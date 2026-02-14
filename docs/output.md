@@ -15,6 +15,7 @@ This document is the source of truth for machine-readable output and CLI exit se
 
 ```json
 {
+  "analysis_mode": "combined",
   "summary": {
     "total_units": 0,
     "hybrid_duplicates": 0,
@@ -42,6 +43,7 @@ With `--show-all`, additional raw sections are included:
 
 ```json
 {
+  "analysis_mode": "semantic",
   "summary": {
     "total_units": 0,
     "traditional_duplicates": 0,
@@ -57,6 +59,7 @@ With `--show-all`, additional raw sections are included:
 ```
 
 `hybrid_duplicates` is only part of default combined mode.
+`analysis_mode` is always present (`combined`, `traditional`, `semantic`, or `none`).
 
 Each duplicate entry includes:
 

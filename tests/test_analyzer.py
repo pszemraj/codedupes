@@ -1244,6 +1244,20 @@ def test_invalid_threshold_raises() -> None:
         AnalyzerConfig(tiny_near_jaccard_min=1.1)
 
 
+def test_invalid_mode_dependency_raises() -> None:
+    with pytest.raises(ValueError, match="strict_unused requires run_unused=True"):
+        AnalyzerConfig(run_unused=False, strict_unused=True)
+
+    with pytest.raises(ValueError, match="require run_semantic=True"):
+        AnalyzerConfig(run_semantic=False, semantic_task="classification")
+
+    with pytest.raises(ValueError, match="require run_semantic=True"):
+        AnalyzerConfig(run_semantic=False, model_revision="abc123")
+
+    with pytest.raises(ValueError, match="require run_traditional=True"):
+        AnalyzerConfig(run_traditional=False, tiny_unit_statement_cutoff=5)
+
+
 def test_empty_directory_analysis(tmp_path: Path) -> None:
     analyzer = CodeAnalyzer()
     result = analyzer.analyze(tmp_path)

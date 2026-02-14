@@ -154,3 +154,23 @@ def test_extract_all_skips_common_artifact_directories(tmp_path: Path) -> None:
 
     assert "pkg.main.keep" in qualified_names
     assert all("ignore_me" not in name for name in qualified_names)
+
+
+def test_extract_from_file_respects_exclude_patterns(tmp_path: Path) -> None:
+    source = "def entry():\n    return 1\n"
+    file_path = tmp_path / "sample.py"
+    file_path.write_text(source)
+
+    extractor = CodeExtractor(tmp_path, exclude_patterns=["sample.py"], include_private=True)
+    units = list(extractor.extract_from_file(file_path))
+    assert units == []
+
+
+def test_extract_all_double_star_pattern_matches_root_level_files(tmp_path: Path) -> None:
+    source = "def entry():\n    return 1\n"
+    file_path = tmp_path / "sample.py"
+    file_path.write_text(source)
+
+    extractor = CodeExtractor(tmp_path, exclude_patterns=["**/sample.py"], include_private=True)
+    units = extractor.extract_all()
+    assert units == []

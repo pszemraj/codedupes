@@ -381,7 +381,13 @@ class CodeExtractor:
             return True
 
         rel_path = str(rel)
-        return any(fnmatch(rel_path, pat) for pat in self.exclude_patterns)
+        for pattern in self.exclude_patterns:
+            if fnmatch(rel_path, pattern):
+                return True
+            # ``fnmatch`` does not treat ``**/name.py`` as matching root-level ``name.py``.
+            if pattern.startswith("**/") and fnmatch(rel_path, pattern[3:]):
+                return True
+        return False
 
     def _get_module_name(self, file_path: Path) -> str:
         """Convert file path to dotted module name.
@@ -403,6 +409,10 @@ class CodeExtractor:
         :param file_path: Source file to parse.
         :return: Iterator over discovered code units.
         """
+        if self._should_exclude(file_path):
+            logger.debug("Skipping excluded file %s", file_path)
+            return
+
         try:
             source = file_path.read_text(encoding="utf-8")
             tree = ast.parse(source, filename=str(file_path))

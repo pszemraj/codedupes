@@ -96,6 +96,10 @@ for unit, score in hits:
 ## Notes
 
 - Call graph and unused detection are heuristic and conservative by default.
+- `AnalyzerConfig` enforces workflow dependencies:
+  - semantic-only settings require `run_semantic=True`
+  - traditional-only settings require `run_traditional=True`
+  - `strict_unused=True` requires `run_unused=True`
 - Semantic candidate defaults and tiny-traditional filtering defaults are defined in
   [docs/analysis-defaults.md](https://github.com/pszemraj/codedupes/blob/main/docs/analysis-defaults.md).
 - Semantic analysis may download model weights on first use.

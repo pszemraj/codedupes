@@ -86,7 +86,10 @@ def _set_console(output_width: int) -> None:
 
 
 def _suppress_logs_for_json() -> tuple[int, list[logging.Handler]]:
-    """Prevent log output from contaminating JSON responses."""
+    """Prevent log output from contaminating JSON responses.
+
+    :return: Prior root logger ``(level, handlers)`` state for later restoration.
+    """
     root_logger = logging.getLogger()
     prior_state = (root_logger.level, list(root_logger.handlers))
     for handler in list(root_logger.handlers):
@@ -238,8 +241,70 @@ def _resolve_search_threshold(
 
 
 def _is_cli_explicit(ctx: click.Context, option_name: str) -> bool:
-    """Return whether a CLI option was explicitly provided by the user."""
+    """Return whether a CLI option was explicitly provided by the user.
+
+    :param ctx: Active Click command context.
+    :param option_name: Internal Click option parameter name.
+    :return: ``True`` when the option source is command line input.
+    """
     return ctx.get_parameter_source(option_name) == click.core.ParameterSource.COMMANDLINE
+
+
+def _resolve_trust_remote_code_flags(
+    *,
+    trust_remote_code: bool,
+    no_trust_remote_code: bool,
+) -> bool | None:
+    """Resolve trust-remote-code flags and reject contradictory input.
+
+    :param trust_remote_code: Whether ``--trust-remote-code`` was provided.
+    :param no_trust_remote_code: Whether ``--no-trust-remote-code`` was provided.
+    :return: ``True``/``False`` when explicitly set, otherwise ``None``.
+    :raises click.UsageError: When both contradictory flags are provided.
+    """
+    if trust_remote_code and no_trust_remote_code:
+        raise click.UsageError("Cannot combine --trust-remote-code and --no-trust-remote-code.")
+    if trust_remote_code:
+        return True
+    if no_trust_remote_code:
+        return False
+    return None
+
+
+def _validate_json_output_controls(
+    *,
+    as_json: bool,
+    verbose: bool,
+    output_width_explicit: bool,
+    show_source: bool = False,
+    full_table: bool = False,
+) -> None:
+    """Reject flags that are incompatible with JSON-only output mode.
+
+    :param as_json: Whether JSON output mode is enabled.
+    :param verbose: Whether verbose logging was requested.
+    :param output_width_explicit: Whether ``--output-width`` was explicitly set.
+    :param show_source: Whether source snippet rendering was requested.
+    :param full_table: Whether full table rendering was requested.
+    :return: ``None``.
+    :raises click.UsageError: When rich/logging controls are combined with JSON mode.
+    """
+    if not as_json:
+        return
+
+    incompatible: list[str] = []
+    if verbose:
+        incompatible.append("--verbose")
+    if output_width_explicit:
+        incompatible.append("--output-width")
+    if show_source:
+        incompatible.append("--show-source")
+    if full_table:
+        incompatible.append("--full-table")
+
+    if incompatible:
+        listed = ", ".join(incompatible)
+        raise click.UsageError(f"Cannot use {listed} with --json.")
 
 
 def format_location(unit: CodeUnit) -> str:
@@ -373,6 +438,7 @@ def print_check_json_combined(result: AnalysisResult, *, show_all: bool) -> None
     :return: ``None``.
     """
     output: dict[str, Any] = {
+        "analysis_mode": result.analysis_mode,
         "summary": {
             "total_units": len(result.units),
             "hybrid_duplicates": len(result.hybrid_duplicates),
@@ -402,6 +468,7 @@ def print_check_json_combined(result: AnalysisResult, *, show_all: bool) -> None
 def print_check_json_raw(result: AnalysisResult) -> None:
     """Output raw single-method check results as JSON."""
     output = {
+        "analysis_mode": result.analysis_mode,
         "summary": {
             "total_units": len(result.units),
             "traditional_duplicates": len(result.traditional_duplicates),
@@ -663,7 +730,10 @@ def _add_common_analysis_options(func: Callable[..., Any]) -> Callable[..., Any]
             default=DEFAULT_MIN_LINES,
             show_default=True,
             callback=_validate_non_negative_int,
-            help="Skip semantic comparison for code units with fewer body statements",
+            help=(
+                "Skip semantic comparison for code units with fewer body statements "
+                "(also narrows traditional duplicate scope in combined mode)"
+            ),
         ),
         click.option(
             "--semantic-unit-type",
@@ -672,7 +742,10 @@ def _add_common_analysis_options(func: Callable[..., Any]) -> Callable[..., Any]
             type=click.Choice(["function", "method", "class"]),
             default=("function", "method"),
             show_default=True,
-            help="Unit type(s) eligible for semantic embedding (repeat option to add more)",
+            help=(
+                "Unit type(s) eligible for semantic embedding (repeat option to add more; "
+                "also narrows traditional duplicate scope in combined mode)"
+            ),
         ),
         click.option(
             "--model",
@@ -695,9 +768,14 @@ def _add_common_analysis_options(func: Callable[..., Any]) -> Callable[..., Any]
             ),
         ),
         click.option(
-            "--trust-remote-code/--no-trust-remote-code",
-            default=None,
+            "--trust-remote-code",
+            is_flag=True,
             help="Allow execution of model-provided remote code during model loading",
+        ),
+        click.option(
+            "--no-trust-remote-code",
+            is_flag=True,
+            help="Disallow execution of model-provided remote code during model loading",
         ),
         click.option(
             "--batch-size",
@@ -838,7 +916,8 @@ def check_command(
     semantic_task: str,
     instruction_prefix: str | None,
     model_revision: str | None,
-    trust_remote_code: bool | None,
+    trust_remote_code: bool,
+    no_trust_remote_code: bool,
     batch_size: int,
     as_json: bool,
     verbose: bool,
@@ -848,6 +927,7 @@ def check_command(
 ) -> None:
     """Run duplicate and unused-code analysis.
 
+    :param ctx: Click command context.
     :param path: Source directory or file to analyze.
     :param threshold: Optional shared threshold override.
     :param semantic_threshold: Semantic threshold override.
@@ -870,7 +950,8 @@ def check_command(
     :param semantic_task: Semantic task used during duplicate detection.
     :param instruction_prefix: Optional custom embedding prefix.
     :param model_revision: Optional model revision/commit override.
-    :param trust_remote_code: Whether to trust remote code loaders.
+    :param trust_remote_code: Whether remote-code execution was explicitly enabled.
+    :param no_trust_remote_code: Whether remote-code execution was explicitly disabled.
     :param batch_size: Embedding batch size.
     :param as_json: Output JSON instead of tables.
     :param verbose: Enable debug-level logging.
@@ -886,6 +967,17 @@ def check_command(
 
     if semantic_only and traditional_only:
         raise click.UsageError("Cannot use both --semantic-only and --traditional-only.")
+
+    if show_all and (semantic_only or traditional_only):
+        raise click.UsageError("--show-all is only valid in default combined mode.")
+
+    _validate_json_output_controls(
+        as_json=as_json,
+        verbose=verbose,
+        output_width_explicit=_is_cli_explicit(ctx, "output_width"),
+        show_source=show_source,
+        full_table=full_table,
+    )
 
     if traditional_only:
         ignored_in_traditional_only = [
@@ -929,6 +1021,11 @@ def check_command(
                 f"Cannot use {listed} with --semantic-only; traditional duplicate analysis is disabled."
             )
 
+    resolved_trust_remote_code = _resolve_trust_remote_code_flags(
+        trust_remote_code=trust_remote_code,
+        no_trust_remote_code=no_trust_remote_code,
+    )
+
     _set_console(output_width)
     logging_state: tuple[int, list[logging.Handler]] | None = None
     if as_json:
@@ -945,6 +1042,10 @@ def check_command(
         traditional_threshold,
         model_name=model,
     )
+    if semantic_only:
+        traditional_thresh = DEFAULT_TRADITIONAL_THRESHOLD
+    if traditional_only:
+        semantic_thresh = get_default_semantic_threshold(model)
 
     config = AnalyzerConfig(
         exclude_patterns=list(exclude) or None,
@@ -955,7 +1056,7 @@ def check_command(
         semantic_task=semantic_task,
         instruction_prefix=instruction_prefix,
         model_revision=model_revision,
-        trust_remote_code=trust_remote_code,
+        trust_remote_code=resolved_trust_remote_code,
         run_traditional=not semantic_only,
         run_semantic=not traditional_only,
         run_unused=not no_unused,
@@ -1083,7 +1184,9 @@ def check_command(
     help="Semantic task mode for query/document embeddings",
 )
 @_add_common_analysis_options
+@click.pass_context
 def search_command(
+    ctx: click.Context,
     path: Path,
     query: str,
     top_k: int,
@@ -1096,7 +1199,8 @@ def search_command(
     model: str,
     instruction_prefix: str | None,
     model_revision: str | None,
-    trust_remote_code: bool | None,
+    trust_remote_code: bool,
+    no_trust_remote_code: bool,
     batch_size: int,
     as_json: bool,
     verbose: bool,
@@ -1106,6 +1210,7 @@ def search_command(
 ) -> None:
     """Run semantic search over extracted code units.
 
+    :param ctx: Click command context.
     :param path: Directory or file to analyze for query context.
     :param query: Natural-language search query.
     :param top_k: Maximum results to return.
@@ -1118,7 +1223,8 @@ def search_command(
     :param model: Semantic model alias/identifier.
     :param instruction_prefix: Optional custom embedding prefix.
     :param model_revision: Optional model revision/commit override.
-    :param trust_remote_code: Whether to trust remote code loaders.
+    :param trust_remote_code: Whether remote-code execution was explicitly enabled.
+    :param no_trust_remote_code: Whether remote-code execution was explicitly disabled.
     :param batch_size: Embedding batch size.
     :param as_json: Output JSON result instead of table.
     :param verbose: Enable debug-level logging.
@@ -1127,6 +1233,16 @@ def search_command(
     :param output_width: Width used for rich output.
     :return: ``None``.
     """
+    _validate_json_output_controls(
+        as_json=as_json,
+        verbose=verbose,
+        output_width_explicit=_is_cli_explicit(ctx, "output_width"),
+    )
+    resolved_trust_remote_code = _resolve_trust_remote_code_flags(
+        trust_remote_code=trust_remote_code,
+        no_trust_remote_code=no_trust_remote_code,
+    )
+
     _set_console(output_width)
     logging_state: tuple[int, list[logging.Handler]] | None = None
     if as_json:
@@ -1146,7 +1262,7 @@ def search_command(
         semantic_task=semantic_task,
         instruction_prefix=instruction_prefix,
         model_revision=model_revision,
-        trust_remote_code=trust_remote_code,
+        trust_remote_code=resolved_trust_remote_code,
         run_traditional=False,
         run_unused=False,
         min_semantic_lines=min_lines,

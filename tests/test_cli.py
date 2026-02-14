@@ -267,6 +267,29 @@ def test_cli_threshold_precedence(monkeypatch, tmp_path):
     assert captured[-1].jaccard_threshold == 0.44
 
 
+def test_cli_semantic_only_shared_threshold_does_not_set_traditional_threshold(
+    monkeypatch, tmp_path
+):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+
+    captured = []
+    patch_cli_analyzer(
+        monkeypatch,
+        cli,
+        analyze_result=lambda: _build_result(tmp_path),
+        captured_configs=captured,
+    )
+    runner = CliRunner()
+    result = runner.invoke(
+        cli.cli,
+        ["check", str(path), "--semantic-only", "--threshold", "0.7"],
+    )
+    assert result.exit_code == 1
+    assert captured[-1].semantic_threshold == 0.7
+    assert captured[-1].jaccard_threshold == cli.DEFAULT_TRADITIONAL_THRESHOLD
+
+
 def test_cli_search_defaults_to_code_retrieval_task(monkeypatch, tmp_path):
     path = tmp_path / "sample.py"
     path.write_text("def entry():\n    return 1\n")
@@ -344,6 +367,79 @@ def test_cli_rejects_conflicting_single_method_flags(tmp_path):
         ["check", str(path), "--semantic-only", "--traditional-only"],
     )
     assert result.exit_code == 2
+
+
+def test_cli_rejects_show_all_in_single_method_modes(tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+
+    runner = CliRunner()
+    semantic_result = runner.invoke(
+        cli.cli,
+        ["check", str(path), "--semantic-only", "--show-all"],
+    )
+    assert semantic_result.exit_code == 2
+    assert "--show-all is only valid in default combined mode." in semantic_result.output
+
+    traditional_result = runner.invoke(
+        cli.cli,
+        ["check", str(path), "--traditional-only", "--show-all"],
+    )
+    assert traditional_result.exit_code == 2
+    assert "--show-all is only valid in default combined mode." in traditional_result.output
+
+
+def test_cli_rejects_json_with_rich_only_flags(tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+
+    runner = CliRunner()
+    check_result = runner.invoke(
+        cli.cli,
+        ["check", str(path), "--json", "--show-source"],
+    )
+    assert check_result.exit_code == 2
+    assert "Cannot use --show-source with --json." in check_result.output
+
+    search_result = runner.invoke(
+        cli.cli,
+        ["search", str(path), "entry", "--json", "--verbose"],
+    )
+    assert search_result.exit_code == 2
+    assert "Cannot use --verbose with --json." in search_result.output
+
+
+def test_cli_rejects_json_with_explicit_output_width(tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli.cli,
+        ["check", str(path), "--json", "--output-width", "160"],
+    )
+    assert result.exit_code == 2
+    assert "Cannot use --output-width with --json." in result.output
+
+
+def test_cli_rejects_conflicting_trust_remote_code_flags(tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+
+    runner = CliRunner()
+    check_result = runner.invoke(
+        cli.cli,
+        ["check", str(path), "--trust-remote-code", "--no-trust-remote-code"],
+    )
+    assert check_result.exit_code == 2
+    assert "Cannot combine --trust-remote-code and --no-trust-remote-code." in check_result.output
+
+    search_result = runner.invoke(
+        cli.cli,
+        ["search", str(path), "entry", "--trust-remote-code", "--no-trust-remote-code"],
+    )
+    assert search_result.exit_code == 2
+    assert "Cannot combine --trust-remote-code and --no-trust-remote-code." in search_result.output
 
 
 def test_cli_rejects_semantic_flags_with_traditional_only(tmp_path):

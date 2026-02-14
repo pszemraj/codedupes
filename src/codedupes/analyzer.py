@@ -391,6 +391,43 @@ class AnalyzerConfig:
                 )
             self.semantic_task = normalized_task
 
+        if not self.run_unused and self.strict_unused:
+            raise ValueError("strict_unused requires run_unused=True")
+
+        if not self.run_semantic:
+            semantic_only_fields: list[str] = []
+            if self.semantic_threshold is not None:
+                semantic_only_fields.append("semantic_threshold")
+            if self.semantic_task is not None:
+                semantic_only_fields.append("semantic_task")
+            if self.instruction_prefix is not None:
+                semantic_only_fields.append("instruction_prefix")
+            if self.model_revision is not None:
+                semantic_only_fields.append("model_revision")
+            if self.trust_remote_code is not None:
+                semantic_only_fields.append("trust_remote_code")
+            if self.batch_size != DEFAULT_BATCH_SIZE:
+                semantic_only_fields.append("batch_size")
+            if self.suppress_test_semantic_matches:
+                semantic_only_fields.append("suppress_test_semantic_matches")
+            if semantic_only_fields:
+                listed = ", ".join(sorted(semantic_only_fields))
+                raise ValueError(f"{listed} require run_semantic=True")
+
+        if not self.run_traditional:
+            traditional_only_fields: list[str] = []
+            if self.jaccard_threshold != DEFAULT_TRADITIONAL_THRESHOLD:
+                traditional_only_fields.append("jaccard_threshold")
+            if not self.filter_tiny_traditional:
+                traditional_only_fields.append("filter_tiny_traditional")
+            if self.tiny_unit_statement_cutoff != DEFAULT_TINY_UNIT_STATEMENT_CUTOFF:
+                traditional_only_fields.append("tiny_unit_statement_cutoff")
+            if self.tiny_near_jaccard_min != DEFAULT_TINY_NEAR_JACCARD_MIN:
+                traditional_only_fields.append("tiny_near_jaccard_min")
+            if traditional_only_fields:
+                listed = ", ".join(sorted(traditional_only_fields))
+                raise ValueError(f"{listed} require run_traditional=True")
+
 
 class CodeAnalyzer:
     """
