@@ -16,6 +16,7 @@ import ast
 import importlib
 from importlib import metadata as importlib_metadata
 import logging
+import os
 import sys
 from typing import Literal
 
@@ -70,6 +71,16 @@ _C2LLM_MODELS = {"codefuse-ai/C2LLM-0.5B", "codefuse-ai/C2LLM-7B"}
 
 class SemanticBackendError(RuntimeError):
     """Raised when semantic model loading or inference backend is incompatible."""
+
+
+def _configure_semantic_runtime_env() -> None:
+    """Set runtime env guards to avoid optional framework noise/import paths."""
+    os.environ.setdefault("USE_TF", "0")
+    os.environ.setdefault("USE_FLAX", "0")
+    os.environ.setdefault("TRANSFORMERS_NO_TF", "1")
+    os.environ.setdefault("TRANSFORMERS_NO_FLAX", "1")
+    os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
+    os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
 
 def _resolve_model_revision(model_name: str, revision: str | None) -> str | None:
@@ -259,6 +270,21 @@ def _is_c2llm(model_name: str) -> bool:
     return model_name in _C2LLM_MODELS or "C2LLM" in model_name
 
 
+def _resolve_c2llm_torch_dtype():
+    """Choose torch dtype for C2LLM on CUDA without fp16 fallback."""
+    try:
+        import torch
+    except ModuleNotFoundError:
+        return None
+
+    if not torch.cuda.is_available():
+        return None
+
+    if hasattr(torch.cuda, "is_bf16_supported") and torch.cuda.is_bf16_supported():
+        return torch.bfloat16
+    return None
+
+
 def get_model(
     model_name: str = DEFAULT_MODEL,
     revision: str | None = None,
@@ -286,6 +312,7 @@ def get_model(
 
     if cache_miss:
         logger.info(f"Loading embedding model: {model_name}")
+        _configure_semantic_runtime_env()
         _check_semantic_dependencies(model_name)
 
         try:
@@ -314,6 +341,11 @@ def get_model(
 
         if _is_c2llm(model_name):
             tokenizer_kwargs["padding_side"] = "left"
+            model_kwargs["low_cpu_mem_usage"] = True
+            selected_dtype = _resolve_c2llm_torch_dtype()
+            if selected_dtype is not None:
+                model_kwargs["dtype"] = selected_dtype
+                logger.info("Using C2LLM torch dtype: %s", selected_dtype)
 
         if resolved_revision is not None:
             model_kwargs["revision"] = resolved_revision
@@ -486,16 +518,60 @@ def compute_embeddings(
         texts.append(_truncate_code_if_needed(prepared, unit.qualified_name, model))
 
     logger.info(f"Computing embeddings for {len(texts)} code units")
-    try:
-        embeddings = model.encode(
-            texts,
-            batch_size=batch_size,
-            show_progress_bar=len(texts) > 100,
-            convert_to_numpy=True,
-            normalize_embeddings=True,  # For cosine similarity via dot product
-        )
-    except RuntimeError as e:  # pragma: no cover - defensive handling
-        if not _is_cuda_oom_error(e):
+    current_batch_size = max(1, batch_size)
+    while True:
+        try:
+            embeddings = model.encode(
+                texts,
+                batch_size=current_batch_size,
+                show_progress_bar=len(texts) > 100,
+                convert_to_numpy=True,
+                normalize_embeddings=True,  # For cosine similarity via dot product
+            )
+            break
+        except RuntimeError as e:  # pragma: no cover - defensive handling
+            if not _is_cuda_oom_error(e):
+                if _is_known_semantic_backend_error(e):
+                    raise _wrap_semantic_backend_error(
+                        e,
+                        model_name=model_name,
+                        revision=resolved_revision,
+                        trust_remote_code=resolved_trust_remote_code,
+                        stage="embedding inference",
+                    )
+                raise
+
+            if current_batch_size > 1:
+                next_batch_size = max(1, current_batch_size // 2)
+                logger.warning(
+                    "CUDA OOM during semantic embedding at batch_size=%d; retrying with "
+                    "batch_size=%d",
+                    current_batch_size,
+                    next_batch_size,
+                )
+                current_batch_size = next_batch_size
+                try:
+                    import torch
+
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                except Exception:
+                    logger.debug("Failed to clear CUDA cache after OOM", exc_info=True)
+                continue
+
+            logger.warning("CUDA OOM during semantic embedding at batch_size=1; retrying on CPU")
+            if hasattr(model, "to"):
+                model.to("cpu")
+            embeddings = model.encode(
+                texts,
+                batch_size=1,
+                show_progress_bar=len(texts) > 100,
+                convert_to_numpy=True,
+                normalize_embeddings=True,  # For cosine similarity via dot product
+                device="cpu",
+            )
+            break
+        except Exception as e:
             if _is_known_semantic_backend_error(e):
                 raise _wrap_semantic_backend_error(
                     e,
@@ -505,27 +581,6 @@ def compute_embeddings(
                     stage="embedding inference",
                 )
             raise
-
-        logger.warning("CUDA OOM during semantic embedding; retrying on CPU")
-        model.to("cpu")
-        embeddings = model.encode(
-            texts,
-            batch_size=1,
-            show_progress_bar=len(texts) > 100,
-            convert_to_numpy=True,
-            normalize_embeddings=True,  # For cosine similarity via dot product
-            device="cpu",
-        )
-    except Exception as e:
-        if _is_known_semantic_backend_error(e):
-            raise _wrap_semantic_backend_error(
-                e,
-                model_name=model_name,
-                revision=resolved_revision,
-                trust_remote_code=resolved_trust_remote_code,
-                stage="embedding inference",
-            )
-        raise
 
     return embeddings
 

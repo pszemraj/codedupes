@@ -32,7 +32,7 @@ Options:
 - `--instruction-prefix <text>`: Override default semantic instruction prefix for code/query embeddings
 - `--model-revision <rev>`: Model revision/commit hash (default pinned revision for C2LLM)
 - `--trust-remote-code / --no-trust-remote-code`: Allow/disallow model remote code execution
-- `--batch-size <int>`: Embedding batch size (default `32`)
+- `--batch-size <int>`: Embedding batch size (default `8`)
 - `--no-private`: Exclude private (`_name`) functions/classes
 - `--exclude <glob>`: Exclude file path glob pattern (repeat option for multiple patterns)
 - `--include-stubs`: Include `*.pyi` files
@@ -61,7 +61,7 @@ Options:
 - `--trust-remote-code / --no-trust-remote-code`: Allow/disallow model remote code execution
 - `--threshold <float>`: Semantic threshold (default `0.82`)
 - `--semantic-threshold <float>`: Override semantic threshold
-- `--batch-size <int>`: Embedding batch size (default `32`)
+- `--batch-size <int>`: Embedding batch size (default `8`)
 - `--min-lines <int>`: Minimum statement count for semantic candidates (default `3`)
 - `--no-private`: Exclude private (`_name`) functions/classes
 - `--exclude <glob>`: Exclude file path glob pattern (repeat option for multiple patterns)

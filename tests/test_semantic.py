@@ -10,9 +10,10 @@ from codedupes.constants import DEFAULT_C2LLM_REVISION, DEFAULT_MODEL
 from codedupes.models import CodeUnit, CodeUnitType
 from codedupes.semantic import (
     SemanticBackendError,
+    compute_embeddings,
     find_semantic_duplicates,
-    get_code_unit_statement_count,
     find_similar_to_query,
+    get_code_unit_statement_count,
     run_semantic_analysis,
 )
 from tests.conftest import extract_arithmetic_units
@@ -210,6 +211,7 @@ def test_get_model_passes_revision_and_trust_kwargs(monkeypatch) -> None:
             calls.append({"args": args, "kwargs": kwargs})
 
     monkeypatch.setattr(semantic, "_check_semantic_dependencies", lambda model_name: None)
+    monkeypatch.setattr(semantic, "_resolve_c2llm_torch_dtype", lambda: "bf16")
     monkeypatch.setattr(sentence_transformers, "SentenceTransformer", FakeSentenceTransformer)
     semantic.clear_model_cache()
 
@@ -221,6 +223,8 @@ def test_get_model_passes_revision_and_trust_kwargs(monkeypatch) -> None:
     assert kwargs["revision"] == DEFAULT_C2LLM_REVISION
     assert kwargs["model_kwargs"]["trust_remote_code"] is True
     assert kwargs["model_kwargs"]["revision"] == DEFAULT_C2LLM_REVISION
+    assert kwargs["model_kwargs"]["dtype"] == "bf16"
+    assert kwargs["model_kwargs"]["low_cpu_mem_usage"] is True
     assert kwargs["tokenizer_kwargs"]["trust_remote_code"] is True
     assert kwargs["tokenizer_kwargs"]["revision"] == DEFAULT_C2LLM_REVISION
     assert kwargs["config_kwargs"]["trust_remote_code"] is True
@@ -283,3 +287,22 @@ def test_get_model_reports_missing_core_dependency(
         semantic.get_model("codefuse-ai/C2LLM-0.5B")
 
     assert expected_snippet in str(excinfo.value).lower()
+
+
+def test_compute_embeddings_retries_with_reduced_batch_before_cpu(monkeypatch, tmp_path) -> None:
+    units = _extract_units(tmp_path)
+    seen_batch_sizes: list[int] = []
+
+    class OomThenRecoverModel:
+        def encode(self, texts, **kwargs):
+            seen_batch_sizes.append(kwargs["batch_size"])
+            if kwargs["batch_size"] > 2:
+                raise RuntimeError("CUDA out of memory")
+            return np.array([[1.0, 0.0], [0.0, 1.0]], dtype=np.float32)
+
+    monkeypatch.setattr(semantic, "get_model", lambda *args, **kwargs: OomThenRecoverModel())
+
+    embeddings = compute_embeddings(units, batch_size=8)
+
+    assert embeddings.shape == (2, 2)
+    assert seen_batch_sizes[:3] == [8, 4, 2]

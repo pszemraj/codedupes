@@ -103,6 +103,12 @@ Pinned default semantic model revision:
 codedupes info
 ```
 
+Semantic runtime defaults:
+
+- CUDA uses `bfloat16` when supported (no `fp16` fallback).
+- Default semantic `--batch-size` is `8`.
+- On CUDA OOM, semantic embedding retries with progressively smaller GPU batches before CPU fallback.
+
 ## Threshold Tuning
 
 Use a single threshold for both traditional and semantic:
