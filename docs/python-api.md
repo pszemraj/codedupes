@@ -1,5 +1,8 @@
 # Python API
 
+This page covers programmatic usage.
+CLI flag defaults are documented in `docs/cli.md`; CLI JSON schemas/exit codes are documented in `docs/output.md`.
+
 ## Quick Start
 
 ```python
@@ -71,6 +74,7 @@ for unit, score in hits:
 - `AnalysisResult.traditional_duplicates`: raw traditional duplicates (diagnostics)
 - `AnalysisResult.semantic_duplicates`: raw semantic duplicates (diagnostics)
 - `AnalysisResult.potentially_unused`: heuristic unused candidates
+- `AnalysisResult.all_duplicates`: convenience alias for `hybrid_duplicates`
 
 ## Notes
 

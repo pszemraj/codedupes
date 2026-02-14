@@ -2,7 +2,14 @@
 
 This document is the source of truth for machine-readable output and CLI exit semantics.
 
-## `check --json` Structure
+## `check --json` schemas
+
+`check` has two JSON schema modes:
+
+1. Combined mode (default): hybrid-first output
+2. Single-method mode (`--semantic-only` or `--traditional-only`): raw output
+
+## Combined mode (default)
 
 `codedupes check <path> --json` emits:
 
@@ -25,6 +32,27 @@ With `--show-all`, additional raw sections are included:
 
 - `traditional_duplicates`
 - `semantic_duplicates`
+
+## Single-method mode (`--semantic-only` or `--traditional-only`)
+
+`codedupes check <path> --json --semantic-only` and
+`codedupes check <path> --json --traditional-only` emit raw duplicate sections:
+
+```json
+{
+  "summary": {
+    "total_units": 0,
+    "traditional_duplicates": 0,
+    "semantic_duplicates": 0,
+    "potentially_unused": 0
+  },
+  "traditional_duplicates": [],
+  "semantic_duplicates": [],
+  "potentially_unused": []
+}
+```
+
+`hybrid_duplicates` is only part of default combined mode.
 
 Each duplicate entry includes:
 
@@ -83,10 +111,12 @@ Each unit object includes:
 - `0`: completed, no findings
 - `1`: completed with findings or failed due to runtime error
 - `2`: CLI usage/validation error (Click)
-- Semantic backend note: in mixed-mode `check` (default), semantic failures degrade to
-  traditional/unused-only results with a warning instead of hard failure.
-- Combined-mode finding note: default `check` exits `1` based on hybrid findings
-  (`hybrid_duplicates`) plus `potentially_unused` only.
+- Semantic backend note:
+  - default combined `check`: semantic failures degrade with a warning
+  - semantic-required mode (`--semantic-only`): fails hard
+- Finding note:
+  - combined mode: exit `1` is based on `hybrid_duplicates` + `potentially_unused`
+  - single-method mode: exit `1` is based on raw duplicate findings + `potentially_unused`
 
 `search`:
 

@@ -7,12 +7,12 @@
 - Semantic matching with embedding similarity
 - Heuristic unused-code detection
 
-## Documentation Map
+## Documentation ownership (source-of-truth model)
 
-- `docs/usage.md`: install, quick start, and common workflows
-- `docs/cli.md`: full CLI command and option reference (source of truth for flags/defaults)
-- `docs/output.md`: output schema and exit codes (source of truth)
-- `docs/python-api.md`: programmatic API usage
+- `docs/cli.md`: source of truth for CLI commands, flags, and defaults.
+- `docs/output.md`: source of truth for JSON payload shapes and exit codes.
+- `docs/usage.md`: workflows and tuning recipes. Links to CLI/output docs for definitive flag/schema semantics.
+- `docs/python-api.md`: programmatic API usage and result objects.
 
 ## Quick Start
 
@@ -21,8 +21,10 @@ pip install codedupes
 codedupes check ./src
 ```
 
-For JSON output, schema details are in `docs/output.md`:
+For machine-readable output, use JSON:
 
 ```bash
 codedupes check ./src --json
 ```
+
+For full command/option details, see `docs/cli.md`.

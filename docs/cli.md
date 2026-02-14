@@ -1,6 +1,7 @@
 # CLI Reference
 
 This document is the source of truth for CLI commands, flags, and option defaults.
+For JSON schemas and exit-code semantics, see `docs/output.md` (the source of truth for output behavior).
 
 ## Commands
 
@@ -22,6 +23,7 @@ codedupes check ./src
 codedupes check ./src --json --threshold 0.82
 codedupes check ./src --semantic-only
 codedupes check ./src --traditional-only --no-unused
+codedupes check ./src --show-all
 ```
 
 Options:
@@ -82,15 +84,13 @@ Options:
 
 Print version and default settings.
 
-## Global Behavior Notes
+## Validation and mode notes
 
 - Threshold values must be in `[0.0, 1.0]`
 - `--batch-size` and `--top-k` must be greater than `0`
 - `--min-lines` must be greater than or equal to `0`
 - `--output-width` must be at least `80`
 - Default `check` behavior degrades to non-semantic analysis if semantic backend fails
-- In combined mode, `check` findings are based on `hybrid_duplicates` + `potentially_unused`
-- `search` and `check --semantic-only` fail when semantic backend is unavailable
 - `--semantic-only` and `--traditional-only` bypass hybrid synthesis and show raw method outputs
 
 For JSON payloads and complete exit-code semantics, see `docs/output.md`.

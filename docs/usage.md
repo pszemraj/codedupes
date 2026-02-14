@@ -1,5 +1,9 @@
 # Usage Guide
 
+This guide focuses on practical workflows.
+Flag defaults and validation rules are defined in `docs/cli.md`.
+JSON schema and exit codes are defined in `docs/output.md`.
+
 ## Install
 
 ```bash
@@ -12,7 +16,7 @@ Optional GPU extras:
 pip install codedupes[gpu]
 ```
 
-Recommended semantic dependency range:
+Recommended semantic dependency bounds:
 
 ```bash
 pip install "transformers>=4.51,<5" "sentence-transformers>=5,<6"
@@ -49,7 +53,7 @@ codedupes check ./src/module.py
 codedupes check ./src --json
 ```
 
-See `docs/output.md` for the authoritative JSON structure and exit-code definitions.
+See `docs/output.md` for authoritative JSON structure and exit-code semantics.
 
 ## Control Rich Output Width
 
@@ -65,7 +69,7 @@ codedupes check ./src --output-width 200
 codedupes search ./src "parse json payload" --top-k 10
 ```
 
-For the complete command/option reference, see `docs/cli.md`.
+For full command/option semantics, see `docs/cli.md`.
 
 ## Override Semantic Instruction Prefix
 
@@ -77,7 +81,7 @@ codedupes check ./src --instruction-prefix "Represent this code for duplicate de
 codedupes search ./src "parse json payload" --instruction-prefix "Represent this query for code lookup: "
 ```
 
-## Fresh Colab/GPU Preflight
+## Fresh Colab/GPU preflight
 
 Use one command to print runtime versions and CUDA availability:
 
@@ -178,7 +182,7 @@ When auditing `tests/` directories, suppress semantic matches involving
 pytest-style `test_*` functions:
 
 ```bash
-codedupes check tests --semantic-only --suppress-test-semantic
+codedupes check tests --suppress-test-semantic
 ```
 
 ## Full Run Verification Sequence
