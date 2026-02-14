@@ -532,9 +532,10 @@ def test_cli_check_degrades_on_semantic_backend_error_in_json(monkeypatch, tmp_p
     result = runner.invoke(cli.cli, ["check", str(path), "--min-lines", "0", "--json"])
     assert result.exit_code == 1
 
-    match = re.search(r"\n(\{.*\})\s*$", result.output, flags=re.S)
-    assert match, f"Could not locate JSON payload in output: {result.output!r}"
-    payload = json.loads(match.group(1))
+    assert result.output.lstrip().startswith("{"), (
+        f"Expected pure JSON output, got: {result.output!r}"
+    )
+    payload = json.loads(result.output)
     assert payload["summary"]["semantic_fallback"] is True
     assert payload["summary"]["semantic_fallback_reason"] is not None
     assert "Semantic analysis unavailable" in payload["summary"]["semantic_fallback_reason"]

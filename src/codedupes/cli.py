@@ -85,6 +85,27 @@ def _set_console(output_width: int) -> None:
     console = Console(width=output_width)
 
 
+def _suppress_logs_for_json() -> tuple[int, list[logging.Handler]]:
+    """Prevent log output from contaminating JSON responses."""
+    root_logger = logging.getLogger()
+    prior_state = (root_logger.level, list(root_logger.handlers))
+    for handler in list(root_logger.handlers):
+        root_logger.removeHandler(handler)
+    root_logger.setLevel(logging.CRITICAL + 1)
+    return prior_state
+
+
+def _restore_root_logger_state(prior_state: tuple[int, list[logging.Handler]]) -> None:
+    """Restore root logger level/handlers after a temporary JSON suppression."""
+    prior_level, prior_handlers = prior_state
+    root_logger = logging.getLogger()
+    for handler in list(root_logger.handlers):
+        root_logger.removeHandler(handler)
+    for handler in prior_handlers:
+        root_logger.addHandler(handler)
+    root_logger.setLevel(prior_level)
+
+
 def setup_logging(verbose: bool = False) -> None:
     """Configure logging with rich handler."""
     level = logging.DEBUG if verbose else logging.INFO
@@ -909,7 +930,10 @@ def check_command(
             )
 
     _set_console(output_width)
-    if not as_json:
+    logging_state: tuple[int, list[logging.Handler]] | None = None
+    if as_json:
+        logging_state = _suppress_logs_for_json()
+    else:
         setup_logging(verbose)
 
     combined_mode = not semantic_only and not traditional_only
@@ -947,71 +971,75 @@ def check_command(
     )
 
     try:
-        analyzer = CodeAnalyzer(config)
-        result = analyzer.analyze(path)
-    except FileNotFoundError as exc:
-        console.print(f"[red]Error:[/red] {exc}")
-        raise click.exceptions.Exit(1) from exc
-    except Exception as exc:
-        console.print(f"[red]Error during analysis:[/red] {exc}")
-        if verbose:
-            console.print_exception()
-        raise click.exceptions.Exit(1) from exc
+        try:
+            analyzer = CodeAnalyzer(config)
+            result = analyzer.analyze(path)
+        except FileNotFoundError as exc:
+            console.print(f"[red]Error:[/red] {exc}")
+            raise click.exceptions.Exit(1) from exc
+        except Exception as exc:
+            console.print(f"[red]Error during analysis:[/red] {exc}")
+            if verbose:
+                console.print_exception()
+            raise click.exceptions.Exit(1) from exc
 
-    if as_json:
-        if combined_mode:
-            print_check_json_combined(result, show_all=show_all)
+        if as_json:
+            if combined_mode:
+                print_check_json_combined(result, show_all=show_all)
+            else:
+                print_check_json_raw(result)
         else:
-            print_check_json_raw(result)
-    else:
-        if combined_mode:
-            print_summary(result, mode="combined")
-            print_hybrid_duplicates(
-                result.hybrid_duplicates,
-                show_source=show_source,
-                max_items=table_max_items,
-            )
-            print_unused(
-                result.potentially_unused,
-                title="Likely Dead Code",
-                max_items=table_max_items,
-            )
-
-            if show_all:
-                console.print(
-                    f"[dim]Filtered out {result.filtered_raw_duplicates} raw duplicate pairs "
-                    "from default hybrid output.[/dim]"
-                )
-                print_duplicates(
-                    result.traditional_duplicates,
-                    "Traditional Duplicates (Raw AST/Token/Jaccard)",
+            if combined_mode:
+                print_summary(result, mode="combined")
+                print_hybrid_duplicates(
+                    result.hybrid_duplicates,
                     show_source=show_source,
                     max_items=table_max_items,
                 )
+                print_unused(
+                    result.potentially_unused,
+                    title="Likely Dead Code",
+                    max_items=table_max_items,
+                )
+
+                if show_all:
+                    console.print(
+                        f"[dim]Filtered out {result.filtered_raw_duplicates} raw duplicate pairs "
+                        "from default hybrid output.[/dim]"
+                    )
+                    print_duplicates(
+                        result.traditional_duplicates,
+                        "Traditional Duplicates (Raw AST/Token/Jaccard)",
+                        show_source=show_source,
+                        max_items=table_max_items,
+                    )
+                    print_duplicates(
+                        result.semantic_duplicates,
+                        "Semantic Duplicates (Raw Embedding)",
+                        show_source=show_source,
+                        max_items=table_max_items,
+                    )
+            elif semantic_only:
+                print_summary(result, mode="semantic")
                 print_duplicates(
                     result.semantic_duplicates,
-                    "Semantic Duplicates (Raw Embedding)",
+                    "Semantic Duplicates (Embedding)",
                     show_source=show_source,
                     max_items=table_max_items,
                 )
-        elif semantic_only:
-            print_summary(result, mode="semantic")
-            print_duplicates(
-                result.semantic_duplicates,
-                "Semantic Duplicates (Embedding)",
-                show_source=show_source,
-                max_items=table_max_items,
-            )
-            print_unused(result.potentially_unused, max_items=table_max_items)
-        else:
-            print_summary(result, mode="traditional")
-            print_duplicates(
-                result.traditional_duplicates,
-                "Traditional Duplicates (AST/Token/Jaccard)",
-                show_source=show_source,
-                max_items=table_max_items,
-            )
-            print_unused(result.potentially_unused, max_items=table_max_items)
+                print_unused(result.potentially_unused, max_items=table_max_items)
+            else:
+                print_summary(result, mode="traditional")
+                print_duplicates(
+                    result.traditional_duplicates,
+                    "Traditional Duplicates (AST/Token/Jaccard)",
+                    show_source=show_source,
+                    max_items=table_max_items,
+                )
+                print_unused(result.potentially_unused, max_items=table_max_items)
+    finally:
+        if logging_state is not None:
+            _restore_root_logger_state(logging_state)
 
     if combined_mode:
         has_issues = bool(result.hybrid_duplicates or result.potentially_unused)
@@ -1100,8 +1128,10 @@ def search_command(
     :return: ``None``.
     """
     _set_console(output_width)
-
-    if not as_json:
+    logging_state: tuple[int, list[logging.Handler]] | None = None
+    if as_json:
+        logging_state = _suppress_logs_for_json()
+    else:
         setup_logging(verbose)
 
     config = AnalyzerConfig(
@@ -1126,20 +1156,24 @@ def search_command(
     )
 
     try:
-        analyzer = CodeAnalyzer(config)
-        analyzer.analyze(path)
-        results = analyzer.search(query, top_k=top_k)
-    except Exception as exc:
-        console.print(f"[red]Error during search:[/red] {exc}")
-        if verbose:
-            console.print_exception()
-        raise click.exceptions.Exit(1) from exc
+        try:
+            analyzer = CodeAnalyzer(config)
+            analyzer.analyze(path)
+            results = analyzer.search(query, top_k=top_k)
+        except Exception as exc:
+            console.print(f"[red]Error during search:[/red] {exc}")
+            if verbose:
+                console.print_exception()
+            raise click.exceptions.Exit(1) from exc
 
-    if as_json:
-        print_search_json(query, results)
-    else:
-        console.print(f"[bold cyan]Query:[/bold cyan] {query!r}")
-        print_search_results(results)
+        if as_json:
+            print_search_json(query, results)
+        else:
+            console.print(f"[bold cyan]Query:[/bold cyan] {query!r}")
+            print_search_results(results)
+    finally:
+        if logging_state is not None:
+            _restore_root_logger_state(logging_state)
 
     raise click.exceptions.Exit(0)
 
