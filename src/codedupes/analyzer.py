@@ -169,8 +169,7 @@ class CodeAnalyzer:
                     duplicate
                     for duplicate in semantic_dupes
                     if not (
-                        duplicate.unit_a.uid in unused_uids
-                        and duplicate.unit_b.uid in unused_uids
+                        duplicate.unit_a.uid in unused_uids and duplicate.unit_b.uid in unused_uids
                     )
                 ]
 

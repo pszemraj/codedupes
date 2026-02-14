@@ -114,9 +114,7 @@ def print_search_json(query: str, results: list[tuple[CodeUnit, float]]) -> None
     """Output search output as JSON."""
     payload = {
         "query": query,
-        "results": [
-            {"score": float(score), **_unit_to_dict(unit)} for unit, score in results
-        ],
+        "results": [{"score": float(score), **_unit_to_dict(unit)} for unit, score in results],
     }
     print(json.dumps(payload, indent=2, sort_keys=True))
 
@@ -257,7 +255,9 @@ def _add_common_analysis_args(parser: argparse.ArgumentParser) -> None:
         default=DEFAULT_MODEL,
         help=f"HuggingFace embedding model (default: {DEFAULT_MODEL})",
     )
-    parser.add_argument("--no-private", action="store_true", help="Exclude private functions/classes")
+    parser.add_argument(
+        "--no-private", action="store_true", help="Exclude private functions/classes"
+    )
     parser.add_argument("--json", action="store_true", help="Output JSON instead of rich tables")
     parser.add_argument("--show-source", action="store_true", help="Show source code snippets")
     parser.add_argument("--verbose", "-v", action="store_true", help="Verbose logging")
@@ -288,8 +288,12 @@ def _run_check(args: argparse.Namespace) -> int:
     if not args.json:
         setup_logging(args.verbose)
 
-    semantic_thresh = args.semantic_threshold if args.semantic_threshold is not None else args.threshold
-    trad_thresh = args.traditional_threshold if args.traditional_threshold is not None else args.threshold
+    semantic_thresh = (
+        args.semantic_threshold if args.semantic_threshold is not None else args.threshold
+    )
+    trad_thresh = (
+        args.traditional_threshold if args.traditional_threshold is not None else args.threshold
+    )
 
     config = AnalyzerConfig(
         exclude_patterns=args.exclude,
@@ -340,7 +344,9 @@ def _run_check(args: argparse.Namespace) -> int:
         )
         print_unused(result.potentially_unused)
 
-    has_issues = bool(result.exact_duplicates or result.semantic_duplicates or result.potentially_unused)
+    has_issues = bool(
+        result.exact_duplicates or result.semantic_duplicates or result.potentially_unused
+    )
     return 1 if has_issues else 0
 
 
@@ -437,12 +443,18 @@ Examples:
         type=float,
         help="Override semantic threshold",
     )
-    search_parser.add_argument("--no-private", action="store_true", help="Exclude private functions/classes")
+    search_parser.add_argument(
+        "--no-private", action="store_true", help="Exclude private functions/classes"
+    )
     search_parser.add_argument("--json", action="store_true", help="Output JSON")
     search_parser.add_argument("--verbose", "-v", action="store_true", help="Verbose logging")
     search_parser.add_argument("--exclude", nargs="+", help="Glob patterns to exclude")
-    search_parser.add_argument("--batch-size", type=int, default=32, help="Batch size for embeddings")
-    search_parser.add_argument("--min-lines", type=int, default=3, help="Minimum body statements for semantic candidates")
+    search_parser.add_argument(
+        "--batch-size", type=int, default=32, help="Batch size for embeddings"
+    )
+    search_parser.add_argument(
+        "--min-lines", type=int, default=3, help="Minimum body statements for semantic candidates"
+    )
     search_parser.add_argument("--include-stubs", action="store_true", help="Include .pyi files")
     search_parser.set_defaults(func=_run_search)
 
