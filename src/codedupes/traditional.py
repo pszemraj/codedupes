@@ -5,16 +5,12 @@ from __future__ import annotations
 import ast
 import keyword
 import logging
+import tomllib
 from collections import defaultdict
 from itertools import combinations
 from pathlib import Path
 
 from codedupes.models import CodeUnit, CodeUnitType, DuplicatePair
-
-try:  # Python 3.11+
-    import tomllib
-except ModuleNotFoundError:  # pragma: no cover - Python 3.10 fallback
-    import tomli as tomllib
 
 logger = logging.getLogger(__name__)
 

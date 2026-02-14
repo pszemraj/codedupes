@@ -8,9 +8,8 @@ version = "0.2.0"
 description = "Detect duplicate/unused Python code via AST analysis and semantic embeddings (C2LLM)"
 readme = "README.md"
 license = "MIT"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
-    "tomli>=2.0.1; python_version < '3.11'",
     "sentence-transformers>=3.0.0",
     "transformers>=4.37.0",
     "torch>=2.0.0",
@@ -30,7 +29,7 @@ packages = ["src/codedupes"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py310"
+target-version = "py311"
 extend-exclude = ["tests/fixtures/**"]
 
 [tool.pytest.ini_options]

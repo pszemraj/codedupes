@@ -30,7 +30,7 @@ For GPU-assisted semantic models that may require `deepspeed`, install:
 pip install codedupes[gpu]
 ```
 
-Requires Python 3.10+.
+Requires Python 3.11+.
 
 ## CLI usage
 
