@@ -17,7 +17,7 @@ from codedupes.constants import (
     DEFAULT_TRADITIONAL_THRESHOLD,
 )
 from codedupes.extractor import CodeExtractor
-from codedupes.models import AnalysisResult, CodeUnit, DuplicatePair
+from codedupes.models import AnalysisResult, CodeUnit, CodeUnitType, DuplicatePair
 from codedupes.semantic import (
     SemanticBackendError,
     get_code_unit_statement_count,
@@ -55,6 +55,13 @@ def _build_exact_hash_exclusions(units: list[CodeUnit]) -> set[tuple[str, str]]:
     return exclude
 
 
+def _is_test_function_unit(unit: CodeUnit) -> bool:
+    """Return True when the unit looks like a pytest-style test function."""
+    return unit.unit_type in {CodeUnitType.FUNCTION, CodeUnitType.METHOD} and unit.name.startswith(
+        "test_"
+    )
+
+
 @dataclass
 class AnalyzerConfig:
     """Configuration for the code analyzer."""
@@ -81,6 +88,7 @@ class AnalyzerConfig:
     run_semantic: bool = True
     run_unused: bool = True
     strict_unused: bool = False
+    suppress_test_semantic_matches: bool = False
 
     def __post_init__(self) -> None:
         if not 0.0 <= self.jaccard_threshold <= 1.0:
@@ -230,6 +238,16 @@ class CodeAnalyzer:
                     version_text,
                     path,
                 )
+
+            if self.config.suppress_test_semantic_matches:
+                semantic_dupes = [
+                    duplicate
+                    for duplicate in semantic_dupes
+                    if not (
+                        _is_test_function_unit(duplicate.unit_a)
+                        or _is_test_function_unit(duplicate.unit_b)
+                    )
+                ]
 
             if self.config.run_unused:
                 unused_uids = {unit.uid for unit in unused}

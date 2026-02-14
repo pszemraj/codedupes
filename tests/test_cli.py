@@ -129,6 +129,7 @@ def test_cli_model_semantic_flags_pass_through(monkeypatch, tmp_path):
             "--model-revision",
             "test-rev",
             "--no-trust-remote-code",
+            "--suppress-test-semantic",
         ],
     )
 
@@ -136,6 +137,7 @@ def test_cli_model_semantic_flags_pass_through(monkeypatch, tmp_path):
     assert captured[0].instruction_prefix == "Represent this code: "
     assert captured[0].model_revision == "test-rev"
     assert captured[0].trust_remote_code is False
+    assert captured[0].suppress_test_semantic_matches is True
 
 
 def test_cli_requires_explicit_command(tmp_path):

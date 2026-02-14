@@ -26,6 +26,7 @@ Options:
 - `--traditional-only`: Run traditional analysis only
 - `--no-unused`: Disable unused-code detection
 - `--strict-unused`: Include public top-level functions in unused checks
+- `--suppress-test-semantic`: Suppress semantic duplicate matches involving `test_*` functions
 - `--min-lines <int>`: Minimum statement count for semantic candidates (default `3`)
 - `--model <name>`: Embedding model (default `codefuse-ai/C2LLM-0.5B`)
 - `--instruction-prefix <text>`: Override default semantic instruction prefix for code/query embeddings

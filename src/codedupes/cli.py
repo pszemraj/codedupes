@@ -431,6 +431,11 @@ def cli() -> None:
 )
 @click.option("--no-unused", is_flag=True, help="Skip unused code detection")
 @click.option("--strict-unused", is_flag=True, help="Do not skip public functions")
+@click.option(
+    "--suppress-test-semantic",
+    is_flag=True,
+    help="Suppress semantic duplicate matches involving test_* functions",
+)
 @click.option("--show-source", is_flag=True, help="Show source code snippets")
 @_add_common_analysis_options
 def check_command(
@@ -442,6 +447,7 @@ def check_command(
     traditional_only: bool,
     no_unused: bool,
     strict_unused: bool,
+    suppress_test_semantic: bool,
     show_source: bool,
     no_private: bool,
     min_lines: int,
@@ -482,6 +488,7 @@ def check_command(
         run_unused=not no_unused,
         min_semantic_lines=min_lines,
         strict_unused=strict_unused,
+        suppress_test_semantic_matches=suppress_test_semantic,
         batch_size=batch_size,
         include_stubs=include_stubs,
     )

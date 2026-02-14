@@ -216,6 +216,75 @@ def test_semantic_only_pre_excludes_exact_hash_pairs(tmp_path: Path, monkeypatch
     assert captured_exclude_pairs
 
 
+def test_suppress_test_semantic_matches_filters_test_named_pairs(
+    tmp_path: Path, monkeypatch
+) -> None:
+    source = dedent(
+        """
+        def test_alpha():
+            return 1
+
+        def test_beta():
+            return 2
+
+        def helper_alpha():
+            return 3
+
+        def helper_beta():
+            return 4
+        """
+    ).strip()
+    project = create_project(tmp_path, source, module="tests_like.py")
+
+    from codedupes import analyzer as analyzer_module
+
+    def fake_run_semantic(
+        units,
+        model_name="codefuse-ai/C2LLM-0.5B",
+        instruction_prefix=None,
+        threshold=0.82,
+        exclude_pairs=None,
+        batch_size=32,
+        revision=None,
+        trust_remote_code=None,
+    ):
+        by_name = {unit.name: unit for unit in units}
+        return np.zeros((len(units), 2), dtype=np.float32), [
+            DuplicatePair(
+                unit_a=by_name["test_alpha"],
+                unit_b=by_name["test_beta"],
+                similarity=0.99,
+                method="semantic",
+            ),
+            DuplicatePair(
+                unit_a=by_name["helper_alpha"],
+                unit_b=by_name["helper_beta"],
+                similarity=0.99,
+                method="semantic",
+            ),
+        ]
+
+    monkeypatch.setattr(analyzer_module, "run_semantic_analysis", fake_run_semantic)
+
+    analyzer = CodeAnalyzer(
+        AnalyzerConfig(
+            run_traditional=False,
+            run_semantic=True,
+            run_unused=False,
+            min_semantic_lines=0,
+            suppress_test_semantic_matches=True,
+        )
+    )
+
+    result = analyzer.analyze(project)
+
+    assert len(result.semantic_duplicates) == 1
+    assert {
+        result.semantic_duplicates[0].unit_a.name,
+        result.semantic_duplicates[0].unit_b.name,
+    } == {"helper_alpha", "helper_beta"}
+
+
 def test_search_requires_embeddings(tmp_path: Path) -> None:
     source = "def entry():\n    return 1\n"
     create_project(tmp_path, source)

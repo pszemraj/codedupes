@@ -160,6 +160,15 @@ Disable unused detection:
 codedupes check ./src --no-unused
 ```
 
+## Reduce Semantic Noise In Test Suites
+
+When auditing `tests/` directories, suppress semantic matches involving
+pytest-style `test_*` functions:
+
+```bash
+codedupes check tests --semantic-only --suppress-test-semantic
+```
+
 ## Full Run Verification Sequence
 
 1. Baseline traditional-only:
