@@ -13,6 +13,7 @@
 - `docs/output.md`: source of truth for JSON payload shapes and exit codes.
 - `docs/usage.md`: workflows and tuning recipes. Links to CLI/output docs for definitive flag/schema semantics.
 - `docs/python-api.md`: programmatic API usage and result objects.
+- `docs/hybrid-tuning.md`: best-practice workflow for hybrid gate sweep and threshold updates.
 
 ## Quick Start
 

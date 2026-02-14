@@ -89,6 +89,7 @@ Primary docs live under `docs/`:
 - `docs/output.md`: source of truth for JSON schemas and exit codes
 - `docs/usage.md`: practical workflows and tuning examples
 - `docs/python-api.md`: programmatic API usage
+- `docs/hybrid-tuning.md`: best-practice hybrid gate tuning workflow (tracked corpus + reproducible sweep)
 
 ## Notes and limits
 

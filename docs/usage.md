@@ -206,3 +206,8 @@ codedupes check src
 ```
 
 Record model/revision, package versions, device, elapsed time, exit code, and whether semantic fallback warnings were emitted.
+
+## Hybrid gate tuning workflow
+
+Use the dedicated sweep harness + tracked synthetic corpus described in `docs/hybrid-tuning.md`.
+Treat that corpus as a guardrail, then re-validate on at least one real repository before changing defaults.
