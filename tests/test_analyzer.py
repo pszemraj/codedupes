@@ -201,3 +201,63 @@ def test_empty_directory_analysis(tmp_path: Path) -> None:
     assert result.exact_duplicates == []
     assert result.semantic_duplicates == []
     assert result.potentially_unused == []
+
+
+def test_semantic_missing_dependency_falls_back_when_traditional_enabled(
+    tmp_path: Path, monkeypatch
+) -> None:
+    source = dedent(
+        """
+        def used():
+            return 1
+
+        def unused():
+            return 2
+        """
+    ).strip()
+    project = create_project(tmp_path, source)
+
+    from codedupes import analyzer as analyzer_module
+
+    def fake_run_semantic(*args, **kwargs):
+        raise ModuleNotFoundError("No module named 'sentence_transformers'")
+
+    monkeypatch.setattr(analyzer_module, "run_semantic_analysis", fake_run_semantic)
+
+    analyzer = CodeAnalyzer(
+        AnalyzerConfig(
+            run_traditional=True,
+            run_semantic=True,
+            run_unused=False,
+        )
+    )
+
+    result = analyzer.analyze(project)
+    assert len(result.units) == 2
+    assert result.semantic_duplicates == []
+
+
+def test_semantic_missing_dependency_raises_when_semantic_required(
+    tmp_path: Path, monkeypatch
+) -> None:
+    source = "def only_func():\n    return 1\n"
+    project = create_project(tmp_path, source)
+
+    from codedupes import analyzer as analyzer_module
+
+    def fake_run_semantic(*args, **kwargs):
+        raise ModuleNotFoundError("No module named 'sentence_transformers'")
+
+    monkeypatch.setattr(analyzer_module, "run_semantic_analysis", fake_run_semantic)
+
+    analyzer = CodeAnalyzer(
+        AnalyzerConfig(
+            run_traditional=False,
+            run_semantic=True,
+            run_unused=False,
+            min_semantic_lines=0,
+        )
+    )
+
+    with pytest.raises(ModuleNotFoundError):
+        analyzer.analyze(project)

@@ -159,13 +159,24 @@ class CodeAnalyzer:
                 }
             )
 
-            self._embeddings, semantic_dupes = run_semantic_analysis(
-                semantic_candidates,
-                model_name=self.config.model_name,
-                threshold=self.config.semantic_threshold,
-                exclude_pairs=exclude,
-                batch_size=self.config.batch_size,
-            )
+            try:
+                self._embeddings, semantic_dupes = run_semantic_analysis(
+                    semantic_candidates,
+                    model_name=self.config.model_name,
+                    threshold=self.config.semantic_threshold,
+                    exclude_pairs=exclude,
+                    batch_size=self.config.batch_size,
+                )
+            except ModuleNotFoundError:
+                # Semantic analysis is best-effort unless it is the only requested mode.
+                if not self.config.run_traditional and not self.config.run_unused:
+                    raise
+
+                self._embeddings = None
+                semantic_dupes = []
+                logger.warning(
+                    "Semantic dependencies unavailable; proceeding with non-semantic analysis only."
+                )
 
             if self.config.run_unused:
                 unused_uids = {unit.uid for unit in unused}
