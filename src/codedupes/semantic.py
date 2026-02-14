@@ -522,14 +522,20 @@ def compute_embeddings(
 
     logger.info(f"Computing embeddings for {len(texts)} code units")
     current_batch_size = max(1, batch_size)
+    attempted_cpu_fallback = False
     while True:
         try:
+            encode_kwargs = {
+                "batch_size": current_batch_size,
+                "show_progress_bar": len(texts) > 100,
+                "convert_to_numpy": True,
+                "normalize_embeddings": True,  # For cosine similarity via dot product
+            }
+            if attempted_cpu_fallback:
+                encode_kwargs["device"] = "cpu"
             embeddings = model.encode(
                 texts,
-                batch_size=current_batch_size,
-                show_progress_bar=len(texts) > 100,
-                convert_to_numpy=True,
-                normalize_embeddings=True,  # For cosine similarity via dot product
+                **encode_kwargs,
             )
             break
         except RuntimeError as e:  # pragma: no cover - defensive handling
@@ -562,18 +568,24 @@ def compute_embeddings(
                     logger.debug("Failed to clear CUDA cache after OOM", exc_info=True)
                 continue
 
+            if attempted_cpu_fallback:
+                logger.warning(
+                    "CUDA OOM during semantic embedding on CPU fallback (batch_size=1); aborting"
+                )
+                raise
+
             logger.warning("CUDA OOM during semantic embedding at batch_size=1; retrying on CPU")
+            attempted_cpu_fallback = True
             if hasattr(model, "to"):
                 model.to("cpu")
-            embeddings = model.encode(
-                texts,
-                batch_size=1,
-                show_progress_bar=len(texts) > 100,
-                convert_to_numpy=True,
-                normalize_embeddings=True,  # For cosine similarity via dot product
-                device="cpu",
-            )
-            break
+            try:
+                import torch
+
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+            except Exception:
+                logger.debug("Failed to clear CUDA cache after OOM", exc_info=True)
+            continue
         except Exception as e:
             if _is_known_semantic_backend_error(e):
                 raise _wrap_semantic_backend_error(
