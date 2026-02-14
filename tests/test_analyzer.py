@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 
 from codedupes import analyzer as analyzer_module
-from codedupes.analyzer import AnalyzerConfig, CodeAnalyzer
+from codedupes.analyzer import AnalyzerConfig, CodeAnalyzer, analyze_directory
 from codedupes.models import CodeUnit, CodeUnitType, DuplicatePair
 from codedupes.semantic import SemanticBackendError
 from tests.conftest import build_two_function_source, create_project
@@ -127,6 +127,38 @@ def test_integration_on_mixed_project(tmp_path: Path) -> None:
     names = {unit.name for unit in result.potentially_unused}
     assert "caller" not in names
     assert "_private_entry" not in names
+
+
+def test_analyze_directory_uses_auto_revision_for_custom_model(tmp_path: Path, monkeypatch) -> None:
+    source = "def add_one(x):\n    return x + 1\n"
+    project = create_project(tmp_path, source)
+    captured: dict[str, str | None] = {}
+
+    def fake_run_semantic(
+        units,
+        model_name="codefuse-ai/C2LLM-0.5B",
+        instruction_prefix=None,
+        threshold=0.82,
+        exclude_pairs=None,
+        batch_size=32,
+        revision=None,
+        trust_remote_code=None,
+    ):
+        captured["model_name"] = model_name
+        captured["revision"] = revision
+        return np.zeros((len(units), 2), dtype=np.float32), []
+
+    monkeypatch.setattr(analyzer_module, "run_semantic_analysis", fake_run_semantic)
+
+    analyze_directory(
+        project,
+        model_name="sentence-transformers/all-MiniLM-L6-v2",
+        min_semantic_lines=0,
+        run_unused=False,
+    )
+
+    assert captured["model_name"] == "sentence-transformers/all-MiniLM-L6-v2"
+    assert captured["revision"] is None
 
 
 def test_combined_mode_preserves_near_dupes_for_semantic_confirmation(

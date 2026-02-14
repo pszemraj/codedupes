@@ -13,7 +13,6 @@ from typing import Any
 import codedupes.analyzer as analyzer_module
 from codedupes.analyzer import AnalyzerConfig, CodeAnalyzer
 from codedupes.constants import (
-    DEFAULT_C2LLM_REVISION,
     DEFAULT_MODEL,
     DEFAULT_SEMANTIC_THRESHOLD,
     DEFAULT_TRADITIONAL_THRESHOLD,
@@ -225,8 +224,11 @@ def main() -> int:
     parser.add_argument("--model", default=DEFAULT_MODEL, help="Embedding model name.")
     parser.add_argument(
         "--model-revision",
-        default=DEFAULT_C2LLM_REVISION,
-        help="Model revision / commit hash.",
+        default=None,
+        help=(
+            "Model revision / commit hash. If omitted, uses model-specific default "
+            "(pinned for default C2LLM model)."
+        ),
     )
     parser.add_argument(
         "--batch-size",

@@ -480,9 +480,12 @@ def _add_common_analysis_options(func: Callable[..., Any]) -> Callable[..., Any]
         ),
         click.option(
             "--model-revision",
-            default=DEFAULT_C2LLM_REVISION,
-            show_default=True,
-            help="Model revision/commit (default pins C2LLM for reproducibility)",
+            default=None,
+            show_default="auto",
+            help=(
+                "Model revision/commit. If omitted, uses model-specific default "
+                "(pinned for default C2LLM model)."
+            ),
         ),
         click.option(
             "--trust-remote-code/--no-trust-remote-code",
@@ -803,7 +806,8 @@ def info_command() -> None:
     """Print version and default settings."""
     click.echo(f"codedupes {__version__}")
     click.echo(f"Default model: {DEFAULT_MODEL}")
-    click.echo(f"Default model revision: {DEFAULT_C2LLM_REVISION}")
+    click.echo("Default model revision: auto")
+    click.echo(f"  (auto resolves to {DEFAULT_C2LLM_REVISION} for {DEFAULT_MODEL})")
     click.echo(f"Default semantic threshold: {DEFAULT_THRESHOLD}")
     click.echo(f"Default traditional threshold: {DEFAULT_TRADITIONAL_THRESHOLD}")
     click.echo(f"Default min_lines for semantic: {DEFAULT_MIN_LINES}")

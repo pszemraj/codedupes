@@ -47,7 +47,7 @@ Use `--show-all` to include raw traditional + raw semantic duplicate lists.
 ## Default semantic model behavior
 
 - Model: `codefuse-ai/C2LLM-0.5B`
-- Pinned revision: `bd6d0ddb29f0c9a3d0f14281aedc9f940bb8d67a`
+- Auto revision selection: pinned to `bd6d0ddb29f0c9a3d0f14281aedc9f940bb8d67a` for the default model
 - Default trust mode for this model: `trust_remote_code=True`
 - Runtime dtype policy: prefer `bfloat16` (CUDA when supported, and CPU)
 - Default semantic batch size: `8` with CUDA OOM backoff

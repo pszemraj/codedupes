@@ -41,7 +41,7 @@ Options:
 - `--min-lines <int>`: Minimum statement count for semantic candidates (default `3`)
 - `--model <name>`: Embedding model (default `codefuse-ai/C2LLM-0.5B`)
 - `--instruction-prefix <text>`: Override default semantic instruction prefix for code/query embeddings
-- `--model-revision <rev>`: Model revision/commit hash (default pinned revision for C2LLM)
+- `--model-revision <rev>`: Model revision/commit hash (default `auto`; pinned for default C2LLM model)
 - `--trust-remote-code / --no-trust-remote-code`: Allow/disallow model remote code execution
 - `--batch-size <int>`: Embedding batch size (default `8`)
 - `--no-private`: Exclude private (`_name`) functions/classes
@@ -68,7 +68,7 @@ Options:
 - `--top-k <int>`: Number of results (default `10`)
 - `--model <name>`: Embedding model (default `codefuse-ai/C2LLM-0.5B`)
 - `--instruction-prefix <text>`: Override default semantic instruction prefix for code/query embeddings
-- `--model-revision <rev>`: Model revision/commit hash (default pinned revision for C2LLM)
+- `--model-revision <rev>`: Model revision/commit hash (default `auto`; pinned for default C2LLM model)
 - `--trust-remote-code / --no-trust-remote-code`: Allow/disallow model remote code execution
 - `--threshold <float>`: Semantic threshold (default `0.82`)
 - `--semantic-threshold <float>`: Override semantic threshold

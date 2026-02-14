@@ -174,6 +174,33 @@ def test_cli_model_semantic_flags_pass_through(monkeypatch, tmp_path):
     assert captured[0].suppress_test_semantic_matches is True
 
 
+def test_cli_model_revision_defaults_to_auto_none(monkeypatch, tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+
+    captured = []
+    patch_cli_analyzer(
+        monkeypatch,
+        cli,
+        analyze_result=lambda: _build_result(tmp_path),
+        captured_configs=captured,
+    )
+    runner = CliRunner()
+    result = runner.invoke(
+        cli.cli,
+        [
+            "check",
+            str(path),
+            "--model",
+            "sentence-transformers/all-MiniLM-L6-v2",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert captured[0].model_name == "sentence-transformers/all-MiniLM-L6-v2"
+    assert captured[0].model_revision is None
+
+
 def test_cli_requires_explicit_command(tmp_path):
     path = tmp_path / "sample.py"
     path.write_text("def entry():\n    return 1\n")

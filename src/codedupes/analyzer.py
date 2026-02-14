@@ -10,7 +10,6 @@ import numpy as np
 
 from codedupes.constants import (
     DEFAULT_BATCH_SIZE,
-    DEFAULT_C2LLM_REVISION,
     DEFAULT_MIN_SEMANTIC_LINES,
     DEFAULT_MODEL,
     DEFAULT_SEMANTIC_THRESHOLD,
@@ -208,7 +207,7 @@ class AnalyzerConfig:
     semantic_threshold: float = DEFAULT_SEMANTIC_THRESHOLD
     model_name: str = DEFAULT_MODEL
     instruction_prefix: str | None = None
-    model_revision: str | None = DEFAULT_C2LLM_REVISION
+    model_revision: str | None = None
     trust_remote_code: bool | None = None
     batch_size: int = DEFAULT_BATCH_SIZE
     min_semantic_lines: int = DEFAULT_MIN_SEMANTIC_LINES
@@ -440,7 +439,7 @@ def analyze_directory(
     exclude_patterns: list[str] | None = None,
     model_name: str = DEFAULT_MODEL,
     instruction_prefix: str | None = None,
-    model_revision: str | None = DEFAULT_C2LLM_REVISION,
+    model_revision: str | None = None,
     trust_remote_code: bool | None = None,
     min_semantic_lines: int = DEFAULT_MIN_SEMANTIC_LINES,
     include_stubs: bool = False,
@@ -457,7 +456,8 @@ def analyze_directory(
         exclude_patterns: Glob patterns for files to exclude
         model_name: HuggingFace model for embeddings
         instruction_prefix: Custom instruction prefix prepended to semantic inputs
-        model_revision: HuggingFace model revision/commit hash
+        model_revision: Optional HuggingFace model revision/commit hash.
+            If None, semantic backend chooses model-specific default behavior.
         trust_remote_code: Whether remote model code may execute while loading
         run_unused: Run potentially-unused detection even when traditional analysis is off
 
