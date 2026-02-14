@@ -8,7 +8,7 @@ import pytest
 
 from codedupes import analyzer as analyzer_module
 from codedupes.analyzer import AnalyzerConfig, CodeAnalyzer, analyze_directory
-from codedupes.models import CodeUnit, CodeUnitType, DuplicatePair
+from codedupes.models import AnalysisResult, CodeUnit, CodeUnitType, DuplicatePair
 from codedupes.semantic import SemanticBackendError
 from tests.conftest import build_two_function_source, create_project
 
@@ -32,6 +32,46 @@ def _make_unit(
         is_public=True,
         is_exported=False,
     )
+
+
+def test_all_duplicates_returns_raw_for_single_method_modes(tmp_path: Path) -> None:
+    file_a = tmp_path / "a.py"
+    file_b = tmp_path / "b.py"
+    file_a.write_text("def foo():\n    return 1\n")
+    file_b.write_text("def foo():\n    return 1\n")
+
+    analyzer = CodeAnalyzer(
+        AnalyzerConfig(run_traditional=True, run_semantic=False, run_unused=False)
+    )
+    result = analyzer.analyze(tmp_path)
+
+    assert result.analysis_mode == "traditional"
+    assert result.traditional_duplicates
+    assert result.all_duplicates == result.traditional_duplicates
+
+    unit = _make_unit(
+        tmp_path,
+        name="bar",
+        source="def bar():\n    return 1\n",
+        lineno=1,
+    )
+    semantic_duplicate = DuplicatePair(
+        unit_a=unit,
+        unit_b=unit,
+        similarity=0.95,
+        method="semantic",
+    )
+    semantic_result = AnalysisResult(
+        units=[unit],
+        traditional_duplicates=[],
+        semantic_duplicates=[semantic_duplicate],
+        hybrid_duplicates=[],
+        potentially_unused=[],
+        analysis_mode="semantic",
+        filtered_raw_duplicates=0,
+    )
+
+    assert semantic_result.all_duplicates == [semantic_duplicate]
 
 
 @pytest.mark.parametrize(

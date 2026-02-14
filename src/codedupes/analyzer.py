@@ -286,6 +286,7 @@ class CodeAnalyzer:
                 semantic_duplicates=[],
                 hybrid_duplicates=[],
                 potentially_unused=[],
+                analysis_mode="none",
                 filtered_raw_duplicates=0,
             )
 
@@ -396,12 +397,22 @@ class CodeAnalyzer:
                 jaccard_threshold=self.config.jaccard_threshold,
             )
 
+        if combined_mode:
+            analysis_mode = "combined"
+        elif self.config.run_traditional:
+            analysis_mode = "traditional"
+        elif self.config.run_semantic:
+            analysis_mode = "semantic"
+        else:
+            analysis_mode = "none"
+
         return AnalysisResult(
             units=units,
             traditional_duplicates=traditional_duplicates,
             semantic_duplicates=semantic_duplicates,
             hybrid_duplicates=hybrid_duplicates,
             potentially_unused=unused,
+            analysis_mode=analysis_mode,
             filtered_raw_duplicates=filtered_raw_duplicates,
         )
 

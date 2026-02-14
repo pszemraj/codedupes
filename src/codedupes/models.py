@@ -85,6 +85,8 @@ HybridTier = Literal[
     "semantic_high_confidence",
 ]
 
+AnalysisMode = Literal["combined", "traditional", "semantic", "none"]
+
 
 @dataclass
 class HybridDuplicate:
@@ -120,6 +122,7 @@ class AnalysisResult:
     semantic_duplicates: list[DuplicatePair]  # Embedding similarity
     hybrid_duplicates: list[HybridDuplicate]  # Final combined output candidates
     potentially_unused: list[CodeUnit]  # No references, not API
+    analysis_mode: AnalysisMode  # How duplicates were synthesized
     filtered_raw_duplicates: int = 0
 
     @property
@@ -128,6 +131,8 @@ class AnalysisResult:
         return self.traditional_duplicates
 
     @property
-    def all_duplicates(self) -> list[HybridDuplicate]:
-        """Return the final synthesized duplicate list."""
-        return self.hybrid_duplicates
+    def all_duplicates(self) -> list[HybridDuplicate] | list[DuplicatePair]:
+        """Return the available duplicate list for this analysis mode."""
+        if self.analysis_mode == "combined":
+            return self.hybrid_duplicates
+        return self.traditional_duplicates + self.semantic_duplicates

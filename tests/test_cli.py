@@ -56,6 +56,7 @@ def _build_result(tmp_path: Path) -> AnalysisResult:
         semantic_duplicates=[],
         hybrid_duplicates=[hybrid],
         potentially_unused=[unit],
+        analysis_mode="combined",
         filtered_raw_duplicates=0,
     )
 
@@ -303,6 +304,7 @@ def test_cli_full_table_disables_truncation(monkeypatch, tmp_path):
         semantic_duplicates=[],
         hybrid_duplicates=[hybrid for _ in range(25)],
         potentially_unused=[],
+        analysis_mode="combined",
         filtered_raw_duplicates=0,
     )
     patch_cli_analyzer(monkeypatch, cli, analyze_result=result_obj)
@@ -383,6 +385,7 @@ def test_cli_combined_exit_code_ignores_raw_filtered_findings(monkeypatch, tmp_p
             semantic_duplicates=[],
             hybrid_duplicates=[],
             potentially_unused=[],
+            analysis_mode="traditional",
             filtered_raw_duplicates=1,
         ),
     )
@@ -406,6 +409,7 @@ def test_cli_semantic_only_uses_raw_findings_for_exit(monkeypatch, tmp_path):
             semantic_duplicates=[duplicate],
             hybrid_duplicates=[],
             potentially_unused=[],
+            analysis_mode="semantic",
             filtered_raw_duplicates=0,
         ),
     )

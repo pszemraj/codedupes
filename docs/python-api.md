@@ -76,7 +76,8 @@ for unit, score in hits:
 - `AnalysisResult.traditional_duplicates`: raw traditional duplicates (diagnostics)
 - `AnalysisResult.semantic_duplicates`: raw semantic duplicates (diagnostics)
 - `AnalysisResult.potentially_unused`: heuristic unused candidates
-- `AnalysisResult.all_duplicates`: convenience alias for `hybrid_duplicates`
+- `AnalysisResult.all_duplicates`: hybrid duplicates in combined mode; raw duplicates in single-method mode
+- `AnalysisResult.analysis_mode`: `"combined"`, `"traditional"`, `"semantic"`, or `"none"`
 
 ## Notes
 
