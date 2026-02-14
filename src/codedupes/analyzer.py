@@ -17,6 +17,7 @@ from codedupes.constants import (
 )
 from codedupes.extractor import CodeExtractor
 from codedupes.models import AnalysisResult, CodeUnit, CodeUnitType, DuplicatePair, HybridDuplicate
+from codedupes.pairs import ordered_pair_key
 from codedupes.semantic import (
     SemanticBackendError,
     get_code_unit_statement_count,
@@ -38,11 +39,6 @@ HYBRID_WEAK_JACCARD_MIN = 0.20
 HYBRID_STATEMENT_RATIO_MIN = 0.35
 
 
-def _pair_key(unit_a: CodeUnit, unit_b: CodeUnit) -> tuple[str, str]:
-    """Return stable key for an unordered pair."""
-    return (min(unit_a.uid, unit_b.uid), max(unit_a.uid, unit_b.uid))
-
-
 def _build_exact_hash_exclusions(units: list[CodeUnit]) -> set[tuple[str, str]]:
     """Build exclusion pairs for exact-duplicate units using precomputed hashes."""
     buckets: dict[tuple[str, str], list[CodeUnit]] = {}
@@ -60,7 +56,7 @@ def _build_exact_hash_exclusions(units: list[CodeUnit]) -> set[tuple[str, str]]:
             continue
         for i, unit_a in enumerate(bucket_units):
             for unit_b in bucket_units[i + 1 :]:
-                exclude.add(_pair_key(unit_a, unit_b))
+                exclude.add(ordered_pair_key(unit_a, unit_b))
 
     return exclude
 
@@ -94,7 +90,7 @@ def _synthesize_hybrid_duplicates(
     pair_evidence: dict[tuple[str, str], dict[str, object]] = {}
 
     def ensure_entry(unit_a: CodeUnit, unit_b: CodeUnit) -> dict[str, object]:
-        key = _pair_key(unit_a, unit_b)
+        key = ordered_pair_key(unit_a, unit_b)
         entry = pair_evidence.get(key)
         if entry is None:
             entry = {
@@ -324,7 +320,7 @@ class CodeAnalyzer:
 
             if self.config.run_traditional:
                 exclude = {
-                    _pair_key(duplicate.unit_a, duplicate.unit_b)
+                    ordered_pair_key(duplicate.unit_a, duplicate.unit_b)
                     for duplicate in traditional_duplicates
                     if duplicate.method in {"ast_hash", "token_hash"}
                 }

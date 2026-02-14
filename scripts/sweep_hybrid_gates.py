@@ -18,6 +18,7 @@ from codedupes.constants import (
     DEFAULT_TRADITIONAL_THRESHOLD,
 )
 from codedupes.models import CodeUnit, HybridDuplicate
+from codedupes.pairs import ordered_pair_key
 
 
 @dataclass(frozen=True)
@@ -51,10 +52,6 @@ def _parse_csv_floats(value: str) -> list[float]:
     return out
 
 
-def _pair_key(unit_a: CodeUnit, unit_b: CodeUnit) -> tuple[str, str]:
-    return tuple(sorted((unit_a.uid, unit_b.uid)))
-
-
 def _parse_label_spec(spec: str) -> tuple[str, str]:
     try:
         filename, symbol = spec.split("::", 1)
@@ -86,7 +83,7 @@ def _build_positive_pairs(units: list[CodeUnit], labels: dict[str, Any]) -> set[
             raise ValueError(msg)
         resolved = [_resolve_label_unit(units, spec) for spec in group]
         for unit_a, unit_b in itertools.combinations(resolved, 2):
-            positives.add(_pair_key(unit_a, unit_b))
+            positives.add(ordered_pair_key(unit_a, unit_b))
     return positives
 
 
@@ -132,7 +129,7 @@ def _run_sweep(
                 semantic_threshold=semantic_threshold,
                 jaccard_threshold=traditional_threshold,
             )
-            predicted_pairs = {_pair_key(item.unit_a, item.unit_b) for item in hybrid}
+            predicted_pairs = {ordered_pair_key(item.unit_a, item.unit_b) for item in hybrid}
             tp, fp, fn, precision, recall, f1 = _metrics(predicted_pairs, positive_pairs)
             rows.append(
                 SweepRow(

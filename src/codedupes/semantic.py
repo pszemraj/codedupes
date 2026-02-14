@@ -31,6 +31,7 @@ from codedupes.constants import (
     DEFAULT_TOP_K,
 )
 from codedupes.models import CodeUnit, DuplicatePair
+from codedupes.pairs import ordered_pair_key
 
 logger = logging.getLogger(__name__)
 
@@ -283,7 +284,6 @@ def _resolve_c2llm_torch_dtype():
     # CPU path: prefer bfloat16 to reduce memory footprint when supported.
     # We intentionally do not use fp16 anywhere.
     return torch.bfloat16
-    return None
 
 
 def get_model(
@@ -664,7 +664,7 @@ def find_semantic_duplicates(
                         continue
 
                 # Skip if already found by exact methods
-                pair_key = tuple(sorted([unit_a.uid, unit_b.uid]))
+                pair_key = ordered_pair_key(unit_a, unit_b)
                 if pair_key in exclude_exact:
                     continue
 

@@ -7,6 +7,8 @@ from enum import Enum, auto
 from pathlib import Path
 from typing import Literal
 
+from codedupes.pairs import unordered_pair_key
+
 
 class CodeUnitType(Enum):
     FUNCTION = auto()
@@ -56,26 +58,6 @@ class CodeUnit:
         )
 
 
-def _pair_uid_set(unit_a: CodeUnit, unit_b: CodeUnit) -> frozenset[str]:
-    """Build a canonical unordered pair key from two units."""
-    return frozenset((unit_a.uid, unit_b.uid))
-
-
-def _unordered_pair_hash(unit_a: CodeUnit, unit_b: CodeUnit) -> int:
-    """Hash helper for unordered duplicate pairs."""
-    return hash(_pair_uid_set(unit_a, unit_b))
-
-
-def _unordered_pair_equal(
-    unit_a: CodeUnit,
-    unit_b: CodeUnit,
-    other_a: CodeUnit,
-    other_b: CodeUnit,
-) -> bool:
-    """Equality helper for unordered duplicate pairs."""
-    return _pair_uid_set(unit_a, unit_b) == _pair_uid_set(other_a, other_b)
-
-
 @dataclass
 class DuplicatePair:
     """A pair of code units identified as duplicates."""
@@ -86,16 +68,13 @@ class DuplicatePair:
     method: str  # "ast_hash", "token_hash", "semantic"
 
     def __hash__(self) -> int:
-        return _unordered_pair_hash(self.unit_a, self.unit_b)
+        return hash(unordered_pair_key(self.unit_a, self.unit_b))
 
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, DuplicatePair):
             return False
-        return _unordered_pair_equal(
-            self.unit_a,
-            self.unit_b,
-            other.unit_a,
-            other.unit_b,
+        return unordered_pair_key(self.unit_a, self.unit_b) == unordered_pair_key(
+            other.unit_a, other.unit_b
         )
 
 
@@ -122,16 +101,13 @@ class HybridDuplicate:
     statement_count_ratio: float | None = None
 
     def __hash__(self) -> int:
-        return _unordered_pair_hash(self.unit_a, self.unit_b)
+        return hash(unordered_pair_key(self.unit_a, self.unit_b))
 
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, HybridDuplicate):
             return False
-        return _unordered_pair_equal(
-            self.unit_a,
-            self.unit_b,
-            other.unit_a,
-            other.unit_b,
+        return unordered_pair_key(self.unit_a, self.unit_b) == unordered_pair_key(
+            other.unit_a, other.unit_b
         )
 
 
