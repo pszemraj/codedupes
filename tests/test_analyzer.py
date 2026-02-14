@@ -176,6 +176,46 @@ def test_unused_semantic_pairs_are_filtered(tmp_path: Path, monkeypatch) -> None
     assert result.semantic_duplicates == []
 
 
+def test_semantic_only_pre_excludes_exact_hash_pairs(tmp_path: Path, monkeypatch) -> None:
+    project = tmp_path / "src"
+    project.mkdir()
+    (project / "__init__.py").write_text("")
+    (project / "a.py").write_text("def helper(x):\n    return x + 1\n")
+    (project / "b.py").write_text("def helper(x):\n    return x + 1\n")
+
+    from codedupes import analyzer as analyzer_module
+
+    captured_exclude_pairs: set[tuple[str, str]] = set()
+
+    def fake_run_semantic(
+        units,
+        model_name="codefuse-ai/C2LLM-0.5B",
+        instruction_prefix=None,
+        threshold=0.82,
+        exclude_pairs=None,
+        batch_size=32,
+        revision=None,
+        trust_remote_code=None,
+    ):
+        captured_exclude_pairs.update(exclude_pairs or set())
+        return np.zeros((len(units), 2), dtype=np.float32), []
+
+    monkeypatch.setattr(analyzer_module, "run_semantic_analysis", fake_run_semantic)
+
+    analyzer = CodeAnalyzer(
+        AnalyzerConfig(
+            run_traditional=False,
+            run_semantic=True,
+            run_unused=False,
+            min_semantic_lines=0,
+        )
+    )
+
+    result = analyzer.analyze(project)
+    assert result.semantic_duplicates == []
+    assert captured_exclude_pairs
+
+
 def test_search_requires_embeddings(tmp_path: Path) -> None:
     source = "def entry():\n    return 1\n"
     create_project(tmp_path, source)

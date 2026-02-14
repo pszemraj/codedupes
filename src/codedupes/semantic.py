@@ -556,6 +556,15 @@ def find_semantic_duplicates(
 
     duplicates = []
 
+    def _types_compatible(unit_a: CodeUnit, unit_b: CodeUnit) -> bool:
+        if unit_a.unit_type == unit_b.unit_type:
+            return True
+        function_like = {"function", "method"}
+        return (
+            unit_a.unit_type.name.lower() in function_like
+            and unit_b.unit_type.name.lower() in function_like
+        )
+
     # Chunk-based computation to handle large matrices
     chunk_size = 500
     for i in range(0, n, chunk_size):
@@ -577,6 +586,9 @@ def find_semantic_duplicates(
                     continue
 
                 unit_b = units[j]
+
+                if not _types_compatible(unit_a, unit_b):
+                    continue
 
                 # Skip if same file and overlapping lines
                 if unit_a.file_path == unit_b.file_path:

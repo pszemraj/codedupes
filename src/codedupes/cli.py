@@ -49,6 +49,21 @@ _NOISY_EXTERNAL_LOGGERS = (
 )
 
 
+class _CodedupesLogFilter(logging.Filter):
+    """Filter log records so non-codedupes INFO chatter is hidden by default."""
+
+    def __init__(self, *, include_external_info: bool) -> None:
+        super().__init__()
+        self.include_external_info = include_external_info
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.name.startswith("codedupes"):
+            return True
+        if self.include_external_info:
+            return True
+        return record.levelno >= logging.WARNING
+
+
 def _set_console(output_width: int) -> None:
     """Set global console used by all rich output helpers."""
     global console
@@ -58,10 +73,12 @@ def _set_console(output_width: int) -> None:
 def setup_logging(verbose: bool = False) -> None:
     """Configure logging with rich handler."""
     level = logging.DEBUG if verbose else logging.INFO
+    handler = RichHandler(console=console, show_time=False, show_path=False)
+    handler.addFilter(_CodedupesLogFilter(include_external_info=verbose))
     logging.basicConfig(
         level=level,
         format="%(message)s",
-        handlers=[RichHandler(console=console, show_time=False, show_path=False)],
+        handlers=[handler],
         force=True,
     )
     quiet_level = logging.DEBUG if verbose else logging.WARNING

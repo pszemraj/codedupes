@@ -7,9 +7,10 @@ from pathlib import Path
 
 from codedupes import semantic
 from codedupes.constants import DEFAULT_C2LLM_REVISION, DEFAULT_MODEL
-from codedupes.models import CodeUnit
+from codedupes.models import CodeUnit, CodeUnitType
 from codedupes.semantic import (
     SemanticBackendError,
+    find_semantic_duplicates,
     get_code_unit_statement_count,
     find_similar_to_query,
     run_semantic_analysis,
@@ -122,6 +123,49 @@ def test_query_search_uses_custom_instruction_prefix(tmp_path: Path, monkeypatch
 
     assert len(results) == 1
     assert captured["texts"][0].startswith("CUSTOM_QUERY_PREFIX: ")
+
+
+def test_find_semantic_duplicates_skips_incompatible_unit_types(tmp_path: Path) -> None:
+    source_path = tmp_path / "sample.py"
+    source_path.write_text("class C:\n    pass\n\ndef f():\n    return 1\n")
+
+    class_unit = CodeUnit(
+        name="C",
+        qualified_name="sample.C",
+        unit_type=CodeUnitType.CLASS,
+        file_path=source_path,
+        lineno=1,
+        end_lineno=2,
+        source="class C:\n    pass",
+        is_public=True,
+        is_exported=False,
+    )
+    function_unit = CodeUnit(
+        name="f",
+        qualified_name="sample.f",
+        unit_type=CodeUnitType.FUNCTION,
+        file_path=source_path,
+        lineno=4,
+        end_lineno=5,
+        source="def f():\n    return 1",
+        is_public=True,
+        is_exported=False,
+    )
+    embeddings = np.array(
+        [
+            [1.0, 0.0],
+            [1.0, 0.0],
+        ],
+        dtype=np.float32,
+    )
+
+    duplicates = find_semantic_duplicates(
+        units=[class_unit, function_unit],
+        embeddings=embeddings,
+        threshold=0.9,
+    )
+
+    assert duplicates == []
 
 
 def test_get_model_reports_deepspeed_guidance(monkeypatch) -> None:

@@ -33,6 +33,28 @@ from codedupes.traditional import (
 logger = logging.getLogger(__name__)
 
 
+def _build_exact_hash_exclusions(units: list[CodeUnit]) -> set[tuple[str, str]]:
+    """Build exclusion pairs for exact-duplicate units using precomputed hashes."""
+    buckets: dict[tuple[str, str], list[CodeUnit]] = {}
+    for unit in units:
+        ast_hash = unit._ast_hash
+        token_hash = unit._token_hash
+        if not ast_hash or not token_hash:
+            continue
+        key = (ast_hash, token_hash)
+        buckets.setdefault(key, []).append(unit)
+
+    exclude: set[tuple[str, str]] = set()
+    for bucket_units in buckets.values():
+        if len(bucket_units) < 2:
+            continue
+        for i, unit_a in enumerate(bucket_units):
+            for unit_b in bucket_units[i + 1 :]:
+                exclude.add((min(unit_a.uid, unit_b.uid), max(unit_a.uid, unit_b.uid)))
+
+    return exclude
+
+
 @dataclass
 class AnalyzerConfig:
     """Configuration for the code analyzer."""
@@ -172,6 +194,7 @@ class CodeAnalyzer:
                     for d in near_dupes
                 }
             )
+            exclude.update(_build_exact_hash_exclusions(semantic_candidates))
 
             try:
                 self._embeddings, semantic_dupes = run_semantic_analysis(
