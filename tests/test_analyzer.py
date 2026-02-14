@@ -712,7 +712,9 @@ def test_semantic_only_pre_excludes_exact_hash_pairs(tmp_path: Path, monkeypatch
     assert not captured_exclude_pairs
 
 
-def test_combined_mode_falls_back_on_runtime_semantic_error(tmp_path: Path, monkeypatch) -> None:
+def test_combined_mode_fails_hard_on_runtime_semantic_error_by_default(
+    tmp_path: Path, monkeypatch
+) -> None:
     source = "def entry(x):\n    return x + 1\n"
     project = create_project(tmp_path, source)
 
@@ -732,13 +734,23 @@ def test_combined_mode_falls_back_on_runtime_semantic_error(tmp_path: Path, monk
         )
     )
 
-    result = analyzer.analyze(project)
-    assert result.traditional_duplicates == []
-    assert result.semantic_duplicates == []
-    assert result.potentially_unused == []
+    with pytest.raises(RuntimeError, match="allow-semantic-fallback"):
+        analyzer.analyze(project)
 
 
-def test_combined_mode_fallback_runs_traditional_on_full_units(tmp_path: Path, monkeypatch) -> None:
+def test_allow_semantic_fallback_requires_combined_mode() -> None:
+    with pytest.raises(
+        ValueError,
+        match="allow_semantic_fallback requires run_semantic=True and run_traditional=True",
+    ):
+        AnalyzerConfig(
+            run_traditional=False,
+            run_semantic=True,
+            allow_semantic_fallback=True,
+        )
+
+
+def test_combined_mode_fallback_keeps_scoped_traditional_units(tmp_path: Path, monkeypatch) -> None:
     source = dedent(
         """
         class Box:
@@ -781,6 +793,7 @@ def test_combined_mode_fallback_runs_traditional_on_full_units(tmp_path: Path, m
         AnalyzerConfig(
             run_traditional=True,
             run_semantic=True,
+            allow_semantic_fallback=True,
             run_unused=False,
             min_semantic_lines=2,
             filter_tiny_traditional=False,
@@ -788,9 +801,8 @@ def test_combined_mode_fallback_runs_traditional_on_full_units(tmp_path: Path, m
     )
     analyzer.analyze(project)
 
-    assert len(traditional_calls) == 2
+    assert len(traditional_calls) == 1
     assert set(traditional_calls[0][0]) == {"method", "longer"}
-    assert set(traditional_calls[1][0]) == {"Box", "method", "short", "longer"}
 
 
 def test_combined_mode_fallback_marks_semantic_degradation(tmp_path: Path, monkeypatch) -> None:
@@ -812,6 +824,7 @@ def test_combined_mode_fallback_marks_semantic_degradation(tmp_path: Path, monke
         AnalyzerConfig(
             run_traditional=True,
             run_semantic=True,
+            allow_semantic_fallback=True,
             run_unused=False,
             min_semantic_lines=0,
             filter_tiny_traditional=False,
@@ -1130,6 +1143,7 @@ def test_mixed_mode_semantic_failure_still_builds_hybrid_from_traditional(
         AnalyzerConfig(
             run_traditional=True,
             run_semantic=True,
+            allow_semantic_fallback=True,
             run_unused=False,
             min_semantic_lines=0,
             filter_tiny_traditional=False,
@@ -1300,6 +1314,7 @@ def test_semantic_failures_fall_back_when_traditional_enabled(
         AnalyzerConfig(
             run_traditional=True,
             run_semantic=True,
+            allow_semantic_fallback=True,
             run_unused=False,
         )
     )

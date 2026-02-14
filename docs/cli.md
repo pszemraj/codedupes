@@ -39,6 +39,7 @@ Options:
 - `--semantic-task <name>`: Semantic task mode for duplicate detection embeddings (default `semantic-similarity`)
 - `--semantic-only`: Run semantic analysis only
 - `--traditional-only`: Run traditional analysis only
+- `--allow-semantic-fallback`: In default combined mode only, continue with scoped traditional results if semantic backend loading/inference fails
 - `--no-unused`: Disable unused-code detection
 - `--strict-unused`: Include public top-level functions in unused checks
 - `--suppress-test-semantic`: Suppress semantic duplicate matches involving `test_*` functions
@@ -56,7 +57,7 @@ Options:
 - `--no-trust-remote-code`: Disallow model remote code execution
 - `--batch-size <int>`: Embedding batch size (default `8`)
 - `--no-private`: Exclude private (`_name`) functions/classes
-- `--exclude <glob>`: Exclude file path glob pattern (repeat option for multiple patterns)
+- `--exclude <glob>`: Add file path glob pattern(s) to exclude (repeat option for multiple patterns). Built-in test/artifact excludes still apply.
 - `--include-stubs`: Include `*.pyi` files
 - `--output-width <int>`: Rich render width for non-JSON output (default `160`, min `80`)
 - `--show-source`: Show truncated duplicate snippets
@@ -89,7 +90,7 @@ Options:
 - `--batch-size <int>`: Embedding batch size (default `8`)
 - `--min-lines <int>`: Minimum statement count for semantic candidate code units (default `3`)
 - `--no-private`: Exclude private (`_name`) functions/classes
-- `--exclude <glob>`: Exclude file path glob pattern (repeat option for multiple patterns)
+- `--exclude <glob>`: Add file path glob pattern(s) to exclude (repeat option for multiple patterns). Built-in test/artifact excludes still apply.
 - `--include-stubs`: Include `*.pyi` files
 - `--output-width <int>`: Rich render width for non-JSON output (default `160`, min `80`)
 - `--json`: Emit JSON instead of rich tables
@@ -106,7 +107,7 @@ Print version and default settings.
 - `--min-lines` must be greater than or equal to `0`
 - `--output-width` must be at least `80`
 - `--show-all` is only valid in default combined `check` mode (not with `--semantic-only` or `--traditional-only`)
-- Default `check` behavior degrades to non-semantic analysis if semantic backend fails
+- Default combined `check` fails if semantic backend fails; opt in to degraded combined fallback with `--allow-semantic-fallback`
 - In `--json` mode, output is machine-parseable JSON only; warning text is surfaced via
   `summary.semantic_fallback` and `summary.semantic_fallback_reason` when fallback happens.
 - `--json` rejects rich-only display controls: `--show-source`, `--full-table`, `--verbose`, and explicit `--output-width`

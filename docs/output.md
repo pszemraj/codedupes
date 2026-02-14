@@ -119,9 +119,10 @@ Each unit object includes:
 - `1`: completed with findings or failed due to runtime error
 - `2`: CLI usage/validation error (Click)
 - Semantic backend note:
-  - default combined `check`: semantic failures degrade with a warning
-  - degraded runs are also surfaced in JSON as `summary.semantic_fallback` plus
-    `summary.semantic_fallback_reason`
+  - default combined `check`: semantic failures fail hard
+  - `--allow-semantic-fallback`: combined mode can continue with scoped traditional
+    results, and degraded runs are surfaced in JSON as
+    `summary.semantic_fallback` plus `summary.semantic_fallback_reason`
   - semantic-required mode (`--semantic-only`): fails hard
 - Finding note:
   - combined mode: exit `1` is based on `hybrid_duplicates` + `potentially_unused`

@@ -27,6 +27,7 @@ from codedupes.constants import (
     DEFAULT_TOP_K,
     DEFAULT_TRADITIONAL_THRESHOLD,
 )
+from codedupes.extractor import DEFAULT_EXCLUDE_DIR_NAMES, DEFAULT_EXCLUDE_PATTERNS
 from codedupes.models import AnalysisResult, CodeUnit, DuplicatePair, HybridDuplicate
 from codedupes.semantic_profiles import (
     get_default_semantic_threshold,
@@ -38,6 +39,10 @@ DEFAULT_MIN_LINES = DEFAULT_MIN_SEMANTIC_LINES
 DEFAULT_OUTPUT_WIDTH = 160
 MIN_OUTPUT_WIDTH = 80
 DEFAULT_TABLE_ROWS = 20
+DEFAULT_EXCLUDE_HELP_HINT = (
+    "Additional glob patterns to exclude (repeat option for multiple patterns). "
+    "Built-in excludes for tests/common artifact directories always apply."
+)
 
 console = Console(width=DEFAULT_OUTPUT_WIDTH)
 
@@ -712,12 +717,30 @@ def print_search_results(results: list[tuple[CodeUnit, float]]) -> None:
     console.print(table)
 
 
-def _add_common_analysis_options(func: Callable[..., Any]) -> Callable[..., Any]:
+def _add_common_analysis_options(
+    *,
+    command_name: Literal["check", "search"],
+) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """Attach shared CLI options to analysis commands.
 
-    :param func: Click command function.
-    :return: Decorated click command function.
+    :param command_name: Command receiving the shared options.
+    :return: Decorator that applies click options to command functions.
     """
+    if command_name == "check":
+        min_lines_help = (
+            "Skip semantic comparison for code units with fewer body statements "
+            "(also narrows traditional duplicate scope in combined mode)"
+        )
+        semantic_unit_help = (
+            "Unit type(s) eligible for semantic embedding (repeat option to add more; "
+            "also narrows traditional duplicate scope in combined mode)"
+        )
+    else:
+        min_lines_help = "Skip semantic comparison for code units with fewer body statements"
+        semantic_unit_help = (
+            "Unit type(s) eligible for semantic embedding (repeat option to add more)"
+        )
+
     options = [
         click.option(
             "--no-private",
@@ -730,10 +753,7 @@ def _add_common_analysis_options(func: Callable[..., Any]) -> Callable[..., Any]
             default=DEFAULT_MIN_LINES,
             show_default=True,
             callback=_validate_non_negative_int,
-            help=(
-                "Skip semantic comparison for code units with fewer body statements "
-                "(also narrows traditional duplicate scope in combined mode)"
-            ),
+            help=min_lines_help,
         ),
         click.option(
             "--semantic-unit-type",
@@ -742,10 +762,7 @@ def _add_common_analysis_options(func: Callable[..., Any]) -> Callable[..., Any]
             type=click.Choice(["function", "method", "class"]),
             default=("function", "method"),
             show_default=True,
-            help=(
-                "Unit type(s) eligible for semantic embedding (repeat option to add more; "
-                "also narrows traditional duplicate scope in combined mode)"
-            ),
+            help=semantic_unit_help,
         ),
         click.option(
             "--model",
@@ -795,7 +812,7 @@ def _add_common_analysis_options(func: Callable[..., Any]) -> Callable[..., Any]
         click.option(
             "--exclude",
             multiple=True,
-            help="Glob patterns to exclude (repeat option for multiple patterns)",
+            help=DEFAULT_EXCLUDE_HELP_HINT,
         ),
         click.option("--include-stubs", is_flag=True, help="Include .pyi files"),
         click.option(
@@ -808,9 +825,17 @@ def _add_common_analysis_options(func: Callable[..., Any]) -> Callable[..., Any]
         ),
     ]
 
-    for option in reversed(options):
-        func = option(func)
-    return func
+    def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
+        """Apply shared command options to a click command function.
+
+        :param func: Click command function to decorate.
+        :return: Click command function with shared options attached.
+        """
+        for option in reversed(options):
+            func = option(func)
+        return func
+
+    return decorator
 
 
 @click.group(context_settings={"help_option_names": ["-h", "--help"]})
@@ -855,6 +880,14 @@ def cli() -> None:
     is_flag=True,
     help="Only run traditional (AST/token) analysis",
 )
+@click.option(
+    "--allow-semantic-fallback",
+    is_flag=True,
+    help=(
+        "Allow combined mode to continue with scoped traditional results when semantic "
+        "backend loading/inference fails"
+    ),
+)
 @click.option("--no-unused", is_flag=True, help="Skip unused code detection")
 @click.option("--strict-unused", is_flag=True, help="Do not skip public functions")
 @click.option(
@@ -890,7 +923,7 @@ def cli() -> None:
 )
 @click.option("--show-source", is_flag=True, help="Show source code snippets")
 @click.option("--full-table", is_flag=True, help="Show all rows in terminal tables")
-@_add_common_analysis_options
+@_add_common_analysis_options(command_name="check")
 @click.pass_context
 def check_command(
     ctx: click.Context,
@@ -900,6 +933,7 @@ def check_command(
     traditional_threshold: float | None,
     semantic_only: bool,
     traditional_only: bool,
+    allow_semantic_fallback: bool,
     no_unused: bool,
     strict_unused: bool,
     suppress_test_semantic: bool,
@@ -934,6 +968,8 @@ def check_command(
     :param traditional_threshold: Traditional threshold override.
     :param semantic_only: If true, run semantic analysis only.
     :param traditional_only: If true, run traditional analysis only.
+    :param allow_semantic_fallback: Continue with scoped traditional results when
+        semantic backend fails in combined mode.
     :param no_unused: If true, skip unused code detection.
     :param strict_unused: If true, do not suppress likely public functions.
     :param suppress_test_semantic: Exclude matches involving test functions.
@@ -967,6 +1003,9 @@ def check_command(
 
     if semantic_only and traditional_only:
         raise click.UsageError("Cannot use both --semantic-only and --traditional-only.")
+
+    if allow_semantic_fallback and (semantic_only or traditional_only):
+        raise click.UsageError("--allow-semantic-fallback is only valid in default combined mode.")
 
     if show_all and (semantic_only or traditional_only):
         raise click.UsageError("--show-all is only valid in default combined mode.")
@@ -1063,6 +1102,7 @@ def check_command(
             trust_remote_code=resolved_trust_remote_code,
             run_traditional=not semantic_only,
             run_semantic=not traditional_only,
+            allow_semantic_fallback=allow_semantic_fallback,
             run_unused=not no_unused,
             min_semantic_lines=min_lines,
             semantic_unit_types=semantic_unit_type,
@@ -1189,7 +1229,7 @@ def check_command(
     show_default=True,
     help="Semantic task mode for query/document embeddings",
 )
-@_add_common_analysis_options
+@_add_common_analysis_options(command_name="search")
 @click.pass_context
 def search_command(
     ctx: click.Context,
@@ -1315,6 +1355,12 @@ def info_command() -> None:
     click.echo(f"Default semantic task for search: {DEFAULT_SEARCH_SEMANTIC_TASK}")
     click.echo(f"Default min_lines for semantic: {DEFAULT_MIN_LINES}")
     click.echo(f"Default output width: {DEFAULT_OUTPUT_WIDTH}")
+    click.echo("Default combined semantic fallback: disabled")
+    click.echo("Default built-in exclude globs:")
+    for pattern in DEFAULT_EXCLUDE_PATTERNS:
+        click.echo(f"  - {pattern}")
+    click.echo(f"Default excluded directory names ({len(DEFAULT_EXCLUDE_DIR_NAMES)} total):")
+    click.echo(f"  {', '.join(sorted(DEFAULT_EXCLUDE_DIR_NAMES))}")
     click.echo("Built-in semantic model aliases:")
     for profile in list_supported_models():
         aliases = ", ".join(profile.all_aliases())

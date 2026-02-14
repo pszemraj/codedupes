@@ -40,6 +40,20 @@ AnalyzerConfig(
 )
 ```
 
+## Extraction Scope Defaults
+
+Default extraction excludes are always applied unless code is changed:
+
+- directory names: common artifact/vendor/cache directories (for example
+  `node_modules`, `target`, `.venv`, `.pytest_cache`, `dist`, `build`)
+- file globs:
+  - `**/test_*`
+  - `**/*_test.py`
+  - `**/tests/**`
+
+CLI `--exclude` adds patterns on top of these defaults; it does not replace
+them.
+
 ## Tiny Traditional Duplicate Filtering Defaults
 
 Default tiny-filter behavior for traditional duplicates:

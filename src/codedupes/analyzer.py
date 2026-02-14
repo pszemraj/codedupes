@@ -336,6 +336,7 @@ class AnalyzerConfig:
     min_semantic_lines: int = DEFAULT_MIN_SEMANTIC_LINES
     semantic_unit_types: tuple[str, ...] = DEFAULT_SEMANTIC_UNIT_TYPES
     include_stubs: bool = False
+    allow_semantic_fallback: bool = False
     filter_tiny_traditional: bool = True
     tiny_unit_statement_cutoff: int = DEFAULT_TINY_UNIT_STATEMENT_CUTOFF
     tiny_near_jaccard_min: float = DEFAULT_TINY_NEAR_JACCARD_MIN
@@ -427,6 +428,11 @@ class AnalyzerConfig:
             if traditional_only_fields:
                 listed = ", ".join(sorted(traditional_only_fields))
                 raise ValueError(f"{listed} require run_traditional=True")
+
+        if self.allow_semantic_fallback and (not self.run_semantic or not self.run_traditional):
+            raise ValueError(
+                "allow_semantic_fallback requires run_semantic=True and run_traditional=True"
+            )
 
 
 class CodeAnalyzer:
@@ -592,6 +598,12 @@ class CodeAnalyzer:
                 # fail hard instead of silently degrading to unused-only output.
                 if not self.config.run_traditional:
                     raise
+                if not self.config.allow_semantic_fallback:
+                    raise RuntimeError(
+                        "Semantic analysis failed in combined mode. Re-run with "
+                        "`--allow-semantic-fallback` to keep scoped traditional results, "
+                        "or use `--traditional-only` for deterministic non-semantic analysis."
+                    ) from exc
                 semantic_fallback = True
                 self._embeddings = None
                 semantic_duplicates = []
@@ -601,7 +613,9 @@ class CodeAnalyzer:
                 )
                 semantic_fallback_reason = (
                     f"Semantic analysis unavailable ({exc}). Proceeding with non-semantic "
-                    f"analysis. model={self.config.model_name} revision={self.config.model_revision} "
+                    "analysis on the existing combined-mode traditional scope "
+                    f"(allow_semantic_fallback=True). model={self.config.model_name} "
+                    f"revision={self.config.model_revision} "
                     f"trust_remote_code={self.config.trust_remote_code} [{version_text}]. "
                     f"Retry with `codedupes check {path} --traditional-only`."
                 )
@@ -609,22 +623,6 @@ class CodeAnalyzer:
                     "%s",
                     semantic_fallback_reason,
                 )
-                if self.config.run_traditional:
-                    exact_dupes, near_dupes, _ = run_traditional_analysis(
-                        units,
-                        jaccard_threshold=self.config.jaccard_threshold,
-                        compute_unused=False,
-                        project_root=path,
-                        strict_unused=self.config.strict_unused,
-                    )
-                    if self.config.filter_tiny_traditional:
-                        exact_dupes, near_dupes = _filter_tiny_traditional_duplicates(
-                            exact_dupes,
-                            near_dupes,
-                            statement_cutoff=self.config.tiny_unit_statement_cutoff,
-                            tiny_near_jaccard_min=self.config.tiny_near_jaccard_min,
-                        )
-                    traditional_duplicates = exact_dupes + near_dupes
 
             if self.config.suppress_test_semantic_matches:
                 semantic_duplicates = [
@@ -730,6 +728,7 @@ def analyze_directory(
     tiny_unit_statement_cutoff: int = DEFAULT_TINY_UNIT_STATEMENT_CUTOFF,
     tiny_near_jaccard_min: float = DEFAULT_TINY_NEAR_JACCARD_MIN,
     include_stubs: bool = False,
+    allow_semantic_fallback: bool = False,
     run_unused: bool = True,
     strict_unused: bool = False,
 ) -> AnalysisResult:
@@ -753,6 +752,8 @@ def analyze_directory(
         tiny_unit_statement_cutoff: Tiny function/method cutoff (exclusive).
         tiny_near_jaccard_min: Keep floor for tiny near-duplicate Jaccard pairs.
         include_stubs: Whether to analyze ``.pyi`` files.
+        allow_semantic_fallback: Allow combined mode to keep scoped traditional results
+            when semantic backend loading/inference fails.
         strict_unused: Whether to ignore public API exclusions when reporting unused code.
         run_unused: Run potentially-unused detection even when traditional analysis is off
 
@@ -774,6 +775,7 @@ def analyze_directory(
         tiny_unit_statement_cutoff=tiny_unit_statement_cutoff,
         tiny_near_jaccard_min=tiny_near_jaccard_min,
         include_stubs=include_stubs,
+        allow_semantic_fallback=allow_semantic_fallback,
         run_unused=run_unused,
         strict_unused=strict_unused,
     )

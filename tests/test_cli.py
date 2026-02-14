@@ -190,6 +190,24 @@ def test_cli_model_semantic_flags_pass_through(monkeypatch, tmp_path):
     assert captured[0].tiny_near_jaccard_min == 0.95
 
 
+def test_cli_allow_semantic_fallback_pass_through(monkeypatch, tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+
+    captured = []
+    patch_cli_analyzer(
+        monkeypatch,
+        cli,
+        analyze_result=lambda: _build_result(tmp_path),
+        captured_configs=captured,
+    )
+    runner = CliRunner()
+    result = runner.invoke(cli.cli, ["check", str(path), "--allow-semantic-fallback"])
+
+    assert result.exit_code == 1
+    assert captured[0].allow_semantic_fallback is True
+
+
 def test_cli_model_revision_defaults_to_auto_none(monkeypatch, tmp_path):
     path = tmp_path / "sample.py"
     path.write_text("def entry():\n    return 1\n")
@@ -433,6 +451,32 @@ def test_cli_rejects_show_all_in_single_method_modes(tmp_path):
     assert "--show-all is only valid in default combined mode." in traditional_result.output
 
 
+def test_cli_rejects_allow_semantic_fallback_in_single_method_modes(tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+
+    runner = CliRunner()
+    semantic_result = runner.invoke(
+        cli.cli,
+        ["check", str(path), "--semantic-only", "--allow-semantic-fallback"],
+    )
+    assert semantic_result.exit_code == 2
+    assert (
+        "--allow-semantic-fallback is only valid in default combined mode."
+        in semantic_result.output
+    )
+
+    traditional_result = runner.invoke(
+        cli.cli,
+        ["check", str(path), "--traditional-only", "--allow-semantic-fallback"],
+    )
+    assert traditional_result.exit_code == 2
+    assert (
+        "--allow-semantic-fallback is only valid in default combined mode."
+        in traditional_result.output
+    )
+
+
 def test_cli_rejects_json_with_rich_only_flags(tmp_path):
     path = tmp_path / "sample.py"
     path.write_text("def entry():\n    return 1\n")
@@ -658,6 +702,16 @@ def test_cli_help_and_version():
     assert version_result.output.lower().startswith("codedupes")
 
 
+def test_cli_search_help_is_search_specific() -> None:
+    runner = CliRunner()
+    result = runner.invoke(cli.cli, ["search", "--help"])
+
+    assert result.exit_code == 0
+    assert "also narrows traditional duplicate scope in combined mode" not in result.output
+    assert "Built-in" in result.output
+    assert "always apply." in result.output
+
+
 def test_cli_output_width_option(monkeypatch, tmp_path):
     path = tmp_path / "sample.py"
     path.write_text("def entry():\n    return 1\n")
@@ -733,7 +787,7 @@ def test_cli_invalid_output_width(tmp_path):
     assert "must be >= 80" in result.output
 
 
-def test_cli_check_degrades_on_semantic_backend_error(monkeypatch, tmp_path):
+def test_cli_check_fails_on_semantic_backend_error_without_fallback(monkeypatch, tmp_path):
     path = tmp_path / "sample.py"
     path.write_text("def _dead():\n    return 1\n\ndef keep(y):\n    return y + 1\n")
 
@@ -743,6 +797,24 @@ def test_cli_check_degrades_on_semantic_backend_error(monkeypatch, tmp_path):
 
     runner = CliRunner()
     result = runner.invoke(cli.cli, ["check", str(path), "--min-lines", "0"])
+    assert result.exit_code == 1
+    assert "Error during analysis" in result.output
+    assert "--allow-semantic-fallback" in result.output
+
+
+def test_cli_check_degrades_on_semantic_backend_error_with_fallback(monkeypatch, tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def _dead():\n    return 1\n\ndef keep(y):\n    return y + 1\n")
+
+    from codedupes import analyzer as analyzer_module
+
+    monkeypatch.setattr(analyzer_module, "run_semantic_analysis", _raise_semantic_backend_error)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli.cli,
+        ["check", str(path), "--min-lines", "0", "--allow-semantic-fallback"],
+    )
     assert result.exit_code == 1
     assert "Semantic analysis unavailable" in result.output
 
@@ -756,7 +828,10 @@ def test_cli_check_degrades_on_semantic_backend_error_in_json(monkeypatch, tmp_p
     monkeypatch.setattr(analyzer_module, "run_semantic_analysis", _raise_semantic_backend_error)
 
     runner = CliRunner()
-    result = runner.invoke(cli.cli, ["check", str(path), "--min-lines", "0", "--json"])
+    result = runner.invoke(
+        cli.cli,
+        ["check", str(path), "--min-lines", "0", "--allow-semantic-fallback", "--json"],
+    )
     assert result.exit_code == 1
 
     assert result.output.lstrip().startswith("{"), (
