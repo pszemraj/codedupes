@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import logging
+import ast
+import keyword
+from pathlib import Path
 from collections import defaultdict
 from itertools import combinations
 
@@ -48,9 +51,6 @@ def find_exact_token_duplicates(units: list[CodeUnit]) -> list[DuplicatePair]:
     for hash_val, group in by_hash.items():
         if len(group) > 1:
             for a, b in combinations(group, 2):
-                # Don't double-count if already found by AST
-                if a._ast_hash and a._ast_hash == b._ast_hash:
-                    continue
                 duplicates.append(
                     DuplicatePair(unit_a=a, unit_b=b, similarity=1.0, method="token_hash")
                 )
@@ -85,7 +85,22 @@ def extract_identifiers(source: str) -> set[str]:
                 identifiers.add(node.arg)
     except SyntaxError:
         pass
-    return identifiers
+    return _normalize_identifiers(identifiers)
+
+
+def _normalize_identifiers(identifiers: set[str]) -> set[str]:
+    """Normalize identifier sets for stable near-duplicate matching."""
+    ignored = set(keyword.kwlist) | set(dir(__builtins__))
+    normalized = set()
+    for ident in identifiers:
+        if not ident:
+            continue
+        if ident in ignored:
+            continue
+        if ident.isdigit():
+            continue
+        normalized.add(ident)
+    return normalized
 
 
 def find_near_duplicates_jaccard(
@@ -107,13 +122,36 @@ def find_near_duplicates_jaccard(
                 if not (a.end_lineno < b.lineno or b.end_lineno < a.lineno):
                     continue
 
-            sim = jaccard_similarity(identifier_sets[a.uid], identifier_sets[b.uid])
+            set_a = identifier_sets[a.uid]
+            set_b = identifier_sets[b.uid]
+
+            # Skip tiny/noisy comparisons quickly
+            if not set_a or not set_b:
+                continue
+            size_ratio = min(len(set_a), len(set_b)) / max(len(set_a), len(set_b), 1)
+            if size_ratio < threshold / 2:
+                continue
+
+            sim = jaccard_similarity(set_a, set_b)
             if sim >= threshold:
                 duplicates.append(
                     DuplicatePair(unit_a=a, unit_b=b, similarity=sim, method="jaccard")
                 )
 
     return duplicates
+
+
+def _dedupe_duplicate_pairs(duplicates: list[DuplicatePair]) -> list[DuplicatePair]:
+    """Deduplicate unordered duplicate pairs."""
+    seen = set()
+    deduped: list[DuplicatePair] = []
+    for dup in duplicates:
+        key = tuple(sorted((dup.unit_a.uid, dup.unit_b.uid)))
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(dup)
+    return deduped
 
 
 def build_reference_graph(units: list[CodeUnit]) -> None:
@@ -130,12 +168,64 @@ def build_reference_graph(units: list[CodeUnit]) -> None:
         for i in range(len(parts)):
             by_name[".".join(parts[i:])].append(unit)
 
+    alias_map_by_file: dict[Path, dict[str, str]] = {}
+    for unit in units:
+        if unit.file_path in alias_map_by_file:
+            continue
+        alias_map_by_file[unit.file_path] = _extract_aliases(unit.file_path)
+
     # Populate references
     for unit in units:
+        file_aliases = alias_map_by_file.get(unit.file_path, {})
         for call in unit.calls:
-            for target in by_name.get(call, []):
-                if target.uid != unit.uid:  # Don't self-reference
-                    target.references.add(unit.uid)
+            candidates = {call}
+            if "." in call:
+                head, _, tail = call.partition(".")
+                if head in file_aliases:
+                    candidates.add(f"{file_aliases[head]}.{tail}")
+            elif call in file_aliases:
+                candidates.add(file_aliases[call])
+
+            for candidate in candidates:
+                for target in by_name.get(candidate, []):
+                    if target.uid != unit.uid:  # Don't self-reference
+                        target.references.add(unit.uid)
+
+
+def _extract_aliases(file_path: Path) -> dict[str, str]:
+    """Extract a conservative alias map from module-level import/assignment statements."""
+    try:
+        source = file_path.read_text(encoding="utf-8")
+        tree = ast.parse(source)
+    except (OSError, SyntaxError, UnicodeDecodeError):
+        return {}
+
+    aliases: dict[str, str] = {}
+
+    for node in tree.body:
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                name = alias.name
+                asname = alias.asname or name.rsplit(".", 1)[-1]
+                aliases[asname] = name
+        elif isinstance(node, ast.ImportFrom):
+            base = node.module or ""
+            for alias in node.names:
+                imported = alias.name
+                asname = alias.asname or imported
+                if base:
+                    aliases[asname] = f"{base}.{imported}"
+                else:
+                    aliases[asname] = imported
+        elif isinstance(node, ast.Assign):
+            if len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+                target = node.targets[0].id
+                value = node.value
+                if isinstance(value, ast.Name):
+                    aliases[target] = value.id
+                elif isinstance(value, ast.Attribute) and isinstance(value.value, ast.Name):
+                    aliases[target] = f"{value.value.id}.{value.attr}"
+    return aliases
 
 
 def find_potentially_unused(units: list[CodeUnit]) -> list[CodeUnit]:
@@ -179,22 +269,25 @@ def find_potentially_unused(units: list[CodeUnit]) -> list[CodeUnit]:
 def run_traditional_analysis(
     units: list[CodeUnit],
     jaccard_threshold: float = 0.85,
+    compute_unused: bool = True,
 ) -> tuple[list[DuplicatePair], list[DuplicatePair], list[CodeUnit]]:
     """
     Run all traditional duplicate detection methods.
 
     Returns:
         (exact_duplicates, near_duplicates, potentially_unused)
+        potentially_unused is empty when compute_unused=False
     """
     logger.info(f"Running traditional analysis on {len(units)} code units")
 
-    # Build reference graph first
-    build_reference_graph(units)
+    # Build reference graph first if we need unused references
+    if compute_unused:
+        build_reference_graph(units)
 
     # Find exact duplicates
     ast_dupes = find_exact_ast_duplicates(units)
     token_dupes = find_exact_token_duplicates(units)
-    exact = ast_dupes + token_dupes
+    exact = _dedupe_duplicate_pairs(ast_dupes + token_dupes)
     logger.info(f"Found {len(exact)} exact duplicates")
 
     # Find near duplicates
@@ -206,7 +299,7 @@ def run_traditional_analysis(
     logger.info(f"Found {len(near)} near duplicates (Jaccard)")
 
     # Find unused
-    unused = find_potentially_unused(units)
+    unused = find_potentially_unused(units) if compute_unused else []
     logger.info(f"Found {len(unused)} potentially unused code units")
 
-    return exact, near, unused
+    return exact, _dedupe_duplicate_pairs(near), unused

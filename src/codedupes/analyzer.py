@@ -11,7 +11,7 @@ import numpy as np
 from .extractor import CodeExtractor
 from .models import AnalysisResult, CodeUnit, DuplicatePair
 from .semantic import run_semantic_analysis
-from .traditional import run_traditional_analysis
+from .traditional import build_reference_graph, find_potentially_unused, run_traditional_analysis
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +37,17 @@ class AnalyzerConfig:
     # What to run
     run_traditional: bool = True
     run_semantic: bool = True
+    run_unused: bool = True
+
+    def __post_init__(self) -> None:
+        if not 0.0 <= self.jaccard_threshold <= 1.0:
+            raise ValueError("jaccard_threshold must be in [0.0, 1.0]")
+
+        if not 0.0 <= self.semantic_threshold <= 1.0:
+            raise ValueError("semantic_threshold must be in [0.0, 1.0]")
+
+        if self.batch_size <= 0:
+            raise ValueError("batch_size must be > 0")
 
 
 class CodeAnalyzer:
@@ -104,7 +115,11 @@ class CodeAnalyzer:
             exact_dupes, near_dupes, unused = run_traditional_analysis(
                 units,
                 jaccard_threshold=self.config.jaccard_threshold,
+                compute_unused=self.config.run_unused,
             )
+        elif self.config.run_unused:
+            build_reference_graph(units)
+            unused = find_potentially_unused(units)
 
         # Run semantic analysis
         semantic_dupes: list[DuplicatePair] = []
@@ -141,7 +156,7 @@ class CodeAnalyzer:
         Must run analyze() first to compute embeddings.
         """
         if self._units is None or self._embeddings is None:
-            raise RuntimeError("Must run analyze() before search()")
+            raise RuntimeError("Must run analyze() with run_semantic=True before search().")
 
         from .semantic import find_similar_to_query
 
@@ -160,6 +175,7 @@ def analyze_directory(
     traditional_threshold: float = 0.85,
     exclude_patterns: list[str] | None = None,
     model_name: str = DEFAULT_MODEL,
+    run_unused: bool = True,
 ) -> AnalysisResult:
     """
     Convenience function for quick analysis.
@@ -170,6 +186,7 @@ def analyze_directory(
         traditional_threshold: Jaccard threshold for traditional near-duplicates
         exclude_patterns: Glob patterns for files to exclude
         model_name: HuggingFace model for embeddings
+        run_unused: Run potentially-unused detection even when traditional analysis is off
 
     Returns:
         AnalysisResult
@@ -179,6 +196,7 @@ def analyze_directory(
         jaccard_threshold=traditional_threshold,
         exclude_patterns=exclude_patterns,
         model_name=model_name,
+        run_unused=run_unused,
     )
 
     analyzer = CodeAnalyzer(config)

@@ -82,6 +82,13 @@ def get_model(model_name: str = "codefuse-ai/C2LLM-0.5B"):
     return _model
 
 
+def clear_model_cache() -> None:
+    """Clear cached embedding model state."""
+    global _model, _model_name
+    _model = None
+    _model_name = None
+
+
 def _get_instruction(model_name: str, mode: Literal["code", "query", "describe"]) -> str:
     """Get the appropriate instruction prefix for the model and task."""
     if _is_c2llm(model_name):

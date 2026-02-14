@@ -189,7 +189,14 @@ def print_json(result: AnalysisResult) -> None:
         "potentially_unused": [unit_to_dict(u) for u in result.potentially_unused],
     }
 
-    print(json.dumps(output, indent=2))
+    print(json.dumps(output, indent=2, sort_keys=True))
+
+
+def _validate_threshold(value: float, label: str) -> bool:
+    if not 0.0 <= value <= 1.0:
+        console.print(f"[red]Error:[/red] {label} must be in [0.0, 1.0], got {value}")
+        return False
+    return True
 
 
 def main() -> int:
@@ -276,12 +283,6 @@ Examples:
         help="Glob patterns to exclude (e.g., '**/test_*')",
     )
     parser.add_argument(
-        "--include-private",
-        action="store_true",
-        default=True,
-        help="Include private (_prefixed) functions (default: True)",
-    )
-    parser.add_argument(
         "--no-private",
         action="store_true",
         help="Exclude private (_prefixed) functions",
@@ -291,6 +292,17 @@ Examples:
 
     if not args.json:
         setup_logging(args.verbose)
+
+    if not _validate_threshold(args.threshold, "--threshold"):
+        return 1
+    if args.semantic_threshold is not None and not _validate_threshold(
+        args.semantic_threshold, "--semantic-threshold"
+    ):
+        return 1
+    if args.traditional_threshold is not None and not _validate_threshold(
+        args.traditional_threshold, "--traditional-threshold"
+    ):
+        return 1
 
     # Build config
     semantic_thresh = args.semantic_threshold or args.threshold
@@ -304,6 +316,7 @@ Examples:
         model_name=args.model,
         run_traditional=not args.semantic_only,
         run_semantic=not args.traditional_only,
+        run_unused=not args.no_unused,
     )
 
     # Run analysis

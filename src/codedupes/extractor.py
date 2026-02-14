@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 import hashlib
 import logging
+import copy
 from pathlib import Path
 from typing import Iterator
 
@@ -14,10 +15,7 @@ logger = logging.getLogger(__name__)
 
 
 class NormalizedASTHasher(ast.NodeTransformer):
-    """
-    Transforms AST to normalize variable names, remove docstrings/comments.
-    This allows structural comparison independent of naming.
-    """
+    """Transform AST into a normalized form for structural comparisons."""
 
     def __init__(self) -> None:
         self._var_counter = 0
@@ -64,7 +62,6 @@ class NormalizedASTHasher(ast.NodeTransformer):
 
     def visit_ClassDef(self, node: ast.ClassDef) -> ast.AST:
         node.name = self._get_normalized_name(node.name)
-        # Remove docstring
         if (
             node.body
             and isinstance(node.body[0], ast.Expr)
@@ -99,11 +96,82 @@ class CallGraphVisitor(ast.NodeVisitor):
         self.generic_visit(node)
 
 
+class _CodeUnitCollector(ast.NodeVisitor):
+    """Collect code units with deterministic scope tracking."""
+
+    def __init__(
+        self,
+        extractor: "CodeExtractor",
+        file_path: Path,
+        source: str,
+        module_name: str,
+        exported: set[str],
+    ) -> None:
+        self.extractor = extractor
+        self.file_path = file_path
+        self.source = source
+        self.module_name = module_name
+        self.exported = exported
+        self.units: list[CodeUnit] = []
+
+        # Scope stacks while walking AST:
+        # - class_stack tracks nested class scope.
+        # - function_stack tracks nested local function scope.
+        self.class_stack: list[str] = []
+        self.function_stack: list[str] = []
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        is_method = bool(self.class_stack) and not self.function_stack
+        scope_prefix = self.class_stack + self.function_stack
+
+        if self.extractor._should_emit_function(node.name, is_method=is_method):
+            self.units.extend(
+                self.extractor._emit_function(
+                    node,
+                    self.file_path,
+                    self.source,
+                    self.module_name,
+                    scope_prefix=scope_prefix,
+                    class_member=is_method,
+                    exported=self.exported,
+                )
+            )
+
+        self.function_stack.append(node.name)
+        self.generic_visit(node)
+        self.function_stack.pop()
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        self.visit_FunctionDef(node)
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        scope_prefix = self.class_stack
+        should_enter = self.extractor._should_emit_class(node.name)
+
+        if should_enter:
+            self.units.extend(
+                self.extractor._emit_class(
+                    node,
+                    self.file_path,
+                    self.source,
+                    self.module_name,
+                    scope_prefix=scope_prefix,
+                    exported=self.exported,
+                )
+            )
+
+            self.class_stack.append(node.name)
+            self.generic_visit(node)
+            self.class_stack.pop()
+        else:
+            # If class is excluded, skip descendants to avoid leaking private internals.
+            logger.debug("Skipping private class %s in %s", node.name, self.file_path)
+
+
 def compute_ast_hash(node: ast.AST) -> str:
     """Compute a hash of the normalized AST structure."""
     hasher = NormalizedASTHasher()
-    normalized = hasher.visit(ast.parse(ast.unparse(node)))
-    # Use ast.dump for structural representation
+    normalized = hasher.visit(copy.deepcopy(node))
     structure = ast.dump(normalized, annotate_fields=False)
     return hashlib.sha256(structure.encode()).hexdigest()[:16]
 
@@ -203,45 +271,51 @@ class CodeExtractor:
 
         module_name = self._get_module_name(file_path)
         exported = get_exported_names(tree)
+        visitor = _CodeUnitCollector(self, file_path, source, module_name, exported)
+        visitor.visit(tree)
+        for unit in visitor.units:
+            yield unit
 
-        for node in ast.walk(tree):
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                # Skip methods (handled via class)
-                if not any(
-                    isinstance(parent, ast.ClassDef)
-                    for parent in ast.walk(tree)
-                    if node in ast.walk(parent) and parent is not node
-                ):
-                    yield from self._extract_function(
-                        node, file_path, source, module_name, None, exported
-                    )
-            elif isinstance(node, ast.ClassDef):
-                yield from self._extract_class(node, file_path, source, module_name, exported)
+    def _should_emit_function(self, name: str, is_method: bool) -> bool:
+        """Respect private-function filtering."""
+        if is_method:
+            is_private = name.startswith("_") and not name.startswith("__")
+            return self.include_private or not is_private
+        is_private = name.startswith("_") and not name.startswith("__")
+        return self.include_private or not is_private
 
-    def _extract_function(
+    def _should_emit_class(self, name: str) -> bool:
+        """Respect private-class filtering."""
+        if self.include_private:
+            return True
+        return not (name.startswith("_") and not name.startswith("__"))
+
+    def _qualified_name(
+        self,
+        module_name: str,
+        scope_prefix: list[str],
+        name: str,
+    ) -> str:
+        parts = [part for part in scope_prefix if part]
+        if module_name:
+            parts.insert(0, module_name)
+        parts.append(name)
+        return ".".join(parts)
+
+    def _emit_function(
         self,
         node: ast.FunctionDef | ast.AsyncFunctionDef,
         file_path: Path,
         source: str,
         module_name: str,
-        class_name: str | None,
+        scope_prefix: list[str],
+        class_member: bool,
         exported: set[str],
     ) -> Iterator[CodeUnit]:
         """Extract a function or method."""
         name = node.name
-        is_private = name.startswith("_") and not name.startswith("__")
-
-        if not self.include_private and is_private:
-            return
-
-        if class_name:
-            qualified = (
-                f"{module_name}.{class_name}.{name}" if module_name else f"{class_name}.{name}"
-            )
-            unit_type = CodeUnitType.METHOD
-        else:
-            qualified = f"{module_name}.{name}" if module_name else name
-            unit_type = CodeUnitType.FUNCTION
+        qualified = self._qualified_name(module_name, scope_prefix, name)
+        unit_type = CodeUnitType.METHOD if class_member else CodeUnitType.FUNCTION
 
         # Extract source for this node
         lines = source.splitlines(keepends=True)
@@ -250,6 +324,9 @@ class CodeExtractor:
         # Build call graph
         call_visitor = CallGraphVisitor()
         call_visitor.visit(node)
+
+        ast_hash = compute_ast_hash(node)
+        token_hash = compute_token_hash(func_source)
 
         yield CodeUnit(
             name=name,
@@ -264,26 +341,26 @@ class CodeExtractor:
             is_public=not name.startswith("_"),
             is_dunder=name.startswith("__") and name.endswith("__"),
             is_exported=name in exported,
+            _ast_hash=ast_hash,
+            _token_hash=token_hash,
         )
 
-    def _extract_class(
+    def _emit_class(
         self,
         node: ast.ClassDef,
         file_path: Path,
         source: str,
         module_name: str,
+        scope_prefix: list[str],
         exported: set[str],
     ) -> Iterator[CodeUnit]:
         """Extract a class and its methods."""
         class_name = node.name
-        is_private = class_name.startswith("_") and not class_name.startswith("__")
-
-        if not self.include_private and is_private:
-            return
-
-        qualified = f"{module_name}.{class_name}" if module_name else class_name
+        qualified = self._qualified_name(module_name, scope_prefix, class_name)
         lines = source.splitlines(keepends=True)
         class_source = "".join(lines[node.lineno - 1 : node.end_lineno])
+        ast_hash = compute_ast_hash(node)
+        token_hash = compute_token_hash(class_source)
 
         yield CodeUnit(
             name=class_name,
@@ -297,14 +374,9 @@ class CodeExtractor:
             is_public=not class_name.startswith("_"),
             is_dunder=False,
             is_exported=class_name in exported,
+            _ast_hash=ast_hash,
+            _token_hash=token_hash,
         )
-
-        # Extract methods
-        for item in node.body:
-            if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                yield from self._extract_function(
-                    item, file_path, source, module_name, class_name, exported
-                )
 
     def extract_all(self) -> list[CodeUnit]:
         """Extract all code units from the directory."""
@@ -314,15 +386,4 @@ class CodeExtractor:
                 logger.debug(f"Excluding {py_file}")
                 continue
             units.extend(self.extract_from_file(py_file))
-
-        # Compute hashes
-        for unit in units:
-            try:
-                parsed = ast.parse(unit.source)
-                if parsed.body:
-                    unit._ast_hash = compute_ast_hash(parsed.body[0])
-            except SyntaxError:
-                pass
-            unit._token_hash = compute_token_hash(unit.source)
-
         return units
