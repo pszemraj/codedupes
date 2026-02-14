@@ -5,6 +5,8 @@ Install and runtime defaults are defined in
 [docs/install.md](https://github.com/pszemraj/codedupes/blob/main/docs/install.md).
 Flag defaults and validation rules are defined in
 [docs/cli.md](https://github.com/pszemraj/codedupes/blob/main/docs/cli.md).
+Analysis behavior defaults are defined in
+[docs/analysis-defaults.md](https://github.com/pszemraj/codedupes/blob/main/docs/analysis-defaults.md).
 JSON schema and exit codes are defined in
 [docs/output.md](https://github.com/pszemraj/codedupes/blob/main/docs/output.md).
 
@@ -174,22 +176,22 @@ Include type stubs:
 codedupes check ./src --include-stubs
 ```
 
-Control semantic candidate unit types (default is function + method):
+Control semantic candidate unit types:
 
 ```bash
 codedupes check ./src
 codedupes check ./src --semantic-unit-type function --semantic-unit-type method --semantic-unit-type class
 ```
 
+Default semantic candidate behavior is documented in
+[docs/analysis-defaults.md](https://github.com/pszemraj/codedupes/blob/main/docs/analysis-defaults.md).
 Use `--semantic-unit-type class` when you explicitly want class-level semantic embeddings.
 
 ## Reduce Boilerplate Duplicate Noise
 
-Traditional duplicate detection filters tiny function/method wrappers by default:
-
-- tiny definition: statement count `< 3`
-- tiny exact duplicates are dropped
-- tiny near duplicates are kept only when Jaccard is very high (`>= 0.93`)
+Traditional duplicate detection filters tiny function/method wrappers by default.
+The authoritative default semantics are in
+[docs/analysis-defaults.md](https://github.com/pszemraj/codedupes/blob/main/docs/analysis-defaults.md).
 
 Override behavior when needed:
 
@@ -251,5 +253,6 @@ Record model/revision, package versions, device, elapsed time, exit code, and wh
 
 ## Hybrid gate tuning workflow
 
-Use the dedicated sweep harness + tracked synthetic corpus described in `docs/hybrid-tuning.md`.
+Use the dedicated sweep harness + tracked synthetic corpus described in
+[docs/hybrid-tuning.md](https://github.com/pszemraj/codedupes/blob/main/docs/hybrid-tuning.md).
 Treat that corpus as a guardrail, then re-validate on at least one real repository before changing defaults.

@@ -42,6 +42,7 @@ Primary docs live under `docs/`:
 
 - [docs/index.md](https://github.com/pszemraj/codedupes/blob/main/docs/index.md): documentation map and ownership
 - [docs/cli.md](https://github.com/pszemraj/codedupes/blob/main/docs/cli.md): commands, flags, and defaults
+- [docs/analysis-defaults.md](https://github.com/pszemraj/codedupes/blob/main/docs/analysis-defaults.md): analysis-behavior defaults and heuristics
 - [docs/output.md](https://github.com/pszemraj/codedupes/blob/main/docs/output.md): JSON schemas and exit codes
 - [docs/usage.md](https://github.com/pszemraj/codedupes/blob/main/docs/usage.md): practical workflows and tuning examples
 - [docs/python-api.md](https://github.com/pszemraj/codedupes/blob/main/docs/python-api.md): programmatic API usage
@@ -54,7 +55,7 @@ See [docs/install.md](https://github.com/pszemraj/codedupes/blob/main/docs/insta
 ## Notes and limits
 
 - Call graph and unused detection are heuristic and conservative by default.
-- Semantic duplicate defaults embed function/method code units; include classes with `--semantic-unit-type class`.
-- Traditional duplicate defaults suppress tiny wrapper noise (tiny exact pairs removed, tiny near pairs require high Jaccard).
+- Analysis defaults (semantic candidate scope, tiny-traditional filtering, hybrid gates) are defined in
+  [docs/analysis-defaults.md](https://github.com/pszemraj/codedupes/blob/main/docs/analysis-defaults.md).
 - Semantic analysis may download model weights on first use.
 - Extraction skips common artifact/cache directories by default (`__pycache__`, `.venv`, etc).

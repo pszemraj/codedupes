@@ -1,6 +1,8 @@
 # Installation and Runtime Defaults
 
 This page is the source of truth for installation, dependency bounds, and semantic runtime defaults.
+Analysis behavior defaults are defined in
+[docs/analysis-defaults.md](https://github.com/pszemraj/codedupes/blob/main/docs/analysis-defaults.md).
 
 ## Install (GitHub source)
 

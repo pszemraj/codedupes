@@ -10,6 +10,7 @@
 ## Documentation ownership (source-of-truth model)
 
 - [docs/install.md](https://github.com/pszemraj/codedupes/blob/main/docs/install.md): installation and runtime defaults.
+- [docs/analysis-defaults.md](https://github.com/pszemraj/codedupes/blob/main/docs/analysis-defaults.md): source of truth for analysis-behavior defaults and heuristics.
 - [docs/cli.md](https://github.com/pszemraj/codedupes/blob/main/docs/cli.md): source of truth for CLI commands, flags, and defaults.
 - [docs/output.md](https://github.com/pszemraj/codedupes/blob/main/docs/output.md): source of truth for JSON payload shapes and exit codes.
 - [docs/usage.md](https://github.com/pszemraj/codedupes/blob/main/docs/usage.md): workflows and tuning recipes. Links to CLI/output docs for definitive flag/schema semantics.

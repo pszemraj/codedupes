@@ -3,6 +3,8 @@
 This document is the source of truth for CLI commands, flags, and option defaults.
 For JSON schemas and exit-code semantics, see
 [docs/output.md](https://github.com/pszemraj/codedupes/blob/main/docs/output.md) (the source of truth for output behavior).
+For analysis-behavior defaults (semantic candidate scope, tiny-traditional filtering, hybrid gates), see
+[docs/analysis-defaults.md](https://github.com/pszemraj/codedupes/blob/main/docs/analysis-defaults.md).
 
 ## Commands
 
@@ -103,11 +105,13 @@ Print version and default settings.
 - `--semantic-only` and `--traditional-only` bypass hybrid synthesis and show raw method outputs
 - `search` applies semantic threshold filtering before returning `top-k` matches
 
-Built-in model aliases:
+Built-in model aliases and model-profile runtime defaults are documented in
+[docs/install.md](https://github.com/pszemraj/codedupes/blob/main/docs/install.md).
+You can also inspect effective model defaults in your environment via:
 
-- `gte-modernbert-base` -> `Alibaba-NLP/gte-modernbert-base`
-- `c2llm-0.5b` -> `codefuse-ai/C2LLM-0.5B`
-- `embeddinggemma-300m` -> `unsloth/embeddinggemma-300m`
+```bash
+codedupes info
+```
 
 For JSON payloads and complete exit-code semantics, see
 [docs/output.md](https://github.com/pszemraj/codedupes/blob/main/docs/output.md).

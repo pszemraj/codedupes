@@ -4,6 +4,8 @@ This page covers programmatic usage.
 CLI flag defaults are documented in
 [docs/cli.md](https://github.com/pszemraj/codedupes/blob/main/docs/cli.md); CLI JSON schemas/exit codes are
 documented in [docs/output.md](https://github.com/pszemraj/codedupes/blob/main/docs/output.md).
+Analysis behavior defaults are documented in
+[docs/analysis-defaults.md](https://github.com/pszemraj/codedupes/blob/main/docs/analysis-defaults.md).
 
 ## Quick Start
 
@@ -92,7 +94,7 @@ for unit, score in hits:
 ## Notes
 
 - Call graph and unused detection are heuristic and conservative by default.
-- Semantic duplicate defaults embed only function/method code units (`semantic_unit_types=("function", "method")`).
-- Traditional duplicate defaults filter tiny wrappers; disable via `filter_tiny_traditional=False`.
+- Semantic candidate defaults and tiny-traditional filtering defaults are defined in
+  [docs/analysis-defaults.md](https://github.com/pszemraj/codedupes/blob/main/docs/analysis-defaults.md).
 - Semantic analysis may download model weights on first use.
 - Model aliases resolve to canonical IDs (`gte-modernbert-base`, `c2llm-0.5b`, `embeddinggemma-300m`).
