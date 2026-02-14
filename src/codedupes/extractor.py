@@ -3,15 +3,54 @@
 from __future__ import annotations
 
 import ast
+import copy
 import hashlib
 import logging
-import copy
+import os
 from pathlib import Path
 from typing import Iterator
 
 from codedupes.models import CodeUnit, CodeUnitType
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_EXCLUDE_DIR_NAMES = {
+    "__pycache__",
+    ".git",
+    ".hg",
+    ".svn",
+    ".venv",
+    "venv",
+    ".tox",
+    ".nox",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".hypothesis",
+    ".eggs",
+    "build",
+    "dist",
+    "target",
+    "node_modules",
+    ".pnpm-store",
+    ".yarn",
+    ".next",
+    ".nuxt",
+    ".svelte-kit",
+    ".gradle",
+    ".idea",
+    ".vscode",
+    ".terraform",
+    ".serverless",
+    ".aws-sam",
+    ".dart_tool",
+}
+
+DEFAULT_EXCLUDE_PATTERNS = [
+    "**/test_*",
+    "**/*_test.py",
+    "**/tests/**",
+]
 
 
 class NormalizedASTHasher(ast.NodeTransformer):
@@ -241,15 +280,24 @@ class CodeExtractor:
         include_stubs: bool = False,
     ) -> None:
         self.root = root.resolve()
-        self.exclude_patterns = exclude_patterns or ["**/test_*", "**/*_test.py", "**/tests/**"]
+        self.exclude_patterns = exclude_patterns or DEFAULT_EXCLUDE_PATTERNS.copy()
         self.include_private = include_private
         self.include_stubs = include_stubs
+
+    @staticmethod
+    def _is_excluded_dir_name(name: str) -> bool:
+        """Return True when a directory name should be skipped by default."""
+        return name in DEFAULT_EXCLUDE_DIR_NAMES or name.endswith(".egg-info")
 
     def _should_exclude(self, path: Path) -> bool:
         """Check if path matches any exclude pattern."""
         from fnmatch import fnmatch
 
-        rel_path = str(path.relative_to(self.root))
+        rel = path.relative_to(self.root)
+        if any(self._is_excluded_dir_name(part) for part in rel.parts[:-1]):
+            return True
+
+        rel_path = str(rel)
         return any(fnmatch(rel_path, pat) for pat in self.exclude_patterns)
 
     def _get_module_name(self, file_path: Path) -> str:
@@ -386,13 +434,20 @@ class CodeExtractor:
     def extract_all(self) -> list[CodeUnit]:
         """Extract all code units from the directory."""
         units: list[CodeUnit] = []
-        patterns = ["*.py"]
+        valid_suffixes = {".py"}
         if self.include_stubs:
-            patterns.append("*.pyi")
+            valid_suffixes.add(".pyi")
 
         seen: set[Path] = set()
-        for pattern in patterns:
-            for py_file in self.root.rglob(pattern):
+        for dirpath, dirnames, filenames in os.walk(self.root, followlinks=False):
+            dirnames[:] = [name for name in dirnames if not self._is_excluded_dir_name(name)]
+            current_dir = Path(dirpath)
+
+            for filename in filenames:
+                if Path(filename).suffix not in valid_suffixes:
+                    continue
+
+                py_file = current_dir / filename
                 try:
                     resolved = py_file.resolve()
                 except OSError:

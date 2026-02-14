@@ -106,3 +106,52 @@ def test_get_module_name_handles_stub_suffix(tmp_path: Path) -> None:
 
     assert len(units) == 1
     assert units[0].qualified_name == "typed_mod.entry"
+
+
+def test_extract_all_skips_common_artifact_directories(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+
+    pkg = root / "pkg"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("")
+    (pkg / "main.py").write_text(
+        dedent(
+            """
+            def keep():
+                return 1
+            """
+        ).strip()
+        + "\n"
+    )
+
+    target_dir = root / "target"
+    target_dir.mkdir()
+    (target_dir / "generated.py").write_text(
+        dedent(
+            """
+            def ignore_me():
+                return 2
+            """
+        ).strip()
+        + "\n"
+    )
+
+    node_modules_dir = root / "node_modules"
+    node_modules_dir.mkdir()
+    (node_modules_dir / "lib.py").write_text(
+        dedent(
+            """
+            def ignore_me_too():
+                return 3
+            """
+        ).strip()
+        + "\n"
+    )
+
+    extractor = CodeExtractor(root, include_private=True)
+    units = extractor.extract_all()
+    qualified_names = {unit.qualified_name for unit in units}
+
+    assert "pkg.main.keep" in qualified_names
+    assert all("ignore_me" not in name for name in qualified_names)
