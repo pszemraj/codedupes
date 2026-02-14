@@ -9,13 +9,13 @@
 ## Install
 
 ```bash
-pip install codedupes
+pip install "codedupes @ git+https://github.com/pszemraj/codedupes.git"
 ```
 
 Optional GPU extras:
 
 ```bash
-pip install codedupes[gpu]
+pip install "codedupes[gpu] @ git+https://github.com/pszemraj/codedupes.git"
 ```
 
 Requires Python 3.11+.
@@ -23,6 +23,8 @@ Requires Python 3.11+.
 For local development from this repo (without `PYTHONPATH=src` hacks):
 
 ```bash
+git clone https://github.com/pszemraj/codedupes.git
+cd codedupes
 pip install -e ".[dev]"
 codedupes info
 ```

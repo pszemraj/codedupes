@@ -22,6 +22,10 @@ dependencies = [
 dev = ["pytest", "ruff"]
 gpu = ["deepspeed"]
 
+[project.urls]
+Homepage = "https://github.com/pszemraj/codedupes.git"
+Repository = "https://github.com/pszemraj/codedupes.git"
+
 [project.scripts]
 codedupes = "codedupes.cli:main"
 
