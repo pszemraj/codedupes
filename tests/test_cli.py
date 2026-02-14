@@ -314,6 +314,20 @@ def test_cli_check_degrades_on_semantic_backend_error(monkeypatch, tmp_path):
     assert "Semantic analysis unavailable" in result.output
 
 
+def test_cli_semantic_only_fails_on_semantic_backend_error(monkeypatch, tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry(x):\n    return x + 1\n")
+
+    from codedupes import analyzer as analyzer_module
+
+    monkeypatch.setattr(analyzer_module, "run_semantic_analysis", _raise_semantic_backend_error)
+
+    runner = CliRunner()
+    result = runner.invoke(cli.cli, ["check", str(path), "--semantic-only", "--min-lines", "0"])
+    assert result.exit_code == 1
+    assert "Error during analysis" in result.output
+
+
 def test_cli_search_fails_on_semantic_backend_error(monkeypatch, tmp_path):
     path = tmp_path / "sample.py"
     path.write_text("def entry(x):\n    return x + 1\n")

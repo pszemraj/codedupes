@@ -199,8 +199,11 @@ def test_combined_mode_preserves_near_dupes_for_semantic_confirmation(
     assert set(captured_exclude_pairs) == {expected_exact_pair}
     assert len(result.traditional_duplicates) == 2
     assert len(result.semantic_duplicates) == 1
-    assert len(result.hybrid_duplicates) == 1
-    assert result.hybrid_duplicates[0].tier == "hybrid_confirmed"
+    assert len(result.hybrid_duplicates) == 2
+    assert {duplicate.tier for duplicate in result.hybrid_duplicates} == {
+        "exact",
+        "hybrid_confirmed",
+    }
 
 
 def test_short_functions_are_skipped_from_semantic(tmp_path: Path) -> None:
@@ -673,14 +676,22 @@ def test_semantic_failures_fall_back_when_traditional_enabled(
     assert "Retry with `codedupes check" in caplog.text
 
 
-def test_semantic_missing_dependency_raises_when_semantic_required(
-    tmp_path: Path, monkeypatch
+@pytest.mark.parametrize(
+    "semantic_error",
+    [
+        ModuleNotFoundError("No module named 'sentence_transformers'"),
+        SemanticBackendError("semantic backend mismatch"),
+    ],
+)
+@pytest.mark.parametrize("run_unused", [False, True])
+def test_semantic_failures_raise_when_semantic_required(
+    tmp_path: Path, monkeypatch, semantic_error, run_unused
 ) -> None:
     source = "def only_func():\n    return 1\n"
     project = create_project(tmp_path, source)
 
     def fake_run_semantic(*args, **kwargs):
-        raise ModuleNotFoundError("No module named 'sentence_transformers'")
+        raise semantic_error
 
     monkeypatch.setattr(analyzer_module, "run_semantic_analysis", fake_run_semantic)
 
@@ -688,10 +699,10 @@ def test_semantic_missing_dependency_raises_when_semantic_required(
         AnalyzerConfig(
             run_traditional=False,
             run_semantic=True,
-            run_unused=False,
+            run_unused=run_unused,
             min_semantic_lines=0,
         )
     )
 
-    with pytest.raises(ModuleNotFoundError):
+    with pytest.raises(type(semantic_error)):
         analyzer.analyze(project)

@@ -342,7 +342,9 @@ class CodeAnalyzer:
                     trust_remote_code=self.config.trust_remote_code,
                 )
             except (ModuleNotFoundError, SemanticBackendError) as exc:
-                if not self.config.run_traditional and not self.config.run_unused:
+                # If semantic is the only duplicate-detection method requested,
+                # fail hard instead of silently degrading to unused-only output.
+                if not self.config.run_traditional:
                     raise
 
                 self._embeddings = None
