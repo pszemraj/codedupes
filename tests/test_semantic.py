@@ -204,6 +204,28 @@ def test_get_model_does_not_trust_remote_code_for_non_c2llm(monkeypatch) -> None
     assert calls[0]["kwargs"]["trust_remote_code"] is False
 
 
+def test_get_model_trusts_remote_code_for_c2llm_variants(monkeypatch) -> None:
+    calls: list[dict] = []
+
+    class FakeSentenceTransformer:
+        def __init__(self, *args, **kwargs):
+            calls.append({"args": args, "kwargs": kwargs})
+
+    monkeypatch.setattr(semantic, "_check_semantic_dependencies", lambda model_name: None)
+    monkeypatch.setattr(semantic, "_resolve_c2llm_torch_dtype", lambda: "bf16")
+    monkeypatch.setattr(sentence_transformers, "SentenceTransformer", FakeSentenceTransformer)
+    semantic.clear_model_cache()
+
+    semantic.get_model("codefuse-ai/C2LLM-7B")
+
+    assert len(calls) == 1
+    kwargs = calls[0]["kwargs"]
+    assert kwargs["trust_remote_code"] is True
+    assert kwargs["model_kwargs"]["trust_remote_code"] is True
+    assert kwargs["tokenizer_kwargs"]["trust_remote_code"] is True
+    assert kwargs["config_kwargs"]["trust_remote_code"] is True
+
+
 def test_get_model_passes_revision_and_trust_kwargs(monkeypatch) -> None:
     calls: list[dict] = []
 

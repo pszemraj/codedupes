@@ -98,7 +98,7 @@ def _resolve_trust_remote_code(model_name: str, trust_remote_code: bool | None) 
     """Resolve trust-remote-code default for a model."""
     if trust_remote_code is not None:
         return trust_remote_code
-    return model_name == DEFAULT_MODEL
+    return _is_c2llm(model_name)
 
 
 def _safe_package_version(package_name: str) -> str | None:

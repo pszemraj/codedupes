@@ -37,10 +37,10 @@ packages = ["src/codedupes"]
 
 [tool.hatch.build.targets.sdist]
 include = [
-    "/src/codedupes",
-    "/README.md",
-    "/LICENSE",
-    "/pyproject.toml",
+    "src/codedupes",
+    "README.md",
+    "LICENSE",
+    "pyproject.toml",
 ]
 
 [tool.ruff]
