@@ -340,9 +340,9 @@ def test_compute_embeddings_cpu_fallback_retries_once_and_bails_on_persistent_oo
     class PersistentCpuOomModel:
         def encode(self, texts, **kwargs):
             seen_batches.append((kwargs["batch_size"], kwargs.get("device")))
-            if kwargs["batch_size"] > 2:
+            if kwargs["batch_size"] >= 2:
                 raise RuntimeError("CUDA out of memory")
-            if kwargs["batch_size"] == 1 and kwargs.get("device") == "cpu":
+            if kwargs["batch_size"] >= 1:
                 raise RuntimeError("CUDA out of memory")
             return np.array([[1.0, 0.0], [0.0, 1.0]], dtype=np.float32)
 
@@ -351,7 +351,7 @@ def test_compute_embeddings_cpu_fallback_retries_once_and_bails_on_persistent_oo
     with pytest.raises(RuntimeError, match="CUDA out of memory"):
         compute_embeddings(units, batch_size=8)
 
-    assert seen_batches == [(8, None), (4, None), (2, None), (1, "cpu"), (1, "cpu")]
+    assert seen_batches == [(8, None), (4, None), (2, None), (1, None), (1, "cpu")]
 
 
 def test_resolve_c2llm_torch_dtype_prefers_cpu_bf16(monkeypatch) -> None:
