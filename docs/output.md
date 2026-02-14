@@ -1,4 +1,6 @@
-# Output And Exit Codes
+# Output and Exit Codes
+
+This document is the source of truth for machine-readable output and CLI exit semantics.
 
 ## `check --json` Structure
 
@@ -64,9 +66,15 @@ Each unit object includes:
 `check`:
 
 - `0`: completed, no findings
-- `1`: completed with findings or failed due to an error
+- `1`: completed with findings or failed due to runtime error
+- `2`: CLI usage/validation error (Click)
 
 `search`:
 
 - `0`: completed successfully
-- `1`: failed due to invalid input or execution error
+- `1`: failed due to runtime error
+- `2`: CLI usage/validation error (Click)
+
+`info`:
+
+- `0`: completed successfully

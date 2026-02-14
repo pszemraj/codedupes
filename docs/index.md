@@ -10,9 +10,9 @@
 ## Documentation Map
 
 - `docs/usage.md`: install, quick start, and common workflows
-- `docs/cli.md`: full CLI command and option reference
+- `docs/cli.md`: full CLI command and option reference (source of truth for flags/defaults)
+- `docs/output.md`: output schema and exit codes (source of truth)
 - `docs/python-api.md`: programmatic API usage
-- `docs/output.md`: output schema, exit codes, and interpretation
 
 ## Quick Start
 
@@ -21,7 +21,7 @@ pip install codedupes
 codedupes check ./src
 ```
 
-For JSON output:
+For JSON output, schema details are in `docs/output.md`:
 
 ```bash
 codedupes check ./src --json

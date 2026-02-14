@@ -1,5 +1,7 @@
 # CLI Reference
 
+This document is the source of truth for CLI commands, flags, and option defaults.
+
 ## Commands
 
 ## `codedupes check <path>`
@@ -17,23 +19,23 @@ codedupes check ./src --traditional-only --no-unused
 
 Options:
 
-- `-t, --threshold <float>`
-- `--semantic-threshold <float>`
-- `--traditional-threshold <float>`
-- `--semantic-only`
-- `--traditional-only`
-- `--no-unused`
-- `--strict-unused`
-- `--min-lines <int>`
-- `--model <name>`
-- `--batch-size <int>`
-- `--no-private`
-- `--exclude <glob>` (repeat option for multiple patterns)
-- `--include-stubs`
-- `--output-width <int>`
-- `--show-source`
-- `--json`
-- `-v, --verbose`
+- `-t, --threshold <float>`: Shared threshold for semantic and traditional checks (default `0.82`)
+- `--semantic-threshold <float>`: Override semantic threshold only
+- `--traditional-threshold <float>`: Override traditional (Jaccard) threshold only
+- `--semantic-only`: Run semantic analysis only
+- `--traditional-only`: Run traditional analysis only
+- `--no-unused`: Disable unused-code detection
+- `--strict-unused`: Include public top-level functions in unused checks
+- `--min-lines <int>`: Minimum statement count for semantic candidates (default `3`)
+- `--model <name>`: Embedding model (default `codefuse-ai/C2LLM-0.5B`)
+- `--batch-size <int>`: Embedding batch size (default `32`)
+- `--no-private`: Exclude private (`_name`) functions/classes
+- `--exclude <glob>`: Exclude file path glob pattern (repeat option for multiple patterns)
+- `--include-stubs`: Include `*.pyi` files
+- `--output-width <int>`: Rich render width for non-JSON output (default `160`, min `80`)
+- `--show-source`: Show truncated duplicate snippets
+- `--json`: Emit JSON instead of rich tables
+- `-v, --verbose`: Verbose logs
 
 ## `codedupes search <path> "<query>"`
 
@@ -48,18 +50,18 @@ codedupes search ./src "normalize request payload" --json
 
 Options:
 
-- `--top-k <int>`
-- `--model <name>`
-- `--threshold <float>`
-- `--semantic-threshold <float>`
-- `--batch-size <int>`
-- `--min-lines <int>`
-- `--no-private`
-- `--exclude <glob>` (repeat option for multiple patterns)
-- `--include-stubs`
-- `--output-width <int>`
-- `--json`
-- `-v, --verbose`
+- `--top-k <int>`: Number of results (default `10`)
+- `--model <name>`: Embedding model (default `codefuse-ai/C2LLM-0.5B`)
+- `--threshold <float>`: Semantic threshold (default `0.82`)
+- `--semantic-threshold <float>`: Override semantic threshold
+- `--batch-size <int>`: Embedding batch size (default `32`)
+- `--min-lines <int>`: Minimum statement count for semantic candidates (default `3`)
+- `--no-private`: Exclude private (`_name`) functions/classes
+- `--exclude <glob>`: Exclude file path glob pattern (repeat option for multiple patterns)
+- `--include-stubs`: Include `*.pyi` files
+- `--output-width <int>`: Rich render width for non-JSON output (default `160`, min `80`)
+- `--json`: Emit JSON instead of rich tables
+- `-v, --verbose`: Verbose logs
 
 ## `codedupes info`
 
@@ -67,8 +69,9 @@ Print version and default settings.
 
 ## Global Behavior Notes
 
-- Threshold values must be in `[0.0, 1.0]`.
-- `--batch-size` and `--top-k` must be greater than `0`.
-- `--min-lines` must be greater than or equal to `0`.
-- `--output-width` must be at least `80` (default `160`).
-- Click usage/validation errors return exit code `2`.
+- Threshold values must be in `[0.0, 1.0]`
+- `--batch-size` and `--top-k` must be greater than `0`
+- `--min-lines` must be greater than or equal to `0`
+- `--output-width` must be at least `80`
+
+For JSON payloads and complete exit-code semantics, see `docs/output.md`.

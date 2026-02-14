@@ -37,11 +37,7 @@ codedupes check ./src/module.py
 codedupes check ./src --json
 ```
 
-`check` returns:
-
-- `0` when no duplicates/unused candidates are found
-- `1` when findings exist or when an execution error occurs
-- `2` for CLI usage/validation errors (invalid options/values)
+See `docs/output.md` for the authoritative JSON structure and exit-code definitions.
 
 ## Control Rich Output Width
 
@@ -56,6 +52,8 @@ codedupes check ./src --output-width 200
 ```bash
 codedupes search ./src "parse json payload" --top-k 10
 ```
+
+For the complete command/option reference, see `docs/cli.md`.
 
 ## Threshold Tuning
 
