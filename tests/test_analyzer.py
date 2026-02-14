@@ -76,6 +76,52 @@ def _make_semantic_runner(
     return fake_run_semantic
 
 
+def _capture_semantic_unit_types(captured_types: list[CodeUnitType]):
+    """Build a semantic runner that records unit types and returns no matches."""
+
+    def fake_run_semantic(units, **_kwargs):
+        captured_types.extend(unit.unit_type for unit in units)
+        return np.zeros((len(units), 2), dtype=np.float32), []
+
+    return fake_run_semantic
+
+
+def _capture_traditional_units_runner(captured_units: list[CodeUnit]):
+    """Build a traditional runner that records incoming units and returns no matches."""
+
+    def fake_traditional(
+        units,
+        jaccard_threshold=0.85,
+        compute_unused=True,
+        strict_unused=False,
+        project_root=None,
+    ):
+        captured_units.extend(units)
+        return [], [], []
+
+    return fake_traditional
+
+
+def _traditional_single_jaccard_runner(similarity: float = 0.9):
+    """Build a traditional runner returning one jaccard duplicate for first two units."""
+
+    def fake_traditional(
+        units,
+        jaccard_threshold=0.85,
+        compute_unused=True,
+        strict_unused=False,
+        project_root=None,
+    ):
+        first, second = units[:2]
+        return (
+            [DuplicatePair(unit_a=first, unit_b=second, similarity=similarity, method="jaccard")],
+            [],
+            [],
+        )
+
+    return fake_traditional
+
+
 def test_all_duplicates_returns_raw_for_single_method_modes(tmp_path: Path) -> None:
     file_a = tmp_path / "a.py"
     file_b = tmp_path / "b.py"
@@ -351,11 +397,11 @@ def test_semantic_defaults_exclude_class_units(tmp_path: Path, monkeypatch) -> N
     project = create_project(tmp_path, source, module="scope.py")
     captured_types: list[CodeUnitType] = []
 
-    def fake_run_semantic(units, **_kwargs):
-        captured_types.extend(unit.unit_type for unit in units)
-        return np.zeros((len(units), 2), dtype=np.float32), []
-
-    monkeypatch.setattr(analyzer_module, "run_semantic_analysis", fake_run_semantic)
+    monkeypatch.setattr(
+        analyzer_module,
+        "run_semantic_analysis",
+        _capture_semantic_unit_types(captured_types),
+    )
 
     analyzer = CodeAnalyzer(
         AnalyzerConfig(
@@ -386,11 +432,11 @@ def test_semantic_class_scope_can_be_enabled_explicitly(tmp_path: Path, monkeypa
     project = create_project(tmp_path, source, module="scope.py")
     captured_types: list[CodeUnitType] = []
 
-    def fake_run_semantic(units, **_kwargs):
-        captured_types.extend(unit.unit_type for unit in units)
-        return np.zeros((len(units), 2), dtype=np.float32), []
-
-    monkeypatch.setattr(analyzer_module, "run_semantic_analysis", fake_run_semantic)
+    monkeypatch.setattr(
+        analyzer_module,
+        "run_semantic_analysis",
+        _capture_semantic_unit_types(captured_types),
+    )
 
     analyzer = CodeAnalyzer(
         AnalyzerConfig(
@@ -423,17 +469,11 @@ def test_combined_mode_scopes_traditional_duplicates_to_semantic_candidates(
     project = create_project(tmp_path, source, module="scope.py")
     captured_traditional_units: list[CodeUnit] = []
 
-    def fake_traditional(
-        units,
-        jaccard_threshold=0.85,
-        compute_unused=True,
-        strict_unused=False,
-        project_root=None,
-    ):
-        captured_traditional_units.extend(units)
-        return [], [], []
-
-    monkeypatch.setattr(analyzer_module, "run_traditional_analysis", fake_traditional)
+    monkeypatch.setattr(
+        analyzer_module,
+        "run_traditional_analysis",
+        _capture_traditional_units_runner(captured_traditional_units),
+    )
     monkeypatch.setattr(analyzer_module, "run_semantic_analysis", _make_semantic_runner())
 
     analyzer = CodeAnalyzer(
@@ -465,17 +505,11 @@ def test_traditional_only_keeps_full_scope_even_with_semantic_filters(
     project = create_project(tmp_path, source, module="scope.py")
     captured_traditional_units: list[CodeUnit] = []
 
-    def fake_traditional(
-        units,
-        jaccard_threshold=0.85,
-        compute_unused=True,
-        strict_unused=False,
-        project_root=None,
-    ):
-        captured_traditional_units.extend(units)
-        return [], [], []
-
-    monkeypatch.setattr(analyzer_module, "run_traditional_analysis", fake_traditional)
+    monkeypatch.setattr(
+        analyzer_module,
+        "run_traditional_analysis",
+        _capture_traditional_units_runner(captured_traditional_units),
+    )
 
     analyzer = CodeAnalyzer(
         AnalyzerConfig(
@@ -1118,21 +1152,11 @@ def test_mixed_mode_semantic_failure_still_builds_hybrid_from_traditional(
     ).strip()
     project = create_project(tmp_path, source)
 
-    def fake_traditional(
-        units,
-        jaccard_threshold=0.85,
-        compute_unused=True,
-        strict_unused=False,
-        project_root=None,
-    ):
-        first, second = units[:2]
-        return (
-            [DuplicatePair(unit_a=first, unit_b=second, similarity=0.9, method="jaccard")],
-            [],
-            [],
-        )
-
-    monkeypatch.setattr(analyzer_module, "run_traditional_analysis", fake_traditional)
+    monkeypatch.setattr(
+        analyzer_module,
+        "run_traditional_analysis",
+        _traditional_single_jaccard_runner(0.9),
+    )
     monkeypatch.setattr(
         analyzer_module,
         "run_semantic_analysis",
@@ -1168,21 +1192,11 @@ def test_single_method_modes_bypass_hybrid_synthesis(tmp_path: Path, monkeypatch
     ).strip()
     project = create_project(tmp_path, source)
 
-    def fake_traditional(
-        units,
-        jaccard_threshold=0.85,
-        compute_unused=True,
-        strict_unused=False,
-        project_root=None,
-    ):
-        first, second = units[:2]
-        return (
-            [DuplicatePair(unit_a=first, unit_b=second, similarity=0.9, method="jaccard")],
-            [],
-            [],
-        )
-
-    monkeypatch.setattr(analyzer_module, "run_traditional_analysis", fake_traditional)
+    monkeypatch.setattr(
+        analyzer_module,
+        "run_traditional_analysis",
+        _traditional_single_jaccard_runner(0.9),
+    )
     monkeypatch.setattr(
         analyzer_module,
         "run_semantic_analysis",
