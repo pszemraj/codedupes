@@ -474,7 +474,9 @@ def main() -> int:
 
     try:
         args = parser.parse_args(argv)
-    except SystemExit:
+    except SystemExit as exc:
+        if isinstance(exc.code, int):
+            return exc.code
         return 1
 
     if not hasattr(args, "func"):
