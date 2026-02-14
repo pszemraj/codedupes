@@ -216,6 +216,11 @@ def _resolve_search_threshold(
     return get_default_semantic_threshold(model_name)
 
 
+def _is_cli_explicit(ctx: click.Context, option_name: str) -> bool:
+    """Return whether a CLI option was explicitly provided by the user."""
+    return ctx.get_parameter_source(option_name) == click.core.ParameterSource.COMMANDLINE
+
+
 def format_location(unit: CodeUnit) -> str:
     """Format file:line location for table rendering.
 
@@ -783,7 +788,9 @@ def cli() -> None:
 @click.option("--show-source", is_flag=True, help="Show source code snippets")
 @click.option("--full-table", is_flag=True, help="Show all rows in terminal tables")
 @_add_common_analysis_options
+@click.pass_context
 def check_command(
+    ctx: click.Context,
     path: Path,
     threshold: float | None,
     semantic_threshold: float | None,
@@ -847,8 +854,55 @@ def check_command(
     :param output_width: Width used for rich output.
     :return: ``None``.
     """
+    if no_unused and strict_unused:
+        raise click.UsageError(
+            "Cannot combine --no-unused and --strict-unused because unused reporting is disabled."
+        )
+
     if semantic_only and traditional_only:
         raise click.UsageError("Cannot use both --semantic-only and --traditional-only.")
+
+    if traditional_only:
+        ignored_in_traditional_only = [
+            "semantic_threshold",
+            "semantic_task",
+            "instruction_prefix",
+            "model",
+            "model_revision",
+            "trust_remote_code",
+            "batch_size",
+            "min_lines",
+            "semantic_unit_type",
+            "suppress_test_semantic",
+        ]
+        specified_ignored = [
+            option_name
+            for option_name in ignored_in_traditional_only
+            if _is_cli_explicit(ctx, option_name)
+        ]
+        if specified_ignored:
+            listed = ", ".join(f"--{name.replace('_', '-')}" for name in specified_ignored)
+            raise click.UsageError(
+                f"Cannot use {listed} with --traditional-only; semantic analysis is disabled."
+            )
+
+    if semantic_only:
+        ignored_in_semantic_only = [
+            "traditional_threshold",
+            "no_tiny_filter",
+            "tiny_cutoff",
+            "tiny_near_jaccard_min",
+        ]
+        specified_ignored = [
+            option_name
+            for option_name in ignored_in_semantic_only
+            if _is_cli_explicit(ctx, option_name)
+        ]
+        if specified_ignored:
+            listed = ", ".join(f"--{name.replace('_', '-')}" for name in specified_ignored)
+            raise click.UsageError(
+                f"Cannot use {listed} with --semantic-only; traditional duplicate analysis is disabled."
+            )
 
     _set_console(output_width)
     if not as_json:

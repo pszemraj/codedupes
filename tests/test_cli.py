@@ -338,6 +338,61 @@ def test_cli_rejects_conflicting_single_method_flags(tmp_path):
     assert result.exit_code == 2
 
 
+def test_cli_rejects_semantic_flags_with_traditional_only(tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli.cli,
+        [
+            "check",
+            str(path),
+            "--traditional-only",
+            "--semantic-task",
+            "classification",
+            "--no-tiny-filter",
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert "Cannot use --semantic-task" in result.output
+
+
+def test_cli_rejects_traditional_flags_with_semantic_only(tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli.cli,
+        [
+            "check",
+            str(path),
+            "--semantic-only",
+            "--traditional-threshold",
+            "0.7",
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert "Cannot use --traditional-threshold" in result.output
+
+
+def test_cli_rejects_strict_unused_with_no_unused(tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli.cli,
+        ["check", str(path), "--no-unused", "--strict-unused"],
+    )
+
+    assert result.exit_code == 2
+    assert "Cannot combine --no-unused and --strict-unused" in result.output
+
+
 def test_cli_info_exit_zero():
     runner = CliRunner()
     result = runner.invoke(cli.cli, ["info"])
