@@ -246,7 +246,7 @@ def test_get_model_passes_revision_and_trust_kwargs(monkeypatch) -> None:
     assert kwargs["revision"] == DEFAULT_C2LLM_REVISION
     assert kwargs["model_kwargs"]["trust_remote_code"] is True
     assert kwargs["model_kwargs"]["revision"] == DEFAULT_C2LLM_REVISION
-    assert kwargs["model_kwargs"]["dtype"] == "bf16"
+    assert kwargs["model_kwargs"]["torch_dtype"] == "bf16"
     assert kwargs["model_kwargs"]["low_cpu_mem_usage"] is True
     assert kwargs["tokenizer_kwargs"]["trust_remote_code"] is True
     assert kwargs["tokenizer_kwargs"]["revision"] == DEFAULT_C2LLM_REVISION

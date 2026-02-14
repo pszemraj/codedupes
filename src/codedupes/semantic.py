@@ -345,7 +345,7 @@ def get_model(
             model_kwargs["low_cpu_mem_usage"] = True
             selected_dtype = _resolve_c2llm_torch_dtype()
             if selected_dtype is not None:
-                model_kwargs["dtype"] = selected_dtype
+                model_kwargs["torch_dtype"] = selected_dtype
                 logger.info("Using C2LLM torch dtype: %s", selected_dtype)
 
         if resolved_revision is not None:
