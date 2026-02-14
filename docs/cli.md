@@ -38,9 +38,13 @@ Options:
 - `--no-unused`: Disable unused-code detection
 - `--strict-unused`: Include public top-level functions in unused checks
 - `--suppress-test-semantic`: Suppress semantic duplicate matches involving `test_*` functions
+- `--semantic-unit-type <name>`: Semantic candidate unit type (`function`, `method`, `class`); repeat option to include multiple types (default `function, method`)
+- `--no-tiny-filter`: Disable tiny function/method filtering for traditional duplicates
+- `--tiny-cutoff <int>`: Tiny function/method statement cutoff (exclusive) for traditional filtering (default `3`)
+- `--tiny-near-jaccard-min <float>`: Minimum Jaccard similarity to keep tiny near-duplicate pairs (default `0.93`)
 - `--show-all`: Also print raw traditional + raw semantic duplicate lists in combined mode
 - `--full-table`: Disable table row truncation and print all rows in terminal output
-- `--min-lines <int>`: Minimum statement count for semantic candidates (default `3`)
+- `--min-lines <int>`: Minimum statement count for semantic candidate code units (default `3`)
 - `--model <name>`: Embedding model alias or HuggingFace ID (default `gte-modernbert-base`)
 - `--instruction-prefix <text>`: Override default semantic instruction prefix for code/query embeddings
 - `--model-revision <rev>`: Model revision/commit hash (default `auto`; profile-specific behavior)
@@ -70,13 +74,14 @@ Options:
 - `--top-k <int>`: Number of results (default `10`)
 - `--model <name>`: Embedding model alias or HuggingFace ID (default `gte-modernbert-base`)
 - `--semantic-task <name>`: Semantic task mode for query/document embeddings (default `code-retrieval`)
+- `--semantic-unit-type <name>`: Semantic candidate unit type (`function`, `method`, `class`); repeat option to include multiple types (default `function, method`)
 - `--instruction-prefix <text>`: Override default semantic instruction prefix for code/query embeddings
 - `--model-revision <rev>`: Model revision/commit hash (default `auto`; profile-specific behavior)
 - `--trust-remote-code / --no-trust-remote-code`: Allow/disallow model remote code execution
 - `--threshold <float>`: Shared semantic threshold override
 - `--semantic-threshold <float>`: Override semantic threshold
 - `--batch-size <int>`: Embedding batch size (default `8`)
-- `--min-lines <int>`: Minimum statement count for semantic candidates (default `3`)
+- `--min-lines <int>`: Minimum statement count for semantic candidate code units (default `3`)
 - `--no-private`: Exclude private (`_name`) functions/classes
 - `--exclude <glob>`: Exclude file path glob pattern (repeat option for multiple patterns)
 - `--include-stubs`: Include `*.pyi` files

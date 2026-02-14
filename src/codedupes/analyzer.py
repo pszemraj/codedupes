@@ -38,6 +38,14 @@ logger = logging.getLogger(__name__)
 HYBRID_SEMANTIC_ONLY_MIN = 0.92
 HYBRID_WEAK_JACCARD_MIN = 0.20
 HYBRID_STATEMENT_RATIO_MIN = 0.35
+DEFAULT_SEMANTIC_UNIT_TYPES = ("function", "method")
+SEMANTIC_UNIT_TYPE_TO_ENUM: dict[str, CodeUnitType] = {
+    "function": CodeUnitType.FUNCTION,
+    "method": CodeUnitType.METHOD,
+    "class": CodeUnitType.CLASS,
+}
+DEFAULT_TINY_UNIT_STATEMENT_CUTOFF = 3
+DEFAULT_TINY_NEAR_JACCARD_MIN = 0.93
 
 
 def _build_exact_hash_exclusions(units: list[CodeUnit]) -> set[tuple[str, str]]:
@@ -91,6 +99,96 @@ def _statement_count_ratio(unit_a: CodeUnit, unit_b: CodeUnit) -> float:
     if high == 0:
         return 0.0
     return low / high
+
+
+def _resolve_semantic_unit_type_filter(
+    semantic_unit_types: tuple[str, ...],
+) -> set[CodeUnitType]:
+    """Resolve configured semantic unit type names to enum values.
+
+    :param semantic_unit_types: Configured semantic unit type names.
+    :return: Set of comparable enum values.
+    """
+    return {
+        SEMANTIC_UNIT_TYPE_TO_ENUM[unit_type_name]
+        for unit_type_name in semantic_unit_types
+        if unit_type_name in SEMANTIC_UNIT_TYPE_TO_ENUM
+    }
+
+
+def _is_tiny_function_like(
+    unit: CodeUnit,
+    *,
+    statement_cutoff: int,
+    statement_cache: dict[str, int],
+) -> bool:
+    """Return whether a unit is a tiny function/method by statement count.
+
+    :param unit: Unit under inspection.
+    :param statement_cutoff: Tiny cutoff (exclusive).
+    :param statement_cache: Memoized statement counts by unit uid.
+    :return: ``True`` when unit is function/method and count is below cutoff.
+    """
+    if unit.unit_type not in {CodeUnitType.FUNCTION, CodeUnitType.METHOD}:
+        return False
+
+    count = statement_cache.get(unit.uid)
+    if count is None:
+        count = get_code_unit_statement_count(unit)
+        statement_cache[unit.uid] = count
+    return count < statement_cutoff
+
+
+def _filter_tiny_traditional_duplicates(
+    exact_duplicates: list[DuplicatePair],
+    near_duplicates: list[DuplicatePair],
+    *,
+    statement_cutoff: int,
+    tiny_near_jaccard_min: float,
+) -> tuple[list[DuplicatePair], list[DuplicatePair]]:
+    """Filter tiny wrapper noise from traditional duplicates.
+
+    :param exact_duplicates: Exact traditional duplicate pairs.
+    :param near_duplicates: Near traditional duplicate pairs.
+    :param statement_cutoff: Tiny cutoff (exclusive).
+    :param tiny_near_jaccard_min: Keep floor for tiny near duplicate Jaccard similarity.
+    :return: Filtered exact and near duplicate lists.
+    """
+    statement_cache: dict[str, int] = {}
+    filtered_exact: list[DuplicatePair] = []
+    filtered_near: list[DuplicatePair] = []
+
+    for duplicate in exact_duplicates:
+        tiny_a = _is_tiny_function_like(
+            duplicate.unit_a,
+            statement_cutoff=statement_cutoff,
+            statement_cache=statement_cache,
+        )
+        tiny_b = _is_tiny_function_like(
+            duplicate.unit_b,
+            statement_cutoff=statement_cutoff,
+            statement_cache=statement_cache,
+        )
+        if tiny_a and tiny_b:
+            continue
+        filtered_exact.append(duplicate)
+
+    for duplicate in near_duplicates:
+        tiny_a = _is_tiny_function_like(
+            duplicate.unit_a,
+            statement_cutoff=statement_cutoff,
+            statement_cache=statement_cache,
+        )
+        tiny_b = _is_tiny_function_like(
+            duplicate.unit_b,
+            statement_cutoff=statement_cutoff,
+            statement_cache=statement_cache,
+        )
+        if tiny_a and tiny_b and duplicate.similarity < tiny_near_jaccard_min:
+            continue
+        filtered_near.append(duplicate)
+
+    return filtered_exact, filtered_near
 
 
 def _synthesize_hybrid_duplicates(
@@ -235,7 +333,11 @@ class AnalyzerConfig:
     trust_remote_code: bool | None = None
     batch_size: int = DEFAULT_BATCH_SIZE
     min_semantic_lines: int = DEFAULT_MIN_SEMANTIC_LINES
+    semantic_unit_types: tuple[str, ...] = DEFAULT_SEMANTIC_UNIT_TYPES
     include_stubs: bool = False
+    filter_tiny_traditional: bool = True
+    tiny_unit_statement_cutoff: int = DEFAULT_TINY_UNIT_STATEMENT_CUTOFF
+    tiny_near_jaccard_min: float = DEFAULT_TINY_NEAR_JACCARD_MIN
 
     # What to run
     run_traditional: bool = True
@@ -256,6 +358,28 @@ class AnalyzerConfig:
 
         if self.min_semantic_lines < 0:
             raise ValueError("min_semantic_lines must be >= 0")
+
+        if not self.semantic_unit_types:
+            raise ValueError("semantic_unit_types must contain at least one unit type")
+        normalized_types = tuple(
+            unit_type.strip().lower() for unit_type in self.semantic_unit_types
+        )
+        invalid_types = sorted(
+            unit_type
+            for unit_type in normalized_types
+            if unit_type not in SEMANTIC_UNIT_TYPE_TO_ENUM
+        )
+        if invalid_types:
+            allowed = ", ".join(sorted(SEMANTIC_UNIT_TYPE_TO_ENUM))
+            invalid = ", ".join(invalid_types)
+            raise ValueError(f"Invalid semantic_unit_types: {invalid}. Allowed values: {allowed}")
+        self.semantic_unit_types = tuple(dict.fromkeys(normalized_types))
+
+        if self.tiny_unit_statement_cutoff < 0:
+            raise ValueError("tiny_unit_statement_cutoff must be >= 0")
+
+        if not 0.0 <= self.tiny_near_jaccard_min <= 1.0:
+            raise ValueError("tiny_near_jaccard_min must be in [0.0, 1.0]")
 
 
 class CodeAnalyzer:
@@ -343,6 +467,13 @@ class CodeAnalyzer:
                 project_root=path,
                 strict_unused=self.config.strict_unused,
             )
+            if self.config.filter_tiny_traditional:
+                exact_dupes, near_dupes = _filter_tiny_traditional_duplicates(
+                    exact_dupes,
+                    near_dupes,
+                    statement_cutoff=self.config.tiny_unit_statement_cutoff,
+                    tiny_near_jaccard_min=self.config.tiny_near_jaccard_min,
+                )
             traditional_duplicates = exact_dupes + near_dupes
         elif self.config.run_unused:
             build_reference_graph(units, project_root=path)
@@ -352,10 +483,14 @@ class CodeAnalyzer:
         self._semantic_units = None
 
         if self.config.run_semantic:
+            semantic_type_filter = _resolve_semantic_unit_type_filter(
+                self.config.semantic_unit_types
+            )
             semantic_candidates = [
                 unit
                 for unit in units
-                if get_code_unit_statement_count(unit) >= self.config.min_semantic_lines
+                if unit.unit_type in semantic_type_filter
+                and get_code_unit_statement_count(unit) >= self.config.min_semantic_lines
             ]
             self._semantic_units = semantic_candidates
 
@@ -508,6 +643,10 @@ def analyze_directory(
     model_revision: str | None = None,
     trust_remote_code: bool | None = None,
     min_semantic_lines: int = DEFAULT_MIN_SEMANTIC_LINES,
+    semantic_unit_types: tuple[str, ...] = DEFAULT_SEMANTIC_UNIT_TYPES,
+    filter_tiny_traditional: bool = True,
+    tiny_unit_statement_cutoff: int = DEFAULT_TINY_UNIT_STATEMENT_CUTOFF,
+    tiny_near_jaccard_min: float = DEFAULT_TINY_NEAR_JACCARD_MIN,
     include_stubs: bool = False,
     run_unused: bool = True,
     strict_unused: bool = False,
@@ -527,6 +666,10 @@ def analyze_directory(
             If None, semantic backend chooses model-specific default behavior.
         trust_remote_code: Whether remote model code may execute while loading
         min_semantic_lines: Minimum statement count required for semantic analysis.
+        semantic_unit_types: Unit types eligible for semantic embeddings.
+        filter_tiny_traditional: Filter tiny traditional duplicates when true.
+        tiny_unit_statement_cutoff: Tiny function/method cutoff (exclusive).
+        tiny_near_jaccard_min: Keep floor for tiny near-duplicate Jaccard pairs.
         include_stubs: Whether to analyze ``.pyi`` files.
         strict_unused: Whether to ignore public API exclusions when reporting unused code.
         run_unused: Run potentially-unused detection even when traditional analysis is off
@@ -544,6 +687,10 @@ def analyze_directory(
         model_revision=model_revision,
         trust_remote_code=trust_remote_code,
         min_semantic_lines=min_semantic_lines,
+        semantic_unit_types=semantic_unit_types,
+        filter_tiny_traditional=filter_tiny_traditional,
+        tiny_unit_statement_cutoff=tiny_unit_statement_cutoff,
+        tiny_near_jaccard_min=tiny_near_jaccard_min,
         include_stubs=include_stubs,
         run_unused=run_unused,
         strict_unused=strict_unused,

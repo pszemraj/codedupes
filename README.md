@@ -54,5 +54,7 @@ See [docs/install.md](https://github.com/pszemraj/codedupes/blob/main/docs/insta
 ## Notes and limits
 
 - Call graph and unused detection are heuristic and conservative by default.
+- Semantic duplicate defaults embed function/method code units; include classes with `--semantic-unit-type class`.
+- Traditional duplicate defaults suppress tiny wrapper noise (tiny exact pairs removed, tiny near pairs require high Jaccard).
 - Semantic analysis may download model weights on first use.
 - Extraction skips common artifact/cache directories by default (`__pycache__`, `.venv`, etc).

@@ -174,6 +174,30 @@ Include type stubs:
 codedupes check ./src --include-stubs
 ```
 
+Control semantic candidate unit types (default is function + method):
+
+```bash
+codedupes check ./src
+codedupes check ./src --semantic-unit-type function --semantic-unit-type method --semantic-unit-type class
+```
+
+Use `--semantic-unit-type class` when you explicitly want class-level semantic embeddings.
+
+## Reduce Boilerplate Duplicate Noise
+
+Traditional duplicate detection filters tiny function/method wrappers by default:
+
+- tiny definition: statement count `< 3`
+- tiny exact duplicates are dropped
+- tiny near duplicates are kept only when Jaccard is very high (`>= 0.93`)
+
+Override behavior when needed:
+
+```bash
+codedupes check ./src --no-tiny-filter
+codedupes check ./src --tiny-cutoff 4 --tiny-near-jaccard-min 0.95
+```
+
 ## Unused Detection Modes
 
 Default behavior is conservative and skips public top-level functions.

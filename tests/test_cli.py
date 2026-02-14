@@ -166,6 +166,13 @@ def test_cli_model_semantic_flags_pass_through(monkeypatch, tmp_path):
             "classification",
             "--no-trust-remote-code",
             "--suppress-test-semantic",
+            "--semantic-unit-type",
+            "class",
+            "--no-tiny-filter",
+            "--tiny-cutoff",
+            "4",
+            "--tiny-near-jaccard-min",
+            "0.95",
             "--show-all",
         ],
     )
@@ -176,6 +183,10 @@ def test_cli_model_semantic_flags_pass_through(monkeypatch, tmp_path):
     assert captured[0].trust_remote_code is False
     assert captured[0].suppress_test_semantic_matches is True
     assert captured[0].semantic_task == "classification"
+    assert captured[0].semantic_unit_types == ("class",)
+    assert captured[0].filter_tiny_traditional is False
+    assert captured[0].tiny_unit_statement_cutoff == 4
+    assert captured[0].tiny_near_jaccard_min == 0.95
 
 
 def test_cli_model_revision_defaults_to_auto_none(monkeypatch, tmp_path):
@@ -228,6 +239,10 @@ def test_cli_threshold_precedence(monkeypatch, tmp_path):
     assert result_default.exit_code == 1
     assert captured[-1].semantic_threshold == 0.73
     assert captured[-1].jaccard_threshold == cli.DEFAULT_TRADITIONAL_THRESHOLD
+    assert captured[-1].semantic_unit_types == ("function", "method")
+    assert captured[-1].filter_tiny_traditional is True
+    assert captured[-1].tiny_unit_statement_cutoff == 3
+    assert captured[-1].tiny_near_jaccard_min == 0.93
 
     result_shared = runner.invoke(cli.cli, ["check", str(path), "--threshold", "0.67"])
     assert result_shared.exit_code == 1
@@ -268,6 +283,28 @@ def test_cli_search_defaults_to_code_retrieval_task(monkeypatch, tmp_path):
     result = runner.invoke(cli.cli, ["search", str(path), "entry"])
     assert result.exit_code == 0
     assert captured[0].semantic_task == "code-retrieval"
+    assert captured[0].semantic_unit_types == ("function", "method")
+
+
+def test_cli_search_semantic_unit_type_pass_through(monkeypatch, tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+
+    captured = []
+    patch_cli_analyzer(
+        monkeypatch,
+        cli,
+        analyze_result=lambda: _build_result(tmp_path),
+        search_results=[(_build_unit(tmp_path), 0.99)],
+        captured_configs=captured,
+    )
+    runner = CliRunner()
+    result = runner.invoke(
+        cli.cli,
+        ["search", str(path), "entry", "--semantic-unit-type", "class"],
+    )
+    assert result.exit_code == 0
+    assert captured[0].semantic_unit_types == ("class",)
 
 
 def test_cli_requires_explicit_command(tmp_path):

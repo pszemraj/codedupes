@@ -47,6 +47,10 @@ config = AnalyzerConfig(
     strict_unused=False,
     include_private=True,
     min_semantic_lines=3,
+    semantic_unit_types=("function", "method"),
+    filter_tiny_traditional=True,
+    tiny_unit_statement_cutoff=3,
+    tiny_near_jaccard_min=0.93,
 )
 
 analyzer = CodeAnalyzer(config)
@@ -88,5 +92,7 @@ for unit, score in hits:
 ## Notes
 
 - Call graph and unused detection are heuristic and conservative by default.
+- Semantic duplicate defaults embed only function/method code units (`semantic_unit_types=("function", "method")`).
+- Traditional duplicate defaults filter tiny wrappers; disable via `filter_tiny_traditional=False`.
 - Semantic analysis may download model weights on first use.
 - Model aliases resolve to canonical IDs (`gte-modernbert-base`, `c2llm-0.5b`, `embeddinggemma-300m`).

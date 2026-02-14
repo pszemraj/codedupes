@@ -633,7 +633,16 @@ def _add_common_analysis_options(func: Callable[..., Any]) -> Callable[..., Any]
             default=DEFAULT_MIN_LINES,
             show_default=True,
             callback=_validate_non_negative_int,
-            help="Skip semantic comparison for functions with fewer body statements",
+            help="Skip semantic comparison for code units with fewer body statements",
+        ),
+        click.option(
+            "--semantic-unit-type",
+            "semantic_unit_type",
+            multiple=True,
+            type=click.Choice(["function", "method", "class"]),
+            default=("function", "method"),
+            show_default=True,
+            help="Unit type(s) eligible for semantic embedding (repeat option to add more)",
         ),
         click.option(
             "--model",
@@ -746,6 +755,27 @@ def cli() -> None:
     help="Suppress semantic duplicate matches involving test_* functions",
 )
 @click.option(
+    "--no-tiny-filter",
+    is_flag=True,
+    help="Disable tiny function/method filtering for traditional duplicates",
+)
+@click.option(
+    "--tiny-cutoff",
+    type=int,
+    default=3,
+    show_default=True,
+    callback=_validate_non_negative_int,
+    help="Tiny function/method statement cutoff (exclusive) for traditional filtering",
+)
+@click.option(
+    "--tiny-near-jaccard-min",
+    type=float,
+    default=0.93,
+    show_default=True,
+    callback=_validate_threshold,
+    help="Minimum Jaccard similarity to keep tiny near-duplicate pairs",
+)
+@click.option(
     "--show-all",
     is_flag=True,
     help="Show raw traditional/semantic duplicate lists alongside hybrid output",
@@ -763,11 +793,15 @@ def check_command(
     no_unused: bool,
     strict_unused: bool,
     suppress_test_semantic: bool,
+    no_tiny_filter: bool,
+    tiny_cutoff: int,
+    tiny_near_jaccard_min: float,
     show_all: bool,
     show_source: bool,
     full_table: bool,
     no_private: bool,
     min_lines: int,
+    semantic_unit_type: tuple[str, ...],
     model: str,
     semantic_task: str,
     instruction_prefix: str | None,
@@ -791,11 +825,15 @@ def check_command(
     :param no_unused: If true, skip unused code detection.
     :param strict_unused: If true, do not suppress likely public functions.
     :param suppress_test_semantic: Exclude matches involving test functions.
+    :param no_tiny_filter: Disable tiny traditional duplicate filtering.
+    :param tiny_cutoff: Tiny function/method statement cutoff for filtering.
+    :param tiny_near_jaccard_min: Keep floor for tiny near-duplicate Jaccard pairs.
     :param show_all: Emit raw duplicate lists in combined mode.
     :param show_source: Show source code snippets for duplicate pairs.
     :param full_table: Show all table rows.
     :param no_private: Exclude private symbols.
-    :param min_lines: Minimum code body statement lines for semantic comparisons.
+    :param min_lines: Minimum code body statement lines for semantic candidate code units.
+    :param semantic_unit_type: Unit type(s) eligible for semantic embedding.
     :param model: Semantic model alias/identifier.
     :param semantic_task: Semantic task used during duplicate detection.
     :param instruction_prefix: Optional custom embedding prefix.
@@ -840,6 +878,10 @@ def check_command(
         run_semantic=not traditional_only,
         run_unused=not no_unused,
         min_semantic_lines=min_lines,
+        semantic_unit_types=semantic_unit_type,
+        filter_tiny_traditional=not no_tiny_filter,
+        tiny_unit_statement_cutoff=tiny_cutoff,
+        tiny_near_jaccard_min=tiny_near_jaccard_min,
         strict_unused=strict_unused,
         suppress_test_semantic_matches=suppress_test_semantic,
         batch_size=batch_size,
@@ -964,6 +1006,7 @@ def search_command(
     semantic_task: str,
     no_private: bool,
     min_lines: int,
+    semantic_unit_type: tuple[str, ...],
     model: str,
     instruction_prefix: str | None,
     model_revision: str | None,
@@ -984,7 +1027,8 @@ def search_command(
     :param semantic_threshold: Semantic threshold override.
     :param semantic_task: Semantic task used for search.
     :param no_private: Exclude private symbols.
-    :param min_lines: Minimum code body statement lines for semantic candidates.
+    :param min_lines: Minimum code body statement lines for semantic candidate code units.
+    :param semantic_unit_type: Unit type(s) eligible for semantic embedding.
     :param model: Semantic model alias/identifier.
     :param instruction_prefix: Optional custom embedding prefix.
     :param model_revision: Optional model revision/commit override.
@@ -1018,6 +1062,7 @@ def search_command(
         run_traditional=False,
         run_unused=False,
         min_semantic_lines=min_lines,
+        semantic_unit_types=semantic_unit_type,
         batch_size=batch_size,
         include_stubs=include_stubs,
     )

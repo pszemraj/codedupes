@@ -82,7 +82,12 @@ def test_all_duplicates_returns_raw_for_single_method_modes(tmp_path: Path) -> N
     file_b.write_text("def foo():\n    return 1\n")
 
     analyzer = CodeAnalyzer(
-        AnalyzerConfig(run_traditional=True, run_semantic=False, run_unused=False)
+        AnalyzerConfig(
+            run_traditional=True,
+            run_semantic=False,
+            run_unused=False,
+            filter_tiny_traditional=False,
+        )
     )
     result = analyzer.analyze(tmp_path)
 
@@ -198,6 +203,7 @@ def test_integration_on_mixed_project(tmp_path: Path) -> None:
             run_traditional=True,
             run_unused=True,
             include_private=False,
+            filter_tiny_traditional=False,
         )
     )
     result = analyzer.analyze(src_root)
@@ -292,6 +298,7 @@ def test_combined_mode_preserves_near_dupes_for_semantic_confirmation(
             min_semantic_lines=0,
             jaccard_threshold=0.85,
             semantic_threshold=0.82,
+            filter_tiny_traditional=False,
         )
     )
     result = analyzer.analyze(project)
@@ -327,6 +334,195 @@ def test_short_functions_are_skipped_from_semantic(tmp_path: Path) -> None:
     )
     result = analyzer.analyze(project)
     assert result.semantic_duplicates == []
+
+
+def test_semantic_defaults_exclude_class_units(tmp_path: Path, monkeypatch) -> None:
+    source = dedent(
+        """
+        class Box:
+            def method(self):
+                return 1
+
+        def helper():
+            return 2
+        """
+    ).strip()
+    project = create_project(tmp_path, source, module="scope.py")
+    captured_types: list[CodeUnitType] = []
+
+    def fake_run_semantic(units, **_kwargs):
+        captured_types.extend(unit.unit_type for unit in units)
+        return np.zeros((len(units), 2), dtype=np.float32), []
+
+    monkeypatch.setattr(analyzer_module, "run_semantic_analysis", fake_run_semantic)
+
+    analyzer = CodeAnalyzer(
+        AnalyzerConfig(
+            run_traditional=False,
+            run_semantic=True,
+            run_unused=False,
+            min_semantic_lines=0,
+        )
+    )
+    analyzer.analyze(project)
+
+    assert CodeUnitType.CLASS not in captured_types
+    assert CodeUnitType.FUNCTION in captured_types
+    assert CodeUnitType.METHOD in captured_types
+
+
+def test_semantic_class_scope_can_be_enabled_explicitly(tmp_path: Path, monkeypatch) -> None:
+    source = dedent(
+        """
+        class Box:
+            def method(self):
+                return 1
+
+        def helper():
+            return 2
+        """
+    ).strip()
+    project = create_project(tmp_path, source, module="scope.py")
+    captured_types: list[CodeUnitType] = []
+
+    def fake_run_semantic(units, **_kwargs):
+        captured_types.extend(unit.unit_type for unit in units)
+        return np.zeros((len(units), 2), dtype=np.float32), []
+
+    monkeypatch.setattr(analyzer_module, "run_semantic_analysis", fake_run_semantic)
+
+    analyzer = CodeAnalyzer(
+        AnalyzerConfig(
+            run_traditional=False,
+            run_semantic=True,
+            run_unused=False,
+            min_semantic_lines=0,
+            semantic_unit_types=("class",),
+        )
+    )
+    analyzer.analyze(project)
+
+    assert captured_types
+    assert set(captured_types) == {CodeUnitType.CLASS}
+
+
+def test_tiny_exact_duplicates_are_filtered_by_default(tmp_path: Path) -> None:
+    source = dedent(
+        """
+        def wrapper_a():
+            return helper_a()
+
+        def wrapper_b():
+            return helper_b()
+
+        def helper_a():
+            return 1
+
+        def helper_b():
+            return 1
+        """
+    ).strip()
+    project = create_project(tmp_path, source, module="tiny_exact.py")
+
+    analyzer = CodeAnalyzer(
+        AnalyzerConfig(
+            run_traditional=True,
+            run_semantic=False,
+            run_unused=False,
+            jaccard_threshold=0.99,
+        )
+    )
+    result = analyzer.analyze(project)
+
+    assert result.traditional_duplicates == []
+
+
+def test_tiny_exact_duplicates_can_be_restored(tmp_path: Path) -> None:
+    source = dedent(
+        """
+        def wrapper_a():
+            return helper_a()
+
+        def wrapper_b():
+            return helper_b()
+
+        def helper_a():
+            return 1
+
+        def helper_b():
+            return 1
+        """
+    ).strip()
+    project = create_project(tmp_path, source, module="tiny_exact.py")
+
+    analyzer = CodeAnalyzer(
+        AnalyzerConfig(
+            run_traditional=True,
+            run_semantic=False,
+            run_unused=False,
+            jaccard_threshold=0.99,
+            filter_tiny_traditional=False,
+        )
+    )
+    result = analyzer.analyze(project)
+
+    assert any(
+        duplicate.method in {"ast_hash", "token_hash"}
+        for duplicate in result.traditional_duplicates
+    )
+
+
+@pytest.mark.parametrize(
+    ("similarity", "expected_count"),
+    [
+        (0.90, 0),
+        (0.95, 1),
+    ],
+)
+def test_tiny_near_duplicates_use_high_jaccard_floor(
+    tmp_path: Path, monkeypatch, similarity: float, expected_count: int
+) -> None:
+    source = dedent(
+        """
+        def first():
+            return alpha()
+
+        def second():
+            return beta()
+        """
+    ).strip()
+    project = create_project(tmp_path, source, module="tiny_near.py")
+
+    def fake_traditional(
+        units,
+        jaccard_threshold=0.85,
+        compute_unused=True,
+        strict_unused=False,
+        project_root=None,
+    ):
+        return (
+            [],
+            [
+                DuplicatePair(
+                    unit_a=units[0], unit_b=units[1], similarity=similarity, method="jaccard"
+                )
+            ],
+            [],
+        )
+
+    monkeypatch.setattr(analyzer_module, "run_traditional_analysis", fake_traditional)
+
+    analyzer = CodeAnalyzer(
+        AnalyzerConfig(
+            run_traditional=True,
+            run_semantic=False,
+            run_unused=False,
+            tiny_near_jaccard_min=0.93,
+        )
+    )
+    result = analyzer.analyze(project)
+
+    assert len(result.traditional_duplicates) == expected_count
 
 
 def test_analyzer_resolves_profile_default_semantic_threshold(tmp_path: Path, monkeypatch) -> None:
@@ -443,6 +639,7 @@ def test_combined_mode_falls_back_on_runtime_semantic_error(tmp_path: Path, monk
             run_semantic=True,
             run_unused=False,
             min_semantic_lines=0,
+            filter_tiny_traditional=False,
         )
     )
 
@@ -692,6 +889,7 @@ def test_mixed_mode_semantic_failure_still_builds_hybrid_from_traditional(
             run_semantic=True,
             run_unused=False,
             min_semantic_lines=0,
+            filter_tiny_traditional=False,
         )
     )
     result = analyzer.analyze(project)
@@ -749,6 +947,7 @@ def test_single_method_modes_bypass_hybrid_synthesis(tmp_path: Path, monkeypatch
             run_semantic=False,
             run_unused=False,
             min_semantic_lines=0,
+            filter_tiny_traditional=False,
         )
     ).analyze(project)
     assert len(traditional_result.traditional_duplicates) == 1
@@ -785,6 +984,18 @@ def test_invalid_threshold_raises() -> None:
 
     with pytest.raises(ValueError, match="semantic_threshold"):
         AnalyzerConfig(semantic_threshold=-0.1)
+
+    with pytest.raises(ValueError, match="semantic_unit_types"):
+        AnalyzerConfig(semantic_unit_types=())
+
+    with pytest.raises(ValueError, match="Invalid semantic_unit_types"):
+        AnalyzerConfig(semantic_unit_types=("invalid",))
+
+    with pytest.raises(ValueError, match="tiny_unit_statement_cutoff"):
+        AnalyzerConfig(tiny_unit_statement_cutoff=-1)
+
+    with pytest.raises(ValueError, match="tiny_near_jaccard_min"):
+        AnalyzerConfig(tiny_near_jaccard_min=1.1)
 
 
 def test_empty_directory_analysis(tmp_path: Path) -> None:
