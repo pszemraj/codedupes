@@ -61,6 +61,16 @@ codedupes search ./src "parse json payload" --top-k 10
 
 For the complete command/option reference, see `docs/cli.md`.
 
+## Override Semantic Instruction Prefix
+
+By default, C2LLM task-specific prefixes are applied automatically. Override them
+for experiments or custom retrieval behavior:
+
+```bash
+codedupes check ./src --instruction-prefix "Represent this code for duplicate detection: "
+codedupes search ./src "parse json payload" --instruction-prefix "Represent this query for code lookup: "
+```
+
 ## Fresh Colab/GPU Preflight
 
 Use one command to print runtime versions and CUDA availability:

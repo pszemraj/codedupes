@@ -148,6 +148,7 @@ def test_unused_semantic_pairs_are_filtered(tmp_path: Path, monkeypatch) -> None
     def fake_run_semantic(
         units,
         model_name="codefuse-ai/C2LLM-0.5B",
+        instruction_prefix=None,
         threshold=0.82,
         exclude_pairs=None,
         batch_size=32,

@@ -47,6 +47,7 @@ analysis is enabled. You can override both revision and trust behavior from the 
 ```bash
 codedupes check ./src --model-revision <commit_or_tag>
 codedupes check ./src --no-trust-remote-code
+codedupes check ./src --instruction-prefix "Represent this code for duplicate detection: "
 ```
 
 ## Troubleshooting Semantic Backend Issues

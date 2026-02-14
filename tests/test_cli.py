@@ -101,7 +101,7 @@ def test_cli_no_private_option_check(monkeypatch, tmp_path):
     assert captured[0].include_private is False
 
 
-def test_cli_model_revision_and_trust_flags_pass_through(monkeypatch, tmp_path):
+def test_cli_model_semantic_flags_pass_through(monkeypatch, tmp_path):
     path = tmp_path / "sample.py"
     path.write_text("def entry():\n    return 1\n")
 
@@ -124,6 +124,8 @@ def test_cli_model_revision_and_trust_flags_pass_through(monkeypatch, tmp_path):
         [
             "check",
             str(path),
+            "--instruction-prefix",
+            "Represent this code: ",
             "--model-revision",
             "test-rev",
             "--no-trust-remote-code",
@@ -131,6 +133,7 @@ def test_cli_model_revision_and_trust_flags_pass_through(monkeypatch, tmp_path):
     )
 
     assert result.exit_code == 1
+    assert captured[0].instruction_prefix == "Represent this code: "
     assert captured[0].model_revision == "test-rev"
     assert captured[0].trust_remote_code is False
 

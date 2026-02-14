@@ -424,10 +424,22 @@ def _get_instruction(model_name: str, mode: Literal["code", "query", "describe"]
     return _GENERIC_INSTRUCTIONS.get(mode, "")
 
 
+def _resolve_instruction_prefix(
+    model_name: str,
+    mode: Literal["code", "query", "describe"],
+    instruction_prefix: str | None,
+) -> str:
+    """Resolve instruction prefix override for embedding inputs."""
+    if instruction_prefix is not None:
+        return instruction_prefix
+    return _get_instruction(model_name, mode)
+
+
 def prepare_code_for_embedding(
     unit: CodeUnit,
     model_name: str = DEFAULT_MODEL,
     mode: Literal["code", "query"] = "code",
+    instruction_prefix: str | None = None,
 ) -> str:
     """Prepare code unit for embedding.
 
@@ -439,13 +451,14 @@ def prepare_code_for_embedding(
     For search (text2code), queries get the "query" instruction.
     """
     source = unit.source.strip()
-    instruction = _get_instruction(model_name, mode)
+    instruction = _resolve_instruction_prefix(model_name, mode, instruction_prefix)
     return f"{instruction}{source}"
 
 
 def compute_embeddings(
     units: list[CodeUnit],
     model_name: str = DEFAULT_MODEL,
+    instruction_prefix: str | None = None,
     batch_size: int = DEFAULT_BATCH_SIZE,
     revision: str | None = None,
     trust_remote_code: bool | None = None,
@@ -465,7 +478,11 @@ def compute_embeddings(
 
     texts = []
     for unit in units:
-        prepared = prepare_code_for_embedding(unit, model_name=model_name)
+        prepared = prepare_code_for_embedding(
+            unit,
+            model_name=model_name,
+            instruction_prefix=instruction_prefix,
+        )
         texts.append(_truncate_code_if_needed(prepared, unit.qualified_name, model))
 
     logger.info(f"Computing embeddings for {len(texts)} code units")
@@ -592,6 +609,7 @@ def find_similar_to_query(
     units: list[CodeUnit],
     embeddings: np.ndarray,
     model_name: str = DEFAULT_MODEL,
+    instruction_prefix: str | None = None,
     top_k: int = DEFAULT_TOP_K,
     revision: str | None = None,
     trust_remote_code: bool | None = None,
@@ -609,7 +627,7 @@ def find_similar_to_query(
     )
 
     # Embed query with task-specific instruction
-    instruction = _get_instruction(model_name, "query")
+    instruction = _resolve_instruction_prefix(model_name, "query", instruction_prefix)
     query_text = f"{instruction}{query}"
 
     try:
@@ -641,6 +659,7 @@ def find_similar_to_query(
 def run_semantic_analysis(
     units: list[CodeUnit],
     model_name: str = DEFAULT_MODEL,
+    instruction_prefix: str | None = None,
     threshold: float = DEFAULT_SEMANTIC_THRESHOLD,
     exclude_pairs: set[tuple[str, str]] | None = None,
     batch_size: int = DEFAULT_BATCH_SIZE,
@@ -658,6 +677,7 @@ def run_semantic_analysis(
     embeddings = compute_embeddings(
         units,
         model_name=model_name,
+        instruction_prefix=instruction_prefix,
         batch_size=batch_size,
         revision=revision,
         trust_remote_code=trust_remote_code,

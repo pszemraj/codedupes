@@ -47,6 +47,7 @@ class AnalyzerConfig:
     # Semantic detection
     semantic_threshold: float = DEFAULT_SEMANTIC_THRESHOLD
     model_name: str = DEFAULT_MODEL
+    instruction_prefix: str | None = None
     model_revision: str | None = DEFAULT_C2LLM_REVISION
     trust_remote_code: bool | None = None
     batch_size: int = DEFAULT_BATCH_SIZE
@@ -176,6 +177,7 @@ class CodeAnalyzer:
                 self._embeddings, semantic_dupes = run_semantic_analysis(
                     semantic_candidates,
                     model_name=self.config.model_name,
+                    instruction_prefix=self.config.instruction_prefix,
                     threshold=self.config.semantic_threshold,
                     exclude_pairs=exclude,
                     batch_size=self.config.batch_size,
@@ -245,6 +247,7 @@ class CodeAnalyzer:
             self._semantic_units,
             self._embeddings,
             model_name=self.config.model_name,
+            instruction_prefix=self.config.instruction_prefix,
             top_k=top_k,
             revision=self.config.model_revision,
             trust_remote_code=self.config.trust_remote_code,
@@ -257,6 +260,7 @@ def analyze_directory(
     traditional_threshold: float = DEFAULT_TRADITIONAL_THRESHOLD,
     exclude_patterns: list[str] | None = None,
     model_name: str = DEFAULT_MODEL,
+    instruction_prefix: str | None = None,
     model_revision: str | None = DEFAULT_C2LLM_REVISION,
     trust_remote_code: bool | None = None,
     min_semantic_lines: int = DEFAULT_MIN_SEMANTIC_LINES,
@@ -273,6 +277,7 @@ def analyze_directory(
         traditional_threshold: Jaccard threshold for traditional near-duplicates
         exclude_patterns: Glob patterns for files to exclude
         model_name: HuggingFace model for embeddings
+        instruction_prefix: Custom instruction prefix prepended to semantic inputs
         model_revision: HuggingFace model revision/commit hash
         trust_remote_code: Whether remote model code may execute while loading
         run_unused: Run potentially-unused detection even when traditional analysis is off
@@ -285,6 +290,7 @@ def analyze_directory(
         jaccard_threshold=traditional_threshold,
         exclude_patterns=exclude_patterns,
         model_name=model_name,
+        instruction_prefix=instruction_prefix,
         model_revision=model_revision,
         trust_remote_code=trust_remote_code,
         min_semantic_lines=min_semantic_lines,

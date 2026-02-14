@@ -89,6 +89,41 @@ def test_prepare_code_for_embedding_prefixes_query(tmp_path: Path) -> None:
     assert prepared.endswith(units[0].source.strip())
 
 
+def test_prepare_code_for_embedding_uses_custom_prefix(tmp_path: Path) -> None:
+    units = _extract_units(tmp_path)
+    prepared = semantic.prepare_code_for_embedding(
+        units[0],
+        mode="code",
+        instruction_prefix="Represent this code as vector: ",
+    )
+    assert prepared.startswith("Represent this code as vector: ")
+    assert prepared.endswith(units[0].source.strip())
+
+
+def test_query_search_uses_custom_instruction_prefix(tmp_path: Path, monkeypatch) -> None:
+    units = _extract_units(tmp_path)
+    embeddings = np.array([[1.0, 0.0], [0.0, 1.0]], dtype=np.float32)
+    captured: dict[str, list[str]] = {}
+
+    class QueryModel:
+        def encode(self, texts, **kwargs):
+            captured["texts"] = list(texts)
+            return np.array([[1.0, 0.0]], dtype=np.float32)
+
+    monkeypatch.setattr(semantic, "get_model", lambda *args, **kwargs: QueryModel())
+
+    results = find_similar_to_query(
+        query="find addition",
+        units=units,
+        embeddings=embeddings,
+        instruction_prefix="CUSTOM_QUERY_PREFIX: ",
+        top_k=1,
+    )
+
+    assert len(results) == 1
+    assert captured["texts"][0].startswith("CUSTOM_QUERY_PREFIX: ")
+
+
 def test_get_model_reports_deepspeed_guidance(monkeypatch) -> None:
     def fake_ctor(*args, **kwargs):
         e = ModuleNotFoundError("No module named 'deepspeed'")
