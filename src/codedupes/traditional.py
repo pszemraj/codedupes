@@ -15,19 +15,6 @@ from codedupes.models import CodeUnit, CodeUnitType, DuplicatePair
 logger = logging.getLogger(__name__)
 
 
-def find_exact_ast_duplicates(units: list[CodeUnit]) -> list[DuplicatePair]:
-    """Find exact structural duplicates via normalized AST hash."""
-    return _find_exact_duplicates(units, "_ast_hash", "ast_hash")
-
-
-def find_exact_token_duplicates(units: list[CodeUnit]) -> list[DuplicatePair]:
-    """Find duplicates via token hash.
-
-    Catches reformatted code with identical token sequence.
-    """
-    return _find_exact_duplicates(units, "_token_hash", "token_hash")
-
-
 def _find_exact_duplicates(
     units: list[CodeUnit], hash_attr: str, method: str
 ) -> list[DuplicatePair]:
@@ -350,8 +337,8 @@ def run_traditional_analysis(
     if compute_unused:
         build_reference_graph(units, project_root=project_root)
 
-    ast_dupes = find_exact_ast_duplicates(units)
-    token_dupes = find_exact_token_duplicates(units)
+    ast_dupes = _find_exact_duplicates(units, "_ast_hash", "ast_hash")
+    token_dupes = _find_exact_duplicates(units, "_token_hash", "token_hash")
     exact = _dedupe_duplicate_pairs(ast_dupes + token_dupes)
     logger.info(f"Found {len(exact)} exact duplicates")
 

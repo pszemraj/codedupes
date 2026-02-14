@@ -16,14 +16,19 @@ from rich.syntax import Syntax
 from rich.table import Table
 
 from codedupes import __version__
-from codedupes.analyzer import DEFAULT_MODEL, AnalyzerConfig, CodeAnalyzer
+from codedupes.analyzer import AnalyzerConfig, CodeAnalyzer
+from codedupes.constants import (
+    DEFAULT_BATCH_SIZE,
+    DEFAULT_MIN_SEMANTIC_LINES,
+    DEFAULT_MODEL,
+    DEFAULT_SEMANTIC_THRESHOLD,
+    DEFAULT_TOP_K,
+    DEFAULT_TRADITIONAL_THRESHOLD,
+)
 from codedupes.models import AnalysisResult, CodeUnit, DuplicatePair
 
-DEFAULT_THRESHOLD = 0.82
-DEFAULT_TRADITIONAL_THRESHOLD = 0.85
-DEFAULT_MIN_LINES = 3
-DEFAULT_BATCH_SIZE = 32
-DEFAULT_TOP_K = 10
+DEFAULT_THRESHOLD = DEFAULT_SEMANTIC_THRESHOLD
+DEFAULT_MIN_LINES = DEFAULT_MIN_SEMANTIC_LINES
 DEFAULT_OUTPUT_WIDTH = 160
 MIN_OUTPUT_WIDTH = 80
 

@@ -8,6 +8,13 @@ from pathlib import Path
 
 import numpy as np
 
+from codedupes.constants import (
+    DEFAULT_BATCH_SIZE,
+    DEFAULT_MIN_SEMANTIC_LINES,
+    DEFAULT_MODEL,
+    DEFAULT_SEMANTIC_THRESHOLD,
+    DEFAULT_TRADITIONAL_THRESHOLD,
+)
 from codedupes.extractor import CodeExtractor
 from codedupes.models import AnalysisResult, CodeUnit, DuplicatePair
 from codedupes.semantic import get_code_unit_statement_count, run_semantic_analysis
@@ -19,8 +26,6 @@ from codedupes.traditional import (
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MODEL = "codefuse-ai/C2LLM-0.5B"
-
 
 @dataclass
 class AnalyzerConfig:
@@ -31,13 +36,13 @@ class AnalyzerConfig:
     include_private: bool = True
 
     # Traditional detection
-    jaccard_threshold: float = 0.85
+    jaccard_threshold: float = DEFAULT_TRADITIONAL_THRESHOLD
 
     # Semantic detection
-    semantic_threshold: float = 0.82
+    semantic_threshold: float = DEFAULT_SEMANTIC_THRESHOLD
     model_name: str = DEFAULT_MODEL
-    batch_size: int = 32
-    min_semantic_lines: int = 3
+    batch_size: int = DEFAULT_BATCH_SIZE
+    min_semantic_lines: int = DEFAULT_MIN_SEMANTIC_LINES
     include_stubs: bool = False
 
     # What to run
@@ -223,11 +228,11 @@ class CodeAnalyzer:
 
 def analyze_directory(
     path: Path | str,
-    semantic_threshold: float = 0.82,
-    traditional_threshold: float = 0.85,
+    semantic_threshold: float = DEFAULT_SEMANTIC_THRESHOLD,
+    traditional_threshold: float = DEFAULT_TRADITIONAL_THRESHOLD,
     exclude_patterns: list[str] | None = None,
     model_name: str = DEFAULT_MODEL,
-    min_semantic_lines: int = 3,
+    min_semantic_lines: int = DEFAULT_MIN_SEMANTIC_LINES,
     include_stubs: bool = False,
     run_unused: bool = True,
     strict_unused: bool = False,

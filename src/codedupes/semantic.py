@@ -12,13 +12,19 @@ Model: codefuse-ai/C2LLM-0.5B
 
 from __future__ import annotations
 
+import ast
 import importlib
 import logging
-import ast
 from typing import Literal
 
 import numpy as np
 
+from codedupes.constants import (
+    DEFAULT_BATCH_SIZE,
+    DEFAULT_MODEL,
+    DEFAULT_SEMANTIC_THRESHOLD,
+    DEFAULT_TOP_K,
+)
 from codedupes.models import CodeUnit, DuplicatePair
 
 logger = logging.getLogger(__name__)
@@ -114,7 +120,7 @@ def _is_c2llm(model_name: str) -> bool:
     return model_name in _C2LLM_MODELS or "C2LLM" in model_name
 
 
-def get_model(model_name: str = "codefuse-ai/C2LLM-0.5B"):
+def get_model(model_name: str = DEFAULT_MODEL):
     """Lazy-load the embedding model.
 
     For C2LLM models, applies required loading args:
@@ -229,7 +235,7 @@ def _get_instruction(model_name: str, mode: Literal["code", "query", "describe"]
 
 def prepare_code_for_embedding(
     unit: CodeUnit,
-    model_name: str = "codefuse-ai/C2LLM-0.5B",
+    model_name: str = DEFAULT_MODEL,
     mode: Literal["code", "query"] = "code",
 ) -> str:
     """Prepare code unit for embedding.
@@ -248,8 +254,8 @@ def prepare_code_for_embedding(
 
 def compute_embeddings(
     units: list[CodeUnit],
-    model_name: str = "codefuse-ai/C2LLM-0.5B",
-    batch_size: int = 32,
+    model_name: str = DEFAULT_MODEL,
+    batch_size: int = DEFAULT_BATCH_SIZE,
 ) -> np.ndarray:
     """Compute embeddings for all code units.
 
@@ -293,7 +299,7 @@ def compute_embeddings(
 def find_semantic_duplicates(
     units: list[CodeUnit],
     embeddings: np.ndarray,
-    threshold: float = 0.82,
+    threshold: float = DEFAULT_SEMANTIC_THRESHOLD,
     exclude_exact: set[tuple[str, str]] | None = None,
 ) -> list[DuplicatePair]:
     """Find semantically similar code units via embedding cosine similarity.
@@ -368,8 +374,8 @@ def find_similar_to_query(
     query: str,
     units: list[CodeUnit],
     embeddings: np.ndarray,
-    model_name: str = "codefuse-ai/C2LLM-0.5B",
-    top_k: int = 10,
+    model_name: str = DEFAULT_MODEL,
+    top_k: int = DEFAULT_TOP_K,
 ) -> list[tuple[CodeUnit, float]]:
     """Find code units most similar to a natural language query.
 
@@ -398,10 +404,10 @@ def find_similar_to_query(
 
 def run_semantic_analysis(
     units: list[CodeUnit],
-    model_name: str = "codefuse-ai/C2LLM-0.5B",
-    threshold: float = 0.82,
+    model_name: str = DEFAULT_MODEL,
+    threshold: float = DEFAULT_SEMANTIC_THRESHOLD,
     exclude_pairs: set[tuple[str, str]] | None = None,
-    batch_size: int = 32,
+    batch_size: int = DEFAULT_BATCH_SIZE,
 ) -> tuple[np.ndarray, list[DuplicatePair]]:
     """Run full semantic duplicate detection.
 

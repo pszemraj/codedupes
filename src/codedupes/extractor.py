@@ -163,7 +163,7 @@ class _CodeUnitCollector(ast.NodeVisitor):
         is_method = bool(self.class_stack) and not self.function_stack
         scope_prefix = self.class_stack + self.function_stack
 
-        if self.extractor._should_emit_function(node.name, is_method=is_method):
+        if self.extractor._should_emit_function(node.name):
             self.units.extend(
                 self.extractor._emit_function(
                     node,
@@ -326,9 +326,8 @@ class CodeExtractor:
         for unit in visitor.units:
             yield unit
 
-    def _should_emit_function(self, name: str, is_method: bool) -> bool:
+    def _should_emit_function(self, name: str) -> bool:
         """Respect private-function filtering."""
-        _ = is_method
         if self._is_private_name(name):
             return self.include_private
         return True
