@@ -254,6 +254,32 @@ def test_get_model_passes_revision_and_trust_kwargs(monkeypatch) -> None:
     assert kwargs["config_kwargs"]["revision"] == DEFAULT_C2LLM_REVISION
 
 
+def test_get_model_keeps_explicit_revision_for_non_default_model(monkeypatch) -> None:
+    calls: list[dict] = []
+
+    class FakeSentenceTransformer:
+        def __init__(self, *args, **kwargs):
+            calls.append({"args": args, "kwargs": kwargs})
+
+    monkeypatch.setattr(semantic, "_check_semantic_dependencies", lambda model_name: None)
+    monkeypatch.setattr(sentence_transformers, "SentenceTransformer", FakeSentenceTransformer)
+    semantic.clear_model_cache()
+
+    semantic.get_model(
+        "sentence-transformers/all-MiniLM-L6-v2",
+        revision=DEFAULT_C2LLM_REVISION,
+        trust_remote_code=False,
+    )
+
+    assert len(calls) == 1
+    kwargs = calls[0]["kwargs"]
+    assert kwargs["trust_remote_code"] is False
+    assert kwargs["revision"] == DEFAULT_C2LLM_REVISION
+    assert kwargs["model_kwargs"]["revision"] == DEFAULT_C2LLM_REVISION
+    assert kwargs["tokenizer_kwargs"]["revision"] == DEFAULT_C2LLM_REVISION
+    assert kwargs["config_kwargs"]["revision"] == DEFAULT_C2LLM_REVISION
+
+
 def test_get_model_rejects_incompatible_default_model_versions(monkeypatch) -> None:
     def fake_safe_package_version(package_name: str) -> str | None:
         fake_versions = {

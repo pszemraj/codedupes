@@ -86,8 +86,6 @@ def _configure_semantic_runtime_env() -> None:
 def _resolve_model_revision(model_name: str, revision: str | None) -> str | None:
     """Resolve the model revision default."""
     if revision is not None:
-        if model_name != DEFAULT_MODEL and revision == DEFAULT_C2LLM_REVISION:
-            return None
         return revision
     if model_name == DEFAULT_MODEL:
         return DEFAULT_C2LLM_REVISION
