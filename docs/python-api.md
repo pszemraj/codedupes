@@ -1,7 +1,9 @@
 # Python API
 
 This page covers programmatic usage.
-CLI flag defaults are documented in `docs/cli.md`; CLI JSON schemas/exit codes are documented in `docs/output.md`.
+CLI flag defaults are documented in
+[docs/cli.md](https://github.com/pszemraj/codedupes/blob/main/docs/cli.md); CLI JSON schemas/exit codes are
+documented in [docs/output.md](https://github.com/pszemraj/codedupes/blob/main/docs/output.md).
 
 ## Quick Start
 

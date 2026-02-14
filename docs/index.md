@@ -9,16 +9,21 @@
 
 ## Documentation ownership (source-of-truth model)
 
-- `docs/cli.md`: source of truth for CLI commands, flags, and defaults.
-- `docs/output.md`: source of truth for JSON payload shapes and exit codes.
-- `docs/usage.md`: workflows and tuning recipes. Links to CLI/output docs for definitive flag/schema semantics.
-- `docs/python-api.md`: programmatic API usage and result objects.
-- `docs/hybrid-tuning.md`: best-practice workflow for hybrid gate sweep and threshold updates.
+- [docs/install.md](https://github.com/pszemraj/codedupes/blob/main/docs/install.md): installation and runtime defaults.
+- [docs/cli.md](https://github.com/pszemraj/codedupes/blob/main/docs/cli.md): source of truth for CLI commands, flags, and defaults.
+- [docs/output.md](https://github.com/pszemraj/codedupes/blob/main/docs/output.md): source of truth for JSON payload shapes and exit codes.
+- [docs/usage.md](https://github.com/pszemraj/codedupes/blob/main/docs/usage.md): workflows and tuning recipes. Links to CLI/output docs for definitive flag/schema semantics.
+- [docs/python-api.md](https://github.com/pszemraj/codedupes/blob/main/docs/python-api.md): programmatic API usage and result objects.
+- [docs/hybrid-tuning.md](https://github.com/pszemraj/codedupes/blob/main/docs/hybrid-tuning.md): best-practice workflow for hybrid gate sweep and threshold updates.
 
 ## Quick Start
 
+Install the CLI:
+[docs/install.md](https://github.com/pszemraj/codedupes/blob/main/docs/install.md)
+
+Then run:
+
 ```bash
-pip install codedupes
 codedupes check ./src
 ```
 
@@ -28,4 +33,5 @@ For machine-readable output, use JSON:
 codedupes check ./src --json
 ```
 
-For full command/option details, see `docs/cli.md`.
+For full command/option details, see
+[docs/cli.md](https://github.com/pszemraj/codedupes/blob/main/docs/cli.md).

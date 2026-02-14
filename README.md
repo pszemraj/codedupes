@@ -8,26 +8,8 @@
 
 ## Install
 
-```bash
-pip install "codedupes @ git+https://github.com/pszemraj/codedupes.git"
-```
-
-Optional GPU extras:
-
-```bash
-pip install "codedupes[gpu] @ git+https://github.com/pszemraj/codedupes.git"
-```
-
-Requires Python 3.11+.
-
-For local development from this repo (without `PYTHONPATH=src` hacks):
-
-```bash
-git clone https://github.com/pszemraj/codedupes.git
-cd codedupes
-pip install -e ".[dev]"
-codedupes info
-```
+Source-of-truth install and runtime defaults:
+[docs/install.md](https://github.com/pszemraj/codedupes/blob/main/docs/install.md).
 
 ## Quick Start
 
@@ -46,52 +28,19 @@ Use `--show-all` to include raw traditional + raw semantic duplicate lists.
 
 ## Default semantic model behavior
 
-- Model: `codefuse-ai/C2LLM-0.5B`
-- Auto revision selection: pinned to `bd6d0ddb29f0c9a3d0f14281aedc9f940bb8d67a` for the default model
-- Default trust mode for this model: `trust_remote_code=True`
-- Runtime dtype policy: prefer `bfloat16` (CUDA when supported, and CPU)
-- Default semantic batch size: `8` with CUDA OOM backoff
-
-Override trust/revision when needed:
-
-```bash
-codedupes check ./src --model-revision <commit_or_tag>
-codedupes check ./src --no-trust-remote-code
-```
-
-If semantic loading/inference fails:
-
-- default `check` degrades to traditional + unused analysis with a warning
-- `search` and `check --semantic-only` fail hard
-
-Recommended semantic dependency bounds:
-
-```bash
-pip install "transformers>=4.51,<5" "sentence-transformers>=5,<6"
-```
-
-Baseline without semantic backend:
-
-```bash
-codedupes check ./src --traditional-only
-```
-
-Debug raw evidence:
-
-```bash
-codedupes check ./src --show-all
-```
+See [docs/install.md](https://github.com/pszemraj/codedupes/blob/main/docs/install.md).
 
 ## Documentation
 
 Primary docs live under `docs/`:
 
-- `docs/index.md`: documentation map and ownership
-- `docs/cli.md`: source of truth for commands, flags, and defaults
-- `docs/output.md`: source of truth for JSON schemas and exit codes
-- `docs/usage.md`: practical workflows and tuning examples
-- `docs/python-api.md`: programmatic API usage
-- `docs/hybrid-tuning.md`: best-practice hybrid gate tuning workflow (tracked corpus + reproducible sweep)
+- [docs/index.md](https://github.com/pszemraj/codedupes/blob/main/docs/index.md): documentation map and ownership
+- [docs/install.md](https://github.com/pszemraj/codedupes/blob/main/docs/install.md): install and runtime defaults (source of truth)
+- [docs/cli.md](https://github.com/pszemraj/codedupes/blob/main/docs/cli.md): commands, flags, and defaults (source of truth)
+- [docs/output.md](https://github.com/pszemraj/codedupes/blob/main/docs/output.md): JSON schemas and exit codes (source of truth)
+- [docs/usage.md](https://github.com/pszemraj/codedupes/blob/main/docs/usage.md): practical workflows and tuning examples
+- [docs/python-api.md](https://github.com/pszemraj/codedupes/blob/main/docs/python-api.md): programmatic API usage
+- [docs/hybrid-tuning.md](https://github.com/pszemraj/codedupes/blob/main/docs/hybrid-tuning.md): hybrid gate tuning workflow
 
 ## Notes and limits
 

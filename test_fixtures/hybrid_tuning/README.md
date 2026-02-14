@@ -1,7 +1,8 @@
 # Hybrid gate tuning fixtures
 
 This directory contains a tracked synthetic corpus used to tune and regression-check
-hybrid semantic-only gate thresholds.
+hybrid semantic-only gate thresholds. The source-of-truth workflow is documented in
+[docs/hybrid-tuning.md](https://github.com/pszemraj/codedupes/blob/main/docs/hybrid-tuning.md).
 
 ## Scope
 

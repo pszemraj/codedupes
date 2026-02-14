@@ -1,7 +1,8 @@
 # CLI Reference
 
 This document is the source of truth for CLI commands, flags, and option defaults.
-For JSON schemas and exit-code semantics, see `docs/output.md` (the source of truth for output behavior).
+For JSON schemas and exit-code semantics, see
+[docs/output.md](https://github.com/pszemraj/codedupes/blob/main/docs/output.md) (the source of truth for output behavior).
 
 ## Commands
 
@@ -94,4 +95,5 @@ Print version and default settings.
 - Default `check` behavior degrades to non-semantic analysis if semantic backend fails
 - `--semantic-only` and `--traditional-only` bypass hybrid synthesis and show raw method outputs
 
-For JSON payloads and complete exit-code semantics, see `docs/output.md`.
+For JSON payloads and complete exit-code semantics, see
+[docs/output.md](https://github.com/pszemraj/codedupes/blob/main/docs/output.md).

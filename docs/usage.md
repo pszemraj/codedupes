@@ -1,26 +1,16 @@
 # Usage Guide
 
 This guide focuses on practical workflows.
-Flag defaults and validation rules are defined in `docs/cli.md`.
-JSON schema and exit codes are defined in `docs/output.md`.
+Install and runtime defaults are defined in
+[docs/install.md](https://github.com/pszemraj/codedupes/blob/main/docs/install.md).
+Flag defaults and validation rules are defined in
+[docs/cli.md](https://github.com/pszemraj/codedupes/blob/main/docs/cli.md).
+JSON schema and exit codes are defined in
+[docs/output.md](https://github.com/pszemraj/codedupes/blob/main/docs/output.md).
 
 ## Install
 
-```bash
-pip install codedupes
-```
-
-Optional GPU extras:
-
-```bash
-pip install codedupes[gpu]
-```
-
-Recommended semantic dependency bounds:
-
-```bash
-pip install "transformers>=4.51,<5" "sentence-transformers>=5,<6"
-```
+See [docs/install.md](https://github.com/pszemraj/codedupes/blob/main/docs/install.md).
 
 ## Core Workflow
 
@@ -59,7 +49,8 @@ codedupes check ./src/module.py
 codedupes check ./src --json
 ```
 
-See `docs/output.md` for authoritative JSON structure and exit-code semantics.
+See [docs/output.md](https://github.com/pszemraj/codedupes/blob/main/docs/output.md) for authoritative JSON
+structure and exit-code semantics.
 
 ## Control Rich Output Width
 
@@ -75,7 +66,8 @@ codedupes check ./src --output-width 200
 codedupes search ./src "parse json payload" --top-k 10
 ```
 
-For full command/option semantics, see `docs/cli.md`.
+For full command/option semantics, see
+[docs/cli.md](https://github.com/pszemraj/codedupes/blob/main/docs/cli.md).
 
 ## Override Semantic Instruction Prefix
 
@@ -119,11 +111,8 @@ Pinned default semantic model revision:
 codedupes info
 ```
 
-Semantic runtime defaults:
-
-- Uses `bfloat16` on CUDA (when supported) and on CPU (no `fp16` fallback).
-- Default semantic `--batch-size` is `8`.
-- On CUDA OOM, semantic embedding retries with progressively smaller GPU batches before CPU fallback.
+Semantic runtime defaults are documented in
+[docs/install.md](https://github.com/pszemraj/codedupes/blob/main/docs/install.md).
 
 ## Threshold Tuning
 
