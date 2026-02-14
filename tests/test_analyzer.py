@@ -129,6 +129,80 @@ def test_integration_on_mixed_project(tmp_path: Path) -> None:
     assert "_private_entry" not in names
 
 
+def test_combined_mode_preserves_near_dupes_for_semantic_confirmation(
+    tmp_path: Path, monkeypatch
+) -> None:
+    source = dedent(
+        """
+        def exact_a():
+            return 1
+
+        def exact_b():
+            return 1
+
+        def near_c():
+            return 2
+        """
+    ).strip()
+    project = create_project(tmp_path, source)
+
+    captured_exclude_pairs: set[tuple[str, str]] = set()
+    expected_exact_pair: tuple[str, str] = ("", "")
+
+    def fake_traditional(
+        units,
+        jaccard_threshold=0.85,
+        compute_unused=True,
+        strict_unused=False,
+        project_root=None,
+    ):
+        first, second, third = units
+        nonlocal expected_exact_pair
+        expected_exact_pair = tuple(sorted((first.uid, second.uid)))
+        return (
+            [DuplicatePair(unit_a=first, unit_b=second, similarity=1.0, method="ast_hash")],
+            [DuplicatePair(unit_a=second, unit_b=third, similarity=0.9, method="jaccard")],
+            [],
+        )
+
+    def fake_run_semantic(
+        units,
+        model_name="codefuse-ai/C2LLM-0.5B",
+        instruction_prefix=None,
+        threshold=0.82,
+        exclude_pairs=None,
+        batch_size=32,
+        revision=None,
+        trust_remote_code=None,
+    ):
+        captured_exclude_pairs.update(exclude_pairs or set())
+        _, b, c = units
+        return np.zeros((len(units), 2), dtype=np.float32), [
+            DuplicatePair(unit_a=b, unit_b=c, similarity=0.95, method="semantic")
+        ]
+
+    monkeypatch.setattr(analyzer_module, "run_traditional_analysis", fake_traditional)
+    monkeypatch.setattr(analyzer_module, "run_semantic_analysis", fake_run_semantic)
+
+    analyzer = CodeAnalyzer(
+        AnalyzerConfig(
+            run_traditional=True,
+            run_semantic=True,
+            run_unused=False,
+            min_semantic_lines=0,
+            jaccard_threshold=0.85,
+            semantic_threshold=0.82,
+        )
+    )
+    result = analyzer.analyze(project)
+
+    assert set(captured_exclude_pairs) == {expected_exact_pair}
+    assert len(result.traditional_duplicates) == 2
+    assert len(result.semantic_duplicates) == 1
+    assert len(result.hybrid_duplicates) == 1
+    assert result.hybrid_duplicates[0].tier == "hybrid_confirmed"
+
+
 def test_short_functions_are_skipped_from_semantic(tmp_path: Path) -> None:
     source = dedent(
         """

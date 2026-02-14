@@ -324,7 +324,10 @@ class CodeAnalyzer:
             exclude: set[tuple[str, str]] = {
                 _pair_key(duplicate.unit_a, duplicate.unit_b)
                 for duplicate in traditional_duplicates
+                if duplicate.method in {"ast_hash", "token_hash"}
             }
+            # Keep near-duplicate pairs out of exclusion so semantic scoring can confirm
+            # traditional evidence and enable hybrid_confirmed scoring.
             exclude.update(_build_exact_hash_exclusions(semantic_candidates))
 
             try:
