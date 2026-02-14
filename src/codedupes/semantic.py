@@ -31,7 +31,7 @@ _model_name = None
 # prefixes consistently improve retrieval quality per the C2LLM paper (Table 1).
 C2LLM_INSTRUCTIONS: dict[str, str] = {
     # Code2Code: for pairwise code similarity / dedup
-    "code": "Represent this code snippet for retrieval: ",
+    "code": "Represent this code for finding similar code: ",
     # Text2Code: natural-language query -> code search
     "query": "Represent this query for searching relevant code: ",
     # Code2Text: code -> natural-language description search
@@ -89,6 +89,55 @@ def clear_model_cache() -> None:
     _model_name = None
 
 
+def _is_cuda_oom_error(error: RuntimeError) -> bool:
+    """Return True when an exception is likely a CUDA out-of-memory condition."""
+    msg = str(error).lower()
+    return "out of memory" in msg or "cuda out of memory" in msg
+
+
+def _truncate_code_if_needed(text: str, unit_name: str, model) -> str:
+    """Truncate code input to the model max token length with best-effort safety."""
+    max_tokens = getattr(model, "max_seq_length", None)
+    tokenizer = getattr(model, "tokenizer", None)
+
+    if not max_tokens or not tokenizer:
+        return text
+
+    try:
+        token_ids = tokenizer.encode(text, add_special_tokens=False)
+    except Exception:
+        logger.debug(
+            "Tokenization failed while preparing '%s'; using full text", unit_name, exc_info=True
+        )
+        return text
+
+    token_count = len(token_ids)
+    if token_count <= max_tokens:
+        return text
+
+    logger.warning(
+        "Code unit '%s' is long (%d tokens), truncating to %d tokens for semantic embedding",
+        unit_name,
+        token_count,
+        max_tokens,
+    )
+    try:
+        truncated_ids = tokenizer.encode(
+            text,
+            add_special_tokens=False,
+            truncation=True,
+            max_length=max_tokens,
+        )
+        return tokenizer.decode(truncated_ids, skip_special_tokens=True)
+    except Exception:
+        logger.debug(
+            "Token decode failed while truncating '%s'; using char fallback",
+            unit_name,
+            exc_info=True,
+        )
+        return text[: max_tokens * 4]
+
+
 def _get_instruction(model_name: str, mode: Literal["code", "query", "describe"]) -> str:
     """Get the appropriate instruction prefix for the model and task."""
     if _is_c2llm(model_name):
@@ -127,16 +176,34 @@ def compute_embeddings(
     """
     model = get_model(model_name)
 
-    texts = [prepare_code_for_embedding(unit, model_name=model_name) for unit in units]
+    texts = []
+    for unit in units:
+        prepared = prepare_code_for_embedding(unit, model_name=model_name)
+        texts.append(_truncate_code_if_needed(prepared, unit.qualified_name, model))
 
     logger.info(f"Computing embeddings for {len(texts)} code units")
-    embeddings = model.encode(
-        texts,
-        batch_size=batch_size,
-        show_progress_bar=len(texts) > 100,
-        convert_to_numpy=True,
-        normalize_embeddings=True,  # For cosine similarity via dot product
-    )
+    try:
+        embeddings = model.encode(
+            texts,
+            batch_size=batch_size,
+            show_progress_bar=len(texts) > 100,
+            convert_to_numpy=True,
+            normalize_embeddings=True,  # For cosine similarity via dot product
+        )
+    except RuntimeError as e:  # pragma: no cover - defensive handling
+        if not _is_cuda_oom_error(e):
+            raise
+
+        logger.warning("CUDA OOM during semantic embedding; retrying on CPU")
+        model.to("cpu")
+        embeddings = model.encode(
+            texts,
+            batch_size=1,
+            show_progress_bar=len(texts) > 100,
+            convert_to_numpy=True,
+            normalize_embeddings=True,  # For cosine similarity via dot product
+            device="cpu",
+        )
 
     return embeddings
 
