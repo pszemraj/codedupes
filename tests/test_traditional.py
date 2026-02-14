@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from textwrap import dedent
 
+from codedupes import traditional as traditional_module
 from codedupes.traditional import (
     build_reference_graph,
     find_potentially_unused,
@@ -157,3 +158,34 @@ def test_pyproject_entry_points_mark_as_used(tmp_path: Path) -> None:
     names = {unit.name for unit in unused}
     assert "cli_entry" not in names
     assert "helper" in names
+
+
+def test_main_block_calls_are_parsed_once_per_file(tmp_path: Path, monkeypatch) -> None:
+    source = dedent(
+        """
+        def first():
+            return 1
+
+        def second():
+            return 2
+
+        if __name__ == "__main__":
+            first()
+        """
+    ).strip()
+    units = extract_units(tmp_path, source, include_private=True)
+    calls: list[Path] = []
+
+    def fake_extract_main_block_calls(path: Path) -> set[str]:
+        calls.append(path)
+        return {"first"}
+
+    monkeypatch.setattr(
+        traditional_module,
+        "_extract_main_block_calls",
+        fake_extract_main_block_calls,
+    )
+
+    build_reference_graph(units)
+
+    assert len(calls) == 1

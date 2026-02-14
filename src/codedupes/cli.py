@@ -5,8 +5,9 @@ from __future__ import annotations
 import json
 import logging
 import sys
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Callable, Literal, cast
+from typing import Any, Callable, Iterator, Literal, TypeVar, cast
 
 import click
 from rich.console import Console
@@ -45,6 +46,7 @@ DEFAULT_EXCLUDE_HELP_HINT = (
 )
 
 console = Console(width=DEFAULT_OUTPUT_WIDTH)
+TResult = TypeVar("TResult")
 
 _NOISY_EXTERNAL_LOGGERS = (
     "deepspeed",
@@ -128,6 +130,64 @@ def setup_logging(verbose: bool = False) -> None:
     quiet_level = logging.DEBUG if verbose else logging.WARNING
     for logger_name in _NOISY_EXTERNAL_LOGGERS:
         logging.getLogger(logger_name).setLevel(quiet_level)
+
+
+@contextmanager
+def _configured_cli_output(
+    *,
+    as_json: bool,
+    verbose: bool,
+    output_width: int,
+) -> Iterator[None]:
+    """Configure logging/console for a CLI command and restore state on exit.
+
+    :param as_json: Whether JSON mode is enabled.
+    :param verbose: Whether verbose logging is enabled.
+    :param output_width: Requested rich console width.
+    :yield: ``None`` while command-specific work executes.
+    """
+    _set_console(output_width)
+    logging_state: tuple[int, list[logging.Handler]] | None = None
+    if as_json:
+        logging_state = _suppress_logs_for_json()
+    else:
+        setup_logging(verbose)
+
+    try:
+        yield
+    finally:
+        if logging_state is not None:
+            _restore_root_logger_state(logging_state)
+
+
+def _run_cli_action(
+    action: Callable[[], TResult],
+    *,
+    error_label: str,
+    verbose: bool,
+    catch_file_not_found: bool = False,
+) -> TResult:
+    """Run a command action and normalize runtime exception handling.
+
+    :param action: Callback to execute.
+    :param error_label: Human-readable action label for error messages.
+    :param verbose: Whether verbose mode is enabled.
+    :param catch_file_not_found: Convert ``FileNotFoundError`` to CLI exit.
+    :return: Action return value.
+    :raises click.exceptions.Exit: On handled runtime failures.
+    """
+    try:
+        return action()
+    except FileNotFoundError as exc:
+        if not catch_file_not_found:
+            raise
+        console.print(f"[red]Error:[/red] {exc}")
+        raise click.exceptions.Exit(1) from exc
+    except Exception as exc:
+        console.print(f"[red]Error during {error_label}:[/red] {exc}")
+        if verbose:
+            console.print_exception()
+        raise click.exceptions.Exit(1) from exc
 
 
 def _validate_threshold(
@@ -1066,13 +1126,6 @@ def check_command(
         no_trust_remote_code=no_trust_remote_code,
     )
 
-    _set_console(output_width)
-    logging_state: tuple[int, list[logging.Handler]] | None = None
-    if as_json:
-        logging_state = _suppress_logs_for_json()
-    else:
-        setup_logging(verbose)
-
     combined_mode = not semantic_only and not traditional_only
     table_max_items: int | None = None if full_table else DEFAULT_TABLE_ROWS
 
@@ -1117,18 +1170,13 @@ def check_command(
     except ValueError as exc:
         raise click.UsageError(str(exc)) from exc
 
-    try:
-        try:
-            analyzer = CodeAnalyzer(config)
-            result = analyzer.analyze(path)
-        except FileNotFoundError as exc:
-            console.print(f"[red]Error:[/red] {exc}")
-            raise click.exceptions.Exit(1) from exc
-        except Exception as exc:
-            console.print(f"[red]Error during analysis:[/red] {exc}")
-            if verbose:
-                console.print_exception()
-            raise click.exceptions.Exit(1) from exc
+    with _configured_cli_output(as_json=as_json, verbose=verbose, output_width=output_width):
+        result = _run_cli_action(
+            lambda: CodeAnalyzer(config).analyze(path),
+            error_label="analysis",
+            verbose=verbose,
+            catch_file_not_found=True,
+        )
 
         if as_json:
             if combined_mode:
@@ -1184,9 +1232,6 @@ def check_command(
                     max_items=table_max_items,
                 )
                 print_unused(result.potentially_unused, max_items=table_max_items)
-    finally:
-        if logging_state is not None:
-            _restore_root_logger_state(logging_state)
 
     if combined_mode:
         has_issues = bool(result.hybrid_duplicates or result.potentially_unused)
@@ -1289,13 +1334,6 @@ def search_command(
         no_trust_remote_code=no_trust_remote_code,
     )
 
-    _set_console(output_width)
-    logging_state: tuple[int, list[logging.Handler]] | None = None
-    if as_json:
-        logging_state = _suppress_logs_for_json()
-    else:
-        setup_logging(verbose)
-
     try:
         config = AnalyzerConfig(
             exclude_patterns=list(exclude) or None,
@@ -1320,25 +1358,24 @@ def search_command(
     except ValueError as exc:
         raise click.UsageError(str(exc)) from exc
 
-    try:
-        try:
-            analyzer = CodeAnalyzer(config)
-            analyzer.analyze(path)
-            results = analyzer.search(query, top_k=top_k)
-        except Exception as exc:
-            console.print(f"[red]Error during search:[/red] {exc}")
-            if verbose:
-                console.print_exception()
-            raise click.exceptions.Exit(1) from exc
+    with _configured_cli_output(as_json=as_json, verbose=verbose, output_width=output_width):
+        analyzer = CodeAnalyzer(config)
+        _run_cli_action(
+            lambda: analyzer.analyze(path),
+            error_label="search",
+            verbose=verbose,
+        )
+        results = _run_cli_action(
+            lambda: analyzer.search(query, top_k=top_k),
+            error_label="search",
+            verbose=verbose,
+        )
 
         if as_json:
             print_search_json(query, results)
         else:
             console.print(f"[bold cyan]Query:[/bold cyan] {query!r}")
             print_search_results(results)
-    finally:
-        if logging_state is not None:
-            _restore_root_logger_state(logging_state)
 
     raise click.exceptions.Exit(0)
 

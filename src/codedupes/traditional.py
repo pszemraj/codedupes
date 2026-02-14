@@ -293,9 +293,13 @@ def build_reference_graph(units: list[CodeUnit], project_root: Path | None = Non
                         candidate.references.add(unit.uid)
 
     # Seed references from __main__ blocks.
+    main_block_calls_by_file: dict[Path, set[str]] = {}
+    for file_path in alias_map_by_file:
+        main_block_calls_by_file[file_path] = _extract_main_block_calls(file_path)
+
     for unit in units:
         caller_uid = f"__main__::{unit.file_path}"
-        for call in _extract_main_block_calls(unit.file_path):
+        for call in main_block_calls_by_file.get(unit.file_path, set()):
             for target in _resolve_call_targets(call, alias_map_by_file.get(unit.file_path, {})):
                 for candidate in by_name.get(target, []):
                     candidate.references.add(caller_uid)

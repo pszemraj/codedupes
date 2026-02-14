@@ -8,7 +8,7 @@ from importlib import metadata as importlib_metadata
 import logging
 import os
 import sys
-from typing import Any, Callable, Literal
+from typing import Any, Callable, Literal, TypeVar, cast
 
 import numpy as np
 from packaging.version import InvalidVersion, Version
@@ -53,7 +53,6 @@ SemanticTask = Literal[
 C2LLM_INSTRUCTIONS: dict[str, str] = {
     "code": "Represent this code for finding similar code: ",
     "query": "Represent this query for searching relevant code: ",
-    "describe": "Represent this code for finding its description: ",
 }
 
 EMBEDDINGGEMMA_QUERY_PREFIXES: dict[SemanticTask, str] = {
@@ -86,6 +85,28 @@ def _configure_semantic_runtime_env() -> None:
     os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
 
+T = TypeVar("T")
+
+
+def _resolve_profile_default(
+    model_name: str,
+    override: T | None,
+    *,
+    accessor: Callable[[Any], T],
+) -> T:
+    """Resolve a profile-derived default with optional explicit override.
+
+    :param model_name: Requested model identifier.
+    :param override: Explicit override value.
+    :param accessor: Profile accessor for default lookup.
+    :return: Explicit override when provided, otherwise profile default.
+    """
+    if override is not None:
+        return override
+    profile = resolve_model_profile(model_name)
+    return accessor(profile)
+
+
 def _resolve_model_revision(model_name: str, revision: str | None) -> str | None:
     """Resolve model revision for a model, honoring explicit overrides.
 
@@ -93,10 +114,11 @@ def _resolve_model_revision(model_name: str, revision: str | None) -> str | None
     :param revision: Optional explicit revision.
     :return: Profile default revision when no explicit revision is provided.
     """
-    if revision is not None:
-        return revision
-    profile = resolve_model_profile(model_name)
-    return profile.default_revision
+    return _resolve_profile_default(
+        model_name,
+        revision,
+        accessor=lambda profile: cast(str | None, profile.default_revision),
+    )
 
 
 def _resolve_trust_remote_code(model_name: str, trust_remote_code: bool | None) -> bool:
@@ -106,10 +128,11 @@ def _resolve_trust_remote_code(model_name: str, trust_remote_code: bool | None) 
     :param trust_remote_code: Optional explicit trust setting.
     :return: Profile default trust setting when no override is provided.
     """
-    if trust_remote_code is not None:
-        return trust_remote_code
-    profile = resolve_model_profile(model_name)
-    return profile.default_trust_remote_code
+    return _resolve_profile_default(
+        model_name,
+        trust_remote_code,
+        accessor=lambda profile: cast(bool, profile.default_trust_remote_code),
+    )
 
 
 def _safe_package_version(package_name: str) -> str | None:
@@ -599,7 +622,7 @@ def _get_embeddinggemma_prefix(task: SemanticTask, mode: Literal["code", "query"
 
 def _get_instruction(
     model_name: str,
-    mode: Literal["code", "query", "describe"],
+    mode: Literal["code", "query"],
     semantic_task: SemanticTask,
 ) -> str:
     """Get default instruction prefix for model/task/mode.
@@ -614,13 +637,9 @@ def _get_instruction(
     if profile.family == "c2llm":
         if mode == "query":
             return C2LLM_INSTRUCTIONS["query"]
-        if mode == "describe":
-            return C2LLM_INSTRUCTIONS["describe"]
         return C2LLM_INSTRUCTIONS["code"]
 
     if profile.family == "embeddinggemma":
-        if mode == "describe":
-            return ""
         return _get_embeddinggemma_prefix(semantic_task, mode)
 
     return ""
@@ -628,7 +647,7 @@ def _get_instruction(
 
 def _resolve_instruction_prefix(
     model_name: str,
-    mode: Literal["code", "query", "describe"],
+    mode: Literal["code", "query"],
     instruction_prefix: str | None,
     *,
     semantic_task: SemanticTask,
