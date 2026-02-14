@@ -149,8 +149,8 @@ def get_model(model_name: str = "codefuse-ai/C2LLM-0.5B"):
                     tokenizer_kwargs={"padding_side": "left"},
                 )
             else:
-                # Fallback for other models (e.g. CodeRankEmbed)
-                _model = SentenceTransformer(model_name, trust_remote_code=True)
+                # Avoid remote-code execution for arbitrary user-supplied models.
+                _model = SentenceTransformer(model_name)
         except ModuleNotFoundError as exc:
             if exc.name == "deepspeed":
                 raise ModuleNotFoundError(

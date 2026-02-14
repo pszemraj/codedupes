@@ -92,3 +92,17 @@ def test_extract_all_deduplicates_symlinked_paths(tmp_path: Path) -> None:
     extractor = CodeExtractor(package, include_private=False)
     units = extractor.extract_all()
     assert len(units) == 1
+
+
+def test_get_module_name_handles_stub_suffix(tmp_path: Path) -> None:
+    package = tmp_path / "package"
+    package.mkdir()
+    (package / "__init__.py").write_text("")
+    stub = package / "typed_mod.pyi"
+    stub.write_text("def entry() -> int: ...\n")
+
+    extractor = CodeExtractor(package, include_private=True, include_stubs=True)
+    units = list(extractor.extract_from_file(stub))
+
+    assert len(units) == 1
+    assert units[0].qualified_name == "typed_mod.entry"

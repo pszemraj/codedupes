@@ -259,7 +259,7 @@ class CodeExtractor:
         if parts[-1] == "__init__.py":
             parts = parts[:-1]
         else:
-            parts[-1] = parts[-1].removesuffix(".py")
+            parts[-1] = Path(parts[-1]).stem
         return ".".join(parts) if parts else ""
 
     def extract_from_file(self, file_path: Path) -> Iterator[CodeUnit]:

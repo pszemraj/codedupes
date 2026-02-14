@@ -101,6 +101,26 @@ def test_get_model_reports_deepspeed_guidance(monkeypatch) -> None:
     assert "deepspeed is required" in str(excinfo.value)
 
 
+def test_get_model_does_not_trust_remote_code_for_non_c2llm(monkeypatch) -> None:
+    calls: list[dict] = []
+
+    class FakeSentenceTransformer:
+        def __init__(self, *args, **kwargs):
+            calls.append({"args": args, "kwargs": kwargs})
+
+    monkeypatch.setattr(
+        semantic,
+        "_check_semantic_dependencies",
+        lambda model_name: None,
+    )
+    monkeypatch.setattr(sentence_transformers, "SentenceTransformer", FakeSentenceTransformer)
+    semantic.clear_model_cache()
+
+    semantic.get_model("sentence-transformers/all-MiniLM-L6-v2")
+    assert len(calls) == 1
+    assert "trust_remote_code" not in calls[0]["kwargs"]
+
+
 @pytest.mark.parametrize(
     ("missing_module", "expected_snippet"),
     [

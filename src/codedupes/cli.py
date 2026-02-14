@@ -21,6 +21,10 @@ from codedupes.models import CodeUnit, DuplicatePair
 console = Console()
 
 
+_COMMANDS = {"check", "search", "info"}
+_GLOBAL_FLAGS = {"-h", "--help", "--version"}
+
+
 def setup_logging(verbose: bool = False) -> None:
     """Configure logging with rich handler."""
     level = logging.DEBUG if verbose else logging.INFO
@@ -464,13 +468,25 @@ Examples:
     return parser
 
 
+def _normalize_legacy_argv(argv: list[str]) -> list[str]:
+    """Insert `check` for legacy invocation forms that omit an explicit command."""
+    if not argv:
+        return argv
+
+    if argv[0] in _COMMANDS or argv[0] in _GLOBAL_FLAGS:
+        return argv
+
+    if any(token in _COMMANDS for token in argv):
+        return argv
+
+    return ["check", *argv]
+
+
 def main() -> int:
     """Main CLI entrypoint."""
     parser = _build_parser()
 
-    argv = sys.argv[1:]
-    if argv and argv[0] not in {"check", "search", "info", "-h", "--help", "-v", "--version"}:
-        argv = ["check"] + argv
+    argv = _normalize_legacy_argv(sys.argv[1:])
 
     try:
         args = parser.parse_args(argv)

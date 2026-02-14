@@ -3,6 +3,7 @@
 
 # --- Pair 1: Exact structural duplicate (different names/vars) ---
 
+
 def calculate_sum(items):
     """Sum up all the items."""
     total = 0
@@ -20,6 +21,7 @@ def compute_total(values):
 
 
 # --- Pair 2: Semantic duplicate (same intent, different impl) ---
+
 
 def find_max_element(data):
     """Find the largest element in a list."""
@@ -40,6 +42,7 @@ def get_maximum(numbers):
 
 
 # --- Pair 3: Near duplicate (minor logic variation) ---
+
 
 def validate_email(email):
     """Check if email looks valid."""
@@ -69,6 +72,7 @@ def check_email_format(address):
 
 # --- Dead code ---
 
+
 def _unused_helper():
     """This function is never called anywhere."""
     return "nobody uses me"
@@ -80,6 +84,7 @@ def _another_dead_function(x, y):
 
 
 # --- Used code (call graph links these) ---
+
 
 def process_data(raw):
     """Process raw data through the pipeline."""
@@ -94,6 +99,7 @@ def _clean(data):
 
 
 # --- Distinctly different (should NOT match each other) ---
+
 
 def fibonacci(n):
     """Generate fibonacci sequence."""
@@ -115,7 +121,7 @@ def parse_csv_line(line):
     for char in line:
         if char == '"':
             in_quotes = not in_quotes
-        elif char == ',' and not in_quotes:
+        elif char == "," and not in_quotes:
             fields.append(current.strip())
             current = ""
         else:
