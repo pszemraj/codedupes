@@ -3,7 +3,6 @@ from __future__ import annotations
 from pathlib import Path
 from textwrap import dedent
 
-from codedupes.extractor import compute_token_hash
 from codedupes.traditional import build_reference_graph
 from codedupes.traditional import find_potentially_unused
 from codedupes.traditional import run_traditional_analysis
@@ -51,12 +50,6 @@ def test_near_duplicates_threshold_boundary(tmp_path: Path) -> None:
     assert len(near_low) >= 1
     assert len(near_high) == 0
     assert len(exact_low) == 0
-
-
-def test_compute_token_hash_ignores_formatting() -> None:
-    assert compute_token_hash("def f(x):\n    return x + 1") == compute_token_hash(
-        "def f( x ):\n\treturn x+1"
-    )
 
 
 def test_alias_aware_reference_graph(tmp_path: Path) -> None:

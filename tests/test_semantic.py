@@ -2,11 +2,10 @@ from __future__ import annotations
 
 import numpy as np
 from pathlib import Path
-from textwrap import dedent
 
 from codedupes import semantic
 from codedupes.semantic import find_similar_to_query, run_semantic_analysis
-from tests.conftest import extract_units
+from tests.conftest import extract_arithmetic_units
 
 
 class FakeModel:
@@ -29,16 +28,7 @@ class FakeModel:
 
 
 def _extract_units(tmp_path: Path) -> list:
-    source = dedent(
-        """
-        def first(x):
-            return x + 1
-
-        def second(x):
-            return x + 2
-        """
-    ).strip()
-    return extract_units(tmp_path, source, include_private=True, exclude_patterns=[])
+    return extract_arithmetic_units(tmp_path, include_private=True, exclude_patterns=[])
 
 
 def test_run_semantic_analysis_with_mock_model(tmp_path, monkeypatch):

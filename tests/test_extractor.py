@@ -4,7 +4,7 @@ import ast
 from pathlib import Path
 from textwrap import dedent
 
-from codedupes.extractor import compute_ast_hash
+from codedupes.extractor import compute_ast_hash, compute_token_hash
 from codedupes.models import CodeUnitType
 
 from tests.conftest import extract_units
@@ -53,3 +53,9 @@ def test_compute_ast_hash_normalizes_variable_names() -> None:
     second = ast.parse("def total(x, y):\n    return x + y").body[0]
 
     assert compute_ast_hash(first) == compute_ast_hash(second)
+
+
+def test_compute_token_hash_ignores_formatting() -> None:
+    assert compute_token_hash("def f(x):\n    return x + 1") == compute_token_hash(
+        "def f( x ):\n\treturn x+1"
+    )

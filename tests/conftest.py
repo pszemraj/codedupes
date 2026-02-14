@@ -34,3 +34,40 @@ def create_project(tmp_path: Path, source: str, *, module: str = "mod.py") -> Pa
     (project_root / "__init__.py").write_text("")
     write_source_file(project_root, source, module)
     return project_root
+
+
+def build_two_function_source() -> str:
+    """Small fixture source containing a used/unused function pair."""
+    return dedent(
+        """
+        def used():
+            return 1
+
+        def unused():
+            return 2
+        """
+    ).strip()
+
+
+def extract_arithmetic_units(
+    tmp_path: Path,
+    *,
+    include_private: bool = False,
+    exclude_patterns: list[str] | None = None,
+) -> list[CodeUnit]:
+    """Extract a tiny deterministic two-function module."""
+    source = dedent(
+        """
+        def first(x):
+            return x + 1
+
+        def second(x):
+            return x + 2
+        """
+    ).strip()
+    return extract_units(
+        tmp_path,
+        source,
+        include_private=include_private,
+        exclude_patterns=exclude_patterns,
+    )
