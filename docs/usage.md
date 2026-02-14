@@ -105,7 +105,7 @@ codedupes info
 
 Semantic runtime defaults:
 
-- CUDA uses `bfloat16` when supported (no `fp16` fallback).
+- Uses `bfloat16` on CUDA (when supported) and on CPU (no `fp16` fallback).
 - Default semantic `--batch-size` is `8`.
 - On CUDA OOM, semantic embedding retries with progressively smaller GPU batches before CPU fallback.
 

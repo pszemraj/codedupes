@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 import numpy as np
 import pytest
 import sentence_transformers
@@ -306,3 +307,18 @@ def test_compute_embeddings_retries_with_reduced_batch_before_cpu(monkeypatch, t
 
     assert embeddings.shape == (2, 2)
     assert seen_batch_sizes[:3] == [8, 4, 2]
+
+
+def test_resolve_c2llm_torch_dtype_prefers_cpu_bf16(monkeypatch) -> None:
+    class FakeCuda:
+        @staticmethod
+        def is_available() -> bool:
+            return False
+
+    class FakeTorch:
+        bfloat16 = "bf16"
+        cuda = FakeCuda()
+
+    monkeypatch.setitem(sys.modules, "torch", FakeTorch)
+
+    assert semantic._resolve_c2llm_torch_dtype() == "bf16"

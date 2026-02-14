@@ -271,17 +271,20 @@ def _is_c2llm(model_name: str) -> bool:
 
 
 def _resolve_c2llm_torch_dtype():
-    """Choose torch dtype for C2LLM on CUDA without fp16 fallback."""
+    """Choose torch dtype for C2LLM without fp16 fallback."""
     try:
         import torch
     except ModuleNotFoundError:
         return None
 
-    if not torch.cuda.is_available():
+    if torch.cuda.is_available():
+        if hasattr(torch.cuda, "is_bf16_supported") and torch.cuda.is_bf16_supported():
+            return torch.bfloat16
         return None
 
-    if hasattr(torch.cuda, "is_bf16_supported") and torch.cuda.is_bf16_supported():
-        return torch.bfloat16
+    # CPU path: prefer bfloat16 to reduce memory footprint when supported.
+    # We intentionally do not use fp16 anywhere.
+    return torch.bfloat16
     return None
 
 

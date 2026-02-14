@@ -40,7 +40,7 @@ codedupes info
 - Default embedding model: `codefuse-ai/C2LLM-0.5B`
 - Default pinned revision: `bd6d0ddb29f0c9a3d0f14281aedc9f940bb8d67a`
 - Default loading for this model uses `trust_remote_code=True`
-- On CUDA, C2LLM uses `bfloat16` when supported (no `fp16` fallback)
+- C2LLM prefers `bfloat16` on CUDA (when supported) and on CPU (no `fp16` fallback)
 - Default semantic embedding batch size: `8` with automatic CUDA OOM batch backoff
 
 This means model-provided Python code from Hugging Face is executed when semantic
