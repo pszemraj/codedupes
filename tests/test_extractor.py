@@ -6,6 +6,7 @@ from textwrap import dedent
 
 from codedupes.extractor import compute_ast_hash, compute_token_hash
 from codedupes.models import CodeUnitType
+from codedupes.extractor import CodeExtractor
 
 from tests.conftest import extract_units
 
@@ -59,3 +60,35 @@ def test_compute_token_hash_ignores_formatting() -> None:
     assert compute_token_hash("def f(x):\n    return x + 1") == compute_token_hash(
         "def f( x ):\n\treturn x+1"
     )
+
+
+def test_parse_error_is_skipped(tmp_path: Path) -> None:
+    root = tmp_path / "project"
+    root.mkdir()
+    root.joinpath("__init__.py").write_text("")
+    bad = root / "bad.py"
+    bad.write_text("def broken(:\n    pass\n")
+    extractor = CodeExtractor(root, include_private=False)
+
+    assert list(extractor.extract_from_file(bad)) == []
+
+
+def test_extract_all_deduplicates_symlinked_paths(tmp_path: Path) -> None:
+    package = tmp_path / "package"
+    package.mkdir()
+    (package / "__init__.py").write_text("")
+
+    source = dedent(
+        """
+        def sample():
+            return 1
+        """
+    ).strip()
+    real = package / "real.py"
+    real.write_text(source)
+    alias = package / "alias.py"
+    alias.symlink_to(real)
+
+    extractor = CodeExtractor(package, include_private=False)
+    units = extractor.extract_all()
+    assert len(units) == 1

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import sys
 from pathlib import Path
@@ -10,11 +11,12 @@ from pathlib import Path
 from rich.console import Console
 from rich.logging import RichHandler
 from rich.panel import Panel
-from rich.table import Table
 from rich.syntax import Syntax
+from rich.table import Table
 
+from . import __version__
 from .analyzer import DEFAULT_MODEL, AnalyzerConfig, CodeAnalyzer
-from .models import AnalysisResult, CodeUnit, CodeUnitType, DuplicatePair
+from .models import CodeUnit, DuplicatePair
 
 console = Console()
 
@@ -27,6 +29,13 @@ def setup_logging(verbose: bool = False) -> None:
         format="%(message)s",
         handlers=[RichHandler(console=console, show_time=False, show_path=False)],
     )
+
+
+def _validate_threshold(value: float, label: str) -> bool:
+    if not 0.0 <= value <= 1.0:
+        console.print(f"[red]Error:[/red] {label} must be in [0.0, 1.0], got {value}")
+        return False
+    return True
 
 
 def format_location(unit: CodeUnit) -> str:
@@ -42,7 +51,7 @@ def truncate_source(source: str, max_lines: int = 5) -> str:
     return "\n".join(lines[:max_lines]) + f"\n... ({len(lines) - max_lines} more lines)"
 
 
-def print_summary(result: AnalysisResult) -> None:
+def print_summary(result: dict) -> None:
     """Print analysis summary."""
     console.print()
 
@@ -50,26 +59,66 @@ def print_summary(result: AnalysisResult) -> None:
     summary.add_column(style="bold cyan")
     summary.add_column(style="white")
 
-    summary.add_row("Total code units", str(len(result.units)))
-    summary.add_row(
-        "  Functions",
-        str(sum(1 for u in result.units if u.unit_type == CodeUnitType.FUNCTION)),
-    )
-    summary.add_row(
-        "  Methods",
-        str(sum(1 for u in result.units if u.unit_type == CodeUnitType.METHOD)),
-    )
-    summary.add_row(
-        "  Classes",
-        str(sum(1 for u in result.units if u.unit_type == CodeUnitType.CLASS)),
-    )
+    summary.add_row("Total code units", str(len(result["units"])))
+    summary.add_row("  Functions", str(sum(1 for u in result["units"] if u["type"] == "function")))
+    summary.add_row("  Methods", str(sum(1 for u in result["units"] if u["type"] == "method")))
+    summary.add_row("  Classes", str(sum(1 for u in result["units"] if u["type"] == "class")))
     summary.add_row("", "")
-    summary.add_row("Exact duplicates", str(len(result.exact_duplicates)))
-    summary.add_row("Semantic duplicates", str(len(result.semantic_duplicates)))
-    summary.add_row("Potentially unused", str(len(result.potentially_unused)))
+    summary.add_row("Exact duplicates", str(len(result["exact_duplicates"])))
+    summary.add_row("Semantic duplicates", str(len(result["semantic_duplicates"])))
+    summary.add_row("Potentially unused", str(len(result["potentially_unused"])))
 
     console.print(summary)
     console.print()
+
+
+def _unit_to_dict(unit: CodeUnit) -> dict:
+    return {
+        "name": unit.name,
+        "qualified_name": unit.qualified_name,
+        "type": unit.unit_type.name.lower(),
+        "file": str(unit.file_path),
+        "line": unit.lineno,
+        "end_line": unit.end_lineno,
+        "is_public": unit.is_public,
+        "is_exported": unit.is_exported,
+    }
+
+
+def _dup_to_dict(dup: DuplicatePair) -> dict:
+    return {
+        "unit_a": _unit_to_dict(dup.unit_a),
+        "unit_b": _unit_to_dict(dup.unit_b),
+        "similarity": dup.similarity,
+        "method": dup.method,
+    }
+
+
+def print_check_json(result) -> None:
+    """Output results as JSON."""
+    output = {
+        "summary": {
+            "total_units": len(result.units),
+            "exact_duplicates": len(result.exact_duplicates),
+            "semantic_duplicates": len(result.semantic_duplicates),
+            "potentially_unused": len(result.potentially_unused),
+        },
+        "exact_duplicates": [_dup_to_dict(d) for d in result.exact_duplicates],
+        "semantic_duplicates": [_dup_to_dict(d) for d in result.semantic_duplicates],
+        "potentially_unused": [_unit_to_dict(u) for u in result.potentially_unused],
+    }
+    print(json.dumps(output, indent=2, sort_keys=True))
+
+
+def print_search_json(query: str, results: list[tuple[CodeUnit, float]]) -> None:
+    """Output search output as JSON."""
+    payload = {
+        "query": query,
+        "results": [
+            {"score": float(score), **_unit_to_dict(unit)} for unit, score in results
+        ],
+    }
+    print(json.dumps(payload, indent=2, sort_keys=True))
 
 
 def print_duplicates(
@@ -153,69 +202,25 @@ def print_unused(unused: list[CodeUnit], max_items: int = 20) -> None:
         console.print(f"[dim]... and {len(unused) - max_items} more[/dim]")
 
 
-def print_json(result: AnalysisResult) -> None:
-    """Output results as JSON."""
-    import json
+def print_search_results(results: list[tuple[CodeUnit, float]]) -> None:
+    """Print search results in a simple rank table."""
+    if not results:
+        console.print("[yellow]No matches found.[/yellow]")
+        return
 
-    def unit_to_dict(u: CodeUnit) -> dict:
-        return {
-            "name": u.name,
-            "qualified_name": u.qualified_name,
-            "type": u.unit_type.name.lower(),
-            "file": str(u.file_path),
-            "line": u.lineno,
-            "end_line": u.end_lineno,
-            "is_public": u.is_public,
-            "is_exported": u.is_exported,
-        }
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("Rank", justify="right")
+    table.add_column("Score", style="green", width=10)
+    table.add_column("Name")
+    table.add_column("Location", style="dim")
 
-    def dup_to_dict(d: DuplicatePair) -> dict:
-        return {
-            "unit_a": unit_to_dict(d.unit_a),
-            "unit_b": unit_to_dict(d.unit_b),
-            "similarity": d.similarity,
-            "method": d.method,
-        }
+    for idx, (unit, score) in enumerate(results, start=1):
+        table.add_row(str(idx), f"{score:.2%}", unit.name, format_location(unit))
 
-    output = {
-        "summary": {
-            "total_units": len(result.units),
-            "exact_duplicates": len(result.exact_duplicates),
-            "semantic_duplicates": len(result.semantic_duplicates),
-            "potentially_unused": len(result.potentially_unused),
-        },
-        "exact_duplicates": [dup_to_dict(d) for d in result.exact_duplicates],
-        "semantic_duplicates": [dup_to_dict(d) for d in result.semantic_duplicates],
-        "potentially_unused": [unit_to_dict(u) for u in result.potentially_unused],
-    }
-
-    print(json.dumps(output, indent=2, sort_keys=True))
+    console.print(table)
 
 
-def _validate_threshold(value: float, label: str) -> bool:
-    if not 0.0 <= value <= 1.0:
-        console.print(f"[red]Error:[/red] {label} must be in [0.0, 1.0], got {value}")
-        return False
-    return True
-
-
-def main() -> int:
-    """Main CLI entrypoint."""
-    parser = argparse.ArgumentParser(
-        description="Detect duplicate and unused Python code using AST analysis and semantic embeddings.",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""\
-Examples:
-  codedupes ./src                    # Analyze ./src directory
-  codedupes ./src --semantic-only    # Skip traditional methods
-  codedupes ./src --threshold 0.9    # Higher similarity threshold
-  codedupes ./src --json             # Output JSON for tooling
-        """,
-    )
-
-    parser.add_argument("path", type=Path, help="Directory or file to analyze")
-
-    # Thresholds
+def _add_common_analysis_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "-t",
         "--threshold",
@@ -233,66 +238,35 @@ Examples:
         type=float,
         help="Override traditional (Jaccard) threshold",
     )
-
-    # What to run
-    parser.add_argument(
-        "--semantic-only",
-        action="store_true",
-        help="Only run semantic (embedding) analysis",
-    )
+    parser.add_argument("--semantic-only", action="store_true", help="Only run semantic analysis")
     parser.add_argument(
         "--traditional-only",
         action="store_true",
         help="Only run traditional (AST/token) analysis",
     )
+    parser.add_argument("--no-unused", action="store_true", help="Skip unused code detection")
+    parser.add_argument("--strict-unused", action="store_true", help="Do not skip public functions")
     parser.add_argument(
-        "--no-unused",
-        action="store_true",
-        help="Skip unused code detection",
+        "--min-lines",
+        type=int,
+        default=3,
+        help="Skip semantic comparison for functions with fewer body statements",
     )
-
-    # Model
     parser.add_argument(
         "--model",
         default=DEFAULT_MODEL,
         help=f"HuggingFace embedding model (default: {DEFAULT_MODEL})",
     )
+    parser.add_argument("--no-private", action="store_true", help="Exclude private functions/classes")
+    parser.add_argument("--json", action="store_true", help="Output JSON instead of rich tables")
+    parser.add_argument("--show-source", action="store_true", help="Show source code snippets")
+    parser.add_argument("--verbose", "-v", action="store_true", help="Verbose logging")
+    parser.add_argument("--exclude", nargs="+", help="Glob patterns to exclude")
+    parser.add_argument("--include-stubs", action="store_true", help="Include .pyi files")
+    parser.add_argument("--batch-size", type=int, default=32, help="Batch size for embeddings")
 
-    # Output
-    parser.add_argument(
-        "--json",
-        action="store_true",
-        help="Output JSON instead of rich tables",
-    )
-    parser.add_argument(
-        "--show-source",
-        action="store_true",
-        help="Show source code snippets for duplicates",
-    )
-    parser.add_argument(
-        "-v",
-        "--verbose",
-        action="store_true",
-        help="Verbose logging",
-    )
 
-    # Filtering
-    parser.add_argument(
-        "--exclude",
-        nargs="+",
-        help="Glob patterns to exclude (e.g., '**/test_*')",
-    )
-    parser.add_argument(
-        "--no-private",
-        action="store_true",
-        help="Exclude private (_prefixed) functions",
-    )
-
-    args = parser.parse_args()
-
-    if not args.json:
-        setup_logging(args.verbose)
-
+def _run_check(args: argparse.Namespace) -> int:
     if not _validate_threshold(args.threshold, "--threshold"):
         return 1
     if args.semantic_threshold is not None and not _validate_threshold(
@@ -304,9 +278,18 @@ Examples:
     ):
         return 1
 
-    # Build config
-    semantic_thresh = args.semantic_threshold or args.threshold
-    trad_thresh = args.traditional_threshold or args.threshold
+    if args.batch_size <= 0:
+        console.print("[red]Error:[/red] --batch-size must be > 0")
+        return 1
+    if args.min_lines < 0:
+        console.print("[red]Error:[/red] --min-lines must be >= 0")
+        return 1
+
+    if not args.json:
+        setup_logging(args.verbose)
+
+    semantic_thresh = args.semantic_threshold if args.semantic_threshold is not None else args.threshold
+    trad_thresh = args.traditional_threshold if args.traditional_threshold is not None else args.threshold
 
     config = AnalyzerConfig(
         exclude_patterns=args.exclude,
@@ -317,26 +300,34 @@ Examples:
         run_traditional=not args.semantic_only,
         run_semantic=not args.traditional_only,
         run_unused=not args.no_unused,
+        min_semantic_lines=args.min_lines,
+        strict_unused=args.strict_unused,
+        batch_size=args.batch_size,
+        include_stubs=args.include_stubs,
     )
 
-    # Run analysis
     try:
         analyzer = CodeAnalyzer(config)
         result = analyzer.analyze(args.path)
-    except FileNotFoundError as e:
-        console.print(f"[red]Error:[/red] {e}")
+    except FileNotFoundError as exc:
+        console.print(f"[red]Error:[/red] {exc}")
         return 1
-    except Exception as e:
-        console.print(f"[red]Error during analysis:[/red] {e}")
+    except Exception as exc:
+        console.print(f"[red]Error during analysis:[/red] {exc}")
         if args.verbose:
             console.print_exception()
         return 1
 
-    # Output
     if args.json:
-        print_json(result)
+        print_check_json(result)
     else:
-        print_summary(result)
+        result_dict = {
+            "units": [_unit_to_dict(u) for u in result.units],
+            "exact_duplicates": [_dup_to_dict(d) for d in result.exact_duplicates],
+            "semantic_duplicates": [_dup_to_dict(d) for d in result.semantic_duplicates],
+            "potentially_unused": [_unit_to_dict(u) for u in result.potentially_unused],
+        }
+        print_summary(result_dict)
         print_duplicates(
             result.exact_duplicates,
             "Exact Duplicates (AST/Token)",
@@ -347,12 +338,138 @@ Examples:
             "Semantic Duplicates (Embedding)",
             show_source=args.show_source,
         )
-        if not args.no_unused:
-            print_unused(result.potentially_unused)
+        print_unused(result.potentially_unused)
 
-    # Exit code: 0 if clean, 1 if issues found
-    has_issues = result.exact_duplicates or result.semantic_duplicates or result.potentially_unused
+    has_issues = bool(result.exact_duplicates or result.semantic_duplicates or result.potentially_unused)
     return 1 if has_issues else 0
+
+
+def _run_search(args: argparse.Namespace) -> int:
+    if args.top_k <= 0:
+        console.print("[red]Error:[/red] --top-k must be > 0")
+        return 1
+
+    if not _validate_threshold(args.threshold, "--threshold"):
+        return 1
+    if args.semantic_threshold is not None and not _validate_threshold(
+        args.semantic_threshold, "--semantic-threshold"
+    ):
+        return 1
+
+    if args.semantic_threshold is not None:
+        args.threshold = args.semantic_threshold
+
+    if args.batch_size <= 0:
+        console.print("[red]Error:[/red] --batch-size must be > 0")
+        return 1
+
+    if not args.json:
+        setup_logging(args.verbose)
+
+    config = AnalyzerConfig(
+        exclude_patterns=args.exclude,
+        include_private=not args.no_private,
+        semantic_threshold=args.threshold,
+        model_name=args.model,
+        run_traditional=False,
+        run_unused=False,
+        min_semantic_lines=args.min_lines,
+        batch_size=args.batch_size,
+        include_stubs=args.include_stubs,
+    )
+
+    try:
+        analyzer = CodeAnalyzer(config)
+        analyzer.analyze(args.path)
+        results = analyzer.search(args.query, top_k=args.top_k)
+    except Exception as exc:
+        console.print(f"[red]Error during search:[/red] {exc}")
+        if args.verbose:
+            console.print_exception()
+        return 1
+
+    if args.json:
+        print_search_json(args.query, results)
+    else:
+        console.print(f"[bold cyan]Query:[/bold cyan] {args.query!r}")
+        print_search_results(results)
+    return 0
+
+
+def _run_info(_: argparse.Namespace) -> int:
+    print(f"codedupes {__version__}")
+    print(f"Default model: {DEFAULT_MODEL}")
+    print("Default semantic threshold: 0.82")
+    print("Default traditional threshold: 0.85")
+    print("Default min_lines for semantic: 3")
+    print("Run with --help for CLI usage")
+    return 0
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Detect duplicate and unused Python code using AST and semantic analysis.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""\
+Examples:
+  codedupes check ./src --json
+  codedupes search ./src \"sum numbers\" --top-k 5
+  codedupes ./src --semantic-only --threshold 0.8
+        """,
+    )
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
+
+    subparsers = parser.add_subparsers(dest="command")
+
+    check_parser = subparsers.add_parser("check", help="Run duplicate + unused analysis")
+    check_parser.add_argument("path", type=Path, help="Directory or file to analyze")
+    _add_common_analysis_args(check_parser)
+    check_parser.set_defaults(func=_run_check)
+
+    search_parser = subparsers.add_parser("search", help="Search for semantically similar code")
+    search_parser.add_argument("path", type=Path, help="Directory or file to analyze")
+    search_parser.add_argument("query", help="Query text")
+    search_parser.add_argument("--top-k", type=int, default=10, help="Maximum results")
+    search_parser.add_argument("--model", default=DEFAULT_MODEL, help="Embedding model")
+    search_parser.add_argument("--threshold", type=float, default=0.82)
+    search_parser.add_argument(
+        "--semantic-threshold",
+        type=float,
+        help="Override semantic threshold",
+    )
+    search_parser.add_argument("--no-private", action="store_true", help="Exclude private functions/classes")
+    search_parser.add_argument("--json", action="store_true", help="Output JSON")
+    search_parser.add_argument("--verbose", "-v", action="store_true", help="Verbose logging")
+    search_parser.add_argument("--exclude", nargs="+", help="Glob patterns to exclude")
+    search_parser.add_argument("--batch-size", type=int, default=32, help="Batch size for embeddings")
+    search_parser.add_argument("--min-lines", type=int, default=3, help="Minimum body statements for semantic candidates")
+    search_parser.add_argument("--include-stubs", action="store_true", help="Include .pyi files")
+    search_parser.set_defaults(func=_run_search)
+
+    info_parser = subparsers.add_parser("info", help="Print tool and model defaults")
+    info_parser.set_defaults(func=_run_info)
+
+    return parser
+
+
+def main() -> int:
+    """Main CLI entrypoint."""
+    parser = _build_parser()
+
+    argv = sys.argv[1:]
+    if argv and argv[0] not in {"check", "search", "info", "-h", "--help", "-v", "--version"}:
+        argv = ["check"] + argv
+
+    try:
+        args = parser.parse_args(argv)
+    except SystemExit:
+        return 1
+
+    if not hasattr(args, "func"):
+        parser.print_help()
+        return 1
+
+    return args.func(args)
 
 
 if __name__ == "__main__":

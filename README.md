@@ -1,19 +1,12 @@
 # codedupes
 
-`codedupes` detects duplicate and potentially unused Python code units.
+`codedupes` detects duplicate and potentially unused Python code with:
 
-This `README.md` is the **primary reference** for CLI usage, defaults, and output format.
+- Traditional AST/token matching (exact + Jaccard near-duplicate)
+- Semantic matching with C2LLM embeddings (`codefuse-ai/C2LLM-0.5B`)
+- Optional unused candidate detection
 
-Detection modes:
-
-- Traditional AST/token analysis for exact and near-duplicate matching.
-- Semantic embedding similarity for functional similarity.
-
-## Primary behavior
-
-- By default, both traditional and semantic analyses run.
-- Potentially-unused candidates are reported unless `--no-unused` is passed.
-- Parse errors are reported as warnings and do not fail the run.
+This document is the primary usage reference.
 
 ## Install
 
@@ -21,7 +14,7 @@ Detection modes:
 pip install codedupes
 ```
 
-For GPU-assisted semantic models (including C2LLM) that require `deepspeed`, install:
+For GPU-assisted semantic models that may require `deepspeed`, install:
 
 ```bash
 pip install codedupes[gpu]
@@ -29,53 +22,113 @@ pip install codedupes[gpu]
 
 Requires Python 3.10+.
 
-## Quick usage
+## CLI usage
+
+### `check`
 
 ```bash
-codedupes ./src
-codedupes ./src --json
-codedupes ./src --semantic-only --threshold 0.9
-codedupes ./src --traditional-only --no-unused
+codedupes check <path>
 ```
 
-## CLI usage reference
+Run full duplicate + unused analysis.
+
+```bash
+codedupes check ./src
+codedupes check ./src --json --threshold 0.82
+codedupes check ./src --semantic-only --traditional-threshold 0.8
+codedupes check ./src --traditional-only --no-unused
+```
+
+### `search`
+
+```bash
+codedupes search <path> "<query>"
+```
+
+Search for code using natural language query.
+
+```bash
+codedupes search ./src "sum values in a list" --top-k 5
+codedupes search ./src "remove unused values" --json
+```
+
+### `info`
+
+```bash
+codedupes info
+```
+
+Prints version/model/config defaults.
+
+### Legacy compatibility
 
 ```bash
 codedupes <path> [options]
 ```
 
-Supported options:
+is still supported as a compatibility shim and is equivalent to:
+
+```bash
+codedupes check <path> [options]
+```
+
+## `check` options
 
 - `-t, --threshold`
-  - shared threshold for both similarity methods (default `0.82`).
+  - Shared threshold for both methods (default `0.82`).
 - `--semantic-threshold`
-  - semantic-only override.
+  - Override semantic threshold only.
 - `--traditional-threshold`
-  - Jaccard-only override.
+  - Override traditional (Jaccard) threshold only.
 - `--semantic-only`
-  - run only semantic analysis.
+  - Run semantic only.
 - `--traditional-only`
-  - run only AST/token analysis.
+  - Run traditional only.
 - `--no-unused`
-  - skip unused-code reporting.
+  - Skip unused-code detection.
+- `--strict-unused`
+  - Do not skip public top-level functions from unused scanning.
 - `--no-private`
-  - omit underscore-prefixed code units.
+  - Exclude private (`_prefixed`) functions/classes.
+- `--min-lines`
+  - Minimum statement count for semantic comparison (default `3`).
 - `--model`
-  - Hugging Face embedding model for semantic mode.
+  - Embedding model override (default `codefuse-ai/C2LLM-0.5B`).
+- `--model` + `--batch-size`
+  - Adjust embedding throughput.
 - `--json`
-  - emit machine-readable JSON.
+  - Emit machine-readable results.
 - `--show-source`
-  - print duplicate source snippets.
+  - Print duplicate snippets in terminal output.
+- `--include-stubs`
+  - Include `*.pyi` files for analysis.
+- `--exclude`
+  - Glob patterns to skip files.
 - `-v, --verbose`
-  - verbose logs.
+  - Enable verbose logs.
 
-## API
+## `search` options
+
+- `--top-k`
+  - Number of results (default `10`).
+- `--model`
+- `--no-private`
+- `--json`
+
+## Analysis defaults
+
+- Semantic threshold default: `0.82`
+- Traditional threshold default: `0.85`
+- Semantic min-lines default: `3` (trivial bodies are skipped from semantic pipeline)
+- Unused detection default: enabled (`--no-unused` to disable)
+- Public top-level functions are treated as API-like by default and are not flagged as unused unless `--strict-unused`.
+
+## Programmatic API
 
 ```python
 from codedupes import analyze_directory
 
 result = analyze_directory("./src", semantic_threshold=0.82, traditional_threshold=0.85)
-
 for dup in result.exact_duplicates:
     print(dup.unit_a.qualified_name, "≈", dup.unit_b.qualified_name)
 
@@ -83,14 +136,26 @@ for unit in result.potentially_unused:
     print("Unused:", unit.qualified_name)
 ```
 
+Search programmatically:
+
+```python
+from codedupes import CodeAnalyzer, AnalyzerConfig
+
+analyzer = CodeAnalyzer(AnalyzerConfig(min_semantic_lines=3))
+analyzer.analyze("./src")
+for unit, score in analyzer.search("load csv"):
+    print(score, unit.qualified_name)
+```
+
 ## Output interpretation
 
-- `exact_duplicates`: AST/hash-based detections (`ast_hash`, `token_hash`).
-- `semantic_duplicates`: cosine similarity of code embeddings.
-- `potentially_unused`: units with no detected references and not likely public API.
-- Findings are heuristic and should be manually reviewed.
+- `exact_duplicates`: AST/token detections (`ast_hash`, `token_hash`)
+- `semantic_duplicates`: cosine threshold hits from embeddings
+- `potentially_unused`: units with no detected references and not considered public API
 
-## Configuration notes
+## Notes and limits
 
-- For deterministic CI tests, mock semantic model loading (`codedupes.semantic.get_model`) to avoid downloading remote weights.
-- Exit status is `0` when no findings are detected, `1` when any exact/semantic duplicate or unused unit is found, and non-zero on errors.
+- `C2LLM_INSTRUCTIONS["code"]` is tuned for code2code retrieval.
+- Call graph is intra-project only.
+- Unused detection remains heuristic and conservative; tune with `--strict-unused` if needed.
+- For deterministic CI, mock `codedupes.semantic.get_model` or use small fake model doubles instead of downloading remote weights.

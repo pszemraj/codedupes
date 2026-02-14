@@ -3,9 +3,11 @@ from __future__ import annotations
 from pathlib import Path
 from textwrap import dedent
 
+import numpy as np
 import pytest
 
 from codedupes.analyzer import AnalyzerConfig, CodeAnalyzer
+from codedupes.models import DuplicatePair
 from tests.conftest import build_two_function_source, create_project
 
 
@@ -14,7 +16,7 @@ from tests.conftest import build_two_function_source, create_project
     [
         (
             AnalyzerConfig(run_traditional=False, run_semantic=False, run_unused=True),
-            {"used", "unused"},
+            set(),
         ),
         (
             AnalyzerConfig(
@@ -24,6 +26,15 @@ from tests.conftest import build_two_function_source, create_project
                 jaccard_threshold=0.5,
             ),
             set(),
+        ),
+        (
+            AnalyzerConfig(
+                run_traditional=False,
+                run_semantic=False,
+                run_unused=True,
+                strict_unused=True,
+            ),
+            {"used", "unused"},
         ),
     ],
 )
@@ -90,8 +101,75 @@ def test_integration_on_mixed_project(tmp_path: Path) -> None:
     assert len(result.exact_duplicates) >= 1
     assert not any("tests" in str(unit.file_path) for unit in result.units)
     names = {unit.name for unit in result.potentially_unused}
-    assert "caller" in names
+    assert "caller" not in names
     assert "_private_entry" not in names
+
+
+def test_short_functions_are_skipped_from_semantic(tmp_path: Path) -> None:
+    source = dedent(
+        """
+        def tiny():
+            return 1
+
+        def another_tiny():
+            return 2
+        """
+    ).strip()
+    project = create_project(tmp_path, source, module="tiny.py")
+    analyzer = CodeAnalyzer(
+        AnalyzerConfig(
+            run_traditional=False,
+            run_semantic=True,
+            run_unused=False,
+            min_semantic_lines=3,
+        )
+    )
+    result = analyzer.analyze(project)
+    assert result.semantic_duplicates == []
+
+
+def test_unused_semantic_pairs_are_filtered(tmp_path: Path, monkeypatch) -> None:
+    source = dedent(
+        """
+        def _a():
+            x = 1
+            return x + 1
+
+        def _b():
+            y = 2
+            return y + 2
+        """
+    ).strip()
+    project = create_project(tmp_path, source, module="pairs.py")
+
+    from codedupes import analyzer as analyzer_module
+
+    def fake_run_semantic(
+        units,
+        model_name="codefuse-ai/C2LLM-0.5B",
+        threshold=0.82,
+        exclude_pairs=None,
+        batch_size=32,
+    ):
+        a, b = units
+        return np.array([[0.0, 0.0]] * 2, dtype=np.float32), [
+            DuplicatePair(unit_a=a, unit_b=b, similarity=0.99, method="semantic")
+        ]
+
+    monkeypatch.setattr(analyzer_module, "run_semantic_analysis", fake_run_semantic)
+
+    analyzer = CodeAnalyzer(
+        AnalyzerConfig(
+            run_traditional=False,
+            run_semantic=True,
+            run_unused=True,
+            min_semantic_lines=0,
+            strict_unused=False,
+        )
+    )
+
+    result = analyzer.analyze(project)
+    assert result.semantic_duplicates == []
 
 
 def test_search_requires_embeddings(tmp_path: Path) -> None:

@@ -13,6 +13,7 @@ Model: codefuse-ai/C2LLM-0.5B
 from __future__ import annotations
 
 import logging
+import ast
 from typing import Literal
 
 import numpy as np
@@ -47,6 +48,40 @@ _GENERIC_INSTRUCTIONS: dict[str, str] = {
 
 # Models known to need C2LLM-specific loading args
 _C2LLM_MODELS = {"codefuse-ai/C2LLM-0.5B", "codefuse-ai/C2LLM-7B"}
+
+
+def get_code_unit_statement_count(unit: CodeUnit) -> int:
+    """Get effective statement count for a unit, excluding docstring.
+
+    This returns the number of top-level AST statements in the unit source after
+    removing a leading docstring, when present.
+    """
+    if not unit.source:
+        return 0
+
+    text = unit.source.strip()
+    if not text:
+        return 0
+
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return 0
+
+    if not tree.body:
+        return 0
+
+    top_node = tree.body[0]
+    body = []
+    if isinstance(top_node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        body = top_node.body
+    else:
+        body = tree.body
+
+    if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant):
+        body = body[1:]
+
+    return len(body)
 
 
 def _is_c2llm(model_name: str) -> bool:

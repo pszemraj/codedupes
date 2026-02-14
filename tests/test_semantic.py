@@ -2,9 +2,16 @@ from __future__ import annotations
 
 import numpy as np
 from pathlib import Path
+import pytest
+import sentence_transformers
 
 from codedupes import semantic
-from codedupes.semantic import find_similar_to_query, run_semantic_analysis
+from codedupes.models import CodeUnit
+from codedupes.semantic import (
+    get_code_unit_statement_count,
+    find_similar_to_query,
+    run_semantic_analysis,
+)
 from tests.conftest import extract_arithmetic_units
 
 
@@ -27,7 +34,7 @@ class FakeModel:
         return np.array([[1.0, 0.0]], dtype=np.float32)
 
 
-def _extract_units(tmp_path: Path) -> list:
+def _extract_units(tmp_path: Path) -> list[CodeUnit]:
     return extract_arithmetic_units(tmp_path, include_private=True, exclude_patterns=[])
 
 
@@ -59,3 +66,36 @@ def test_query_search_with_mocked_semantic_model(tmp_path, monkeypatch):
 
     assert len(results) == 1
     assert results[0][0] in units
+
+
+def test_code_unit_statement_count_ignores_docstring(tmp_path: Path) -> None:
+    source = """
+    def sample(a, b):
+        \"\"\"doc\"\"\"
+        x = 1
+        return a + b + x
+    """
+    unit = extract_arithmetic_units(tmp_path, include_private=True)[0]
+    unit.source = source
+    assert get_code_unit_statement_count(unit) == 2
+
+
+def test_prepare_code_for_embedding_prefixes_query(tmp_path: Path) -> None:
+    units = _extract_units(tmp_path)
+    prepared = semantic.prepare_code_for_embedding(units[0], mode="query")
+    assert prepared.startswith(semantic.C2LLM_INSTRUCTIONS["query"])
+    assert prepared.endswith(units[0].source.strip())
+
+
+def test_get_model_reports_deepspeed_guidance(monkeypatch) -> None:
+    def fake_ctor(*args, **kwargs):
+        e = ModuleNotFoundError("No module named 'deepspeed'")
+        e.name = "deepspeed"
+        raise e
+
+    monkeypatch.setattr(sentence_transformers, "SentenceTransformer", fake_ctor)
+    semantic.clear_model_cache()
+
+    with pytest.raises(ModuleNotFoundError) as excinfo:
+        semantic.get_model("codefuse-ai/C2LLM-0.5B")
+    assert "deepspeed is required" in str(excinfo.value)

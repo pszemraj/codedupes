@@ -238,10 +238,12 @@ class CodeExtractor:
         root: Path,
         exclude_patterns: list[str] | None = None,
         include_private: bool = True,
+        include_stubs: bool = False,
     ) -> None:
         self.root = root.resolve()
         self.exclude_patterns = exclude_patterns or ["**/test_*", "**/*_test.py", "**/tests/**"]
         self.include_private = include_private
+        self.include_stubs = include_stubs
 
     def _should_exclude(self, path: Path) -> bool:
         """Check if path matches any exclude pattern."""
@@ -384,9 +386,24 @@ class CodeExtractor:
     def extract_all(self) -> list[CodeUnit]:
         """Extract all code units from the directory."""
         units: list[CodeUnit] = []
-        for py_file in self.root.rglob("*.py"):
-            if self._should_exclude(py_file):
-                logger.debug(f"Excluding {py_file}")
-                continue
-            units.extend(self.extract_from_file(py_file))
+        patterns = ["*.py"]
+        if self.include_stubs:
+            patterns.append("*.pyi")
+
+        seen: set[Path] = set()
+        for pattern in patterns:
+            for py_file in self.root.rglob(pattern):
+                try:
+                    resolved = py_file.resolve()
+                except OSError:
+                    resolved = py_file
+                if resolved in seen:
+                    continue
+                seen.add(resolved)
+
+                if self._should_exclude(py_file):
+                    continue
+
+                units.extend(self.extract_from_file(py_file))
+
         return units
