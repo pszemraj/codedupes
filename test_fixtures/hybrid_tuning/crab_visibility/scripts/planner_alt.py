@@ -11,7 +11,9 @@ def derive_observable_bands(
     best = -999
 
     for tick, elevation in rows:
-        qualifies = elevation is not None and (elevation > floor_deg or abs(elevation - floor_deg) < 1e-9)
+        qualifies = elevation is not None and (
+            elevation > floor_deg or abs(elevation - floor_deg) < 1e-9
+        )
         if qualifies:
             if opening is None:
                 opening = tick

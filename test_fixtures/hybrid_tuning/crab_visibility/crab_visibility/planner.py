@@ -31,7 +31,9 @@ def compute_visibility_bands(
     return output
 
 
-def total_dark_minutes(timeline: list[tuple[int, float | None]], min_altitude_deg: float = 5.0) -> int:
+def total_dark_minutes(
+    timeline: list[tuple[int, float | None]], min_altitude_deg: float = 5.0
+) -> int:
     """Count minutes where target is below threshold."""
     below = 0
     for _minute, altitude in timeline:

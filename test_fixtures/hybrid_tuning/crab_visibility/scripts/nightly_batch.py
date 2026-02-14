@@ -34,7 +34,9 @@ def batch_visibility_score(all_tracks: list[list[float | None]], floor_deg: floa
     return sum(scores) / len(scores)
 
 
-def run_batch(records: list[tuple[str, list[float | None]]], floor_deg: float = 5.0) -> dict[str, int]:
+def run_batch(
+    records: list[tuple[str, list[float | None]]], floor_deg: float = 5.0
+) -> dict[str, int]:
     """Run batch estimates keyed by site name."""
     out: dict[str, int] = {}
     for site, track in records:
@@ -51,7 +53,9 @@ def build_observable_ranges(
     open_tick: int | None = None
 
     for tick, elevation in samples:
-        is_up = elevation is not None and (elevation > floor_deg or abs(elevation - floor_deg) < 1e-9)
+        is_up = elevation is not None and (
+            elevation > floor_deg or abs(elevation - floor_deg) < 1e-9
+        )
         if is_up:
             if open_tick is None:
                 open_tick = tick

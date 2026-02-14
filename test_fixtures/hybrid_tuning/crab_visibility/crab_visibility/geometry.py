@@ -33,9 +33,8 @@ def angular_separation_deg(ra_a: float, dec_a: float, ra_b: float, dec_b: float)
     ra_b_r = deg_to_rad(ra_b)
     dec_b_r = deg_to_rad(dec_b)
 
-    cos_angle = (
-        math.sin(dec_a_r) * math.sin(dec_b_r)
-        + math.cos(dec_a_r) * math.cos(dec_b_r) * math.cos(ra_a_r - ra_b_r)
-    )
+    cos_angle = math.sin(dec_a_r) * math.sin(dec_b_r) + math.cos(dec_a_r) * math.cos(
+        dec_b_r
+    ) * math.cos(ra_a_r - ra_b_r)
     clamped = max(-1.0, min(1.0, cos_angle))
     return rad_to_deg(math.acos(clamped))
