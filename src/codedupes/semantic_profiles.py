@@ -27,7 +27,10 @@ class SemanticModelProfile:
     default_semantic_threshold: float = DEFAULT_FALLBACK_SEMANTIC_THRESHOLD
 
     def all_aliases(self) -> tuple[str, ...]:
-        """Return all user-facing names that map to this profile."""
+        """Return all user-facing names that map to this profile.
+
+        :return: Tuple of alias strings including canonical profile keys.
+        """
         return (self.key, self.canonical_name, *self.aliases)
 
 
@@ -79,17 +82,27 @@ _GENERIC_PROFILE = SemanticModelProfile(
 
 
 def _normalize_model_key(value: str) -> str:
-    """Normalize model aliases for stable lookup."""
+    """Normalize model aliases for stable lookup.
+
+    :param value: Raw model alias.
+    :return: Normalized lowercase alias.
+    """
     return value.strip().lower()
 
 
 def list_supported_models() -> list[SemanticModelProfile]:
-    """Return the built-in model profiles in deterministic order."""
+    """Return the built-in model profiles in deterministic order.
+
+    :return: Built-in profiles list.
+    """
     return list(_BUILTIN_MODEL_PROFILES)
 
 
 def _builtin_alias_map() -> dict[str, SemanticModelProfile]:
-    """Return normalized alias map for built-in profiles."""
+    """Return normalized alias map for built-in profiles.
+
+    :return: Alias-to-profile dictionary.
+    """
     alias_map: dict[str, SemanticModelProfile] = {}
     for profile in _BUILTIN_MODEL_PROFILES:
         for alias in profile.all_aliases():
@@ -98,7 +111,11 @@ def _builtin_alias_map() -> dict[str, SemanticModelProfile]:
 
 
 def _build_dynamic_c2llm_profile(model_name: str) -> SemanticModelProfile:
-    """Build a C2LLM-family profile for non-builtin C2LLM model IDs."""
+    """Build a C2LLM-family profile for non-builtin C2LLM model IDs.
+
+    :param model_name: Model name.
+    :return: Dynamic family-appropriate profile.
+    """
     return SemanticModelProfile(
         key=model_name,
         canonical_name=model_name,
@@ -113,7 +130,11 @@ def _build_dynamic_c2llm_profile(model_name: str) -> SemanticModelProfile:
 
 
 def resolve_model_profile(model_name: str) -> SemanticModelProfile:
-    """Resolve a user model identifier into a concrete model profile."""
+    """Resolve a user model identifier into a concrete model profile.
+
+    :param model_name: Alias or model name.
+    :return: Matching profile from builtins or a dynamic fallback.
+    """
     alias_map = _builtin_alias_map()
     normalized = _normalize_model_key(model_name)
     builtin = alias_map.get(normalized)
@@ -133,10 +154,18 @@ def resolve_model_profile(model_name: str) -> SemanticModelProfile:
 
 
 def resolve_model_name(model_name: str) -> str:
-    """Resolve model name aliases to canonical model IDs."""
+    """Resolve model name aliases to canonical model IDs.
+
+    :param model_name: Alias or model key.
+    :return: Canonical model identifier.
+    """
     return resolve_model_profile(model_name).canonical_name
 
 
 def get_default_semantic_threshold(model_name: str) -> float:
-    """Return semantic threshold default for the resolved model profile."""
+    """Return semantic threshold default for the resolved model profile.
+
+    :param model_name: Alias or model key.
+    :return: Default threshold for the resolved profile.
+    """
     return resolve_model_profile(model_name).default_semantic_threshold

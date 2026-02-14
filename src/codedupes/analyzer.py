@@ -41,7 +41,11 @@ HYBRID_STATEMENT_RATIO_MIN = 0.35
 
 
 def _build_exact_hash_exclusions(units: list[CodeUnit]) -> set[tuple[str, str]]:
-    """Build exclusion pairs for exact-duplicate units using precomputed hashes."""
+    """Build exclusion pairs for exact-duplicate units using precomputed hashes.
+
+    :param units: Code units to scan for shared hash pairs.
+    :return: Set of unit uid pairs that should be treated as exact duplicates.
+    """
     buckets: dict[tuple[str, str], list[CodeUnit]] = {}
     for unit in units:
         ast_hash = unit._ast_hash
@@ -63,14 +67,23 @@ def _build_exact_hash_exclusions(units: list[CodeUnit]) -> set[tuple[str, str]]:
 
 
 def _is_test_function_unit(unit: CodeUnit) -> bool:
-    """Return True when the unit looks like a pytest-style test function."""
+    """Return whether the unit is a pytest-style test function.
+
+    :param unit: Code unit under inspection.
+    :return: ``True`` for function/method units whose names start with ``test_``.
+    """
     return unit.unit_type in {CodeUnitType.FUNCTION, CodeUnitType.METHOD} and unit.name.startswith(
         "test_"
     )
 
 
 def _statement_count_ratio(unit_a: CodeUnit, unit_b: CodeUnit) -> float:
-    """Compute ratio of statement counts for two units."""
+    """Compute ratio of statement counts for two units.
+
+    :param unit_a: First code unit.
+    :param unit_b: Second code unit.
+    :return: Ratio of smaller statement count to larger statement count.
+    """
     count_a = get_code_unit_statement_count(unit_a)
     count_b = get_code_unit_statement_count(unit_b)
     high = max(count_a, count_b)
@@ -87,10 +100,23 @@ def _synthesize_hybrid_duplicates(
     semantic_threshold: float,
     jaccard_threshold: float,
 ) -> tuple[list[HybridDuplicate], int]:
-    """Build a single ranked hybrid duplicate list from raw method outputs."""
+    """Build ranked hybrid duplicates from traditional and semantic outputs.
+
+    :param traditional_duplicates: Traditional duplicate pairs (exact + Jaccard).
+    :param semantic_duplicates: Semantic duplicate pairs.
+    :param semantic_threshold: Minimum semantic similarity used for hybrid tiering.
+    :param jaccard_threshold: Minimum Jaccard similarity used for hybrid tiering.
+    :return: Tuple of sorted hybrid duplicates and number filtered pairs.
+    """
     pair_evidence: dict[tuple[str, str], dict[str, object]] = {}
 
     def ensure_entry(unit_a: CodeUnit, unit_b: CodeUnit) -> dict[str, object]:
+        """Return/create a pair evidence map entry.
+
+        :param unit_a: First unit in a candidate pair.
+        :param unit_b: Second unit in a candidate pair.
+        :return: Shared mutable evidence dict used to combine signals.
+        """
         key = ordered_pair_key(unit_a, unit_b)
         entry = pair_evidence.get(key)
         if entry is None:
@@ -240,6 +266,10 @@ class CodeAnalyzer:
     """
 
     def __init__(self, config: AnalyzerConfig | None = None) -> None:
+        """Initialize analyzer state.
+
+        :param config: Optional analyzer configuration override.
+        """
         self.config = config or AnalyzerConfig()
         self._units: list[CodeUnit] | None = None
         self._embeddings: np.ndarray | None = None
@@ -437,6 +467,10 @@ class CodeAnalyzer:
         Search for code units matching a natural language query.
 
         Must run analyze() first to compute embeddings.
+
+        :param query: Search query string.
+        :param top_k: Maximum results to return.
+        :return: List of code units and cosine scores.
         """
         if self._units is None or self._embeddings is None:
             raise RuntimeError("Must run analyze() with run_semantic=True before search().")
@@ -492,6 +526,9 @@ def analyze_directory(
         model_revision: Optional HuggingFace model revision/commit hash.
             If None, semantic backend chooses model-specific default behavior.
         trust_remote_code: Whether remote model code may execute while loading
+        min_semantic_lines: Minimum statement count required for semantic analysis.
+        include_stubs: Whether to analyze ``.pyi`` files.
+        strict_unused: Whether to ignore public API exclusions when reporting unused code.
         run_unused: Run potentially-unused detection even when traditional analysis is off
 
     Returns:

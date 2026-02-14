@@ -19,7 +19,13 @@ logger = logging.getLogger(__name__)
 def _find_exact_duplicates(
     units: list[CodeUnit], hash_attr: str, method: str
 ) -> list[DuplicatePair]:
-    """Find duplicate pairs by grouping units by a stored hash attribute."""
+    """Find duplicate pairs by grouping units by a stored hash attribute.
+
+    :param units: Candidate units to compare.
+    :param hash_attr: Unit attribute name containing a hash.
+    :param method: Duplicate classification label.
+    :return: Exact duplicate pairs for the selected hash field.
+    """
     by_hash: dict[str, list[CodeUnit]] = defaultdict(list)
 
     for unit in units:
@@ -38,7 +44,12 @@ def _find_exact_duplicates(
 
 
 def jaccard_similarity(set_a: set[str], set_b: set[str]) -> float:
-    """Jaccard similarity between two sets."""
+    """Jaccard similarity between two sets.
+
+    :param set_a: First identifier set.
+    :param set_b: Second identifier set.
+    :return: Intersection-over-union score.
+    """
     if not set_a and not set_b:
         return 0.0
     intersection = len(set_a & set_b)
@@ -47,7 +58,11 @@ def jaccard_similarity(set_a: set[str], set_b: set[str]) -> float:
 
 
 def extract_identifiers(source: str) -> set[str]:
-    """Extract all identifiers from source code."""
+    """Extract all identifiers from source code.
+
+    :param source: Source text.
+    :return: Identifier names found in the AST.
+    """
     identifiers = set()
     try:
         tree = ast.parse(source)
@@ -68,7 +83,11 @@ def extract_identifiers(source: str) -> set[str]:
 
 
 def _normalize_identifiers(identifiers: set[str]) -> set[str]:
-    """Normalize identifier sets for stable near-duplicate matching."""
+    """Normalize identifier sets for stable near-duplicate matching.
+
+    :param identifiers: Raw identifier names.
+    :return: Normalized filtered identifiers.
+    """
     ignored = set(keyword.kwlist) | set(dir(__builtins__))
     normalized = set()
     for ident in identifiers:
@@ -86,7 +105,12 @@ def find_near_duplicates_jaccard(
     units: list[CodeUnit],
     threshold: float = 0.8,
 ) -> list[DuplicatePair]:
-    """Find near-duplicates via Jaccard similarity on identifiers."""
+    """Find near-duplicates via Jaccard similarity on identifiers.
+
+    :param units: Candidate units.
+    :param threshold: Jaccard cutoff.
+    :return: Near-duplicate pairs above threshold.
+    """
     identifier_sets = {unit.uid: extract_identifiers(unit.source) for unit in units}
 
     duplicates = []
@@ -117,7 +141,11 @@ def find_near_duplicates_jaccard(
 
 
 def _dedupe_duplicate_pairs(duplicates: list[DuplicatePair]) -> list[DuplicatePair]:
-    """Deduplicate unordered duplicate pairs."""
+    """Deduplicate unordered duplicate pairs.
+
+    :param duplicates: Duplicate candidates.
+    :return: Unique duplicate pairs.
+    """
     seen: set[tuple[str, str]] = set()
     deduped: list[DuplicatePair] = []
     for dup in duplicates:
@@ -130,7 +158,12 @@ def _dedupe_duplicate_pairs(duplicates: list[DuplicatePair]) -> list[DuplicatePa
 
 
 def _resolve_call_targets(call: str, aliases: dict[str, str]) -> set[str]:
-    """Resolve direct and alias-mapped call targets."""
+    """Resolve direct and alias-mapped call targets.
+
+    :param call: Raw call expression string.
+    :param aliases: Alias map from local symbols to full targets.
+    :return: Candidate call target names.
+    """
     candidates = {call}
     if call in aliases:
         candidates.add(aliases[call])
@@ -142,7 +175,11 @@ def _resolve_call_targets(call: str, aliases: dict[str, str]) -> set[str]:
 
 
 def _extract_main_block_calls(file_path: Path) -> set[str]:
-    """Extract function names called from an if-`__main__` block."""
+    """Extract function names called from an if-``__main__`` block.
+
+    :param file_path: Path to inspect.
+    :return: Function names called from the module entry block.
+    """
     try:
         source = file_path.read_text(encoding="utf-8")
         tree = ast.parse(source)
@@ -191,7 +228,11 @@ def _extract_main_block_calls(file_path: Path) -> set[str]:
 
 
 def _extract_pyproject_entry_points(project_root: Path) -> set[str]:
-    """Collect callable targets from `[project.scripts]` and `[project.gui-scripts]`."""
+    """Collect callable targets from ``[project.scripts]`` and ``[project.gui-scripts]``.
+
+    :param project_root: Project root path.
+    :return: Entry point callable names.
+    """
     pyproject_path = project_root / "pyproject.toml"
     if not pyproject_path.is_file():
         return set()
@@ -224,7 +265,12 @@ def _extract_pyproject_entry_points(project_root: Path) -> set[str]:
 
 
 def build_reference_graph(units: list[CodeUnit], project_root: Path | None = None) -> None:
-    """Populate references from direct calls, entrypoints, and `__main__` blocks."""
+    """Populate references from direct calls, entrypoints, and ``__main__`` blocks.
+
+    :param units: Collected code units.
+    :param project_root: Optional root for entry point resolution.
+    :return: ``None``.
+    """
     by_name: dict[str, list[CodeUnit]] = defaultdict(list)
     for unit in units:
         by_name[unit.name].append(unit)
@@ -263,7 +309,11 @@ def build_reference_graph(units: list[CodeUnit], project_root: Path | None = Non
 
 
 def _extract_aliases(file_path: Path) -> dict[str, str]:
-    """Extract a conservative alias map from module-level imports and assignments."""
+    """Extract a conservative alias map from module-level imports and assignments.
+
+    :param file_path: Python source path.
+    :return: Alias map for name resolution.
+    """
     try:
         source = file_path.read_text(encoding="utf-8")
         tree = ast.parse(source)
@@ -296,7 +346,12 @@ def _extract_aliases(file_path: Path) -> dict[str, str]:
 
 
 def find_potentially_unused(units: list[CodeUnit], strict_unused: bool = False) -> list[CodeUnit]:
-    """Find code units that are never referenced and are not likely API."""
+    """Find code units that are never referenced and are not likely API.
+
+    :param units: Candidate code units.
+    :param strict_unused: Whether to include likely public functions in results.
+    :return: Units with no references and not classified as API.
+    """
     unused = []
     for unit in units:
         if not strict_unused and unit.unit_type == CodeUnitType.FUNCTION and unit.is_public:
@@ -332,7 +387,15 @@ def run_traditional_analysis(
     strict_unused: bool = False,
     project_root: Path | None = None,
 ) -> tuple[list[DuplicatePair], list[DuplicatePair], list[CodeUnit]]:
-    """Run all traditional duplicate detection methods."""
+    """Run all traditional duplicate detection methods.
+
+    :param units: Candidate code units.
+    :param jaccard_threshold: Similarity threshold for near-duplicate detection.
+    :param compute_unused: Whether to compute unused candidates.
+    :param strict_unused: Whether to keep public functions in unused results.
+    :param project_root: Optional project root for reference graph and entry points.
+    :return: Exact duplicates, near duplicates, and potentially unused units.
+    """
     logger.info(f"Running traditional analysis on {len(units)} code units")
 
     if compute_unused:

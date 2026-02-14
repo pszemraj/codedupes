@@ -59,10 +59,19 @@ class _CodedupesLogFilter(logging.Filter):
     """Filter log records so non-codedupes INFO chatter is hidden by default."""
 
     def __init__(self, *, include_external_info: bool) -> None:
+        """Create a log filter configured for CLI verbosity.
+
+        :param include_external_info: Allow noisy external INFO logs through.
+        """
         super().__init__()
         self.include_external_info = include_external_info
 
     def filter(self, record: logging.LogRecord) -> bool:
+        """Decide whether a log record should be emitted.
+
+        :param record: Candidate log record.
+        :return: ``False`` for noisy INFO messages from non-codedupes modules.
+        """
         if record.name.startswith("codedupes"):
             return True
         if self.include_external_info:
@@ -95,6 +104,14 @@ def setup_logging(verbose: bool = False) -> None:
 def _validate_threshold(
     _ctx: click.Context, _param: click.Parameter, value: float | None
 ) -> float | None:
+    """Validate a threshold in the ``[0.0, 1.0]`` range.
+
+    :param _ctx: Click callback context (unused).
+    :param _param: Click callback parameter metadata (unused).
+    :param value: Optional float to validate.
+    :return: Validated threshold value.
+    :raises click.BadParameter: When value is outside the allowed range.
+    """
     if value is None:
         return None
     if not 0.0 <= value <= 1.0:
@@ -103,18 +120,42 @@ def _validate_threshold(
 
 
 def _validate_positive_int(_ctx: click.Context, _param: click.Parameter, value: int) -> int:
+    """Validate a positive integer option value.
+
+    :param _ctx: Click callback context (unused).
+    :param _param: Click callback parameter metadata (unused).
+    :param value: Candidate value.
+    :return: Value if it is strictly positive.
+    :raises click.BadParameter: When value is ``<= 0``.
+    """
     if value <= 0:
         raise click.BadParameter("must be > 0")
     return value
 
 
 def _validate_non_negative_int(_ctx: click.Context, _param: click.Parameter, value: int) -> int:
+    """Validate a non-negative integer option value.
+
+    :param _ctx: Click callback context (unused).
+    :param _param: Click callback parameter metadata (unused).
+    :param value: Candidate value.
+    :return: Value if it is ``>= 0``.
+    :raises click.BadParameter: When value is negative.
+    """
     if value < 0:
         raise click.BadParameter("must be >= 0")
     return value
 
 
 def _validate_output_width(_ctx: click.Context, _param: click.Parameter, value: int) -> int:
+    """Validate output width for rich table rendering.
+
+    :param _ctx: Click callback context (unused).
+    :param _param: Click callback parameter metadata (unused).
+    :param value: Desired output width.
+    :return: Value if it meets the minimum width.
+    :raises click.BadParameter: When value is below the minimum width.
+    """
     if value < MIN_OUTPUT_WIDTH:
         raise click.BadParameter(f"must be >= {MIN_OUTPUT_WIDTH}")
     return value
@@ -127,6 +168,14 @@ def _resolve_check_thresholds(
     *,
     model_name: str,
 ) -> tuple[float, float]:
+    """Resolve semantic and traditional thresholds using precedence rules.
+
+    :param threshold: Shared threshold override.
+    :param semantic_threshold: Explicit semantic threshold override.
+    :param traditional_threshold: Explicit traditional threshold override.
+    :param model_name: Model name used for default semantic threshold.
+    :return: Tuple of ``(semantic_threshold, traditional_threshold)``.
+    """
     default_semantic = get_default_semantic_threshold(model_name)
     default_traditional = DEFAULT_TRADITIONAL_THRESHOLD
     return (
@@ -153,6 +202,13 @@ def _resolve_search_threshold(
     *,
     model_name: str,
 ) -> float:
+    """Resolve semantic threshold for search mode.
+
+    :param threshold: Shared threshold override.
+    :param semantic_threshold: Search-specific semantic threshold override.
+    :param model_name: Model name used for default threshold.
+    :return: Resolved semantic threshold.
+    """
     if semantic_threshold is not None:
         return semantic_threshold
     if threshold is not None:
@@ -161,12 +217,21 @@ def _resolve_search_threshold(
 
 
 def format_location(unit: CodeUnit) -> str:
-    """Format file:line location."""
+    """Format file:line location for table rendering.
+
+    :param unit: Unit to format.
+    :return: ``<filename>:<lineno>`` string.
+    """
     return f"{unit.file_path.name}:{unit.lineno}"
 
 
 def truncate_source(source: str, max_lines: int = 5) -> str:
-    """Truncate source code for display."""
+    """Truncate source code for compact display.
+
+    :param source: Source string to truncate.
+    :param max_lines: Maximum lines to keep.
+    :return: Truncated source with optional overflow note.
+    """
     lines = source.strip().split("\n")
     if len(lines) <= max_lines:
         return source.strip()
@@ -178,7 +243,12 @@ def print_summary(
     *,
     mode: Literal["combined", "traditional", "semantic"],
 ) -> None:
-    """Print analysis summary."""
+    """Print analysis summary.
+
+    :param result: Complete analysis result.
+    :param mode: Output mode used for this result.
+    :return: ``None``.
+    """
     console.print()
 
     summary = Table(title="Analysis Summary", show_header=False, box=None)
@@ -219,6 +289,11 @@ def print_summary(
 
 
 def _unit_to_dict(unit: CodeUnit) -> dict[str, Any]:
+    """Convert a code unit to JSON-serializable summary.
+
+    :param unit: Unit to convert.
+    :return: Dictionary with public unit fields.
+    """
     return {
         "name": unit.name,
         "qualified_name": unit.qualified_name,
@@ -232,6 +307,11 @@ def _unit_to_dict(unit: CodeUnit) -> dict[str, Any]:
 
 
 def _dup_to_dict(dup: DuplicatePair) -> dict[str, Any]:
+    """Convert a duplicate pair to JSON-serializable mapping.
+
+    :param dup: Duplicate pair to serialize.
+    :return: Dictionary representation of the pair.
+    """
     return {
         "unit_a": _unit_to_dict(dup.unit_a),
         "unit_b": _unit_to_dict(dup.unit_b),
@@ -241,6 +321,11 @@ def _dup_to_dict(dup: DuplicatePair) -> dict[str, Any]:
 
 
 def _hybrid_dup_to_dict(dup: HybridDuplicate) -> dict[str, Any]:
+    """Convert a hybrid duplicate pair for JSON output.
+
+    :param dup: Hybrid duplicate to serialize.
+    :return: Dictionary representation of the hybrid pair.
+    """
     return {
         "unit_a": _unit_to_dict(dup.unit_a),
         "unit_b": _unit_to_dict(dup.unit_b),
@@ -255,7 +340,12 @@ def _hybrid_dup_to_dict(dup: HybridDuplicate) -> dict[str, Any]:
 
 
 def print_check_json_combined(result: AnalysisResult, *, show_all: bool) -> None:
-    """Output combined-mode check results as JSON."""
+    """Output combined-mode check results as JSON.
+
+    :param result: Full analysis result to serialize.
+    :param show_all: Include raw duplicate lists in addition to hybrid output.
+    :return: ``None``.
+    """
     output: dict[str, Any] = {
         "summary": {
             "total_units": len(result.units),
@@ -302,7 +392,12 @@ def print_check_json_raw(result: AnalysisResult) -> None:
 
 
 def print_search_json(query: str, results: list[tuple[CodeUnit, float]]) -> None:
-    """Output search output as JSON."""
+    """Output search results as JSON.
+
+    :param query: Original search query.
+    :param results: Matching units and cosine scores.
+    :return: ``None``.
+    """
     payload = {
         "query": query,
         "results": [{"score": float(score), **_unit_to_dict(unit)} for unit, score in results],
@@ -311,6 +406,11 @@ def print_search_json(query: str, results: list[tuple[CodeUnit, float]]) -> None
 
 
 def _build_duplicates_table(*, hybrid: bool = False) -> Table:
+    """Build the duplicate table columns for terminal output.
+
+    :param hybrid: When true, build columns for hybrid duplicate mode.
+    :return: Configured rich ``Table`` instance.
+    """
     table = Table(show_header=True, header_style="bold")
     if hybrid:
         table.add_column("Confidence", style="green", width=10, no_wrap=True)
@@ -328,6 +428,12 @@ def _build_duplicates_table(*, hybrid: bool = False) -> Table:
 
 
 def _print_source_panels(unit_a: CodeUnit, unit_b: CodeUnit) -> None:
+    """Print syntax-highlighted side-by-side source snippets for two units.
+
+    :param unit_a: First code unit.
+    :param unit_b: Second code unit.
+    :return: ``None``.
+    """
     console.print(
         Panel(
             Syntax(truncate_source(unit_a.source), "python", theme="monokai"),
@@ -352,7 +458,15 @@ def _print_duplicate_table(
     max_items: int | None,
     hybrid: bool,
 ) -> None:
-    """Render duplicate pairs in either raw or hybrid layout."""
+    """Render duplicate pairs in either raw or hybrid layout.
+
+    :param duplicates: Duplicate pairs to display.
+    :param title: Section title.
+    :param show_source: Whether to render source snippets.
+    :param max_items: Optional row limit.
+    :param hybrid: Whether the payload is hybrid duplicates.
+    :return: ``None``.
+    """
     if not duplicates:
         return
 
@@ -408,7 +522,14 @@ def print_duplicates(
     show_source: bool = False,
     max_items: int | None = DEFAULT_TABLE_ROWS,
 ) -> None:
-    """Print duplicate pairs in a table."""
+    """Print duplicate pairs in a table.
+
+    :param duplicates: Duplicate pairs to print.
+    :param title: Section title.
+    :param show_source: Whether to render source snippets.
+    :param max_items: Optional max rows.
+    :return: ``None``.
+    """
     _print_duplicate_table(
         duplicates,
         title=title,
@@ -423,7 +544,13 @@ def print_hybrid_duplicates(
     show_source: bool = False,
     max_items: int | None = DEFAULT_TABLE_ROWS,
 ) -> None:
-    """Print synthesized hybrid duplicate pairs."""
+    """Print synthesized hybrid duplicate pairs.
+
+    :param duplicates: Hybrid duplicates to print.
+    :param show_source: Whether to render source snippets.
+    :param max_items: Optional max rows.
+    :return: ``None``.
+    """
     _print_duplicate_table(
         duplicates,
         title="Hybrid Duplicates",
@@ -438,7 +565,13 @@ def print_unused(
     max_items: int | None = DEFAULT_TABLE_ROWS,
     title: str = "Potentially Unused",
 ) -> None:
-    """Print potentially unused code units."""
+    """Print potentially unused code units.
+
+    :param unused: Units with no detected references.
+    :param max_items: Optional max rows.
+    :param title: Section title.
+    :return: ``None``.
+    """
     if not unused:
         return
 
@@ -483,6 +616,11 @@ def print_search_results(results: list[tuple[CodeUnit, float]]) -> None:
 
 
 def _add_common_analysis_options(func: Callable[..., Any]) -> Callable[..., Any]:
+    """Attach shared CLI options to analysis commands.
+
+    :param func: Click command function.
+    :return: Decorated click command function.
+    """
     options = [
         click.option(
             "--no-private",
@@ -642,7 +780,35 @@ def check_command(
     include_stubs: bool,
     output_width: int,
 ) -> None:
-    """Run duplicate and unused-code analysis."""
+    """Run duplicate and unused-code analysis.
+
+    :param path: Source directory or file to analyze.
+    :param threshold: Optional shared threshold override.
+    :param semantic_threshold: Semantic threshold override.
+    :param traditional_threshold: Traditional threshold override.
+    :param semantic_only: If true, run semantic analysis only.
+    :param traditional_only: If true, run traditional analysis only.
+    :param no_unused: If true, skip unused code detection.
+    :param strict_unused: If true, do not suppress likely public functions.
+    :param suppress_test_semantic: Exclude matches involving test functions.
+    :param show_all: Emit raw duplicate lists in combined mode.
+    :param show_source: Show source code snippets for duplicate pairs.
+    :param full_table: Show all table rows.
+    :param no_private: Exclude private symbols.
+    :param min_lines: Minimum code body statement lines for semantic comparisons.
+    :param model: Semantic model alias/identifier.
+    :param semantic_task: Semantic task used during duplicate detection.
+    :param instruction_prefix: Optional custom embedding prefix.
+    :param model_revision: Optional model revision/commit override.
+    :param trust_remote_code: Whether to trust remote code loaders.
+    :param batch_size: Embedding batch size.
+    :param as_json: Output JSON instead of tables.
+    :param verbose: Enable debug-level logging.
+    :param exclude: Glob patterns to exclude.
+    :param include_stubs: Include ``.pyi`` files.
+    :param output_width: Width used for rich output.
+    :return: ``None``.
+    """
     if semantic_only and traditional_only:
         raise click.UsageError("Cannot use both --semantic-only and --traditional-only.")
 
@@ -809,7 +975,28 @@ def search_command(
     include_stubs: bool,
     output_width: int,
 ) -> None:
-    """Run semantic search over extracted code units."""
+    """Run semantic search over extracted code units.
+
+    :param path: Directory or file to analyze for query context.
+    :param query: Natural-language search query.
+    :param top_k: Maximum results to return.
+    :param threshold: Shared threshold override.
+    :param semantic_threshold: Semantic threshold override.
+    :param semantic_task: Semantic task used for search.
+    :param no_private: Exclude private symbols.
+    :param min_lines: Minimum code body statement lines for semantic candidates.
+    :param model: Semantic model alias/identifier.
+    :param instruction_prefix: Optional custom embedding prefix.
+    :param model_revision: Optional model revision/commit override.
+    :param trust_remote_code: Whether to trust remote code loaders.
+    :param batch_size: Embedding batch size.
+    :param as_json: Output JSON result instead of table.
+    :param verbose: Enable debug-level logging.
+    :param exclude: Glob patterns to exclude.
+    :param include_stubs: Include ``.pyi`` files.
+    :param output_width: Width used for rich output.
+    :return: ``None``.
+    """
     _set_console(output_width)
 
     if not as_json:
@@ -880,7 +1067,10 @@ def info_command() -> None:
 
 
 def main() -> int:
-    """Main CLI entrypoint."""
+    """CLI program entrypoint.
+
+    :return: Process exit code from click dispatch.
+    """
     argv = sys.argv[1:]
 
     try:

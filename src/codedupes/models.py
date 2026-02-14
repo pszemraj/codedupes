@@ -11,6 +11,8 @@ from codedupes.pairs import unordered_pair_key
 
 
 class CodeUnitType(Enum):
+    """Kinds of analyzed code units."""
+
     FUNCTION = auto()
     METHOD = auto()
     CLASS = auto()
@@ -44,12 +46,18 @@ class CodeUnit:
 
     @property
     def uid(self) -> str:
-        """Unique identifier for this code unit."""
+        """Build a stable unique identifier for this code unit.
+
+        :return: ``"<path>::<qualified_name>"``.
+        """
         return f"{self.file_path}::{self.qualified_name}"
 
     @property
     def is_likely_api(self) -> bool:
-        """Heuristic: is this likely intentionally exposed?"""
+        """Indicate whether this unit is likely public API surface.
+
+        :return: ``True`` if the unit is likely intentionally exposed.
+        """
         return (
             self.is_exported
             or self.is_dunder
@@ -127,12 +135,18 @@ class AnalysisResult:
 
     @property
     def exact_duplicates(self) -> list[DuplicatePair]:
-        """Backward-compatible alias for traditional duplicates."""
+        """Backward-compatible alias for traditional duplicates.
+
+        :return: Exact/near duplicates from traditional analysis.
+        """
         return self.traditional_duplicates
 
     @property
     def all_duplicates(self) -> list[HybridDuplicate] | list[DuplicatePair]:
-        """Return the available duplicate list for this analysis mode."""
+        """Return the available duplicate list for this analysis mode.
+
+        :return: Duplicate list for the selected analysis mode.
+        """
         if self.analysis_mode == "combined":
             return self.hybrid_duplicates
         return self.traditional_duplicates + self.semantic_duplicates
