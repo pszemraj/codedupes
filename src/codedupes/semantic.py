@@ -14,13 +14,17 @@ from __future__ import annotations
 
 import ast
 import importlib
+from importlib import metadata as importlib_metadata
 import logging
+import sys
 from typing import Literal
 
 import numpy as np
+from packaging.version import InvalidVersion, Version
 
 from codedupes.constants import (
     DEFAULT_BATCH_SIZE,
+    DEFAULT_C2LLM_REVISION,
     DEFAULT_MODEL,
     DEFAULT_SEMANTIC_THRESHOLD,
     DEFAULT_TOP_K,
@@ -32,6 +36,13 @@ logger = logging.getLogger(__name__)
 # Lazy-loaded model
 _model = None
 _model_name = None
+_model_revision = None
+_model_trust_remote_code = None
+
+_DEFAULT_TRANSFORMERS_MIN = Version("4.51")
+_DEFAULT_TRANSFORMERS_MAX_EXCLUSIVE = Version("5")
+_DEFAULT_ST_MIN = Version("5")
+_DEFAULT_ST_MAX_EXCLUSIVE = Version("6")
 
 # C2LLM task-specific instruction prefixes.
 # These are prepended to every input to steer the PMA pooling toward the right
@@ -57,6 +68,133 @@ _GENERIC_INSTRUCTIONS: dict[str, str] = {
 _C2LLM_MODELS = {"codefuse-ai/C2LLM-0.5B", "codefuse-ai/C2LLM-7B"}
 
 
+class SemanticBackendError(RuntimeError):
+    """Raised when semantic model loading or inference backend is incompatible."""
+
+
+def _resolve_model_revision(model_name: str, revision: str | None) -> str | None:
+    """Resolve the model revision default."""
+    if revision is not None:
+        if model_name != DEFAULT_MODEL and revision == DEFAULT_C2LLM_REVISION:
+            return None
+        return revision
+    if model_name == DEFAULT_MODEL:
+        return DEFAULT_C2LLM_REVISION
+    return None
+
+
+def _resolve_trust_remote_code(model_name: str, trust_remote_code: bool | None) -> bool:
+    """Resolve trust-remote-code default for a model."""
+    if trust_remote_code is not None:
+        return trust_remote_code
+    return model_name == DEFAULT_MODEL
+
+
+def _safe_package_version(package_name: str) -> str | None:
+    """Get installed package version string, returning None if unavailable."""
+    try:
+        return importlib_metadata.version(package_name)
+    except importlib_metadata.PackageNotFoundError:
+        return None
+
+
+def get_semantic_runtime_versions() -> dict[str, str]:
+    """Return semantic runtime versions for diagnostics."""
+    return {
+        "python": sys.version.split()[0],
+        "torch": _safe_package_version("torch") or "missing",
+        "transformers": _safe_package_version("transformers") or "missing",
+        "sentence-transformers": _safe_package_version("sentence-transformers") or "missing",
+        "deepspeed": _safe_package_version("deepspeed") or "missing",
+    }
+
+
+def _validate_version_range(
+    package_name: str,
+    min_version: Version,
+    max_exclusive: Version,
+) -> None:
+    """Validate that a package version is within an inclusive/exclusive range."""
+    raw = _safe_package_version(package_name)
+    if raw is None:
+        raise SemanticBackendError(
+            f"{package_name} is not installed. Install compatible dependencies before semantic runs."
+        )
+
+    try:
+        parsed = Version(raw)
+    except InvalidVersion as exc:
+        raise SemanticBackendError(f"Could not parse {package_name} version: {raw}") from exc
+
+    if not (min_version <= parsed < max_exclusive):
+        raise SemanticBackendError(
+            f"Incompatible {package_name} version {raw} for default model {DEFAULT_MODEL}. "
+            f"Supported range is >={min_version},<{max_exclusive}. "
+            "Run: pip install 'transformers>=4.51,<5' 'sentence-transformers>=5,<6'."
+        )
+
+
+def _check_default_model_compatibility(model_name: str) -> None:
+    """Check dependency compatibility for the default C2LLM model."""
+    if model_name != DEFAULT_MODEL:
+        return
+
+    _validate_version_range(
+        "transformers",
+        _DEFAULT_TRANSFORMERS_MIN,
+        _DEFAULT_TRANSFORMERS_MAX_EXCLUSIVE,
+    )
+    _validate_version_range(
+        "sentence-transformers",
+        _DEFAULT_ST_MIN,
+        _DEFAULT_ST_MAX_EXCLUSIVE,
+    )
+
+
+def _is_known_semantic_backend_error(error: Exception) -> bool:
+    """Return True when an exception is likely caused by semantic backend compatibility."""
+    text = str(error).lower()
+    if isinstance(error, ModuleNotFoundError):
+        return True
+    if isinstance(error, AttributeError) and "all_tied_weights_keys" in text:
+        return True
+    keywords = (
+        "trust_remote_code",
+        "deepspeed",
+        "flash_attn",
+        "c2llm",
+        "auto_map",
+        "tokenizer",
+        "modeling_c2llm",
+    )
+    return any(keyword in text for keyword in keywords)
+
+
+def _wrap_semantic_backend_error(
+    error: Exception,
+    *,
+    model_name: str,
+    revision: str | None,
+    trust_remote_code: bool,
+    stage: str,
+) -> SemanticBackendError:
+    """Convert backend exceptions into a stable semantic error with remediation guidance."""
+    versions = get_semantic_runtime_versions()
+    version_info = ", ".join(f"{key}={value}" for key, value in versions.items())
+    revision_text = revision or "default"
+    message = (
+        f"Semantic backend failed during {stage} for model={model_name} revision={revision_text} "
+        f"trust_remote_code={trust_remote_code}. "
+        f"Versions: {version_info}. "
+        "Fix suggestions: ensure compatible deps with "
+        '\'pip install "transformers>=4.51,<5" "sentence-transformers>=5,<6"\', '
+        "or run traditional-only mode with '--traditional-only'."
+    )
+    wrapped = SemanticBackendError(message)
+    wrapped.__cause__ = error
+    return wrapped
+
+
 def _require_dependency(module_name: str, install_hint: str) -> None:
     """Raise a clear error when a required dependency is unavailable."""
     try:
@@ -79,6 +217,7 @@ def _check_semantic_dependencies(model_name: str) -> None:
             "deepspeed",
             "pip install codedupes[gpu] or pip install deepspeed",
         )
+    _check_default_model_compatibility(model_name)
 
 
 def get_code_unit_statement_count(unit: CodeUnit) -> int:
@@ -120,16 +259,32 @@ def _is_c2llm(model_name: str) -> bool:
     return model_name in _C2LLM_MODELS or "C2LLM" in model_name
 
 
-def get_model(model_name: str = DEFAULT_MODEL):
+def get_model(
+    model_name: str = DEFAULT_MODEL,
+    revision: str | None = None,
+    trust_remote_code: bool | None = None,
+):
     """Lazy-load the embedding model.
 
     For C2LLM models, applies required loading args:
       - trust_remote_code=True (custom PMA pooling layer)
       - padding_side="left" (causal LM backbone requirement)
     """
-    global _model, _model_name
+    global _model, _model_name, _model_revision, _model_trust_remote_code
 
-    if _model is None or _model_name != model_name:
+    resolved_revision = _resolve_model_revision(model_name, revision)
+    resolved_trust_remote_code = _resolve_trust_remote_code(model_name, trust_remote_code)
+
+    cache_miss = any(
+        (
+            _model is None,
+            _model_name != model_name,
+            _model_revision != resolved_revision,
+            _model_trust_remote_code != resolved_trust_remote_code,
+        )
+    )
+
+    if cache_miss:
         logger.info(f"Loading embedding model: {model_name}")
         _check_semantic_dependencies(model_name)
 
@@ -147,16 +302,38 @@ def get_model(model_name: str = DEFAULT_MODEL):
                 ) from exc
             raise
 
+        st_kwargs: dict[str, object] = {
+            "trust_remote_code": resolved_trust_remote_code,
+        }
+        if resolved_revision is not None:
+            st_kwargs["revision"] = resolved_revision
+
+        model_kwargs: dict[str, object] = {}
+        tokenizer_kwargs: dict[str, object] = {}
+        config_kwargs: dict[str, object] = {}
+
+        if _is_c2llm(model_name):
+            tokenizer_kwargs["padding_side"] = "left"
+
+        if resolved_revision is not None:
+            model_kwargs["revision"] = resolved_revision
+            tokenizer_kwargs["revision"] = resolved_revision
+            config_kwargs["revision"] = resolved_revision
+
+        if resolved_trust_remote_code:
+            model_kwargs["trust_remote_code"] = True
+            tokenizer_kwargs["trust_remote_code"] = True
+            config_kwargs["trust_remote_code"] = True
+
+        if model_kwargs:
+            st_kwargs["model_kwargs"] = model_kwargs
+        if tokenizer_kwargs:
+            st_kwargs["tokenizer_kwargs"] = tokenizer_kwargs
+        if config_kwargs:
+            st_kwargs["config_kwargs"] = config_kwargs
+
         try:
-            if _is_c2llm(model_name):
-                _model = SentenceTransformer(
-                    model_name,
-                    trust_remote_code=True,
-                    tokenizer_kwargs={"padding_side": "left"},
-                )
-            else:
-                # Avoid remote-code execution for arbitrary user-supplied models.
-                _model = SentenceTransformer(model_name)
+            _model = SentenceTransformer(model_name, **st_kwargs)
         except ModuleNotFoundError as exc:
             if exc.name == "deepspeed":
                 raise ModuleNotFoundError(
@@ -164,17 +341,31 @@ def get_model(model_name: str = DEFAULT_MODEL):
                     "Install with `pip install codedupes[gpu]` or `pip install deepspeed`."
                 ) from exc
             raise
+        except Exception as exc:
+            if _is_known_semantic_backend_error(exc):
+                raise _wrap_semantic_backend_error(
+                    exc,
+                    model_name=model_name,
+                    revision=resolved_revision,
+                    trust_remote_code=resolved_trust_remote_code,
+                    stage="model loading",
+                )
+            raise
 
         _model_name = model_name
+        _model_revision = resolved_revision
+        _model_trust_remote_code = resolved_trust_remote_code
 
     return _model
 
 
 def clear_model_cache() -> None:
     """Clear cached embedding model state."""
-    global _model, _model_name
+    global _model, _model_name, _model_revision, _model_trust_remote_code
     _model = None
     _model_name = None
+    _model_revision = None
+    _model_trust_remote_code = None
 
 
 def _is_cuda_oom_error(error: RuntimeError) -> bool:
@@ -256,13 +447,21 @@ def compute_embeddings(
     units: list[CodeUnit],
     model_name: str = DEFAULT_MODEL,
     batch_size: int = DEFAULT_BATCH_SIZE,
+    revision: str | None = None,
+    trust_remote_code: bool | None = None,
 ) -> np.ndarray:
     """Compute embeddings for all code units.
 
     Returns:
         numpy array of shape (len(units), embedding_dim)
     """
-    model = get_model(model_name)
+    resolved_revision = _resolve_model_revision(model_name, revision)
+    resolved_trust_remote_code = _resolve_trust_remote_code(model_name, trust_remote_code)
+    model = get_model(
+        model_name,
+        revision=resolved_revision,
+        trust_remote_code=resolved_trust_remote_code,
+    )
 
     texts = []
     for unit in units:
@@ -280,6 +479,14 @@ def compute_embeddings(
         )
     except RuntimeError as e:  # pragma: no cover - defensive handling
         if not _is_cuda_oom_error(e):
+            if _is_known_semantic_backend_error(e):
+                raise _wrap_semantic_backend_error(
+                    e,
+                    model_name=model_name,
+                    revision=resolved_revision,
+                    trust_remote_code=resolved_trust_remote_code,
+                    stage="embedding inference",
+                )
             raise
 
         logger.warning("CUDA OOM during semantic embedding; retrying on CPU")
@@ -292,6 +499,16 @@ def compute_embeddings(
             normalize_embeddings=True,  # For cosine similarity via dot product
             device="cpu",
         )
+    except Exception as e:
+        if _is_known_semantic_backend_error(e):
+            raise _wrap_semantic_backend_error(
+                e,
+                model_name=model_name,
+                revision=resolved_revision,
+                trust_remote_code=resolved_trust_remote_code,
+                stage="embedding inference",
+            )
+        raise
 
     return embeddings
 
@@ -376,22 +593,41 @@ def find_similar_to_query(
     embeddings: np.ndarray,
     model_name: str = DEFAULT_MODEL,
     top_k: int = DEFAULT_TOP_K,
+    revision: str | None = None,
+    trust_remote_code: bool | None = None,
 ) -> list[tuple[CodeUnit, float]]:
     """Find code units most similar to a natural language query.
 
     Useful for ad-hoc exploration: "find functions that parse JSON"
     """
-    model = get_model(model_name)
+    resolved_revision = _resolve_model_revision(model_name, revision)
+    resolved_trust_remote_code = _resolve_trust_remote_code(model_name, trust_remote_code)
+    model = get_model(
+        model_name,
+        revision=resolved_revision,
+        trust_remote_code=resolved_trust_remote_code,
+    )
 
     # Embed query with task-specific instruction
     instruction = _get_instruction(model_name, "query")
     query_text = f"{instruction}{query}"
 
-    query_embedding = model.encode(
-        [query_text],
-        convert_to_numpy=True,
-        normalize_embeddings=True,
-    )[0]
+    try:
+        query_embedding = model.encode(
+            [query_text],
+            convert_to_numpy=True,
+            normalize_embeddings=True,
+        )[0]
+    except Exception as exc:
+        if _is_known_semantic_backend_error(exc):
+            raise _wrap_semantic_backend_error(
+                exc,
+                model_name=model_name,
+                revision=resolved_revision,
+                trust_remote_code=resolved_trust_remote_code,
+                stage="query embedding",
+            )
+        raise
 
     # Compute similarities
     similarities = embeddings @ query_embedding
@@ -408,6 +644,8 @@ def run_semantic_analysis(
     threshold: float = DEFAULT_SEMANTIC_THRESHOLD,
     exclude_pairs: set[tuple[str, str]] | None = None,
     batch_size: int = DEFAULT_BATCH_SIZE,
+    revision: str | None = None,
+    trust_remote_code: bool | None = None,
 ) -> tuple[np.ndarray, list[DuplicatePair]]:
     """Run full semantic duplicate detection.
 
@@ -417,7 +655,13 @@ def run_semantic_analysis(
     if not units:
         return np.array([]), []
 
-    embeddings = compute_embeddings(units, model_name=model_name, batch_size=batch_size)
+    embeddings = compute_embeddings(
+        units,
+        model_name=model_name,
+        batch_size=batch_size,
+        revision=revision,
+        trust_remote_code=trust_remote_code,
+    )
     duplicates = find_semantic_duplicates(
         units, embeddings, threshold=threshold, exclude_exact=exclude_pairs
     )

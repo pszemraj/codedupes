@@ -10,6 +10,7 @@ import numpy as np
 
 from codedupes.constants import (
     DEFAULT_BATCH_SIZE,
+    DEFAULT_C2LLM_REVISION,
     DEFAULT_MIN_SEMANTIC_LINES,
     DEFAULT_MODEL,
     DEFAULT_SEMANTIC_THRESHOLD,
@@ -17,7 +18,12 @@ from codedupes.constants import (
 )
 from codedupes.extractor import CodeExtractor
 from codedupes.models import AnalysisResult, CodeUnit, DuplicatePair
-from codedupes.semantic import get_code_unit_statement_count, run_semantic_analysis
+from codedupes.semantic import (
+    SemanticBackendError,
+    get_code_unit_statement_count,
+    get_semantic_runtime_versions,
+    run_semantic_analysis,
+)
 from codedupes.traditional import (
     build_reference_graph,
     find_potentially_unused,
@@ -41,6 +47,8 @@ class AnalyzerConfig:
     # Semantic detection
     semantic_threshold: float = DEFAULT_SEMANTIC_THRESHOLD
     model_name: str = DEFAULT_MODEL
+    model_revision: str | None = DEFAULT_C2LLM_REVISION
+    trust_remote_code: bool | None = None
     batch_size: int = DEFAULT_BATCH_SIZE
     min_semantic_lines: int = DEFAULT_MIN_SEMANTIC_LINES
     include_stubs: bool = False
@@ -171,16 +179,31 @@ class CodeAnalyzer:
                     threshold=self.config.semantic_threshold,
                     exclude_pairs=exclude,
                     batch_size=self.config.batch_size,
+                    revision=self.config.model_revision,
+                    trust_remote_code=self.config.trust_remote_code,
                 )
-            except ModuleNotFoundError:
+            except (ModuleNotFoundError, SemanticBackendError) as exc:
                 # Semantic analysis is best-effort unless it is the only requested mode.
                 if not self.config.run_traditional and not self.config.run_unused:
                     raise
 
                 self._embeddings = None
                 semantic_dupes = []
+                runtime_versions = get_semantic_runtime_versions()
+                version_text = ", ".join(
+                    f"{key}={value}" for key, value in runtime_versions.items()
+                )
                 logger.warning(
-                    "Semantic dependencies unavailable; proceeding with non-semantic analysis only."
+                    "Semantic analysis unavailable (%s). Proceeding with non-semantic analysis. "
+                    "model=%s revision=%s trust_remote_code=%s [%s]. "
+                    "Retry with `codedupes check %s --traditional-only` or install compatible "
+                    "deps: pip install 'transformers>=4.51,<5' 'sentence-transformers>=5,<6'.",
+                    exc,
+                    self.config.model_name,
+                    self.config.model_revision,
+                    self.config.trust_remote_code,
+                    version_text,
+                    path,
                 )
 
             if self.config.run_unused:
@@ -223,6 +246,8 @@ class CodeAnalyzer:
             self._embeddings,
             model_name=self.config.model_name,
             top_k=top_k,
+            revision=self.config.model_revision,
+            trust_remote_code=self.config.trust_remote_code,
         )
 
 
@@ -232,6 +257,8 @@ def analyze_directory(
     traditional_threshold: float = DEFAULT_TRADITIONAL_THRESHOLD,
     exclude_patterns: list[str] | None = None,
     model_name: str = DEFAULT_MODEL,
+    model_revision: str | None = DEFAULT_C2LLM_REVISION,
+    trust_remote_code: bool | None = None,
     min_semantic_lines: int = DEFAULT_MIN_SEMANTIC_LINES,
     include_stubs: bool = False,
     run_unused: bool = True,
@@ -246,6 +273,8 @@ def analyze_directory(
         traditional_threshold: Jaccard threshold for traditional near-duplicates
         exclude_patterns: Glob patterns for files to exclude
         model_name: HuggingFace model for embeddings
+        model_revision: HuggingFace model revision/commit hash
+        trust_remote_code: Whether remote model code may execute while loading
         run_unused: Run potentially-unused detection even when traditional analysis is off
 
     Returns:
@@ -256,6 +285,8 @@ def analyze_directory(
         jaccard_threshold=traditional_threshold,
         exclude_patterns=exclude_patterns,
         model_name=model_name,
+        model_revision=model_revision,
+        trust_remote_code=trust_remote_code,
         min_semantic_lines=min_semantic_lines,
         include_stubs=include_stubs,
         run_unused=run_unused,

@@ -19,6 +19,7 @@ from codedupes import __version__
 from codedupes.analyzer import AnalyzerConfig, CodeAnalyzer
 from codedupes.constants import (
     DEFAULT_BATCH_SIZE,
+    DEFAULT_C2LLM_REVISION,
     DEFAULT_MIN_SEMANTIC_LINES,
     DEFAULT_MODEL,
     DEFAULT_SEMANTIC_THRESHOLD,
@@ -33,6 +34,19 @@ DEFAULT_OUTPUT_WIDTH = 160
 MIN_OUTPUT_WIDTH = 80
 
 console = Console(width=DEFAULT_OUTPUT_WIDTH)
+
+_NOISY_EXTERNAL_LOGGERS = (
+    "deepspeed",
+    "httpx",
+    "huggingface_hub",
+    "jax",
+    "numexpr",
+    "sentence_transformers",
+    "tensorflow",
+    "torch.utils.cpp_extension",
+    "transformers",
+    "urllib3",
+)
 
 
 def _set_console(output_width: int) -> None:
@@ -50,6 +64,9 @@ def setup_logging(verbose: bool = False) -> None:
         handlers=[RichHandler(console=console, show_time=False, show_path=False)],
         force=True,
     )
+    quiet_level = logging.DEBUG if verbose else logging.WARNING
+    for logger_name in _NOISY_EXTERNAL_LOGGERS:
+        logging.getLogger(logger_name).setLevel(quiet_level)
 
 
 def _validate_threshold(
@@ -309,6 +326,17 @@ def _add_common_analysis_options(func: Callable[..., Any]) -> Callable[..., Any]
             help="HuggingFace embedding model",
         ),
         click.option(
+            "--model-revision",
+            default=DEFAULT_C2LLM_REVISION,
+            show_default=True,
+            help="Model revision/commit (default pins C2LLM for reproducibility)",
+        ),
+        click.option(
+            "--trust-remote-code/--no-trust-remote-code",
+            default=None,
+            help="Allow execution of model-provided remote code during model loading",
+        ),
+        click.option(
             "--batch-size",
             type=int,
             default=DEFAULT_BATCH_SIZE,
@@ -396,6 +424,8 @@ def check_command(
     no_private: bool,
     min_lines: int,
     model: str,
+    model_revision: str | None,
+    trust_remote_code: bool | None,
     batch_size: int,
     as_json: bool,
     verbose: bool,
@@ -421,6 +451,8 @@ def check_command(
         jaccard_threshold=traditional_thresh,
         semantic_threshold=semantic_thresh,
         model_name=model,
+        model_revision=model_revision,
+        trust_remote_code=trust_remote_code,
         run_traditional=not semantic_only,
         run_semantic=not traditional_only,
         run_unused=not no_unused,
@@ -499,6 +531,8 @@ def search_command(
     no_private: bool,
     min_lines: int,
     model: str,
+    model_revision: str | None,
+    trust_remote_code: bool | None,
     batch_size: int,
     as_json: bool,
     verbose: bool,
@@ -517,6 +551,8 @@ def search_command(
         include_private=not no_private,
         semantic_threshold=_resolve_threshold(threshold, semantic_threshold),
         model_name=model,
+        model_revision=model_revision,
+        trust_remote_code=trust_remote_code,
         run_traditional=False,
         run_unused=False,
         min_semantic_lines=min_lines,
@@ -548,6 +584,7 @@ def info_command() -> None:
     """Print version and default settings."""
     click.echo(f"codedupes {__version__}")
     click.echo(f"Default model: {DEFAULT_MODEL}")
+    click.echo(f"Default model revision: {DEFAULT_C2LLM_REVISION}")
     click.echo(f"Default semantic threshold: {DEFAULT_THRESHOLD}")
     click.echo(f"Default traditional threshold: {DEFAULT_TRADITIONAL_THRESHOLD}")
     click.echo(f"Default min_lines for semantic: {DEFAULT_MIN_LINES}")
