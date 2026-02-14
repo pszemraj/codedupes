@@ -98,6 +98,8 @@ Prints version/model/config defaults.
   - Emit machine-readable results.
 - `--show-source`
   - Print duplicate snippets in terminal output.
+- `--output-width`
+  - Rich terminal width for wide/no-wrap table output (default `160`, min `80`).
 - `--include-stubs`
   - Include `*.pyi` files for analysis.
 - `--exclude`
@@ -111,6 +113,7 @@ Prints version/model/config defaults.
   - Number of results (default `10`).
 - `--model`
 - `--no-private`
+- `--output-width`
 - `--json`
 
 ## Analysis defaults
@@ -156,4 +159,6 @@ for unit, score in analyzer.search("load csv"):
 - `C2LLM_INSTRUCTIONS["code"]` is tuned for code2code retrieval.
 - Call graph is intra-project only.
 - Unused detection remains heuristic and conservative; tune with `--strict-unused` if needed.
+- Extraction skips common artifact/cache directories by default (for example `target`,
+  `node_modules`, `__pycache__`, `.venv`, `build`, and `dist`).
 - For deterministic CI, mock `codedupes.semantic.get_model` or use small fake model doubles instead of downloading remote weights.

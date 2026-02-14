@@ -41,6 +41,15 @@ codedupes check ./src --json
 
 - `0` when no duplicates/unused candidates are found
 - `1` when findings exist or when an execution error occurs
+- `2` for CLI usage/validation errors (invalid options/values)
+
+## Control Rich Output Width
+
+Use a wider output width for less wrapping in terminal tables:
+
+```bash
+codedupes check ./src --output-width 200
+```
 
 ## Search Semantically Similar Code
 
@@ -73,8 +82,11 @@ codedupes check ./src --no-private
 Exclude files with glob patterns:
 
 ```bash
-codedupes check ./src --exclude "**/generated/**" "**/migrations/**"
+codedupes check ./src --exclude "**/generated/**" --exclude "**/migrations/**"
 ```
+
+By default, common artifact/cache directories are skipped automatically (for example `target`,
+`node_modules`, `__pycache__`, `.venv`, `build`, `dist`, and similar tool outputs).
 
 Include type stubs:
 
