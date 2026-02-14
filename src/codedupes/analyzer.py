@@ -10,9 +10,9 @@ import numpy as np
 
 from codedupes.constants import (
     DEFAULT_BATCH_SIZE,
+    DEFAULT_CHECK_SEMANTIC_TASK,
     DEFAULT_MIN_SEMANTIC_LINES,
     DEFAULT_MODEL,
-    DEFAULT_SEMANTIC_THRESHOLD,
     DEFAULT_TRADITIONAL_THRESHOLD,
 )
 from codedupes.extractor import CodeExtractor
@@ -24,6 +24,7 @@ from codedupes.semantic import (
     get_semantic_runtime_versions,
     run_semantic_analysis,
 )
+from codedupes.semantic_profiles import get_default_semantic_threshold
 from codedupes.traditional import (
     build_reference_graph,
     extract_identifiers,
@@ -200,8 +201,9 @@ class AnalyzerConfig:
     jaccard_threshold: float = DEFAULT_TRADITIONAL_THRESHOLD
 
     # Semantic detection
-    semantic_threshold: float = DEFAULT_SEMANTIC_THRESHOLD
+    semantic_threshold: float | None = None
     model_name: str = DEFAULT_MODEL
+    semantic_task: str | None = None
     instruction_prefix: str | None = None
     model_revision: str | None = None
     trust_remote_code: bool | None = None
@@ -220,7 +222,7 @@ class AnalyzerConfig:
         if not 0.0 <= self.jaccard_threshold <= 1.0:
             raise ValueError("jaccard_threshold must be in [0.0, 1.0]")
 
-        if not 0.0 <= self.semantic_threshold <= 1.0:
+        if self.semantic_threshold is not None and not 0.0 <= self.semantic_threshold <= 1.0:
             raise ValueError("semantic_threshold must be in [0.0, 1.0]")
 
         if self.batch_size <= 0:
@@ -242,6 +244,8 @@ class CodeAnalyzer:
         self._units: list[CodeUnit] | None = None
         self._embeddings: np.ndarray | None = None
         self._semantic_units: list[CodeUnit] | None = None
+        self._resolved_semantic_threshold: float | None = None
+        self._resolved_semantic_task: str | None = None
 
     def analyze(self, path: Path | str) -> AnalysisResult:
         """
@@ -292,6 +296,14 @@ class CodeAnalyzer:
 
         traditional_duplicates: list[DuplicatePair] = []
         unused: list[CodeUnit] = []
+        semantic_threshold = (
+            self.config.semantic_threshold
+            if self.config.semantic_threshold is not None
+            else get_default_semantic_threshold(self.config.model_name)
+        )
+        semantic_task = self.config.semantic_task or DEFAULT_CHECK_SEMANTIC_TASK
+        self._resolved_semantic_threshold = semantic_threshold
+        self._resolved_semantic_task = semantic_task
 
         if self.config.run_traditional:
             exact_dupes, near_dupes, unused = run_traditional_analysis(
@@ -330,15 +342,20 @@ class CodeAnalyzer:
                 exclude.update(_build_exact_hash_exclusions(semantic_candidates))
 
             try:
+                semantic_kwargs: dict[str, object] = {
+                    "model_name": self.config.model_name,
+                    "instruction_prefix": self.config.instruction_prefix,
+                    "threshold": semantic_threshold,
+                    "exclude_pairs": exclude,
+                    "batch_size": self.config.batch_size,
+                    "revision": self.config.model_revision,
+                    "trust_remote_code": self.config.trust_remote_code,
+                }
+                if self.config.semantic_task is not None:
+                    semantic_kwargs["semantic_task"] = semantic_task
                 self._embeddings, semantic_duplicates = run_semantic_analysis(
                     semantic_candidates,
-                    model_name=self.config.model_name,
-                    instruction_prefix=self.config.instruction_prefix,
-                    threshold=self.config.semantic_threshold,
-                    exclude_pairs=exclude,
-                    batch_size=self.config.batch_size,
-                    revision=self.config.model_revision,
-                    trust_remote_code=self.config.trust_remote_code,
+                    **semantic_kwargs,
                 )
             except (ModuleNotFoundError, SemanticBackendError, RuntimeError) as exc:
                 # If semantic is the only duplicate-detection method requested,
@@ -355,8 +372,7 @@ class CodeAnalyzer:
                 logger.warning(
                     "Semantic analysis unavailable (%s). Proceeding with non-semantic analysis. "
                     "model=%s revision=%s trust_remote_code=%s [%s]. "
-                    "Retry with `codedupes check %s --traditional-only` or install compatible "
-                    "deps: pip install 'transformers>=4.51,<5' 'sentence-transformers>=5,<6'.",
+                    "Retry with `codedupes check %s --traditional-only`.",
                     exc,
                     self.config.model_name,
                     self.config.model_revision,
@@ -393,7 +409,7 @@ class CodeAnalyzer:
             hybrid_duplicates, filtered_raw_duplicates = _synthesize_hybrid_duplicates(
                 traditional_duplicates,
                 semantic_duplicates,
-                semantic_threshold=self.config.semantic_threshold,
+                semantic_threshold=semantic_threshold,
                 jaccard_threshold=self.config.jaccard_threshold,
             )
 
@@ -430,6 +446,13 @@ class CodeAnalyzer:
 
         from codedupes.semantic import find_similar_to_query
 
+        semantic_threshold = (
+            self._resolved_semantic_threshold
+            if self._resolved_semantic_threshold is not None
+            else get_default_semantic_threshold(self.config.model_name)
+        )
+        semantic_task = self._resolved_semantic_task or self.config.semantic_task
+
         return find_similar_to_query(
             query,
             self._semantic_units,
@@ -439,15 +462,18 @@ class CodeAnalyzer:
             top_k=top_k,
             revision=self.config.model_revision,
             trust_remote_code=self.config.trust_remote_code,
+            threshold=semantic_threshold,
+            semantic_task=semantic_task,
         )
 
 
 def analyze_directory(
     path: Path | str,
-    semantic_threshold: float = DEFAULT_SEMANTIC_THRESHOLD,
+    semantic_threshold: float | None = None,
     traditional_threshold: float = DEFAULT_TRADITIONAL_THRESHOLD,
     exclude_patterns: list[str] | None = None,
     model_name: str = DEFAULT_MODEL,
+    semantic_task: str | None = None,
     instruction_prefix: str | None = None,
     model_revision: str | None = None,
     trust_remote_code: bool | None = None,
@@ -465,6 +491,7 @@ def analyze_directory(
         traditional_threshold: Jaccard threshold for traditional near-duplicates
         exclude_patterns: Glob patterns for files to exclude
         model_name: HuggingFace model for embeddings
+        semantic_task: Semantic task mode for prompt/inference behavior
         instruction_prefix: Custom instruction prefix prepended to semantic inputs
         model_revision: Optional HuggingFace model revision/commit hash.
             If None, semantic backend chooses model-specific default behavior.
@@ -479,6 +506,7 @@ def analyze_directory(
         jaccard_threshold=traditional_threshold,
         exclude_patterns=exclude_patterns,
         model_name=model_name,
+        semantic_task=semantic_task,
         instruction_prefix=instruction_prefix,
         model_revision=model_revision,
         trust_remote_code=trust_remote_code,

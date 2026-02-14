@@ -223,8 +223,8 @@ def main() -> int:
         "--model-revision",
         default=None,
         help=(
-            "Model revision / commit hash. If omitted, uses model-specific default "
-            "(pinned for default C2LLM model)."
+            "Model revision / commit hash. If omitted, uses model-profile default "
+            "(for example pinned for C2LLM 0.5B)."
         ),
     )
     parser.add_argument(

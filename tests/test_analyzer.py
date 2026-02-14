@@ -301,6 +301,41 @@ def test_short_functions_are_skipped_from_semantic(tmp_path: Path) -> None:
     assert result.semantic_duplicates == []
 
 
+def test_analyzer_resolves_profile_default_semantic_threshold(tmp_path: Path, monkeypatch) -> None:
+    source = "def add_one(x):\n    return x + 1\n"
+    project = create_project(tmp_path, source)
+    captured: dict[str, float] = {}
+
+    def fake_run_semantic(
+        units,
+        model_name="gte-modernbert-base",
+        instruction_prefix=None,
+        threshold=0.82,
+        exclude_pairs=None,
+        batch_size=32,
+        revision=None,
+        trust_remote_code=None,
+    ):
+        captured["threshold"] = threshold
+        return np.zeros((len(units), 2), dtype=np.float32), []
+
+    monkeypatch.setattr(analyzer_module, "get_default_semantic_threshold", lambda _model: 0.77)
+    monkeypatch.setattr(analyzer_module, "run_semantic_analysis", fake_run_semantic)
+
+    analyzer = CodeAnalyzer(
+        AnalyzerConfig(
+            run_traditional=False,
+            run_semantic=True,
+            run_unused=False,
+            min_semantic_lines=0,
+            semantic_threshold=None,
+        )
+    )
+    analyzer.analyze(project)
+
+    assert captured["threshold"] == 0.77
+
+
 def test_unused_semantic_pairs_are_filtered(tmp_path: Path, monkeypatch) -> None:
     source = dedent(
         """

@@ -19,16 +19,21 @@ from codedupes import __version__
 from codedupes.analyzer import AnalyzerConfig, CodeAnalyzer
 from codedupes.constants import (
     DEFAULT_BATCH_SIZE,
-    DEFAULT_C2LLM_REVISION,
+    DEFAULT_CHECK_SEMANTIC_TASK,
     DEFAULT_MIN_SEMANTIC_LINES,
     DEFAULT_MODEL,
-    DEFAULT_SEMANTIC_THRESHOLD,
+    DEFAULT_SEARCH_SEMANTIC_TASK,
+    SEMANTIC_TASK_CHOICES,
     DEFAULT_TOP_K,
     DEFAULT_TRADITIONAL_THRESHOLD,
 )
 from codedupes.models import AnalysisResult, CodeUnit, DuplicatePair, HybridDuplicate
+from codedupes.semantic_profiles import (
+    get_default_semantic_threshold,
+    list_supported_models,
+)
 
-DEFAULT_THRESHOLD = DEFAULT_SEMANTIC_THRESHOLD
+DEFAULT_THRESHOLD = get_default_semantic_threshold(DEFAULT_MODEL)
 DEFAULT_MIN_LINES = DEFAULT_MIN_SEMANTIC_LINES
 DEFAULT_OUTPUT_WIDTH = 160
 MIN_OUTPUT_WIDTH = 80
@@ -115,19 +120,44 @@ def _validate_output_width(_ctx: click.Context, _param: click.Parameter, value: 
     return value
 
 
-def _resolve_threshold(base: float, override: float | None) -> float:
-    return override if override is not None else base
-
-
 def _resolve_check_thresholds(
-    threshold: float,
+    threshold: float | None,
     semantic_threshold: float | None,
     traditional_threshold: float | None,
+    *,
+    model_name: str,
 ) -> tuple[float, float]:
+    default_semantic = get_default_semantic_threshold(model_name)
+    default_traditional = DEFAULT_TRADITIONAL_THRESHOLD
     return (
-        _resolve_threshold(threshold, semantic_threshold),
-        _resolve_threshold(threshold, traditional_threshold),
+        (
+            semantic_threshold
+            if semantic_threshold is not None
+            else threshold
+            if threshold is not None
+            else default_semantic
+        ),
+        (
+            traditional_threshold
+            if traditional_threshold is not None
+            else threshold
+            if threshold is not None
+            else default_traditional
+        ),
     )
+
+
+def _resolve_search_threshold(
+    threshold: float | None,
+    semantic_threshold: float | None,
+    *,
+    model_name: str,
+) -> float:
+    if semantic_threshold is not None:
+        return semantic_threshold
+    if threshold is not None:
+        return threshold
+    return get_default_semantic_threshold(model_name)
 
 
 def format_location(unit: CodeUnit) -> str:
@@ -471,7 +501,7 @@ def _add_common_analysis_options(func: Callable[..., Any]) -> Callable[..., Any]
             "--model",
             default=DEFAULT_MODEL,
             show_default=True,
-            help="HuggingFace embedding model",
+            help="Embedding model alias or HuggingFace model ID",
         ),
         click.option(
             "--instruction-prefix",
@@ -483,8 +513,8 @@ def _add_common_analysis_options(func: Callable[..., Any]) -> Callable[..., Any]
             default=None,
             show_default="auto",
             help=(
-                "Model revision/commit. If omitted, uses model-specific default "
-                "(pinned for default C2LLM model)."
+                "Model revision/commit. If omitted, uses model-profile default "
+                "(for example pinned for C2LLM 0.5B)."
             ),
         ),
         click.option(
@@ -540,10 +570,10 @@ def cli() -> None:
     "-t",
     "--threshold",
     type=float,
-    default=DEFAULT_THRESHOLD,
-    show_default=True,
+    default=None,
+    show_default=False,
     callback=_validate_threshold,
-    help="Similarity threshold for both methods",
+    help="Shared threshold override for semantic and traditional checks",
 )
 @click.option(
     "--semantic-threshold",
@@ -556,6 +586,13 @@ def cli() -> None:
     type=float,
     callback=_validate_threshold,
     help="Override traditional (Jaccard) threshold",
+)
+@click.option(
+    "--semantic-task",
+    type=click.Choice(SEMANTIC_TASK_CHOICES),
+    default=DEFAULT_CHECK_SEMANTIC_TASK,
+    show_default=True,
+    help="Semantic task mode for duplicate detection embeddings",
 )
 @click.option("--semantic-only", is_flag=True, help="Only run semantic analysis")
 @click.option(
@@ -580,7 +617,7 @@ def cli() -> None:
 @_add_common_analysis_options
 def check_command(
     path: Path,
-    threshold: float,
+    threshold: float | None,
     semantic_threshold: float | None,
     traditional_threshold: float | None,
     semantic_only: bool,
@@ -594,6 +631,7 @@ def check_command(
     no_private: bool,
     min_lines: int,
     model: str,
+    semantic_task: str,
     instruction_prefix: str | None,
     model_revision: str | None,
     trust_remote_code: bool | None,
@@ -619,6 +657,7 @@ def check_command(
         threshold,
         semantic_threshold,
         traditional_threshold,
+        model_name=model,
     )
 
     config = AnalyzerConfig(
@@ -627,6 +666,7 @@ def check_command(
         jaccard_threshold=traditional_thresh,
         semantic_threshold=semantic_thresh,
         model_name=model,
+        semantic_task=semantic_task,
         instruction_prefix=instruction_prefix,
         model_revision=model_revision,
         trust_remote_code=trust_remote_code,
@@ -730,10 +770,10 @@ def check_command(
 @click.option(
     "--threshold",
     type=float,
-    default=DEFAULT_THRESHOLD,
-    show_default=True,
+    default=None,
+    show_default=False,
     callback=_validate_threshold,
-    help="Semantic similarity threshold",
+    help="Shared threshold override for semantic search",
 )
 @click.option(
     "--semantic-threshold",
@@ -741,13 +781,21 @@ def check_command(
     callback=_validate_threshold,
     help="Override semantic threshold",
 )
+@click.option(
+    "--semantic-task",
+    type=click.Choice(SEMANTIC_TASK_CHOICES),
+    default=DEFAULT_SEARCH_SEMANTIC_TASK,
+    show_default=True,
+    help="Semantic task mode for query/document embeddings",
+)
 @_add_common_analysis_options
 def search_command(
     path: Path,
     query: str,
     top_k: int,
-    threshold: float,
+    threshold: float | None,
     semantic_threshold: float | None,
+    semantic_task: str,
     no_private: bool,
     min_lines: int,
     model: str,
@@ -770,8 +818,13 @@ def search_command(
     config = AnalyzerConfig(
         exclude_patterns=list(exclude) or None,
         include_private=not no_private,
-        semantic_threshold=_resolve_threshold(threshold, semantic_threshold),
+        semantic_threshold=_resolve_search_threshold(
+            threshold,
+            semantic_threshold,
+            model_name=model,
+        ),
         model_name=model,
+        semantic_task=semantic_task,
         instruction_prefix=instruction_prefix,
         model_revision=model_revision,
         trust_remote_code=trust_remote_code,
@@ -807,11 +860,22 @@ def info_command() -> None:
     click.echo(f"codedupes {__version__}")
     click.echo(f"Default model: {DEFAULT_MODEL}")
     click.echo("Default model revision: auto")
-    click.echo(f"  (auto resolves to {DEFAULT_C2LLM_REVISION} for {DEFAULT_MODEL})")
-    click.echo(f"Default semantic threshold: {DEFAULT_THRESHOLD}")
+    click.echo(f"Default semantic threshold ({DEFAULT_MODEL}): {DEFAULT_THRESHOLD}")
     click.echo(f"Default traditional threshold: {DEFAULT_TRADITIONAL_THRESHOLD}")
+    click.echo(f"Default semantic task for check: {DEFAULT_CHECK_SEMANTIC_TASK}")
+    click.echo(f"Default semantic task for search: {DEFAULT_SEARCH_SEMANTIC_TASK}")
     click.echo(f"Default min_lines for semantic: {DEFAULT_MIN_LINES}")
     click.echo(f"Default output width: {DEFAULT_OUTPUT_WIDTH}")
+    click.echo("Built-in semantic model aliases:")
+    for profile in list_supported_models():
+        aliases = ", ".join(profile.all_aliases())
+        threshold = get_default_semantic_threshold(profile.key)
+        click.echo(f"  - {profile.key} -> {profile.canonical_name}")
+        click.echo(f"      family={profile.family} semantic_threshold={threshold}")
+        click.echo(f"      aliases: {aliases}")
+        if profile.default_revision is not None:
+            click.echo(f"      default_revision: {profile.default_revision}")
+        click.echo(f"      default_trust_remote_code: {profile.default_trust_remote_code}")
     click.echo("Run with --help for CLI usage")
 
 

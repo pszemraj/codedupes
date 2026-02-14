@@ -3,7 +3,7 @@ codedupes - Detect duplicate and unused Python code.
 
 Uses dual-approach detection:
 1. Traditional: AST hashing, token hashing, Jaccard similarity
-2. Semantic: Code embedding similarity via C2LLM (codefuse-ai/C2LLM-0.5B)
+2. Semantic: Code embedding similarity via model profiles (default gte-modernbert-base)
 
 Example:
     from codedupes import analyze_directory

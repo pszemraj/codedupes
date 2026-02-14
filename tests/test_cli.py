@@ -162,6 +162,8 @@ def test_cli_model_semantic_flags_pass_through(monkeypatch, tmp_path):
             "Represent this code: ",
             "--model-revision",
             "test-rev",
+            "--semantic-task",
+            "classification",
             "--no-trust-remote-code",
             "--suppress-test-semantic",
             "--show-all",
@@ -173,6 +175,7 @@ def test_cli_model_semantic_flags_pass_through(monkeypatch, tmp_path):
     assert captured[0].model_revision == "test-rev"
     assert captured[0].trust_remote_code is False
     assert captured[0].suppress_test_semantic_matches is True
+    assert captured[0].semantic_task == "classification"
 
 
 def test_cli_model_revision_defaults_to_auto_none(monkeypatch, tmp_path):
@@ -200,6 +203,71 @@ def test_cli_model_revision_defaults_to_auto_none(monkeypatch, tmp_path):
     assert result.exit_code == 1
     assert captured[0].model_name == "sentence-transformers/all-MiniLM-L6-v2"
     assert captured[0].model_revision is None
+
+
+def test_cli_threshold_precedence(monkeypatch, tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+
+    monkeypatch.setattr(
+        cli,
+        "get_default_semantic_threshold",
+        lambda model_name: 0.73 if model_name == "gte-modernbert-base" else 0.82,
+    )
+
+    captured = []
+    patch_cli_analyzer(
+        monkeypatch,
+        cli,
+        analyze_result=lambda: _build_result(tmp_path),
+        captured_configs=captured,
+    )
+    runner = CliRunner()
+
+    result_default = runner.invoke(cli.cli, ["check", str(path)])
+    assert result_default.exit_code == 1
+    assert captured[-1].semantic_threshold == 0.73
+    assert captured[-1].jaccard_threshold == cli.DEFAULT_TRADITIONAL_THRESHOLD
+
+    result_shared = runner.invoke(cli.cli, ["check", str(path), "--threshold", "0.67"])
+    assert result_shared.exit_code == 1
+    assert captured[-1].semantic_threshold == 0.67
+    assert captured[-1].jaccard_threshold == 0.67
+
+    result_override = runner.invoke(
+        cli.cli,
+        [
+            "check",
+            str(path),
+            "--threshold",
+            "0.67",
+            "--semantic-threshold",
+            "0.91",
+            "--traditional-threshold",
+            "0.44",
+        ],
+    )
+    assert result_override.exit_code == 1
+    assert captured[-1].semantic_threshold == 0.91
+    assert captured[-1].jaccard_threshold == 0.44
+
+
+def test_cli_search_defaults_to_code_retrieval_task(monkeypatch, tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+
+    captured = []
+    patch_cli_analyzer(
+        monkeypatch,
+        cli,
+        analyze_result=lambda: _build_result(tmp_path),
+        search_results=[(_build_unit(tmp_path), 0.99)],
+        captured_configs=captured,
+    )
+    runner = CliRunner()
+    result = runner.invoke(cli.cli, ["search", str(path), "entry"])
+    assert result.exit_code == 0
+    assert captured[0].semantic_task == "code-retrieval"
 
 
 def test_cli_requires_explicit_command(tmp_path):
@@ -238,6 +306,7 @@ def test_cli_info_exit_zero():
     result = runner.invoke(cli.cli, ["info"])
     assert result.exit_code == 0
     assert "codedupes" in result.output.lower()
+    assert "built-in semantic model aliases" in result.output.lower()
 
 
 def test_cli_help_and_version():

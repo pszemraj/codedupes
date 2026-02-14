@@ -7,7 +7,7 @@ import sentence_transformers
 from pathlib import Path
 
 from codedupes import semantic
-from codedupes.constants import DEFAULT_C2LLM_REVISION, DEFAULT_MODEL
+from codedupes.constants import DEFAULT_C2LLM_REVISION
 from codedupes.models import CodeUnit, CodeUnitType
 from codedupes.semantic import (
     SemanticBackendError,
@@ -87,9 +87,19 @@ def test_code_unit_statement_count_ignores_docstring(tmp_path: Path) -> None:
 
 def test_prepare_code_for_embedding_prefixes_query(tmp_path: Path) -> None:
     units = _extract_units(tmp_path)
-    prepared = semantic.prepare_code_for_embedding(units[0], mode="query")
+    prepared = semantic.prepare_code_for_embedding(
+        units[0],
+        model_name="c2llm-0.5b",
+        mode="query",
+    )
     assert prepared.startswith(semantic.C2LLM_INSTRUCTIONS["query"])
     assert prepared.endswith(units[0].source.strip())
+
+
+def test_prepare_code_for_embedding_default_model_no_prefix(tmp_path: Path) -> None:
+    units = _extract_units(tmp_path)
+    prepared = semantic.prepare_code_for_embedding(units[0], mode="query")
+    assert prepared == units[0].source.strip()
 
 
 def test_prepare_code_for_embedding_uses_custom_prefix(tmp_path: Path) -> None:
@@ -125,6 +135,82 @@ def test_query_search_uses_custom_instruction_prefix(tmp_path: Path, monkeypatch
 
     assert len(results) == 1
     assert captured["texts"][0].startswith("CUSTOM_QUERY_PREFIX: ")
+
+
+def test_compute_embeddings_uses_embeddinggemma_encode_document(
+    tmp_path: Path, monkeypatch
+) -> None:
+    units = _extract_units(tmp_path)
+    captured: dict[str, int] = {"encode_document": 0, "encode": 0}
+
+    class GemmaLikeModel:
+        def encode_document(self, texts, **kwargs):
+            captured["encode_document"] += 1
+            return np.array([[1.0, 0.0], [0.0, 1.0]], dtype=np.float32)
+
+        def encode(self, texts, **kwargs):
+            captured["encode"] += 1
+            return np.array([[1.0, 0.0], [0.0, 1.0]], dtype=np.float32)
+
+    monkeypatch.setattr(semantic, "get_model", lambda *args, **kwargs: GemmaLikeModel())
+
+    embeddings = compute_embeddings(units, model_name="embeddinggemma-300m", batch_size=2)
+
+    assert embeddings.shape == (2, 2)
+    assert captured["encode_document"] == 1
+    assert captured["encode"] == 0
+
+
+def test_find_similar_to_query_uses_embeddinggemma_encode_query(
+    tmp_path: Path, monkeypatch
+) -> None:
+    units = _extract_units(tmp_path)
+    embeddings = np.array([[1.0, 0.0], [0.0, 1.0]], dtype=np.float32)
+    captured: dict[str, int] = {"encode_query": 0, "encode": 0}
+
+    class GemmaLikeModel:
+        def encode_query(self, texts, **kwargs):
+            captured["encode_query"] += 1
+            return np.array([[1.0, 0.0]], dtype=np.float32)
+
+        def encode(self, texts, **kwargs):
+            captured["encode"] += 1
+            return np.array([[1.0, 0.0]], dtype=np.float32)
+
+    monkeypatch.setattr(semantic, "get_model", lambda *args, **kwargs: GemmaLikeModel())
+
+    results = find_similar_to_query(
+        query="find addition",
+        units=units,
+        embeddings=embeddings,
+        model_name="embeddinggemma-300m",
+        top_k=2,
+    )
+
+    assert len(results) == 1
+    assert captured["encode_query"] == 1
+    assert captured["encode"] == 0
+
+
+def test_find_similar_to_query_applies_threshold_filter(tmp_path: Path, monkeypatch) -> None:
+    units = _extract_units(tmp_path)
+    embeddings = np.array([[1.0, 0.0], [0.6, 0.8]], dtype=np.float32)
+
+    class QueryModel:
+        def encode(self, texts, **kwargs):
+            return np.array([[1.0, 0.0]], dtype=np.float32)
+
+    monkeypatch.setattr(semantic, "get_model", lambda *args, **kwargs: QueryModel())
+
+    results = find_similar_to_query(
+        query="find addition",
+        units=units,
+        embeddings=embeddings,
+        top_k=5,
+        threshold=0.9,
+    )
+
+    assert len(results) == 1
 
 
 def test_find_semantic_duplicates_skips_incompatible_unit_types(tmp_path: Path) -> None:
@@ -238,7 +324,7 @@ def test_get_model_passes_revision_and_trust_kwargs(monkeypatch) -> None:
     monkeypatch.setattr(sentence_transformers, "SentenceTransformer", FakeSentenceTransformer)
     semantic.clear_model_cache()
 
-    semantic.get_model(DEFAULT_MODEL, revision=DEFAULT_C2LLM_REVISION, trust_remote_code=True)
+    semantic.get_model("c2llm-0.5b", revision=DEFAULT_C2LLM_REVISION, trust_remote_code=True)
 
     assert len(calls) == 1
     kwargs = calls[0]["kwargs"]
@@ -294,7 +380,7 @@ def test_get_model_rejects_incompatible_default_model_versions(monkeypatch) -> N
     semantic.clear_model_cache()
 
     with pytest.raises(SemanticBackendError, match="Incompatible transformers version"):
-        semantic._check_default_model_compatibility(DEFAULT_MODEL)
+        semantic._check_default_model_compatibility("c2llm-0.5b")
 
 
 def test_get_model_wraps_known_backend_error(monkeypatch) -> None:
@@ -306,7 +392,7 @@ def test_get_model_wraps_known_backend_error(monkeypatch) -> None:
     semantic.clear_model_cache()
 
     with pytest.raises(SemanticBackendError, match="Semantic backend failed"):
-        semantic.get_model(DEFAULT_MODEL, trust_remote_code=True)
+        semantic.get_model("c2llm-0.5b", trust_remote_code=True)
 
 
 @pytest.mark.parametrize(
