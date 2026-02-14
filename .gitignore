@@ -214,3 +214,9 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Local scratch workspace
+scratch/
+
+# hatch-vcs generated version file
+src/codedupes/_version.py

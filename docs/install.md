@@ -1,6 +1,10 @@
-# Installation and Runtime Defaults
+# Installation and Runtime Environment
 
-This page is the source of truth for installation, dependency bounds, and semantic runtime defaults.
+This page is the source of truth for installation and dependency/runtime environment setup.
+Analysis behavior defaults are defined in
+[docs/analysis-defaults.md](https://github.com/pszemraj/codedupes/blob/main/docs/analysis-defaults.md).
+Semantic model-profile defaults are defined in
+[docs/model-profiles.md](https://github.com/pszemraj/codedupes/blob/main/docs/model-profiles.md).
 
 ## Install (GitHub source)
 
@@ -25,22 +29,17 @@ pip install -e ".[dev]"
 codedupes info
 ```
 
-## Semantic dependency bounds (default model)
+## Semantic dependency bounds
 
 ```bash
 pip install "transformers>=4.51,<5" "sentence-transformers>=5,<6"
 ```
 
-## Default semantic runtime behavior
+For C2LLM-family models, install `deepspeed` (via `codedupes[gpu]` or direct install).
 
-- Model: `codefuse-ai/C2LLM-0.5B`
-- Default model revision: `auto` (resolves to `bd6d0ddb29f0c9a3d0f14281aedc9f940bb8d67a` for the default model)
-- Default trust mode for this model: `trust_remote_code=True`
-- Runtime dtype policy: prefer `bfloat16` (CUDA when supported, and CPU)
-- Default semantic batch size: `8` with CUDA OOM backoff
-- Failure behavior:
-  - default `check` degrades to traditional + unused analysis with a warning
-  - `search` and `check --semantic-only` fail hard
-
+For semantic model aliases/default thresholds/task behavior, see
+[docs/model-profiles.md](https://github.com/pszemraj/codedupes/blob/main/docs/model-profiles.md).
 For CLI flags (including `--model-revision` and `--trust-remote-code`), see
 [docs/cli.md](https://github.com/pszemraj/codedupes/blob/main/docs/cli.md).
+For runtime failure/exit behavior, see
+[docs/output.md](https://github.com/pszemraj/codedupes/blob/main/docs/output.md).

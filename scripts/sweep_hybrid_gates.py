@@ -8,7 +8,6 @@ import itertools
 import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any
 
 import codedupes.analyzer as analyzer_module
 from codedupes.analyzer import AnalyzerConfig, CodeAnalyzer
@@ -17,8 +16,13 @@ from codedupes.constants import (
     DEFAULT_SEMANTIC_THRESHOLD,
     DEFAULT_TRADITIONAL_THRESHOLD,
 )
-from codedupes.models import CodeUnit, HybridDuplicate
+from codedupes.models import HybridDuplicate
 from codedupes.pairs import ordered_pair_key
+
+try:
+    from .sweep_common import build_positive_pairs, metrics
+except ImportError:
+    from sweep_common import build_positive_pairs, metrics
 
 
 @dataclass(frozen=True)
@@ -52,54 +56,6 @@ def _parse_csv_floats(value: str) -> list[float]:
     return out
 
 
-def _parse_label_spec(spec: str) -> tuple[str, str]:
-    try:
-        filename, symbol = spec.split("::", 1)
-    except ValueError as exc:  # pragma: no cover - argument error path
-        msg = f"Invalid label spec {spec!r}; expected 'file.py::symbol_name'."
-        raise ValueError(msg) from exc
-    return filename, symbol
-
-
-def _resolve_label_unit(units: list[CodeUnit], spec: str) -> CodeUnit:
-    filename, symbol = _parse_label_spec(spec)
-    matches = [unit for unit in units if unit.file_path.name == filename and unit.name == symbol]
-    if len(matches) != 1:
-        msg = f"Label {spec!r} matched {len(matches)} units (expected exactly 1)."
-        raise ValueError(msg)
-    return matches[0]
-
-
-def _build_positive_pairs(units: list[CodeUnit], labels: dict[str, Any]) -> set[tuple[str, str]]:
-    groups = labels.get("positive_groups", [])
-    if not isinstance(groups, list) or not groups:
-        msg = "labels.json must define a non-empty 'positive_groups' list."
-        raise ValueError(msg)
-
-    positives: set[tuple[str, str]] = set()
-    for group in groups:
-        if not isinstance(group, list) or len(group) < 2:
-            msg = f"Invalid positive group {group!r}; expected a list with at least two specs."
-            raise ValueError(msg)
-        resolved = [_resolve_label_unit(units, spec) for spec in group]
-        for unit_a, unit_b in itertools.combinations(resolved, 2):
-            positives.add(ordered_pair_key(unit_a, unit_b))
-    return positives
-
-
-def _metrics(
-    predicted_pairs: set[tuple[str, str]],
-    positive_pairs: set[tuple[str, str]],
-) -> tuple[int, int, int, float, float, float]:
-    tp = len(predicted_pairs & positive_pairs)
-    fp = len(predicted_pairs - positive_pairs)
-    fn = len(positive_pairs - predicted_pairs)
-    precision = tp / (tp + fp) if tp + fp else 0.0
-    recall = tp / (tp + fn) if tp + fn else 0.0
-    f1 = (2 * precision * recall / (precision + recall)) if precision + recall else 0.0
-    return tp, fp, fn, precision, recall, f1
-
-
 def _run_sweep(
     *,
     traditional_duplicates,
@@ -130,7 +86,7 @@ def _run_sweep(
                 jaccard_threshold=traditional_threshold,
             )
             predicted_pairs = {ordered_pair_key(item.unit_a, item.unit_b) for item in hybrid}
-            tp, fp, fn, precision, recall, f1 = _metrics(predicted_pairs, positive_pairs)
+            tp, fp, fn, precision, recall, f1 = metrics(predicted_pairs, positive_pairs)
             rows.append(
                 SweepRow(
                     config=config,
@@ -223,8 +179,8 @@ def main() -> int:
         "--model-revision",
         default=None,
         help=(
-            "Model revision / commit hash. If omitted, uses model-specific default "
-            "(pinned for default C2LLM model)."
+            "Model revision / commit hash. If omitted, uses model-profile default "
+            "(for example pinned for C2LLM 0.5B)."
         ),
     )
     parser.add_argument(
@@ -285,7 +241,7 @@ def main() -> int:
     analyzer = CodeAnalyzer(config)
     result = analyzer.analyze(args.corpus_path)
 
-    positive_pairs = _build_positive_pairs(result.units, labels)
+    positive_pairs = build_positive_pairs(result.units, labels)
     grid = [
         GateConfig(semantic, weak, ratio)
         for semantic, weak, ratio in itertools.product(

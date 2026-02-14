@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 from click.testing import CliRunner
+import pytest
 
 from codedupes import cli
 from codedupes.models import (
@@ -162,8 +163,17 @@ def test_cli_model_semantic_flags_pass_through(monkeypatch, tmp_path):
             "Represent this code: ",
             "--model-revision",
             "test-rev",
+            "--semantic-task",
+            "classification",
             "--no-trust-remote-code",
             "--suppress-test-semantic",
+            "--semantic-unit-type",
+            "class",
+            "--no-tiny-filter",
+            "--tiny-cutoff",
+            "4",
+            "--tiny-near-jaccard-min",
+            "0.95",
             "--show-all",
         ],
     )
@@ -173,6 +183,29 @@ def test_cli_model_semantic_flags_pass_through(monkeypatch, tmp_path):
     assert captured[0].model_revision == "test-rev"
     assert captured[0].trust_remote_code is False
     assert captured[0].suppress_test_semantic_matches is True
+    assert captured[0].semantic_task == "classification"
+    assert captured[0].semantic_unit_types == ("class",)
+    assert captured[0].filter_tiny_traditional is False
+    assert captured[0].tiny_unit_statement_cutoff == 4
+    assert captured[0].tiny_near_jaccard_min == 0.95
+
+
+def test_cli_allow_semantic_fallback_pass_through(monkeypatch, tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+
+    captured = []
+    patch_cli_analyzer(
+        monkeypatch,
+        cli,
+        analyze_result=lambda: _build_result(tmp_path),
+        captured_configs=captured,
+    )
+    runner = CliRunner()
+    result = runner.invoke(cli.cli, ["check", str(path), "--allow-semantic-fallback"])
+
+    assert result.exit_code == 1
+    assert captured[0].allow_semantic_fallback is True
 
 
 def test_cli_model_revision_defaults_to_auto_none(monkeypatch, tmp_path):
@@ -202,6 +235,163 @@ def test_cli_model_revision_defaults_to_auto_none(monkeypatch, tmp_path):
     assert captured[0].model_revision is None
 
 
+def test_cli_threshold_precedence(monkeypatch, tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+
+    monkeypatch.setattr(
+        cli,
+        "get_default_semantic_threshold",
+        lambda model_name: 0.73 if model_name == "gte-modernbert-base" else 0.82,
+    )
+
+    captured = []
+    patch_cli_analyzer(
+        monkeypatch,
+        cli,
+        analyze_result=lambda: _build_result(tmp_path),
+        captured_configs=captured,
+    )
+    runner = CliRunner()
+
+    result_default = runner.invoke(cli.cli, ["check", str(path)])
+    assert result_default.exit_code == 1
+    assert captured[-1].semantic_threshold == 0.73
+    assert captured[-1].jaccard_threshold == cli.DEFAULT_TRADITIONAL_THRESHOLD
+    assert captured[-1].semantic_unit_types == ("function", "method")
+    assert captured[-1].filter_tiny_traditional is True
+    assert captured[-1].tiny_unit_statement_cutoff == 3
+    assert captured[-1].tiny_near_jaccard_min == 0.93
+
+    result_shared = runner.invoke(cli.cli, ["check", str(path), "--threshold", "0.67"])
+    assert result_shared.exit_code == 1
+    assert captured[-1].semantic_threshold == 0.67
+    assert captured[-1].jaccard_threshold == 0.67
+
+    result_override = runner.invoke(
+        cli.cli,
+        [
+            "check",
+            str(path),
+            "--threshold",
+            "0.67",
+            "--semantic-threshold",
+            "0.91",
+            "--traditional-threshold",
+            "0.44",
+        ],
+    )
+    assert result_override.exit_code == 1
+    assert captured[-1].semantic_threshold == 0.91
+    assert captured[-1].jaccard_threshold == 0.44
+
+
+def test_cli_semantic_only_shared_threshold_does_not_set_traditional_threshold(
+    monkeypatch, tmp_path
+):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+
+    captured = []
+    patch_cli_analyzer(
+        monkeypatch,
+        cli,
+        analyze_result=lambda: _build_result(tmp_path),
+        captured_configs=captured,
+    )
+    runner = CliRunner()
+    result = runner.invoke(
+        cli.cli,
+        ["check", str(path), "--semantic-only", "--threshold", "0.7"],
+    )
+    assert result.exit_code == 1
+    assert captured[-1].semantic_threshold == 0.7
+    assert captured[-1].jaccard_threshold == cli.DEFAULT_TRADITIONAL_THRESHOLD
+
+
+def test_cli_traditional_only_omits_semantic_defaults(monkeypatch, tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+
+    captured = []
+    patch_cli_analyzer(
+        monkeypatch,
+        cli,
+        analyze_result=lambda: _build_result(tmp_path),
+        captured_configs=captured,
+    )
+    runner = CliRunner()
+    result = runner.invoke(cli.cli, ["check", str(path), "--traditional-only"])
+    assert result.exit_code == 1
+    assert captured[-1].run_semantic is False
+    assert captured[-1].semantic_threshold is None
+    assert captured[-1].semantic_task is None
+
+
+def test_cli_traditional_only_shared_threshold_sets_only_traditional_threshold(
+    monkeypatch, tmp_path
+):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+
+    captured = []
+    patch_cli_analyzer(
+        monkeypatch,
+        cli,
+        analyze_result=lambda: _build_result(tmp_path),
+        captured_configs=captured,
+    )
+    runner = CliRunner()
+    result = runner.invoke(
+        cli.cli,
+        ["check", str(path), "--traditional-only", "--threshold", "0.9"],
+    )
+    assert result.exit_code == 1
+    assert captured[-1].jaccard_threshold == 0.9
+    assert captured[-1].semantic_threshold is None
+    assert captured[-1].semantic_task is None
+
+
+def test_cli_search_defaults_to_code_retrieval_task(monkeypatch, tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+
+    captured = []
+    patch_cli_analyzer(
+        monkeypatch,
+        cli,
+        analyze_result=lambda: _build_result(tmp_path),
+        search_results=[(_build_unit(tmp_path), 0.99)],
+        captured_configs=captured,
+    )
+    runner = CliRunner()
+    result = runner.invoke(cli.cli, ["search", str(path), "entry"])
+    assert result.exit_code == 0
+    assert captured[0].semantic_task == "code-retrieval"
+    assert captured[0].semantic_unit_types == ("function", "method")
+
+
+def test_cli_search_semantic_unit_type_pass_through(monkeypatch, tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+
+    captured = []
+    patch_cli_analyzer(
+        monkeypatch,
+        cli,
+        analyze_result=lambda: _build_result(tmp_path),
+        search_results=[(_build_unit(tmp_path), 0.99)],
+        captured_configs=captured,
+    )
+    runner = CliRunner()
+    result = runner.invoke(
+        cli.cli,
+        ["search", str(path), "entry", "--semantic-unit-type", "class"],
+    )
+    assert result.exit_code == 0
+    assert captured[0].semantic_unit_types == ("class",)
+
+
 def test_cli_requires_explicit_command(tmp_path):
     path = tmp_path / "sample.py"
     path.write_text("def entry():\n    return 1\n")
@@ -209,6 +399,14 @@ def test_cli_requires_explicit_command(tmp_path):
     runner = CliRunner()
     result = runner.invoke(cli.cli, [str(path), "--no-private"])
     assert result.exit_code == 2
+
+
+def test_cli_check_rejects_missing_path(tmp_path):
+    missing = tmp_path / "missing.py"
+    runner = CliRunner()
+    result = runner.invoke(cli.cli, ["check", str(missing)])
+    assert result.exit_code == 2
+    assert "does not exist" in result.output
 
 
 def test_cli_invalid_threshold(tmp_path):
@@ -233,11 +431,261 @@ def test_cli_rejects_conflicting_single_method_flags(tmp_path):
     assert result.exit_code == 2
 
 
+def test_cli_rejects_show_all_in_single_method_modes(tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+
+    runner = CliRunner()
+    semantic_result = runner.invoke(
+        cli.cli,
+        ["check", str(path), "--semantic-only", "--show-all"],
+    )
+    assert semantic_result.exit_code == 2
+    assert "--show-all is only valid in default combined mode." in semantic_result.output
+
+    traditional_result = runner.invoke(
+        cli.cli,
+        ["check", str(path), "--traditional-only", "--show-all"],
+    )
+    assert traditional_result.exit_code == 2
+    assert "--show-all is only valid in default combined mode." in traditional_result.output
+
+
+def test_cli_rejects_allow_semantic_fallback_in_single_method_modes(tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+
+    runner = CliRunner()
+    semantic_result = runner.invoke(
+        cli.cli,
+        ["check", str(path), "--semantic-only", "--allow-semantic-fallback"],
+    )
+    assert semantic_result.exit_code == 2
+    assert (
+        "--allow-semantic-fallback is only valid in default combined mode."
+        in semantic_result.output
+    )
+
+    traditional_result = runner.invoke(
+        cli.cli,
+        ["check", str(path), "--traditional-only", "--allow-semantic-fallback"],
+    )
+    assert traditional_result.exit_code == 2
+    assert (
+        "--allow-semantic-fallback is only valid in default combined mode."
+        in traditional_result.output
+    )
+
+
+def test_cli_rejects_json_with_rich_only_flags(tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+
+    runner = CliRunner()
+    check_result = runner.invoke(
+        cli.cli,
+        ["check", str(path), "--json", "--show-source"],
+    )
+    assert check_result.exit_code == 2
+    assert "Cannot use --show-source with --json." in check_result.output
+
+    search_result = runner.invoke(
+        cli.cli,
+        ["search", str(path), "entry", "--json", "--verbose"],
+    )
+    assert search_result.exit_code == 2
+    assert "Cannot use --verbose with --json." in search_result.output
+
+
+def test_cli_rejects_json_with_explicit_output_width(tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli.cli,
+        ["check", str(path), "--json", "--output-width", "160"],
+    )
+    assert result.exit_code == 2
+    assert "Cannot use --output-width with --json." in result.output
+
+
+def test_cli_rejects_conflicting_trust_remote_code_flags(tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+
+    runner = CliRunner()
+    check_result = runner.invoke(
+        cli.cli,
+        ["check", str(path), "--trust-remote-code", "--no-trust-remote-code"],
+    )
+    assert check_result.exit_code == 2
+    assert "Cannot combine --trust-remote-code and --no-trust-remote-code." in check_result.output
+
+    search_result = runner.invoke(
+        cli.cli,
+        ["search", str(path), "entry", "--trust-remote-code", "--no-trust-remote-code"],
+    )
+    assert search_result.exit_code == 2
+    assert "Cannot combine --trust-remote-code and --no-trust-remote-code." in search_result.output
+
+
+def test_cli_rejects_semantic_flags_with_traditional_only(tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli.cli,
+        [
+            "check",
+            str(path),
+            "--traditional-only",
+            "--semantic-task",
+            "classification",
+            "--no-tiny-filter",
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert "Cannot use --semantic-task" in result.output
+
+
+@pytest.mark.parametrize(
+    ("extra_args", "expected_option"),
+    [
+        (["--semantic-threshold", "0.9"], "--semantic-threshold"),
+        (["--semantic-task", "classification"], "--semantic-task"),
+        (["--instruction-prefix", "prefix"], "--instruction-prefix"),
+        (["--model", "sentence-transformers/all-MiniLM-L6-v2"], "--model"),
+        (["--model-revision", "rev1"], "--model-revision"),
+        (["--trust-remote-code"], "--trust-remote-code"),
+        (["--no-trust-remote-code"], "--no-trust-remote-code"),
+        (["--batch-size", "4"], "--batch-size"),
+        (["--min-lines", "1"], "--min-lines"),
+        (["--semantic-unit-type", "class"], "--semantic-unit-type"),
+        (["--suppress-test-semantic"], "--suppress-test-semantic"),
+    ],
+)
+def test_cli_rejects_all_semantic_mode_flags_with_traditional_only(
+    tmp_path, extra_args, expected_option
+):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli.cli,
+        ["check", str(path), "--traditional-only", *extra_args],
+    )
+
+    assert result.exit_code == 2
+    assert f"Cannot use {expected_option}" in result.output
+
+
+def test_cli_rejects_traditional_flags_with_semantic_only(tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli.cli,
+        [
+            "check",
+            str(path),
+            "--semantic-only",
+            "--traditional-threshold",
+            "0.7",
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert "Cannot use --traditional-threshold" in result.output
+
+
+@pytest.mark.parametrize(
+    ("extra_args", "expected_option"),
+    [
+        (["--traditional-threshold", "0.8"], "--traditional-threshold"),
+        (["--no-tiny-filter"], "--no-tiny-filter"),
+        (["--tiny-cutoff", "4"], "--tiny-cutoff"),
+        (["--tiny-near-jaccard-min", "0.95"], "--tiny-near-jaccard-min"),
+    ],
+)
+def test_cli_rejects_all_traditional_mode_flags_with_semantic_only(
+    tmp_path, extra_args, expected_option
+):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli.cli,
+        ["check", str(path), "--semantic-only", *extra_args],
+    )
+
+    assert result.exit_code == 2
+    assert f"Cannot use {expected_option}" in result.output
+
+
+def test_cli_rejects_strict_unused_with_no_unused(tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli.cli,
+        ["check", str(path), "--no-unused", "--strict-unused"],
+    )
+
+    assert result.exit_code == 2
+    assert "Cannot combine --no-unused and --strict-unused" in result.output
+
+
 def test_cli_info_exit_zero():
     runner = CliRunner()
     result = runner.invoke(cli.cli, ["info"])
     assert result.exit_code == 0
     assert "codedupes" in result.output.lower()
+    assert "built-in semantic model aliases" in result.output.lower()
+
+
+def test_cli_search_rejects_missing_path(tmp_path):
+    missing = tmp_path / "missing.py"
+    runner = CliRunner()
+    result = runner.invoke(cli.cli, ["search", str(missing), "entry"])
+    assert result.exit_code == 2
+    assert "does not exist" in result.output
+
+
+def test_cli_check_surfaces_analyzer_config_validation_error(monkeypatch, tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+
+    def _raise_config_error(**_kwargs):
+        raise ValueError("invalid config")
+
+    monkeypatch.setattr(cli, "AnalyzerConfig", _raise_config_error)
+
+    runner = CliRunner()
+    result = runner.invoke(cli.cli, ["check", str(path)])
+    assert result.exit_code == 2
+    assert "invalid config" in result.output
+
+
+def test_cli_search_surfaces_analyzer_config_validation_error(monkeypatch, tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+
+    def _raise_config_error(**_kwargs):
+        raise ValueError("invalid config")
+
+    monkeypatch.setattr(cli, "AnalyzerConfig", _raise_config_error)
+
+    runner = CliRunner()
+    result = runner.invoke(cli.cli, ["search", str(path), "entry"])
+    assert result.exit_code == 2
+    assert "invalid config" in result.output
 
 
 def test_cli_help_and_version():
@@ -252,6 +700,16 @@ def test_cli_help_and_version():
     version_result = runner.invoke(cli.cli, ["--version"])
     assert version_result.exit_code == 0
     assert version_result.output.lower().startswith("codedupes")
+
+
+def test_cli_search_help_is_search_specific() -> None:
+    runner = CliRunner()
+    result = runner.invoke(cli.cli, ["search", "--help"])
+
+    assert result.exit_code == 0
+    assert "also narrows traditional duplicate scope in combined mode" not in result.output
+    assert "Built-in" in result.output
+    assert "always apply." in result.output
 
 
 def test_cli_output_width_option(monkeypatch, tmp_path):
@@ -329,7 +787,7 @@ def test_cli_invalid_output_width(tmp_path):
     assert "must be >= 80" in result.output
 
 
-def test_cli_check_degrades_on_semantic_backend_error(monkeypatch, tmp_path):
+def test_cli_check_fails_on_semantic_backend_error_without_fallback(monkeypatch, tmp_path):
     path = tmp_path / "sample.py"
     path.write_text("def _dead():\n    return 1\n\ndef keep(y):\n    return y + 1\n")
 
@@ -340,7 +798,49 @@ def test_cli_check_degrades_on_semantic_backend_error(monkeypatch, tmp_path):
     runner = CliRunner()
     result = runner.invoke(cli.cli, ["check", str(path), "--min-lines", "0"])
     assert result.exit_code == 1
+    assert "Error during analysis" in result.output
+    assert "--allow-semantic-fallback" in result.output
+
+
+def test_cli_check_degrades_on_semantic_backend_error_with_fallback(monkeypatch, tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def _dead():\n    return 1\n\ndef keep(y):\n    return y + 1\n")
+
+    from codedupes import analyzer as analyzer_module
+
+    monkeypatch.setattr(analyzer_module, "run_semantic_analysis", _raise_semantic_backend_error)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli.cli,
+        ["check", str(path), "--min-lines", "0", "--allow-semantic-fallback"],
+    )
+    assert result.exit_code == 1
     assert "Semantic analysis unavailable" in result.output
+
+
+def test_cli_check_degrades_on_semantic_backend_error_in_json(monkeypatch, tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def _dead():\n    return 1\n\ndef keep(y):\n    return y + 1\n")
+
+    from codedupes import analyzer as analyzer_module
+
+    monkeypatch.setattr(analyzer_module, "run_semantic_analysis", _raise_semantic_backend_error)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli.cli,
+        ["check", str(path), "--min-lines", "0", "--allow-semantic-fallback", "--json"],
+    )
+    assert result.exit_code == 1
+
+    assert result.output.lstrip().startswith("{"), (
+        f"Expected pure JSON output, got: {result.output!r}"
+    )
+    payload = json.loads(result.output)
+    assert payload["summary"]["semantic_fallback"] is True
+    assert payload["summary"]["semantic_fallback_reason"] is not None
+    assert "Semantic analysis unavailable" in payload["summary"]["semantic_fallback_reason"]
 
 
 def test_cli_semantic_only_fails_on_semantic_backend_error(monkeypatch, tmp_path):

@@ -5,8 +5,9 @@ from __future__ import annotations
 import json
 import logging
 import sys
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Callable, Literal, cast
+from typing import Any, Callable, Iterator, Literal, TypeVar, cast
 
 import click
 from rich.console import Console
@@ -19,22 +20,33 @@ from codedupes import __version__
 from codedupes.analyzer import AnalyzerConfig, CodeAnalyzer
 from codedupes.constants import (
     DEFAULT_BATCH_SIZE,
-    DEFAULT_C2LLM_REVISION,
+    DEFAULT_CHECK_SEMANTIC_TASK,
     DEFAULT_MIN_SEMANTIC_LINES,
     DEFAULT_MODEL,
-    DEFAULT_SEMANTIC_THRESHOLD,
+    DEFAULT_SEARCH_SEMANTIC_TASK,
+    SEMANTIC_TASK_CHOICES,
     DEFAULT_TOP_K,
     DEFAULT_TRADITIONAL_THRESHOLD,
 )
+from codedupes.extractor import DEFAULT_EXCLUDE_DIR_NAMES, DEFAULT_EXCLUDE_PATTERNS
 from codedupes.models import AnalysisResult, CodeUnit, DuplicatePair, HybridDuplicate
+from codedupes.semantic_profiles import (
+    get_default_semantic_threshold,
+    list_supported_models,
+)
 
-DEFAULT_THRESHOLD = DEFAULT_SEMANTIC_THRESHOLD
+DEFAULT_THRESHOLD = get_default_semantic_threshold(DEFAULT_MODEL)
 DEFAULT_MIN_LINES = DEFAULT_MIN_SEMANTIC_LINES
 DEFAULT_OUTPUT_WIDTH = 160
 MIN_OUTPUT_WIDTH = 80
 DEFAULT_TABLE_ROWS = 20
+DEFAULT_EXCLUDE_HELP_HINT = (
+    "Additional glob patterns to exclude (repeat option for multiple patterns). "
+    "Built-in excludes for tests/common artifact directories always apply."
+)
 
 console = Console(width=DEFAULT_OUTPUT_WIDTH)
+TResult = TypeVar("TResult")
 
 _NOISY_EXTERNAL_LOGGERS = (
     "deepspeed",
@@ -54,10 +66,19 @@ class _CodedupesLogFilter(logging.Filter):
     """Filter log records so non-codedupes INFO chatter is hidden by default."""
 
     def __init__(self, *, include_external_info: bool) -> None:
+        """Create a log filter configured for CLI verbosity.
+
+        :param include_external_info: Allow noisy external INFO logs through.
+        """
         super().__init__()
         self.include_external_info = include_external_info
 
     def filter(self, record: logging.LogRecord) -> bool:
+        """Decide whether a log record should be emitted.
+
+        :param record: Candidate log record.
+        :return: ``False`` for noisy INFO messages from non-codedupes modules.
+        """
         if record.name.startswith("codedupes"):
             return True
         if self.include_external_info:
@@ -69,6 +90,30 @@ def _set_console(output_width: int) -> None:
     """Set global console used by all rich output helpers."""
     global console
     console = Console(width=output_width)
+
+
+def _suppress_logs_for_json() -> tuple[int, list[logging.Handler]]:
+    """Prevent log output from contaminating JSON responses.
+
+    :return: Prior root logger ``(level, handlers)`` state for later restoration.
+    """
+    root_logger = logging.getLogger()
+    prior_state = (root_logger.level, list(root_logger.handlers))
+    for handler in list(root_logger.handlers):
+        root_logger.removeHandler(handler)
+    root_logger.setLevel(logging.CRITICAL + 1)
+    return prior_state
+
+
+def _restore_root_logger_state(prior_state: tuple[int, list[logging.Handler]]) -> None:
+    """Restore root logger level/handlers after a temporary JSON suppression."""
+    prior_level, prior_handlers = prior_state
+    root_logger = logging.getLogger()
+    for handler in list(root_logger.handlers):
+        root_logger.removeHandler(handler)
+    for handler in prior_handlers:
+        root_logger.addHandler(handler)
+    root_logger.setLevel(prior_level)
 
 
 def setup_logging(verbose: bool = False) -> None:
@@ -87,9 +132,75 @@ def setup_logging(verbose: bool = False) -> None:
         logging.getLogger(logger_name).setLevel(quiet_level)
 
 
+@contextmanager
+def _configured_cli_output(
+    *,
+    as_json: bool,
+    verbose: bool,
+    output_width: int,
+) -> Iterator[None]:
+    """Configure logging/console for a CLI command and restore state on exit.
+
+    :param as_json: Whether JSON mode is enabled.
+    :param verbose: Whether verbose logging is enabled.
+    :param output_width: Requested rich console width.
+    :yield: ``None`` while command-specific work executes.
+    """
+    _set_console(output_width)
+    logging_state: tuple[int, list[logging.Handler]] | None = None
+    if as_json:
+        logging_state = _suppress_logs_for_json()
+    else:
+        setup_logging(verbose)
+
+    try:
+        yield
+    finally:
+        if logging_state is not None:
+            _restore_root_logger_state(logging_state)
+
+
+def _run_cli_action(
+    action: Callable[[], TResult],
+    *,
+    error_label: str,
+    verbose: bool,
+    catch_file_not_found: bool = False,
+) -> TResult:
+    """Run a command action and normalize runtime exception handling.
+
+    :param action: Callback to execute.
+    :param error_label: Human-readable action label for error messages.
+    :param verbose: Whether verbose mode is enabled.
+    :param catch_file_not_found: Convert ``FileNotFoundError`` to CLI exit.
+    :return: Action return value.
+    :raises click.exceptions.Exit: On handled runtime failures.
+    """
+    try:
+        return action()
+    except FileNotFoundError as exc:
+        if not catch_file_not_found:
+            raise
+        console.print(f"[red]Error:[/red] {exc}")
+        raise click.exceptions.Exit(1) from exc
+    except Exception as exc:
+        console.print(f"[red]Error during {error_label}:[/red] {exc}")
+        if verbose:
+            console.print_exception()
+        raise click.exceptions.Exit(1) from exc
+
+
 def _validate_threshold(
     _ctx: click.Context, _param: click.Parameter, value: float | None
 ) -> float | None:
+    """Validate a threshold in the ``[0.0, 1.0]`` range.
+
+    :param _ctx: Click callback context (unused).
+    :param _param: Click callback parameter metadata (unused).
+    :param value: Optional float to validate.
+    :return: Validated threshold value.
+    :raises click.BadParameter: When value is outside the allowed range.
+    """
     if value is None:
         return None
     if not 0.0 <= value <= 1.0:
@@ -98,45 +209,185 @@ def _validate_threshold(
 
 
 def _validate_positive_int(_ctx: click.Context, _param: click.Parameter, value: int) -> int:
+    """Validate a positive integer option value.
+
+    :param _ctx: Click callback context (unused).
+    :param _param: Click callback parameter metadata (unused).
+    :param value: Candidate value.
+    :return: Value if it is strictly positive.
+    :raises click.BadParameter: When value is ``<= 0``.
+    """
     if value <= 0:
         raise click.BadParameter("must be > 0")
     return value
 
 
 def _validate_non_negative_int(_ctx: click.Context, _param: click.Parameter, value: int) -> int:
+    """Validate a non-negative integer option value.
+
+    :param _ctx: Click callback context (unused).
+    :param _param: Click callback parameter metadata (unused).
+    :param value: Candidate value.
+    :return: Value if it is ``>= 0``.
+    :raises click.BadParameter: When value is negative.
+    """
     if value < 0:
         raise click.BadParameter("must be >= 0")
     return value
 
 
 def _validate_output_width(_ctx: click.Context, _param: click.Parameter, value: int) -> int:
+    """Validate output width for rich table rendering.
+
+    :param _ctx: Click callback context (unused).
+    :param _param: Click callback parameter metadata (unused).
+    :param value: Desired output width.
+    :return: Value if it meets the minimum width.
+    :raises click.BadParameter: When value is below the minimum width.
+    """
     if value < MIN_OUTPUT_WIDTH:
         raise click.BadParameter(f"must be >= {MIN_OUTPUT_WIDTH}")
     return value
 
 
-def _resolve_threshold(base: float, override: float | None) -> float:
-    return override if override is not None else base
-
-
 def _resolve_check_thresholds(
-    threshold: float,
+    threshold: float | None,
     semantic_threshold: float | None,
     traditional_threshold: float | None,
+    *,
+    model_name: str,
 ) -> tuple[float, float]:
+    """Resolve semantic and traditional thresholds using precedence rules.
+
+    :param threshold: Shared threshold override.
+    :param semantic_threshold: Explicit semantic threshold override.
+    :param traditional_threshold: Explicit traditional threshold override.
+    :param model_name: Model name used for default semantic threshold.
+    :return: Tuple of ``(semantic_threshold, traditional_threshold)``.
+    """
+    default_semantic = get_default_semantic_threshold(model_name)
+    default_traditional = DEFAULT_TRADITIONAL_THRESHOLD
     return (
-        _resolve_threshold(threshold, semantic_threshold),
-        _resolve_threshold(threshold, traditional_threshold),
+        (
+            semantic_threshold
+            if semantic_threshold is not None
+            else threshold
+            if threshold is not None
+            else default_semantic
+        ),
+        (
+            traditional_threshold
+            if traditional_threshold is not None
+            else threshold
+            if threshold is not None
+            else default_traditional
+        ),
     )
 
 
+def _resolve_search_threshold(
+    threshold: float | None,
+    semantic_threshold: float | None,
+    *,
+    model_name: str,
+) -> float:
+    """Resolve semantic threshold for search mode.
+
+    :param threshold: Shared threshold override.
+    :param semantic_threshold: Search-specific semantic threshold override.
+    :param model_name: Model name used for default threshold.
+    :return: Resolved semantic threshold.
+    """
+    if semantic_threshold is not None:
+        return semantic_threshold
+    if threshold is not None:
+        return threshold
+    return get_default_semantic_threshold(model_name)
+
+
+def _is_cli_explicit(ctx: click.Context, option_name: str) -> bool:
+    """Return whether a CLI option was explicitly provided by the user.
+
+    :param ctx: Active Click command context.
+    :param option_name: Internal Click option parameter name.
+    :return: ``True`` when the option source is command line input.
+    """
+    return ctx.get_parameter_source(option_name) == click.core.ParameterSource.COMMANDLINE
+
+
+def _resolve_trust_remote_code_flags(
+    *,
+    trust_remote_code: bool,
+    no_trust_remote_code: bool,
+) -> bool | None:
+    """Resolve trust-remote-code flags and reject contradictory input.
+
+    :param trust_remote_code: Whether ``--trust-remote-code`` was provided.
+    :param no_trust_remote_code: Whether ``--no-trust-remote-code`` was provided.
+    :return: ``True``/``False`` when explicitly set, otherwise ``None``.
+    :raises click.UsageError: When both contradictory flags are provided.
+    """
+    if trust_remote_code and no_trust_remote_code:
+        raise click.UsageError("Cannot combine --trust-remote-code and --no-trust-remote-code.")
+    if trust_remote_code:
+        return True
+    if no_trust_remote_code:
+        return False
+    return None
+
+
+def _validate_json_output_controls(
+    *,
+    as_json: bool,
+    verbose: bool,
+    output_width_explicit: bool,
+    show_source: bool = False,
+    full_table: bool = False,
+) -> None:
+    """Reject flags that are incompatible with JSON-only output mode.
+
+    :param as_json: Whether JSON output mode is enabled.
+    :param verbose: Whether verbose logging was requested.
+    :param output_width_explicit: Whether ``--output-width`` was explicitly set.
+    :param show_source: Whether source snippet rendering was requested.
+    :param full_table: Whether full table rendering was requested.
+    :return: ``None``.
+    :raises click.UsageError: When rich/logging controls are combined with JSON mode.
+    """
+    if not as_json:
+        return
+
+    incompatible: list[str] = []
+    if verbose:
+        incompatible.append("--verbose")
+    if output_width_explicit:
+        incompatible.append("--output-width")
+    if show_source:
+        incompatible.append("--show-source")
+    if full_table:
+        incompatible.append("--full-table")
+
+    if incompatible:
+        listed = ", ".join(incompatible)
+        raise click.UsageError(f"Cannot use {listed} with --json.")
+
+
 def format_location(unit: CodeUnit) -> str:
-    """Format file:line location."""
+    """Format file:line location for table rendering.
+
+    :param unit: Unit to format.
+    :return: ``<filename>:<lineno>`` string.
+    """
     return f"{unit.file_path.name}:{unit.lineno}"
 
 
 def truncate_source(source: str, max_lines: int = 5) -> str:
-    """Truncate source code for display."""
+    """Truncate source code for compact display.
+
+    :param source: Source string to truncate.
+    :param max_lines: Maximum lines to keep.
+    :return: Truncated source with optional overflow note.
+    """
     lines = source.strip().split("\n")
     if len(lines) <= max_lines:
         return source.strip()
@@ -148,7 +399,12 @@ def print_summary(
     *,
     mode: Literal["combined", "traditional", "semantic"],
 ) -> None:
-    """Print analysis summary."""
+    """Print analysis summary.
+
+    :param result: Complete analysis result.
+    :param mode: Output mode used for this result.
+    :return: ``None``.
+    """
     console.print()
 
     summary = Table(title="Analysis Summary", show_header=False, box=None)
@@ -189,6 +445,11 @@ def print_summary(
 
 
 def _unit_to_dict(unit: CodeUnit) -> dict[str, Any]:
+    """Convert a code unit to JSON-serializable summary.
+
+    :param unit: Unit to convert.
+    :return: Dictionary with public unit fields.
+    """
     return {
         "name": unit.name,
         "qualified_name": unit.qualified_name,
@@ -202,6 +463,11 @@ def _unit_to_dict(unit: CodeUnit) -> dict[str, Any]:
 
 
 def _dup_to_dict(dup: DuplicatePair) -> dict[str, Any]:
+    """Convert a duplicate pair to JSON-serializable mapping.
+
+    :param dup: Duplicate pair to serialize.
+    :return: Dictionary representation of the pair.
+    """
     return {
         "unit_a": _unit_to_dict(dup.unit_a),
         "unit_b": _unit_to_dict(dup.unit_b),
@@ -211,6 +477,11 @@ def _dup_to_dict(dup: DuplicatePair) -> dict[str, Any]:
 
 
 def _hybrid_dup_to_dict(dup: HybridDuplicate) -> dict[str, Any]:
+    """Convert a hybrid duplicate pair for JSON output.
+
+    :param dup: Hybrid duplicate to serialize.
+    :return: Dictionary representation of the hybrid pair.
+    """
     return {
         "unit_a": _unit_to_dict(dup.unit_a),
         "unit_b": _unit_to_dict(dup.unit_b),
@@ -225,8 +496,14 @@ def _hybrid_dup_to_dict(dup: HybridDuplicate) -> dict[str, Any]:
 
 
 def print_check_json_combined(result: AnalysisResult, *, show_all: bool) -> None:
-    """Output combined-mode check results as JSON."""
+    """Output combined-mode check results as JSON.
+
+    :param result: Full analysis result to serialize.
+    :param show_all: Include raw duplicate lists in addition to hybrid output.
+    :return: ``None``.
+    """
     output: dict[str, Any] = {
+        "analysis_mode": result.analysis_mode,
         "summary": {
             "total_units": len(result.units),
             "hybrid_duplicates": len(result.hybrid_duplicates),
@@ -234,6 +511,8 @@ def print_check_json_combined(result: AnalysisResult, *, show_all: bool) -> None
             "raw_traditional_duplicates": len(result.traditional_duplicates),
             "raw_semantic_duplicates": len(result.semantic_duplicates),
             "filtered_raw_duplicates": result.filtered_raw_duplicates,
+            "semantic_fallback": result.semantic_fallback,
+            "semantic_fallback_reason": result.semantic_fallback_reason,
         },
         "hybrid_duplicates": [
             _hybrid_dup_to_dict(duplicate) for duplicate in result.hybrid_duplicates
@@ -254,11 +533,14 @@ def print_check_json_combined(result: AnalysisResult, *, show_all: bool) -> None
 def print_check_json_raw(result: AnalysisResult) -> None:
     """Output raw single-method check results as JSON."""
     output = {
+        "analysis_mode": result.analysis_mode,
         "summary": {
             "total_units": len(result.units),
             "traditional_duplicates": len(result.traditional_duplicates),
             "semantic_duplicates": len(result.semantic_duplicates),
             "potentially_unused": len(result.potentially_unused),
+            "semantic_fallback": result.semantic_fallback,
+            "semantic_fallback_reason": result.semantic_fallback_reason,
         },
         "traditional_duplicates": [
             _dup_to_dict(duplicate) for duplicate in result.traditional_duplicates
@@ -272,7 +554,12 @@ def print_check_json_raw(result: AnalysisResult) -> None:
 
 
 def print_search_json(query: str, results: list[tuple[CodeUnit, float]]) -> None:
-    """Output search output as JSON."""
+    """Output search results as JSON.
+
+    :param query: Original search query.
+    :param results: Matching units and cosine scores.
+    :return: ``None``.
+    """
     payload = {
         "query": query,
         "results": [{"score": float(score), **_unit_to_dict(unit)} for unit, score in results],
@@ -281,6 +568,11 @@ def print_search_json(query: str, results: list[tuple[CodeUnit, float]]) -> None
 
 
 def _build_duplicates_table(*, hybrid: bool = False) -> Table:
+    """Build the duplicate table columns for terminal output.
+
+    :param hybrid: When true, build columns for hybrid duplicate mode.
+    :return: Configured rich ``Table`` instance.
+    """
     table = Table(show_header=True, header_style="bold")
     if hybrid:
         table.add_column("Confidence", style="green", width=10, no_wrap=True)
@@ -298,6 +590,12 @@ def _build_duplicates_table(*, hybrid: bool = False) -> Table:
 
 
 def _print_source_panels(unit_a: CodeUnit, unit_b: CodeUnit) -> None:
+    """Print syntax-highlighted side-by-side source snippets for two units.
+
+    :param unit_a: First code unit.
+    :param unit_b: Second code unit.
+    :return: ``None``.
+    """
     console.print(
         Panel(
             Syntax(truncate_source(unit_a.source), "python", theme="monokai"),
@@ -322,7 +620,15 @@ def _print_duplicate_table(
     max_items: int | None,
     hybrid: bool,
 ) -> None:
-    """Render duplicate pairs in either raw or hybrid layout."""
+    """Render duplicate pairs in either raw or hybrid layout.
+
+    :param duplicates: Duplicate pairs to display.
+    :param title: Section title.
+    :param show_source: Whether to render source snippets.
+    :param max_items: Optional row limit.
+    :param hybrid: Whether the payload is hybrid duplicates.
+    :return: ``None``.
+    """
     if not duplicates:
         return
 
@@ -378,7 +684,14 @@ def print_duplicates(
     show_source: bool = False,
     max_items: int | None = DEFAULT_TABLE_ROWS,
 ) -> None:
-    """Print duplicate pairs in a table."""
+    """Print duplicate pairs in a table.
+
+    :param duplicates: Duplicate pairs to print.
+    :param title: Section title.
+    :param show_source: Whether to render source snippets.
+    :param max_items: Optional max rows.
+    :return: ``None``.
+    """
     _print_duplicate_table(
         duplicates,
         title=title,
@@ -393,7 +706,13 @@ def print_hybrid_duplicates(
     show_source: bool = False,
     max_items: int | None = DEFAULT_TABLE_ROWS,
 ) -> None:
-    """Print synthesized hybrid duplicate pairs."""
+    """Print synthesized hybrid duplicate pairs.
+
+    :param duplicates: Hybrid duplicates to print.
+    :param show_source: Whether to render source snippets.
+    :param max_items: Optional max rows.
+    :return: ``None``.
+    """
     _print_duplicate_table(
         duplicates,
         title="Hybrid Duplicates",
@@ -408,7 +727,13 @@ def print_unused(
     max_items: int | None = DEFAULT_TABLE_ROWS,
     title: str = "Potentially Unused",
 ) -> None:
-    """Print potentially unused code units."""
+    """Print potentially unused code units.
+
+    :param unused: Units with no detected references.
+    :param max_items: Optional max rows.
+    :param title: Section title.
+    :return: ``None``.
+    """
     if not unused:
         return
 
@@ -452,7 +777,30 @@ def print_search_results(results: list[tuple[CodeUnit, float]]) -> None:
     console.print(table)
 
 
-def _add_common_analysis_options(func: Callable[..., Any]) -> Callable[..., Any]:
+def _add_common_analysis_options(
+    *,
+    command_name: Literal["check", "search"],
+) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+    """Attach shared CLI options to analysis commands.
+
+    :param command_name: Command receiving the shared options.
+    :return: Decorator that applies click options to command functions.
+    """
+    if command_name == "check":
+        min_lines_help = (
+            "Skip semantic comparison for code units with fewer body statements "
+            "(also narrows traditional duplicate scope in combined mode)"
+        )
+        semantic_unit_help = (
+            "Unit type(s) eligible for semantic embedding (repeat option to add more; "
+            "also narrows traditional duplicate scope in combined mode)"
+        )
+    else:
+        min_lines_help = "Skip semantic comparison for code units with fewer body statements"
+        semantic_unit_help = (
+            "Unit type(s) eligible for semantic embedding (repeat option to add more)"
+        )
+
     options = [
         click.option(
             "--no-private",
@@ -465,13 +813,22 @@ def _add_common_analysis_options(func: Callable[..., Any]) -> Callable[..., Any]
             default=DEFAULT_MIN_LINES,
             show_default=True,
             callback=_validate_non_negative_int,
-            help="Skip semantic comparison for functions with fewer body statements",
+            help=min_lines_help,
+        ),
+        click.option(
+            "--semantic-unit-type",
+            "semantic_unit_type",
+            multiple=True,
+            type=click.Choice(["function", "method", "class"]),
+            default=("function", "method"),
+            show_default=True,
+            help=semantic_unit_help,
         ),
         click.option(
             "--model",
             default=DEFAULT_MODEL,
             show_default=True,
-            help="HuggingFace embedding model",
+            help="Embedding model alias or HuggingFace model ID",
         ),
         click.option(
             "--instruction-prefix",
@@ -483,14 +840,19 @@ def _add_common_analysis_options(func: Callable[..., Any]) -> Callable[..., Any]
             default=None,
             show_default="auto",
             help=(
-                "Model revision/commit. If omitted, uses model-specific default "
-                "(pinned for default C2LLM model)."
+                "Model revision/commit. If omitted, uses model-profile default "
+                "(for example pinned for C2LLM 0.5B)."
             ),
         ),
         click.option(
-            "--trust-remote-code/--no-trust-remote-code",
-            default=None,
+            "--trust-remote-code",
+            is_flag=True,
             help="Allow execution of model-provided remote code during model loading",
+        ),
+        click.option(
+            "--no-trust-remote-code",
+            is_flag=True,
+            help="Disallow execution of model-provided remote code during model loading",
         ),
         click.option(
             "--batch-size",
@@ -510,7 +872,7 @@ def _add_common_analysis_options(func: Callable[..., Any]) -> Callable[..., Any]
         click.option(
             "--exclude",
             multiple=True,
-            help="Glob patterns to exclude (repeat option for multiple patterns)",
+            help=DEFAULT_EXCLUDE_HELP_HINT,
         ),
         click.option("--include-stubs", is_flag=True, help="Include .pyi files"),
         click.option(
@@ -523,9 +885,17 @@ def _add_common_analysis_options(func: Callable[..., Any]) -> Callable[..., Any]
         ),
     ]
 
-    for option in reversed(options):
-        func = option(func)
-    return func
+    def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
+        """Apply shared command options to a click command function.
+
+        :param func: Click command function to decorate.
+        :return: Click command function with shared options attached.
+        """
+        for option in reversed(options):
+            func = option(func)
+        return func
+
+    return decorator
 
 
 @click.group(context_settings={"help_option_names": ["-h", "--help"]})
@@ -535,15 +905,15 @@ def cli() -> None:
 
 
 @cli.command("check", help="Run duplicate + unused analysis")
-@click.argument("path", type=click.Path(path_type=Path))
+@click.argument("path", type=click.Path(path_type=Path, exists=True))
 @click.option(
     "-t",
     "--threshold",
     type=float,
-    default=DEFAULT_THRESHOLD,
-    show_default=True,
+    default=None,
+    show_default=False,
     callback=_validate_threshold,
-    help="Similarity threshold for both methods",
+    help="Shared threshold override for semantic and traditional checks",
 )
 @click.option(
     "--semantic-threshold",
@@ -557,11 +927,26 @@ def cli() -> None:
     callback=_validate_threshold,
     help="Override traditional (Jaccard) threshold",
 )
+@click.option(
+    "--semantic-task",
+    type=click.Choice(SEMANTIC_TASK_CHOICES),
+    default=DEFAULT_CHECK_SEMANTIC_TASK,
+    show_default=True,
+    help="Semantic task mode for duplicate detection embeddings",
+)
 @click.option("--semantic-only", is_flag=True, help="Only run semantic analysis")
 @click.option(
     "--traditional-only",
     is_flag=True,
     help="Only run traditional (AST/token) analysis",
+)
+@click.option(
+    "--allow-semantic-fallback",
+    is_flag=True,
+    help=(
+        "Allow combined mode to continue with scoped traditional results when semantic "
+        "backend loading/inference fails"
+    ),
 )
 @click.option("--no-unused", is_flag=True, help="Skip unused code detection")
 @click.option("--strict-unused", is_flag=True, help="Do not skip public functions")
@@ -571,32 +956,62 @@ def cli() -> None:
     help="Suppress semantic duplicate matches involving test_* functions",
 )
 @click.option(
+    "--no-tiny-filter",
+    is_flag=True,
+    help="Disable tiny function/method filtering for traditional duplicates",
+)
+@click.option(
+    "--tiny-cutoff",
+    type=int,
+    default=3,
+    show_default=True,
+    callback=_validate_non_negative_int,
+    help="Tiny function/method statement cutoff (exclusive) for traditional filtering",
+)
+@click.option(
+    "--tiny-near-jaccard-min",
+    type=float,
+    default=0.93,
+    show_default=True,
+    callback=_validate_threshold,
+    help="Minimum Jaccard similarity to keep tiny near-duplicate pairs",
+)
+@click.option(
     "--show-all",
     is_flag=True,
     help="Show raw traditional/semantic duplicate lists alongside hybrid output",
 )
 @click.option("--show-source", is_flag=True, help="Show source code snippets")
 @click.option("--full-table", is_flag=True, help="Show all rows in terminal tables")
-@_add_common_analysis_options
+@_add_common_analysis_options(command_name="check")
+@click.pass_context
 def check_command(
+    ctx: click.Context,
     path: Path,
-    threshold: float,
+    threshold: float | None,
     semantic_threshold: float | None,
     traditional_threshold: float | None,
     semantic_only: bool,
     traditional_only: bool,
+    allow_semantic_fallback: bool,
     no_unused: bool,
     strict_unused: bool,
     suppress_test_semantic: bool,
+    no_tiny_filter: bool,
+    tiny_cutoff: int,
+    tiny_near_jaccard_min: float,
     show_all: bool,
     show_source: bool,
     full_table: bool,
     no_private: bool,
     min_lines: int,
+    semantic_unit_type: tuple[str, ...],
     model: str,
+    semantic_task: str,
     instruction_prefix: str | None,
     model_revision: str | None,
-    trust_remote_code: bool | None,
+    trust_remote_code: bool,
+    no_trust_remote_code: bool,
     batch_size: int,
     as_json: bool,
     verbose: bool,
@@ -604,13 +1019,112 @@ def check_command(
     include_stubs: bool,
     output_width: int,
 ) -> None:
-    """Run duplicate and unused-code analysis."""
+    """Run duplicate and unused-code analysis.
+
+    :param ctx: Click command context.
+    :param path: Source directory or file to analyze.
+    :param threshold: Optional shared threshold override.
+    :param semantic_threshold: Semantic threshold override.
+    :param traditional_threshold: Traditional threshold override.
+    :param semantic_only: If true, run semantic analysis only.
+    :param traditional_only: If true, run traditional analysis only.
+    :param allow_semantic_fallback: Continue with scoped traditional results when
+        semantic backend fails in combined mode.
+    :param no_unused: If true, skip unused code detection.
+    :param strict_unused: If true, do not suppress likely public functions.
+    :param suppress_test_semantic: Exclude matches involving test functions.
+    :param no_tiny_filter: Disable tiny traditional duplicate filtering.
+    :param tiny_cutoff: Tiny function/method statement cutoff for filtering.
+    :param tiny_near_jaccard_min: Keep floor for tiny near-duplicate Jaccard pairs.
+    :param show_all: Emit raw duplicate lists in combined mode.
+    :param show_source: Show source code snippets for duplicate pairs.
+    :param full_table: Show all table rows.
+    :param no_private: Exclude private symbols.
+    :param min_lines: Minimum code body statement lines for semantic candidate code units.
+    :param semantic_unit_type: Unit type(s) eligible for semantic embedding.
+    :param model: Semantic model alias/identifier.
+    :param semantic_task: Semantic task used during duplicate detection.
+    :param instruction_prefix: Optional custom embedding prefix.
+    :param model_revision: Optional model revision/commit override.
+    :param trust_remote_code: Whether remote-code execution was explicitly enabled.
+    :param no_trust_remote_code: Whether remote-code execution was explicitly disabled.
+    :param batch_size: Embedding batch size.
+    :param as_json: Output JSON instead of tables.
+    :param verbose: Enable debug-level logging.
+    :param exclude: Glob patterns to exclude.
+    :param include_stubs: Include ``.pyi`` files.
+    :param output_width: Width used for rich output.
+    :return: ``None``.
+    """
+    if no_unused and strict_unused:
+        raise click.UsageError(
+            "Cannot combine --no-unused and --strict-unused because unused reporting is disabled."
+        )
+
     if semantic_only and traditional_only:
         raise click.UsageError("Cannot use both --semantic-only and --traditional-only.")
 
-    _set_console(output_width)
-    if not as_json:
-        setup_logging(verbose)
+    if allow_semantic_fallback and (semantic_only or traditional_only):
+        raise click.UsageError("--allow-semantic-fallback is only valid in default combined mode.")
+
+    if show_all and (semantic_only or traditional_only):
+        raise click.UsageError("--show-all is only valid in default combined mode.")
+
+    _validate_json_output_controls(
+        as_json=as_json,
+        verbose=verbose,
+        output_width_explicit=_is_cli_explicit(ctx, "output_width"),
+        show_source=show_source,
+        full_table=full_table,
+    )
+
+    if traditional_only:
+        ignored_in_traditional_only = [
+            "semantic_threshold",
+            "semantic_task",
+            "instruction_prefix",
+            "model",
+            "model_revision",
+            "trust_remote_code",
+            "no_trust_remote_code",
+            "batch_size",
+            "min_lines",
+            "semantic_unit_type",
+            "suppress_test_semantic",
+        ]
+        specified_ignored = [
+            option_name
+            for option_name in ignored_in_traditional_only
+            if _is_cli_explicit(ctx, option_name)
+        ]
+        if specified_ignored:
+            listed = ", ".join(f"--{name.replace('_', '-')}" for name in specified_ignored)
+            raise click.UsageError(
+                f"Cannot use {listed} with --traditional-only; semantic analysis is disabled."
+            )
+
+    if semantic_only:
+        ignored_in_semantic_only = [
+            "traditional_threshold",
+            "no_tiny_filter",
+            "tiny_cutoff",
+            "tiny_near_jaccard_min",
+        ]
+        specified_ignored = [
+            option_name
+            for option_name in ignored_in_semantic_only
+            if _is_cli_explicit(ctx, option_name)
+        ]
+        if specified_ignored:
+            listed = ", ".join(f"--{name.replace('_', '-')}" for name in specified_ignored)
+            raise click.UsageError(
+                f"Cannot use {listed} with --semantic-only; traditional duplicate analysis is disabled."
+            )
+
+    resolved_trust_remote_code = _resolve_trust_remote_code_flags(
+        trust_remote_code=trust_remote_code,
+        no_trust_remote_code=no_trust_remote_code,
+    )
 
     combined_mode = not semantic_only and not traditional_only
     table_max_items: int | None = None if full_table else DEFAULT_TABLE_ROWS
@@ -619,93 +1133,105 @@ def check_command(
         threshold,
         semantic_threshold,
         traditional_threshold,
-    )
-
-    config = AnalyzerConfig(
-        exclude_patterns=list(exclude) or None,
-        include_private=not no_private,
-        jaccard_threshold=traditional_thresh,
-        semantic_threshold=semantic_thresh,
         model_name=model,
-        instruction_prefix=instruction_prefix,
-        model_revision=model_revision,
-        trust_remote_code=trust_remote_code,
-        run_traditional=not semantic_only,
-        run_semantic=not traditional_only,
-        run_unused=not no_unused,
-        min_semantic_lines=min_lines,
-        strict_unused=strict_unused,
-        suppress_test_semantic_matches=suppress_test_semantic,
-        batch_size=batch_size,
-        include_stubs=include_stubs,
     )
+    semantic_task_value: str | None = semantic_task
+    if semantic_only:
+        traditional_thresh = DEFAULT_TRADITIONAL_THRESHOLD
+    if traditional_only:
+        semantic_thresh = None
+        semantic_task_value = None
 
     try:
-        analyzer = CodeAnalyzer(config)
-        result = analyzer.analyze(path)
-    except FileNotFoundError as exc:
-        console.print(f"[red]Error:[/red] {exc}")
-        raise click.exceptions.Exit(1) from exc
-    except Exception as exc:
-        console.print(f"[red]Error during analysis:[/red] {exc}")
-        if verbose:
-            console.print_exception()
-        raise click.exceptions.Exit(1) from exc
+        config = AnalyzerConfig(
+            exclude_patterns=list(exclude) or None,
+            include_private=not no_private,
+            jaccard_threshold=traditional_thresh,
+            semantic_threshold=semantic_thresh,
+            model_name=model,
+            semantic_task=semantic_task_value,
+            instruction_prefix=instruction_prefix,
+            model_revision=model_revision,
+            trust_remote_code=resolved_trust_remote_code,
+            run_traditional=not semantic_only,
+            run_semantic=not traditional_only,
+            allow_semantic_fallback=allow_semantic_fallback,
+            run_unused=not no_unused,
+            min_semantic_lines=min_lines,
+            semantic_unit_types=semantic_unit_type,
+            filter_tiny_traditional=not no_tiny_filter,
+            tiny_unit_statement_cutoff=tiny_cutoff,
+            tiny_near_jaccard_min=tiny_near_jaccard_min,
+            strict_unused=strict_unused,
+            suppress_test_semantic_matches=suppress_test_semantic,
+            batch_size=batch_size,
+            include_stubs=include_stubs,
+        )
+    except ValueError as exc:
+        raise click.UsageError(str(exc)) from exc
 
-    if as_json:
-        if combined_mode:
-            print_check_json_combined(result, show_all=show_all)
+    with _configured_cli_output(as_json=as_json, verbose=verbose, output_width=output_width):
+        result = _run_cli_action(
+            lambda: CodeAnalyzer(config).analyze(path),
+            error_label="analysis",
+            verbose=verbose,
+            catch_file_not_found=True,
+        )
+
+        if as_json:
+            if combined_mode:
+                print_check_json_combined(result, show_all=show_all)
+            else:
+                print_check_json_raw(result)
         else:
-            print_check_json_raw(result)
-    else:
-        if combined_mode:
-            print_summary(result, mode="combined")
-            print_hybrid_duplicates(
-                result.hybrid_duplicates,
-                show_source=show_source,
-                max_items=table_max_items,
-            )
-            print_unused(
-                result.potentially_unused,
-                title="Likely Dead Code",
-                max_items=table_max_items,
-            )
-
-            if show_all:
-                console.print(
-                    f"[dim]Filtered out {result.filtered_raw_duplicates} raw duplicate pairs "
-                    "from default hybrid output.[/dim]"
-                )
-                print_duplicates(
-                    result.traditional_duplicates,
-                    "Traditional Duplicates (Raw AST/Token/Jaccard)",
+            if combined_mode:
+                print_summary(result, mode="combined")
+                print_hybrid_duplicates(
+                    result.hybrid_duplicates,
                     show_source=show_source,
                     max_items=table_max_items,
                 )
+                print_unused(
+                    result.potentially_unused,
+                    title="Likely Dead Code",
+                    max_items=table_max_items,
+                )
+
+                if show_all:
+                    console.print(
+                        f"[dim]Filtered out {result.filtered_raw_duplicates} raw duplicate pairs "
+                        "from default hybrid output.[/dim]"
+                    )
+                    print_duplicates(
+                        result.traditional_duplicates,
+                        "Traditional Duplicates (Raw AST/Token/Jaccard)",
+                        show_source=show_source,
+                        max_items=table_max_items,
+                    )
+                    print_duplicates(
+                        result.semantic_duplicates,
+                        "Semantic Duplicates (Raw Embedding)",
+                        show_source=show_source,
+                        max_items=table_max_items,
+                    )
+            elif semantic_only:
+                print_summary(result, mode="semantic")
                 print_duplicates(
                     result.semantic_duplicates,
-                    "Semantic Duplicates (Raw Embedding)",
+                    "Semantic Duplicates (Embedding)",
                     show_source=show_source,
                     max_items=table_max_items,
                 )
-        elif semantic_only:
-            print_summary(result, mode="semantic")
-            print_duplicates(
-                result.semantic_duplicates,
-                "Semantic Duplicates (Embedding)",
-                show_source=show_source,
-                max_items=table_max_items,
-            )
-            print_unused(result.potentially_unused, max_items=table_max_items)
-        else:
-            print_summary(result, mode="traditional")
-            print_duplicates(
-                result.traditional_duplicates,
-                "Traditional Duplicates (AST/Token/Jaccard)",
-                show_source=show_source,
-                max_items=table_max_items,
-            )
-            print_unused(result.potentially_unused, max_items=table_max_items)
+                print_unused(result.potentially_unused, max_items=table_max_items)
+            else:
+                print_summary(result, mode="traditional")
+                print_duplicates(
+                    result.traditional_duplicates,
+                    "Traditional Duplicates (AST/Token/Jaccard)",
+                    show_source=show_source,
+                    max_items=table_max_items,
+                )
+                print_unused(result.potentially_unused, max_items=table_max_items)
 
     if combined_mode:
         has_issues = bool(result.hybrid_duplicates or result.potentially_unused)
@@ -717,7 +1243,7 @@ def check_command(
 
 
 @cli.command("search", help="Search for semantically similar code")
-@click.argument("path", type=click.Path(path_type=Path))
+@click.argument("path", type=click.Path(path_type=Path, exists=True))
 @click.argument("query")
 @click.option(
     "--top-k",
@@ -730,10 +1256,10 @@ def check_command(
 @click.option(
     "--threshold",
     type=float,
-    default=DEFAULT_THRESHOLD,
-    show_default=True,
+    default=None,
+    show_default=False,
     callback=_validate_threshold,
-    help="Semantic similarity threshold",
+    help="Shared threshold override for semantic search",
 )
 @click.option(
     "--semantic-threshold",
@@ -741,19 +1267,31 @@ def check_command(
     callback=_validate_threshold,
     help="Override semantic threshold",
 )
-@_add_common_analysis_options
+@click.option(
+    "--semantic-task",
+    type=click.Choice(SEMANTIC_TASK_CHOICES),
+    default=DEFAULT_SEARCH_SEMANTIC_TASK,
+    show_default=True,
+    help="Semantic task mode for query/document embeddings",
+)
+@_add_common_analysis_options(command_name="search")
+@click.pass_context
 def search_command(
+    ctx: click.Context,
     path: Path,
     query: str,
     top_k: int,
-    threshold: float,
+    threshold: float | None,
     semantic_threshold: float | None,
+    semantic_task: str,
     no_private: bool,
     min_lines: int,
+    semantic_unit_type: tuple[str, ...],
     model: str,
     instruction_prefix: str | None,
     model_revision: str | None,
-    trust_remote_code: bool | None,
+    trust_remote_code: bool,
+    no_trust_remote_code: bool,
     batch_size: int,
     as_json: bool,
     verbose: bool,
@@ -761,42 +1299,83 @@ def search_command(
     include_stubs: bool,
     output_width: int,
 ) -> None:
-    """Run semantic search over extracted code units."""
-    _set_console(output_width)
+    """Run semantic search over extracted code units.
 
-    if not as_json:
-        setup_logging(verbose)
-
-    config = AnalyzerConfig(
-        exclude_patterns=list(exclude) or None,
-        include_private=not no_private,
-        semantic_threshold=_resolve_threshold(threshold, semantic_threshold),
-        model_name=model,
-        instruction_prefix=instruction_prefix,
-        model_revision=model_revision,
+    :param ctx: Click command context.
+    :param path: Directory or file to analyze for query context.
+    :param query: Natural-language search query.
+    :param top_k: Maximum results to return.
+    :param threshold: Shared threshold override.
+    :param semantic_threshold: Semantic threshold override.
+    :param semantic_task: Semantic task used for search.
+    :param no_private: Exclude private symbols.
+    :param min_lines: Minimum code body statement lines for semantic candidate code units.
+    :param semantic_unit_type: Unit type(s) eligible for semantic embedding.
+    :param model: Semantic model alias/identifier.
+    :param instruction_prefix: Optional custom embedding prefix.
+    :param model_revision: Optional model revision/commit override.
+    :param trust_remote_code: Whether remote-code execution was explicitly enabled.
+    :param no_trust_remote_code: Whether remote-code execution was explicitly disabled.
+    :param batch_size: Embedding batch size.
+    :param as_json: Output JSON result instead of table.
+    :param verbose: Enable debug-level logging.
+    :param exclude: Glob patterns to exclude.
+    :param include_stubs: Include ``.pyi`` files.
+    :param output_width: Width used for rich output.
+    :return: ``None``.
+    """
+    _validate_json_output_controls(
+        as_json=as_json,
+        verbose=verbose,
+        output_width_explicit=_is_cli_explicit(ctx, "output_width"),
+    )
+    resolved_trust_remote_code = _resolve_trust_remote_code_flags(
         trust_remote_code=trust_remote_code,
-        run_traditional=False,
-        run_unused=False,
-        min_semantic_lines=min_lines,
-        batch_size=batch_size,
-        include_stubs=include_stubs,
+        no_trust_remote_code=no_trust_remote_code,
     )
 
     try:
-        analyzer = CodeAnalyzer(config)
-        analyzer.analyze(path)
-        results = analyzer.search(query, top_k=top_k)
-    except Exception as exc:
-        console.print(f"[red]Error during search:[/red] {exc}")
-        if verbose:
-            console.print_exception()
-        raise click.exceptions.Exit(1) from exc
+        config = AnalyzerConfig(
+            exclude_patterns=list(exclude) or None,
+            include_private=not no_private,
+            semantic_threshold=_resolve_search_threshold(
+                threshold,
+                semantic_threshold,
+                model_name=model,
+            ),
+            model_name=model,
+            semantic_task=semantic_task,
+            instruction_prefix=instruction_prefix,
+            model_revision=model_revision,
+            trust_remote_code=resolved_trust_remote_code,
+            run_traditional=False,
+            run_unused=False,
+            min_semantic_lines=min_lines,
+            semantic_unit_types=semantic_unit_type,
+            batch_size=batch_size,
+            include_stubs=include_stubs,
+        )
+    except ValueError as exc:
+        raise click.UsageError(str(exc)) from exc
 
-    if as_json:
-        print_search_json(query, results)
-    else:
-        console.print(f"[bold cyan]Query:[/bold cyan] {query!r}")
-        print_search_results(results)
+    with _configured_cli_output(as_json=as_json, verbose=verbose, output_width=output_width):
+        analyzer = CodeAnalyzer(config)
+        _run_cli_action(
+            lambda: analyzer.analyze(path),
+            error_label="search",
+            verbose=verbose,
+        )
+        results = _run_cli_action(
+            lambda: analyzer.search(query, top_k=top_k),
+            error_label="search",
+            verbose=verbose,
+        )
+
+        if as_json:
+            print_search_json(query, results)
+        else:
+            console.print(f"[bold cyan]Query:[/bold cyan] {query!r}")
+            print_search_results(results)
 
     raise click.exceptions.Exit(0)
 
@@ -807,16 +1386,36 @@ def info_command() -> None:
     click.echo(f"codedupes {__version__}")
     click.echo(f"Default model: {DEFAULT_MODEL}")
     click.echo("Default model revision: auto")
-    click.echo(f"  (auto resolves to {DEFAULT_C2LLM_REVISION} for {DEFAULT_MODEL})")
-    click.echo(f"Default semantic threshold: {DEFAULT_THRESHOLD}")
+    click.echo(f"Default semantic threshold ({DEFAULT_MODEL}): {DEFAULT_THRESHOLD}")
     click.echo(f"Default traditional threshold: {DEFAULT_TRADITIONAL_THRESHOLD}")
+    click.echo(f"Default semantic task for check: {DEFAULT_CHECK_SEMANTIC_TASK}")
+    click.echo(f"Default semantic task for search: {DEFAULT_SEARCH_SEMANTIC_TASK}")
     click.echo(f"Default min_lines for semantic: {DEFAULT_MIN_LINES}")
     click.echo(f"Default output width: {DEFAULT_OUTPUT_WIDTH}")
+    click.echo("Default combined semantic fallback: disabled")
+    click.echo("Default built-in exclude globs:")
+    for pattern in DEFAULT_EXCLUDE_PATTERNS:
+        click.echo(f"  - {pattern}")
+    click.echo(f"Default excluded directory names ({len(DEFAULT_EXCLUDE_DIR_NAMES)} total):")
+    click.echo(f"  {', '.join(sorted(DEFAULT_EXCLUDE_DIR_NAMES))}")
+    click.echo("Built-in semantic model aliases:")
+    for profile in list_supported_models():
+        aliases = ", ".join(profile.all_aliases())
+        threshold = get_default_semantic_threshold(profile.key)
+        click.echo(f"  - {profile.key} -> {profile.canonical_name}")
+        click.echo(f"      family={profile.family} semantic_threshold={threshold}")
+        click.echo(f"      aliases: {aliases}")
+        if profile.default_revision is not None:
+            click.echo(f"      default_revision: {profile.default_revision}")
+        click.echo(f"      default_trust_remote_code: {profile.default_trust_remote_code}")
     click.echo("Run with --help for CLI usage")
 
 
 def main() -> int:
-    """Main CLI entrypoint."""
+    """CLI program entrypoint.
+
+    :return: Process exit code from click dispatch.
+    """
     argv = sys.argv[1:]
 
     try:

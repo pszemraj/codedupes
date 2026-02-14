@@ -6,9 +6,9 @@ hybrid semantic-only gate thresholds. The source-of-truth workflow is documented
 
 ## Scope
 
-- Corpus root: `test_fixtures/hybrid_tuning/crab_visibility`
-- Labels: `test_fixtures/hybrid_tuning/labels.json`
-- Sweep harness: `scripts/sweep_hybrid_gates.py`
+- Corpus root: [`test_fixtures/hybrid_tuning/crab_visibility`](https://github.com/pszemraj/codedupes/tree/main/test_fixtures/hybrid_tuning/crab_visibility)
+- Labels: [`test_fixtures/hybrid_tuning/labels.json`](https://github.com/pszemraj/codedupes/blob/main/test_fixtures/hybrid_tuning/labels.json)
+- Sweep harness: [`scripts/sweep_hybrid_gates.py`](https://github.com/pszemraj/codedupes/blob/main/scripts/sweep_hybrid_gates.py)
 
 ## Best-practice boundaries
 

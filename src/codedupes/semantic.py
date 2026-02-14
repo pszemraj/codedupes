@@ -1,14 +1,4 @@
-"""Semantic duplicate detection using code embeddings.
-
-Uses C2LLM (Code Contrastive LLM) with PMA-based pooling for code embeddings.
-C2LLM is SOTA for sub-1B models on MTEB-Code (75.46 avg score).
-
-Model: codefuse-ai/C2LLM-0.5B
-  - Base: Qwen2.5-Coder-0.5B-Instruct
-  - Pooling: Multihead Attention (PMA) with 32 heads
-  - Requires: trust_remote_code=True, padding_side="left"
-  - Supports: Code2Code, Text2Code, Code2Text retrieval
-"""
+"""Semantic duplicate detection using embedding similarity."""
 
 from __future__ import annotations
 
@@ -18,56 +8,67 @@ from importlib import metadata as importlib_metadata
 import logging
 import os
 import sys
-from typing import Literal
+from typing import Any, Callable, Literal, TypeVar, cast
 
 import numpy as np
 from packaging.version import InvalidVersion, Version
 
 from codedupes.constants import (
     DEFAULT_BATCH_SIZE,
-    DEFAULT_C2LLM_REVISION,
+    DEFAULT_CHECK_SEMANTIC_TASK,
     DEFAULT_MODEL,
+    DEFAULT_SEARCH_SEMANTIC_TASK,
     DEFAULT_SEMANTIC_THRESHOLD,
     DEFAULT_TOP_K,
+    SEMANTIC_TASK_CHOICES,
 )
 from codedupes.models import CodeUnit, DuplicatePair
 from codedupes.pairs import ordered_pair_key
+from codedupes.semantic_profiles import get_default_semantic_threshold, resolve_model_profile
 
 logger = logging.getLogger(__name__)
 
 # Lazy-loaded model
 _model = None
-_model_name = None
-_model_revision = None
-_model_trust_remote_code = None
+_model_name: str | None = None
+_model_revision: str | None = None
+_model_trust_remote_code: bool | None = None
 
 _DEFAULT_TRANSFORMERS_MIN = Version("4.51")
 _DEFAULT_TRANSFORMERS_MAX_EXCLUSIVE = Version("5")
 _DEFAULT_ST_MIN = Version("5")
 _DEFAULT_ST_MAX_EXCLUSIVE = Version("6")
 
+SemanticTask = Literal[
+    "semantic-similarity",
+    "code-retrieval",
+    "retrieval",
+    "question-answering",
+    "fact-verification",
+    "classification",
+    "clustering",
+]
+
 # C2LLM task-specific instruction prefixes.
-# These are prepended to every input to steer the PMA pooling toward the right
-# representation space. Using an empty string is valid but instruction-tuned
-# prefixes consistently improve retrieval quality per the C2LLM paper (Table 1).
 C2LLM_INSTRUCTIONS: dict[str, str] = {
-    # Code2Code: for pairwise code similarity / dedup
     "code": "Represent this code for finding similar code: ",
-    # Text2Code: natural-language query -> code search
     "query": "Represent this query for searching relevant code: ",
-    # Code2Text: code -> natural-language description search
-    "describe": "Represent this code for finding its description: ",
 }
 
-# Fallback instruction for non-C2LLM models that don't use instruction prefixes
-_GENERIC_INSTRUCTIONS: dict[str, str] = {
-    "code": "",
-    "query": "Represent this query for searching relevant code: ",
-    "describe": "",
+EMBEDDINGGEMMA_QUERY_PREFIXES: dict[SemanticTask, str] = {
+    "semantic-similarity": "task: sentence similarity | query: ",
+    "code-retrieval": "task: code retrieval | query: ",
+    "retrieval": "task: search result | query: ",
+    "question-answering": "task: question answering | query: ",
+    "fact-verification": "task: fact checking | query: ",
+    "classification": "task: classification | query: ",
+    "clustering": "task: clustering | query: ",
 }
-
-# Models known to need C2LLM-specific loading args
-_C2LLM_MODELS = {"codefuse-ai/C2LLM-0.5B", "codefuse-ai/C2LLM-7B"}
+EMBEDDINGGEMMA_DOCUMENT_PREFIX = "title: none | text: "
+_DEEPSPEED_REQUIRED_MESSAGE = (
+    "deepspeed is required for C2LLM models. "
+    "Install with `pip install codedupes[gpu]` or `pip install deepspeed`."
+)
 
 
 class SemanticBackendError(RuntimeError):
@@ -84,24 +85,62 @@ def _configure_semantic_runtime_env() -> None:
     os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
 
+T = TypeVar("T")
+
+
+def _resolve_profile_default(
+    model_name: str,
+    override: T | None,
+    *,
+    accessor: Callable[[Any], T],
+) -> T:
+    """Resolve a profile-derived default with optional explicit override.
+
+    :param model_name: Requested model identifier.
+    :param override: Explicit override value.
+    :param accessor: Profile accessor for default lookup.
+    :return: Explicit override when provided, otherwise profile default.
+    """
+    if override is not None:
+        return override
+    profile = resolve_model_profile(model_name)
+    return accessor(profile)
+
+
 def _resolve_model_revision(model_name: str, revision: str | None) -> str | None:
-    """Resolve the model revision default."""
-    if revision is not None:
-        return revision
-    if model_name == DEFAULT_MODEL:
-        return DEFAULT_C2LLM_REVISION
-    return None
+    """Resolve model revision for a model, honoring explicit overrides.
+
+    :param model_name: Requested model identifier.
+    :param revision: Optional explicit revision.
+    :return: Profile default revision when no explicit revision is provided.
+    """
+    return _resolve_profile_default(
+        model_name,
+        revision,
+        accessor=lambda profile: cast(str | None, profile.default_revision),
+    )
 
 
 def _resolve_trust_remote_code(model_name: str, trust_remote_code: bool | None) -> bool:
-    """Resolve trust-remote-code default for a model."""
-    if trust_remote_code is not None:
-        return trust_remote_code
-    return _is_c2llm(model_name)
+    """Resolve trust-remote-code mode for a model, honoring explicit overrides.
+
+    :param model_name: Requested model identifier.
+    :param trust_remote_code: Optional explicit trust setting.
+    :return: Profile default trust setting when no override is provided.
+    """
+    return _resolve_profile_default(
+        model_name,
+        trust_remote_code,
+        accessor=lambda profile: cast(bool, profile.default_trust_remote_code),
+    )
 
 
 def _safe_package_version(package_name: str) -> str | None:
-    """Get installed package version string, returning None if unavailable."""
+    """Get installed package version string, returning ``None`` if unavailable.
+
+    :param package_name: Package to inspect.
+    :return: Installed version string, or ``None``.
+    """
     try:
         return importlib_metadata.version(package_name)
     except importlib_metadata.PackageNotFoundError:
@@ -109,7 +148,10 @@ def _safe_package_version(package_name: str) -> str | None:
 
 
 def get_semantic_runtime_versions() -> dict[str, str]:
-    """Return semantic runtime versions for diagnostics."""
+    """Return semantic runtime versions for diagnostics.
+
+    :return: Mapping of runtime component names to version strings.
+    """
     return {
         "python": sys.version.split()[0],
         "torch": _safe_package_version("torch") or "missing",
@@ -124,7 +166,14 @@ def _validate_version_range(
     min_version: Version,
     max_exclusive: Version,
 ) -> None:
-    """Validate that a package version is within an inclusive/exclusive range."""
+    """Validate that a package version is within an inclusive/exclusive range.
+
+    :param package_name: Package to validate.
+    :param min_version: Lower bound inclusive.
+    :param max_exclusive: Upper bound exclusive.
+    :return: ``None``.
+    :raises SemanticBackendError: If package version is invalid or incompatible.
+    """
     raw = _safe_package_version(package_name)
     if raw is None:
         raise SemanticBackendError(
@@ -138,15 +187,16 @@ def _validate_version_range(
 
     if not (min_version <= parsed < max_exclusive):
         raise SemanticBackendError(
-            f"Incompatible {package_name} version {raw} for default model {DEFAULT_MODEL}. "
+            f"Incompatible {package_name} version {raw} for C2LLM models. "
             f"Supported range is >={min_version},<{max_exclusive}. "
             "Run: pip install 'transformers>=4.51,<5' 'sentence-transformers>=5,<6'."
         )
 
 
-def _check_default_model_compatibility(model_name: str) -> None:
-    """Check dependency compatibility for the default C2LLM model."""
-    if model_name != DEFAULT_MODEL:
+def _check_c2llm_model_compatibility(model_name: str) -> None:
+    """Check dependency compatibility for C2LLM-family models."""
+    profile = resolve_model_profile(model_name)
+    if profile.family != "c2llm":
         return
 
     _validate_version_range(
@@ -162,7 +212,11 @@ def _check_default_model_compatibility(model_name: str) -> None:
 
 
 def _is_known_semantic_backend_error(error: Exception) -> bool:
-    """Return True when an exception is likely caused by semantic backend compatibility."""
+    """Return True when an exception is likely caused by semantic backend compatibility.
+
+    :param error: Captured exception.
+    :return: ``True`` when exception text matches known backend issues.
+    """
     text = str(error).lower()
     if isinstance(error, ModuleNotFoundError):
         return True
@@ -173,6 +227,7 @@ def _is_known_semantic_backend_error(error: Exception) -> bool:
         "deepspeed",
         "flash_attn",
         "c2llm",
+        "embeddinggemma",
         "auto_map",
         "tokenizer",
         "modeling_c2llm",
@@ -188,17 +243,32 @@ def _wrap_semantic_backend_error(
     trust_remote_code: bool,
     stage: str,
 ) -> SemanticBackendError:
-    """Convert backend exceptions into a stable semantic error with remediation guidance."""
+    """Convert backend exceptions into a stable semantic error with remediation guidance.
+
+    :param error: Original exception.
+    :param model_name: Model involved in the failure.
+    :param revision: Resolved model revision.
+    :param trust_remote_code: Trust-remote-code flag used.
+    :param stage: Backend stage where failure occurred.
+    :return: Wrapped ``SemanticBackendError`` with remediation guidance.
+    """
     versions = get_semantic_runtime_versions()
     version_info = ", ".join(f"{key}={value}" for key, value in versions.items())
     revision_text = revision or "default"
+    profile = resolve_model_profile(model_name)
+    hints: list[str] = []
+    if profile.requires_deepspeed:
+        hints.append(
+            "install C2LLM-compatible deps via "
+            '\'pip install "transformers>=4.51,<5" "sentence-transformers>=5,<6"\'.'
+        )
+    hints.append("or run traditional-only mode with '--traditional-only'.")
+
     message = (
         f"Semantic backend failed during {stage} for model={model_name} revision={revision_text} "
         f"trust_remote_code={trust_remote_code}. "
         f"Versions: {version_info}. "
-        "Fix suggestions: ensure compatible deps with "
-        '\'pip install "transformers>=4.51,<5" "sentence-transformers>=5,<6"\', '
-        "or run traditional-only mode with '--traditional-only'."
+        "Fix suggestions: " + " ".join(hints)
     )
     wrapped = SemanticBackendError(message)
     wrapped.__cause__ = error
@@ -206,7 +276,13 @@ def _wrap_semantic_backend_error(
 
 
 def _require_dependency(module_name: str, install_hint: str) -> None:
-    """Raise a clear error when a required dependency is unavailable."""
+    """Raise a clear error when a required dependency is unavailable.
+
+    :param module_name: Required module name.
+    :param install_hint: Suggested installation command.
+    :return: ``None``.
+    :raises ModuleNotFoundError: When dependency is missing.
+    """
     try:
         importlib.import_module(module_name)
     except ModuleNotFoundError as exc:
@@ -222,19 +298,38 @@ def _check_semantic_dependencies(model_name: str) -> None:
     _require_dependency("sentence_transformers", "pip install codedupes")
     _require_dependency("transformers", "pip install codedupes")
     _require_dependency("torch", "pip install codedupes")
-    if _is_c2llm(model_name):
+
+    profile = resolve_model_profile(model_name)
+    if profile.requires_deepspeed:
         _require_dependency(
             "deepspeed",
             "pip install codedupes[gpu] or pip install deepspeed",
         )
-    _check_default_model_compatibility(model_name)
+
+    _check_c2llm_model_compatibility(model_name)
+
+
+def _raise_missing_deepspeed(exc: ModuleNotFoundError) -> None:
+    """Raise a stable deepspeed dependency error for C2LLM-family loads."""
+    raise ModuleNotFoundError(_DEEPSPEED_REQUIRED_MESSAGE) from exc
+
+
+def _clear_cuda_cache() -> None:
+    """Best-effort CUDA cache clear after OOM retries."""
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception:
+        logger.debug("Failed to clear CUDA cache after OOM", exc_info=True)
 
 
 def get_code_unit_statement_count(unit: CodeUnit) -> int:
     """Get effective statement count for a unit, excluding docstring.
 
-    This returns the number of top-level AST statements in the unit source after
-    removing a leading docstring, when present.
+    :param unit: Unit to measure.
+    :return: Number of executable statements.
     """
     if not unit.source:
         return 0
@@ -264,13 +359,11 @@ def get_code_unit_statement_count(unit: CodeUnit) -> int:
     return len(body)
 
 
-def _is_c2llm(model_name: str) -> bool:
-    """Check if model is a C2LLM variant."""
-    return model_name in _C2LLM_MODELS or "C2LLM" in model_name
+def _resolve_c2llm_torch_dtype() -> Any:
+    """Choose torch dtype for C2LLM without fp16 fallback.
 
-
-def _resolve_c2llm_torch_dtype():
-    """Choose torch dtype for C2LLM without fp16 fallback."""
+    :return: Suggested dtype object for Torch models, or ``None``.
+    """
     try:
         import torch
     except ModuleNotFoundError:
@@ -281,40 +374,68 @@ def _resolve_c2llm_torch_dtype():
             return torch.bfloat16
         return None
 
-    # CPU path: prefer bfloat16 to reduce memory footprint when supported.
-    # We intentionally do not use fp16 anywhere.
     return torch.bfloat16
+
+
+def _resolve_embeddinggemma_torch_dtype() -> Any:
+    """Choose torch dtype for EmbeddingGemma without fp16 usage.
+
+    :return: Suggested dtype object for Torch models, or ``None``.
+    """
+    try:
+        import torch
+    except ModuleNotFoundError:
+        return None
+
+    if torch.cuda.is_available() and hasattr(torch.cuda, "is_bf16_supported"):
+        if torch.cuda.is_bf16_supported():
+            return torch.bfloat16
+
+    return torch.float32
+
+
+def _patch_c2llm_runtime_compat() -> None:
+    """Patch known C2LLM remote-code symbol gaps for newer runtimes."""
+    import builtins
+
+    if not hasattr(builtins, "is_torch_npu_available"):
+        setattr(builtins, "is_torch_npu_available", lambda: False)
 
 
 def get_model(
     model_name: str = DEFAULT_MODEL,
     revision: str | None = None,
     trust_remote_code: bool | None = None,
-):
+) -> object:
     """Lazy-load the embedding model.
 
-    For C2LLM models, applies required loading args:
-      - trust_remote_code=True (custom PMA pooling layer)
-      - padding_side="left" (causal LM backbone requirement)
+    :param model_name: Model alias or identifier.
+    :param revision: Optional model revision.
+    :param trust_remote_code: Optional remote code trust setting.
+    :return: Loaded model instance.
     """
     global _model, _model_name, _model_revision, _model_trust_remote_code
 
+    profile = resolve_model_profile(model_name)
+    resolved_model_name = profile.canonical_name
     resolved_revision = _resolve_model_revision(model_name, revision)
     resolved_trust_remote_code = _resolve_trust_remote_code(model_name, trust_remote_code)
 
     cache_miss = any(
         (
             _model is None,
-            _model_name != model_name,
+            _model_name != resolved_model_name,
             _model_revision != resolved_revision,
             _model_trust_remote_code != resolved_trust_remote_code,
         )
     )
 
     if cache_miss:
-        logger.info(f"Loading embedding model: {model_name}")
+        logger.info("Loading embedding model: %s", resolved_model_name)
         _configure_semantic_runtime_env()
-        _check_semantic_dependencies(model_name)
+        _check_semantic_dependencies(resolved_model_name)
+        if profile.family == "c2llm":
+            _patch_c2llm_runtime_compat()
 
         try:
             from sentence_transformers import SentenceTransformer
@@ -324,10 +445,7 @@ def get_model(
                     "sentence-transformers is not installed. Install it with `pip install codedupes`."
                 ) from exc
             if exc.name == "deepspeed":
-                raise ModuleNotFoundError(
-                    "deepspeed is required for C2LLM models. "
-                    "Install with `pip install codedupes[gpu]` or `pip install deepspeed`."
-                ) from exc
+                _raise_missing_deepspeed(exc)
             raise
 
         st_kwargs: dict[str, object] = {
@@ -340,13 +458,21 @@ def get_model(
         tokenizer_kwargs: dict[str, object] = {}
         config_kwargs: dict[str, object] = {}
 
-        if _is_c2llm(model_name):
+        if profile.left_padding:
             tokenizer_kwargs["padding_side"] = "left"
+        if profile.low_cpu_mem_usage:
             model_kwargs["low_cpu_mem_usage"] = True
+
+        if profile.family == "c2llm":
             selected_dtype = _resolve_c2llm_torch_dtype()
             if selected_dtype is not None:
                 model_kwargs["torch_dtype"] = selected_dtype
                 logger.info("Using C2LLM torch dtype: %s", selected_dtype)
+        elif profile.family == "embeddinggemma":
+            selected_dtype = _resolve_embeddinggemma_torch_dtype()
+            if selected_dtype is not None:
+                model_kwargs["torch_dtype"] = selected_dtype
+                logger.info("Using EmbeddingGemma torch dtype: %s", selected_dtype)
 
         if resolved_revision is not None:
             model_kwargs["revision"] = resolved_revision
@@ -366,26 +492,23 @@ def get_model(
             st_kwargs["config_kwargs"] = config_kwargs
 
         try:
-            _model = SentenceTransformer(model_name, **st_kwargs)
+            _model = SentenceTransformer(resolved_model_name, **st_kwargs)
         except ModuleNotFoundError as exc:
             if exc.name == "deepspeed":
-                raise ModuleNotFoundError(
-                    "deepspeed is required for C2LLM models. "
-                    "Install with `pip install codedupes[gpu]` or `pip install deepspeed`."
-                ) from exc
+                _raise_missing_deepspeed(exc)
             raise
         except Exception as exc:
             if _is_known_semantic_backend_error(exc):
                 raise _wrap_semantic_backend_error(
                     exc,
-                    model_name=model_name,
+                    model_name=resolved_model_name,
                     revision=resolved_revision,
                     trust_remote_code=resolved_trust_remote_code,
                     stage="model loading",
                 )
             raise
 
-        _model_name = model_name
+        _model_name = resolved_model_name
         _model_revision = resolved_revision
         _model_trust_remote_code = resolved_trust_remote_code
 
@@ -402,13 +525,23 @@ def clear_model_cache() -> None:
 
 
 def _is_cuda_oom_error(error: RuntimeError) -> bool:
-    """Return True when an exception is likely a CUDA out-of-memory condition."""
+    """Return True when an exception is likely a CUDA out-of-memory condition.
+
+    :param error: Runtime error thrown by model execution.
+    :return: ``True`` when text indicates CUDA OOM.
+    """
     msg = str(error).lower()
     return "out of memory" in msg or "cuda out of memory" in msg
 
 
-def _truncate_code_if_needed(text: str, unit_name: str, model) -> str:
-    """Truncate code input to the model max token length with best-effort safety."""
+def _truncate_code_if_needed(text: str, unit_name: str, model: Any) -> str:
+    """Truncate code input to the model max token length with best-effort safety.
+
+    :param text: Source text to truncate.
+    :param unit_name: Unit name for logging context.
+    :param model: Model object with tokenizer metadata.
+    :return: Possibly truncated source text.
+    """
     max_tokens = getattr(model, "max_seq_length", None)
     tokenizer = getattr(model, "tokenizer", None)
 
@@ -450,22 +583,86 @@ def _truncate_code_if_needed(text: str, unit_name: str, model) -> str:
         return text[: max_tokens * 4]
 
 
-def _get_instruction(model_name: str, mode: Literal["code", "query", "describe"]) -> str:
-    """Get the appropriate instruction prefix for the model and task."""
-    if _is_c2llm(model_name):
-        return C2LLM_INSTRUCTIONS[mode]
-    return _GENERIC_INSTRUCTIONS.get(mode, "")
+def _normalize_semantic_task(
+    semantic_task: str | None,
+    *,
+    default_task: SemanticTask,
+) -> SemanticTask:
+    """Validate and normalize semantic task names.
+
+    :param semantic_task: Candidate task value.
+    :param default_task: Fallback task when no value is provided.
+    :return: Normalized task enum.
+    """
+    if semantic_task is None:
+        return default_task
+
+    normalized = semantic_task.strip().lower()
+    if normalized not in SEMANTIC_TASK_CHOICES:
+        allowed = ", ".join(SEMANTIC_TASK_CHOICES)
+        raise ValueError(f"Unknown semantic task '{semantic_task}'. Expected one of: {allowed}")
+    return normalized  # type: ignore[return-value]
+
+
+def _get_embeddinggemma_prefix(task: SemanticTask, mode: Literal["code", "query"]) -> str:
+    """Get task-aware prompt prefixes for EmbeddingGemma.
+
+    :param task: Normalized task.
+    :param mode: Input mode.
+    :return: Instruction prefix.
+    """
+    if mode == "query":
+        return EMBEDDINGGEMMA_QUERY_PREFIXES[task]
+
+    if task in {"retrieval", "code-retrieval"}:
+        return EMBEDDINGGEMMA_DOCUMENT_PREFIX
+
+    return EMBEDDINGGEMMA_QUERY_PREFIXES[task]
+
+
+def _get_instruction(
+    model_name: str,
+    mode: Literal["code", "query"],
+    semantic_task: SemanticTask,
+) -> str:
+    """Get default instruction prefix for model/task/mode.
+
+    :param model_name: Model identifier.
+    :param mode: Input mode.
+    :param semantic_task: Normalized task.
+    :return: Instruction prefix.
+    """
+    profile = resolve_model_profile(model_name)
+
+    if profile.family == "c2llm":
+        if mode == "query":
+            return C2LLM_INSTRUCTIONS["query"]
+        return C2LLM_INSTRUCTIONS["code"]
+
+    if profile.family == "embeddinggemma":
+        return _get_embeddinggemma_prefix(semantic_task, mode)
+
+    return ""
 
 
 def _resolve_instruction_prefix(
     model_name: str,
-    mode: Literal["code", "query", "describe"],
+    mode: Literal["code", "query"],
     instruction_prefix: str | None,
+    *,
+    semantic_task: SemanticTask,
 ) -> str:
-    """Resolve instruction prefix override for embedding inputs."""
+    """Resolve instruction prefix override for embedding inputs.
+
+    :param model_name: Model identifier.
+    :param mode: Input mode.
+    :param instruction_prefix: Optional override.
+    :param semantic_task: Resolved task.
+    :return: Instruction prefix.
+    """
     if instruction_prefix is not None:
         return instruction_prefix
-    return _get_instruction(model_name, mode)
+    return _get_instruction(model_name, mode, semantic_task)
 
 
 def prepare_code_for_embedding(
@@ -473,19 +670,67 @@ def prepare_code_for_embedding(
     model_name: str = DEFAULT_MODEL,
     mode: Literal["code", "query"] = "code",
     instruction_prefix: str | None = None,
+    semantic_task: str | None = None,
 ) -> str:
     """Prepare code unit for embedding.
 
-    C2LLM expects: instruction_prefix + source_code
-    The instruction steers the PMA cross-attention toward the right
-    representation for the downstream task.
-
-    For dedup (code2code), both sides get the "code" instruction.
-    For search (text2code), queries get the "query" instruction.
+    :param unit: Source unit to embed.
+    :param model_name: Model identifier.
+    :param mode: Embedding mode.
+    :param instruction_prefix: Optional explicit instruction.
+    :param semantic_task: Optional task override.
+    :return: Prefixed source payload.
     """
     source = unit.source.strip()
-    instruction = _resolve_instruction_prefix(model_name, mode, instruction_prefix)
+    task_default = DEFAULT_SEARCH_SEMANTIC_TASK if mode == "query" else DEFAULT_CHECK_SEMANTIC_TASK
+    resolved_task = _normalize_semantic_task(
+        semantic_task,
+        default_task=task_default,  # type: ignore[arg-type]
+    )
+    instruction = _resolve_instruction_prefix(
+        model_name,
+        mode,
+        instruction_prefix,
+        semantic_task=resolved_task,
+    )
     return f"{instruction}{source}"
+
+
+def _encode_texts(
+    encode_fn: Callable[..., np.ndarray],
+    texts: list[str],
+    *,
+    batch_size: int,
+    show_progress_bar: bool,
+    convert_to_numpy: bool,
+    normalize_embeddings: bool,
+    device: str | None = None,
+) -> np.ndarray:
+    """Encode texts with defensive kwargs handling across model backends.
+
+    :param encode_fn: Model encode callable.
+    :param texts: Input texts to encode.
+    :param batch_size: Batch size for encoder.
+    :param show_progress_bar: Whether to surface a progress bar.
+    :param convert_to_numpy: Return NumPy arrays.
+    :param normalize_embeddings: Normalize outputs.
+    :param device: Optional execution device.
+    :return: Encoded vectors.
+    """
+    kwargs = {
+        "batch_size": batch_size,
+        "show_progress_bar": show_progress_bar,
+        "convert_to_numpy": convert_to_numpy,
+        "normalize_embeddings": normalize_embeddings,
+    }
+    if device is not None:
+        kwargs["device"] = device
+
+    try:
+        return encode_fn(texts, **kwargs)
+    except TypeError:
+        kwargs.pop("device", None)
+        return encode_fn(texts, **kwargs)
 
 
 def compute_embeddings(
@@ -495,14 +740,26 @@ def compute_embeddings(
     batch_size: int = DEFAULT_BATCH_SIZE,
     revision: str | None = None,
     trust_remote_code: bool | None = None,
+    semantic_task: str | None = None,
 ) -> np.ndarray:
     """Compute embeddings for all code units.
 
-    Returns:
-        numpy array of shape (len(units), embedding_dim)
+    :param units: Units to encode.
+    :param model_name: Model identifier.
+    :param instruction_prefix: Optional embedding instruction override.
+    :param batch_size: Encoding batch size.
+    :param revision: Optional model revision.
+    :param trust_remote_code: Optional trust setting.
+    :param semantic_task: Optional semantic task override.
+    :return: Dense embedding matrix.
     """
     resolved_revision = _resolve_model_revision(model_name, revision)
     resolved_trust_remote_code = _resolve_trust_remote_code(model_name, trust_remote_code)
+    profile = resolve_model_profile(model_name)
+    resolved_task = _normalize_semantic_task(
+        semantic_task,
+        default_task=DEFAULT_CHECK_SEMANTIC_TASK,
+    )
     model = get_model(
         model_name,
         revision=resolved_revision,
@@ -515,25 +772,27 @@ def compute_embeddings(
             unit,
             model_name=model_name,
             instruction_prefix=instruction_prefix,
+            semantic_task=resolved_task,
         )
         texts.append(_truncate_code_if_needed(prepared, unit.qualified_name, model))
 
-    logger.info(f"Computing embeddings for {len(texts)} code units")
+    logger.info("Computing embeddings for %d code units", len(texts))
     current_batch_size = max(1, batch_size)
     attempted_cpu_fallback = False
     while True:
         try:
-            encode_kwargs = {
-                "batch_size": current_batch_size,
-                "show_progress_bar": len(texts) > 100,
-                "convert_to_numpy": True,
-                "normalize_embeddings": True,  # For cosine similarity via dot product
-            }
-            if attempted_cpu_fallback:
-                encode_kwargs["device"] = "cpu"
-            embeddings = model.encode(
+            encode_fn = model.encode
+            if profile.family == "embeddinggemma" and hasattr(model, "encode_document"):
+                encode_fn = model.encode_document
+
+            embeddings = _encode_texts(
+                encode_fn,
                 texts,
-                **encode_kwargs,
+                batch_size=current_batch_size,
+                show_progress_bar=len(texts) > 100,
+                convert_to_numpy=True,
+                normalize_embeddings=True,
+                device="cpu" if attempted_cpu_fallback else None,
             )
             break
         except RuntimeError as e:  # pragma: no cover - defensive handling
@@ -557,13 +816,7 @@ def compute_embeddings(
                     next_batch_size,
                 )
                 current_batch_size = next_batch_size
-                try:
-                    import torch
-
-                    if torch.cuda.is_available():
-                        torch.cuda.empty_cache()
-                except Exception:
-                    logger.debug("Failed to clear CUDA cache after OOM", exc_info=True)
+                _clear_cuda_cache()
                 continue
 
             if attempted_cpu_fallback:
@@ -576,13 +829,7 @@ def compute_embeddings(
             attempted_cpu_fallback = True
             if hasattr(model, "to"):
                 model.to("cpu")
-            try:
-                import torch
-
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
-            except Exception:
-                logger.debug("Failed to clear CUDA cache after OOM", exc_info=True)
+            _clear_cuda_cache()
             continue
         except Exception as e:
             if _is_known_semantic_backend_error(e):
@@ -606,25 +853,26 @@ def find_semantic_duplicates(
 ) -> list[DuplicatePair]:
     """Find semantically similar code units via embedding cosine similarity.
 
-    Args:
-        units: List of code units
-        embeddings: Precomputed embeddings (normalized)
-        threshold: Minimum similarity to consider a duplicate
-        exclude_exact: Set of (uid_a, uid_b) pairs to exclude (already found by exact methods)
-
-    Returns:
-        List of duplicate pairs above threshold
+    :param units: Candidate units in the same order as ``embeddings``.
+    :param embeddings: Embedding matrix.
+    :param threshold: Minimum cosine similarity.
+    :param exclude_exact: Pairs to exclude from semantic output.
+    :return: Similar pairs sorted by confidence.
     """
     exclude_exact = exclude_exact or set()
     n = len(units)
 
-    # Compute pairwise cosine similarity (embeddings are normalized, so dot product = cosine)
-    # Do this in batches to avoid memory issues for large codebases
-    logger.info(f"Computing pairwise similarities for {n} units")
+    logger.info("Computing pairwise similarities for %d units", n)
 
     duplicates = []
 
     def _types_compatible(unit_a: CodeUnit, unit_b: CodeUnit) -> bool:
+        """Check whether unit kinds are compatible for semantic comparison.
+
+        :param unit_a: First unit.
+        :param unit_b: Second unit.
+        :return: ``True`` when types are comparable.
+        """
         if unit_a.unit_type == unit_b.unit_type:
             return True
         function_like = {"function", "method"}
@@ -633,20 +881,17 @@ def find_semantic_duplicates(
             and unit_b.unit_type.name.lower() in function_like
         )
 
-    # Chunk-based computation to handle large matrices
     chunk_size = 500
     for i in range(0, n, chunk_size):
         end_i = min(i + chunk_size, n)
         chunk_embeddings = embeddings[i:end_i]
 
-        # Compare this chunk against all units (including itself)
         similarities = chunk_embeddings @ embeddings.T
 
         for local_idx in range(end_i - i):
             global_idx = i + local_idx
             unit_a = units[global_idx]
 
-            # Only look at upper triangle to avoid duplicates
             for j in range(global_idx + 1, n):
                 sim = similarities[local_idx, j]
 
@@ -658,12 +903,10 @@ def find_semantic_duplicates(
                 if not _types_compatible(unit_a, unit_b):
                     continue
 
-                # Skip if same file and overlapping lines
                 if unit_a.file_path == unit_b.file_path:
                     if not (unit_a.end_lineno < unit_b.lineno or unit_b.end_lineno < unit_a.lineno):
                         continue
 
-                # Skip if already found by exact methods
                 pair_key = ordered_pair_key(unit_a, unit_b)
                 if pair_key in exclude_exact:
                     continue
@@ -677,10 +920,9 @@ def find_semantic_duplicates(
                     )
                 )
 
-    # Sort by similarity descending
     duplicates.sort(key=lambda x: x.similarity, reverse=True)
 
-    logger.info(f"Found {len(duplicates)} semantic duplicates above threshold {threshold}")
+    logger.info("Found %d semantic duplicates above threshold %s", len(duplicates), threshold)
     return duplicates
 
 
@@ -693,26 +935,57 @@ def find_similar_to_query(
     top_k: int = DEFAULT_TOP_K,
     revision: str | None = None,
     trust_remote_code: bool | None = None,
+    threshold: float | None = None,
+    semantic_task: str | None = None,
 ) -> list[tuple[CodeUnit, float]]:
     """Find code units most similar to a natural language query.
 
-    Useful for ad-hoc exploration: "find functions that parse JSON"
+    :param query: Search text.
+    :param units: Candidate units.
+    :param embeddings: Embeddings aligned with ``units``.
+    :param model_name: Model identifier.
+    :param instruction_prefix: Optional query instruction override.
+    :param top_k: Maximum number of results.
+    :param revision: Optional model revision.
+    :param trust_remote_code: Optional trust setting.
+    :param threshold: Optional result cutoff.
+    :param semantic_task: Optional semantic task override.
+    :return: Ranked results and cosine scores.
     """
     resolved_revision = _resolve_model_revision(model_name, revision)
     resolved_trust_remote_code = _resolve_trust_remote_code(model_name, trust_remote_code)
+    profile = resolve_model_profile(model_name)
+    resolved_threshold = (
+        threshold if threshold is not None else get_default_semantic_threshold(model_name)
+    )
+    resolved_task = _normalize_semantic_task(
+        semantic_task,
+        default_task=DEFAULT_SEARCH_SEMANTIC_TASK,
+    )
     model = get_model(
         model_name,
         revision=resolved_revision,
         trust_remote_code=resolved_trust_remote_code,
     )
 
-    # Embed query with task-specific instruction
-    instruction = _resolve_instruction_prefix(model_name, "query", instruction_prefix)
+    instruction = _resolve_instruction_prefix(
+        model_name,
+        "query",
+        instruction_prefix,
+        semantic_task=resolved_task,
+    )
     query_text = f"{instruction}{query}"
 
     try:
-        query_embedding = model.encode(
+        encode_fn = model.encode
+        if profile.family == "embeddinggemma" and hasattr(model, "encode_query"):
+            encode_fn = model.encode_query
+
+        query_embedding = _encode_texts(
+            encode_fn,
             [query_text],
+            batch_size=1,
+            show_progress_bar=False,
             convert_to_numpy=True,
             normalize_embeddings=True,
         )[0]
@@ -727,11 +1000,11 @@ def find_similar_to_query(
             )
         raise
 
-    # Compute similarities
     similarities = embeddings @ query_embedding
 
-    # Get top-k
-    top_indices = np.argsort(similarities)[::-1][:top_k]
+    sorted_indices = np.argsort(similarities)[::-1]
+    filtered_indices = [idx for idx in sorted_indices if similarities[idx] >= resolved_threshold]
+    top_indices = filtered_indices[:top_k]
 
     return [(units[i], float(similarities[i])) for i in top_indices]
 
@@ -740,19 +1013,31 @@ def run_semantic_analysis(
     units: list[CodeUnit],
     model_name: str = DEFAULT_MODEL,
     instruction_prefix: str | None = None,
-    threshold: float = DEFAULT_SEMANTIC_THRESHOLD,
+    threshold: float | None = None,
     exclude_pairs: set[tuple[str, str]] | None = None,
     batch_size: int = DEFAULT_BATCH_SIZE,
     revision: str | None = None,
     trust_remote_code: bool | None = None,
+    semantic_task: str | None = None,
 ) -> tuple[np.ndarray, list[DuplicatePair]]:
     """Run full semantic duplicate detection.
 
-    Returns:
-        (embeddings, duplicate_pairs)
+    :param units: Units to analyze.
+    :param model_name: Model identifier.
+    :param instruction_prefix: Optional embedding instruction override.
+    :param threshold: Optional similarity threshold.
+    :param exclude_pairs: Pairs to skip from output.
+    :param batch_size: Encoding batch size.
+    :param revision: Optional model revision.
+    :param trust_remote_code: Optional trust setting.
+    :param semantic_task: Optional semantic task override.
+    :return: Embeddings and semantic duplicate pairs.
     """
     if not units:
         return np.array([]), []
+    resolved_threshold = (
+        threshold if threshold is not None else get_default_semantic_threshold(model_name)
+    )
 
     embeddings = compute_embeddings(
         units,
@@ -761,9 +1046,10 @@ def run_semantic_analysis(
         batch_size=batch_size,
         revision=revision,
         trust_remote_code=trust_remote_code,
+        semantic_task=semantic_task,
     )
     duplicates = find_semantic_duplicates(
-        units, embeddings, threshold=threshold, exclude_exact=exclude_pairs
+        units, embeddings, threshold=resolved_threshold, exclude_exact=exclude_pairs
     )
 
     return embeddings, duplicates

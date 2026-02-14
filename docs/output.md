@@ -15,13 +15,16 @@ This document is the source of truth for machine-readable output and CLI exit se
 
 ```json
 {
+  "analysis_mode": "combined",
   "summary": {
     "total_units": 0,
     "hybrid_duplicates": 0,
     "potentially_unused": 0,
     "raw_traditional_duplicates": 0,
     "raw_semantic_duplicates": 0,
-    "filtered_raw_duplicates": 0
+    "filtered_raw_duplicates": 0,
+    "semantic_fallback": false,
+    "semantic_fallback_reason": null
   },
   "hybrid_duplicates": [],
   "potentially_unused": []
@@ -40,11 +43,14 @@ With `--show-all`, additional raw sections are included:
 
 ```json
 {
+  "analysis_mode": "semantic",
   "summary": {
     "total_units": 0,
     "traditional_duplicates": 0,
     "semantic_duplicates": 0,
-    "potentially_unused": 0
+    "potentially_unused": 0,
+    "semantic_fallback": false,
+    "semantic_fallback_reason": null
   },
   "traditional_duplicates": [],
   "semantic_duplicates": [],
@@ -53,6 +59,7 @@ With `--show-all`, additional raw sections are included:
 ```
 
 `hybrid_duplicates` is only part of default combined mode.
+`analysis_mode` is always present (`combined`, `traditional`, `semantic`, or `none`).
 
 Each duplicate entry includes:
 
@@ -112,7 +119,10 @@ Each unit object includes:
 - `1`: completed with findings or failed due to runtime error
 - `2`: CLI usage/validation error (Click)
 - Semantic backend note:
-  - default combined `check`: semantic failures degrade with a warning
+  - default combined `check`: semantic failures fail hard
+  - `--allow-semantic-fallback`: combined mode can continue with scoped traditional
+    results, and degraded runs are surfaced in JSON as
+    `summary.semantic_fallback` plus `summary.semantic_fallback_reason`
   - semantic-required mode (`--semantic-only`): fails hard
 - Finding note:
   - combined mode: exit `1` is based on `hybrid_duplicates` + `potentially_unused`

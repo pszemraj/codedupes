@@ -10,9 +10,10 @@ import numpy as np
 
 from codedupes.constants import (
     DEFAULT_BATCH_SIZE,
+    DEFAULT_CHECK_SEMANTIC_TASK,
     DEFAULT_MIN_SEMANTIC_LINES,
     DEFAULT_MODEL,
-    DEFAULT_SEMANTIC_THRESHOLD,
+    SEMANTIC_TASK_CHOICES,
     DEFAULT_TRADITIONAL_THRESHOLD,
 )
 from codedupes.extractor import CodeExtractor
@@ -24,6 +25,7 @@ from codedupes.semantic import (
     get_semantic_runtime_versions,
     run_semantic_analysis,
 )
+from codedupes.semantic_profiles import get_default_semantic_threshold
 from codedupes.traditional import (
     build_reference_graph,
     extract_identifiers,
@@ -37,10 +39,22 @@ logger = logging.getLogger(__name__)
 HYBRID_SEMANTIC_ONLY_MIN = 0.92
 HYBRID_WEAK_JACCARD_MIN = 0.20
 HYBRID_STATEMENT_RATIO_MIN = 0.35
+DEFAULT_SEMANTIC_UNIT_TYPES = ("function", "method")
+SEMANTIC_UNIT_TYPE_TO_ENUM: dict[str, CodeUnitType] = {
+    "function": CodeUnitType.FUNCTION,
+    "method": CodeUnitType.METHOD,
+    "class": CodeUnitType.CLASS,
+}
+DEFAULT_TINY_UNIT_STATEMENT_CUTOFF = 3
+DEFAULT_TINY_NEAR_JACCARD_MIN = 0.93
 
 
 def _build_exact_hash_exclusions(units: list[CodeUnit]) -> set[tuple[str, str]]:
-    """Build exclusion pairs for exact-duplicate units using precomputed hashes."""
+    """Build exclusion pairs for exact-duplicate units using precomputed hashes.
+
+    :param units: Code units to scan for shared hash pairs.
+    :return: Set of unit uid pairs that should be treated as exact duplicates.
+    """
     buckets: dict[tuple[str, str], list[CodeUnit]] = {}
     for unit in units:
         ast_hash = unit._ast_hash
@@ -62,14 +76,23 @@ def _build_exact_hash_exclusions(units: list[CodeUnit]) -> set[tuple[str, str]]:
 
 
 def _is_test_function_unit(unit: CodeUnit) -> bool:
-    """Return True when the unit looks like a pytest-style test function."""
+    """Return whether the unit is a pytest-style test function.
+
+    :param unit: Code unit under inspection.
+    :return: ``True`` for function/method units whose names start with ``test_``.
+    """
     return unit.unit_type in {CodeUnitType.FUNCTION, CodeUnitType.METHOD} and unit.name.startswith(
         "test_"
     )
 
 
 def _statement_count_ratio(unit_a: CodeUnit, unit_b: CodeUnit) -> float:
-    """Compute ratio of statement counts for two units."""
+    """Compute ratio of statement counts for two units.
+
+    :param unit_a: First code unit.
+    :param unit_b: Second code unit.
+    :return: Ratio of smaller statement count to larger statement count.
+    """
     count_a = get_code_unit_statement_count(unit_a)
     count_b = get_code_unit_statement_count(unit_b)
     high = max(count_a, count_b)
@@ -79,6 +102,96 @@ def _statement_count_ratio(unit_a: CodeUnit, unit_b: CodeUnit) -> float:
     return low / high
 
 
+def _resolve_semantic_unit_type_filter(
+    semantic_unit_types: tuple[str, ...],
+) -> set[CodeUnitType]:
+    """Resolve configured semantic unit type names to enum values.
+
+    :param semantic_unit_types: Configured semantic unit type names.
+    :return: Set of comparable enum values.
+    """
+    return {
+        SEMANTIC_UNIT_TYPE_TO_ENUM[unit_type_name]
+        for unit_type_name in semantic_unit_types
+        if unit_type_name in SEMANTIC_UNIT_TYPE_TO_ENUM
+    }
+
+
+def _is_tiny_function_like(
+    unit: CodeUnit,
+    *,
+    statement_cutoff: int,
+    statement_cache: dict[str, int],
+) -> bool:
+    """Return whether a unit is a tiny function/method by statement count.
+
+    :param unit: Unit under inspection.
+    :param statement_cutoff: Tiny cutoff (exclusive).
+    :param statement_cache: Memoized statement counts by unit uid.
+    :return: ``True`` when unit is function/method and count is below cutoff.
+    """
+    if unit.unit_type not in {CodeUnitType.FUNCTION, CodeUnitType.METHOD}:
+        return False
+
+    count = statement_cache.get(unit.uid)
+    if count is None:
+        count = get_code_unit_statement_count(unit)
+        statement_cache[unit.uid] = count
+    return count < statement_cutoff
+
+
+def _filter_tiny_traditional_duplicates(
+    exact_duplicates: list[DuplicatePair],
+    near_duplicates: list[DuplicatePair],
+    *,
+    statement_cutoff: int,
+    tiny_near_jaccard_min: float,
+) -> tuple[list[DuplicatePair], list[DuplicatePair]]:
+    """Filter tiny wrapper noise from traditional duplicates.
+
+    :param exact_duplicates: Exact traditional duplicate pairs.
+    :param near_duplicates: Near traditional duplicate pairs.
+    :param statement_cutoff: Tiny cutoff (exclusive).
+    :param tiny_near_jaccard_min: Keep floor for tiny near duplicate Jaccard similarity.
+    :return: Filtered exact and near duplicate lists.
+    """
+    statement_cache: dict[str, int] = {}
+    filtered_exact: list[DuplicatePair] = []
+    filtered_near: list[DuplicatePair] = []
+
+    for duplicate in exact_duplicates:
+        tiny_a = _is_tiny_function_like(
+            duplicate.unit_a,
+            statement_cutoff=statement_cutoff,
+            statement_cache=statement_cache,
+        )
+        tiny_b = _is_tiny_function_like(
+            duplicate.unit_b,
+            statement_cutoff=statement_cutoff,
+            statement_cache=statement_cache,
+        )
+        if tiny_a and tiny_b:
+            continue
+        filtered_exact.append(duplicate)
+
+    for duplicate in near_duplicates:
+        tiny_a = _is_tiny_function_like(
+            duplicate.unit_a,
+            statement_cutoff=statement_cutoff,
+            statement_cache=statement_cache,
+        )
+        tiny_b = _is_tiny_function_like(
+            duplicate.unit_b,
+            statement_cutoff=statement_cutoff,
+            statement_cache=statement_cache,
+        )
+        if tiny_a and tiny_b and duplicate.similarity < tiny_near_jaccard_min:
+            continue
+        filtered_near.append(duplicate)
+
+    return filtered_exact, filtered_near
+
+
 def _synthesize_hybrid_duplicates(
     traditional_duplicates: list[DuplicatePair],
     semantic_duplicates: list[DuplicatePair],
@@ -86,10 +199,23 @@ def _synthesize_hybrid_duplicates(
     semantic_threshold: float,
     jaccard_threshold: float,
 ) -> tuple[list[HybridDuplicate], int]:
-    """Build a single ranked hybrid duplicate list from raw method outputs."""
+    """Build ranked hybrid duplicates from traditional and semantic outputs.
+
+    :param traditional_duplicates: Traditional duplicate pairs (exact + Jaccard).
+    :param semantic_duplicates: Semantic duplicate pairs.
+    :param semantic_threshold: Minimum semantic similarity used for hybrid tiering.
+    :param jaccard_threshold: Minimum Jaccard similarity used for hybrid tiering.
+    :return: Tuple of sorted hybrid duplicates and number filtered pairs.
+    """
     pair_evidence: dict[tuple[str, str], dict[str, object]] = {}
 
     def ensure_entry(unit_a: CodeUnit, unit_b: CodeUnit) -> dict[str, object]:
+        """Return/create a pair evidence map entry.
+
+        :param unit_a: First unit in a candidate pair.
+        :param unit_b: Second unit in a candidate pair.
+        :return: Shared mutable evidence dict used to combine signals.
+        """
         key = ordered_pair_key(unit_a, unit_b)
         entry = pair_evidence.get(key)
         if entry is None:
@@ -200,14 +326,20 @@ class AnalyzerConfig:
     jaccard_threshold: float = DEFAULT_TRADITIONAL_THRESHOLD
 
     # Semantic detection
-    semantic_threshold: float = DEFAULT_SEMANTIC_THRESHOLD
+    semantic_threshold: float | None = None
     model_name: str = DEFAULT_MODEL
+    semantic_task: str | None = None
     instruction_prefix: str | None = None
     model_revision: str | None = None
     trust_remote_code: bool | None = None
     batch_size: int = DEFAULT_BATCH_SIZE
     min_semantic_lines: int = DEFAULT_MIN_SEMANTIC_LINES
+    semantic_unit_types: tuple[str, ...] = DEFAULT_SEMANTIC_UNIT_TYPES
     include_stubs: bool = False
+    allow_semantic_fallback: bool = False
+    filter_tiny_traditional: bool = True
+    tiny_unit_statement_cutoff: int = DEFAULT_TINY_UNIT_STATEMENT_CUTOFF
+    tiny_near_jaccard_min: float = DEFAULT_TINY_NEAR_JACCARD_MIN
 
     # What to run
     run_traditional: bool = True
@@ -220,7 +352,7 @@ class AnalyzerConfig:
         if not 0.0 <= self.jaccard_threshold <= 1.0:
             raise ValueError("jaccard_threshold must be in [0.0, 1.0]")
 
-        if not 0.0 <= self.semantic_threshold <= 1.0:
+        if self.semantic_threshold is not None and not 0.0 <= self.semantic_threshold <= 1.0:
             raise ValueError("semantic_threshold must be in [0.0, 1.0]")
 
         if self.batch_size <= 0:
@@ -228,6 +360,79 @@ class AnalyzerConfig:
 
         if self.min_semantic_lines < 0:
             raise ValueError("min_semantic_lines must be >= 0")
+
+        if not self.semantic_unit_types:
+            raise ValueError("semantic_unit_types must contain at least one unit type")
+        normalized_types = tuple(
+            unit_type.strip().lower() for unit_type in self.semantic_unit_types
+        )
+        invalid_types = sorted(
+            unit_type
+            for unit_type in normalized_types
+            if unit_type not in SEMANTIC_UNIT_TYPE_TO_ENUM
+        )
+        if invalid_types:
+            allowed = ", ".join(sorted(SEMANTIC_UNIT_TYPE_TO_ENUM))
+            invalid = ", ".join(invalid_types)
+            raise ValueError(f"Invalid semantic_unit_types: {invalid}. Allowed values: {allowed}")
+        self.semantic_unit_types = tuple(dict.fromkeys(normalized_types))
+
+        if self.tiny_unit_statement_cutoff < 0:
+            raise ValueError("tiny_unit_statement_cutoff must be >= 0")
+
+        if not 0.0 <= self.tiny_near_jaccard_min <= 1.0:
+            raise ValueError("tiny_near_jaccard_min must be in [0.0, 1.0]")
+
+        if self.semantic_task is not None:
+            normalized_task = self.semantic_task.strip().lower()
+            if normalized_task not in SEMANTIC_TASK_CHOICES:
+                allowed = ", ".join(SEMANTIC_TASK_CHOICES)
+                raise ValueError(
+                    f"Invalid semantic_task: {self.semantic_task}. Allowed values: {allowed}"
+                )
+            self.semantic_task = normalized_task
+
+        if not self.run_unused and self.strict_unused:
+            raise ValueError("strict_unused requires run_unused=True")
+
+        if not self.run_semantic:
+            semantic_only_fields: list[str] = []
+            if self.semantic_threshold is not None:
+                semantic_only_fields.append("semantic_threshold")
+            if self.semantic_task is not None:
+                semantic_only_fields.append("semantic_task")
+            if self.instruction_prefix is not None:
+                semantic_only_fields.append("instruction_prefix")
+            if self.model_revision is not None:
+                semantic_only_fields.append("model_revision")
+            if self.trust_remote_code is not None:
+                semantic_only_fields.append("trust_remote_code")
+            if self.batch_size != DEFAULT_BATCH_SIZE:
+                semantic_only_fields.append("batch_size")
+            if self.suppress_test_semantic_matches:
+                semantic_only_fields.append("suppress_test_semantic_matches")
+            if semantic_only_fields:
+                listed = ", ".join(sorted(semantic_only_fields))
+                raise ValueError(f"{listed} require run_semantic=True")
+
+        if not self.run_traditional:
+            traditional_only_fields: list[str] = []
+            if self.jaccard_threshold != DEFAULT_TRADITIONAL_THRESHOLD:
+                traditional_only_fields.append("jaccard_threshold")
+            if not self.filter_tiny_traditional:
+                traditional_only_fields.append("filter_tiny_traditional")
+            if self.tiny_unit_statement_cutoff != DEFAULT_TINY_UNIT_STATEMENT_CUTOFF:
+                traditional_only_fields.append("tiny_unit_statement_cutoff")
+            if self.tiny_near_jaccard_min != DEFAULT_TINY_NEAR_JACCARD_MIN:
+                traditional_only_fields.append("tiny_near_jaccard_min")
+            if traditional_only_fields:
+                listed = ", ".join(sorted(traditional_only_fields))
+                raise ValueError(f"{listed} require run_traditional=True")
+
+        if self.allow_semantic_fallback and (not self.run_semantic or not self.run_traditional):
+            raise ValueError(
+                "allow_semantic_fallback requires run_semantic=True and run_traditional=True"
+            )
 
 
 class CodeAnalyzer:
@@ -238,10 +443,17 @@ class CodeAnalyzer:
     """
 
     def __init__(self, config: AnalyzerConfig | None = None) -> None:
+        """Initialize analyzer state.
+
+        :param config: Optional analyzer configuration override.
+        """
         self.config = config or AnalyzerConfig()
         self._units: list[CodeUnit] | None = None
         self._embeddings: np.ndarray | None = None
         self._semantic_units: list[CodeUnit] | None = None
+        self._resolved_semantic_threshold: float | None = None
+        self._resolved_semantic_task: str | None = None
+        self._resolved_search_semantic_task: str | None = None
 
     def analyze(self, path: Path | str) -> AnalysisResult:
         """
@@ -292,31 +504,68 @@ class CodeAnalyzer:
 
         traditional_duplicates: list[DuplicatePair] = []
         unused: list[CodeUnit] = []
+        semantic_fallback = False
+        semantic_fallback_reason: str | None = None
+        semantic_threshold = (
+            self.config.semantic_threshold
+            if self.config.semantic_threshold is not None
+            else get_default_semantic_threshold(self.config.model_name)
+        )
+        semantic_task = self.config.semantic_task or DEFAULT_CHECK_SEMANTIC_TASK
+        search_semantic_task = semantic_task
+        self._resolved_semantic_threshold = semantic_threshold
+        self._resolved_semantic_task = semantic_task
+        self._resolved_search_semantic_task = search_semantic_task
+
+        semantic_candidates: list[CodeUnit] = []
+        self._semantic_units = None
+        if self.config.run_semantic:
+            semantic_type_filter = _resolve_semantic_unit_type_filter(
+                self.config.semantic_unit_types
+            )
+            semantic_candidates = [
+                unit
+                for unit in units
+                if unit.unit_type in semantic_type_filter
+                and get_code_unit_statement_count(unit) >= self.config.min_semantic_lines
+            ]
+            self._semantic_units = semantic_candidates
 
         if self.config.run_traditional:
+            traditional_duplicate_units = units
+            compute_unused_with_traditional = self.config.run_unused
+            if self.config.run_semantic:
+                # In combined mode, keep traditional duplicate scope aligned with semantic scope.
+                traditional_duplicate_units = semantic_candidates
+                # Unused analysis should still operate on the full extraction set.
+                compute_unused_with_traditional = False
+
             exact_dupes, near_dupes, unused = run_traditional_analysis(
-                units,
+                traditional_duplicate_units,
                 jaccard_threshold=self.config.jaccard_threshold,
-                compute_unused=self.config.run_unused,
+                compute_unused=compute_unused_with_traditional,
                 project_root=path,
                 strict_unused=self.config.strict_unused,
             )
+            if self.config.filter_tiny_traditional:
+                exact_dupes, near_dupes = _filter_tiny_traditional_duplicates(
+                    exact_dupes,
+                    near_dupes,
+                    statement_cutoff=self.config.tiny_unit_statement_cutoff,
+                    tiny_near_jaccard_min=self.config.tiny_near_jaccard_min,
+                )
             traditional_duplicates = exact_dupes + near_dupes
+
+            if self.config.run_semantic and self.config.run_unused:
+                build_reference_graph(units, project_root=path)
+                unused = find_potentially_unused(units, strict_unused=self.config.strict_unused)
         elif self.config.run_unused:
             build_reference_graph(units, project_root=path)
             unused = find_potentially_unused(units, strict_unused=self.config.strict_unused)
 
         semantic_duplicates: list[DuplicatePair] = []
-        self._semantic_units = None
 
         if self.config.run_semantic:
-            semantic_candidates = [
-                unit
-                for unit in units
-                if get_code_unit_statement_count(unit) >= self.config.min_semantic_lines
-            ]
-            self._semantic_units = semantic_candidates
-
             exclude: set[tuple[str, str]] = set()
 
             if self.config.run_traditional:
@@ -330,39 +579,49 @@ class CodeAnalyzer:
                 exclude.update(_build_exact_hash_exclusions(semantic_candidates))
 
             try:
+                semantic_kwargs: dict[str, object] = {
+                    "model_name": self.config.model_name,
+                    "instruction_prefix": self.config.instruction_prefix,
+                    "threshold": semantic_threshold,
+                    "exclude_pairs": exclude,
+                    "batch_size": self.config.batch_size,
+                    "revision": self.config.model_revision,
+                    "trust_remote_code": self.config.trust_remote_code,
+                    "semantic_task": semantic_task,
+                }
                 self._embeddings, semantic_duplicates = run_semantic_analysis(
                     semantic_candidates,
-                    model_name=self.config.model_name,
-                    instruction_prefix=self.config.instruction_prefix,
-                    threshold=self.config.semantic_threshold,
-                    exclude_pairs=exclude,
-                    batch_size=self.config.batch_size,
-                    revision=self.config.model_revision,
-                    trust_remote_code=self.config.trust_remote_code,
+                    **semantic_kwargs,
                 )
             except (ModuleNotFoundError, SemanticBackendError, RuntimeError) as exc:
                 # If semantic is the only duplicate-detection method requested,
                 # fail hard instead of silently degrading to unused-only output.
                 if not self.config.run_traditional:
                     raise
-
+                if not self.config.allow_semantic_fallback:
+                    raise RuntimeError(
+                        "Semantic analysis failed in combined mode. Re-run with "
+                        "`--allow-semantic-fallback` to keep scoped traditional results, "
+                        "or use `--traditional-only` for deterministic non-semantic analysis."
+                    ) from exc
+                semantic_fallback = True
                 self._embeddings = None
                 semantic_duplicates = []
                 runtime_versions = get_semantic_runtime_versions()
                 version_text = ", ".join(
                     f"{key}={value}" for key, value in runtime_versions.items()
                 )
+                semantic_fallback_reason = (
+                    f"Semantic analysis unavailable ({exc}). Proceeding with non-semantic "
+                    "analysis on the existing combined-mode traditional scope "
+                    f"(allow_semantic_fallback=True). model={self.config.model_name} "
+                    f"revision={self.config.model_revision} "
+                    f"trust_remote_code={self.config.trust_remote_code} [{version_text}]. "
+                    f"Retry with `codedupes check {path} --traditional-only`."
+                )
                 logger.warning(
-                    "Semantic analysis unavailable (%s). Proceeding with non-semantic analysis. "
-                    "model=%s revision=%s trust_remote_code=%s [%s]. "
-                    "Retry with `codedupes check %s --traditional-only` or install compatible "
-                    "deps: pip install 'transformers>=4.51,<5' 'sentence-transformers>=5,<6'.",
-                    exc,
-                    self.config.model_name,
-                    self.config.model_revision,
-                    self.config.trust_remote_code,
-                    version_text,
-                    path,
+                    "%s",
+                    semantic_fallback_reason,
                 )
 
             if self.config.suppress_test_semantic_matches:
@@ -393,7 +652,7 @@ class CodeAnalyzer:
             hybrid_duplicates, filtered_raw_duplicates = _synthesize_hybrid_duplicates(
                 traditional_duplicates,
                 semantic_duplicates,
-                semantic_threshold=self.config.semantic_threshold,
+                semantic_threshold=semantic_threshold,
                 jaccard_threshold=self.config.jaccard_threshold,
             )
 
@@ -414,6 +673,8 @@ class CodeAnalyzer:
             potentially_unused=unused,
             analysis_mode=analysis_mode,
             filtered_raw_duplicates=filtered_raw_duplicates,
+            semantic_fallback=semantic_fallback,
+            semantic_fallback_reason=semantic_fallback_reason,
         )
 
     def search(self, query: str, top_k: int = 10) -> list[tuple[CodeUnit, float]]:
@@ -421,6 +682,10 @@ class CodeAnalyzer:
         Search for code units matching a natural language query.
 
         Must run analyze() first to compute embeddings.
+
+        :param query: Search query string.
+        :param top_k: Maximum results to return.
+        :return: List of code units and cosine scores.
         """
         if self._units is None or self._embeddings is None:
             raise RuntimeError("Must run analyze() with run_semantic=True before search().")
@@ -429,6 +694,9 @@ class CodeAnalyzer:
             return []
 
         from codedupes.semantic import find_similar_to_query
+
+        if self._resolved_semantic_threshold is None or self._resolved_search_semantic_task is None:
+            raise RuntimeError("Semantic configuration was not resolved; run analyze() first.")
 
         return find_similar_to_query(
             query,
@@ -439,20 +707,28 @@ class CodeAnalyzer:
             top_k=top_k,
             revision=self.config.model_revision,
             trust_remote_code=self.config.trust_remote_code,
+            threshold=self._resolved_semantic_threshold,
+            semantic_task=self._resolved_search_semantic_task,
         )
 
 
 def analyze_directory(
     path: Path | str,
-    semantic_threshold: float = DEFAULT_SEMANTIC_THRESHOLD,
+    semantic_threshold: float | None = None,
     traditional_threshold: float = DEFAULT_TRADITIONAL_THRESHOLD,
     exclude_patterns: list[str] | None = None,
     model_name: str = DEFAULT_MODEL,
+    semantic_task: str | None = None,
     instruction_prefix: str | None = None,
     model_revision: str | None = None,
     trust_remote_code: bool | None = None,
     min_semantic_lines: int = DEFAULT_MIN_SEMANTIC_LINES,
+    semantic_unit_types: tuple[str, ...] = DEFAULT_SEMANTIC_UNIT_TYPES,
+    filter_tiny_traditional: bool = True,
+    tiny_unit_statement_cutoff: int = DEFAULT_TINY_UNIT_STATEMENT_CUTOFF,
+    tiny_near_jaccard_min: float = DEFAULT_TINY_NEAR_JACCARD_MIN,
     include_stubs: bool = False,
+    allow_semantic_fallback: bool = False,
     run_unused: bool = True,
     strict_unused: bool = False,
 ) -> AnalysisResult:
@@ -465,10 +741,20 @@ def analyze_directory(
         traditional_threshold: Jaccard threshold for traditional near-duplicates
         exclude_patterns: Glob patterns for files to exclude
         model_name: HuggingFace model for embeddings
+        semantic_task: Semantic task mode for prompt/inference behavior
         instruction_prefix: Custom instruction prefix prepended to semantic inputs
         model_revision: Optional HuggingFace model revision/commit hash.
             If None, semantic backend chooses model-specific default behavior.
         trust_remote_code: Whether remote model code may execute while loading
+        min_semantic_lines: Minimum statement count required for semantic analysis.
+        semantic_unit_types: Unit types eligible for semantic embeddings.
+        filter_tiny_traditional: Filter tiny traditional duplicates when true.
+        tiny_unit_statement_cutoff: Tiny function/method cutoff (exclusive).
+        tiny_near_jaccard_min: Keep floor for tiny near-duplicate Jaccard pairs.
+        include_stubs: Whether to analyze ``.pyi`` files.
+        allow_semantic_fallback: Allow combined mode to keep scoped traditional results
+            when semantic backend loading/inference fails.
+        strict_unused: Whether to ignore public API exclusions when reporting unused code.
         run_unused: Run potentially-unused detection even when traditional analysis is off
 
     Returns:
@@ -479,11 +765,17 @@ def analyze_directory(
         jaccard_threshold=traditional_threshold,
         exclude_patterns=exclude_patterns,
         model_name=model_name,
+        semantic_task=semantic_task,
         instruction_prefix=instruction_prefix,
         model_revision=model_revision,
         trust_remote_code=trust_remote_code,
         min_semantic_lines=min_semantic_lines,
+        semantic_unit_types=semantic_unit_types,
+        filter_tiny_traditional=filter_tiny_traditional,
+        tiny_unit_statement_cutoff=tiny_unit_statement_cutoff,
+        tiny_near_jaccard_min=tiny_near_jaccard_min,
         include_stubs=include_stubs,
+        allow_semantic_fallback=allow_semantic_fallback,
         run_unused=run_unused,
         strict_unused=strict_unused,
     )

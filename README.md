@@ -3,13 +3,23 @@
 `codedupes` detects duplicate and potentially unused Python code with:
 
 - Traditional AST/token matching (exact + Jaccard near-duplicate)
-- Semantic matching with C2LLM embeddings (`codefuse-ai/C2LLM-0.5B`)
+- Semantic matching with model-profile embeddings (default `gte-modernbert-base`)
 - Heuristic unused-code detection
 
 ## Install
 
-Source-of-truth install and runtime defaults:
-[docs/install.md](https://github.com/pszemraj/codedupes/blob/main/docs/install.md).
+```bash
+pip install "codedupes @ git+https://github.com/pszemraj/codedupes.git"
+```
+
+Optional GPU extras:
+
+```bash
+pip install "codedupes[gpu] @ git+https://github.com/pszemraj/codedupes.git"
+```
+
+Requires Python 3.11+. Details are in
+[docs/install.md](https://github.com/pszemraj/codedupes/blob/main/docs/install.md)
 
 ## Quick Start
 
@@ -26,18 +36,15 @@ codedupes info
 
 Use `--show-all` to include raw traditional + raw semantic duplicate lists.
 
-## Default semantic model behavior
-
-See [docs/install.md](https://github.com/pszemraj/codedupes/blob/main/docs/install.md).
-
 ## Documentation
 
 Primary docs live under `docs/`:
 
 - [docs/index.md](https://github.com/pszemraj/codedupes/blob/main/docs/index.md): documentation map and ownership
-- [docs/install.md](https://github.com/pszemraj/codedupes/blob/main/docs/install.md): install and runtime defaults (source of truth)
-- [docs/cli.md](https://github.com/pszemraj/codedupes/blob/main/docs/cli.md): commands, flags, and defaults (source of truth)
-- [docs/output.md](https://github.com/pszemraj/codedupes/blob/main/docs/output.md): JSON schemas and exit codes (source of truth)
+- [docs/cli.md](https://github.com/pszemraj/codedupes/blob/main/docs/cli.md): commands, flags, and defaults
+- [docs/model-profiles.md](https://github.com/pszemraj/codedupes/blob/main/docs/model-profiles.md): semantic model aliases, profile defaults, and task behavior
+- [docs/analysis-defaults.md](https://github.com/pszemraj/codedupes/blob/main/docs/analysis-defaults.md): analysis-behavior defaults and heuristics
+- [docs/output.md](https://github.com/pszemraj/codedupes/blob/main/docs/output.md): JSON schemas and exit codes
 - [docs/usage.md](https://github.com/pszemraj/codedupes/blob/main/docs/usage.md): practical workflows and tuning examples
 - [docs/python-api.md](https://github.com/pszemraj/codedupes/blob/main/docs/python-api.md): programmatic API usage
 - [docs/hybrid-tuning.md](https://github.com/pszemraj/codedupes/blob/main/docs/hybrid-tuning.md): hybrid gate tuning workflow
@@ -45,6 +52,9 @@ Primary docs live under `docs/`:
 ## Notes and limits
 
 - Call graph and unused detection are heuristic and conservative by default.
+- Semantic model-profile defaults and task behavior are defined in
+  [docs/model-profiles.md](https://github.com/pszemraj/codedupes/blob/main/docs/model-profiles.md).
+- Analysis defaults (semantic candidate scope, tiny-traditional filtering, hybrid gates) are defined in
+  [docs/analysis-defaults.md](https://github.com/pszemraj/codedupes/blob/main/docs/analysis-defaults.md).
 - Semantic analysis may download model weights on first use.
-- Extraction skips common artifact/cache directories by default (for example `target`,
-  `node_modules`, `__pycache__`, `.venv`, `build`, and `dist`).
+- Extraction skips common artifact/cache directories by default (`__pycache__`, `.venv`, etc).
