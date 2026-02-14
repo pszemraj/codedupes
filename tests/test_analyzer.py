@@ -737,6 +737,85 @@ def test_combined_mode_falls_back_on_runtime_semantic_error(tmp_path: Path, monk
     assert result.potentially_unused == []
 
 
+def test_combined_mode_fallback_runs_traditional_on_full_units(tmp_path: Path, monkeypatch) -> None:
+    source = dedent(
+        """
+        class Box:
+            def method(self):
+                value = 1
+                return value
+
+        def short():
+            return 1
+
+        def longer():
+            value = 2
+            return value
+        """
+    ).strip()
+    project = create_project(tmp_path, source)
+
+    traditional_calls: list[tuple[tuple[str, ...], list[str]]] = []
+
+    def fake_traditional(
+        units,
+        jaccard_threshold=0.85,
+        compute_unused=True,
+        strict_unused=False,
+        project_root=None,
+    ):
+        traditional_calls.append(
+            (tuple(unit.name for unit in units), [unit.name for unit in units])
+        )
+        return [], [], []
+
+    monkeypatch.setattr(analyzer_module, "run_traditional_analysis", fake_traditional)
+    monkeypatch.setattr(
+        analyzer_module,
+        "run_semantic_analysis",
+        _make_semantic_runner(error=RuntimeError("CUDA out of memory")),
+    )
+
+    analyzer = CodeAnalyzer(
+        AnalyzerConfig(
+            run_traditional=True,
+            run_semantic=True,
+            run_unused=False,
+            min_semantic_lines=2,
+            filter_tiny_traditional=False,
+        )
+    )
+    analyzer.analyze(project)
+
+    assert len(traditional_calls) == 2
+    assert set(traditional_calls[0][0]) == {"method", "longer"}
+    assert set(traditional_calls[1][0]) == {"Box", "method", "short", "longer"}
+
+
+def test_semantic_task_resolves_check_default_for_indexing(tmp_path: Path, monkeypatch) -> None:
+    source = "def entry(x):\n    return x + 1\n"
+    project = create_project(tmp_path, source)
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        analyzer_module,
+        "run_semantic_analysis",
+        _make_semantic_runner(capture=captured),
+    )
+
+    analyzer = CodeAnalyzer(
+        AnalyzerConfig(
+            run_traditional=False,
+            run_semantic=True,
+            run_unused=False,
+            min_semantic_lines=0,
+        )
+    )
+    analyzer.analyze(project)
+
+    assert captured["semantic_task"] == analyzer_module.DEFAULT_CHECK_SEMANTIC_TASK
+
+
 def test_semantic_only_fails_hard_on_runtime_semantic_error(tmp_path: Path, monkeypatch) -> None:
     source = "def entry(x):\n    return x + 1\n"
     project = create_project(tmp_path, source)
@@ -789,6 +868,7 @@ def test_suppress_test_semantic_matches_filters_test_named_pairs(
         batch_size=32,
         revision=None,
         trust_remote_code=None,
+        semantic_task=None,
     ):
         by_name = {unit.name: unit for unit in units}
         return np.zeros((len(units), 2), dtype=np.float32), [

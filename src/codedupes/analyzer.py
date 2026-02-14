@@ -533,9 +533,8 @@ class CodeAnalyzer:
                     "batch_size": self.config.batch_size,
                     "revision": self.config.model_revision,
                     "trust_remote_code": self.config.trust_remote_code,
+                    "semantic_task": semantic_task,
                 }
-                if self.config.semantic_task is not None:
-                    semantic_kwargs["semantic_task"] = semantic_task
                 self._embeddings, semantic_duplicates = run_semantic_analysis(
                     semantic_candidates,
                     **semantic_kwargs,
@@ -563,6 +562,22 @@ class CodeAnalyzer:
                     version_text,
                     path,
                 )
+                if self.config.run_traditional:
+                    exact_dupes, near_dupes, _ = run_traditional_analysis(
+                        units,
+                        jaccard_threshold=self.config.jaccard_threshold,
+                        compute_unused=False,
+                        project_root=path,
+                        strict_unused=self.config.strict_unused,
+                    )
+                    if self.config.filter_tiny_traditional:
+                        exact_dupes, near_dupes = _filter_tiny_traditional_duplicates(
+                            exact_dupes,
+                            near_dupes,
+                            statement_cutoff=self.config.tiny_unit_statement_cutoff,
+                            tiny_near_jaccard_min=self.config.tiny_near_jaccard_min,
+                        )
+                    traditional_duplicates = exact_dupes + near_dupes
 
             if self.config.suppress_test_semantic_matches:
                 semantic_duplicates = [
