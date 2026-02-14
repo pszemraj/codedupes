@@ -104,8 +104,12 @@ Print version and default settings.
 - `--min-lines` must be greater than or equal to `0`
 - `--output-width` must be at least `80`
 - Default `check` behavior degrades to non-semantic analysis if semantic backend fails
+- In `--json` mode, output is machine-parseable JSON only; warning text is surfaced via
+  `summary.semantic_fallback` and `summary.semantic_fallback_reason` when fallback happens.
 - `--semantic-only` and `--traditional-only` bypass hybrid synthesis and show raw method outputs
+- `--semantic-only` and `--traditional-only` are mutually exclusive
 - `search` applies semantic threshold filtering before returning `top-k` matches
+- Contradictory mode-specific options are rejected at parse time for the selected workflow
 
 Built-in model aliases and model-profile defaults are documented in
 [docs/model-profiles.md](https://github.com/pszemraj/codedupes/blob/main/docs/model-profiles.md).
