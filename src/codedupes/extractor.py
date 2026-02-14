@@ -276,8 +276,9 @@ class CodeExtractor:
         for unit in visitor.units:
             yield unit
 
-    def _should_emit_function(self, name: str, _is_method: bool) -> bool:
+    def _should_emit_function(self, name: str, is_method: bool) -> bool:
         """Respect private-function filtering."""
+        _ = is_method
         if self._is_private_name(name):
             return self.include_private
         return True
