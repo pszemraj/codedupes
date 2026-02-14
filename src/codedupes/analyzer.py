@@ -14,6 +14,7 @@ from codedupes.constants import (
     DEFAULT_SEARCH_SEMANTIC_TASK,
     DEFAULT_MIN_SEMANTIC_LINES,
     DEFAULT_MODEL,
+    SEMANTIC_TASK_CHOICES,
     DEFAULT_TRADITIONAL_THRESHOLD,
 )
 from codedupes.extractor import CodeExtractor
@@ -381,6 +382,15 @@ class AnalyzerConfig:
 
         if not 0.0 <= self.tiny_near_jaccard_min <= 1.0:
             raise ValueError("tiny_near_jaccard_min must be in [0.0, 1.0]")
+
+        if self.semantic_task is not None:
+            normalized_task = self.semantic_task.strip().lower()
+            if normalized_task not in SEMANTIC_TASK_CHOICES:
+                allowed = ", ".join(SEMANTIC_TASK_CHOICES)
+                raise ValueError(
+                    f"Invalid semantic_task: {self.semantic_task}. Allowed values: {allowed}"
+                )
+            self.semantic_task = normalized_task
 
 
 class CodeAnalyzer:

@@ -1159,6 +1159,9 @@ def test_invalid_threshold_raises() -> None:
     with pytest.raises(ValueError, match="Invalid semantic_unit_types"):
         AnalyzerConfig(semantic_unit_types=("invalid",))
 
+    with pytest.raises(ValueError, match="Invalid semantic_task"):
+        AnalyzerConfig(semantic_task="not-a-task")
+
     with pytest.raises(ValueError, match="tiny_unit_statement_cutoff"):
         AnalyzerConfig(tiny_unit_statement_cutoff=-1)
 
