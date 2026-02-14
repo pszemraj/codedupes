@@ -10,7 +10,6 @@ readme = "README.md"
 license = "MIT"
 requires-python = ">=3.10"
 dependencies = [
-    "deepspeed",
     "sentence-transformers>=3.0.0",
     "transformers>=4.37.0",
     "torch>=2.0.0",
@@ -20,6 +19,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest", "ruff"]
+gpu = ["deepspeed"]
 
 [project.scripts]
 codedupes = "codedupes.cli:main"

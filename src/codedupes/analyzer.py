@@ -30,7 +30,7 @@ class AnalyzerConfig:
     jaccard_threshold: float = 0.85
 
     # Semantic detection
-    semantic_threshold: float = 0.85
+    semantic_threshold: float = 0.82
     model_name: str = DEFAULT_MODEL
     batch_size: int = 32
 
@@ -171,7 +171,7 @@ class CodeAnalyzer:
 
 def analyze_directory(
     path: Path | str,
-    semantic_threshold: float = 0.85,
+    semantic_threshold: float = 0.82,
     traditional_threshold: float = 0.85,
     exclude_patterns: list[str] | None = None,
     model_name: str = DEFAULT_MODEL,

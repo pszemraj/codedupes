@@ -220,8 +220,8 @@ Examples:
         "-t",
         "--threshold",
         type=float,
-        default=0.85,
-        help="Similarity threshold for both methods (default: 0.85)",
+        default=0.82,
+        help="Similarity threshold for both methods (default: 0.82)",
     )
     parser.add_argument(
         "--semantic-threshold",

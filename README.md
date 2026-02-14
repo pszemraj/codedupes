@@ -21,6 +21,12 @@ Detection modes:
 pip install codedupes
 ```
 
+For GPU-assisted semantic models (including C2LLM) that require `deepspeed`, install:
+
+```bash
+pip install codedupes[gpu]
+```
+
 Requires Python 3.10+.
 
 ## Quick usage
@@ -41,7 +47,7 @@ codedupes <path> [options]
 Supported options:
 
 - `-t, --threshold`
-  - shared threshold for both similarity methods (default `0.85`).
+  - shared threshold for both similarity methods (default `0.82`).
 - `--semantic-threshold`
   - semantic-only override.
 - `--traditional-threshold`
@@ -68,7 +74,7 @@ Supported options:
 ```python
 from codedupes import analyze_directory
 
-result = analyze_directory("./src", semantic_threshold=0.88, traditional_threshold=0.85)
+result = analyze_directory("./src", semantic_threshold=0.82, traditional_threshold=0.85)
 
 for dup in result.exact_duplicates:
     print(dup.unit_a.qualified_name, "≈", dup.unit_b.qualified_name)

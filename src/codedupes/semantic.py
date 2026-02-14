@@ -65,17 +65,30 @@ def get_model(model_name: str = "codefuse-ai/C2LLM-0.5B"):
 
     if _model is None or _model_name != model_name:
         logger.info(f"Loading embedding model: {model_name}")
-        from sentence_transformers import SentenceTransformer
+        try:
+            from sentence_transformers import SentenceTransformer
+        except ModuleNotFoundError as exc:
+            raise ModuleNotFoundError(
+                "sentence-transformers is not installed. Install it with `pip install codedupes`."
+            ) from exc
 
-        if _is_c2llm(model_name):
-            _model = SentenceTransformer(
-                model_name,
-                trust_remote_code=True,
-                tokenizer_kwargs={"padding_side": "left"},
-            )
-        else:
-            # Fallback for other models (e.g. CodeRankEmbed)
-            _model = SentenceTransformer(model_name, trust_remote_code=True)
+        try:
+            if _is_c2llm(model_name):
+                _model = SentenceTransformer(
+                    model_name,
+                    trust_remote_code=True,
+                    tokenizer_kwargs={"padding_side": "left"},
+                )
+            else:
+                # Fallback for other models (e.g. CodeRankEmbed)
+                _model = SentenceTransformer(model_name, trust_remote_code=True)
+        except ModuleNotFoundError as exc:
+            if exc.name == "deepspeed":
+                raise ModuleNotFoundError(
+                    "deepspeed is required for C2LLM models. "
+                    "Install with `pip install codedupes[gpu]` or `pip install deepspeed`."
+                ) from exc
+            raise
 
         _model_name = model_name
 
@@ -211,7 +224,7 @@ def compute_embeddings(
 def find_semantic_duplicates(
     units: list[CodeUnit],
     embeddings: np.ndarray,
-    threshold: float = 0.85,
+    threshold: float = 0.82,
     exclude_exact: set[tuple[str, str]] | None = None,
 ) -> list[DuplicatePair]:
     """Find semantically similar code units via embedding cosine similarity.
@@ -317,7 +330,7 @@ def find_similar_to_query(
 def run_semantic_analysis(
     units: list[CodeUnit],
     model_name: str = "codefuse-ai/C2LLM-0.5B",
-    threshold: float = 0.85,
+    threshold: float = 0.82,
     exclude_pairs: set[tuple[str, str]] | None = None,
     batch_size: int = 32,
 ) -> tuple[np.ndarray, list[DuplicatePair]]:
