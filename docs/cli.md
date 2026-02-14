@@ -28,8 +28,9 @@ Options:
 - `--model <name>`
 - `--batch-size <int>`
 - `--no-private`
-- `--exclude <glob> [<glob> ...]`
+- `--exclude <glob>` (repeat option for multiple patterns)
 - `--include-stubs`
+- `--output-width <int>`
 - `--show-source`
 - `--json`
 - `-v, --verbose`
@@ -54,8 +55,9 @@ Options:
 - `--batch-size <int>`
 - `--min-lines <int>`
 - `--no-private`
-- `--exclude <glob> [<glob> ...]`
+- `--exclude <glob>` (repeat option for multiple patterns)
 - `--include-stubs`
+- `--output-width <int>`
 - `--json`
 - `-v, --verbose`
 
@@ -68,3 +70,5 @@ Print version and default settings.
 - Threshold values must be in `[0.0, 1.0]`.
 - `--batch-size` and `--top-k` must be greater than `0`.
 - `--min-lines` must be greater than or equal to `0`.
+- `--output-width` must be at least `80` (default `160`).
+- Click usage/validation errors return exit code `2`.

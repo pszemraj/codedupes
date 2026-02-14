@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
-import sys
 import re
+from pathlib import Path
+
+from click.testing import CliRunner
 
 from codedupes import cli
 from codedupes.models import AnalysisResult, CodeUnit, CodeUnitType, DuplicatePair
@@ -52,7 +53,7 @@ def _build_units(tmp_path: Path) -> list[CodeUnit]:
     return [unit]
 
 
-def test_cli_json_output(monkeypatch, tmp_path, capsys):
+def test_cli_json_output(monkeypatch, tmp_path):
     path = tmp_path / "sample.py"
     path.write_text("def entry():\n    return 1\n")
 
@@ -69,22 +70,19 @@ def test_cli_json_output(monkeypatch, tmp_path, capsys):
             return [(_build_units(tmp_path)[0], 0.99)]
 
     monkeypatch.setattr(cli, "CodeAnalyzer", DummyAnalyzer)
+    runner = CliRunner()
 
-    monkeypatch.setattr(sys, "argv", ["codedupes", "check", str(path), "--json"])
-    assert cli.main() == 1
-    output = json.loads(capsys.readouterr().out)
+    result = runner.invoke(cli.cli, ["check", str(path), "--json"])
+    assert result.exit_code == 1
+    output = json.loads(result.output)
 
     assert "summary" in output
     assert output["summary"]["potentially_unused"] == 1
     assert captured[0].include_private is True
 
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        ["codedupes", "search", str(path), "entry", "--json", "--top-k", "1"],
-    )
-    assert cli.main() == 0
-    search_output = json.loads(capsys.readouterr().out)
+    result = runner.invoke(cli.cli, ["search", str(path), "entry", "--json", "--top-k", "1"])
+    assert result.exit_code == 0
+    search_output = json.loads(result.output)
     assert search_output["query"] == "entry"
     assert search_output["results"][0]["name"] == "entry"
 
@@ -106,46 +104,81 @@ def test_cli_no_private_option_check(monkeypatch, tmp_path):
             return []
 
     monkeypatch.setattr(cli, "CodeAnalyzer", DummyAnalyzer)
-    monkeypatch.setattr(sys, "argv", ["codedupes", "check", str(path), "--no-private"])
-
-    assert cli.main() == 1
+    runner = CliRunner()
+    result = runner.invoke(cli.cli, ["check", str(path), "--no-private"])
+    assert result.exit_code == 1
     assert captured[0].include_private is False
 
 
-def test_cli_requires_explicit_command(monkeypatch, tmp_path):
+def test_cli_requires_explicit_command(tmp_path):
     path = tmp_path / "sample.py"
     path.write_text("def entry():\n    return 1\n")
 
-    monkeypatch.setattr(sys, "argv", ["codedupes", str(path), "--no-private"])
+    runner = CliRunner()
+    result = runner.invoke(cli.cli, [str(path), "--no-private"])
+    assert result.exit_code == 2
 
-    assert cli.main() == 2
 
-
-def test_cli_invalid_threshold(monkeypatch, tmp_path, capsys):
+def test_cli_invalid_threshold(tmp_path):
     path = tmp_path / "sample.py"
     path.write_text("def entry():\n    return 1\n")
 
-    monkeypatch.setattr(sys, "argv", ["codedupes", "check", str(path), "--threshold", "1.2"])
-    assert cli.main() == 1
-    assert "threshold must be in [0.0, 1.0]" in capsys.readouterr().out
+    runner = CliRunner()
+    result = runner.invoke(cli.cli, ["check", str(path), "--threshold", "1.2"])
+    assert result.exit_code == 2
+    assert "must be in [0.0, 1.0]" in result.output
 
 
-def test_cli_info_exit_zero(monkeypatch, capsys):
-    monkeypatch.setattr(sys, "argv", ["codedupes", "info"])
-    assert cli.main() == 0
-    assert "codedupes" in capsys.readouterr().out.lower()
+def test_cli_info_exit_zero():
+    runner = CliRunner()
+    result = runner.invoke(cli.cli, ["info"])
+    assert result.exit_code == 0
+    assert "codedupes" in result.output.lower()
 
 
-def test_cli_help_and_version(monkeypatch, capsys):
-    monkeypatch.setattr(sys, "argv", ["codedupes", "--help"])
-    assert cli.main() == 0
-    help_output = capsys.readouterr().out
-    assert "codedupes check" in help_output
+def test_cli_help_and_version():
+    runner = CliRunner()
 
-    monkeypatch.setattr(sys, "argv", ["codedupes", "--version"])
-    assert cli.main() == 0
-    version_output = capsys.readouterr().out
-    assert version_output.lower().startswith("codedupes")
+    help_result = runner.invoke(cli.cli, ["--help"])
+    assert help_result.exit_code == 0
+    assert "Commands:" in help_result.output
+    assert "check" in help_result.output
+    assert "search" in help_result.output
+
+    version_result = runner.invoke(cli.cli, ["--version"])
+    assert version_result.exit_code == 0
+    assert version_result.output.lower().startswith("codedupes")
+
+
+def test_cli_output_width_option(monkeypatch, tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+
+    class DummyAnalyzer:
+        def __init__(self, _config):
+            pass
+
+        def analyze(self, _path):
+            return _build_result(tmp_path)
+
+        def search(self, query, top_k=10):
+            return []
+
+    monkeypatch.setattr(cli, "CodeAnalyzer", DummyAnalyzer)
+
+    runner = CliRunner()
+    result = runner.invoke(cli.cli, ["check", str(path), "--output-width", "200"])
+    assert result.exit_code == 1
+
+
+def test_cli_invalid_output_width(tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+
+    runner = CliRunner()
+    result = runner.invoke(cli.cli, ["check", str(path), "--output-width", "60"])
+    assert result.exit_code == 2
+    assert "must be >= 80" in result.output
 
 
 def test_no_banned_runtime_practice() -> None:
