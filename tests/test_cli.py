@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import sys
 from pathlib import Path
 
 from click.testing import CliRunner
@@ -243,6 +244,26 @@ def test_setup_logging_quiets_external_loggers() -> None:
     cli.setup_logging(verbose=False)
     for logger_name in cli._NOISY_EXTERNAL_LOGGERS:
         assert logging.getLogger(logger_name).level == logging.WARNING
+
+
+def test_main_propagates_check_exit_code(monkeypatch, tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+
+    class DummyAnalyzer:
+        def __init__(self, _config):
+            pass
+
+        def analyze(self, _path):
+            return _build_result(tmp_path)
+
+        def search(self, query, top_k=10):
+            return []
+
+    monkeypatch.setattr(cli, "CodeAnalyzer", DummyAnalyzer)
+    monkeypatch.setattr(sys, "argv", ["codedupes", "check", str(path), "--json"])
+
+    assert cli.main() == 1
 
 
 def test_no_banned_runtime_practice() -> None:

@@ -597,7 +597,9 @@ def main() -> int:
     argv = sys.argv[1:]
 
     try:
-        cli.main(args=argv, prog_name="codedupes", standalone_mode=False)
+        result = cli.main(args=argv, prog_name="codedupes", standalone_mode=False)
+        if isinstance(result, int):
+            return result
     except click.exceptions.Exit as exc:
         return int(exc.exit_code)
     except click.ClickException as exc:
