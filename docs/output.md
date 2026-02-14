@@ -68,12 +68,16 @@ Each unit object includes:
 - `0`: completed, no findings
 - `1`: completed with findings or failed due to runtime error
 - `2`: CLI usage/validation error (Click)
+- Semantic backend note: in mixed-mode `check` (default), semantic failures degrade to
+  traditional/unused-only results with a warning instead of hard failure.
 
 `search`:
 
 - `0`: completed successfully
 - `1`: failed due to runtime error
 - `2`: CLI usage/validation error (Click)
+- Semantic backend note: `search` requires semantic inference and fails hard if semantic
+  backend loading/inference fails.
 
 `info`:
 

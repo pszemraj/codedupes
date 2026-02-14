@@ -28,6 +28,8 @@ Options:
 - `--strict-unused`: Include public top-level functions in unused checks
 - `--min-lines <int>`: Minimum statement count for semantic candidates (default `3`)
 - `--model <name>`: Embedding model (default `codefuse-ai/C2LLM-0.5B`)
+- `--model-revision <rev>`: Model revision/commit hash (default pinned revision for C2LLM)
+- `--trust-remote-code / --no-trust-remote-code`: Allow/disallow model remote code execution
 - `--batch-size <int>`: Embedding batch size (default `32`)
 - `--no-private`: Exclude private (`_name`) functions/classes
 - `--exclude <glob>`: Exclude file path glob pattern (repeat option for multiple patterns)
@@ -52,6 +54,8 @@ Options:
 
 - `--top-k <int>`: Number of results (default `10`)
 - `--model <name>`: Embedding model (default `codefuse-ai/C2LLM-0.5B`)
+- `--model-revision <rev>`: Model revision/commit hash (default pinned revision for C2LLM)
+- `--trust-remote-code / --no-trust-remote-code`: Allow/disallow model remote code execution
 - `--threshold <float>`: Semantic threshold (default `0.82`)
 - `--semantic-threshold <float>`: Override semantic threshold
 - `--batch-size <int>`: Embedding batch size (default `32`)
@@ -73,5 +77,7 @@ Print version and default settings.
 - `--batch-size` and `--top-k` must be greater than `0`
 - `--min-lines` must be greater than or equal to `0`
 - `--output-width` must be at least `80`
+- Default `check` behavior degrades to non-semantic analysis if semantic backend fails
+- `search` and `check --semantic-only` fail when semantic backend is unavailable
 
 For JSON payloads and complete exit-code semantics, see `docs/output.md`.

@@ -12,6 +12,12 @@ Optional GPU extras:
 pip install codedupes[gpu]
 ```
 
+Recommended semantic dependency range:
+
+```bash
+pip install "transformers>=4.51,<5" "sentence-transformers>=5,<6"
+```
+
 ## Core Workflow
 
 1. Run analysis on a package or file.
@@ -54,6 +60,38 @@ codedupes search ./src "parse json payload" --top-k 10
 ```
 
 For the complete command/option reference, see `docs/cli.md`.
+
+## Fresh Colab/GPU Preflight
+
+Use one command to print runtime versions and CUDA availability:
+
+```bash
+python - <<'PY'
+import platform
+import torch
+import transformers
+import sentence_transformers
+try:
+    import deepspeed
+    deepspeed_version = deepspeed.__version__
+except Exception:
+    deepspeed_version = "missing"
+
+print("python", platform.python_version())
+print("torch", torch.__version__)
+print("transformers", transformers.__version__)
+print("sentence-transformers", sentence_transformers.__version__)
+print("deepspeed", deepspeed_version)
+print("cuda_available", torch.cuda.is_available())
+print("cuda_device_count", torch.cuda.device_count())
+PY
+```
+
+Pinned default semantic model revision:
+
+```bash
+codedupes info
+```
 
 ## Threshold Tuning
 
@@ -111,3 +149,25 @@ Disable unused detection:
 ```bash
 codedupes check ./src --no-unused
 ```
+
+## Full Run Verification Sequence
+
+1. Baseline traditional-only:
+
+```bash
+codedupes check src --traditional-only
+```
+
+2. Semantic-only quick pass:
+
+```bash
+codedupes check src --semantic-only --min-lines 1 --batch-size 4
+```
+
+3. Full mixed run:
+
+```bash
+codedupes check src
+```
+
+Record model/revision, package versions, device, elapsed time, exit code, and whether semantic fallback warnings were emitted.

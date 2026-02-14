@@ -28,6 +28,35 @@ codedupes search ./src "normalize request payload"
 codedupes info
 ```
 
+## Default Semantic Model Behavior
+
+- Default embedding model: `codefuse-ai/C2LLM-0.5B`
+- Default pinned revision: `bd6d0ddb29f0c9a3d0f14281aedc9f940bb8d67a`
+- Default loading for this model uses `trust_remote_code=True`
+
+This means model-provided Python code from Hugging Face is executed when semantic
+analysis is enabled. You can override both revision and trust behavior from the CLI:
+
+```bash
+codedupes check ./src --model-revision <commit_or_tag>
+codedupes check ./src --no-trust-remote-code
+```
+
+## Troubleshooting Semantic Backend Issues
+
+If semantic loading/inference fails, `codedupes check` falls back to traditional analysis
+unless semantic-only mode is required. For compatibility in fresh environments, use:
+
+```bash
+pip install "transformers>=4.51,<5" "sentence-transformers>=5,<6"
+```
+
+Fallback-free baseline:
+
+```bash
+codedupes check ./src --traditional-only
+```
+
 ## Documentation
 
 Primary docs live under `docs/`:
