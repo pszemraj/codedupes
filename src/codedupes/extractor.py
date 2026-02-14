@@ -142,7 +142,11 @@ class NormalizedASTHasher(ast.NodeTransformer):
         return self.generic_visit(node)
 
     def visit_Constant(self, node: ast.Constant) -> ast.AST:
-        """Normalize string constants for structural comparison."""
+        """Normalize string constants for structural comparison.
+
+        :param node: Constant AST node.
+        :return: Updated constant node with string values replaced by ``<STR>``.
+        """
         # Normalize string constants (but not numeric)
         if isinstance(node.value, str):
             node.value = "<STR>"
