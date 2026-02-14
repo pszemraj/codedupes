@@ -459,29 +459,8 @@ class CodeAnalyzer:
         self._resolved_semantic_threshold = semantic_threshold
         self._resolved_semantic_task = semantic_task
 
-        if self.config.run_traditional:
-            exact_dupes, near_dupes, unused = run_traditional_analysis(
-                units,
-                jaccard_threshold=self.config.jaccard_threshold,
-                compute_unused=self.config.run_unused,
-                project_root=path,
-                strict_unused=self.config.strict_unused,
-            )
-            if self.config.filter_tiny_traditional:
-                exact_dupes, near_dupes = _filter_tiny_traditional_duplicates(
-                    exact_dupes,
-                    near_dupes,
-                    statement_cutoff=self.config.tiny_unit_statement_cutoff,
-                    tiny_near_jaccard_min=self.config.tiny_near_jaccard_min,
-                )
-            traditional_duplicates = exact_dupes + near_dupes
-        elif self.config.run_unused:
-            build_reference_graph(units, project_root=path)
-            unused = find_potentially_unused(units, strict_unused=self.config.strict_unused)
-
-        semantic_duplicates: list[DuplicatePair] = []
+        semantic_candidates: list[CodeUnit] = []
         self._semantic_units = None
-
         if self.config.run_semantic:
             semantic_type_filter = _resolve_semantic_unit_type_filter(
                 self.config.semantic_unit_types
@@ -494,6 +473,41 @@ class CodeAnalyzer:
             ]
             self._semantic_units = semantic_candidates
 
+        if self.config.run_traditional:
+            traditional_duplicate_units = units
+            compute_unused_with_traditional = self.config.run_unused
+            if self.config.run_semantic:
+                # In combined mode, keep traditional duplicate scope aligned with semantic scope.
+                traditional_duplicate_units = semantic_candidates
+                # Unused analysis should still operate on the full extraction set.
+                compute_unused_with_traditional = False
+
+            exact_dupes, near_dupes, unused = run_traditional_analysis(
+                traditional_duplicate_units,
+                jaccard_threshold=self.config.jaccard_threshold,
+                compute_unused=compute_unused_with_traditional,
+                project_root=path,
+                strict_unused=self.config.strict_unused,
+            )
+            if self.config.filter_tiny_traditional:
+                exact_dupes, near_dupes = _filter_tiny_traditional_duplicates(
+                    exact_dupes,
+                    near_dupes,
+                    statement_cutoff=self.config.tiny_unit_statement_cutoff,
+                    tiny_near_jaccard_min=self.config.tiny_near_jaccard_min,
+                )
+            traditional_duplicates = exact_dupes + near_dupes
+
+            if self.config.run_semantic and self.config.run_unused:
+                build_reference_graph(units, project_root=path)
+                unused = find_potentially_unused(units, strict_unused=self.config.strict_unused)
+        elif self.config.run_unused:
+            build_reference_graph(units, project_root=path)
+            unused = find_potentially_unused(units, strict_unused=self.config.strict_unused)
+
+        semantic_duplicates: list[DuplicatePair] = []
+
+        if self.config.run_semantic:
             exclude: set[tuple[str, str]] = set()
 
             if self.config.run_traditional:

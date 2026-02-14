@@ -16,6 +16,12 @@ Default semantic candidate selection:
 - class units are excluded by default from semantic embedding
 - minimum statement count: `3` (via `min_semantic_lines`)
 
+Combined-mode alignment rule:
+
+- when both traditional and semantic analysis are enabled, traditional duplicate
+  matching is scoped to the same semantic candidate pool
+- traditional-only mode keeps full extraction scope (functions, methods, classes)
+
 Override via CLI:
 
 ```bash

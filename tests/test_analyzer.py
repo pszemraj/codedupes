@@ -406,6 +406,94 @@ def test_semantic_class_scope_can_be_enabled_explicitly(tmp_path: Path, monkeypa
     assert set(captured_types) == {CodeUnitType.CLASS}
 
 
+def test_combined_mode_scopes_traditional_duplicates_to_semantic_candidates(
+    tmp_path: Path, monkeypatch
+) -> None:
+    source = dedent(
+        """
+        class Box:
+            def method(self):
+                return 1
+
+        def tiny():
+            return 2
+        """
+    ).strip()
+    project = create_project(tmp_path, source, module="scope.py")
+    captured_traditional_units: list[CodeUnit] = []
+
+    def fake_traditional(
+        units,
+        jaccard_threshold=0.85,
+        compute_unused=True,
+        strict_unused=False,
+        project_root=None,
+    ):
+        captured_traditional_units.extend(units)
+        return [], [], []
+
+    monkeypatch.setattr(analyzer_module, "run_traditional_analysis", fake_traditional)
+    monkeypatch.setattr(analyzer_module, "run_semantic_analysis", _make_semantic_runner())
+
+    analyzer = CodeAnalyzer(
+        AnalyzerConfig(
+            run_traditional=True,
+            run_semantic=True,
+            run_unused=False,
+            min_semantic_lines=2,
+        )
+    )
+    analyzer.analyze(project)
+
+    assert captured_traditional_units == []
+
+
+def test_traditional_only_keeps_full_scope_even_with_semantic_filters(
+    tmp_path: Path, monkeypatch
+) -> None:
+    source = dedent(
+        """
+        class Box:
+            def method(self):
+                return 1
+
+        def tiny():
+            return 2
+        """
+    ).strip()
+    project = create_project(tmp_path, source, module="scope.py")
+    captured_traditional_units: list[CodeUnit] = []
+
+    def fake_traditional(
+        units,
+        jaccard_threshold=0.85,
+        compute_unused=True,
+        strict_unused=False,
+        project_root=None,
+    ):
+        captured_traditional_units.extend(units)
+        return [], [], []
+
+    monkeypatch.setattr(analyzer_module, "run_traditional_analysis", fake_traditional)
+
+    analyzer = CodeAnalyzer(
+        AnalyzerConfig(
+            run_traditional=True,
+            run_semantic=False,
+            run_unused=False,
+            min_semantic_lines=2,
+        )
+    )
+    analyzer.analyze(project)
+
+    assert captured_traditional_units
+    assert {unit.unit_type for unit in captured_traditional_units} == {
+        CodeUnitType.CLASS,
+        CodeUnitType.METHOD,
+        CodeUnitType.FUNCTION,
+    }
+
+
 def test_tiny_exact_duplicates_are_filtered_by_default(tmp_path: Path) -> None:
     source = dedent(
         """
