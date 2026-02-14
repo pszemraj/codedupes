@@ -20,7 +20,11 @@ Example:
 from .analyzer import AnalyzerConfig, CodeAnalyzer, analyze_directory
 from .models import AnalysisResult, CodeUnit, CodeUnitType, DuplicatePair, HybridDuplicate
 
-__version__ = "0.2.0"
+try:
+    from ._version import __version__, __version_tuple__
+except ImportError:
+    __version__ = "0.0.0+unknown"
+    __version_tuple__ = (0, 0, 0, "+unknown")
 
 __all__ = [
     "AnalysisResult",
@@ -30,5 +34,7 @@ __all__ = [
     "CodeUnitType",
     "DuplicatePair",
     "HybridDuplicate",
+    "__version__",
+    "__version_tuple__",
     "analyze_directory",
 ]
