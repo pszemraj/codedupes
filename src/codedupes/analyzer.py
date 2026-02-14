@@ -11,6 +11,7 @@ import numpy as np
 from codedupes.constants import (
     DEFAULT_BATCH_SIZE,
     DEFAULT_CHECK_SEMANTIC_TASK,
+    DEFAULT_SEARCH_SEMANTIC_TASK,
     DEFAULT_MIN_SEMANTIC_LINES,
     DEFAULT_MODEL,
     DEFAULT_TRADITIONAL_THRESHOLD,
@@ -400,6 +401,7 @@ class CodeAnalyzer:
         self._semantic_units: list[CodeUnit] | None = None
         self._resolved_semantic_threshold: float | None = None
         self._resolved_semantic_task: str | None = None
+        self._resolved_search_semantic_task: str | None = None
 
     def analyze(self, path: Path | str) -> AnalysisResult:
         """
@@ -456,8 +458,10 @@ class CodeAnalyzer:
             else get_default_semantic_threshold(self.config.model_name)
         )
         semantic_task = self.config.semantic_task or DEFAULT_CHECK_SEMANTIC_TASK
+        search_semantic_task = self.config.semantic_task or DEFAULT_SEARCH_SEMANTIC_TASK
         self._resolved_semantic_threshold = semantic_threshold
         self._resolved_semantic_task = semantic_task
+        self._resolved_search_semantic_task = search_semantic_task
 
         semantic_candidates: list[CodeUnit] = []
         self._semantic_units = None
@@ -629,7 +633,7 @@ class CodeAnalyzer:
 
         from codedupes.semantic import find_similar_to_query
 
-        if self._resolved_semantic_threshold is None or self._resolved_semantic_task is None:
+        if self._resolved_semantic_threshold is None or self._resolved_search_semantic_task is None:
             raise RuntimeError("Semantic configuration was not resolved; run analyze() first.")
 
         return find_similar_to_query(
@@ -642,7 +646,7 @@ class CodeAnalyzer:
             revision=self.config.model_revision,
             trust_remote_code=self.config.trust_remote_code,
             threshold=self._resolved_semantic_threshold,
-            semantic_task=self._resolved_semantic_task,
+            semantic_task=self._resolved_search_semantic_task,
         )
 
 
