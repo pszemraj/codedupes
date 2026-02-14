@@ -3,7 +3,7 @@
 `codedupes` detects duplicate and potentially unused Python code with:
 
 - Traditional AST/token matching (exact + Jaccard near-duplicate)
-- Semantic matching with C2LLM embeddings (`codefuse-ai/C2LLM-0.5B`)
+- Semantic matching with model-profile embeddings (default `gte-modernbert-base`)
 - Heuristic unused-code detection
 
 ## Install

@@ -69,10 +69,27 @@ codedupes search ./src "parse json payload" --top-k 10
 For full command/option semantics, see
 [docs/cli.md](https://github.com/pszemraj/codedupes/blob/main/docs/cli.md).
 
+## Select Model And Task
+
+Choose model aliases or raw HuggingFace IDs:
+
+```bash
+codedupes check ./src --model gte-modernbert-base
+codedupes check ./src --model c2llm-0.5b
+codedupes check ./src --model embeddinggemma-300m
+```
+
+Set task behavior explicitly:
+
+```bash
+codedupes check ./src --semantic-task semantic-similarity
+codedupes search ./src "parse json payload" --semantic-task code-retrieval
+```
+
 ## Override Semantic Instruction Prefix
 
-By default, C2LLM task-specific prefixes are applied automatically. Override them
-for experiments or custom retrieval behavior:
+By default, model-profile task prompts are applied automatically when needed. Override
+with a fixed prefix for experiments or custom retrieval behavior:
 
 ```bash
 codedupes check ./src --instruction-prefix "Represent this code for duplicate detection: "
@@ -105,7 +122,7 @@ print("cuda_device_count", torch.cuda.device_count())
 PY
 ```
 
-Pinned default semantic model revision:
+Model profiles and revision defaults:
 
 ```bash
 codedupes info
@@ -116,7 +133,7 @@ Semantic runtime defaults are documented in
 
 ## Threshold Tuning
 
-Use a single threshold for both traditional and semantic:
+Use a single threshold override for both traditional and semantic:
 
 ```bash
 codedupes check ./src --threshold 0.82
@@ -126,6 +143,12 @@ Set separate thresholds:
 
 ```bash
 codedupes check ./src --semantic-threshold 0.84 --traditional-threshold 0.75
+```
+
+Search applies threshold filtering before top-k:
+
+```bash
+codedupes search ./src "parse json payload" --semantic-threshold 0.9 --top-k 20
 ```
 
 ## Scope Control

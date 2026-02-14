@@ -9,6 +9,7 @@ Primary goal: keep hybrid output high-precision while preserving recall on known
 - Corpus: `test_fixtures/hybrid_tuning/crab_visibility`
 - Labels: `test_fixtures/hybrid_tuning/labels.json`
 - Sweep harness: `scripts/sweep_hybrid_gates.py`
+- Semantic threshold harness: `scripts/sweep_semantic_thresholds.py`
 
 This corpus is synthetic and tracked for reproducibility.
 
@@ -58,6 +59,22 @@ conda run --name inf python scripts/sweep_hybrid_gates.py \
 - By default it uses the same model/revision defaults as the CLI.
 - Keep runtime metadata (model, revision, dependency versions) when recording decisions.
 
+## Semantic threshold sweep (model profiles)
+
+Run the semantic threshold sweep for built-in model profiles:
+
+```bash
+CUDA_VISIBLE_DEVICES='' conda run --name inf python scripts/sweep_semantic_thresholds.py --top-n 10
+```
+
+Default report path:
+
+- `test_fixtures/hybrid_tuning/semantic_threshold_report.json`
+
+Selection policy is deterministic:
+
+- sort by `f1` (desc), `precision` (desc), `recall` (desc), `fp` (asc)
+
 ## Current defaults
 
 Current production gate defaults are defined in `src/codedupes/analyzer.py`:
@@ -65,3 +82,9 @@ Current production gate defaults are defined in `src/codedupes/analyzer.py`:
 - semantic-only minimum: `0.92`
 - weak identifier jaccard minimum: `0.20`
 - statement ratio minimum: `0.35`
+
+Current model-profile semantic thresholds are defined in `src/codedupes/semantic_profiles.py`:
+
+- `gte-modernbert-base`: `0.96`
+- `c2llm-0.5b`: `0.80`
+- `embeddinggemma-300m`: `0.86`

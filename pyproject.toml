@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "codedupes"
 dynamic = ["version"]
-description = "Detect duplicate/unused Python code via AST analysis and semantic embeddings (C2LLM)"
+description = "Detect duplicate/unused Python code via AST analysis and multi-model semantic embeddings"
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.11"

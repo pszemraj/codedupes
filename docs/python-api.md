@@ -12,8 +12,10 @@ from codedupes import analyze_directory
 
 result = analyze_directory(
     "./src",
-    semantic_threshold=0.82,
+    semantic_threshold=None,  # use model-profile default
     traditional_threshold=0.85,
+    model_name="gte-modernbert-base",
+    semantic_task="semantic-similarity",
 )
 
 for dup in result.hybrid_duplicates:
@@ -36,7 +38,9 @@ from codedupes import AnalyzerConfig, CodeAnalyzer
 
 config = AnalyzerConfig(
     jaccard_threshold=0.85,
-    semantic_threshold=0.82,
+    semantic_threshold=None,  # resolves from model profile
+    model_name="embeddinggemma-300m",
+    semantic_task="semantic-similarity",
     run_traditional=True,
     run_semantic=True,
     run_unused=True,
@@ -59,6 +63,8 @@ analyzer = CodeAnalyzer(
         run_traditional=False,
         run_semantic=True,
         run_unused=False,
+        model_name="gte-modernbert-base",
+        semantic_task="code-retrieval",
     )
 )
 
@@ -83,3 +89,4 @@ for unit, score in hits:
 
 - Call graph and unused detection are heuristic and conservative by default.
 - Semantic analysis may download model weights on first use.
+- Model aliases resolve to canonical IDs (`gte-modernbert-base`, `c2llm-0.5b`, `embeddinggemma-300m`).
