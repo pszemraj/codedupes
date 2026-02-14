@@ -11,6 +11,7 @@ from itertools import combinations
 from pathlib import Path
 
 from codedupes.models import CodeUnit, CodeUnitType, DuplicatePair
+from codedupes.pairs import ordered_pair_key
 
 logger = logging.getLogger(__name__)
 
@@ -117,10 +118,10 @@ def find_near_duplicates_jaccard(
 
 def _dedupe_duplicate_pairs(duplicates: list[DuplicatePair]) -> list[DuplicatePair]:
     """Deduplicate unordered duplicate pairs."""
-    seen = set()
+    seen: set[tuple[str, str]] = set()
     deduped: list[DuplicatePair] = []
     for dup in duplicates:
-        key = tuple(sorted((dup.unit_a.uid, dup.unit_b.uid)))
+        key = ordered_pair_key(dup.unit_a, dup.unit_b)
         if key in seen:
             continue
         seen.add(key)
@@ -343,9 +344,8 @@ def run_traditional_analysis(
     logger.info(f"Found {len(exact)} exact duplicates")
 
     near = find_near_duplicates_jaccard(units, threshold=jaccard_threshold)
-    exact_pairs = {(d.unit_a.uid, d.unit_b.uid) for d in exact}
-    exact_pairs |= {(d.unit_b.uid, d.unit_a.uid) for d in exact}
-    near = [d for d in near if (d.unit_a.uid, d.unit_b.uid) not in exact_pairs]
+    exact_pairs = {ordered_pair_key(d.unit_a, d.unit_b) for d in exact}
+    near = [d for d in near if ordered_pair_key(d.unit_a, d.unit_b) not in exact_pairs]
     logger.info(f"Found {len(near)} near duplicates (Jaccard)")
 
     unused = find_potentially_unused(units, strict_unused=strict_unused) if compute_unused else []

@@ -66,6 +66,10 @@ EMBEDDINGGEMMA_QUERY_PREFIXES: dict[SemanticTask, str] = {
     "clustering": "task: clustering | query: ",
 }
 EMBEDDINGGEMMA_DOCUMENT_PREFIX = "title: none | text: "
+_DEEPSPEED_REQUIRED_MESSAGE = (
+    "deepspeed is required for C2LLM models. "
+    "Install with `pip install codedupes[gpu]` or `pip install deepspeed`."
+)
 
 
 class SemanticBackendError(RuntimeError):
@@ -144,7 +148,8 @@ def _validate_version_range(
 
 def _check_c2llm_model_compatibility(model_name: str) -> None:
     """Check dependency compatibility for C2LLM-family models."""
-    if not _is_c2llm(model_name):
+    profile = resolve_model_profile(model_name)
+    if profile.family != "c2llm":
         return
 
     _validate_version_range(
@@ -157,11 +162,6 @@ def _check_c2llm_model_compatibility(model_name: str) -> None:
         _DEFAULT_ST_MIN,
         _DEFAULT_ST_MAX_EXCLUSIVE,
     )
-
-
-def _check_default_model_compatibility(model_name: str) -> None:
-    """Backward-compatible alias for compatibility checks."""
-    _check_c2llm_model_compatibility(model_name)
 
 
 def _is_known_semantic_backend_error(error: Exception) -> bool:
@@ -244,6 +244,22 @@ def _check_semantic_dependencies(model_name: str) -> None:
     _check_c2llm_model_compatibility(model_name)
 
 
+def _raise_missing_deepspeed(exc: ModuleNotFoundError) -> None:
+    """Raise a stable deepspeed dependency error for C2LLM-family loads."""
+    raise ModuleNotFoundError(_DEEPSPEED_REQUIRED_MESSAGE) from exc
+
+
+def _clear_cuda_cache() -> None:
+    """Best-effort CUDA cache clear after OOM retries."""
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception:
+        logger.debug("Failed to clear CUDA cache after OOM", exc_info=True)
+
+
 def get_code_unit_statement_count(unit: CodeUnit) -> int:
     """Get effective statement count for a unit, excluding docstring."""
     if not unit.source:
@@ -272,18 +288,6 @@ def get_code_unit_statement_count(unit: CodeUnit) -> int:
         body = body[1:]
 
     return len(body)
-
-
-def _is_c2llm(model_name: str) -> bool:
-    """Check if model is a C2LLM variant."""
-    profile = resolve_model_profile(model_name)
-    return profile.family == "c2llm"
-
-
-def _is_embeddinggemma(model_name: str) -> bool:
-    """Check if model belongs to EmbeddingGemma family."""
-    profile = resolve_model_profile(model_name)
-    return profile.family == "embeddinggemma"
 
 
 def _resolve_c2llm_torch_dtype():
@@ -360,10 +364,7 @@ def get_model(
                     "sentence-transformers is not installed. Install it with `pip install codedupes`."
                 ) from exc
             if exc.name == "deepspeed":
-                raise ModuleNotFoundError(
-                    "deepspeed is required for C2LLM models. "
-                    "Install with `pip install codedupes[gpu]` or `pip install deepspeed`."
-                ) from exc
+                _raise_missing_deepspeed(exc)
             raise
 
         st_kwargs: dict[str, object] = {
@@ -413,10 +414,7 @@ def get_model(
             _model = SentenceTransformer(resolved_model_name, **st_kwargs)
         except ModuleNotFoundError as exc:
             if exc.name == "deepspeed":
-                raise ModuleNotFoundError(
-                    "deepspeed is required for C2LLM models. "
-                    "Install with `pip install codedupes[gpu]` or `pip install deepspeed`."
-                ) from exc
+                _raise_missing_deepspeed(exc)
             raise
         except Exception as exc:
             if _is_known_semantic_backend_error(exc):
@@ -680,13 +678,7 @@ def compute_embeddings(
                     next_batch_size,
                 )
                 current_batch_size = next_batch_size
-                try:
-                    import torch
-
-                    if torch.cuda.is_available():
-                        torch.cuda.empty_cache()
-                except Exception:
-                    logger.debug("Failed to clear CUDA cache after OOM", exc_info=True)
+                _clear_cuda_cache()
                 continue
 
             if attempted_cpu_fallback:
@@ -699,13 +691,7 @@ def compute_embeddings(
             attempted_cpu_fallback = True
             if hasattr(model, "to"):
                 model.to("cpu")
-            try:
-                import torch
-
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
-            except Exception:
-                logger.debug("Failed to clear CUDA cache after OOM", exc_info=True)
+            _clear_cuda_cache()
             continue
         except Exception as e:
             if _is_known_semantic_backend_error(e):

@@ -10,9 +10,14 @@ from pathlib import Path
 from typing import Any
 
 from codedupes.analyzer import AnalyzerConfig, CodeAnalyzer
-from codedupes.models import CodeUnit, DuplicatePair
+from codedupes.models import DuplicatePair
 from codedupes.pairs import ordered_pair_key
 from codedupes.semantic_profiles import list_supported_models, resolve_model_profile
+
+try:
+    from .sweep_common import build_positive_pairs, metrics
+except ImportError:
+    from sweep_common import build_positive_pairs, metrics
 
 THRESHOLD_START = 0.70
 THRESHOLD_STOP = 0.96
@@ -52,55 +57,6 @@ def _threshold_grid() -> list[float]:
     return values
 
 
-def _parse_label_spec(spec: str) -> tuple[str, str]:
-    try:
-        filename, symbol = spec.split("::", 1)
-    except ValueError as exc:  # pragma: no cover - argument error path
-        msg = f"Invalid label spec {spec!r}; expected 'file.py::symbol_name'."
-        raise ValueError(msg) from exc
-    return filename, symbol
-
-
-def _resolve_label_unit(units: list[CodeUnit], spec: str) -> CodeUnit:
-    filename, symbol = _parse_label_spec(spec)
-    matches = [unit for unit in units if unit.file_path.name == filename and unit.name == symbol]
-    if len(matches) != 1:
-        msg = f"Label {spec!r} matched {len(matches)} units (expected exactly 1)."
-        raise ValueError(msg)
-    return matches[0]
-
-
-def _build_positive_pairs(units: list[CodeUnit], labels: dict[str, Any]) -> set[tuple[str, str]]:
-    groups = labels.get("positive_groups", [])
-    if not isinstance(groups, list) or not groups:
-        msg = "labels.json must define a non-empty 'positive_groups' list."
-        raise ValueError(msg)
-
-    positives: set[tuple[str, str]] = set()
-    for group in groups:
-        if not isinstance(group, list) or len(group) < 2:
-            msg = f"Invalid positive group {group!r}; expected a list with at least two specs."
-            raise ValueError(msg)
-        resolved = [_resolve_label_unit(units, spec) for spec in group]
-        for i, unit_a in enumerate(resolved):
-            for unit_b in resolved[i + 1 :]:
-                positives.add(ordered_pair_key(unit_a, unit_b))
-    return positives
-
-
-def _metrics(
-    predicted_pairs: set[tuple[str, str]],
-    positive_pairs: set[tuple[str, str]],
-) -> tuple[int, int, int, float, float, float]:
-    tp = len(predicted_pairs & positive_pairs)
-    fp = len(predicted_pairs - positive_pairs)
-    fn = len(positive_pairs - predicted_pairs)
-    precision = tp / (tp + fp) if tp + fp else 0.0
-    recall = tp / (tp + fn) if tp + fn else 0.0
-    f1 = (2 * precision * recall / (precision + recall)) if precision + recall else 0.0
-    return tp, fp, fn, precision, recall, f1
-
-
 def _evaluate_thresholds(
     duplicates: list[DuplicatePair],
     positive_pairs: set[tuple[str, str]],
@@ -114,7 +70,7 @@ def _evaluate_thresholds(
             for duplicate in duplicates
             if duplicate.similarity >= threshold
         }
-        tp, fp, fn, precision, recall, f1 = _metrics(predicted_pairs, positive_pairs)
+        tp, fp, fn, precision, recall, f1 = metrics(predicted_pairs, positive_pairs)
         rows.append(
             SweepRow(
                 threshold=threshold,
@@ -162,7 +118,7 @@ def _run_model_sweep(
     analyzer = CodeAnalyzer(config)
     result = analyzer.analyze(corpus_path)
 
-    positive_pairs = _build_positive_pairs(result.units, labels)
+    positive_pairs = build_positive_pairs(result.units, labels)
     rows = _evaluate_thresholds(
         result.semantic_duplicates,
         positive_pairs,

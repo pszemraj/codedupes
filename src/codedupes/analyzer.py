@@ -446,12 +446,8 @@ class CodeAnalyzer:
 
         from codedupes.semantic import find_similar_to_query
 
-        semantic_threshold = (
-            self._resolved_semantic_threshold
-            if self._resolved_semantic_threshold is not None
-            else get_default_semantic_threshold(self.config.model_name)
-        )
-        semantic_task = self._resolved_semantic_task or self.config.semantic_task
+        if self._resolved_semantic_threshold is None or self._resolved_semantic_task is None:
+            raise RuntimeError("Semantic configuration was not resolved; run analyze() first.")
 
         return find_similar_to_query(
             query,
@@ -462,8 +458,8 @@ class CodeAnalyzer:
             top_k=top_k,
             revision=self.config.model_revision,
             trust_remote_code=self.config.trust_remote_code,
-            threshold=semantic_threshold,
-            semantic_task=semantic_task,
+            threshold=self._resolved_semantic_threshold,
+            semantic_task=self._resolved_semantic_task,
         )
 
 

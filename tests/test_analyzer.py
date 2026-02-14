@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 from textwrap import dedent
 
@@ -32,6 +33,46 @@ def _make_unit(
         is_public=True,
         is_exported=False,
     )
+
+
+def _make_semantic_runner(
+    *,
+    duplicate_factory: Callable[[list[CodeUnit]], list[DuplicatePair]] | None = None,
+    capture: dict[str, object] | None = None,
+    capture_exclude_pairs: set[tuple[str, str]] | None = None,
+    error: Exception | None = None,
+) -> Callable[..., tuple[np.ndarray, list[DuplicatePair]]]:
+    """Build a reusable semantic-analysis test double."""
+
+    def fake_run_semantic(
+        units,
+        model_name="gte-modernbert-base",
+        instruction_prefix=None,
+        threshold=0.82,
+        exclude_pairs=None,
+        batch_size=32,
+        revision=None,
+        trust_remote_code=None,
+        semantic_task=None,
+    ):
+        if capture is not None:
+            capture["model_name"] = model_name
+            capture["instruction_prefix"] = instruction_prefix
+            capture["threshold"] = threshold
+            capture["exclude_pairs"] = exclude_pairs
+            capture["batch_size"] = batch_size
+            capture["revision"] = revision
+            capture["trust_remote_code"] = trust_remote_code
+            capture["semantic_task"] = semantic_task
+        if capture_exclude_pairs is not None:
+            capture_exclude_pairs.update(exclude_pairs or set())
+        if error is not None:
+            raise error
+
+        duplicates = duplicate_factory(units) if duplicate_factory is not None else []
+        return np.zeros((len(units), 2), dtype=np.float32), duplicates
+
+    return fake_run_semantic
 
 
 def test_all_duplicates_returns_raw_for_single_method_modes(tmp_path: Path) -> None:
@@ -172,23 +213,12 @@ def test_integration_on_mixed_project(tmp_path: Path) -> None:
 def test_analyze_directory_uses_auto_revision_for_custom_model(tmp_path: Path, monkeypatch) -> None:
     source = "def add_one(x):\n    return x + 1\n"
     project = create_project(tmp_path, source)
-    captured: dict[str, str | None] = {}
-
-    def fake_run_semantic(
-        units,
-        model_name="codefuse-ai/C2LLM-0.5B",
-        instruction_prefix=None,
-        threshold=0.82,
-        exclude_pairs=None,
-        batch_size=32,
-        revision=None,
-        trust_remote_code=None,
-    ):
-        captured["model_name"] = model_name
-        captured["revision"] = revision
-        return np.zeros((len(units), 2), dtype=np.float32), []
-
-    monkeypatch.setattr(analyzer_module, "run_semantic_analysis", fake_run_semantic)
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(
+        analyzer_module,
+        "run_semantic_analysis",
+        _make_semantic_runner(capture=captured),
+    )
 
     analyze_directory(
         project,
@@ -237,24 +267,22 @@ def test_combined_mode_preserves_near_dupes_for_semantic_confirmation(
             [],
         )
 
-    def fake_run_semantic(
-        units,
-        model_name="codefuse-ai/C2LLM-0.5B",
-        instruction_prefix=None,
-        threshold=0.82,
-        exclude_pairs=None,
-        batch_size=32,
-        revision=None,
-        trust_remote_code=None,
-    ):
-        captured_exclude_pairs.update(exclude_pairs or set())
-        _, b, c = units
-        return np.zeros((len(units), 2), dtype=np.float32), [
-            DuplicatePair(unit_a=b, unit_b=c, similarity=0.95, method="semantic")
-        ]
-
     monkeypatch.setattr(analyzer_module, "run_traditional_analysis", fake_traditional)
-    monkeypatch.setattr(analyzer_module, "run_semantic_analysis", fake_run_semantic)
+    monkeypatch.setattr(
+        analyzer_module,
+        "run_semantic_analysis",
+        _make_semantic_runner(
+            capture_exclude_pairs=captured_exclude_pairs,
+            duplicate_factory=lambda units: [
+                DuplicatePair(
+                    unit_a=units[1],
+                    unit_b=units[2],
+                    similarity=0.95,
+                    method="semantic",
+                )
+            ],
+        ),
+    )
 
     analyzer = CodeAnalyzer(
         AnalyzerConfig(
@@ -304,23 +332,14 @@ def test_short_functions_are_skipped_from_semantic(tmp_path: Path) -> None:
 def test_analyzer_resolves_profile_default_semantic_threshold(tmp_path: Path, monkeypatch) -> None:
     source = "def add_one(x):\n    return x + 1\n"
     project = create_project(tmp_path, source)
-    captured: dict[str, float] = {}
-
-    def fake_run_semantic(
-        units,
-        model_name="gte-modernbert-base",
-        instruction_prefix=None,
-        threshold=0.82,
-        exclude_pairs=None,
-        batch_size=32,
-        revision=None,
-        trust_remote_code=None,
-    ):
-        captured["threshold"] = threshold
-        return np.zeros((len(units), 2), dtype=np.float32), []
+    captured: dict[str, object] = {}
 
     monkeypatch.setattr(analyzer_module, "get_default_semantic_threshold", lambda _model: 0.77)
-    monkeypatch.setattr(analyzer_module, "run_semantic_analysis", fake_run_semantic)
+    monkeypatch.setattr(
+        analyzer_module,
+        "run_semantic_analysis",
+        _make_semantic_runner(capture=captured),
+    )
 
     analyzer = CodeAnalyzer(
         AnalyzerConfig(
@@ -350,22 +369,20 @@ def test_unused_semantic_pairs_are_filtered(tmp_path: Path, monkeypatch) -> None
     ).strip()
     project = create_project(tmp_path, source, module="pairs.py")
 
-    def fake_run_semantic(
-        units,
-        model_name="codefuse-ai/C2LLM-0.5B",
-        instruction_prefix=None,
-        threshold=0.82,
-        exclude_pairs=None,
-        batch_size=32,
-        revision=None,
-        trust_remote_code=None,
-    ):
-        a, b = units
-        return np.array([[0.0, 0.0]] * 2, dtype=np.float32), [
-            DuplicatePair(unit_a=a, unit_b=b, similarity=0.99, method="semantic")
-        ]
-
-    monkeypatch.setattr(analyzer_module, "run_semantic_analysis", fake_run_semantic)
+    monkeypatch.setattr(
+        analyzer_module,
+        "run_semantic_analysis",
+        _make_semantic_runner(
+            duplicate_factory=lambda units: [
+                DuplicatePair(
+                    unit_a=units[0],
+                    unit_b=units[1],
+                    similarity=0.99,
+                    method="semantic",
+                )
+            ],
+        ),
+    )
 
     analyzer = CodeAnalyzer(
         AnalyzerConfig(
@@ -390,20 +407,11 @@ def test_semantic_only_pre_excludes_exact_hash_pairs(tmp_path: Path, monkeypatch
 
     captured_exclude_pairs: set[tuple[str, str]] = set()
 
-    def fake_run_semantic(
-        units,
-        model_name="codefuse-ai/C2LLM-0.5B",
-        instruction_prefix=None,
-        threshold=0.82,
-        exclude_pairs=None,
-        batch_size=32,
-        revision=None,
-        trust_remote_code=None,
-    ):
-        captured_exclude_pairs.update(exclude_pairs or set())
-        return np.zeros((len(units), 2), dtype=np.float32), []
-
-    monkeypatch.setattr(analyzer_module, "run_semantic_analysis", fake_run_semantic)
+    monkeypatch.setattr(
+        analyzer_module,
+        "run_semantic_analysis",
+        _make_semantic_runner(capture_exclude_pairs=captured_exclude_pairs),
+    )
 
     analyzer = CodeAnalyzer(
         AnalyzerConfig(
@@ -423,10 +431,11 @@ def test_combined_mode_falls_back_on_runtime_semantic_error(tmp_path: Path, monk
     source = "def entry(x):\n    return x + 1\n"
     project = create_project(tmp_path, source)
 
-    def fake_run_semantic(*_args, **_kwargs):
-        raise RuntimeError("CUDA out of memory")
-
-    monkeypatch.setattr(analyzer_module, "run_semantic_analysis", fake_run_semantic)
+    monkeypatch.setattr(
+        analyzer_module,
+        "run_semantic_analysis",
+        _make_semantic_runner(error=RuntimeError("CUDA out of memory")),
+    )
 
     analyzer = CodeAnalyzer(
         AnalyzerConfig(
@@ -447,10 +456,11 @@ def test_semantic_only_fails_hard_on_runtime_semantic_error(tmp_path: Path, monk
     source = "def entry(x):\n    return x + 1\n"
     project = create_project(tmp_path, source)
 
-    def fake_run_semantic(*_args, **_kwargs):
-        raise RuntimeError("CUDA out of memory")
-
-    monkeypatch.setattr(analyzer_module, "run_semantic_analysis", fake_run_semantic)
+    monkeypatch.setattr(
+        analyzer_module,
+        "run_semantic_analysis",
+        _make_semantic_runner(error=RuntimeError("CUDA out of memory")),
+    )
 
     analyzer = CodeAnalyzer(
         AnalyzerConfig(
@@ -669,11 +679,12 @@ def test_mixed_mode_semantic_failure_still_builds_hybrid_from_traditional(
             [],
         )
 
-    def fake_run_semantic(*args, **kwargs):
-        raise SemanticBackendError("semantic backend mismatch")
-
     monkeypatch.setattr(analyzer_module, "run_traditional_analysis", fake_traditional)
-    monkeypatch.setattr(analyzer_module, "run_semantic_analysis", fake_run_semantic)
+    monkeypatch.setattr(
+        analyzer_module,
+        "run_semantic_analysis",
+        _make_semantic_runner(error=SemanticBackendError("semantic backend mismatch")),
+    )
 
     analyzer = CodeAnalyzer(
         AnalyzerConfig(
@@ -716,23 +727,21 @@ def test_single_method_modes_bypass_hybrid_synthesis(tmp_path: Path, monkeypatch
             [],
         )
 
-    def fake_run_semantic(
-        units,
-        model_name="codefuse-ai/C2LLM-0.5B",
-        instruction_prefix=None,
-        threshold=0.82,
-        exclude_pairs=None,
-        batch_size=32,
-        revision=None,
-        trust_remote_code=None,
-    ):
-        first, second = units[:2]
-        return np.zeros((len(units), 2), dtype=np.float32), [
-            DuplicatePair(unit_a=first, unit_b=second, similarity=0.96, method="semantic")
-        ]
-
     monkeypatch.setattr(analyzer_module, "run_traditional_analysis", fake_traditional)
-    monkeypatch.setattr(analyzer_module, "run_semantic_analysis", fake_run_semantic)
+    monkeypatch.setattr(
+        analyzer_module,
+        "run_semantic_analysis",
+        _make_semantic_runner(
+            duplicate_factory=lambda units: [
+                DuplicatePair(
+                    unit_a=units[0],
+                    unit_b=units[1],
+                    similarity=0.96,
+                    method="semantic",
+                )
+            ],
+        ),
+    )
 
     traditional_result = CodeAnalyzer(
         AnalyzerConfig(
@@ -810,10 +819,11 @@ def test_semantic_failures_fall_back_when_traditional_enabled(
     ).strip()
     project = create_project(tmp_path, source)
 
-    def fake_run_semantic(*args, **kwargs):
-        raise semantic_error
-
-    monkeypatch.setattr(analyzer_module, "run_semantic_analysis", fake_run_semantic)
+    monkeypatch.setattr(
+        analyzer_module,
+        "run_semantic_analysis",
+        _make_semantic_runner(error=semantic_error),
+    )
 
     analyzer = CodeAnalyzer(
         AnalyzerConfig(
@@ -843,10 +853,11 @@ def test_semantic_failures_raise_when_semantic_required(
     source = "def only_func():\n    return 1\n"
     project = create_project(tmp_path, source)
 
-    def fake_run_semantic(*args, **kwargs):
-        raise semantic_error
-
-    monkeypatch.setattr(analyzer_module, "run_semantic_analysis", fake_run_semantic)
+    monkeypatch.setattr(
+        analyzer_module,
+        "run_semantic_analysis",
+        _make_semantic_runner(error=semantic_error),
+    )
 
     analyzer = CodeAnalyzer(
         AnalyzerConfig(

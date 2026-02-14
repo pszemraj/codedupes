@@ -366,7 +366,7 @@ def test_get_model_keeps_explicit_revision_for_non_default_model(monkeypatch) ->
     assert kwargs["config_kwargs"]["revision"] == DEFAULT_C2LLM_REVISION
 
 
-def test_get_model_rejects_incompatible_default_model_versions(monkeypatch) -> None:
+def test_get_model_rejects_incompatible_c2llm_model_versions(monkeypatch) -> None:
     def fake_safe_package_version(package_name: str) -> str | None:
         fake_versions = {
             "transformers": "4.49.0",
@@ -380,7 +380,7 @@ def test_get_model_rejects_incompatible_default_model_versions(monkeypatch) -> N
     semantic.clear_model_cache()
 
     with pytest.raises(SemanticBackendError, match="Incompatible transformers version"):
-        semantic._check_default_model_compatibility("c2llm-0.5b")
+        semantic._check_c2llm_model_compatibility("c2llm-0.5b")
 
 
 def test_get_model_wraps_known_backend_error(monkeypatch) -> None:
