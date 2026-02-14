@@ -8,6 +8,16 @@
 
 This document is the primary usage reference.
 
+## Docs
+
+Detailed documentation is available under `docs/`:
+
+- `docs/index.md`
+- `docs/usage.md`
+- `docs/cli.md`
+- `docs/python-api.md`
+- `docs/output.md`
+
 ## Install
 
 ```bash
