@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from pathlib import Path
 
@@ -8,6 +9,7 @@ from click.testing import CliRunner
 
 from codedupes import cli
 from codedupes.models import AnalysisResult, CodeUnit, CodeUnitType, DuplicatePair
+from codedupes.semantic import SemanticBackendError
 
 
 def _build_unit(tmp_path: Path) -> CodeUnit:
@@ -98,6 +100,40 @@ def test_cli_no_private_option_check(monkeypatch, tmp_path):
     assert captured[0].include_private is False
 
 
+def test_cli_model_revision_and_trust_flags_pass_through(monkeypatch, tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+
+    captured = []
+
+    class DummyAnalyzer:
+        def __init__(self, config):
+            captured.append(config)
+
+        def analyze(self, _path):
+            return _build_result(tmp_path)
+
+        def search(self, query, top_k=10):
+            return []
+
+    monkeypatch.setattr(cli, "CodeAnalyzer", DummyAnalyzer)
+    runner = CliRunner()
+    result = runner.invoke(
+        cli.cli,
+        [
+            "check",
+            str(path),
+            "--model-revision",
+            "test-rev",
+            "--no-trust-remote-code",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert captured[0].model_revision == "test-rev"
+    assert captured[0].trust_remote_code is False
+
+
 def test_cli_requires_explicit_command(tmp_path):
     path = tmp_path / "sample.py"
     path.write_text("def entry():\n    return 1\n")
@@ -167,6 +203,46 @@ def test_cli_invalid_output_width(tmp_path):
     result = runner.invoke(cli.cli, ["check", str(path), "--output-width", "60"])
     assert result.exit_code == 2
     assert "must be >= 80" in result.output
+
+
+def test_cli_check_degrades_on_semantic_backend_error(monkeypatch, tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def first(x):\n    return x + 1\n\ndef second(y):\n    return y + 1\n")
+
+    from codedupes import analyzer as analyzer_module
+
+    def fake_run_semantic(*args, **kwargs):
+        raise SemanticBackendError("semantic backend mismatch")
+
+    monkeypatch.setattr(analyzer_module, "run_semantic_analysis", fake_run_semantic)
+
+    runner = CliRunner()
+    result = runner.invoke(cli.cli, ["check", str(path), "--min-lines", "0"])
+    assert result.exit_code == 1
+    assert "Semantic analysis unavailable" in result.output
+
+
+def test_cli_search_fails_on_semantic_backend_error(monkeypatch, tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry(x):\n    return x + 1\n")
+
+    from codedupes import analyzer as analyzer_module
+
+    def fake_run_semantic(*args, **kwargs):
+        raise SemanticBackendError("semantic backend mismatch")
+
+    monkeypatch.setattr(analyzer_module, "run_semantic_analysis", fake_run_semantic)
+
+    runner = CliRunner()
+    result = runner.invoke(cli.cli, ["search", str(path), "entry"])
+    assert result.exit_code == 1
+    assert "Error during search" in result.output
+
+
+def test_setup_logging_quiets_external_loggers() -> None:
+    cli.setup_logging(verbose=False)
+    for logger_name in cli._NOISY_EXTERNAL_LOGGERS:
+        assert logging.getLogger(logger_name).level == logging.WARNING
 
 
 def test_no_banned_runtime_practice() -> None:

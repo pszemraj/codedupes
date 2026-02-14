@@ -8,6 +8,7 @@ import pytest
 
 from codedupes.analyzer import AnalyzerConfig, CodeAnalyzer
 from codedupes.models import DuplicatePair
+from codedupes.semantic import SemanticBackendError
 from tests.conftest import build_two_function_source, create_project
 
 
@@ -150,6 +151,8 @@ def test_unused_semantic_pairs_are_filtered(tmp_path: Path, monkeypatch) -> None
         threshold=0.82,
         exclude_pairs=None,
         batch_size=32,
+        revision=None,
+        trust_remote_code=None,
     ):
         a, b = units
         return np.array([[0.0, 0.0]] * 2, dtype=np.float32), [
@@ -203,8 +206,15 @@ def test_empty_directory_analysis(tmp_path: Path) -> None:
     assert result.potentially_unused == []
 
 
-def test_semantic_missing_dependency_falls_back_when_traditional_enabled(
-    tmp_path: Path, monkeypatch
+@pytest.mark.parametrize(
+    "semantic_error",
+    [
+        ModuleNotFoundError("No module named 'sentence_transformers'"),
+        SemanticBackendError("semantic backend mismatch"),
+    ],
+)
+def test_semantic_failures_fall_back_when_traditional_enabled(
+    tmp_path: Path, monkeypatch, caplog, semantic_error
 ) -> None:
     source = dedent(
         """
@@ -220,7 +230,7 @@ def test_semantic_missing_dependency_falls_back_when_traditional_enabled(
     from codedupes import analyzer as analyzer_module
 
     def fake_run_semantic(*args, **kwargs):
-        raise ModuleNotFoundError("No module named 'sentence_transformers'")
+        raise semantic_error
 
     monkeypatch.setattr(analyzer_module, "run_semantic_analysis", fake_run_semantic)
 
@@ -235,6 +245,7 @@ def test_semantic_missing_dependency_falls_back_when_traditional_enabled(
     result = analyzer.analyze(project)
     assert len(result.units) == 2
     assert result.semantic_duplicates == []
+    assert "Retry with `codedupes check" in caplog.text
 
 
 def test_semantic_missing_dependency_raises_when_semantic_required(

@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import numpy as np
-from pathlib import Path
 import pytest
 import sentence_transformers
+from pathlib import Path
 
 from codedupes import semantic
+from codedupes.constants import DEFAULT_C2LLM_REVISION, DEFAULT_MODEL
 from codedupes.models import CodeUnit
 from codedupes.semantic import (
+    SemanticBackendError,
     get_code_unit_statement_count,
     find_similar_to_query,
     run_semantic_analysis,
@@ -118,7 +120,61 @@ def test_get_model_does_not_trust_remote_code_for_non_c2llm(monkeypatch) -> None
 
     semantic.get_model("sentence-transformers/all-MiniLM-L6-v2")
     assert len(calls) == 1
-    assert "trust_remote_code" not in calls[0]["kwargs"]
+    assert calls[0]["kwargs"]["trust_remote_code"] is False
+
+
+def test_get_model_passes_revision_and_trust_kwargs(monkeypatch) -> None:
+    calls: list[dict] = []
+
+    class FakeSentenceTransformer:
+        def __init__(self, *args, **kwargs):
+            calls.append({"args": args, "kwargs": kwargs})
+
+    monkeypatch.setattr(semantic, "_check_semantic_dependencies", lambda model_name: None)
+    monkeypatch.setattr(sentence_transformers, "SentenceTransformer", FakeSentenceTransformer)
+    semantic.clear_model_cache()
+
+    semantic.get_model(DEFAULT_MODEL, revision=DEFAULT_C2LLM_REVISION, trust_remote_code=True)
+
+    assert len(calls) == 1
+    kwargs = calls[0]["kwargs"]
+    assert kwargs["trust_remote_code"] is True
+    assert kwargs["revision"] == DEFAULT_C2LLM_REVISION
+    assert kwargs["model_kwargs"]["trust_remote_code"] is True
+    assert kwargs["model_kwargs"]["revision"] == DEFAULT_C2LLM_REVISION
+    assert kwargs["tokenizer_kwargs"]["trust_remote_code"] is True
+    assert kwargs["tokenizer_kwargs"]["revision"] == DEFAULT_C2LLM_REVISION
+    assert kwargs["config_kwargs"]["trust_remote_code"] is True
+    assert kwargs["config_kwargs"]["revision"] == DEFAULT_C2LLM_REVISION
+
+
+def test_get_model_rejects_incompatible_default_model_versions(monkeypatch) -> None:
+    def fake_safe_package_version(package_name: str) -> str | None:
+        fake_versions = {
+            "transformers": "4.49.0",
+            "sentence-transformers": "5.1.0",
+            "torch": "2.5.0",
+            "deepspeed": "0.16.0",
+        }
+        return fake_versions.get(package_name)
+
+    monkeypatch.setattr(semantic, "_safe_package_version", fake_safe_package_version)
+    semantic.clear_model_cache()
+
+    with pytest.raises(SemanticBackendError, match="Incompatible transformers version"):
+        semantic._check_default_model_compatibility(DEFAULT_MODEL)
+
+
+def test_get_model_wraps_known_backend_error(monkeypatch) -> None:
+    def fake_ctor(*args, **kwargs):
+        raise AttributeError("'C2LLMForEmbedding' object has no attribute 'all_tied_weights_keys'")
+
+    monkeypatch.setattr(semantic, "_check_semantic_dependencies", lambda model_name: None)
+    monkeypatch.setattr(sentence_transformers, "SentenceTransformer", fake_ctor)
+    semantic.clear_model_cache()
+
+    with pytest.raises(SemanticBackendError, match="Semantic backend failed"):
+        semantic.get_model(DEFAULT_MODEL, trust_remote_code=True)
 
 
 @pytest.mark.parametrize(
