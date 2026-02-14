@@ -70,18 +70,6 @@ codedupes info
 
 Prints version/model/config defaults.
 
-### Compatibility mode (legacy invocation retained)
-
-```bash
-codedupes <path> [options]
-```
-
-is retained as a compatibility mode and is equivalent to:
-
-```bash
-codedupes check <path> [options]
-```
-
 ## `check` options
 
 - `-t, --threshold`

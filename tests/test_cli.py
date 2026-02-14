@@ -89,7 +89,7 @@ def test_cli_json_output(monkeypatch, tmp_path, capsys):
     assert search_output["results"][0]["name"] == "entry"
 
 
-def test_cli_no_private_option_legacy(monkeypatch, tmp_path):
+def test_cli_no_private_option_check(monkeypatch, tmp_path):
     path = tmp_path / "sample.py"
     path.write_text("def entry():\n    return 1\n")
 
@@ -106,40 +106,26 @@ def test_cli_no_private_option_legacy(monkeypatch, tmp_path):
             return []
 
     monkeypatch.setattr(cli, "CodeAnalyzer", DummyAnalyzer)
+    monkeypatch.setattr(sys, "argv", ["codedupes", "check", str(path), "--no-private"])
+
+    assert cli.main() == 1
+    assert captured[0].include_private is False
+
+
+def test_cli_requires_explicit_command(monkeypatch, tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+
     monkeypatch.setattr(sys, "argv", ["codedupes", str(path), "--no-private"])
 
-    assert cli.main() == 1
-    assert captured[0].include_private is False
-
-
-def test_cli_no_private_option_legacy_option_first(monkeypatch, tmp_path):
-    path = tmp_path / "sample.py"
-    path.write_text("def entry():\n    return 1\n")
-
-    captured = []
-
-    class DummyAnalyzer:
-        def __init__(self, config):
-            captured.append(config)
-
-        def analyze(self, _path):
-            return _build_result(tmp_path)
-
-        def search(self, query, top_k=10):
-            return []
-
-    monkeypatch.setattr(cli, "CodeAnalyzer", DummyAnalyzer)
-    monkeypatch.setattr(sys, "argv", ["codedupes", "--no-private", str(path)])
-
-    assert cli.main() == 1
-    assert captured[0].include_private is False
+    assert cli.main() == 2
 
 
 def test_cli_invalid_threshold(monkeypatch, tmp_path, capsys):
     path = tmp_path / "sample.py"
     path.write_text("def entry():\n    return 1\n")
 
-    monkeypatch.setattr(sys, "argv", ["codedupes", str(path), "--threshold", "1.2"])
+    monkeypatch.setattr(sys, "argv", ["codedupes", "check", str(path), "--threshold", "1.2"])
     assert cli.main() == 1
     assert "threshold must be in [0.0, 1.0]" in capsys.readouterr().out
 

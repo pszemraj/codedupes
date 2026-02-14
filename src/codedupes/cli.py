@@ -21,10 +21,6 @@ from codedupes.models import CodeUnit, DuplicatePair
 console = Console()
 
 
-_COMMANDS = {"check", "search", "info"}
-_GLOBAL_FLAGS = {"-h", "--help", "--version"}
-
-
 def setup_logging(verbose: bool = False) -> None:
     """Configure logging with rich handler."""
     level = logging.DEBUG if verbose else logging.INFO
@@ -424,7 +420,7 @@ def _build_parser() -> argparse.ArgumentParser:
 Examples:
   codedupes check ./src --json
   codedupes search ./src \"sum numbers\" --top-k 5
-  codedupes ./src --semantic-only --threshold 0.8
+  codedupes check ./src --semantic-only --threshold 0.8
         """,
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
@@ -468,25 +464,11 @@ Examples:
     return parser
 
 
-def _normalize_legacy_argv(argv: list[str]) -> list[str]:
-    """Insert `check` for legacy invocation forms that omit an explicit command."""
-    if not argv:
-        return argv
-
-    if argv[0] in _COMMANDS or argv[0] in _GLOBAL_FLAGS:
-        return argv
-
-    if any(token in _COMMANDS for token in argv):
-        return argv
-
-    return ["check", *argv]
-
-
 def main() -> int:
     """Main CLI entrypoint."""
     parser = _build_parser()
 
-    argv = _normalize_legacy_argv(sys.argv[1:])
+    argv = sys.argv[1:]
 
     try:
         args = parser.parse_args(argv)

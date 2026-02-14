@@ -101,11 +101,3 @@ Disable unused detection:
 ```bash
 codedupes check ./src --no-unused
 ```
-
-## Legacy Invocation Compatibility
-
-`codedupes <path> [options]` is treated as:
-
-```bash
-codedupes check <path> [options]
-```

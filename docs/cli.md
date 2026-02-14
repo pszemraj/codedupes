@@ -63,20 +63,6 @@ Options:
 
 Print version and default settings.
 
-## Legacy Form
-
-You can call:
-
-```bash
-codedupes <path> [check options]
-```
-
-This is interpreted as:
-
-```bash
-codedupes check <path> [check options]
-```
-
 ## Global Behavior Notes
 
 - Threshold values must be in `[0.0, 1.0]`.
