@@ -10,8 +10,8 @@ from codedupes import cli
 from codedupes.models import AnalysisResult, CodeUnit, CodeUnitType, DuplicatePair
 
 
-def _build_result(tmp_path: Path) -> AnalysisResult:
-    unit = CodeUnit(
+def _build_unit(tmp_path: Path) -> CodeUnit:
+    return CodeUnit(
         name="entry",
         qualified_name="sample.entry",
         unit_type=CodeUnitType.FUNCTION,
@@ -23,6 +23,9 @@ def _build_result(tmp_path: Path) -> AnalysisResult:
         is_exported=False,
     )
 
+
+def _build_result(tmp_path: Path) -> AnalysisResult:
+    unit = _build_unit(tmp_path)
     duplicate = DuplicatePair(
         unit_a=unit,
         unit_b=unit,
@@ -36,21 +39,6 @@ def _build_result(tmp_path: Path) -> AnalysisResult:
         semantic_duplicates=[],
         potentially_unused=[unit],
     )
-
-
-def _build_units(tmp_path: Path) -> list[CodeUnit]:
-    unit = CodeUnit(
-        name="entry",
-        qualified_name="sample.entry",
-        unit_type=CodeUnitType.FUNCTION,
-        file_path=tmp_path / "sample.py",
-        lineno=1,
-        end_lineno=2,
-        source="def entry():\n    return 1",
-        is_public=True,
-        is_exported=False,
-    )
-    return [unit]
 
 
 def test_cli_json_output(monkeypatch, tmp_path):
@@ -67,7 +55,7 @@ def test_cli_json_output(monkeypatch, tmp_path):
             return _build_result(tmp_path)
 
         def search(self, query, top_k=10):
-            return [(_build_units(tmp_path)[0], 0.99)]
+            return [(_build_unit(tmp_path), 0.99)]
 
     monkeypatch.setattr(cli, "CodeAnalyzer", DummyAnalyzer)
     runner = CliRunner()

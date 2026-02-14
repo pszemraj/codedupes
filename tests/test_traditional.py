@@ -6,8 +6,8 @@ from textwrap import dedent
 from codedupes.traditional import (
     build_reference_graph,
     find_potentially_unused,
+    run_traditional_analysis,
 )
-from codedupes.traditional import run_traditional_analysis
 from tests.conftest import extract_units
 
 

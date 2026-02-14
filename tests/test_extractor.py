@@ -4,9 +4,8 @@ import ast
 from pathlib import Path
 from textwrap import dedent
 
-from codedupes.extractor import compute_ast_hash, compute_token_hash
+from codedupes.extractor import CodeExtractor, compute_ast_hash, compute_token_hash
 from codedupes.models import CodeUnitType
-from codedupes.extractor import CodeExtractor
 
 from tests.conftest import extract_units
 
