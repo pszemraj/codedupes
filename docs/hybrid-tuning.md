@@ -85,8 +85,4 @@ Current production gate defaults are defined in
 - statement ratio minimum: `0.35`
 
 Current model-profile semantic thresholds are defined in
-[`src/codedupes/semantic_profiles.py`](https://github.com/pszemraj/codedupes/blob/main/src/codedupes/semantic_profiles.py):
-
-- `gte-modernbert-base`: `0.96`
-- `c2llm-0.5b`: `0.80`
-- `embeddinggemma-300m`: `0.86`
+[docs/model-profiles.md](https://github.com/pszemraj/codedupes/blob/main/docs/model-profiles.md).

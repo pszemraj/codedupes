@@ -6,6 +6,8 @@ CLI flag defaults are documented in
 documented in [docs/output.md](https://github.com/pszemraj/codedupes/blob/main/docs/output.md).
 Analysis behavior defaults are documented in
 [docs/analysis-defaults.md](https://github.com/pszemraj/codedupes/blob/main/docs/analysis-defaults.md).
+Semantic model aliases/profile defaults/task behavior are documented in
+[docs/model-profiles.md](https://github.com/pszemraj/codedupes/blob/main/docs/model-profiles.md).
 
 ## Quick Start
 
@@ -97,4 +99,5 @@ for unit, score in hits:
 - Semantic candidate defaults and tiny-traditional filtering defaults are defined in
   [docs/analysis-defaults.md](https://github.com/pszemraj/codedupes/blob/main/docs/analysis-defaults.md).
 - Semantic analysis may download model weights on first use.
-- Model aliases resolve to canonical IDs (`gte-modernbert-base`, `c2llm-0.5b`, `embeddinggemma-300m`).
+- Model alias and profile-resolution behavior is documented in
+  [docs/model-profiles.md](https://github.com/pszemraj/codedupes/blob/main/docs/model-profiles.md).

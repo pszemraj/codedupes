@@ -5,6 +5,8 @@ For JSON schemas and exit-code semantics, see
 [docs/output.md](https://github.com/pszemraj/codedupes/blob/main/docs/output.md) (the source of truth for output behavior).
 For analysis-behavior defaults (semantic candidate scope, tiny-traditional filtering, hybrid gates), see
 [docs/analysis-defaults.md](https://github.com/pszemraj/codedupes/blob/main/docs/analysis-defaults.md).
+For semantic model aliases/profile defaults/task behavior, see
+[docs/model-profiles.md](https://github.com/pszemraj/codedupes/blob/main/docs/model-profiles.md).
 
 ## Commands
 
@@ -105,8 +107,8 @@ Print version and default settings.
 - `--semantic-only` and `--traditional-only` bypass hybrid synthesis and show raw method outputs
 - `search` applies semantic threshold filtering before returning `top-k` matches
 
-Built-in model aliases and model-profile runtime defaults are documented in
-[docs/install.md](https://github.com/pszemraj/codedupes/blob/main/docs/install.md).
+Built-in model aliases and model-profile defaults are documented in
+[docs/model-profiles.md](https://github.com/pszemraj/codedupes/blob/main/docs/model-profiles.md).
 You can also inspect effective model defaults in your environment via:
 
 ```bash

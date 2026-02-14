@@ -7,6 +7,8 @@ For CLI command syntax and option validation, see
 [docs/cli.md](https://github.com/pszemraj/codedupes/blob/main/docs/cli.md).
 For model/runtime installation defaults, see
 [docs/install.md](https://github.com/pszemraj/codedupes/blob/main/docs/install.md).
+For semantic model-profile defaults and task behavior, see
+[docs/model-profiles.md](https://github.com/pszemraj/codedupes/blob/main/docs/model-profiles.md).
 
 ## Semantic Candidate Defaults
 

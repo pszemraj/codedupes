@@ -1,12 +1,14 @@
 # Usage Guide
 
 This guide focuses on practical workflows.
-Install and runtime defaults are defined in
+Install and dependency setup are defined in
 [docs/install.md](https://github.com/pszemraj/codedupes/blob/main/docs/install.md).
 Flag defaults and validation rules are defined in
 [docs/cli.md](https://github.com/pszemraj/codedupes/blob/main/docs/cli.md).
 Analysis behavior defaults are defined in
 [docs/analysis-defaults.md](https://github.com/pszemraj/codedupes/blob/main/docs/analysis-defaults.md).
+Semantic model aliases/profile defaults/task behavior are defined in
+[docs/model-profiles.md](https://github.com/pszemraj/codedupes/blob/main/docs/model-profiles.md).
 JSON schema and exit codes are defined in
 [docs/output.md](https://github.com/pszemraj/codedupes/blob/main/docs/output.md).
 
@@ -131,7 +133,7 @@ codedupes info
 ```
 
 Semantic runtime defaults are documented in
-[docs/install.md](https://github.com/pszemraj/codedupes/blob/main/docs/install.md).
+[docs/model-profiles.md](https://github.com/pszemraj/codedupes/blob/main/docs/model-profiles.md).
 
 ## Threshold Tuning
 
