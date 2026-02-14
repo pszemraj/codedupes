@@ -33,7 +33,7 @@ codedupes check ./src --show-all
 
 Options:
 
-- `-t, --threshold <float>`: Shared threshold override for semantic and traditional checks
+- `-t, --threshold <float>`: Shared threshold override for semantic and traditional checks (in single-method modes, it applies to the active method only)
 - `--semantic-threshold <float>`: Override semantic threshold only
 - `--traditional-threshold <float>`: Override traditional (Jaccard) threshold only
 - `--semantic-task <name>`: Semantic task mode for duplicate detection embeddings (default `semantic-similarity`)

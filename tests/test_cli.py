@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 from click.testing import CliRunner
+import pytest
 
 from codedupes import cli
 from codedupes.models import (
@@ -290,6 +291,49 @@ def test_cli_semantic_only_shared_threshold_does_not_set_traditional_threshold(
     assert captured[-1].jaccard_threshold == cli.DEFAULT_TRADITIONAL_THRESHOLD
 
 
+def test_cli_traditional_only_omits_semantic_defaults(monkeypatch, tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+
+    captured = []
+    patch_cli_analyzer(
+        monkeypatch,
+        cli,
+        analyze_result=lambda: _build_result(tmp_path),
+        captured_configs=captured,
+    )
+    runner = CliRunner()
+    result = runner.invoke(cli.cli, ["check", str(path), "--traditional-only"])
+    assert result.exit_code == 1
+    assert captured[-1].run_semantic is False
+    assert captured[-1].semantic_threshold is None
+    assert captured[-1].semantic_task is None
+
+
+def test_cli_traditional_only_shared_threshold_sets_only_traditional_threshold(
+    monkeypatch, tmp_path
+):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+
+    captured = []
+    patch_cli_analyzer(
+        monkeypatch,
+        cli,
+        analyze_result=lambda: _build_result(tmp_path),
+        captured_configs=captured,
+    )
+    runner = CliRunner()
+    result = runner.invoke(
+        cli.cli,
+        ["check", str(path), "--traditional-only", "--threshold", "0.9"],
+    )
+    assert result.exit_code == 1
+    assert captured[-1].jaccard_threshold == 0.9
+    assert captured[-1].semantic_threshold is None
+    assert captured[-1].semantic_task is None
+
+
 def test_cli_search_defaults_to_code_retrieval_task(monkeypatch, tmp_path):
     path = tmp_path / "sample.py"
     path.write_text("def entry():\n    return 1\n")
@@ -463,6 +507,38 @@ def test_cli_rejects_semantic_flags_with_traditional_only(tmp_path):
     assert "Cannot use --semantic-task" in result.output
 
 
+@pytest.mark.parametrize(
+    ("extra_args", "expected_option"),
+    [
+        (["--semantic-threshold", "0.9"], "--semantic-threshold"),
+        (["--semantic-task", "classification"], "--semantic-task"),
+        (["--instruction-prefix", "prefix"], "--instruction-prefix"),
+        (["--model", "sentence-transformers/all-MiniLM-L6-v2"], "--model"),
+        (["--model-revision", "rev1"], "--model-revision"),
+        (["--trust-remote-code"], "--trust-remote-code"),
+        (["--no-trust-remote-code"], "--no-trust-remote-code"),
+        (["--batch-size", "4"], "--batch-size"),
+        (["--min-lines", "1"], "--min-lines"),
+        (["--semantic-unit-type", "class"], "--semantic-unit-type"),
+        (["--suppress-test-semantic"], "--suppress-test-semantic"),
+    ],
+)
+def test_cli_rejects_all_semantic_mode_flags_with_traditional_only(
+    tmp_path, extra_args, expected_option
+):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli.cli,
+        ["check", str(path), "--traditional-only", *extra_args],
+    )
+
+    assert result.exit_code == 2
+    assert f"Cannot use {expected_option}" in result.output
+
+
 def test_cli_rejects_traditional_flags_with_semantic_only(tmp_path):
     path = tmp_path / "sample.py"
     path.write_text("def entry():\n    return 1\n")
@@ -481,6 +557,31 @@ def test_cli_rejects_traditional_flags_with_semantic_only(tmp_path):
 
     assert result.exit_code == 2
     assert "Cannot use --traditional-threshold" in result.output
+
+
+@pytest.mark.parametrize(
+    ("extra_args", "expected_option"),
+    [
+        (["--traditional-threshold", "0.8"], "--traditional-threshold"),
+        (["--no-tiny-filter"], "--no-tiny-filter"),
+        (["--tiny-cutoff", "4"], "--tiny-cutoff"),
+        (["--tiny-near-jaccard-min", "0.95"], "--tiny-near-jaccard-min"),
+    ],
+)
+def test_cli_rejects_all_traditional_mode_flags_with_semantic_only(
+    tmp_path, extra_args, expected_option
+):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli.cli,
+        ["check", str(path), "--semantic-only", *extra_args],
+    )
+
+    assert result.exit_code == 2
+    assert f"Cannot use {expected_option}" in result.output
 
 
 def test_cli_rejects_strict_unused_with_no_unused(tmp_path):
@@ -511,6 +612,36 @@ def test_cli_search_rejects_missing_path(tmp_path):
     result = runner.invoke(cli.cli, ["search", str(missing), "entry"])
     assert result.exit_code == 2
     assert "does not exist" in result.output
+
+
+def test_cli_check_surfaces_analyzer_config_validation_error(monkeypatch, tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+
+    def _raise_config_error(**_kwargs):
+        raise ValueError("invalid config")
+
+    monkeypatch.setattr(cli, "AnalyzerConfig", _raise_config_error)
+
+    runner = CliRunner()
+    result = runner.invoke(cli.cli, ["check", str(path)])
+    assert result.exit_code == 2
+    assert "invalid config" in result.output
+
+
+def test_cli_search_surfaces_analyzer_config_validation_error(monkeypatch, tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+
+    def _raise_config_error(**_kwargs):
+        raise ValueError("invalid config")
+
+    monkeypatch.setattr(cli, "AnalyzerConfig", _raise_config_error)
+
+    runner = CliRunner()
+    result = runner.invoke(cli.cli, ["search", str(path), "entry"])
+    assert result.exit_code == 2
+    assert "invalid config" in result.output
 
 
 def test_cli_help_and_version():

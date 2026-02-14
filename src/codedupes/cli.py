@@ -987,6 +987,7 @@ def check_command(
             "model",
             "model_revision",
             "trust_remote_code",
+            "no_trust_remote_code",
             "batch_size",
             "min_lines",
             "semantic_unit_type",
@@ -1042,34 +1043,39 @@ def check_command(
         traditional_threshold,
         model_name=model,
     )
+    semantic_task_value: str | None = semantic_task
     if semantic_only:
         traditional_thresh = DEFAULT_TRADITIONAL_THRESHOLD
     if traditional_only:
-        semantic_thresh = get_default_semantic_threshold(model)
+        semantic_thresh = None
+        semantic_task_value = None
 
-    config = AnalyzerConfig(
-        exclude_patterns=list(exclude) or None,
-        include_private=not no_private,
-        jaccard_threshold=traditional_thresh,
-        semantic_threshold=semantic_thresh,
-        model_name=model,
-        semantic_task=semantic_task,
-        instruction_prefix=instruction_prefix,
-        model_revision=model_revision,
-        trust_remote_code=resolved_trust_remote_code,
-        run_traditional=not semantic_only,
-        run_semantic=not traditional_only,
-        run_unused=not no_unused,
-        min_semantic_lines=min_lines,
-        semantic_unit_types=semantic_unit_type,
-        filter_tiny_traditional=not no_tiny_filter,
-        tiny_unit_statement_cutoff=tiny_cutoff,
-        tiny_near_jaccard_min=tiny_near_jaccard_min,
-        strict_unused=strict_unused,
-        suppress_test_semantic_matches=suppress_test_semantic,
-        batch_size=batch_size,
-        include_stubs=include_stubs,
-    )
+    try:
+        config = AnalyzerConfig(
+            exclude_patterns=list(exclude) or None,
+            include_private=not no_private,
+            jaccard_threshold=traditional_thresh,
+            semantic_threshold=semantic_thresh,
+            model_name=model,
+            semantic_task=semantic_task_value,
+            instruction_prefix=instruction_prefix,
+            model_revision=model_revision,
+            trust_remote_code=resolved_trust_remote_code,
+            run_traditional=not semantic_only,
+            run_semantic=not traditional_only,
+            run_unused=not no_unused,
+            min_semantic_lines=min_lines,
+            semantic_unit_types=semantic_unit_type,
+            filter_tiny_traditional=not no_tiny_filter,
+            tiny_unit_statement_cutoff=tiny_cutoff,
+            tiny_near_jaccard_min=tiny_near_jaccard_min,
+            strict_unused=strict_unused,
+            suppress_test_semantic_matches=suppress_test_semantic,
+            batch_size=batch_size,
+            include_stubs=include_stubs,
+        )
+    except ValueError as exc:
+        raise click.UsageError(str(exc)) from exc
 
     try:
         try:
@@ -1250,26 +1256,29 @@ def search_command(
     else:
         setup_logging(verbose)
 
-    config = AnalyzerConfig(
-        exclude_patterns=list(exclude) or None,
-        include_private=not no_private,
-        semantic_threshold=_resolve_search_threshold(
-            threshold,
-            semantic_threshold,
+    try:
+        config = AnalyzerConfig(
+            exclude_patterns=list(exclude) or None,
+            include_private=not no_private,
+            semantic_threshold=_resolve_search_threshold(
+                threshold,
+                semantic_threshold,
+                model_name=model,
+            ),
             model_name=model,
-        ),
-        model_name=model,
-        semantic_task=semantic_task,
-        instruction_prefix=instruction_prefix,
-        model_revision=model_revision,
-        trust_remote_code=resolved_trust_remote_code,
-        run_traditional=False,
-        run_unused=False,
-        min_semantic_lines=min_lines,
-        semantic_unit_types=semantic_unit_type,
-        batch_size=batch_size,
-        include_stubs=include_stubs,
-    )
+            semantic_task=semantic_task,
+            instruction_prefix=instruction_prefix,
+            model_revision=model_revision,
+            trust_remote_code=resolved_trust_remote_code,
+            run_traditional=False,
+            run_unused=False,
+            min_semantic_lines=min_lines,
+            semantic_unit_types=semantic_unit_type,
+            batch_size=batch_size,
+            include_stubs=include_stubs,
+        )
+    except ValueError as exc:
+        raise click.UsageError(str(exc)) from exc
 
     try:
         try:
