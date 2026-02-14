@@ -19,21 +19,7 @@ def find_exact_ast_duplicates(units: list[CodeUnit]) -> list[DuplicatePair]:
     Find exact structural duplicates via normalized AST hash.
     These are functionally identical regardless of variable naming.
     """
-    by_hash: dict[str, list[CodeUnit]] = defaultdict(list)
-
-    for unit in units:
-        if unit._ast_hash:
-            by_hash[unit._ast_hash].append(unit)
-
-    duplicates = []
-    for hash_val, group in by_hash.items():
-        if len(group) > 1:
-            for a, b in combinations(group, 2):
-                duplicates.append(
-                    DuplicatePair(unit_a=a, unit_b=b, similarity=1.0, method="ast_hash")
-                )
-
-    return duplicates
+    return _find_exact_duplicates(units, "_ast_hash", "ast_hash")
 
 
 def find_exact_token_duplicates(units: list[CodeUnit]) -> list[DuplicatePair]:
@@ -41,19 +27,26 @@ def find_exact_token_duplicates(units: list[CodeUnit]) -> list[DuplicatePair]:
     Find duplicates via token hash.
     Catches reformatted code that has identical token sequence.
     """
+    return _find_exact_duplicates(units, "_token_hash", "token_hash")
+
+
+def _find_exact_duplicates(
+    units: list[CodeUnit], hash_attr: str, method: str
+) -> list[DuplicatePair]:
+    """Find duplicate pairs by grouping units by a stored hash attribute."""
     by_hash: dict[str, list[CodeUnit]] = defaultdict(list)
 
     for unit in units:
-        if unit._token_hash:
-            by_hash[unit._token_hash].append(unit)
+        value = getattr(unit, hash_attr, None)
+        if value:
+            by_hash[value].append(unit)
 
     duplicates = []
-    for hash_val, group in by_hash.items():
-        if len(group) > 1:
-            for a, b in combinations(group, 2):
-                duplicates.append(
-                    DuplicatePair(unit_a=a, unit_b=b, similarity=1.0, method="token_hash")
-                )
+    for group in by_hash.values():
+        if len(group) <= 1:
+            continue
+        for a, b in combinations(group, 2):
+            duplicates.append(DuplicatePair(unit_a=a, unit_b=b, similarity=1.0, method=method))
 
     return duplicates
 

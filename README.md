@@ -1,10 +1,19 @@
 # codedupes
 
-`codedupes` detects duplicate and potentially unused Python code units using two complementary
-approaches:
+`codedupes` detects duplicate and potentially unused Python code units.
 
-- Traditional AST/token analysis for exact and near duplicates.
-- Semantic embedding similarity for functionally similar code blocks.
+This `README.md` is the **primary reference** for CLI usage, defaults, and output format.
+
+Detection modes:
+
+- Traditional AST/token analysis for exact and near-duplicate matching.
+- Semantic embedding similarity for functional similarity.
+
+## Primary behavior
+
+- By default, both traditional and semantic analyses run.
+- Potentially-unused candidates are reported unless `--no-unused` is passed.
+- Parse errors are reported as warnings and do not fail the run.
 
 ## Install
 
@@ -23,6 +32,37 @@ codedupes ./src --semantic-only --threshold 0.9
 codedupes ./src --traditional-only --no-unused
 ```
 
+## CLI usage reference
+
+```bash
+codedupes <path> [options]
+```
+
+Supported options:
+
+- `-t, --threshold`
+  - shared threshold for both similarity methods (default `0.85`).
+- `--semantic-threshold`
+  - semantic-only override.
+- `--traditional-threshold`
+  - Jaccard-only override.
+- `--semantic-only`
+  - run only semantic analysis.
+- `--traditional-only`
+  - run only AST/token analysis.
+- `--no-unused`
+  - skip unused-code reporting.
+- `--no-private`
+  - omit underscore-prefixed code units.
+- `--model`
+  - Hugging Face embedding model for semantic mode.
+- `--json`
+  - emit machine-readable JSON.
+- `--show-source`
+  - print duplicate source snippets.
+- `-v, --verbose`
+  - verbose logs.
+
 ## API
 
 ```python
@@ -37,34 +77,14 @@ for unit in result.potentially_unused:
     print("Unused:", unit.qualified_name)
 ```
 
-## CLI options
-
-- `--threshold`
-  - Shared similarity default for both methods.
-- `--semantic-threshold`
-  - Override only semantic similarity.
-- `--traditional-threshold`
-  - Override only Jaccard near-duplicate threshold.
-- `--semantic-only`
-- `--traditional-only`
-- `--no-unused`
-  - Skip potentially-unused detection.
-- `--no-private`
-  - Exclude `_prefixed` functions, methods, and classes.
-- `--json`
-  - Machine-readable output.
-- `--show-source`
-  - Show snippets for duplicate findings.
-
 ## Output interpretation
 
 - `exact_duplicates`: AST/hash-based detections (`ast_hash`, `token_hash`).
 - `semantic_duplicates`: cosine similarity of code embeddings.
 - `potentially_unused`: units with no detected references and not likely public API.
+- Findings are heuristic and should be manually reviewed.
 
-## Notes
+## Configuration notes
 
-- `findings` are heuristics, especially unused detection.
-- For CI or deterministic tests, prefer mocking `codedupes.semantic.get_model` so no external model
-  download is required.
-- Parse failures are ignored per file with warnings; they do not stop analysis.
+- For deterministic CI tests, mock semantic model loading (`codedupes.semantic.get_model`) to avoid downloading remote weights.
+- Exit status is `0` when no findings are detected, `1` when any exact/semantic duplicate or unused unit is found, and non-zero on errors.

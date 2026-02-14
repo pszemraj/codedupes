@@ -1,19 +1,11 @@
 from __future__ import annotations
 
 from pathlib import Path
-from textwrap import dedent
 
 import pytest
 
 from codedupes.analyzer import AnalyzerConfig, CodeAnalyzer
-
-
-def _write_project(tmp_path: Path, source: str) -> Path:
-    path = tmp_path / "src"
-    path.mkdir()
-    (path / "__init__.py").write_text("")
-    (path / "mod.py").write_text(dedent(source).strip())
-    return path
+from tests.conftest import create_project
 
 
 def test_run_unused_with_semantic_only(tmp_path: Path) -> None:
@@ -25,7 +17,7 @@ def test_run_unused_with_semantic_only(tmp_path: Path) -> None:
         return 2
     """
 
-    project = _write_project(tmp_path, source)
+    project = create_project(tmp_path, source)
     analyzer = CodeAnalyzer(
         AnalyzerConfig(run_traditional=False, run_semantic=False, run_unused=True)
     )
@@ -45,7 +37,7 @@ def test_traditional_without_unused_detection(tmp_path: Path) -> None:
         return 2
     """
 
-    project = _write_project(tmp_path, source)
+    project = create_project(tmp_path, source)
     analyzer = CodeAnalyzer(
         AnalyzerConfig(
             run_traditional=True,
@@ -61,7 +53,7 @@ def test_traditional_without_unused_detection(tmp_path: Path) -> None:
 
 def test_search_requires_embeddings(tmp_path: Path) -> None:
     source = "def entry():\n    return 1\n"
-    _write_project(tmp_path, source)
+    create_project(tmp_path, source)
     project = tmp_path / "src"
     analyzer = CodeAnalyzer(
         AnalyzerConfig(run_semantic=False, run_traditional=False, run_unused=False)

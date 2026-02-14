@@ -276,19 +276,21 @@ class CodeExtractor:
         for unit in visitor.units:
             yield unit
 
-    def _should_emit_function(self, name: str, is_method: bool) -> bool:
+    def _should_emit_function(self, name: str, _is_method: bool) -> bool:
         """Respect private-function filtering."""
-        if is_method:
-            is_private = name.startswith("_") and not name.startswith("__")
-            return self.include_private or not is_private
-        is_private = name.startswith("_") and not name.startswith("__")
-        return self.include_private or not is_private
+        if self._is_private_name(name):
+            return self.include_private
+        return True
+
+    @staticmethod
+    def _is_private_name(name: str) -> bool:
+        return name.startswith("_") and not name.startswith("__")
 
     def _should_emit_class(self, name: str) -> bool:
         """Respect private-class filtering."""
         if self.include_private:
             return True
-        return not (name.startswith("_") and not name.startswith("__"))
+        return not self._is_private_name(name)
 
     def _qualified_name(
         self,

@@ -1,13 +1,12 @@
 from __future__ import annotations
 
+import numpy as np
 from pathlib import Path
 from textwrap import dedent
 
-import numpy as np
-
-from codedupes.extractor import CodeExtractor
 from codedupes import semantic
 from codedupes.semantic import find_similar_to_query, run_semantic_analysis
+from tests.conftest import extract_units
 
 
 class FakeModel:
@@ -39,10 +38,7 @@ def _extract_units(tmp_path: Path) -> list:
             return x + 2
         """
     ).strip()
-    path = tmp_path / "sample.py"
-    path.write_text(source)
-    extractor = CodeExtractor(tmp_path, exclude_patterns=[], include_private=True)
-    return list(extractor.extract_from_file(path))
+    return extract_units(tmp_path, source, include_private=True, exclude_patterns=[])
 
 
 def test_run_semantic_analysis_with_mock_model(tmp_path, monkeypatch):

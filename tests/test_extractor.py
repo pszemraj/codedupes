@@ -4,8 +4,10 @@ import ast
 from pathlib import Path
 from textwrap import dedent
 
-from codedupes.extractor import CodeExtractor, compute_ast_hash
+from codedupes.extractor import compute_ast_hash
 from codedupes.models import CodeUnitType
+
+from tests.conftest import extract_units
 
 
 def test_nested_scope_extraction_and_private_filtering(tmp_path: Path) -> None:
@@ -33,11 +35,7 @@ def test_nested_scope_extraction_and_private_filtering(tmp_path: Path) -> None:
         """
     ).strip()
 
-    source = tmp_path / "sample.py"
-    source.write_text(code)
-
-    extractor = CodeExtractor(tmp_path, exclude_patterns=[], include_private=False)
-    units = list(extractor.extract_all())
+    units = extract_units(tmp_path, code, include_private=False)
     names = {unit.qualified_name: unit.unit_type for unit in units}
 
     assert names["sample.top_level"] == CodeUnitType.FUNCTION

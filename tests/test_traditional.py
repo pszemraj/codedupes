@@ -3,17 +3,11 @@ from __future__ import annotations
 from pathlib import Path
 from textwrap import dedent
 
-from codedupes.extractor import CodeExtractor, compute_token_hash
-from codedupes.traditional import run_traditional_analysis
-from codedupes.traditional import find_potentially_unused
+from codedupes.extractor import compute_token_hash
 from codedupes.traditional import build_reference_graph
-
-
-def _extract_units(tmp_path: Path, source: str) -> list:
-    file_path = tmp_path / "sample.py"
-    file_path.write_text(source)
-    extractor = CodeExtractor(tmp_path, exclude_patterns=[], include_private=False)
-    return list(extractor.extract_from_file(file_path))
+from codedupes.traditional import find_potentially_unused
+from codedupes.traditional import run_traditional_analysis
+from tests.conftest import extract_units
 
 
 def test_exact_duplicates_via_ast_hash(tmp_path: Path) -> None:
@@ -26,7 +20,7 @@ def test_exact_duplicates_via_ast_hash(tmp_path: Path) -> None:
             return x + y
         """
     ).strip()
-    units = _extract_units(tmp_path, source)
+    units = extract_units(tmp_path, source, include_private=False)
 
     exact, near, _ = run_traditional_analysis(units, jaccard_threshold=0.85)
 
@@ -49,7 +43,7 @@ def test_near_duplicates_threshold_boundary(tmp_path: Path) -> None:
             return b + 2
         """
     ).strip()
-    units = _extract_units(tmp_path, source)
+    units = extract_units(tmp_path, source, include_private=False)
 
     exact_low, near_low, _ = run_traditional_analysis(units, jaccard_threshold=0.3)
     exact_high, near_high, _ = run_traditional_analysis(units, jaccard_threshold=0.95)
@@ -80,7 +74,7 @@ def test_alias_aware_reference_graph(tmp_path: Path) -> None:
             return 0
         """
     ).strip()
-    units = _extract_units(tmp_path, source)
+    units = extract_units(tmp_path, source, include_private=False)
     build_reference_graph(units)
 
     unused = find_potentially_unused(units)
