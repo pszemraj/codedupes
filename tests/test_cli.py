@@ -316,6 +316,14 @@ def test_cli_requires_explicit_command(tmp_path):
     assert result.exit_code == 2
 
 
+def test_cli_check_rejects_missing_path(tmp_path):
+    missing = tmp_path / "missing.py"
+    runner = CliRunner()
+    result = runner.invoke(cli.cli, ["check", str(missing)])
+    assert result.exit_code == 2
+    assert "does not exist" in result.output
+
+
 def test_cli_invalid_threshold(tmp_path):
     path = tmp_path / "sample.py"
     path.write_text("def entry():\n    return 1\n")
@@ -399,6 +407,14 @@ def test_cli_info_exit_zero():
     assert result.exit_code == 0
     assert "codedupes" in result.output.lower()
     assert "built-in semantic model aliases" in result.output.lower()
+
+
+def test_cli_search_rejects_missing_path(tmp_path):
+    missing = tmp_path / "missing.py"
+    runner = CliRunner()
+    result = runner.invoke(cli.cli, ["search", str(missing), "entry"])
+    assert result.exit_code == 2
+    assert "does not exist" in result.output
 
 
 def test_cli_help_and_version():

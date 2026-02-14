@@ -717,7 +717,7 @@ def cli() -> None:
 
 
 @cli.command("check", help="Run duplicate + unused analysis")
-@click.argument("path", type=click.Path(path_type=Path))
+@click.argument("path", type=click.Path(path_type=Path, exists=True))
 @click.option(
     "-t",
     "--threshold",
@@ -1019,7 +1019,7 @@ def check_command(
 
 
 @cli.command("search", help="Search for semantically similar code")
-@click.argument("path", type=click.Path(path_type=Path))
+@click.argument("path", type=click.Path(path_type=Path, exists=True))
 @click.argument("query")
 @click.option(
     "--top-k",
