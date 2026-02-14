@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 from textwrap import dedent
+from typing import Any, Callable
 
 from codedupes.extractor import CodeExtractor
-from codedupes.models import CodeUnit
+from codedupes.models import AnalysisResult, CodeUnit
 
 
 def write_source_file(tmp_path: Path, source: str, filename: str = "sample.py") -> Path:
@@ -71,3 +72,31 @@ def extract_arithmetic_units(
         include_private=include_private,
         exclude_patterns=exclude_patterns,
     )
+
+
+def patch_cli_analyzer(
+    monkeypatch: Any,
+    cli_module: Any,
+    *,
+    analyze_result: AnalysisResult | Callable[[], AnalysisResult],
+    search_results: (
+        list[tuple[CodeUnit, float]] | Callable[[str, int], list[tuple[CodeUnit, float]]] | None
+    ) = None,
+    captured_configs: list[Any] | None = None,
+) -> None:
+    """Patch CLI analyzer construction with a configurable test double."""
+
+    class DummyAnalyzer:
+        def __init__(self, config: Any) -> None:
+            if captured_configs is not None:
+                captured_configs.append(config)
+
+        def analyze(self, _path: Path) -> AnalysisResult:
+            return analyze_result() if callable(analyze_result) else analyze_result
+
+        def search(self, query: str, top_k: int = 10) -> list[tuple[CodeUnit, float]]:
+            if callable(search_results):
+                return search_results(query, top_k)
+            return [] if search_results is None else search_results
+
+    monkeypatch.setattr(cli_module, "CodeAnalyzer", DummyAnalyzer)

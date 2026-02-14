@@ -17,6 +17,7 @@ from codedupes.models import (
     HybridDuplicate,
 )
 from codedupes.semantic import SemanticBackendError
+from tests.conftest import patch_cli_analyzer
 
 
 def _build_unit(tmp_path: Path) -> CodeUnit:
@@ -59,23 +60,31 @@ def _build_result(tmp_path: Path) -> AnalysisResult:
     )
 
 
+def _raise_semantic_backend_error(*_args, **_kwargs):
+    raise SemanticBackendError("semantic backend mismatch")
+
+
+def _build_result_with_semantic_duplicate(tmp_path: Path) -> AnalysisResult:
+    result = _build_result(tmp_path)
+    unit = _build_unit(tmp_path)
+    result.semantic_duplicates = [
+        DuplicatePair(unit_a=unit, unit_b=unit, similarity=0.95, method="semantic")
+    ]
+    return result
+
+
 def test_cli_json_output_hybrid_default(monkeypatch, tmp_path):
     path = tmp_path / "sample.py"
     path.write_text("def entry():\n    return 1\n")
 
     captured = []
-
-    class DummyAnalyzer:
-        def __init__(self, config):
-            captured.append(config)
-
-        def analyze(self, _path):
-            return _build_result(tmp_path)
-
-        def search(self, query, top_k=10):
-            return [(_build_unit(tmp_path), 0.99)]
-
-    monkeypatch.setattr(cli, "CodeAnalyzer", DummyAnalyzer)
+    patch_cli_analyzer(
+        monkeypatch,
+        cli,
+        analyze_result=lambda: _build_result(tmp_path),
+        search_results=[(_build_unit(tmp_path), 0.99)],
+        captured_configs=captured,
+    )
     runner = CliRunner()
 
     result = runner.invoke(cli.cli, ["check", str(path), "--json"])
@@ -101,22 +110,11 @@ def test_cli_json_show_all_includes_raw_sections(monkeypatch, tmp_path):
     path = tmp_path / "sample.py"
     path.write_text("def entry():\n    return 1\n")
 
-    class DummyAnalyzer:
-        def __init__(self, _config):
-            pass
-
-        def analyze(self, _path):
-            result = _build_result(tmp_path)
-            unit = _build_unit(tmp_path)
-            result.semantic_duplicates = [
-                DuplicatePair(unit_a=unit, unit_b=unit, similarity=0.95, method="semantic")
-            ]
-            return result
-
-        def search(self, query, top_k=10):
-            return []
-
-    monkeypatch.setattr(cli, "CodeAnalyzer", DummyAnalyzer)
+    patch_cli_analyzer(
+        monkeypatch,
+        cli,
+        analyze_result=lambda: _build_result_with_semantic_duplicate(tmp_path),
+    )
     runner = CliRunner()
     result = runner.invoke(cli.cli, ["check", str(path), "--json", "--show-all"])
     assert result.exit_code == 1
@@ -130,18 +128,12 @@ def test_cli_no_private_option_check(monkeypatch, tmp_path):
     path.write_text("def entry():\n    return 1\n")
 
     captured = []
-
-    class DummyAnalyzer:
-        def __init__(self, config):
-            captured.append(config)
-
-        def analyze(self, _path):
-            return _build_result(tmp_path)
-
-        def search(self, query, top_k=10):
-            return []
-
-    monkeypatch.setattr(cli, "CodeAnalyzer", DummyAnalyzer)
+    patch_cli_analyzer(
+        monkeypatch,
+        cli,
+        analyze_result=lambda: _build_result(tmp_path),
+        captured_configs=captured,
+    )
     runner = CliRunner()
     result = runner.invoke(cli.cli, ["check", str(path), "--no-private"])
     assert result.exit_code == 1
@@ -153,18 +145,12 @@ def test_cli_model_semantic_flags_pass_through(monkeypatch, tmp_path):
     path.write_text("def entry():\n    return 1\n")
 
     captured = []
-
-    class DummyAnalyzer:
-        def __init__(self, config):
-            captured.append(config)
-
-        def analyze(self, _path):
-            return _build_result(tmp_path)
-
-        def search(self, query, top_k=10):
-            return []
-
-    monkeypatch.setattr(cli, "CodeAnalyzer", DummyAnalyzer)
+    patch_cli_analyzer(
+        monkeypatch,
+        cli,
+        analyze_result=lambda: _build_result(tmp_path),
+        captured_configs=captured,
+    )
     runner = CliRunner()
     result = runner.invoke(
         cli.cli,
@@ -244,22 +230,11 @@ def test_cli_output_width_option(monkeypatch, tmp_path):
     path = tmp_path / "sample.py"
     path.write_text("def entry():\n    return 1\n")
 
-    class DummyAnalyzer:
-        def __init__(self, _config):
-            pass
-
-        def analyze(self, _path):
-            result = _build_result(tmp_path)
-            unit = _build_unit(tmp_path)
-            result.semantic_duplicates = [
-                DuplicatePair(unit_a=unit, unit_b=unit, similarity=0.95, method="semantic")
-            ]
-            return result
-
-        def search(self, query, top_k=10):
-            return []
-
-    monkeypatch.setattr(cli, "CodeAnalyzer", DummyAnalyzer)
+    patch_cli_analyzer(
+        monkeypatch,
+        cli,
+        analyze_result=lambda: _build_result_with_semantic_duplicate(tmp_path),
+    )
 
     runner = CliRunner()
     result = runner.invoke(cli.cli, ["check", str(path), "--output-width", "200"])
@@ -272,22 +247,11 @@ def test_cli_show_all_prints_raw_sections(monkeypatch, tmp_path):
     path = tmp_path / "sample.py"
     path.write_text("def entry():\n    return 1\n")
 
-    class DummyAnalyzer:
-        def __init__(self, _config):
-            pass
-
-        def analyze(self, _path):
-            result = _build_result(tmp_path)
-            unit = _build_unit(tmp_path)
-            result.semantic_duplicates = [
-                DuplicatePair(unit_a=unit, unit_b=unit, similarity=0.95, method="semantic")
-            ]
-            return result
-
-        def search(self, query, top_k=10):
-            return []
-
-    monkeypatch.setattr(cli, "CodeAnalyzer", DummyAnalyzer)
+    patch_cli_analyzer(
+        monkeypatch,
+        cli,
+        analyze_result=lambda: _build_result_with_semantic_duplicate(tmp_path),
+    )
     runner = CliRunner()
     result = runner.invoke(cli.cli, ["check", str(path), "--show-all"])
     assert result.exit_code == 1
@@ -311,10 +275,7 @@ def test_cli_check_degrades_on_semantic_backend_error(monkeypatch, tmp_path):
 
     from codedupes import analyzer as analyzer_module
 
-    def fake_run_semantic(*args, **kwargs):
-        raise SemanticBackendError("semantic backend mismatch")
-
-    monkeypatch.setattr(analyzer_module, "run_semantic_analysis", fake_run_semantic)
+    monkeypatch.setattr(analyzer_module, "run_semantic_analysis", _raise_semantic_backend_error)
 
     runner = CliRunner()
     result = runner.invoke(cli.cli, ["check", str(path), "--min-lines", "0"])
@@ -328,10 +289,7 @@ def test_cli_search_fails_on_semantic_backend_error(monkeypatch, tmp_path):
 
     from codedupes import analyzer as analyzer_module
 
-    def fake_run_semantic(*args, **kwargs):
-        raise SemanticBackendError("semantic backend mismatch")
-
-    monkeypatch.setattr(analyzer_module, "run_semantic_analysis", fake_run_semantic)
+    monkeypatch.setattr(analyzer_module, "run_semantic_analysis", _raise_semantic_backend_error)
 
     runner = CliRunner()
     result = runner.invoke(cli.cli, ["search", str(path), "entry"])
@@ -344,25 +302,18 @@ def test_cli_combined_exit_code_ignores_raw_filtered_findings(monkeypatch, tmp_p
     path.write_text("def entry():\n    return 1\n")
     unit = _build_unit(tmp_path)
     duplicate = DuplicatePair(unit_a=unit, unit_b=unit, similarity=1.0, method="jaccard")
-
-    class DummyAnalyzer:
-        def __init__(self, _config):
-            pass
-
-        def analyze(self, _path):
-            return AnalysisResult(
-                units=[unit],
-                traditional_duplicates=[duplicate],
-                semantic_duplicates=[],
-                hybrid_duplicates=[],
-                potentially_unused=[],
-                filtered_raw_duplicates=1,
-            )
-
-        def search(self, query, top_k=10):
-            return []
-
-    monkeypatch.setattr(cli, "CodeAnalyzer", DummyAnalyzer)
+    patch_cli_analyzer(
+        monkeypatch,
+        cli,
+        analyze_result=AnalysisResult(
+            units=[unit],
+            traditional_duplicates=[duplicate],
+            semantic_duplicates=[],
+            hybrid_duplicates=[],
+            potentially_unused=[],
+            filtered_raw_duplicates=1,
+        ),
+    )
 
     runner = CliRunner()
     result = runner.invoke(cli.cli, ["check", str(path)])
@@ -374,25 +325,18 @@ def test_cli_semantic_only_uses_raw_findings_for_exit(monkeypatch, tmp_path):
     path.write_text("def entry():\n    return 1\n")
     unit = _build_unit(tmp_path)
     duplicate = DuplicatePair(unit_a=unit, unit_b=unit, similarity=0.95, method="semantic")
-
-    class DummyAnalyzer:
-        def __init__(self, _config):
-            pass
-
-        def analyze(self, _path):
-            return AnalysisResult(
-                units=[unit],
-                traditional_duplicates=[],
-                semantic_duplicates=[duplicate],
-                hybrid_duplicates=[],
-                potentially_unused=[],
-                filtered_raw_duplicates=0,
-            )
-
-        def search(self, query, top_k=10):
-            return []
-
-    monkeypatch.setattr(cli, "CodeAnalyzer", DummyAnalyzer)
+    patch_cli_analyzer(
+        monkeypatch,
+        cli,
+        analyze_result=AnalysisResult(
+            units=[unit],
+            traditional_duplicates=[],
+            semantic_duplicates=[duplicate],
+            hybrid_duplicates=[],
+            potentially_unused=[],
+            filtered_raw_duplicates=0,
+        ),
+    )
 
     runner = CliRunner()
     result = runner.invoke(cli.cli, ["check", str(path), "--semantic-only"])
@@ -410,17 +354,7 @@ def test_main_propagates_check_exit_code(monkeypatch, tmp_path):
     path = tmp_path / "sample.py"
     path.write_text("def entry():\n    return 1\n")
 
-    class DummyAnalyzer:
-        def __init__(self, _config):
-            pass
-
-        def analyze(self, _path):
-            return _build_result(tmp_path)
-
-        def search(self, query, top_k=10):
-            return []
-
-    monkeypatch.setattr(cli, "CodeAnalyzer", DummyAnalyzer)
+    patch_cli_analyzer(monkeypatch, cli, analyze_result=lambda: _build_result(tmp_path))
     monkeypatch.setattr(sys, "argv", ["codedupes", "check", str(path), "--json"])
 
     assert cli.main() == 1

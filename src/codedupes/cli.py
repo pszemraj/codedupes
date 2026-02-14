@@ -6,7 +6,7 @@ import json
 import logging
 import sys
 from pathlib import Path
-from typing import Any, Callable, Literal
+from typing import Any, Callable, Literal, cast
 
 import click
 from rich.console import Console
@@ -279,24 +279,95 @@ def print_search_json(query: str, results: list[tuple[CodeUnit, float]]) -> None
     print(json.dumps(payload, indent=2, sort_keys=True))
 
 
-def _build_duplicates_table() -> Table:
+def _build_duplicates_table(*, hybrid: bool = False) -> Table:
     table = Table(show_header=True, header_style="bold")
-    table.add_column("Similarity", style="green", width=10, no_wrap=True)
-    table.add_column("Unit A", style="cyan", no_wrap=True)
-    table.add_column("Unit B", style="cyan", no_wrap=True)
-    table.add_column("Method", style="dim", no_wrap=True)
+    if hybrid:
+        table.add_column("Confidence", style="green", width=10, no_wrap=True)
+        table.add_column("Tier", style="magenta", no_wrap=True)
+        table.add_column("Semantic", style="green", width=10, no_wrap=True)
+        table.add_column("Jaccard", style="green", width=10, no_wrap=True)
+        table.add_column("Unit A", style="cyan", no_wrap=True)
+        table.add_column("Unit B", style="cyan", no_wrap=True)
+    else:
+        table.add_column("Similarity", style="green", width=10, no_wrap=True)
+        table.add_column("Unit A", style="cyan", no_wrap=True)
+        table.add_column("Unit B", style="cyan", no_wrap=True)
+        table.add_column("Method", style="dim", no_wrap=True)
     return table
 
 
-def _build_hybrid_duplicates_table() -> Table:
-    table = Table(show_header=True, header_style="bold")
-    table.add_column("Confidence", style="green", width=10, no_wrap=True)
-    table.add_column("Tier", style="magenta", no_wrap=True)
-    table.add_column("Semantic", style="green", width=10, no_wrap=True)
-    table.add_column("Jaccard", style="green", width=10, no_wrap=True)
-    table.add_column("Unit A", style="cyan", no_wrap=True)
-    table.add_column("Unit B", style="cyan", no_wrap=True)
-    return table
+def _print_source_panels(unit_a: CodeUnit, unit_b: CodeUnit) -> None:
+    console.print(
+        Panel(
+            Syntax(truncate_source(unit_a.source), "python", theme="monokai"),
+            title=f"[cyan]{unit_a.qualified_name}[/cyan]",
+            border_style="dim",
+        )
+    )
+    console.print(
+        Panel(
+            Syntax(truncate_source(unit_b.source), "python", theme="monokai"),
+            title=f"[cyan]{unit_b.qualified_name}[/cyan]",
+            border_style="dim",
+        )
+    )
+
+
+def _print_duplicate_table(
+    duplicates: list[DuplicatePair] | list[HybridDuplicate],
+    *,
+    title: str,
+    show_source: bool,
+    max_items: int,
+    hybrid: bool,
+) -> None:
+    """Render duplicate pairs in either raw or hybrid layout."""
+    if not duplicates:
+        return
+
+    console.print(f"\n[bold yellow]{title}[/bold yellow] ({len(duplicates)} pairs)")
+    table = _build_duplicates_table(hybrid=hybrid)
+
+    for duplicate in duplicates[:max_items]:
+        if hybrid:
+            pair = cast(HybridDuplicate, duplicate)
+            semantic = (
+                f"{pair.semantic_similarity:.2%}" if pair.semantic_similarity is not None else "-"
+            )
+            jaccard = (
+                f"{pair.jaccard_similarity:.2%}" if pair.jaccard_similarity is not None else "-"
+            )
+            table.add_row(
+                f"{pair.confidence:.2%}",
+                pair.tier,
+                semantic,
+                jaccard,
+                f"{pair.unit_a.name}\n[dim]{format_location(pair.unit_a)}[/dim]",
+                f"{pair.unit_b.name}\n[dim]{format_location(pair.unit_b)}[/dim]",
+            )
+            unit_a = pair.unit_a
+            unit_b = pair.unit_b
+        else:
+            pair = cast(DuplicatePair, duplicate)
+            table.add_row(
+                f"{pair.similarity:.2%}",
+                f"{pair.unit_a.name}\n[dim]{format_location(pair.unit_a)}[/dim]",
+                f"{pair.unit_b.name}\n[dim]{format_location(pair.unit_b)}[/dim]",
+                pair.method,
+            )
+            unit_a = pair.unit_a
+            unit_b = pair.unit_b
+
+        if show_source:
+            console.print(table)
+            _print_source_panels(unit_a, unit_b)
+            table = _build_duplicates_table(hybrid=hybrid)
+
+    if not show_source:
+        console.print(table)
+
+    if len(duplicates) > max_items:
+        console.print(f"[dim]... and {len(duplicates) - max_items} more[/dim]")
 
 
 def print_duplicates(
@@ -306,44 +377,13 @@ def print_duplicates(
     max_items: int = 20,
 ) -> None:
     """Print duplicate pairs in a table."""
-    if not duplicates:
-        return
-
-    console.print(f"\n[bold yellow]{title}[/bold yellow] ({len(duplicates)} pairs)")
-
-    table = _build_duplicates_table()
-
-    for duplicate in duplicates[:max_items]:
-        table.add_row(
-            f"{duplicate.similarity:.2%}",
-            f"{duplicate.unit_a.name}\n[dim]{format_location(duplicate.unit_a)}[/dim]",
-            f"{duplicate.unit_b.name}\n[dim]{format_location(duplicate.unit_b)}[/dim]",
-            duplicate.method,
-        )
-
-        if show_source:
-            console.print(table)
-            console.print(
-                Panel(
-                    Syntax(truncate_source(duplicate.unit_a.source), "python", theme="monokai"),
-                    title=f"[cyan]{duplicate.unit_a.qualified_name}[/cyan]",
-                    border_style="dim",
-                )
-            )
-            console.print(
-                Panel(
-                    Syntax(truncate_source(duplicate.unit_b.source), "python", theme="monokai"),
-                    title=f"[cyan]{duplicate.unit_b.qualified_name}[/cyan]",
-                    border_style="dim",
-                )
-            )
-            table = _build_duplicates_table()
-
-    if not show_source:
-        console.print(table)
-
-    if len(duplicates) > max_items:
-        console.print(f"[dim]... and {len(duplicates) - max_items} more[/dim]")
+    _print_duplicate_table(
+        duplicates,
+        title=title,
+        show_source=show_source,
+        max_items=max_items,
+        hybrid=False,
+    )
 
 
 def print_hybrid_duplicates(
@@ -352,55 +392,13 @@ def print_hybrid_duplicates(
     max_items: int = 20,
 ) -> None:
     """Print synthesized hybrid duplicate pairs."""
-    if not duplicates:
-        return
-
-    console.print(f"\n[bold yellow]Hybrid Duplicates[/bold yellow] ({len(duplicates)} pairs)")
-
-    table = _build_hybrid_duplicates_table()
-    for duplicate in duplicates[:max_items]:
-        semantic = (
-            f"{duplicate.semantic_similarity:.2%}"
-            if duplicate.semantic_similarity is not None
-            else "-"
-        )
-        jaccard = (
-            f"{duplicate.jaccard_similarity:.2%}"
-            if duplicate.jaccard_similarity is not None
-            else "-"
-        )
-        table.add_row(
-            f"{duplicate.confidence:.2%}",
-            duplicate.tier,
-            semantic,
-            jaccard,
-            f"{duplicate.unit_a.name}\n[dim]{format_location(duplicate.unit_a)}[/dim]",
-            f"{duplicate.unit_b.name}\n[dim]{format_location(duplicate.unit_b)}[/dim]",
-        )
-
-        if show_source:
-            console.print(table)
-            console.print(
-                Panel(
-                    Syntax(truncate_source(duplicate.unit_a.source), "python", theme="monokai"),
-                    title=f"[cyan]{duplicate.unit_a.qualified_name}[/cyan]",
-                    border_style="dim",
-                )
-            )
-            console.print(
-                Panel(
-                    Syntax(truncate_source(duplicate.unit_b.source), "python", theme="monokai"),
-                    title=f"[cyan]{duplicate.unit_b.qualified_name}[/cyan]",
-                    border_style="dim",
-                )
-            )
-            table = _build_hybrid_duplicates_table()
-
-    if not show_source:
-        console.print(table)
-
-    if len(duplicates) > max_items:
-        console.print(f"[dim]... and {len(duplicates) - max_items} more[/dim]")
+    _print_duplicate_table(
+        duplicates,
+        title="Hybrid Duplicates",
+        show_source=show_source,
+        max_items=max_items,
+        hybrid=True,
+    )
 
 
 def print_unused(
