@@ -341,7 +341,53 @@ def test_semantic_only_pre_excludes_exact_hash_pairs(tmp_path: Path, monkeypatch
 
     result = analyzer.analyze(project)
     assert result.semantic_duplicates == []
-    assert captured_exclude_pairs
+    assert not captured_exclude_pairs
+
+
+def test_combined_mode_falls_back_on_runtime_semantic_error(tmp_path: Path, monkeypatch) -> None:
+    source = "def entry(x):\n    return x + 1\n"
+    project = create_project(tmp_path, source)
+
+    def fake_run_semantic(*_args, **_kwargs):
+        raise RuntimeError("CUDA out of memory")
+
+    monkeypatch.setattr(analyzer_module, "run_semantic_analysis", fake_run_semantic)
+
+    analyzer = CodeAnalyzer(
+        AnalyzerConfig(
+            run_traditional=True,
+            run_semantic=True,
+            run_unused=False,
+            min_semantic_lines=0,
+        )
+    )
+
+    result = analyzer.analyze(project)
+    assert result.traditional_duplicates == []
+    assert result.semantic_duplicates == []
+    assert result.potentially_unused == []
+
+
+def test_semantic_only_fails_hard_on_runtime_semantic_error(tmp_path: Path, monkeypatch) -> None:
+    source = "def entry(x):\n    return x + 1\n"
+    project = create_project(tmp_path, source)
+
+    def fake_run_semantic(*_args, **_kwargs):
+        raise RuntimeError("CUDA out of memory")
+
+    monkeypatch.setattr(analyzer_module, "run_semantic_analysis", fake_run_semantic)
+
+    analyzer = CodeAnalyzer(
+        AnalyzerConfig(
+            run_traditional=False,
+            run_semantic=True,
+            run_unused=False,
+            min_semantic_lines=0,
+        )
+    )
+
+    with pytest.raises(RuntimeError):
+        analyzer.analyze(project)
 
 
 def test_suppress_test_semantic_matches_filters_test_named_pairs(

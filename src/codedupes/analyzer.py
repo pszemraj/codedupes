@@ -320,14 +320,17 @@ class CodeAnalyzer:
             ]
             self._semantic_units = semantic_candidates
 
-            exclude: set[tuple[str, str]] = {
-                _pair_key(duplicate.unit_a, duplicate.unit_b)
-                for duplicate in traditional_duplicates
-                if duplicate.method in {"ast_hash", "token_hash"}
-            }
-            # Keep near-duplicate pairs out of exclusion so semantic scoring can confirm
-            # traditional evidence and enable hybrid_confirmed scoring.
-            exclude.update(_build_exact_hash_exclusions(semantic_candidates))
+            exclude: set[tuple[str, str]] = set()
+
+            if self.config.run_traditional:
+                exclude = {
+                    _pair_key(duplicate.unit_a, duplicate.unit_b)
+                    for duplicate in traditional_duplicates
+                    if duplicate.method in {"ast_hash", "token_hash"}
+                }
+                # Keep near-duplicate pairs out of exclusion so semantic scoring can confirm
+                # traditional evidence and enable hybrid_confirmed scoring.
+                exclude.update(_build_exact_hash_exclusions(semantic_candidates))
 
             try:
                 self._embeddings, semantic_duplicates = run_semantic_analysis(
@@ -340,7 +343,7 @@ class CodeAnalyzer:
                     revision=self.config.model_revision,
                     trust_remote_code=self.config.trust_remote_code,
                 )
-            except (ModuleNotFoundError, SemanticBackendError) as exc:
+            except (ModuleNotFoundError, SemanticBackendError, RuntimeError) as exc:
                 # If semantic is the only duplicate-detection method requested,
                 # fail hard instead of silently degrading to unused-only output.
                 if not self.config.run_traditional:
