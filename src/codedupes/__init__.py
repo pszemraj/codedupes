@@ -10,15 +10,15 @@ Example:
 
     result = analyze_directory("./src")
 
-    for dup in result.semantic_duplicates:
-        print(f"{dup.unit_a.name} ~ {dup.unit_b.name} ({dup.similarity:.0%})")
+    for dup in result.hybrid_duplicates:
+        print(f"{dup.unit_a.name} ~ {dup.unit_b.name} ({dup.confidence:.0%}, {dup.tier})")
 
     for unused in result.potentially_unused:
         print(f"Unused: {unused.qualified_name}")
 """
 
 from .analyzer import AnalyzerConfig, CodeAnalyzer, analyze_directory
-from .models import AnalysisResult, CodeUnit, CodeUnitType, DuplicatePair
+from .models import AnalysisResult, CodeUnit, CodeUnitType, DuplicatePair, HybridDuplicate
 
 __version__ = "0.2.0"
 
@@ -29,5 +29,6 @@ __all__ = [
     "CodeUnit",
     "CodeUnitType",
     "DuplicatePair",
+    "HybridDuplicate",
     "analyze_directory",
 ]

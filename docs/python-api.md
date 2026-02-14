@@ -11,11 +11,14 @@ result = analyze_directory(
     traditional_threshold=0.85,
 )
 
-for dup in result.exact_duplicates:
-    print(dup.unit_a.qualified_name, "<->", dup.unit_b.qualified_name, dup.method)
-
-for dup in result.semantic_duplicates:
-    print(dup.unit_a.qualified_name, "<->", dup.unit_b.qualified_name, dup.similarity)
+for dup in result.hybrid_duplicates:
+    print(
+        dup.unit_a.qualified_name,
+        "<->",
+        dup.unit_b.qualified_name,
+        dup.tier,
+        f"{dup.confidence:.2f}",
+    )
 
 for unit in result.potentially_unused:
     print("Unused:", unit.qualified_name)
@@ -64,8 +67,9 @@ for unit, score in hits:
 ## Key Result Types
 
 - `AnalysisResult.units`: extracted functions, methods, and classes
-- `AnalysisResult.exact_duplicates`: exact and near-traditional duplicates
-- `AnalysisResult.semantic_duplicates`: embedding-similarity duplicates
+- `AnalysisResult.hybrid_duplicates`: synthesized default duplicate candidates
+- `AnalysisResult.traditional_duplicates`: raw traditional duplicates (diagnostics)
+- `AnalysisResult.semantic_duplicates`: raw semantic duplicates (diagnostics)
 - `AnalysisResult.potentially_unused`: heuristic unused candidates
 
 ## Notes

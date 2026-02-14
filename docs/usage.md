@@ -21,7 +21,7 @@ pip install "transformers>=4.51,<5" "sentence-transformers>=5,<6"
 ## Core Workflow
 
 1. Run analysis on a package or file.
-2. Review duplicate candidates.
+2. Review the hybrid duplicate candidates.
 3. Review potentially unused symbols.
 4. Re-run with stricter/looser thresholds to tune sensitivity.
 
@@ -29,6 +29,12 @@ pip install "transformers>=4.51,<5" "sentence-transformers>=5,<6"
 
 ```bash
 codedupes check ./src
+```
+
+Inspect raw traditional + semantic evidence alongside hybrid output:
+
+```bash
+codedupes check ./src --show-all
 ```
 
 Analyze one file:

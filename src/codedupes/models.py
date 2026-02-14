@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from pathlib import Path
+from typing import Literal
 
 
 class CodeUnitType(Enum):
@@ -74,21 +75,54 @@ class DuplicatePair:
         return {self.unit_a.uid, self.unit_b.uid} == {other.unit_a.uid, other.unit_b.uid}
 
 
+HybridTier = Literal[
+    "exact",
+    "traditional_near",
+    "hybrid_confirmed",
+    "semantic_high_confidence",
+]
+
+
+@dataclass
+class HybridDuplicate:
+    """A synthesized duplicate candidate combining traditional + semantic evidence."""
+
+    unit_a: CodeUnit
+    unit_b: CodeUnit
+    tier: HybridTier
+    confidence: float
+    has_exact: bool = False
+    jaccard_similarity: float | None = None
+    semantic_similarity: float | None = None
+    weak_identifier_jaccard: float | None = None
+    statement_count_ratio: float | None = None
+
+    def __hash__(self) -> int:
+        return hash(frozenset([self.unit_a.uid, self.unit_b.uid]))
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, HybridDuplicate):
+            return False
+        return {self.unit_a.uid, self.unit_b.uid} == {other.unit_a.uid, other.unit_b.uid}
+
+
 @dataclass
 class AnalysisResult:
     """Full analysis result."""
 
     units: list[CodeUnit]
-    exact_duplicates: list[DuplicatePair]  # AST/token hash matches
+    traditional_duplicates: list[DuplicatePair]  # AST/token/jaccard matches
     semantic_duplicates: list[DuplicatePair]  # Embedding similarity
+    hybrid_duplicates: list[HybridDuplicate]  # Final combined output candidates
     potentially_unused: list[CodeUnit]  # No references, not API
+    filtered_raw_duplicates: int = 0
 
     @property
-    def all_duplicates(self) -> list[DuplicatePair]:
-        seen = set()
-        result = []
-        for dup in self.exact_duplicates + self.semantic_duplicates:
-            if dup not in seen:
-                seen.add(dup)
-                result.append(dup)
-        return result
+    def exact_duplicates(self) -> list[DuplicatePair]:
+        """Backward-compatible alias for traditional duplicates."""
+        return self.traditional_duplicates
+
+    @property
+    def all_duplicates(self) -> list[HybridDuplicate]:
+        """Return the final synthesized duplicate list."""
+        return self.hybrid_duplicates

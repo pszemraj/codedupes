@@ -10,20 +10,35 @@ This document is the source of truth for machine-readable output and CLI exit se
 {
   "summary": {
     "total_units": 0,
-    "exact_duplicates": 0,
-    "semantic_duplicates": 0,
-    "potentially_unused": 0
+    "hybrid_duplicates": 0,
+    "potentially_unused": 0,
+    "raw_traditional_duplicates": 0,
+    "raw_semantic_duplicates": 0,
+    "filtered_raw_duplicates": 0
   },
-  "exact_duplicates": [],
-  "semantic_duplicates": [],
+  "hybrid_duplicates": [],
   "potentially_unused": []
 }
 ```
+
+With `--show-all`, additional raw sections are included:
+
+- `traditional_duplicates`
+- `semantic_duplicates`
 
 Each duplicate entry includes:
 
 - `unit_a`
 - `unit_b`
+
+`hybrid_duplicates` entries include:
+
+- `tier`
+- `confidence`
+- evidence fields (`has_exact`, `semantic_similarity`, `jaccard_similarity`, etc.)
+
+Raw duplicate entries include:
+
 - `similarity`
 - `method`
 
@@ -70,6 +85,8 @@ Each unit object includes:
 - `2`: CLI usage/validation error (Click)
 - Semantic backend note: in mixed-mode `check` (default), semantic failures degrade to
   traditional/unused-only results with a warning instead of hard failure.
+- Combined-mode finding note: default `check` exits `1` based on hybrid findings
+  (`hybrid_duplicates`) plus `potentially_unused` only.
 
 `search`:
 

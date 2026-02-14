@@ -8,6 +8,13 @@ This document is the source of truth for CLI commands, flags, and option default
 
 Run duplicate and unused-code analysis.
 
+Default behavior is hybrid-first:
+
+- one synthesized `Hybrid Duplicates` list (combined traditional + semantic evidence)
+- likely dead-code candidates
+
+Use `--show-all` to additionally print raw traditional and raw semantic duplicate lists.
+
 Examples:
 
 ```bash
@@ -27,6 +34,7 @@ Options:
 - `--no-unused`: Disable unused-code detection
 - `--strict-unused`: Include public top-level functions in unused checks
 - `--suppress-test-semantic`: Suppress semantic duplicate matches involving `test_*` functions
+- `--show-all`: Also print raw traditional + raw semantic duplicate lists in combined mode
 - `--min-lines <int>`: Minimum statement count for semantic candidates (default `3`)
 - `--model <name>`: Embedding model (default `codefuse-ai/C2LLM-0.5B`)
 - `--instruction-prefix <text>`: Override default semantic instruction prefix for code/query embeddings
@@ -81,6 +89,8 @@ Print version and default settings.
 - `--min-lines` must be greater than or equal to `0`
 - `--output-width` must be at least `80`
 - Default `check` behavior degrades to non-semantic analysis if semantic backend fails
+- In combined mode, `check` findings are based on `hybrid_duplicates` + `potentially_unused`
 - `search` and `check --semantic-only` fail when semantic backend is unavailable
+- `--semantic-only` and `--traditional-only` bypass hybrid synthesis and show raw method outputs
 
 For JSON payloads and complete exit-code semantics, see `docs/output.md`.

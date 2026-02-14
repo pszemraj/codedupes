@@ -35,6 +35,10 @@ codedupes search ./src "normalize request payload"
 codedupes info
 ```
 
+`codedupes check` now defaults to a hybrid-first duplicate report (single combined
+duplicate list + likely dead code). Use `--show-all` to also inspect raw
+traditional and semantic duplicate lists.
+
 ## Default Semantic Model Behavior
 
 - Default embedding model: `codefuse-ai/C2LLM-0.5B`
@@ -65,6 +69,12 @@ Fallback-free baseline:
 
 ```bash
 codedupes check ./src --traditional-only
+```
+
+Raw evidence debugging:
+
+```bash
+codedupes check ./src --show-all
 ```
 
 ## Documentation
