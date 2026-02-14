@@ -11,8 +11,8 @@ license = "Apache-2.0"
 requires-python = ">=3.11"
 dependencies = [
     "click>=8.1.0",
-    "sentence-transformers>=3.0.0",
-    "transformers>=4.37.0",
+    "sentence-transformers>=5,<6",
+    "transformers>=4.51,<5",
     "torch>=2.5.0",
     "numpy>=1.24.0",
     "rich>=13.0.0",
@@ -22,11 +22,26 @@ dependencies = [
 dev = ["pytest", "ruff"]
 gpu = ["deepspeed"]
 
+[project.urls]
+Homepage = "https://github.com/pszemraj/codedupes.git"
+Repository = "https://github.com/pszemraj/codedupes.git"
+
 [project.scripts]
 codedupes = "codedupes.cli:main"
 
+[tool.hatch.build]
+dev-mode-dirs = ["src"]
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/codedupes"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "src/codedupes",
+    "README.md",
+    "LICENSE",
+    "pyproject.toml",
+]
 
 [tool.ruff]
 line-length = 100
@@ -36,3 +51,8 @@ extend-exclude = ["tests/fixtures/**"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+pythonpath = ["src"]
+markers = [
+    "network: tests that download remote model assets",
+    "gpu: tests that require CUDA and GPU execution",
+]

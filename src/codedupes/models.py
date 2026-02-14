@@ -5,6 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from pathlib import Path
+from typing import Literal
+
+from codedupes.pairs import unordered_pair_key
 
 
 class CodeUnitType(Enum):
@@ -65,13 +68,49 @@ class DuplicatePair:
     method: str  # "ast_hash", "token_hash", "semantic"
 
     def __hash__(self) -> int:
-        # Unordered pair
-        return hash(frozenset([self.unit_a.uid, self.unit_b.uid]))
+        return hash(unordered_pair_key(self.unit_a, self.unit_b))
 
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, DuplicatePair):
             return False
-        return {self.unit_a.uid, self.unit_b.uid} == {other.unit_a.uid, other.unit_b.uid}
+        return unordered_pair_key(self.unit_a, self.unit_b) == unordered_pair_key(
+            other.unit_a, other.unit_b
+        )
+
+
+HybridTier = Literal[
+    "exact",
+    "traditional_near",
+    "hybrid_confirmed",
+    "semantic_high_confidence",
+]
+
+AnalysisMode = Literal["combined", "traditional", "semantic", "none"]
+
+
+@dataclass
+class HybridDuplicate:
+    """A synthesized duplicate candidate combining traditional + semantic evidence."""
+
+    unit_a: CodeUnit
+    unit_b: CodeUnit
+    tier: HybridTier
+    confidence: float
+    has_exact: bool = False
+    jaccard_similarity: float | None = None
+    semantic_similarity: float | None = None
+    weak_identifier_jaccard: float | None = None
+    statement_count_ratio: float | None = None
+
+    def __hash__(self) -> int:
+        return hash(unordered_pair_key(self.unit_a, self.unit_b))
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, HybridDuplicate):
+            return False
+        return unordered_pair_key(self.unit_a, self.unit_b) == unordered_pair_key(
+            other.unit_a, other.unit_b
+        )
 
 
 @dataclass
@@ -79,16 +118,21 @@ class AnalysisResult:
     """Full analysis result."""
 
     units: list[CodeUnit]
-    exact_duplicates: list[DuplicatePair]  # AST/token hash matches
+    traditional_duplicates: list[DuplicatePair]  # AST/token/jaccard matches
     semantic_duplicates: list[DuplicatePair]  # Embedding similarity
+    hybrid_duplicates: list[HybridDuplicate]  # Final combined output candidates
     potentially_unused: list[CodeUnit]  # No references, not API
+    analysis_mode: AnalysisMode  # How duplicates were synthesized
+    filtered_raw_duplicates: int = 0
 
     @property
-    def all_duplicates(self) -> list[DuplicatePair]:
-        seen = set()
-        result = []
-        for dup in self.exact_duplicates + self.semantic_duplicates:
-            if dup not in seen:
-                seen.add(dup)
-                result.append(dup)
-        return result
+    def exact_duplicates(self) -> list[DuplicatePair]:
+        """Backward-compatible alias for traditional duplicates."""
+        return self.traditional_duplicates
+
+    @property
+    def all_duplicates(self) -> list[HybridDuplicate] | list[DuplicatePair]:
+        """Return the available duplicate list for this analysis mode."""
+        if self.analysis_mode == "combined":
+            return self.hybrid_duplicates
+        return self.traditional_duplicates + self.semantic_duplicates

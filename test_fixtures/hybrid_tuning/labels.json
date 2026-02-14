@@ -1,0 +1,38 @@
+{
+  "description": "Expected semantic/traditional duplicate groups for hybrid gate tuning.",
+  "positive_groups": [
+    [
+      "geometry.py::normalize_longitude_deg",
+      "sidereal.py::normalize_longitude_deg"
+    ],
+    [
+      "windowing.py::minutes_to_hms",
+      "reporting.py::format_minutes_hms",
+      "legacy_report.py::minutes_to_hms_legacy"
+    ],
+    [
+      "predict.py::classify_night_quality",
+      "nightly_batch.py::rank_night_quality"
+    ],
+    [
+      "predict.py::estimate_visibility_minutes",
+      "nightly_batch.py::estimate_observable_minutes"
+    ],
+    [
+      "predict.py::estimate_nightly_visibility_profile",
+      "nightly_batch.py::build_observable_ranges"
+    ],
+    [
+      "planner.py::compute_visibility_bands",
+      "planner_alt.py::derive_observable_bands"
+    ],
+    [
+      "predict.py::altitude_bucket",
+      "planner_alt.py::exposure_band"
+    ],
+    [
+      "predict.py::verbose_visibility_flag",
+      "planner_alt.py::fast_visibility_flag"
+    ]
+  ]
+}

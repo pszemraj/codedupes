@@ -1,21 +1,21 @@
 # Usage Guide
 
+This guide focuses on practical workflows.
+Install and runtime defaults are defined in
+[docs/install.md](https://github.com/pszemraj/codedupes/blob/main/docs/install.md).
+Flag defaults and validation rules are defined in
+[docs/cli.md](https://github.com/pszemraj/codedupes/blob/main/docs/cli.md).
+JSON schema and exit codes are defined in
+[docs/output.md](https://github.com/pszemraj/codedupes/blob/main/docs/output.md).
+
 ## Install
 
-```bash
-pip install codedupes
-```
-
-Optional GPU extras:
-
-```bash
-pip install codedupes[gpu]
-```
+See [docs/install.md](https://github.com/pszemraj/codedupes/blob/main/docs/install.md).
 
 ## Core Workflow
 
 1. Run analysis on a package or file.
-2. Review duplicate candidates.
+2. Review the hybrid duplicate candidates.
 3. Review potentially unused symbols.
 4. Re-run with stricter/looser thresholds to tune sensitivity.
 
@@ -23,6 +23,18 @@ pip install codedupes[gpu]
 
 ```bash
 codedupes check ./src
+```
+
+Inspect raw traditional + semantic evidence alongside hybrid output:
+
+```bash
+codedupes check ./src --show-all
+```
+
+Print full terminal tables without the default 20-row truncation:
+
+```bash
+codedupes check ./src --full-table
 ```
 
 Analyze one file:
@@ -37,7 +49,8 @@ codedupes check ./src/module.py
 codedupes check ./src --json
 ```
 
-See `docs/output.md` for the authoritative JSON structure and exit-code definitions.
+See [docs/output.md](https://github.com/pszemraj/codedupes/blob/main/docs/output.md) for authoritative JSON
+structure and exit-code semantics.
 
 ## Control Rich Output Width
 
@@ -53,7 +66,53 @@ codedupes check ./src --output-width 200
 codedupes search ./src "parse json payload" --top-k 10
 ```
 
-For the complete command/option reference, see `docs/cli.md`.
+For full command/option semantics, see
+[docs/cli.md](https://github.com/pszemraj/codedupes/blob/main/docs/cli.md).
+
+## Override Semantic Instruction Prefix
+
+By default, C2LLM task-specific prefixes are applied automatically. Override them
+for experiments or custom retrieval behavior:
+
+```bash
+codedupes check ./src --instruction-prefix "Represent this code for duplicate detection: "
+codedupes search ./src "parse json payload" --instruction-prefix "Represent this query for code lookup: "
+```
+
+## Fresh Colab/GPU preflight
+
+Use one command to print runtime versions and CUDA availability:
+
+```bash
+python - <<'PY'
+import platform
+import torch
+import transformers
+import sentence_transformers
+try:
+    import deepspeed
+    deepspeed_version = deepspeed.__version__
+except Exception:
+    deepspeed_version = "missing"
+
+print("python", platform.python_version())
+print("torch", torch.__version__)
+print("transformers", transformers.__version__)
+print("sentence-transformers", sentence_transformers.__version__)
+print("deepspeed", deepspeed_version)
+print("cuda_available", torch.cuda.is_available())
+print("cuda_device_count", torch.cuda.device_count())
+PY
+```
+
+Pinned default semantic model revision:
+
+```bash
+codedupes info
+```
+
+Semantic runtime defaults are documented in
+[docs/install.md](https://github.com/pszemraj/codedupes/blob/main/docs/install.md).
 
 ## Threshold Tuning
 
@@ -111,3 +170,39 @@ Disable unused detection:
 ```bash
 codedupes check ./src --no-unused
 ```
+
+## Reduce Semantic Noise In Test Suites
+
+When auditing `tests/` directories, suppress semantic matches involving
+pytest-style `test_*` functions:
+
+```bash
+codedupes check tests --suppress-test-semantic
+```
+
+## Full Run Verification Sequence
+
+1. Baseline traditional-only:
+
+```bash
+codedupes check src --traditional-only
+```
+
+2. Semantic-only quick pass:
+
+```bash
+codedupes check src --semantic-only --min-lines 1 --batch-size 4
+```
+
+3. Full mixed run:
+
+```bash
+codedupes check src
+```
+
+Record model/revision, package versions, device, elapsed time, exit code, and whether semantic fallback warnings were emitted.
+
+## Hybrid gate tuning workflow
+
+Use the dedicated sweep harness + tracked synthetic corpus described in `docs/hybrid-tuning.md`.
+Treat that corpus as a guardrail, then re-validate on at least one real repository before changing defaults.

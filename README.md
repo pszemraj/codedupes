@@ -8,17 +8,8 @@
 
 ## Install
 
-```bash
-pip install codedupes
-```
-
-Optional GPU extras:
-
-```bash
-pip install codedupes[gpu]
-```
-
-Requires Python 3.11+.
+Source-of-truth install and runtime defaults:
+[docs/install.md](https://github.com/pszemraj/codedupes/blob/main/docs/install.md).
 
 ## Quick Start
 
@@ -28,15 +19,28 @@ codedupes search ./src "normalize request payload"
 codedupes info
 ```
 
+`codedupes check` defaults to a hybrid-first report:
+
+- one combined duplicate list (`Hybrid Duplicates`)
+- likely dead code (`potentially_unused`)
+
+Use `--show-all` to include raw traditional + raw semantic duplicate lists.
+
+## Default semantic model behavior
+
+See [docs/install.md](https://github.com/pszemraj/codedupes/blob/main/docs/install.md).
+
 ## Documentation
 
 Primary docs live under `docs/`:
 
-- `docs/index.md`: documentation map
-- `docs/usage.md`: practical workflows and tuning examples
-- `docs/cli.md`: authoritative CLI command/option reference (source of truth)
-- `docs/output.md`: authoritative JSON schema and exit codes (source of truth)
-- `docs/python-api.md`: programmatic API usage
+- [docs/index.md](https://github.com/pszemraj/codedupes/blob/main/docs/index.md): documentation map and ownership
+- [docs/install.md](https://github.com/pszemraj/codedupes/blob/main/docs/install.md): install and runtime defaults (source of truth)
+- [docs/cli.md](https://github.com/pszemraj/codedupes/blob/main/docs/cli.md): commands, flags, and defaults (source of truth)
+- [docs/output.md](https://github.com/pszemraj/codedupes/blob/main/docs/output.md): JSON schemas and exit codes (source of truth)
+- [docs/usage.md](https://github.com/pszemraj/codedupes/blob/main/docs/usage.md): practical workflows and tuning examples
+- [docs/python-api.md](https://github.com/pszemraj/codedupes/blob/main/docs/python-api.md): programmatic API usage
+- [docs/hybrid-tuning.md](https://github.com/pszemraj/codedupes/blob/main/docs/hybrid-tuning.md): hybrid gate tuning workflow
 
 ## Notes and limits
 
