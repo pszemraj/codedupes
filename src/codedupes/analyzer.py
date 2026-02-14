@@ -461,6 +461,8 @@ class CodeAnalyzer:
 
         traditional_duplicates: list[DuplicatePair] = []
         unused: list[CodeUnit] = []
+        semantic_fallback = False
+        semantic_fallback_reason: str | None = None
         semantic_threshold = (
             self.config.semantic_threshold
             if self.config.semantic_threshold is not None
@@ -553,23 +555,22 @@ class CodeAnalyzer:
                 # fail hard instead of silently degrading to unused-only output.
                 if not self.config.run_traditional:
                     raise
-
+                semantic_fallback = True
                 self._embeddings = None
                 semantic_duplicates = []
                 runtime_versions = get_semantic_runtime_versions()
                 version_text = ", ".join(
                     f"{key}={value}" for key, value in runtime_versions.items()
                 )
+                semantic_fallback_reason = (
+                    f"Semantic analysis unavailable ({exc}). Proceeding with non-semantic "
+                    f"analysis. model={self.config.model_name} revision={self.config.model_revision} "
+                    f"trust_remote_code={self.config.trust_remote_code} [{version_text}]. "
+                    f"Retry with `codedupes check {path} --traditional-only`."
+                )
                 logger.warning(
-                    "Semantic analysis unavailable (%s). Proceeding with non-semantic analysis. "
-                    "model=%s revision=%s trust_remote_code=%s [%s]. "
-                    "Retry with `codedupes check %s --traditional-only`.",
-                    exc,
-                    self.config.model_name,
-                    self.config.model_revision,
-                    self.config.trust_remote_code,
-                    version_text,
-                    path,
+                    "%s",
+                    semantic_fallback_reason,
                 )
                 if self.config.run_traditional:
                     exact_dupes, near_dupes, _ = run_traditional_analysis(
@@ -637,6 +638,8 @@ class CodeAnalyzer:
             potentially_unused=unused,
             analysis_mode=analysis_mode,
             filtered_raw_duplicates=filtered_raw_duplicates,
+            semantic_fallback=semantic_fallback,
+            semantic_fallback_reason=semantic_fallback_reason,
         )
 
     def search(self, query: str, top_k: int = 10) -> list[tuple[CodeUnit, float]]:

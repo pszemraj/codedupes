@@ -520,6 +520,26 @@ def test_cli_check_degrades_on_semantic_backend_error(monkeypatch, tmp_path):
     assert "Semantic analysis unavailable" in result.output
 
 
+def test_cli_check_degrades_on_semantic_backend_error_in_json(monkeypatch, tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def _dead():\n    return 1\n\ndef keep(y):\n    return y + 1\n")
+
+    from codedupes import analyzer as analyzer_module
+
+    monkeypatch.setattr(analyzer_module, "run_semantic_analysis", _raise_semantic_backend_error)
+
+    runner = CliRunner()
+    result = runner.invoke(cli.cli, ["check", str(path), "--min-lines", "0", "--json"])
+    assert result.exit_code == 1
+
+    match = re.search(r"\n(\{.*\})\s*$", result.output, flags=re.S)
+    assert match, f"Could not locate JSON payload in output: {result.output!r}"
+    payload = json.loads(match.group(1))
+    assert payload["summary"]["semantic_fallback"] is True
+    assert payload["summary"]["semantic_fallback_reason"] is not None
+    assert "Semantic analysis unavailable" in payload["summary"]["semantic_fallback_reason"]
+
+
 def test_cli_semantic_only_fails_on_semantic_backend_error(monkeypatch, tmp_path):
     path = tmp_path / "sample.py"
     path.write_text("def entry(x):\n    return x + 1\n")

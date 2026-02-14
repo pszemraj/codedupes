@@ -132,6 +132,8 @@ class AnalysisResult:
     potentially_unused: list[CodeUnit]  # No references, not API
     analysis_mode: AnalysisMode  # How duplicates were synthesized
     filtered_raw_duplicates: int = 0
+    semantic_fallback: bool = False
+    semantic_fallback_reason: str | None = None
 
     @property
     def exact_duplicates(self) -> list[DuplicatePair]:

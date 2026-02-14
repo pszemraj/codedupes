@@ -21,7 +21,9 @@ This document is the source of truth for machine-readable output and CLI exit se
     "potentially_unused": 0,
     "raw_traditional_duplicates": 0,
     "raw_semantic_duplicates": 0,
-    "filtered_raw_duplicates": 0
+    "filtered_raw_duplicates": 0,
+    "semantic_fallback": false,
+    "semantic_fallback_reason": null
   },
   "hybrid_duplicates": [],
   "potentially_unused": []
@@ -44,7 +46,9 @@ With `--show-all`, additional raw sections are included:
     "total_units": 0,
     "traditional_duplicates": 0,
     "semantic_duplicates": 0,
-    "potentially_unused": 0
+    "potentially_unused": 0,
+    "semantic_fallback": false,
+    "semantic_fallback_reason": null
   },
   "traditional_duplicates": [],
   "semantic_duplicates": [],
@@ -113,6 +117,8 @@ Each unit object includes:
 - `2`: CLI usage/validation error (Click)
 - Semantic backend note:
   - default combined `check`: semantic failures degrade with a warning
+  - degraded runs are also surfaced in JSON as `summary.semantic_fallback` plus
+    `summary.semantic_fallback_reason`
   - semantic-required mode (`--semantic-only`): fails hard
 - Finding note:
   - combined mode: exit `1` is based on `hybrid_duplicates` + `potentially_unused`

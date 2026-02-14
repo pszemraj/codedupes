@@ -359,6 +359,8 @@ def print_check_json_combined(result: AnalysisResult, *, show_all: bool) -> None
             "raw_traditional_duplicates": len(result.traditional_duplicates),
             "raw_semantic_duplicates": len(result.semantic_duplicates),
             "filtered_raw_duplicates": result.filtered_raw_duplicates,
+            "semantic_fallback": result.semantic_fallback,
+            "semantic_fallback_reason": result.semantic_fallback_reason,
         },
         "hybrid_duplicates": [
             _hybrid_dup_to_dict(duplicate) for duplicate in result.hybrid_duplicates
@@ -384,6 +386,8 @@ def print_check_json_raw(result: AnalysisResult) -> None:
             "traditional_duplicates": len(result.traditional_duplicates),
             "semantic_duplicates": len(result.semantic_duplicates),
             "potentially_unused": len(result.potentially_unused),
+            "semantic_fallback": result.semantic_fallback,
+            "semantic_fallback_reason": result.semantic_fallback_reason,
         },
         "traditional_duplicates": [
             _dup_to_dict(duplicate) for duplicate in result.traditional_duplicates

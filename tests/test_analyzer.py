@@ -793,6 +793,37 @@ def test_combined_mode_fallback_runs_traditional_on_full_units(tmp_path: Path, m
     assert set(traditional_calls[1][0]) == {"Box", "method", "short", "longer"}
 
 
+def test_combined_mode_fallback_marks_semantic_degradation(tmp_path: Path, monkeypatch) -> None:
+    source = dedent(
+        """
+        def dead(x):
+            return x
+        """
+    ).strip()
+    project = create_project(tmp_path, source)
+
+    monkeypatch.setattr(
+        analyzer_module,
+        "run_semantic_analysis",
+        _make_semantic_runner(error=RuntimeError("backend unavailable")),
+    )
+
+    analyzer = CodeAnalyzer(
+        AnalyzerConfig(
+            run_traditional=True,
+            run_semantic=True,
+            run_unused=False,
+            min_semantic_lines=0,
+            filter_tiny_traditional=False,
+        )
+    )
+    result = analyzer.analyze(project)
+
+    assert result.semantic_fallback is True
+    assert result.semantic_fallback_reason is not None
+    assert "backend unavailable" in result.semantic_fallback_reason
+
+
 def test_semantic_task_resolves_check_default_for_indexing(tmp_path: Path, monkeypatch) -> None:
     source = "def entry(x):\n    return x + 1\n"
     project = create_project(tmp_path, source)
