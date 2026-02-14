@@ -7,13 +7,13 @@ name = "codedupes"
 version = "0.2.0"
 description = "Detect duplicate/unused Python code via AST analysis and semantic embeddings (C2LLM)"
 readme = "README.md"
-license = "MIT"
+license = "Apache-2.0"
 requires-python = ">=3.11"
 dependencies = [
     "click>=8.1.0",
     "sentence-transformers>=3.0.0",
     "transformers>=4.37.0",
-    "torch>=2.0.0",
+    "torch>=2.5.0",
     "numpy>=1.24.0",
     "rich>=13.0.0",
 ]
