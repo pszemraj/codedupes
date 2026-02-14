@@ -11,6 +11,7 @@ from codedupes import analyzer as analyzer_module
 from codedupes.analyzer import AnalyzerConfig, CodeAnalyzer, analyze_directory
 from codedupes.models import AnalysisResult, CodeUnit, CodeUnitType, DuplicatePair
 from codedupes.semantic import SemanticBackendError
+import codedupes.semantic as semantic_module
 from tests.conftest import build_two_function_source, create_project
 
 
@@ -814,6 +815,49 @@ def test_semantic_task_resolves_check_default_for_indexing(tmp_path: Path, monke
     analyzer.analyze(project)
 
     assert captured["semantic_task"] == analyzer_module.DEFAULT_CHECK_SEMANTIC_TASK
+
+
+def test_search_uses_index_task_when_unset(tmp_path: Path, monkeypatch) -> None:
+    source = "def entry(x):\n    return x + 1\n"
+    project = create_project(tmp_path, source)
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        analyzer_module,
+        "run_semantic_analysis",
+        _make_semantic_runner(capture=captured),
+    )
+
+    def fake_find_similar_to_query(
+        query: str,
+        units,
+        embeddings,
+        model_name="gte-modernbert-base",
+        instruction_prefix=None,
+        top_k=10,
+        revision=None,
+        trust_remote_code=None,
+        threshold=None,
+        semantic_task=None,
+    ):
+        captured["query_task"] = semantic_task
+        return []
+
+    monkeypatch.setattr(semantic_module, "find_similar_to_query", fake_find_similar_to_query)
+
+    analyzer = CodeAnalyzer(
+        AnalyzerConfig(
+            run_traditional=False,
+            run_semantic=True,
+            run_unused=False,
+            min_semantic_lines=0,
+        )
+    )
+    analyzer.analyze(project)
+    analyzer.search("entry")
+
+    assert captured["semantic_task"] == analyzer_module.DEFAULT_CHECK_SEMANTIC_TASK
+    assert captured["query_task"] == analyzer_module.DEFAULT_CHECK_SEMANTIC_TASK
 
 
 def test_semantic_only_fails_hard_on_runtime_semantic_error(tmp_path: Path, monkeypatch) -> None:

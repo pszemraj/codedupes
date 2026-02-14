@@ -11,7 +11,6 @@ import numpy as np
 from codedupes.constants import (
     DEFAULT_BATCH_SIZE,
     DEFAULT_CHECK_SEMANTIC_TASK,
-    DEFAULT_SEARCH_SEMANTIC_TASK,
     DEFAULT_MIN_SEMANTIC_LINES,
     DEFAULT_MODEL,
     SEMANTIC_TASK_CHOICES,
@@ -468,7 +467,7 @@ class CodeAnalyzer:
             else get_default_semantic_threshold(self.config.model_name)
         )
         semantic_task = self.config.semantic_task or DEFAULT_CHECK_SEMANTIC_TASK
-        search_semantic_task = self.config.semantic_task or DEFAULT_SEARCH_SEMANTIC_TASK
+        search_semantic_task = semantic_task
         self._resolved_semantic_threshold = semantic_threshold
         self._resolved_semantic_task = semantic_task
         self._resolved_search_semantic_task = search_semantic_task
