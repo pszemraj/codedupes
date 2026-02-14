@@ -37,6 +37,7 @@ Options:
 - `--strict-unused`: Include public top-level functions in unused checks
 - `--suppress-test-semantic`: Suppress semantic duplicate matches involving `test_*` functions
 - `--show-all`: Also print raw traditional + raw semantic duplicate lists in combined mode
+- `--full-table`: Disable table row truncation and print all rows in terminal output
 - `--min-lines <int>`: Minimum statement count for semantic candidates (default `3`)
 - `--model <name>`: Embedding model (default `codefuse-ai/C2LLM-0.5B`)
 - `--instruction-prefix <text>`: Override default semantic instruction prefix for code/query embeddings

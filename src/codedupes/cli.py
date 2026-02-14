@@ -32,6 +32,7 @@ DEFAULT_THRESHOLD = DEFAULT_SEMANTIC_THRESHOLD
 DEFAULT_MIN_LINES = DEFAULT_MIN_SEMANTIC_LINES
 DEFAULT_OUTPUT_WIDTH = 160
 MIN_OUTPUT_WIDTH = 80
+DEFAULT_TABLE_ROWS = 20
 
 console = Console(width=DEFAULT_OUTPUT_WIDTH)
 
@@ -318,7 +319,7 @@ def _print_duplicate_table(
     *,
     title: str,
     show_source: bool,
-    max_items: int,
+    max_items: int | None,
     hybrid: bool,
 ) -> None:
     """Render duplicate pairs in either raw or hybrid layout."""
@@ -328,7 +329,8 @@ def _print_duplicate_table(
     console.print(f"\n[bold yellow]{title}[/bold yellow] ({len(duplicates)} pairs)")
     table = _build_duplicates_table(hybrid=hybrid)
 
-    for duplicate in duplicates[:max_items]:
+    visible = duplicates if max_items is None else duplicates[:max_items]
+    for duplicate in visible:
         if hybrid:
             pair = cast(HybridDuplicate, duplicate)
             semantic = (
@@ -366,7 +368,7 @@ def _print_duplicate_table(
     if not show_source:
         console.print(table)
 
-    if len(duplicates) > max_items:
+    if max_items is not None and len(duplicates) > max_items:
         console.print(f"[dim]... and {len(duplicates) - max_items} more[/dim]")
 
 
@@ -374,7 +376,7 @@ def print_duplicates(
     duplicates: list[DuplicatePair],
     title: str,
     show_source: bool = False,
-    max_items: int = 20,
+    max_items: int | None = DEFAULT_TABLE_ROWS,
 ) -> None:
     """Print duplicate pairs in a table."""
     _print_duplicate_table(
@@ -389,7 +391,7 @@ def print_duplicates(
 def print_hybrid_duplicates(
     duplicates: list[HybridDuplicate],
     show_source: bool = False,
-    max_items: int = 20,
+    max_items: int | None = DEFAULT_TABLE_ROWS,
 ) -> None:
     """Print synthesized hybrid duplicate pairs."""
     _print_duplicate_table(
@@ -402,7 +404,9 @@ def print_hybrid_duplicates(
 
 
 def print_unused(
-    unused: list[CodeUnit], max_items: int = 20, title: str = "Potentially Unused"
+    unused: list[CodeUnit],
+    max_items: int | None = DEFAULT_TABLE_ROWS,
+    title: str = "Potentially Unused",
 ) -> None:
     """Print potentially unused code units."""
     if not unused:
@@ -416,7 +420,8 @@ def print_unused(
     table.add_column("Type", style="dim", no_wrap=True)
     table.add_column("Location", style="dim", no_wrap=True)
 
-    for unit in unused[:max_items]:
+    visible = unused if max_items is None else unused[:max_items]
+    for unit in visible:
         table.add_row(
             unit.name,
             unit.unit_type.name.lower(),
@@ -425,7 +430,7 @@ def print_unused(
 
     console.print(table)
 
-    if len(unused) > max_items:
+    if max_items is not None and len(unused) > max_items:
         console.print(f"[dim]... and {len(unused) - max_items} more[/dim]")
 
 
@@ -568,6 +573,7 @@ def cli() -> None:
     help="Show raw traditional/semantic duplicate lists alongside hybrid output",
 )
 @click.option("--show-source", is_flag=True, help="Show source code snippets")
+@click.option("--full-table", is_flag=True, help="Show all rows in terminal tables")
 @_add_common_analysis_options
 def check_command(
     path: Path,
@@ -581,6 +587,7 @@ def check_command(
     suppress_test_semantic: bool,
     show_all: bool,
     show_source: bool,
+    full_table: bool,
     no_private: bool,
     min_lines: int,
     model: str,
@@ -603,6 +610,7 @@ def check_command(
         setup_logging(verbose)
 
     combined_mode = not semantic_only and not traditional_only
+    table_max_items: int | None = None if full_table else DEFAULT_TABLE_ROWS
 
     semantic_thresh, traditional_thresh = _resolve_check_thresholds(
         threshold,
@@ -649,8 +657,16 @@ def check_command(
     else:
         if combined_mode:
             print_summary(result, mode="combined")
-            print_hybrid_duplicates(result.hybrid_duplicates, show_source=show_source)
-            print_unused(result.potentially_unused, title="Likely Dead Code")
+            print_hybrid_duplicates(
+                result.hybrid_duplicates,
+                show_source=show_source,
+                max_items=table_max_items,
+            )
+            print_unused(
+                result.potentially_unused,
+                title="Likely Dead Code",
+                max_items=table_max_items,
+            )
 
             if show_all:
                 console.print(
@@ -661,11 +677,13 @@ def check_command(
                     result.traditional_duplicates,
                     "Traditional Duplicates (Raw AST/Token/Jaccard)",
                     show_source=show_source,
+                    max_items=table_max_items,
                 )
                 print_duplicates(
                     result.semantic_duplicates,
                     "Semantic Duplicates (Raw Embedding)",
                     show_source=show_source,
+                    max_items=table_max_items,
                 )
         elif semantic_only:
             print_summary(result, mode="semantic")
@@ -673,16 +691,18 @@ def check_command(
                 result.semantic_duplicates,
                 "Semantic Duplicates (Embedding)",
                 show_source=show_source,
+                max_items=table_max_items,
             )
-            print_unused(result.potentially_unused)
+            print_unused(result.potentially_unused, max_items=table_max_items)
         else:
             print_summary(result, mode="traditional")
             print_duplicates(
                 result.traditional_duplicates,
                 "Traditional Duplicates (AST/Token/Jaccard)",
                 show_source=show_source,
+                max_items=table_max_items,
             )
-            print_unused(result.potentially_unused)
+            print_unused(result.potentially_unused, max_items=table_max_items)
 
     if combined_mode:
         has_issues = bool(result.hybrid_duplicates or result.potentially_unused)

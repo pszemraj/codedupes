@@ -41,6 +41,12 @@ Inspect raw traditional + semantic evidence alongside hybrid output:
 codedupes check ./src --show-all
 ```
 
+Print full terminal tables without the default 20-row truncation:
+
+```bash
+codedupes check ./src --full-table
+```
+
 Analyze one file:
 
 ```bash

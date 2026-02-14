@@ -259,6 +259,37 @@ def test_cli_show_all_prints_raw_sections(monkeypatch, tmp_path):
     assert "Semantic Duplicates (Raw" in result.output
 
 
+def test_cli_full_table_disables_truncation(monkeypatch, tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+    unit = _build_unit(tmp_path)
+    hybrid = HybridDuplicate(
+        unit_a=unit,
+        unit_b=unit,
+        tier="exact",
+        confidence=1.0,
+        has_exact=True,
+    )
+    result_obj = AnalysisResult(
+        units=[unit],
+        traditional_duplicates=[],
+        semantic_duplicates=[],
+        hybrid_duplicates=[hybrid for _ in range(25)],
+        potentially_unused=[],
+        filtered_raw_duplicates=0,
+    )
+    patch_cli_analyzer(monkeypatch, cli, analyze_result=result_obj)
+
+    runner = CliRunner()
+    default_result = runner.invoke(cli.cli, ["check", str(path)])
+    assert default_result.exit_code == 1
+    assert "... and 5 more" in default_result.output
+
+    full_result = runner.invoke(cli.cli, ["check", str(path), "--full-table"])
+    assert full_result.exit_code == 1
+    assert "... and 5 more" not in full_result.output
+
+
 def test_cli_invalid_output_width(tmp_path):
     path = tmp_path / "sample.py"
     path.write_text("def entry():\n    return 1\n")
