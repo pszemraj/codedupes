@@ -401,10 +401,14 @@ def test_cli_requires_explicit_command(tmp_path):
     assert result.exit_code == 2
 
 
-def test_cli_check_rejects_missing_path(tmp_path):
+@pytest.mark.parametrize(
+    ("command", "tail_args"),
+    [("check", []), ("search", ["entry"])],
+)
+def test_cli_rejects_missing_path(tmp_path, command, tail_args):
     missing = tmp_path / "missing.py"
     runner = CliRunner()
-    result = runner.invoke(cli.cli, ["check", str(missing)])
+    result = runner.invoke(cli.cli, [command, str(missing), *tail_args])
     assert result.exit_code == 2
     assert "does not exist" in result.output
 
@@ -431,50 +435,34 @@ def test_cli_rejects_conflicting_single_method_flags(tmp_path):
     assert result.exit_code == 2
 
 
-def test_cli_rejects_show_all_in_single_method_modes(tmp_path):
+@pytest.mark.parametrize(
+    ("flag", "expected_message"),
+    [
+        ("--show-all", "--show-all is only valid in default combined mode."),
+        (
+            "--allow-semantic-fallback",
+            "--allow-semantic-fallback is only valid in default combined mode.",
+        ),
+    ],
+)
+def test_cli_rejects_combined_only_flags_in_single_method_modes(tmp_path, flag, expected_message):
     path = tmp_path / "sample.py"
     path.write_text("def entry():\n    return 1\n")
 
     runner = CliRunner()
     semantic_result = runner.invoke(
         cli.cli,
-        ["check", str(path), "--semantic-only", "--show-all"],
+        ["check", str(path), "--semantic-only", flag],
     )
     assert semantic_result.exit_code == 2
-    assert "--show-all is only valid in default combined mode." in semantic_result.output
+    assert expected_message in semantic_result.output
 
     traditional_result = runner.invoke(
         cli.cli,
-        ["check", str(path), "--traditional-only", "--show-all"],
+        ["check", str(path), "--traditional-only", flag],
     )
     assert traditional_result.exit_code == 2
-    assert "--show-all is only valid in default combined mode." in traditional_result.output
-
-
-def test_cli_rejects_allow_semantic_fallback_in_single_method_modes(tmp_path):
-    path = tmp_path / "sample.py"
-    path.write_text("def entry():\n    return 1\n")
-
-    runner = CliRunner()
-    semantic_result = runner.invoke(
-        cli.cli,
-        ["check", str(path), "--semantic-only", "--allow-semantic-fallback"],
-    )
-    assert semantic_result.exit_code == 2
-    assert (
-        "--allow-semantic-fallback is only valid in default combined mode."
-        in semantic_result.output
-    )
-
-    traditional_result = runner.invoke(
-        cli.cli,
-        ["check", str(path), "--traditional-only", "--allow-semantic-fallback"],
-    )
-    assert traditional_result.exit_code == 2
-    assert (
-        "--allow-semantic-fallback is only valid in default combined mode."
-        in traditional_result.output
-    )
+    assert expected_message in traditional_result.output
 
 
 def test_cli_rejects_json_with_rich_only_flags(tmp_path):
@@ -650,15 +638,11 @@ def test_cli_info_exit_zero():
     assert "built-in semantic model aliases" in result.output.lower()
 
 
-def test_cli_search_rejects_missing_path(tmp_path):
-    missing = tmp_path / "missing.py"
-    runner = CliRunner()
-    result = runner.invoke(cli.cli, ["search", str(missing), "entry"])
-    assert result.exit_code == 2
-    assert "does not exist" in result.output
-
-
-def test_cli_check_surfaces_analyzer_config_validation_error(monkeypatch, tmp_path):
+@pytest.mark.parametrize(
+    ("command", "tail_args"),
+    [("check", []), ("search", ["entry"])],
+)
+def test_cli_surfaces_analyzer_config_validation_error(monkeypatch, tmp_path, command, tail_args):
     path = tmp_path / "sample.py"
     path.write_text("def entry():\n    return 1\n")
 
@@ -668,22 +652,7 @@ def test_cli_check_surfaces_analyzer_config_validation_error(monkeypatch, tmp_pa
     monkeypatch.setattr(cli, "AnalyzerConfig", _raise_config_error)
 
     runner = CliRunner()
-    result = runner.invoke(cli.cli, ["check", str(path)])
-    assert result.exit_code == 2
-    assert "invalid config" in result.output
-
-
-def test_cli_search_surfaces_analyzer_config_validation_error(monkeypatch, tmp_path):
-    path = tmp_path / "sample.py"
-    path.write_text("def entry():\n    return 1\n")
-
-    def _raise_config_error(**_kwargs):
-        raise ValueError("invalid config")
-
-    monkeypatch.setattr(cli, "AnalyzerConfig", _raise_config_error)
-
-    runner = CliRunner()
-    result = runner.invoke(cli.cli, ["search", str(path), "entry"])
+    result = runner.invoke(cli.cli, [command, str(path), *tail_args])
     assert result.exit_code == 2
     assert "invalid config" in result.output
 
@@ -843,7 +812,16 @@ def test_cli_check_degrades_on_semantic_backend_error_in_json(monkeypatch, tmp_p
     assert "Semantic analysis unavailable" in payload["summary"]["semantic_fallback_reason"]
 
 
-def test_cli_semantic_only_fails_on_semantic_backend_error(monkeypatch, tmp_path):
+@pytest.mark.parametrize(
+    ("args", "expected_message"),
+    [
+        (["check", "--semantic-only", "--min-lines", "0"], "Error during analysis"),
+        (["search", "entry"], "Error during search"),
+    ],
+)
+def test_cli_semantic_required_modes_fail_on_semantic_backend_error(
+    monkeypatch, tmp_path, args, expected_message
+):
     path = tmp_path / "sample.py"
     path.write_text("def entry(x):\n    return x + 1\n")
 
@@ -852,23 +830,9 @@ def test_cli_semantic_only_fails_on_semantic_backend_error(monkeypatch, tmp_path
     monkeypatch.setattr(analyzer_module, "run_semantic_analysis", _raise_semantic_backend_error)
 
     runner = CliRunner()
-    result = runner.invoke(cli.cli, ["check", str(path), "--semantic-only", "--min-lines", "0"])
+    result = runner.invoke(cli.cli, [args[0], str(path), *args[1:]])
     assert result.exit_code == 1
-    assert "Error during analysis" in result.output
-
-
-def test_cli_search_fails_on_semantic_backend_error(monkeypatch, tmp_path):
-    path = tmp_path / "sample.py"
-    path.write_text("def entry(x):\n    return x + 1\n")
-
-    from codedupes import analyzer as analyzer_module
-
-    monkeypatch.setattr(analyzer_module, "run_semantic_analysis", _raise_semantic_backend_error)
-
-    runner = CliRunner()
-    result = runner.invoke(cli.cli, ["search", str(path), "entry"])
-    assert result.exit_code == 1
-    assert "Error during search" in result.output
+    assert expected_message in result.output
 
 
 def test_cli_combined_exit_code_ignores_raw_filtered_findings(monkeypatch, tmp_path):

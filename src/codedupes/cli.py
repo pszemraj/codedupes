@@ -145,6 +145,7 @@ def _configured_cli_output(
     :param verbose: Whether verbose logging is enabled.
     :param output_width: Requested rich console width.
     :yield: ``None`` while command-specific work executes.
+    :return: Iterator context that restores prior logging state on exit.
     """
     _set_console(output_width)
     logging_state: tuple[int, list[logging.Handler]] | None = None
