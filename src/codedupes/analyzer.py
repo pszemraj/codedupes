@@ -8,10 +8,14 @@ from pathlib import Path
 
 import numpy as np
 
-from .extractor import CodeExtractor
-from .models import AnalysisResult, CodeUnit, DuplicatePair
-from .semantic import get_code_unit_statement_count, run_semantic_analysis
-from .traditional import build_reference_graph, find_potentially_unused, run_traditional_analysis
+from codedupes.extractor import CodeExtractor
+from codedupes.models import AnalysisResult, CodeUnit, DuplicatePair
+from codedupes.semantic import get_code_unit_statement_count, run_semantic_analysis
+from codedupes.traditional import (
+    build_reference_graph,
+    find_potentially_unused,
+    run_traditional_analysis,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -195,7 +199,7 @@ class CodeAnalyzer:
         if not self._semantic_units:
             return []
 
-        from .semantic import find_similar_to_query
+        from codedupes.semantic import find_similar_to_query
 
         return find_similar_to_query(
             query,

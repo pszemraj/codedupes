@@ -60,13 +60,13 @@ codedupes info
 
 Prints version/model/config defaults.
 
-### Legacy compatibility
+### Compatibility mode (legacy invocation retained)
 
 ```bash
 codedupes <path> [options]
 ```
 
-is still supported as a compatibility shim and is equivalent to:
+is retained as a compatibility mode and is equivalent to:
 
 ```bash
 codedupes check <path> [options]

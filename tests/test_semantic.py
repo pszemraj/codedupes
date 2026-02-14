@@ -99,3 +99,32 @@ def test_get_model_reports_deepspeed_guidance(monkeypatch) -> None:
     with pytest.raises(ModuleNotFoundError) as excinfo:
         semantic.get_model("codefuse-ai/C2LLM-0.5B")
     assert "deepspeed is required" in str(excinfo.value)
+
+
+@pytest.mark.parametrize(
+    ("missing_module", "expected_snippet"),
+    [
+        ("sentence_transformers", "sentence_transformers"),
+        ("transformers", "transformers"),
+        ("torch", "torch"),
+    ],
+)
+def test_get_model_reports_missing_core_dependency(
+    monkeypatch, missing_module: str, expected_snippet: str
+) -> None:
+    original_import = semantic.importlib.import_module
+
+    def fake_import_module(name: str, package: str | None = None):
+        if name == missing_module:
+            e = ModuleNotFoundError(f"No module named '{name}'")
+            e.name = name
+            raise e
+        return original_import(name, package)
+
+    monkeypatch.setattr(semantic.importlib, "import_module", fake_import_module)
+    semantic.clear_model_cache()
+
+    with pytest.raises(ModuleNotFoundError) as excinfo:
+        semantic.get_model("codefuse-ai/C2LLM-0.5B")
+
+    assert expected_snippet in str(excinfo.value).lower()

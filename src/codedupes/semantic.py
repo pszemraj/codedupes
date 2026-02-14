@@ -12,13 +12,14 @@ Model: codefuse-ai/C2LLM-0.5B
 
 from __future__ import annotations
 
+import importlib
 import logging
 import ast
 from typing import Literal
 
 import numpy as np
 
-from .models import CodeUnit, DuplicatePair
+from codedupes.models import CodeUnit, DuplicatePair
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +49,30 @@ _GENERIC_INSTRUCTIONS: dict[str, str] = {
 
 # Models known to need C2LLM-specific loading args
 _C2LLM_MODELS = {"codefuse-ai/C2LLM-0.5B", "codefuse-ai/C2LLM-7B"}
+
+
+def _require_dependency(module_name: str, install_hint: str) -> None:
+    """Raise a clear error when a required dependency is unavailable."""
+    try:
+        importlib.import_module(module_name)
+    except ModuleNotFoundError as exc:
+        if exc.name != module_name:
+            raise
+        raise ModuleNotFoundError(
+            f"{module_name} is required for semantic analysis. Install with {install_hint}."
+        ) from exc
+
+
+def _check_semantic_dependencies(model_name: str) -> None:
+    """Validate required runtime dependencies before model loading."""
+    _require_dependency("sentence_transformers", "pip install codedupes")
+    _require_dependency("transformers", "pip install codedupes")
+    _require_dependency("torch", "pip install codedupes")
+    if _is_c2llm(model_name):
+        _require_dependency(
+            "deepspeed",
+            "pip install codedupes[gpu] or pip install deepspeed",
+        )
 
 
 def get_code_unit_statement_count(unit: CodeUnit) -> int:
@@ -100,12 +125,21 @@ def get_model(model_name: str = "codefuse-ai/C2LLM-0.5B"):
 
     if _model is None or _model_name != model_name:
         logger.info(f"Loading embedding model: {model_name}")
+        _check_semantic_dependencies(model_name)
+
         try:
             from sentence_transformers import SentenceTransformer
         except ModuleNotFoundError as exc:
-            raise ModuleNotFoundError(
-                "sentence-transformers is not installed. Install it with `pip install codedupes`."
-            ) from exc
+            if exc.name == "sentence_transformers":
+                raise ModuleNotFoundError(
+                    "sentence-transformers is not installed. Install it with `pip install codedupes`."
+                ) from exc
+            if exc.name == "deepspeed":
+                raise ModuleNotFoundError(
+                    "deepspeed is required for C2LLM models. "
+                    "Install with `pip install codedupes[gpu]` or `pip install deepspeed`."
+                ) from exc
+            raise
 
         try:
             if _is_c2llm(model_name):

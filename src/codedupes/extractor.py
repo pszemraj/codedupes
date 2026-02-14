@@ -9,7 +9,7 @@ import copy
 from pathlib import Path
 from typing import Iterator
 
-from .models import CodeUnit, CodeUnitType
+from codedupes.models import CodeUnit, CodeUnitType
 
 logger = logging.getLogger(__name__)
 

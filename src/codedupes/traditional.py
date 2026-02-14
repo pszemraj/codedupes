@@ -10,7 +10,7 @@ from collections import defaultdict
 from itertools import combinations
 from pathlib import Path
 
-from .models import CodeUnit, CodeUnitType, DuplicatePair
+from codedupes.models import CodeUnit, CodeUnitType, DuplicatePair
 
 logger = logging.getLogger(__name__)
 
@@ -161,7 +161,7 @@ def _extract_main_block_calls(file_path: Path) -> set[str]:
     except (OSError, SyntaxError, UnicodeDecodeError):
         return set()
 
-    from .extractor import CallGraphVisitor
+    from codedupes.extractor import CallGraphVisitor
 
     calls: set[str] = set()
     visitor = CallGraphVisitor()

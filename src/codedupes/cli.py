@@ -14,9 +14,9 @@ from rich.panel import Panel
 from rich.syntax import Syntax
 from rich.table import Table
 
-from . import __version__
-from .analyzer import DEFAULT_MODEL, AnalyzerConfig, CodeAnalyzer
-from .models import CodeUnit, DuplicatePair
+from codedupes import __version__
+from codedupes.analyzer import DEFAULT_MODEL, AnalyzerConfig, CodeAnalyzer
+from codedupes.models import CodeUnit, DuplicatePair
 
 console = Console()
 
