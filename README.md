@@ -20,6 +20,13 @@ pip install codedupes[gpu]
 
 Requires Python 3.11+.
 
+For local development from this repo (without `PYTHONPATH=src` hacks):
+
+```bash
+pip install -e ".[dev]"
+codedupes info
+```
+
 ## Quick Start
 
 ```bash
