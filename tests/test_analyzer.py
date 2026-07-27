@@ -7,11 +7,11 @@ from textwrap import dedent
 import numpy as np
 import pytest
 
+import codedupes.semantic as semantic_module
 from codedupes import analyzer as analyzer_module
 from codedupes.analyzer import AnalyzerConfig, CodeAnalyzer, analyze_directory
 from codedupes.models import AnalysisResult, CodeUnit, CodeUnitType, DuplicatePair
 from codedupes.semantic import SemanticBackendError
-import codedupes.semantic as semantic_module
 from tests.conftest import build_two_function_source, create_project
 
 

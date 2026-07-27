@@ -48,7 +48,7 @@ def test_near_duplicates_threshold_boundary(tmp_path: Path) -> None:
     units = extract_units(tmp_path, source, include_private=True)
 
     exact_low, near_low, _ = run_traditional_analysis(units, jaccard_threshold=0.3)
-    exact_high, near_high, _ = run_traditional_analysis(units, jaccard_threshold=0.95)
+    _exact_high, near_high, _ = run_traditional_analysis(units, jaccard_threshold=0.95)
 
     assert len(near_low) >= 1
     assert len(near_high) == 0

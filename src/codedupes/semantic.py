@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import ast
 import importlib
-from importlib import metadata as importlib_metadata
 import logging
 import os
 import sys
 import threading
-from typing import Any, Callable, Literal, TypeVar, cast
+from collections.abc import Callable
+from importlib import metadata as importlib_metadata
+from typing import Any, Literal, TypeVar, cast
 
 import numpy as np
 from packaging.version import InvalidVersion, Version
@@ -406,7 +407,12 @@ def _prepare_semantic_device(
 
 
 def _coerce_device_name(value: object, fallback: str) -> str:
-    """Reduce a torch device-like value to ``cpu``, ``cuda``, or ``mps``."""
+    """Reduce a torch device-like value to ``cpu``, ``cuda``, or ``mps``.
+
+    :param value: Device-like object or string, for example ``torch.device('mps:0')``.
+    :param fallback: Device name to use when the value is ``None`` or unrecognized.
+    :return: ``cpu``, ``cuda``, ``mps``, or ``fallback``.
+    """
     if value is None:
         return fallback
     candidate = str(value).lower().split(":", 1)[0]
@@ -416,7 +422,13 @@ def _coerce_device_name(value: object, fallback: str) -> str:
 
 
 def _get_effective_model_device(model: object, fallback: str) -> str:
-    """Return cached or model-reported execution device."""
+    """Return cached or model-reported execution device.
+
+    :param model: Model instance to inspect.
+    :param fallback: Device name to use when the model reports nothing usable.
+    :return: Tracked execution device when ``model`` is the process-wide cached model,
+        otherwise the device coerced from ``model.device``.
+    """
     if model is _model and _model_execution_device is not None:
         return _model_execution_device
     return _coerce_device_name(getattr(model, "device", None), fallback)
@@ -491,9 +503,12 @@ def _resolve_embeddinggemma_torch_dtype(device: str) -> Any:
     except ModuleNotFoundError:
         return None
 
-    if device == "cuda" and hasattr(torch.cuda, "is_bf16_supported"):
-        if torch.cuda.is_bf16_supported():
-            return torch.bfloat16
+    if (
+        device == "cuda"
+        and hasattr(torch.cuda, "is_bf16_supported")
+        and torch.cuda.is_bf16_supported()
+    ):
+        return torch.bfloat16
 
     return torch.float32
 
@@ -503,7 +518,7 @@ def _patch_c2llm_runtime_compat() -> None:
     import builtins
 
     if not hasattr(builtins, "is_torch_npu_available"):
-        setattr(builtins, "is_torch_npu_available", lambda: False)
+        builtins.is_torch_npu_available = lambda: False
 
 
 def _get_model_unlocked(
@@ -708,7 +723,19 @@ def get_model(
     mps_fallback: bool | None = None,
     mps_memory_fraction: float | None = None,
 ) -> object:
-    """Thread-safe wrapper around the process-wide semantic model cache."""
+    """Thread-safe wrapper around the process-wide semantic model cache.
+
+    :param model_name: Model alias or identifier, defaults to ``DEFAULT_MODEL``.
+    :param revision: Optional model revision; ``None`` uses the profile default.
+    :param trust_remote_code: Optional remote-code trust setting; ``None`` uses the
+        profile default.
+    :param device: ``auto``, ``cpu``, ``cuda``, or ``mps``, defaults to
+        ``DEFAULT_SEMANTIC_DEVICE``.
+    :param mps_fallback: MPS unsupported-op CPU fallback behavior; ``None`` keeps the
+        automatic behavior.
+    :param mps_memory_fraction: Optional MPS allocator limit in ``(0, 2]``.
+    :return: Cached model instance, reloaded when any cache key changed.
+    """
     with _model_lock:
         return _get_model_unlocked(
             model_name,
@@ -957,6 +984,16 @@ def _encode_texts(
     The fallback call is intentionally limited to an explicit "unexpected
     keyword argument: device" failure. Broadly retrying every ``TypeError`` can
     execute inference twice and hide a genuine model/backend bug.
+
+    :param encode_fn: Backend encode callable, for example ``model.encode``.
+    :param texts: Inputs to embed.
+    :param batch_size: Encode batch size passed to the backend.
+    :param show_progress_bar: Whether the backend should render a progress bar.
+    :param convert_to_numpy: Whether the backend should return NumPy arrays.
+    :param normalize_embeddings: Whether the backend should L2-normalize outputs.
+    :param device: Per-call device override, or ``None`` to leave the model device
+        untouched, defaults to ``None``.
+    :return: Embedding matrix returned by ``encode_fn``.
     """
     kwargs: dict[str, object] = {
         "batch_size": batch_size,
@@ -1000,6 +1037,20 @@ def _encode_with_retries(
     the requested batch size. OOM traceback references are detached before
     synchronization/garbage collection so temporary tensors do not remain live
     during allocator cleanup.
+
+    :param model: Loaded model, moved to CPU in place when accelerator OOM persists.
+    :param encode_fn: Backend encode callable bound to ``model``.
+    :param texts: Inputs to embed.
+    :param batch_size: Requested batch size, also the restart size for the CPU retry.
+    :param show_progress_bar: Whether the backend should render a progress bar.
+    :param initial_device: Device the model executes on before any CPU fallback.
+    :param model_name: Model identifier reported in backend error messages.
+    :param revision: Resolved model revision reported in backend error messages.
+    :param trust_remote_code: Trust setting reported in backend error messages.
+    :param stage: Short stage label used in warnings and error messages.
+    :return: Embedding matrix for ``texts``.
+    :raises SemanticBackendError: If a non-OOM failure matches a known backend issue.
+    :raises RuntimeError: If OOM persists at batch size one with no fallback left.
     """
     current_batch_size = max(1, batch_size)
     active_device = initial_device
@@ -1113,6 +1164,22 @@ def _compute_embeddings_unlocked(
 
     Embeddings are converted to NumPy immediately, keeping pairwise similarity
     computation on CPU and avoiding long-lived Metal tensors beyond model weights.
+
+    :param units: Code units to embed, preserved in input order.
+    :param model_name: Model alias or identifier, defaults to ``DEFAULT_MODEL``.
+    :param instruction_prefix: Optional instruction override for embedding inputs.
+    :param batch_size: Initial encode batch size, defaults to ``DEFAULT_BATCH_SIZE``.
+    :param revision: Optional model revision; ``None`` uses the profile default.
+    :param trust_remote_code: Optional remote-code trust setting; ``None`` uses the
+        profile default.
+    :param semantic_task: Optional task override; ``None`` uses
+        ``DEFAULT_CHECK_SEMANTIC_TASK``.
+    :param device: ``auto``, ``cpu``, ``cuda``, or ``mps``, defaults to
+        ``DEFAULT_SEMANTIC_DEVICE``.
+    :param mps_fallback: MPS unsupported-op CPU fallback behavior.
+    :param mps_memory_fraction: Optional MPS allocator limit in ``(0, 2]``.
+    :return: Normalized embedding matrix row-aligned with ``units``.
+    :raises ValueError: If ``batch_size`` is not positive.
     """
     if batch_size <= 0:
         raise ValueError("batch_size must be > 0")
@@ -1184,7 +1251,23 @@ def compute_embeddings(
     mps_fallback: bool | None = None,
     mps_memory_fraction: float | None = None,
 ) -> np.ndarray:
-    """Compute embeddings while serializing shared-model lifecycle and inference."""
+    """Compute embeddings while serializing shared-model lifecycle and inference.
+
+    :param units: Code units to embed, preserved in input order.
+    :param model_name: Model alias or identifier, defaults to ``DEFAULT_MODEL``.
+    :param instruction_prefix: Optional instruction override for embedding inputs.
+    :param batch_size: Initial encode batch size, defaults to ``DEFAULT_BATCH_SIZE``.
+    :param revision: Optional model revision; ``None`` uses the profile default.
+    :param trust_remote_code: Optional remote-code trust setting; ``None`` uses the
+        profile default.
+    :param semantic_task: Optional task override; ``None`` uses
+        ``DEFAULT_CHECK_SEMANTIC_TASK``.
+    :param device: ``auto``, ``cpu``, ``cuda``, or ``mps``, defaults to
+        ``DEFAULT_SEMANTIC_DEVICE``.
+    :param mps_fallback: MPS unsupported-op CPU fallback behavior.
+    :param mps_memory_fraction: Optional MPS allocator limit in ``(0, 2]``.
+    :return: Normalized embedding matrix row-aligned with ``units``.
+    """
     with _model_lock:
         return _compute_embeddings_unlocked(
             units,
@@ -1258,9 +1341,10 @@ def find_semantic_duplicates(
                 if not _types_compatible(unit_a, unit_b):
                     continue
 
-                if unit_a.file_path == unit_b.file_path:
-                    if not (unit_a.end_lineno < unit_b.lineno or unit_b.end_lineno < unit_a.lineno):
-                        continue
+                if unit_a.file_path == unit_b.file_path and not (
+                    unit_a.end_lineno < unit_b.lineno or unit_b.end_lineno < unit_a.lineno
+                ):
+                    continue
 
                 pair_key = ordered_pair_key(unit_a, unit_b)
                 if pair_key in exclude_exact:
@@ -1296,7 +1380,27 @@ def _find_similar_to_query_unlocked(
     mps_fallback: bool | None = None,
     mps_memory_fraction: float | None = None,
 ) -> list[tuple[CodeUnit, float]]:
-    """Find code units most similar to a natural-language query."""
+    """Find code units most similar to a natural-language query.
+
+    :param query: Natural-language search text.
+    :param units: Code units row-aligned with ``embeddings``.
+    :param embeddings: Precomputed normalized embedding matrix.
+    :param model_name: Model alias or identifier, defaults to ``DEFAULT_MODEL``.
+    :param instruction_prefix: Optional instruction override for the query text.
+    :param top_k: Maximum number of matches to return, defaults to ``DEFAULT_TOP_K``.
+    :param revision: Optional model revision; ``None`` uses the profile default.
+    :param trust_remote_code: Optional remote-code trust setting; ``None`` uses the
+        profile default.
+    :param threshold: Minimum cosine similarity; ``None`` uses the model profile default.
+    :param semantic_task: Optional task override; ``None`` uses
+        ``DEFAULT_SEARCH_SEMANTIC_TASK``.
+    :param device: ``auto``, ``cpu``, ``cuda``, or ``mps``, defaults to
+        ``DEFAULT_SEMANTIC_DEVICE``.
+    :param mps_fallback: MPS unsupported-op CPU fallback behavior.
+    :param mps_memory_fraction: Optional MPS allocator limit in ``(0, 2]``.
+    :return: Up to ``top_k`` ``(unit, similarity)`` pairs at or above the threshold,
+        sorted by descending similarity.
+    """
     resolved_revision = _resolve_model_revision(model_name, revision)
     resolved_trust_remote_code = _resolve_trust_remote_code(model_name, trust_remote_code)
     profile = resolve_model_profile(model_name)
@@ -1371,7 +1475,27 @@ def find_similar_to_query(
     mps_fallback: bool | None = None,
     mps_memory_fraction: float | None = None,
 ) -> list[tuple[CodeUnit, float]]:
-    """Search embeddings while serializing shared-model lifecycle and inference."""
+    """Search embeddings while serializing shared-model lifecycle and inference.
+
+    :param query: Natural-language search text.
+    :param units: Code units row-aligned with ``embeddings``.
+    :param embeddings: Precomputed normalized embedding matrix.
+    :param model_name: Model alias or identifier, defaults to ``DEFAULT_MODEL``.
+    :param instruction_prefix: Optional instruction override for the query text.
+    :param top_k: Maximum number of matches to return, defaults to ``DEFAULT_TOP_K``.
+    :param revision: Optional model revision; ``None`` uses the profile default.
+    :param trust_remote_code: Optional remote-code trust setting; ``None`` uses the
+        profile default.
+    :param threshold: Minimum cosine similarity; ``None`` uses the model profile default.
+    :param semantic_task: Optional task override; ``None`` uses
+        ``DEFAULT_SEARCH_SEMANTIC_TASK``.
+    :param device: ``auto``, ``cpu``, ``cuda``, or ``mps``, defaults to
+        ``DEFAULT_SEMANTIC_DEVICE``.
+    :param mps_fallback: MPS unsupported-op CPU fallback behavior.
+    :param mps_memory_fraction: Optional MPS allocator limit in ``(0, 2]``.
+    :return: Up to ``top_k`` ``(unit, similarity)`` pairs at or above the threshold,
+        sorted by descending similarity.
+    """
     with _model_lock:
         return _find_similar_to_query_unlocked(
             query,
@@ -1404,7 +1528,25 @@ def run_semantic_analysis(
     mps_fallback: bool | None = None,
     mps_memory_fraction: float | None = None,
 ) -> tuple[np.ndarray, list[DuplicatePair]]:
-    """Run full semantic duplicate detection."""
+    """Run full semantic duplicate detection.
+
+    :param units: Code units to embed and compare.
+    :param model_name: Model alias or identifier, defaults to ``DEFAULT_MODEL``.
+    :param instruction_prefix: Optional instruction override for embedding inputs.
+    :param threshold: Minimum cosine similarity; ``None`` uses the model profile default.
+    :param exclude_pairs: Ordered pair keys to omit from the semantic results.
+    :param batch_size: Initial encode batch size, defaults to ``DEFAULT_BATCH_SIZE``.
+    :param revision: Optional model revision; ``None`` uses the profile default.
+    :param trust_remote_code: Optional remote-code trust setting; ``None`` uses the
+        profile default.
+    :param semantic_task: Optional task override; ``None`` uses
+        ``DEFAULT_CHECK_SEMANTIC_TASK``.
+    :param device: ``auto``, ``cpu``, ``cuda``, or ``mps``, defaults to
+        ``DEFAULT_SEMANTIC_DEVICE``.
+    :param mps_fallback: MPS unsupported-op CPU fallback behavior.
+    :param mps_memory_fraction: Optional MPS allocator limit in ``(0, 2]``.
+    :return: ``(embeddings, duplicates)``; both are empty when ``units`` is empty.
+    """
     if not units:
         return np.array([]), []
     resolved_threshold = (

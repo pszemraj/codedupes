@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 from textwrap import dedent
-from typing import Any, Callable
+from typing import Any
 
 from codedupes.extractor import CodeExtractor
 from codedupes.models import AnalysisResult, CodeUnit

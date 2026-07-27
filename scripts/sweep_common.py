@@ -1,4 +1,3 @@
-#!/usr/bin/env python
 """Shared helpers for synthetic sweep scripts."""
 
 from __future__ import annotations

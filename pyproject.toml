@@ -58,7 +58,7 @@ version-file = "src/codedupes/_version.py"
 [tool.ruff]
 line-length = 100
 target-version = "py311"
-extend-exclude = ["tests/fixtures/**"]
+extend-exclude = ["test_fixtures/**"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

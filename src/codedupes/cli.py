@@ -6,9 +6,10 @@ import json
 import logging
 import platform
 import sys
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path, PureWindowsPath
-from typing import Any, Callable, Iterator, Literal, TypeVar, cast
+from typing import Any, Literal, TypeVar, cast
 
 import click
 from rich.console import Console
@@ -27,9 +28,9 @@ from codedupes.constants import (
     DEFAULT_SEARCH_SEMANTIC_TASK,
     DEFAULT_SEMANTIC_DEVICE,
     DEFAULT_TOP_K,
+    DEFAULT_TRADITIONAL_THRESHOLD,
     SEMANTIC_DEVICE_CHOICES,
     SEMANTIC_TASK_CHOICES,
-    DEFAULT_TRADITIONAL_THRESHOLD,
 )
 from codedupes.devices import (
     configure_mps_environment,
@@ -85,7 +86,14 @@ class _StrictCommandGroup(click.Group):
         ctx: click.Context,
         args: list[str],
     ) -> tuple[str | None, click.Command | None, list[str]]:
-        """Resolve commands while preserving a usage error for absolute paths."""
+        """Resolve commands while preserving a usage error for absolute paths.
+
+        :param ctx: Active click context for this group.
+        :param args: Remaining command-line tokens, leading with the command name.
+        :return: ``(command_name, command, remaining_args)`` from click's resolver.
+        :raises click.UsageError: If the first token is an absolute path that does not
+            name a registered command.
+        """
         if args:
             command_token = str(args[0])
             is_absolute_path = (
@@ -369,44 +377,20 @@ def _is_cli_explicit(ctx: click.Context, option_name: str) -> bool:
     return ctx.get_parameter_source(option_name) == click.core.ParameterSource.COMMANDLINE
 
 
-def _resolve_trust_remote_code_flags(
-    *,
-    trust_remote_code: bool,
-    no_trust_remote_code: bool,
-) -> bool | None:
-    """Resolve trust-remote-code flags and reject contradictory input.
+def _resolve_paired_flags(enabled: bool, disabled: bool, flag: str) -> bool | None:
+    """Resolve a ``--<flag>``/``--no-<flag>`` pair and reject contradictory input.
 
-    :param trust_remote_code: Whether ``--trust-remote-code`` was provided.
-    :param no_trust_remote_code: Whether ``--no-trust-remote-code`` was provided.
+    :param enabled: Whether ``--<flag>`` was provided.
+    :param disabled: Whether ``--no-<flag>`` was provided.
+    :param flag: Flag name without the leading dashes, e.g. ``mps-fallback``.
     :return: ``True``/``False`` when explicitly set, otherwise ``None``.
     :raises click.UsageError: When both contradictory flags are provided.
     """
-    if trust_remote_code and no_trust_remote_code:
-        raise click.UsageError("Cannot combine --trust-remote-code and --no-trust-remote-code.")
-    if trust_remote_code:
+    if enabled and disabled:
+        raise click.UsageError(f"Cannot combine --{flag} and --no-{flag}.")
+    if enabled:
         return True
-    if no_trust_remote_code:
-        return False
-    return None
-
-
-def _resolve_mps_fallback_flags(
-    *,
-    mps_fallback: bool,
-    no_mps_fallback: bool,
-) -> bool | None:
-    """Resolve MPS fallback flags and reject contradictory input.
-
-    :param mps_fallback: Whether ``--mps-fallback`` was provided.
-    :param no_mps_fallback: Whether ``--no-mps-fallback`` was provided.
-    :return: ``True``/``False`` when explicitly set, otherwise ``None``.
-    :raises click.UsageError: When both contradictory flags are provided.
-    """
-    if mps_fallback and no_mps_fallback:
-        raise click.UsageError("Cannot combine --mps-fallback and --no-mps-fallback.")
-    if mps_fallback:
-        return True
-    if no_mps_fallback:
+    if disabled:
         return False
     return None
 
@@ -1238,14 +1222,10 @@ def check_command(
                 f"Cannot use {listed} with --semantic-only; traditional duplicate analysis is disabled."
             )
 
-    resolved_trust_remote_code = _resolve_trust_remote_code_flags(
-        trust_remote_code=trust_remote_code,
-        no_trust_remote_code=no_trust_remote_code,
+    resolved_trust_remote_code = _resolve_paired_flags(
+        trust_remote_code, no_trust_remote_code, "trust-remote-code"
     )
-    resolved_mps_fallback = _resolve_mps_fallback_flags(
-        mps_fallback=mps_fallback,
-        no_mps_fallback=no_mps_fallback,
-    )
+    resolved_mps_fallback = _resolve_paired_flags(mps_fallback, no_mps_fallback, "mps-fallback")
 
     combined_mode = not semantic_only and not traditional_only
     table_max_items: int | None = None if full_table else DEFAULT_TABLE_ROWS
@@ -1461,14 +1441,10 @@ def search_command(
         verbose=verbose,
         output_width_explicit=_is_cli_explicit(ctx, "output_width"),
     )
-    resolved_trust_remote_code = _resolve_trust_remote_code_flags(
-        trust_remote_code=trust_remote_code,
-        no_trust_remote_code=no_trust_remote_code,
+    resolved_trust_remote_code = _resolve_paired_flags(
+        trust_remote_code, no_trust_remote_code, "trust-remote-code"
     )
-    resolved_mps_fallback = _resolve_mps_fallback_flags(
-        mps_fallback=mps_fallback,
-        no_mps_fallback=no_mps_fallback,
-    )
+    resolved_mps_fallback = _resolve_paired_flags(mps_fallback, no_mps_fallback, "mps-fallback")
 
     try:
         config = AnalyzerConfig(

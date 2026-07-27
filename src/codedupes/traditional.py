@@ -69,11 +69,7 @@ def extract_identifiers(source: str) -> set[str]:
         for node in ast.walk(tree):
             if isinstance(node, ast.Name):
                 identifiers.add(node.id)
-            elif isinstance(node, ast.FunctionDef):
-                identifiers.add(node.name)
-            elif isinstance(node, ast.ClassDef):
-                identifiers.add(node.name)
-            elif isinstance(node, ast.AsyncFunctionDef):
+            elif isinstance(node, (ast.FunctionDef, ast.ClassDef, ast.AsyncFunctionDef)):
                 identifiers.add(node.name)
             elif isinstance(node, ast.arg):
                 identifiers.add(node.arg)
@@ -207,9 +203,7 @@ def _extract_main_block_calls(file_path: Path) -> set[str]:
                     and left.id == "__name__"
                     and isinstance(right, ast.Constant)
                     and right.value == "__main__"
-                ):
-                    is_main = True
-                elif (
+                ) or (
                     isinstance(left, ast.Constant)
                     and left.value == "__main__"
                     and isinstance(right, ast.Name)
@@ -338,14 +332,17 @@ def _extract_aliases(file_path: Path) -> dict[str, str]:
                 imported = alias.name
                 asname = alias.asname or imported
                 aliases[asname] = f"{base}.{imported}" if base else imported
-        elif isinstance(node, ast.Assign):
-            if len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
-                target = node.targets[0].id
-                value = node.value
-                if isinstance(value, ast.Name):
-                    aliases[target] = value.id
-                elif isinstance(value, ast.Attribute) and isinstance(value.value, ast.Name):
-                    aliases[target] = f"{value.value.id}.{value.attr}"
+        elif (
+            isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+        ):
+            target = node.targets[0].id
+            value = node.value
+            if isinstance(value, ast.Name):
+                aliases[target] = value.id
+            elif isinstance(value, ast.Attribute) and isinstance(value.value, ast.Name):
+                aliases[target] = f"{value.value.id}.{value.attr}"
     return aliases
 
 

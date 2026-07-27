@@ -7,8 +7,8 @@ import copy
 import hashlib
 import logging
 import os
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Iterator
 
 from codedupes.models import CodeUnit, CodeUnitType
 
@@ -192,7 +192,11 @@ def _dotted_expression_name(node: ast.expr) -> str | None:
 
 
 def _is_ast_visitor_base(base_name: str) -> bool:
-    """Return whether a base name denotes an AST visitor dispatch class."""
+    """Return whether a base name denotes an AST visitor dispatch class.
+
+    :param base_name: Possibly dotted base-class name, for example ``ast.NodeVisitor``.
+    :return: ``True`` when the trailing segment is ``NodeVisitor`` or ``NodeTransformer``.
+    """
     return base_name.rsplit(".", 1)[-1] in {"NodeVisitor", "NodeTransformer"}
 
 
@@ -201,7 +205,7 @@ class _CodeUnitCollector(ast.NodeVisitor):
 
     def __init__(
         self,
-        extractor: "CodeExtractor",
+        extractor: CodeExtractor,
         file_path: Path,
         source: str,
         module_name: str,
@@ -334,7 +338,7 @@ def compute_token_hash(source: str) -> str:
                 tokenize.ENCODING,
             ):
                 tokens.append((tok.type, tok.string))
-    except Exception:  # tokenize.TokenizeError and other parsing errors
+    except Exception:  # noqa: BLE001 - arbitrary source can fail tokenize in many ways
         # Fall back to simple normalization
         tokens = [(0, w) for w in source.split()]
 
@@ -366,13 +370,16 @@ def get_exported_names(tree: ast.Module) -> set[str]:
     for node in ast.walk(tree):
         if isinstance(node, ast.Assign):
             for target in node.targets:
-                if isinstance(target, ast.Name) and target.id == "__all__":
-                    if isinstance(node.value, (ast.List, ast.Tuple)):
-                        return {
-                            elt.value
-                            for elt in node.value.elts
-                            if isinstance(elt, ast.Constant) and isinstance(elt.value, str)
-                        }
+                if (
+                    isinstance(target, ast.Name)
+                    and target.id == "__all__"
+                    and isinstance(node.value, (ast.List, ast.Tuple))
+                ):
+                    return {
+                        elt.value
+                        for elt in node.value.elts
+                        if isinstance(elt, ast.Constant) and isinstance(elt.value, str)
+                    }
     return set()
 
 
@@ -463,8 +470,7 @@ class CodeExtractor:
         exported = get_exported_names(tree)
         visitor = _CodeUnitCollector(self, file_path, source, module_name, exported)
         visitor.visit(tree)
-        for unit in visitor.units:
-            yield unit
+        yield from visitor.units
 
     def _should_emit_function(self, name: str) -> bool:
         """Respect private-function filtering.

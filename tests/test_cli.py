@@ -6,8 +6,8 @@ import re
 import sys
 from pathlib import Path
 
-from click.testing import CliRunner
 import pytest
+from click.testing import CliRunner
 
 from codedupes import cli
 from codedupes.devices import DeviceDiagnostics
@@ -942,10 +942,11 @@ def test_no_banned_runtime_practice() -> None:
     scanned_files.extend(root.joinpath("src").rglob("*.py"))
     scanned_files.extend(root.joinpath("tests").rglob("*.py"))
 
-    python_m_pattern = " ".join(["python", "-m", "codedupes"])
-    sys_path_pattern = ".".join(["sys", "path"])
-    subprocess_import_pattern = " ".join(["import", "subprocess"])
-    subprocess_attr_pattern = "subprocess" + "."
+    # This file is skipped during the scan, so plain literals are safe here.
+    python_m_pattern = "python -m codedupes"
+    sys_path_pattern = "sys.path"
+    subprocess_import_pattern = "import subprocess"
+    subprocess_attr_pattern = "subprocess."
 
     violations: list[str] = []
     for file in scanned_files:

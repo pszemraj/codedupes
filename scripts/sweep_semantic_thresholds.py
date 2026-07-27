@@ -1,4 +1,3 @@
-#!/usr/bin/env python
 """Sweep semantic thresholds for built-in semantic model profiles."""
 
 from __future__ import annotations

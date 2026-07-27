@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import logging
 import sys
+from pathlib import Path
+
 import numpy as np
 import pytest
 import sentence_transformers
-from pathlib import Path
 
 from codedupes import semantic
 from codedupes.constants import DEFAULT_C2LLM_REVISION

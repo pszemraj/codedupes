@@ -1,4 +1,3 @@
-#!/usr/bin/env python
 """Sweep hybrid semantic-only gate thresholds against a labeled synthetic corpus."""
 
 from __future__ import annotations

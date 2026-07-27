@@ -5,7 +5,10 @@ replacement for the CLI, output, model-profile, or accelerator source-of-truth d
 
 ## Breaking baseline change
 
-- Minimum PyTorch version is now `2.13.0`; the supported range is `>=2.13.0,<3`.
+- Minimum PyTorch version is now `2.13.0`; the supported range is `>=2.13.0,<3`. Dev and rc builds
+  of an in-range release (for example `2.13.0.dev20250101`) are accepted.
+- The transformers pin widened from `<5` to `>=4.51,<6`; validated against transformers 5.14.1 with
+  sentence-transformers 5.6.1.
 - `packaging` is now an explicit runtime dependency because semantic compatibility checks import it
   directly.
 - Semantic startup now rejects an unsupported PyTorch runtime even when dependency resolution was
@@ -18,12 +21,18 @@ replacement for the CLI, output, model-profile, or accelerator source-of-truth d
 
 - Added explicit `auto`, `cpu`, `cuda`, and `mps` selection for both CLI workflows and the Python
   API.
-- Added pre-import MPS unsupported-operator fallback control.
-- Added an optional, validated MPS per-process memory fraction.
+- Added pre-import MPS unsupported-operator fallback control; `codedupes info` configures the
+  fallback environment before importing torch so diagnostics do not pin the setting for later
+  same-process runs.
+- Added an optional, validated MPS per-process memory fraction. The fraction is ignored (with a
+  log message) when the resolved device is not MPS, so `--device auto --mps-memory-fraction X` is
+  safe on CPU-only and CUDA hosts.
 - Made model caching device-aware and serialized model lifecycle/inference across threads.
 - Added MPS memory diagnostics, synchronized allocator cleanup, adaptive batch-size OOM retries,
-  and one final CPU retry.
-- Made MPS-to-CPU OOM fallback state explicit so later calls do not falsely report MPS execution.
+  and one final CPU retry. The CPU retry restarts from the originally requested batch size and
+  re-enters the halving ladder if host memory also OOMs.
+- Made MPS-to-CPU OOM fallback state explicit so later calls do not falsely report MPS execution;
+  reusing the fallback model for an accelerator request warns once per fallback event.
 - Kept semantic embeddings as normalized NumPy arrays immediately after inference.
 - Added MLX coexistence diagnostics without importing or mutating the MLX allocator.
 - Avoided forced MPS fast math, forced Metal matmul selection, and success-path cache clearing.
@@ -40,8 +49,13 @@ replacement for the CLI, output, model-profile, or accelerator source-of-truth d
 ## Validation boundary
 
 The offline suite covers deterministic MPS simulations and ordinary regressions. Physical Apple
-Silicon validation remains an explicit release step:
+Silicon validation is an explicit release step:
 
 ```bash
 CODEDUPES_SMOKE_MPS=1 pytest -m mps tests/test_semantic_smoke.py
 ```
+
+For this release it was performed on an Apple M5 (32 GB unified memory, macOS Tahoe, PyTorch
+2.13.0): the smoke test passed with the model on `mps`, a full `codedupes check` of this repo ran
+roughly 38x faster on MPS than on CPU with bit-identical duplicate scores across the two devices,
+and strict `--no-mps-fallback` runs completed without hitting unsupported operators.

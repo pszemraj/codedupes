@@ -47,7 +47,10 @@ class DeviceDiagnostics:
 
 
 def is_mlx_loaded() -> bool:
-    """Return whether MLX has already been imported in this process."""
+    """Return whether MLX has already been imported in this process.
+
+    :return: ``True`` when ``mlx`` or ``mlx.core`` is present in ``sys.modules``.
+    """
     return "mlx" in sys.modules or "mlx.core" in sys.modules
 
 
@@ -142,7 +145,13 @@ def _load_torch() -> Any:
 
 
 def _safe_bool_call(owner: Any, name: str) -> bool:
-    """Call an optional boolean capability function safely."""
+    """Call an optional boolean capability function safely.
+
+    :param owner: Object that may expose the capability function.
+    :param name: Attribute name of the zero-argument capability function.
+    :return: Result coerced to ``bool``, or ``False`` when the attribute is missing,
+        not callable, or raises.
+    """
     callback = getattr(owner, name, None)
     if not callable(callback):
         return False
@@ -156,13 +165,22 @@ def _safe_bool_call(owner: Any, name: str) -> bool:
 
 
 def _cuda_available(torch_module: Any) -> bool:
-    """Return whether CUDA is available in a torch runtime."""
+    """Return whether CUDA is available in a torch runtime.
+
+    :param torch_module: Imported ``torch`` module or a compatible test double.
+    :return: ``True`` when ``torch.cuda.is_available()`` reports availability.
+    """
     cuda = getattr(torch_module, "cuda", None)
     return cuda is not None and _safe_bool_call(cuda, "is_available")
 
 
 def _mps_capabilities(torch_module: Any) -> tuple[bool, bool]:
-    """Return ``(built, available)`` for the PyTorch MPS backend."""
+    """Return ``(built, available)`` for the PyTorch MPS backend.
+
+    :param torch_module: Imported ``torch`` module or a compatible test double.
+    :return: ``(built, available)`` flags, where ``built`` is inferred as ``True`` for
+        runtimes that report availability without exposing ``is_built``.
+    """
     backends = getattr(torch_module, "backends", None)
     backend_mps = getattr(backends, "mps", None) if backends is not None else None
     torch_mps = getattr(torch_module, "mps", None)
@@ -184,7 +202,14 @@ def _resolve_semantic_device_with_torch(
     requested_device: str | None,
     torch_module: Any,
 ) -> ResolvedSemanticDevice:
-    """Resolve a semantic device using an already-imported torch module."""
+    """Resolve a semantic device using an already-imported torch module.
+
+    :param requested_device: Requested device name, or ``None`` for the default.
+    :param torch_module: Imported ``torch`` module or a compatible test double.
+    :return: Concrete device name; ``auto`` prefers CUDA, then MPS, then CPU.
+    :raises DeviceConfigurationError: If an explicitly requested accelerator is
+        unavailable or unsupported by this PyTorch build.
+    """
     requested = normalize_semantic_device(requested_device)
     cuda_available = _cuda_available(torch_module)
     mps_built, mps_available = _mps_capabilities(torch_module)
@@ -278,7 +303,13 @@ def configure_mps_memory_fraction(
 
 
 def _safe_int_call(owner: Any, name: str) -> int | None:
-    """Call an optional integer-returning runtime function safely."""
+    """Call an optional integer-returning runtime function safely.
+
+    :param owner: Object that may expose the query function.
+    :param name: Attribute name of the zero-argument query function.
+    :return: Result coerced to ``int``, or ``None`` when the attribute is missing,
+        not callable, or raises.
+    """
     callback = getattr(owner, name, None)
     if not callable(callback):
         return None
@@ -317,7 +348,11 @@ def get_mps_memory_snapshot() -> dict[str, int]:
 
 
 def format_bytes(value: int | None) -> str:
-    """Format byte counts for compact diagnostics."""
+    """Format byte counts for compact diagnostics.
+
+    :param value: Byte count, or ``None`` when the statistic is unavailable.
+    :return: Binary-unit string such as ``1.5 GiB``, or ``unknown`` for ``None``.
+    """
     if value is None:
         return "unknown"
     units = ("B", "KiB", "MiB", "GiB", "TiB")
@@ -330,7 +365,13 @@ def format_bytes(value: int | None) -> str:
 
 
 def format_mps_memory_snapshot(snapshot: dict[str, int] | None = None) -> str:
-    """Format an MPS memory snapshot for logs."""
+    """Format an MPS memory snapshot for logs.
+
+    :param snapshot: Pre-collected allocator statistics, or ``None`` to query the live
+        PyTorch MPS allocator, defaults to ``None``.
+    :return: Comma-separated ``tensor``/``driver``/``recommended`` summary, or a notice
+        that MPS memory statistics are unavailable.
+    """
     values = snapshot if snapshot is not None else get_mps_memory_snapshot()
     if not values:
         return "MPS memory statistics unavailable"
