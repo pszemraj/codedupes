@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import hashlib
 import importlib
 import logging
 import os
@@ -42,6 +43,7 @@ from codedupes.semantic_profiles import (
     SemanticModelProfile,
     get_default_search_threshold,
     get_default_semantic_threshold,
+    resolve_local_model_path,
     resolve_model_profile,
 )
 
@@ -198,21 +200,71 @@ def _resolve_hf_cached_revision(canonical_model: str) -> str | None:
     return parts[snapshots_index + 1]
 
 
+def _fingerprint_local_model_dir(model_dir: Path) -> str | None:
+    """Fingerprint a local model directory for use as a cache revision.
+
+    The fingerprint hashes every regular file's relative path, size, and
+    mtime, so replacing or retraining the weights in place changes the
+    resulting cache revision and stale vectors are never served. It reads
+    no file contents, keeping warm-path key derivation cheap enough to run
+    before any model import.
+
+    :param model_dir: Resolved local model directory.
+    :return: ``"dir-<hex>"`` fingerprint, or ``None`` when the walk fails.
+    """
+    entries: list[tuple[str, int, int]] = []
+    try:
+        for file_path in sorted(model_dir.rglob("*")):
+            if not file_path.is_file():
+                continue
+            stat = file_path.stat()
+            relative = file_path.relative_to(model_dir).as_posix()
+            entries.append((relative, stat.st_size, stat.st_mtime_ns))
+    except OSError:
+        return None
+    if not entries:
+        return None
+    digest = hashlib.blake2b(repr(entries).encode(), digest_size=12).hexdigest()
+    return f"dir-{digest}"
+
+
+def _resolve_load_revision(model_name: str, explicit_revision: str | None) -> str | None:
+    """Resolve the revision used for model loading and post-load verification.
+
+    Local model directories always resolve to ``None``: on-disk weights have no
+    hub revision, so an explicit override would only poison model-cache keys and
+    post-load cache-revision confirmation with a meaningless string.
+
+    :param model_name: Requested model identifier.
+    :param explicit_revision: Optional explicit revision override.
+    :return: Revision for hub models, ``None`` for local model directories.
+    """
+    canonical_model = resolve_model_profile(model_name).canonical_name
+    if resolve_local_model_path(canonical_model) is not None:
+        return None
+    return _resolve_model_revision(model_name, explicit_revision)
+
+
 def _resolve_revision_for_cache(model_name: str, explicit_revision: str | None) -> str | None:
     """Resolve a concrete revision usable as a cache key component, without loading the model.
 
-    Pinned profiles (or an explicit override) resolve immediately. Unpinned models fall
-    back to reading the locally cached HuggingFace commit hash so cache keys stay stable
-    across runs even before the model is loaded.
+    Pinned profiles (or an explicit override) resolve immediately. Local model
+    directories resolve to a content fingerprint of the directory (an explicit
+    revision is ignored for them because nothing pins on-disk weights). Unpinned
+    hub models fall back to reading the locally cached HuggingFace commit hash so
+    cache keys stay stable across runs even before the model is loaded.
 
     :param model_name: Requested model identifier.
     :param explicit_revision: Optional explicit revision override.
     :return: Concrete revision string, or ``None`` when it cannot be resolved offline.
     """
+    canonical_model = resolve_model_profile(model_name).canonical_name
+    local_dir = resolve_local_model_path(canonical_model)
+    if local_dir is not None:
+        return _fingerprint_local_model_dir(local_dir)
     profile_revision = _resolve_model_revision(model_name, explicit_revision)
     if profile_revision is not None:
         return profile_revision
-    canonical_model = resolve_model_profile(model_name).canonical_name
     return _resolve_hf_cached_revision(canonical_model)
 
 
@@ -646,6 +698,13 @@ def _get_model_unlocked(
     profile = resolve_model_profile(model_name)
     resolved_model_name = profile.canonical_name
     resolved_revision = _resolve_model_revision(model_name, revision)
+    if resolved_revision is not None and resolve_local_model_path(resolved_model_name) is not None:
+        logger.warning(
+            "Ignoring revision %r for local model directory %s; on-disk weights are unpinned",
+            resolved_revision,
+            resolved_model_name,
+        )
+        resolved_revision = None
     resolved_trust_remote_code = _resolve_trust_remote_code(model_name, trust_remote_code)
 
     # Configure MPS environment variables before dependency checks import torch
@@ -1334,7 +1393,7 @@ def _compute_embeddings_unlocked(
     if cache_keys is not None and len(hits) == len(units):
         return _assemble_cached_matrix(cache_keys, hits)
 
-    resolved_revision = _resolve_model_revision(model_name, revision)
+    resolved_revision = _resolve_load_revision(model_name, revision)
     resolved_trust_remote_code = _resolve_trust_remote_code(model_name, trust_remote_code)
     resolved_device = _prepare_semantic_device(
         device,
@@ -1683,7 +1742,7 @@ def _find_similar_to_query_unlocked(
         query_embedding = _validated_query_hit(hit.get(cache_key))
 
     if query_embedding is None:
-        resolved_revision = _resolve_model_revision(model_name, revision)
+        resolved_revision = _resolve_load_revision(model_name, revision)
         resolved_trust_remote_code = _resolve_trust_remote_code(model_name, trust_remote_code)
         resolved_device = _prepare_semantic_device(
             device,

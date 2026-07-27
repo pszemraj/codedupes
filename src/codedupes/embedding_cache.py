@@ -147,10 +147,18 @@ def _scope_hash(resolved_scope: Path) -> str:
 def _model_slug(canonical_model: str) -> str:
     """Build a filesystem-safe slug for a canonical model name.
 
+    Local model directories (absolute paths) slug to their basename plus a
+    short path hash so shard names stay readable and bounded regardless of
+    how deep the directory lives.
+
     :param canonical_model: Canonical model identifier, for example
-        ``Alibaba-NLP/gte-modernbert-base``.
+        ``Alibaba-NLP/gte-modernbert-base`` or ``/models/gte-modernbert-base``.
     :return: Sanitized slug with ``/`` replaced by ``--``.
     """
+    path = Path(canonical_model)
+    if path.is_absolute():
+        digest = hashlib.blake2b(canonical_model.encode(), digest_size=6).hexdigest()
+        return f"local--{_sanitize_component(path.name)}-{digest}"
     return _sanitize_component(canonical_model.replace("/", "--"))
 
 

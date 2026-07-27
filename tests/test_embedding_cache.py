@@ -416,3 +416,89 @@ def test_put_many_skips_write_when_shard_lock_held(tmp_path):
 
     cache.put_many(scope, "model-a", "rev1", [("k1", np.array([1.0], dtype=np.float32))])
     assert "k1" in cache.get_many(scope, "model-a", "rev1", ["k1"])
+
+
+def _fake_local_model_dir(tmp_path: Path, name: str = "gemma-work-copy") -> Path:
+    model_dir = tmp_path / name
+    model_dir.mkdir()
+    (model_dir / "config.json").write_text('{"model_type": "test"}')
+    (model_dir / "model.safetensors").write_text("weights-v1")
+    return model_dir
+
+
+def test_local_model_dir_full_hit_and_fingerprint_invalidation(tmp_path, monkeypatch):
+    units = _five_units(tmp_path)
+    model = CountingModel()
+    get_model_counts = _patch_get_model(monkeypatch, model)
+    model_dir = _fake_local_model_dir(tmp_path)
+
+    compute_embeddings(units, model_name=str(model_dir), cache_scope=tmp_path)
+    assert get_model_counts["count"] == 1
+    assert len(model.encode_calls) == 1
+
+    second = compute_embeddings(units, model_name=str(model_dir), cache_scope=tmp_path)
+    assert get_model_counts["count"] == 1
+    assert len(model.encode_calls) == 1
+    assert second.shape == (5, 4)
+
+    # Replacing the weights in place must change the fingerprint revision and
+    # invalidate every cached vector for this model directory.
+    (model_dir / "model.safetensors").write_text("weights-v2-longer")
+    compute_embeddings(units, model_name=str(model_dir), cache_scope=tmp_path)
+    assert get_model_counts["count"] == 2
+    assert len(model.encode_calls) == 2
+    assert len(model.encode_calls[-1]) == 5
+
+
+def test_local_model_dir_ignores_explicit_revision_for_cache_keys(tmp_path, monkeypatch):
+    units = _five_units(tmp_path)
+    model = CountingModel()
+    get_model_counts = _patch_get_model(monkeypatch, model)
+    model_dir = _fake_local_model_dir(tmp_path)
+
+    compute_embeddings(units, model_name=str(model_dir), revision="main", cache_scope=tmp_path)
+    assert get_model_counts["count"] == 1
+
+    compute_embeddings(units, model_name=str(model_dir), revision="main", cache_scope=tmp_path)
+    assert get_model_counts["count"] == 1
+    assert len(model.encode_calls) == 1
+
+
+def test_local_model_dir_relative_and_absolute_share_cache(tmp_path, monkeypatch):
+    units = _five_units(tmp_path)
+    model = CountingModel()
+    get_model_counts = _patch_get_model(monkeypatch, model)
+    model_dir = _fake_local_model_dir(tmp_path)
+
+    compute_embeddings(units, model_name=str(model_dir), cache_scope=tmp_path)
+    assert get_model_counts["count"] == 1
+
+    monkeypatch.chdir(tmp_path)
+    compute_embeddings(units, model_name="./gemma-work-copy", cache_scope=tmp_path)
+    assert get_model_counts["count"] == 1
+    assert len(model.encode_calls) == 1
+
+
+def test_fingerprint_local_model_dir_stability_and_edge_cases(tmp_path):
+    model_dir = _fake_local_model_dir(tmp_path)
+    first = semantic._fingerprint_local_model_dir(model_dir)
+    assert first is not None and first.startswith("dir-")
+    assert semantic._fingerprint_local_model_dir(model_dir) == first
+
+    empty = tmp_path / "empty-model"
+    empty.mkdir()
+    assert semantic._fingerprint_local_model_dir(empty) is None
+
+
+def test_model_slug_for_local_paths_is_bounded_and_collision_safe():
+    hub = embedding_cache._model_slug("Alibaba-NLP/gte-modernbert-base")
+    assert hub == "Alibaba-NLP--gte-modernbert-base"
+
+    deep = "/very/deep/nested/path/to/models/gte-modernbert-base"
+    other = "/other/location/gte-modernbert-base"
+    slug_a = embedding_cache._model_slug(deep)
+    slug_b = embedding_cache._model_slug(other)
+    assert slug_a.startswith("local--gte-modernbert-base-")
+    assert "/" not in slug_a
+    assert slug_a != slug_b
+    assert len(slug_a) < 60

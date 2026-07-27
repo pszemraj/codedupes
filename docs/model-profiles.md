@@ -48,10 +48,35 @@ Notes:
 ## Alias resolution rules
 
 - Built-in alias keys and known aliases resolve to the profile’s canonical model ID.
+- A model name that is an existing directory on disk is treated as a local
+  `save_pretrained`-style model copy: it canonicalizes to its resolved absolute
+  path (so relative and absolute spellings share one identity), and its family is
+  inferred from the directory basename using the same name rules below.
 - Any model name containing `c2llm` resolves to a dynamic C2LLM-family profile:
   - `trust_remote_code=True` by default
   - no pinned default revision
+- Any model name containing `embeddinggemma` resolves to a dynamic
+  EmbeddingGemma-family profile with the built-in profile’s thresholds and encode
+  entry points.
+- Any model name containing `gte-modernbert` resolves to a dynamic
+  gte-modernbert-family profile with the built-in profile’s calibrated thresholds.
 - Other unknown model IDs resolve to the generic profile.
+
+### Local model directories and offline use
+
+Pass a directory path anywhere a model name is accepted to load a model straight
+from disk without contacting the HuggingFace Hub:
+
+```bash
+codedupes check ./src --model /opt/models/embeddinggemma-300m --device mps
+```
+
+- `--model-revision` is ignored for local directories (with a warning): on-disk
+  weights have no hub revision. The embedding cache instead keys local models by a
+  content fingerprint of the directory, so replacing or retraining the weights in
+  place invalidates cached vectors automatically.
+- For hub models already present in the local HuggingFace cache, set
+  `HF_HUB_OFFLINE=1` to guarantee no network access.
 
 For live effective values in your environment, run:
 

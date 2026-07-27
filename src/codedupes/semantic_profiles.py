@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Literal
 
 SemanticModelFamily = Literal["gte-modernbert", "c2llm", "embeddinggemma", "generic"]
@@ -115,6 +116,64 @@ def _builtin_alias_map() -> dict[str, SemanticModelProfile]:
     return alias_map
 
 
+def resolve_local_model_path(model_name: str) -> Path | None:
+    """Resolve a model identifier to a local model directory when one exists.
+
+    A model identifier is treated as a local ``save_pretrained``-style directory
+    when it points at an existing directory on disk (after ``~`` expansion). Hub
+    identifiers like ``org/name`` never resolve here unless a directory of that
+    relative name actually exists, mirroring how ``sentence-transformers``
+    disambiguates local paths from hub repositories.
+
+    :param model_name: Alias, hub identifier, or filesystem path.
+    :return: Resolved absolute directory path, or ``None`` for non-local names.
+    """
+    candidate = model_name.strip()
+    if not candidate:
+        return None
+    try:
+        path = Path(candidate).expanduser()
+        if path.is_dir():
+            return path.resolve()
+    except OSError:
+        return None
+    return None
+
+
+def _build_dynamic_gte_modernbert_profile(model_name: str) -> SemanticModelProfile:
+    """Build a gte-modernbert-family profile for non-builtin model IDs or local copies.
+
+    :param model_name: Model name or local directory path.
+    :return: Dynamic family-appropriate profile.
+    """
+    builtin = _builtin_alias_map()[_normalize_model_key("gte-modernbert")]
+    return SemanticModelProfile(
+        key=model_name,
+        canonical_name=model_name,
+        aliases=(),
+        family="gte-modernbert",
+        default_semantic_threshold=builtin.default_semantic_threshold,
+        default_search_threshold=builtin.default_search_threshold,
+    )
+
+
+def _build_dynamic_embeddinggemma_profile(model_name: str) -> SemanticModelProfile:
+    """Build an EmbeddingGemma-family profile for non-builtin model IDs or local copies.
+
+    :param model_name: Model name or local directory path.
+    :return: Dynamic family-appropriate profile.
+    """
+    builtin = _builtin_alias_map()[_normalize_model_key("embeddinggemma")]
+    return SemanticModelProfile(
+        key=model_name,
+        canonical_name=model_name,
+        aliases=(),
+        family="embeddinggemma",
+        default_semantic_threshold=builtin.default_semantic_threshold,
+        default_search_threshold=builtin.default_search_threshold,
+    )
+
+
 def _build_dynamic_c2llm_profile(model_name: str) -> SemanticModelProfile:
     """Build a C2LLM-family profile for non-builtin C2LLM model IDs.
 
@@ -137,7 +196,13 @@ def _build_dynamic_c2llm_profile(model_name: str) -> SemanticModelProfile:
 def resolve_model_profile(model_name: str) -> SemanticModelProfile:
     """Resolve a user model identifier into a concrete model profile.
 
-    :param model_name: Alias or model name.
+    Built-in aliases resolve to their profiles. An existing local directory
+    (a ``save_pretrained``-style model copy) canonicalizes to its resolved
+    absolute path so relative and absolute spellings share one cache identity,
+    and its family is inferred from the directory name. Remaining hub-style
+    names fall back to name-based family inference.
+
+    :param model_name: Alias, hub model name, or local model directory path.
     :return: Matching profile from builtins or a dynamic fallback.
     """
     alias_map = _builtin_alias_map()
@@ -146,12 +211,24 @@ def resolve_model_profile(model_name: str) -> SemanticModelProfile:
     if builtin is not None:
         return builtin
 
-    if "c2llm" in normalized:
-        return _build_dynamic_c2llm_profile(model_name)
+    local_path = resolve_local_model_path(model_name)
+    if local_path is not None:
+        canonical = str(local_path)
+        family_hint = _normalize_model_key(local_path.name)
+    else:
+        canonical = model_name
+        family_hint = normalized
+
+    if "c2llm" in family_hint:
+        return _build_dynamic_c2llm_profile(canonical)
+    if "embeddinggemma" in family_hint:
+        return _build_dynamic_embeddinggemma_profile(canonical)
+    if "gte-modernbert" in family_hint:
+        return _build_dynamic_gte_modernbert_profile(canonical)
 
     return SemanticModelProfile(
-        key=model_name,
-        canonical_name=model_name,
+        key=canonical,
+        canonical_name=canonical,
         aliases=(),
         family=_GENERIC_PROFILE.family,
         default_semantic_threshold=_GENERIC_PROFILE.default_semantic_threshold,

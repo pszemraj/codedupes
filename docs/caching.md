@@ -38,6 +38,10 @@ variables, CLI management commands, and the escape hatch for stale results.
 - Query embeddings from `codedupes search` are cached in the same shard as the
   corpus they were searched against, keyed on the prepared query text. Repeating an
   identical search is a full cache hit end-to-end.
+- Local model directories (`--model /path/to/model`) are keyed by a content
+  fingerprint of the directory (file names, sizes, and mtimes) instead of a hub
+  revision, so swapping updated weights into the same path invalidates the cache
+  automatically while unchanged directories keep the skip-model-load fast path.
 - If the model resolves to an unpinned revision (for example the default
   `gte-modernbert-base` profile), the cache resolves the locally cached HuggingFace
   commit hash from disk before loading the model. If that can't be determined

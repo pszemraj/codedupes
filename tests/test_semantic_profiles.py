@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from codedupes.semantic_profiles import (
     DEFAULT_C2LLM_REVISION,
     DEFAULT_FALLBACK_SEARCH_THRESHOLD,
     get_default_search_threshold,
     get_default_semantic_threshold,
     list_supported_models,
+    resolve_local_model_path,
     resolve_model_name,
     resolve_model_profile,
 )
@@ -57,3 +60,56 @@ def test_search_threshold_is_looser_than_duplicate_threshold() -> None:
         assert 0 < profile.default_search_threshold < profile.default_semantic_threshold
     assert get_default_search_threshold("gte-modernbert-base") == 0.50
     assert get_default_search_threshold("unknown/model-id") == DEFAULT_FALLBACK_SEARCH_THRESHOLD
+
+
+def test_resolve_local_model_path_only_matches_existing_directories(tmp_path: Path) -> None:
+    model_dir = tmp_path / "my-model"
+    model_dir.mkdir()
+    resolved = resolve_local_model_path(str(model_dir))
+    assert resolved == model_dir.resolve()
+    assert resolve_local_model_path("Alibaba-NLP/gte-modernbert-base") is None
+    assert resolve_local_model_path(str(tmp_path / "missing")) is None
+    assert resolve_local_model_path("") is None
+
+
+def test_local_directory_canonicalizes_to_resolved_path(tmp_path: Path, monkeypatch) -> None:
+    model_dir = tmp_path / "some-finetune"
+    model_dir.mkdir()
+    monkeypatch.chdir(tmp_path)
+    relative = resolve_model_profile("./some-finetune")
+    absolute = resolve_model_profile(str(model_dir))
+    assert relative.canonical_name == absolute.canonical_name == str(model_dir.resolve())
+    assert relative.family == "generic"
+
+
+def test_local_directory_family_inferred_from_basename(tmp_path: Path) -> None:
+    gemma_dir = tmp_path / "embeddinggemma-work-copy"
+    gemma_dir.mkdir()
+    gemma = resolve_model_profile(str(gemma_dir))
+    assert gemma.family == "embeddinggemma"
+    assert gemma.canonical_name == str(gemma_dir.resolve())
+    builtin = resolve_model_profile("embeddinggemma")
+    assert gemma.default_semantic_threshold == builtin.default_semantic_threshold
+    assert gemma.default_search_threshold == builtin.default_search_threshold
+
+    c2llm_dir = tmp_path / "C2LLM-0.5B-saved"
+    c2llm_dir.mkdir()
+    c2llm = resolve_model_profile(str(c2llm_dir))
+    assert c2llm.family == "c2llm"
+    assert c2llm.default_trust_remote_code is True
+
+
+def test_dynamic_embeddinggemma_profile_for_non_builtin_hub_id() -> None:
+    profile = resolve_model_profile("someone/embeddinggemma-300m-code-ft")
+    assert profile.family == "embeddinggemma"
+    assert profile.canonical_name == "someone/embeddinggemma-300m-code-ft"
+
+
+def test_dynamic_gte_modernbert_profile_matches_builtin_thresholds(tmp_path: Path) -> None:
+    local_dir = tmp_path / "gte-modernbert-base"
+    local_dir.mkdir()
+    profile = resolve_model_profile(str(local_dir))
+    builtin = resolve_model_profile("gte-modernbert-base")
+    assert profile.family == "gte-modernbert"
+    assert profile.default_semantic_threshold == builtin.default_semantic_threshold
+    assert profile.default_search_threshold == builtin.default_search_threshold

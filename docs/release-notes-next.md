@@ -52,6 +52,14 @@ replacement for the CLI, output, model-profile, or accelerator source-of-truth d
   `CODEDUPES_CACHE_MAX_MB`), the new `codedupes cache info`/`cache clear` commands, and
   `--no-cache`.
 
+- Model identifiers that point at an existing directory now load as local
+  `save_pretrained`-style copies with no hub access: the path canonicalizes to one
+  identity, family (C2LLM/EmbeddingGemma) is inferred from the directory name, an
+  explicit `--model-revision` is ignored with a warning, and the embedding cache keys the
+  model by a content fingerprint of the directory so in-place weight updates
+  invalidate stale vectors. `HF_HUB_OFFLINE=1` remains the switch for fully offline
+  use of hub models already in the local HuggingFace cache.
+
 ## Static-analysis fixes
 
 - `ast.NodeVisitor` and `ast.NodeTransformer` `visit_*` hooks are no longer reported as unused when
