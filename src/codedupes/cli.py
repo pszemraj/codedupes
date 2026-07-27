@@ -38,6 +38,7 @@ from codedupes.devices import (
     get_device_diagnostics,
     validate_mps_memory_fraction,
 )
+from codedupes.embedding_cache import EmbeddingCache
 from codedupes.extractor import DEFAULT_EXCLUDE_DIR_NAMES, DEFAULT_EXCLUDE_PATTERNS
 from codedupes.models import AnalysisResult, CodeUnit, DuplicatePair, HybridDuplicate
 from codedupes.semantic import get_semantic_runtime_versions
@@ -45,6 +46,7 @@ from codedupes.semantic_profiles import (
     get_default_search_threshold,
     get_default_semantic_threshold,
     list_supported_models,
+    resolve_model_profile,
 )
 
 DEFAULT_THRESHOLD = get_default_semantic_threshold(DEFAULT_MODEL)
@@ -958,6 +960,11 @@ def _add_common_analysis_options(
         ),
         click.option("--include-stubs", is_flag=True, help="Include .pyi files"),
         click.option(
+            "--no-cache",
+            is_flag=True,
+            help="Disable the persistent on-disk embedding cache for this run",
+        ),
+        click.option(
             "--output-width",
             type=int,
             default=DEFAULT_OUTPUT_WIDTH,
@@ -1106,6 +1113,7 @@ def check_command(
     verbose: bool,
     exclude: tuple[str, ...],
     include_stubs: bool,
+    no_cache: bool,
     output_width: int,
 ) -> None:
     """Run duplicate and unused-code analysis.
@@ -1146,6 +1154,7 @@ def check_command(
     :param verbose: Enable debug-level logging.
     :param exclude: Glob patterns to exclude.
     :param include_stubs: Include ``.pyi`` files.
+    :param no_cache: Disable the persistent on-disk embedding cache for this run.
     :param output_width: Width used for rich output.
     :return: ``None``.
     """
@@ -1188,6 +1197,7 @@ def check_command(
             "min_lines",
             "semantic_unit_type",
             "suppress_test_semantic",
+            "no_cache",
         ]
         specified_ignored = [
             option_name
@@ -1266,6 +1276,7 @@ def check_command(
             suppress_test_semantic_matches=suppress_test_semantic,
             batch_size=batch_size,
             include_stubs=include_stubs,
+            embedding_cache=not no_cache,
         )
     except ValueError as exc:
         raise click.UsageError(str(exc)) from exc
@@ -1401,6 +1412,7 @@ def search_command(
     verbose: bool,
     exclude: tuple[str, ...],
     include_stubs: bool,
+    no_cache: bool,
     output_width: int,
 ) -> None:
     """Run semantic search over extracted code units.
@@ -1429,6 +1441,7 @@ def search_command(
     :param verbose: Enable debug-level logging.
     :param exclude: Glob patterns to exclude.
     :param include_stubs: Include ``.pyi`` files.
+    :param no_cache: Disable the persistent on-disk embedding cache for this run.
     :param output_width: Width used for rich output.
     :return: ``None``.
     """
@@ -1461,6 +1474,7 @@ def search_command(
             semantic_unit_types=semantic_unit_type,
             batch_size=batch_size,
             include_stubs=include_stubs,
+            embedding_cache=not no_cache,
         )
     except ValueError as exc:
         raise click.UsageError(str(exc)) from exc
@@ -1485,6 +1499,24 @@ def search_command(
             print_search_results(results)
 
     raise click.exceptions.Exit(0)
+
+
+def _safe_cache_stats() -> dict[str, Any]:
+    """Fetch embedding-cache statistics without ever raising into the CLI.
+
+    :return: Cache stats dict, or a disabled/empty fallback dict on failure.
+    """
+    try:
+        return EmbeddingCache().stats()
+    except Exception:  # noqa: BLE001 - cache introspection must never break the CLI
+        return {
+            "path": "unknown",
+            "disabled": True,
+            "entries": 0,
+            "size_bytes": 0,
+            "models": {},
+            "repos": [],
+        }
 
 
 @cli.command("info", help="Print tool and model defaults")
@@ -1543,7 +1575,66 @@ def info_command() -> None:
         if profile.default_revision is not None:
             click.echo(f"      default_revision: {profile.default_revision}")
         click.echo(f"      default_trust_remote_code: {profile.default_trust_remote_code}")
+    cache_stats = _safe_cache_stats()
+    click.echo(f"Embedding cache path: {cache_stats['path']}")
+    click.echo(
+        f"Embedding cache entries: {cache_stats['entries']} "
+        f"({cache_stats['size_bytes']} bytes on disk)"
+    )
+    click.echo(f"Embedding cache disabled via CODEDUPES_NO_CACHE: {cache_stats['disabled']}")
     click.echo("Run with --help for CLI usage")
+
+
+@cli.group("cache", help="Inspect or clear the persistent embedding cache")
+def cache_group() -> None:
+    """Group namespace for embedding-cache management subcommands."""
+
+
+@cache_group.command("info", help="Show embedding cache location, size, and breakdown")
+def cache_info_command() -> None:
+    """Print embedding cache path, entry counts, size, and per-model/per-repo breakdown."""
+    stats = _safe_cache_stats()
+    click.echo(f"Cache path: {stats['path']}")
+    click.echo(f"Disabled via CODEDUPES_NO_CACHE: {stats['disabled']}")
+    click.echo(f"Entries: {stats['entries']}")
+    click.echo(f"Size on disk: {stats['size_bytes']} bytes")
+    if stats["models"]:
+        click.echo("Per-model entry counts:")
+        for model_name, count in sorted(stats["models"].items()):
+            click.echo(f"  - {model_name}: {count}")
+    if stats["repos"]:
+        click.echo("Per-repo breakdown:")
+        for repo in stats["repos"]:
+            click.echo(
+                f"  - {repo['repo']}: {repo['shards']} shard(s), {repo['entries']} entries, "
+                f"{repo['size_bytes']} bytes"
+            )
+
+
+@cache_group.command("clear", help="Clear cached embeddings")
+@click.option(
+    "--model",
+    default=None,
+    help="Only clear entries for this model alias or canonical HuggingFace ID",
+)
+def cache_clear_command(model: str | None) -> None:
+    """Clear cached embeddings, optionally scoped to a single model.
+
+    :param model: Optional model alias or canonical name filter.
+    :return: ``None``.
+    """
+    canonical_model = resolve_model_profile(model).canonical_name if model else None
+    try:
+        cleared = EmbeddingCache().clear(model=canonical_model)
+    except Exception as exc:
+        click.echo(f"Cache clear failed: {exc}")
+        raise click.exceptions.Exit(1) from exc
+    if model:
+        click.echo(
+            f"Cleared {cleared} cached embedding(s) for model '{model}' ({canonical_model})."
+        )
+    else:
+        click.echo(f"Cleared {cleared} cached embedding(s).")
 
 
 def main() -> int:

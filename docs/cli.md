@@ -9,6 +9,8 @@ For semantic model aliases/profile defaults/task behavior, see
 [docs/model-profiles.md](https://github.com/pszemraj/codedupes/blob/main/docs/model-profiles.md).
 For device selection and MPS runtime behavior, see
 [docs/accelerators.md](https://github.com/pszemraj/codedupes/blob/main/docs/accelerators.md).
+For the persistent embedding cache (location, env vars, `cache` subcommand), see
+[docs/caching.md](https://github.com/pszemraj/codedupes/blob/main/docs/caching.md).
 
 ## Commands
 
@@ -66,6 +68,7 @@ Options:
 - `--no-private`: Exclude private (`_name`) functions/classes
 - `--exclude <glob>`: Add file path glob pattern(s) to exclude (repeat option for multiple patterns). Built-in test/artifact excludes still apply.
 - `--include-stubs`: Include `*.pyi` files
+- `--no-cache`: Disable the persistent on-disk embedding cache for this run (see [docs/caching.md](https://github.com/pszemraj/codedupes/blob/main/docs/caching.md))
 - `--output-width <int>`: Rich render width for non-JSON output (default `160`, min `80`)
 - `--show-source`: Show truncated duplicate snippets
 - `--json`: Emit JSON instead of rich tables
@@ -104,13 +107,22 @@ Options:
 - `--no-private`: Exclude private (`_name`) functions/classes
 - `--exclude <glob>`: Add file path glob pattern(s) to exclude (repeat option for multiple patterns). Built-in test/artifact excludes still apply.
 - `--include-stubs`: Include `*.pyi` files
+- `--no-cache`: Disable the persistent on-disk embedding cache for this run (see [docs/caching.md](https://github.com/pszemraj/codedupes/blob/main/docs/caching.md))
 - `--output-width <int>`: Rich render width for non-JSON output (default `160`, min `80`)
 - `--json`: Emit JSON instead of rich tables
 - `-v, --verbose`: Verbose logs
 
 ## `codedupes info`
 
-Print version, model defaults, resolved device capabilities, MPS memory statistics when available, and whether MLX is already loaded in the process.
+Print version, model defaults, resolved device capabilities, MPS memory statistics when available, whether MLX is already loaded in the process, and an embedding-cache summary (path, entry count, size on disk).
+
+## `codedupes cache info`
+
+Print embedding cache path, whether it is disabled via `CODEDUPES_NO_CACHE`, total entry count, size on disk, and a per-model and per-repo breakdown.
+
+## `codedupes cache clear [--model <name>]`
+
+Clear cached embeddings. Without `--model`, clears every shard across every analyzed repo. With `--model` (alias or canonical HuggingFace ID), only that model's shards are removed. Prints the number of entries cleared. See [docs/caching.md](https://github.com/pszemraj/codedupes/blob/main/docs/caching.md) for the full cache design.
 
 ## Validation and mode notes
 
@@ -128,7 +140,7 @@ Print version, model defaults, resolved device capabilities, MPS memory statisti
 - `--trust-remote-code` and `--no-trust-remote-code` are mutually exclusive
 - `--mps-fallback` and `--no-mps-fallback` are mutually exclusive
 - `--mps-memory-fraction` must be finite and in `(0, 2]`; it requires `--device mps` or `--device auto`
-- Explicit semantic device/MPS controls are rejected with `--traditional-only`
+- Explicit semantic device/MPS controls are rejected with `--traditional-only`, including `--no-cache`
 - Unsupported-op fallback and codedupes OOM recovery are separate policies; `--no-mps-fallback` does not disable OOM recovery
 - `search` applies semantic threshold filtering before returning `top-k` matches; without an
   explicit `--threshold`/`--semantic-threshold` it uses the model profile search default

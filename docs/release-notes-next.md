@@ -40,6 +40,17 @@ replacement for the CLI, output, model-profile, or accelerator source-of-truth d
 - Kept semantic embeddings as normalized NumPy arrays immediately after inference.
 - Added MLX coexistence diagnostics without importing or mutating the MLX allocator.
 - Avoided forced MPS fast math, forced Metal matmul selection, and success-path cache clearing.
+- Added a persistent, content-addressed on-disk embedding cache (`codedupes.embedding_cache`).
+  Cache keys hash the canonical model name, resolved revision, embedding mode, and
+  pre-truncation prepared text (plus the requested device for the device-dependent-dtype
+  C2LLM/EmbeddingGemma families), so unchanged code units hit across runs and single-file
+  edits only re-embed the changed units. Writers serialize per shard via advisory locks,
+  non-finite or dimension-mismatched cached vectors are treated as misses, and a fully
+  cached `check`/`search` run skips model load entirely. See
+  [docs/caching.md](https://github.com/pszemraj/codedupes/blob/main/docs/caching.md) for
+  location, env vars (`CODEDUPES_CACHE_DIR`, `CODEDUPES_NO_CACHE`,
+  `CODEDUPES_CACHE_MAX_MB`), the new `codedupes cache info`/`cache clear` commands, and
+  `--no-cache`.
 
 ## Static-analysis fixes
 

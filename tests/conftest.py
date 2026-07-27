@@ -5,8 +5,21 @@ from pathlib import Path
 from textwrap import dedent
 from typing import Any
 
+import pytest
+
 from codedupes.extractor import CodeExtractor
 from codedupes.models import AnalysisResult, CodeUnit
+
+
+@pytest.fixture(autouse=True)
+def _isolated_embedding_cache_dir(tmp_path: Path, monkeypatch: Any) -> None:
+    """Point the embedding cache at a per-test directory so tests never touch ``~/.cache``.
+
+    :param tmp_path: Pytest per-test temporary directory.
+    :param monkeypatch: Pytest monkeypatch fixture.
+    :return: ``None``.
+    """
+    monkeypatch.setenv("CODEDUPES_CACHE_DIR", str(tmp_path / "embedding-cache"))
 
 
 def write_source_file(tmp_path: Path, source: str, filename: str = "sample.py") -> Path:

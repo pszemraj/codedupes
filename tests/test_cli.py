@@ -6,11 +6,13 @@ import re
 import sys
 from pathlib import Path
 
+import numpy as np
 import pytest
 from click.testing import CliRunner
 
 from codedupes import cli
 from codedupes.devices import DeviceDiagnostics
+from codedupes.embedding_cache import EmbeddingCache
 from codedupes.models import (
     AnalysisResult,
     CodeUnit,
@@ -1138,3 +1140,117 @@ def test_cli_rejects_device_controls_with_traditional_only(
 
     assert result.exit_code == 2
     assert f"Cannot use {expected_option}" in result.output
+
+
+def test_cli_no_cache_flag_disables_embedding_cache_for_check(monkeypatch, tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+
+    captured = []
+    patch_cli_analyzer(
+        monkeypatch,
+        cli,
+        analyze_result=lambda: _build_result(tmp_path),
+        captured_configs=captured,
+    )
+    runner = CliRunner()
+    result = runner.invoke(cli.cli, ["check", str(path), "--no-cache"])
+
+    assert result.exit_code == 1
+    assert captured[0].embedding_cache is False
+
+
+def test_cli_check_defaults_to_embedding_cache_enabled(monkeypatch, tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+
+    captured = []
+    patch_cli_analyzer(
+        monkeypatch,
+        cli,
+        analyze_result=lambda: _build_result(tmp_path),
+        captured_configs=captured,
+    )
+    runner = CliRunner()
+    result = runner.invoke(cli.cli, ["check", str(path)])
+
+    assert result.exit_code == 1
+    assert captured[0].embedding_cache is True
+
+
+def test_cli_no_cache_flag_disables_embedding_cache_for_search(monkeypatch, tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+
+    captured = []
+    patch_cli_analyzer(
+        monkeypatch,
+        cli,
+        analyze_result=lambda: _build_result(tmp_path),
+        search_results=[(_build_unit(tmp_path), 0.9)],
+        captured_configs=captured,
+    )
+    runner = CliRunner()
+    result = runner.invoke(cli.cli, ["search", str(path), "entry", "--no-cache"])
+
+    assert result.exit_code == 0
+    assert captured[0].embedding_cache is False
+
+
+def test_cli_cache_info_reports_empty_cache():
+    runner = CliRunner()
+    result = runner.invoke(cli.cli, ["cache", "info"])
+
+    assert result.exit_code == 0
+    assert "Cache path:" in result.output
+    assert "Entries: 0" in result.output
+
+
+def test_cli_cache_info_reports_populated_cache(tmp_path):
+    cache = EmbeddingCache()
+    scope = tmp_path / "proj"
+    scope.mkdir()
+    cache.put_many(scope, "some/model", "rev1", [("k1", np.array([1.0, 2.0], dtype=np.float32))])
+
+    runner = CliRunner()
+    result = runner.invoke(cli.cli, ["cache", "info"])
+
+    assert result.exit_code == 0
+    assert "Entries: 1" in result.output
+    assert "some/model: 1" in result.output
+
+
+def test_cli_cache_clear_removes_all_entries(tmp_path):
+    cache = EmbeddingCache()
+    scope = tmp_path / "proj"
+    scope.mkdir()
+    cache.put_many(scope, "some/model", "rev1", [("k1", np.array([1.0, 2.0], dtype=np.float32))])
+
+    runner = CliRunner()
+    result = runner.invoke(cli.cli, ["cache", "clear"])
+
+    assert result.exit_code == 0
+    assert "Cleared 1 cached embedding" in result.output
+    assert cache.stats()["entries"] == 0
+
+
+def test_cli_cache_clear_scoped_to_model(tmp_path):
+    cache = EmbeddingCache()
+    scope = tmp_path / "proj"
+    scope.mkdir()
+    cache.put_many(
+        scope,
+        "Alibaba-NLP/gte-modernbert-base",
+        "rev1",
+        [("k1", np.array([1.0, 2.0], dtype=np.float32))],
+    )
+    cache.put_many(scope, "other/model", "rev1", [("k2", np.array([3.0, 4.0], dtype=np.float32))])
+
+    runner = CliRunner()
+    result = runner.invoke(cli.cli, ["cache", "clear", "--model", "gte-modernbert-base"])
+
+    assert result.exit_code == 0
+    assert "Cleared 1 cached embedding" in result.output
+    remaining = cache.stats()
+    assert remaining["entries"] == 1
+    assert remaining["models"] == {"other/model": 1}

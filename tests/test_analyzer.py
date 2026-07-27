@@ -58,6 +58,8 @@ def _make_semantic_runner(
         device="auto",
         mps_fallback=None,
         mps_memory_fraction=None,
+        use_cache=True,
+        cache_scope=None,
     ):
         if capture is not None:
             capture["model_name"] = model_name
@@ -71,6 +73,8 @@ def _make_semantic_runner(
             capture["device"] = device
             capture["mps_fallback"] = mps_fallback
             capture["mps_memory_fraction"] = mps_memory_fraction
+            capture["use_cache"] = use_cache
+            capture["cache_scope"] = cache_scope
         if capture_exclude_pairs is not None:
             capture_exclude_pairs.update(exclude_pairs or set())
         if error is not None:
@@ -926,6 +930,8 @@ def test_search_uses_index_task_when_unset(tmp_path: Path, monkeypatch) -> None:
         device="auto",
         mps_fallback=None,
         mps_memory_fraction=None,
+        use_cache=True,
+        cache_scope=None,
     ):
         captured["query_task"] = semantic_task
         return []
@@ -1328,6 +1334,9 @@ def test_invalid_mode_dependency_raises() -> None:
     with pytest.raises(ValueError, match="require run_semantic=True"):
         AnalyzerConfig(run_semantic=False, model_revision="abc123")
 
+    with pytest.raises(ValueError, match="require run_semantic=True"):
+        AnalyzerConfig(run_semantic=False, embedding_cache=False)
+
     with pytest.raises(ValueError, match="require run_traditional=True"):
         AnalyzerConfig(run_traditional=False, tiny_unit_statement_cutoff=5)
 
@@ -1503,3 +1512,71 @@ def test_analyzer_passes_device_controls_to_index_and_query(
     assert captured["query_device"] == "mps"
     assert captured["query_mps_fallback"] is False
     assert captured["query_mps_memory_fraction"] == 0.8
+
+
+def test_analyzer_threads_embedding_cache_flag_and_scope_to_index_and_query(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    source = "def entry(x):\n    return x + 1\n"
+    project = create_project(tmp_path, source)
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        analyzer_module,
+        "run_semantic_analysis",
+        _make_semantic_runner(capture=captured),
+    )
+
+    def fake_find_similar_to_query(query: str, units, embeddings, **kwargs):
+        del query, units, embeddings
+        captured["query_use_cache"] = kwargs["use_cache"]
+        captured["query_cache_scope"] = kwargs["cache_scope"]
+        return []
+
+    monkeypatch.setattr(semantic_module, "find_similar_to_query", fake_find_similar_to_query)
+
+    analyzer = CodeAnalyzer(
+        AnalyzerConfig(
+            run_traditional=False,
+            run_semantic=True,
+            run_unused=False,
+            min_semantic_lines=0,
+            embedding_cache=False,
+        )
+    )
+    analyzer.analyze(project)
+    analyzer.search("entry")
+
+    assert captured["use_cache"] is False
+    assert captured["cache_scope"] == project
+    assert captured["query_use_cache"] is False
+    assert captured["query_cache_scope"] == project
+
+
+def test_analyzer_default_embedding_cache_enabled_and_scoped_to_analyzed_root(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    source = "def entry(x):\n    return x + 1\n"
+    project = create_project(tmp_path, source)
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        analyzer_module,
+        "run_semantic_analysis",
+        _make_semantic_runner(capture=captured),
+    )
+
+    analyzer = CodeAnalyzer(
+        AnalyzerConfig(
+            run_traditional=False,
+            run_semantic=True,
+            run_unused=False,
+            min_semantic_lines=0,
+        )
+    )
+    analyzer.analyze(project)
+
+    assert captured["use_cache"] is True
+    assert captured["cache_scope"] == project

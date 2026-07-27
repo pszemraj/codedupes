@@ -10,6 +10,8 @@ Semantic model aliases/profile defaults/task behavior are documented in
 [docs/model-profiles.md](https://github.com/pszemraj/codedupes/blob/main/docs/model-profiles.md).
 Device selection and MPS lifecycle behavior are documented in
 [docs/accelerators.md](https://github.com/pszemraj/codedupes/blob/main/docs/accelerators.md).
+The persistent embedding cache is documented in
+[docs/caching.md](https://github.com/pszemraj/codedupes/blob/main/docs/caching.md).
 
 ## Quick Start
 
@@ -61,6 +63,7 @@ config = AnalyzerConfig(
     filter_tiny_traditional=True,
     tiny_unit_statement_cutoff=3,
     tiny_near_jaccard_min=0.93,
+    embedding_cache=True,  # persistent on-disk embedding cache, scoped to the analyzed path
 )
 
 analyzer = CodeAnalyzer(config)
@@ -139,6 +142,9 @@ clear_model_cache()
 - Semantic candidate defaults and tiny-traditional filtering defaults are defined in
   [docs/analysis-defaults.md](https://github.com/pszemraj/codedupes/blob/main/docs/analysis-defaults.md).
 - Semantic analysis may download model weights on first use.
-- `device`, `mps_fallback`, and `mps_memory_fraction` require `run_semantic=True`.
+- `device`, `mps_fallback`, `mps_memory_fraction`, and `embedding_cache` require `run_semantic=True`.
+- `embedding_cache=True` (the default) caches embeddings on disk, keyed by the analyzed path,
+  model, and resolved revision; set `embedding_cache=False` to bypass the cache for a run. See
+  [docs/caching.md](https://github.com/pszemraj/codedupes/blob/main/docs/caching.md).
 - Model alias and profile-resolution behavior is documented in
   [docs/model-profiles.md](https://github.com/pszemraj/codedupes/blob/main/docs/model-profiles.md).

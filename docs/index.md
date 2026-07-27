@@ -14,6 +14,7 @@
 - [docs/accelerators.md](https://github.com/pszemraj/codedupes/blob/main/docs/accelerators.md): source of truth for CPU/CUDA/MPS selection, PyTorch MPS recovery, precision policy, and MLX coexistence.
 - [docs/analysis-defaults.md](https://github.com/pszemraj/codedupes/blob/main/docs/analysis-defaults.md): source of truth for analysis-behavior defaults and heuristics.
 - [docs/cli.md](https://github.com/pszemraj/codedupes/blob/main/docs/cli.md): source of truth for CLI commands, flags, and defaults.
+- [docs/caching.md](https://github.com/pszemraj/codedupes/blob/main/docs/caching.md): source of truth for the persistent embedding cache (location, env vars, `cache` subcommand).
 - [docs/output.md](https://github.com/pszemraj/codedupes/blob/main/docs/output.md): source of truth for JSON payload shapes and exit codes.
 - [docs/usage.md](https://github.com/pszemraj/codedupes/blob/main/docs/usage.md): workflows and tuning recipes. Links to CLI/output docs for definitive flag/schema semantics.
 - [docs/python-api.md](https://github.com/pszemraj/codedupes/blob/main/docs/python-api.md): programmatic API usage and result objects.

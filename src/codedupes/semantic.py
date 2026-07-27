@@ -10,6 +10,7 @@ import sys
 import threading
 from collections.abc import Callable
 from importlib import metadata as importlib_metadata
+from pathlib import Path
 from typing import Any, Literal, TypeVar, cast
 
 import numpy as np
@@ -34,9 +35,11 @@ from codedupes.devices import (
     is_mlx_loaded,
     resolve_semantic_device,
 )
+from codedupes.embedding_cache import compute_cache_key, get_embedding_cache
 from codedupes.models import CodeUnit, DuplicatePair
 from codedupes.pairs import ordered_pair_key
 from codedupes.semantic_profiles import (
+    SemanticModelProfile,
     get_default_search_threshold,
     get_default_semantic_threshold,
     resolve_model_profile,
@@ -167,6 +170,100 @@ def _resolve_trust_remote_code(model_name: str, trust_remote_code: bool | None) 
         trust_remote_code,
         accessor=lambda profile: cast(bool, profile.default_trust_remote_code),
     )
+
+
+def _resolve_hf_cached_revision(canonical_model: str) -> str | None:
+    """Resolve the locally cached commit hash for an unpinned model, without downloading.
+
+    :param canonical_model: Canonical HuggingFace model identifier.
+    :return: Resolved commit hash, or ``None`` when it cannot be determined offline.
+    """
+    try:
+        from huggingface_hub import try_to_load_from_cache
+    except ImportError:
+        return None
+    try:
+        cached = try_to_load_from_cache(canonical_model, "config.json", revision="main")
+    except Exception:  # noqa: BLE001 - offline revision lookup must never block analysis
+        return None
+    if not isinstance(cached, str):
+        return None
+    parts = Path(cached).parts
+    try:
+        snapshots_index = parts.index("snapshots")
+    except ValueError:
+        return None
+    if snapshots_index + 1 >= len(parts):
+        return None
+    return parts[snapshots_index + 1]
+
+
+def _resolve_revision_for_cache(model_name: str, explicit_revision: str | None) -> str | None:
+    """Resolve a concrete revision usable as a cache key component, without loading the model.
+
+    Pinned profiles (or an explicit override) resolve immediately. Unpinned models fall
+    back to reading the locally cached HuggingFace commit hash so cache keys stay stable
+    across runs even before the model is loaded.
+
+    :param model_name: Requested model identifier.
+    :param explicit_revision: Optional explicit revision override.
+    :return: Concrete revision string, or ``None`` when it cannot be resolved offline.
+    """
+    profile_revision = _resolve_model_revision(model_name, explicit_revision)
+    if profile_revision is not None:
+        return profile_revision
+    canonical_model = resolve_model_profile(model_name).canonical_name
+    return _resolve_hf_cached_revision(canonical_model)
+
+
+def _get_loaded_model_commit_hash(model: object) -> str | None:
+    """Best-effort read of the actual loaded commit hash for cache-revision verification.
+
+    :param model: Loaded ``SentenceTransformer`` model instance.
+    :return: Commit hash reported by the underlying transformers config, or ``None``.
+    """
+    try:
+        first_module = model[0]  # type: ignore[index]
+        auto_model = getattr(first_module, "auto_model", None)
+        config = getattr(auto_model, "config", None)
+        commit_hash = getattr(config, "_commit_hash", None)
+        return commit_hash if isinstance(commit_hash, str) else None
+    except Exception:  # noqa: BLE001 - defensive introspection of an arbitrary model object
+        return None
+
+
+def _assemble_cached_matrix(keys: list[str], hits: dict[str, np.ndarray]) -> np.ndarray:
+    """Assemble a row-aligned embedding matrix entirely from cache hits.
+
+    :param keys: Cache keys row-aligned with the target unit order.
+    :param hits: Mapping of cache key to cached embedding vector.
+    :return: Float32 matrix with one row per key, in ``keys`` order.
+    """
+    dim = next(iter(hits.values())).shape[-1]
+    matrix = np.empty((len(keys), dim), dtype=np.float32)
+    for i, key in enumerate(keys):
+        matrix[i] = hits[key]
+    return matrix
+
+
+_DEVICE_DTYPE_FAMILIES = frozenset({"c2llm", "embeddinggemma"})
+
+
+def _cache_variant_for(profile: SemanticModelProfile, device: str) -> str:
+    """Build the vector-affecting cache-key variant for one model family.
+
+    C2LLM and EmbeddingGemma select their torch dtype from the execution device
+    (bfloat16 vs float32), so vectors cached under one device must never be served
+    under another; the requested device string is folded into their cache keys.
+    Families that embed identically across devices share one key space.
+
+    :param profile: Resolved model profile.
+    :param device: Requested device string (``auto``, ``cpu``, ``cuda``, ``mps``).
+    :return: Variant fingerprint, empty for device-independent families.
+    """
+    if profile.family in _DEVICE_DTYPE_FAMILIES:
+        return f"device={device}"
+    return ""
 
 
 def _safe_package_version(package_name: str) -> str | None:
@@ -1163,11 +1260,18 @@ def _compute_embeddings_unlocked(
     device: str = DEFAULT_SEMANTIC_DEVICE,
     mps_fallback: bool | None = None,
     mps_memory_fraction: float | None = None,
+    use_cache: bool = True,
+    cache_scope: Path | None = None,
 ) -> np.ndarray:
     """Compute normalized NumPy embeddings for all code units.
 
     Embeddings are converted to NumPy immediately, keeping pairwise similarity
     computation on CPU and avoiding long-lived Metal tensors beyond model weights.
+
+    Cache keys are derived from the pre-truncation prepared text so they can be
+    computed without loading the model; when every unit hits the on-disk cache,
+    the model is never loaded at all. On a cache miss, only the miss texts are
+    truncated and encoded through the existing OOM-retry ladder.
 
     :param units: Code units to embed, preserved in input order.
     :param model_name: Model alias or identifier, defaults to ``DEFAULT_MODEL``.
@@ -1182,19 +1286,56 @@ def _compute_embeddings_unlocked(
         ``DEFAULT_SEMANTIC_DEVICE``.
     :param mps_fallback: MPS unsupported-op CPU fallback behavior.
     :param mps_memory_fraction: Optional MPS allocator limit in ``(0, 2]``.
+    :param use_cache: Whether to consult/update the persistent embedding cache.
+    :param cache_scope: Analyzed corpus root path used to address the cache shard;
+        ``None`` disables caching for this call regardless of ``use_cache``.
     :return: Normalized embedding matrix row-aligned with ``units``.
     :raises ValueError: If ``batch_size`` is not positive.
     """
     if batch_size <= 0:
         raise ValueError("batch_size must be > 0")
+    if not units:
+        return np.zeros((0, 0), dtype=np.float32)
 
-    resolved_revision = _resolve_model_revision(model_name, revision)
-    resolved_trust_remote_code = _resolve_trust_remote_code(model_name, trust_remote_code)
     profile = resolve_model_profile(model_name)
     resolved_task = _normalize_semantic_task(
         semantic_task,
         default_task=DEFAULT_CHECK_SEMANTIC_TASK,
     )
+    prepared_texts = [
+        prepare_code_for_embedding(
+            unit,
+            model_name=model_name,
+            instruction_prefix=instruction_prefix,
+            semantic_task=resolved_task,
+        )
+        for unit in units
+    ]
+
+    cache = get_embedding_cache() if (use_cache and cache_scope is not None) else None
+    cache_revision = (
+        _resolve_revision_for_cache(model_name, revision) if cache is not None else None
+    )
+    cache_variant = _cache_variant_for(profile, device)
+    cache_keys = (
+        [
+            compute_cache_key(profile.canonical_name, cache_revision, text, variant=cache_variant)
+            for text in prepared_texts
+        ]
+        if cache is not None and cache_revision is not None
+        else None
+    )
+    hits: dict[str, np.ndarray] = (
+        cache.get_many(cache_scope, profile.canonical_name, cache_revision, cache_keys)
+        if cache is not None and cache_keys is not None
+        else {}
+    )
+
+    if cache_keys is not None and len(hits) == len(units):
+        return _assemble_cached_matrix(cache_keys, hits)
+
+    resolved_revision = _resolve_model_revision(model_name, revision)
+    resolved_trust_remote_code = _resolve_trust_remote_code(model_name, trust_remote_code)
     resolved_device = _prepare_semantic_device(
         device,
         mps_fallback=mps_fallback,
@@ -1210,37 +1351,104 @@ def _compute_embeddings_unlocked(
     )
     execution_device = _get_effective_model_device(model, resolved_device)
 
-    texts = []
-    for unit in units:
-        prepared = prepare_code_for_embedding(
-            unit,
-            model_name=model_name,
-            instruction_prefix=instruction_prefix,
-            semantic_task=resolved_task,
-        )
-        texts.append(_truncate_code_if_needed(prepared, unit.qualified_name, model))
+    if cache is not None:
+        confirmed_revision = _get_loaded_model_commit_hash(model) or resolved_revision
+        if confirmed_revision is None:
+            # Unconfirmable is not the same as different: keep the pre-load
+            # resolution rather than silently discarding valid hits.
+            logger.debug(
+                "Could not confirm the loaded model revision; keeping cache revision %s",
+                cache_revision,
+            )
+        elif confirmed_revision != cache_revision:
+            # Never mix vectors cached under a different resolved revision into
+            # this matrix: discard any pre-load hits and re-key under the truth.
+            cache_revision = confirmed_revision
+            cache_keys = [
+                compute_cache_key(
+                    profile.canonical_name, cache_revision, text, variant=cache_variant
+                )
+                for text in prepared_texts
+            ]
+            hits = cache.get_many(cache_scope, profile.canonical_name, cache_revision, cache_keys)
+            if len(hits) == len(units):
+                return _assemble_cached_matrix(cache_keys, hits)
+
+    miss_indices = [i for i in range(len(units)) if cache_keys is None or cache_keys[i] not in hits]
+    miss_texts = [
+        _truncate_code_if_needed(prepared_texts[i], units[i].qualified_name, model)
+        for i in miss_indices
+    ]
 
     logger.info(
-        "Computing embeddings for %d code units on %s",
-        len(texts),
+        "Computing embeddings for %d code units on %s (%d cache hits)",
+        len(miss_texts),
         execution_device,
+        len(units) - len(miss_texts),
     )
     encode_fn = model.encode
     if profile.family == "embeddinggemma" and hasattr(model, "encode_document"):
         encode_fn = model.encode_document
 
-    return _encode_with_retries(
-        model,
-        encode_fn,
-        texts,
-        batch_size=batch_size,
-        show_progress_bar=len(texts) > 100,
-        initial_device=execution_device,
-        model_name=model_name,
-        revision=resolved_revision,
-        trust_remote_code=resolved_trust_remote_code,
-        stage="embedding inference",
-    )
+    def _encode_miss_texts(texts: list[str]) -> np.ndarray:
+        """Encode prepared miss texts through the shared OOM-retry ladder.
+
+        :param texts: Truncated embedding inputs to encode.
+        :return: Normalized embedding matrix row-aligned with ``texts``.
+        """
+        return _encode_with_retries(
+            model,
+            encode_fn,
+            texts,
+            batch_size=batch_size,
+            show_progress_bar=len(texts) > 100,
+            initial_device=execution_device,
+            model_name=model_name,
+            revision=resolved_revision,
+            trust_remote_code=resolved_trust_remote_code,
+            stage="embedding inference",
+        )
+
+    miss_vectors = _encode_miss_texts(miss_texts)
+
+    dim = miss_vectors.shape[1]
+    if hits:
+        hit_dim = int(next(iter(hits.values())).shape[-1])
+        if hit_dim != dim:
+            # A shard can be self-consistent on disk yet disagree with the live
+            # model's dimensionality; trusting it would corrupt the matrix.
+            logger.warning(
+                "Discarding %d cached embeddings whose dimensionality (%d) does not "
+                "match the loaded model (%d); re-embedding all units.",
+                len(hits),
+                hit_dim,
+                dim,
+            )
+            hits = {}
+            miss_indices = list(range(len(units)))
+            miss_vectors = _encode_miss_texts(
+                [
+                    _truncate_code_if_needed(prepared_texts[i], units[i].qualified_name, model)
+                    for i in miss_indices
+                ]
+            )
+    matrix = np.empty((len(units), dim), dtype=np.float32)
+    for local_idx, global_idx in enumerate(miss_indices):
+        matrix[global_idx] = miss_vectors[local_idx]
+    if cache_keys is not None:
+        for i, key in enumerate(cache_keys):
+            if key in hits:
+                matrix[i] = hits[key]
+
+    if cache is not None and cache_keys is not None and cache_revision is not None and miss_indices:
+        cache.put_many(
+            cache_scope,
+            profile.canonical_name,
+            cache_revision,
+            [(cache_keys[i], matrix[i]) for i in miss_indices],
+        )
+
+    return matrix
 
 
 def compute_embeddings(
@@ -1254,6 +1462,8 @@ def compute_embeddings(
     device: str = DEFAULT_SEMANTIC_DEVICE,
     mps_fallback: bool | None = None,
     mps_memory_fraction: float | None = None,
+    use_cache: bool = True,
+    cache_scope: Path | None = None,
 ) -> np.ndarray:
     """Compute embeddings while serializing shared-model lifecycle and inference.
 
@@ -1270,6 +1480,9 @@ def compute_embeddings(
         ``DEFAULT_SEMANTIC_DEVICE``.
     :param mps_fallback: MPS unsupported-op CPU fallback behavior.
     :param mps_memory_fraction: Optional MPS allocator limit in ``(0, 2]``.
+    :param use_cache: Whether to consult/update the persistent embedding cache.
+    :param cache_scope: Analyzed corpus root path used to address the cache shard;
+        ``None`` disables caching for this call regardless of ``use_cache``.
     :return: Normalized embedding matrix row-aligned with ``units``.
     """
     with _model_lock:
@@ -1282,6 +1495,8 @@ def compute_embeddings(
             trust_remote_code=trust_remote_code,
             semantic_task=semantic_task,
             device=device,
+            use_cache=use_cache,
+            cache_scope=cache_scope,
             mps_fallback=mps_fallback,
             mps_memory_fraction=mps_memory_fraction,
         )
@@ -1383,8 +1598,14 @@ def _find_similar_to_query_unlocked(
     device: str = DEFAULT_SEMANTIC_DEVICE,
     mps_fallback: bool | None = None,
     mps_memory_fraction: float | None = None,
+    use_cache: bool = True,
+    cache_scope: Path | None = None,
 ) -> list[tuple[CodeUnit, float]]:
     """Find code units most similar to a natural-language query.
+
+    The query embedding is cached under the same shard as its corpus, keyed on the
+    prepared query text. Combined with a fully cached corpus, a repeated identical
+    search needs no model load at all.
 
     :param query: Natural-language search text.
     :param units: Code units row-aligned with ``embeddings``.
@@ -1403,11 +1624,12 @@ def _find_similar_to_query_unlocked(
         ``DEFAULT_SEMANTIC_DEVICE``.
     :param mps_fallback: MPS unsupported-op CPU fallback behavior.
     :param mps_memory_fraction: Optional MPS allocator limit in ``(0, 2]``.
+    :param use_cache: Whether to consult/update the persistent embedding cache.
+    :param cache_scope: Analyzed corpus root path used to address the cache shard;
+        ``None`` disables caching for this call regardless of ``use_cache``.
     :return: Up to ``top_k`` ``(unit, similarity)`` pairs at or above the threshold,
         sorted by descending similarity.
     """
-    resolved_revision = _resolve_model_revision(model_name, revision)
-    resolved_trust_remote_code = _resolve_trust_remote_code(model_name, trust_remote_code)
     profile = resolve_model_profile(model_name)
     resolved_threshold = (
         threshold if threshold is not None else get_default_search_threshold(model_name)
@@ -1416,21 +1638,6 @@ def _find_similar_to_query_unlocked(
         semantic_task,
         default_task=DEFAULT_SEARCH_SEMANTIC_TASK,
     )
-    resolved_device = _prepare_semantic_device(
-        device,
-        mps_fallback=mps_fallback,
-        mps_memory_fraction=mps_memory_fraction,
-    )
-    model = get_model(
-        model_name,
-        revision=resolved_revision,
-        trust_remote_code=resolved_trust_remote_code,
-        device=resolved_device,
-        mps_fallback=mps_fallback,
-        mps_memory_fraction=mps_memory_fraction,
-    )
-    execution_device = _get_effective_model_device(model, resolved_device)
-
     instruction = _resolve_instruction_prefix(
         model_name,
         "query",
@@ -1439,23 +1646,107 @@ def _find_similar_to_query_unlocked(
     )
     query_text = f"{instruction}{query}"
 
-    encode_fn = model.encode
-    if profile.family == "embeddinggemma" and hasattr(model, "encode_query"):
-        encode_fn = model.encode_query
-
-    query_embeddings = _encode_with_retries(
-        model,
-        encode_fn,
-        [query_text],
-        batch_size=1,
-        show_progress_bar=False,
-        initial_device=execution_device,
-        model_name=model_name,
-        revision=resolved_revision,
-        trust_remote_code=resolved_trust_remote_code,
-        stage="query embedding",
+    cache = get_embedding_cache() if (use_cache and cache_scope is not None) else None
+    cache_revision = (
+        _resolve_revision_for_cache(model_name, revision) if cache is not None else None
     )
-    query_embedding = query_embeddings[0]
+    cache_variant = _cache_variant_for(profile, device)
+    cache_key = (
+        compute_cache_key(
+            profile.canonical_name, cache_revision, query_text, mode="query", variant=cache_variant
+        )
+        if cache is not None and cache_revision is not None
+        else None
+    )
+
+    def _validated_query_hit(candidate: np.ndarray | None) -> np.ndarray | None:
+        """Reject a cached query vector whose dimensionality cannot match the corpus.
+
+        :param candidate: Cached query embedding, or ``None`` on a miss.
+        :return: The candidate when usable, else ``None`` to force a fresh encode.
+        """
+        if candidate is None:
+            return None
+        if embeddings.size and candidate.shape[-1] != embeddings.shape[1]:
+            logger.warning(
+                "Discarding a cached query embedding whose dimensionality (%d) does "
+                "not match the corpus matrix (%d); re-encoding the query.",
+                candidate.shape[-1],
+                embeddings.shape[1],
+            )
+            return None
+        return candidate
+
+    query_embedding: np.ndarray | None = None
+    if cache_key is not None:
+        hit = cache.get_many(cache_scope, profile.canonical_name, cache_revision, [cache_key])
+        query_embedding = _validated_query_hit(hit.get(cache_key))
+
+    if query_embedding is None:
+        resolved_revision = _resolve_model_revision(model_name, revision)
+        resolved_trust_remote_code = _resolve_trust_remote_code(model_name, trust_remote_code)
+        resolved_device = _prepare_semantic_device(
+            device,
+            mps_fallback=mps_fallback,
+            mps_memory_fraction=mps_memory_fraction,
+        )
+        model = get_model(
+            model_name,
+            revision=resolved_revision,
+            trust_remote_code=resolved_trust_remote_code,
+            device=resolved_device,
+            mps_fallback=mps_fallback,
+            mps_memory_fraction=mps_memory_fraction,
+        )
+        execution_device = _get_effective_model_device(model, resolved_device)
+
+        if cache is not None:
+            confirmed_revision = _get_loaded_model_commit_hash(model) or resolved_revision
+            if confirmed_revision is None:
+                logger.debug(
+                    "Could not confirm the loaded model revision; keeping cache revision %s",
+                    cache_revision,
+                )
+            elif confirmed_revision != cache_revision:
+                cache_revision = confirmed_revision
+                cache_key = compute_cache_key(
+                    profile.canonical_name,
+                    cache_revision,
+                    query_text,
+                    mode="query",
+                    variant=cache_variant,
+                )
+                hit = cache.get_many(
+                    cache_scope, profile.canonical_name, cache_revision, [cache_key]
+                )
+                query_embedding = _validated_query_hit(hit.get(cache_key))
+
+        if query_embedding is None:
+            encode_fn = model.encode
+            if profile.family == "embeddinggemma" and hasattr(model, "encode_query"):
+                encode_fn = model.encode_query
+
+            query_embeddings = _encode_with_retries(
+                model,
+                encode_fn,
+                [query_text],
+                batch_size=1,
+                show_progress_bar=False,
+                initial_device=execution_device,
+                model_name=model_name,
+                revision=resolved_revision,
+                trust_remote_code=resolved_trust_remote_code,
+                stage="query embedding",
+            )
+            query_embedding = query_embeddings[0]
+
+            if cache is not None and cache_key is not None and cache_revision is not None:
+                cache.put_many(
+                    cache_scope,
+                    profile.canonical_name,
+                    cache_revision,
+                    [(cache_key, query_embedding)],
+                )
 
     similarities = embeddings @ query_embedding
     sorted_indices = np.argsort(similarities)[::-1]
@@ -1479,6 +1770,8 @@ def find_similar_to_query(
     device: str = DEFAULT_SEMANTIC_DEVICE,
     mps_fallback: bool | None = None,
     mps_memory_fraction: float | None = None,
+    use_cache: bool = True,
+    cache_scope: Path | None = None,
 ) -> list[tuple[CodeUnit, float]]:
     """Search embeddings while serializing shared-model lifecycle and inference.
 
@@ -1499,6 +1792,9 @@ def find_similar_to_query(
         ``DEFAULT_SEMANTIC_DEVICE``.
     :param mps_fallback: MPS unsupported-op CPU fallback behavior.
     :param mps_memory_fraction: Optional MPS allocator limit in ``(0, 2]``.
+    :param use_cache: Whether to consult/update the persistent embedding cache.
+    :param cache_scope: Analyzed corpus root path used to address the cache shard;
+        ``None`` disables caching for this call regardless of ``use_cache``.
     :return: Up to ``top_k`` ``(unit, similarity)`` pairs at or above the threshold,
         sorted by descending similarity.
     """
@@ -1517,6 +1813,8 @@ def find_similar_to_query(
             device=device,
             mps_fallback=mps_fallback,
             mps_memory_fraction=mps_memory_fraction,
+            use_cache=use_cache,
+            cache_scope=cache_scope,
         )
 
 
@@ -1533,6 +1831,8 @@ def run_semantic_analysis(
     device: str = DEFAULT_SEMANTIC_DEVICE,
     mps_fallback: bool | None = None,
     mps_memory_fraction: float | None = None,
+    use_cache: bool = True,
+    cache_scope: Path | None = None,
 ) -> tuple[np.ndarray, list[DuplicatePair]]:
     """Run full semantic duplicate detection.
 
@@ -1551,6 +1851,9 @@ def run_semantic_analysis(
         ``DEFAULT_SEMANTIC_DEVICE``.
     :param mps_fallback: MPS unsupported-op CPU fallback behavior.
     :param mps_memory_fraction: Optional MPS allocator limit in ``(0, 2]``.
+    :param use_cache: Whether to consult/update the persistent embedding cache.
+    :param cache_scope: Analyzed corpus root path used to address the cache shard;
+        ``None`` disables caching for this call regardless of ``use_cache``.
     :return: ``(embeddings, duplicates)``; both are empty when ``units`` is empty.
     """
     if not units:
@@ -1570,6 +1873,8 @@ def run_semantic_analysis(
         device=device,
         mps_fallback=mps_fallback,
         mps_memory_fraction=mps_memory_fraction,
+        use_cache=use_cache,
+        cache_scope=cache_scope,
     )
     duplicates = find_semantic_duplicates(
         units,

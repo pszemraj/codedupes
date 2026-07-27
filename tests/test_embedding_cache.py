@@ -1,0 +1,418 @@
+from __future__ import annotations
+
+import copy
+import hashlib
+import itertools
+import json
+import os
+from pathlib import Path
+
+import numpy as np
+import pytest
+
+from codedupes import embedding_cache, semantic
+from codedupes.embedding_cache import EmbeddingCache
+from codedupes.models import CodeUnit
+from codedupes.semantic import compute_embeddings, find_similar_to_query
+from tests.conftest import extract_units
+
+FIVE_FUNCTION_SOURCE = """
+def alpha(x):
+    return x + 1
+
+def beta(x):
+    return x + 2
+
+def gamma(x):
+    return x + 3
+
+def delta(x):
+    return x + 4
+
+def epsilon(x):
+    return x + 5
+"""
+
+
+def _vector_for_text(text: str, dim: int = 4) -> np.ndarray:
+    """Derive a small deterministic float32 vector from a text's MD5 digest."""
+    digest = hashlib.md5(text.encode()).digest()
+    return np.array([float(b) for b in digest[:dim]], dtype=np.float32)
+
+
+class CountingModel:
+    """Deterministic fake embedding model that records every encode call."""
+
+    def __init__(self, dim: int = 4) -> None:
+        self.dim = dim
+        self.encode_calls: list[list[str]] = []
+
+    def encode(self, texts, **_kwargs):
+        self.encode_calls.append(list(texts))
+        return np.stack([_vector_for_text(text, self.dim) for text in texts], axis=0)
+
+
+def _five_units(tmp_path: Path) -> list[CodeUnit]:
+    return extract_units(tmp_path, FIVE_FUNCTION_SOURCE, filename="mod.py")
+
+
+def _patch_get_model(monkeypatch, model: CountingModel) -> dict[str, int]:
+    counts = {"count": 0}
+
+    def fake_get_model(*_args, **_kwargs):
+        counts["count"] += 1
+        return model
+
+    monkeypatch.setattr(semantic, "get_model", fake_get_model)
+    return counts
+
+
+def test_full_cache_hit_skips_model_load_and_encode(tmp_path, monkeypatch):
+    units = _five_units(tmp_path)
+    model = CountingModel()
+    get_model_counts = _patch_get_model(monkeypatch, model)
+    monkeypatch.setattr(semantic, "_get_loaded_model_commit_hash", lambda _model: None)
+
+    first = compute_embeddings(
+        units, model_name="test-model", revision="rev1", cache_scope=tmp_path
+    )
+    assert get_model_counts["count"] == 1
+    assert len(model.encode_calls) == 1
+    assert len(model.encode_calls[0]) == 5
+
+    second = compute_embeddings(
+        units, model_name="test-model", revision="rev1", cache_scope=tmp_path
+    )
+    assert get_model_counts["count"] == 1
+    assert len(model.encode_calls) == 1
+    np.testing.assert_array_equal(first, second)
+
+
+def test_partial_update_only_reencodes_changed_unit(tmp_path, monkeypatch):
+    units = _five_units(tmp_path)
+    model = CountingModel()
+    get_model_counts = _patch_get_model(monkeypatch, model)
+    monkeypatch.setattr(semantic, "_get_loaded_model_commit_hash", lambda _model: None)
+
+    compute_embeddings(units, model_name="test-model", revision="rev1", cache_scope=tmp_path)
+    assert len(model.encode_calls) == 1
+
+    changed = copy.copy(units[2])
+    changed.source = "def gamma(x):\n    return x + 999\n"
+    updated_units = list(units)
+    updated_units[2] = changed
+
+    compute_embeddings(
+        updated_units, model_name="test-model", revision="rev1", cache_scope=tmp_path
+    )
+    assert get_model_counts["count"] == 2
+    assert len(model.encode_calls) == 2
+    assert len(model.encode_calls[-1]) == 1
+
+
+def test_cache_key_sensitive_to_model_revision_prefix_and_task(tmp_path, monkeypatch):
+    units = _five_units(tmp_path)
+    model = CountingModel()
+    _patch_get_model(monkeypatch, model)
+    monkeypatch.setattr(semantic, "_get_loaded_model_commit_hash", lambda _model: None)
+
+    base: dict[str, object] = {
+        "model_name": "embeddinggemma-300m",
+        "revision": "rev1",
+        "cache_scope": tmp_path,
+    }
+    compute_embeddings(units, **base)
+    assert len(model.encode_calls) == 1
+
+    compute_embeddings(units, **{**base, "revision": "rev2"})
+    assert len(model.encode_calls) == 2
+
+    compute_embeddings(units, **{**base, "model_name": "c2llm-0.5b"})
+    assert len(model.encode_calls) == 3
+
+    compute_embeddings(units, **{**base, "instruction_prefix": "CUSTOM: "})
+    assert len(model.encode_calls) == 4
+
+    compute_embeddings(units, **{**base, "semantic_task": "classification"})
+    assert len(model.encode_calls) == 5
+
+
+def test_shuffled_partial_hit_matches_fully_uncached_compute(tmp_path, monkeypatch):
+    units = _five_units(tmp_path)
+    model = CountingModel()
+    _patch_get_model(monkeypatch, model)
+    monkeypatch.setattr(semantic, "_get_loaded_model_commit_hash", lambda _model: None)
+
+    compute_embeddings(units, model_name="test-model", revision="rev1", cache_scope=tmp_path)
+    assert len(model.encode_calls) == 1
+
+    shuffled = [units[3], units[0], units[4], units[1], units[2]]
+    mutated = copy.copy(shuffled[1])
+    mutated.source = "def other(x):\n    return x + 12345\n"
+    shuffled[1] = mutated
+
+    cached_result = compute_embeddings(
+        shuffled, model_name="test-model", revision="rev1", cache_scope=tmp_path
+    )
+    assert len(model.encode_calls) == 2
+    assert len(model.encode_calls[-1]) == 1
+
+    uncached_result = compute_embeddings(
+        shuffled, model_name="test-model", revision="rev1", cache_scope=None
+    )
+    assert len(model.encode_calls) == 3
+    assert len(model.encode_calls[-1]) == 5
+
+    np.testing.assert_allclose(cached_result, uncached_result)
+
+
+def test_revision_drift_after_model_load_discards_stale_prefetched_hits(tmp_path, monkeypatch):
+    units = _five_units(tmp_path)
+    model = CountingModel()
+    _patch_get_model(monkeypatch, model)
+
+    monkeypatch.setattr(semantic, "_resolve_hf_cached_revision", lambda _model: "rev-a")
+    monkeypatch.setattr(semantic, "_get_loaded_model_commit_hash", lambda _model: "rev-a")
+    compute_embeddings(units, model_name="drift-model", revision=None, cache_scope=tmp_path)
+    assert len(model.encode_calls) == 1
+    assert len(model.encode_calls[0]) == 5
+
+    changed = copy.copy(units[1])
+    changed.source = "def other(x):\n    return x + 777\n"
+    mixed_units = [units[0], changed, units[2]]
+    monkeypatch.setattr(semantic, "_get_loaded_model_commit_hash", lambda _model: "rev-b")
+
+    result = compute_embeddings(
+        mixed_units, model_name="drift-model", revision=None, cache_scope=tmp_path
+    )
+
+    assert len(model.encode_calls) == 2
+    assert len(model.encode_calls[-1]) == 3
+    assert result.shape == (3, model.dim)
+
+
+def test_repeated_identical_search_skips_model_load_when_corpus_cached(tmp_path, monkeypatch):
+    units = _five_units(tmp_path)
+    model = CountingModel()
+    get_model_counts = _patch_get_model(monkeypatch, model)
+    monkeypatch.setattr(semantic, "_get_loaded_model_commit_hash", lambda _model: None)
+
+    embeddings = compute_embeddings(
+        units, model_name="test-model", revision="rev1", cache_scope=tmp_path
+    )
+    assert get_model_counts["count"] == 1
+
+    first_hits = find_similar_to_query(
+        "find addition",
+        units,
+        embeddings,
+        model_name="test-model",
+        revision="rev1",
+        cache_scope=tmp_path,
+        top_k=3,
+    )
+    assert get_model_counts["count"] == 2
+    assert len(model.encode_calls) == 2
+
+    second_hits = find_similar_to_query(
+        "find addition",
+        units,
+        embeddings,
+        model_name="test-model",
+        revision="rev1",
+        cache_scope=tmp_path,
+        top_k=3,
+    )
+    assert get_model_counts["count"] == 2
+    assert len(model.encode_calls) == 2
+    assert [unit.qualified_name for unit, _score in first_hits] == [
+        unit.qualified_name for unit, _score in second_hits
+    ]
+
+
+def test_corrupt_vectors_file_recomputes_without_crash(tmp_path, monkeypatch, caplog):
+    monkeypatch.setattr(embedding_cache, "_warned_cache_error", False)
+    units = _five_units(tmp_path)
+    model = CountingModel()
+    _patch_get_model(monkeypatch, model)
+    monkeypatch.setattr(semantic, "_get_loaded_model_commit_hash", lambda _model: None)
+
+    compute_embeddings(units, model_name="test-model", revision="rev1", cache_scope=tmp_path)
+    assert len(model.encode_calls) == 1
+
+    cache = EmbeddingCache()
+    shard_dir = cache.shard_dir(tmp_path, "test-model", "rev1")
+    (shard_dir / embedding_cache.VECTORS_FILENAME).write_bytes(b"garbage, not a valid npy file")
+
+    with caplog.at_level("WARNING"):
+        result = compute_embeddings(
+            units, model_name="test-model", revision="rev1", cache_scope=tmp_path
+        )
+
+    assert result.shape == (5, model.dim)
+    assert len(model.encode_calls) == 2
+    assert "Embedding cache" in caplog.text
+
+
+def test_stale_index_row_out_of_range_recomputes_without_crash(tmp_path, monkeypatch, caplog):
+    monkeypatch.setattr(embedding_cache, "_warned_cache_error", False)
+    units = _five_units(tmp_path)
+    model = CountingModel()
+    _patch_get_model(monkeypatch, model)
+    monkeypatch.setattr(semantic, "_get_loaded_model_commit_hash", lambda _model: None)
+
+    compute_embeddings(units, model_name="test-model", revision="rev1", cache_scope=tmp_path)
+    assert len(model.encode_calls) == 1
+
+    cache = EmbeddingCache()
+    shard_dir = cache.shard_dir(tmp_path, "test-model", "rev1")
+    index_path = shard_dir / embedding_cache.INDEX_FILENAME
+    payload = json.loads(index_path.read_text(encoding="utf-8"))
+    payload["keys"] = dict.fromkeys(payload["keys"], 999)
+    index_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with caplog.at_level("WARNING"):
+        result = compute_embeddings(
+            units, model_name="test-model", revision="rev1", cache_scope=tmp_path
+        )
+
+    assert result.shape == (5, model.dim)
+    assert len(model.encode_calls) == 2
+    assert "Embedding cache" in caplog.text
+
+
+def test_use_cache_false_creates_no_cache_files(tmp_path, monkeypatch):
+    units = _five_units(tmp_path)
+    model = CountingModel()
+    _patch_get_model(monkeypatch, model)
+
+    compute_embeddings(
+        units, model_name="test-model", revision="rev1", cache_scope=tmp_path, use_cache=False
+    )
+    assert not embedding_cache.resolve_cache_dir().exists()
+
+
+def test_codedupes_no_cache_env_creates_no_cache_files(tmp_path, monkeypatch):
+    monkeypatch.setenv("CODEDUPES_NO_CACHE", "1")
+    units = _five_units(tmp_path)
+    model = CountingModel()
+    _patch_get_model(monkeypatch, model)
+
+    compute_embeddings(
+        units, model_name="test-model", revision="rev1", cache_scope=tmp_path, use_cache=True
+    )
+    assert not embedding_cache.resolve_cache_dir().exists()
+
+
+def test_size_cap_prunes_least_recently_used_shards(tmp_path, monkeypatch):
+    counter = itertools.count()
+    monkeypatch.setattr(embedding_cache.time, "time", lambda: next(counter))
+    monkeypatch.setattr(embedding_cache, "_resolve_max_bytes", lambda: 4000)
+
+    cache = EmbeddingCache()
+    dim = 256
+    for i in range(6):
+        scope = tmp_path / f"proj{i}"
+        scope.mkdir()
+        vector = np.full(dim, float(i), dtype=np.float32)
+        cache.put_many(scope, "model-x", "rev1", [(f"key{i}", vector)])
+
+    stats = cache.stats()
+    assert stats["size_bytes"] <= 4000
+    assert len(stats["repos"]) < 6
+
+
+def test_resolve_cache_dir_env_precedence(monkeypatch, tmp_path):
+    monkeypatch.delenv("CODEDUPES_CACHE_DIR", raising=False)
+    monkeypatch.delenv("XDG_CACHE_HOME", raising=False)
+    monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
+    assert embedding_cache.resolve_cache_dir() == tmp_path / "home" / ".cache" / "codedupes"
+
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "xdg"))
+    assert embedding_cache.resolve_cache_dir() == tmp_path / "xdg" / "codedupes"
+
+    monkeypatch.setenv("CODEDUPES_CACHE_DIR", str(tmp_path / "explicit"))
+    assert embedding_cache.resolve_cache_dir() == tmp_path / "explicit"
+
+
+def test_clear_scopes_to_one_model(tmp_path):
+    cache = EmbeddingCache()
+    scope = tmp_path / "proj"
+    scope.mkdir()
+    cache.put_many(scope, "model-a", "rev1", [("k1", np.array([1.0, 2.0], dtype=np.float32))])
+    cache.put_many(scope, "model-b", "rev1", [("k2", np.array([3.0, 4.0], dtype=np.float32))])
+
+    cleared = cache.clear(model="model-a")
+    assert cleared == 1
+
+    remaining = cache.stats()
+    assert remaining["entries"] == 1
+    assert remaining["models"] == {"model-b": 1}
+
+
+def test_unconfirmable_loaded_revision_keeps_caching(tmp_path, monkeypatch):
+    units = _five_units(tmp_path)
+    model = CountingModel()
+    get_model_counts = _patch_get_model(monkeypatch, model)
+    monkeypatch.setattr(semantic, "_resolve_hf_cached_revision", lambda _model: "rev-a")
+    monkeypatch.setattr(semantic, "_get_loaded_model_commit_hash", lambda _model: None)
+
+    first = compute_embeddings(units, model_name="test-model", cache_scope=tmp_path)
+    assert len(model.encode_calls) == 1
+
+    second = compute_embeddings(units, model_name="test-model", cache_scope=tmp_path)
+    assert get_model_counts["count"] == 1
+    assert len(model.encode_calls) == 1
+    np.testing.assert_array_equal(first, second)
+
+
+def test_nonfinite_cached_vector_treated_as_miss(tmp_path):
+    cache = EmbeddingCache()
+    scope = tmp_path / "proj"
+    scope.mkdir()
+    poisoned = np.array([1.0, float("nan")], dtype=np.float32)
+    healthy = np.array([3.0, 4.0], dtype=np.float32)
+    cache.put_many(scope, "model-a", "rev1", [("bad", poisoned), ("good", healthy)])
+
+    hits = cache.get_many(scope, "model-a", "rev1", ["bad", "good"])
+    assert "bad" not in hits
+    np.testing.assert_array_equal(hits["good"], healthy)
+
+
+def test_dim_mismatched_hits_after_revision_correction_recover(tmp_path, monkeypatch):
+    units = _five_units(tmp_path)
+    model = CountingModel(dim=4)
+    _patch_get_model(monkeypatch, model)
+    monkeypatch.setattr(semantic, "_resolve_hf_cached_revision", lambda _model: "rev-a")
+    monkeypatch.setattr(semantic, "_get_loaded_model_commit_hash", lambda _model: "rev-b")
+
+    stale_text = semantic.prepare_code_for_embedding(units[0], model_name="test-model")
+    stale_key = embedding_cache.compute_cache_key("test-model", "rev-b", stale_text)
+    EmbeddingCache().put_many(
+        tmp_path, "test-model", "rev-b", [(stale_key, np.array([9.0, 9.0], dtype=np.float32))]
+    )
+
+    result = compute_embeddings(units, model_name="test-model", cache_scope=tmp_path)
+    assert result.shape == (5, 4)
+    assert np.isfinite(result).all()
+    np.testing.assert_array_equal(result[0], _vector_for_text(stale_text))
+
+
+def test_put_many_skips_write_when_shard_lock_held(tmp_path):
+    fcntl = pytest.importorskip("fcntl")
+    cache = EmbeddingCache()
+    scope = tmp_path / "proj"
+    scope.mkdir()
+    shard_dir = cache.shard_dir(scope, "model-a", "rev1")
+    shard_dir.mkdir(parents=True)
+    lock_fd = os.open(shard_dir / ".lock", os.O_CREAT | os.O_RDWR)
+    fcntl.flock(lock_fd, fcntl.LOCK_EX)
+    try:
+        cache.put_many(scope, "model-a", "rev1", [("k1", np.array([1.0], dtype=np.float32))])
+        assert cache.get_many(scope, "model-a", "rev1", ["k1"]) == {}
+    finally:
+        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        os.close(lock_fd)
+
+    cache.put_many(scope, "model-a", "rev1", [("k1", np.array([1.0], dtype=np.float32))])
+    assert "k1" in cache.get_many(scope, "model-a", "rev1", ["k1"])

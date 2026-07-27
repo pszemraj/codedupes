@@ -4,6 +4,7 @@
 
 - Traditional AST/token matching (exact + Jaccard near-duplicate)
 - Semantic matching with model-profile embeddings (default `gte-modernbert-base`)
+- Persistent, content-addressed on-disk embedding cache so unchanged code never re-embeds
 - Explicit CPU, CUDA, and Apple Silicon MPS execution
 - Heuristic unused-code detection
 
@@ -46,6 +47,7 @@ Primary docs live under `docs/`:
 
 - [docs/index.md](https://github.com/pszemraj/codedupes/blob/main/docs/index.md): documentation map and ownership
 - [docs/cli.md](https://github.com/pszemraj/codedupes/blob/main/docs/cli.md): commands, flags, and defaults
+- [docs/caching.md](https://github.com/pszemraj/codedupes/blob/main/docs/caching.md): persistent embedding cache design, env vars, and `cache` subcommand
 - [docs/model-profiles.md](https://github.com/pszemraj/codedupes/blob/main/docs/model-profiles.md): semantic model aliases, profile defaults, and task behavior
 - [docs/accelerators.md](https://github.com/pszemraj/codedupes/blob/main/docs/accelerators.md): CPU/CUDA/MPS selection, Metal memory recovery, and MLX coexistence
 - [docs/analysis-defaults.md](https://github.com/pszemraj/codedupes/blob/main/docs/analysis-defaults.md): analysis-behavior defaults and heuristics

@@ -345,6 +345,7 @@ class AnalyzerConfig:
     filter_tiny_traditional: bool = True
     tiny_unit_statement_cutoff: int = DEFAULT_TINY_UNIT_STATEMENT_CUTOFF
     tiny_near_jaccard_min: float = DEFAULT_TINY_NEAR_JACCARD_MIN
+    embedding_cache: bool = True
 
     # What to run
     run_traditional: bool = True
@@ -431,6 +432,8 @@ class AnalyzerConfig:
                 semantic_only_fields.append("batch_size")
             if self.suppress_test_semantic_matches:
                 semantic_only_fields.append("suppress_test_semantic_matches")
+            if not self.embedding_cache:
+                semantic_only_fields.append("embedding_cache")
             if semantic_only_fields:
                 listed = ", ".join(sorted(semantic_only_fields))
                 raise ValueError(f"{listed} require run_semantic=True")
@@ -474,6 +477,7 @@ class CodeAnalyzer:
         self._resolved_semantic_threshold: float | None = None
         self._resolved_semantic_task: str | None = None
         self._resolved_search_semantic_task: str | None = None
+        self._cache_scope: Path | None = None
 
     def analyze(self, path: Path | str) -> AnalysisResult:
         """
@@ -489,6 +493,8 @@ class CodeAnalyzer:
 
         if not path.exists():
             raise FileNotFoundError(f"Path does not exist: {path}")
+
+        self._cache_scope = path.parent if path.is_file() else path
 
         logger.info(f"Extracting code units from {path}")
 
@@ -611,6 +617,8 @@ class CodeAnalyzer:
                     "device": self.config.device,
                     "mps_fallback": self.config.mps_fallback,
                     "mps_memory_fraction": self.config.mps_memory_fraction,
+                    "use_cache": self.config.embedding_cache,
+                    "cache_scope": self._cache_scope,
                 }
                 self._embeddings, semantic_duplicates = run_semantic_analysis(
                     semantic_candidates,
@@ -743,6 +751,8 @@ class CodeAnalyzer:
             device=self.config.device,
             mps_fallback=self.config.mps_fallback,
             mps_memory_fraction=self.config.mps_memory_fraction,
+            use_cache=self.config.embedding_cache,
+            cache_scope=self._cache_scope,
         )
 
 
