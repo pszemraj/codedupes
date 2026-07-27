@@ -1390,7 +1390,9 @@ def _compute_embeddings_unlocked(
         else {}
     )
 
-    if cache_keys is not None and len(hits) == len(units):
+    # Duplicate code units share one cache key, so compare against the covered
+    # keys rather than the unique-hit count: len(hits) undercounts coverage.
+    if cache_keys is not None and all(key in hits for key in cache_keys):
         return _assemble_cached_matrix(cache_keys, hits)
 
     resolved_revision = _resolve_load_revision(model_name, revision)
@@ -1430,7 +1432,7 @@ def _compute_embeddings_unlocked(
                 for text in prepared_texts
             ]
             hits = cache.get_many(cache_scope, profile.canonical_name, cache_revision, cache_keys)
-            if len(hits) == len(units):
+            if all(key in hits for key in cache_keys):
                 return _assemble_cached_matrix(cache_keys, hits)
 
     miss_indices = [i for i in range(len(units)) if cache_keys is None or cache_keys[i] not in hits]

@@ -502,3 +502,38 @@ def test_model_slug_for_local_paths_is_bounded_and_collision_safe():
     assert "/" not in slug_a
     assert slug_a != slug_b
     assert len(slug_a) < 60
+
+
+def test_duplicate_source_units_share_keys_and_warm_run_full_hits(tmp_path, monkeypatch):
+    # Two copies of the same functions in different files collapse to one cache
+    # key each; the warm-path coverage check must not confuse unique hits with
+    # covered units (regression: IndexError on the second cached run).
+    units = _five_units(tmp_path)
+    duplicate_units = extract_units(tmp_path, FIVE_FUNCTION_SOURCE, filename="copy.py")
+    all_units = units + duplicate_units
+    model = CountingModel()
+    get_model_counts = _patch_get_model(monkeypatch, model)
+    monkeypatch.setattr(semantic, "_get_loaded_model_commit_hash", lambda _model: None)
+
+    first = compute_embeddings(
+        all_units, model_name="test-model", revision="rev1", cache_scope=tmp_path
+    )
+    assert first.shape[0] == 10
+    assert get_model_counts["count"] == 1
+
+    second = compute_embeddings(
+        all_units, model_name="test-model", revision="rev1", cache_scope=tmp_path
+    )
+    assert get_model_counts["count"] == 1
+    assert len(model.encode_calls) == 1
+    np.testing.assert_array_equal(first, second)
+
+    # A partial warm run (one changed unit) alongside duplicate keys must
+    # re-encode exactly the changed unit.
+    changed = copy.copy(all_units[1])
+    changed.source = "def beta(x):\n    return x + 222\n"
+    mutated = list(all_units)
+    mutated[1] = changed
+    compute_embeddings(mutated, model_name="test-model", revision="rev1", cache_scope=tmp_path)
+    assert len(model.encode_calls) == 2
+    assert len(model.encode_calls[-1]) == 1
