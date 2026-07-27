@@ -99,7 +99,9 @@ Inference OOM recovery is deterministic:
 2. Log MPS tensor, driver, and recommended-memory statistics when available.
 3. Synchronize queued MPS work, run garbage collection, and call `torch.mps.empty_cache()`.
 4. Halve the embedding batch size until it reaches one.
-5. If an accelerator still OOMs at batch size one, move the cached model to CPU for one final retry.
+5. If an accelerator still OOMs at batch size one, move the cached model to CPU once and retry from
+   the originally requested batch size; host memory has different limits, and a CPU OOM re-enters
+   the halving ladder above before aborting.
 
 A model-loading MPS OOM has no batch to shrink, so it clears the MPS cache and retries loading once
 on CPU. After an MPS-to-CPU OOM fallback, the CPU model remains sticky for the same cache key in a

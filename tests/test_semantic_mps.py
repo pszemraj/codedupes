@@ -24,6 +24,7 @@ def _reset_model_cache_state() -> None:
     semantic._model_device_key = None
     semantic._model_execution_device = None
     semantic._warned_mlx_mps_contention = False
+    semantic._warned_cpu_fallback_reuse = False
 
 
 def _prepare_device(device, *, mps_fallback, mps_memory_fraction):
@@ -101,6 +102,30 @@ def test_mps_model_load_oom_retries_once_on_cpu(monkeypatch) -> None:
     assert semantic._model_execution_device == "cpu"
 
 
+def test_sticky_cpu_fallback_reuse_warns_once(monkeypatch, caplog) -> None:
+    class FakeModel:
+        device = "cpu"
+
+    def fake_constructor(_model_name, **kwargs):
+        if kwargs["device"] == "mps":
+            raise RuntimeError("MPS backend out of memory")
+        return FakeModel()
+
+    _reset_model_cache_state()
+    monkeypatch.setattr(semantic, "_configure_semantic_runtime_env", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(semantic, "_check_semantic_dependencies", lambda _name: None)
+    monkeypatch.setattr(semantic, "_prepare_semantic_device", _prepare_device)
+    monkeypatch.setattr(semantic, "clear_device_cache", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(sentence_transformers, "SentenceTransformer", fake_constructor)
+
+    with caplog.at_level("WARNING"):
+        semantic.get_model("sentence-transformers/all-MiniLM-L6-v2", device="mps")
+        semantic.get_model("sentence-transformers/all-MiniLM-L6-v2", device="mps")
+        semantic.get_model("sentence-transformers/all-MiniLM-L6-v2", device="mps")
+
+    assert caplog.text.count("after an earlier mps-to-CPU OOM fallback") == 1
+
+
 def test_mps_embedding_oom_halves_batch_then_moves_model_to_cpu(
     monkeypatch,
     tmp_path: Path,
@@ -144,7 +169,7 @@ def test_mps_embedding_oom_halves_batch_then_moves_model_to_cpu(
     embeddings = semantic.compute_embeddings(units, device="mps", batch_size=8)
 
     assert embeddings.shape == (2, 2)
-    assert attempts == [(8, None), (4, None), (2, None), (1, None), (1, "cpu")]
+    assert attempts == [(8, None), (4, None), (2, None), (1, None), (8, "cpu")]
     assert model.moves == ["cpu"]
     assert cache_clears == ["mps", "mps", "mps", "mps"]
     assert recovery_events[-2:] == ["clear:mps", "move:cpu"]

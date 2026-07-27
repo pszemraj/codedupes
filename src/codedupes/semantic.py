@@ -48,6 +48,7 @@ _model_device_key: str | None = None
 _model_execution_device: str | None = None
 _model_lock = threading.RLock()
 _warned_mlx_mps_contention = False
+_warned_cpu_fallback_reuse = False
 
 _TORCH_MIN_RELEASE = (2, 13)
 _TORCH_MAX_EXCLUSIVE_RELEASE = (3,)
@@ -524,7 +525,7 @@ def _get_model_unlocked(
     :return: Loaded model instance.
     """
     global _model, _model_name, _model_revision, _model_trust_remote_code
-    global _model_device_key, _model_execution_device
+    global _model_device_key, _model_execution_device, _warned_cpu_fallback_reuse
 
     profile = resolve_model_profile(model_name)
     resolved_model_name = profile.canonical_name
@@ -553,7 +554,7 @@ def _get_model_unlocked(
 
     if cache_miss:
         if _model is not None:
-            clear_model_cache()
+            _clear_model_cache_unlocked()
 
         logger.info("Loading embedding model %s on %s", resolved_model_name, resolved_device)
         if profile.family == "c2llm":
@@ -685,12 +686,16 @@ def _get_model_unlocked(
             getattr(loaded_model, "device", None),
             load_device,
         )
-    elif _model_execution_device != resolved_device:
-        logger.info(
-            "Reusing cached model on %s after an earlier %s-to-CPU OOM fallback",
+        _warned_cpu_fallback_reuse = False
+    elif _model_execution_device != resolved_device and not _warned_cpu_fallback_reuse:
+        logger.warning(
+            "Reusing cached model on %s after an earlier %s-to-CPU OOM fallback; "
+            "call clear_model_cache() to force a fresh %s load",
             _model_execution_device,
             resolved_device,
+            resolved_device,
         )
+        _warned_cpu_fallback_reuse = True
 
     return _model
 
@@ -718,7 +723,7 @@ def get_model(
 def _clear_model_cache_unlocked() -> None:
     """Release the cached model and its accelerator allocator cache."""
     global _model, _model_name, _model_revision, _model_trust_remote_code
-    global _model_device_key, _model_execution_device
+    global _model_device_key, _model_execution_device, _warned_cpu_fallback_reuse
 
     model = _model
     execution_device = _model_execution_device
@@ -732,6 +737,7 @@ def _clear_model_cache_unlocked() -> None:
     _model_trust_remote_code = None
     _model_device_key = None
     _model_execution_device = None
+    _warned_cpu_fallback_reuse = False
 
     del model
     clear_device_cache(execution_device, synchronize=True, collect=True)
@@ -990,9 +996,10 @@ def _encode_with_retries(
     """Encode with adaptive OOM recovery for CUDA, MPS, and CPU.
 
     Recovery first halves the batch until one item remains. Accelerator OOM at
-    batch size one then moves the cached model to CPU exactly once. OOM traceback
-    references are detached before synchronization/garbage collection so temporary
-    tensors do not remain live during allocator cleanup.
+    batch size one then moves the cached model to CPU exactly once, restarting from
+    the requested batch size. OOM traceback references are detached before
+    synchronization/garbage collection so temporary tensors do not remain live
+    during allocator cleanup.
     """
     current_batch_size = max(1, batch_size)
     active_device = initial_device
@@ -1067,14 +1074,19 @@ def _encode_with_retries(
         source_device = oom_device if oom_device in {"cuda", "mps"} else active_device
         if source_device in {"cuda", "mps"} and not attempted_cpu_fallback:
             logger.warning(
-                "%s OOM during %s at batch_size=1; moving the model to CPU for one retry",
+                "%s OOM during %s at batch_size=1; moving the model to CPU and retrying "
+                "from batch_size=%d",
                 source_device.upper(),
                 stage,
+                max(1, batch_size),
             )
             clear_device_cache(source_device, synchronize=True, collect=True)
             _move_model_to_cpu(model)
             active_device = "cpu"
             attempted_cpu_fallback = True
+            # Host memory has different limits than the accelerator, so the CPU retry
+            # restarts at the requested batch size instead of inheriting batch_size=1.
+            current_batch_size = max(1, batch_size)
             continue
 
         logger.warning(

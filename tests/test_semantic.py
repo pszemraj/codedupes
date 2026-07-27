@@ -491,7 +491,16 @@ def test_compute_embeddings_cpu_fallback_retries_once_and_bails_on_persistent_oo
     with pytest.raises(RuntimeError, match="CUDA out of memory"):
         compute_embeddings(units, batch_size=8)
 
-    assert seen_batches == [(8, None), (4, None), (2, None), (1, None), (1, "cpu")]
+    assert seen_batches == [
+        (8, None),
+        (4, None),
+        (2, None),
+        (1, None),
+        (8, "cpu"),
+        (4, "cpu"),
+        (2, "cpu"),
+        (1, "cpu"),
+    ]
 
 
 def test_resolve_c2llm_torch_dtype_prefers_cpu_bf16(monkeypatch) -> None:
