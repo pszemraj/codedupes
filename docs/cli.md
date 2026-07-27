@@ -7,6 +7,8 @@ For analysis-behavior defaults (semantic candidate scope, tiny-traditional filte
 [docs/analysis-defaults.md](https://github.com/pszemraj/codedupes/blob/main/docs/analysis-defaults.md).
 For semantic model aliases/profile defaults/task behavior, see
 [docs/model-profiles.md](https://github.com/pszemraj/codedupes/blob/main/docs/model-profiles.md).
+For device selection and MPS runtime behavior, see
+[docs/accelerators.md](https://github.com/pszemraj/codedupes/blob/main/docs/accelerators.md).
 
 ## Commands
 
@@ -29,6 +31,7 @@ codedupes check ./src --json --threshold 0.82
 codedupes check ./src --semantic-only
 codedupes check ./src --traditional-only --no-unused
 codedupes check ./src --show-all
+codedupes check ./src --device mps --mps-memory-fraction 0.9
 ```
 
 Options:
@@ -51,6 +54,10 @@ Options:
 - `--full-table`: Disable table row truncation and print all rows in terminal output
 - `--min-lines <int>`: Minimum statement count for semantic candidate code units (default `3`). In default combined mode this also narrows traditional duplicate scope.
 - `--model <name>`: Embedding model alias or HuggingFace ID (default `gte-modernbert-base`)
+- `--device <name>`: Semantic inference device: `auto`, `cpu`, `cuda`, or `mps` (default `auto`; priority CUDA, then MPS, then CPU)
+- `--mps-fallback`: Enable PyTorch CPU fallback for unsupported MPS operators
+- `--no-mps-fallback`: Disable PyTorch CPU fallback for unsupported MPS operators
+- `--mps-memory-fraction <float>`: Optional PyTorch MPS allocator fraction in `(0, 2]`; `0` is rejected as unsafe
 - `--instruction-prefix <text>`: Override default semantic instruction prefix for code/query embeddings
 - `--model-revision <rev>`: Model revision/commit hash (default `auto`; profile-specific behavior)
 - `--trust-remote-code`: Allow model remote code execution
@@ -73,12 +80,17 @@ Examples:
 ```bash
 codedupes search ./src "sum values in a list" --top-k 5
 codedupes search ./src "normalize request payload" --json
+codedupes search ./src "normalize request payload" --device mps
 ```
 
 Options:
 
 - `--top-k <int>`: Number of results (default `10`)
 - `--model <name>`: Embedding model alias or HuggingFace ID (default `gte-modernbert-base`)
+- `--device <name>`: Semantic inference device: `auto`, `cpu`, `cuda`, or `mps` (default `auto`; priority CUDA, then MPS, then CPU)
+- `--mps-fallback`: Enable PyTorch CPU fallback for unsupported MPS operators
+- `--no-mps-fallback`: Disable PyTorch CPU fallback for unsupported MPS operators
+- `--mps-memory-fraction <float>`: Optional PyTorch MPS allocator fraction in `(0, 2]`; `0` is rejected as unsafe
 - `--semantic-task <name>`: Semantic task mode for query/document embeddings (default `code-retrieval`)
 - `--semantic-unit-type <name>`: Semantic candidate unit type (`function`, `method`, `class`); repeat option to include multiple types (default `function, method`)
 - `--instruction-prefix <text>`: Override default semantic instruction prefix for code/query embeddings
@@ -98,7 +110,7 @@ Options:
 
 ## `codedupes info`
 
-Print version and default settings.
+Print version, model defaults, resolved device capabilities, MPS memory statistics when available, and whether MLX is already loaded in the process.
 
 ## Validation and mode notes
 
@@ -114,6 +126,10 @@ Print version and default settings.
 - `--semantic-only` and `--traditional-only` bypass hybrid synthesis and show raw method outputs
 - `--semantic-only` and `--traditional-only` are mutually exclusive
 - `--trust-remote-code` and `--no-trust-remote-code` are mutually exclusive
+- `--mps-fallback` and `--no-mps-fallback` are mutually exclusive
+- `--mps-memory-fraction` must be finite and in `(0, 2]`; it requires `--device mps` or `--device auto`
+- Explicit semantic device/MPS controls are rejected with `--traditional-only`
+- Unsupported-op fallback and codedupes OOM recovery are separate policies; `--no-mps-fallback` does not disable OOM recovery
 - `search` applies semantic threshold filtering before returning `top-k` matches
 - Contradictory mode-specific options are rejected at parse time for the selected workflow
 

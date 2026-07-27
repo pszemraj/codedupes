@@ -9,6 +9,8 @@ Analysis behavior defaults are defined in
 [docs/analysis-defaults.md](https://github.com/pszemraj/codedupes/blob/main/docs/analysis-defaults.md).
 Semantic model aliases/profile defaults/task behavior are defined in
 [docs/model-profiles.md](https://github.com/pszemraj/codedupes/blob/main/docs/model-profiles.md).
+Accelerator and Apple Silicon behavior is defined in
+[docs/accelerators.md](https://github.com/pszemraj/codedupes/blob/main/docs/accelerators.md).
 JSON schema and exit codes are defined in
 [docs/output.md](https://github.com/pszemraj/codedupes/blob/main/docs/output.md).
 
@@ -90,6 +92,27 @@ codedupes check ./src --semantic-task semantic-similarity
 codedupes search ./src "parse json payload" --semantic-task code-retrieval
 ```
 
+## Apple Silicon / MPS
+
+`auto` selects MPS when CUDA is unavailable and PyTorch reports MPS available. Use an explicit
+device during release validation so a missing MPS backend cannot silently turn the run into CPU:
+
+```bash
+codedupes check ./src --device mps
+codedupes search ./src "parse json payload" --device mps
+```
+
+On a memory-constrained machine, begin with a conservative allocator cap and a smaller batch:
+
+```bash
+codedupes check ./src --device mps --mps-memory-fraction 0.9 --batch-size 4
+```
+
+Do not add `torch.mps.empty_cache()` after every successful batch. `codedupes` clears unoccupied
+MPS cache only during model replacement, explicit model-cache release, or OOM recovery. Full
+behavior is documented in
+[docs/accelerators.md](https://github.com/pszemraj/codedupes/blob/main/docs/accelerators.md).
+
 ## Override Semantic Instruction Prefix
 
 By default, model-profile task prompts are applied automatically when needed. Override
@@ -100,9 +123,9 @@ codedupes check ./src --instruction-prefix "Represent this code for duplicate de
 codedupes search ./src "parse json payload" --instruction-prefix "Represent this query for code lookup: "
 ```
 
-## Fresh Colab/GPU preflight
+## Accelerator preflight
 
-Use one command to print runtime versions and CUDA availability:
+Use one command to print runtime versions and CUDA/MPS availability:
 
 ```bash
 python - <<'PY'
@@ -123,6 +146,8 @@ print("sentence-transformers", sentence_transformers.__version__)
 print("deepspeed", deepspeed_version)
 print("cuda_available", torch.cuda.is_available())
 print("cuda_device_count", torch.cuda.device_count())
+print("mps_built", torch.backends.mps.is_built())
+print("mps_available", torch.backends.mps.is_available())
 PY
 ```
 
@@ -132,8 +157,10 @@ Model profiles and revision defaults:
 codedupes info
 ```
 
-Semantic runtime defaults are documented in
+Semantic model defaults are documented in
 [docs/model-profiles.md](https://github.com/pszemraj/codedupes/blob/main/docs/model-profiles.md).
+Device runtime defaults are documented in
+[docs/accelerators.md](https://github.com/pszemraj/codedupes/blob/main/docs/accelerators.md).
 
 ## Threshold Tuning
 
@@ -251,7 +278,7 @@ codedupes check src --semantic-only --min-lines 1 --batch-size 4
 codedupes check src
 ```
 
-Record model/revision, package versions, device, elapsed time, exit code, and whether semantic fallback warnings were emitted.
+Record model/revision, package versions, requested and resolved device, elapsed time, exit code, and whether unsupported-op or OOM fallback warnings were emitted.
 
 ## Hybrid gate tuning workflow
 

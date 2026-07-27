@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import sys
 import numpy as np
 import pytest
@@ -298,7 +299,7 @@ def test_get_model_trusts_remote_code_for_c2llm_variants(monkeypatch) -> None:
             calls.append({"args": args, "kwargs": kwargs})
 
     monkeypatch.setattr(semantic, "_check_semantic_dependencies", lambda model_name: None)
-    monkeypatch.setattr(semantic, "_resolve_c2llm_torch_dtype", lambda: "bf16")
+    monkeypatch.setattr(semantic, "_resolve_c2llm_torch_dtype", lambda _device: "bf16")
     monkeypatch.setattr(sentence_transformers, "SentenceTransformer", FakeSentenceTransformer)
     semantic.clear_model_cache()
 
@@ -320,7 +321,7 @@ def test_get_model_passes_revision_and_trust_kwargs(monkeypatch) -> None:
             calls.append({"args": args, "kwargs": kwargs})
 
     monkeypatch.setattr(semantic, "_check_semantic_dependencies", lambda model_name: None)
-    monkeypatch.setattr(semantic, "_resolve_c2llm_torch_dtype", lambda: "bf16")
+    monkeypatch.setattr(semantic, "_resolve_c2llm_torch_dtype", lambda _device: "bf16")
     monkeypatch.setattr(sentence_transformers, "SentenceTransformer", FakeSentenceTransformer)
     semantic.clear_model_cache()
 
@@ -364,6 +365,33 @@ def test_get_model_keeps_explicit_revision_for_non_default_model(monkeypatch) ->
     assert kwargs["model_kwargs"]["revision"] == DEFAULT_C2LLM_REVISION
     assert kwargs["tokenizer_kwargs"]["revision"] == DEFAULT_C2LLM_REVISION
     assert kwargs["config_kwargs"]["revision"] == DEFAULT_C2LLM_REVISION
+
+
+@pytest.mark.parametrize("version", ["2.12.9", "2.12.0", "3.0.0", "3.0.0.dev1"])
+def test_torch_runtime_rejects_unsupported_versions(monkeypatch, version: str) -> None:
+    monkeypatch.setattr(semantic, "_safe_package_version", lambda _name: version)
+
+    with pytest.raises(SemanticBackendError, match="requires >=2.13,<3"):
+        semantic._validate_torch_runtime()
+
+
+@pytest.mark.parametrize("version", ["2.13.0", "2.13.0.dev20260101", "2.13.0rc1", "2.14.1"])
+def test_torch_runtime_accepts_supported_versions(monkeypatch, version: str) -> None:
+    monkeypatch.setattr(semantic, "_safe_package_version", lambda _name: version)
+
+    semantic._validate_torch_runtime()
+
+
+def test_prepare_semantic_device_ignores_fraction_on_non_mps(caplog) -> None:
+    with caplog.at_level(logging.INFO, logger="codedupes.semantic"):
+        resolved = semantic._prepare_semantic_device(
+            "cpu",
+            mps_fallback=None,
+            mps_memory_fraction=0.9,
+        )
+
+    assert resolved == "cpu"
+    assert "mps_memory_fraction ignored: resolved device is cpu" in caplog.text
 
 
 def test_get_model_rejects_incompatible_c2llm_model_versions(monkeypatch) -> None:
@@ -478,4 +506,4 @@ def test_resolve_c2llm_torch_dtype_prefers_cpu_bf16(monkeypatch) -> None:
 
     monkeypatch.setitem(sys.modules, "torch", FakeTorch)
 
-    assert semantic._resolve_c2llm_torch_dtype() == "bf16"
+    assert semantic._resolve_c2llm_torch_dtype("cpu") == "bf16"

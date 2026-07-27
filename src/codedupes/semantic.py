@@ -8,6 +8,7 @@ from importlib import metadata as importlib_metadata
 import logging
 import os
 import sys
+import threading
 from typing import Any, Callable, Literal, TypeVar, cast
 
 import numpy as np
@@ -18,9 +19,19 @@ from codedupes.constants import (
     DEFAULT_CHECK_SEMANTIC_TASK,
     DEFAULT_MODEL,
     DEFAULT_SEARCH_SEMANTIC_TASK,
+    DEFAULT_SEMANTIC_DEVICE,
     DEFAULT_SEMANTIC_THRESHOLD,
     DEFAULT_TOP_K,
     SEMANTIC_TASK_CHOICES,
+)
+from codedupes.devices import (
+    DeviceConfigurationError,
+    clear_device_cache,
+    configure_mps_environment,
+    configure_mps_memory_fraction,
+    format_mps_memory_snapshot,
+    is_mlx_loaded,
+    resolve_semantic_device,
 )
 from codedupes.models import CodeUnit, DuplicatePair
 from codedupes.pairs import ordered_pair_key
@@ -33,7 +44,13 @@ _model = None
 _model_name: str | None = None
 _model_revision: str | None = None
 _model_trust_remote_code: bool | None = None
+_model_device_key: str | None = None
+_model_execution_device: str | None = None
+_model_lock = threading.RLock()
+_warned_mlx_mps_contention = False
 
+_TORCH_MIN_RELEASE = (2, 13)
+_TORCH_MAX_EXCLUSIVE_RELEASE = (3,)
 _DEFAULT_TRANSFORMERS_MIN = Version("4.51")
 _DEFAULT_TRANSFORMERS_MAX_EXCLUSIVE = Version("5")
 _DEFAULT_ST_MIN = Version("5")
@@ -75,14 +92,25 @@ class SemanticBackendError(RuntimeError):
     """Raised when semantic model loading or inference backend is incompatible."""
 
 
-def _configure_semantic_runtime_env() -> None:
-    """Set runtime env guards to avoid optional framework noise/import paths."""
+def _configure_semantic_runtime_env(
+    device: str | None = DEFAULT_SEMANTIC_DEVICE,
+    *,
+    mps_fallback: bool | None = None,
+) -> None:
+    """Set semantic runtime guards before importing model frameworks.
+
+    :param device: Requested semantic execution device.
+    :param mps_fallback: Explicit MPS unsupported-op fallback setting, or ``None``
+        for automatic behavior that respects an existing environment override.
+    :return: ``None``.
+    """
     os.environ.setdefault("USE_TF", "0")
     os.environ.setdefault("USE_FLAX", "0")
     os.environ.setdefault("TRANSFORMERS_NO_TF", "1")
     os.environ.setdefault("TRANSFORMERS_NO_FLAX", "1")
     os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
     os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+    configure_mps_environment(device, fallback=mps_fallback)
 
 
 T = TypeVar("T")
@@ -190,6 +218,29 @@ def _validate_version_range(
             f"Incompatible {package_name} version {raw} for C2LLM models. "
             f"Supported range is >={min_version},<{max_exclusive}. "
             "Run: pip install 'transformers>=4.51,<5' 'sentence-transformers>=5,<6'."
+        )
+
+
+def _validate_torch_runtime() -> None:
+    """Enforce the supported PyTorch range even when installer checks were bypassed."""
+    raw = _safe_package_version("torch")
+    if raw is None:
+        raise SemanticBackendError(
+            "Could not determine the installed PyTorch version. "
+            "Install a supported runtime with `pip install 'torch>=2.13,<3'`."
+        )
+
+    try:
+        parsed = Version(raw)
+    except InvalidVersion as exc:
+        raise SemanticBackendError(f"Could not parse torch version: {raw}") from exc
+
+    # Release tuples are compared instead of Version objects: Version ordering puts
+    # 2.13.0.dev1 and 2.13.0rc1 below 2.13, which would reject supported pre-releases.
+    if not (_TORCH_MIN_RELEASE <= parsed.release < _TORCH_MAX_EXCLUSIVE_RELEASE):
+        raise SemanticBackendError(
+            f"Incompatible torch version {raw}. codedupes semantic analysis requires "
+            ">=2.13,<3. Run: pip install 'torch>=2.13,<3'."
         )
 
 
@@ -306,6 +357,7 @@ def _check_semantic_dependencies(model_name: str) -> None:
             "pip install codedupes[gpu] or pip install deepspeed",
         )
 
+    _validate_torch_runtime()
     _check_c2llm_model_compatibility(model_name)
 
 
@@ -314,15 +366,59 @@ def _raise_missing_deepspeed(exc: ModuleNotFoundError) -> None:
     raise ModuleNotFoundError(_DEEPSPEED_REQUIRED_MESSAGE) from exc
 
 
-def _clear_cuda_cache() -> None:
-    """Best-effort CUDA cache clear after OOM retries."""
-    try:
-        import torch
+def _prepare_semantic_device(
+    device: str | None,
+    *,
+    mps_fallback: bool | None,
+    mps_memory_fraction: float | None,
+) -> str:
+    """Configure and resolve one semantic execution device.
 
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-    except Exception:
-        logger.debug("Failed to clear CUDA cache after OOM", exc_info=True)
+    :param device: Requested device name.
+    :param mps_fallback: MPS unsupported-op fallback behavior.
+    :param mps_memory_fraction: Optional MPS allocator limit, ignored when the
+        request resolves to a non-MPS device.
+    :return: Concrete device name.
+    :raises SemanticBackendError: If device configuration fails.
+    """
+    _configure_semantic_runtime_env(device, mps_fallback=mps_fallback)
+    try:
+        resolved_device = resolve_semantic_device(device)
+        # ``device='auto'`` may legitimately resolve to CPU/CUDA with a fraction set,
+        # so the strict low-level check is only applied once MPS is the real target.
+        if resolved_device == "mps":
+            configure_mps_memory_fraction(resolved_device, mps_memory_fraction)
+        elif mps_memory_fraction is not None:
+            logger.info("mps_memory_fraction ignored: resolved device is %s", resolved_device)
+    except (DeviceConfigurationError, ValueError) as exc:
+        raise SemanticBackendError(str(exc)) from exc
+
+    global _warned_mlx_mps_contention
+    if resolved_device == "mps" and is_mlx_loaded() and not _warned_mlx_mps_contention:
+        logger.warning(
+            "MLX is already loaded in this process and may share Apple unified-memory "
+            "pressure with PyTorch MPS. codedupes manages only the PyTorch allocator; "
+            "the host application remains responsible for MLX cache policy."
+        )
+        _warned_mlx_mps_contention = True
+    return resolved_device
+
+
+def _coerce_device_name(value: object, fallback: str) -> str:
+    """Reduce a torch device-like value to ``cpu``, ``cuda``, or ``mps``."""
+    if value is None:
+        return fallback
+    candidate = str(value).lower().split(":", 1)[0]
+    if candidate in {"cpu", "cuda", "mps"}:
+        return candidate
+    return fallback
+
+
+def _get_effective_model_device(model: object, fallback: str) -> str:
+    """Return cached or model-reported execution device."""
+    if model is _model and _model_execution_device is not None:
+        return _model_execution_device
+    return _coerce_device_name(getattr(model, "device", None), fallback)
 
 
 def get_code_unit_statement_count(unit: CodeUnit) -> int:
@@ -359,9 +455,14 @@ def get_code_unit_statement_count(unit: CodeUnit) -> int:
     return len(body)
 
 
-def _resolve_c2llm_torch_dtype() -> Any:
-    """Choose torch dtype for C2LLM without fp16 fallback.
+def _resolve_c2llm_torch_dtype(device: str) -> Any:
+    """Choose a conservative C2LLM dtype for the selected device.
 
+    CUDA uses bfloat16 only when the hardware reports support. CPU preserves the
+    existing bfloat16 profile behavior. MPS uses float32 because remote C2LLM
+    code and several Metal operators remain less predictable in reduced precision.
+
+    :param device: Concrete execution device.
     :return: Suggested dtype object for Torch models, or ``None``.
     """
     try:
@@ -369,17 +470,19 @@ def _resolve_c2llm_torch_dtype() -> Any:
     except ModuleNotFoundError:
         return None
 
-    if torch.cuda.is_available():
+    if device == "cuda":
         if hasattr(torch.cuda, "is_bf16_supported") and torch.cuda.is_bf16_supported():
             return torch.bfloat16
         return None
-
+    if device == "mps":
+        return torch.float32
     return torch.bfloat16
 
 
-def _resolve_embeddinggemma_torch_dtype() -> Any:
-    """Choose torch dtype for EmbeddingGemma without fp16 usage.
+def _resolve_embeddinggemma_torch_dtype(device: str) -> Any:
+    """Choose a stable EmbeddingGemma dtype for the selected device.
 
+    :param device: Concrete execution device.
     :return: Suggested dtype object for Torch models, or ``None``.
     """
     try:
@@ -387,7 +490,7 @@ def _resolve_embeddinggemma_torch_dtype() -> Any:
     except ModuleNotFoundError:
         return None
 
-    if torch.cuda.is_available() and hasattr(torch.cuda, "is_bf16_supported"):
+    if device == "cuda" and hasattr(torch.cuda, "is_bf16_supported"):
         if torch.cuda.is_bf16_supported():
             return torch.bfloat16
 
@@ -402,24 +505,41 @@ def _patch_c2llm_runtime_compat() -> None:
         setattr(builtins, "is_torch_npu_available", lambda: False)
 
 
-def get_model(
+def _get_model_unlocked(
     model_name: str = DEFAULT_MODEL,
     revision: str | None = None,
     trust_remote_code: bool | None = None,
+    device: str = DEFAULT_SEMANTIC_DEVICE,
+    mps_fallback: bool | None = None,
+    mps_memory_fraction: float | None = None,
 ) -> object:
-    """Lazy-load the embedding model.
+    """Lazy-load the embedding model on an explicit resolved device.
 
     :param model_name: Model alias or identifier.
     :param revision: Optional model revision.
     :param trust_remote_code: Optional remote code trust setting.
+    :param device: ``auto``, ``cpu``, ``cuda``, or ``mps``.
+    :param mps_fallback: MPS unsupported-op CPU fallback behavior.
+    :param mps_memory_fraction: Optional MPS allocator limit in ``(0, 2]``.
     :return: Loaded model instance.
     """
     global _model, _model_name, _model_revision, _model_trust_remote_code
+    global _model_device_key, _model_execution_device
 
     profile = resolve_model_profile(model_name)
     resolved_model_name = profile.canonical_name
     resolved_revision = _resolve_model_revision(model_name, revision)
     resolved_trust_remote_code = _resolve_trust_remote_code(model_name, trust_remote_code)
+
+    # Configure MPS environment variables before dependency checks import torch
+    # through sentence-transformers/transformers.
+    _configure_semantic_runtime_env(device, mps_fallback=mps_fallback)
+    _check_semantic_dependencies(resolved_model_name)
+    resolved_device = _prepare_semantic_device(
+        device,
+        mps_fallback=mps_fallback,
+        mps_memory_fraction=mps_memory_fraction,
+    )
 
     cache_miss = any(
         (
@@ -427,13 +547,15 @@ def get_model(
             _model_name != resolved_model_name,
             _model_revision != resolved_revision,
             _model_trust_remote_code != resolved_trust_remote_code,
+            _model_device_key != resolved_device,
         )
     )
 
     if cache_miss:
-        logger.info("Loading embedding model: %s", resolved_model_name)
-        _configure_semantic_runtime_env()
-        _check_semantic_dependencies(resolved_model_name)
+        if _model is not None:
+            clear_model_cache()
+
+        logger.info("Loading embedding model %s on %s", resolved_model_name, resolved_device)
         if profile.family == "c2llm":
             _patch_c2llm_runtime_compat()
 
@@ -450,6 +572,7 @@ def get_model(
 
         st_kwargs: dict[str, object] = {
             "trust_remote_code": resolved_trust_remote_code,
+            "device": resolved_device,
         }
         if resolved_revision is not None:
             st_kwargs["revision"] = resolved_revision
@@ -464,15 +587,19 @@ def get_model(
             model_kwargs["low_cpu_mem_usage"] = True
 
         if profile.family == "c2llm":
-            selected_dtype = _resolve_c2llm_torch_dtype()
+            selected_dtype = _resolve_c2llm_torch_dtype(resolved_device)
             if selected_dtype is not None:
                 model_kwargs["torch_dtype"] = selected_dtype
-                logger.info("Using C2LLM torch dtype: %s", selected_dtype)
+                logger.info("Using C2LLM torch dtype on %s: %s", resolved_device, selected_dtype)
         elif profile.family == "embeddinggemma":
-            selected_dtype = _resolve_embeddinggemma_torch_dtype()
+            selected_dtype = _resolve_embeddinggemma_torch_dtype(resolved_device)
             if selected_dtype is not None:
                 model_kwargs["torch_dtype"] = selected_dtype
-                logger.info("Using EmbeddingGemma torch dtype: %s", selected_dtype)
+                logger.info(
+                    "Using EmbeddingGemma torch dtype on %s: %s",
+                    resolved_device,
+                    selected_dtype,
+                )
 
         if resolved_revision is not None:
             model_kwargs["revision"] = resolved_revision
@@ -491,12 +618,53 @@ def get_model(
         if config_kwargs:
             st_kwargs["config_kwargs"] = config_kwargs
 
+        load_device = resolved_device
         try:
-            _model = SentenceTransformer(resolved_model_name, **st_kwargs)
+            loaded_model = SentenceTransformer(resolved_model_name, **st_kwargs)
         except ModuleNotFoundError as exc:
             if exc.name == "deepspeed":
                 _raise_missing_deepspeed(exc)
             raise
+        except RuntimeError as exc:
+            oom_device = _classify_oom_device(exc, resolved_device)
+            if resolved_device == "mps" and oom_device == "mps":
+                exc.__traceback__ = None
+                exc.__context__ = None
+                logger.warning(
+                    "MPS OOM while loading %s (%s); clearing Metal cache and retrying on CPU",
+                    resolved_model_name,
+                    format_mps_memory_snapshot(),
+                )
+                clear_device_cache("mps", synchronize=True, collect=True)
+                cpu_kwargs = dict(st_kwargs)
+                cpu_kwargs["device"] = "cpu"
+                try:
+                    loaded_model = SentenceTransformer(resolved_model_name, **cpu_kwargs)
+                except ModuleNotFoundError as retry_exc:
+                    if retry_exc.name == "deepspeed":
+                        _raise_missing_deepspeed(retry_exc)
+                    raise
+                except Exception as retry_exc:
+                    if _is_known_semantic_backend_error(retry_exc):
+                        raise _wrap_semantic_backend_error(
+                            retry_exc,
+                            model_name=resolved_model_name,
+                            revision=resolved_revision,
+                            trust_remote_code=resolved_trust_remote_code,
+                            stage="CPU model-loading retry after MPS OOM",
+                        )
+                    raise
+                load_device = "cpu"
+            elif _is_known_semantic_backend_error(exc):
+                raise _wrap_semantic_backend_error(
+                    exc,
+                    model_name=resolved_model_name,
+                    revision=resolved_revision,
+                    trust_remote_code=resolved_trust_remote_code,
+                    stage=f"model loading on {resolved_device}",
+                )
+            else:
+                raise
         except Exception as exc:
             if _is_known_semantic_backend_error(exc):
                 raise _wrap_semantic_backend_error(
@@ -504,34 +672,106 @@ def get_model(
                     model_name=resolved_model_name,
                     revision=resolved_revision,
                     trust_remote_code=resolved_trust_remote_code,
-                    stage="model loading",
+                    stage=f"model loading on {resolved_device}",
                 )
             raise
 
+        _model = loaded_model
         _model_name = resolved_model_name
         _model_revision = resolved_revision
         _model_trust_remote_code = resolved_trust_remote_code
+        _model_device_key = resolved_device
+        _model_execution_device = _coerce_device_name(
+            getattr(loaded_model, "device", None),
+            load_device,
+        )
+    elif _model_execution_device != resolved_device:
+        logger.info(
+            "Reusing cached model on %s after an earlier %s-to-CPU OOM fallback",
+            _model_execution_device,
+            resolved_device,
+        )
 
     return _model
 
 
-def clear_model_cache() -> None:
-    """Clear cached embedding model state."""
+def get_model(
+    model_name: str = DEFAULT_MODEL,
+    revision: str | None = None,
+    trust_remote_code: bool | None = None,
+    device: str = DEFAULT_SEMANTIC_DEVICE,
+    mps_fallback: bool | None = None,
+    mps_memory_fraction: float | None = None,
+) -> object:
+    """Thread-safe wrapper around the process-wide semantic model cache."""
+    with _model_lock:
+        return _get_model_unlocked(
+            model_name,
+            revision=revision,
+            trust_remote_code=trust_remote_code,
+            device=device,
+            mps_fallback=mps_fallback,
+            mps_memory_fraction=mps_memory_fraction,
+        )
+
+
+def _clear_model_cache_unlocked() -> None:
+    """Release the cached model and its accelerator allocator cache."""
     global _model, _model_name, _model_revision, _model_trust_remote_code
+    global _model_device_key, _model_execution_device
+
+    model = _model
+    execution_device = _model_execution_device
+
+    # Do not migrate a model to CPU merely to release it. On unified-memory
+    # systems that can transiently increase pressure; dropping references and
+    # collecting first lets the owning allocator reclaim storage directly.
     _model = None
     _model_name = None
     _model_revision = None
     _model_trust_remote_code = None
+    _model_device_key = None
+    _model_execution_device = None
+
+    del model
+    clear_device_cache(execution_device, synchronize=True, collect=True)
 
 
-def _is_cuda_oom_error(error: RuntimeError) -> bool:
-    """Return True when an exception is likely a CUDA out-of-memory condition.
+def clear_model_cache() -> None:
+    """Thread-safe release of the cached model and accelerator cache."""
+    with _model_lock:
+        _clear_model_cache_unlocked()
+
+
+def _classify_oom_device(error: RuntimeError, active_device: str) -> str | None:
+    """Classify accelerator/CPU out-of-memory errors without CUDA-only assumptions.
 
     :param error: Runtime error thrown by model execution.
-    :return: ``True`` when text indicates CUDA OOM.
+    :param active_device: Device used for the failed attempt.
+    :return: ``cuda``, ``mps``, ``cpu``, or ``None`` when this is not an OOM.
     """
-    msg = str(error).lower()
-    return "out of memory" in msg or "cuda out of memory" in msg
+    message = str(error).lower()
+    if "cuda out of memory" in message or ("cuda" in message and "out of memory" in message):
+        return "cuda"
+    if (
+        "mps backend out of memory" in message
+        or "mps out of memory" in message
+        or ("mps" in message and "out of memory" in message)
+        or ("metal" in message and "out of memory" in message)
+    ):
+        return "mps"
+    if "out of memory" in message or "cannot allocate memory" in message:
+        return active_device
+    return None
+
+
+def _move_model_to_cpu(model: object) -> None:
+    """Move a model to CPU and update cached execution-device state."""
+    global _model_execution_device
+    if hasattr(model, "to"):
+        model.to("cpu")
+    if model is _model:
+        _model_execution_device = "cpu"
 
 
 def _truncate_code_if_needed(text: str, unit_name: str, model: Any) -> str:
@@ -708,16 +948,11 @@ def _encode_texts(
 ) -> np.ndarray:
     """Encode texts with defensive kwargs handling across model backends.
 
-    :param encode_fn: Model encode callable.
-    :param texts: Input texts to encode.
-    :param batch_size: Batch size for encoder.
-    :param show_progress_bar: Whether to surface a progress bar.
-    :param convert_to_numpy: Return NumPy arrays.
-    :param normalize_embeddings: Normalize outputs.
-    :param device: Optional execution device.
-    :return: Encoded vectors.
+    The fallback call is intentionally limited to an explicit "unexpected
+    keyword argument: device" failure. Broadly retrying every ``TypeError`` can
+    execute inference twice and hide a genuine model/backend bug.
     """
-    kwargs = {
+    kwargs: dict[str, object] = {
         "batch_size": batch_size,
         "show_progress_bar": show_progress_bar,
         "convert_to_numpy": convert_to_numpy,
@@ -728,12 +963,129 @@ def _encode_texts(
 
     try:
         return encode_fn(texts, **kwargs)
-    except TypeError:
+    except TypeError as exc:
+        message = str(exc).lower()
+        unexpected_device = "device" in message and (
+            "unexpected keyword" in message or "unexpected argument" in message
+        )
+        if device is None or not unexpected_device:
+            raise
         kwargs.pop("device", None)
         return encode_fn(texts, **kwargs)
 
 
-def compute_embeddings(
+def _encode_with_retries(
+    model: object,
+    encode_fn: Callable[..., np.ndarray],
+    texts: list[str],
+    *,
+    batch_size: int,
+    show_progress_bar: bool,
+    initial_device: str,
+    model_name: str,
+    revision: str | None,
+    trust_remote_code: bool,
+    stage: str,
+) -> np.ndarray:
+    """Encode with adaptive OOM recovery for CUDA, MPS, and CPU.
+
+    Recovery first halves the batch until one item remains. Accelerator OOM at
+    batch size one then moves the cached model to CPU exactly once. OOM traceback
+    references are detached before synchronization/garbage collection so temporary
+    tensors do not remain live during allocator cleanup.
+    """
+    current_batch_size = max(1, batch_size)
+    active_device = initial_device
+    attempted_cpu_fallback = False
+
+    while True:
+        oom_device: str | None = None
+        oom_error: RuntimeError | None = None
+
+        try:
+            return _encode_texts(
+                encode_fn,
+                texts,
+                batch_size=current_batch_size,
+                show_progress_bar=show_progress_bar,
+                convert_to_numpy=True,
+                normalize_embeddings=True,
+                device="cpu" if attempted_cpu_fallback else None,
+            )
+        except RuntimeError as exc:
+            oom_device = _classify_oom_device(exc, active_device)
+            if oom_device is None:
+                if _is_known_semantic_backend_error(exc):
+                    raise _wrap_semantic_backend_error(
+                        exc,
+                        model_name=model_name,
+                        revision=revision,
+                        trust_remote_code=trust_remote_code,
+                        stage=f"{stage} on {active_device}",
+                    )
+                raise
+
+            oom_error = exc.with_traceback(None)
+            oom_error.__context__ = None
+        except Exception as exc:
+            if _is_known_semantic_backend_error(exc):
+                raise _wrap_semantic_backend_error(
+                    exc,
+                    model_name=model_name,
+                    revision=revision,
+                    trust_remote_code=trust_remote_code,
+                    stage=f"{stage} on {active_device}",
+                )
+            raise
+
+        # This block runs outside the exception handler so the original traceback
+        # no longer retains inference frames while the allocator cache is cleared.
+        if oom_device is None or oom_error is None:
+            raise RuntimeError("unreachable: OOM state lost during retry handling")
+
+        if oom_device == "mps":
+            logger.warning(
+                "MPS OOM during %s at batch_size=%d (%s)",
+                stage,
+                current_batch_size,
+                format_mps_memory_snapshot(),
+            )
+
+        if current_batch_size > 1:
+            next_batch_size = max(1, current_batch_size // 2)
+            logger.warning(
+                "%s OOM during %s at batch_size=%d; retrying with batch_size=%d",
+                oom_device.upper(),
+                stage,
+                current_batch_size,
+                next_batch_size,
+            )
+            current_batch_size = next_batch_size
+            clear_device_cache(oom_device, synchronize=True, collect=True)
+            continue
+
+        source_device = oom_device if oom_device in {"cuda", "mps"} else active_device
+        if source_device in {"cuda", "mps"} and not attempted_cpu_fallback:
+            logger.warning(
+                "%s OOM during %s at batch_size=1; moving the model to CPU for one retry",
+                source_device.upper(),
+                stage,
+            )
+            clear_device_cache(source_device, synchronize=True, collect=True)
+            _move_model_to_cpu(model)
+            active_device = "cpu"
+            attempted_cpu_fallback = True
+            continue
+
+        logger.warning(
+            "OOM persisted during %s at batch_size=1 on %s; aborting",
+            stage,
+            active_device,
+        )
+        raise oom_error
+
+
+def _compute_embeddings_unlocked(
     units: list[CodeUnit],
     model_name: str = DEFAULT_MODEL,
     instruction_prefix: str | None = None,
@@ -741,18 +1093,18 @@ def compute_embeddings(
     revision: str | None = None,
     trust_remote_code: bool | None = None,
     semantic_task: str | None = None,
+    device: str = DEFAULT_SEMANTIC_DEVICE,
+    mps_fallback: bool | None = None,
+    mps_memory_fraction: float | None = None,
 ) -> np.ndarray:
-    """Compute embeddings for all code units.
+    """Compute normalized NumPy embeddings for all code units.
 
-    :param units: Units to encode.
-    :param model_name: Model identifier.
-    :param instruction_prefix: Optional embedding instruction override.
-    :param batch_size: Encoding batch size.
-    :param revision: Optional model revision.
-    :param trust_remote_code: Optional trust setting.
-    :param semantic_task: Optional semantic task override.
-    :return: Dense embedding matrix.
+    Embeddings are converted to NumPy immediately, keeping pairwise similarity
+    computation on CPU and avoiding long-lived Metal tensors beyond model weights.
     """
+    if batch_size <= 0:
+        raise ValueError("batch_size must be > 0")
+
     resolved_revision = _resolve_model_revision(model_name, revision)
     resolved_trust_remote_code = _resolve_trust_remote_code(model_name, trust_remote_code)
     profile = resolve_model_profile(model_name)
@@ -760,11 +1112,20 @@ def compute_embeddings(
         semantic_task,
         default_task=DEFAULT_CHECK_SEMANTIC_TASK,
     )
+    resolved_device = _prepare_semantic_device(
+        device,
+        mps_fallback=mps_fallback,
+        mps_memory_fraction=mps_memory_fraction,
+    )
     model = get_model(
         model_name,
         revision=resolved_revision,
         trust_remote_code=resolved_trust_remote_code,
+        device=resolved_device,
+        mps_fallback=mps_fallback,
+        mps_memory_fraction=mps_memory_fraction,
     )
+    execution_device = _get_effective_model_device(model, resolved_device)
 
     texts = []
     for unit in units:
@@ -776,73 +1137,55 @@ def compute_embeddings(
         )
         texts.append(_truncate_code_if_needed(prepared, unit.qualified_name, model))
 
-    logger.info("Computing embeddings for %d code units", len(texts))
-    current_batch_size = max(1, batch_size)
-    attempted_cpu_fallback = False
-    while True:
-        try:
-            encode_fn = model.encode
-            if profile.family == "embeddinggemma" and hasattr(model, "encode_document"):
-                encode_fn = model.encode_document
+    logger.info(
+        "Computing embeddings for %d code units on %s",
+        len(texts),
+        execution_device,
+    )
+    encode_fn = model.encode
+    if profile.family == "embeddinggemma" and hasattr(model, "encode_document"):
+        encode_fn = model.encode_document
 
-            embeddings = _encode_texts(
-                encode_fn,
-                texts,
-                batch_size=current_batch_size,
-                show_progress_bar=len(texts) > 100,
-                convert_to_numpy=True,
-                normalize_embeddings=True,
-                device="cpu" if attempted_cpu_fallback else None,
-            )
-            break
-        except RuntimeError as e:  # pragma: no cover - defensive handling
-            if not _is_cuda_oom_error(e):
-                if _is_known_semantic_backend_error(e):
-                    raise _wrap_semantic_backend_error(
-                        e,
-                        model_name=model_name,
-                        revision=resolved_revision,
-                        trust_remote_code=resolved_trust_remote_code,
-                        stage="embedding inference",
-                    )
-                raise
+    return _encode_with_retries(
+        model,
+        encode_fn,
+        texts,
+        batch_size=batch_size,
+        show_progress_bar=len(texts) > 100,
+        initial_device=execution_device,
+        model_name=model_name,
+        revision=resolved_revision,
+        trust_remote_code=resolved_trust_remote_code,
+        stage="embedding inference",
+    )
 
-            if current_batch_size > 1:
-                next_batch_size = max(1, current_batch_size // 2)
-                logger.warning(
-                    "CUDA OOM during semantic embedding at batch_size=%d; retrying with "
-                    "batch_size=%d",
-                    current_batch_size,
-                    next_batch_size,
-                )
-                current_batch_size = next_batch_size
-                _clear_cuda_cache()
-                continue
 
-            if attempted_cpu_fallback:
-                logger.warning(
-                    "CUDA OOM during semantic embedding on CPU fallback (batch_size=1); aborting"
-                )
-                raise
-
-            logger.warning("CUDA OOM during semantic embedding at batch_size=1; retrying on CPU")
-            attempted_cpu_fallback = True
-            if hasattr(model, "to"):
-                model.to("cpu")
-            _clear_cuda_cache()
-            continue
-        except Exception as e:
-            if _is_known_semantic_backend_error(e):
-                raise _wrap_semantic_backend_error(
-                    e,
-                    model_name=model_name,
-                    revision=resolved_revision,
-                    trust_remote_code=resolved_trust_remote_code,
-                    stage="embedding inference",
-                )
-            raise
-
-    return embeddings
+def compute_embeddings(
+    units: list[CodeUnit],
+    model_name: str = DEFAULT_MODEL,
+    instruction_prefix: str | None = None,
+    batch_size: int = DEFAULT_BATCH_SIZE,
+    revision: str | None = None,
+    trust_remote_code: bool | None = None,
+    semantic_task: str | None = None,
+    device: str = DEFAULT_SEMANTIC_DEVICE,
+    mps_fallback: bool | None = None,
+    mps_memory_fraction: float | None = None,
+) -> np.ndarray:
+    """Compute embeddings while serializing shared-model lifecycle and inference."""
+    with _model_lock:
+        return _compute_embeddings_unlocked(
+            units,
+            model_name=model_name,
+            instruction_prefix=instruction_prefix,
+            batch_size=batch_size,
+            revision=revision,
+            trust_remote_code=trust_remote_code,
+            semantic_task=semantic_task,
+            device=device,
+            mps_fallback=mps_fallback,
+            mps_memory_fraction=mps_memory_fraction,
+        )
 
 
 def find_semantic_duplicates(
@@ -926,6 +1269,81 @@ def find_semantic_duplicates(
     return duplicates
 
 
+def _find_similar_to_query_unlocked(
+    query: str,
+    units: list[CodeUnit],
+    embeddings: np.ndarray,
+    model_name: str = DEFAULT_MODEL,
+    instruction_prefix: str | None = None,
+    top_k: int = DEFAULT_TOP_K,
+    revision: str | None = None,
+    trust_remote_code: bool | None = None,
+    threshold: float | None = None,
+    semantic_task: str | None = None,
+    device: str = DEFAULT_SEMANTIC_DEVICE,
+    mps_fallback: bool | None = None,
+    mps_memory_fraction: float | None = None,
+) -> list[tuple[CodeUnit, float]]:
+    """Find code units most similar to a natural-language query."""
+    resolved_revision = _resolve_model_revision(model_name, revision)
+    resolved_trust_remote_code = _resolve_trust_remote_code(model_name, trust_remote_code)
+    profile = resolve_model_profile(model_name)
+    resolved_threshold = (
+        threshold if threshold is not None else get_default_semantic_threshold(model_name)
+    )
+    resolved_task = _normalize_semantic_task(
+        semantic_task,
+        default_task=DEFAULT_SEARCH_SEMANTIC_TASK,
+    )
+    resolved_device = _prepare_semantic_device(
+        device,
+        mps_fallback=mps_fallback,
+        mps_memory_fraction=mps_memory_fraction,
+    )
+    model = get_model(
+        model_name,
+        revision=resolved_revision,
+        trust_remote_code=resolved_trust_remote_code,
+        device=resolved_device,
+        mps_fallback=mps_fallback,
+        mps_memory_fraction=mps_memory_fraction,
+    )
+    execution_device = _get_effective_model_device(model, resolved_device)
+
+    instruction = _resolve_instruction_prefix(
+        model_name,
+        "query",
+        instruction_prefix,
+        semantic_task=resolved_task,
+    )
+    query_text = f"{instruction}{query}"
+
+    encode_fn = model.encode
+    if profile.family == "embeddinggemma" and hasattr(model, "encode_query"):
+        encode_fn = model.encode_query
+
+    query_embeddings = _encode_with_retries(
+        model,
+        encode_fn,
+        [query_text],
+        batch_size=1,
+        show_progress_bar=False,
+        initial_device=execution_device,
+        model_name=model_name,
+        revision=resolved_revision,
+        trust_remote_code=resolved_trust_remote_code,
+        stage="query embedding",
+    )
+    query_embedding = query_embeddings[0]
+
+    similarities = embeddings @ query_embedding
+    sorted_indices = np.argsort(similarities)[::-1]
+    filtered_indices = [idx for idx in sorted_indices if similarities[idx] >= resolved_threshold]
+    top_indices = filtered_indices[:top_k]
+
+    return [(units[i], float(similarities[i])) for i in top_indices]
+
+
 def find_similar_to_query(
     query: str,
     units: list[CodeUnit],
@@ -937,76 +1355,27 @@ def find_similar_to_query(
     trust_remote_code: bool | None = None,
     threshold: float | None = None,
     semantic_task: str | None = None,
+    device: str = DEFAULT_SEMANTIC_DEVICE,
+    mps_fallback: bool | None = None,
+    mps_memory_fraction: float | None = None,
 ) -> list[tuple[CodeUnit, float]]:
-    """Find code units most similar to a natural language query.
-
-    :param query: Search text.
-    :param units: Candidate units.
-    :param embeddings: Embeddings aligned with ``units``.
-    :param model_name: Model identifier.
-    :param instruction_prefix: Optional query instruction override.
-    :param top_k: Maximum number of results.
-    :param revision: Optional model revision.
-    :param trust_remote_code: Optional trust setting.
-    :param threshold: Optional result cutoff.
-    :param semantic_task: Optional semantic task override.
-    :return: Ranked results and cosine scores.
-    """
-    resolved_revision = _resolve_model_revision(model_name, revision)
-    resolved_trust_remote_code = _resolve_trust_remote_code(model_name, trust_remote_code)
-    profile = resolve_model_profile(model_name)
-    resolved_threshold = (
-        threshold if threshold is not None else get_default_semantic_threshold(model_name)
-    )
-    resolved_task = _normalize_semantic_task(
-        semantic_task,
-        default_task=DEFAULT_SEARCH_SEMANTIC_TASK,
-    )
-    model = get_model(
-        model_name,
-        revision=resolved_revision,
-        trust_remote_code=resolved_trust_remote_code,
-    )
-
-    instruction = _resolve_instruction_prefix(
-        model_name,
-        "query",
-        instruction_prefix,
-        semantic_task=resolved_task,
-    )
-    query_text = f"{instruction}{query}"
-
-    try:
-        encode_fn = model.encode
-        if profile.family == "embeddinggemma" and hasattr(model, "encode_query"):
-            encode_fn = model.encode_query
-
-        query_embedding = _encode_texts(
-            encode_fn,
-            [query_text],
-            batch_size=1,
-            show_progress_bar=False,
-            convert_to_numpy=True,
-            normalize_embeddings=True,
-        )[0]
-    except Exception as exc:
-        if _is_known_semantic_backend_error(exc):
-            raise _wrap_semantic_backend_error(
-                exc,
-                model_name=model_name,
-                revision=resolved_revision,
-                trust_remote_code=resolved_trust_remote_code,
-                stage="query embedding",
-            )
-        raise
-
-    similarities = embeddings @ query_embedding
-
-    sorted_indices = np.argsort(similarities)[::-1]
-    filtered_indices = [idx for idx in sorted_indices if similarities[idx] >= resolved_threshold]
-    top_indices = filtered_indices[:top_k]
-
-    return [(units[i], float(similarities[i])) for i in top_indices]
+    """Search embeddings while serializing shared-model lifecycle and inference."""
+    with _model_lock:
+        return _find_similar_to_query_unlocked(
+            query,
+            units,
+            embeddings,
+            model_name=model_name,
+            instruction_prefix=instruction_prefix,
+            top_k=top_k,
+            revision=revision,
+            trust_remote_code=trust_remote_code,
+            threshold=threshold,
+            semantic_task=semantic_task,
+            device=device,
+            mps_fallback=mps_fallback,
+            mps_memory_fraction=mps_memory_fraction,
+        )
 
 
 def run_semantic_analysis(
@@ -1019,20 +1388,11 @@ def run_semantic_analysis(
     revision: str | None = None,
     trust_remote_code: bool | None = None,
     semantic_task: str | None = None,
+    device: str = DEFAULT_SEMANTIC_DEVICE,
+    mps_fallback: bool | None = None,
+    mps_memory_fraction: float | None = None,
 ) -> tuple[np.ndarray, list[DuplicatePair]]:
-    """Run full semantic duplicate detection.
-
-    :param units: Units to analyze.
-    :param model_name: Model identifier.
-    :param instruction_prefix: Optional embedding instruction override.
-    :param threshold: Optional similarity threshold.
-    :param exclude_pairs: Pairs to skip from output.
-    :param batch_size: Encoding batch size.
-    :param revision: Optional model revision.
-    :param trust_remote_code: Optional trust setting.
-    :param semantic_task: Optional semantic task override.
-    :return: Embeddings and semantic duplicate pairs.
-    """
+    """Run full semantic duplicate detection."""
     if not units:
         return np.array([]), []
     resolved_threshold = (
@@ -1047,9 +1407,15 @@ def run_semantic_analysis(
         revision=revision,
         trust_remote_code=trust_remote_code,
         semantic_task=semantic_task,
+        device=device,
+        mps_fallback=mps_fallback,
+        mps_memory_fraction=mps_memory_fraction,
     )
     duplicates = find_semantic_duplicates(
-        units, embeddings, threshold=resolved_threshold, exclude_exact=exclude_pairs
+        units,
+        embeddings,
+        threshold=resolved_threshold,
+        exclude_exact=exclude_pairs,
     )
 
     return embeddings, duplicates

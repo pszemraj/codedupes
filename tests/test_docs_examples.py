@@ -38,10 +38,13 @@ def test_readme_and_docs_cli_examples_are_parseable(monkeypatch, tmp_path: Path)
         "codedupes check ./src --semantic-only",
         "codedupes check ./src --traditional-only --no-unused",
         "codedupes check ./src --show-all",
+        "codedupes check ./src --device mps --mps-memory-fraction 0.9",
+        "codedupes check ./src --device mps --mps-memory-fraction 0.9 --batch-size 4",
         "codedupes check ./src --full-table",
         "codedupes check ./src --output-width 200",
         'codedupes search ./src "sum values in a list" --top-k 5',
         'codedupes search ./src "normalize request payload" --json',
+        'codedupes search ./src "normalize request payload" --device mps',
         "codedupes info",
     ]
 

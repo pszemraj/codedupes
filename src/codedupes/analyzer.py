@@ -13,9 +13,11 @@ from codedupes.constants import (
     DEFAULT_CHECK_SEMANTIC_TASK,
     DEFAULT_MIN_SEMANTIC_LINES,
     DEFAULT_MODEL,
-    SEMANTIC_TASK_CHOICES,
+    DEFAULT_SEMANTIC_DEVICE,
     DEFAULT_TRADITIONAL_THRESHOLD,
+    SEMANTIC_TASK_CHOICES,
 )
+from codedupes.devices import normalize_semantic_device, validate_mps_memory_fraction
 from codedupes.extractor import CodeExtractor
 from codedupes.models import AnalysisResult, CodeUnit, CodeUnitType, DuplicatePair, HybridDuplicate
 from codedupes.pairs import ordered_pair_key
@@ -332,6 +334,9 @@ class AnalyzerConfig:
     instruction_prefix: str | None = None
     model_revision: str | None = None
     trust_remote_code: bool | None = None
+    device: str = DEFAULT_SEMANTIC_DEVICE
+    mps_fallback: bool | None = None
+    mps_memory_fraction: float | None = None
     batch_size: int = DEFAULT_BATCH_SIZE
     min_semantic_lines: int = DEFAULT_MIN_SEMANTIC_LINES
     semantic_unit_types: tuple[str, ...] = DEFAULT_SEMANTIC_UNIT_TYPES
@@ -354,6 +359,15 @@ class AnalyzerConfig:
 
         if self.semantic_threshold is not None and not 0.0 <= self.semantic_threshold <= 1.0:
             raise ValueError("semantic_threshold must be in [0.0, 1.0]")
+
+        try:
+            self.device = normalize_semantic_device(self.device)
+            self.mps_memory_fraction = validate_mps_memory_fraction(self.mps_memory_fraction)
+        except ValueError as exc:
+            raise ValueError(str(exc)) from exc
+
+        if self.mps_memory_fraction is not None and self.device not in {"auto", "mps"}:
+            raise ValueError("mps_memory_fraction requires device='mps' or device='auto'")
 
         if self.batch_size <= 0:
             raise ValueError("batch_size must be > 0")
@@ -407,6 +421,12 @@ class AnalyzerConfig:
                 semantic_only_fields.append("model_revision")
             if self.trust_remote_code is not None:
                 semantic_only_fields.append("trust_remote_code")
+            if self.device != DEFAULT_SEMANTIC_DEVICE:
+                semantic_only_fields.append("device")
+            if self.mps_fallback is not None:
+                semantic_only_fields.append("mps_fallback")
+            if self.mps_memory_fraction is not None:
+                semantic_only_fields.append("mps_memory_fraction")
             if self.batch_size != DEFAULT_BATCH_SIZE:
                 semantic_only_fields.append("batch_size")
             if self.suppress_test_semantic_matches:
@@ -588,6 +608,9 @@ class CodeAnalyzer:
                     "revision": self.config.model_revision,
                     "trust_remote_code": self.config.trust_remote_code,
                     "semantic_task": semantic_task,
+                    "device": self.config.device,
+                    "mps_fallback": self.config.mps_fallback,
+                    "mps_memory_fraction": self.config.mps_memory_fraction,
                 }
                 self._embeddings, semantic_duplicates = run_semantic_analysis(
                     semantic_candidates,
@@ -616,7 +639,11 @@ class CodeAnalyzer:
                     "analysis on the existing combined-mode traditional scope "
                     f"(allow_semantic_fallback=True). model={self.config.model_name} "
                     f"revision={self.config.model_revision} "
-                    f"trust_remote_code={self.config.trust_remote_code} [{version_text}]. "
+                    f"trust_remote_code={self.config.trust_remote_code} "
+                    f"device={self.config.device} "
+                    f"mps_fallback={self.config.mps_fallback} "
+                    f"mps_memory_fraction={self.config.mps_memory_fraction} "
+                    f"[{version_text}]. "
                     f"Retry with `codedupes check {path} --traditional-only`."
                 )
                 logger.warning(
@@ -709,6 +736,9 @@ class CodeAnalyzer:
             trust_remote_code=self.config.trust_remote_code,
             threshold=self._resolved_semantic_threshold,
             semantic_task=self._resolved_search_semantic_task,
+            device=self.config.device,
+            mps_fallback=self.config.mps_fallback,
+            mps_memory_fraction=self.config.mps_memory_fraction,
         )
 
 
@@ -722,6 +752,9 @@ def analyze_directory(
     instruction_prefix: str | None = None,
     model_revision: str | None = None,
     trust_remote_code: bool | None = None,
+    device: str = DEFAULT_SEMANTIC_DEVICE,
+    mps_fallback: bool | None = None,
+    mps_memory_fraction: float | None = None,
     min_semantic_lines: int = DEFAULT_MIN_SEMANTIC_LINES,
     semantic_unit_types: tuple[str, ...] = DEFAULT_SEMANTIC_UNIT_TYPES,
     filter_tiny_traditional: bool = True,
@@ -745,7 +778,12 @@ def analyze_directory(
         instruction_prefix: Custom instruction prefix prepended to semantic inputs
         model_revision: Optional HuggingFace model revision/commit hash.
             If None, semantic backend chooses model-specific default behavior.
-        trust_remote_code: Whether remote model code may execute while loading
+        trust_remote_code: Whether remote model code may execute while loading.
+        device: Semantic inference device: ``auto``, ``cpu``, ``cuda``, or ``mps``.
+        mps_fallback: Whether unsupported MPS operators may fall back to CPU.
+            ``None`` enables the safe automatic policy while respecting an existing
+            ``PYTORCH_ENABLE_MPS_FALLBACK`` environment setting.
+        mps_memory_fraction: Optional PyTorch MPS allocator fraction in ``(0, 2]``.
         min_semantic_lines: Minimum statement count required for semantic analysis.
         semantic_unit_types: Unit types eligible for semantic embeddings.
         filter_tiny_traditional: Filter tiny traditional duplicates when true.
@@ -769,6 +807,9 @@ def analyze_directory(
         instruction_prefix=instruction_prefix,
         model_revision=model_revision,
         trust_remote_code=trust_remote_code,
+        device=device,
+        mps_fallback=mps_fallback,
+        mps_memory_fraction=mps_memory_fraction,
         min_semantic_lines=min_semantic_lines,
         semantic_unit_types=semantic_unit_types,
         filter_tiny_traditional=filter_tiny_traditional,

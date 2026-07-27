@@ -10,6 +10,8 @@ Installation/dependency guidance lives in
 [docs/install.md](https://github.com/pszemraj/codedupes/blob/main/docs/install.md).
 CLI option syntax/validation lives in
 [docs/cli.md](https://github.com/pszemraj/codedupes/blob/main/docs/cli.md).
+Device placement and MPS precision/memory policy live in
+[docs/accelerators.md](https://github.com/pszemraj/codedupes/blob/main/docs/accelerators.md).
 
 The canonical implementation is:
 
@@ -27,7 +29,9 @@ The canonical implementation is:
 
 Notes:
 
-- C2LLM-family profiles require `deepspeed`.
+- C2LLM-family profiles require `deepspeed` and are CUDA-oriented in practice; use `gte-modernbert-base` first on native macOS.
+- Built-in dtype overrides use float32 on MPS. CUDA may use bfloat16 for C2LLM/EmbeddingGemma when the hardware reports support.
+- Generic/unknown model profiles follow their model-defined dtype and operator support, so explicit MPS compatibility is not guaranteed.
 - Generic/unknown models fall back to threshold `0.82` unless you override `--semantic-threshold` / `semantic_threshold`.
 
 ## Alias resolution rules

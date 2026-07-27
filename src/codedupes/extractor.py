@@ -177,6 +177,25 @@ class CallGraphVisitor(ast.NodeVisitor):
         self.generic_visit(node)
 
 
+def _dotted_expression_name(node: ast.expr) -> str | None:
+    """Return a dotted name for a simple class-base expression.
+
+    :param node: Base-class expression.
+    :return: Dotted name for ``Name``/``Attribute`` expressions, otherwise ``None``.
+    """
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        parent = _dotted_expression_name(node.value)
+        return f"{parent}.{node.attr}" if parent else node.attr
+    return None
+
+
+def _is_ast_visitor_base(base_name: str) -> bool:
+    """Return whether a base name denotes an AST visitor dispatch class."""
+    return base_name.rsplit(".", 1)[-1] in {"NodeVisitor", "NodeTransformer"}
+
+
 class _CodeUnitCollector(ast.NodeVisitor):
     """Collect code units with deterministic scope tracking."""
 
@@ -208,6 +227,8 @@ class _CodeUnitCollector(ast.NodeVisitor):
         # - function_stack tracks nested local function scope.
         self.class_stack: list[str] = []
         self.function_stack: list[str] = []
+        self.dynamic_dispatch_stack: list[bool] = []
+        self.dynamic_dispatch_class_names: set[str] = set()
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
         """Collect function code units and recurse into nested definitions."""
@@ -223,6 +244,9 @@ class _CodeUnitCollector(ast.NodeVisitor):
                     self.module_name,
                     scope_prefix=scope_prefix,
                     class_member=is_method,
+                    is_dynamic_dispatch_class=(
+                        self.dynamic_dispatch_stack[-1] if is_method else False
+                    ),
                     exported=self.exported,
                 )
             )
@@ -252,8 +276,23 @@ class _CodeUnitCollector(ast.NodeVisitor):
                 )
             )
 
+            base_names = {
+                base_name
+                for base in node.bases
+                if (base_name := _dotted_expression_name(base)) is not None
+            }
+            is_dynamic_dispatch_class = any(
+                _is_ast_visitor_base(base_name)
+                or base_name.rsplit(".", 1)[-1] in self.dynamic_dispatch_class_names
+                for base_name in base_names
+            )
+            if is_dynamic_dispatch_class:
+                self.dynamic_dispatch_class_names.add(node.name)
+
             self.class_stack.append(node.name)
+            self.dynamic_dispatch_stack.append(is_dynamic_dispatch_class)
             self.generic_visit(node)
+            self.dynamic_dispatch_stack.pop()
             self.class_stack.pop()
         else:
             # If class is excluded, skip descendants to avoid leaking private internals.
@@ -483,6 +522,7 @@ class CodeExtractor:
         module_name: str,
         scope_prefix: list[str],
         class_member: bool,
+        is_dynamic_dispatch_class: bool,
         exported: set[str],
     ) -> Iterator[CodeUnit]:
         """Emit one or more code units for a function node.
@@ -493,6 +533,7 @@ class CodeExtractor:
         :param module_name: Module name.
         :param scope_prefix: Scope prefix stack.
         :param class_member: Whether node is a method.
+        :param is_dynamic_dispatch_class: Whether the containing class uses AST visitor dispatch.
         :param exported: Exported names from module __all__.
         :return: Iterator of constructed ``CodeUnit`` instances.
         """
@@ -524,6 +565,9 @@ class CodeExtractor:
             is_public=not name.startswith("_"),
             is_dunder=name.startswith("__") and name.endswith("__"),
             is_exported=name in exported,
+            is_dynamic_dispatch_hook=(
+                class_member and is_dynamic_dispatch_class and name.startswith("visit_")
+            ),
             _ast_hash=ast_hash,
             _token_hash=token_hash,
         )

@@ -189,3 +189,30 @@ def test_main_block_calls_are_parsed_once_per_file(tmp_path: Path, monkeypatch) 
     build_reference_graph(units)
 
     assert len(calls) == 1
+
+
+def test_unused_analysis_skips_only_proven_ast_visitor_hooks(tmp_path: Path) -> None:
+    source = dedent(
+        """
+        import ast
+
+        class Visitor(ast.NodeTransformer):
+            def visit_Name(self, node):
+                return node
+
+            def unused_helper(self):
+                return 1
+
+        class Ordinary:
+            def visit_Name(self, node):
+                return node
+        """
+    ).strip()
+    units = extract_units(tmp_path, source, include_private=True)
+
+    unused = find_potentially_unused(units, strict_unused=True)
+    qualified_names = {unit.qualified_name for unit in unused}
+
+    assert "sample.Visitor.visit_Name" not in qualified_names
+    assert "sample.Visitor.unused_helper" in qualified_names
+    assert "sample.Ordinary.visit_Name" in qualified_names

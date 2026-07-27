@@ -1,0 +1,174 @@
+# Semantic Accelerators and Apple Silicon
+
+This page is the source of truth for semantic device selection, PyTorch MPS behavior,
+accelerator memory recovery, and MLX coexistence. CLI syntax is defined in
+[docs/cli.md](https://github.com/pszemraj/codedupes/blob/main/docs/cli.md), and model-specific
+behavior is defined in
+[docs/model-profiles.md](https://github.com/pszemraj/codedupes/blob/main/docs/model-profiles.md).
+
+## Runtime baseline
+
+Semantic analysis requires PyTorch `>=2.13.0,<3`. PyTorch 2.13 is the baseline because that
+release moved a broad set of MPS operations from graph fallbacks to handwritten Metal kernels and
+added MPS FlexAttention support. The operator migration is directly useful to embedding workloads;
+FlexAttention helps only when the selected model and Transformers path actually invoke it.
+
+MPS execution additionally requires:
+
+- Apple Silicon or another MPS-enabled Apple device
+- macOS 14.0 or newer
+- a PyTorch build compiled with MPS support
+
+Check the active environment with:
+
+```bash
+codedupes info
+```
+
+Or inspect PyTorch directly:
+
+```bash
+python - <<'PY'
+import torch
+
+print("torch", torch.__version__)
+print("mps_built", torch.backends.mps.is_built())
+print("mps_available", torch.backends.mps.is_available())
+PY
+```
+
+## Device selection
+
+Both `check` and `search` accept:
+
+```bash
+codedupes check ./src --device auto
+codedupes check ./src --device mps
+codedupes search ./src "normalize request payload" --device mps
+```
+
+`auto` is the default and resolves in this order:
+
+1. CUDA when `torch.cuda.is_available()` is true
+2. MPS when the MPS backend is available
+3. CPU
+
+An explicit unavailable accelerator is an error. `codedupes` does not silently reinterpret
+`--device mps` as CPU. The only automatic CPU transitions are the documented unsupported-op
+and out-of-memory recovery paths below.
+
+The process-wide model cache is keyed by canonical model ID, revision, remote-code trust mode,
+and resolved device. Model lifecycle and embedding inference are serialized because replacing or
+moving one cached model while another thread is using it is unsafe.
+
+## Unsupported MPS operators
+
+PyTorch controls unsupported-operator fallback through
+`PYTORCH_ENABLE_MPS_FALLBACK`.
+
+- With `--device mps`, or `--device auto` on macOS, `codedupes` sets the variable to `1`
+  before importing PyTorch when the variable is otherwise unset.
+- `--mps-fallback` explicitly sets it to `1`.
+- `--no-mps-fallback` explicitly sets it to `0`.
+- With neither flag, an existing environment value is respected.
+
+Set this before any other code imports PyTorch. If a long-lived Python process has already imported
+PyTorch, changing the setting may require a process restart; `codedupes` emits a warning in that
+case.
+
+Unsupported-op fallback is different from out-of-memory recovery. Disabling unsupported-op
+fallback does not disable the explicit OOM recovery policy described next.
+
+## MPS memory policy and OOM recovery
+
+No allocator cap is imposed by default. On memory-constrained systems, start with a cap of `0.9`:
+
+```bash
+codedupes check ./src --device mps --mps-memory-fraction 0.9
+```
+
+The option calls `torch.mps.set_per_process_memory_fraction()` and accepts `(0, 2]`.
+`codedupes` rejects `0` because PyTorch defines it as unlimited allocation, which can permit a
+system-wide OOM. Values above `1` are accepted for parity with PyTorch but emit a warning because
+they exceed the device-recommended working-set size. A cap can cause an earlier, controlled OOM;
+it is not a performance setting.
+
+Inference OOM recovery is deterministic:
+
+1. Detach the failed traceback so temporary tensors are no longer retained by Python frames.
+2. Log MPS tensor, driver, and recommended-memory statistics when available.
+3. Synchronize queued MPS work, run garbage collection, and call `torch.mps.empty_cache()`.
+4. Halve the embedding batch size until it reaches one.
+5. If an accelerator still OOMs at batch size one, move the cached model to CPU for one final retry.
+
+A model-loading MPS OOM has no batch to shrink, so it clears the MPS cache and retries loading once
+on CPU. After an MPS-to-CPU OOM fallback, the CPU model remains sticky for the same cache key in a
+long-lived process. Call `codedupes.semantic.clear_model_cache()` to force a fresh accelerator
+load.
+
+Successful batches do not call `empty_cache()`. Clearing the allocator cache after every batch
+usually adds synchronization and allocation churn without reducing live model memory. Embeddings
+are converted to normalized NumPy arrays immediately, so pairwise similarity runs on CPU and no
+large embedding tensor remains resident in Metal memory.
+
+## Precision and Metal environment variables
+
+Built-in dtype overrides use float32 on MPS. In particular, C2LLM and EmbeddingGemma are not forced
+to bfloat16 on Apple Silicon. Generic HuggingFace models follow their own model defaults.
+
+`codedupes` deliberately does not set `PYTORCH_MPS_FAST_MATH` or
+`PYTORCH_MPS_PREFER_METAL`. Fast math may change floating-point results around tuned similarity
+thresholds, while forcing a particular matmul implementation is a workload-specific optimization.
+You can experiment with those variables externally, but re-run the hybrid tuning guardrail and a
+representative repository before adopting altered thresholds.
+
+The C2LLM profile still requires `deepspeed` and is CUDA-oriented in practice. For a native macOS
+installation, use the default `gte-modernbert-base` profile first; evaluate
+`embeddinggemma-300m` only after the default path is stable.
+
+## MLX coexistence
+
+MLX and PyTorch expose separate framework-managed memory and cache APIs even though both consume
+Apple unified memory. `codedupes` therefore never imports MLX and never calls
+`mlx.core.clear_cache()`. Clearing another framework's process-wide cache from a library would be
+surprising and could invalidate the host application's performance assumptions.
+
+When MLX is already imported and semantic execution resolves to MPS, `codedupes` logs one warning
+about shared unified-memory pressure. The host application remains responsible for releasing MLX
+arrays and applying its own cache policy. For example, only the host application should decide when
+this is safe:
+
+```python
+import mlx.core as mx
+
+print("mlx_active_bytes", mx.get_active_memory())
+print("mlx_cache_bytes", mx.get_cache_memory())
+mx.clear_cache()
+```
+
+MLX's compiled-function cache is separate from its buffer-memory cache. Reusing `mx.compile()` on
+the same function can avoid recompilation, but that cache has no role in the PyTorch-based
+`codedupes` embedding path.
+
+## Hardware validation
+
+The deterministic unit suite simulates MPS availability, model placement, allocator calls, OOM
+retries, cache keying, and CPU migration. Run the opt-in hardware smoke test on Apple Silicon to
+validate the installed PyTorch wheel and the default model end to end:
+
+```bash
+CODEDUPES_SMOKE_MPS=1 pytest -m mps tests/test_semantic_smoke.py
+```
+
+This test downloads the default model if it is not already cached. A release should not claim
+physical-MPS validation unless this command has passed on the target macOS/PyTorch combination.
+
+## Upstream references
+
+- [PyTorch 2.13 release notes](https://pytorch.org/blog/pytorch-2-13-release-blog/)
+- [PyTorch 2.13 MPS backend requirements](https://docs.pytorch.org/docs/2.13/notes/mps.html)
+- [PyTorch 2.13 MPS environment variables](https://docs.pytorch.org/docs/2.13/mps_environment_variables.html)
+- [PyTorch 2.13 `torch.mps` API](https://docs.pytorch.org/docs/2.13/mps.html)
+- [SentenceTransformer device placement](https://sbert.net/docs/package_reference/sentence_transformer/model.html)
+- [MLX Metal memory APIs](https://ml-explore.github.io/mlx/build/html/python/metal.html)
+- [MLX compiled-function caching](https://ml-explore.github.io/mlx/build/html/usage/compile.html)

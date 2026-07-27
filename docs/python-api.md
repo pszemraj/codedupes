@@ -8,6 +8,8 @@ Analysis behavior defaults are documented in
 [docs/analysis-defaults.md](https://github.com/pszemraj/codedupes/blob/main/docs/analysis-defaults.md).
 Semantic model aliases/profile defaults/task behavior are documented in
 [docs/model-profiles.md](https://github.com/pszemraj/codedupes/blob/main/docs/model-profiles.md).
+Device selection and MPS lifecycle behavior are documented in
+[docs/accelerators.md](https://github.com/pszemraj/codedupes/blob/main/docs/accelerators.md).
 
 ## Quick Start
 
@@ -20,6 +22,7 @@ result = analyze_directory(
     traditional_threshold=0.85,
     model_name="gte-modernbert-base",
     semantic_task="semantic-similarity",
+    device="auto",
 )
 
 for dup in result.hybrid_duplicates:
@@ -45,6 +48,9 @@ config = AnalyzerConfig(
     semantic_threshold=None,  # resolves from model profile
     model_name="embeddinggemma-300m",
     semantic_task="semantic-similarity",
+    device="auto",
+    mps_fallback=None,
+    mps_memory_fraction=None,
     run_traditional=True,
     run_semantic=True,
     run_unused=True,
@@ -73,6 +79,7 @@ analyzer = CodeAnalyzer(
         run_unused=False,
         model_name="gte-modernbert-base",
         semantic_task="code-retrieval",
+        device="auto",
     )
 )
 
@@ -81,6 +88,35 @@ hits = analyzer.search("load csv data", top_k=10)
 
 for unit, score in hits:
     print(f"{score:.3f}", unit.qualified_name)
+```
+
+## Apple Silicon configuration
+
+Use an explicit device for validation and set an allocator cap only when needed:
+
+```python
+from codedupes import AnalyzerConfig, CodeAnalyzer
+
+analyzer = CodeAnalyzer(
+    AnalyzerConfig(
+        device="mps",
+        mps_fallback=True,
+        mps_memory_fraction=0.9,
+        batch_size=4,
+    )
+)
+result = analyzer.analyze("./src")
+```
+
+`mps_fallback` controls unsupported PyTorch operations. It does not disable the analyzer's explicit
+OOM recovery. The shared model cache and inference path are serialized in-process; after an OOM
+forces a model to CPU, that CPU placement remains cached until `clear_model_cache()` is called or a
+different model/device key is requested.
+
+```python
+from codedupes.semantic import clear_model_cache
+
+clear_model_cache()
 ```
 
 ## Key Result Types
@@ -103,5 +139,6 @@ for unit, score in hits:
 - Semantic candidate defaults and tiny-traditional filtering defaults are defined in
   [docs/analysis-defaults.md](https://github.com/pszemraj/codedupes/blob/main/docs/analysis-defaults.md).
 - Semantic analysis may download model weights on first use.
+- `device`, `mps_fallback`, and `mps_memory_fraction` require `run_semantic=True`.
 - Model alias and profile-resolution behavior is documented in
   [docs/model-profiles.md](https://github.com/pszemraj/codedupes/blob/main/docs/model-profiles.md).

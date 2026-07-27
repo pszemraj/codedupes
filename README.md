@@ -4,6 +4,7 @@
 
 - Traditional AST/token matching (exact + Jaccard near-duplicate)
 - Semantic matching with model-profile embeddings (default `gte-modernbert-base`)
+- Explicit CPU, CUDA, and Apple Silicon MPS execution
 - Heuristic unused-code detection
 
 ## Install
@@ -18,7 +19,7 @@ Optional GPU extras:
 pip install "codedupes[gpu] @ git+https://github.com/pszemraj/codedupes.git"
 ```
 
-Requires Python 3.11+. Details are in
+Requires Python 3.11+ and PyTorch 2.13+. Details are in
 [docs/install.md](https://github.com/pszemraj/codedupes/blob/main/docs/install.md)
 
 ## Quick Start
@@ -27,6 +28,9 @@ Requires Python 3.11+. Details are in
 codedupes check ./src
 codedupes search ./src "normalize request payload"
 codedupes info
+
+# Apple Silicon
+codedupes check ./src --device mps
 ```
 
 `codedupes check` defaults to a hybrid-first report:
@@ -43,6 +47,7 @@ Primary docs live under `docs/`:
 - [docs/index.md](https://github.com/pszemraj/codedupes/blob/main/docs/index.md): documentation map and ownership
 - [docs/cli.md](https://github.com/pszemraj/codedupes/blob/main/docs/cli.md): commands, flags, and defaults
 - [docs/model-profiles.md](https://github.com/pszemraj/codedupes/blob/main/docs/model-profiles.md): semantic model aliases, profile defaults, and task behavior
+- [docs/accelerators.md](https://github.com/pszemraj/codedupes/blob/main/docs/accelerators.md): CPU/CUDA/MPS selection, Metal memory recovery, and MLX coexistence
 - [docs/analysis-defaults.md](https://github.com/pszemraj/codedupes/blob/main/docs/analysis-defaults.md): analysis-behavior defaults and heuristics
 - [docs/output.md](https://github.com/pszemraj/codedupes/blob/main/docs/output.md): JSON schemas and exit codes
 - [docs/usage.md](https://github.com/pszemraj/codedupes/blob/main/docs/usage.md): practical workflows and tuning examples
@@ -57,4 +62,6 @@ Primary docs live under `docs/`:
 - Analysis defaults (semantic candidate scope, tiny-traditional filtering, hybrid gates) are defined in
   [docs/analysis-defaults.md](https://github.com/pszemraj/codedupes/blob/main/docs/analysis-defaults.md).
 - Semantic analysis may download model weights on first use.
+- Accelerator behavior and Apple Silicon guidance are defined in
+  [docs/accelerators.md](https://github.com/pszemraj/codedupes/blob/main/docs/accelerators.md).
 - Extraction skips common artifact/cache directories by default (`__pycache__`, `.venv`, etc).

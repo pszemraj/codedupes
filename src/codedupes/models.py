@@ -44,6 +44,9 @@ class CodeUnit:
     is_dunder: bool = False
     is_exported: bool = False  # in __all__
 
+    # Framework/runtime dispatch markers used by conservative unused analysis.
+    is_dynamic_dispatch_hook: bool = False
+
     @property
     def uid(self) -> str:
         """Build a stable unique identifier for this code unit.

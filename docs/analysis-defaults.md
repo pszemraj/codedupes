@@ -9,6 +9,19 @@ For model/runtime installation defaults, see
 [docs/install.md](https://github.com/pszemraj/codedupes/blob/main/docs/install.md).
 For semantic model-profile defaults and task behavior, see
 [docs/model-profiles.md](https://github.com/pszemraj/codedupes/blob/main/docs/model-profiles.md).
+For semantic device and accelerator-memory behavior, see
+[docs/accelerators.md](https://github.com/pszemraj/codedupes/blob/main/docs/accelerators.md).
+
+## Semantic Device Defaults
+
+Default semantic device request: `auto`. Resolution priority is CUDA, MPS, then CPU. No MPS
+allocator fraction is imposed by default. On a possible MPS run, unsupported-operator CPU fallback
+is enabled only when the user has not already provided an environment override.
+
+Device selection does not change duplicate thresholds or hybrid gates. Built-in dtype overrides use
+float32 on MPS to avoid introducing a second threshold regime without a labeled retuning pass.
+Detailed lifecycle and OOM behavior is owned by
+[docs/accelerators.md](https://github.com/pszemraj/codedupes/blob/main/docs/accelerators.md).
 
 ## Semantic Candidate Defaults
 

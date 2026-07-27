@@ -55,6 +55,9 @@ def _make_semantic_runner(
         revision=None,
         trust_remote_code=None,
         semantic_task=None,
+        device="auto",
+        mps_fallback=None,
+        mps_memory_fraction=None,
     ):
         if capture is not None:
             capture["model_name"] = model_name
@@ -65,6 +68,9 @@ def _make_semantic_runner(
             capture["revision"] = revision
             capture["trust_remote_code"] = trust_remote_code
             capture["semantic_task"] = semantic_task
+            capture["device"] = device
+            capture["mps_fallback"] = mps_fallback
+            capture["mps_memory_fraction"] = mps_memory_fraction
         if capture_exclude_pairs is not None:
             capture_exclude_pairs.update(exclude_pairs or set())
         if error is not None:
@@ -917,6 +923,9 @@ def test_search_uses_index_task_when_unset(tmp_path: Path, monkeypatch) -> None:
         trust_remote_code=None,
         threshold=None,
         semantic_task=None,
+        device="auto",
+        mps_fallback=None,
+        mps_memory_fraction=None,
     ):
         captured["query_task"] = semantic_task
         return []
@@ -991,6 +1000,7 @@ def test_suppress_test_semantic_matches_filters_test_named_pairs(
         revision=None,
         trust_remote_code=None,
         semantic_task=None,
+        **_device_kwargs,
     ):
         by_name = {unit.name: unit for unit in units}
         return np.zeros((len(units), 2), dtype=np.float32), [
@@ -1370,3 +1380,90 @@ def test_semantic_failures_raise_when_semantic_required(
 
     with pytest.raises(type(semantic_error)):
         analyzer.analyze(project)
+
+
+def test_analyzer_config_normalizes_semantic_device_options() -> None:
+    config = AnalyzerConfig(
+        device=" MPS ",
+        mps_fallback=False,
+        mps_memory_fraction=0.8,
+    )
+
+    assert config.device == "mps"
+    assert config.mps_fallback is False
+    assert config.mps_memory_fraction == 0.8
+
+
+@pytest.mark.parametrize("device", ["cpu", "cuda"])
+def test_analyzer_config_rejects_mps_memory_fraction_for_non_mps_devices(
+    device: str,
+) -> None:
+    with pytest.raises(ValueError, match="requires device='mps' or device='auto'"):
+        AnalyzerConfig(device=device, mps_memory_fraction=0.8)
+
+
+@pytest.mark.parametrize("fraction", [0.0, -0.1, 2.1])
+def test_analyzer_config_rejects_unsafe_mps_memory_fraction(fraction: float) -> None:
+    with pytest.raises(ValueError, match=r"\(0.0, 2.0\]"):
+        AnalyzerConfig(mps_memory_fraction=fraction)
+
+
+def test_analyzer_config_rejects_device_controls_without_semantic_mode() -> None:
+    with pytest.raises(ValueError, match="device.*require run_semantic=True"):
+        AnalyzerConfig(run_semantic=False, device="mps")
+
+    with pytest.raises(ValueError, match="mps_fallback.*require run_semantic=True"):
+        AnalyzerConfig(run_semantic=False, mps_fallback=False)
+
+    with pytest.raises(ValueError, match="mps_memory_fraction.*require run_semantic=True"):
+        AnalyzerConfig(run_semantic=False, mps_memory_fraction=0.8)
+
+
+def test_analyzer_passes_device_controls_to_index_and_query(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    source = "def entry(x):\n    return x + 1\n"
+    project = create_project(tmp_path, source)
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        analyzer_module,
+        "run_semantic_analysis",
+        _make_semantic_runner(capture=captured),
+    )
+
+    def fake_find_similar_to_query(
+        query: str,
+        units,
+        embeddings,
+        **kwargs,
+    ):
+        del query, units, embeddings
+        captured["query_device"] = kwargs["device"]
+        captured["query_mps_fallback"] = kwargs["mps_fallback"]
+        captured["query_mps_memory_fraction"] = kwargs["mps_memory_fraction"]
+        return []
+
+    monkeypatch.setattr(semantic_module, "find_similar_to_query", fake_find_similar_to_query)
+
+    analyzer = CodeAnalyzer(
+        AnalyzerConfig(
+            run_traditional=False,
+            run_semantic=True,
+            run_unused=False,
+            min_semantic_lines=0,
+            device="mps",
+            mps_fallback=False,
+            mps_memory_fraction=0.8,
+        )
+    )
+    analyzer.analyze(project)
+    analyzer.search("entry")
+
+    assert captured["device"] == "mps"
+    assert captured["mps_fallback"] is False
+    assert captured["mps_memory_fraction"] == 0.8
+    assert captured["query_device"] == "mps"
+    assert captured["query_mps_fallback"] is False
+    assert captured["query_mps_memory_fraction"] == 0.8

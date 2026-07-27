@@ -364,6 +364,9 @@ def find_potentially_unused(units: list[CodeUnit], strict_unused: bool = False) 
         if unit.references:
             continue
 
+        if unit.is_dynamic_dispatch_hook:
+            continue
+
         source = unit.source.lower()
         if "noqa: codedupes" in source or "codedupes: ignore" in source:
             continue

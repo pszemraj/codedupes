@@ -10,6 +10,7 @@ from click.testing import CliRunner
 import pytest
 
 from codedupes import cli
+from codedupes.devices import DeviceDiagnostics
 from codedupes.models import (
     AnalysisResult,
     CodeUnit,
@@ -635,7 +636,42 @@ def test_cli_info_exit_zero():
     result = runner.invoke(cli.cli, ["info"])
     assert result.exit_code == 0
     assert "codedupes" in result.output.lower()
+    assert "pytorch:" in result.output.lower()
+    assert "mps built/available:" in result.output.lower()
+    assert "mlx loaded in process:" in result.output.lower()
     assert "built-in semantic model aliases" in result.output.lower()
+
+
+def test_cli_info_configures_mps_environment_before_diagnostics(monkeypatch):
+    order: list[str] = []
+
+    def _record_configure(requested_device, *, fallback):
+        order.append(f"configure:{requested_device}:{fallback}")
+
+    def _record_diagnostics(requested_device):
+        order.append(f"diagnostics:{requested_device}")
+        return DeviceDiagnostics(
+            requested=requested_device,
+            resolved="cpu",
+            torch_available=True,
+            cuda_available=False,
+            mps_built=False,
+            mps_available=False,
+            mps_fallback_env="1",
+            mlx_loaded=False,
+        )
+
+    monkeypatch.setattr(cli, "configure_mps_environment", _record_configure)
+    monkeypatch.setattr(cli, "get_device_diagnostics", _record_diagnostics)
+
+    runner = CliRunner()
+    result = runner.invoke(cli.cli, ["info"])
+
+    assert result.exit_code == 0
+    assert order == [
+        f"configure:{cli.DEFAULT_SEMANTIC_DEVICE}:None",
+        f"diagnostics:{cli.DEFAULT_SEMANTIC_DEVICE}",
+    ]
 
 
 @pytest.mark.parametrize(
@@ -941,3 +977,132 @@ def test_no_relative_imports_outside_init() -> None:
                 offenders.append(f"{file_path}:{line_no}:{line.strip()}")
 
     assert offenders == []
+
+
+@pytest.mark.parametrize(
+    ("command", "tail_args"),
+    [("check", []), ("search", ["entry"])],
+)
+def test_cli_device_controls_pass_through(
+    monkeypatch,
+    tmp_path,
+    command,
+    tail_args,
+):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+
+    captured = []
+    patch_cli_analyzer(
+        monkeypatch,
+        cli,
+        analyze_result=lambda: _build_result(tmp_path),
+        search_results=[(_build_unit(tmp_path), 0.99)],
+        captured_configs=captured,
+    )
+    runner = CliRunner()
+    result = runner.invoke(
+        cli.cli,
+        [
+            command,
+            str(path),
+            *tail_args,
+            "--device",
+            "mps",
+            "--no-mps-fallback",
+            "--mps-memory-fraction",
+            "0.8",
+        ],
+    )
+
+    expected_exit = 1 if command == "check" else 0
+    assert result.exit_code == expected_exit, result.output
+    assert captured[0].device == "mps"
+    assert captured[0].mps_fallback is False
+    assert captured[0].mps_memory_fraction == 0.8
+
+
+@pytest.mark.parametrize(
+    ("command", "tail_args"),
+    [("check", []), ("search", ["entry"])],
+)
+def test_cli_rejects_conflicting_mps_fallback_flags(tmp_path, command, tail_args):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli.cli,
+        [
+            command,
+            str(path),
+            *tail_args,
+            "--mps-fallback",
+            "--no-mps-fallback",
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert "Cannot combine --mps-fallback and --no-mps-fallback." in result.output
+
+
+def test_cli_rejects_unsafe_mps_memory_fraction(tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli.cli,
+        ["check", str(path), "--mps-memory-fraction", "0"],
+    )
+
+    assert result.exit_code == 2
+    assert "must be finite and in the interval (0.0, 2.0]" in result.output
+
+
+def test_cli_rejects_mps_memory_fraction_with_cpu_device(tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli.cli,
+        [
+            "check",
+            str(path),
+            "--device",
+            "cpu",
+            "--mps-memory-fraction",
+            "0.8",
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert "mps_memory_fraction requires device='mps' or device='auto'" in result.output
+
+
+@pytest.mark.parametrize(
+    ("extra_args", "expected_option"),
+    [
+        (["--device", "mps"], "--device"),
+        (["--mps-fallback"], "--mps-fallback"),
+        (["--no-mps-fallback"], "--no-mps-fallback"),
+        (["--mps-memory-fraction", "0.8"], "--mps-memory-fraction"),
+    ],
+)
+def test_cli_rejects_device_controls_with_traditional_only(
+    tmp_path,
+    extra_args,
+    expected_option,
+):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli.cli,
+        ["check", str(path), "--traditional-only", *extra_args],
+    )
+
+    assert result.exit_code == 2
+    assert f"Cannot use {expected_option}" in result.output

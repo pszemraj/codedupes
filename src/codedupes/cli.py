@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import json
 import logging
+import platform
 import sys
 from contextlib import contextmanager
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any, Callable, Iterator, Literal, TypeVar, cast
 
 import click
@@ -24,12 +25,21 @@ from codedupes.constants import (
     DEFAULT_MIN_SEMANTIC_LINES,
     DEFAULT_MODEL,
     DEFAULT_SEARCH_SEMANTIC_TASK,
-    SEMANTIC_TASK_CHOICES,
+    DEFAULT_SEMANTIC_DEVICE,
     DEFAULT_TOP_K,
+    SEMANTIC_DEVICE_CHOICES,
+    SEMANTIC_TASK_CHOICES,
     DEFAULT_TRADITIONAL_THRESHOLD,
+)
+from codedupes.devices import (
+    configure_mps_environment,
+    format_mps_memory_snapshot,
+    get_device_diagnostics,
+    validate_mps_memory_fraction,
 )
 from codedupes.extractor import DEFAULT_EXCLUDE_DIR_NAMES, DEFAULT_EXCLUDE_PATTERNS
 from codedupes.models import AnalysisResult, CodeUnit, DuplicatePair, HybridDuplicate
+from codedupes.semantic import get_semantic_runtime_versions
 from codedupes.semantic_profiles import (
     get_default_semantic_threshold,
     list_supported_models,
@@ -60,6 +70,30 @@ _NOISY_EXTERNAL_LOGGERS = (
     "transformers",
     "urllib3",
 )
+
+
+class _StrictCommandGroup(click.Group):
+    """Group that reports an absolute path as a missing command instead of help.
+
+    Click reparses unknown command tokens that look like options. Absolute POSIX
+    paths begin with ``/`` and can otherwise trigger the group's no-args help path,
+    hiding the required ``check``/``search`` command and returning exit code zero.
+    """
+
+    def resolve_command(
+        self,
+        ctx: click.Context,
+        args: list[str],
+    ) -> tuple[str | None, click.Command | None, list[str]]:
+        """Resolve commands while preserving a usage error for absolute paths."""
+        if args:
+            command_token = str(args[0])
+            is_absolute_path = (
+                Path(command_token).is_absolute() or PureWindowsPath(command_token).is_absolute()
+            )
+            if is_absolute_path and self.get_command(ctx, command_token) is None:
+                ctx.fail(f"No such command {command_token!r}.")
+        return super().resolve_command(ctx, args)
 
 
 class _CodedupesLogFilter(logging.Filter):
@@ -237,6 +271,25 @@ def _validate_non_negative_int(_ctx: click.Context, _param: click.Parameter, val
     return value
 
 
+def _validate_mps_memory_fraction(
+    _ctx: click.Context,
+    _param: click.Parameter,
+    value: float | None,
+) -> float | None:
+    """Validate an optional PyTorch MPS allocator fraction.
+
+    :param _ctx: Click callback context (unused).
+    :param _param: Click callback parameter metadata (unused).
+    :param value: Optional allocator fraction.
+    :return: Validated fraction or ``None``.
+    :raises click.BadParameter: When value is unsafe or outside ``(0, 2]``.
+    """
+    try:
+        return validate_mps_memory_fraction(value)
+    except ValueError as exc:
+        raise click.BadParameter(str(exc)) from exc
+
+
 def _validate_output_width(_ctx: click.Context, _param: click.Parameter, value: int) -> int:
     """Validate output width for rich table rendering.
 
@@ -333,6 +386,27 @@ def _resolve_trust_remote_code_flags(
     if trust_remote_code:
         return True
     if no_trust_remote_code:
+        return False
+    return None
+
+
+def _resolve_mps_fallback_flags(
+    *,
+    mps_fallback: bool,
+    no_mps_fallback: bool,
+) -> bool | None:
+    """Resolve MPS fallback flags and reject contradictory input.
+
+    :param mps_fallback: Whether ``--mps-fallback`` was provided.
+    :param no_mps_fallback: Whether ``--no-mps-fallback`` was provided.
+    :return: ``True``/``False`` when explicitly set, otherwise ``None``.
+    :raises click.UsageError: When both contradictory flags are provided.
+    """
+    if mps_fallback and no_mps_fallback:
+        raise click.UsageError("Cannot combine --mps-fallback and --no-mps-fallback.")
+    if mps_fallback:
+        return True
+    if no_mps_fallback:
         return False
     return None
 
@@ -856,6 +930,33 @@ def _add_common_analysis_options(
             help="Disallow execution of model-provided remote code during model loading",
         ),
         click.option(
+            "--device",
+            type=click.Choice(SEMANTIC_DEVICE_CHOICES),
+            default=DEFAULT_SEMANTIC_DEVICE,
+            show_default=True,
+            help="Semantic inference device (auto prefers CUDA, then MPS, then CPU)",
+        ),
+        click.option(
+            "--mps-fallback",
+            is_flag=True,
+            help="Allow unsupported MPS operators to fall back to CPU",
+        ),
+        click.option(
+            "--no-mps-fallback",
+            is_flag=True,
+            help="Disallow unsupported MPS operators from falling back to CPU",
+        ),
+        click.option(
+            "--mps-memory-fraction",
+            type=float,
+            default=None,
+            callback=_validate_mps_memory_fraction,
+            help=(
+                "Optional PyTorch MPS allocator limit as a fraction of the recommended "
+                "working set, in (0, 2]. Values above 1 increase system memory pressure."
+            ),
+        ),
+        click.option(
             "--batch-size",
             type=int,
             default=DEFAULT_BATCH_SIZE,
@@ -899,7 +1000,10 @@ def _add_common_analysis_options(
     return decorator
 
 
-@click.group(context_settings={"help_option_names": ["-h", "--help"]})
+@click.group(
+    cls=_StrictCommandGroup,
+    context_settings={"help_option_names": ["-h", "--help"]},
+)
 @click.version_option(__version__, prog_name="codedupes")
 def cli() -> None:
     """Detect duplicate and unused Python code using AST and semantic analysis."""
@@ -1013,6 +1117,10 @@ def check_command(
     model_revision: str | None,
     trust_remote_code: bool,
     no_trust_remote_code: bool,
+    device: str,
+    mps_fallback: bool,
+    no_mps_fallback: bool,
+    mps_memory_fraction: float | None,
     batch_size: int,
     as_json: bool,
     verbose: bool,
@@ -1049,6 +1157,10 @@ def check_command(
     :param model_revision: Optional model revision/commit override.
     :param trust_remote_code: Whether remote-code execution was explicitly enabled.
     :param no_trust_remote_code: Whether remote-code execution was explicitly disabled.
+    :param device: Semantic inference device.
+    :param mps_fallback: Explicitly enable unsupported MPS operator fallback.
+    :param no_mps_fallback: Explicitly disable unsupported MPS operator fallback.
+    :param mps_memory_fraction: Optional PyTorch MPS allocator fraction.
     :param batch_size: Embedding batch size.
     :param as_json: Output JSON instead of tables.
     :param verbose: Enable debug-level logging.
@@ -1088,6 +1200,10 @@ def check_command(
             "model_revision",
             "trust_remote_code",
             "no_trust_remote_code",
+            "device",
+            "mps_fallback",
+            "no_mps_fallback",
+            "mps_memory_fraction",
             "batch_size",
             "min_lines",
             "semantic_unit_type",
@@ -1126,6 +1242,10 @@ def check_command(
         trust_remote_code=trust_remote_code,
         no_trust_remote_code=no_trust_remote_code,
     )
+    resolved_mps_fallback = _resolve_mps_fallback_flags(
+        mps_fallback=mps_fallback,
+        no_mps_fallback=no_mps_fallback,
+    )
 
     combined_mode = not semantic_only and not traditional_only
     table_max_items: int | None = None if full_table else DEFAULT_TABLE_ROWS
@@ -1154,6 +1274,9 @@ def check_command(
             instruction_prefix=instruction_prefix,
             model_revision=model_revision,
             trust_remote_code=resolved_trust_remote_code,
+            device=device,
+            mps_fallback=resolved_mps_fallback,
+            mps_memory_fraction=mps_memory_fraction,
             run_traditional=not semantic_only,
             run_semantic=not traditional_only,
             allow_semantic_fallback=allow_semantic_fallback,
@@ -1293,6 +1416,10 @@ def search_command(
     model_revision: str | None,
     trust_remote_code: bool,
     no_trust_remote_code: bool,
+    device: str,
+    mps_fallback: bool,
+    no_mps_fallback: bool,
+    mps_memory_fraction: float | None,
     batch_size: int,
     as_json: bool,
     verbose: bool,
@@ -1317,6 +1444,10 @@ def search_command(
     :param model_revision: Optional model revision/commit override.
     :param trust_remote_code: Whether remote-code execution was explicitly enabled.
     :param no_trust_remote_code: Whether remote-code execution was explicitly disabled.
+    :param device: Semantic inference device.
+    :param mps_fallback: Explicitly enable unsupported MPS operator fallback.
+    :param no_mps_fallback: Explicitly disable unsupported MPS operator fallback.
+    :param mps_memory_fraction: Optional PyTorch MPS allocator fraction.
     :param batch_size: Embedding batch size.
     :param as_json: Output JSON result instead of table.
     :param verbose: Enable debug-level logging.
@@ -1334,6 +1465,10 @@ def search_command(
         trust_remote_code=trust_remote_code,
         no_trust_remote_code=no_trust_remote_code,
     )
+    resolved_mps_fallback = _resolve_mps_fallback_flags(
+        mps_fallback=mps_fallback,
+        no_mps_fallback=no_mps_fallback,
+    )
 
     try:
         config = AnalyzerConfig(
@@ -1349,6 +1484,9 @@ def search_command(
             instruction_prefix=instruction_prefix,
             model_revision=model_revision,
             trust_remote_code=resolved_trust_remote_code,
+            device=device,
+            mps_fallback=resolved_mps_fallback,
+            mps_memory_fraction=mps_memory_fraction,
             run_traditional=False,
             run_unused=False,
             min_semantic_lines=min_lines,
@@ -1385,6 +1523,30 @@ def search_command(
 def info_command() -> None:
     """Print version and default settings."""
     click.echo(f"codedupes {__version__}")
+    runtime_versions = get_semantic_runtime_versions()
+    click.echo(f"Python: {runtime_versions['python']}")
+    click.echo(f"Platform: {platform.platform()}")
+    click.echo(f"PyTorch: {runtime_versions['torch']}")
+    click.echo(f"Transformers: {runtime_versions['transformers']}")
+    click.echo(f"Sentence Transformers: {runtime_versions['sentence-transformers']}")
+    click.echo(f"DeepSpeed: {runtime_versions['deepspeed']}")
+    # Diagnostics import torch, which reads PYTORCH_ENABLE_MPS_FALLBACK exactly once, so the
+    # environment must be settled first or a later semantic run in this process cannot enable it.
+    configure_mps_environment(DEFAULT_SEMANTIC_DEVICE, fallback=None)
+    diagnostics = get_device_diagnostics(DEFAULT_SEMANTIC_DEVICE)
+    click.echo(f"Default semantic device request: {DEFAULT_SEMANTIC_DEVICE}")
+    click.echo(f"Resolved semantic device: {diagnostics.resolved or 'unavailable'}")
+    click.echo(f"CUDA available: {diagnostics.cuda_available}")
+    click.echo(f"MPS built/available: {diagnostics.mps_built}/{diagnostics.mps_available}")
+    click.echo(f"PYTORCH_ENABLE_MPS_FALLBACK: {diagnostics.mps_fallback_env}")
+    click.echo(
+        f"MLX loaded in process: {diagnostics.mlx_loaded} "
+        "(MLX allocator is not managed by codedupes)"
+    )
+    if diagnostics.mps_memory_bytes:
+        click.echo(f"MPS memory: {format_mps_memory_snapshot(diagnostics.mps_memory_bytes)}")
+    if diagnostics.error is not None:
+        click.echo(f"Device diagnostic error: {diagnostics.error}")
     click.echo(f"Default model: {DEFAULT_MODEL}")
     click.echo("Default model revision: auto")
     click.echo(f"Default semantic threshold ({DEFAULT_MODEL}): {DEFAULT_THRESHOLD}")

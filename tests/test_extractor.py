@@ -174,3 +174,36 @@ def test_extract_all_double_star_pattern_matches_root_level_files(tmp_path: Path
     extractor = CodeExtractor(tmp_path, exclude_patterns=["**/sample.py"], include_private=True)
     units = extractor.extract_all()
     assert units == []
+
+
+def test_ast_visitor_methods_are_marked_as_dynamic_dispatch_hooks(tmp_path: Path) -> None:
+    source = dedent(
+        """
+        import ast
+
+        class DirectVisitor(ast.NodeVisitor):
+            def visit_Name(self, node):
+                return self.generic_visit(node)
+
+            def helper(self):
+                return 1
+
+        class DerivedVisitor(DirectVisitor):
+            def visit_Call(self, node):
+                return self.generic_visit(node)
+
+        class OrdinaryWalker:
+            def visit_Name(self, node):
+                return node
+        """
+    ).strip()
+    file_path = tmp_path / "visitors.py"
+    file_path.write_text(source)
+
+    units = list(CodeExtractor(tmp_path, include_private=True).extract_from_file(file_path))
+    by_qualified_name = {unit.qualified_name: unit for unit in units}
+
+    assert by_qualified_name["visitors.DirectVisitor.visit_Name"].is_dynamic_dispatch_hook is True
+    assert by_qualified_name["visitors.DerivedVisitor.visit_Call"].is_dynamic_dispatch_hook is True
+    assert by_qualified_name["visitors.DirectVisitor.helper"].is_dynamic_dispatch_hook is False
+    assert by_qualified_name["visitors.OrdinaryWalker.visit_Name"].is_dynamic_dispatch_hook is False
