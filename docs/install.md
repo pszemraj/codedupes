@@ -34,7 +34,7 @@ codedupes info
 ## Semantic dependency bounds
 
 ```bash
-pip install "torch>=2.13.0,<3" "transformers>=4.51,<6" "sentence-transformers>=5,<6"
+pip install "torch>=2.13.0,<3" "transformers>=5.1,<6" "sentence-transformers>=5.6,<6" "numpy>=2.1.0,<3"
 ```
 
 ## Apple Silicon / MPS
