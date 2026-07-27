@@ -38,6 +38,10 @@ variables, CLI management commands, and the escape hatch for stale results.
 - Query embeddings from `codedupes search` are cached in the same shard as the
   corpus they were searched against, keyed on the prepared query text. Repeating an
   identical search is a full cache hit end-to-end.
+- `check` and `search` embed the corpus under different task instructions
+  (`semantic-similarity` vs `code-retrieval`), which produce genuinely different
+  vectors, so each command warms its own entries: a warm `check` does not make the
+  first `search` against that corpus warm, and vice versa.
 - Local model directories (`--model /path/to/model`) are keyed by a content
   fingerprint of the directory (file names, sizes, and mtimes) instead of a hub
   revision, so swapping updated weights into the same path invalidates the cache
