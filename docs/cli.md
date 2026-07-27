@@ -130,7 +130,9 @@ Print version, model defaults, resolved device capabilities, MPS memory statisti
 - `--mps-memory-fraction` must be finite and in `(0, 2]`; it requires `--device mps` or `--device auto`
 - Explicit semantic device/MPS controls are rejected with `--traditional-only`
 - Unsupported-op fallback and codedupes OOM recovery are separate policies; `--no-mps-fallback` does not disable OOM recovery
-- `search` applies semantic threshold filtering before returning `top-k` matches
+- `search` applies semantic threshold filtering before returning `top-k` matches; without an
+  explicit `--threshold`/`--semantic-threshold` it uses the model profile search default
+  (for example `0.50` for `gte-modernbert-base`), not the stricter duplicate threshold
 - Contradictory mode-specific options are rejected at parse time for the selected workflow
 
 Built-in model aliases and model-profile defaults are documented in

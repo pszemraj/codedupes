@@ -947,6 +947,42 @@ def test_search_uses_index_task_when_unset(tmp_path: Path, monkeypatch) -> None:
     assert captured["query_task"] == analyzer_module.DEFAULT_CHECK_SEMANTIC_TASK
 
 
+def test_search_threshold_defaults_to_none_and_honors_explicit_config(
+    tmp_path: Path, monkeypatch
+) -> None:
+    source = "def entry(x):\n    return x + 1\n"
+    project = create_project(tmp_path, source)
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        analyzer_module,
+        "run_semantic_analysis",
+        _make_semantic_runner(capture=captured),
+    )
+
+    def fake_find_similar_to_query(query, units, embeddings, **kwargs):
+        captured["query_threshold"] = kwargs.get("threshold")
+        return []
+
+    monkeypatch.setattr(semantic_module, "find_similar_to_query", fake_find_similar_to_query)
+
+    base_config = {
+        "run_traditional": False,
+        "run_semantic": True,
+        "run_unused": False,
+        "min_semantic_lines": 0,
+    }
+    analyzer = CodeAnalyzer(AnalyzerConfig(**base_config))
+    analyzer.analyze(project)
+    analyzer.search("entry")
+    assert captured["query_threshold"] is None
+
+    explicit = CodeAnalyzer(AnalyzerConfig(semantic_threshold=0.7, **base_config))
+    explicit.analyze(project)
+    explicit.search("entry")
+    assert captured["query_threshold"] == 0.7
+
+
 def test_semantic_only_fails_hard_on_runtime_semantic_error(tmp_path: Path, monkeypatch) -> None:
     source = "def entry(x):\n    return x + 1\n"
     project = create_project(tmp_path, source)

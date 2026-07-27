@@ -393,6 +393,36 @@ def test_cli_search_semantic_unit_type_pass_through(monkeypatch, tmp_path):
     assert captured[0].semantic_unit_types == ("class",)
 
 
+def test_cli_search_threshold_precedence(monkeypatch, tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+
+    captured = []
+    patch_cli_analyzer(
+        monkeypatch,
+        cli,
+        analyze_result=lambda: _build_result(tmp_path),
+        search_results=[(_build_unit(tmp_path), 0.99)],
+        captured_configs=captured,
+    )
+    runner = CliRunner()
+
+    result_default = runner.invoke(cli.cli, ["search", str(path), "entry"])
+    assert result_default.exit_code == 0
+    assert captured[-1].semantic_threshold is None
+
+    result_shared = runner.invoke(cli.cli, ["search", str(path), "entry", "--threshold", "0.4"])
+    assert result_shared.exit_code == 0
+    assert captured[-1].semantic_threshold == 0.4
+
+    result_override = runner.invoke(
+        cli.cli,
+        ["search", str(path), "entry", "--threshold", "0.4", "--semantic-threshold", "0.6"],
+    )
+    assert result_override.exit_code == 0
+    assert captured[-1].semantic_threshold == 0.6
+
+
 def test_cli_requires_explicit_command(tmp_path):
     path = tmp_path / "sample.py"
     path.write_text("def entry():\n    return 1\n")
@@ -640,6 +670,7 @@ def test_cli_info_exit_zero():
     assert "mps built/available:" in result.output.lower()
     assert "mlx loaded in process:" in result.output.lower()
     assert "built-in semantic model aliases" in result.output.lower()
+    assert "semantic_threshold=0.96 search_threshold=0.5" in result.output
 
 
 def test_cli_info_configures_mps_environment_before_diagnostics(monkeypatch):

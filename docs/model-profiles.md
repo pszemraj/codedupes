@@ -21,18 +21,29 @@ The canonical implementation is:
 
 ## Built-in profiles
 
-| profile key | canonical model ID | family | default threshold | default revision | default trust mode |
-| --- | --- | --- | --- | --- | --- |
-| `gte-modernbert-base` | `Alibaba-NLP/gte-modernbert-base` | `gte-modernbert` | `0.96` | `auto` (unpinned) | `False` |
-| `c2llm-0.5b` | `codefuse-ai/C2LLM-0.5B` | `c2llm` | `0.80` | `bd6d0ddb29f0c9a3d0f14281aedc9f940bb8d67a` | `True` |
-| `embeddinggemma-300m` | `unsloth/embeddinggemma-300m` | `embeddinggemma` | `0.86` | `auto` (unpinned) | `False` |
+| profile key | canonical model ID | family | duplicate threshold | search threshold | default revision | default trust mode |
+| --- | --- | --- | --- | --- | --- | --- |
+| `gte-modernbert-base` | `Alibaba-NLP/gte-modernbert-base` | `gte-modernbert` | `0.96` | `0.50` | `auto` (unpinned) | `False` |
+| `c2llm-0.5b` | `codefuse-ai/C2LLM-0.5B` | `c2llm` | `0.80` | `0.40` | `bd6d0ddb29f0c9a3d0f14281aedc9f940bb8d67a` | `True` |
+| `embeddinggemma-300m` | `unsloth/embeddinggemma-300m` | `embeddinggemma` | `0.86` | `0.40` | `auto` (unpinned) | `False` |
 
 Notes:
 
+- The duplicate threshold gates `check` pair reporting; the search threshold is the floor for
+  `search` query matches. Query-to-code similarity runs far below code-to-code duplicate
+  similarity, so search defaults are intentionally much lower.
+- Search defaults are calibrated recall-safe: across seven real corpora, genuinely relevant
+  hits start near `0.59` while fully off-topic queries ceiling near `0.48` on most corpora.
+  Vocabulary overlap — a shared domain (GPU kernels vs a graphics query) or even a single
+  shared word ("pattern", "parse", "warp") — can push off-topic matches to `0.52`–`0.65`;
+  those carry visible scores and rank below real hits, but raise `--semantic-threshold`
+  toward `0.6` if they clutter results. No fixed floor separates them everywhere, and the
+  default deliberately favors recall over precision.
 - C2LLM-family profiles require `deepspeed` and are CUDA-oriented in practice; use `gte-modernbert-base` first on native macOS.
 - Built-in dtype overrides use float32 on MPS. CUDA may use bfloat16 for C2LLM/EmbeddingGemma when the hardware reports support.
 - Generic/unknown model profiles follow their model-defined dtype and operator support, so explicit MPS compatibility is not guaranteed.
-- Generic/unknown models fall back to threshold `0.82` unless you override `--semantic-threshold` / `semantic_threshold`.
+- Generic/unknown models fall back to duplicate threshold `0.82` and search threshold `0.35`
+  unless you override `--semantic-threshold` / `semantic_threshold`.
 
 ## Alias resolution rules
 

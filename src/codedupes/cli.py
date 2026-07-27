@@ -42,6 +42,7 @@ from codedupes.extractor import DEFAULT_EXCLUDE_DIR_NAMES, DEFAULT_EXCLUDE_PATTE
 from codedupes.models import AnalysisResult, CodeUnit, DuplicatePair, HybridDuplicate
 from codedupes.semantic import get_semantic_runtime_versions
 from codedupes.semantic_profiles import (
+    get_default_search_threshold,
     get_default_semantic_threshold,
     list_supported_models,
 )
@@ -350,21 +351,16 @@ def _resolve_check_thresholds(
 def _resolve_search_threshold(
     threshold: float | None,
     semantic_threshold: float | None,
-    *,
-    model_name: str,
-) -> float:
-    """Resolve semantic threshold for search mode.
+) -> float | None:
+    """Resolve the explicit semantic threshold override for search mode.
 
     :param threshold: Shared threshold override.
     :param semantic_threshold: Search-specific semantic threshold override.
-    :param model_name: Model name used for default threshold.
-    :return: Resolved semantic threshold.
+    :return: Explicit override, or ``None`` to use the model profile search default.
     """
     if semantic_threshold is not None:
         return semantic_threshold
-    if threshold is not None:
-        return threshold
-    return get_default_semantic_threshold(model_name)
+    return threshold
 
 
 def _is_cli_explicit(ctx: click.Context, option_name: str) -> bool:
@@ -1450,11 +1446,7 @@ def search_command(
         config = AnalyzerConfig(
             exclude_patterns=list(exclude) or None,
             include_private=not no_private,
-            semantic_threshold=_resolve_search_threshold(
-                threshold,
-                semantic_threshold,
-                model_name=model,
-            ),
+            semantic_threshold=_resolve_search_threshold(threshold, semantic_threshold),
             model_name=model,
             semantic_task=semantic_task,
             instruction_prefix=instruction_prefix,
@@ -1541,8 +1533,12 @@ def info_command() -> None:
     for profile in list_supported_models():
         aliases = ", ".join(profile.all_aliases())
         threshold = get_default_semantic_threshold(profile.key)
+        search_threshold = get_default_search_threshold(profile.key)
         click.echo(f"  - {profile.key} -> {profile.canonical_name}")
-        click.echo(f"      family={profile.family} semantic_threshold={threshold}")
+        click.echo(
+            f"      family={profile.family} semantic_threshold={threshold}"
+            f" search_threshold={search_threshold}"
+        )
         click.echo(f"      aliases: {aliases}")
         if profile.default_revision is not None:
             click.echo(f"      default_revision: {profile.default_revision}")

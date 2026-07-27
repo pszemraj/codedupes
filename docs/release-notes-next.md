@@ -33,6 +33,10 @@ replacement for the CLI, output, model-profile, or accelerator source-of-truth d
   re-enters the halving ladder if host memory also OOMs.
 - Made MPS-to-CPU OOM fallback state explicit so later calls do not falsely report MPS execution;
   reusing the fallback model for an accelerator request warns once per fallback event.
+- Gave `search` its own default threshold. Model profiles now carry a search threshold
+  (`0.50` for `gte-modernbert-base`, calibrated against real corpora on Apple Silicon) separate
+  from the duplicate threshold, so default searches return ranked matches instead of nothing;
+  explicit `--threshold`/`--semantic-threshold` overrides still win.
 - Kept semantic embeddings as normalized NumPy arrays immediately after inference.
 - Added MLX coexistence diagnostics without importing or mutating the MLX allocator.
 - Avoided forced MPS fast math, forced Metal matmul selection, and success-path cache clearing.

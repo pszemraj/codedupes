@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from codedupes.semantic_profiles import (
     DEFAULT_C2LLM_REVISION,
+    DEFAULT_FALLBACK_SEARCH_THRESHOLD,
+    get_default_search_threshold,
     get_default_semantic_threshold,
     list_supported_models,
     resolve_model_name,
@@ -48,3 +50,10 @@ def test_supported_model_list_contains_three_profiles() -> None:
 def test_model_threshold_lookup_works_for_builtin_and_unknown() -> None:
     assert get_default_semantic_threshold("gte-modernbert-base") > 0
     assert get_default_semantic_threshold("unknown/model-id") > 0
+
+
+def test_search_threshold_is_looser_than_duplicate_threshold() -> None:
+    for profile in list_supported_models():
+        assert 0 < profile.default_search_threshold < profile.default_semantic_threshold
+    assert get_default_search_threshold("gte-modernbert-base") == 0.50
+    assert get_default_search_threshold("unknown/model-id") == DEFAULT_FALLBACK_SEARCH_THRESHOLD

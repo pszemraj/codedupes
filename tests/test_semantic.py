@@ -215,6 +215,31 @@ def test_find_similar_to_query_applies_threshold_filter(tmp_path: Path, monkeypa
     assert len(results) == 1
 
 
+def test_find_similar_to_query_default_threshold_is_search_default(
+    tmp_path: Path, monkeypatch
+) -> None:
+    units = _extract_units(tmp_path)
+    # First row scores 0.6: above the search default (0.50) but far below the
+    # duplicate-detection default (0.96); second row scores 0.3 and is dropped.
+    embeddings = np.array([[0.6, 0.8], [0.3, 0.9539392]], dtype=np.float32)
+
+    class QueryModel:
+        def encode(self, texts, **kwargs):
+            return np.array([[1.0, 0.0]], dtype=np.float32)
+
+    monkeypatch.setattr(semantic, "get_model", lambda *args, **kwargs: QueryModel())
+
+    results = find_similar_to_query(
+        query="find addition",
+        units=units,
+        embeddings=embeddings,
+        top_k=5,
+    )
+
+    assert [unit for unit, _score in results] == [units[0]]
+    assert results[0][1] == pytest.approx(0.6, abs=1e-6)
+
+
 def test_find_semantic_duplicates_skips_incompatible_unit_types(tmp_path: Path) -> None:
     source_path = tmp_path / "sample.py"
     source_path.write_text("class C:\n    pass\n\ndef f():\n    return 1\n")

@@ -8,6 +8,7 @@ from typing import Literal
 SemanticModelFamily = Literal["gte-modernbert", "c2llm", "embeddinggemma", "generic"]
 
 DEFAULT_FALLBACK_SEMANTIC_THRESHOLD = 0.82
+DEFAULT_FALLBACK_SEARCH_THRESHOLD = 0.35
 DEFAULT_C2LLM_REVISION = "bd6d0ddb29f0c9a3d0f14281aedc9f940bb8d67a"
 
 
@@ -25,6 +26,7 @@ class SemanticModelProfile:
     left_padding: bool = False
     low_cpu_mem_usage: bool = False
     default_semantic_threshold: float = DEFAULT_FALLBACK_SEMANTIC_THRESHOLD
+    default_search_threshold: float = DEFAULT_FALLBACK_SEARCH_THRESHOLD
 
     def all_aliases(self) -> tuple[str, ...]:
         """Return all user-facing names that map to this profile.
@@ -44,6 +46,7 @@ _BUILTIN_MODEL_PROFILES: tuple[SemanticModelProfile, ...] = (
         ),
         family="gte-modernbert",
         default_semantic_threshold=0.96,
+        default_search_threshold=0.50,
     ),
     SemanticModelProfile(
         key="c2llm-0.5b",
@@ -59,6 +62,7 @@ _BUILTIN_MODEL_PROFILES: tuple[SemanticModelProfile, ...] = (
         left_padding=True,
         low_cpu_mem_usage=True,
         default_semantic_threshold=0.80,
+        default_search_threshold=0.40,
     ),
     SemanticModelProfile(
         key="embeddinggemma-300m",
@@ -70,6 +74,7 @@ _BUILTIN_MODEL_PROFILES: tuple[SemanticModelProfile, ...] = (
         ),
         family="embeddinggemma",
         default_semantic_threshold=0.86,
+        default_search_threshold=0.40,
     ),
 )
 
@@ -150,6 +155,7 @@ def resolve_model_profile(model_name: str) -> SemanticModelProfile:
         aliases=(),
         family=_GENERIC_PROFILE.family,
         default_semantic_threshold=_GENERIC_PROFILE.default_semantic_threshold,
+        default_search_threshold=_GENERIC_PROFILE.default_search_threshold,
     )
 
 
@@ -169,3 +175,15 @@ def get_default_semantic_threshold(model_name: str) -> float:
     :return: Default threshold for the resolved profile.
     """
     return resolve_model_profile(model_name).default_semantic_threshold
+
+
+def get_default_search_threshold(model_name: str) -> float:
+    """Return query-search threshold default for the resolved model profile.
+
+    Query-to-code similarity runs far below code-to-code duplicate similarity,
+    so search uses a lower floor than duplicate detection.
+
+    :param model_name: Alias or model key.
+    :return: Default search threshold for the resolved profile.
+    """
+    return resolve_model_profile(model_name).default_search_threshold

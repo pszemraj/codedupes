@@ -176,10 +176,13 @@ Set separate thresholds:
 codedupes check ./src --semantic-threshold 0.84 --traditional-threshold 0.75
 ```
 
-Search applies threshold filtering before top-k:
+Search applies threshold filtering before top-k. The default floor is the model profile
+search threshold (`0.50` for `gte-modernbert-base`), which is intentionally lower than the
+duplicate threshold because query-to-code similarity scores run lower than code-to-code
+scores. Raise it to keep only strong matches:
 
 ```bash
-codedupes search ./src "parse json payload" --semantic-threshold 0.9 --top-k 20
+codedupes search ./src "parse json payload" --semantic-threshold 0.6 --top-k 20
 ```
 
 ## Scope Control

@@ -1,0 +1,15 @@
+{
+  "comment": "Query spec for the search smoke test. Relevant queries must surface their expected function within top-3 at the default search threshold; noise queries must return no results at all.",
+  "relevant": [
+    { "query": "parse rows from a csv file", "expected": "parse_csv_rows" },
+    { "query": "retry a failing call with exponential backoff", "expected": "retry_with_backoff" },
+    { "query": "evict the least recently used cache entry", "expected": "evict_least_recently_used" },
+    { "query": "human readable file size string", "expected": "format_bytes_human" },
+    { "query": "binary search for the insertion point in a sorted list", "expected": "find_insertion_index" },
+    { "query": "rate limit requests using a token bucket", "expected": "take_rate_limit_token" }
+  ],
+  "noise": [
+    "knit a wool sweater pattern",
+    "water the tomato plants in the garden"
+  ]
+}

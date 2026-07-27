@@ -36,7 +36,11 @@ from codedupes.devices import (
 )
 from codedupes.models import CodeUnit, DuplicatePair
 from codedupes.pairs import ordered_pair_key
-from codedupes.semantic_profiles import get_default_semantic_threshold, resolve_model_profile
+from codedupes.semantic_profiles import (
+    get_default_search_threshold,
+    get_default_semantic_threshold,
+    resolve_model_profile,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1391,7 +1395,8 @@ def _find_similar_to_query_unlocked(
     :param revision: Optional model revision; ``None`` uses the profile default.
     :param trust_remote_code: Optional remote-code trust setting; ``None`` uses the
         profile default.
-    :param threshold: Minimum cosine similarity; ``None`` uses the model profile default.
+    :param threshold: Minimum cosine similarity; ``None`` uses the model profile
+        search default.
     :param semantic_task: Optional task override; ``None`` uses
         ``DEFAULT_SEARCH_SEMANTIC_TASK``.
     :param device: ``auto``, ``cpu``, ``cuda``, or ``mps``, defaults to
@@ -1405,7 +1410,7 @@ def _find_similar_to_query_unlocked(
     resolved_trust_remote_code = _resolve_trust_remote_code(model_name, trust_remote_code)
     profile = resolve_model_profile(model_name)
     resolved_threshold = (
-        threshold if threshold is not None else get_default_semantic_threshold(model_name)
+        threshold if threshold is not None else get_default_search_threshold(model_name)
     )
     resolved_task = _normalize_semantic_task(
         semantic_task,
@@ -1486,7 +1491,8 @@ def find_similar_to_query(
     :param revision: Optional model revision; ``None`` uses the profile default.
     :param trust_remote_code: Optional remote-code trust setting; ``None`` uses the
         profile default.
-    :param threshold: Minimum cosine similarity; ``None`` uses the model profile default.
+    :param threshold: Minimum cosine similarity; ``None`` uses the model profile
+        search default.
     :param semantic_task: Optional task override; ``None`` uses
         ``DEFAULT_SEARCH_SEMANTIC_TASK``.
     :param device: ``auto``, ``cpu``, ``cuda``, or ``mps``, defaults to

@@ -165,6 +165,14 @@ CODEDUPES_SMOKE_MPS=1 pytest -m mps tests/test_semantic_smoke.py
 This test downloads the default model if it is not already cached. A release should not claim
 physical-MPS validation unless this command has passed on the target macOS/PyTorch combination.
 
+A companion opt-in smoke test validates search quality against the probe corpus in
+`test_fixtures/search_probes/`: every relevant query must surface its expected function at the
+default search threshold and every off-topic query must return nothing:
+
+```bash
+CODEDUPES_SMOKE_SEARCH=1 pytest tests/test_semantic_smoke.py
+```
+
 ## Upstream references
 
 - [PyTorch 2.13 release notes](https://pytorch.org/blog/pytorch-2-13-release-blog/)

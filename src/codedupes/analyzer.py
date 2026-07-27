@@ -708,7 +708,11 @@ class CodeAnalyzer:
         """
         Search for code units matching a natural language query.
 
-        Must run analyze() first to compute embeddings.
+        Must run analyze() first to compute embeddings. Any non-``None``
+        ``config.semantic_threshold`` applies to search as well, so leave it
+        ``None`` (do not pre-resolve a duplicate-detection default into it) to
+        get the model profile search default, which is far looser because
+        query-to-code similarity runs well below code-to-code similarity.
 
         :param query: Search query string.
         :param top_k: Maximum results to return.
@@ -722,7 +726,7 @@ class CodeAnalyzer:
 
         from codedupes.semantic import find_similar_to_query
 
-        if self._resolved_semantic_threshold is None or self._resolved_search_semantic_task is None:
+        if self._resolved_search_semantic_task is None:
             raise RuntimeError("Semantic configuration was not resolved; run analyze() first.")
 
         return find_similar_to_query(
@@ -734,7 +738,7 @@ class CodeAnalyzer:
             top_k=top_k,
             revision=self.config.model_revision,
             trust_remote_code=self.config.trust_remote_code,
-            threshold=self._resolved_semantic_threshold,
+            threshold=self.config.semantic_threshold,
             semantic_task=self._resolved_search_semantic_task,
             device=self.config.device,
             mps_fallback=self.config.mps_fallback,
