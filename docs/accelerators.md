@@ -24,11 +24,6 @@ An explicit unavailable accelerator is an error. `codedupes` does not silently r
 `--device mps` as CPU. The only automatic CPU transitions are the documented unsupported-op
 and out-of-memory recovery paths below.
 
-The process-wide model cache is keyed by canonical model ID, revision, remote-code trust mode,
-resolved device, and the source fingerprint for a mutable local model directory. Model lifecycle
-and embedding inference are serialized because replacing or moving one cached model while another
-thread is using it is unsafe.
-
 ## Unsupported MPS operators
 
 PyTorch controls unsupported-operator fallback through
@@ -75,14 +70,13 @@ Inference OOM recovery is deterministic:
    the halving ladder above before aborting.
 
 A model-loading MPS OOM has no batch to shrink, so it clears the MPS cache and retries loading once
-on CPU. After an MPS-to-CPU OOM fallback, the CPU model remains sticky for the same cache key in a
+on CPU. After an MPS-to-CPU OOM fallback, the CPU model remains sticky for that model in a
 long-lived process. Call `codedupes.semantic.clear_model_cache()` to force a fresh accelerator
 load.
 
-Successful batches do not call `empty_cache()`. Clearing the allocator cache after every batch
-usually adds synchronization and allocation churn without reducing live model memory. Embeddings
-are converted to normalized NumPy arrays immediately, so pairwise similarity runs on CPU and no
-large embedding tensor remains resident in Metal memory.
+Successful batches do not clear the allocator cache. Embeddings are converted to normalized NumPy
+arrays immediately, so pairwise similarity runs on CPU and no large embedding tensor remains
+resident in Metal memory.
 
 ## Precision and Metal environment variables
 
@@ -101,40 +95,21 @@ first; evaluate `embeddinggemma-300m` only after the default path is stable.
 
 ## MLX coexistence
 
-MLX and PyTorch expose separate framework-managed memory and cache APIs even though both consume
-Apple unified memory. `codedupes` therefore never imports MLX and never calls
-`mlx.core.clear_cache()`. Clearing another framework's process-wide cache from a library would be
-surprising and could invalidate the host application's performance assumptions.
-
-When MLX is already imported and semantic execution resolves to MPS, `codedupes` logs one warning
-about shared unified-memory pressure. The host application remains responsible for releasing MLX
-arrays and applying its own cache policy. For example, only the host application should decide when
-this is safe:
-
-```python
-import mlx.core as mx
-
-print("mlx_active_bytes", mx.get_active_memory())
-print("mlx_cache_bytes", mx.get_cache_memory())
-mx.clear_cache()
-```
-
-MLX's compiled-function cache is separate from its buffer-memory cache. Reusing `mx.compile()` on
-the same function can avoid recompilation, but that cache has no role in the PyTorch-based
-`codedupes` embedding path.
+MLX and PyTorch both consume Apple unified memory but manage it separately. `codedupes` never
+imports MLX and never touches its allocator; if MLX is already loaded in the process and semantic
+execution resolves to MPS, `codedupes` logs one warning about shared unified-memory pressure.
+Releasing MLX arrays and clearing MLX caches remains the host application's job.
 
 ## Hardware validation
 
-The deterministic unit suite simulates MPS availability, model placement, allocator calls, OOM
-retries, cache keying, and CPU migration. Run the opt-in hardware smoke test on Apple Silicon to
-validate the installed PyTorch wheel and the default model end to end:
+To validate your installed PyTorch wheel and the default model end to end on Apple Silicon
+hardware, run the opt-in smoke test:
 
 ```bash
 CODEDUPES_SMOKE_MPS=1 pytest -m mps tests/test_semantic_smoke.py
 ```
 
-This test downloads the default model if it is not already cached. A release should not claim
-physical-MPS validation unless this command has passed on the target macOS/PyTorch combination.
+This test downloads the default model if it is not already cached.
 
 A companion opt-in smoke test validates search quality against the probe corpus in
 `test_fixtures/search_probes/`: every relevant query must surface its expected function at the

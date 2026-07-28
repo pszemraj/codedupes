@@ -1,127 +1,85 @@
 # Embedding Cache
 
-`codedupes` persists computed embedding vectors to disk so unchanged code units do not re-embed
-across runs.
+`codedupes` persists embedding vectors under `~/.cache/codedupes` so unchanged code never
+re-embeds across runs. Edit one function and only that function re-embeds next time; when every
+code unit (and, for `search`, the query) is already cached, the run never loads the model at all.
 
-## How it works
+## Controls
 
-- The cache is **content-addressed**: each cached vector is keyed by a hash of
-  `(canonical model name, resolved model revision, embedding mode, prepared embedding
-  text)`. The prepared text is the pre-truncation output of
-  `prepare_code_for_embedding(...)`, so the key can be derived without loading the
-  model. A non-default inference dtype is also part of the key. EmbeddingGemma uses
-  float32 on CPU and MPS, so those devices share one key space; CUDA bfloat16 vectors
-  remain separate from float32 vectors. Other built-in models share one key space
-  across devices.
-- Because the key depends on the exact prepared text, **partial updates happen
-  naturally**: editing one function in one file only invalidates that function's cache
-  entry; every other unit in the corpus still hits.
-- Historical code rows are compacted by embedding mode, instruction, and dtype when
-  they exceed twice the live corpus for that namespace. This bounds churn from edited
-  or deleted units without evicting valid `check`, `search`, or query entries that
-  share the shard. Whole-shard LRU eviction remains the final global size bound.
-- Cached vectors live under one directory ("shard") per `(analyzed repo root, model,
-  revision)` combination:
+Environment variables:
+
+- `CODEDUPES_CACHE_DIR`: explicit cache root. Takes precedence over everything else.
+- `XDG_CACHE_HOME`: when `CODEDUPES_CACHE_DIR` is unset, the cache root is
+  `$XDG_CACHE_HOME/codedupes`.
+- Default (both unset): `~/.cache/codedupes`.
+- `CODEDUPES_CACHE_MAX_MB`: size cap in megabytes (default `2048`). When a write pushes the
+  cache over the cap, least-recently-used shards are deleted until usage falls to about 80% of
+  the cap. The shard just written is never deleted; if it alone exceeds the cap, it stays usable
+  and a warning recommends raising the limit.
+- `CODEDUPES_NO_CACHE=1`: disable the cache for the whole process, every command. Nothing is
+  read or written.
+
+CLI:
+
+```bash
+codedupes cache info                               # path, entry count, size, per-model/per-repo breakdown
+codedupes cache clear                              # delete every shard for every repo
+codedupes cache clear --model gte-modernbert-base  # delete one model's shards
+codedupes check ./src --no-cache                   # bypass for one run; on-disk state untouched
+```
+
+`codedupes info` also prints a one-line cache summary. Built-in model aliases match
+case-insensitively in `cache clear --model`; any other model must be passed as the exact string
+used when analyzing. `--no-cache` works on both `check` and `search`.
+
+## What invalidates what
+
+- Editing a code unit invalidates only that unit's entry; every other unit still hits.
+- Different models and different revisions never share entries.
+- `check` and `search` embed the corpus under different task instructions, which produce
+  genuinely different vectors, so each command warms its own entries: a warm `check` does not
+  make the first `search` against that corpus warm, and vice versa.
+- Repeating an identical search is a full cache hit end to end — query embeddings are cached in
+  the same shard as the corpus they were searched against.
+- Local model directories (`--model /path/to/model`) are keyed by a content fingerprint of the
+  directory instead of a hub revision, so swapping updated weights into the same path
+  invalidates cached vectors automatically.
+- If you suspect stale results anyway (for example after hand-editing cache files), run
+  `codedupes cache clear`, or add `--no-cache` for a one-off run that bypasses the cache.
+
+## Design notes
+
+Internals for debugging and the curious; none of this is needed to use the cache.
+
+- Entries are content-addressed: each vector is keyed by a hash of (canonical model name,
+  resolved model revision, embedding mode, prepared pre-truncation embedding text), plus the
+  inference dtype when it differs from the default. EmbeddingGemma uses float32 on CPU and MPS,
+  so those devices share one key space; CUDA bfloat16 vectors stay separate. Keys derive
+  without loading the model, which is what makes the warm no-model-load path possible.
+- Vectors live in one shard directory per (analyzed repo root, model, revision):
 
   ```text
   <cache_root>/repos/<repo-basename>-<pathhash>/<model-slug>@<revision>/
       vectors-<generation>.npy  # immutable float32 matrix
-      index.json                # active generation, key -> row map, and metadata
+      index.json                # active generation, key -> row map, metadata
   ```
 
-  The path hash means two repos that happen to share a directory basename (for
-  example two checkouts both named `src`) never collide, and identical code cached
-  under the same model/revision is naturally shared within a repo's shard. Writers
-  publish a complete new matrix before atomically switching the index to its
-  generation, so a concurrent reader cannot pair an old key map with rebuilt rows.
-- **No model load on a full cache hit.** `codedupes check`/`search` resolve the
-  model revision, prepare embedding text, and check the cache *before* touching
-  `sentence-transformers`. If every code unit (and, for `search`, the query) is
-  already cached, the model is never loaded at all. A warm `check`/`search` run
-  skips model load and inference entirely when the revision is concrete. Resolving
-  a CUDA-specific dtype may initialize PyTorch capability checks, but CPU, MPS, and
-  macOS `auto` cache hits do not import PyTorch.
-- Query embeddings from `codedupes search` are cached in the same shard as the
-  corpus they were searched against, keyed on the prepared query text. Repeating an
-  identical search is a full cache hit end-to-end.
-- `check` and `search` embed the corpus under different task instructions
-  (`semantic-similarity` vs `code-retrieval`), which produce genuinely different
-  vectors, so each command warms its own entries: a warm `check` does not make the
-  first `search` against that corpus warm, and vice versa.
-- Local model directories (`--model /path/to/model`) are keyed by a content
-  fingerprint of the directory (file names, sizes, and mtimes) instead of a hub
-  revision, so swapping updated weights into the same path invalidates the cache
-  automatically while unchanged directories keep the skip-model-load fast path.
-  The same fingerprint also invalidates the process-wide loaded-model cache, so
-  newly computed vectors cannot come from stale in-memory weights after an in-place
-  model update.
-  Metadata under `.cache/huggingface` created by `hf download --local-dir` is
-  excluded because download timestamps do not change model output.
-- If the model resolves to an unpinned revision (for example the default
-  `gte-modernbert-base` profile), the cache resolves the locally cached HuggingFace
-  commit hash from disk before loading the model. If that can't be determined
-  offline, the run falls back to loading the model normally. After any model load,
-  the cache double-checks the true loaded commit hash against what it assumed; on a
-  confirmed mismatch it discards any pre-load cache hits and re-keys under the true
-  revision (which may itself hit entries cached earlier under that revision), so a
-  single result matrix is never assembled from two different model revisions. Note
-  that a symbolic `--revision` such as `main` is resolved through the local Hub
-  cache before any model-free hit. If no concrete snapshot can be resolved, the
-  model loads first; if the loaded backend still cannot report a concrete commit,
-  persistent reuse is bypassed for that call instead of storing vectors under the
-  mutable symbolic name. A full commit-hash pin can keep the skip-model-load fast
-  path even when the Hub model cache has been cleared.
-- The cache is **never fatal**. A missing, corrupt, or unwritable cache file is
-  treated as a cache miss (or a no-op write) and logged once per process as a
-  warning; analysis always proceeds and produces correct results either way.
-
-## Location and environment variables
-
-- `CODEDUPES_CACHE_DIR`: explicit cache root directory. Takes precedence over
-  everything else.
-- `XDG_CACHE_HOME`: when `CODEDUPES_CACHE_DIR` is unset, the cache root is
-  `$XDG_CACHE_HOME/codedupes`.
-- Default (both unset): `~/.cache/codedupes`.
-- `CODEDUPES_CACHE_MAX_MB`: opportunistic size cap in megabytes (default `2048`).
-  After a write, if the cache exceeds this cap, the least-recently-used shards are
-  deleted until the cache is back under about 80% of the cap. The shard just
-  written is preserved; if that shard alone exceeds the cap, it remains usable and
-  a warning recommends raising the limit.
-- `CODEDUPES_NO_CACHE=1`: disable the embedding cache globally for the process, for
-  every command. No cache files are read or written.
-
-## CLI
-
-```bash
-codedupes cache info
-codedupes cache clear
-codedupes cache clear --model gte-modernbert-base
-```
-
-- `codedupes cache info`: prints the cache path, whether it is disabled via
-  `CODEDUPES_NO_CACHE`, total entry count, size on disk, and a per-model and
-  per-repo breakdown.
-- `codedupes cache clear [--model <name>]`: deletes cached embeddings. Without
-  `--model`, clears every shard across every analyzed repo. With `--model`, only
-  shards for that model (alias or canonical HuggingFace ID) are removed. Prints the
-  number of entries cleared. Built-in aliases match case-insensitively; a
-  non-builtin model must be passed as the exact string used when analyzing.
-- `codedupes info` also prints a short embedding-cache summary line (path, entry
-  count, size on disk).
-
-`--no-cache` is available on both `codedupes check` and `codedupes search` to
-disable the cache for a single invocation without touching any on-disk state.
-
-## When results look stale
-
-The cache is keyed by exact prepared text and resolved model revision, so it should
-never serve embeddings computed from a different model or a different version of the
-code. If you ever suspect stale results anyway (for example after manually rewriting
-cache files, or after switching HuggingFace cache directories), the fix is:
-
-```bash
-codedupes cache clear
-```
-
-or `codedupes check ./src --no-cache` / `codedupes search ./src "..." --no-cache` for
-a one-off run that bypasses the cache entirely.
+  The path hash keeps two repos that share a directory basename (say, two checkouts both named
+  `src`) from ever colliding.
+- Writers publish a complete new vector matrix before atomically switching the index to its
+  generation, and serialize through per-shard advisory file locks, so a concurrent reader can
+  never pair an old key map with rebuilt rows.
+- Stale rows from edited or deleted units are compacted per namespace once they exceed twice the
+  live corpus; whole-shard LRU eviction is the final global size bound.
+- Unpinned revisions (the default profiles) resolve through the local Hugging Face cache before
+  any model-free hit. After any model load, the true loaded commit hash is double-checked; on a
+  mismatch, pre-load hits are discarded and re-keyed under the true revision so one result
+  matrix never mixes two model revisions. If no concrete commit can be determined at all,
+  persistent reuse is skipped for that call rather than caching under a mutable symbolic name.
+  Pinning a full commit hash keeps the warm no-model-load path even after the hub cache is
+  cleared.
+- A warm hit for `cpu`, `mps`, or macOS `auto` does not import PyTorch. Resolving a
+  CUDA-specific dtype may initialize PyTorch capability checks.
+- The cache is never fatal: missing, corrupt, or unwritable cache state degrades to a cache miss
+  (or a skipped write), warns once per process, and analysis proceeds with correct results
+  either way.

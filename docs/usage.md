@@ -179,27 +179,19 @@ pytest-style `test_*` functions:
 codedupes check tests --suppress-test-semantic
 ```
 
-## Full Run Verification Sequence
+## Isolate A Method When Results Look Wrong
 
-1. Baseline traditional-only:
+Hybrid output synthesizes traditional and semantic evidence. When it looks off, run each
+method alone to see which side contributes:
 
 ```bash
 codedupes check src --traditional-only
-```
-
-2. Semantic-only quick pass:
-
-```bash
-codedupes check src --semantic-only --min-lines 1 --batch-size 4
-```
-
-3. Full mixed run:
-
-```bash
+codedupes check src --semantic-only
 codedupes check src
 ```
 
-Record model/revision, package versions, requested and resolved device, elapsed time, exit code, and whether unsupported-op or OOM fallback warnings were emitted.
+Add `--verbose` for debug-level logs (model loading, device resolution, fallback
+warnings) when comparing runs or filing an issue.
 
 ## Hybrid gate tuning workflow
 
