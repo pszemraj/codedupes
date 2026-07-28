@@ -16,6 +16,9 @@ from codedupes.models import CodeUnit
 from codedupes.semantic import compute_embeddings, find_similar_to_query
 from tests.conftest import extract_units
 
+REVISION_1 = "1" * 40
+REVISION_2 = "2" * 40
+
 FIVE_FUNCTION_SOURCE = """
 def alpha(x):
     return x + 1
@@ -79,16 +82,41 @@ def test_full_cache_hit_skips_model_load_and_encode(tmp_path, monkeypatch):
     monkeypatch.setattr(semantic, "_get_loaded_model_commit_hash", lambda _model: None)
 
     first = compute_embeddings(
-        units, model_name="test-model", revision="rev1", cache_scope=tmp_path
+        units, model_name="test-model", revision=REVISION_1, cache_scope=tmp_path
     )
     assert get_model_counts["count"] == 1
     assert len(model.encode_calls) == 1
     assert len(model.encode_calls[0]) == 5
 
     second = compute_embeddings(
-        units, model_name="test-model", revision="rev1", cache_scope=tmp_path
+        units, model_name="test-model", revision=REVISION_1, cache_scope=tmp_path
     )
     assert get_model_counts["count"] == 1
+    assert len(model.encode_calls) == 1
+    np.testing.assert_array_equal(first, second)
+
+
+def test_symbolic_revision_revalidates_before_cache_hit(tmp_path, monkeypatch):
+    units = _five_units(tmp_path)
+    model = CountingModel()
+    get_model_counts = _patch_get_model(monkeypatch, model)
+    monkeypatch.setattr(semantic, "_resolve_hf_cached_revision", lambda *_args: None)
+    monkeypatch.setattr(semantic, "_get_loaded_model_commit_hash", lambda _model: None)
+
+    first = compute_embeddings(
+        units,
+        model_name="test-model",
+        revision="main",
+        cache_scope=tmp_path,
+    )
+    second = compute_embeddings(
+        units,
+        model_name="test-model",
+        revision="main",
+        cache_scope=tmp_path,
+    )
+
+    assert get_model_counts["count"] == 2
     assert len(model.encode_calls) == 1
     np.testing.assert_array_equal(first, second)
 
@@ -111,7 +139,7 @@ def test_auto_device_cache_key_shares_float32_macos_devices(tmp_path, monkeypatc
 
     kwargs = {
         "model_name": "embeddinggemma-300m",
-        "revision": "rev1",
+        "revision": REVISION_1,
         "device": "auto",
         "cache_scope": tmp_path,
     }
@@ -182,7 +210,7 @@ def test_partial_update_only_reencodes_changed_unit(tmp_path, monkeypatch):
     get_model_counts = _patch_get_model(monkeypatch, model)
     monkeypatch.setattr(semantic, "_get_loaded_model_commit_hash", lambda _model: None)
 
-    compute_embeddings(units, model_name="test-model", revision="rev1", cache_scope=tmp_path)
+    compute_embeddings(units, model_name="test-model", revision=REVISION_1, cache_scope=tmp_path)
     assert len(model.encode_calls) == 1
 
     changed = copy.copy(units[2])
@@ -191,7 +219,7 @@ def test_partial_update_only_reencodes_changed_unit(tmp_path, monkeypatch):
     updated_units[2] = changed
 
     compute_embeddings(
-        updated_units, model_name="test-model", revision="rev1", cache_scope=tmp_path
+        updated_units, model_name="test-model", revision=REVISION_1, cache_scope=tmp_path
     )
     assert get_model_counts["count"] == 2
     assert len(model.encode_calls) == 2
@@ -206,13 +234,13 @@ def test_cache_key_sensitive_to_model_revision_prefix_and_task(tmp_path, monkeyp
 
     base: dict[str, object] = {
         "model_name": "embeddinggemma-300m",
-        "revision": "rev1",
+        "revision": REVISION_1,
         "cache_scope": tmp_path,
     }
     compute_embeddings(units, **base)
     assert len(model.encode_calls) == 1
 
-    compute_embeddings(units, **{**base, "revision": "rev2"})
+    compute_embeddings(units, **{**base, "revision": REVISION_2})
     assert len(model.encode_calls) == 2
 
     compute_embeddings(units, **{**base, "model_name": "other-model"})
@@ -231,7 +259,7 @@ def test_shuffled_partial_hit_matches_fully_uncached_compute(tmp_path, monkeypat
     _patch_get_model(monkeypatch, model)
     monkeypatch.setattr(semantic, "_get_loaded_model_commit_hash", lambda _model: None)
 
-    compute_embeddings(units, model_name="test-model", revision="rev1", cache_scope=tmp_path)
+    compute_embeddings(units, model_name="test-model", revision=REVISION_1, cache_scope=tmp_path)
     assert len(model.encode_calls) == 1
 
     shuffled = [units[3], units[0], units[4], units[1], units[2]]
@@ -240,13 +268,13 @@ def test_shuffled_partial_hit_matches_fully_uncached_compute(tmp_path, monkeypat
     shuffled[1] = mutated
 
     cached_result = compute_embeddings(
-        shuffled, model_name="test-model", revision="rev1", cache_scope=tmp_path
+        shuffled, model_name="test-model", revision=REVISION_1, cache_scope=tmp_path
     )
     assert len(model.encode_calls) == 2
     assert len(model.encode_calls[-1]) == 1
 
     uncached_result = compute_embeddings(
-        shuffled, model_name="test-model", revision="rev1", cache_scope=None
+        shuffled, model_name="test-model", revision=REVISION_1, cache_scope=None
     )
     assert len(model.encode_calls) == 3
     assert len(model.encode_calls[-1]) == 5
@@ -286,7 +314,7 @@ def test_repeated_identical_search_skips_model_load_when_corpus_cached(tmp_path,
     monkeypatch.setattr(semantic, "_get_loaded_model_commit_hash", lambda _model: None)
 
     embeddings = compute_embeddings(
-        units, model_name="test-model", revision="rev1", cache_scope=tmp_path
+        units, model_name="test-model", revision=REVISION_1, cache_scope=tmp_path
     )
     assert get_model_counts["count"] == 1
 
@@ -295,7 +323,7 @@ def test_repeated_identical_search_skips_model_load_when_corpus_cached(tmp_path,
         units,
         embeddings,
         model_name="test-model",
-        revision="rev1",
+        revision=REVISION_1,
         cache_scope=tmp_path,
         top_k=3,
     )
@@ -307,7 +335,7 @@ def test_repeated_identical_search_skips_model_load_when_corpus_cached(tmp_path,
         units,
         embeddings,
         model_name="test-model",
-        revision="rev1",
+        revision=REVISION_1,
         cache_scope=tmp_path,
         top_k=3,
     )
@@ -325,17 +353,17 @@ def test_corrupt_vectors_file_recomputes_without_crash(tmp_path, monkeypatch, ca
     _patch_get_model(monkeypatch, model)
     monkeypatch.setattr(semantic, "_get_loaded_model_commit_hash", lambda _model: None)
 
-    compute_embeddings(units, model_name="test-model", revision="rev1", cache_scope=tmp_path)
+    compute_embeddings(units, model_name="test-model", revision=REVISION_1, cache_scope=tmp_path)
     assert len(model.encode_calls) == 1
 
     cache = EmbeddingCache()
-    shard_dir = cache.shard_dir(tmp_path, "test-model", "rev1")
+    shard_dir = cache.shard_dir(tmp_path, "test-model", REVISION_1)
     original_vectors_path = _active_vectors_path(shard_dir)
     original_vectors_path.write_bytes(b"garbage, not a valid npy file")
 
     with caplog.at_level("WARNING"):
         result = compute_embeddings(
-            units, model_name="test-model", revision="rev1", cache_scope=tmp_path
+            units, model_name="test-model", revision=REVISION_1, cache_scope=tmp_path
         )
 
     assert result.shape == (5, model.dim)
@@ -383,11 +411,11 @@ def test_stale_index_row_out_of_range_recomputes_without_crash(tmp_path, monkeyp
     _patch_get_model(monkeypatch, model)
     monkeypatch.setattr(semantic, "_get_loaded_model_commit_hash", lambda _model: None)
 
-    compute_embeddings(units, model_name="test-model", revision="rev1", cache_scope=tmp_path)
+    compute_embeddings(units, model_name="test-model", revision=REVISION_1, cache_scope=tmp_path)
     assert len(model.encode_calls) == 1
 
     cache = EmbeddingCache()
-    shard_dir = cache.shard_dir(tmp_path, "test-model", "rev1")
+    shard_dir = cache.shard_dir(tmp_path, "test-model", REVISION_1)
     index_path = shard_dir / embedding_cache.INDEX_FILENAME
     payload = json.loads(index_path.read_text(encoding="utf-8"))
     payload["keys"] = dict.fromkeys(payload["keys"], 999)
@@ -395,7 +423,7 @@ def test_stale_index_row_out_of_range_recomputes_without_crash(tmp_path, monkeyp
 
     with caplog.at_level("WARNING"):
         result = compute_embeddings(
-            units, model_name="test-model", revision="rev1", cache_scope=tmp_path
+            units, model_name="test-model", revision=REVISION_1, cache_scope=tmp_path
         )
 
     assert result.shape == (5, model.dim)
@@ -460,7 +488,7 @@ def test_use_cache_false_creates_no_cache_files(tmp_path, monkeypatch):
     _patch_get_model(monkeypatch, model)
 
     compute_embeddings(
-        units, model_name="test-model", revision="rev1", cache_scope=tmp_path, use_cache=False
+        units, model_name="test-model", revision=REVISION_1, cache_scope=tmp_path, use_cache=False
     )
     assert not embedding_cache.resolve_cache_dir().exists()
 
@@ -472,7 +500,7 @@ def test_codedupes_no_cache_env_creates_no_cache_files(tmp_path, monkeypatch):
     _patch_get_model(monkeypatch, model)
 
     compute_embeddings(
-        units, model_name="test-model", revision="rev1", cache_scope=tmp_path, use_cache=True
+        units, model_name="test-model", revision=REVISION_1, cache_scope=tmp_path, use_cache=True
     )
     assert not embedding_cache.resolve_cache_dir().exists()
 
@@ -574,11 +602,11 @@ def test_full_hit_compacts_units_deleted_from_corpus(tmp_path, monkeypatch):
     get_model_counts = _patch_get_model(monkeypatch, model)
     monkeypatch.setattr(semantic, "_get_loaded_model_commit_hash", lambda _model: None)
 
-    compute_embeddings(units, model_name="test-model", revision="rev1", cache_scope=tmp_path)
+    compute_embeddings(units, model_name="test-model", revision=REVISION_1, cache_scope=tmp_path)
     compute_embeddings(
         units[:1],
         model_name="test-model",
-        revision="rev1",
+        revision=REVISION_1,
         cache_scope=tmp_path,
     )
 
@@ -787,21 +815,21 @@ def test_duplicate_source_units_share_keys_and_warm_run_full_hits(tmp_path, monk
     monkeypatch.setattr(semantic, "_get_loaded_model_commit_hash", lambda _model: None)
 
     first = compute_embeddings(
-        all_units, model_name="test-model", revision="rev1", cache_scope=tmp_path
+        all_units, model_name="test-model", revision=REVISION_1, cache_scope=tmp_path
     )
     assert first.shape[0] == 10
     assert get_model_counts["count"] == 1
     assert len(model.encode_calls[0]) == 5
 
     cache = EmbeddingCache()
-    shard_dir = cache.shard_dir(tmp_path, "test-model", "rev1")
+    shard_dir = cache.shard_dir(tmp_path, "test-model", REVISION_1)
     vectors = np.load(_active_vectors_path(shard_dir), allow_pickle=False)
     payload = json.loads((shard_dir / embedding_cache.INDEX_FILENAME).read_text(encoding="utf-8"))
     assert vectors.shape[0] == 5
     assert len(payload["keys"]) == 5
 
     second = compute_embeddings(
-        all_units, model_name="test-model", revision="rev1", cache_scope=tmp_path
+        all_units, model_name="test-model", revision=REVISION_1, cache_scope=tmp_path
     )
     assert get_model_counts["count"] == 1
     assert len(model.encode_calls) == 1
@@ -813,7 +841,7 @@ def test_duplicate_source_units_share_keys_and_warm_run_full_hits(tmp_path, monk
     changed.source = "def beta(x):\n    return x + 222\n"
     mutated = list(all_units)
     mutated[1] = changed
-    compute_embeddings(mutated, model_name="test-model", revision="rev1", cache_scope=tmp_path)
+    compute_embeddings(mutated, model_name="test-model", revision=REVISION_1, cache_scope=tmp_path)
     assert len(model.encode_calls) == 2
     assert len(model.encode_calls[-1]) == 1
 

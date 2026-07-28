@@ -153,10 +153,14 @@ def _resolve_trust_remote_code(model_name: str, trust_remote_code: bool | None) 
     )
 
 
-def _resolve_hf_cached_revision(canonical_model: str) -> str | None:
-    """Resolve the locally cached commit hash for an unpinned model, without downloading.
+def _resolve_hf_cached_revision(
+    canonical_model: str,
+    revision: str = "main",
+) -> str | None:
+    """Resolve a locally cached Hub revision to its commit hash without downloading.
 
     :param canonical_model: Canonical HuggingFace model identifier.
+    :param revision: Branch, tag, or commit revision to resolve, defaults to ``"main"``.
     :return: Resolved commit hash, or ``None`` when it cannot be determined offline.
     """
     try:
@@ -164,7 +168,7 @@ def _resolve_hf_cached_revision(canonical_model: str) -> str | None:
     except ImportError:
         return None
     try:
-        cached = try_to_load_from_cache(canonical_model, "config.json", revision="main")
+        cached = try_to_load_from_cache(canonical_model, "config.json", revision=revision)
     except Exception:  # noqa: BLE001 - offline revision lookup must never block analysis
         return None
     if not isinstance(cached, str):
@@ -177,6 +181,17 @@ def _resolve_hf_cached_revision(canonical_model: str) -> str | None:
     if snapshots_index + 1 >= len(parts):
         return None
     return parts[snapshots_index + 1]
+
+
+def _is_hf_commit_hash(revision: str) -> bool:
+    """Return whether a revision is an immutable 40-character Git commit hash.
+
+    :param revision: Hub revision string to classify.
+    :return: ``True`` for a full hexadecimal SHA-1 commit hash.
+    """
+    return len(revision) == 40 and all(
+        character in "0123456789abcdefABCDEF" for character in revision
+    )
 
 
 def _fingerprint_local_model_dir(model_dir: Path) -> str | None:
@@ -271,10 +286,19 @@ def _resolve_revision_for_cache(model_name: str, explicit_revision: str | None) 
     local_dir = resolve_local_model_path(canonical_model)
     if local_dir is not None:
         return _fingerprint_local_model_dir(local_dir)
-    profile_revision = _resolve_model_revision(model_name, explicit_revision)
-    if profile_revision is not None:
-        return profile_revision
-    return _resolve_hf_cached_revision(canonical_model)
+    load_revision = _resolve_model_revision(model_name, explicit_revision)
+    if load_revision is None:
+        return _resolve_hf_cached_revision(canonical_model)
+
+    cached_revision = _resolve_hf_cached_revision(canonical_model, load_revision)
+    if cached_revision is not None:
+        return cached_revision
+    if _is_hf_commit_hash(load_revision):
+        return load_revision
+
+    # A branch or tag may move. Without an offline mapping to a concrete
+    # snapshot, loading the model is required before cached vectors are trusted.
+    return None
 
 
 def _get_loaded_model_commit_hash(model: object) -> str | None:

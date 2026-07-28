@@ -65,9 +65,10 @@ across runs.
   confirmed mismatch it discards any pre-load cache hits and re-keys under the true
   revision (which may itself hit entries cached earlier under that revision), so a
   single result matrix is never assembled from two different model revisions. Note
-  that pinning `--revision` to a moving branch name like `main` keys the cache by
-  that literal string, which disables the skip-model-load fast path (a commit-hash
-  pin or the unpinned default keeps it).
+  that a symbolic `--revision` such as `main` is resolved through the local Hub
+  cache before any model-free hit. If no concrete snapshot can be resolved, the
+  model loads before cached vectors are trusted. A full commit-hash pin can keep
+  the skip-model-load fast path even when the Hub model cache has been cleared.
 - The cache is **never fatal**. A missing, corrupt, or unwritable cache file is
   treated as a cache miss (or a no-op write) and logged once per process as a
   warning; analysis always proceeds and produces correct results either way.
