@@ -16,18 +16,24 @@ across runs.
 - Because the key depends on the exact prepared text, **partial updates happen
   naturally**: editing one function in one file only invalidates that function's cache
   entry; every other unit in the corpus still hits.
+- Historical code rows are compacted by embedding mode, instruction, and dtype when
+  they exceed twice the live corpus for that namespace. This bounds churn from edited
+  or deleted units without evicting valid `check`, `search`, or query entries that
+  share the shard. Whole-shard LRU eviction remains the final global size bound.
 - Cached vectors live under one directory ("shard") per `(analyzed repo root, model,
   revision)` combination:
 
   ```text
   <cache_root>/repos/<repo-basename>-<pathhash>/<model-slug>@<revision>/
-      vectors.npy   # float32 matrix, one row per cached embedding
-      index.json    # key -> row map, plus schema/model/revision/last_used_at
+      vectors-<generation>.npy  # immutable float32 matrix
+      index.json                # active generation, key -> row map, and metadata
   ```
 
   The path hash means two repos that happen to share a directory basename (for
   example two checkouts both named `src`) never collide, and identical code cached
-  under the same model/revision is naturally shared within a repo's shard.
+  under the same model/revision is naturally shared within a repo's shard. Writers
+  publish a complete new matrix before atomically switching the index to its
+  generation, so a concurrent reader cannot pair an old key map with rebuilt rows.
 - **No model load on a full cache hit.** `codedupes check`/`search` resolve the
   model revision, prepare embedding text, and check the cache *before* touching
   `sentence-transformers`. If every code unit (and, for `search`, the query) is

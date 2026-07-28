@@ -67,6 +67,11 @@ def _patch_get_model(monkeypatch, model: CountingModel) -> dict[str, int]:
     return counts
 
 
+def _active_vectors_path(shard_dir: Path) -> Path:
+    payload = json.loads((shard_dir / embedding_cache.INDEX_FILENAME).read_text(encoding="utf-8"))
+    return shard_dir / embedding_cache._vectors_filename(payload["generation"])
+
+
 def test_full_cache_hit_skips_model_load_and_encode(tmp_path, monkeypatch):
     units = _five_units(tmp_path)
     model = CountingModel()
@@ -325,7 +330,8 @@ def test_corrupt_vectors_file_recomputes_without_crash(tmp_path, monkeypatch, ca
 
     cache = EmbeddingCache()
     shard_dir = cache.shard_dir(tmp_path, "test-model", "rev1")
-    (shard_dir / embedding_cache.VECTORS_FILENAME).write_bytes(b"garbage, not a valid npy file")
+    original_vectors_path = _active_vectors_path(shard_dir)
+    original_vectors_path.write_bytes(b"garbage, not a valid npy file")
 
     with caplog.at_level("WARNING"):
         result = compute_embeddings(
@@ -335,6 +341,39 @@ def test_corrupt_vectors_file_recomputes_without_crash(tmp_path, monkeypatch, ca
     assert result.shape == (5, model.dim)
     assert len(model.encode_calls) == 2
     assert "Embedding cache" in caplog.text
+    rebuilt_vectors_path = _active_vectors_path(shard_dir)
+    assert rebuilt_vectors_path != original_vectors_path
+    assert rebuilt_vectors_path.exists()
+    assert not original_vectors_path.exists()
+
+
+def test_reader_discards_shard_replaced_during_vector_load(tmp_path, monkeypatch):
+    monkeypatch.setattr(embedding_cache, "_warned_cache_error", False)
+    cache = EmbeddingCache()
+    scope = tmp_path / "proj"
+    scope.mkdir()
+    first = np.array([1.0, 2.0], dtype=np.float32)
+    second = np.array([3.0, 4.0], dtype=np.float32)
+    cache.put_many(scope, "model-a", "rev1", [("first", first)])
+
+    original_load = embedding_cache.np.load
+    raced = False
+
+    def racing_load(*args, **kwargs):
+        nonlocal raced
+        vectors = original_load(*args, **kwargs)
+        if not raced:
+            raced = True
+            cache.put_many(scope, "model-a", "rev1", [("second", second)])
+        return vectors
+
+    monkeypatch.setattr(embedding_cache.np, "load", racing_load)
+    assert cache.get_many(scope, "model-a", "rev1", ["first"]) == {}
+
+    monkeypatch.setattr(embedding_cache.np, "load", original_load)
+    hits = cache.get_many(scope, "model-a", "rev1", ["first", "second"])
+    np.testing.assert_array_equal(hits["first"], first)
+    np.testing.assert_array_equal(hits["second"], second)
 
 
 def test_stale_index_row_out_of_range_recomputes_without_crash(tmp_path, monkeypatch, caplog):
@@ -472,6 +511,71 @@ def test_size_cap_preserves_fresh_shard_larger_than_cap(tmp_path, monkeypatch, c
     )
     assert cache.stats()["size_bytes"] > 1000
     assert "still exceeds its size target after eviction" in caplog.text
+
+
+def test_namespace_compaction_prunes_stale_code_keys_and_preserves_queries(tmp_path):
+    cache = EmbeddingCache()
+    scope = tmp_path / "proj"
+    scope.mkdir()
+
+    def vector(value: float) -> np.ndarray:
+        return np.array([value, value + 1.0], dtype=np.float32)
+
+    cache.put_many(
+        scope,
+        "model-a",
+        "rev1",
+        [("code-a", vector(1.0)), ("code-b", vector(2.0))],
+        namespace="check",
+        active_keys={"code-a", "code-b"},
+    )
+    cache.put_many(
+        scope,
+        "model-a",
+        "rev1",
+        [("query", vector(3.0))],
+        namespace="query",
+    )
+    previous_key = "code-a"
+    for index in range(3):
+        current_key = f"edited-{index}"
+        cache.put_many(
+            scope,
+            "model-a",
+            "rev1",
+            [(current_key, vector(10.0 + index))],
+            namespace="check",
+            active_keys={"code-b", current_key},
+        )
+        previous_key = current_key
+
+    hits = cache.get_many(
+        scope,
+        "model-a",
+        "rev1",
+        ["code-a", "edited-0", "edited-1", "code-b", previous_key, "query"],
+    )
+    assert set(hits) == {"code-b", previous_key, "query"}
+    assert cache.stats()["entries"] == 3
+
+
+def test_full_hit_compacts_units_deleted_from_corpus(tmp_path, monkeypatch):
+    units = _five_units(tmp_path)
+    model = CountingModel()
+    get_model_counts = _patch_get_model(monkeypatch, model)
+    monkeypatch.setattr(semantic, "_get_loaded_model_commit_hash", lambda _model: None)
+
+    compute_embeddings(units, model_name="test-model", revision="rev1", cache_scope=tmp_path)
+    compute_embeddings(
+        units[:1],
+        model_name="test-model",
+        revision="rev1",
+        cache_scope=tmp_path,
+    )
+
+    assert get_model_counts["count"] == 1
+    assert len(model.encode_calls) == 1
+    assert EmbeddingCache().stats()["entries"] == 1
 
 
 def test_resolve_cache_dir_env_precedence(monkeypatch, tmp_path):
@@ -682,7 +786,7 @@ def test_duplicate_source_units_share_keys_and_warm_run_full_hits(tmp_path, monk
 
     cache = EmbeddingCache()
     shard_dir = cache.shard_dir(tmp_path, "test-model", "rev1")
-    vectors = np.load(shard_dir / embedding_cache.VECTORS_FILENAME, allow_pickle=False)
+    vectors = np.load(_active_vectors_path(shard_dir), allow_pickle=False)
     payload = json.loads((shard_dir / embedding_cache.INDEX_FILENAME).read_text(encoding="utf-8"))
     assert vectors.shape[0] == 5
     assert len(payload["keys"]) == 5
@@ -720,7 +824,7 @@ def test_put_many_coalesces_duplicate_keys(tmp_path):
     )
 
     shard_dir = cache.shard_dir(scope, "model-a", "rev1")
-    vectors = np.load(shard_dir / embedding_cache.VECTORS_FILENAME, allow_pickle=False)
+    vectors = np.load(_active_vectors_path(shard_dir), allow_pickle=False)
     assert vectors.shape == (1, 2)
     np.testing.assert_array_equal(
         cache.get_many(scope, "model-a", "rev1", ["shared"])["shared"],

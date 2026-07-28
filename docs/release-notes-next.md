@@ -48,8 +48,9 @@
 - Kept semantic embeddings as normalized NumPy arrays immediately after inference.
 - Added MLX coexistence diagnostics without importing or mutating the MLX allocator.
 - Avoided forced MPS fast math, forced Metal matmul selection, and success-path cache clearing.
-- Added a persistent, content-addressed embedding cache with partial updates, safe corrupt-entry
-  recovery, bounded storage, and CLI management. See [Embedding cache](caching.md).
+- Added a persistent, content-addressed embedding cache with partial updates,
+  generation-safe concurrent rebuilds, namespace-aware stale-row compaction, bounded
+  storage, and CLI management. See [Embedding cache](caching.md).
 - Hardened offline loading for local `save_pretrained` and complete `hf download`
   directories across `check` and `search`, including family detection for
   hash-named cache snapshots and early validation of incomplete downloads. See

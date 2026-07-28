@@ -1,13 +1,13 @@
 """Persistent, content-addressed on-disk cache for semantic embedding vectors.
 
-Cached vectors live under ``<cache_root>/repos/<repo-shard>/<model>@<revision>/`` as a
-pair of files: ``vectors.npy`` (a float32 matrix) and ``index.json`` (a key-to-row
-map plus metadata). The primary key hashes the model, resolved revision, and the
-prepared (pre-truncation) embedding text, so unchanged code units keep hitting the
-cache across runs and partial edits only miss for the units that actually changed.
-Every public operation is wrapped so on-disk corruption or filesystem errors never
-raise into the caller; a shard that cannot be trusted is simply treated as empty and
-rebuilt on the next write.
+Cached vectors live under ``<cache_root>/repos/<repo-shard>/<model>@<revision>/`` as
+an immutable generation-named float32 matrix and an ``index.json`` key-to-row map
+that atomically selects the active generation. The primary key hashes the model,
+resolved revision, and prepared (pre-truncation) embedding text, so unchanged code
+units keep hitting the cache across runs and partial edits only miss for units that
+actually changed. Every public operation is wrapped so on-disk corruption or
+filesystem errors never raise into the caller; an untrusted shard is treated as
+empty and rebuilt on the next write.
 """
 
 from __future__ import annotations
@@ -23,6 +23,7 @@ import shutil
 import time
 import uuid
 from collections.abc import Iterator, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -31,15 +32,27 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 CACHE_SUBDIR = "repos"
-VECTORS_FILENAME = "vectors.npy"
 INDEX_FILENAME = "index.json"
 DEFAULT_CACHE_MAX_MB = 2048
-_SCHEMA_VERSION = 1
+_SCHEMA_VERSION = 2
 _PRUNE_TARGET_RATIO = 0.8
 _TOUCH_INTERVAL_SECONDS = 3600.0
+_COMPACTION_LIVE_MULTIPLIER = 2
 _SANITIZE_PATTERN = re.compile(r"[^A-Za-z0-9._-]+")
+_GENERATION_PATTERN = re.compile(r"^[0-9a-f]{32}$")
 
 _warned_cache_error = False
+
+
+@dataclass
+class _ShardData:
+    """Validated vector shard loaded from one immutable generation."""
+
+    vectors: np.ndarray
+    keys: dict[str, int]
+    namespaces: dict[str, str]
+    last_used_at: float
+    generation: str
 
 
 def _warn_once(action: str, exc: Exception) -> None:
@@ -113,7 +126,7 @@ def compute_cache_key(
     (for example EmbeddingGemma's ``encode_document`` vs ``encode_query``), so an
     identical prepared text does not guarantee an identical vector across modes.
     The ``variant`` component carries any additional vector-affecting fingerprint,
-    such as the requested device for families whose torch dtype is device-dependent.
+    such as a non-default inference dtype.
 
     :param canonical_model: Canonical model identifier.
     :param revision: Resolved model revision/commit hash.
@@ -208,16 +221,24 @@ def _tmp_suffix() -> str:
     return f".tmp-{os.getpid()}-{uuid.uuid4().hex[:8]}"
 
 
+def _vectors_filename(generation: str) -> str:
+    """Return the immutable vector filename for one shard generation.
+
+    :param generation: Validated hexadecimal generation identifier.
+    :return: Filename local to a shard directory.
+    """
+    return f"vectors-{generation}.npy"
+
+
 @contextlib.contextmanager
 def _shard_write_lock(shard_dir: Path) -> Iterator[bool]:
     """Hold an exclusive advisory lock serializing writers of one shard.
 
-    Two unserialized read-modify-write writers can interleave their vectors/index
-    replacements so a reader pairs one writer's vectors with the other's index,
-    silently serving a wrong vector under a valid key. Writers therefore must hold
-    this lock across the whole read-append-replace sequence. Lock contention or an
-    unavailable lock API yields ``False`` and the caller skips its write (lost
-    cache entries are acceptable; wrong ones are not). Readers never need the lock.
+    Writers must hold this lock across the whole read-update-publish sequence so
+    concurrent updates cannot discard one another. Lock contention or an unavailable
+    lock API yields ``False`` and the caller skips its write (lost cache entries are
+    acceptable; wrong ones are not). Readers need no lock because published vector
+    generations are immutable.
 
     :param shard_dir: Shard directory the caller intends to rewrite.
     :return: Context manager yielding ``True`` when the exclusive lock was acquired.
@@ -260,6 +281,8 @@ def _validate_shard_metadata(payload: Any) -> dict[str, Any] | None:
     revision = payload.get("revision")
     dim = payload.get("dim")
     keys_map = payload.get("keys")
+    namespaces = payload.get("namespaces")
+    generation = payload.get("generation")
     if not isinstance(model, str) or not isinstance(revision, str):
         return None
     if isinstance(dim, bool) or not isinstance(dim, int) or dim < 1:
@@ -268,6 +291,17 @@ def _validate_shard_metadata(payload: Any) -> dict[str, Any] | None:
         isinstance(key, str) and not isinstance(row, bool) and isinstance(row, int) and row >= 0
         for key, row in keys_map.items()
     ):
+        return None
+    if (
+        not isinstance(namespaces, dict)
+        or set(namespaces) != set(keys_map)
+        or not all(
+            isinstance(key, str) and isinstance(namespace, str)
+            for key, namespace in namespaces.items()
+        )
+    ):
+        return None
+    if not isinstance(generation, str) or _GENERATION_PATTERN.fullmatch(generation) is None:
         return None
 
     last_used_at = payload.get("last_used_at", 0.0)
@@ -286,7 +320,9 @@ def _validate_shard_metadata(payload: Any) -> dict[str, Any] | None:
         "revision": revision,
         "dim": dim,
         "keys": dict(keys_map),
+        "namespaces": dict(namespaces),
         "last_used_at": normalized_last_used_at,
+        "generation": generation,
     }
 
 
@@ -310,37 +346,47 @@ def _validate_shard(index: Any, vectors: Any) -> dict[str, Any] | None:
     return metadata
 
 
-def _read_shard(shard_dir: Path) -> tuple[np.ndarray, dict[str, int], float] | None:
+def _read_shard(shard_dir: Path) -> _ShardData | None:
     """Load and validate one shard's vectors and key index.
 
-    Any structural inconsistency (corrupt ``vectors.npy``, a stale ``index.json``
-    pointing past the end of the vector matrix, schema drift, and so on) is treated
-    as an empty shard rather than raised, matching the never-fatal cache contract.
+    Any structural inconsistency (a corrupt vector generation, a stale ``index.json``
+    pointing past the end of its matrix, schema drift, and so on) is treated as an
+    empty shard rather than raised, matching the never-fatal cache contract.
 
     :param shard_dir: Shard directory to load.
-    :return: ``(vectors, key_to_row, last_used_at)``, or ``None`` when the shard is
-        missing, unreadable, or internally inconsistent.
+    :return: Validated shard data, or ``None`` when the shard is missing, unreadable,
+        internally inconsistent, or replaced by a concurrent writer.
     """
     index_path = shard_dir / INDEX_FILENAME
-    vectors_path = shard_dir / VECTORS_FILENAME
-    if not index_path.exists() or not vectors_path.exists():
+    if not index_path.exists():
         return None
 
     try:
         index = json.loads(index_path.read_text(encoding="utf-8"))
+        initial_metadata = _validate_shard_metadata(index)
+        if initial_metadata is None:
+            raise ValueError(f"invalid shard metadata at {shard_dir}")
+        vectors_path = shard_dir / _vectors_filename(initial_metadata["generation"])
         # Memory-mapped so sparse lookups (for example a single query key) only
         # fault in the rows they touch; hit rows are copied before being returned.
         vectors = np.load(vectors_path, mmap_mode="r", allow_pickle=False)
+        confirmed_index = json.loads(index_path.read_text(encoding="utf-8"))
     except Exception as exc:  # noqa: BLE001 - corrupt on-disk data can fail in many ways
         _warn_once("read shard", exc)
         return None
 
-    metadata = _validate_shard(index, vectors)
-    if metadata is None:
+    metadata = _validate_shard(confirmed_index, vectors)
+    if metadata is None or metadata["generation"] != initial_metadata["generation"]:
         _warn_once("read shard", ValueError(f"inconsistent shard at {shard_dir}"))
         return None
 
-    return vectors, metadata["keys"], metadata["last_used_at"]
+    return _ShardData(
+        vectors=vectors,
+        keys=metadata["keys"],
+        namespaces=metadata["namespaces"],
+        last_used_at=metadata["last_used_at"],
+        generation=metadata["generation"],
+    )
 
 
 def _atomic_write_shard(
@@ -349,27 +395,33 @@ def _atomic_write_shard(
     revision: str | None,
     vectors: np.ndarray,
     keys_map: dict[str, int],
+    namespaces: dict[str, str],
     dim: int,
 ) -> None:
-    """Write a shard's vectors and index atomically via temp-file-then-replace.
+    """Publish a complete shard generation through one atomic index replacement.
 
-    The vectors file is replaced first and the index second: an older index only
-    ever references a subset of an already-superset vectors file, so a crash
-    between the two replacements still leaves a consistent shard on disk.
+    Each vector matrix has an immutable generation-specific filename. The matrix
+    is fully written before ``index.json`` atomically switches to that generation,
+    so readers can never pair an older key map with a rebuilt matrix. A crash
+    before the index replacement leaves only an unreferenced file; a crash after
+    it leaves the new generation complete.
 
     :param shard_dir: Shard directory to write into (created if missing).
     :param canonical_model: Canonical model identifier.
     :param revision: Resolved model revision, or ``None`` when unpinned.
     :param vectors: Full float32 vector matrix to persist.
     :param keys_map: Key-to-row mapping to persist.
+    :param namespaces: Key-to-input-namespace mapping used for safe compaction.
     :param dim: Embedding dimensionality.
     :return: ``None``.
     """
     shard_dir.mkdir(parents=True, exist_ok=True)
     suffix = _tmp_suffix()
-    vectors_path = shard_dir / VECTORS_FILENAME
+    generation = uuid.uuid4().hex
+    vectors_filename = _vectors_filename(generation)
+    vectors_path = shard_dir / vectors_filename
     index_path = shard_dir / INDEX_FILENAME
-    vectors_tmp = shard_dir / f"{VECTORS_FILENAME}{suffix}"
+    vectors_tmp = shard_dir / f"{vectors_filename}{suffix}"
     index_tmp = shard_dir / f"{INDEX_FILENAME}{suffix}"
     try:
         with open(vectors_tmp, "wb") as handle:
@@ -382,10 +434,19 @@ def _atomic_write_shard(
             "revision": revision if revision is not None else "unpinned",
             "dim": dim,
             "keys": keys_map,
+            "namespaces": namespaces,
             "last_used_at": time.time(),
+            "generation": generation,
         }
         index_tmp.write_text(json.dumps(payload), encoding="utf-8")
         os.replace(index_tmp, index_path)
+
+        for stale_vectors in shard_dir.glob("vectors-*.npy"):
+            if stale_vectors != vectors_path:
+                with contextlib.suppress(OSError):
+                    stale_vectors.unlink()
+        with contextlib.suppress(OSError):
+            (shard_dir / "vectors.npy").unlink()
     finally:
         for tmp_path in (vectors_tmp, index_tmp):
             if tmp_path.exists():
@@ -426,48 +487,105 @@ def _write_shard_entries(
     canonical_model: str,
     revision: str | None,
     entries: Sequence[tuple[str, np.ndarray]],
+    *,
+    namespace: str,
+    active_keys: set[str] | None,
 ) -> None:
-    """Append new embedding rows to a shard, rebuilding it fresh if inconsistent.
+    """Append embedding rows and compact stale keys from one input namespace.
 
     :param shard_dir: Shard directory to update.
     :param canonical_model: Canonical model identifier.
     :param revision: Resolved model revision, or ``None`` when unpinned.
     :param entries: Sequence of ``(key, vector)`` pairs to append.
+    :param namespace: Stable identifier for one mode/instruction/dtype combination.
+    :param active_keys: Complete live key set for ``namespace``, or ``None`` to skip
+        stale-key compaction.
     :return: ``None``.
     """
-    if not entries:
+    if not entries and active_keys is None:
         return
     try:
         unique_entries = list(dict(entries).items())
-        dim = int(np.asarray(unique_entries[0][1]).reshape(-1).shape[0])
+        entry_dim = (
+            int(np.asarray(unique_entries[0][1]).reshape(-1).shape[0]) if unique_entries else None
+        )
 
         shard_dir.mkdir(parents=True, exist_ok=True)
         with _shard_write_lock(shard_dir) as acquired:
             if not acquired:
                 return
             existing = _read_shard(shard_dir)
-            if existing is not None and existing[0].shape[1] == dim:
-                vectors, keys_map, _ = existing
+            if existing is not None and (
+                entry_dim is None or existing.vectors.shape[1] == entry_dim
+            ):
+                vectors = existing.vectors
+                keys_map = existing.keys
+                namespaces = existing.namespaces
+                dim = int(vectors.shape[1])
             else:
+                if entry_dim is None:
+                    return
+                dim = entry_dim
                 vectors = np.empty((0, dim), dtype=np.float32)
                 keys_map = {}
+                namespaces = {}
             existing = None
 
-            start_row = vectors.shape[0]
-            new_rows = np.stack(
-                [
-                    np.ascontiguousarray(vector, dtype=np.float32).reshape(dim)
-                    for _key, vector in unique_entries
-                ],
-                axis=0,
-            )
-            # Rebinding releases the memory-mapped source before the replace below,
-            # so the vectors file is never replaced while still mapped.
-            vectors = np.concatenate([vectors, new_rows], axis=0)
-            for offset, (key, _vector) in enumerate(unique_entries):
-                keys_map[key] = start_row + offset
+            missing_entries = [
+                (key, vector) for key, vector in unique_entries if key not in keys_map
+            ]
+            if missing_entries:
+                start_row = vectors.shape[0]
+                new_rows = np.stack(
+                    [
+                        np.ascontiguousarray(vector, dtype=np.float32).reshape(dim)
+                        for _key, vector in missing_entries
+                    ],
+                    axis=0,
+                )
+                vectors = np.concatenate([vectors, new_rows], axis=0)
+                for offset, (key, _vector) in enumerate(missing_entries):
+                    keys_map[key] = start_row + offset
+                    namespaces[key] = namespace
 
-            _atomic_write_shard(shard_dir, canonical_model, revision, vectors, keys_map, dim)
+            stale_keys: set[str] = set()
+            if active_keys is not None:
+                namespace_keys = {
+                    key for key, key_namespace in namespaces.items() if key_namespace == namespace
+                }
+                stale_keys = namespace_keys - active_keys
+                if len(namespace_keys) <= _COMPACTION_LIVE_MULTIPLIER * max(1, len(active_keys)):
+                    stale_keys.clear()
+
+            if stale_keys:
+                retained_keys = sorted(
+                    (key for key in keys_map if key not in stale_keys),
+                    key=keys_map.__getitem__,
+                )
+                vectors = (
+                    np.stack(
+                        [
+                            np.ascontiguousarray(vectors[keys_map[key]], dtype=np.float32)
+                            for key in retained_keys
+                        ],
+                        axis=0,
+                    )
+                    if retained_keys
+                    else np.empty((0, dim), dtype=np.float32)
+                )
+                keys_map = {key: row for row, key in enumerate(retained_keys)}
+                namespaces = {key: namespaces[key] for key in retained_keys}
+
+            if missing_entries or stale_keys:
+                _atomic_write_shard(
+                    shard_dir,
+                    canonical_model,
+                    revision,
+                    vectors,
+                    keys_map,
+                    namespaces,
+                    dim,
+                )
     except Exception as exc:  # noqa: BLE001 - cache writes must never break analysis
         _warn_once("write shard", exc)
 
@@ -629,18 +747,17 @@ class EmbeddingCache:
         loaded = _read_shard(shard_dir)
         if loaded is None:
             return {}
-        vectors, keys_map, last_used_at = loaded
         hits: dict[str, np.ndarray] = {}
         for key in keys:
-            row = keys_map.get(key)
+            row = loaded.keys.get(key)
             if row is None:
                 continue
-            vector = np.array(vectors[row], dtype=np.float32, copy=True)
+            vector = np.array(loaded.vectors[row], dtype=np.float32, copy=True)
             # A NaN/Inf row would silently poison every similarity it touches on
             # every future run; treat it as a miss so it gets recomputed.
             if np.isfinite(vector).all():
                 hits[key] = vector
-        if hits and (time.time() - last_used_at) > _TOUCH_INTERVAL_SECONDS:
+        if hits and (time.time() - loaded.last_used_at) > _TOUCH_INTERVAL_SECONDS:
             _touch_shard(shard_dir)
         return hits
 
@@ -650,20 +767,60 @@ class EmbeddingCache:
         canonical_model: str,
         revision: str | None,
         entries: Sequence[tuple[str, np.ndarray]],
+        *,
+        namespace: str = "default",
+        active_keys: set[str] | None = None,
     ) -> None:
-        """Insert new embedding vectors into a shard and enforce the size cap.
+        """Insert vectors, compact stale namespace entries, and enforce the size cap.
 
         :param cache_scope: Analyzed corpus root path.
         :param canonical_model: Canonical model identifier.
         :param revision: Resolved model revision, or ``None`` when unpinned.
         :param entries: Sequence of ``(key, vector)`` pairs to store.
+        :param namespace: Stable identifier for one mode/instruction/dtype combination.
+        :param active_keys: Complete live key set for ``namespace``, or ``None`` to
+            preserve every existing key.
         :return: ``None``.
         """
-        if not entries:
+        if not entries and active_keys is None:
             return
         shard_dir = self.shard_dir(cache_scope, canonical_model, revision)
-        _write_shard_entries(shard_dir, canonical_model, revision, entries)
+        _write_shard_entries(
+            shard_dir,
+            canonical_model,
+            revision,
+            entries,
+            namespace=namespace,
+            active_keys=active_keys,
+        )
         _maybe_evict(self.repos_dir, protect=shard_dir)
+
+    def compact(
+        self,
+        cache_scope: Path,
+        canonical_model: str,
+        revision: str | None,
+        *,
+        namespace: str,
+        active_keys: set[str],
+    ) -> None:
+        """Compact stale entries after a fully cached corpus run.
+
+        :param cache_scope: Analyzed corpus root path.
+        :param canonical_model: Canonical model identifier.
+        :param revision: Resolved model revision, or ``None`` when unpinned.
+        :param namespace: Stable identifier for one mode/instruction/dtype combination.
+        :param active_keys: Complete live keys for ``namespace``.
+        :return: ``None``.
+        """
+        self.put_many(
+            cache_scope,
+            canonical_model,
+            revision,
+            [],
+            namespace=namespace,
+            active_keys=active_keys,
+        )
 
     def stats(self) -> dict[str, Any]:
         """Summarize cache location, size, and per-model/per-repo entry counts.

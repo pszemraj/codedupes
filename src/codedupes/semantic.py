@@ -1040,6 +1040,18 @@ def _prefix_embedding_text(instruction: str, text: str) -> str:
     return f"{instruction}{text}"
 
 
+def _embedding_cache_namespace(mode: str, instruction: str, variant: str) -> str:
+    """Build a namespace for compacting equivalent embedding inputs.
+
+    :param mode: Embedding input mode, such as ``code`` or ``query``.
+    :param instruction: Resolved model instruction prefix.
+    :param variant: Vector-affecting cache variant.
+    :return: Stable compact namespace identifier.
+    """
+    payload = f"{mode}\x00{variant}\x00{instruction}".encode()
+    return hashlib.blake2b(payload, digest_size=8).hexdigest()
+
+
 def prepare_code_for_embedding(
     unit: CodeUnit,
     model_name: str = DEFAULT_MODEL,
@@ -1316,6 +1328,7 @@ def _compute_embeddings_unlocked(
     cache_variant = (
         _cache_variant_for(profile, device, mps_fallback=mps_fallback) if cache is not None else ""
     )
+    cache_namespace = _embedding_cache_namespace("code", instruction, cache_variant)
     cache_keys = (
         [
             compute_cache_key(profile.canonical_name, cache_revision, text, variant=cache_variant)
@@ -1333,6 +1346,14 @@ def _compute_embeddings_unlocked(
     # Duplicate code units share one cache key, so compare against the covered
     # keys rather than the unique-hit count: len(hits) undercounts coverage.
     if cache_keys is not None and all(key in hits for key in cache_keys):
+        assert cache is not None and cache_scope is not None
+        cache.compact(
+            cache_scope,
+            profile.canonical_name,
+            cache_revision,
+            namespace=cache_namespace,
+            active_keys=set(cache_keys),
+        )
         return _assemble_cached_matrix(cache_keys, hits)
 
     resolved_revision = _resolve_load_revision(model_name, revision)
@@ -1373,6 +1394,14 @@ def _compute_embeddings_unlocked(
             ]
             hits = cache.get_many(cache_scope, profile.canonical_name, cache_revision, cache_keys)
             if all(key in hits for key in cache_keys):
+                assert cache_scope is not None
+                cache.compact(
+                    cache_scope,
+                    profile.canonical_name,
+                    cache_revision,
+                    namespace=cache_namespace,
+                    active_keys=set(cache_keys),
+                )
                 return _assemble_cached_matrix(cache_keys, hits)
 
     miss_indices = _select_cache_miss_indices(cache_keys, hits, len(units))
@@ -1460,6 +1489,8 @@ def _compute_embeddings_unlocked(
                 (cache_keys[global_idx], miss_vectors[local_idx])
                 for local_idx, global_idx in enumerate(miss_indices)
             ],
+            namespace=cache_namespace,
+            active_keys=set(cache_keys),
         )
 
     return matrix
@@ -1667,6 +1698,7 @@ def _find_similar_to_query_unlocked(
     cache_variant = (
         _cache_variant_for(profile, device, mps_fallback=mps_fallback) if cache is not None else ""
     )
+    cache_namespace = _embedding_cache_namespace("query", instruction, cache_variant)
     cache_key = (
         compute_cache_key(
             profile.canonical_name, cache_revision, query_text, mode="query", variant=cache_variant
@@ -1762,6 +1794,7 @@ def _find_similar_to_query_unlocked(
                     profile.canonical_name,
                     cache_revision,
                     [(cache_key, query_embedding)],
+                    namespace=cache_namespace,
                 )
 
     similarities = embeddings @ query_embedding
