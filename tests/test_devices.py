@@ -136,6 +136,10 @@ def test_configure_mps_environment_explicit_setting_overrides_environment(monkey
     assert devices.os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] == "0"
 
 
+def test_format_bytes_always_returns_largest_supported_unit() -> None:
+    assert devices.format_bytes(1024**5) == "1024.0 TiB"
+
+
 def test_auto_device_priority_is_cuda_then_mps_then_cpu() -> None:
     both = _fake_torch(cuda_available=True, mps_built=True, mps_available=True)
     mps_only = _fake_torch(cuda_available=False, mps_built=True, mps_available=True)

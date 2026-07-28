@@ -365,10 +365,11 @@ def format_bytes(value: int | None) -> str:
         return "unknown"
     units = ("B", "KiB", "MiB", "GiB", "TiB")
     amount = float(value)
-    for unit in units:
-        if abs(amount) < 1024.0 or unit == units[-1]:
+    for unit in units[:-1]:
+        if abs(amount) < 1024.0:
             return f"{amount:.1f} {unit}"
         amount /= 1024.0
+    return f"{amount:.1f} {units[-1]}"
 
 
 def format_mps_memory_snapshot(snapshot: dict[str, int] | None = None) -> str:
