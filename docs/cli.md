@@ -42,7 +42,7 @@ Options:
 - `--show-all`: Also print raw traditional + raw semantic duplicate lists in combined mode
 - `--full-table`: Disable table row truncation and print all rows in terminal output
 - `--min-lines <int>`: Minimum statement count for semantic candidate code units (default `3`). In default combined mode this also narrows traditional duplicate scope.
-- `--model <name>`: Embedding model alias, HuggingFace ID, or local model directory path (default `gte-modernbert-base`)
+- `--model <name>`: Embedding model alias, Hugging Face ID, or complete local `save_pretrained`/`hf download` directory (default `gte-modernbert-base`)
 - `--device <name>`: Semantic inference device: `auto`, `cpu`, `cuda`, or `mps` (default `auto`; priority CUDA, then MPS, then CPU)
 - `--mps-fallback`: Enable PyTorch CPU fallback for unsupported MPS operators
 - `--no-mps-fallback`: Disable PyTorch CPU fallback for unsupported MPS operators
@@ -76,7 +76,7 @@ codedupes search ./src "normalize request payload" --device mps
 Options:
 
 - `--top-k <int>`: Number of results (default `10`)
-- `--model <name>`: Embedding model alias, HuggingFace ID, or local model directory path (default `gte-modernbert-base`)
+- `--model <name>`: Embedding model alias, Hugging Face ID, or complete local `save_pretrained`/`hf download` directory (default `gte-modernbert-base`)
 - `--device <name>`: Semantic inference device: `auto`, `cpu`, `cuda`, or `mps` (default `auto`; priority CUDA, then MPS, then CPU)
 - `--mps-fallback`: Enable PyTorch CPU fallback for unsupported MPS operators
 - `--no-mps-fallback`: Disable PyTorch CPU fallback for unsupported MPS operators

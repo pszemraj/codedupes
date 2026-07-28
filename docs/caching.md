@@ -47,6 +47,8 @@ across runs.
   fingerprint of the directory (file names, sizes, and mtimes) instead of a hub
   revision, so swapping updated weights into the same path invalidates the cache
   automatically while unchanged directories keep the skip-model-load fast path.
+  Metadata under `.cache/huggingface` created by `hf download --local-dir` is
+  excluded because download timestamps do not change model output.
 - If the model resolves to an unpinned revision (for example the default
   `gte-modernbert-base` profile), the cache resolves the locally cached HuggingFace
   commit hash from disk before loading the model. If that can't be determined

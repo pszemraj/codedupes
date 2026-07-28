@@ -30,9 +30,11 @@ Notes:
 
 - Built-in alias keys and known aliases resolve to the profile's canonical model ID.
 - A model name that is an existing directory on disk is treated as a local
-  `save_pretrained`-style model copy: it canonicalizes to its resolved absolute
-  path (so relative and absolute spellings share one identity), and its family is
-  inferred from the directory basename using the same name rules below.
+  model copy and canonicalized to its resolved absolute path, so relative and
+  absolute spellings share one cache identity.
+- Known local model families are inferred from a recognizable directory name,
+  Hugging Face cache ancestor, saved configuration, or model-card title.
+  Unrecognized local models use the generic thresholds.
 - Any model name containing `embeddinggemma` resolves to a dynamic
   EmbeddingGemma-family profile with the built-in profile's thresholds and encode
   entry points.
@@ -42,18 +44,34 @@ Notes:
 
 ### Local model directories and offline use
 
-Pass a directory path anywhere a model name is accepted to load a model straight
-from disk without contacting the HuggingFace Hub:
+Both `check` and `search` accept a directory written by `save_pretrained()` or a
+complete Hugging Face repository download. Local paths are passed to Sentence
+Transformers with `local_files_only=True`.
 
 ```bash
-codedupes check ./src --model /opt/models/embeddinggemma-300m --device mps
+hf download Alibaba-NLP/gte-modernbert-base \
+  --local-dir ./models/gte-modernbert-base
+
+codedupes check ./src \
+  --model ./models/gte-modernbert-base \
+  --device mps
+
+codedupes search ./src "parse json payload" \
+  --model ./models/gte-modernbert-base \
+  --device mps
 ```
 
+- Download the complete repository rather than selecting only configuration or
+  tokenizer files. Local directories without `config.json` and model weights
+  fail before model loading with a corrective error.
+- Without `--local-dir`, `hf download <repo-id>` prints the cached snapshot
+  directory. That directory can be passed directly to `--model`, including when
+  its basename is a commit hash.
 - `--model-revision` is ignored for local directories (with a warning): on-disk
   weights have no hub revision. The embedding cache instead keys local models by a
   content fingerprint of the directory, so replacing or retraining the weights in
   place invalidates cached vectors automatically.
-- For hub models already present in the local HuggingFace cache, set
+- For a Hub model ID rather than a directory path, set
   `HF_HUB_OFFLINE=1` to guarantee no network access.
 
 For live effective values in your environment, run:

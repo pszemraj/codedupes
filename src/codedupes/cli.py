@@ -884,7 +884,7 @@ def _add_common_analysis_options(
             "--model",
             default=DEFAULT_MODEL,
             show_default=True,
-            help="Embedding model alias or HuggingFace model ID",
+            help="Embedding model alias, Hugging Face model ID, or complete local model directory",
         ),
         click.option(
             "--instruction-prefix",

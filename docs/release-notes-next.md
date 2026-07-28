@@ -49,7 +49,9 @@
 - Avoided forced MPS fast math, forced Metal matmul selection, and success-path cache clearing.
 - Added a persistent, content-addressed embedding cache with partial updates, safe corrupt-entry
   recovery, bounded storage, and CLI management. See [Embedding cache](caching.md).
-- Added offline loading for local `save_pretrained` model directories. See
+- Hardened offline loading for local `save_pretrained` and complete `hf download`
+  directories across `check` and `search`, including family detection for
+  hash-named cache snapshots and early validation of incomplete downloads. See
   [Model profiles](model-profiles.md#local-model-directories-and-offline-use).
 
 ## Static-analysis fixes

@@ -746,6 +746,14 @@ def test_cli_search_help_is_search_specific() -> None:
     assert "always apply." in result.output
 
 
+@pytest.mark.parametrize("command", ["check", "search"])
+def test_cli_help_advertises_local_model_directories(command: str) -> None:
+    result = CliRunner().invoke(cli.cli, [command, "--help"])
+
+    assert result.exit_code == 0
+    assert "complete local model directory" in result.output
+
+
 def test_cli_output_width_option(monkeypatch, tmp_path):
     path = tmp_path / "sample.py"
     path.write_text("def entry():\n    return 1\n")
