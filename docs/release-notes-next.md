@@ -54,10 +54,18 @@
 - Avoided forced MPS fast math, forced Metal matmul selection, and success-path cache clearing.
 - Added a persistent, content-addressed embedding cache with partial updates,
   generation-safe concurrent rebuilds, namespace-aware stale-row compaction, bounded
-  storage, and CLI management. See [Embedding cache](caching.md).
+  storage (including a FIFO cap on cached search queries), and CLI management.
+  Poisoned (NaN/Inf) rows self-heal on the next recompute, shard deletion by eviction
+  or `cache clear` respects the per-shard writer lock, and temp files orphaned by a
+  killed writer are reclaimed by the next write. See [Embedding cache](caching.md).
+- Explicit `--device cuda`/`--device mps` requests are validated even when a fully
+  warm embedding cache makes inference unnecessary, for every model family: an
+  unavailable accelerator errors instead of silently serving cached vectors.
 - Hardened offline loading for local `save_pretrained` and complete `hf download`
   directories across `check` and `search`, including family detection for
-  hash-named cache snapshots and early validation of incomplete downloads. See
+  hash-named cache snapshots, early validation of incomplete downloads, and
+  true-case path canonicalization so differently-cased spellings of one model
+  directory share one cache identity on case-insensitive filesystems. See
   [Model profiles](model-profiles.md#local-model-directories-and-offline-use).
 
 ## Static-analysis fixes
@@ -66,8 +74,10 @@
   `builtins` module. Traditional Jaccard and hybrid scores can therefore change for
   code that uses built-in functions or types.
 - `visit_*` hooks are excluded from unused-code results only when their base resolves through an
-  `ast.NodeVisitor` or `ast.NodeTransformer` import, including aliases, or through a proven local
-  subclass. Unrelated local or imported visitor classes remain eligible for unused-code analysis.
+  `ast.NodeVisitor` or `ast.NodeTransformer` import, including aliases, or through a proven
+  subclass — including inheritance chains that span multiple analyzed files via absolute or
+  relative imports. Unrelated local or imported visitor classes remain eligible for unused-code
+  analysis.
 - Reusing a `CodeAnalyzer` now clears corpus-specific state before each analysis, so
   an empty or nonsemantic run cannot leave stale embeddings available to
   `search()`. See [Python API](python-api.md#semantic-query-search).
