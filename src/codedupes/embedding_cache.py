@@ -629,7 +629,7 @@ class EmbeddingCache:
             return
         shard_dir = self.shard_dir(cache_scope, canonical_model, revision)
         _write_shard_entries(shard_dir, canonical_model, revision, entries)
-        _maybe_evict(self.repos_dir)
+        _maybe_evict(self.repos_dir, protect=shard_dir)
 
     def stats(self) -> dict[str, Any]:
         """Summarize cache location, size, and per-model/per-repo entry counts.

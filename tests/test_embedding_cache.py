@@ -374,6 +374,24 @@ def test_size_cap_prunes_least_recently_used_shards(tmp_path, monkeypatch):
     assert len(stats["repos"]) < 6
 
 
+def test_size_cap_preserves_fresh_shard_larger_than_cap(tmp_path, monkeypatch, caplog):
+    monkeypatch.setattr(embedding_cache, "_resolve_max_bytes", lambda: 1000)
+    cache = EmbeddingCache()
+    scope = tmp_path / "proj"
+    scope.mkdir()
+    vector = np.zeros(256, dtype=np.float32)
+
+    with caplog.at_level("WARNING"):
+        cache.put_many(scope, "model-x", "rev1", [("key", vector)])
+
+    np.testing.assert_array_equal(
+        cache.get_many(scope, "model-x", "rev1", ["key"])["key"],
+        vector,
+    )
+    assert cache.stats()["size_bytes"] > 1000
+    assert "still exceeds its size target after eviction" in caplog.text
+
+
 def test_resolve_cache_dir_env_precedence(monkeypatch, tmp_path):
     monkeypatch.delenv("CODEDUPES_CACHE_DIR", raising=False)
     monkeypatch.delenv("XDG_CACHE_HOME", raising=False)

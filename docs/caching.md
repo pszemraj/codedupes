@@ -72,7 +72,9 @@ variables, CLI management commands, and the escape hatch for stale results.
 - Default (both unset): `~/.cache/codedupes`.
 - `CODEDUPES_CACHE_MAX_MB`: opportunistic size cap in megabytes (default `2048`).
   After a write, if the cache exceeds this cap, the least-recently-used shards are
-  deleted until the cache is back under about 80% of the cap.
+  deleted until the cache is back under about 80% of the cap. The shard just
+  written is preserved; if that shard alone exceeds the cap, it remains usable and
+  a warning recommends raising the limit.
 - `CODEDUPES_NO_CACHE=1`: disable the embedding cache globally for the process, for
   every command. No cache files are read or written.
 
