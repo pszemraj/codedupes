@@ -34,3 +34,21 @@ def test_vcs_less_source_archives_have_a_build_version_fallback() -> None:
     """GitHub/source snapshots must remain buildable without a .git directory."""
     hatch = _pyproject()["tool"]["hatch"]  # type: ignore[index]
     assert hatch["version"]["fallback-version"] == "0.0.0+unknown"
+
+
+def test_sdist_uses_an_explicit_release_file_allowlist() -> None:
+    """Local ignored worktrees must never leak into source distributions."""
+    hatch = _pyproject()["tool"]["hatch"]  # type: ignore[index]
+    sdist = hatch["build"]["targets"]["sdist"]
+
+    assert sdist["only-include"] == [
+        "src/codedupes",
+        "tests",
+        "test_fixtures",
+        "scripts",
+        "docs",
+        "README.md",
+        "LICENSE",
+        "pyproject.toml",
+    ]
+    assert "include" not in sdist

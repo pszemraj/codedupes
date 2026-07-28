@@ -36,7 +36,7 @@ dev-mode-dirs = ["src"]
 packages = ["src/codedupes"]
 
 [tool.hatch.build.targets.sdist]
-include = [
+only-include = [
     "src/codedupes",
     "tests",
     "test_fixtures",

@@ -19,8 +19,9 @@
   `resolve_model_profile(...).canonical_name` and
   `AnalysisResult.traditional_duplicates`, respectively.
 - VCS-less source snapshots now build with an explicit `0.0.0+unknown` fallback; tagged Git builds
-  continue to derive the release version from VCS metadata. The sdist now includes tests, docs,
-  scripts, and tuning fixtures.
+  continue to derive the release version from VCS metadata. The sdist uses an explicit release-file
+  allowlist containing the package, tests, docs, scripts, and tuning fixtures, so ignored local
+  worktrees cannot leak into published archives.
 
 ## Semantic runtime changes
 
