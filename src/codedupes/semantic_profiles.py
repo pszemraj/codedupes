@@ -178,15 +178,6 @@ def resolve_model_profile(model_name: str) -> SemanticModelProfile:
     )
 
 
-def resolve_model_name(model_name: str) -> str:
-    """Resolve model name aliases to canonical model IDs.
-
-    :param model_name: Alias or model key.
-    :return: Canonical model identifier.
-    """
-    return resolve_model_profile(model_name).canonical_name
-
-
 def get_default_semantic_threshold(model_name: str) -> float:
     """Return semantic threshold default for the resolved model profile.
 

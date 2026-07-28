@@ -17,6 +17,10 @@ replacement for the CLI, output, model-profile, or accelerator source-of-truth d
   separate dependency/runtime contract was not reliable under the supported
   Transformers baseline; the built-in model set now focuses on
   `gte-modernbert-base` and `embeddinggemma-300m`.
+- Removed the undocumented `semantic_profiles.resolve_model_name()` wrapper and
+  `AnalysisResult.exact_duplicates` compatibility alias. Use
+  `resolve_model_profile(...).canonical_name` and
+  `AnalysisResult.traditional_duplicates`, respectively.
 - VCS-less source snapshots now build with an explicit `0.0.0+unknown` fallback; tagged Git builds
   continue to derive the release version from VCS metadata. The sdist now includes tests, docs,
   scripts, and tuning fixtures.

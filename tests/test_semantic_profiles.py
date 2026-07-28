@@ -8,15 +8,17 @@ from codedupes.semantic_profiles import (
     get_default_semantic_threshold,
     list_supported_models,
     resolve_local_model_path,
-    resolve_model_name,
     resolve_model_profile,
 )
 
 
 def test_resolve_builtin_model_aliases_to_canonical_ids() -> None:
-    assert resolve_model_name("gte-modernbert-base") == "Alibaba-NLP/gte-modernbert-base"
-    assert resolve_model_name("embeddinggemma-300m") == "unsloth/embeddinggemma-300m"
-    assert resolve_model_name("google/embeddinggemma-300m") == "unsloth/embeddinggemma-300m"
+    expected = {
+        "gte-modernbert-base": "Alibaba-NLP/gte-modernbert-base",
+        "embeddinggemma-300m": "unsloth/embeddinggemma-300m",
+        "google/embeddinggemma-300m": "unsloth/embeddinggemma-300m",
+    }
+    assert {alias: resolve_model_profile(alias).canonical_name for alias in expected} == expected
 
 
 def test_unknown_model_uses_generic_fallback_profile() -> None:
