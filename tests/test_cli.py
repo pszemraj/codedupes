@@ -470,6 +470,35 @@ def test_cli_requires_explicit_command(tmp_path):
 
 
 @pytest.mark.parametrize(
+    "token",
+    [".", "./src", "/tmp", "~/whatever", "srcish"],
+    ids=["dot", "dot-relative", "absolute", "tilde", "bare-name"],
+)
+def test_cli_no_subcommand_token_exits_usage_error(token):
+    """A sole path-like or bare-name token with no subcommand must be a usage error.
+
+    Click's ``resolve_command`` re-parses unmatched command tokens whose first
+    character is non-alphanumeric (``.``, ``/``, ``~``, ...); older click releases
+    used to re-run this with an emptied ``ctx.args``, which spuriously hit the
+    group's no-args help path and exited 0 instead of raising a usage error.
+    """
+    runner = CliRunner()
+    result = runner.invoke(cli.cli, [token])
+    assert result.exit_code == 2
+    assert f"No such command {token!r}." in result.output
+    assert "Commands:" not in result.output
+
+
+def test_cli_no_args_prints_help_and_exits_usage_error():
+    runner = CliRunner()
+    result = runner.invoke(cli.cli, [])
+    assert result.exit_code == 2
+    assert "Commands:" in result.output
+    assert "check" in result.output
+    assert "search" in result.output
+
+
+@pytest.mark.parametrize(
     ("command", "tail_args"),
     [("check", []), ("search", ["entry"])],
 )

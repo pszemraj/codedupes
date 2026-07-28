@@ -8,6 +8,9 @@
   sentence-transformers 5.6.1.
 - `packaging` is now an explicit runtime dependency because semantic compatibility checks import it
   directly.
+- The minimum `click` version is now `8.2.1`: click 8.2 fixed the resolver bug that turned
+  path-like tokens (`codedupes .`, `codedupes ./src`) without a subcommand into help with exit
+  code zero, letting codedupes drop its partial workaround.
 - Semantic startup now rejects an unsupported PyTorch runtime even when dependency resolution was
   bypassed with `--no-deps` or an editable/source-only environment.
 - Removed the C2LLM profile and its DeepSpeed-only `gpu` extra. The backend's
@@ -68,8 +71,9 @@
 - Reusing a `CodeAnalyzer` now clears corpus-specific state before each analysis, so
   an empty or nonsemantic run cannot leave stale embeddings available to
   `search()`. See [Python API](python-api.md#semantic-query-search).
-- Absolute paths passed without the required `check` or `search` command now produce a CLI usage
-  error instead of help with exit code zero.
+- Any path-like token (absolute, `.`, `./relative`, `~/home-relative`) passed without the
+  required `check` or `search` command now produces a CLI usage error instead of help with exit
+  code zero, on every supported click version.
 - `--traditional-only --no-cache` is accepted as a no-op instead of rejected as a
   contradictory semantic setting.
 

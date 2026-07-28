@@ -8,7 +8,7 @@ import platform
 import sys
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from pathlib import Path, PureWindowsPath
+from pathlib import Path
 from typing import Any, Literal, TypeVar, cast
 
 import click
@@ -73,37 +73,6 @@ _NOISY_EXTERNAL_LOGGERS = (
     "transformers",
     "urllib3",
 )
-
-
-class _StrictCommandGroup(click.Group):
-    """Group that reports an absolute path as a missing command instead of help.
-
-    Click reparses unknown command tokens that look like options. Absolute POSIX
-    paths begin with ``/`` and can otherwise trigger the group's no-args help path,
-    hiding the required ``check``/``search`` command and returning exit code zero.
-    """
-
-    def resolve_command(
-        self,
-        ctx: click.Context,
-        args: list[str],
-    ) -> tuple[str | None, click.Command | None, list[str]]:
-        """Resolve commands while preserving a usage error for absolute paths.
-
-        :param ctx: Active click context for this group.
-        :param args: Remaining command-line tokens, leading with the command name.
-        :return: ``(command_name, command, remaining_args)`` from click's resolver.
-        :raises click.UsageError: If the first token is an absolute path that does not
-            name a registered command.
-        """
-        if args:
-            command_token = str(args[0])
-            is_absolute_path = (
-                Path(command_token).is_absolute() or PureWindowsPath(command_token).is_absolute()
-            )
-            if is_absolute_path and self.get_command(ctx, command_token) is None:
-                ctx.fail(f"No such command {command_token!r}.")
-        return super().resolve_command(ctx, args)
 
 
 class _CodedupesLogFilter(logging.Filter):
@@ -984,7 +953,6 @@ def _add_common_analysis_options(
 
 
 @click.group(
-    cls=_StrictCommandGroup,
     context_settings={"help_option_names": ["-h", "--help"]},
 )
 @click.version_option(__version__, prog_name="codedupes")
