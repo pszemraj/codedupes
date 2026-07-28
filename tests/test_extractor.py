@@ -206,3 +206,166 @@ def test_ast_visitor_methods_are_marked_as_dynamic_dispatch_hooks(tmp_path: Path
     assert by_qualified_name["visitors.DerivedVisitor.visit_Call"].is_dynamic_dispatch_hook is True
     assert by_qualified_name["visitors.DirectVisitor.helper"].is_dynamic_dispatch_hook is False
     assert by_qualified_name["visitors.OrdinaryWalker.visit_Name"].is_dynamic_dispatch_hook is False
+
+
+def _base_visitor_source() -> str:
+    """Source for a module defining a class that directly inherits ``ast.NodeVisitor``."""
+    return dedent(
+        """
+        import ast
+
+        class Base(ast.NodeVisitor):
+            def visit_Name(self, node):
+                return self.generic_visit(node)
+        """
+    ).strip()
+
+
+def test_cross_file_direct_import_marks_visitor_hook(tmp_path: Path) -> None:
+    (tmp_path / "base.py").write_text(_base_visitor_source() + "\n")
+    (tmp_path / "concrete.py").write_text(
+        dedent(
+            """
+            from base import Base
+
+            class Concrete(Base):
+                def visit_Call(self, node):
+                    return self.generic_visit(node)
+            """
+        ).strip()
+        + "\n"
+    )
+
+    units = CodeExtractor(tmp_path, include_private=True).extract_all()
+    by_qualified_name = {unit.qualified_name: unit for unit in units}
+
+    assert by_qualified_name["concrete.Concrete.visit_Call"].is_dynamic_dispatch_hook is True
+
+
+def test_cross_file_package_relative_import_marks_visitor_hook(tmp_path: Path) -> None:
+    pkg = tmp_path / "pkg"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("")
+    (pkg / "base.py").write_text(_base_visitor_source() + "\n")
+    (pkg / "concrete.py").write_text(
+        dedent(
+            """
+            from .base import Base
+
+            class Concrete(Base):
+                def visit_Call(self, node):
+                    return self.generic_visit(node)
+            """
+        ).strip()
+        + "\n"
+    )
+
+    units = CodeExtractor(tmp_path, include_private=True).extract_all()
+    by_qualified_name = {unit.qualified_name: unit for unit in units}
+
+    assert by_qualified_name["pkg.concrete.Concrete.visit_Call"].is_dynamic_dispatch_hook is True
+
+
+def test_cross_file_transitive_import_chain_marks_visitor_hook(tmp_path: Path) -> None:
+    (tmp_path / "a.py").write_text(_base_visitor_source() + "\n")
+    (tmp_path / "b.py").write_text(
+        dedent(
+            """
+            from a import Base
+
+            class Mid(Base):
+                def helper(self):
+                    return 1
+            """
+        ).strip()
+        + "\n"
+    )
+    (tmp_path / "c.py").write_text(
+        dedent(
+            """
+            from b import Mid
+
+            class Concrete(Mid):
+                def visit_Call(self, node):
+                    return self.generic_visit(node)
+            """
+        ).strip()
+        + "\n"
+    )
+
+    units = CodeExtractor(tmp_path, include_private=True).extract_all()
+    by_qualified_name = {unit.qualified_name: unit for unit in units}
+
+    assert by_qualified_name["c.Concrete.visit_Call"].is_dynamic_dispatch_hook is True
+
+
+def test_cross_file_import_alias_marks_visitor_hook(tmp_path: Path) -> None:
+    (tmp_path / "base.py").write_text(_base_visitor_source() + "\n")
+    (tmp_path / "concrete.py").write_text(
+        dedent(
+            """
+            from base import Base as Mixin
+
+            class Concrete(Mixin):
+                def visit_Call(self, node):
+                    return self.generic_visit(node)
+            """
+        ).strip()
+        + "\n"
+    )
+
+    units = CodeExtractor(tmp_path, include_private=True).extract_all()
+    by_qualified_name = {unit.qualified_name: unit for unit in units}
+
+    assert by_qualified_name["concrete.Concrete.visit_Call"].is_dynamic_dispatch_hook is True
+
+
+def test_cross_file_unresolvable_third_party_base_is_not_marked(tmp_path: Path) -> None:
+    (tmp_path / "concrete.py").write_text(
+        dedent(
+            """
+            from totally_external_package import SomethingElse
+
+            class Concrete(SomethingElse):
+                def visit_Call(self, node):
+                    return node
+            """
+        ).strip()
+        + "\n"
+    )
+
+    units = CodeExtractor(tmp_path, include_private=True).extract_all()
+    by_qualified_name = {unit.qualified_name: unit for unit in units}
+
+    assert by_qualified_name["concrete.Concrete.visit_Call"].is_dynamic_dispatch_hook is False
+
+
+def test_cross_file_unrelated_class_named_node_visitor_is_not_marked(tmp_path: Path) -> None:
+    (tmp_path / "base.py").write_text(
+        dedent(
+            """
+            class NodeVisitor:
+                def visit_Name(self, node):
+                    return node
+            """
+        ).strip()
+        + "\n"
+    )
+    (tmp_path / "concrete.py").write_text(
+        dedent(
+            """
+            from base import NodeVisitor
+
+            class Concrete(NodeVisitor):
+                def visit_Call(self, node):
+                    return node
+            """
+        ).strip()
+        + "\n"
+    )
+
+    units = CodeExtractor(tmp_path, include_private=True).extract_all()
+    by_qualified_name = {unit.qualified_name: unit for unit in units}
+
+    assert by_qualified_name["base.NodeVisitor.visit_Name"].is_dynamic_dispatch_hook is False
+    assert by_qualified_name["concrete.Concrete.visit_Call"].is_dynamic_dispatch_hook is False

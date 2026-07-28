@@ -60,7 +60,9 @@ direct calls, module-level aliases, `if __name__ == "__main__"` blocks, and
 The following units are not reported:
 
 - referenced units and proven `ast.NodeVisitor` or `ast.NodeTransformer`
-  dispatch hooks
+  dispatch hooks (inheritance is proven through imports across the analyzed
+  files, including relative imports; unresolvable third-party bases stay
+  eligible for reporting)
 - names exported through `__all__`, public classes, and dunder/API lifecycle
   methods such as `__init__`, `__new__`, and `__call__`
 - `get_*`, `set_*`, and abstract methods

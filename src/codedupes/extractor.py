@@ -8,6 +8,7 @@ import hashlib
 import logging
 import os
 from collections.abc import Iterator
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from codedupes.models import CodeUnit, CodeUnitType
@@ -54,6 +55,10 @@ DEFAULT_EXCLUDE_PATTERNS = [
 
 DefinitionNode = ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef
 AST_VISITOR_CLASS_NAMES = {"NodeVisitor", "NodeTransformer"}
+
+# Sentinel identity seeded as "already proven" in the corpus-wide inheritance graph;
+# any class with an edge to this node is a direct ast.NodeVisitor/NodeTransformer subclass.
+_CROSS_FILE_AST_VISITOR_ROOT = "<ast-visitor-root>"
 
 
 def extract_docstring(node: DefinitionNode) -> str | None:
@@ -222,6 +227,90 @@ def _get_ast_visitor_base_names(tree: ast.Module) -> set[str]:
     return base_names
 
 
+def _resolve_relative_module(package: str, level: int, module: str | None) -> str | None:
+    """Resolve a relative import to an absolute dotted module path.
+
+    :param package: Dotted package containing the importing module (its own name for
+        ``__init__.py``, otherwise its parent package).
+    :param level: Import level (``0`` for absolute imports, ``1`` for ``from . import``, etc.).
+    :param module: Dotted module name following the leading dots, if any.
+    :return: Absolute dotted module path, or ``None`` if it escapes the analyzed root.
+    """
+    if level <= 0:
+        return module
+    bits = package.rsplit(".", level - 1)
+    if len(bits) < level:
+        return None
+    base = bits[0]
+    if module:
+        return f"{base}.{module}" if base else module
+    return base or None
+
+
+def _get_cross_file_import_map(
+    tree: ast.Module, module_name: str, is_package_init: bool
+) -> tuple[dict[str, str], set[str]]:
+    """Resolve module-level imports to corpus-qualified identities for base-class lookup.
+
+    Handles ``from pkg.mod import Base [as B]`` (including relative variants) and plain
+    ``import pkg.mod`` (matched against ``pkg.mod.Base`` base expressions). Star imports,
+    aliased ``import ... as`` module bindings, and imports guarded inside conditionals are
+    left unresolved.
+
+    :param tree: Parsed module AST.
+    :param module_name: Dotted module name for this file, as returned by module-name resolution.
+    :param is_package_init: Whether this file is a package ``__init__.py``.
+    :return: Bare-name-to-identity map from ``from`` imports, and dotted module paths bound by
+        plain ``import`` statements.
+    """
+    from_import_map: dict[str, str] = {}
+    imported_module_names: set[str] = set()
+    package = module_name if is_package_init else module_name.rpartition(".")[0]
+
+    for node in tree.body:
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.asname is None:
+                    imported_module_names.add(alias.name)
+        elif isinstance(node, ast.ImportFrom):
+            resolved_module = _resolve_relative_module(package, node.level, node.module)
+            if resolved_module is None:
+                continue
+            for alias in node.names:
+                if alias.name == "*":
+                    continue
+                bound_name = alias.asname or alias.name
+                from_import_map[bound_name] = f"{resolved_module}.{alias.name}"
+
+    return from_import_map, imported_module_names
+
+
+def _resolve_base_identity(
+    base_name: str, from_import_map: dict[str, str], imported_module_names: set[str]
+) -> str | None:
+    """Resolve a base-class expression to a corpus-qualified identity via this file's imports.
+
+    :param base_name: Dotted or bare base-class expression from a class definition.
+    :param from_import_map: Bare names bound to resolved identities via ``from`` imports.
+    :param imported_module_names: Dotted module paths bound via plain ``import`` statements.
+    :return: Resolved ``module.ClassName`` identity, or ``None`` if unresolved.
+    """
+    if base_name in from_import_map:
+        return from_import_map[base_name]
+    module_part, sep, class_part = base_name.rpartition(".")
+    if sep and module_part in imported_module_names:
+        return f"{module_part}.{class_part}"
+    return None
+
+
+@dataclass
+class _ClassFact:
+    """Cross-file inheritance evidence recorded for one emitted class."""
+
+    qualified_name: str
+    resolved_base_identities: set[str] = field(default_factory=set)
+
+
 class _CodeUnitCollector(ast.NodeVisitor):
     """Collect code units with deterministic scope tracking."""
 
@@ -233,6 +322,8 @@ class _CodeUnitCollector(ast.NodeVisitor):
         module_name: str,
         exported: set[str],
         ast_visitor_base_names: set[str],
+        from_import_map: dict[str, str],
+        imported_module_names: set[str],
     ) -> None:
         """Create a collector bound to an extractor and source context.
 
@@ -242,6 +333,8 @@ class _CodeUnitCollector(ast.NodeVisitor):
         :param module_name: Deduced module name.
         :param exported: Export names from module-level ``__all__``.
         :param ast_visitor_base_names: Base names resolved from module-level ``ast`` imports.
+        :param from_import_map: Bare names bound to resolved identities via ``from`` imports.
+        :param imported_module_names: Dotted module paths bound via plain ``import`` statements.
         """
         self.extractor = extractor
         self.file_path = file_path
@@ -249,7 +342,10 @@ class _CodeUnitCollector(ast.NodeVisitor):
         self.module_name = module_name
         self.exported = exported
         self.ast_visitor_base_names = ast_visitor_base_names
+        self.from_import_map = from_import_map
+        self.imported_module_names = imported_module_names
         self.units: list[CodeUnit] = []
+        self.class_facts: list[_ClassFact] = []
 
         # Scope stacks while walking AST:
         # - class_stack tracks nested class scope.
@@ -258,6 +354,10 @@ class _CodeUnitCollector(ast.NodeVisitor):
         self.function_stack: list[str] = []
         self.dynamic_dispatch_stack: list[bool] = []
         self.dynamic_dispatch_class_names: set[str] = set()
+        # Most recently defined class per bare name in this file, for same-file base lookups
+        # feeding the corpus-wide cross-file inheritance graph (mirrors dynamic_dispatch_class_names'
+        # document-order semantics but keeps qualified identities instead of a proven/not flag).
+        self.local_class_qualified_by_name: dict[str, str] = {}
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
         """Collect function code units and recurse into nested definitions."""
@@ -318,6 +418,14 @@ class _CodeUnitCollector(ast.NodeVisitor):
             if is_dynamic_dispatch_class:
                 self.dynamic_dispatch_class_names.add(node.name)
 
+            qualified_name = self.extractor._qualified_name(
+                self.module_name, scope_prefix, node.name
+            )
+            self.class_facts.append(
+                _ClassFact(qualified_name, self._resolve_cross_file_base_identities(base_names))
+            )
+            self.local_class_qualified_by_name[node.name] = qualified_name
+
             self.class_stack.append(node.name)
             self.dynamic_dispatch_stack.append(is_dynamic_dispatch_class)
             self.generic_visit(node)
@@ -326,6 +434,69 @@ class _CodeUnitCollector(ast.NodeVisitor):
         else:
             # If class is excluded, skip descendants to avoid leaking private internals.
             logger.debug("Skipping private class %s in %s", node.name, self.file_path)
+
+    def _resolve_cross_file_base_identities(self, base_names: set[str]) -> set[str]:
+        """Resolve base-class expressions to identities usable by the corpus-wide graph.
+
+        :param base_names: Dotted or bare base-class expressions for one class definition.
+        :return: Resolved identities: the AST-visitor root sentinel, import-resolved
+            ``module.ClassName`` identities, and/or same-file class qualified names.
+        """
+        resolved: set[str] = set()
+        for base_name in base_names:
+            if base_name in self.ast_visitor_base_names:
+                resolved.add(_CROSS_FILE_AST_VISITOR_ROOT)
+                continue
+            imported_identity = _resolve_base_identity(
+                base_name, self.from_import_map, self.imported_module_names
+            )
+            if imported_identity is not None:
+                resolved.add(imported_identity)
+                continue
+            if "." not in base_name:
+                local_identity = self.local_class_qualified_by_name.get(base_name)
+                if local_identity is not None:
+                    resolved.add(local_identity)
+        return resolved
+
+
+def _resolve_cross_file_dynamic_dispatch_hooks(
+    units: list[CodeUnit], class_facts: list[_ClassFact]
+) -> None:
+    """Mark ``visit_*`` methods whose class is provably an AST visitor across files.
+
+    Computes the transitive closure of "inherits from ast.NodeVisitor/NodeTransformer" over
+    the corpus-wide class graph built from per-file inheritance evidence, then flags any
+    not-yet-marked ``visit_*`` method belonging to a class proven only through that closure.
+    Unresolvable bases (third-party imports, star imports, dynamic bases) never enter the
+    graph, so they stay unproven, same as the existing same-file behavior.
+
+    :param units: All code units collected across the corpus (mutated in place).
+    :param class_facts: Per-class base-identity evidence gathered during extraction.
+    :return: ``None``.
+    """
+    edges = {fact.qualified_name: fact.resolved_base_identities for fact in class_facts}
+    proven: set[str] = {_CROSS_FILE_AST_VISITOR_ROOT}
+
+    changed = True
+    while changed:
+        changed = False
+        for qualified_name, base_identities in edges.items():
+            if qualified_name not in proven and base_identities & proven:
+                proven.add(qualified_name)
+                changed = True
+
+    if len(proven) <= 1:
+        return
+
+    for unit in units:
+        if (
+            unit.unit_type == CodeUnitType.METHOD
+            and not unit.is_dynamic_dispatch_hook
+            and unit.name.startswith("visit_")
+            and unit.qualified_name.rsplit(".", 1)[0] in proven
+        ):
+            unit.is_dynamic_dispatch_hook = True
 
 
 def compute_ast_hash(node: ast.AST) -> str:
@@ -458,36 +629,56 @@ class CodeExtractor:
             parts[-1] = Path(parts[-1]).stem
         return ".".join(parts) if parts else ""
 
-    def extract_from_file(self, file_path: Path) -> Iterator[CodeUnit]:
-        """Yield all code units from a single file.
+    def _collect_file(self, file_path: Path) -> _CodeUnitCollector | None:
+        """Parse one file and run the code-unit collector over it.
 
         :param file_path: Source file to parse.
-        :return: Iterator over discovered code units.
+        :return: Populated collector, or ``None`` if the file was excluded or unparsable.
         """
         if self._should_exclude(file_path):
             logger.debug("Skipping excluded file %s", file_path)
-            return
+            return None
 
         try:
             source = file_path.read_text(encoding="utf-8")
             tree = ast.parse(source, filename=str(file_path))
         except (SyntaxError, UnicodeDecodeError) as e:
             logger.warning(f"Could not parse {file_path}: {e}")
-            return
+            return None
 
         module_name = self._get_module_name(file_path)
         exported = get_exported_names(tree)
         ast_visitor_base_names = _get_ast_visitor_base_names(tree)
-        visitor = _CodeUnitCollector(
+        from_import_map, imported_module_names = _get_cross_file_import_map(
+            tree, module_name, is_package_init=file_path.name == "__init__.py"
+        )
+        collector = _CodeUnitCollector(
             self,
             file_path,
             source,
             module_name,
             exported,
             ast_visitor_base_names,
+            from_import_map,
+            imported_module_names,
         )
-        visitor.visit(tree)
-        yield from visitor.units
+        collector.visit(tree)
+        return collector
+
+    def extract_from_file(self, file_path: Path) -> Iterator[CodeUnit]:
+        """Yield all code units from a single file.
+
+        Base-class resolution is limited to evidence provable within this one file; it does
+        not benefit from the corpus-wide cross-file inheritance pass that ``extract_all``
+        performs, since no other files are available here.
+
+        :param file_path: Source file to parse.
+        :return: Iterator over discovered code units.
+        """
+        collector = self._collect_file(file_path)
+        if collector is None:
+            return
+        yield from collector.units
 
     def _should_emit_name(self, name: str) -> bool:
         """Respect private symbol filtering.
@@ -648,9 +839,15 @@ class CodeExtractor:
     def extract_all(self) -> list[CodeUnit]:
         """Extract all code units from the configured directory tree.
 
+        Runs a corpus-wide pass after per-file extraction to resolve base classes across
+        files (imports, including relative imports), so ``visit_*`` methods on classes that
+        inherit ``ast.NodeVisitor``/``NodeTransformer`` through another module are correctly
+        exempted from potentially-unused reporting even when the proof spans multiple files.
+
         :return: List of extracted code units.
         """
         units: list[CodeUnit] = []
+        class_facts: list[_ClassFact] = []
         valid_suffixes = {".py"}
         if self.include_stubs:
             valid_suffixes.add(".pyi")
@@ -673,6 +870,11 @@ class CodeExtractor:
                     continue
                 seen.add(resolved)
 
-                units.extend(self.extract_from_file(py_file))
+                collector = self._collect_file(py_file)
+                if collector is None:
+                    continue
+                units.extend(collector.units)
+                class_facts.extend(collector.class_facts)
 
+        _resolve_cross_file_dynamic_dispatch_hooks(units, class_facts)
         return units
