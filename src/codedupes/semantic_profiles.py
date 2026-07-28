@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Literal
 
 SemanticModelFamily = Literal["gte-modernbert", "embeddinggemma", "generic"]
+CalibratedModelFamily = Literal["gte-modernbert", "embeddinggemma"]
 
 DEFAULT_FALLBACK_SEMANTIC_THRESHOLD = 0.82
 DEFAULT_FALLBACK_SEARCH_THRESHOLD = 0.35
@@ -84,16 +85,12 @@ def list_supported_models() -> list[SemanticModelProfile]:
     return list(_BUILTIN_MODEL_PROFILES)
 
 
-def _builtin_alias_map() -> dict[str, SemanticModelProfile]:
-    """Return normalized alias map for built-in profiles.
-
-    :return: Alias-to-profile dictionary.
-    """
-    alias_map: dict[str, SemanticModelProfile] = {}
-    for profile in _BUILTIN_MODEL_PROFILES:
-        for alias in profile.all_aliases():
-            alias_map[_normalize_model_key(alias)] = profile
-    return alias_map
+_BUILTIN_ALIAS_MAP = {
+    _normalize_model_key(alias): profile
+    for profile in _BUILTIN_MODEL_PROFILES
+    for alias in profile.all_aliases()
+}
+_BUILTIN_FAMILY_PROFILES = {profile.family: profile for profile in _BUILTIN_MODEL_PROFILES}
 
 
 def resolve_local_model_path(model_name: str) -> Path | None:
@@ -120,35 +117,22 @@ def resolve_local_model_path(model_name: str) -> Path | None:
     return None
 
 
-def _build_dynamic_gte_modernbert_profile(model_name: str) -> SemanticModelProfile:
-    """Build a gte-modernbert-family profile for non-builtin model IDs or local copies.
+def _build_dynamic_profile(
+    model_name: str,
+    family: CalibratedModelFamily,
+) -> SemanticModelProfile:
+    """Build a calibrated family profile for a non-builtin model.
 
     :param model_name: Model name or local directory path.
+    :param family: Built-in family whose calibrated thresholds should be inherited.
     :return: Dynamic family-appropriate profile.
     """
-    builtin = _builtin_alias_map()[_normalize_model_key("gte-modernbert")]
+    builtin = _BUILTIN_FAMILY_PROFILES[family]
     return SemanticModelProfile(
         key=model_name,
         canonical_name=model_name,
         aliases=(),
-        family="gte-modernbert",
-        default_semantic_threshold=builtin.default_semantic_threshold,
-        default_search_threshold=builtin.default_search_threshold,
-    )
-
-
-def _build_dynamic_embeddinggemma_profile(model_name: str) -> SemanticModelProfile:
-    """Build an EmbeddingGemma-family profile for non-builtin model IDs or local copies.
-
-    :param model_name: Model name or local directory path.
-    :return: Dynamic family-appropriate profile.
-    """
-    builtin = _builtin_alias_map()[_normalize_model_key("embeddinggemma")]
-    return SemanticModelProfile(
-        key=model_name,
-        canonical_name=model_name,
-        aliases=(),
-        family="embeddinggemma",
+        family=family,
         default_semantic_threshold=builtin.default_semantic_threshold,
         default_search_threshold=builtin.default_search_threshold,
     )
@@ -166,9 +150,8 @@ def resolve_model_profile(model_name: str) -> SemanticModelProfile:
     :param model_name: Alias, hub model name, or local model directory path.
     :return: Matching profile from builtins or a dynamic fallback.
     """
-    alias_map = _builtin_alias_map()
     normalized = _normalize_model_key(model_name)
-    builtin = alias_map.get(normalized)
+    builtin = _BUILTIN_ALIAS_MAP.get(normalized)
     if builtin is not None:
         return builtin
 
@@ -181,9 +164,9 @@ def resolve_model_profile(model_name: str) -> SemanticModelProfile:
         family_hint = normalized
 
     if "embeddinggemma" in family_hint:
-        return _build_dynamic_embeddinggemma_profile(canonical)
+        return _build_dynamic_profile(canonical, "embeddinggemma")
     if "gte-modernbert" in family_hint:
-        return _build_dynamic_gte_modernbert_profile(canonical)
+        return _build_dynamic_profile(canonical, "gte-modernbert")
 
     return SemanticModelProfile(
         key=canonical,
