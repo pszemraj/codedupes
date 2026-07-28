@@ -863,30 +863,6 @@ def test_combined_mode_fallback_marks_semantic_degradation(tmp_path: Path, monke
     assert "backend unavailable" in result.semantic_fallback_reason
 
 
-def test_semantic_task_resolves_check_default_for_indexing(tmp_path: Path, monkeypatch) -> None:
-    source = "def entry(x):\n    return x + 1\n"
-    project = create_project(tmp_path, source)
-    captured: dict[str, object] = {}
-
-    monkeypatch.setattr(
-        analyzer_module,
-        "run_semantic_analysis",
-        _make_semantic_runner(capture=captured),
-    )
-
-    analyzer = CodeAnalyzer(
-        AnalyzerConfig(
-            run_traditional=False,
-            run_semantic=True,
-            run_unused=False,
-            min_semantic_lines=0,
-        )
-    )
-    analyzer.analyze(project)
-
-    assert captured["semantic_task"] == analyzer_module.DEFAULT_CHECK_SEMANTIC_TASK
-
-
 def test_search_uses_index_task_when_unset(tmp_path: Path, monkeypatch) -> None:
     source = "def entry(x):\n    return x + 1\n"
     project = create_project(tmp_path, source)

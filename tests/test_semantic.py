@@ -39,12 +39,8 @@ class FakeModel:
         return np.array([[1.0, 0.0]], dtype=np.float32)
 
 
-def _extract_units(tmp_path: Path) -> list[CodeUnit]:
-    return extract_arithmetic_units(tmp_path, include_private=True, exclude_patterns=[])
-
-
 def test_run_semantic_analysis_with_mock_model(tmp_path, monkeypatch):
-    units = _extract_units(tmp_path)
+    units = extract_arithmetic_units(tmp_path)
     fake = FakeModel()
     monkeypatch.setattr(semantic, "_model", None)
     monkeypatch.setattr(semantic, "get_model", lambda *args, **kwargs: fake)
@@ -57,7 +53,7 @@ def test_run_semantic_analysis_with_mock_model(tmp_path, monkeypatch):
 
 
 def test_query_search_with_mocked_semantic_model(tmp_path, monkeypatch):
-    units = _extract_units(tmp_path)
+    units = extract_arithmetic_units(tmp_path)
     fake = FakeModel()
     monkeypatch.setattr(semantic, "get_model", lambda *args, **kwargs: fake)
 
@@ -80,19 +76,19 @@ def test_code_unit_statement_count_ignores_docstring(tmp_path: Path) -> None:
         x = 1
         return a + b + x
     """
-    unit = extract_arithmetic_units(tmp_path, include_private=True)[0]
+    unit = extract_arithmetic_units(tmp_path)[0]
     unit.source = source
     assert get_code_unit_statement_count(unit) == 2
 
 
 def test_prepare_code_for_embedding_default_model_no_prefix(tmp_path: Path) -> None:
-    units = _extract_units(tmp_path)
+    units = extract_arithmetic_units(tmp_path)
     prepared = semantic.prepare_code_for_embedding(units[0], mode="query")
     assert prepared == units[0].source.strip()
 
 
 def test_prepare_code_for_embedding_uses_custom_prefix(tmp_path: Path) -> None:
-    units = _extract_units(tmp_path)
+    units = extract_arithmetic_units(tmp_path)
     prepared = semantic.prepare_code_for_embedding(
         units[0],
         mode="code",
@@ -103,7 +99,7 @@ def test_prepare_code_for_embedding_uses_custom_prefix(tmp_path: Path) -> None:
 
 
 def test_query_search_uses_custom_instruction_prefix(tmp_path: Path, monkeypatch) -> None:
-    units = _extract_units(tmp_path)
+    units = extract_arithmetic_units(tmp_path)
     embeddings = np.array([[1.0, 0.0], [0.0, 1.0]], dtype=np.float32)
     captured: dict[str, list[str]] = {}
 
@@ -129,7 +125,7 @@ def test_query_search_uses_custom_instruction_prefix(tmp_path: Path, monkeypatch
 def test_compute_embeddings_uses_embeddinggemma_encode_document(
     tmp_path: Path, monkeypatch
 ) -> None:
-    units = _extract_units(tmp_path)
+    units = extract_arithmetic_units(tmp_path)
     captured: dict[str, int] = {"encode_document": 0, "encode": 0}
 
     class GemmaLikeModel:
@@ -153,7 +149,7 @@ def test_compute_embeddings_uses_embeddinggemma_encode_document(
 def test_find_similar_to_query_uses_embeddinggemma_encode_query(
     tmp_path: Path, monkeypatch
 ) -> None:
-    units = _extract_units(tmp_path)
+    units = extract_arithmetic_units(tmp_path)
     embeddings = np.array([[1.0, 0.0], [0.0, 1.0]], dtype=np.float32)
     captured: dict[str, int] = {"encode_query": 0, "encode": 0}
 
@@ -182,7 +178,7 @@ def test_find_similar_to_query_uses_embeddinggemma_encode_query(
 
 
 def test_find_similar_to_query_applies_threshold_filter(tmp_path: Path, monkeypatch) -> None:
-    units = _extract_units(tmp_path)
+    units = extract_arithmetic_units(tmp_path)
     embeddings = np.array([[1.0, 0.0], [0.6, 0.8]], dtype=np.float32)
 
     class QueryModel:
@@ -205,7 +201,7 @@ def test_find_similar_to_query_applies_threshold_filter(tmp_path: Path, monkeypa
 def test_find_similar_to_query_default_threshold_is_search_default(
     tmp_path: Path, monkeypatch
 ) -> None:
-    units = _extract_units(tmp_path)
+    units = extract_arithmetic_units(tmp_path)
     # First row scores 0.6: above the search default (0.50) but far below the
     # duplicate-detection default (0.96); second row scores 0.3 and is dropped.
     embeddings = np.array([[0.6, 0.8], [0.3, 0.9539392]], dtype=np.float32)
@@ -270,27 +266,19 @@ def test_find_semantic_duplicates_skips_incompatible_unit_types(tmp_path: Path) 
     assert duplicates == []
 
 
-def test_get_model_does_not_trust_remote_code_by_default(monkeypatch) -> None:
-    calls: list[dict] = []
-
-    class FakeSentenceTransformer:
-        def __init__(self, *args, **kwargs):
-            calls.append({"args": args, "kwargs": kwargs})
-
-    monkeypatch.setattr(
-        semantic,
-        "_check_semantic_dependencies",
-        lambda: None,
-    )
-    monkeypatch.setattr(sentence_transformers, "SentenceTransformer", FakeSentenceTransformer)
-    semantic.clear_model_cache()
-
-    semantic.get_model("sentence-transformers/all-MiniLM-L6-v2")
-    assert len(calls) == 1
-    assert calls[0]["kwargs"]["trust_remote_code"] is False
-
-
-def test_get_model_passes_revision_and_trust_kwargs(monkeypatch) -> None:
+@pytest.mark.parametrize(
+    ("revision", "trust_remote_code"),
+    [
+        pytest.param(None, None, id="safe-defaults"),
+        pytest.param("test-revision", True, id="trusted-revision"),
+        pytest.param("test-revision", False, id="untrusted-revision"),
+    ],
+)
+def test_get_model_passes_revision_and_trust_options(
+    monkeypatch,
+    revision: str | None,
+    trust_remote_code: bool | None,
+) -> None:
     calls: list[dict] = []
 
     class FakeSentenceTransformer:
@@ -301,48 +289,32 @@ def test_get_model_passes_revision_and_trust_kwargs(monkeypatch) -> None:
     monkeypatch.setattr(sentence_transformers, "SentenceTransformer", FakeSentenceTransformer)
     semantic.clear_model_cache()
 
-    revision = "test-revision"
     semantic.get_model(
         "sentence-transformers/all-MiniLM-L6-v2",
         revision=revision,
-        trust_remote_code=True,
+        trust_remote_code=trust_remote_code,
     )
 
     assert len(calls) == 1
     kwargs = calls[0]["kwargs"]
-    assert kwargs["trust_remote_code"] is True
+    expected_trust = trust_remote_code is True
+    assert kwargs["trust_remote_code"] is expected_trust
+
+    if revision is None:
+        assert "revision" not in kwargs
+        assert "model_kwargs" not in kwargs
+        assert "tokenizer_kwargs" not in kwargs
+        assert "config_kwargs" not in kwargs
+        return
+
     assert kwargs["revision"] == revision
-    assert kwargs["model_kwargs"]["trust_remote_code"] is True
-    assert kwargs["model_kwargs"]["revision"] == revision
-    assert kwargs["tokenizer_kwargs"]["trust_remote_code"] is True
-    assert kwargs["tokenizer_kwargs"]["revision"] == revision
-    assert kwargs["config_kwargs"]["trust_remote_code"] is True
-    assert kwargs["config_kwargs"]["revision"] == revision
-
-
-def test_get_model_keeps_explicit_revision_for_non_default_model(monkeypatch) -> None:
-    calls: list[dict] = []
-
-    class FakeSentenceTransformer:
-        def __init__(self, *args, **kwargs):
-            calls.append({"args": args, "kwargs": kwargs})
-
-    monkeypatch.setattr(semantic, "_check_semantic_dependencies", lambda: None)
-    monkeypatch.setattr(sentence_transformers, "SentenceTransformer", FakeSentenceTransformer)
-    semantic.clear_model_cache()
-
-    revision = "test-revision"
-    semantic.get_model(
-        "sentence-transformers/all-MiniLM-L6-v2", revision=revision, trust_remote_code=False
-    )
-
-    assert len(calls) == 1
-    kwargs = calls[0]["kwargs"]
-    assert kwargs["trust_remote_code"] is False
-    assert kwargs["revision"] == revision
-    assert kwargs["model_kwargs"]["revision"] == revision
-    assert kwargs["tokenizer_kwargs"]["revision"] == revision
-    assert kwargs["config_kwargs"]["revision"] == revision
+    for nested_name in ("model_kwargs", "tokenizer_kwargs", "config_kwargs"):
+        nested = kwargs[nested_name]
+        assert nested["revision"] == revision
+        if expected_trust:
+            assert nested["trust_remote_code"] is True
+        else:
+            assert "trust_remote_code" not in nested
 
 
 @pytest.mark.parametrize("version", ["2.12.9", "2.12.0", "3.0.0", "3.0.0.dev1"])
@@ -414,7 +386,7 @@ def test_get_model_reports_missing_core_dependency(
 
 
 def test_compute_embeddings_retries_with_reduced_batch_before_cpu(monkeypatch, tmp_path) -> None:
-    units = _extract_units(tmp_path)
+    units = extract_arithmetic_units(tmp_path)
     seen_batch_sizes: list[int] = []
 
     class OomThenRecoverModel:
@@ -435,7 +407,7 @@ def test_compute_embeddings_retries_with_reduced_batch_before_cpu(monkeypatch, t
 def test_compute_embeddings_cpu_fallback_retries_once_and_bails_on_persistent_oom(
     monkeypatch, tmp_path
 ) -> None:
-    units = _extract_units(tmp_path)
+    units = extract_arithmetic_units(tmp_path)
     seen_batches: list[tuple[int, str | None]] = []
 
     class PersistentCpuOomModel:

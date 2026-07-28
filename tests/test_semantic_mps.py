@@ -8,12 +8,7 @@ import pytest
 import sentence_transformers
 
 from codedupes import semantic
-from codedupes.models import CodeUnit
 from tests.conftest import extract_arithmetic_units
-
-
-def _extract_units(tmp_path: Path) -> list[CodeUnit]:
-    return extract_arithmetic_units(tmp_path, include_private=True, exclude_patterns=[])
 
 
 def _reset_model_cache_state() -> None:
@@ -52,7 +47,6 @@ def test_model_cache_is_keyed_by_resolved_device(monkeypatch) -> None:
             self.device = device
             moved.append(device)
 
-    _reset_model_cache_state()
     monkeypatch.setattr(semantic, "_configure_semantic_runtime_env", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(semantic, "_check_semantic_dependencies", lambda: None)
     monkeypatch.setattr(semantic, "_prepare_semantic_device", _prepare_device)
@@ -82,7 +76,6 @@ def test_mps_model_load_oom_retries_once_on_cpu(monkeypatch) -> None:
             raise RuntimeError("MPS backend out of memory")
         return FakeModel()
 
-    _reset_model_cache_state()
     monkeypatch.setattr(semantic, "_configure_semantic_runtime_env", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(semantic, "_check_semantic_dependencies", lambda: None)
     monkeypatch.setattr(semantic, "_prepare_semantic_device", _prepare_device)
@@ -111,7 +104,6 @@ def test_sticky_cpu_fallback_reuse_warns_once(monkeypatch, caplog) -> None:
             raise RuntimeError("MPS backend out of memory")
         return FakeModel()
 
-    _reset_model_cache_state()
     monkeypatch.setattr(semantic, "_configure_semantic_runtime_env", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(semantic, "_check_semantic_dependencies", lambda: None)
     monkeypatch.setattr(semantic, "_prepare_semantic_device", _prepare_device)
@@ -130,7 +122,7 @@ def test_mps_embedding_oom_halves_batch_then_moves_model_to_cpu(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
-    units = _extract_units(tmp_path)
+    units = extract_arithmetic_units(tmp_path)
     attempts: list[tuple[int, str | None]] = []
     cache_clears: list[str] = []
     recovery_events: list[str] = []
@@ -176,7 +168,7 @@ def test_mps_embedding_oom_halves_batch_then_moves_model_to_cpu(
 
 
 def test_mps_query_oom_uses_shared_cpu_recovery(monkeypatch, tmp_path: Path) -> None:
-    units = _extract_units(tmp_path)
+    units = extract_arithmetic_units(tmp_path)
     embeddings = np.array([[1.0, 0.0], [0.0, 1.0]], dtype=np.float32)
     attempts: list[str | None] = []
 

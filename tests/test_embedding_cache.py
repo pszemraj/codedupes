@@ -528,17 +528,27 @@ def _fake_local_model_dir(tmp_path: Path, name: str = "gemma-work-copy") -> Path
     return model_dir
 
 
-def test_local_model_dir_full_hit_and_fingerprint_invalidation(tmp_path, monkeypatch):
+def test_local_model_dir_cache_uses_fingerprint_not_revision(tmp_path, monkeypatch):
     units = _five_units(tmp_path)
     model = CountingModel()
     get_model_counts = _patch_get_model(monkeypatch, model)
     model_dir = _fake_local_model_dir(tmp_path)
 
-    compute_embeddings(units, model_name=str(model_dir), cache_scope=tmp_path)
+    compute_embeddings(
+        units,
+        model_name=str(model_dir),
+        revision="requested-revision-a",
+        cache_scope=tmp_path,
+    )
     assert get_model_counts["count"] == 1
     assert len(model.encode_calls) == 1
 
-    second = compute_embeddings(units, model_name=str(model_dir), cache_scope=tmp_path)
+    second = compute_embeddings(
+        units,
+        model_name=str(model_dir),
+        revision="requested-revision-b",
+        cache_scope=tmp_path,
+    )
     assert get_model_counts["count"] == 1
     assert len(model.encode_calls) == 1
     assert second.shape == (5, 4)
@@ -546,24 +556,15 @@ def test_local_model_dir_full_hit_and_fingerprint_invalidation(tmp_path, monkeyp
     # Replacing the weights in place must change the fingerprint revision and
     # invalidate every cached vector for this model directory.
     (model_dir / "model.safetensors").write_text("weights-v2-longer")
-    compute_embeddings(units, model_name=str(model_dir), cache_scope=tmp_path)
+    compute_embeddings(
+        units,
+        model_name=str(model_dir),
+        revision="requested-revision-c",
+        cache_scope=tmp_path,
+    )
     assert get_model_counts["count"] == 2
     assert len(model.encode_calls) == 2
     assert len(model.encode_calls[-1]) == 5
-
-
-def test_local_model_dir_ignores_explicit_revision_for_cache_keys(tmp_path, monkeypatch):
-    units = _five_units(tmp_path)
-    model = CountingModel()
-    get_model_counts = _patch_get_model(monkeypatch, model)
-    model_dir = _fake_local_model_dir(tmp_path)
-
-    compute_embeddings(units, model_name=str(model_dir), revision="main", cache_scope=tmp_path)
-    assert get_model_counts["count"] == 1
-
-    compute_embeddings(units, model_name=str(model_dir), revision="main", cache_scope=tmp_path)
-    assert get_model_counts["count"] == 1
-    assert len(model.encode_calls) == 1
 
 
 def test_local_model_dir_relative_and_absolute_share_cache(tmp_path, monkeypatch):
