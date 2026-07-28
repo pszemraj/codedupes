@@ -513,6 +513,15 @@ def test_size_cap_preserves_fresh_shard_larger_than_cap(tmp_path, monkeypatch, c
     assert "still exceeds its size target after eviction" in caplog.text
 
 
+@pytest.mark.parametrize("value", ["invalid", "nan", "inf", "-inf"])
+def test_invalid_size_cap_uses_default(monkeypatch, value: str):
+    monkeypatch.setenv("CODEDUPES_CACHE_MAX_MB", value)
+
+    assert (
+        embedding_cache._resolve_max_bytes() == embedding_cache.DEFAULT_CACHE_MAX_MB * 1024 * 1024
+    )
+
+
 def test_namespace_compaction_prunes_stale_code_keys_and_preserves_queries(tmp_path):
     cache = EmbeddingCache()
     scope = tmp_path / "proj"

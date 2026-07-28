@@ -106,8 +106,11 @@ def _resolve_max_bytes() -> int:
     raw = os.environ.get("CODEDUPES_CACHE_MAX_MB")
     if raw:
         try:
-            return max(1, int(float(raw))) * 1024 * 1024
-        except ValueError:
+            value = float(raw)
+            if not math.isfinite(value):
+                raise ValueError
+            return max(1, int(value)) * 1024 * 1024
+        except (OverflowError, ValueError):
             pass
     return DEFAULT_CACHE_MAX_MB * 1024 * 1024
 
