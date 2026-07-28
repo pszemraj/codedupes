@@ -51,8 +51,8 @@ replacement for the CLI, output, model-profile, or accelerator source-of-truth d
   pre-truncation prepared text (plus the resolved device and selected dtype for the
   device-dependent EmbeddingGemma family), so unchanged code units hit across runs and single-file
   edits only re-embed the changed units. Writers serialize per shard via advisory locks,
-  non-finite or dimension-mismatched cached vectors are treated as misses, and a fully
-  cached `check`/`search` run skips model load entirely. See
+  malformed shard metadata and non-finite or dimension-mismatched cached vectors are
+  treated as misses, and a fully cached `check`/`search` run skips model load entirely. See
   [docs/caching.md](https://github.com/pszemraj/codedupes/blob/main/docs/caching.md) for
   location, env vars (`CODEDUPES_CACHE_DIR`, `CODEDUPES_NO_CACHE`,
   `CODEDUPES_CACHE_MAX_MB`), the new `codedupes cache info`/`cache clear` commands, and

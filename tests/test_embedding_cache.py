@@ -314,6 +314,25 @@ def test_stale_index_row_out_of_range_recomputes_without_crash(tmp_path, monkeyp
     assert "Embedding cache" in caplog.text
 
 
+def test_invalid_last_used_metadata_is_a_cache_miss(tmp_path, monkeypatch, caplog):
+    monkeypatch.setattr(embedding_cache, "_warned_cache_error", False)
+    cache = EmbeddingCache()
+    scope = tmp_path / "proj"
+    scope.mkdir()
+    vector = np.array([1.0, 2.0], dtype=np.float32)
+    cache.put_many(scope, "model-a", "rev1", [("key", vector)])
+
+    index_path = cache.shard_dir(scope, "model-a", "rev1") / embedding_cache.INDEX_FILENAME
+    payload = json.loads(index_path.read_text(encoding="utf-8"))
+    payload["last_used_at"] = "corrupt"
+    index_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with caplog.at_level("WARNING"):
+        assert cache.get_many(scope, "model-a", "rev1", ["key"]) == {}
+
+    assert "Embedding cache read shard failed" in caplog.text
+
+
 def test_use_cache_false_creates_no_cache_files(tmp_path, monkeypatch):
     units = _five_units(tmp_path)
     model = CountingModel()

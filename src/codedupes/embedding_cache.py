@@ -16,6 +16,7 @@ import contextlib
 import hashlib
 import json
 import logging
+import math
 import os
 import re
 import shutil
@@ -258,6 +259,14 @@ def _shard_is_consistent(index: Any, vectors: Any) -> bool:
     dim = index.get("dim")
     keys_map = index.get("keys")
     if not isinstance(dim, int) or not isinstance(keys_map, dict):
+        return False
+    last_used_at = index.get("last_used_at", 0.0)
+    if isinstance(last_used_at, bool) or not isinstance(last_used_at, (int, float)):
+        return False
+    try:
+        if not math.isfinite(float(last_used_at)):
+            return False
+    except OverflowError:
         return False
     if not isinstance(vectors, np.ndarray) or vectors.ndim != 2:
         return False
