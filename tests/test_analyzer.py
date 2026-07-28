@@ -1251,8 +1251,8 @@ def test_invalid_mode_dependency_raises() -> None:
     with pytest.raises(ValueError, match="require run_semantic=True"):
         AnalyzerConfig(run_semantic=False, model_revision="abc123")
 
-    with pytest.raises(ValueError, match="require run_semantic=True"):
-        AnalyzerConfig(run_semantic=False, embedding_cache=False)
+    config = AnalyzerConfig(run_semantic=False, embedding_cache=False)
+    assert config.embedding_cache is False
 
     with pytest.raises(ValueError, match="require run_traditional=True"):
         AnalyzerConfig(run_traditional=False, tiny_unit_statement_cutoff=5)

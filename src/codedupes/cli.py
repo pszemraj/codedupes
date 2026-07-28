@@ -1193,7 +1193,6 @@ def check_command(
             "min_lines",
             "semantic_unit_type",
             "suppress_test_semantic",
-            "no_cache",
         ]
         specified_ignored = [
             option_name

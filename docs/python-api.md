@@ -118,7 +118,8 @@ clear_model_cache()
   - semantic-only settings require `run_semantic=True`
   - traditional-only settings require `run_traditional=True`
   - `strict_unused=True` requires `run_unused=True`
-- `device`, `mps_fallback`, `mps_memory_fraction`, and `embedding_cache` require `run_semantic=True`.
+- `device`, `mps_fallback`, and `mps_memory_fraction` require `run_semantic=True`.
+  `embedding_cache=False` is accepted when semantic analysis is disabled and has no effect.
 - [Analysis defaults](analysis-defaults.md) covers candidate scope and filtering.
 - [Embedding cache](caching.md) covers persistent cache behavior.
 - [Model profiles](model-profiles.md) covers aliases, thresholds, revisions, and task behavior.

@@ -427,8 +427,6 @@ class AnalyzerConfig:
                 semantic_only_fields.append("batch_size")
             if self.suppress_test_semantic_matches:
                 semantic_only_fields.append("suppress_test_semantic_matches")
-            if not self.embedding_cache:
-                semantic_only_fields.append("embedding_cache")
             if semantic_only_fields:
                 listed = ", ".join(sorted(semantic_only_fields))
                 raise ValueError(f"{listed} require run_semantic=True")

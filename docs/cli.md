@@ -128,7 +128,7 @@ Clear all cached embeddings or only entries for one model. See [Embedding cache]
 - `--mps-fallback` and `--no-mps-fallback` are mutually exclusive
 - `--mps-memory-fraction` must be finite and in `(0, 2]`; it requires `--device mps` or `--device auto`
 - Explicit semantic-analysis controls are rejected with `--traditional-only`, including model/task,
-  candidate-scope, device/runtime, and cache options
+  candidate-scope, and device/runtime options. `--no-cache` is accepted as a harmless no-op.
 - Unsupported-op fallback and codedupes OOM recovery are separate policies; `--no-mps-fallback` does not disable OOM recovery
 - `search` applies semantic threshold filtering before returning `top-k` matches; without an
   explicit `--threshold`/`--semantic-threshold` it uses the model profile search default

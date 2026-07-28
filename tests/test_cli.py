@@ -1106,6 +1106,27 @@ def test_cli_no_cache_flag_disables_embedding_cache(
     assert captured[0].embedding_cache is False
 
 
+def test_cli_traditional_only_accepts_no_cache_as_noop(monkeypatch, tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+    captured = []
+    patch_cli_analyzer(
+        monkeypatch,
+        cli,
+        analyze_result=lambda: _build_result(tmp_path),
+        captured_configs=captured,
+    )
+
+    result = CliRunner().invoke(
+        cli.cli,
+        ["check", str(path), "--traditional-only", "--no-cache"],
+    )
+
+    assert result.exit_code == 1
+    assert captured[0].run_semantic is False
+    assert captured[0].embedding_cache is False
+
+
 def test_cli_check_defaults_to_embedding_cache_enabled(monkeypatch, tmp_path):
     path = tmp_path / "sample.py"
     path.write_text("def entry():\n    return 1\n")
