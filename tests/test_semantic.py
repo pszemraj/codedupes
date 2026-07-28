@@ -525,3 +525,152 @@ def test_compute_embeddings_cpu_fallback_retries_once_and_bails_on_persistent_oo
         (2, "cpu"),
         (1, "cpu"),
     ]
+
+
+_FULL_REVISION = "1" * 40
+
+
+class _WarmCacheModel:
+    """Deterministic embedding model stub used to populate a warm on-disk cache."""
+
+    def __init__(self, dim: int = 2) -> None:
+        self.dim = dim
+        self.encode_calls = 0
+
+    def encode(self, texts, **_kwargs):
+        self.encode_calls += 1
+        return np.array([[1.0, 0.0]] * len(texts), dtype=np.float32)
+
+
+def _fail_if_called(*_args, **_kwargs):
+    """Fail the test whenever the mocked callable it replaces is invoked."""
+    raise AssertionError("this callable must not run on a fully warm cache hit")
+
+
+def _warm_corpus_cache(
+    tmp_path: Path, monkeypatch, model_name: str = "gte-modernbert-base"
+) -> list[CodeUnit]:
+    """Populate the on-disk embedding cache so the corpus is fully covered.
+
+    :param tmp_path: Per-test cache scope and corpus directory.
+    :param monkeypatch: Pytest monkeypatch fixture.
+    :param model_name: Model alias to warm the cache under.
+    :return: Extracted units whose embeddings are now fully cached under ``tmp_path``.
+    """
+    units = extract_arithmetic_units(tmp_path)
+    model = _WarmCacheModel()
+    monkeypatch.setattr(semantic, "get_model", lambda *_args, **_kwargs: model)
+    monkeypatch.setattr(semantic, "_get_loaded_model_commit_hash", lambda _model: None)
+    compute_embeddings(
+        units,
+        model_name=model_name,
+        revision=_FULL_REVISION,
+        device="cpu",
+        cache_scope=tmp_path,
+    )
+    return units
+
+
+def test_compute_embeddings_warm_cache_raises_for_explicit_unavailable_device(
+    tmp_path: Path, monkeypatch
+) -> None:
+    units = _warm_corpus_cache(tmp_path, monkeypatch)
+
+    def _raise_unavailable(*_args, **_kwargs):
+        raise SemanticBackendError("cuda is not available in this environment")
+
+    monkeypatch.setattr(semantic, "_resolve_semantic_device_request", _raise_unavailable)
+    monkeypatch.setattr(semantic, "get_model", _fail_if_called)
+
+    with pytest.raises(SemanticBackendError):
+        compute_embeddings(
+            units,
+            model_name="gte-modernbert-base",
+            revision=_FULL_REVISION,
+            device="cuda",
+            cache_scope=tmp_path,
+        )
+
+
+def test_find_similar_to_query_warm_cache_raises_for_explicit_unavailable_device(
+    tmp_path: Path, monkeypatch
+) -> None:
+    units = extract_arithmetic_units(tmp_path)
+    embeddings = np.array([[1.0, 0.0], [0.0, 1.0]], dtype=np.float32)
+    model = _WarmCacheModel()
+    monkeypatch.setattr(semantic, "get_model", lambda *_args, **_kwargs: model)
+    monkeypatch.setattr(semantic, "_get_loaded_model_commit_hash", lambda _model: None)
+
+    find_similar_to_query(
+        "find addition",
+        units,
+        embeddings,
+        model_name="gte-modernbert-base",
+        revision=_FULL_REVISION,
+        device="cpu",
+        cache_scope=tmp_path,
+    )
+
+    def _raise_unavailable(*_args, **_kwargs):
+        raise SemanticBackendError("cuda is not available in this environment")
+
+    monkeypatch.setattr(semantic, "_resolve_semantic_device_request", _raise_unavailable)
+    monkeypatch.setattr(semantic, "get_model", _fail_if_called)
+
+    with pytest.raises(SemanticBackendError):
+        find_similar_to_query(
+            "find addition",
+            units,
+            embeddings,
+            model_name="gte-modernbert-base",
+            revision=_FULL_REVISION,
+            device="cuda",
+            cache_scope=tmp_path,
+        )
+
+
+def test_compute_embeddings_warm_cache_auto_and_cpu_skip_device_validation(
+    tmp_path: Path, monkeypatch
+) -> None:
+    units = _warm_corpus_cache(tmp_path, monkeypatch)
+
+    validation_calls = {"count": 0}
+
+    def _count_and_raise(*_args, **_kwargs):
+        validation_calls["count"] += 1
+        raise SemanticBackendError("must not be called for auto/cpu on a warm cache")
+
+    monkeypatch.setattr(semantic, "_resolve_semantic_device_request", _count_and_raise)
+    monkeypatch.setattr(semantic, "get_model", _fail_if_called)
+
+    for device in ("auto", "cpu"):
+        result = compute_embeddings(
+            units,
+            model_name="gte-modernbert-base",
+            revision=_FULL_REVISION,
+            device=device,
+            cache_scope=tmp_path,
+        )
+        assert result.shape == (len(units), 2)
+
+    assert validation_calls["count"] == 0
+
+
+def test_compute_embeddings_warm_cache_embeddinggemma_explicit_device_also_raises(
+    tmp_path: Path, monkeypatch
+) -> None:
+    units = _warm_corpus_cache(tmp_path, monkeypatch, model_name="embeddinggemma-300m")
+
+    def _raise_unavailable(*_args, **_kwargs):
+        raise SemanticBackendError("cuda is not available in this environment")
+
+    monkeypatch.setattr(semantic, "_resolve_semantic_device_request", _raise_unavailable)
+
+    with pytest.raises(SemanticBackendError):
+        compute_embeddings(
+            units,
+            model_name="embeddinggemma-300m",
+            revision=_FULL_REVISION,
+            device="cuda",
+            cache_scope=tmp_path,
+        )

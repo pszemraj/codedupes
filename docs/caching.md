@@ -78,8 +78,10 @@ Internals for debugging and the curious; none of this is needed to use the cache
   persistent reuse is skipped for that call rather than caching under a mutable symbolic name.
   Pinning a full commit hash keeps the warm no-model-load path even after the hub cache is
   cleared.
-- A warm hit for `cpu`, `mps`, or macOS `auto` does not import PyTorch. Resolving a
-  CUDA-specific dtype may initialize PyTorch capability checks.
+- A warm hit for `cpu` or `auto` does not import PyTorch. An explicit `--device mps` or
+  `--device cuda` request validates accelerator availability even on a fully warm cache — an
+  unavailable accelerator errors rather than silently serving cached vectors — which imports
+  PyTorch; resolving a CUDA-specific dtype may also initialize capability checks.
 - The cache is never fatal: missing, corrupt, or unwritable cache state degrades to a cache miss
   (or a skipped write), warns once per process, and analysis proceeds with correct results
   either way. A poisoned (NaN/Inf) row reads as a miss and is overwritten in place by the next

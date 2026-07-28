@@ -578,6 +578,32 @@ def _resolve_semantic_device_request(
         raise SemanticBackendError(str(exc)) from exc
 
 
+def _validate_explicit_device_request(
+    device: str | None,
+    *,
+    mps_fallback: bool | None,
+) -> None:
+    """Validate an explicit accelerator device request regardless of cache state.
+
+    ``cpu`` and ``auto`` can never fail this check -- ``auto`` always has a CPU
+    fallback -- so both no-op here, keeping the torch-import-free warm-cache path
+    available for the default device. An explicit ``cuda``/``mps`` request is
+    resolved through :func:`_resolve_semantic_device_request`, which raises the
+    documented :class:`SemanticBackendError` for an unavailable accelerator even
+    when every embedding for this call is already cached: an explicit unavailable
+    ``--device`` must always be an error, never a silent cache-driven no-op.
+
+    :param device: Requested device name.
+    :param mps_fallback: MPS unsupported-op fallback behavior.
+    :return: ``None``.
+    :raises SemanticBackendError: If an explicitly requested device is invalid or unavailable.
+    """
+    normalized = (device or DEFAULT_SEMANTIC_DEVICE).strip().lower()
+    if normalized in {"cpu", "auto"}:
+        return
+    _resolve_semantic_device_request(device, mps_fallback=mps_fallback)
+
+
 def _prepare_semantic_device(
     device: str | None,
     *,
@@ -684,12 +710,9 @@ def _resolve_embeddinggemma_torch_dtype(device: str) -> Any:
     """Choose a stable EmbeddingGemma dtype for the selected device.
 
     :param device: Concrete execution device.
-    :return: Suggested dtype object for Torch models, or ``None``.
+    :return: Suggested dtype object for Torch models.
     """
-    try:
-        import torch
-    except ModuleNotFoundError:
-        return None
+    import torch
 
     if (
         device == "cuda"
@@ -1369,11 +1392,15 @@ def _compute_embeddings_unlocked(
         ``None`` disables caching for this call regardless of ``use_cache``.
     :return: Normalized embedding matrix row-aligned with ``units``.
     :raises ValueError: If ``batch_size`` is not positive.
+    :raises SemanticBackendError: If an explicitly requested device is unavailable,
+        even when every embedding is already cached.
     """
     if batch_size <= 0:
         raise ValueError("batch_size must be > 0")
     if not units:
         return np.zeros((0, 0), dtype=np.float32)
+
+    _validate_explicit_device_request(device, mps_fallback=mps_fallback)
 
     profile = resolve_model_profile(model_name)
     resolved_task = normalize_semantic_task(
@@ -1749,7 +1776,11 @@ def _find_similar_to_query_unlocked(
         ``None`` disables caching for this call regardless of ``use_cache``.
     :return: Up to ``top_k`` ``(unit, similarity)`` pairs at or above the threshold,
         sorted by descending similarity.
+    :raises SemanticBackendError: If an explicitly requested device is unavailable,
+        even when the query embedding is already cached.
     """
+    _validate_explicit_device_request(device, mps_fallback=mps_fallback)
+
     profile = resolve_model_profile(model_name)
     resolved_threshold = (
         threshold if threshold is not None else get_default_search_threshold(model_name)

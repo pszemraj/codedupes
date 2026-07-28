@@ -21,8 +21,9 @@ codedupes search ./src "normalize request payload" --device mps
 3. CPU
 
 An explicit unavailable accelerator is an error. `codedupes` does not silently reinterpret
-`--device mps` as CPU. The only automatic CPU transitions are the documented unsupported-op
-and out-of-memory recovery paths below.
+`--device mps` as CPU, and the check applies even when a warm embedding cache makes inference
+unnecessary. The only automatic CPU transitions are the documented unsupported-op and
+out-of-memory recovery paths below.
 
 ## Unsupported MPS operators
 

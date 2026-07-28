@@ -16,6 +16,11 @@ def _prepare_device(device, *, mps_fallback, mps_memory_fraction):
     return "cpu" if device == "auto" else device
 
 
+def _resolve_device_request(device, *, mps_fallback):
+    del mps_fallback
+    return "cpu" if device == "auto" else device
+
+
 @pytest.fixture(autouse=True)
 def _isolate_model_cache(monkeypatch):
     monkeypatch.setattr(semantic, "clear_device_cache", lambda *_args, **_kwargs: True)
@@ -137,6 +142,9 @@ def test_mps_embedding_oom_halves_batch_then_moves_model_to_cpu(
             return np.array([[1.0, 0.0], [0.0, 1.0]], dtype=np.float32)
 
     model = OomModel()
+    # This test simulates an MPS host: the explicit-device availability check
+    # must be simulated too, or it fails honestly on MPS-less runners.
+    monkeypatch.setattr(semantic, "_resolve_semantic_device_request", _resolve_device_request)
     monkeypatch.setattr(semantic, "_prepare_semantic_device", _prepare_device)
     monkeypatch.setattr(semantic, "get_model", lambda *_args, **_kwargs: model)
     monkeypatch.setattr(semantic, "format_mps_memory_snapshot", lambda: "test-memory")
@@ -179,6 +187,7 @@ def test_mps_query_oom_uses_shared_cpu_recovery(monkeypatch, tmp_path: Path) -> 
             return np.array([[1.0, 0.0]], dtype=np.float32)
 
     model = QueryModel()
+    monkeypatch.setattr(semantic, "_resolve_semantic_device_request", _resolve_device_request)
     monkeypatch.setattr(semantic, "_prepare_semantic_device", _prepare_device)
     monkeypatch.setattr(semantic, "get_model", lambda *_args, **_kwargs: model)
     monkeypatch.setattr(semantic, "clear_device_cache", lambda *_args, **_kwargs: True)
