@@ -88,17 +88,20 @@ def test_full_cache_hit_skips_model_load_and_encode(tmp_path, monkeypatch):
     np.testing.assert_array_equal(first, second)
 
 
-def test_auto_device_cache_key_tracks_resolved_device(tmp_path, monkeypatch):
+def test_auto_device_cache_key_shares_float32_macos_devices(tmp_path, monkeypatch):
     units = _five_units(tmp_path)
     model = CountingModel()
     get_model_counts = _patch_get_model(monkeypatch, model)
     selected_device = {"value": "cpu"}
+    resolution_count = {"value": 0}
     monkeypatch.setattr(semantic, "_configure_semantic_runtime_env", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(
-        semantic,
-        "resolve_semantic_device",
-        lambda _request: selected_device["value"],
-    )
+    monkeypatch.setattr(semantic.sys, "platform", "darwin")
+
+    def resolve_device(_request):
+        resolution_count["value"] += 1
+        return selected_device["value"]
+
+    monkeypatch.setattr(semantic, "resolve_semantic_device", resolve_device)
     monkeypatch.setattr(semantic, "_get_loaded_model_commit_hash", lambda _model: None)
 
     kwargs = {
@@ -110,15 +113,62 @@ def test_auto_device_cache_key_tracks_resolved_device(tmp_path, monkeypatch):
     compute_embeddings(units, **kwargs)
     assert get_model_counts["count"] == 1
     assert len(model.encode_calls) == 1
+    assert resolution_count["value"] == 1
 
     selected_device["value"] = "mps"
-    compute_embeddings(units, **kwargs)
-    assert get_model_counts["count"] == 2
-    assert len(model.encode_calls) == 2
+    second = compute_embeddings(units, **kwargs)
+    assert get_model_counts["count"] == 1
+    assert len(model.encode_calls) == 1
+    assert resolution_count["value"] == 1
+    assert second.shape == (5, model.dim)
 
     compute_embeddings(units, **kwargs)
-    assert get_model_counts["count"] == 2
-    assert len(model.encode_calls) == 2
+    assert get_model_counts["count"] == 1
+    assert len(model.encode_calls) == 1
+    assert resolution_count["value"] == 1
+
+
+def test_embeddinggemma_cache_variant_scopes_only_nondefault_dtype(monkeypatch):
+    profile = semantic.resolve_model_profile("embeddinggemma-300m")
+    monkeypatch.setattr(
+        semantic,
+        "_resolve_semantic_device_request",
+        lambda *_args, **_kwargs: "cuda",
+    )
+    selected_dtype = {"value": "torch.bfloat16"}
+    monkeypatch.setattr(
+        semantic,
+        "_resolve_embeddinggemma_torch_dtype",
+        lambda _device: selected_dtype["value"],
+    )
+
+    assert semantic._cache_variant_for(profile, "cuda", mps_fallback=None) == "dtype=torch.bfloat16"
+
+    selected_dtype["value"] = "torch.float32"
+    assert semantic._cache_variant_for(profile, "cuda", mps_fallback=None) == ""
+
+
+def test_compute_embeddings_uses_public_prepared_text(tmp_path, monkeypatch):
+    units = _five_units(tmp_path)
+    model = CountingModel()
+    _patch_get_model(monkeypatch, model)
+    expected = [
+        semantic.prepare_code_for_embedding(
+            unit,
+            model_name="test-model",
+            instruction_prefix="custom: ",
+        )
+        for unit in units
+    ]
+
+    compute_embeddings(
+        units,
+        model_name="test-model",
+        instruction_prefix="custom: ",
+        cache_scope=None,
+    )
+
+    assert model.encode_calls == [expected]
 
 
 def test_partial_update_only_reencodes_changed_unit(tmp_path, monkeypatch):

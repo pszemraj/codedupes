@@ -32,9 +32,10 @@
 - Added an optional, validated MPS per-process memory fraction. The fraction is ignored (with a
   log message) when the resolved device is not MPS, so `--device auto --mps-memory-fraction X` is
   safe on CPU-only and CUDA hosts.
-- Made model caching device-aware and serialized model lifecycle/inference across
-  threads. Device-dependent cache entries use the resolved device and selected
-  dtype, so `auto` cannot reuse vectors across CPU, CUDA, and MPS runs.
+- Scoped model cache entries by vector-affecting dtype rather than device and
+  serialized model lifecycle/inference across threads. CPU and MPS float32
+  EmbeddingGemma runs share cached vectors, while CUDA bfloat16 vectors remain
+  separate.
 - Added MPS memory diagnostics, synchronized allocator cleanup, adaptive batch-size OOM retries,
   and one final CPU retry. The CPU retry restarts from the originally requested batch size and
   re-enters the halving ladder if host memory also OOMs.

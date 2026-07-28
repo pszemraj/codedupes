@@ -9,11 +9,10 @@ across runs.
   `(canonical model name, resolved model revision, embedding mode, prepared embedding
   text)`. The prepared text is the pre-truncation output of
   `prepare_code_for_embedding(...)`, so the key can be derived without loading the
-  model. For model families whose torch dtype depends on the execution device
-  (currently EmbeddingGemma), the resolved device and selected dtype are also part
-  of the key. An `auto` request therefore resolves to CPU, CUDA, or MPS before
-  lookup, and vectors computed under bfloat16 are never served for a float32 run;
-  `gte-modernbert-base` embeds identically across devices and shares one key space.
+  model. A non-default inference dtype is also part of the key. EmbeddingGemma uses
+  float32 on CPU and MPS, so those devices share one key space; CUDA bfloat16 vectors
+  remain separate from float32 vectors. Other built-in models share one key space
+  across devices.
 - Because the key depends on the exact prepared text, **partial updates happen
   naturally**: editing one function in one file only invalidates that function's cache
   entry; every other unit in the corpus still hits.
@@ -33,9 +32,9 @@ across runs.
   model revision, prepare embedding text, and check the cache *before* touching
   `sentence-transformers`. If every code unit (and, for `search`, the query) is
   already cached, the model is never loaded at all. A warm `check`/`search` run
-  skips model load and inference entirely. Device-sensitive families may initialize
-  PyTorch capability checks to resolve `auto` and select the cache variant, but do
-  not load model weights.
+  skips model load and inference entirely. Resolving a CUDA-specific dtype may
+  initialize PyTorch capability checks, but CPU, MPS, and macOS `auto` cache hits do
+  not import PyTorch.
 - Query embeddings from `codedupes search` are cached in the same shard as the
   corpus they were searched against, keyed on the prepared query text. Repeating an
   identical search is a full cache hit end-to-end.

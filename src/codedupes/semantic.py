@@ -343,9 +343,10 @@ def _cache_variant_for(
     """Build the vector-affecting cache-key variant for one model family.
 
     EmbeddingGemma selects its torch dtype from the execution device (bfloat16 vs
-    float32), so its cache identity records the concrete device selected from the
-    request and the dtype used to load the model. This prevents ``auto`` from sharing
-    vectors across CPU, CUDA, and MPS runs.
+    float32), so its cache identity records only a non-default dtype. CPU and MPS
+    both use float32 and therefore share a key space without importing PyTorch to
+    resolve the device. On macOS, ``auto`` can only select MPS or CPU, so it shares
+    that same model-free warm path.
     Families that embed identically across devices share one key space.
 
     :param profile: Resolved model profile.
@@ -356,13 +357,21 @@ def _cache_variant_for(
     if profile.family not in _DEVICE_DTYPE_FAMILIES:
         return ""
 
+    normalized_device = device.strip().lower()
+    if normalized_device in {"cpu", "mps"} or (
+        normalized_device == "auto" and sys.platform == "darwin"
+    ):
+        return ""
+
     resolved_device = _resolve_semantic_device_request(
         device,
         mps_fallback=mps_fallback,
     )
     selected_dtype = _resolve_embeddinggemma_torch_dtype(resolved_device)
     dtype_name = str(selected_dtype) if selected_dtype is not None else "default"
-    return f"device={resolved_device};dtype={dtype_name}"
+    if dtype_name in {"float32", "fp32", "torch.float32"}:
+        return ""
+    return f"dtype={dtype_name}"
 
 
 def _safe_package_version(package_name: str) -> str | None:
@@ -1021,6 +1030,16 @@ def _resolve_instruction_prefix(
     return _get_instruction(profile, mode, semantic_task)
 
 
+def _prefix_embedding_text(instruction: str, text: str) -> str:
+    """Join a resolved instruction with one embedding input.
+
+    :param instruction: Resolved model instruction prefix.
+    :param text: Source or query text, already normalized for its input mode.
+    :return: Exact pre-truncation text used for cache identity and inference.
+    """
+    return f"{instruction}{text}"
+
+
 def prepare_code_for_embedding(
     unit: CodeUnit,
     model_name: str = DEFAULT_MODEL,
@@ -1050,7 +1069,7 @@ def prepare_code_for_embedding(
         instruction_prefix,
         semantic_task=resolved_task,
     )
-    return f"{instruction}{source}"
+    return _prefix_embedding_text(instruction, source)
 
 
 def _encode_texts(
@@ -1288,7 +1307,7 @@ def _compute_embeddings_unlocked(
         instruction_prefix,
         semantic_task=resolved_task,
     )
-    prepared_texts = [f"{instruction}{unit.source.strip()}" for unit in units]
+    prepared_texts = [_prefix_embedding_text(instruction, unit.source.strip()) for unit in units]
 
     cache = get_embedding_cache() if (use_cache and cache_scope is not None) else None
     cache_revision = (
@@ -1639,7 +1658,7 @@ def _find_similar_to_query_unlocked(
         instruction_prefix,
         semantic_task=resolved_task,
     )
-    query_text = f"{instruction}{query}"
+    query_text = _prefix_embedding_text(instruction, query)
 
     cache = get_embedding_cache() if (use_cache and cache_scope is not None) else None
     cache_revision = (
