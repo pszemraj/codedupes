@@ -6,6 +6,7 @@ from textwrap import dedent
 from codedupes import traditional as traditional_module
 from codedupes.traditional import (
     build_reference_graph,
+    extract_identifiers,
     find_potentially_unused,
     run_traditional_analysis,
 )
@@ -24,7 +25,7 @@ def test_exact_duplicates_via_ast_hash(tmp_path: Path) -> None:
     ).strip()
     units = extract_units(tmp_path, source, include_private=True)
 
-    exact, near, _ = run_traditional_analysis(units, jaccard_threshold=0.85)
+    exact, near = run_traditional_analysis(units, jaccard_threshold=0.85)
 
     assert len(exact) == 1
     assert len(near) == 0
@@ -47,12 +48,18 @@ def test_near_duplicates_threshold_boundary(tmp_path: Path) -> None:
     ).strip()
     units = extract_units(tmp_path, source, include_private=True)
 
-    exact_low, near_low, _ = run_traditional_analysis(units, jaccard_threshold=0.3)
-    _exact_high, near_high, _ = run_traditional_analysis(units, jaccard_threshold=0.95)
+    exact_low, near_low = run_traditional_analysis(units, jaccard_threshold=0.3)
+    _exact_high, near_high = run_traditional_analysis(units, jaccard_threshold=0.95)
 
     assert len(near_low) >= 1
     assert len(near_high) == 0
     assert len(exact_low) == 0
+
+
+def test_identifier_extraction_ignores_python_builtins() -> None:
+    identifiers = extract_identifiers("def count(values):\n    return len(list(values))\n")
+
+    assert identifiers == {"count", "values"}
 
 
 def test_alias_aware_reference_graph(tmp_path: Path) -> None:
@@ -160,7 +167,7 @@ def test_pyproject_entry_points_mark_as_used(tmp_path: Path) -> None:
     assert "helper" in names
 
 
-def test_main_block_calls_are_parsed_once_per_file(tmp_path: Path, monkeypatch) -> None:
+def test_main_block_calls_are_resolved_once_per_file(tmp_path: Path, monkeypatch) -> None:
     source = dedent(
         """
         def first():
@@ -175,20 +182,31 @@ def test_main_block_calls_are_parsed_once_per_file(tmp_path: Path, monkeypatch) 
     ).strip()
     units = extract_units(tmp_path, source, include_private=True)
     calls: list[Path] = []
+    resolutions: list[str] = []
 
     def fake_extract_main_block_calls(path: Path) -> set[str]:
         calls.append(path)
         return {"first"}
+
+    def fake_resolve_call_targets(call: str, _aliases: dict[str, str]) -> set[str]:
+        resolutions.append(call)
+        return {call}
 
     monkeypatch.setattr(
         traditional_module,
         "_extract_main_block_calls",
         fake_extract_main_block_calls,
     )
+    monkeypatch.setattr(
+        traditional_module,
+        "_resolve_call_targets",
+        fake_resolve_call_targets,
+    )
 
     build_reference_graph(units)
 
     assert len(calls) == 1
+    assert resolutions == ["first"]
 
 
 def test_unused_analysis_skips_only_proven_ast_visitor_hooks(tmp_path: Path) -> None:

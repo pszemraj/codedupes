@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import ast
-import keyword
+import builtins
 import logging
 import tomllib
 from collections import defaultdict
 from itertools import combinations
 from pathlib import Path
 
+from codedupes.constants import DEFAULT_TRADITIONAL_THRESHOLD
 from codedupes.models import CodeUnit, CodeUnitType, DuplicatePair
 from codedupes.pairs import ordered_pair_key
 
@@ -54,7 +55,7 @@ def jaccard_similarity(set_a: set[str], set_b: set[str]) -> float:
         return 0.0
     intersection = len(set_a & set_b)
     union = len(set_a | set_b)
-    return intersection / union if union > 0 else 0.0
+    return intersection / union
 
 
 def extract_identifiers(source: str) -> set[str]:
@@ -84,22 +85,13 @@ def _normalize_identifiers(identifiers: set[str]) -> set[str]:
     :param identifiers: Raw identifier names.
     :return: Normalized filtered identifiers.
     """
-    ignored = set(keyword.kwlist) | set(dir(__builtins__))
-    normalized = set()
-    for ident in identifiers:
-        if not ident:
-            continue
-        if ident in ignored:
-            continue
-        if ident.isdigit():
-            continue
-        normalized.add(ident)
-    return normalized
+    ignored = set(dir(builtins))
+    return identifiers - ignored
 
 
 def find_near_duplicates_jaccard(
     units: list[CodeUnit],
-    threshold: float = 0.8,
+    threshold: float = DEFAULT_TRADITIONAL_THRESHOLD,
 ) -> list[DuplicatePair]:
     """Find near-duplicates via Jaccard similarity on identifiers.
 
@@ -267,10 +259,10 @@ def build_reference_graph(units: list[CodeUnit], project_root: Path | None = Non
     """
     by_name: dict[str, list[CodeUnit]] = defaultdict(list)
     for unit in units:
-        by_name[unit.name].append(unit)
         parts = unit.qualified_name.split(".")
-        for i in range(len(parts)):
-            by_name[".".join(parts[i:])].append(unit)
+        aliases = {unit.name, *(".".join(parts[i:]) for i in range(len(parts)))}
+        for alias in aliases:
+            by_name[alias].append(unit)
 
     alias_map_by_file: dict[Path, dict[str, str]] = {}
     for unit in units:
@@ -287,14 +279,10 @@ def build_reference_graph(units: list[CodeUnit], project_root: Path | None = Non
                         candidate.references.add(unit.uid)
 
     # Seed references from __main__ blocks.
-    main_block_calls_by_file: dict[Path, set[str]] = {}
-    for file_path in alias_map_by_file:
-        main_block_calls_by_file[file_path] = _extract_main_block_calls(file_path)
-
-    for unit in units:
-        caller_uid = f"__main__::{unit.file_path}"
-        for call in main_block_calls_by_file.get(unit.file_path, set()):
-            for target in _resolve_call_targets(call, alias_map_by_file.get(unit.file_path, {})):
+    for file_path, file_aliases in alias_map_by_file.items():
+        caller_uid = f"__main__::{file_path}"
+        for call in _extract_main_block_calls(file_path):
+            for target in _resolve_call_targets(call, file_aliases):
                 for candidate in by_name.get(target, []):
                     candidate.references.add(caller_uid)
 
@@ -370,8 +358,6 @@ def find_potentially_unused(units: list[CodeUnit], strict_unused: bool = False) 
 
         if unit.is_likely_api:
             continue
-        if unit.name == "__init__":
-            continue
         if unit.name.startswith("get_") or unit.name.startswith("set_"):
             continue
         if "@abstractmethod" in unit.source or "@abc.abstractmethod" in unit.source:
@@ -386,24 +372,15 @@ def find_potentially_unused(units: list[CodeUnit], strict_unused: bool = False) 
 
 def run_traditional_analysis(
     units: list[CodeUnit],
-    jaccard_threshold: float = 0.85,
-    compute_unused: bool = True,
-    strict_unused: bool = False,
-    project_root: Path | None = None,
-) -> tuple[list[DuplicatePair], list[DuplicatePair], list[CodeUnit]]:
-    """Run all traditional duplicate detection methods.
+    jaccard_threshold: float = DEFAULT_TRADITIONAL_THRESHOLD,
+) -> tuple[list[DuplicatePair], list[DuplicatePair]]:
+    """Run traditional exact and near-duplicate detection.
 
     :param units: Candidate code units.
     :param jaccard_threshold: Similarity threshold for near-duplicate detection.
-    :param compute_unused: Whether to compute unused candidates.
-    :param strict_unused: Whether to keep public functions in unused results.
-    :param project_root: Optional project root for reference graph and entry points.
-    :return: Exact duplicates, near duplicates, and potentially unused units.
+    :return: Exact and near-duplicate lists.
     """
     logger.info(f"Running traditional analysis on {len(units)} code units")
-
-    if compute_unused:
-        build_reference_graph(units, project_root=project_root)
 
     ast_dupes = _find_exact_duplicates(units, "_ast_hash", "ast_hash")
     token_dupes = _find_exact_duplicates(units, "_token_hash", "token_hash")
@@ -415,7 +392,4 @@ def run_traditional_analysis(
     near = [d for d in near if ordered_pair_key(d.unit_a, d.unit_b) not in exact_pairs]
     logger.info(f"Found {len(near)} near duplicates (Jaccard)")
 
-    unused = find_potentially_unused(units, strict_unused=strict_unused) if compute_unused else []
-    logger.info(f"Found {len(unused)} potentially unused code units")
-
-    return exact, _dedupe_duplicate_pairs(near), unused
+    return exact, _dedupe_duplicate_pairs(near)

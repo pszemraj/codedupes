@@ -559,19 +559,13 @@ class CodeAnalyzer:
 
         if self.config.run_traditional:
             traditional_duplicate_units = units
-            compute_unused_with_traditional = self.config.run_unused
             if self.config.run_semantic:
                 # In combined mode, keep traditional duplicate scope aligned with semantic scope.
                 traditional_duplicate_units = semantic_candidates
-                # Unused analysis should still operate on the full extraction set.
-                compute_unused_with_traditional = False
 
-            exact_dupes, near_dupes, unused = run_traditional_analysis(
+            exact_dupes, near_dupes = run_traditional_analysis(
                 traditional_duplicate_units,
                 jaccard_threshold=self.config.jaccard_threshold,
-                compute_unused=compute_unused_with_traditional,
-                project_root=path,
-                strict_unused=self.config.strict_unused,
             )
             if self.config.filter_tiny_traditional:
                 exact_dupes, near_dupes = _filter_tiny_traditional_duplicates(
@@ -582,10 +576,7 @@ class CodeAnalyzer:
                 )
             traditional_duplicates = exact_dupes + near_dupes
 
-            if self.config.run_semantic and self.config.run_unused:
-                build_reference_graph(units, project_root=path)
-                unused = find_potentially_unused(units, strict_unused=self.config.strict_unused)
-        elif self.config.run_unused:
+        if self.config.run_unused:
             build_reference_graph(units, project_root=path)
             unused = find_potentially_unused(units, strict_unused=self.config.strict_unused)
 
