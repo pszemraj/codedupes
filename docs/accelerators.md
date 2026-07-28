@@ -41,7 +41,10 @@ PyTorch controls unsupported-operator fallback through
 
 Set this before any other code imports PyTorch. If a long-lived Python process has already imported
 PyTorch, changing the setting may require a process restart; `codedupes` emits a warning in that
-case.
+case. The Python API intentionally leaves `PYTORCH_ENABLE_MPS_FALLBACK` at the configured value
+because PyTorch reads it as process-wide runtime state; the previous environment value is not
+restored after analysis. Library embedders should configure the policy once during process startup
+or isolate analyses that need different policies in separate processes.
 
 Unsupported-op fallback is different from out-of-memory recovery. Disabling unsupported-op
 fallback does not disable the explicit OOM recovery policy described next.

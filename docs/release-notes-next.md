@@ -58,6 +58,9 @@
 
 ## Static-analysis fixes
 
+- Identifier normalization now filters Python's actual built-in names through the
+  `builtins` module. Traditional Jaccard and hybrid scores can therefore change for
+  code that uses built-in functions or types.
 - `visit_*` hooks are excluded from unused-code results only when their base resolves through an
   `ast.NodeVisitor` or `ast.NodeTransformer` import, including aliases, or through a proven local
   subclass. Unrelated local or imported visitor classes remain eligible for unused-code analysis.
@@ -66,6 +69,8 @@
   `search()`. See [Python API](python-api.md#semantic-query-search).
 - Absolute paths passed without the required `check` or `search` command now produce a CLI usage
   error instead of help with exit code zero.
+- `--traditional-only --no-cache` is accepted as a no-op instead of rejected as a
+  contradictory semantic setting.
 
 ## Validation boundary
 
