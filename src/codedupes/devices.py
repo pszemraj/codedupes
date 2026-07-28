@@ -320,6 +320,24 @@ def _safe_int_call(owner: Any, name: str) -> int | None:
         return None
 
 
+def _read_mps_memory_snapshot(torch_module: Any) -> dict[str, int]:
+    """Read allocator statistics from an available PyTorch MPS runtime.
+
+    :param torch_module: Imported PyTorch module with available MPS support.
+    :return: Available MPS allocator statistics in bytes.
+    """
+    mps = getattr(torch_module, "mps", None)
+    if mps is None:
+        return {}
+
+    mapping = {
+        "current_allocated": _safe_int_call(mps, "current_allocated_memory"),
+        "driver_allocated": _safe_int_call(mps, "driver_allocated_memory"),
+        "recommended_max": _safe_int_call(mps, "recommended_max_memory"),
+    }
+    return {key: value for key, value in mapping.items() if value is not None}
+
+
 def get_mps_memory_snapshot() -> dict[str, int]:
     """Return available PyTorch MPS allocator statistics in bytes.
 
@@ -334,17 +352,7 @@ def get_mps_memory_snapshot() -> dict[str, int]:
     _, available = _mps_capabilities(torch_module)
     if not available:
         return {}
-
-    mps = getattr(torch_module, "mps", None)
-    if mps is None:
-        return {}
-
-    mapping = {
-        "current_allocated": _safe_int_call(mps, "current_allocated_memory"),
-        "driver_allocated": _safe_int_call(mps, "driver_allocated_memory"),
-        "recommended_max": _safe_int_call(mps, "recommended_max_memory"),
-    }
-    return {key: value for key, value in mapping.items() if value is not None}
+    return _read_mps_memory_snapshot(torch_module)
 
 
 def format_bytes(value: int | None) -> str:
@@ -361,7 +369,6 @@ def format_bytes(value: int | None) -> str:
         if abs(amount) < 1024.0 or unit == units[-1]:
             return f"{amount:.1f} {unit}"
         amount /= 1024.0
-    return f"{amount:.1f} TiB"
 
 
 def format_mps_memory_snapshot(snapshot: dict[str, int] | None = None) -> str:
@@ -510,7 +517,7 @@ def get_device_diagnostics(
         resolved = None
         error = str(exc)
 
-    memory = get_mps_memory_snapshot() if mps_available else {}
+    memory = _read_mps_memory_snapshot(torch_module) if mps_available else {}
     return DeviceDiagnostics(
         requested=requested,
         resolved=resolved,

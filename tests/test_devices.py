@@ -204,10 +204,18 @@ def test_clear_mps_cache_synchronizes_then_collects_then_empties(monkeypatch) ->
 
 def test_device_diagnostics_reports_mps_memory(monkeypatch) -> None:
     torch_module = _fake_torch(mps_built=True, mps_available=True)
-    monkeypatch.setattr(devices, "_load_torch", lambda: torch_module)
+    load_calls = 0
+
+    def load_torch():
+        nonlocal load_calls
+        load_calls += 1
+        return torch_module
+
+    monkeypatch.setattr(devices, "_load_torch", load_torch)
 
     diagnostics = devices.get_device_diagnostics("mps")
 
+    assert load_calls == 1
     assert diagnostics.resolved == "mps"
     assert diagnostics.mps_built is True
     assert diagnostics.mps_available is True
