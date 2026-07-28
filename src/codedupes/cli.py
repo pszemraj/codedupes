@@ -1497,24 +1497,6 @@ def search_command(
     raise click.exceptions.Exit(0)
 
 
-def _safe_cache_stats() -> dict[str, Any]:
-    """Fetch embedding-cache statistics without ever raising into the CLI.
-
-    :return: Cache stats dict, or a disabled/empty fallback dict on failure.
-    """
-    try:
-        return EmbeddingCache().stats()
-    except Exception:  # noqa: BLE001 - cache introspection must never break the CLI
-        return {
-            "path": "unknown",
-            "disabled": True,
-            "entries": 0,
-            "size_bytes": 0,
-            "models": {},
-            "repos": [],
-        }
-
-
 @cli.command("info", help="Print tool and model defaults")
 def info_command() -> None:
     """Print version and default settings."""
@@ -1570,7 +1552,7 @@ def info_command() -> None:
         if profile.default_revision is not None:
             click.echo(f"      default_revision: {profile.default_revision}")
         click.echo(f"      default_trust_remote_code: {profile.default_trust_remote_code}")
-    cache_stats = _safe_cache_stats()
+    cache_stats = EmbeddingCache().stats()
     click.echo(f"Embedding cache path: {cache_stats['path']}")
     click.echo(
         f"Embedding cache entries: {cache_stats['entries']} "
@@ -1588,7 +1570,7 @@ def cache_group() -> None:
 @cache_group.command("info", help="Show embedding cache location, size, and breakdown")
 def cache_info_command() -> None:
     """Print embedding cache path, entry counts, size, and per-model/per-repo breakdown."""
-    stats = _safe_cache_stats()
+    stats = EmbeddingCache().stats()
     click.echo(f"Cache path: {stats['path']}")
     click.echo(f"Disabled via CODEDUPES_NO_CACHE: {stats['disabled']}")
     click.echo(f"Entries: {stats['entries']}")

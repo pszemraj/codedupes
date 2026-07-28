@@ -333,6 +333,38 @@ def test_invalid_last_used_metadata_is_a_cache_miss(tmp_path, monkeypatch, caplo
     assert "Embedding cache read shard failed" in caplog.text
 
 
+@pytest.mark.parametrize(
+    ("field", "invalid_value"),
+    [
+        ("keys", 3),
+        ("last_used_at", True),
+        ("last_used_at", float("nan")),
+        ("dim", False),
+    ],
+)
+def test_malformed_metadata_is_safe_for_stats_and_clear(tmp_path, field, invalid_value):
+    cache = EmbeddingCache()
+    scope = tmp_path / "proj"
+    scope.mkdir()
+    cache.put_many(
+        scope,
+        "model-a",
+        "rev1",
+        [("key", np.array([1.0, 2.0], dtype=np.float32))],
+    )
+    shard_dir = cache.shard_dir(scope, "model-a", "rev1")
+    index_path = shard_dir / embedding_cache.INDEX_FILENAME
+    payload = json.loads(index_path.read_text(encoding="utf-8"))
+    payload[field] = invalid_value
+    index_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    stats = cache.stats()
+    assert stats["entries"] == 0
+    assert stats["models"] == {}
+    assert cache.clear() == 0
+    assert not shard_dir.exists()
+
+
 def test_use_cache_false_creates_no_cache_files(tmp_path, monkeypatch):
     units = _five_units(tmp_path)
     model = CountingModel()

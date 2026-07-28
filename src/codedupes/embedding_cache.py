@@ -247,33 +247,67 @@ def _shard_write_lock(shard_dir: Path) -> Iterator[bool]:
         os.close(lock_fd)
 
 
-def _shard_is_consistent(index: Any, vectors: Any) -> bool:
-    """Validate that a loaded index and vector matrix are mutually consistent.
+def _validate_shard_metadata(payload: Any) -> dict[str, Any] | None:
+    """Validate and normalize one parsed shard index.
+
+    :param payload: Parsed ``index.json`` payload.
+    :return: Normalized metadata dictionary, or ``None`` when invalid.
+    """
+    if not isinstance(payload, dict) or payload.get("schema") != _SCHEMA_VERSION:
+        return None
+
+    model = payload.get("model")
+    revision = payload.get("revision")
+    dim = payload.get("dim")
+    keys_map = payload.get("keys")
+    if not isinstance(model, str) or not isinstance(revision, str):
+        return None
+    if isinstance(dim, bool) or not isinstance(dim, int) or dim < 1:
+        return None
+    if not isinstance(keys_map, dict) or not all(
+        isinstance(key, str) and not isinstance(row, bool) and isinstance(row, int) and row >= 0
+        for key, row in keys_map.items()
+    ):
+        return None
+
+    last_used_at = payload.get("last_used_at", 0.0)
+    if isinstance(last_used_at, bool) or not isinstance(last_used_at, (int, float)):
+        return None
+    try:
+        normalized_last_used_at = float(last_used_at)
+        if not math.isfinite(normalized_last_used_at):
+            return None
+    except OverflowError:
+        return None
+
+    return {
+        "schema": _SCHEMA_VERSION,
+        "model": model,
+        "revision": revision,
+        "dim": dim,
+        "keys": dict(keys_map),
+        "last_used_at": normalized_last_used_at,
+    }
+
+
+def _validate_shard(index: Any, vectors: Any) -> dict[str, Any] | None:
+    """Validate one shard's metadata and vector matrix together.
 
     :param index: Parsed ``index.json`` payload.
     :param vectors: Loaded ``vectors.npy`` array.
-    :return: ``True`` when the schema, dimensions, and row references all line up.
+    :return: Normalized metadata dictionary, or ``None`` when inconsistent.
     """
-    if not isinstance(index, dict) or index.get("schema") != _SCHEMA_VERSION:
-        return False
-    dim = index.get("dim")
-    keys_map = index.get("keys")
-    if not isinstance(dim, int) or not isinstance(keys_map, dict):
-        return False
-    last_used_at = index.get("last_used_at", 0.0)
-    if isinstance(last_used_at, bool) or not isinstance(last_used_at, (int, float)):
-        return False
-    try:
-        if not math.isfinite(float(last_used_at)):
-            return False
-    except OverflowError:
-        return False
+    metadata = _validate_shard_metadata(index)
+    if metadata is None:
+        return None
     if not isinstance(vectors, np.ndarray) or vectors.ndim != 2:
-        return False
-    if vectors.dtype != np.float32 or vectors.shape[1] != dim:
-        return False
+        return None
+    if vectors.dtype != np.float32 or vectors.shape[1] != metadata["dim"]:
+        return None
     n_rows = vectors.shape[0]
-    return all(isinstance(row, int) and 0 <= row < n_rows for row in keys_map.values())
+    if any(row >= n_rows for row in metadata["keys"].values()):
+        return None
+    return metadata
 
 
 def _read_shard(shard_dir: Path) -> tuple[np.ndarray, dict[str, int], float] | None:
@@ -301,13 +335,12 @@ def _read_shard(shard_dir: Path) -> tuple[np.ndarray, dict[str, int], float] | N
         _warn_once("read shard", exc)
         return None
 
-    if not _shard_is_consistent(index, vectors):
+    metadata = _validate_shard(index, vectors)
+    if metadata is None:
         _warn_once("read shard", ValueError(f"inconsistent shard at {shard_dir}"))
         return None
 
-    keys_map = {str(key): int(row) for key, row in index["keys"].items()}
-    last_used_at = float(index.get("last_used_at", 0.0))
-    return vectors, keys_map, last_used_at
+    return vectors, metadata["keys"], metadata["last_used_at"]
 
 
 def _atomic_write_shard(
@@ -465,7 +498,7 @@ def _read_shard_meta(shard_dir: Path) -> dict[str, Any] | None:
         return None
     try:
         payload = json.loads(index_path.read_text(encoding="utf-8"))
-        return payload if isinstance(payload, dict) else None
+        return _validate_shard_metadata(payload)
     except (OSError, ValueError):
         return None
 
@@ -516,8 +549,8 @@ def _maybe_evict(repos_dir: Path, protect: Path | None = None) -> None:
             :return: ``last_used_at`` from the index, or directory mtime as a fallback.
             """
             meta = _read_shard_meta(shard_dir)
-            if meta is not None and isinstance(meta.get("last_used_at"), (int, float)):
-                return float(meta["last_used_at"])
+            if meta is not None:
+                return meta["last_used_at"]
             try:
                 return shard_dir.stat().st_mtime
             except OSError:
@@ -651,11 +684,12 @@ class EmbeddingCache:
             for shard_dir in _iter_shard_dirs(self.repos_dir):
                 meta = _read_shard_meta(shard_dir)
                 count = len(meta.get("keys", {})) if meta else 0
-                model_name = (meta.get("model") if meta else None) or shard_dir.name
                 size = _shard_size_bytes(shard_dir)
                 info["entries"] += count
                 info["size_bytes"] += size
-                info["models"][model_name] = info["models"].get(model_name, 0) + count
+                if meta is not None:
+                    model_name = meta["model"]
+                    info["models"][model_name] = info["models"].get(model_name, 0) + count
                 totals = repo_totals.setdefault(
                     shard_dir.parent.name, {"shards": 0, "entries": 0, "size_bytes": 0}
                 )
