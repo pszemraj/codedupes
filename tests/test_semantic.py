@@ -8,6 +8,7 @@ import pytest
 import sentence_transformers
 
 from codedupes import semantic
+from codedupes.embedding_cache import EmbeddingCache
 from codedupes.models import CodeUnit, CodeUnitType
 from codedupes.semantic import (
     SemanticBackendError,
@@ -627,6 +628,35 @@ def test_find_similar_to_query_warm_cache_raises_for_explicit_unavailable_device
             device="cuda",
             cache_scope=tmp_path,
         )
+
+
+def test_query_embedding_cache_put_is_fifo_capped(tmp_path: Path, monkeypatch) -> None:
+    units = extract_arithmetic_units(tmp_path)
+    embeddings = np.array([[1.0, 0.0], [0.0, 1.0]], dtype=np.float32)
+    model = _WarmCacheModel()
+    monkeypatch.setattr(semantic, "get_model", lambda *_args, **_kwargs: model)
+    monkeypatch.setattr(semantic, "_get_loaded_model_commit_hash", lambda _model: None)
+
+    captured: dict[str, object] = {}
+    original_put_many = EmbeddingCache.put_many
+
+    def _recording_put_many(self, *args, **kwargs):
+        captured["max_namespace_keys"] = kwargs.get("max_namespace_keys")
+        return original_put_many(self, *args, **kwargs)
+
+    monkeypatch.setattr(EmbeddingCache, "put_many", _recording_put_many)
+
+    find_similar_to_query(
+        "find addition",
+        units,
+        embeddings,
+        model_name="gte-modernbert-base",
+        revision=_FULL_REVISION,
+        device="cpu",
+        cache_scope=tmp_path,
+    )
+
+    assert captured["max_namespace_keys"] == semantic._MAX_CACHED_QUERY_KEYS
 
 
 def test_compute_embeddings_warm_cache_auto_and_cpu_skip_device_validation(

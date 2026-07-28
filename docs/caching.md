@@ -70,7 +70,8 @@ Internals for debugging and the curious; none of this is needed to use the cache
   generation, and serialize through per-shard advisory file locks, so a concurrent reader can
   never pair an old key map with rebuilt rows.
 - Stale rows from edited or deleted units are compacted per namespace once they exceed twice the
-  live corpus; whole-shard LRU eviction is the final global size bound.
+  live corpus; cached search queries are FIFO-capped at 512 per namespace; whole-shard LRU
+  eviction is the final global size bound.
 - Unpinned revisions (the default profiles) resolve through the local Hugging Face cache before
   any model-free hit. After any model load, the true loaded commit hash is double-checked; on a
   mismatch, pre-load hits are discarded and re-keyed under the true revision so one result

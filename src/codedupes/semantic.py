@@ -389,6 +389,11 @@ def _select_cache_miss_indices(
 
 _DEVICE_DTYPE_FAMILIES = frozenset({"embeddinggemma"})
 
+# Query texts are unbounded user input with no live-corpus set to compact
+# against, so cap them FIFO per namespace instead of letting unique searches
+# accumulate until whole-shard LRU eviction.
+_MAX_CACHED_QUERY_KEYS = 512
+
 
 def _cache_variant_for(
     profile: SemanticModelProfile,
@@ -1910,6 +1915,7 @@ def _find_similar_to_query_unlocked(
                     cache_revision,
                     [(cache_key, query_embedding)],
                     namespace=cache_namespace,
+                    max_namespace_keys=_MAX_CACHED_QUERY_KEYS,
                 )
 
     similarities = embeddings @ query_embedding
