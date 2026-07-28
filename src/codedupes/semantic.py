@@ -1139,9 +1139,6 @@ def _encode_with_retries(
 
         # This block runs outside the exception handler so the original traceback
         # no longer retains inference frames while the allocator cache is cleared.
-        if oom_device is None or oom_error is None:
-            raise RuntimeError("unreachable: OOM state lost during retry handling")
-
         if oom_device == "mps":
             logger.warning(
                 "MPS OOM during %s at batch_size=%d (%s)",
