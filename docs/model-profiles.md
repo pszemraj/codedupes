@@ -30,8 +30,9 @@ Notes:
 
 - Built-in alias keys and known aliases resolve to the profile's canonical model ID.
 - A model name that is an existing directory on disk is treated as a local
-  model copy and canonicalized to its resolved absolute path, so relative and
-  absolute spellings share one cache identity.
+  model copy before built-in aliases are considered, then canonicalized to its
+  resolved absolute path so relative and absolute spellings share one cache
+  identity.
 - Known local model families are inferred from a recognizable directory name,
   Hugging Face cache ancestor, saved configuration, or model-card title.
   Unrecognized local models use the generic thresholds.

@@ -239,15 +239,14 @@ def resolve_model_profile(model_name: str) -> SemanticModelProfile:
     :return: Matching profile from builtins or a dynamic fallback.
     """
     normalized = _normalize_model_key(model_name)
-    builtin = _BUILTIN_ALIAS_MAP.get(normalized)
-    if builtin is not None:
-        return builtin
-
     local_path = resolve_local_model_path(model_name)
     if local_path is not None:
         canonical = str(local_path)
         local_family = _infer_local_model_family(local_path)
     else:
+        builtin = _BUILTIN_ALIAS_MAP.get(normalized)
+        if builtin is not None:
+            return builtin
         canonical = model_name
         local_family = None
 

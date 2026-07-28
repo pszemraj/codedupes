@@ -67,6 +67,20 @@ def test_local_directory_canonicalizes_to_resolved_path(tmp_path: Path, monkeypa
     assert relative.family == "generic"
 
 
+def test_existing_local_directory_takes_precedence_over_builtin_alias(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    model_dir = tmp_path / "gte-modernbert-base"
+    model_dir.mkdir()
+    monkeypatch.chdir(tmp_path)
+
+    profile = resolve_model_profile("gte-modernbert-base")
+
+    assert profile.canonical_name == str(model_dir.resolve())
+    assert profile.family == "gte-modernbert"
+
+
 def test_local_directory_family_inferred_from_basename(tmp_path: Path) -> None:
     gemma_dir = tmp_path / "embeddinggemma-work-copy"
     gemma_dir.mkdir()
