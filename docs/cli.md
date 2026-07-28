@@ -53,7 +53,7 @@ Options:
 - `--no-trust-remote-code`: Disallow model remote code execution
 - `--batch-size <int>`: Embedding batch size (default `8`)
 - `--no-private`: Exclude private (`_name`) functions/classes
-- `--exclude <glob>`: Add file path glob pattern(s) to exclude (repeat option for multiple patterns). Built-in test/artifact excludes still apply.
+- `--exclude <glob>`: Replace the default test-file globs with one or more file path globs (repeat for multiple patterns). Built-in artifact-directory exclusions still apply.
 - `--include-stubs`: Include `*.pyi` files
 - `--no-cache`: Disable the persistent on-disk embedding cache for this run
 - `--output-width <int>`: Rich render width for non-JSON output (default `160`, min `80`)
@@ -92,7 +92,7 @@ Options:
 - `--batch-size <int>`: Embedding batch size (default `8`)
 - `--min-lines <int>`: Minimum statement count for semantic candidate code units (default `3`)
 - `--no-private`: Exclude private (`_name`) functions/classes
-- `--exclude <glob>`: Add file path glob pattern(s) to exclude (repeat option for multiple patterns). Built-in test/artifact excludes still apply.
+- `--exclude <glob>`: Replace the default test-file globs with one or more file path globs (repeat for multiple patterns). Built-in artifact-directory exclusions still apply.
 - `--include-stubs`: Include `*.pyi` files
 - `--no-cache`: Disable the persistent on-disk embedding cache for this run
 - `--output-width <int>`: Rich render width for non-JSON output (default `160`, min `80`)
@@ -127,7 +127,8 @@ Clear all cached embeddings or only entries for one model. See [Embedding cache]
 - `--trust-remote-code` and `--no-trust-remote-code` are mutually exclusive
 - `--mps-fallback` and `--no-mps-fallback` are mutually exclusive
 - `--mps-memory-fraction` must be finite and in `(0, 2]`; it requires `--device mps` or `--device auto`
-- Explicit semantic device/MPS controls are rejected with `--traditional-only`, including `--no-cache`
+- Explicit semantic-analysis controls are rejected with `--traditional-only`, including model/task,
+  candidate-scope, device/runtime, and cache options
 - Unsupported-op fallback and codedupes OOM recovery are separate policies; `--no-mps-fallback` does not disable OOM recovery
 - `search` applies semantic threshold filtering before returning `top-k` matches; without an
   explicit `--threshold`/`--semantic-threshold` it uses the model profile search default

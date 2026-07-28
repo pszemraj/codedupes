@@ -161,23 +161,14 @@ See [Analysis defaults](analysis-defaults.md) for tiny-pair filtering behavior.
 
 ## Unused Detection Modes
 
-Default behavior is conservative and skips public top-level functions.
-
 ```bash
 codedupes check ./src
-```
-
-Strict mode includes public functions:
-
-```bash
 codedupes check ./src --strict-unused
-```
-
-Disable unused detection:
-
-```bash
 codedupes check ./src --no-unused
 ```
+
+See [Analysis defaults](analysis-defaults.md#potentially-unused-defaults) for the
+reference graph, suppressions, strict-mode behavior, and limitations.
 
 ## Reduce Semantic Noise In Test Suites
 

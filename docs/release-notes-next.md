@@ -4,7 +4,7 @@
 
 - Minimum PyTorch version is now `2.13.0`; the supported range is `>=2.13.0,<3`. Dev and rc builds
   of an in-range release (for example `2.13.0.dev20250101`) are accepted.
-- The transformers pin widened from `<5` to `>=4.51,<6`; validated against transformers 5.14.1 with
+- The supported Transformers range is now `>=5.1,<6`; validated against Transformers 5.14.1 with
   sentence-transformers 5.6.1.
 - `packaging` is now an explicit runtime dependency because semantic compatibility checks import it
   directly.
@@ -58,6 +58,9 @@
   their containing class is proven to inherit from the visitor hierarchy, including local
   subclasses.
 - An unrelated ordinary method named `visit_*` remains eligible for unused-code analysis.
+- Reusing a `CodeAnalyzer` now clears corpus-specific state before each analysis, so
+  an empty or nonsemantic run cannot leave stale embeddings available to
+  `search()`. See [Python API](python-api.md#semantic-query-search).
 - Absolute paths passed without the required `check` or `search` command now produce a CLI usage
   error instead of help with exit code zero.
 

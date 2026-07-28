@@ -55,8 +55,8 @@ DEFAULT_OUTPUT_WIDTH = 160
 MIN_OUTPUT_WIDTH = 80
 DEFAULT_TABLE_ROWS = 20
 DEFAULT_EXCLUDE_HELP_HINT = (
-    "Additional glob patterns to exclude (repeat option for multiple patterns). "
-    "Built-in excludes for tests/common artifact directories always apply."
+    "Replace default test-file globs with patterns to exclude (repeat for multiple patterns). "
+    "Built-in common artifact-directory excludes always apply."
 )
 
 console = Console(width=DEFAULT_OUTPUT_WIDTH)

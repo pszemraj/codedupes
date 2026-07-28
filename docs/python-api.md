@@ -70,6 +70,11 @@ for unit, score in hits:
     print(f"{score:.3f}", unit.qualified_name)
 ```
 
+Each `analyze()` call replaces the analyzer's corpus-specific state before
+extraction. `search()` therefore targets only the most recent analysis and
+requires that run to have semantic embeddings. A later empty or nonsemantic
+analysis cannot reuse an older corpus accidentally.
+
 ## Apple Silicon configuration
 
 Use an explicit device for validation and set an allocator cap only when needed:
