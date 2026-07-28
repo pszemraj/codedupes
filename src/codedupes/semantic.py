@@ -286,21 +286,35 @@ def _assemble_cached_matrix(keys: list[str], hits: dict[str, np.ndarray]) -> np.
 _DEVICE_DTYPE_FAMILIES = frozenset({"embeddinggemma"})
 
 
-def _cache_variant_for(profile: SemanticModelProfile, device: str) -> str:
+def _cache_variant_for(
+    profile: SemanticModelProfile,
+    device: str,
+    *,
+    mps_fallback: bool | None,
+) -> str:
     """Build the vector-affecting cache-key variant for one model family.
 
     EmbeddingGemma selects its torch dtype from the execution device (bfloat16 vs
-    float32), so vectors cached under one device must never be served under another;
-    the requested device string is folded into its cache keys.
+    float32), so its cache identity records the concrete device selected from the
+    request and the dtype used to load the model. This prevents ``auto`` from sharing
+    vectors across CPU, CUDA, and MPS runs.
     Families that embed identically across devices share one key space.
 
     :param profile: Resolved model profile.
     :param device: Requested device string (``auto``, ``cpu``, ``cuda``, ``mps``).
+    :param mps_fallback: MPS unsupported-op CPU fallback behavior.
     :return: Variant fingerprint, empty for device-independent families.
     """
-    if profile.family in _DEVICE_DTYPE_FAMILIES:
-        return f"device={device}"
-    return ""
+    if profile.family not in _DEVICE_DTYPE_FAMILIES:
+        return ""
+
+    resolved_device = _resolve_semantic_device_request(
+        device,
+        mps_fallback=mps_fallback,
+    )
+    selected_dtype = _resolve_embeddinggemma_torch_dtype(resolved_device)
+    dtype_name = str(selected_dtype) if selected_dtype is not None else "default"
+    return f"device={resolved_device};dtype={dtype_name}"
 
 
 def _safe_package_version(package_name: str) -> str | None:
@@ -432,13 +446,32 @@ def _check_semantic_dependencies() -> None:
     _validate_torch_runtime()
 
 
+def _resolve_semantic_device_request(
+    device: str | None,
+    *,
+    mps_fallback: bool | None,
+) -> str:
+    """Configure the runtime environment and resolve one semantic device request.
+
+    :param device: Requested device name.
+    :param mps_fallback: MPS unsupported-op fallback behavior.
+    :return: Concrete device name.
+    :raises SemanticBackendError: If device configuration fails.
+    """
+    _configure_semantic_runtime_env(device, mps_fallback=mps_fallback)
+    try:
+        return resolve_semantic_device(device)
+    except (DeviceConfigurationError, ValueError) as exc:
+        raise SemanticBackendError(str(exc)) from exc
+
+
 def _prepare_semantic_device(
     device: str | None,
     *,
     mps_fallback: bool | None,
     mps_memory_fraction: float | None,
 ) -> str:
-    """Configure and resolve one semantic execution device.
+    """Resolve and configure one semantic execution device.
 
     :param device: Requested device name.
     :param mps_fallback: MPS unsupported-op fallback behavior.
@@ -447,9 +480,11 @@ def _prepare_semantic_device(
     :return: Concrete device name.
     :raises SemanticBackendError: If device configuration fails.
     """
-    _configure_semantic_runtime_env(device, mps_fallback=mps_fallback)
+    resolved_device = _resolve_semantic_device_request(
+        device,
+        mps_fallback=mps_fallback,
+    )
     try:
-        resolved_device = resolve_semantic_device(device)
         # ``device='auto'`` may legitimately resolve to CPU/CUDA with a fraction set,
         # so the strict low-level check is only applied once MPS is the real target.
         if resolved_device == "mps":
@@ -1226,7 +1261,9 @@ def _compute_embeddings_unlocked(
     cache_revision = (
         _resolve_revision_for_cache(model_name, revision) if cache is not None else None
     )
-    cache_variant = _cache_variant_for(profile, device)
+    cache_variant = (
+        _cache_variant_for(profile, device, mps_fallback=mps_fallback) if cache is not None else ""
+    )
     cache_keys = (
         [
             compute_cache_key(profile.canonical_name, cache_revision, text, variant=cache_variant)
@@ -1562,7 +1599,9 @@ def _find_similar_to_query_unlocked(
     cache_revision = (
         _resolve_revision_for_cache(model_name, revision) if cache is not None else None
     )
-    cache_variant = _cache_variant_for(profile, device)
+    cache_variant = (
+        _cache_variant_for(profile, device, mps_fallback=mps_fallback) if cache is not None else ""
+    )
     cache_key = (
         compute_cache_key(
             profile.canonical_name, cache_revision, query_text, mode="query", variant=cache_variant

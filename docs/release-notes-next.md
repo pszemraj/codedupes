@@ -31,7 +31,9 @@ replacement for the CLI, output, model-profile, or accelerator source-of-truth d
 - Added an optional, validated MPS per-process memory fraction. The fraction is ignored (with a
   log message) when the resolved device is not MPS, so `--device auto --mps-memory-fraction X` is
   safe on CPU-only and CUDA hosts.
-- Made model caching device-aware and serialized model lifecycle/inference across threads.
+- Made model caching device-aware and serialized model lifecycle/inference across
+  threads. Device-dependent cache entries use the resolved device and selected
+  dtype, so `auto` cannot reuse vectors across CPU, CUDA, and MPS runs.
 - Added MPS memory diagnostics, synchronized allocator cleanup, adaptive batch-size OOM retries,
   and one final CPU retry. The CPU retry restarts from the originally requested batch size and
   re-enters the halving ladder if host memory also OOMs.
@@ -46,8 +48,8 @@ replacement for the CLI, output, model-profile, or accelerator source-of-truth d
 - Avoided forced MPS fast math, forced Metal matmul selection, and success-path cache clearing.
 - Added a persistent, content-addressed on-disk embedding cache (`codedupes.embedding_cache`).
   Cache keys hash the canonical model name, resolved revision, embedding mode, and
-  pre-truncation prepared text (plus the requested device for the device-dependent-dtype
-  EmbeddingGemma family), so unchanged code units hit across runs and single-file
+  pre-truncation prepared text (plus the resolved device and selected dtype for the
+  device-dependent EmbeddingGemma family), so unchanged code units hit across runs and single-file
   edits only re-embed the changed units. Writers serialize per shard via advisory locks,
   non-finite or dimension-mismatched cached vectors are treated as misses, and a fully
   cached `check`/`search` run skips model load entirely. See

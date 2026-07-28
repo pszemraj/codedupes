@@ -88,6 +88,39 @@ def test_full_cache_hit_skips_model_load_and_encode(tmp_path, monkeypatch):
     np.testing.assert_array_equal(first, second)
 
 
+def test_auto_device_cache_key_tracks_resolved_device(tmp_path, monkeypatch):
+    units = _five_units(tmp_path)
+    model = CountingModel()
+    get_model_counts = _patch_get_model(monkeypatch, model)
+    selected_device = {"value": "cpu"}
+    monkeypatch.setattr(semantic, "_configure_semantic_runtime_env", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        semantic,
+        "resolve_semantic_device",
+        lambda _request: selected_device["value"],
+    )
+    monkeypatch.setattr(semantic, "_get_loaded_model_commit_hash", lambda _model: None)
+
+    kwargs = {
+        "model_name": "embeddinggemma-300m",
+        "revision": "rev1",
+        "device": "auto",
+        "cache_scope": tmp_path,
+    }
+    compute_embeddings(units, **kwargs)
+    assert get_model_counts["count"] == 1
+    assert len(model.encode_calls) == 1
+
+    selected_device["value"] = "mps"
+    compute_embeddings(units, **kwargs)
+    assert get_model_counts["count"] == 2
+    assert len(model.encode_calls) == 2
+
+    compute_embeddings(units, **kwargs)
+    assert get_model_counts["count"] == 2
+    assert len(model.encode_calls) == 2
+
+
 def test_partial_update_only_reencodes_changed_unit(tmp_path, monkeypatch):
     units = _five_units(tmp_path)
     model = CountingModel()
