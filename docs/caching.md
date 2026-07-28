@@ -14,8 +14,8 @@ across runs.
   of the key. An `auto` request therefore resolves to CPU, CUDA, or MPS before
   lookup, and vectors computed under bfloat16 are never served for a float32 run;
   `gte-modernbert-base` embeds identically across devices and shares one key space.
-- Because the key depends on the exact prepared text, **partial updates fall out for
-  free** — editing one function in one file only invalidates that function's cache
+- Because the key depends on the exact prepared text, **partial updates happen
+  naturally**: editing one function in one file only invalidates that function's cache
   entry; every other unit in the corpus still hits.
 - Cached vectors live under one directory ("shard") per `(analyzed repo root, model,
   revision)` combination:
@@ -32,7 +32,7 @@ across runs.
 - **No model load on a full cache hit.** `codedupes check`/`search` resolve the
   model revision, prepare embedding text, and check the cache *before* touching
   `sentence-transformers`. If every code unit (and, for `search`, the query) is
-  already cached, the model is never loaded at all — a warm `check`/`search` run
+  already cached, the model is never loaded at all. A warm `check`/`search` run
   skips model load and inference entirely. Device-sensitive families may initialize
   PyTorch capability checks to resolve `auto` and select the cache variant, but do
   not load model weights.

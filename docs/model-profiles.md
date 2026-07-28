@@ -18,8 +18,8 @@ Notes:
   similarity, so search defaults are intentionally much lower.
 - Search defaults are calibrated recall-safe: across seven real corpora, genuinely relevant
   hits start near `0.59` while fully off-topic queries ceiling near `0.48` on most corpora.
-  Vocabulary overlap — a shared domain (GPU kernels vs a graphics query) or even a single
-  shared word ("pattern", "parse", "warp") — can push off-topic matches to `0.52`–`0.65`;
+  Vocabulary overlap from a shared domain (GPU kernels vs a graphics query) or even a single
+  shared word ("pattern", "parse", "warp") can push off-topic matches to `0.52`-`0.65`;
   those carry visible scores and rank below real hits, but raise `--semantic-threshold`
   toward `0.6` if they clutter results. No fixed floor separates them everywhere, and the
   default deliberately favors recall over precision.
@@ -28,16 +28,16 @@ Notes:
 
 ## Alias resolution rules
 
-- Built-in alias keys and known aliases resolve to the profile’s canonical model ID.
+- Built-in alias keys and known aliases resolve to the profile's canonical model ID.
 - A model name that is an existing directory on disk is treated as a local
   `save_pretrained`-style model copy: it canonicalizes to its resolved absolute
   path (so relative and absolute spellings share one identity), and its family is
   inferred from the directory basename using the same name rules below.
 - Any model name containing `embeddinggemma` resolves to a dynamic
-  EmbeddingGemma-family profile with the built-in profile’s thresholds and encode
+  EmbeddingGemma-family profile with the built-in profile's thresholds and encode
   entry points.
 - Any model name containing `gte-modernbert` resolves to a dynamic
-  gte-modernbert-family profile with the built-in profile’s calibrated thresholds.
+  gte-modernbert-family profile with the built-in profile's calibrated thresholds.
 - Other unknown model IDs resolve to the generic profile.
 
 ### Local model directories and offline use
