@@ -181,6 +181,38 @@ _BUILTIN_ALIAS_MAP = {
 _BUILTIN_FAMILY_PROFILES = {profile.family: profile for profile in _BUILTIN_MODEL_PROFILES}
 
 
+def _true_case_path(path: Path) -> Path:
+    """Rebuild an absolute path using each component's on-disk letter case.
+
+    ``Path.resolve()`` follows symlinks but does not normalize letter case, so
+    on case-insensitive, case-preserving filesystems (e.g. macOS/APFS) two
+    differently-cased spellings of the same directory resolve to two different
+    strings. This walks ``path`` component by component from its anchor and
+    swaps each one for the exact spelling reported by ``iterdir()``, so the
+    result is stable regardless of how the caller spelled it. On genuinely
+    case-sensitive filesystems the case-insensitive match degenerates to the
+    exact match, so behavior there is unchanged.
+
+    :param path: Absolute, already symlink-resolved path to canonicalize.
+    :return: Path with each component corrected to its true on-disk spelling;
+        falls back to the remaining resolved components as-is on ``OSError``
+        or a missing component.
+    """
+    true_path = Path(path.anchor)
+    remaining = path.relative_to(path.anchor).parts
+    for index, part in enumerate(remaining):
+        try:
+            entries = tuple(entry.name for entry in true_path.iterdir())
+        except OSError:
+            return true_path.joinpath(*remaining[index:])
+        if part in entries:
+            true_path /= part
+            continue
+        match = next((entry for entry in entries if entry.lower() == part.lower()), None)
+        true_path /= match if match is not None else part
+    return true_path
+
+
 def resolve_local_model_path(model_name: str) -> Path | None:
     """Resolve a model identifier to a local model directory when one exists.
 
@@ -188,7 +220,9 @@ def resolve_local_model_path(model_name: str) -> Path | None:
     when it points at an existing directory on disk (after ``~`` expansion). Hub
     identifiers like ``org/name`` never resolve here unless a directory of that
     relative name actually exists, mirroring how ``sentence-transformers``
-    disambiguates local paths from hub repositories.
+    disambiguates local paths from hub repositories. The resolved path is
+    additionally true-case canonicalized so differently-cased spellings of the
+    same directory on case-insensitive filesystems share one cache identity.
 
     :param model_name: Alias, hub identifier, or filesystem path.
     :return: Resolved absolute directory path, or ``None`` for non-local names.
@@ -199,7 +233,7 @@ def resolve_local_model_path(model_name: str) -> Path | None:
     try:
         path = Path(candidate).expanduser()
         if path.is_dir():
-            return path.resolve()
+            return _true_case_path(path.resolve())
     except OSError:
         return None
     return None
@@ -230,9 +264,10 @@ def resolve_model_profile(model_name: str) -> SemanticModelProfile:
     """Resolve a user model identifier into a concrete model profile.
 
     Built-in aliases resolve to their profiles. An existing local directory
-    (a ``save_pretrained``-style model copy) canonicalizes to its resolved
-    absolute path so relative and absolute spellings share one cache identity,
-    and its family is inferred from the directory name. Remaining hub-style
+    (a ``save_pretrained``-style model copy) canonicalizes to its resolved,
+    true-cased absolute path so relative, absolute, and differently-cased
+    spellings share one cache identity, and its family is inferred from that
+    true-cased directory name. Remaining hub-style
     names fall back to name-based family inference.
 
     :param model_name: Alias, hub model name, or local model directory path.

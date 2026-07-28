@@ -2,8 +2,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from codedupes.semantic_profiles import (
     DEFAULT_FALLBACK_SEARCH_THRESHOLD,
+    _true_case_path,
     get_default_search_threshold,
     get_default_semantic_threshold,
     is_explicit_local_model_path,
@@ -11,6 +14,16 @@ from codedupes.semantic_profiles import (
     resolve_local_model_path,
     resolve_model_profile,
 )
+
+
+def _filesystem_is_case_insensitive(tmp_path: Path) -> bool:
+    """Detect whether ``tmp_path`` lives on a case-insensitive filesystem.
+
+    :param tmp_path: Writable directory to probe.
+    :return: ``True`` if a differently-cased path resolves to the same entry.
+    """
+    (tmp_path / "CaseProbe").mkdir()
+    return (tmp_path / "caseprobe").exists()
 
 
 def test_resolve_builtin_model_aliases_to_canonical_ids() -> None:
@@ -65,6 +78,46 @@ def test_local_directory_canonicalizes_to_resolved_path(tmp_path: Path, monkeypa
     absolute = resolve_model_profile(str(model_dir))
     assert relative.canonical_name == absolute.canonical_name == str(model_dir.resolve())
     assert relative.family == "generic"
+
+
+def test_local_directory_canonicalizes_case_variants_to_one_identity(tmp_path: Path) -> None:
+    case_insensitive = _filesystem_is_case_insensitive(tmp_path)
+    model_dir = tmp_path / "MyFineTune"
+    model_dir.mkdir()
+
+    if not case_insensitive:
+        pytest.skip("filesystem is case-sensitive; case variants are distinct paths")
+
+    lower = resolve_model_profile(str(tmp_path / "myfinetune"))
+    exact = resolve_model_profile(str(model_dir))
+    upper = resolve_model_profile(str(tmp_path / "MYFINETUNE"))
+
+    expected = str(model_dir.resolve())
+    assert lower.canonical_name == exact.canonical_name == upper.canonical_name == expected
+    assert expected.endswith("MyFineTune")
+
+
+def test_true_case_path_is_identity_for_exact_case_path(tmp_path: Path) -> None:
+    model_dir = tmp_path / "ExactCase"
+    model_dir.mkdir()
+    assert _true_case_path(model_dir.resolve()) == model_dir.resolve()
+
+
+def test_true_case_path_corrects_wrong_case_component(tmp_path: Path) -> None:
+    if not _filesystem_is_case_insensitive(tmp_path):
+        pytest.skip("filesystem is case-sensitive; wrong-case components do not exist on disk")
+
+    model_dir = tmp_path / "TrueCased"
+    model_dir.mkdir()
+    wrong_case = tmp_path / "truecased"
+    assert _true_case_path(wrong_case.resolve()) == model_dir.resolve()
+
+
+def test_true_case_path_falls_back_gracefully_for_missing_tail(tmp_path: Path) -> None:
+    parent = tmp_path / "parent-dir"
+    parent.mkdir()
+    missing = parent / "does-not-exist"
+    assert _true_case_path(missing) == missing
 
 
 def test_existing_local_directory_takes_precedence_over_builtin_alias(
