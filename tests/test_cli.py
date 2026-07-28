@@ -524,24 +524,32 @@ def test_cli_rejects_json_with_rich_only_flags(
     assert f"Cannot use {expected_option} with --json." in result.output
 
 
-def test_cli_rejects_conflicting_trust_remote_code_flags(tmp_path):
+@pytest.mark.parametrize(
+    ("command", "tail_args", "enabled_flag", "disabled_flag"),
+    [
+        ("check", [], "--trust-remote-code", "--no-trust-remote-code"),
+        ("search", ["entry"], "--trust-remote-code", "--no-trust-remote-code"),
+        ("check", [], "--mps-fallback", "--no-mps-fallback"),
+        ("search", ["entry"], "--mps-fallback", "--no-mps-fallback"),
+    ],
+)
+def test_cli_rejects_conflicting_paired_flags(
+    tmp_path,
+    command,
+    tail_args,
+    enabled_flag,
+    disabled_flag,
+):
     path = tmp_path / "sample.py"
     path.write_text("def entry():\n    return 1\n")
 
     runner = CliRunner()
-    check_result = runner.invoke(
+    result = runner.invoke(
         cli.cli,
-        ["check", str(path), "--trust-remote-code", "--no-trust-remote-code"],
+        [command, str(path), *tail_args, enabled_flag, disabled_flag],
     )
-    assert check_result.exit_code == 2
-    assert "Cannot combine --trust-remote-code and --no-trust-remote-code." in check_result.output
-
-    search_result = runner.invoke(
-        cli.cli,
-        ["search", str(path), "entry", "--trust-remote-code", "--no-trust-remote-code"],
-    )
-    assert search_result.exit_code == 2
-    assert "Cannot combine --trust-remote-code and --no-trust-remote-code." in search_result.output
+    assert result.exit_code == 2
+    assert f"Cannot combine {enabled_flag} and {disabled_flag}." in result.output
 
 
 @pytest.mark.parametrize(
@@ -961,30 +969,6 @@ def test_cli_device_controls_pass_through(
     assert captured[0].device == "mps"
     assert captured[0].mps_fallback is False
     assert captured[0].mps_memory_fraction == 0.8
-
-
-@pytest.mark.parametrize(
-    ("command", "tail_args"),
-    [("check", []), ("search", ["entry"])],
-)
-def test_cli_rejects_conflicting_mps_fallback_flags(tmp_path, command, tail_args):
-    path = tmp_path / "sample.py"
-    path.write_text("def entry():\n    return 1\n")
-
-    runner = CliRunner()
-    result = runner.invoke(
-        cli.cli,
-        [
-            command,
-            str(path),
-            *tail_args,
-            "--mps-fallback",
-            "--no-mps-fallback",
-        ],
-    )
-
-    assert result.exit_code == 2
-    assert "Cannot combine --mps-fallback and --no-mps-fallback." in result.output
 
 
 def test_cli_rejects_unsafe_mps_memory_fraction(tmp_path):
