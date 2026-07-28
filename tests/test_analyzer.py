@@ -14,6 +14,36 @@ from codedupes.models import AnalysisResult, CodeUnit, CodeUnitType, DuplicatePa
 from codedupes.semantic import SemanticBackendError
 from tests.conftest import build_two_function_source, create_project
 
+_SEMANTIC_ANALYSIS_KWARG_NAMES = {
+    "batch_size",
+    "cache_scope",
+    "device",
+    "exclude_pairs",
+    "instruction_prefix",
+    "model_name",
+    "mps_fallback",
+    "mps_memory_fraction",
+    "revision",
+    "semantic_task",
+    "threshold",
+    "trust_remote_code",
+    "use_cache",
+}
+_QUERY_KWARG_NAMES = {
+    "cache_scope",
+    "device",
+    "instruction_prefix",
+    "model_name",
+    "mps_fallback",
+    "mps_memory_fraction",
+    "revision",
+    "semantic_task",
+    "threshold",
+    "top_k",
+    "trust_remote_code",
+    "use_cache",
+}
+
 
 def _make_unit(
     tmp_path: Path,
@@ -45,38 +75,12 @@ def _make_semantic_runner(
 ) -> Callable[..., tuple[np.ndarray, list[DuplicatePair]]]:
     """Build a reusable semantic-analysis test double."""
 
-    def fake_run_semantic(
-        units,
-        model_name="gte-modernbert-base",
-        instruction_prefix=None,
-        threshold=0.82,
-        exclude_pairs=None,
-        batch_size=32,
-        revision=None,
-        trust_remote_code=None,
-        semantic_task=None,
-        device="auto",
-        mps_fallback=None,
-        mps_memory_fraction=None,
-        use_cache=True,
-        cache_scope=None,
-    ):
+    def fake_run_semantic(units, **kwargs):
+        assert set(kwargs) == _SEMANTIC_ANALYSIS_KWARG_NAMES
         if capture is not None:
-            capture["model_name"] = model_name
-            capture["instruction_prefix"] = instruction_prefix
-            capture["threshold"] = threshold
-            capture["exclude_pairs"] = exclude_pairs
-            capture["batch_size"] = batch_size
-            capture["revision"] = revision
-            capture["trust_remote_code"] = trust_remote_code
-            capture["semantic_task"] = semantic_task
-            capture["device"] = device
-            capture["mps_fallback"] = mps_fallback
-            capture["mps_memory_fraction"] = mps_memory_fraction
-            capture["use_cache"] = use_cache
-            capture["cache_scope"] = cache_scope
+            capture.update(kwargs)
         if capture_exclude_pairs is not None:
-            capture_exclude_pairs.update(exclude_pairs or set())
+            capture_exclude_pairs.update(kwargs["exclude_pairs"] or set())
         if error is not None:
             raise error
 
@@ -84,6 +88,20 @@ def _make_semantic_runner(
         return np.zeros((len(units), 2), dtype=np.float32), duplicates
 
     return fake_run_semantic
+
+
+def _capture_query_runner(
+    capture: dict[str, object],
+) -> Callable[..., list[tuple[CodeUnit, float]]]:
+    """Build a query runner that records and validates forwarded keyword arguments."""
+
+    def fake_find_similar_to_query(query, units, embeddings, **kwargs):
+        del query, units, embeddings
+        assert set(kwargs) == _QUERY_KWARG_NAMES
+        capture.update({f"query_{key}": value for key, value in kwargs.items()})
+        return []
+
+    return fake_find_similar_to_query
 
 
 def _capture_semantic_unit_types(captured_types: list[CodeUnitType]):
@@ -382,7 +400,19 @@ def test_short_functions_are_skipped_from_semantic(tmp_path: Path) -> None:
     assert result.semantic_duplicates == []
 
 
-def test_semantic_defaults_exclude_class_units(tmp_path: Path, monkeypatch) -> None:
+@pytest.mark.parametrize(
+    ("semantic_unit_types", "expected_types"),
+    [
+        (None, {CodeUnitType.FUNCTION, CodeUnitType.METHOD}),
+        (("class",), {CodeUnitType.CLASS}),
+    ],
+)
+def test_semantic_unit_scope(
+    tmp_path: Path,
+    monkeypatch,
+    semantic_unit_types: tuple[str, ...] | None,
+    expected_types: set[CodeUnitType],
+) -> None:
     source = dedent(
         """
         class Box:
@@ -402,58 +432,36 @@ def test_semantic_defaults_exclude_class_units(tmp_path: Path, monkeypatch) -> N
         _capture_semantic_unit_types(captured_types),
     )
 
-    analyzer = CodeAnalyzer(
-        AnalyzerConfig(
-            run_traditional=False,
-            run_semantic=True,
-            run_unused=False,
-            min_semantic_lines=0,
-        )
-    )
-    analyzer.analyze(project)
-
-    assert CodeUnitType.CLASS not in captured_types
-    assert CodeUnitType.FUNCTION in captured_types
-    assert CodeUnitType.METHOD in captured_types
-
-
-def test_semantic_class_scope_can_be_enabled_explicitly(tmp_path: Path, monkeypatch) -> None:
-    source = dedent(
-        """
-        class Box:
-            def method(self):
-                return 1
-
-        def helper():
-            return 2
-        """
-    ).strip()
-    project = create_project(tmp_path, source, module="scope.py")
-    captured_types: list[CodeUnitType] = []
-
-    monkeypatch.setattr(
-        analyzer_module,
-        "run_semantic_analysis",
-        _capture_semantic_unit_types(captured_types),
-    )
-
-    analyzer = CodeAnalyzer(
-        AnalyzerConfig(
-            run_traditional=False,
-            run_semantic=True,
-            run_unused=False,
-            min_semantic_lines=0,
-            semantic_unit_types=("class",),
-        )
-    )
+    config_kwargs = {
+        "run_traditional": False,
+        "run_semantic": True,
+        "run_unused": False,
+        "min_semantic_lines": 0,
+    }
+    if semantic_unit_types is not None:
+        config_kwargs["semantic_unit_types"] = semantic_unit_types
+    analyzer = CodeAnalyzer(AnalyzerConfig(**config_kwargs))
     analyzer.analyze(project)
 
     assert captured_types
-    assert set(captured_types) == {CodeUnitType.CLASS}
+    assert set(captured_types) == expected_types
 
 
-def test_combined_mode_scopes_traditional_duplicates_to_semantic_candidates(
-    tmp_path: Path, monkeypatch
+@pytest.mark.parametrize(
+    ("run_semantic", "expected_types"),
+    [
+        (True, set()),
+        (
+            False,
+            {CodeUnitType.CLASS, CodeUnitType.METHOD, CodeUnitType.FUNCTION},
+        ),
+    ],
+)
+def test_traditional_scope_depends_on_semantic_mode(
+    tmp_path: Path,
+    monkeypatch,
+    run_semantic: bool,
+    expected_types: set[CodeUnitType],
 ) -> None:
     source = dedent(
         """
@@ -478,120 +486,58 @@ def test_combined_mode_scopes_traditional_duplicates_to_semantic_candidates(
     analyzer = CodeAnalyzer(
         AnalyzerConfig(
             run_traditional=True,
-            run_semantic=True,
+            run_semantic=run_semantic,
             run_unused=False,
             min_semantic_lines=2,
         )
     )
     analyzer.analyze(project)
 
-    assert captured_traditional_units == []
+    assert {unit.unit_type for unit in captured_traditional_units} == expected_types
 
 
-def test_traditional_only_keeps_full_scope_even_with_semantic_filters(
-    tmp_path: Path, monkeypatch
+@pytest.mark.parametrize(
+    ("filter_tiny_traditional", "expected_exact_duplicate"),
+    [(None, False), (False, True)],
+)
+def test_tiny_exact_duplicate_filter(
+    tmp_path: Path,
+    filter_tiny_traditional: bool | None,
+    expected_exact_duplicate: bool,
 ) -> None:
     source = dedent(
         """
-        class Box:
-            def method(self):
-                return 1
+        def wrapper_a():
+            return helper_a()
 
-        def tiny():
-            return 2
+        def wrapper_b():
+            return helper_b()
+
+        def helper_a():
+            return 1
+
+        def helper_b():
+            return 1
         """
     ).strip()
-    project = create_project(tmp_path, source, module="scope.py")
-    captured_traditional_units: list[CodeUnit] = []
+    project = create_project(tmp_path, source, module="tiny_exact.py")
 
-    monkeypatch.setattr(
-        analyzer_module,
-        "run_traditional_analysis",
-        _capture_traditional_units_runner(captured_traditional_units),
-    )
-
-    analyzer = CodeAnalyzer(
-        AnalyzerConfig(
-            run_traditional=True,
-            run_semantic=False,
-            run_unused=False,
-            min_semantic_lines=2,
-        )
-    )
-    analyzer.analyze(project)
-
-    assert captured_traditional_units
-    assert {unit.unit_type for unit in captured_traditional_units} == {
-        CodeUnitType.CLASS,
-        CodeUnitType.METHOD,
-        CodeUnitType.FUNCTION,
+    config_kwargs = {
+        "run_traditional": True,
+        "run_semantic": False,
+        "run_unused": False,
+        "jaccard_threshold": 0.99,
     }
-
-
-def test_tiny_exact_duplicates_are_filtered_by_default(tmp_path: Path) -> None:
-    source = dedent(
-        """
-        def wrapper_a():
-            return helper_a()
-
-        def wrapper_b():
-            return helper_b()
-
-        def helper_a():
-            return 1
-
-        def helper_b():
-            return 1
-        """
-    ).strip()
-    project = create_project(tmp_path, source, module="tiny_exact.py")
-
-    analyzer = CodeAnalyzer(
-        AnalyzerConfig(
-            run_traditional=True,
-            run_semantic=False,
-            run_unused=False,
-            jaccard_threshold=0.99,
-        )
-    )
+    if filter_tiny_traditional is not None:
+        config_kwargs["filter_tiny_traditional"] = filter_tiny_traditional
+    analyzer = CodeAnalyzer(AnalyzerConfig(**config_kwargs))
     result = analyzer.analyze(project)
 
-    assert result.traditional_duplicates == []
-
-
-def test_tiny_exact_duplicates_can_be_restored(tmp_path: Path) -> None:
-    source = dedent(
-        """
-        def wrapper_a():
-            return helper_a()
-
-        def wrapper_b():
-            return helper_b()
-
-        def helper_a():
-            return 1
-
-        def helper_b():
-            return 1
-        """
-    ).strip()
-    project = create_project(tmp_path, source, module="tiny_exact.py")
-
-    analyzer = CodeAnalyzer(
-        AnalyzerConfig(
-            run_traditional=True,
-            run_semantic=False,
-            run_unused=False,
-            jaccard_threshold=0.99,
-            filter_tiny_traditional=False,
-        )
-    )
-    result = analyzer.analyze(project)
-
-    assert any(
+    has_exact_duplicate = any(
         duplicate.method in {"ast_hash", "token_hash"}
         for duplicate in result.traditional_duplicates
     )
+    assert has_exact_duplicate is expected_exact_duplicate
 
 
 @pytest.mark.parametrize(
@@ -874,27 +820,11 @@ def test_search_uses_index_task_when_unset(tmp_path: Path, monkeypatch) -> None:
         _make_semantic_runner(capture=captured),
     )
 
-    def fake_find_similar_to_query(
-        query: str,
-        units,
-        embeddings,
-        model_name="gte-modernbert-base",
-        instruction_prefix=None,
-        top_k=10,
-        revision=None,
-        trust_remote_code=None,
-        threshold=None,
-        semantic_task=None,
-        device="auto",
-        mps_fallback=None,
-        mps_memory_fraction=None,
-        use_cache=True,
-        cache_scope=None,
-    ):
-        captured["query_task"] = semantic_task
-        return []
-
-    monkeypatch.setattr(semantic_module, "find_similar_to_query", fake_find_similar_to_query)
+    monkeypatch.setattr(
+        semantic_module,
+        "find_similar_to_query",
+        _capture_query_runner(captured),
+    )
 
     analyzer = CodeAnalyzer(
         AnalyzerConfig(
@@ -908,7 +838,7 @@ def test_search_uses_index_task_when_unset(tmp_path: Path, monkeypatch) -> None:
     analyzer.search("entry")
 
     assert captured["semantic_task"] == analyzer_module.DEFAULT_CHECK_SEMANTIC_TASK
-    assert captured["query_task"] == analyzer_module.DEFAULT_CHECK_SEMANTIC_TASK
+    assert captured["query_semantic_task"] == analyzer_module.DEFAULT_CHECK_SEMANTIC_TASK
 
 
 def test_search_threshold_defaults_to_none_and_honors_explicit_config(
@@ -924,11 +854,11 @@ def test_search_threshold_defaults_to_none_and_honors_explicit_config(
         _make_semantic_runner(capture=captured),
     )
 
-    def fake_find_similar_to_query(query, units, embeddings, **kwargs):
-        captured["query_threshold"] = kwargs.get("threshold")
-        return []
-
-    monkeypatch.setattr(semantic_module, "find_similar_to_query", fake_find_similar_to_query)
+    monkeypatch.setattr(
+        semantic_module,
+        "find_similar_to_query",
+        _capture_query_runner(captured),
+    )
 
     base_config = {
         "run_traditional": False,
@@ -1451,9 +1381,34 @@ def test_analyzer_config_rejects_device_controls_without_semantic_mode() -> None
         AnalyzerConfig(run_semantic=False, mps_memory_fraction=0.8)
 
 
-def test_analyzer_passes_device_controls_to_index_and_query(
+@pytest.mark.parametrize(
+    ("config_overrides", "expected_values"),
+    [
+        pytest.param(
+            {
+                "device": "mps",
+                "mps_fallback": False,
+                "mps_memory_fraction": 0.8,
+            },
+            {
+                "device": "mps",
+                "mps_fallback": False,
+                "mps_memory_fraction": 0.8,
+            },
+            id="device-controls",
+        ),
+        pytest.param(
+            {"embedding_cache": False},
+            {"use_cache": False},
+            id="cache-control",
+        ),
+    ],
+)
+def test_analyzer_passes_semantic_controls_to_index_and_query(
     tmp_path: Path,
     monkeypatch,
+    config_overrides: dict[str, object],
+    expected_values: dict[str, object],
 ) -> None:
     source = "def entry(x):\n    return x + 1\n"
     project = create_project(tmp_path, source)
@@ -1464,64 +1419,11 @@ def test_analyzer_passes_device_controls_to_index_and_query(
         "run_semantic_analysis",
         _make_semantic_runner(capture=captured),
     )
-
-    def fake_find_similar_to_query(
-        query: str,
-        units,
-        embeddings,
-        **kwargs,
-    ):
-        del query, units, embeddings
-        captured["query_device"] = kwargs["device"]
-        captured["query_mps_fallback"] = kwargs["mps_fallback"]
-        captured["query_mps_memory_fraction"] = kwargs["mps_memory_fraction"]
-        return []
-
-    monkeypatch.setattr(semantic_module, "find_similar_to_query", fake_find_similar_to_query)
-
-    analyzer = CodeAnalyzer(
-        AnalyzerConfig(
-            run_traditional=False,
-            run_semantic=True,
-            run_unused=False,
-            min_semantic_lines=0,
-            device="mps",
-            mps_fallback=False,
-            mps_memory_fraction=0.8,
-        )
-    )
-    analyzer.analyze(project)
-    analyzer.search("entry")
-
-    assert captured["device"] == "mps"
-    assert captured["mps_fallback"] is False
-    assert captured["mps_memory_fraction"] == 0.8
-    assert captured["query_device"] == "mps"
-    assert captured["query_mps_fallback"] is False
-    assert captured["query_mps_memory_fraction"] == 0.8
-
-
-def test_analyzer_threads_embedding_cache_flag_and_scope_to_index_and_query(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    source = "def entry(x):\n    return x + 1\n"
-    project = create_project(tmp_path, source)
-    captured: dict[str, object] = {}
-
     monkeypatch.setattr(
-        analyzer_module,
-        "run_semantic_analysis",
-        _make_semantic_runner(capture=captured),
+        semantic_module,
+        "find_similar_to_query",
+        _capture_query_runner(captured),
     )
-
-    def fake_find_similar_to_query(query: str, units, embeddings, **kwargs):
-        del query, units, embeddings
-        captured["query_use_cache"] = kwargs["use_cache"]
-        captured["query_cache_scope"] = kwargs["cache_scope"]
-        return []
-
-    monkeypatch.setattr(semantic_module, "find_similar_to_query", fake_find_similar_to_query)
 
     analyzer = CodeAnalyzer(
         AnalyzerConfig(
@@ -1529,15 +1431,16 @@ def test_analyzer_threads_embedding_cache_flag_and_scope_to_index_and_query(
             run_semantic=True,
             run_unused=False,
             min_semantic_lines=0,
-            embedding_cache=False,
+            **config_overrides,
         )
     )
     analyzer.analyze(project)
     analyzer.search("entry")
 
-    assert captured["use_cache"] is False
+    for key, expected in expected_values.items():
+        assert captured[key] == expected
+        assert captured[f"query_{key}"] == expected
     assert captured["cache_scope"] == project
-    assert captured["query_use_cache"] is False
     assert captured["query_cache_scope"] == project
 
 
