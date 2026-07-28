@@ -40,6 +40,7 @@ _TOUCH_INTERVAL_SECONDS = 3600.0
 _COMPACTION_LIVE_MULTIPLIER = 2
 _SANITIZE_PATTERN = re.compile(r"[^A-Za-z0-9._-]+")
 _GENERATION_PATTERN = re.compile(r"^[0-9a-f]{32}$")
+_TMP_FILE_GLOB = "*.tmp-*"
 
 _warned_cache_error = False
 
@@ -233,8 +234,20 @@ def _vectors_filename(generation: str) -> str:
     return f"vectors-{generation}.npy"
 
 
+def _is_finite_row(vector: np.ndarray) -> bool:
+    """Check whether a stored or candidate embedding row is usable.
+
+    Shared by reads and writes so the two can never disagree on what counts as a
+    poisoned (NaN/Inf) row.
+
+    :param vector: Embedding row to validate.
+    :return: ``True`` when every element is finite.
+    """
+    return bool(np.isfinite(vector).all())
+
+
 @contextlib.contextmanager
-def _shard_write_lock(shard_dir: Path) -> Iterator[bool]:
+def _shard_write_lock(shard_dir: Path, *, blocking: bool = False) -> Iterator[bool]:
     """Hold an exclusive advisory lock serializing writers of one shard.
 
     Writers must hold this lock across the whole read-update-publish sequence so
@@ -244,6 +257,9 @@ def _shard_write_lock(shard_dir: Path) -> Iterator[bool]:
     generations are immutable.
 
     :param shard_dir: Shard directory the caller intends to rewrite.
+    :param blocking: When ``True``, block until the lock is available instead of
+        yielding ``False`` on contention; used by callers (like directory deletion)
+        that must not race a concurrent writer under any circumstance.
     :return: Context manager yielding ``True`` when the exclusive lock was acquired.
     """
     try:
@@ -254,10 +270,11 @@ def _shard_write_lock(shard_dir: Path) -> Iterator[bool]:
         yield True
         return
 
+    lock_flags = fcntl.LOCK_EX if blocking else fcntl.LOCK_EX | fcntl.LOCK_NB
     lock_fd: int | None = None
     try:
         lock_fd = os.open(shard_dir / ".lock", os.O_CREAT | os.O_RDWR, 0o644)
-        fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        fcntl.flock(lock_fd, lock_flags)
     except OSError:
         if lock_fd is not None:
             os.close(lock_fd)
@@ -392,6 +409,25 @@ def _read_shard(shard_dir: Path) -> _ShardData | None:
     )
 
 
+def _reclaim_stale_tmp_files(shard_dir: Path, keep: frozenset[Path] = frozenset()) -> None:
+    """Delete leftover tmp files abandoned by a writer that never reached cleanup.
+
+    Tmp files are only ever created by a writer holding this shard's exclusive
+    lock, so any tmp file found here while that lock is held (as it is by every
+    caller of this helper) was orphaned by a process that died mid-write (SIGKILL,
+    power loss) before its own ``finally`` block could remove it. Left alone, they
+    linger forever and inflate the shard's size-cap accounting.
+
+    :param shard_dir: Shard directory to sweep; caller must hold its write lock.
+    :param keep: Tmp paths belonging to the current write, left untouched.
+    :return: ``None``.
+    """
+    for stale_tmp in shard_dir.glob(_TMP_FILE_GLOB):
+        if stale_tmp not in keep:
+            with contextlib.suppress(OSError):
+                stale_tmp.unlink()
+
+
 def _atomic_write_shard(
     shard_dir: Path,
     canonical_model: str,
@@ -407,7 +443,8 @@ def _atomic_write_shard(
     is fully written before ``index.json`` atomically switches to that generation,
     so readers can never pair an older key map with a rebuilt matrix. A crash
     before the index replacement leaves only an unreferenced file; a crash after
-    it leaves the new generation complete.
+    it leaves the new generation complete. Always runs under the shard write lock,
+    so it also reclaims any tmp files orphaned by a prior writer that crashed.
 
     :param shard_dir: Shard directory to write into (created if missing).
     :param canonical_model: Canonical model identifier.
@@ -426,6 +463,7 @@ def _atomic_write_shard(
     index_path = shard_dir / INDEX_FILENAME
     vectors_tmp = shard_dir / f"{vectors_filename}{suffix}"
     index_tmp = shard_dir / f"{INDEX_FILENAME}{suffix}"
+    _reclaim_stale_tmp_files(shard_dir, keep=frozenset({vectors_tmp, index_tmp}))
     try:
         with open(vectors_tmp, "wb") as handle:
             np.save(handle, np.ascontiguousarray(vectors, dtype=np.float32))
@@ -474,6 +512,7 @@ def _touch_shard(shard_dir: Path) -> None:
         with _shard_write_lock(shard_dir) as acquired:
             if not acquired:
                 return
+            _reclaim_stale_tmp_files(shard_dir)
             payload = _read_shard_meta(shard_dir)
             if payload is None:
                 return
@@ -485,6 +524,41 @@ def _touch_shard(shard_dir: Path) -> None:
         _warn_once("touch shard", exc)
 
 
+def _rebuild_matrix_retaining(
+    vectors: np.ndarray,
+    keys_map: dict[str, int],
+    namespaces: dict[str, str],
+    dim: int,
+    retained_keys: list[str],
+) -> tuple[np.ndarray, dict[str, int], dict[str, str]]:
+    """Rebuild a shard's vector matrix and key maps keeping only the given keys.
+
+    Shared by stale-key compaction and namespace-key-count capping so both
+    densely renumber rows the same way.
+
+    :param vectors: Current vector matrix indexed by ``keys_map``.
+    :param keys_map: Current key-to-row mapping.
+    :param namespaces: Current key-to-input-namespace mapping.
+    :param dim: Embedding dimensionality.
+    :param retained_keys: Keys to keep, in their new row order.
+    :return: Rebuilt ``(vectors, keys_map, namespaces)`` with densely renumbered rows.
+    """
+    new_vectors = (
+        np.stack(
+            [
+                np.ascontiguousarray(vectors[keys_map[key]], dtype=np.float32)
+                for key in retained_keys
+            ],
+            axis=0,
+        )
+        if retained_keys
+        else np.empty((0, dim), dtype=np.float32)
+    )
+    new_keys_map = {key: row for row, key in enumerate(retained_keys)}
+    new_namespaces = {key: namespaces[key] for key in retained_keys}
+    return new_vectors, new_keys_map, new_namespaces
+
+
 def _write_shard_entries(
     shard_dir: Path,
     canonical_model: str,
@@ -493,16 +567,20 @@ def _write_shard_entries(
     *,
     namespace: str,
     active_keys: set[str] | None,
+    max_namespace_keys: int | None = None,
 ) -> None:
-    """Append embedding rows and compact stale keys from one input namespace.
+    """Append/heal embedding rows and compact stale or overflowing namespace keys.
 
     :param shard_dir: Shard directory to update.
     :param canonical_model: Canonical model identifier.
     :param revision: Resolved model revision, or ``None`` when unpinned.
-    :param entries: Sequence of ``(key, vector)`` pairs to append.
+    :param entries: Sequence of ``(key, vector)`` pairs to append or, for keys that
+        already exist with a poisoned (NaN/Inf) stored row, heal in place.
     :param namespace: Stable identifier for one mode/instruction/dtype combination.
     :param active_keys: Complete live key set for ``namespace``, or ``None`` to skip
         stale-key compaction.
+    :param max_namespace_keys: Maximum keys to retain in ``namespace`` after this
+        write, oldest (lowest row index) dropped first, or ``None`` for no cap.
     :return: ``None``.
     """
     if not entries and active_keys is None:
@@ -534,9 +612,28 @@ def _write_shard_entries(
                 namespaces = {}
             existing = None
 
-            missing_entries = [
-                (key, vector) for key, vector in unique_entries if key not in keys_map
-            ]
+            missing_entries: list[tuple[str, np.ndarray]] = []
+            overwrite_entries: list[tuple[str, np.ndarray]] = []
+            for key, vector in unique_entries:
+                row = keys_map.get(key)
+                if row is None:
+                    missing_entries.append((key, vector))
+                elif not _is_finite_row(vectors[row]):
+                    # A poisoned stored row (NaN/Inf) is a permanent miss for
+                    # get_many (see its matching _is_finite_row check), so a
+                    # recomputed value for the same key must overwrite it here
+                    # or the unit would re-embed on every future run forever.
+                    overwrite_entries.append((key, vector))
+
+            if overwrite_entries:
+                # existing.vectors is a read-only mmap; copy before mutating rows.
+                vectors = np.array(vectors, dtype=np.float32, copy=True)
+                for key, vector in overwrite_entries:
+                    vectors[keys_map[key]] = np.ascontiguousarray(vector, dtype=np.float32).reshape(
+                        dim
+                    )
+                    namespaces[key] = namespace
+
             if missing_entries:
                 start_row = vectors.shape[0]
                 new_rows = np.stack(
@@ -565,21 +662,33 @@ def _write_shard_entries(
                     (key for key in keys_map if key not in stale_keys),
                     key=keys_map.__getitem__,
                 )
-                vectors = (
-                    np.stack(
-                        [
-                            np.ascontiguousarray(vectors[keys_map[key]], dtype=np.float32)
-                            for key in retained_keys
-                        ],
-                        axis=0,
-                    )
-                    if retained_keys
-                    else np.empty((0, dim), dtype=np.float32)
+                vectors, keys_map, namespaces = _rebuild_matrix_retaining(
+                    vectors, keys_map, namespaces, dim, retained_keys
                 )
-                keys_map = {key: row for row, key in enumerate(retained_keys)}
-                namespaces = {key: namespaces[key] for key in retained_keys}
 
-            if missing_entries or stale_keys:
+            capped_namespace = False
+            if max_namespace_keys is not None:
+                namespace_keys_by_row = sorted(
+                    (
+                        key
+                        for key, key_namespace in namespaces.items()
+                        if key_namespace == namespace
+                    ),
+                    key=keys_map.__getitem__,
+                )
+                overflow = len(namespace_keys_by_row) - max_namespace_keys
+                if overflow > 0:
+                    drop_keys = set(namespace_keys_by_row[:overflow])
+                    retained_keys = sorted(
+                        (key for key in keys_map if key not in drop_keys),
+                        key=keys_map.__getitem__,
+                    )
+                    vectors, keys_map, namespaces = _rebuild_matrix_retaining(
+                        vectors, keys_map, namespaces, dim, retained_keys
+                    )
+                    capped_namespace = True
+
+            if missing_entries or overwrite_entries or stale_keys or capped_namespace:
                 _atomic_write_shard(
                     shard_dir,
                     canonical_model,
@@ -683,8 +792,14 @@ def _maybe_evict(repos_dir: Path, protect: Path | None = None) -> None:
                 break
             if protect is not None and shard_dir == protect:
                 continue
-            shutil.rmtree(shard_dir, ignore_errors=True)
-            total -= size
+            # A concurrent writer may be mid-publish under this shard's lock; skip
+            # rather than rmtree out from under it (lost eviction opportunity is
+            # fine, destroying an in-flight write is not).
+            with _shard_write_lock(shard_dir) as acquired:
+                if not acquired:
+                    continue
+                shutil.rmtree(shard_dir, ignore_errors=True)
+                total -= size
         _prune_empty_repo_dirs(repos_dir)
         if total > target:
             logger.warning(
@@ -757,8 +872,9 @@ class EmbeddingCache:
                 continue
             vector = np.array(loaded.vectors[row], dtype=np.float32, copy=True)
             # A NaN/Inf row would silently poison every similarity it touches on
-            # every future run; treat it as a miss so it gets recomputed.
-            if np.isfinite(vector).all():
+            # every future run; treat it as a miss so it gets recomputed (and, in
+            # _write_shard_entries, healed in place using this same predicate).
+            if _is_finite_row(vector):
                 hits[key] = vector
         if hits and (time.time() - loaded.last_used_at) > _TOUCH_INTERVAL_SECONDS:
             _touch_shard(shard_dir)
@@ -773,8 +889,9 @@ class EmbeddingCache:
         *,
         namespace: str = "default",
         active_keys: set[str] | None = None,
+        max_namespace_keys: int | None = None,
     ) -> None:
-        """Insert vectors, compact stale namespace entries, and enforce the size cap.
+        """Insert vectors, compact stale/overflowing namespace entries, enforce the size cap.
 
         :param cache_scope: Analyzed corpus root path.
         :param canonical_model: Canonical model identifier.
@@ -783,6 +900,8 @@ class EmbeddingCache:
         :param namespace: Stable identifier for one mode/instruction/dtype combination.
         :param active_keys: Complete live key set for ``namespace``, or ``None`` to
             preserve every existing key.
+        :param max_namespace_keys: Maximum keys to retain in ``namespace`` after this
+            write, oldest dropped first, or ``None`` for no cap.
         :return: ``None``.
         """
         if not entries and active_keys is None:
@@ -795,6 +914,7 @@ class EmbeddingCache:
             entries,
             namespace=namespace,
             active_keys=active_keys,
+            max_namespace_keys=max_namespace_keys,
         )
         _maybe_evict(self.repos_dir, protect=shard_dir)
 
@@ -875,7 +995,12 @@ class EmbeddingCache:
                 if model is not None and (meta is None or meta.get("model") != model):
                     continue
                 removed += len(meta.get("keys", {})) if meta else 0
-                shutil.rmtree(shard_dir, ignore_errors=True)
+                # Wait for any concurrent writer rather than deleting under it: writers
+                # hold this lock only briefly, and a dead holder's flock self-releases.
+                with _shard_write_lock(shard_dir, blocking=True) as acquired:
+                    if not acquired:
+                        continue
+                    shutil.rmtree(shard_dir, ignore_errors=True)
             _prune_empty_repo_dirs(self.repos_dir)
         except OSError as exc:
             _warn_once("clear", exc)

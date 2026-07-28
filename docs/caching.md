@@ -82,4 +82,5 @@ Internals for debugging and the curious; none of this is needed to use the cache
   CUDA-specific dtype may initialize PyTorch capability checks.
 - The cache is never fatal: missing, corrupt, or unwritable cache state degrades to a cache miss
   (or a skipped write), warns once per process, and analysis proceeds with correct results
-  either way.
+  either way. A poisoned (NaN/Inf) row reads as a miss and is overwritten in place by the next
+  successful recompute, so corruption self-heals instead of forcing a manual `cache clear`.

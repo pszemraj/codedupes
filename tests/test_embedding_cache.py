@@ -5,6 +5,8 @@ import hashlib
 import itertools
 import json
 import os
+import threading
+import time
 from pathlib import Path
 
 import numpy as np
@@ -868,3 +870,149 @@ def test_put_many_coalesces_duplicate_keys(tmp_path):
         cache.get_many(scope, "model-a", "rev1", ["shared"])["shared"],
         replacement,
     )
+
+
+def test_poisoned_cached_row_is_healed_by_next_put(tmp_path):
+    # Reuses the corruption setup from test_nonfinite_cached_vector_treated_as_miss:
+    # a NaN-poisoned row is a permanent miss until put_many heals it in place.
+    cache = EmbeddingCache()
+    scope = tmp_path / "proj"
+    scope.mkdir()
+    poisoned = np.array([1.0, float("nan")], dtype=np.float32)
+    corrected = np.array([5.0, 6.0], dtype=np.float32)
+
+    cache.put_many(scope, "model-a", "rev1", [("key", poisoned)])
+    assert cache.get_many(scope, "model-a", "rev1", ["key"]) == {}
+
+    cache.put_many(scope, "model-a", "rev1", [("key", corrected)])
+
+    hits = cache.get_many(scope, "model-a", "rev1", ["key"])
+    np.testing.assert_array_equal(hits["key"], corrected)
+
+
+def test_put_many_never_overwrites_a_valid_existing_row(tmp_path):
+    cache = EmbeddingCache()
+    scope = tmp_path / "proj"
+    scope.mkdir()
+    original = np.array([1.0, 2.0], dtype=np.float32)
+    bogus = np.array([float("nan"), float("nan")], dtype=np.float32)
+
+    cache.put_many(scope, "model-a", "rev1", [("key", original)])
+    # A second write for the same already-valid key must be a no-op for that
+    # row, even if the candidate vector is poisoned: only a stored row that
+    # fails the finiteness predicate is eligible for the healing overwrite.
+    cache.put_many(scope, "model-a", "rev1", [("key", bogus)])
+
+    hits = cache.get_many(scope, "model-a", "rev1", ["key"])
+    np.testing.assert_array_equal(hits["key"], original)
+
+
+def test_eviction_skips_shard_whose_lock_is_held(tmp_path, monkeypatch):
+    fcntl = pytest.importorskip("fcntl")
+    monkeypatch.setattr(embedding_cache, "_resolve_max_bytes", lambda: 1000)
+    cache = EmbeddingCache()
+    dim = 256
+
+    locked_scope = tmp_path / "locked-proj"
+    locked_scope.mkdir()
+    locked_shard_dir = cache.shard_dir(locked_scope, "model-x", "rev1")
+    cache.put_many(locked_scope, "model-x", "rev1", [("k0", np.zeros(dim, dtype=np.float32))])
+    assert locked_shard_dir.exists()
+
+    lock_fd = os.open(locked_shard_dir / ".lock", os.O_CREAT | os.O_RDWR)
+    fcntl.flock(lock_fd, fcntl.LOCK_EX)
+    try:
+        # Write enough other shards to push the cache well past its tiny cap and
+        # force eviction; the locked shard must survive every sweep.
+        for i in range(6):
+            scope = tmp_path / f"proj{i}"
+            scope.mkdir()
+            vector = np.full(dim, float(i), dtype=np.float32)
+            cache.put_many(scope, "model-x", "rev1", [(f"key{i}", vector)])
+
+        assert locked_shard_dir.exists()
+    finally:
+        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        os.close(lock_fd)
+
+
+def test_clear_waits_for_held_lock_then_removes_shard(tmp_path):
+    fcntl = pytest.importorskip("fcntl")
+    cache = EmbeddingCache()
+    scope = tmp_path / "proj"
+    scope.mkdir()
+    cache.put_many(scope, "model-a", "rev1", [("k1", np.array([1.0], dtype=np.float32))])
+    shard_dir = cache.shard_dir(scope, "model-a", "rev1")
+
+    lock_fd = os.open(shard_dir / ".lock", os.O_CREAT | os.O_RDWR)
+    fcntl.flock(lock_fd, fcntl.LOCK_EX)
+
+    def release_after_delay() -> None:
+        time.sleep(0.2)
+        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        os.close(lock_fd)
+
+    releaser = threading.Thread(target=release_after_delay)
+    releaser.start()
+
+    result: dict[str, int] = {}
+
+    def run_clear() -> None:
+        result["removed"] = cache.clear()
+
+    clearer = threading.Thread(target=run_clear)
+    clearer.start()
+    clearer.join(timeout=5)
+    releaser.join(timeout=5)
+
+    # Bounds the test: clear() must block-and-wait, not hang forever or skip.
+    assert not clearer.is_alive()
+    assert result.get("removed") == 1
+    assert not shard_dir.exists()
+
+
+def test_orphaned_tmp_file_reclaimed_by_next_write(tmp_path):
+    cache = EmbeddingCache()
+    scope = tmp_path / "proj"
+    scope.mkdir()
+    cache.put_many(scope, "model-a", "rev1", [("k1", np.array([1.0, 2.0], dtype=np.float32))])
+    shard_dir = cache.shard_dir(scope, "model-a", "rev1")
+
+    orphan = shard_dir / f"vectors-deadbeef.npy{embedding_cache._tmp_suffix()}"
+    orphan.write_bytes(b"leftover from a writer that never reached its own cleanup")
+    assert orphan.exists()
+
+    cache.put_many(scope, "model-a", "rev1", [("k2", np.array([3.0, 4.0], dtype=np.float32))])
+
+    assert not orphan.exists()
+
+
+def test_max_namespace_keys_drops_oldest_and_spares_other_namespaces(tmp_path):
+    cache = EmbeddingCache()
+    scope = tmp_path / "proj"
+    scope.mkdir()
+
+    for i in range(5):
+        cache.put_many(
+            scope,
+            "model-a",
+            "rev1",
+            [(f"query-{i}", np.array([float(i), float(i) + 1.0], dtype=np.float32))],
+            namespace="query",
+            max_namespace_keys=3,
+        )
+
+    all_query_keys = [f"query-{i}" for i in range(5)]
+    hits = cache.get_many(scope, "model-a", "rev1", all_query_keys)
+    assert set(hits) == {"query-2", "query-3", "query-4"}
+
+    # A key in a different namespace is unaffected by another namespace's cap.
+    cache.put_many(
+        scope,
+        "model-a",
+        "rev1",
+        [("code-a", np.array([9.0, 9.0], dtype=np.float32))],
+        namespace="check",
+    )
+    hits_with_code = cache.get_many(scope, "model-a", "rev1", [*all_query_keys, "code-a"])
+    assert set(hits_with_code) == {"code-a", "query-2", "query-3", "query-4"}
