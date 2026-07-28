@@ -52,3 +52,11 @@ def test_sdist_uses_an_explicit_release_file_allowlist() -> None:
         "pyproject.toml",
     ]
     assert "include" not in sdist
+
+
+def test_readme_documentation_links_work_outside_the_repository() -> None:
+    """Package-index metadata must not contain repository-relative docs links."""
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+
+    assert "](docs/" not in readme
+    assert "https://github.com/pszemraj/codedupes/blob/main/docs/" in readme
