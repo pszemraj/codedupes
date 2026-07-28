@@ -117,7 +117,7 @@ def test_symbolic_revision_revalidates_before_cache_hit(tmp_path, monkeypatch):
     )
 
     assert get_model_counts["count"] == 2
-    assert len(model.encode_calls) == 1
+    assert len(model.encode_calls) == 2
     np.testing.assert_array_equal(first, second)
 
 
@@ -643,7 +643,7 @@ def test_clear_scopes_to_one_model(tmp_path):
     assert remaining["models"] == {"model-b": 1}
 
 
-def test_unconfirmable_loaded_revision_keeps_caching(tmp_path, monkeypatch):
+def test_unconfirmable_loaded_revision_disables_cache(tmp_path, monkeypatch):
     units = _five_units(tmp_path)
     model = CountingModel()
     get_model_counts = _patch_get_model(monkeypatch, model)
@@ -654,8 +654,9 @@ def test_unconfirmable_loaded_revision_keeps_caching(tmp_path, monkeypatch):
     assert len(model.encode_calls) == 1
 
     second = compute_embeddings(units, model_name="test-model", cache_scope=tmp_path)
-    assert get_model_counts["count"] == 1
-    assert len(model.encode_calls) == 1
+    assert get_model_counts["count"] == 2
+    assert len(model.encode_calls) == 2
+    assert EmbeddingCache().stats()["entries"] == 0
     np.testing.assert_array_equal(first, second)
 
 

@@ -317,6 +317,37 @@ def _get_loaded_model_commit_hash(model: object) -> str | None:
         return None
 
 
+def _confirm_cache_revision_after_load(
+    model: object,
+    model_name: str,
+    resolved_revision: str | None,
+    assumed_cache_revision: str | None,
+) -> str | None:
+    """Resolve a vector-safe cache revision after loading an embedding model.
+
+    Local directories retain their pre-load content fingerprint. Hub models
+    require either the loaded config's concrete commit hash or an explicitly
+    pinned full commit hash; a symbolic branch/tag is unsafe when the backend
+    cannot report what it loaded.
+
+    :param model: Loaded embedding model.
+    :param model_name: Requested model alias, Hub ID, or local directory.
+    :param resolved_revision: Revision passed to the model loader.
+    :param assumed_cache_revision: Pre-load local fingerprint or Hub snapshot.
+    :return: Safe cache revision, or ``None`` when persistent reuse must be disabled.
+    """
+    canonical_model = resolve_model_profile(model_name).canonical_name
+    if resolve_local_model_path(canonical_model) is not None:
+        return assumed_cache_revision
+
+    loaded_commit = _get_loaded_model_commit_hash(model)
+    if loaded_commit is not None:
+        return loaded_commit
+    if resolved_revision is not None and _is_hf_commit_hash(resolved_revision):
+        return resolved_revision
+    return None
+
+
 def _assemble_cached_matrix(keys: list[str], hits: dict[str, np.ndarray]) -> np.ndarray:
     """Assemble a row-aligned embedding matrix entirely from cache hits.
 
@@ -1410,14 +1441,22 @@ def _compute_embeddings_unlocked(
     execution_device = _get_effective_model_device(model, resolved_device)
 
     if cache is not None:
-        confirmed_revision = _get_loaded_model_commit_hash(model) or resolved_revision
+        confirmed_revision = _confirm_cache_revision_after_load(
+            model,
+            model_name,
+            resolved_revision,
+            cache_revision,
+        )
         if confirmed_revision is None:
-            # Unconfirmable is not the same as different: keep the pre-load
-            # resolution rather than silently discarding valid hits.
             logger.debug(
-                "Could not confirm the loaded model revision; keeping cache revision %s",
+                "Could not tie the loaded Hub model to a concrete commit; "
+                "bypassing persistent embeddings assumed under %s",
                 cache_revision,
             )
+            cache = None
+            cache_revision = None
+            cache_keys = None
+            hits = {}
         elif confirmed_revision != cache_revision:
             # Never mix vectors cached under a different resolved revision into
             # this matrix: discard any pre-load hits and re-key under the truth.
@@ -1785,12 +1824,21 @@ def _find_similar_to_query_unlocked(
         execution_device = _get_effective_model_device(model, resolved_device)
 
         if cache is not None:
-            confirmed_revision = _get_loaded_model_commit_hash(model) or resolved_revision
+            confirmed_revision = _confirm_cache_revision_after_load(
+                model,
+                model_name,
+                resolved_revision,
+                cache_revision,
+            )
             if confirmed_revision is None:
                 logger.debug(
-                    "Could not confirm the loaded model revision; keeping cache revision %s",
+                    "Could not tie the loaded Hub model to a concrete commit; "
+                    "bypassing persistent query embedding assumed under %s",
                     cache_revision,
                 )
+                cache = None
+                cache_revision = None
+                cache_key = None
             elif confirmed_revision != cache_revision:
                 cache_revision = confirmed_revision
                 cache_key = compute_cache_key(

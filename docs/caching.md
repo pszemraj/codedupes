@@ -38,9 +38,9 @@ across runs.
   model revision, prepare embedding text, and check the cache *before* touching
   `sentence-transformers`. If every code unit (and, for `search`, the query) is
   already cached, the model is never loaded at all. A warm `check`/`search` run
-  skips model load and inference entirely. Resolving a CUDA-specific dtype may
-  initialize PyTorch capability checks, but CPU, MPS, and macOS `auto` cache hits do
-  not import PyTorch.
+  skips model load and inference entirely when the revision is concrete. Resolving
+  a CUDA-specific dtype may initialize PyTorch capability checks, but CPU, MPS, and
+  macOS `auto` cache hits do not import PyTorch.
 - Query embeddings from `codedupes search` are cached in the same shard as the
   corpus they were searched against, keyed on the prepared query text. Repeating an
   identical search is a full cache hit end-to-end.
@@ -67,8 +67,10 @@ across runs.
   single result matrix is never assembled from two different model revisions. Note
   that a symbolic `--revision` such as `main` is resolved through the local Hub
   cache before any model-free hit. If no concrete snapshot can be resolved, the
-  model loads before cached vectors are trusted. A full commit-hash pin can keep
-  the skip-model-load fast path even when the Hub model cache has been cleared.
+  model loads first; if the loaded backend still cannot report a concrete commit,
+  persistent reuse is bypassed for that call instead of storing vectors under the
+  mutable symbolic name. A full commit-hash pin can keep the skip-model-load fast
+  path even when the Hub model cache has been cleared.
 - The cache is **never fatal**. A missing, corrupt, or unwritable cache file is
   treated as a cache miss (or a no-op write) and logged once per process as a
   warning; analysis always proceeds and produces correct results either way.
