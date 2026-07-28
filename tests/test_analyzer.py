@@ -1301,6 +1301,32 @@ def test_search_requires_embeddings(tmp_path: Path) -> None:
         analyzer.search("entry")
 
 
+def test_empty_reanalysis_clears_previous_search_state(tmp_path: Path, monkeypatch) -> None:
+    project = create_project(tmp_path, "def entry():\n    return 1\n")
+    empty_project = tmp_path / "empty"
+    empty_project.mkdir()
+    monkeypatch.setattr(
+        analyzer_module,
+        "run_semantic_analysis",
+        _make_semantic_runner(),
+    )
+    analyzer = CodeAnalyzer(
+        AnalyzerConfig(
+            run_traditional=False,
+            run_semantic=True,
+            run_unused=False,
+            min_semantic_lines=0,
+        )
+    )
+
+    analyzer.analyze(project)
+    result = analyzer.analyze(empty_project)
+
+    assert result.analysis_mode == "none"
+    with pytest.raises(RuntimeError, match="run_semantic=True"):
+        analyzer.search("entry")
+
+
 def test_invalid_threshold_raises() -> None:
     with pytest.raises(ValueError, match="jaccard_threshold"):
         AnalyzerConfig(jaccard_threshold=1.5)

@@ -474,10 +474,20 @@ class CodeAnalyzer:
         self._units: list[CodeUnit] | None = None
         self._embeddings: np.ndarray | None = None
         self._semantic_units: list[CodeUnit] | None = None
-        self._resolved_semantic_threshold: float | None = None
-        self._resolved_semantic_task: str | None = None
         self._resolved_search_semantic_task: str | None = None
         self._cache_scope: Path | None = None
+
+    def _reset_analysis_state(self, cache_scope: Path) -> None:
+        """Clear corpus-specific state before one analysis run.
+
+        :param cache_scope: Root path used to address embedding-cache entries.
+        :return: ``None``.
+        """
+        self._units = None
+        self._embeddings = None
+        self._semantic_units = None
+        self._resolved_search_semantic_task = None
+        self._cache_scope = cache_scope
 
     def analyze(self, path: Path | str) -> AnalysisResult:
         """
@@ -494,7 +504,7 @@ class CodeAnalyzer:
         if not path.exists():
             raise FileNotFoundError(f"Path does not exist: {path}")
 
-        self._cache_scope = path.parent if path.is_file() else path
+        self._reset_analysis_state(path.parent if path.is_file() else path)
 
         logger.info(f"Extracting code units from {path}")
 
@@ -538,13 +548,9 @@ class CodeAnalyzer:
             else get_default_semantic_threshold(self.config.model_name)
         )
         semantic_task = self.config.semantic_task or DEFAULT_CHECK_SEMANTIC_TASK
-        search_semantic_task = semantic_task
-        self._resolved_semantic_threshold = semantic_threshold
-        self._resolved_semantic_task = semantic_task
-        self._resolved_search_semantic_task = search_semantic_task
+        self._resolved_search_semantic_task = semantic_task
 
         semantic_candidates: list[CodeUnit] = []
-        self._semantic_units = None
         if self.config.run_semantic:
             semantic_type_filter = _resolve_semantic_unit_type_filter(
                 self.config.semantic_unit_types
