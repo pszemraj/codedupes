@@ -11,27 +11,19 @@ from codedupes import semantic
 from tests.conftest import extract_arithmetic_units
 
 
-def _reset_model_cache_state() -> None:
-    semantic._model = None
-    semantic._model_name = None
-    semantic._model_revision = None
-    semantic._model_trust_remote_code = None
-    semantic._model_device_key = None
-    semantic._model_execution_device = None
-    semantic._warned_mlx_mps_contention = False
-    semantic._warned_cpu_fallback_reuse = False
-
-
 def _prepare_device(device, *, mps_fallback, mps_memory_fraction):
     del mps_fallback, mps_memory_fraction
     return "cpu" if device == "auto" else device
 
 
 @pytest.fixture(autouse=True)
-def _isolate_model_cache():
-    _reset_model_cache_state()
+def _isolate_model_cache(monkeypatch):
+    monkeypatch.setattr(semantic, "clear_device_cache", lambda *_args, **_kwargs: True)
+    semantic.clear_model_cache()
+    semantic._warned_mlx_mps_contention = False
     yield
-    _reset_model_cache_state()
+    semantic.clear_model_cache()
+    semantic._warned_mlx_mps_contention = False
 
 
 def test_model_cache_is_keyed_by_resolved_device(monkeypatch) -> None:
