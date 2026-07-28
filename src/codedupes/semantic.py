@@ -44,6 +44,7 @@ from codedupes.semantic_profiles import (
     SemanticModelProfile,
     get_default_search_threshold,
     get_default_semantic_threshold,
+    is_explicit_local_model_path,
     resolve_local_model_path,
     resolve_model_profile,
 )
@@ -180,19 +181,23 @@ def _resolve_hf_cached_revision(canonical_model: str) -> str | None:
 def _fingerprint_local_model_dir(model_dir: Path) -> str | None:
     """Fingerprint a local model directory for use as a cache revision.
 
-    The fingerprint hashes every regular file's relative path, size, and
-    mtime, so replacing or retraining the weights in place changes the
-    resulting cache revision and stale vectors are never served. It reads
-    no file contents, keeping warm-path key derivation cheap enough to run
-    before any model import.
+    The fingerprint hashes each model file's relative path, size, and mtime,
+    excluding Hugging Face's ``--local-dir`` download metadata. Replacing or
+    retraining the weights in place therefore changes the cache revision
+    without invalidating embeddings when only download timestamps change. It
+    reads no file contents, keeping warm-path key derivation cheap enough to
+    run before any model import.
 
     :param model_dir: Resolved local model directory.
     :return: ``"dir-<hex>"`` fingerprint, or ``None`` when the walk fails.
     """
     entries: list[tuple[str, int, int]] = []
+    hf_download_metadata = model_dir / ".cache" / "huggingface"
     try:
         for file_path in sorted(model_dir.rglob("*")):
             if not file_path.is_file():
+                continue
+            if file_path.is_relative_to(hf_download_metadata):
                 continue
             stat = file_path.stat()
             relative = file_path.relative_to(model_dir).as_posix()
@@ -203,6 +208,32 @@ def _fingerprint_local_model_dir(model_dir: Path) -> str | None:
         return None
     digest = hashlib.blake2b(repr(entries).encode(), digest_size=12).hexdigest()
     return f"dir-{digest}"
+
+
+def _validate_local_model_directory(model_dir: Path) -> None:
+    """Validate the minimum files needed to load a local embedding model.
+
+    :param model_dir: Resolved local model directory.
+    :raises SemanticBackendError: If model configuration or weights are missing.
+    """
+    config_path = model_dir / "config.json"
+    if not config_path.is_file():
+        raise SemanticBackendError(
+            f"Local model directory is missing config.json: {model_dir}. "
+            "Download the complete model repository, not selected files: "
+            "`hf download <repo-id> --local-dir <directory>`."
+        )
+
+    weight_patterns = ("*.safetensors", "pytorch_model*.bin")
+    has_weights = any(
+        candidate.is_file() for pattern in weight_patterns for candidate in model_dir.rglob(pattern)
+    )
+    if not has_weights:
+        raise SemanticBackendError(
+            f"Local model directory contains no safetensors or PyTorch model weights: {model_dir}. "
+            "Download the complete model repository, not selected files: "
+            "`hf download <repo-id> --local-dir <directory>`."
+        )
 
 
 def _resolve_load_revision(model_name: str, explicit_revision: str | None) -> str | None:
@@ -626,10 +657,20 @@ def _get_model_unlocked(
     global _model, _model_name, _model_revision, _model_trust_remote_code
     global _model_device_key, _model_execution_device, _warned_cpu_fallback_reuse
 
+    requested_local_path = resolve_local_model_path(model_name)
+    if requested_local_path is None and is_explicit_local_model_path(model_name):
+        raise SemanticBackendError(
+            "Local model directory does not exist or is not a directory: "
+            f"{Path(model_name).expanduser()}"
+        )
+
     profile = resolve_model_profile(model_name)
     resolved_model_name = profile.canonical_name
+    local_model_path = resolve_local_model_path(resolved_model_name)
+    if local_model_path is not None:
+        _validate_local_model_directory(local_model_path)
     resolved_revision = _resolve_model_revision(model_name, revision)
-    if resolved_revision is not None and resolve_local_model_path(resolved_model_name) is not None:
+    if resolved_revision is not None and local_model_path is not None:
         logger.warning(
             "Ignoring revision %r for local model directory %s; on-disk weights are unpinned",
             resolved_revision,
@@ -676,6 +717,8 @@ def _get_model_unlocked(
             "trust_remote_code": resolved_trust_remote_code,
             "device": resolved_device,
         }
+        if local_model_path is not None:
+            st_kwargs["local_files_only"] = True
         if resolved_revision is not None:
             st_kwargs["revision"] = resolved_revision
 

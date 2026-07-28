@@ -6,6 +6,7 @@ from codedupes.semantic_profiles import (
     DEFAULT_FALLBACK_SEARCH_THRESHOLD,
     get_default_search_threshold,
     get_default_semantic_threshold,
+    is_explicit_local_model_path,
     list_supported_models,
     resolve_local_model_path,
     resolve_model_profile,
@@ -75,6 +76,52 @@ def test_local_directory_family_inferred_from_basename(tmp_path: Path) -> None:
     builtin = resolve_model_profile("embeddinggemma")
     assert gemma.default_semantic_threshold == builtin.default_semantic_threshold
     assert gemma.default_search_threshold == builtin.default_search_threshold
+
+
+def test_hash_named_hf_snapshot_infers_family_from_cache_ancestor(tmp_path: Path) -> None:
+    snapshot = (
+        tmp_path
+        / "models--Alibaba-NLP--gte-modernbert-base"
+        / "snapshots"
+        / "e7f32e3c00f91d699e8c43b53106206bcc72bb22"
+    )
+    snapshot.mkdir(parents=True)
+
+    profile = resolve_model_profile(str(snapshot))
+
+    assert profile.family == "gte-modernbert"
+    assert profile.default_search_threshold == get_default_search_threshold("gte-modernbert-base")
+
+
+def test_arbitrary_local_directory_infers_embeddinggemma_from_config(tmp_path: Path) -> None:
+    model_dir = tmp_path / "downloaded-model"
+    model_dir.mkdir()
+    (model_dir / "config.json").write_text(
+        '{"model_type": "gemma3_text", "use_bidirectional_attention": true}'
+    )
+
+    profile = resolve_model_profile(str(model_dir))
+
+    assert profile.family == "embeddinggemma"
+    assert profile.default_semantic_threshold == get_default_semantic_threshold(
+        "embeddinggemma-300m"
+    )
+
+
+def test_arbitrary_local_directory_infers_gte_family_from_model_card(tmp_path: Path) -> None:
+    model_dir = tmp_path / "downloaded-model"
+    model_dir.mkdir()
+    (model_dir / "README.md").write_text("# gte-modernbert-base\n\nLocal model copy.\n")
+
+    assert resolve_model_profile(str(model_dir)).family == "gte-modernbert"
+
+
+def test_explicit_local_path_detection() -> None:
+    assert is_explicit_local_model_path("/models/local-copy")
+    assert is_explicit_local_model_path("./models/local-copy")
+    assert is_explicit_local_model_path("../models/local-copy")
+    assert is_explicit_local_model_path("~/models/local-copy")
+    assert not is_explicit_local_model_path("Alibaba-NLP/gte-modernbert-base")
 
 
 def test_dynamic_embeddinggemma_profile_for_non_builtin_hub_id() -> None:

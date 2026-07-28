@@ -237,6 +237,42 @@ def test_cli_model_revision_defaults_to_auto_none(monkeypatch, tmp_path):
     assert captured[0].model_revision is None
 
 
+@pytest.mark.parametrize(
+    ("command", "tail_args", "expected_exit"),
+    [
+        ("check", [], 1),
+        ("search", ["entry"], 0),
+    ],
+)
+def test_cli_local_model_path_pass_through(
+    monkeypatch,
+    tmp_path,
+    command,
+    tail_args,
+    expected_exit,
+):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+    model_dir = tmp_path / "saved-model"
+    model_dir.mkdir()
+    captured = []
+    patch_cli_analyzer(
+        monkeypatch,
+        cli,
+        analyze_result=lambda: _build_result(tmp_path),
+        search_results=[(_build_unit(tmp_path), 0.99)],
+        captured_configs=captured,
+    )
+
+    result = CliRunner().invoke(
+        cli.cli,
+        [command, str(path), *tail_args, "--model", str(model_dir)],
+    )
+
+    assert result.exit_code == expected_exit
+    assert captured[0].model_name == str(model_dir)
+
+
 def test_cli_threshold_precedence(monkeypatch, tmp_path):
     path = tmp_path / "sample.py"
     path.write_text("def entry():\n    return 1\n")

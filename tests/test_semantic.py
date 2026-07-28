@@ -286,6 +286,7 @@ def test_get_model_passes_revision_and_trust_options(
             calls.append({"args": args, "kwargs": kwargs})
 
     monkeypatch.setattr(semantic, "_check_semantic_dependencies", lambda: None)
+    monkeypatch.setattr(semantic, "_prepare_semantic_device", lambda *_args, **_kwargs: "cpu")
     monkeypatch.setattr(sentence_transformers, "SentenceTransformer", FakeSentenceTransformer)
     semantic.clear_model_cache()
 
@@ -315,6 +316,66 @@ def test_get_model_passes_revision_and_trust_options(
             assert nested["trust_remote_code"] is True
         else:
             assert "trust_remote_code" not in nested
+
+
+def test_get_model_loads_local_directory_without_hub_revision(tmp_path: Path, monkeypatch) -> None:
+    model_dir = tmp_path / "local-model"
+    model_dir.mkdir()
+    (model_dir / "config.json").write_text('{"model_type": "test"}')
+    (model_dir / "model.safetensors").write_text("weights")
+    calls: list[dict] = []
+
+    class FakeSentenceTransformer:
+        def __init__(self, *args, **kwargs):
+            calls.append({"args": args, "kwargs": kwargs})
+
+    monkeypatch.setattr(semantic, "_check_semantic_dependencies", lambda: None)
+    monkeypatch.setattr(semantic, "_prepare_semantic_device", lambda *_args, **_kwargs: "cpu")
+    monkeypatch.setattr(sentence_transformers, "SentenceTransformer", FakeSentenceTransformer)
+    semantic.clear_model_cache()
+
+    semantic.get_model(str(model_dir), revision="ignored-local-revision")
+
+    assert calls == [
+        {
+            "args": (str(model_dir.resolve()),),
+            "kwargs": {
+                "trust_remote_code": False,
+                "device": "cpu",
+                "local_files_only": True,
+            },
+        }
+    ]
+
+
+def test_get_model_rejects_missing_explicit_local_directory(tmp_path: Path) -> None:
+    missing = tmp_path / "missing-model"
+    semantic.clear_model_cache()
+
+    with pytest.raises(SemanticBackendError, match="does not exist"):
+        semantic.get_model(str(missing))
+
+
+@pytest.mark.parametrize(
+    ("files", "message"),
+    [
+        ({"model.safetensors": "weights"}, "missing config.json"),
+        ({"config.json": "{}"}, "contains no safetensors or PyTorch model weights"),
+    ],
+)
+def test_get_model_rejects_incomplete_local_directory(
+    tmp_path: Path,
+    files: dict[str, str],
+    message: str,
+) -> None:
+    model_dir = tmp_path / "incomplete-model"
+    model_dir.mkdir()
+    for filename, content in files.items():
+        (model_dir / filename).write_text(content)
+    semantic.clear_model_cache()
+
+    with pytest.raises(SemanticBackendError, match=message):
+        semantic.get_model(str(model_dir))
 
 
 @pytest.mark.parametrize("version", ["2.12.9", "2.12.0", "3.0.0", "3.0.0.dev1"])

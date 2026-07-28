@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -75,6 +76,93 @@ def _normalize_model_key(value: str) -> str:
     :return: Normalized lowercase alias.
     """
     return value.strip().lower()
+
+
+def _match_calibrated_family(value: str) -> CalibratedModelFamily | None:
+    """Match a model identity hint to a calibrated family.
+
+    :param value: Model name, path component, or serialized metadata.
+    :return: Matching calibrated family, or ``None``.
+    """
+    normalized = _normalize_model_key(value)
+    if "embeddinggemma" in normalized:
+        return "embeddinggemma"
+    if "gte-modernbert" in normalized:
+        return "gte-modernbert"
+    return None
+
+
+def _infer_local_model_family(model_dir: Path) -> CalibratedModelFamily | None:
+    """Infer a calibrated family from a local model directory.
+
+    The nearest directory name handles intentionally named ``save_pretrained``
+    copies. Hugging Face cache snapshots use commit hashes as directory names,
+    so their ``models--org--name`` ancestor is also inspected. For arbitrary
+    ``hf download --local-dir`` destinations, stable configuration fields and
+    the model-card title provide identity without loading model weights.
+
+    :param model_dir: Resolved local model directory.
+    :return: Matching calibrated family, or ``None`` for an unknown model.
+    """
+    path_hints = [model_dir.name]
+    path_hints.extend(part for part in model_dir.parts if part.startswith("models--"))
+    for hint in path_hints:
+        family = _match_calibrated_family(hint)
+        if family is not None:
+            return family
+
+    config_data: dict[str, object] = {}
+    for filename in ("config.json", "config_sentence_transformers.json"):
+        config_path = model_dir / filename
+        try:
+            config_text = config_path.read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            continue
+        family = _match_calibrated_family(config_text)
+        if family is not None:
+            return family
+        if filename == "config.json":
+            try:
+                parsed = json.loads(config_text)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(parsed, dict):
+                config_data = parsed
+
+    if (
+        config_data.get("model_type") == "gemma3_text"
+        and config_data.get("use_bidirectional_attention") is True
+    ):
+        return "embeddinggemma"
+
+    try:
+        with (model_dir / "README.md").open(encoding="utf-8", errors="replace") as model_card:
+            for line_number, line in enumerate(model_card):
+                if line.startswith("# "):
+                    return _match_calibrated_family(line)
+                if line_number >= 127:
+                    break
+    except OSError:
+        pass
+
+    return None
+
+
+def is_explicit_local_model_path(model_name: str) -> bool:
+    """Return whether a model argument unambiguously denotes a filesystem path.
+
+    :param model_name: Model argument from the CLI or Python API.
+    :return: ``True`` for absolute, dot-relative, or home-relative paths.
+    """
+    candidate = model_name.strip()
+    return bool(
+        candidate
+        and (
+            Path(candidate).is_absolute()
+            or candidate.startswith(("./", "../", "~"))
+            or candidate in {".", ".."}
+        )
+    )
 
 
 def list_supported_models() -> list[SemanticModelProfile]:
@@ -158,15 +246,14 @@ def resolve_model_profile(model_name: str) -> SemanticModelProfile:
     local_path = resolve_local_model_path(model_name)
     if local_path is not None:
         canonical = str(local_path)
-        family_hint = _normalize_model_key(local_path.name)
+        local_family = _infer_local_model_family(local_path)
     else:
         canonical = model_name
-        family_hint = normalized
+        local_family = None
 
-    if "embeddinggemma" in family_hint:
-        return _build_dynamic_profile(canonical, "embeddinggemma")
-    if "gte-modernbert" in family_hint:
-        return _build_dynamic_profile(canonical, "gte-modernbert")
+    family = local_family or _match_calibrated_family(normalized)
+    if family is not None:
+        return _build_dynamic_profile(canonical, family)
 
     return SemanticModelProfile(
         key=canonical,

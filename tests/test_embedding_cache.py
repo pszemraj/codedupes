@@ -588,6 +588,11 @@ def test_fingerprint_local_model_dir_stability_and_edge_cases(tmp_path):
     assert first is not None and first.startswith("dir-")
     assert semantic._fingerprint_local_model_dir(model_dir) == first
 
+    hf_metadata = model_dir / ".cache" / "huggingface" / "download"
+    hf_metadata.mkdir(parents=True)
+    (hf_metadata / "config.json.metadata").write_text("updated-download-metadata")
+    assert semantic._fingerprint_local_model_dir(model_dir) == first
+
     empty = tmp_path / "empty-model"
     empty.mkdir()
     assert semantic._fingerprint_local_model_dir(empty) is None
