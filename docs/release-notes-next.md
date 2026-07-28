@@ -56,10 +56,9 @@
 
 ## Static-analysis fixes
 
-- `ast.NodeVisitor` and `ast.NodeTransformer` `visit_*` hooks are no longer reported as unused when
-  their containing class is proven to inherit from the visitor hierarchy, including local
-  subclasses.
-- An unrelated ordinary method named `visit_*` remains eligible for unused-code analysis.
+- `visit_*` hooks are excluded from unused-code results only when their base resolves through an
+  `ast.NodeVisitor` or `ast.NodeTransformer` import, including aliases, or through a proven local
+  subclass. Unrelated local or imported visitor classes remain eligible for unused-code analysis.
 - Reusing a `CodeAnalyzer` now clears corpus-specific state before each analysis, so
   an empty or nonsemantic run cannot leave stale embeddings available to
   `search()`. See [Python API](python-api.md#semantic-query-search).

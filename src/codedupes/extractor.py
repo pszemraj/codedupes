@@ -53,6 +53,7 @@ DEFAULT_EXCLUDE_PATTERNS = [
 ]
 
 DefinitionNode = ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef
+AST_VISITOR_CLASS_NAMES = {"NodeVisitor", "NodeTransformer"}
 
 
 def extract_docstring(node: DefinitionNode) -> str | None:
@@ -197,13 +198,28 @@ def _dotted_expression_name(node: ast.expr) -> str | None:
     return None
 
 
-def _is_ast_visitor_base(base_name: str) -> bool:
-    """Return whether a base name denotes an AST visitor dispatch class.
+def _get_ast_visitor_base_names(tree: ast.Module) -> set[str]:
+    """Return names bound to AST visitor classes by module-level imports.
 
-    :param base_name: Possibly dotted base-class name, for example ``ast.NodeVisitor``.
-    :return: ``True`` when the trailing segment is ``NodeVisitor`` or ``NodeTransformer``.
+    :param tree: Parsed module AST.
+    :return: Base expressions proven to resolve to visitor classes from ``ast``.
     """
-    return base_name.rsplit(".", 1)[-1] in {"NodeVisitor", "NodeTransformer"}
+    base_names: set[str] = set()
+    for node in tree.body:
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name == "ast":
+                    qualifier = alias.asname or alias.name
+                    base_names.update(
+                        f"{qualifier}.{class_name}" for class_name in AST_VISITOR_CLASS_NAMES
+                    )
+        elif isinstance(node, ast.ImportFrom) and node.module == "ast":
+            for alias in node.names:
+                if alias.name == "*":
+                    base_names.update(AST_VISITOR_CLASS_NAMES)
+                elif alias.name in AST_VISITOR_CLASS_NAMES:
+                    base_names.add(alias.asname or alias.name)
+    return base_names
 
 
 class _CodeUnitCollector(ast.NodeVisitor):
@@ -216,6 +232,7 @@ class _CodeUnitCollector(ast.NodeVisitor):
         source: str,
         module_name: str,
         exported: set[str],
+        ast_visitor_base_names: set[str],
     ) -> None:
         """Create a collector bound to an extractor and source context.
 
@@ -224,12 +241,14 @@ class _CodeUnitCollector(ast.NodeVisitor):
         :param source: Full file source text.
         :param module_name: Deduced module name.
         :param exported: Export names from module-level ``__all__``.
+        :param ast_visitor_base_names: Base names resolved from module-level ``ast`` imports.
         """
         self.extractor = extractor
         self.file_path = file_path
         self.source_lines = source.splitlines(keepends=True)
         self.module_name = module_name
         self.exported = exported
+        self.ast_visitor_base_names = ast_visitor_base_names
         self.units: list[CodeUnit] = []
 
         # Scope stacks while walking AST:
@@ -292,8 +311,8 @@ class _CodeUnitCollector(ast.NodeVisitor):
                 if (base_name := _dotted_expression_name(base)) is not None
             }
             is_dynamic_dispatch_class = any(
-                _is_ast_visitor_base(base_name)
-                or base_name.rsplit(".", 1)[-1] in self.dynamic_dispatch_class_names
+                base_name in self.ast_visitor_base_names
+                or base_name in self.dynamic_dispatch_class_names
                 for base_name in base_names
             )
             if is_dynamic_dispatch_class:
@@ -458,7 +477,15 @@ class CodeExtractor:
 
         module_name = self._get_module_name(file_path)
         exported = get_exported_names(tree)
-        visitor = _CodeUnitCollector(self, file_path, source, module_name, exported)
+        ast_visitor_base_names = _get_ast_visitor_base_names(tree)
+        visitor = _CodeUnitCollector(
+            self,
+            file_path,
+            source,
+            module_name,
+            exported,
+            ast_visitor_base_names,
+        )
         visitor.visit(tree)
         yield from visitor.units
 

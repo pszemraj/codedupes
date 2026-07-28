@@ -212,14 +212,26 @@ def test_main_block_calls_are_resolved_once_per_file(tmp_path: Path, monkeypatch
 def test_unused_analysis_skips_only_proven_ast_visitor_hooks(tmp_path: Path) -> None:
     source = dedent(
         """
-        import ast
+        from ast import NodeTransformer as AstTransformer
+        from framework import NodeVisitor
 
-        class Visitor(ast.NodeTransformer):
+        class Visitor(AstTransformer):
             def visit_Name(self, node):
                 return node
 
             def unused_helper(self):
                 return 1
+
+        class ImportedWorker(NodeVisitor):
+            def visit_Name(self, node):
+                return node
+
+        class NodeVisitor:
+            pass
+
+        class LocalWorker(NodeVisitor):
+            def visit_Name(self, node):
+                return node
 
         class Ordinary:
             def visit_Name(self, node):
@@ -233,4 +245,6 @@ def test_unused_analysis_skips_only_proven_ast_visitor_hooks(tmp_path: Path) -> 
 
     assert "sample.Visitor.visit_Name" not in qualified_names
     assert "sample.Visitor.unused_helper" in qualified_names
+    assert "sample.LocalWorker.visit_Name" in qualified_names
+    assert "sample.ImportedWorker.visit_Name" in qualified_names
     assert "sample.Ordinary.visit_Name" in qualified_names
