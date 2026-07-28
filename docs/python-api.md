@@ -1,17 +1,7 @@
 # Python API
 
-This page covers programmatic usage.
-CLI flag defaults are documented in
-[docs/cli.md](https://github.com/pszemraj/codedupes/blob/main/docs/cli.md); CLI JSON schemas/exit codes are
-documented in [docs/output.md](https://github.com/pszemraj/codedupes/blob/main/docs/output.md).
-Analysis behavior defaults are documented in
-[docs/analysis-defaults.md](https://github.com/pszemraj/codedupes/blob/main/docs/analysis-defaults.md).
-Semantic model aliases/profile defaults/task behavior are documented in
-[docs/model-profiles.md](https://github.com/pszemraj/codedupes/blob/main/docs/model-profiles.md).
-Device selection and MPS lifecycle behavior are documented in
-[docs/accelerators.md](https://github.com/pszemraj/codedupes/blob/main/docs/accelerators.md).
-The persistent embedding cache is documented in
-[docs/caching.md](https://github.com/pszemraj/codedupes/blob/main/docs/caching.md).
+Use `analyze_directory` for a one-shot analysis or `CodeAnalyzer` when configuration and semantic
+search share one analyzed corpus.
 
 ## Quick Start
 
@@ -46,24 +36,11 @@ for unit in result.potentially_unused:
 from codedupes import AnalyzerConfig, CodeAnalyzer
 
 config = AnalyzerConfig(
-    jaccard_threshold=0.85,
-    semantic_threshold=None,  # resolves from model profile
-    model_name="embeddinggemma-300m",
-    semantic_task="semantic-similarity",
-    device="auto",
-    mps_fallback=None,
-    mps_memory_fraction=None,
     run_traditional=True,
     run_semantic=True,
-    run_unused=True,
-    strict_unused=False,
-    include_private=True,
-    min_semantic_lines=3,
-    semantic_unit_types=("function", "method"),
-    filter_tiny_traditional=True,
-    tiny_unit_statement_cutoff=3,
-    tiny_near_jaccard_min=0.93,
-    embedding_cache=True,  # persistent on-disk embedding cache, scoped to the analyzed path
+    run_unused=False,
+    semantic_unit_types=("function", "method", "class"),
+    min_semantic_lines=1,
 )
 
 analyzer = CodeAnalyzer(config)
@@ -111,10 +88,8 @@ analyzer = CodeAnalyzer(
 result = analyzer.analyze("./src")
 ```
 
-`mps_fallback` controls unsupported PyTorch operations. It does not disable the analyzer's explicit
-OOM recovery. The shared model cache and inference path are serialized in-process; after an OOM
-forces a model to CPU, that CPU placement remains cached until `clear_model_cache()` is called or a
-different model/device key is requested.
+See [Accelerators](accelerators.md) for unsupported-operator fallback, OOM recovery, and cached model
+placement. Long-lived processes can explicitly release the model:
 
 ```python
 from codedupes.semantic import clear_model_cache
@@ -134,17 +109,11 @@ clear_model_cache()
 
 ## Notes
 
-- Call graph and unused detection are heuristic and conservative by default.
 - `AnalyzerConfig` enforces workflow dependencies:
   - semantic-only settings require `run_semantic=True`
   - traditional-only settings require `run_traditional=True`
   - `strict_unused=True` requires `run_unused=True`
-- Semantic candidate defaults and tiny-traditional filtering defaults are defined in
-  [docs/analysis-defaults.md](https://github.com/pszemraj/codedupes/blob/main/docs/analysis-defaults.md).
-- Semantic analysis may download model weights on first use.
 - `device`, `mps_fallback`, `mps_memory_fraction`, and `embedding_cache` require `run_semantic=True`.
-- `embedding_cache=True` (the default) caches embeddings on disk, keyed by the analyzed path,
-  model, and resolved revision; set `embedding_cache=False` to bypass the cache for a run. See
-  [docs/caching.md](https://github.com/pszemraj/codedupes/blob/main/docs/caching.md).
-- Model alias and profile-resolution behavior is documented in
-  [docs/model-profiles.md](https://github.com/pszemraj/codedupes/blob/main/docs/model-profiles.md).
+- [Analysis defaults](analysis-defaults.md) covers candidate scope and filtering.
+- [Embedding cache](caching.md) covers persistent cache behavior.
+- [Model profiles](model-profiles.md) covers aliases, thresholds, revisions, and task behavior.

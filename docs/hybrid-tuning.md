@@ -1,19 +1,17 @@
-# Hybrid Gate Tuning (Best-Practice Workflow)
+# Hybrid Gate Tuning
 
-This page defines the recommended workflow for tuning hybrid semantic-only gates.
-
-Primary goal: keep hybrid output high-precision while preserving recall on known good pairs.
+Tune hybrid semantic-only gates for high precision while preserving recall on known good pairs.
 
 ## Guardrail corpus and labels
 
-- Corpus: [`test_fixtures/hybrid_tuning/crab_visibility`](https://github.com/pszemraj/codedupes/tree/main/test_fixtures/hybrid_tuning/crab_visibility)
-- Labels: [`test_fixtures/hybrid_tuning/labels.json`](https://github.com/pszemraj/codedupes/blob/main/test_fixtures/hybrid_tuning/labels.json)
-- Sweep harness: [`scripts/sweep_hybrid_gates.py`](https://github.com/pszemraj/codedupes/blob/main/scripts/sweep_hybrid_gates.py)
-- Semantic threshold harness: [`scripts/sweep_semantic_thresholds.py`](https://github.com/pszemraj/codedupes/blob/main/scripts/sweep_semantic_thresholds.py)
+- Corpus: [`../test_fixtures/hybrid_tuning/crab_visibility`](../test_fixtures/hybrid_tuning/crab_visibility)
+- Labels: [`../test_fixtures/hybrid_tuning/labels.json`](../test_fixtures/hybrid_tuning/labels.json)
+- Sweep harness: [`../scripts/sweep_hybrid_gates.py`](../scripts/sweep_hybrid_gates.py)
+- Semantic threshold harness: [`../scripts/sweep_semantic_thresholds.py`](../scripts/sweep_semantic_thresholds.py)
 
 This corpus is synthetic and tracked for reproducibility.
 
-Important boundary: this is a guardrail dataset, not a benchmark.
+Use it as a guardrail dataset, not a benchmark.
 
 ## Recommended process
 
@@ -69,20 +67,11 @@ CUDA_VISIBLE_DEVICES='' conda run --name inf python scripts/sweep_semantic_thres
 
 Default report path:
 
-- [`test_fixtures/hybrid_tuning/semantic_threshold_report.json`](https://github.com/pszemraj/codedupes/blob/main/test_fixtures/hybrid_tuning/semantic_threshold_report.json)
+- [`../test_fixtures/hybrid_tuning/semantic_threshold_report.json`](../test_fixtures/hybrid_tuning/semantic_threshold_report.json)
 
 Selection policy is deterministic:
 
 - sort by `f1` (desc), `precision` (desc), `recall` (desc), `fp` (asc)
 
-## Current defaults
-
-Current production gate defaults are defined in
-[`src/codedupes/analyzer.py`](https://github.com/pszemraj/codedupes/blob/main/src/codedupes/analyzer.py):
-
-- semantic-only minimum: `0.92`
-- weak identifier jaccard minimum: `0.20`
-- statement ratio minimum: `0.35`
-
-Current model-profile semantic thresholds are defined in
-[docs/model-profiles.md](https://github.com/pszemraj/codedupes/blob/main/docs/model-profiles.md).
+Production gate values are listed in [Analysis defaults](analysis-defaults.md). Model-specific
+semantic thresholds are listed in [Model profiles](model-profiles.md).

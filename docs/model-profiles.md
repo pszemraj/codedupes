@@ -1,23 +1,8 @@
 # Semantic Model Profiles and Tasks
 
-This document is the source of truth for semantic model-profile behavior:
-
-- built-in model aliases and canonical IDs
-- model-family runtime defaults (threshold, revision, trust mode)
-- semantic task defaults and accepted task names
-
-Installation/dependency guidance lives in
-[docs/install.md](https://github.com/pszemraj/codedupes/blob/main/docs/install.md).
-CLI option syntax/validation lives in
-[docs/cli.md](https://github.com/pszemraj/codedupes/blob/main/docs/cli.md).
-Device placement and MPS precision/memory policy live in
-[docs/accelerators.md](https://github.com/pszemraj/codedupes/blob/main/docs/accelerators.md).
-
-The canonical implementation is:
-
-- [`src/codedupes/semantic_profiles.py`](https://github.com/pszemraj/codedupes/blob/main/src/codedupes/semantic_profiles.py)
-- [`src/codedupes/constants.py`](https://github.com/pszemraj/codedupes/blob/main/src/codedupes/constants.py)
-- [`src/codedupes/semantic.py`](https://github.com/pszemraj/codedupes/blob/main/src/codedupes/semantic.py)
+Profiles resolve model aliases, thresholds, revisions, trust settings, and task-specific embedding
+behavior. See [Installation](install.md) for dependencies, the [CLI reference](cli.md) for option
+syntax, and [Accelerators](accelerators.md) for device and precision behavior.
 
 ## Built-in profiles
 
@@ -38,9 +23,6 @@ Notes:
   those carry visible scores and rank below real hits, but raise `--semantic-threshold`
   toward `0.6` if they clutter results. No fixed floor separates them everywhere, and the
   default deliberately favors recall over precision.
-- Built-in EmbeddingGemma dtype overrides use float32 on MPS. CUDA may use
-  bfloat16 when the hardware reports support.
-- Generic/unknown model profiles follow their model-defined dtype and operator support, so explicit MPS compatibility is not guaranteed.
 - Generic/unknown models fall back to duplicate threshold `0.82` and search threshold `0.35`
   unless you override `--semantic-threshold` / `semantic_threshold`.
 
@@ -104,7 +86,4 @@ If you pass an unknown semantic task, the CLI/API raises a validation error.
 - `embeddinggemma`: uses task-aware query/document prefix formats.
 - generic models: no default instruction prefix unless explicitly overridden.
 
-For usage examples, see
-[docs/usage.md](https://github.com/pszemraj/codedupes/blob/main/docs/usage.md)
-and
-[docs/python-api.md](https://github.com/pszemraj/codedupes/blob/main/docs/python-api.md).
+For examples, see the [usage guide](usage.md) and [Python API](python-api.md).

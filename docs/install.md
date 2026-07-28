@@ -1,13 +1,5 @@
 # Installation and Runtime Environment
 
-This page is the source of truth for installation and dependency/runtime environment setup.
-Analysis behavior defaults are defined in
-[docs/analysis-defaults.md](https://github.com/pszemraj/codedupes/blob/main/docs/analysis-defaults.md).
-Semantic model-profile defaults are defined in
-[docs/model-profiles.md](https://github.com/pszemraj/codedupes/blob/main/docs/model-profiles.md).
-Accelerator requirements and runtime behavior are defined in
-[docs/accelerators.md](https://github.com/pszemraj/codedupes/blob/main/docs/accelerators.md).
-
 ## Install (GitHub source)
 
 ```bash
@@ -52,12 +44,5 @@ Then run:
 codedupes check ./src --device mps
 ```
 
-For fallback, allocator, OOM-recovery, precision, and MLX guidance, see
-[docs/accelerators.md](https://github.com/pszemraj/codedupes/blob/main/docs/accelerators.md).
-
-For semantic model aliases/default thresholds/task behavior, see
-[docs/model-profiles.md](https://github.com/pszemraj/codedupes/blob/main/docs/model-profiles.md).
-For CLI flags (including `--model-revision` and `--trust-remote-code`), see
-[docs/cli.md](https://github.com/pszemraj/codedupes/blob/main/docs/cli.md).
-For runtime failure/exit behavior, see
-[docs/output.md](https://github.com/pszemraj/codedupes/blob/main/docs/output.md).
+Continue with [accelerator behavior](accelerators.md), [model profiles](model-profiles.md), or the
+[CLI reference](cli.md).

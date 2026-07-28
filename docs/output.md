@@ -1,7 +1,5 @@
 # Output and Exit Codes
 
-This document is the source of truth for machine-readable output and CLI exit semantics.
-
 ## `check --json` schemas
 
 `check` has two JSON schema modes:

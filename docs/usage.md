@@ -1,22 +1,7 @@
 # Usage Guide
 
-This guide focuses on practical workflows.
-Install and dependency setup are defined in
-[docs/install.md](https://github.com/pszemraj/codedupes/blob/main/docs/install.md).
-Flag defaults and validation rules are defined in
-[docs/cli.md](https://github.com/pszemraj/codedupes/blob/main/docs/cli.md).
-Analysis behavior defaults are defined in
-[docs/analysis-defaults.md](https://github.com/pszemraj/codedupes/blob/main/docs/analysis-defaults.md).
-Semantic model aliases/profile defaults/task behavior are defined in
-[docs/model-profiles.md](https://github.com/pszemraj/codedupes/blob/main/docs/model-profiles.md).
-Accelerator and Apple Silicon behavior is defined in
-[docs/accelerators.md](https://github.com/pszemraj/codedupes/blob/main/docs/accelerators.md).
-JSON schema and exit codes are defined in
-[docs/output.md](https://github.com/pszemraj/codedupes/blob/main/docs/output.md).
-
-## Install
-
-See [docs/install.md](https://github.com/pszemraj/codedupes/blob/main/docs/install.md).
+Install `codedupes` first, then use these workflows to analyze, search, and tune a project. The
+[CLI reference](cli.md) lists every option.
 
 ## Core Workflow
 
@@ -55,8 +40,7 @@ codedupes check ./src/module.py
 codedupes check ./src --json
 ```
 
-See [docs/output.md](https://github.com/pszemraj/codedupes/blob/main/docs/output.md) for authoritative JSON
-structure and exit-code semantics.
+See [Output and exit codes](output.md) for JSON structure and process status.
 
 ## Control Rich Output Width
 
@@ -71,9 +55,6 @@ codedupes check ./src --output-width 200
 ```bash
 codedupes search ./src "parse json payload" --top-k 10
 ```
-
-For full command/option semantics, see
-[docs/cli.md](https://github.com/pszemraj/codedupes/blob/main/docs/cli.md).
 
 ## Select Model And Task
 
@@ -91,10 +72,9 @@ codedupes check ./src --semantic-task semantic-similarity
 codedupes search ./src "parse json payload" --semantic-task code-retrieval
 ```
 
-## Apple Silicon / MPS
+See [Model profiles](model-profiles.md) for aliases, thresholds, and task behavior.
 
-`auto` selects MPS when CUDA is unavailable and PyTorch reports MPS available. Use an explicit
-device during release validation so a missing MPS backend cannot silently turn the run into CPU:
+## Apple Silicon / MPS
 
 ```bash
 codedupes check ./src --device mps
@@ -107,10 +87,7 @@ On a memory-constrained machine, begin with a conservative allocator cap and a s
 codedupes check ./src --device mps --mps-memory-fraction 0.9 --batch-size 4
 ```
 
-Do not add `torch.mps.empty_cache()` after every successful batch. `codedupes` clears unoccupied
-MPS cache only during model replacement, explicit model-cache release, or OOM recovery. Full
-behavior is documented in
-[docs/accelerators.md](https://github.com/pszemraj/codedupes/blob/main/docs/accelerators.md).
+See [Accelerators](accelerators.md) for device resolution, memory limits, and OOM recovery.
 
 ## Override Semantic Instruction Prefix
 
@@ -121,39 +98,6 @@ with a fixed prefix for experiments or custom retrieval behavior:
 codedupes check ./src --instruction-prefix "Represent this code for duplicate detection: "
 codedupes search ./src "parse json payload" --instruction-prefix "Represent this query for code lookup: "
 ```
-
-## Accelerator preflight
-
-Use one command to print runtime versions and CUDA/MPS availability:
-
-```bash
-python - <<'PY'
-import platform
-import torch
-import transformers
-import sentence_transformers
-
-print("python", platform.python_version())
-print("torch", torch.__version__)
-print("transformers", transformers.__version__)
-print("sentence-transformers", sentence_transformers.__version__)
-print("cuda_available", torch.cuda.is_available())
-print("cuda_device_count", torch.cuda.device_count())
-print("mps_built", torch.backends.mps.is_built())
-print("mps_available", torch.backends.mps.is_available())
-PY
-```
-
-Model profiles and revision defaults:
-
-```bash
-codedupes info
-```
-
-Semantic model defaults are documented in
-[docs/model-profiles.md](https://github.com/pszemraj/codedupes/blob/main/docs/model-profiles.md).
-Device runtime defaults are documented in
-[docs/accelerators.md](https://github.com/pszemraj/codedupes/blob/main/docs/accelerators.md).
 
 ## Threshold Tuning
 
@@ -169,14 +113,13 @@ Set separate thresholds:
 codedupes check ./src --semantic-threshold 0.84 --traditional-threshold 0.75
 ```
 
-Search applies threshold filtering before top-k. The default floor is the model profile
-search threshold (`0.50` for `gte-modernbert-base`), which is intentionally lower than the
-duplicate threshold because query-to-code similarity scores run lower than code-to-code
-scores. Raise it to keep only strong matches:
+Raise the search threshold to keep only stronger matches:
 
 ```bash
 codedupes search ./src "parse json payload" --semantic-threshold 0.6 --top-k 20
 ```
+
+See [Model profiles](model-profiles.md) for model-specific check and search thresholds.
 
 ## Scope Control
 
@@ -192,9 +135,6 @@ Exclude files with glob patterns:
 codedupes check ./src --exclude "**/generated/**" --exclude "**/migrations/**"
 ```
 
-By default, common artifact/cache directories are skipped automatically (for example `target`,
-`node_modules`, `__pycache__`, `.venv`, `build`, `dist`, and similar tool outputs).
-
 Include type stubs:
 
 ```bash
@@ -208,22 +148,16 @@ codedupes check ./src
 codedupes check ./src --semantic-unit-type function --semantic-unit-type method --semantic-unit-type class
 ```
 
-Default semantic candidate behavior is documented in
-[docs/analysis-defaults.md](https://github.com/pszemraj/codedupes/blob/main/docs/analysis-defaults.md).
-Use `--semantic-unit-type class` when you explicitly want class-level semantic embeddings.
+See [Analysis defaults](analysis-defaults.md) for extraction and candidate scope.
 
 ## Reduce Boilerplate Duplicate Noise
-
-Traditional duplicate detection filters tiny function/method wrappers by default.
-The authoritative default semantics are in
-[docs/analysis-defaults.md](https://github.com/pszemraj/codedupes/blob/main/docs/analysis-defaults.md).
-
-Override behavior when needed:
 
 ```bash
 codedupes check ./src --no-tiny-filter
 codedupes check ./src --tiny-cutoff 4 --tiny-near-jaccard-min 0.95
 ```
+
+See [Analysis defaults](analysis-defaults.md) for tiny-pair filtering behavior.
 
 ## Unused Detection Modes
 
@@ -278,6 +212,4 @@ Record model/revision, package versions, requested and resolved device, elapsed 
 
 ## Hybrid gate tuning workflow
 
-Use the dedicated sweep harness + tracked synthetic corpus described in
-[docs/hybrid-tuning.md](https://github.com/pszemraj/codedupes/blob/main/docs/hybrid-tuning.md).
-Treat that corpus as a guardrail, then re-validate on at least one real repository before changing defaults.
+Use the sweep harness and tracked corpus described in [Hybrid gate tuning](hybrid-tuning.md).

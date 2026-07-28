@@ -1,29 +1,16 @@
 # CLI Reference
 
-This document is the source of truth for CLI commands, flags, and option defaults.
-For JSON schemas and exit-code semantics, see
-[docs/output.md](https://github.com/pszemraj/codedupes/blob/main/docs/output.md) (the source of truth for output behavior).
-For analysis-behavior defaults (semantic candidate scope, tiny-traditional filtering, hybrid gates), see
-[docs/analysis-defaults.md](https://github.com/pszemraj/codedupes/blob/main/docs/analysis-defaults.md).
-For semantic model aliases/profile defaults/task behavior, see
-[docs/model-profiles.md](https://github.com/pszemraj/codedupes/blob/main/docs/model-profiles.md).
-For device selection and MPS runtime behavior, see
-[docs/accelerators.md](https://github.com/pszemraj/codedupes/blob/main/docs/accelerators.md).
-For the persistent embedding cache (location, env vars, `cache` subcommand), see
-[docs/caching.md](https://github.com/pszemraj/codedupes/blob/main/docs/caching.md).
-
-## Commands
+See [Output and exit codes](output.md) for JSON and process status,
+[Analysis defaults](analysis-defaults.md) for heuristics, [Model profiles](model-profiles.md) for
+semantic defaults, [Accelerators](accelerators.md) for device behavior, and
+[Embedding cache](caching.md) for persistent cache behavior.
 
 ## `codedupes check <path>`
 
 Run duplicate and unused-code analysis.
 
-Default behavior is hybrid-first:
-
-- one synthesized `Hybrid Duplicates` list (combined traditional + semantic evidence)
-- likely dead-code candidates
-
-Use `--show-all` to additionally print raw traditional and raw semantic duplicate lists.
+The default combined mode reports synthesized hybrid duplicates and unused candidates. See
+[Output and exit codes](output.md) for report modes.
 
 Examples:
 
@@ -68,7 +55,7 @@ Options:
 - `--no-private`: Exclude private (`_name`) functions/classes
 - `--exclude <glob>`: Add file path glob pattern(s) to exclude (repeat option for multiple patterns). Built-in test/artifact excludes still apply.
 - `--include-stubs`: Include `*.pyi` files
-- `--no-cache`: Disable the persistent on-disk embedding cache for this run (see [docs/caching.md](https://github.com/pszemraj/codedupes/blob/main/docs/caching.md))
+- `--no-cache`: Disable the persistent on-disk embedding cache for this run
 - `--output-width <int>`: Rich render width for non-JSON output (default `160`, min `80`)
 - `--show-source`: Show truncated duplicate snippets
 - `--json`: Emit JSON instead of rich tables
@@ -107,7 +94,7 @@ Options:
 - `--no-private`: Exclude private (`_name`) functions/classes
 - `--exclude <glob>`: Add file path glob pattern(s) to exclude (repeat option for multiple patterns). Built-in test/artifact excludes still apply.
 - `--include-stubs`: Include `*.pyi` files
-- `--no-cache`: Disable the persistent on-disk embedding cache for this run (see [docs/caching.md](https://github.com/pszemraj/codedupes/blob/main/docs/caching.md))
+- `--no-cache`: Disable the persistent on-disk embedding cache for this run
 - `--output-width <int>`: Rich render width for non-JSON output (default `160`, min `80`)
 - `--json`: Emit JSON instead of rich tables
 - `-v, --verbose`: Verbose logs
@@ -118,11 +105,11 @@ Print version, model defaults, resolved device capabilities, MPS memory statisti
 
 ## `codedupes cache info`
 
-Print embedding cache path, whether it is disabled via `CODEDUPES_NO_CACHE`, total entry count, size on disk, and a per-model and per-repo breakdown.
+Print an embedding-cache summary.
 
 ## `codedupes cache clear [--model <name>]`
 
-Clear cached embeddings. Without `--model`, clears every shard across every analyzed repo. With `--model` (alias or canonical HuggingFace ID), only that model's shards are removed. Prints the number of entries cleared. See [docs/caching.md](https://github.com/pszemraj/codedupes/blob/main/docs/caching.md) for the full cache design.
+Clear all cached embeddings or only entries for one model. See [Embedding cache](caching.md).
 
 ## Validation and mode notes
 
@@ -147,13 +134,10 @@ Clear cached embeddings. Without `--model`, clears every shard across every anal
   (for example `0.50` for `gte-modernbert-base`), not the stricter duplicate threshold
 - Contradictory mode-specific options are rejected at parse time for the selected workflow
 
-Built-in model aliases and model-profile defaults are documented in
-[docs/model-profiles.md](https://github.com/pszemraj/codedupes/blob/main/docs/model-profiles.md).
-You can also inspect effective model defaults in your environment via:
+Inspect effective model defaults with:
 
 ```bash
 codedupes info
 ```
 
-For JSON payloads and complete exit-code semantics, see
-[docs/output.md](https://github.com/pszemraj/codedupes/blob/main/docs/output.md).
+For JSON payloads and complete exit-code semantics, see [Output and exit codes](output.md).

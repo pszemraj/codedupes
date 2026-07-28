@@ -1,8 +1,7 @@
 # Embedding Cache
 
-`codedupes` persists computed embedding vectors to disk so unchanged code units never
-re-embed across runs. This is the source of truth for cache location, environment
-variables, CLI management commands, and the escape hatch for stale results.
+`codedupes` persists computed embedding vectors to disk so unchanged code units do not re-embed
+across runs.
 
 ## How it works
 

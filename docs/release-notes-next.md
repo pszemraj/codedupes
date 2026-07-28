@@ -1,8 +1,5 @@
 # Next Release Engineering Notes
 
-This document records the implementation and validation scope for the next release. It is not a
-replacement for the CLI, output, model-profile, or accelerator source-of-truth documents.
-
 ## Breaking baseline change
 
 - Minimum PyTorch version is now `2.13.0`; the supported range is `>=2.13.0,<3`. Dev and rc builds
@@ -50,26 +47,10 @@ replacement for the CLI, output, model-profile, or accelerator source-of-truth d
 - Kept semantic embeddings as normalized NumPy arrays immediately after inference.
 - Added MLX coexistence diagnostics without importing or mutating the MLX allocator.
 - Avoided forced MPS fast math, forced Metal matmul selection, and success-path cache clearing.
-- Added a persistent, content-addressed on-disk embedding cache (`codedupes.embedding_cache`).
-  Cache keys hash the canonical model name, resolved revision, embedding mode, and
-  pre-truncation prepared text (plus the resolved device and selected dtype for the
-  device-dependent EmbeddingGemma family), so unchanged code units hit across runs and single-file
-  edits only re-embed the changed units. Writers serialize per shard via advisory locks,
-  malformed shard metadata and non-finite or dimension-mismatched cached vectors are
-  treated as misses, a newly written shard survives even when it alone exceeds the size cap,
-  and a fully cached `check`/`search` run skips model load entirely. See
-  [docs/caching.md](https://github.com/pszemraj/codedupes/blob/main/docs/caching.md) for
-  location, env vars (`CODEDUPES_CACHE_DIR`, `CODEDUPES_NO_CACHE`,
-  `CODEDUPES_CACHE_MAX_MB`), the new `codedupes cache info`/`cache clear` commands, and
-  `--no-cache`.
-
-- Model identifiers that point at an existing directory now load as local
-  `save_pretrained`-style copies with no hub access: the path canonicalizes to one
-  identity, family (EmbeddingGemma/gte-modernbert) is inferred from the directory name, an
-  explicit `--model-revision` is ignored with a warning, and the embedding cache keys the
-  model by a content fingerprint of the directory so in-place weight updates
-  invalidate stale vectors. `HF_HUB_OFFLINE=1` remains the switch for fully offline
-  use of hub models already in the local HuggingFace cache.
+- Added a persistent, content-addressed embedding cache with partial updates, safe corrupt-entry
+  recovery, bounded storage, and CLI management. See [Embedding cache](caching.md).
+- Added offline loading for local `save_pretrained` model directories. See
+  [Model profiles](model-profiles.md#local-model-directories-and-offline-use).
 
 ## Static-analysis fixes
 

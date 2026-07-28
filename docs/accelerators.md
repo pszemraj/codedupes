@@ -1,41 +1,8 @@
 # Semantic Accelerators and Apple Silicon
 
-This page is the source of truth for semantic device selection, PyTorch MPS behavior,
-accelerator memory recovery, and MLX coexistence. CLI syntax is defined in
-[docs/cli.md](https://github.com/pszemraj/codedupes/blob/main/docs/cli.md), and model-specific
-behavior is defined in
-[docs/model-profiles.md](https://github.com/pszemraj/codedupes/blob/main/docs/model-profiles.md).
-
-## Runtime baseline
-
-Semantic analysis requires PyTorch `>=2.13.0,<3`. PyTorch 2.13 is the baseline because that
-release moved a broad set of MPS operations from graph fallbacks to handwritten Metal kernels and
-added MPS FlexAttention support. The operator migration is directly useful to embedding workloads;
-FlexAttention helps only when the selected model and Transformers path actually invoke it.
-
-MPS execution additionally requires:
-
-- Apple Silicon or another MPS-enabled Apple device
-- macOS 14.0 or newer
-- a PyTorch build compiled with MPS support
-
-Check the active environment with:
-
-```bash
-codedupes info
-```
-
-Or inspect PyTorch directly:
-
-```bash
-python - <<'PY'
-import torch
-
-print("torch", torch.__version__)
-print("mps_built", torch.backends.mps.is_built())
-print("mps_available", torch.backends.mps.is_available())
-PY
-```
+Install the supported runtime and verify MPS availability as described in
+[Installation](install.md). The [CLI reference](cli.md) lists device options, and
+[model profiles](model-profiles.md) lists model-specific thresholds and tasks.
 
 ## Device selection
 
@@ -115,8 +82,9 @@ large embedding tensor remains resident in Metal memory.
 
 ## Precision and Metal environment variables
 
-The built-in EmbeddingGemma dtype override uses float32 on MPS instead of forcing
-bfloat16 on Apple Silicon. Generic HuggingFace models follow their own model defaults.
+The built-in EmbeddingGemma dtype override uses float32 on MPS instead of forcing bfloat16 on Apple
+Silicon. CUDA may use bfloat16 when the hardware reports support. Generic HuggingFace models follow
+their own model defaults and may not support MPS.
 
 `codedupes` deliberately does not set `PYTORCH_MPS_FAST_MATH` or
 `PYTORCH_MPS_PREFER_METAL`. Fast math may change floating-point results around tuned similarity
