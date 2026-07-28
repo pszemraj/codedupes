@@ -200,6 +200,9 @@ def _synthesize_hybrid_duplicates(
     *,
     semantic_threshold: float,
     jaccard_threshold: float,
+    semantic_only_min: float = HYBRID_SEMANTIC_ONLY_MIN,
+    weak_identifier_jaccard_min: float = HYBRID_WEAK_JACCARD_MIN,
+    statement_ratio_min: float = HYBRID_STATEMENT_RATIO_MIN,
 ) -> tuple[list[HybridDuplicate], int]:
     """Build ranked hybrid duplicates from traditional and semantic outputs.
 
@@ -207,6 +210,9 @@ def _synthesize_hybrid_duplicates(
     :param semantic_duplicates: Semantic duplicate pairs.
     :param semantic_threshold: Minimum semantic similarity used for hybrid tiering.
     :param jaccard_threshold: Minimum Jaccard similarity used for hybrid tiering.
+    :param semantic_only_min: Minimum semantic score for semantic-only candidates.
+    :param weak_identifier_jaccard_min: Minimum identifier overlap for semantic-only candidates.
+    :param statement_ratio_min: Minimum statement-count ratio for semantic-only candidates.
     :return: Tuple of sorted hybrid duplicates and number filtered pairs.
     """
     pair_evidence: dict[tuple[str, str], dict[str, object]] = {}
@@ -278,9 +284,9 @@ def _synthesize_hybrid_duplicates(
             statement_ratio = _statement_count_ratio(unit_a, unit_b)
 
             if (
-                semantic_sim >= HYBRID_SEMANTIC_ONLY_MIN
-                and weak_identifier_jaccard >= HYBRID_WEAK_JACCARD_MIN
-                and statement_ratio >= HYBRID_STATEMENT_RATIO_MIN
+                semantic_sim >= semantic_only_min
+                and weak_identifier_jaccard >= weak_identifier_jaccard_min
+                and statement_ratio >= statement_ratio_min
             ):
                 tier = "semantic_high_confidence"
                 confidence = 0.45 + (0.55 * semantic_sim)

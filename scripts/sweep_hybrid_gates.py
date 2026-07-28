@@ -64,47 +64,41 @@ def _run_sweep(
     traditional_threshold: float,
     grid: list[GateConfig],
 ) -> tuple[list[SweepRow], dict[str, float]]:
-    old_values = {
+    baseline = {
         "semantic_min": float(analyzer_module.HYBRID_SEMANTIC_ONLY_MIN),
         "weak_min": float(analyzer_module.HYBRID_WEAK_JACCARD_MIN),
         "ratio_min": float(analyzer_module.HYBRID_STATEMENT_RATIO_MIN),
     }
 
     rows: list[SweepRow] = []
-    try:
-        for config in grid:
-            analyzer_module.HYBRID_SEMANTIC_ONLY_MIN = config.semantic_min
-            analyzer_module.HYBRID_WEAK_JACCARD_MIN = config.weak_identifier_jaccard_min
-            analyzer_module.HYBRID_STATEMENT_RATIO_MIN = config.statement_ratio_min
-
-            hybrid: list[HybridDuplicate]
-            hybrid, _ = analyzer_module._synthesize_hybrid_duplicates(
-                traditional_duplicates,
-                semantic_duplicates,
-                semantic_threshold=semantic_threshold,
-                jaccard_threshold=traditional_threshold,
+    for config in grid:
+        hybrid: list[HybridDuplicate]
+        hybrid, _ = analyzer_module._synthesize_hybrid_duplicates(
+            traditional_duplicates,
+            semantic_duplicates,
+            semantic_threshold=semantic_threshold,
+            jaccard_threshold=traditional_threshold,
+            semantic_only_min=config.semantic_min,
+            weak_identifier_jaccard_min=config.weak_identifier_jaccard_min,
+            statement_ratio_min=config.statement_ratio_min,
+        )
+        predicted_pairs = {ordered_pair_key(item.unit_a, item.unit_b) for item in hybrid}
+        tp, fp, fn, precision, recall, f1 = metrics(predicted_pairs, positive_pairs)
+        rows.append(
+            SweepRow(
+                config=config,
+                predicted=len(predicted_pairs),
+                tp=tp,
+                fp=fp,
+                fn=fn,
+                precision=precision,
+                recall=recall,
+                f1=f1,
             )
-            predicted_pairs = {ordered_pair_key(item.unit_a, item.unit_b) for item in hybrid}
-            tp, fp, fn, precision, recall, f1 = metrics(predicted_pairs, positive_pairs)
-            rows.append(
-                SweepRow(
-                    config=config,
-                    predicted=len(predicted_pairs),
-                    tp=tp,
-                    fp=fp,
-                    fn=fn,
-                    precision=precision,
-                    recall=recall,
-                    f1=f1,
-                )
-            )
-    finally:
-        analyzer_module.HYBRID_SEMANTIC_ONLY_MIN = old_values["semantic_min"]
-        analyzer_module.HYBRID_WEAK_JACCARD_MIN = old_values["weak_min"]
-        analyzer_module.HYBRID_STATEMENT_RATIO_MIN = old_values["ratio_min"]
+        )
 
     rows.sort(key=lambda row: (row.f1, row.precision, row.recall, -row.fp), reverse=True)
-    return rows, old_values
+    return rows, baseline
 
 
 def _print_rows(rows: list[SweepRow], *, top_n: int) -> None:

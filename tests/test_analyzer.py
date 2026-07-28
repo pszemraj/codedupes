@@ -1130,6 +1130,9 @@ def test_hybrid_synthesis_semantic_only_gate_enforced(tmp_path: Path) -> None:
         low_semantic,
         semantic_threshold=0.82,
         jaccard_threshold=0.85,
+        semantic_only_min=0.92,
+        weak_identifier_jaccard_min=0.20,
+        statement_ratio_min=0.35,
     )
     assert hybrid_low == []
     assert filtered_low == 1
