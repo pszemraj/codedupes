@@ -62,11 +62,6 @@ _warned_cpu_fallback_reuse = False
 
 _TORCH_MIN_RELEASE = (2, 13)
 _TORCH_MAX_EXCLUSIVE_RELEASE = (3,)
-_DEFAULT_TRANSFORMERS_MIN = Version("4.51")
-_DEFAULT_TRANSFORMERS_MAX_EXCLUSIVE = Version("5")
-_DEFAULT_ST_MIN = Version("5")
-_DEFAULT_ST_MAX_EXCLUSIVE = Version("6")
-
 SemanticTask = Literal[
     "semantic-similarity",
     "code-retrieval",
@@ -76,12 +71,6 @@ SemanticTask = Literal[
     "classification",
     "clustering",
 ]
-
-# C2LLM task-specific instruction prefixes.
-C2LLM_INSTRUCTIONS: dict[str, str] = {
-    "code": "Represent this code for finding similar code: ",
-    "query": "Represent this query for searching relevant code: ",
-}
 
 EMBEDDINGGEMMA_QUERY_PREFIXES: dict[SemanticTask, str] = {
     "semantic-similarity": "task: sentence similarity | query: ",
@@ -93,10 +82,6 @@ EMBEDDINGGEMMA_QUERY_PREFIXES: dict[SemanticTask, str] = {
     "clustering": "task: clustering | query: ",
 }
 EMBEDDINGGEMMA_DOCUMENT_PREFIX = "title: none | text: "
-_DEEPSPEED_REQUIRED_MESSAGE = (
-    "deepspeed is required for C2LLM models. "
-    "Install with `pip install codedupes[gpu]` or `pip install deepspeed`."
-)
 
 
 class SemanticBackendError(RuntimeError):
@@ -298,15 +283,15 @@ def _assemble_cached_matrix(keys: list[str], hits: dict[str, np.ndarray]) -> np.
     return matrix
 
 
-_DEVICE_DTYPE_FAMILIES = frozenset({"c2llm", "embeddinggemma"})
+_DEVICE_DTYPE_FAMILIES = frozenset({"embeddinggemma"})
 
 
 def _cache_variant_for(profile: SemanticModelProfile, device: str) -> str:
     """Build the vector-affecting cache-key variant for one model family.
 
-    C2LLM and EmbeddingGemma select their torch dtype from the execution device
-    (bfloat16 vs float32), so vectors cached under one device must never be served
-    under another; the requested device string is folded into their cache keys.
+    EmbeddingGemma selects its torch dtype from the execution device (bfloat16 vs
+    float32), so vectors cached under one device must never be served under another;
+    the requested device string is folded into its cache keys.
     Families that embed identically across devices share one key space.
 
     :param profile: Resolved model profile.
@@ -340,40 +325,7 @@ def get_semantic_runtime_versions() -> dict[str, str]:
         "torch": _safe_package_version("torch") or "missing",
         "transformers": _safe_package_version("transformers") or "missing",
         "sentence-transformers": _safe_package_version("sentence-transformers") or "missing",
-        "deepspeed": _safe_package_version("deepspeed") or "missing",
     }
-
-
-def _validate_version_range(
-    package_name: str,
-    min_version: Version,
-    max_exclusive: Version,
-) -> None:
-    """Validate that a package version is within an inclusive/exclusive range.
-
-    :param package_name: Package to validate.
-    :param min_version: Lower bound inclusive.
-    :param max_exclusive: Upper bound exclusive.
-    :return: ``None``.
-    :raises SemanticBackendError: If package version is invalid or incompatible.
-    """
-    raw = _safe_package_version(package_name)
-    if raw is None:
-        raise SemanticBackendError(
-            f"{package_name} is not installed. Install compatible dependencies before semantic runs."
-        )
-
-    try:
-        parsed = Version(raw)
-    except InvalidVersion as exc:
-        raise SemanticBackendError(f"Could not parse {package_name} version: {raw}") from exc
-
-    if not (min_version <= parsed < max_exclusive):
-        raise SemanticBackendError(
-            f"Incompatible {package_name} version {raw} for C2LLM models. "
-            f"Supported range is >={min_version},<{max_exclusive}. "
-            "Run: pip install 'transformers>=4.51,<5' 'sentence-transformers>=5,<6'."
-        )
 
 
 def _validate_torch_runtime() -> None:
@@ -399,24 +351,6 @@ def _validate_torch_runtime() -> None:
         )
 
 
-def _check_c2llm_model_compatibility(model_name: str) -> None:
-    """Check dependency compatibility for C2LLM-family models."""
-    profile = resolve_model_profile(model_name)
-    if profile.family != "c2llm":
-        return
-
-    _validate_version_range(
-        "transformers",
-        _DEFAULT_TRANSFORMERS_MIN,
-        _DEFAULT_TRANSFORMERS_MAX_EXCLUSIVE,
-    )
-    _validate_version_range(
-        "sentence-transformers",
-        _DEFAULT_ST_MIN,
-        _DEFAULT_ST_MAX_EXCLUSIVE,
-    )
-
-
 def _is_known_semantic_backend_error(error: Exception) -> bool:
     """Return True when an exception is likely caused by semantic backend compatibility.
 
@@ -430,13 +364,10 @@ def _is_known_semantic_backend_error(error: Exception) -> bool:
         return True
     keywords = (
         "trust_remote_code",
-        "deepspeed",
         "flash_attn",
-        "c2llm",
         "embeddinggemma",
         "auto_map",
         "tokenizer",
-        "modeling_c2llm",
     )
     return any(keyword in text for keyword in keywords)
 
@@ -461,14 +392,7 @@ def _wrap_semantic_backend_error(
     versions = get_semantic_runtime_versions()
     version_info = ", ".join(f"{key}={value}" for key, value in versions.items())
     revision_text = revision or "default"
-    profile = resolve_model_profile(model_name)
-    hints: list[str] = []
-    if profile.requires_deepspeed:
-        hints.append(
-            "install C2LLM-compatible deps via "
-            '\'pip install "transformers>=4.51,<5" "sentence-transformers>=5,<6"\'.'
-        )
-    hints.append("or run traditional-only mode with '--traditional-only'.")
+    hints = ["run traditional-only mode with '--traditional-only'."]
 
     message = (
         f"Semantic backend failed during {stage} for model={model_name} revision={revision_text} "
@@ -499,26 +423,13 @@ def _require_dependency(module_name: str, install_hint: str) -> None:
         ) from exc
 
 
-def _check_semantic_dependencies(model_name: str) -> None:
+def _check_semantic_dependencies() -> None:
     """Validate required runtime dependencies before model loading."""
     _require_dependency("sentence_transformers", "pip install codedupes")
     _require_dependency("transformers", "pip install codedupes")
     _require_dependency("torch", "pip install codedupes")
 
-    profile = resolve_model_profile(model_name)
-    if profile.requires_deepspeed:
-        _require_dependency(
-            "deepspeed",
-            "pip install codedupes[gpu] or pip install deepspeed",
-        )
-
     _validate_torch_runtime()
-    _check_c2llm_model_compatibility(model_name)
-
-
-def _raise_missing_deepspeed(exc: ModuleNotFoundError) -> None:
-    """Raise a stable deepspeed dependency error for C2LLM-family loads."""
-    raise ModuleNotFoundError(_DEEPSPEED_REQUIRED_MESSAGE) from exc
 
 
 def _prepare_semantic_device(
@@ -621,30 +532,6 @@ def get_code_unit_statement_count(unit: CodeUnit) -> int:
     return len(body)
 
 
-def _resolve_c2llm_torch_dtype(device: str) -> Any:
-    """Choose a conservative C2LLM dtype for the selected device.
-
-    CUDA uses bfloat16 only when the hardware reports support. CPU preserves the
-    existing bfloat16 profile behavior. MPS uses float32 because remote C2LLM
-    code and several Metal operators remain less predictable in reduced precision.
-
-    :param device: Concrete execution device.
-    :return: Suggested dtype object for Torch models, or ``None``.
-    """
-    try:
-        import torch
-    except ModuleNotFoundError:
-        return None
-
-    if device == "cuda":
-        if hasattr(torch.cuda, "is_bf16_supported") and torch.cuda.is_bf16_supported():
-            return torch.bfloat16
-        return None
-    if device == "mps":
-        return torch.float32
-    return torch.bfloat16
-
-
 def _resolve_embeddinggemma_torch_dtype(device: str) -> Any:
     """Choose a stable EmbeddingGemma dtype for the selected device.
 
@@ -664,14 +551,6 @@ def _resolve_embeddinggemma_torch_dtype(device: str) -> Any:
         return torch.bfloat16
 
     return torch.float32
-
-
-def _patch_c2llm_runtime_compat() -> None:
-    """Patch known C2LLM remote-code symbol gaps for newer runtimes."""
-    import builtins
-
-    if not hasattr(builtins, "is_torch_npu_available"):
-        builtins.is_torch_npu_available = lambda: False
 
 
 def _get_model_unlocked(
@@ -710,7 +589,7 @@ def _get_model_unlocked(
     # Configure MPS environment variables before dependency checks import torch
     # through sentence-transformers/transformers.
     _configure_semantic_runtime_env(device, mps_fallback=mps_fallback)
-    _check_semantic_dependencies(resolved_model_name)
+    _check_semantic_dependencies()
     resolved_device = _prepare_semantic_device(
         device,
         mps_fallback=mps_fallback,
@@ -732,9 +611,6 @@ def _get_model_unlocked(
             _clear_model_cache_unlocked()
 
         logger.info("Loading embedding model %s on %s", resolved_model_name, resolved_device)
-        if profile.family == "c2llm":
-            _patch_c2llm_runtime_compat()
-
         try:
             from sentence_transformers import SentenceTransformer
         except ModuleNotFoundError as exc:
@@ -742,8 +618,6 @@ def _get_model_unlocked(
                 raise ModuleNotFoundError(
                     "sentence-transformers is not installed. Install it with `pip install codedupes`."
                 ) from exc
-            if exc.name == "deepspeed":
-                _raise_missing_deepspeed(exc)
             raise
 
         st_kwargs: dict[str, object] = {
@@ -757,17 +631,7 @@ def _get_model_unlocked(
         tokenizer_kwargs: dict[str, object] = {}
         config_kwargs: dict[str, object] = {}
 
-        if profile.left_padding:
-            tokenizer_kwargs["padding_side"] = "left"
-        if profile.low_cpu_mem_usage:
-            model_kwargs["low_cpu_mem_usage"] = True
-
-        if profile.family == "c2llm":
-            selected_dtype = _resolve_c2llm_torch_dtype(resolved_device)
-            if selected_dtype is not None:
-                model_kwargs["torch_dtype"] = selected_dtype
-                logger.info("Using C2LLM torch dtype on %s: %s", resolved_device, selected_dtype)
-        elif profile.family == "embeddinggemma":
+        if profile.family == "embeddinggemma":
             selected_dtype = _resolve_embeddinggemma_torch_dtype(resolved_device)
             if selected_dtype is not None:
                 model_kwargs["torch_dtype"] = selected_dtype
@@ -797,10 +661,6 @@ def _get_model_unlocked(
         load_device = resolved_device
         try:
             loaded_model = SentenceTransformer(resolved_model_name, **st_kwargs)
-        except ModuleNotFoundError as exc:
-            if exc.name == "deepspeed":
-                _raise_missing_deepspeed(exc)
-            raise
         except RuntimeError as exc:
             oom_device = _classify_oom_device(exc, resolved_device)
             if resolved_device == "mps" and oom_device == "mps":
@@ -816,10 +676,6 @@ def _get_model_unlocked(
                 cpu_kwargs["device"] = "cpu"
                 try:
                     loaded_model = SentenceTransformer(resolved_model_name, **cpu_kwargs)
-                except ModuleNotFoundError as retry_exc:
-                    if retry_exc.name == "deepspeed":
-                        _raise_missing_deepspeed(retry_exc)
-                    raise
                 except Exception as retry_exc:
                     if _is_known_semantic_backend_error(retry_exc):
                         raise _wrap_semantic_backend_error(
@@ -1066,11 +922,6 @@ def _get_instruction(
     :return: Instruction prefix.
     """
     profile = resolve_model_profile(model_name)
-
-    if profile.family == "c2llm":
-        if mode == "query":
-            return C2LLM_INSTRUCTIONS["query"]
-        return C2LLM_INSTRUCTIONS["code"]
 
     if profile.family == "embeddinggemma":
         return _get_embeddinggemma_prefix(semantic_task, mode)

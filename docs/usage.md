@@ -81,7 +81,6 @@ Choose model aliases or raw HuggingFace IDs:
 
 ```bash
 codedupes check ./src --model gte-modernbert-base
-codedupes check ./src --model c2llm-0.5b
 codedupes check ./src --model embeddinggemma-300m
 ```
 
@@ -133,17 +132,11 @@ import platform
 import torch
 import transformers
 import sentence_transformers
-try:
-    import deepspeed
-    deepspeed_version = deepspeed.__version__
-except Exception:
-    deepspeed_version = "missing"
 
 print("python", platform.python_version())
 print("torch", torch.__version__)
 print("transformers", transformers.__version__)
 print("sentence-transformers", sentence_transformers.__version__)
-print("deepspeed", deepspeed_version)
 print("cuda_available", torch.cuda.is_available())
 print("cuda_device_count", torch.cuda.device_count())
 print("mps_built", torch.backends.mps.is_built())

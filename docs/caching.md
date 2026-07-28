@@ -11,10 +11,10 @@ variables, CLI management commands, and the escape hatch for stale results.
   text)`. The prepared text is the pre-truncation output of
   `prepare_code_for_embedding(...)`, so the key can be derived without loading the
   model. For model families whose torch dtype depends on the execution device
-  (C2LLM, EmbeddingGemma), the requested device is also part of the key, so vectors
-  computed under bfloat16 on one device are never served for a float32 run on
-  another; `gte-modernbert-base` embeds identically across devices and shares one
-  key space.
+  (currently EmbeddingGemma), the requested device is also part of the key, so
+  vectors computed under bfloat16 on one device are never served for a float32 run
+  on another; `gte-modernbert-base` embeds identically across devices and shares
+  one key space.
 - Because the key depends on the exact prepared text, **partial updates fall out for
   free** — editing one function in one file only invalidates that function's cache
   entry; every other unit in the corpus still hits.

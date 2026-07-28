@@ -6,11 +6,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-SemanticModelFamily = Literal["gte-modernbert", "c2llm", "embeddinggemma", "generic"]
+SemanticModelFamily = Literal["gte-modernbert", "embeddinggemma", "generic"]
 
 DEFAULT_FALLBACK_SEMANTIC_THRESHOLD = 0.82
 DEFAULT_FALLBACK_SEARCH_THRESHOLD = 0.35
-DEFAULT_C2LLM_REVISION = "bd6d0ddb29f0c9a3d0f14281aedc9f940bb8d67a"
 
 
 @dataclass(frozen=True)
@@ -23,9 +22,6 @@ class SemanticModelProfile:
     family: SemanticModelFamily
     default_revision: str | None = None
     default_trust_remote_code: bool = False
-    requires_deepspeed: bool = False
-    left_padding: bool = False
-    low_cpu_mem_usage: bool = False
     default_semantic_threshold: float = DEFAULT_FALLBACK_SEMANTIC_THRESHOLD
     default_search_threshold: float = DEFAULT_FALLBACK_SEARCH_THRESHOLD
 
@@ -48,22 +44,6 @@ _BUILTIN_MODEL_PROFILES: tuple[SemanticModelProfile, ...] = (
         family="gte-modernbert",
         default_semantic_threshold=0.96,
         default_search_threshold=0.50,
-    ),
-    SemanticModelProfile(
-        key="c2llm-0.5b",
-        canonical_name="codefuse-ai/C2LLM-0.5B",
-        aliases=(
-            "codefuse-ai/c2llm-0.5b",
-            "codefuse-ai/C2LLM-0.5B",
-        ),
-        family="c2llm",
-        default_revision=DEFAULT_C2LLM_REVISION,
-        default_trust_remote_code=True,
-        requires_deepspeed=True,
-        left_padding=True,
-        low_cpu_mem_usage=True,
-        default_semantic_threshold=0.80,
-        default_search_threshold=0.40,
     ),
     SemanticModelProfile(
         key="embeddinggemma-300m",
@@ -174,25 +154,6 @@ def _build_dynamic_embeddinggemma_profile(model_name: str) -> SemanticModelProfi
     )
 
 
-def _build_dynamic_c2llm_profile(model_name: str) -> SemanticModelProfile:
-    """Build a C2LLM-family profile for non-builtin C2LLM model IDs.
-
-    :param model_name: Model name.
-    :return: Dynamic family-appropriate profile.
-    """
-    return SemanticModelProfile(
-        key=model_name,
-        canonical_name=model_name,
-        aliases=(),
-        family="c2llm",
-        default_revision=None,
-        default_trust_remote_code=True,
-        requires_deepspeed=True,
-        left_padding=True,
-        low_cpu_mem_usage=True,
-    )
-
-
 def resolve_model_profile(model_name: str) -> SemanticModelProfile:
     """Resolve a user model identifier into a concrete model profile.
 
@@ -219,8 +180,6 @@ def resolve_model_profile(model_name: str) -> SemanticModelProfile:
         canonical = model_name
         family_hint = normalized
 
-    if "c2llm" in family_hint:
-        return _build_dynamic_c2llm_profile(canonical)
     if "embeddinggemma" in family_hint:
         return _build_dynamic_embeddinggemma_profile(canonical)
     if "gte-modernbert" in family_hint:

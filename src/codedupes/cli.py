@@ -63,7 +63,6 @@ console = Console(width=DEFAULT_OUTPUT_WIDTH)
 TResult = TypeVar("TResult")
 
 _NOISY_EXTERNAL_LOGGERS = (
-    "deepspeed",
     "httpx",
     "huggingface_hub",
     "jax",
@@ -896,10 +895,7 @@ def _add_common_analysis_options(
             "--model-revision",
             default=None,
             show_default="auto",
-            help=(
-                "Model revision/commit. If omitted, uses model-profile default "
-                "(for example pinned for C2LLM 0.5B)."
-            ),
+            help=("Model revision/commit. If omitted, uses the model-profile default."),
         ),
         click.option(
             "--trust-remote-code",
@@ -1529,7 +1525,6 @@ def info_command() -> None:
     click.echo(f"PyTorch: {runtime_versions['torch']}")
     click.echo(f"Transformers: {runtime_versions['transformers']}")
     click.echo(f"Sentence Transformers: {runtime_versions['sentence-transformers']}")
-    click.echo(f"DeepSpeed: {runtime_versions['deepspeed']}")
     # Diagnostics import torch, which reads PYTORCH_ENABLE_MPS_FALLBACK exactly once, so the
     # environment must be settled first or a later semantic run in this process cannot enable it.
     configure_mps_environment(DEFAULT_SEMANTIC_DEVICE, fallback=None)

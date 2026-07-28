@@ -14,12 +14,6 @@ Accelerator requirements and runtime behavior are defined in
 pip install "codedupes @ git+https://github.com/pszemraj/codedupes.git"
 ```
 
-Optional GPU extras:
-
-```bash
-pip install "codedupes[gpu] @ git+https://github.com/pszemraj/codedupes.git"
-```
-
 Requires Python 3.11+ and PyTorch `>=2.13.0,<3`.
 
 ## Local development (editable install)
@@ -39,8 +33,8 @@ pip install "torch>=2.13.0,<3" "transformers>=5.1,<6" "sentence-transformers>=5.
 
 ## Apple Silicon / MPS
 
-MPS does not require the `gpu` extra. Use the standard install on macOS 14.0+ and verify that the
-installed PyTorch wheel was built with MPS support:
+Use the standard install on macOS 14.0+ and verify that the installed PyTorch
+wheel was built with MPS support:
 
 ```bash
 python - <<'PY'
@@ -60,8 +54,6 @@ codedupes check ./src --device mps
 
 For fallback, allocator, OOM-recovery, precision, and MLX guidance, see
 [docs/accelerators.md](https://github.com/pszemraj/codedupes/blob/main/docs/accelerators.md).
-
-For C2LLM-family models, install `deepspeed` (via `codedupes[gpu]` or direct install).
 
 For semantic model aliases/default thresholds/task behavior, see
 [docs/model-profiles.md](https://github.com/pszemraj/codedupes/blob/main/docs/model-profiles.md).

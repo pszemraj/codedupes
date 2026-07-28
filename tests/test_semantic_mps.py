@@ -54,7 +54,7 @@ def test_model_cache_is_keyed_by_resolved_device(monkeypatch) -> None:
 
     _reset_model_cache_state()
     monkeypatch.setattr(semantic, "_configure_semantic_runtime_env", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(semantic, "_check_semantic_dependencies", lambda _name: None)
+    monkeypatch.setattr(semantic, "_check_semantic_dependencies", lambda: None)
     monkeypatch.setattr(semantic, "_prepare_semantic_device", _prepare_device)
     monkeypatch.setattr(semantic, "clear_device_cache", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(sentence_transformers, "SentenceTransformer", FakeSentenceTransformer)
@@ -84,7 +84,7 @@ def test_mps_model_load_oom_retries_once_on_cpu(monkeypatch) -> None:
 
     _reset_model_cache_state()
     monkeypatch.setattr(semantic, "_configure_semantic_runtime_env", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(semantic, "_check_semantic_dependencies", lambda _name: None)
+    monkeypatch.setattr(semantic, "_check_semantic_dependencies", lambda: None)
     monkeypatch.setattr(semantic, "_prepare_semantic_device", _prepare_device)
     monkeypatch.setattr(
         semantic,
@@ -113,7 +113,7 @@ def test_sticky_cpu_fallback_reuse_warns_once(monkeypatch, caplog) -> None:
 
     _reset_model_cache_state()
     monkeypatch.setattr(semantic, "_configure_semantic_runtime_env", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(semantic, "_check_semantic_dependencies", lambda _name: None)
+    monkeypatch.setattr(semantic, "_check_semantic_dependencies", lambda: None)
     monkeypatch.setattr(semantic, "_prepare_semantic_device", _prepare_device)
     monkeypatch.setattr(semantic, "clear_device_cache", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(sentence_transformers, "SentenceTransformer", fake_constructor)
@@ -225,7 +225,6 @@ def test_mps_profile_dtypes_are_float32(monkeypatch) -> None:
 
     monkeypatch.setitem(sys.modules, "torch", FakeTorch)
 
-    assert semantic._resolve_c2llm_torch_dtype("mps") == "fp32"
     assert semantic._resolve_embeddinggemma_torch_dtype("mps") == "fp32"
 
 

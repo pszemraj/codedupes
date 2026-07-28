@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import sys
 from pathlib import Path
 
 import numpy as np
@@ -9,7 +8,6 @@ import pytest
 import sentence_transformers
 
 from codedupes import semantic
-from codedupes.constants import DEFAULT_C2LLM_REVISION
 from codedupes.models import CodeUnit, CodeUnitType
 from codedupes.semantic import (
     SemanticBackendError,
@@ -85,17 +83,6 @@ def test_code_unit_statement_count_ignores_docstring(tmp_path: Path) -> None:
     unit = extract_arithmetic_units(tmp_path, include_private=True)[0]
     unit.source = source
     assert get_code_unit_statement_count(unit) == 2
-
-
-def test_prepare_code_for_embedding_prefixes_query(tmp_path: Path) -> None:
-    units = _extract_units(tmp_path)
-    prepared = semantic.prepare_code_for_embedding(
-        units[0],
-        model_name="c2llm-0.5b",
-        mode="query",
-    )
-    assert prepared.startswith(semantic.C2LLM_INSTRUCTIONS["query"])
-    assert prepared.endswith(units[0].source.strip())
 
 
 def test_prepare_code_for_embedding_default_model_no_prefix(tmp_path: Path) -> None:
@@ -283,21 +270,7 @@ def test_find_semantic_duplicates_skips_incompatible_unit_types(tmp_path: Path) 
     assert duplicates == []
 
 
-def test_get_model_reports_deepspeed_guidance(monkeypatch) -> None:
-    def fake_ctor(*args, **kwargs):
-        e = ModuleNotFoundError("No module named 'deepspeed'")
-        e.name = "deepspeed"
-        raise e
-
-    monkeypatch.setattr(sentence_transformers, "SentenceTransformer", fake_ctor)
-    semantic.clear_model_cache()
-
-    with pytest.raises(ModuleNotFoundError) as excinfo:
-        semantic.get_model("codefuse-ai/C2LLM-0.5B")
-    assert "deepspeed is required" in str(excinfo.value)
-
-
-def test_get_model_does_not_trust_remote_code_for_non_c2llm(monkeypatch) -> None:
+def test_get_model_does_not_trust_remote_code_by_default(monkeypatch) -> None:
     calls: list[dict] = []
 
     class FakeSentenceTransformer:
@@ -307,7 +280,7 @@ def test_get_model_does_not_trust_remote_code_for_non_c2llm(monkeypatch) -> None
     monkeypatch.setattr(
         semantic,
         "_check_semantic_dependencies",
-        lambda model_name: None,
+        lambda: None,
     )
     monkeypatch.setattr(sentence_transformers, "SentenceTransformer", FakeSentenceTransformer)
     semantic.clear_model_cache()
@@ -317,28 +290,6 @@ def test_get_model_does_not_trust_remote_code_for_non_c2llm(monkeypatch) -> None
     assert calls[0]["kwargs"]["trust_remote_code"] is False
 
 
-def test_get_model_trusts_remote_code_for_c2llm_variants(monkeypatch) -> None:
-    calls: list[dict] = []
-
-    class FakeSentenceTransformer:
-        def __init__(self, *args, **kwargs):
-            calls.append({"args": args, "kwargs": kwargs})
-
-    monkeypatch.setattr(semantic, "_check_semantic_dependencies", lambda model_name: None)
-    monkeypatch.setattr(semantic, "_resolve_c2llm_torch_dtype", lambda _device: "bf16")
-    monkeypatch.setattr(sentence_transformers, "SentenceTransformer", FakeSentenceTransformer)
-    semantic.clear_model_cache()
-
-    semantic.get_model("codefuse-ai/C2LLM-7B")
-
-    assert len(calls) == 1
-    kwargs = calls[0]["kwargs"]
-    assert kwargs["trust_remote_code"] is True
-    assert kwargs["model_kwargs"]["trust_remote_code"] is True
-    assert kwargs["tokenizer_kwargs"]["trust_remote_code"] is True
-    assert kwargs["config_kwargs"]["trust_remote_code"] is True
-
-
 def test_get_model_passes_revision_and_trust_kwargs(monkeypatch) -> None:
     calls: list[dict] = []
 
@@ -346,25 +297,27 @@ def test_get_model_passes_revision_and_trust_kwargs(monkeypatch) -> None:
         def __init__(self, *args, **kwargs):
             calls.append({"args": args, "kwargs": kwargs})
 
-    monkeypatch.setattr(semantic, "_check_semantic_dependencies", lambda model_name: None)
-    monkeypatch.setattr(semantic, "_resolve_c2llm_torch_dtype", lambda _device: "bf16")
+    monkeypatch.setattr(semantic, "_check_semantic_dependencies", lambda: None)
     monkeypatch.setattr(sentence_transformers, "SentenceTransformer", FakeSentenceTransformer)
     semantic.clear_model_cache()
 
-    semantic.get_model("c2llm-0.5b", revision=DEFAULT_C2LLM_REVISION, trust_remote_code=True)
+    revision = "test-revision"
+    semantic.get_model(
+        "sentence-transformers/all-MiniLM-L6-v2",
+        revision=revision,
+        trust_remote_code=True,
+    )
 
     assert len(calls) == 1
     kwargs = calls[0]["kwargs"]
     assert kwargs["trust_remote_code"] is True
-    assert kwargs["revision"] == DEFAULT_C2LLM_REVISION
+    assert kwargs["revision"] == revision
     assert kwargs["model_kwargs"]["trust_remote_code"] is True
-    assert kwargs["model_kwargs"]["revision"] == DEFAULT_C2LLM_REVISION
-    assert kwargs["model_kwargs"]["torch_dtype"] == "bf16"
-    assert kwargs["model_kwargs"]["low_cpu_mem_usage"] is True
+    assert kwargs["model_kwargs"]["revision"] == revision
     assert kwargs["tokenizer_kwargs"]["trust_remote_code"] is True
-    assert kwargs["tokenizer_kwargs"]["revision"] == DEFAULT_C2LLM_REVISION
+    assert kwargs["tokenizer_kwargs"]["revision"] == revision
     assert kwargs["config_kwargs"]["trust_remote_code"] is True
-    assert kwargs["config_kwargs"]["revision"] == DEFAULT_C2LLM_REVISION
+    assert kwargs["config_kwargs"]["revision"] == revision
 
 
 def test_get_model_keeps_explicit_revision_for_non_default_model(monkeypatch) -> None:
@@ -374,23 +327,22 @@ def test_get_model_keeps_explicit_revision_for_non_default_model(monkeypatch) ->
         def __init__(self, *args, **kwargs):
             calls.append({"args": args, "kwargs": kwargs})
 
-    monkeypatch.setattr(semantic, "_check_semantic_dependencies", lambda model_name: None)
+    monkeypatch.setattr(semantic, "_check_semantic_dependencies", lambda: None)
     monkeypatch.setattr(sentence_transformers, "SentenceTransformer", FakeSentenceTransformer)
     semantic.clear_model_cache()
 
+    revision = "test-revision"
     semantic.get_model(
-        "sentence-transformers/all-MiniLM-L6-v2",
-        revision=DEFAULT_C2LLM_REVISION,
-        trust_remote_code=False,
+        "sentence-transformers/all-MiniLM-L6-v2", revision=revision, trust_remote_code=False
     )
 
     assert len(calls) == 1
     kwargs = calls[0]["kwargs"]
     assert kwargs["trust_remote_code"] is False
-    assert kwargs["revision"] == DEFAULT_C2LLM_REVISION
-    assert kwargs["model_kwargs"]["revision"] == DEFAULT_C2LLM_REVISION
-    assert kwargs["tokenizer_kwargs"]["revision"] == DEFAULT_C2LLM_REVISION
-    assert kwargs["config_kwargs"]["revision"] == DEFAULT_C2LLM_REVISION
+    assert kwargs["revision"] == revision
+    assert kwargs["model_kwargs"]["revision"] == revision
+    assert kwargs["tokenizer_kwargs"]["revision"] == revision
+    assert kwargs["config_kwargs"]["revision"] == revision
 
 
 @pytest.mark.parametrize("version", ["2.12.9", "2.12.0", "3.0.0", "3.0.0.dev1"])
@@ -420,33 +372,16 @@ def test_prepare_semantic_device_ignores_fraction_on_non_mps(caplog) -> None:
     assert "mps_memory_fraction ignored: resolved device is cpu" in caplog.text
 
 
-def test_get_model_rejects_incompatible_c2llm_model_versions(monkeypatch) -> None:
-    def fake_safe_package_version(package_name: str) -> str | None:
-        fake_versions = {
-            "transformers": "4.49.0",
-            "sentence-transformers": "5.1.0",
-            "torch": "2.5.0",
-            "deepspeed": "0.16.0",
-        }
-        return fake_versions.get(package_name)
-
-    monkeypatch.setattr(semantic, "_safe_package_version", fake_safe_package_version)
-    semantic.clear_model_cache()
-
-    with pytest.raises(SemanticBackendError, match="Incompatible transformers version"):
-        semantic._check_c2llm_model_compatibility("c2llm-0.5b")
-
-
 def test_get_model_wraps_known_backend_error(monkeypatch) -> None:
     def fake_ctor(*args, **kwargs):
-        raise AttributeError("'C2LLMForEmbedding' object has no attribute 'all_tied_weights_keys'")
+        raise RuntimeError("EmbeddingGemma tokenizer backend is incompatible")
 
-    monkeypatch.setattr(semantic, "_check_semantic_dependencies", lambda model_name: None)
+    monkeypatch.setattr(semantic, "_check_semantic_dependencies", lambda: None)
     monkeypatch.setattr(sentence_transformers, "SentenceTransformer", fake_ctor)
     semantic.clear_model_cache()
 
     with pytest.raises(SemanticBackendError, match="Semantic backend failed"):
-        semantic.get_model("c2llm-0.5b", trust_remote_code=True)
+        semantic.get_model("embeddinggemma-300m")
 
 
 @pytest.mark.parametrize(
@@ -473,7 +408,7 @@ def test_get_model_reports_missing_core_dependency(
     semantic.clear_model_cache()
 
     with pytest.raises(ModuleNotFoundError) as excinfo:
-        semantic.get_model("codefuse-ai/C2LLM-0.5B")
+        semantic.get_model("gte-modernbert-base")
 
     assert expected_snippet in str(excinfo.value).lower()
 
@@ -527,18 +462,3 @@ def test_compute_embeddings_cpu_fallback_retries_once_and_bails_on_persistent_oo
         (2, "cpu"),
         (1, "cpu"),
     ]
-
-
-def test_resolve_c2llm_torch_dtype_prefers_cpu_bf16(monkeypatch) -> None:
-    class FakeCuda:
-        @staticmethod
-        def is_available() -> bool:
-            return False
-
-    class FakeTorch:
-        bfloat16 = "bf16"
-        cuda = FakeCuda()
-
-    monkeypatch.setitem(sys.modules, "torch", FakeTorch)
-
-    assert semantic._resolve_c2llm_torch_dtype("cpu") == "bf16"

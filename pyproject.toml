@@ -21,7 +21,6 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["build>=1.2", "pytest>=8", "ruff>=0.12"]
-gpu = ["deepspeed"]
 
 [project.urls]
 Homepage = "https://github.com/pszemraj/codedupes.git"

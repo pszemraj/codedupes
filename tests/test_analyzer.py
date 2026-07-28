@@ -1034,7 +1034,7 @@ def test_suppress_test_semantic_matches_filters_test_named_pairs(
 
     def fake_run_semantic(
         units,
-        model_name="codefuse-ai/C2LLM-0.5B",
+        model_name="Alibaba-NLP/gte-modernbert-base",
         instruction_prefix=None,
         threshold=0.82,
         exclude_pairs=None,

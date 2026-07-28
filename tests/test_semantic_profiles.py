@@ -3,7 +3,6 @@ from __future__ import annotations
 from pathlib import Path
 
 from codedupes.semantic_profiles import (
-    DEFAULT_C2LLM_REVISION,
     DEFAULT_FALLBACK_SEARCH_THRESHOLD,
     get_default_search_threshold,
     get_default_semantic_threshold,
@@ -16,7 +15,6 @@ from codedupes.semantic_profiles import (
 
 def test_resolve_builtin_model_aliases_to_canonical_ids() -> None:
     assert resolve_model_name("gte-modernbert-base") == "Alibaba-NLP/gte-modernbert-base"
-    assert resolve_model_name("c2llm-0.5b") == "codefuse-ai/C2LLM-0.5B"
     assert resolve_model_name("embeddinggemma-300m") == "unsloth/embeddinggemma-300m"
     assert resolve_model_name("google/embeddinggemma-300m") == "unsloth/embeddinggemma-300m"
 
@@ -29,25 +27,9 @@ def test_unknown_model_uses_generic_fallback_profile() -> None:
     assert profile.default_trust_remote_code is False
 
 
-def test_c2llm_profile_defaults() -> None:
-    profile = resolve_model_profile("c2llm-0.5b")
-    assert profile.family == "c2llm"
-    assert profile.default_revision == DEFAULT_C2LLM_REVISION
-    assert profile.default_trust_remote_code is True
-    assert profile.requires_deepspeed is True
-
-
-def test_dynamic_c2llm_profile_for_non_builtin_model() -> None:
-    profile = resolve_model_profile("codefuse-ai/C2LLM-7B")
-    assert profile.family == "c2llm"
-    assert profile.canonical_name == "codefuse-ai/C2LLM-7B"
-    assert profile.default_revision is None
-    assert profile.default_trust_remote_code is True
-
-
-def test_supported_model_list_contains_three_profiles() -> None:
+def test_supported_model_list_contains_two_profiles() -> None:
     keys = [profile.key for profile in list_supported_models()]
-    assert keys == ["gte-modernbert-base", "c2llm-0.5b", "embeddinggemma-300m"]
+    assert keys == ["gte-modernbert-base", "embeddinggemma-300m"]
 
 
 def test_model_threshold_lookup_works_for_builtin_and_unknown() -> None:
@@ -91,12 +73,6 @@ def test_local_directory_family_inferred_from_basename(tmp_path: Path) -> None:
     builtin = resolve_model_profile("embeddinggemma")
     assert gemma.default_semantic_threshold == builtin.default_semantic_threshold
     assert gemma.default_search_threshold == builtin.default_search_threshold
-
-    c2llm_dir = tmp_path / "C2LLM-0.5B-saved"
-    c2llm_dir.mkdir()
-    c2llm = resolve_model_profile(str(c2llm_dir))
-    assert c2llm.family == "c2llm"
-    assert c2llm.default_trust_remote_code is True
 
 
 def test_dynamic_embeddinggemma_profile_for_non_builtin_hub_id() -> None:

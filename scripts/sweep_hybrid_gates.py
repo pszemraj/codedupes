@@ -177,10 +177,7 @@ def main() -> int:
     parser.add_argument(
         "--model-revision",
         default=None,
-        help=(
-            "Model revision / commit hash. If omitted, uses model-profile default "
-            "(for example pinned for C2LLM 0.5B)."
-        ),
+        help=("Model revision / commit hash. If omitted, uses the model-profile default."),
     )
     parser.add_argument(
         "--batch-size",

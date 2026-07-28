@@ -13,6 +13,10 @@ replacement for the CLI, output, model-profile, or accelerator source-of-truth d
   directly.
 - Semantic startup now rejects an unsupported PyTorch runtime even when dependency resolution was
   bypassed with `--no-deps` or an editable/source-only environment.
+- Removed the C2LLM profile and its DeepSpeed-only `gpu` extra. The backend's
+  separate dependency/runtime contract was not reliable under the supported
+  Transformers baseline; the built-in model set now focuses on
+  `gte-modernbert-base` and `embeddinggemma-300m`.
 - VCS-less source snapshots now build with an explicit `0.0.0+unknown` fallback; tagged Git builds
   continue to derive the release version from VCS metadata. The sdist now includes tests, docs,
   scripts, and tuning fixtures.
@@ -43,7 +47,7 @@ replacement for the CLI, output, model-profile, or accelerator source-of-truth d
 - Added a persistent, content-addressed on-disk embedding cache (`codedupes.embedding_cache`).
   Cache keys hash the canonical model name, resolved revision, embedding mode, and
   pre-truncation prepared text (plus the requested device for the device-dependent-dtype
-  C2LLM/EmbeddingGemma families), so unchanged code units hit across runs and single-file
+  EmbeddingGemma family), so unchanged code units hit across runs and single-file
   edits only re-embed the changed units. Writers serialize per shard via advisory locks,
   non-finite or dimension-mismatched cached vectors are treated as misses, and a fully
   cached `check`/`search` run skips model load entirely. See
@@ -54,7 +58,7 @@ replacement for the CLI, output, model-profile, or accelerator source-of-truth d
 
 - Model identifiers that point at an existing directory now load as local
   `save_pretrained`-style copies with no hub access: the path canonicalizes to one
-  identity, family (C2LLM/EmbeddingGemma) is inferred from the directory name, an
+  identity, family (EmbeddingGemma/gte-modernbert) is inferred from the directory name, an
   explicit `--model-revision` is ignored with a warning, and the embedding cache keys the
   model by a content fingerprint of the directory so in-place weight updates
   invalidate stale vectors. `HF_HUB_OFFLINE=1` remains the switch for fully offline

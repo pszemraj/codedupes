@@ -127,7 +127,7 @@ def test_cache_key_sensitive_to_model_revision_prefix_and_task(tmp_path, monkeyp
     compute_embeddings(units, **{**base, "revision": "rev2"})
     assert len(model.encode_calls) == 2
 
-    compute_embeddings(units, **{**base, "model_name": "c2llm-0.5b"})
+    compute_embeddings(units, **{**base, "model_name": "other-model"})
     assert len(model.encode_calls) == 3
 
     compute_embeddings(units, **{**base, "instruction_prefix": "CUSTOM: "})

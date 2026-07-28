@@ -115,8 +115,8 @@ large embedding tensor remains resident in Metal memory.
 
 ## Precision and Metal environment variables
 
-Built-in dtype overrides use float32 on MPS. In particular, C2LLM and EmbeddingGemma are not forced
-to bfloat16 on Apple Silicon. Generic HuggingFace models follow their own model defaults.
+The built-in EmbeddingGemma dtype override uses float32 on MPS instead of forcing
+bfloat16 on Apple Silicon. Generic HuggingFace models follow their own model defaults.
 
 `codedupes` deliberately does not set `PYTORCH_MPS_FAST_MATH` or
 `PYTORCH_MPS_PREFER_METAL`. Fast math may change floating-point results around tuned similarity
@@ -124,9 +124,8 @@ thresholds, while forcing a particular matmul implementation is a workload-speci
 You can experiment with those variables externally, but re-run the hybrid tuning guardrail and a
 representative repository before adopting altered thresholds.
 
-The C2LLM profile still requires `deepspeed` and is CUDA-oriented in practice. For a native macOS
-installation, use the default `gte-modernbert-base` profile first; evaluate
-`embeddinggemma-300m` only after the default path is stable.
+For a native macOS installation, use the default `gte-modernbert-base` profile
+first; evaluate `embeddinggemma-300m` only after the default path is stable.
 
 ## MLX coexistence
 

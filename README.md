@@ -14,12 +14,6 @@
 pip install "codedupes @ git+https://github.com/pszemraj/codedupes.git"
 ```
 
-Optional GPU extras:
-
-```bash
-pip install "codedupes[gpu] @ git+https://github.com/pszemraj/codedupes.git"
-```
-
 Requires Python 3.11+ and PyTorch 2.13+. Details are in
 [docs/install.md](https://github.com/pszemraj/codedupes/blob/main/docs/install.md)
 

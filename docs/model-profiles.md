@@ -24,7 +24,6 @@ The canonical implementation is:
 | profile key | canonical model ID | family | duplicate threshold | search threshold | default revision | default trust mode |
 | --- | --- | --- | --- | --- | --- | --- |
 | `gte-modernbert-base` | `Alibaba-NLP/gte-modernbert-base` | `gte-modernbert` | `0.96` | `0.50` | `auto` (unpinned) | `False` |
-| `c2llm-0.5b` | `codefuse-ai/C2LLM-0.5B` | `c2llm` | `0.80` | `0.40` | `bd6d0ddb29f0c9a3d0f14281aedc9f940bb8d67a` | `True` |
 | `embeddinggemma-300m` | `unsloth/embeddinggemma-300m` | `embeddinggemma` | `0.86` | `0.40` | `auto` (unpinned) | `False` |
 
 Notes:
@@ -39,8 +38,8 @@ Notes:
   those carry visible scores and rank below real hits, but raise `--semantic-threshold`
   toward `0.6` if they clutter results. No fixed floor separates them everywhere, and the
   default deliberately favors recall over precision.
-- C2LLM-family profiles require `deepspeed` and are CUDA-oriented in practice; use `gte-modernbert-base` first on native macOS.
-- Built-in dtype overrides use float32 on MPS. CUDA may use bfloat16 for C2LLM/EmbeddingGemma when the hardware reports support.
+- Built-in EmbeddingGemma dtype overrides use float32 on MPS. CUDA may use
+  bfloat16 when the hardware reports support.
 - Generic/unknown model profiles follow their model-defined dtype and operator support, so explicit MPS compatibility is not guaranteed.
 - Generic/unknown models fall back to duplicate threshold `0.82` and search threshold `0.35`
   unless you override `--semantic-threshold` / `semantic_threshold`.
@@ -52,9 +51,6 @@ Notes:
   `save_pretrained`-style model copy: it canonicalizes to its resolved absolute
   path (so relative and absolute spellings share one identity), and its family is
   inferred from the directory basename using the same name rules below.
-- Any model name containing `c2llm` resolves to a dynamic C2LLM-family profile:
-  - `trust_remote_code=True` by default
-  - no pinned default revision
 - Any model name containing `embeddinggemma` resolves to a dynamic
   EmbeddingGemma-family profile with the built-in profile’s thresholds and encode
   entry points.
@@ -105,7 +101,6 @@ If you pass an unknown semantic task, the CLI/API raises a validation error.
 
 ## Task/prefix behavior by model family
 
-- `c2llm`: uses family-specific instruction prefixes for code/query/describe modes.
 - `embeddinggemma`: uses task-aware query/document prefix formats.
 - generic models: no default instruction prefix unless explicitly overridden.
 
