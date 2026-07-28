@@ -25,8 +25,9 @@ An explicit unavailable accelerator is an error. `codedupes` does not silently r
 and out-of-memory recovery paths below.
 
 The process-wide model cache is keyed by canonical model ID, revision, remote-code trust mode,
-and resolved device. Model lifecycle and embedding inference are serialized because replacing or
-moving one cached model while another thread is using it is unsafe.
+resolved device, and the source fingerprint for a mutable local model directory. Model lifecycle
+and embedding inference are serialized because replacing or moving one cached model while another
+thread is using it is unsafe.
 
 ## Unsupported MPS operators
 

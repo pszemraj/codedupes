@@ -56,6 +56,7 @@ _model = None
 _model_name: str | None = None
 _model_revision: str | None = None
 _model_trust_remote_code: bool | None = None
+_model_local_fingerprint: str | None = None
 _model_device_key: str | None = None
 _model_execution_device: str | None = None
 _model_lock = threading.RLock()
@@ -664,6 +665,7 @@ def _get_model_unlocked(
     :return: Loaded model instance.
     """
     global _model, _model_name, _model_revision, _model_trust_remote_code
+    global _model_local_fingerprint
     global _model_device_key, _model_execution_device, _warned_cpu_fallback_reuse
 
     requested_local_path = resolve_local_model_path(model_name)
@@ -678,6 +680,9 @@ def _get_model_unlocked(
     local_model_path = resolve_local_model_path(resolved_model_name)
     if local_model_path is not None:
         _validate_local_model_directory(local_model_path)
+    local_model_fingerprint = (
+        _fingerprint_local_model_dir(local_model_path) if local_model_path is not None else None
+    )
     resolved_revision = _resolve_model_revision(model_name, revision)
     if resolved_revision is not None and local_model_path is not None:
         logger.warning(
@@ -704,7 +709,11 @@ def _get_model_unlocked(
             _model_name != resolved_model_name,
             _model_revision != resolved_revision,
             _model_trust_remote_code != resolved_trust_remote_code,
+            _model_local_fingerprint != local_model_fingerprint,
             _model_device_key != resolved_device,
+            # Without a reliable fingerprint, reloading is the only safe way to
+            # avoid retaining stale weights from a mutable local directory.
+            local_model_path is not None and local_model_fingerprint is None,
         )
     )
 
@@ -816,6 +825,7 @@ def _get_model_unlocked(
         _model_name = resolved_model_name
         _model_revision = resolved_revision
         _model_trust_remote_code = resolved_trust_remote_code
+        _model_local_fingerprint = local_model_fingerprint
         _model_device_key = resolved_device
         _model_execution_device = _coerce_device_name(
             getattr(loaded_model, "device", None),
@@ -870,6 +880,7 @@ def get_model(
 def _clear_model_cache_unlocked() -> None:
     """Release the cached model and its accelerator allocator cache."""
     global _model, _model_name, _model_revision, _model_trust_remote_code
+    global _model_local_fingerprint
     global _model_device_key, _model_execution_device, _warned_cpu_fallback_reuse
 
     model = _model
@@ -882,6 +893,7 @@ def _clear_model_cache_unlocked() -> None:
     _model_name = None
     _model_revision = None
     _model_trust_remote_code = None
+    _model_local_fingerprint = None
     _model_device_key = None
     _model_execution_device = None
     _warned_cpu_fallback_reuse = False

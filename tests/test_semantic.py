@@ -348,6 +348,36 @@ def test_get_model_loads_local_directory_without_hub_revision(tmp_path: Path, mo
     ]
 
 
+def test_get_model_reloads_local_directory_after_weights_change(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    model_dir = tmp_path / "local-model"
+    model_dir.mkdir()
+    (model_dir / "config.json").write_text('{"model_type": "test"}')
+    weights_path = model_dir / "model.safetensors"
+    weights_path.write_text("weights-v1")
+    loaded_models: list[object] = []
+
+    class FakeSentenceTransformer:
+        def __init__(self, *_args, **_kwargs):
+            loaded_models.append(self)
+
+    monkeypatch.setattr(semantic, "_check_semantic_dependencies", lambda: None)
+    monkeypatch.setattr(semantic, "_prepare_semantic_device", lambda *_args, **_kwargs: "cpu")
+    monkeypatch.setattr(sentence_transformers, "SentenceTransformer", FakeSentenceTransformer)
+    semantic.clear_model_cache()
+
+    first = semantic.get_model(str(model_dir))
+    unchanged = semantic.get_model(str(model_dir))
+    weights_path.write_text("weights-v2-longer")
+    changed = semantic.get_model(str(model_dir))
+
+    assert first is unchanged
+    assert changed is not first
+    assert loaded_models == [first, changed]
+
+
 def test_get_model_rejects_missing_explicit_local_directory(tmp_path: Path) -> None:
     missing = tmp_path / "missing-model"
     semantic.clear_model_cache()

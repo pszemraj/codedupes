@@ -52,6 +52,9 @@ across runs.
   fingerprint of the directory (file names, sizes, and mtimes) instead of a hub
   revision, so swapping updated weights into the same path invalidates the cache
   automatically while unchanged directories keep the skip-model-load fast path.
+  The same fingerprint also invalidates the process-wide loaded-model cache, so
+  newly computed vectors cannot come from stale in-memory weights after an in-place
+  model update.
   Metadata under `.cache/huggingface` created by `hf download --local-dir` is
   excluded because download timestamps do not change model output.
 - If the model resolves to an unpinned revision (for example the default
