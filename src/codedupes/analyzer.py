@@ -15,7 +15,7 @@ from codedupes.constants import (
     DEFAULT_MODEL,
     DEFAULT_SEMANTIC_DEVICE,
     DEFAULT_TRADITIONAL_THRESHOLD,
-    SEMANTIC_TASK_CHOICES,
+    normalize_semantic_task,
 )
 from codedupes.devices import normalize_semantic_device, validate_mps_memory_fraction
 from codedupes.extractor import CodeExtractor
@@ -361,11 +361,8 @@ class AnalyzerConfig:
         if self.semantic_threshold is not None and not 0.0 <= self.semantic_threshold <= 1.0:
             raise ValueError("semantic_threshold must be in [0.0, 1.0]")
 
-        try:
-            self.device = normalize_semantic_device(self.device)
-            self.mps_memory_fraction = validate_mps_memory_fraction(self.mps_memory_fraction)
-        except ValueError as exc:
-            raise ValueError(str(exc)) from exc
+        self.device = normalize_semantic_device(self.device)
+        self.mps_memory_fraction = validate_mps_memory_fraction(self.mps_memory_fraction)
 
         if self.mps_memory_fraction is not None and self.device not in {"auto", "mps"}:
             raise ValueError("mps_memory_fraction requires device='mps' or device='auto'")
@@ -399,13 +396,10 @@ class AnalyzerConfig:
             raise ValueError("tiny_near_jaccard_min must be in [0.0, 1.0]")
 
         if self.semantic_task is not None:
-            normalized_task = self.semantic_task.strip().lower()
-            if normalized_task not in SEMANTIC_TASK_CHOICES:
-                allowed = ", ".join(SEMANTIC_TASK_CHOICES)
-                raise ValueError(
-                    f"Invalid semantic_task: {self.semantic_task}. Allowed values: {allowed}"
-                )
-            self.semantic_task = normalized_task
+            self.semantic_task = normalize_semantic_task(
+                self.semantic_task,
+                default_task=DEFAULT_CHECK_SEMANTIC_TASK,
+            )
 
         if not self.run_unused and self.strict_unused:
             raise ValueError("strict_unused requires run_unused=True")

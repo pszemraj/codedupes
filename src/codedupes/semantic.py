@@ -25,7 +25,8 @@ from codedupes.constants import (
     DEFAULT_SEMANTIC_DEVICE,
     DEFAULT_SEMANTIC_THRESHOLD,
     DEFAULT_TOP_K,
-    SEMANTIC_TASK_CHOICES,
+    SemanticTask,
+    normalize_semantic_task,
 )
 from codedupes.devices import (
     DeviceConfigurationError,
@@ -62,15 +63,6 @@ _warned_cpu_fallback_reuse = False
 
 _TORCH_MIN_RELEASE = (2, 13)
 _TORCH_MAX_EXCLUSIVE_RELEASE = (3,)
-SemanticTask = Literal[
-    "semantic-similarity",
-    "code-retrieval",
-    "retrieval",
-    "question-answering",
-    "fact-verification",
-    "classification",
-    "clustering",
-]
 
 EMBEDDINGGEMMA_QUERY_PREFIXES: dict[SemanticTask, str] = {
     "semantic-similarity": "task: sentence similarity | query: ",
@@ -932,27 +924,6 @@ def _truncate_code_if_needed(text: str, unit_name: str, model: Any) -> str:
         return text[: max_tokens * 4]
 
 
-def _normalize_semantic_task(
-    semantic_task: str | None,
-    *,
-    default_task: SemanticTask,
-) -> SemanticTask:
-    """Validate and normalize semantic task names.
-
-    :param semantic_task: Candidate task value.
-    :param default_task: Fallback task when no value is provided.
-    :return: Normalized task enum.
-    """
-    if semantic_task is None:
-        return default_task
-
-    normalized = semantic_task.strip().lower()
-    if normalized not in SEMANTIC_TASK_CHOICES:
-        allowed = ", ".join(SEMANTIC_TASK_CHOICES)
-        raise ValueError(f"Unknown semantic task '{semantic_task}'. Expected one of: {allowed}")
-    return normalized  # type: ignore[return-value]
-
-
 def _get_embeddinggemma_prefix(task: SemanticTask, mode: Literal["code", "query"]) -> str:
     """Get task-aware prompt prefixes for EmbeddingGemma.
 
@@ -970,19 +941,17 @@ def _get_embeddinggemma_prefix(task: SemanticTask, mode: Literal["code", "query"
 
 
 def _get_instruction(
-    model_name: str,
+    profile: SemanticModelProfile,
     mode: Literal["code", "query"],
     semantic_task: SemanticTask,
 ) -> str:
     """Get default instruction prefix for model/task/mode.
 
-    :param model_name: Model identifier.
+    :param profile: Resolved model profile.
     :param mode: Input mode.
     :param semantic_task: Normalized task.
     :return: Instruction prefix.
     """
-    profile = resolve_model_profile(model_name)
-
     if profile.family == "embeddinggemma":
         return _get_embeddinggemma_prefix(semantic_task, mode)
 
@@ -990,7 +959,7 @@ def _get_instruction(
 
 
 def _resolve_instruction_prefix(
-    model_name: str,
+    profile: SemanticModelProfile,
     mode: Literal["code", "query"],
     instruction_prefix: str | None,
     *,
@@ -998,7 +967,7 @@ def _resolve_instruction_prefix(
 ) -> str:
     """Resolve instruction prefix override for embedding inputs.
 
-    :param model_name: Model identifier.
+    :param profile: Resolved model profile.
     :param mode: Input mode.
     :param instruction_prefix: Optional override.
     :param semantic_task: Resolved task.
@@ -1006,7 +975,7 @@ def _resolve_instruction_prefix(
     """
     if instruction_prefix is not None:
         return instruction_prefix
-    return _get_instruction(model_name, mode, semantic_task)
+    return _get_instruction(profile, mode, semantic_task)
 
 
 def prepare_code_for_embedding(
@@ -1027,12 +996,13 @@ def prepare_code_for_embedding(
     """
     source = unit.source.strip()
     task_default = DEFAULT_SEARCH_SEMANTIC_TASK if mode == "query" else DEFAULT_CHECK_SEMANTIC_TASK
-    resolved_task = _normalize_semantic_task(
+    resolved_task = normalize_semantic_task(
         semantic_task,
-        default_task=task_default,  # type: ignore[arg-type]
+        default_task=task_default,
     )
+    profile = resolve_model_profile(model_name)
     instruction = _resolve_instruction_prefix(
-        model_name,
+        profile,
         mode,
         instruction_prefix,
         semantic_task=resolved_task,
@@ -1268,19 +1238,17 @@ def _compute_embeddings_unlocked(
         return np.zeros((0, 0), dtype=np.float32)
 
     profile = resolve_model_profile(model_name)
-    resolved_task = _normalize_semantic_task(
+    resolved_task = normalize_semantic_task(
         semantic_task,
         default_task=DEFAULT_CHECK_SEMANTIC_TASK,
     )
-    prepared_texts = [
-        prepare_code_for_embedding(
-            unit,
-            model_name=model_name,
-            instruction_prefix=instruction_prefix,
-            semantic_task=resolved_task,
-        )
-        for unit in units
-    ]
+    instruction = _resolve_instruction_prefix(
+        profile,
+        "code",
+        instruction_prefix,
+        semantic_task=resolved_task,
+    )
+    prepared_texts = [f"{instruction}{unit.source.strip()}" for unit in units]
 
     cache = get_embedding_cache() if (use_cache and cache_scope is not None) else None
     cache_revision = (
@@ -1621,12 +1589,12 @@ def _find_similar_to_query_unlocked(
     resolved_threshold = (
         threshold if threshold is not None else get_default_search_threshold(model_name)
     )
-    resolved_task = _normalize_semantic_task(
+    resolved_task = normalize_semantic_task(
         semantic_task,
         default_task=DEFAULT_SEARCH_SEMANTIC_TASK,
     )
     instruction = _resolve_instruction_prefix(
-        model_name,
+        profile,
         "query",
         instruction_prefix,
         semantic_task=resolved_task,
