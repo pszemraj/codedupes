@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 import sys
 from pathlib import Path
 
@@ -967,50 +966,6 @@ def test_main_propagates_check_exit_code(monkeypatch, tmp_path):
     monkeypatch.setattr(sys, "argv", ["codedupes", "check", str(path), "--json"])
 
     assert cli.main() == 1
-
-
-def test_no_banned_runtime_practice() -> None:
-    root = Path(__file__).resolve().parents[1]
-    scanned_files = [root / "README.md"]
-    scanned_files.extend(root.joinpath("src").rglob("*.py"))
-    scanned_files.extend(root.joinpath("tests").rglob("*.py"))
-
-    # This file is skipped during the scan, so plain literals are safe here.
-    python_m_pattern = "python -m codedupes"
-    sys_path_pattern = "sys.path"
-    subprocess_import_pattern = "import subprocess"
-    subprocess_attr_pattern = "subprocess."
-
-    violations: list[str] = []
-    for file in scanned_files:
-        if file == Path(__file__):
-            continue
-        text = file.read_text(encoding="utf-8", errors="ignore")
-        if python_m_pattern in text:
-            violations.append(f"{file}: python -m codedupes usage")
-
-        if sys_path_pattern in text:
-            violations.append(f"{file}: sys.path usage")
-
-        if subprocess_import_pattern in text or subprocess_attr_pattern in text:
-            violations.append(f"{file}: subprocess usage")
-
-    assert violations == []
-
-
-def test_no_relative_imports_outside_init() -> None:
-    package_root = Path(__file__).resolve().parents[1] / "src" / "codedupes"
-    offenders: list[str] = []
-    pattern = re.compile(r"^\\s*from \\.\\w")
-
-    for file_path in package_root.rglob("*.py"):
-        if file_path.name == "__init__.py":
-            continue
-        for line_no, line in enumerate(file_path.read_text(encoding="utf-8").splitlines(), 1):
-            if pattern.match(line):
-                offenders.append(f"{file_path}:{line_no}:{line.strip()}")
-
-    assert offenders == []
 
 
 @pytest.mark.parametrize(

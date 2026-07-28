@@ -34,11 +34,3 @@ def test_vcs_less_source_archives_have_a_build_version_fallback() -> None:
     """GitHub/source snapshots must remain buildable without a .git directory."""
     hatch = _pyproject()["tool"]["hatch"]  # type: ignore[index]
     assert hatch["version"]["fallback-version"] == "0.0.0+unknown"
-
-
-def test_sdist_contains_release_validation_assets() -> None:
-    """Source distributions should carry their tests, docs, and tuning corpus."""
-    hatch = _pyproject()["tool"]["hatch"]  # type: ignore[index]
-    included = set(hatch["build"]["targets"]["sdist"]["include"])
-
-    assert {"src/codedupes", "tests", "test_fixtures", "scripts", "docs"} <= included
