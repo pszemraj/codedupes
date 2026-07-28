@@ -52,6 +52,27 @@ DEFAULT_EXCLUDE_PATTERNS = [
     "**/tests/**",
 ]
 
+DefinitionNode = ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef
+
+
+def extract_docstring(node: DefinitionNode) -> str | None:
+    """Extract an unmodified leading docstring from a definition.
+
+    :param node: Function or class node to inspect.
+    :return: Leading docstring if present, otherwise ``None``.
+    """
+    return ast.get_docstring(node, clean=False)
+
+
+def _remove_leading_docstring(node: DefinitionNode) -> None:
+    """Remove one leading docstring expression from a definition body.
+
+    :param node: Function or class node to modify.
+    :return: ``None``.
+    """
+    if extract_docstring(node) is not None:
+        node.body = node.body[1:]
+
 
 class NormalizedASTHasher(ast.NodeTransformer):
     """Transform AST into a normalized form for structural comparisons."""
@@ -98,16 +119,7 @@ class NormalizedASTHasher(ast.NodeTransformer):
         :param node: FunctionDef node to normalize.
         :return: Updated function definition node after generic visit.
         """
-        node.name = self._get_normalized_name(node.name)
-        # Remove docstring
-        if (
-            node.body
-            and isinstance(node.body[0], ast.Expr)
-            and isinstance(node.body[0].value, ast.Constant)
-            and isinstance(node.body[0].value.value, str)
-        ):
-            node.body = node.body[1:]
-        return self.generic_visit(node)
+        return self._visit_definition(node)
 
     def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> ast.AST:
         """Normalize async function definition metadata and body.
@@ -115,15 +127,7 @@ class NormalizedASTHasher(ast.NodeTransformer):
         :param node: AsyncFunctionDef node to normalize.
         :return: Updated function definition node after generic visit.
         """
-        node.name = self._get_normalized_name(node.name)
-        if (
-            node.body
-            and isinstance(node.body[0], ast.Expr)
-            and isinstance(node.body[0].value, ast.Constant)
-            and isinstance(node.body[0].value.value, str)
-        ):
-            node.body = node.body[1:]
-        return self.generic_visit(node)
+        return self._visit_definition(node)
 
     def visit_ClassDef(self, node: ast.ClassDef) -> ast.AST:
         """Normalize class definition metadata and body.
@@ -131,14 +135,16 @@ class NormalizedASTHasher(ast.NodeTransformer):
         :param node: ClassDef node to normalize.
         :return: Updated class node after generic visit.
         """
+        return self._visit_definition(node)
+
+    def _visit_definition(self, node: DefinitionNode) -> ast.AST:
+        """Normalize one function or class definition.
+
+        :param node: Definition node to normalize.
+        :return: Updated definition after recursively visiting its body.
+        """
         node.name = self._get_normalized_name(node.name)
-        if (
-            node.body
-            and isinstance(node.body[0], ast.Expr)
-            and isinstance(node.body[0].value, ast.Constant)
-            and isinstance(node.body[0].value.value, str)
-        ):
-            node.body = node.body[1:]
+        _remove_leading_docstring(node)
         return self.generic_visit(node)
 
     def visit_Constant(self, node: ast.Constant) -> ast.AST:
@@ -221,7 +227,7 @@ class _CodeUnitCollector(ast.NodeVisitor):
         """
         self.extractor = extractor
         self.file_path = file_path
-        self.source = source
+        self.source_lines = source.splitlines(keepends=True)
         self.module_name = module_name
         self.exported = exported
         self.units: list[CodeUnit] = []
@@ -239,12 +245,12 @@ class _CodeUnitCollector(ast.NodeVisitor):
         is_method = bool(self.class_stack) and not self.function_stack
         scope_prefix = self.class_stack + self.function_stack
 
-        if self.extractor._should_emit_function(node.name):
-            self.units.extend(
+        if self.extractor._should_emit_name(node.name):
+            self.units.append(
                 self.extractor._emit_function(
                     node,
                     self.file_path,
-                    self.source,
+                    self.source_lines,
                     self.module_name,
                     scope_prefix=scope_prefix,
                     class_member=is_method,
@@ -266,14 +272,14 @@ class _CodeUnitCollector(ast.NodeVisitor):
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
         """Collect class units and descend into exported/visible class bodies."""
         scope_prefix = self.class_stack
-        should_enter = self.extractor._should_emit_class(node.name)
+        should_enter = self.extractor._should_emit_name(node.name)
 
         if should_enter:
-            self.units.extend(
+            self.units.append(
                 self.extractor._emit_class(
                     node,
                     self.file_path,
-                    self.source,
+                    self.source_lines,
                     self.module_name,
                     scope_prefix=scope_prefix,
                     exported=self.exported,
@@ -343,22 +349,6 @@ def compute_token_hash(source: str) -> str:
         tokens = [(0, w) for w in source.split()]
 
     return hashlib.sha256(str(tokens).encode()).hexdigest()[:16]
-
-
-def extract_docstring(node: ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef) -> str | None:
-    """Extract docstring from a function or class node.
-
-    :param node: AST node to inspect.
-    :return: Leading docstring if present, otherwise ``None``.
-    """
-    if (
-        node.body
-        and isinstance(node.body[0], ast.Expr)
-        and isinstance(node.body[0].value, ast.Constant)
-        and isinstance(node.body[0].value.value, str)
-    ):
-        return node.body[0].value.value
-    return None
 
 
 def get_exported_names(tree: ast.Module) -> set[str]:
@@ -472,15 +462,13 @@ class CodeExtractor:
         visitor.visit(tree)
         yield from visitor.units
 
-    def _should_emit_function(self, name: str) -> bool:
-        """Respect private-function filtering.
+    def _should_emit_name(self, name: str) -> bool:
+        """Respect private symbol filtering.
 
-        :param name: Function name.
-        :return: Whether to emit this function.
+        :param name: Function or class name.
+        :return: Whether to emit this symbol.
         """
-        if self._is_private_name(name):
-            return self.include_private
-        return True
+        return self.include_private or not self._is_private_name(name)
 
     @staticmethod
     def _is_private_name(name: str) -> bool:
@@ -490,16 +478,6 @@ class CodeExtractor:
         :return: ``True`` for names starting with single underscore.
         """
         return name.startswith("_") and not name.startswith("__")
-
-    def _should_emit_class(self, name: str) -> bool:
-        """Respect private-class filtering.
-
-        :param name: Class name.
-        :return: Whether to emit this class.
-        """
-        if self.include_private:
-            return True
-        return not self._is_private_name(name)
 
     def _qualified_name(
         self,
@@ -524,100 +502,120 @@ class CodeExtractor:
         self,
         node: ast.FunctionDef | ast.AsyncFunctionDef,
         file_path: Path,
-        source: str,
+        source_lines: list[str],
         module_name: str,
         scope_prefix: list[str],
         class_member: bool,
         is_dynamic_dispatch_class: bool,
         exported: set[str],
-    ) -> Iterator[CodeUnit]:
-        """Emit one or more code units for a function node.
+    ) -> CodeUnit:
+        """Build one function or method code unit.
 
         :param node: Function or async function AST node.
         :param file_path: Source file path.
-        :param source: Entire file source text.
+        :param source_lines: Entire file source split with line endings.
         :param module_name: Module name.
         :param scope_prefix: Scope prefix stack.
         :param class_member: Whether node is a method.
         :param is_dynamic_dispatch_class: Whether the containing class uses AST visitor dispatch.
         :param exported: Exported names from module __all__.
-        :return: Iterator of constructed ``CodeUnit`` instances.
+        :return: Constructed function or method unit.
         """
-        name = node.name
-        qualified = self._qualified_name(module_name, scope_prefix, name)
         unit_type = CodeUnitType.METHOD if class_member else CodeUnitType.FUNCTION
 
-        # Extract source for this node
-        lines = source.splitlines(keepends=True)
-        func_source = "".join(lines[node.lineno - 1 : node.end_lineno])
-
-        # Build call graph
         call_visitor = CallGraphVisitor()
         call_visitor.visit(node)
 
-        ast_hash = compute_ast_hash(node)
-        token_hash = compute_token_hash(func_source)
-
-        yield CodeUnit(
-            name=name,
-            qualified_name=qualified,
+        return self._build_code_unit(
+            node,
+            file_path,
+            source_lines,
+            module_name,
+            scope_prefix,
             unit_type=unit_type,
-            file_path=file_path,
-            lineno=node.lineno,
-            end_lineno=node.end_lineno or node.lineno,
-            source=func_source,
-            docstring=extract_docstring(node),
             calls=call_visitor.calls,
-            is_public=not name.startswith("_"),
-            is_dunder=name.startswith("__") and name.endswith("__"),
-            is_exported=name in exported,
-            is_dynamic_dispatch_hook=(
-                class_member and is_dynamic_dispatch_class and name.startswith("visit_")
+            exported=exported,
+            dynamic_dispatch_hook=(
+                class_member and is_dynamic_dispatch_class and node.name.startswith("visit_")
             ),
-            _ast_hash=ast_hash,
-            _token_hash=token_hash,
         )
 
     def _emit_class(
         self,
         node: ast.ClassDef,
         file_path: Path,
-        source: str,
+        source_lines: list[str],
         module_name: str,
         scope_prefix: list[str],
         exported: set[str],
-    ) -> Iterator[CodeUnit]:
-        """Emit a class code unit with metadata and hashes.
+    ) -> CodeUnit:
+        """Build one class code unit.
 
         :param node: Class AST node.
         :param file_path: Source file path.
-        :param source: Entire file source text.
+        :param source_lines: Entire file source split with line endings.
         :param module_name: Module name.
         :param scope_prefix: Scope prefix stack.
         :param exported: Exported names from module __all__.
-        :return: Iterator over emitted class ``CodeUnit`` values.
+        :return: Constructed class unit.
         """
-        class_name = node.name
-        qualified = self._qualified_name(module_name, scope_prefix, class_name)
-        lines = source.splitlines(keepends=True)
-        class_source = "".join(lines[node.lineno - 1 : node.end_lineno])
-        ast_hash = compute_ast_hash(node)
-        token_hash = compute_token_hash(class_source)
-
-        yield CodeUnit(
-            name=class_name,
-            qualified_name=qualified,
+        return self._build_code_unit(
+            node,
+            file_path=file_path,
+            source_lines=source_lines,
+            module_name=module_name,
+            scope_prefix=scope_prefix,
             unit_type=CodeUnitType.CLASS,
+            calls=set(),
+            exported=exported,
+            dynamic_dispatch_hook=False,
+        )
+
+    def _build_code_unit(
+        self,
+        node: DefinitionNode,
+        file_path: Path,
+        source_lines: list[str],
+        module_name: str,
+        scope_prefix: list[str],
+        unit_type: CodeUnitType,
+        calls: set[str],
+        exported: set[str],
+        dynamic_dispatch_hook: bool,
+    ) -> CodeUnit:
+        """Build shared source and metadata fields for one code unit.
+
+        :param node: Function or class definition node.
+        :param file_path: Source file path.
+        :param source_lines: Entire file source split with line endings.
+        :param module_name: Module name.
+        :param scope_prefix: Scope prefix stack.
+        :param unit_type: Emitted unit type.
+        :param calls: Direct call targets found in the definition.
+        :param exported: Exported names from module ``__all__``.
+        :param dynamic_dispatch_hook: Whether runtime visitor dispatch reaches this method.
+        :return: Constructed code unit.
+        """
+        name = node.name
+        unit_source = "".join(source_lines[node.lineno - 1 : node.end_lineno])
+        return CodeUnit(
+            name=name,
+            qualified_name=self._qualified_name(module_name, scope_prefix, name),
+            unit_type=unit_type,
             file_path=file_path,
             lineno=node.lineno,
             end_lineno=node.end_lineno or node.lineno,
-            source=class_source,
+            source=unit_source,
             docstring=extract_docstring(node),
-            is_public=not class_name.startswith("_"),
-            is_dunder=False,
-            is_exported=class_name in exported,
-            _ast_hash=ast_hash,
-            _token_hash=token_hash,
+            calls=calls,
+            is_public=not name.startswith("_"),
+            is_dunder=unit_type != CodeUnitType.CLASS
+            and name.startswith("__")
+            and name.endswith("__"),
+            is_exported=name in exported,
+            is_dynamic_dispatch_hook=dynamic_dispatch_hook,
+            _ast_hash=compute_ast_hash(node),
+            _token_hash=compute_token_hash(unit_source),
         )
 
     def extract_all(self) -> list[CodeUnit]:
@@ -647,9 +645,6 @@ class CodeExtractor:
                 if resolved in seen:
                     continue
                 seen.add(resolved)
-
-                if self._should_exclude(py_file):
-                    continue
 
                 units.extend(self.extract_from_file(py_file))
 
