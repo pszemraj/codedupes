@@ -283,6 +283,31 @@ def _assemble_cached_matrix(keys: list[str], hits: dict[str, np.ndarray]) -> np.
     return matrix
 
 
+def _select_cache_miss_indices(
+    cache_keys: list[str] | None,
+    hits: dict[str, np.ndarray],
+    unit_count: int,
+) -> list[int]:
+    """Select one representative row for each missing cache key.
+
+    :param cache_keys: Row-aligned cache keys, or ``None`` when caching is unavailable.
+    :param hits: Cached vectors keyed by cache key.
+    :param unit_count: Number of input units.
+    :return: Representative row indices that require encoding.
+    """
+    if cache_keys is None:
+        return list(range(unit_count))
+
+    covered_keys = set(hits)
+    miss_indices: list[int] = []
+    for index, key in enumerate(cache_keys):
+        if key in covered_keys:
+            continue
+        covered_keys.add(key)
+        miss_indices.append(index)
+    return miss_indices
+
+
 _DEVICE_DTYPE_FAMILIES = frozenset({"embeddinggemma"})
 
 
@@ -1323,17 +1348,23 @@ def _compute_embeddings_unlocked(
             if all(key in hits for key in cache_keys):
                 return _assemble_cached_matrix(cache_keys, hits)
 
-    miss_indices = [i for i in range(len(units)) if cache_keys is None or cache_keys[i] not in hits]
+    miss_indices = _select_cache_miss_indices(cache_keys, hits, len(units))
     miss_texts = [
         _truncate_code_if_needed(prepared_texts[i], units[i].qualified_name, model)
         for i in miss_indices
     ]
+    cache_covered_rows = (
+        sum(1 for key in cache_keys if key in hits) if cache_keys is not None else 0
+    )
+    reused_duplicate_rows = len(units) - cache_covered_rows - len(miss_indices)
 
     logger.info(
-        "Computing embeddings for %d code units on %s (%d cache hits)",
+        "Computing embeddings for %d unique inputs on %s "
+        "(%d cache-covered rows, %d duplicate rows reused)",
         len(miss_texts),
         execution_device,
-        len(units) - len(miss_texts),
+        cache_covered_rows,
+        reused_duplicate_rows,
     )
     encode_fn = model.encode
     if profile.family == "embeddinggemma" and hasattr(model, "encode_document"):
@@ -1374,27 +1405,34 @@ def _compute_embeddings_unlocked(
                 dim,
             )
             hits = {}
-            miss_indices = list(range(len(units)))
+            miss_indices = _select_cache_miss_indices(cache_keys, hits, len(units))
             miss_vectors = _encode_miss_texts(
                 [
                     _truncate_code_if_needed(prepared_texts[i], units[i].qualified_name, model)
                     for i in miss_indices
                 ]
             )
-    matrix = np.empty((len(units), dim), dtype=np.float32)
-    for local_idx, global_idx in enumerate(miss_indices):
-        matrix[global_idx] = miss_vectors[local_idx]
-    if cache_keys is not None:
-        for i, key in enumerate(cache_keys):
-            if key in hits:
-                matrix[i] = hits[key]
+    if cache_keys is None:
+        matrix = np.empty((len(units), dim), dtype=np.float32)
+        for local_idx, global_idx in enumerate(miss_indices):
+            matrix[global_idx] = miss_vectors[local_idx]
+    else:
+        vectors_by_key = dict(hits)
+        vectors_by_key.update(
+            (cache_keys[global_idx], miss_vectors[local_idx])
+            for local_idx, global_idx in enumerate(miss_indices)
+        )
+        matrix = _assemble_cached_matrix(cache_keys, vectors_by_key)
 
     if cache is not None and cache_keys is not None and cache_revision is not None and miss_indices:
         cache.put_many(
             cache_scope,
             profile.canonical_name,
             cache_revision,
-            [(cache_keys[i], matrix[i]) for i in miss_indices],
+            [
+                (cache_keys[global_idx], miss_vectors[local_idx])
+                for local_idx, global_idx in enumerate(miss_indices)
+            ],
         )
 
     return matrix

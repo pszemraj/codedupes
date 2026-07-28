@@ -590,6 +590,14 @@ def test_duplicate_source_units_share_keys_and_warm_run_full_hits(tmp_path, monk
     )
     assert first.shape[0] == 10
     assert get_model_counts["count"] == 1
+    assert len(model.encode_calls[0]) == 5
+
+    cache = EmbeddingCache()
+    shard_dir = cache.shard_dir(tmp_path, "test-model", "rev1")
+    vectors = np.load(shard_dir / embedding_cache.VECTORS_FILENAME, allow_pickle=False)
+    payload = json.loads((shard_dir / embedding_cache.INDEX_FILENAME).read_text(encoding="utf-8"))
+    assert vectors.shape[0] == 5
+    assert len(payload["keys"]) == 5
 
     second = compute_embeddings(
         all_units, model_name="test-model", revision="rev1", cache_scope=tmp_path
@@ -607,3 +615,26 @@ def test_duplicate_source_units_share_keys_and_warm_run_full_hits(tmp_path, monk
     compute_embeddings(mutated, model_name="test-model", revision="rev1", cache_scope=tmp_path)
     assert len(model.encode_calls) == 2
     assert len(model.encode_calls[-1]) == 1
+
+
+def test_put_many_coalesces_duplicate_keys(tmp_path):
+    scope = tmp_path / "project"
+    scope.mkdir()
+    cache = EmbeddingCache()
+    first = np.array([1.0, 2.0], dtype=np.float32)
+    replacement = np.array([3.0, 4.0], dtype=np.float32)
+
+    cache.put_many(
+        scope,
+        "model-a",
+        "rev1",
+        [("shared", first), ("shared", replacement)],
+    )
+
+    shard_dir = cache.shard_dir(scope, "model-a", "rev1")
+    vectors = np.load(shard_dir / embedding_cache.VECTORS_FILENAME, allow_pickle=False)
+    assert vectors.shape == (1, 2)
+    np.testing.assert_array_equal(
+        cache.get_many(scope, "model-a", "rev1", ["shared"])["shared"],
+        replacement,
+    )

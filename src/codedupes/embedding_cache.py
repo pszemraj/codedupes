@@ -405,7 +405,8 @@ def _write_shard_entries(
     if not entries:
         return
     try:
-        dim = int(np.asarray(entries[0][1]).reshape(-1).shape[0])
+        unique_entries = list(dict(entries).items())
+        dim = int(np.asarray(unique_entries[0][1]).reshape(-1).shape[0])
 
         shard_dir.mkdir(parents=True, exist_ok=True)
         with _shard_write_lock(shard_dir) as acquired:
@@ -423,14 +424,14 @@ def _write_shard_entries(
             new_rows = np.stack(
                 [
                     np.ascontiguousarray(vector, dtype=np.float32).reshape(dim)
-                    for _key, vector in entries
+                    for _key, vector in unique_entries
                 ],
                 axis=0,
             )
             # Rebinding releases the memory-mapped source before the replace below,
             # so the vectors file is never replaced while still mapped.
             vectors = np.concatenate([vectors, new_rows], axis=0)
-            for offset, (key, _vector) in enumerate(entries):
+            for offset, (key, _vector) in enumerate(unique_entries):
                 keys_map[key] = start_row + offset
 
             _atomic_write_shard(shard_dir, canonical_model, revision, vectors, keys_map, dim)
