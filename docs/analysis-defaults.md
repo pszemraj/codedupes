@@ -1,8 +1,6 @@
 # Analysis Defaults and Heuristics
 
-These defaults apply to `codedupes check` and `AnalyzerConfig`. See the
-[CLI reference](cli.md) for syntax, [model profiles](model-profiles.md) for semantic thresholds and
-tasks, and [accelerators](accelerators.md) for device behavior.
+These defaults apply to `codedupes check` and `AnalyzerConfig`. See the [CLI reference](cli.md) for syntax, [model profiles](model-profiles.md) for semantic thresholds and tasks, and [accelerators](accelerators.md) for device behavior.
 
 ## Semantic Candidate Defaults
 
@@ -14,8 +12,7 @@ Default semantic candidate selection:
 
 Combined-mode alignment rule:
 
-- when both traditional and semantic analysis are enabled, traditional duplicate
-  matching is scoped to the same semantic candidate pool
+- when both traditional and semantic analysis are enabled, traditional duplicate matching is scoped to the same semantic candidate pool
 - traditional-only mode keeps full extraction scope (functions, methods, classes)
 
 Override via CLI:
@@ -36,9 +33,7 @@ AnalyzerConfig(
 
 ## Extraction Scope Defaults
 
-Directory-name exclusions always apply. They cover common artifact, vendor, and
-cache directories such as `node_modules`, `target`, `.venv`, `.pytest_cache`,
-`dist`, and `build`; directories ending in `.egg-info` are also skipped.
+Directory-name exclusions always apply. They cover common artifact, vendor, and cache directories such as `node_modules`, `target`, `.venv`, `.pytest_cache`, `dist`, and `build`; directories ending in `.egg-info` are also skipped.
 
 When no nonempty `exclude_patterns` list is supplied, these file globs apply:
 
@@ -46,34 +41,21 @@ When no nonempty `exclude_patterns` list is supplied, these file globs apply:
 - `**/*_test.py`
 - `**/tests/**`
 
-A nonempty `AnalyzerConfig.exclude_patterns` list or one or more CLI
-`--exclude` options replaces those file globs. Directory-name exclusions still
-apply. Repeat any built-in file globs that you want to preserve alongside
-custom patterns.
+A nonempty `AnalyzerConfig.exclude_patterns` list or one or more CLI `--exclude` options replaces those file globs. Directory-name exclusions still apply. Repeat any built-in file globs that you want to preserve alongside custom patterns.
 
 ## Potentially Unused Defaults
 
-Unused detection runs by default and builds a conservative reference graph from
-direct calls, module-level aliases, `if __name__ == "__main__"` blocks, and
-`[project.scripts]` or `[project.gui-scripts]` entries in `pyproject.toml`.
+Unused detection runs by default and builds a conservative reference graph from direct calls, module-level aliases, `if __name__ == "__main__"` blocks, and `[project.scripts]` or `[project.gui-scripts]` entries in `pyproject.toml`.
 
 The following units are not reported:
 
-- referenced units and proven `ast.NodeVisitor` or `ast.NodeTransformer`
-  dispatch hooks (inheritance is proven through imports across the analyzed
-  files, including relative imports; unresolvable third-party bases stay
-  eligible for reporting)
-- names exported through `__all__`, public classes, and dunder/API lifecycle
-  methods such as `__init__`, `__new__`, and `__call__`
+- referenced units and proven `ast.NodeVisitor` or `ast.NodeTransformer` dispatch hooks (inheritance is proven through imports across the analyzed files, including relative imports; unresolvable third-party bases stay eligible for reporting)
+- names exported through `__all__`, public classes, and dunder/API lifecycle methods such as `__init__`, `__new__`, and `__call__`
 - `get_*`, `set_*`, and abstract methods
 - `test_*` definitions and definitions in files whose names contain `_test`
 - units containing `# noqa: codedupes` or `# codedupes: ignore`
 
-Default mode also skips public top-level functions. Strict mode
-(`--strict-unused` or `strict_unused=True`) removes only that last suppression;
-the other API and runtime exclusions still apply. Dynamic registration and
-reflection remain outside the static call graph, so unused findings require
-review.
+Default mode also skips public top-level functions. Strict mode (`--strict-unused` or `strict_unused=True`) removes only that last suppression; the other API and runtime exclusions still apply. Dynamic registration and reflection remain outside the static call graph, so unused findings require review.
 
 ## Tiny Traditional Duplicate Filtering Defaults
 

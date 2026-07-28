@@ -1,7 +1,6 @@
 # Python API
 
-Use `analyze_directory` for a one-shot analysis or `CodeAnalyzer` when configuration and semantic
-search share one analyzed corpus.
+Use `analyze_directory` for a one-shot analysis or `CodeAnalyzer` when configuration and semantic search share one analyzed corpus.
 
 ## Quick Start
 
@@ -70,10 +69,7 @@ for unit, score in hits:
     print(f"{score:.3f}", unit.qualified_name)
 ```
 
-Each `analyze()` call replaces the analyzer's corpus-specific state before
-extraction. `search()` therefore targets only the most recent analysis and
-requires that run to have semantic embeddings. A later empty or nonsemantic
-analysis cannot reuse an older corpus accidentally.
+Each `analyze()` call replaces the analyzer's corpus-specific state before extraction. `search()` therefore targets only the most recent analysis and requires that run to have semantic embeddings. A later empty or nonsemantic analysis cannot reuse an older corpus accidentally.
 
 ## Apple Silicon configuration
 
@@ -93,8 +89,7 @@ analyzer = CodeAnalyzer(
 result = analyzer.analyze("./src")
 ```
 
-See [Accelerators](accelerators.md) for unsupported-operator fallback, OOM recovery, and cached model
-placement. Long-lived processes can explicitly release the model:
+See [Accelerators](accelerators.md) for unsupported-operator fallback, OOM recovery, and cached model placement. Long-lived processes can explicitly release the model:
 
 ```python
 from codedupes.semantic import clear_model_cache
@@ -118,8 +113,7 @@ clear_model_cache()
   - semantic-only settings require `run_semantic=True`
   - traditional-only settings require `run_traditional=True`
   - `strict_unused=True` requires `run_unused=True`
-- `device`, `mps_fallback`, and `mps_memory_fraction` require `run_semantic=True`.
-  `embedding_cache=False` is accepted when semantic analysis is disabled and has no effect.
+- `device`, `mps_fallback`, and `mps_memory_fraction` require `run_semantic=True`. `embedding_cache=False` is accepted when semantic analysis is disabled and has no effect.
 - [Analysis defaults](analysis-defaults.md) covers candidate scope and filtering.
 - [Embedding cache](caching.md) covers persistent cache behavior.
 - [Model profiles](model-profiles.md) covers aliases, thresholds, revisions, and task behavior.

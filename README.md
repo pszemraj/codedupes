@@ -14,8 +14,7 @@
 pip install "codedupes @ git+https://github.com/pszemraj/codedupes.git"
 ```
 
-See [Installation](https://github.com/pszemraj/codedupes/blob/main/docs/install.md) for Python and
-runtime requirements.
+See [Installation](https://github.com/pszemraj/codedupes/blob/main/docs/install.md) for Python and runtime requirements.
 
 ## Quick Start
 
@@ -28,8 +27,7 @@ codedupes info
 codedupes check ./src --device mps
 ```
 
-See [Output and exit codes](https://github.com/pszemraj/codedupes/blob/main/docs/output.md) for
-report modes and CI behavior.
+See [Output and exit codes](https://github.com/pszemraj/codedupes/blob/main/docs/output.md) for report modes and CI behavior.
 
 ## Documentation
 

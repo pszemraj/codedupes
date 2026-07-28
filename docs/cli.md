@@ -1,16 +1,12 @@
 # CLI Reference
 
-See [Output and exit codes](output.md) for JSON and process status,
-[Analysis defaults](analysis-defaults.md) for heuristics, [Model profiles](model-profiles.md) for
-semantic defaults, [Accelerators](accelerators.md) for device behavior, and
-[Embedding cache](caching.md) for persistent cache behavior.
+See [Output and exit codes](output.md) for JSON and process status, [Analysis defaults](analysis-defaults.md) for heuristics, [Model profiles](model-profiles.md) for semantic defaults, [Accelerators](accelerators.md) for device behavior, and [Embedding cache](caching.md) for persistent cache behavior.
 
 ## `codedupes check <path>`
 
 Run duplicate and unused-code analysis.
 
-The default combined mode reports synthesized hybrid duplicates and unused candidates. See
-[Output and exit codes](output.md) for report modes.
+The default combined mode reports synthesized hybrid duplicates and unused candidates. See [Output and exit codes](output.md) for report modes.
 
 Examples:
 
@@ -119,20 +115,16 @@ Clear all cached embeddings or only entries for one model. See [Embedding cache]
 - `--output-width` must be at least `80`
 - `--show-all` is only valid in default combined `check` mode (not with `--semantic-only` or `--traditional-only`)
 - Default combined `check` fails if semantic backend fails; opt in to degraded combined fallback with `--allow-semantic-fallback`
-- In `--json` mode, output is machine-parseable JSON only; warning text is surfaced via
-  `summary.semantic_fallback` and `summary.semantic_fallback_reason` when fallback happens.
+- In `--json` mode, output is machine-parseable JSON only; warning text is surfaced via `summary.semantic_fallback` and `summary.semantic_fallback_reason` when fallback happens.
 - `--json` rejects rich-only display controls: `--show-source`, `--full-table`, `--verbose`, and explicit `--output-width`
 - `--semantic-only` and `--traditional-only` bypass hybrid synthesis and show raw method outputs
 - `--semantic-only` and `--traditional-only` are mutually exclusive
 - `--trust-remote-code` and `--no-trust-remote-code` are mutually exclusive
 - `--mps-fallback` and `--no-mps-fallback` are mutually exclusive
 - `--mps-memory-fraction` must be finite and in `(0, 2]`; it requires `--device mps` or `--device auto`
-- Explicit semantic-analysis controls are rejected with `--traditional-only`, including model/task,
-  candidate-scope, and device/runtime options. `--no-cache` is accepted as a harmless no-op.
+- Explicit semantic-analysis controls are rejected with `--traditional-only`, including model/task, candidate-scope, and device/runtime options. `--no-cache` is accepted as a harmless no-op.
 - Unsupported-op fallback and codedupes OOM recovery are separate policies; `--no-mps-fallback` does not disable OOM recovery
-- `search` applies semantic threshold filtering before returning `top-k` matches; without an
-  explicit `--threshold`/`--semantic-threshold` it uses the model profile search default
-  (for example `0.50` for `gte-modernbert-base`), not the stricter duplicate threshold
+- `search` applies semantic threshold filtering before returning `top-k` matches; without an explicit `--threshold`/`--semantic-threshold` it uses the model profile search default (for example `0.50` for `gte-modernbert-base`), not the stricter duplicate threshold
 - Contradictory mode-specific options are rejected at parse time for the selected workflow
 
 Inspect effective model defaults with:

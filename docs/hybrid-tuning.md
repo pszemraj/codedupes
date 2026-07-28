@@ -51,8 +51,7 @@ python scripts/sweep_hybrid_gates.py \
   --statement-ratio-grid 0.25,0.35,0.45
 ```
 
-The harness uses the same analyzer synthesis logic and model/revision defaults as the
-CLI, so sweep results transfer directly to production gate values.
+The harness uses the same analyzer synthesis logic and model/revision defaults as the CLI, so sweep results transfer directly to production gate values.
 
 ## Semantic threshold sweep (model profiles)
 
@@ -70,5 +69,4 @@ Selection policy is deterministic:
 
 - sort by `f1` (desc), `precision` (desc), `recall` (desc), `fp` (asc)
 
-Production gate values are listed in [Analysis defaults](analysis-defaults.md). Model-specific
-semantic thresholds are listed in [Model profiles](model-profiles.md).
+Production gate values are listed in [Analysis defaults](analysis-defaults.md). Model-specific semantic thresholds are listed in [Model profiles](model-profiles.md).

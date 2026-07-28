@@ -25,8 +25,7 @@ pip install "torch>=2.13.0,<3" "transformers>=5.1,<6" "sentence-transformers>=5.
 
 ## Apple Silicon / MPS
 
-Use the standard install on macOS 14.0+ and verify that the installed PyTorch
-wheel was built with MPS support:
+Use the standard install on macOS 14.0+ and verify that the installed PyTorch wheel was built with MPS support:
 
 ```bash
 python - <<'PY'
@@ -44,5 +43,4 @@ Then run:
 codedupes check ./src --device mps
 ```
 
-Continue with [accelerator behavior](accelerators.md), [model profiles](model-profiles.md), or the
-[CLI reference](cli.md).
+Continue with [accelerator behavior](accelerators.md), [model profiles](model-profiles.md), or the [CLI reference](cli.md).

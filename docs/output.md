@@ -36,8 +36,7 @@ With `--show-all`, additional raw sections are included:
 
 ## Single-method mode (`--semantic-only` or `--traditional-only`)
 
-`codedupes check <path> --json --semantic-only` and
-`codedupes check <path> --json --traditional-only` emit raw duplicate sections:
+`codedupes check <path> --json --semantic-only` and `codedupes check <path> --json --traditional-only` emit raw duplicate sections:
 
 ```json
 {
@@ -56,8 +55,7 @@ With `--show-all`, additional raw sections are included:
 }
 ```
 
-`hybrid_duplicates` is only part of default combined mode.
-`analysis_mode` is always present (`combined`, `traditional`, `semantic`, or `none`).
+`hybrid_duplicates` is only part of default combined mode. `analysis_mode` is always present (`combined`, `traditional`, `semantic`, or `none`).
 
 Each duplicate entry includes:
 
@@ -118,9 +116,7 @@ Each unit object includes:
 - `2`: CLI usage/validation error (Click)
 - Semantic backend note:
   - default combined `check`: semantic failures fail hard
-  - `--allow-semantic-fallback`: combined mode can continue with scoped traditional
-    results, and degraded runs are surfaced in JSON as
-    `summary.semantic_fallback` plus `summary.semantic_fallback_reason`
+  - `--allow-semantic-fallback`: combined mode can continue with scoped traditional results, and degraded runs are surfaced in JSON as `summary.semantic_fallback` plus `summary.semantic_fallback_reason`
   - semantic-required mode (`--semantic-only`): fails hard
 - Finding note:
   - combined mode: exit `1` is based on `hybrid_duplicates` + `potentially_unused`
@@ -131,8 +127,7 @@ Each unit object includes:
 - `0`: completed successfully
 - `1`: failed due to runtime error
 - `2`: CLI usage/validation error (Click)
-- Semantic backend note: `search` requires semantic inference and fails hard if semantic
-  backend loading/inference fails.
+- Semantic backend note: `search` requires semantic inference and fails hard if semantic backend loading/inference fails.
 
 `info`:
 

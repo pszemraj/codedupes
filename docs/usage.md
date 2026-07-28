@@ -1,7 +1,6 @@
 # Usage Guide
 
-Install `codedupes` first, then use these workflows to analyze, search, and tune a project. The
-[CLI reference](cli.md) lists every option.
+Install `codedupes` first, then use these workflows to analyze, search, and tune a project. The [CLI reference](cli.md) lists every option.
 
 ## Core Workflow
 
@@ -91,8 +90,7 @@ See [Accelerators](accelerators.md) for device resolution, memory limits, and OO
 
 ## Override Semantic Instruction Prefix
 
-By default, model-profile task prompts are applied automatically when needed. Override
-with a fixed prefix for experiments or custom retrieval behavior:
+By default, model-profile task prompts are applied automatically when needed. Override with a fixed prefix for experiments or custom retrieval behavior:
 
 ```bash
 codedupes check ./src --instruction-prefix "Represent this code for duplicate detection: "
@@ -167,13 +165,11 @@ codedupes check ./src --strict-unused
 codedupes check ./src --no-unused
 ```
 
-See [Analysis defaults](analysis-defaults.md#potentially-unused-defaults) for the
-reference graph, suppressions, strict-mode behavior, and limitations.
+See [Analysis defaults](analysis-defaults.md#potentially-unused-defaults) for the reference graph, suppressions, strict-mode behavior, and limitations.
 
 ## Reduce Semantic Noise In Test Suites
 
-When auditing `tests/` directories, suppress semantic matches involving
-pytest-style `test_*` functions:
+When auditing `tests/` directories, suppress semantic matches involving pytest-style `test_*` functions:
 
 ```bash
 codedupes check tests --suppress-test-semantic
@@ -181,8 +177,7 @@ codedupes check tests --suppress-test-semantic
 
 ## Isolate A Method When Results Look Wrong
 
-Hybrid output synthesizes traditional and semantic evidence. When it looks off, run each
-method alone to see which side contributes:
+Hybrid output synthesizes traditional and semantic evidence. When it looks off, run each method alone to see which side contributes:
 
 ```bash
 codedupes check src --traditional-only
@@ -190,8 +185,7 @@ codedupes check src --semantic-only
 codedupes check src
 ```
 
-Add `--verbose` for debug-level logs (model loading, device resolution, fallback
-warnings) when comparing runs or filing an issue.
+Add `--verbose` for debug-level logs (model loading, device resolution, fallback warnings) when comparing runs or filing an issue.
 
 ## Hybrid gate tuning workflow
 
