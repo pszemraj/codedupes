@@ -112,16 +112,11 @@ def _resolve_semantic_unit_type_filter(
     :param semantic_unit_types: Configured semantic unit type names.
     :return: Set of comparable enum values.
     """
-    return {
-        SEMANTIC_UNIT_TYPE_TO_ENUM[unit_type_name]
-        for unit_type_name in semantic_unit_types
-        if unit_type_name in SEMANTIC_UNIT_TYPE_TO_ENUM
-    }
+    return {SEMANTIC_UNIT_TYPE_TO_ENUM[unit_type_name] for unit_type_name in semantic_unit_types}
 
 
 def _is_tiny_function_like(
     unit: CodeUnit,
-    *,
     statement_cutoff: int,
     statement_cache: dict[str, int],
 ) -> bool:
@@ -140,6 +135,23 @@ def _is_tiny_function_like(
         count = get_code_unit_statement_count(unit)
         statement_cache[unit.uid] = count
     return count < statement_cutoff
+
+
+def _both_units_are_tiny(
+    duplicate: DuplicatePair,
+    statement_cutoff: int,
+    statement_cache: dict[str, int],
+) -> bool:
+    """Return whether both endpoints are tiny function-like units.
+
+    :param duplicate: Duplicate pair to inspect.
+    :param statement_cutoff: Tiny cutoff (exclusive).
+    :param statement_cache: Memoized statement counts by unit uid.
+    :return: Whether both endpoints are tiny function-like units.
+    """
+    return _is_tiny_function_like(
+        duplicate.unit_a, statement_cutoff, statement_cache
+    ) and _is_tiny_function_like(duplicate.unit_b, statement_cutoff, statement_cache)
 
 
 def _filter_tiny_traditional_duplicates(
@@ -162,32 +174,15 @@ def _filter_tiny_traditional_duplicates(
     filtered_near: list[DuplicatePair] = []
 
     for duplicate in exact_duplicates:
-        tiny_a = _is_tiny_function_like(
-            duplicate.unit_a,
-            statement_cutoff=statement_cutoff,
-            statement_cache=statement_cache,
-        )
-        tiny_b = _is_tiny_function_like(
-            duplicate.unit_b,
-            statement_cutoff=statement_cutoff,
-            statement_cache=statement_cache,
-        )
-        if tiny_a and tiny_b:
+        if _both_units_are_tiny(duplicate, statement_cutoff, statement_cache):
             continue
         filtered_exact.append(duplicate)
 
     for duplicate in near_duplicates:
-        tiny_a = _is_tiny_function_like(
-            duplicate.unit_a,
-            statement_cutoff=statement_cutoff,
-            statement_cache=statement_cache,
-        )
-        tiny_b = _is_tiny_function_like(
-            duplicate.unit_b,
-            statement_cutoff=statement_cutoff,
-            statement_cache=statement_cache,
-        )
-        if tiny_a and tiny_b and duplicate.similarity < tiny_near_jaccard_min:
+        if (
+            _both_units_are_tiny(duplicate, statement_cutoff, statement_cache)
+            and duplicate.similarity < tiny_near_jaccard_min
+        ):
             continue
         filtered_near.append(duplicate)
 
