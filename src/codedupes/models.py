@@ -7,7 +7,7 @@ from enum import Enum, auto
 from pathlib import Path
 from typing import Literal
 
-from codedupes.pairs import unordered_pair_key
+from codedupes.pairs import ordered_pair_key
 
 
 class CodeUnitType(Enum):
@@ -79,12 +79,12 @@ class DuplicatePair:
     method: str  # "ast_hash", "token_hash", "semantic"
 
     def __hash__(self) -> int:
-        return hash(unordered_pair_key(self.unit_a, self.unit_b))
+        return hash(ordered_pair_key(self.unit_a, self.unit_b))
 
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, DuplicatePair):
             return False
-        return unordered_pair_key(self.unit_a, self.unit_b) == unordered_pair_key(
+        return ordered_pair_key(self.unit_a, self.unit_b) == ordered_pair_key(
             other.unit_a, other.unit_b
         )
 
@@ -114,12 +114,12 @@ class HybridDuplicate:
     statement_count_ratio: float | None = None
 
     def __hash__(self) -> int:
-        return hash(unordered_pair_key(self.unit_a, self.unit_b))
+        return hash(ordered_pair_key(self.unit_a, self.unit_b))
 
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, HybridDuplicate):
             return False
-        return unordered_pair_key(self.unit_a, self.unit_b) == unordered_pair_key(
+        return ordered_pair_key(self.unit_a, self.unit_b) == ordered_pair_key(
             other.unit_a, other.unit_b
         )
 

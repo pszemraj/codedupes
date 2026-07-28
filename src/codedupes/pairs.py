@@ -23,14 +23,3 @@ def ordered_pair_key(unit_a: _HasUid, unit_b: _HasUid) -> tuple[str, str]:
     """
 
     return (min(unit_a.uid, unit_b.uid), max(unit_a.uid, unit_b.uid))
-
-
-def unordered_pair_key(unit_a: _HasUid, unit_b: _HasUid) -> frozenset[str]:
-    """Return an unordered uid key for two units.
-
-    :param _HasUid unit_a: First unit.
-    :param _HasUid unit_b: Second unit.
-    :return frozenset[str]: Unordered uid set.
-    """
-
-    return frozenset((unit_a.uid, unit_b.uid))
