@@ -392,4 +392,4 @@ def run_traditional_analysis(
     near = [d for d in near if ordered_pair_key(d.unit_a, d.unit_b) not in exact_pairs]
     logger.info(f"Found {len(near)} near duplicates (Jaccard)")
 
-    return exact, _dedupe_duplicate_pairs(near)
+    return exact, near
