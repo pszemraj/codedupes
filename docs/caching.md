@@ -36,7 +36,7 @@ codedupes check ./src --no-cache                   # bypass for one run; on-disk
 
 Internals for debugging and the curious; none of this is needed to use the cache.
 
-- Entries are content-addressed: each vector is keyed by a hash of (canonical model name, resolved model revision, embedding mode, prepared pre-truncation embedding text), plus the inference dtype when it differs from the default. EmbeddingGemma uses float32 on CPU and MPS, so those devices share one key space; CUDA bfloat16 vectors stay separate. Keys derive without loading the model, which is what makes the warm no-model-load path possible.
+- Entries are content-addressed: each vector is keyed by a hash of (canonical model name, resolved model revision, embedding mode, raw pre-truncation input text) plus a variant fingerprint covering everything else that determines vector values — the encode plan (route and effective prompt), the inference dtype when it differs from the default, the embedding pipeline schema, the installed sentence-transformers/transformers/tokenizers/torch versions, and the remote-code trust setting. Upgrading any of those is a full-corpus miss, never a partial one, so one matrix can never mix vectors from two coordinate systems. EmbeddingGemma uses float32 on CPU and MPS, so those devices share one key space; CUDA bfloat16 vectors stay separate. Keys derive without loading the model, which is what makes the warm no-model-load path possible.
 - Vectors live in one shard directory per (analyzed repo root, model, revision):
 
   ```text

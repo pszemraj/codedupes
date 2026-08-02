@@ -185,6 +185,24 @@ def test_embeddinggemma_cache_variant_scopes_only_nondefault_dtype(monkeypatch):
     assert semantic._dtype_variant_for(profile, "cuda", mps_fallback=None) == ""
 
 
+def test_runtime_upgrade_invalidates_whole_corpus_not_row_subset(tmp_path, monkeypatch):
+    units = _five_units(tmp_path)
+    model = CountingModel()
+    _patch_get_model(monkeypatch, model)
+    monkeypatch.setattr(semantic, "_get_loaded_model_commit_hash", lambda _model: None)
+
+    compute_embeddings(units, model_name="test-model", revision=REVISION_1, cache_scope=tmp_path)
+    assert len(model.encode_calls) == 1
+
+    # Same model, revision, and texts — only the installed inference stack differs.
+    monkeypatch.setattr(semantic, "_safe_package_version", lambda _name: "99.0.0-upgraded")
+
+    compute_embeddings(units, model_name="test-model", revision=REVISION_1, cache_scope=tmp_path)
+    assert len(model.encode_calls) == 2
+    # Every unit re-embedded: no partial reuse of vectors from the old runtime.
+    assert len(model.encode_calls[-1]) == len(units)
+
+
 def test_cache_variant_includes_encode_plan_identity():
     profile = semantic.resolve_model_profile("test-model")
     plain = semantic._cache_variant_for(

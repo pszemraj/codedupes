@@ -464,6 +464,34 @@ def _select_cache_miss_indices(
 
 _DEVICE_DTYPE_FAMILIES = frozenset({"embeddinggemma"})
 
+# Bump whenever codedupes' own embedding pipeline changes in a vector-affecting
+# way (prompt handling, routing, normalization, truncation policy), so cached
+# vectors from an older pipeline can never mix into a new matrix.
+EMBEDDING_PIPELINE_SCHEMA = 2
+
+
+def _embedding_runtime_fingerprint() -> str:
+    """Digest the embedding runtime that determines vector values.
+
+    Two runs whose installed inference stack differs may place the same text at
+    different coordinates even for the same model revision, so the runtime is
+    part of cache identity. ``importlib.metadata`` never imports the packages,
+    keeping the model-free warm path intact.
+
+    :return: Stable hex digest of pipeline schema and runtime package versions.
+    """
+    payload = "\x00".join(
+        (
+            f"pipeline={EMBEDDING_PIPELINE_SCHEMA}",
+            f"sentence-transformers={_safe_package_version('sentence-transformers') or 'missing'}",
+            f"transformers={_safe_package_version('transformers') or 'missing'}",
+            f"tokenizers={_safe_package_version('tokenizers') or 'missing'}",
+            f"torch={_safe_package_version('torch') or 'missing'}",
+        )
+    ).encode()
+    return hashlib.blake2b(payload, digest_size=10).hexdigest()
+
+
 # Query texts are unbounded user input with no live-corpus set to compact
 # against, so cap them FIFO per namespace instead of letting unique searches
 # accumulate until whole-shard LRU eviction.
@@ -516,17 +544,31 @@ def _cache_variant_for(
     plan: EncodePlan,
     *,
     mps_fallback: bool | None,
+    trust_remote_code: bool = False,
 ) -> str:
     """Build the complete vector-affecting cache-key variant for one encode call.
+
+    The variant deliberately excludes the device name itself: devices that
+    provably embed identically (CPU/MPS float32) share one key space, while
+    behavior that changes vectors (dtype, runtime versions, encode plan,
+    remote-code execution path) always splits it.
 
     :param profile: Resolved model profile.
     :param device: Requested device string (``auto``, ``cpu``, ``cuda``, ``mps``).
     :param plan: Resolved encode plan (route and effective prompt).
     :param mps_fallback: MPS unsupported-op CPU fallback behavior.
-    :return: Variant fingerprint combining encode plan and dtype identity.
+    :param trust_remote_code: Resolved remote-code trust setting.
+    :return: Variant fingerprint combining plan, dtype, runtime, and trust identity.
     """
     dtype_variant = _dtype_variant_for(profile, device, mps_fallback=mps_fallback)
-    return f"{plan.cache_identity()}\x00{dtype_variant}"
+    return "\x00".join(
+        (
+            plan.cache_identity(),
+            dtype_variant,
+            _embedding_runtime_fingerprint(),
+            f"trc={int(trust_remote_code)}",
+        )
+    )
 
 
 def _safe_package_version(package_name: str) -> str | None:
@@ -1478,6 +1520,7 @@ def _compute_embeddings_unlocked(
         default_task=DEFAULT_CHECK_SEMANTIC_TASK,
     )
     encode_plan = _resolve_encode_plan(profile, "code", resolved_task, instruction_prefix)
+    resolved_trust_remote_code = _resolve_trust_remote_code(model_name, trust_remote_code)
     prepared_texts = [unit.source.strip() for unit in units]
 
     cache = get_embedding_cache() if (use_cache and cache_scope is not None) else None
@@ -1485,7 +1528,13 @@ def _compute_embeddings_unlocked(
         _resolve_revision_for_cache(model_name, revision) if cache is not None else None
     )
     cache_variant = (
-        _cache_variant_for(profile, device, encode_plan, mps_fallback=mps_fallback)
+        _cache_variant_for(
+            profile,
+            device,
+            encode_plan,
+            mps_fallback=mps_fallback,
+            trust_remote_code=resolved_trust_remote_code,
+        )
         if cache is not None
         else ""
     )
@@ -1518,7 +1567,6 @@ def _compute_embeddings_unlocked(
         return _assemble_cached_matrix(cache_keys, hits)
 
     resolved_revision = _resolve_load_revision(model_name, revision)
-    resolved_trust_remote_code = _resolve_trust_remote_code(model_name, trust_remote_code)
     resolved_device = _prepare_semantic_device(
         device,
         mps_fallback=mps_fallback,
@@ -1856,6 +1904,7 @@ def _find_similar_to_query_unlocked(
         default_task=DEFAULT_SEARCH_SEMANTIC_TASK,
     )
     encode_plan = _resolve_encode_plan(profile, "query", resolved_task, instruction_prefix)
+    resolved_trust_remote_code = _resolve_trust_remote_code(model_name, trust_remote_code)
     query_text = query
 
     cache = get_embedding_cache() if (use_cache and cache_scope is not None) else None
@@ -1863,7 +1912,13 @@ def _find_similar_to_query_unlocked(
         _resolve_revision_for_cache(model_name, revision) if cache is not None else None
     )
     cache_variant = (
-        _cache_variant_for(profile, device, encode_plan, mps_fallback=mps_fallback)
+        _cache_variant_for(
+            profile,
+            device,
+            encode_plan,
+            mps_fallback=mps_fallback,
+            trust_remote_code=resolved_trust_remote_code,
+        )
         if cache is not None
         else ""
     )
@@ -1901,7 +1956,6 @@ def _find_similar_to_query_unlocked(
 
     if query_embedding is None:
         resolved_revision = _resolve_load_revision(model_name, revision)
-        resolved_trust_remote_code = _resolve_trust_remote_code(model_name, trust_remote_code)
         resolved_device = _prepare_semantic_device(
             device,
             mps_fallback=mps_fallback,
