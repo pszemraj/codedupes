@@ -623,6 +623,67 @@ def test_get_model_reloads_local_directory_after_weights_change(
     assert loaded_models == [first, changed]
 
 
+def test_get_model_reloads_once_when_local_dir_changes_during_load(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    model_dir = tmp_path / "local-model"
+    model_dir.mkdir()
+    (model_dir / "config.json").write_text('{"model_type": "test"}')
+    weights_path = model_dir / "model.safetensors"
+    weights_path.write_text("weights-v1")
+    loaded_models: list[object] = []
+
+    class MidLoadSwapSentenceTransformer:
+        def __init__(self, *_args, **_kwargs):
+            if not loaded_models:
+                weights_path.write_text("weights-v2-swapped-mid-load")
+            loaded_models.append(self)
+
+    monkeypatch.setattr(semantic, "_check_semantic_dependencies", lambda: None)
+    monkeypatch.setattr(semantic, "_prepare_semantic_device", lambda *_args, **_kwargs: "cpu")
+    monkeypatch.setattr(
+        sentence_transformers, "SentenceTransformer", MidLoadSwapSentenceTransformer
+    )
+    semantic.clear_model_cache()
+
+    model = semantic.get_model(str(model_dir))
+
+    # The first load raced the swap and was discarded; the kept model was
+    # verified against a stable post-swap fingerprint.
+    assert len(loaded_models) == 2
+    assert model is loaded_models[1]
+    assert semantic._model_local_fingerprint == semantic._fingerprint_local_model_dir(model_dir)
+
+
+def test_get_model_fails_when_local_dir_keeps_changing_during_load(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    model_dir = tmp_path / "local-model"
+    model_dir.mkdir()
+    (model_dir / "config.json").write_text('{"model_type": "test"}')
+    weights_path = model_dir / "model.safetensors"
+    weights_path.write_text("weights-v0")
+    load_count = {"count": 0}
+
+    class AlwaysMutatingSentenceTransformer:
+        def __init__(self, *_args, **_kwargs):
+            load_count["count"] += 1
+            weights_path.write_text(f"weights-mutated-{load_count['count']}")
+
+    monkeypatch.setattr(semantic, "_check_semantic_dependencies", lambda: None)
+    monkeypatch.setattr(semantic, "_prepare_semantic_device", lambda *_args, **_kwargs: "cpu")
+    monkeypatch.setattr(
+        sentence_transformers, "SentenceTransformer", AlwaysMutatingSentenceTransformer
+    )
+    semantic.clear_model_cache()
+
+    with pytest.raises(SemanticBackendError, match="changed twice while loading"):
+        semantic.get_model(str(model_dir))
+    assert load_count["count"] == 2
+
+
 def test_get_model_rejects_missing_explicit_local_directory(tmp_path: Path) -> None:
     missing = tmp_path / "missing-model"
     semantic.clear_model_cache()

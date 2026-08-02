@@ -858,6 +858,103 @@ def test_fingerprint_local_model_dir_stability_and_edge_cases(tmp_path):
     assert semantic._fingerprint_local_model_dir(empty) is None
 
 
+def test_local_model_content_change_with_preserved_size_and_mtime_invalidates(
+    tmp_path, monkeypatch
+):
+    # A byte-for-byte-length rewrite with a restored mtime defeats a
+    # metadata-only fingerprint; the content-backed fingerprint must still miss.
+    units = _five_units(tmp_path)
+    model = CountingModel()
+    get_model_counts = _patch_get_model(monkeypatch, model)
+    model_dir = _fake_local_model_dir(tmp_path)
+    weights_path = model_dir / "model.safetensors"
+    original_stat = weights_path.stat()
+
+    compute_embeddings(units, model_name=str(model_dir), cache_scope=tmp_path)
+    assert get_model_counts["count"] == 1
+    assert len(model.encode_calls) == 1
+
+    weights_path.write_text("weights-v2")
+    os.utime(weights_path, ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns))
+    rewritten_stat = weights_path.stat()
+    assert rewritten_stat.st_size == original_stat.st_size
+    assert rewritten_stat.st_mtime_ns == original_stat.st_mtime_ns
+
+    compute_embeddings(units, model_name=str(model_dir), cache_scope=tmp_path)
+    assert get_model_counts["count"] == 2
+    assert len(model.encode_calls) == 2
+    assert len(model.encode_calls[-1]) == 5
+
+
+def test_local_model_swap_during_load_discards_preload_hits(tmp_path, monkeypatch):
+    # Weights swapped between key derivation and model load must not let
+    # vectors cached for the old weights survive into the new model's matrix.
+    units = _five_units(tmp_path)
+    model = CountingModel()
+    model_dir = _fake_local_model_dir(tmp_path)
+    weights_path = model_dir / "model.safetensors"
+    get_model_counts = {"count": 0}
+
+    def swapping_get_model(*_args, **_kwargs):
+        get_model_counts["count"] += 1
+        if get_model_counts["count"] == 2:
+            weights_path.write_text("weights-v2-swapped-mid-load")
+        return model
+
+    monkeypatch.setattr(semantic, "get_model", swapping_get_model)
+
+    compute_embeddings(units, model_name=str(model_dir), cache_scope=tmp_path)
+    assert len(model.encode_calls) == 1
+
+    extra_source = "def brand_new():\n    return 99\n"
+    all_units = units + extract_units(tmp_path, extra_source, filename="extra.py")
+    second = compute_embeddings(all_units, model_name=str(model_dir), cache_scope=tmp_path)
+    assert second.shape[0] == 6
+    assert get_model_counts["count"] == 2
+    # All six units re-embed with the freshly loaded weights; zero stale reuse.
+    assert len(model.encode_calls[-1]) == 6
+
+    third = compute_embeddings(all_units, model_name=str(model_dir), cache_scope=tmp_path)
+    assert third.shape[0] == 6
+    assert get_model_counts["count"] == 2
+    assert len(model.encode_calls) == 2
+
+
+def test_fingerprint_manifest_reuses_digests_and_ignores_touch(tmp_path, monkeypatch):
+    model_dir = _fake_local_model_dir(tmp_path)
+    hash_calls = {"count": 0}
+    real_hash = semantic._hash_file_content
+
+    def counting_hash(path):
+        hash_calls["count"] += 1
+        return real_hash(path)
+
+    monkeypatch.setattr(semantic, "_hash_file_content", counting_hash)
+
+    first = semantic._fingerprint_local_model_dir(model_dir)
+    assert first is not None
+    assert hash_calls["count"] == 2
+
+    assert semantic._fingerprint_local_model_dir(model_dir) == first
+    assert hash_calls["count"] == 2
+
+    # A metadata-only touch rehashes that file, but the fingerprint is
+    # content-based so cached vectors survive.
+    os.utime(model_dir / "model.safetensors")
+    assert semantic._fingerprint_local_model_dir(model_dir) == first
+    assert hash_calls["count"] == 3
+
+    # The on-disk manifest keeps a fresh process cheap: drop the in-process
+    # memo and confirm nothing is rehashed.
+    with semantic._local_model_manifest_lock:
+        semantic._local_model_manifest_memo.pop(str(model_dir), None)
+    assert semantic._fingerprint_local_model_dir(model_dir) == first
+    assert hash_calls["count"] == 3
+
+    (model_dir / "model.safetensors").write_text("weights-v2-longer")
+    assert semantic._fingerprint_local_model_dir(model_dir) != first
+
+
 def test_model_slug_for_local_paths_is_bounded_and_collision_safe():
     hub = embedding_cache._model_slug("Alibaba-NLP/gte-modernbert-base")
     assert hub == "Alibaba-NLP--gte-modernbert-base"

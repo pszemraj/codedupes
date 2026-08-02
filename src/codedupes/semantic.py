@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 import hashlib
 import importlib
+import json
 import logging
 import os
 import sys
@@ -38,7 +39,12 @@ from codedupes.devices import (
     is_mlx_loaded,
     resolve_semantic_device,
 )
-from codedupes.embedding_cache import compute_cache_key, get_embedding_cache
+from codedupes.embedding_cache import (
+    compute_cache_key,
+    get_embedding_cache,
+    is_cache_disabled,
+    resolve_cache_dir,
+)
 from codedupes.models import CodeUnit, DuplicatePair
 from codedupes.pairs import ordered_pair_key
 from codedupes.semantic_profiles import (
@@ -63,6 +69,12 @@ _model_execution_device: str | None = None
 _model_lock = threading.RLock()
 _warned_mlx_mps_contention = False
 _warned_cpu_fallback_reuse = False
+
+# Per-file content digests for local model directories, memoized so warm-path
+# fingerprinting stays a stat walk instead of rehashing gigabytes of weights.
+_LOCAL_MODEL_MANIFEST_VERSION = 1
+_local_model_manifest_lock = threading.Lock()
+_local_model_manifest_memo: dict[str, dict[str, dict[str, object]]] = {}
 
 _TORCH_MIN_RELEASE = (2, 13)
 _TORCH_MAX_EXCLUSIVE_RELEASE = (3,)
@@ -166,6 +178,12 @@ class InvalidEmbeddingError(RuntimeError):
     """
 
     def __init__(self, message: str, *, retryable: bool = False) -> None:
+        """Record the failure message and whether a CPU re-encode may fix it.
+
+        :param message: Human-readable description of the violated invariant.
+        :param retryable: ``True`` when the corruption is value-level and worth
+            one CPU retry.
+        """
         super().__init__(message)
         self.retryable = retryable
 
@@ -326,20 +344,124 @@ def _is_hf_commit_hash(revision: str) -> bool:
     )
 
 
-def _fingerprint_local_model_dir(model_dir: Path) -> str | None:
-    """Fingerprint a local model directory for use as a cache revision.
+def _hash_file_content(file_path: Path) -> str:
+    """Stream a file's bytes into a stable content digest.
 
-    The fingerprint hashes each model file's relative path, size, and mtime,
-    excluding Hugging Face's ``--local-dir`` download metadata. Replacing or
-    retraining the weights in place therefore changes the cache revision
-    without invalidating embeddings when only download timestamps change. It
-    reads no file contents, keeping warm-path key derivation cheap enough to
-    run before any model import.
+    :param file_path: File to hash.
+    :return: Hexadecimal blake2b digest of the file contents.
+    """
+    digest = hashlib.blake2b(digest_size=16)
+    with file_path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _local_model_manifest_path(model_dir: Path) -> Path:
+    """Resolve the on-disk digest-manifest path for a local model directory.
+
+    :param model_dir: Resolved local model directory.
+    :return: Manifest path under the codedupes cache root.
+    """
+    key = hashlib.blake2b(str(model_dir).encode(), digest_size=8).hexdigest()
+    return resolve_cache_dir() / "local-models" / f"{key}.json"
+
+
+def _manifest_digest_for(entry: object, identity: tuple[int, int, int, int]) -> str | None:
+    """Return a manifest entry's content digest when its stat identity still matches.
+
+    :param entry: Manifest entry payload for one file, of unverified shape.
+    :param identity: Current ``(size, mtime_ns, ctime_ns, ino)`` of the file.
+    :return: Reusable content digest, or ``None`` when the file must be rehashed.
+    """
+    if not isinstance(entry, dict):
+        return None
+    recorded = (
+        entry.get("size"),
+        entry.get("mtime_ns"),
+        entry.get("ctime_ns"),
+        entry.get("ino"),
+    )
+    digest = entry.get("digest")
+    if recorded != identity or not isinstance(digest, str) or not digest:
+        return None
+    return digest
+
+
+def _load_local_model_manifest(model_dir: Path) -> dict[str, dict[str, object]]:
+    """Load the digest manifest for a local model directory, tolerating any failure.
+
+    :param model_dir: Resolved local model directory.
+    :return: Mapping of relative path to digest entry; empty when unavailable.
+    """
+    with _local_model_manifest_lock:
+        memo = _local_model_manifest_memo.get(str(model_dir))
+        if memo is not None:
+            return memo
+    if is_cache_disabled():
+        return {}
+    try:
+        payload = json.loads(_local_model_manifest_path(model_dir).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(payload, dict) or payload.get("version") != _LOCAL_MODEL_MANIFEST_VERSION:
+        return {}
+    files = payload.get("files")
+    return files if isinstance(files, dict) else {}
+
+
+def _store_local_model_manifest(
+    model_dir: Path,
+    files: dict[str, dict[str, object]],
+    previous: dict[str, dict[str, object]],
+) -> None:
+    """Persist the digest manifest in-process and, best effort, on disk.
+
+    :param model_dir: Resolved local model directory.
+    :param files: Fresh manifest entries keyed by relative path.
+    :param previous: Manifest the fingerprint walk started from, to skip no-op writes.
+    :return: ``None``.
+    """
+    with _local_model_manifest_lock:
+        _local_model_manifest_memo[str(model_dir)] = files
+    if is_cache_disabled() or files == previous:
+        return
+    manifest_path = _local_model_manifest_path(model_dir)
+    try:
+        manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        payload = json.dumps(
+            {
+                "version": _LOCAL_MODEL_MANIFEST_VERSION,
+                "model_dir": str(model_dir),
+                "files": files,
+            }
+        )
+        tmp_path = manifest_path.with_name(f"{manifest_path.name}.{os.getpid()}.tmp")
+        tmp_path.write_text(payload, encoding="utf-8")
+        os.replace(tmp_path, manifest_path)
+    except OSError:
+        logger.debug(
+            "Could not persist local-model digest manifest for %s", model_dir, exc_info=True
+        )
+
+
+def _fingerprint_local_model_dir(model_dir: Path) -> str | None:
+    """Fingerprint a local model directory's contents for use as a cache revision.
+
+    The fingerprint hashes each model file's relative path and content digest,
+    excluding Hugging Face's ``--local-dir`` download metadata, so replacing or
+    retraining weights in place always changes the cache revision — even when
+    file size and mtime are preserved — while metadata-only touches keep it
+    stable. Digests are reused from a manifest keyed on the full stat identity
+    ``(size, mtime_ns, ctime_ns, inode)``; unchanged files are never rehashed,
+    keeping warm-path key derivation cheap enough to run before any model import.
 
     :param model_dir: Resolved local model directory.
     :return: ``"dir-<hex>"`` fingerprint, or ``None`` when the walk fails.
     """
-    entries: list[tuple[str, int, int]] = []
+    manifest = _load_local_model_manifest(model_dir)
+    fresh_manifest: dict[str, dict[str, object]] = {}
+    entries: list[tuple[str, str]] = []
     hf_download_metadata = model_dir / ".cache" / "huggingface"
     try:
         for file_path in sorted(model_dir.rglob("*")):
@@ -349,11 +471,23 @@ def _fingerprint_local_model_dir(model_dir: Path) -> str | None:
                 continue
             stat = file_path.stat()
             relative = file_path.relative_to(model_dir).as_posix()
-            entries.append((relative, stat.st_size, stat.st_mtime_ns))
+            identity = (stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns, stat.st_ino)
+            content_digest = _manifest_digest_for(manifest.get(relative), identity)
+            if content_digest is None:
+                content_digest = _hash_file_content(file_path)
+            fresh_manifest[relative] = {
+                "size": identity[0],
+                "mtime_ns": identity[1],
+                "ctime_ns": identity[2],
+                "ino": identity[3],
+                "digest": content_digest,
+            }
+            entries.append((relative, content_digest))
     except OSError:
         return None
     if not entries:
         return None
+    _store_local_model_manifest(model_dir, fresh_manifest, manifest)
     digest = hashlib.blake2b(repr(entries).encode(), digest_size=12).hexdigest()
     return f"dir-{digest}"
 
@@ -453,11 +587,13 @@ def _confirm_cache_revision_after_load(
     model: object,
     model_name: str,
     resolved_revision: str | None,
-    assumed_cache_revision: str | None,
 ) -> str | None:
     """Resolve a vector-safe cache revision after loading an embedding model.
 
-    Local directories retain their pre-load content fingerprint. Hub models
+    Local directories resolve to the content fingerprint verified while this
+    model was loaded, never the caller's pre-load assumption: a directory
+    swapped mid-load would otherwise key fresh vectors — and retain stale
+    hits — under a fingerprint the loaded weights no longer match. Hub models
     require either the loaded config's concrete commit hash or an explicitly
     pinned full commit hash; a symbolic branch/tag is unsafe when the backend
     cannot report what it loaded.
@@ -465,12 +601,19 @@ def _confirm_cache_revision_after_load(
     :param model: Loaded embedding model.
     :param model_name: Requested model alias, Hub ID, or local directory.
     :param resolved_revision: Revision passed to the model loader.
-    :param assumed_cache_revision: Pre-load local fingerprint or Hub snapshot.
     :return: Safe cache revision, or ``None`` when persistent reuse must be disabled.
     """
     canonical_model = resolve_model_profile(model_name).canonical_name
-    if resolve_local_model_path(canonical_model) is not None:
-        return assumed_cache_revision
+    local_dir = resolve_local_model_path(canonical_model)
+    if local_dir is not None:
+        with _model_lock:
+            if model is _model:
+                return _model_local_fingerprint
+        # The model did not come from the process-wide cache (injected by tests
+        # or displaced by a concurrent load), so no load-time verification
+        # bracket exists for it; the directory's current state is the best
+        # available identity.
+        return _fingerprint_local_model_dir(local_dir)
 
     loaded_commit = _get_loaded_model_commit_hash(model)
     if loaded_commit is not None:
@@ -874,9 +1017,15 @@ class _ExecutableStatementCounter(ast.NodeVisitor):
     """Count executable statements recursively, stopping at nested scopes."""
 
     def __init__(self) -> None:
+        """Initialize the running statement count."""
         self.count = 0
 
     def generic_visit(self, node: ast.AST) -> None:
+        """Count ``node`` when it is a statement, then recurse into its children.
+
+        :param node: AST node being visited.
+        :return: ``None``.
+        """
         if isinstance(node, ast.stmt):
             self.count += 1
         super().generic_visit(node)
@@ -884,12 +1033,27 @@ class _ExecutableStatementCounter(ast.NodeVisitor):
     # Nested scopes count as one declaration; their implementation belongs to a
     # separate CodeUnit and must not inflate the enclosing unit's count.
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        """Count a nested function as one declaration without descending into it.
+
+        :param node: Nested function definition node.
+        :return: ``None``.
+        """
         self.count += 1
 
     def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        """Count a nested async function as one declaration without descending into it.
+
+        :param node: Nested async function definition node.
+        :return: ``None``.
+        """
         self.count += 1
 
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        """Count a nested class as one declaration without descending into it.
+
+        :param node: Nested class definition node.
+        :return: ``None``.
+        """
         self.count += 1
 
 
@@ -1084,55 +1248,77 @@ def _get_model_unlocked(
         if config_kwargs:
             st_kwargs["config_kwargs"] = config_kwargs
 
-        load_device = resolved_device
-        try:
-            loaded_model = SentenceTransformer(resolved_model_name, **st_kwargs)
-        except RuntimeError as exc:
-            oom_device = _classify_oom_device(exc, resolved_device)
-            if resolved_device == "mps" and oom_device == "mps":
-                exc.__traceback__ = None
-                exc.__context__ = None
-                logger.warning(
-                    "MPS OOM while loading %s (%s); clearing Metal cache and retrying on CPU",
-                    resolved_model_name,
-                    format_mps_memory_snapshot(),
-                )
-                clear_device_cache("mps", synchronize=True, collect=True)
-                cpu_kwargs = dict(st_kwargs)
-                cpu_kwargs["device"] = "cpu"
-                try:
-                    loaded_model = SentenceTransformer(resolved_model_name, **cpu_kwargs)
-                except Exception as retry_exc:
-                    if _is_known_semantic_backend_error(retry_exc):
-                        raise _wrap_semantic_backend_error(
-                            retry_exc,
-                            model_name=resolved_model_name,
-                            revision=resolved_revision,
-                            trust_remote_code=resolved_trust_remote_code,
-                            stage="CPU model-loading retry after MPS OOM",
-                        )
+        for reload_attempt in range(2):
+            load_device = resolved_device
+            try:
+                loaded_model = SentenceTransformer(resolved_model_name, **st_kwargs)
+            except RuntimeError as exc:
+                oom_device = _classify_oom_device(exc, resolved_device)
+                if resolved_device == "mps" and oom_device == "mps":
+                    exc.__traceback__ = None
+                    exc.__context__ = None
+                    logger.warning(
+                        "MPS OOM while loading %s (%s); clearing Metal cache and retrying on CPU",
+                        resolved_model_name,
+                        format_mps_memory_snapshot(),
+                    )
+                    clear_device_cache("mps", synchronize=True, collect=True)
+                    cpu_kwargs = dict(st_kwargs)
+                    cpu_kwargs["device"] = "cpu"
+                    try:
+                        loaded_model = SentenceTransformer(resolved_model_name, **cpu_kwargs)
+                    except Exception as retry_exc:
+                        if _is_known_semantic_backend_error(retry_exc):
+                            raise _wrap_semantic_backend_error(
+                                retry_exc,
+                                model_name=resolved_model_name,
+                                revision=resolved_revision,
+                                trust_remote_code=resolved_trust_remote_code,
+                                stage="CPU model-loading retry after MPS OOM",
+                            )
+                        raise
+                    load_device = "cpu"
+                elif _is_known_semantic_backend_error(exc):
+                    raise _wrap_semantic_backend_error(
+                        exc,
+                        model_name=resolved_model_name,
+                        revision=resolved_revision,
+                        trust_remote_code=resolved_trust_remote_code,
+                        stage=f"model loading on {resolved_device}",
+                    )
+                else:
                     raise
-                load_device = "cpu"
-            elif _is_known_semantic_backend_error(exc):
-                raise _wrap_semantic_backend_error(
-                    exc,
-                    model_name=resolved_model_name,
-                    revision=resolved_revision,
-                    trust_remote_code=resolved_trust_remote_code,
-                    stage=f"model loading on {resolved_device}",
-                )
-            else:
+            except Exception as exc:
+                if _is_known_semantic_backend_error(exc):
+                    raise _wrap_semantic_backend_error(
+                        exc,
+                        model_name=resolved_model_name,
+                        revision=resolved_revision,
+                        trust_remote_code=resolved_trust_remote_code,
+                        stage=f"model loading on {resolved_device}",
+                    )
                 raise
-        except Exception as exc:
-            if _is_known_semantic_backend_error(exc):
-                raise _wrap_semantic_backend_error(
-                    exc,
-                    model_name=resolved_model_name,
-                    revision=resolved_revision,
-                    trust_remote_code=resolved_trust_remote_code,
-                    stage=f"model loading on {resolved_device}",
+
+            # Without a pre-load fingerprint there is nothing to verify against;
+            # persistent reuse is already disabled and every call reloads.
+            if local_model_path is None or local_model_fingerprint is None:
+                break
+            post_load_fingerprint = _fingerprint_local_model_dir(local_model_path)
+            if post_load_fingerprint == local_model_fingerprint:
+                break
+            if reload_attempt == 0:
+                logger.warning(
+                    "Local model directory %s changed while loading; "
+                    "reloading from the current on-disk state",
+                    resolved_model_name,
                 )
-            raise
+                del loaded_model
+                local_model_fingerprint = post_load_fingerprint
+                continue
+            raise SemanticBackendError(
+                f"Local model directory changed twice while loading: {resolved_model_name}. "
+                "Retry once the directory contents are stable."
+            )
 
         _model = loaded_model
         _model_name = resolved_model_name
@@ -1673,11 +1859,10 @@ def _compute_embeddings_unlocked(
             model,
             model_name,
             resolved_revision,
-            cache_revision,
         )
         if confirmed_revision is None:
             logger.debug(
-                "Could not tie the loaded Hub model to a concrete commit; "
+                "Could not tie the loaded model to a concrete revision; "
                 "bypassing persistent embeddings assumed under %s",
                 cache_revision,
             )
@@ -2064,11 +2249,10 @@ def _find_similar_to_query_unlocked(
                 model,
                 model_name,
                 resolved_revision,
-                cache_revision,
             )
             if confirmed_revision is None:
                 logger.debug(
-                    "Could not tie the loaded Hub model to a concrete commit; "
+                    "Could not tie the loaded model to a concrete revision; "
                     "bypassing persistent query embedding assumed under %s",
                     cache_revision,
                 )
