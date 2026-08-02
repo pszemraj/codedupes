@@ -71,9 +71,14 @@ Allowed task names:
 
 If you pass an unknown semantic task, the CLI/API raises a validation error.
 
-## Task/prefix behavior by model family
+## Task/prompt behavior by model family
 
-- `embeddinggemma`: uses task-aware query/document prefix formats.
-- generic models: no default instruction prefix unless explicitly overridden.
+Prompts are backend configuration, not text decoration: codedupes passes raw code/query text to Sentence Transformers together with an explicit prompt and encode route, so the model's saved prompts are never applied a second time on top of a manually prefixed input.
+
+- `embeddinggemma`: duplicate detection embeds code through the symmetric `encode` route with the task prompt (for example `task: sentence similarity | query: ` for `semantic-similarity`); retrieval-task code inputs use `encode_document` with the document prompt (`title: none | text: `); queries use `encode_query` with the task's query prompt (for example `task: code retrieval | query: ` for `code-retrieval`).
+- generic models: symmetric `encode` route with no prompt unless explicitly overridden.
+- `--instruction-prefix` replaces the model prompt for that input mode while preserving the encode route; it is never stacked inside the saved prompt.
+
+The encode route and effective prompt participate in embedding-cache identity, so changing task, prompt, or route can never reuse vectors produced under a different plan.
 
 For examples, see the [usage guide](usage.md) and [Python API](python-api.md).

@@ -154,31 +154,31 @@ def test_statement_count_stops_at_nested_scopes(tmp_path: Path) -> None:
     assert get_code_unit_statement_count(unit) == 3
 
 
-def test_prepare_code_for_embedding_default_model_no_prefix(tmp_path: Path) -> None:
-    units = extract_arithmetic_units(tmp_path)
-    prepared = semantic.prepare_code_for_embedding(units[0], mode="query")
-    assert prepared == units[0].source.strip()
+def test_resolve_encode_plan_default_model_symmetric_no_prompt() -> None:
+    for mode in ("code", "query"):
+        plan = semantic.resolve_encode_plan(mode=mode)
+        assert plan == semantic.EncodePlan(route="symmetric", prompt=None)
 
 
-def test_prepare_code_for_embedding_uses_custom_prefix(tmp_path: Path) -> None:
-    units = extract_arithmetic_units(tmp_path)
-    prepared = semantic.prepare_code_for_embedding(
-        units[0],
+def test_resolve_encode_plan_custom_prefix_replaces_prompt_and_keeps_route() -> None:
+    plan = semantic.resolve_encode_plan(
+        model_name="embeddinggemma-300m",
         mode="code",
         instruction_prefix="Represent this code as vector: ",
+        semantic_task="code-retrieval",
     )
-    assert prepared.startswith("Represent this code as vector: ")
-    assert prepared.endswith(units[0].source.strip())
+    assert plan == semantic.EncodePlan(route="document", prompt="Represent this code as vector: ")
 
 
 def test_query_search_uses_custom_instruction_prefix(tmp_path: Path, monkeypatch) -> None:
     units = extract_arithmetic_units(tmp_path)
     embeddings = np.array([[1.0, 0.0], [0.0, 1.0]], dtype=np.float32)
-    captured: dict[str, list[str]] = {}
+    captured: dict[str, object] = {}
 
     class QueryModel:
         def encode(self, texts, **kwargs):
             captured["texts"] = list(texts)
+            captured["prompt"] = kwargs.get("prompt")
             return np.array([[1.0, 0.0]], dtype=np.float32)
 
     monkeypatch.setattr(semantic, "get_model", lambda *args, **kwargs: QueryModel())
@@ -192,50 +192,104 @@ def test_query_search_uses_custom_instruction_prefix(tmp_path: Path, monkeypatch
     )
 
     assert len(results) == 1
-    assert captured["texts"][0].startswith("CUSTOM_QUERY_PREFIX: ")
+    # The prompt travels as backend configuration; the input text stays raw.
+    assert captured["texts"] == ["find addition"]
+    assert captured["prompt"] == "CUSTOM_QUERY_PREFIX: "
 
 
-def test_compute_embeddings_uses_embeddinggemma_encode_document(
+# Saved prompts exactly as they appear in EmbeddingGemma's
+# config_sentence_transformers.json; the fake below composes them the same way
+# SentenceTransformers does, so these tests assert the *effective* model input.
+EMBEDDINGGEMMA_SAVED_PROMPTS = {
+    "query": "task: search result | query: ",
+    "document": "title: none | text: ",
+    "STS": "task: sentence similarity | query: ",
+    "InstructionRetrieval": "task: code retrieval | query: ",
+}
+
+
+class PromptAwareGemmaModel:
+    """Fake EmbeddingGemma emulating SentenceTransformers prompt composition.
+
+    ``encode_query``/``encode_document`` fall back to the saved query/document
+    prompt whenever the caller provides no explicit ``prompt``/``prompt_name``,
+    exactly like the real backend, so a manually prefixed input would surface
+    here as a double prompt.
+    """
+
+    def __init__(self) -> None:
+        self.prompts = dict(EMBEDDINGGEMMA_SAVED_PROMPTS)
+        self.calls: list[tuple[str, list[str]]] = []
+
+    def _run(
+        self,
+        method: str,
+        texts,
+        prompt: str | None,
+        prompt_name: str | None,
+        default_prompt_name: str | None,
+    ) -> np.ndarray:
+        if prompt is None:
+            name = prompt_name if prompt_name is not None else default_prompt_name
+            prompt = self.prompts.get(name, "") if name is not None else ""
+        effective = [f"{prompt}{text}" for text in texts]
+        self.calls.append((method, effective))
+        return np.array(
+            [[1.0, 0.0] if i == 0 else [0.0, 1.0] for i in range(len(texts))],
+            dtype=np.float32,
+        )
+
+    def encode(self, texts, prompt=None, prompt_name=None, **kwargs):
+        return self._run("encode", texts, prompt, prompt_name, None)
+
+    def encode_query(self, texts, prompt=None, prompt_name=None, **kwargs):
+        return self._run("encode_query", texts, prompt, prompt_name, "query")
+
+    def encode_document(self, texts, prompt=None, prompt_name=None, **kwargs):
+        return self._run("encode_document", texts, prompt, prompt_name, "document")
+
+
+def test_embeddinggemma_duplicate_mode_symmetric_route_single_sts_prompt(
     tmp_path: Path, monkeypatch
 ) -> None:
     units = extract_arithmetic_units(tmp_path)
-    captured: dict[str, int] = {"encode_document": 0, "encode": 0}
-
-    class GemmaLikeModel:
-        def encode_document(self, texts, **kwargs):
-            captured["encode_document"] += 1
-            return np.array([[1.0, 0.0], [0.0, 1.0]], dtype=np.float32)
-
-        def encode(self, texts, **kwargs):
-            captured["encode"] += 1
-            return np.array([[1.0, 0.0], [0.0, 1.0]], dtype=np.float32)
-
-    monkeypatch.setattr(semantic, "get_model", lambda *args, **kwargs: GemmaLikeModel())
+    model = PromptAwareGemmaModel()
+    monkeypatch.setattr(semantic, "get_model", lambda *args, **kwargs: model)
 
     embeddings = compute_embeddings(units, model_name="embeddinggemma-300m", batch_size=2)
 
     assert embeddings.shape == (2, 2)
-    assert captured["encode_document"] == 1
-    assert captured["encode"] == 0
+    ((method, effective),) = model.calls
+    assert method == "encode"
+    assert effective == [
+        f"task: sentence similarity | query: {unit.source.strip()}" for unit in units
+    ]
 
 
-def test_find_similar_to_query_uses_embeddinggemma_encode_query(
+def test_embeddinggemma_search_corpus_document_route_single_prompt(
     tmp_path: Path, monkeypatch
 ) -> None:
     units = extract_arithmetic_units(tmp_path)
+    model = PromptAwareGemmaModel()
+    monkeypatch.setattr(semantic, "get_model", lambda *args, **kwargs: model)
+
+    compute_embeddings(
+        units,
+        model_name="embeddinggemma-300m",
+        semantic_task="code-retrieval",
+        batch_size=2,
+    )
+
+    ((method, effective),) = model.calls
+    assert method == "encode_document"
+    assert effective == [f"title: none | text: {unit.source.strip()}" for unit in units]
+
+
+def test_embeddinggemma_query_route_single_task_prompt(tmp_path: Path, monkeypatch) -> None:
+    units = extract_arithmetic_units(tmp_path)
     embeddings = np.array([[1.0, 0.0], [0.0, 1.0]], dtype=np.float32)
-    captured: dict[str, int] = {"encode_query": 0, "encode": 0}
-
-    class GemmaLikeModel:
-        def encode_query(self, texts, **kwargs):
-            captured["encode_query"] += 1
-            return np.array([[1.0, 0.0]], dtype=np.float32)
-
-        def encode(self, texts, **kwargs):
-            captured["encode"] += 1
-            return np.array([[1.0, 0.0]], dtype=np.float32)
-
-    monkeypatch.setattr(semantic, "get_model", lambda *args, **kwargs: GemmaLikeModel())
+    model = PromptAwareGemmaModel()
+    monkeypatch.setattr(semantic, "get_model", lambda *args, **kwargs: model)
 
     results = find_similar_to_query(
         query="find addition",
@@ -246,8 +300,31 @@ def test_find_similar_to_query_uses_embeddinggemma_encode_query(
     )
 
     assert len(results) == 1
-    assert captured["encode_query"] == 1
-    assert captured["encode"] == 0
+    ((method, effective),) = model.calls
+    assert method == "encode_query"
+    assert effective == ["task: code retrieval | query: find addition"]
+
+
+def test_embeddinggemma_custom_instruction_replaces_saved_prompt(
+    tmp_path: Path, monkeypatch
+) -> None:
+    units = extract_arithmetic_units(tmp_path)
+    embeddings = np.array([[1.0, 0.0], [0.0, 1.0]], dtype=np.float32)
+    model = PromptAwareGemmaModel()
+    monkeypatch.setattr(semantic, "get_model", lambda *args, **kwargs: model)
+
+    find_similar_to_query(
+        query="find addition",
+        units=units,
+        embeddings=embeddings,
+        model_name="embeddinggemma-300m",
+        instruction_prefix="CUSTOM: ",
+        top_k=2,
+    )
+
+    ((method, effective),) = model.calls
+    assert method == "encode_query"
+    assert effective == ["CUSTOM: find addition"]
 
 
 def test_find_similar_to_query_applies_threshold_filter(tmp_path: Path, monkeypatch) -> None:

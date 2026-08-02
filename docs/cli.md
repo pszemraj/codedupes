@@ -43,7 +43,7 @@ Options:
 - `--mps-fallback`: Enable PyTorch CPU fallback for unsupported MPS operators
 - `--no-mps-fallback`: Disable PyTorch CPU fallback for unsupported MPS operators
 - `--mps-memory-fraction <float>`: Optional PyTorch MPS allocator fraction in `(0, 2]`; `0` is rejected as unsafe
-- `--instruction-prefix <text>`: Override default semantic instruction prefix for code/query embeddings
+- `--instruction-prefix <text>`: Replace the model prompt for code/query embeddings (encode route is preserved)
 - `--model-revision <rev>`: Model revision/commit hash (default `auto`; profile-specific behavior)
 - `--trust-remote-code`: Allow model remote code execution
 - `--no-trust-remote-code`: Disallow model remote code execution
@@ -79,7 +79,7 @@ Options:
 - `--mps-memory-fraction <float>`: Optional PyTorch MPS allocator fraction in `(0, 2]`; `0` is rejected as unsafe
 - `--semantic-task <name>`: Semantic task mode for query/document embeddings (default `code-retrieval`)
 - `--semantic-unit-type <name>`: Semantic candidate unit type (`function`, `method`, `class`); repeat option to include multiple types (default `function, method`)
-- `--instruction-prefix <text>`: Override default semantic instruction prefix for code/query embeddings
+- `--instruction-prefix <text>`: Replace the model prompt for code/query embeddings (encode route is preserved)
 - `--model-revision <rev>`: Model revision/commit hash (default `auto`; profile-specific behavior)
 - `--trust-remote-code`: Allow model remote code execution
 - `--no-trust-remote-code`: Disallow model remote code execution

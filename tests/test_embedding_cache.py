@@ -51,9 +51,11 @@ class CountingModel:
     def __init__(self, dim: int = 4) -> None:
         self.dim = dim
         self.encode_calls: list[list[str]] = []
+        self.prompts_seen: list[str | None] = []
 
-    def encode(self, texts, **_kwargs):
+    def encode(self, texts, **kwargs):
         self.encode_calls.append(list(texts))
+        self.prompts_seen.append(kwargs.get("prompt"))
         return np.stack([_vector_for_text(text, self.dim) for text in texts], axis=0)
 
 
@@ -177,24 +179,30 @@ def test_embeddinggemma_cache_variant_scopes_only_nondefault_dtype(monkeypatch):
         lambda _device: selected_dtype["value"],
     )
 
-    assert semantic._cache_variant_for(profile, "cuda", mps_fallback=None) == "dtype=torch.bfloat16"
+    assert semantic._dtype_variant_for(profile, "cuda", mps_fallback=None) == "dtype=torch.bfloat16"
 
     selected_dtype["value"] = "torch.float32"
-    assert semantic._cache_variant_for(profile, "cuda", mps_fallback=None) == ""
+    assert semantic._dtype_variant_for(profile, "cuda", mps_fallback=None) == ""
 
 
-def test_compute_embeddings_uses_public_prepared_text(tmp_path, monkeypatch):
+def test_cache_variant_includes_encode_plan_identity():
+    profile = semantic.resolve_model_profile("test-model")
+    plain = semantic._cache_variant_for(
+        profile, "cpu", semantic.EncodePlan(route="symmetric"), mps_fallback=None
+    )
+    prompted = semantic._cache_variant_for(
+        profile, "cpu", semantic.EncodePlan(route="symmetric", prompt="custom: "), mps_fallback=None
+    )
+    routed = semantic._cache_variant_for(
+        profile, "cpu", semantic.EncodePlan(route="document"), mps_fallback=None
+    )
+    assert len({plain, prompted, routed}) == 3
+
+
+def test_compute_embeddings_passes_raw_text_with_prompt_config(tmp_path, monkeypatch):
     units = _five_units(tmp_path)
     model = CountingModel()
     _patch_get_model(monkeypatch, model)
-    expected = [
-        semantic.prepare_code_for_embedding(
-            unit,
-            model_name="test-model",
-            instruction_prefix="custom: ",
-        )
-        for unit in units
-    ]
 
     compute_embeddings(
         units,
@@ -203,7 +211,9 @@ def test_compute_embeddings_uses_public_prepared_text(tmp_path, monkeypatch):
         cache_scope=None,
     )
 
-    assert model.encode_calls == [expected]
+    # The instruction travels as the backend prompt; input texts stay raw.
+    assert model.encode_calls == [[unit.source.strip() for unit in units]]
+    assert model.prompts_seen == ["custom: "]
 
 
 def test_partial_update_only_reencodes_changed_unit(tmp_path, monkeypatch):
@@ -682,8 +692,16 @@ def test_dim_mismatched_hits_after_revision_correction_recover(tmp_path, monkeyp
     monkeypatch.setattr(semantic, "_resolve_hf_cached_revision", lambda _model: "rev-a")
     monkeypatch.setattr(semantic, "_get_loaded_model_commit_hash", lambda _model: "rev-b")
 
-    stale_text = semantic.prepare_code_for_embedding(units[0], model_name="test-model")
-    stale_key = embedding_cache.compute_cache_key("test-model", "rev-b", stale_text)
+    stale_text = units[0].source.strip()
+    stale_variant = semantic._cache_variant_for(
+        semantic.resolve_model_profile("test-model"),
+        "auto",
+        semantic.resolve_encode_plan("test-model", mode="code"),
+        mps_fallback=None,
+    )
+    stale_key = embedding_cache.compute_cache_key(
+        "test-model", "rev-b", stale_text, variant=stale_variant
+    )
     EmbeddingCache().put_many(
         tmp_path, "test-model", "rev-b", [(stale_key, np.array([9.0, 9.0], dtype=np.float32))]
     )

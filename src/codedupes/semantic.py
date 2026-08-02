@@ -10,6 +10,7 @@ import os
 import sys
 import threading
 from collections.abc import Callable
+from dataclasses import dataclass
 from importlib import metadata as importlib_metadata
 from pathlib import Path
 from typing import Any, Literal, TypeVar, cast
@@ -76,6 +77,80 @@ EMBEDDINGGEMMA_QUERY_PREFIXES: dict[SemanticTask, str] = {
     "clustering": "task: clustering | query: ",
 }
 EMBEDDINGGEMMA_DOCUMENT_PREFIX = "title: none | text: "
+
+EncodeRoute = Literal["symmetric", "query", "document"]
+
+
+@dataclass(frozen=True)
+class EncodePlan:
+    """Structured encode configuration: backend route plus explicit prompt.
+
+    The prompt is passed to the backend's encode call so it is applied exactly
+    once. SentenceTransformers ``encode_query``/``encode_document`` prepend the
+    model's saved query/document prompt whenever no explicit prompt is given,
+    so prompts must never also be prepended to the input text.
+    """
+
+    route: EncodeRoute
+    prompt: str | None = None
+
+    def cache_identity(self) -> str:
+        """Serialize the vector-affecting encode configuration for cache keys.
+
+        :return: Stable string covering route and effective prompt.
+        """
+        return f"route={self.route}\x00prompt={self.prompt or ''}"
+
+
+def _resolve_encode_plan(
+    profile: SemanticModelProfile,
+    mode: Literal["code", "query"],
+    semantic_task: SemanticTask,
+    instruction_prefix: str | None,
+) -> EncodePlan:
+    """Resolve the encode route and prompt for one model/mode/task combination.
+
+    Duplicate detection is a symmetric similarity task, so EmbeddingGemma code
+    inputs use the symmetric route with the task's query prompt. Retrieval-task
+    code inputs are search corpus documents and use the document route; query
+    inputs always use the query route. A custom instruction prefix replaces the
+    model prompt while preserving the route.
+
+    :param profile: Resolved model profile.
+    :param mode: Embedding input mode.
+    :param semantic_task: Normalized semantic task.
+    :param instruction_prefix: Optional explicit prompt override.
+    :return: Encode plan applied exactly once at the backend call.
+    """
+    if profile.family == "embeddinggemma":
+        if mode == "query":
+            route: EncodeRoute = "query"
+            prompt: str | None = EMBEDDINGGEMMA_QUERY_PREFIXES[semantic_task]
+        elif semantic_task in {"retrieval", "code-retrieval"}:
+            route = "document"
+            prompt = EMBEDDINGGEMMA_DOCUMENT_PREFIX
+        else:
+            route = "symmetric"
+            prompt = EMBEDDINGGEMMA_QUERY_PREFIXES[semantic_task]
+        if instruction_prefix is not None:
+            prompt = instruction_prefix
+        return EncodePlan(route=route, prompt=prompt)
+
+    return EncodePlan(route="symmetric", prompt=instruction_prefix)
+
+
+def _select_encode_fn(model: Any, route: EncodeRoute) -> Callable[..., np.ndarray]:
+    """Select the backend encode callable for one route.
+
+    :param model: Loaded embedding model.
+    :param route: Encode route from the resolved plan.
+    :return: Bound encode callable, falling back to ``model.encode``.
+    """
+    if route == "query" and hasattr(model, "encode_query"):
+        return cast(Callable[..., np.ndarray], model.encode_query)
+    if route == "document" and hasattr(model, "encode_document"):
+        return cast(Callable[..., np.ndarray], model.encode_document)
+    return cast(Callable[..., np.ndarray], model.encode)
 
 
 class SemanticBackendError(RuntimeError):
@@ -395,13 +470,13 @@ _DEVICE_DTYPE_FAMILIES = frozenset({"embeddinggemma"})
 _MAX_CACHED_QUERY_KEYS = 512
 
 
-def _cache_variant_for(
+def _dtype_variant_for(
     profile: SemanticModelProfile,
     device: str,
     *,
     mps_fallback: bool | None,
 ) -> str:
-    """Build the vector-affecting cache-key variant for one model family.
+    """Build the dtype component of the cache variant for one model family.
 
     EmbeddingGemma selects its torch dtype from the execution device (bfloat16 vs
     float32), so its cache identity records only a non-default dtype. CPU and MPS
@@ -413,7 +488,7 @@ def _cache_variant_for(
     :param profile: Resolved model profile.
     :param device: Requested device string (``auto``, ``cpu``, ``cuda``, ``mps``).
     :param mps_fallback: MPS unsupported-op CPU fallback behavior.
-    :return: Variant fingerprint, empty for device-independent families.
+    :return: Dtype fingerprint, empty for device-independent families.
     """
     if profile.family not in _DEVICE_DTYPE_FAMILIES:
         return ""
@@ -433,6 +508,25 @@ def _cache_variant_for(
     if dtype_name in {"float32", "fp32", "torch.float32"}:
         return ""
     return f"dtype={dtype_name}"
+
+
+def _cache_variant_for(
+    profile: SemanticModelProfile,
+    device: str,
+    plan: EncodePlan,
+    *,
+    mps_fallback: bool | None,
+) -> str:
+    """Build the complete vector-affecting cache-key variant for one encode call.
+
+    :param profile: Resolved model profile.
+    :param device: Requested device string (``auto``, ``cpu``, ``cuda``, ``mps``).
+    :param plan: Resolved encode plan (route and effective prompt).
+    :param mps_fallback: MPS unsupported-op CPU fallback behavior.
+    :return: Variant fingerprint combining encode plan and dtype identity.
+    """
+    dtype_variant = _dtype_variant_for(profile, device, mps_fallback=mps_fallback)
+    return f"{plan.cache_identity()}\x00{dtype_variant}"
 
 
 def _safe_package_version(package_name: str) -> str | None:
@@ -1108,112 +1202,38 @@ def _truncate_code_if_needed(text: str, unit_name: str, model: Any) -> str:
         return text[: max_tokens * 4]
 
 
-def _get_embeddinggemma_prefix(task: SemanticTask, mode: Literal["code", "query"]) -> str:
-    """Get task-aware prompt prefixes for EmbeddingGemma.
-
-    :param task: Normalized task.
-    :param mode: Input mode.
-    :return: Instruction prefix.
-    """
-    if mode == "query":
-        return EMBEDDINGGEMMA_QUERY_PREFIXES[task]
-
-    if task in {"retrieval", "code-retrieval"}:
-        return EMBEDDINGGEMMA_DOCUMENT_PREFIX
-
-    return EMBEDDINGGEMMA_QUERY_PREFIXES[task]
-
-
-def _get_instruction(
-    profile: SemanticModelProfile,
-    mode: Literal["code", "query"],
-    semantic_task: SemanticTask,
-) -> str:
-    """Get default instruction prefix for model/task/mode.
-
-    :param profile: Resolved model profile.
-    :param mode: Input mode.
-    :param semantic_task: Normalized task.
-    :return: Instruction prefix.
-    """
-    if profile.family == "embeddinggemma":
-        return _get_embeddinggemma_prefix(semantic_task, mode)
-
-    return ""
-
-
-def _resolve_instruction_prefix(
-    profile: SemanticModelProfile,
-    mode: Literal["code", "query"],
-    instruction_prefix: str | None,
-    *,
-    semantic_task: SemanticTask,
-) -> str:
-    """Resolve instruction prefix override for embedding inputs.
-
-    :param profile: Resolved model profile.
-    :param mode: Input mode.
-    :param instruction_prefix: Optional override.
-    :param semantic_task: Resolved task.
-    :return: Instruction prefix.
-    """
-    if instruction_prefix is not None:
-        return instruction_prefix
-    return _get_instruction(profile, mode, semantic_task)
-
-
-def _prefix_embedding_text(instruction: str, text: str) -> str:
-    """Join a resolved instruction with one embedding input.
-
-    :param instruction: Resolved model instruction prefix.
-    :param text: Source or query text, already normalized for its input mode.
-    :return: Exact pre-truncation text used for cache identity and inference.
-    """
-    return f"{instruction}{text}"
-
-
-def _embedding_cache_namespace(mode: str, instruction: str, variant: str) -> str:
-    """Build a namespace for compacting equivalent embedding inputs.
+def _embedding_cache_namespace(mode: str, variant: str) -> str:
+    """Build a namespace grouping equivalent embedding inputs.
 
     :param mode: Embedding input mode, such as ``code`` or ``query``.
-    :param instruction: Resolved model instruction prefix.
-    :param variant: Vector-affecting cache variant.
-    :return: Stable compact namespace identifier.
+    :param variant: Vector-affecting cache variant, including the encode plan.
+    :return: Stable namespace identifier.
     """
-    payload = f"{mode}\x00{variant}\x00{instruction}".encode()
+    payload = f"{mode}\x00{variant}".encode()
     return hashlib.blake2b(payload, digest_size=8).hexdigest()
 
 
-def prepare_code_for_embedding(
-    unit: CodeUnit,
+def resolve_encode_plan(
     model_name: str = DEFAULT_MODEL,
     mode: Literal["code", "query"] = "code",
     instruction_prefix: str | None = None,
     semantic_task: str | None = None,
-) -> str:
-    """Prepare code unit for embedding.
+) -> EncodePlan:
+    """Resolve the encode route and prompt used for one embedding input mode.
 
-    :param unit: Source unit to embed.
     :param model_name: Model identifier.
     :param mode: Embedding mode.
-    :param instruction_prefix: Optional explicit instruction.
+    :param instruction_prefix: Optional explicit prompt override.
     :param semantic_task: Optional task override.
-    :return: Prefixed source payload.
+    :return: Encode plan applied exactly once at the backend call.
     """
-    source = unit.source.strip()
     task_default = DEFAULT_SEARCH_SEMANTIC_TASK if mode == "query" else DEFAULT_CHECK_SEMANTIC_TASK
     resolved_task = normalize_semantic_task(
         semantic_task,
         default_task=task_default,
     )
     profile = resolve_model_profile(model_name)
-    instruction = _resolve_instruction_prefix(
-        profile,
-        mode,
-        instruction_prefix,
-        semantic_task=resolved_task,
-    )
-    return _prefix_embedding_text(instruction, source)
+    return _resolve_encode_plan(profile, mode, resolved_task, instruction_prefix)
 
 
 def _encode_texts(
@@ -1224,6 +1244,7 @@ def _encode_texts(
     show_progress_bar: bool,
     convert_to_numpy: bool,
     normalize_embeddings: bool,
+    prompt: str | None = None,
     device: str | None = None,
 ) -> np.ndarray:
     """Encode texts with defensive kwargs handling across model backends.
@@ -1238,6 +1259,8 @@ def _encode_texts(
     :param show_progress_bar: Whether the backend should render a progress bar.
     :param convert_to_numpy: Whether the backend should return NumPy arrays.
     :param normalize_embeddings: Whether the backend should L2-normalize outputs.
+    :param prompt: Explicit prompt for the backend to prepend exactly once, or
+        ``None`` to keep the encode function's default prompt selection.
     :param device: Per-call device override, or ``None`` to leave the model device
         untouched, defaults to ``None``.
     :return: Embedding matrix returned by ``encode_fn``.
@@ -1248,6 +1271,8 @@ def _encode_texts(
         "convert_to_numpy": convert_to_numpy,
         "normalize_embeddings": normalize_embeddings,
     }
+    if prompt is not None:
+        kwargs["prompt"] = prompt
     if device is not None:
         kwargs["device"] = device
 
@@ -1276,6 +1301,7 @@ def _encode_with_retries(
     revision: str | None,
     trust_remote_code: bool,
     stage: str,
+    prompt: str | None = None,
 ) -> np.ndarray:
     """Encode with adaptive OOM recovery for CUDA, MPS, and CPU.
 
@@ -1295,6 +1321,7 @@ def _encode_with_retries(
     :param revision: Resolved model revision reported in backend error messages.
     :param trust_remote_code: Trust setting reported in backend error messages.
     :param stage: Short stage label used in warnings and error messages.
+    :param prompt: Explicit prompt for the backend to prepend exactly once.
     :return: Embedding matrix for ``texts``.
     :raises SemanticBackendError: If a non-OOM failure matches a known backend issue.
     :raises RuntimeError: If OOM persists at batch size one with no fallback left.
@@ -1315,6 +1342,7 @@ def _encode_with_retries(
                 show_progress_bar=show_progress_bar,
                 convert_to_numpy=True,
                 normalize_embeddings=True,
+                prompt=prompt,
                 device="cpu" if attempted_cpu_fallback else None,
             )
         except RuntimeError as exc:
@@ -1449,22 +1477,19 @@ def _compute_embeddings_unlocked(
         semantic_task,
         default_task=DEFAULT_CHECK_SEMANTIC_TASK,
     )
-    instruction = _resolve_instruction_prefix(
-        profile,
-        "code",
-        instruction_prefix,
-        semantic_task=resolved_task,
-    )
-    prepared_texts = [_prefix_embedding_text(instruction, unit.source.strip()) for unit in units]
+    encode_plan = _resolve_encode_plan(profile, "code", resolved_task, instruction_prefix)
+    prepared_texts = [unit.source.strip() for unit in units]
 
     cache = get_embedding_cache() if (use_cache and cache_scope is not None) else None
     cache_revision = (
         _resolve_revision_for_cache(model_name, revision) if cache is not None else None
     )
     cache_variant = (
-        _cache_variant_for(profile, device, mps_fallback=mps_fallback) if cache is not None else ""
+        _cache_variant_for(profile, device, encode_plan, mps_fallback=mps_fallback)
+        if cache is not None
+        else ""
     )
-    cache_namespace = _embedding_cache_namespace("code", instruction, cache_variant)
+    cache_namespace = _embedding_cache_namespace("code", cache_variant)
     cache_keys = (
         [
             compute_cache_key(profile.canonical_name, cache_revision, text, variant=cache_variant)
@@ -1566,9 +1591,7 @@ def _compute_embeddings_unlocked(
         cache_covered_rows,
         reused_duplicate_rows,
     )
-    encode_fn = model.encode
-    if profile.family == "embeddinggemma" and hasattr(model, "encode_document"):
-        encode_fn = model.encode_document
+    encode_fn = _select_encode_fn(model, encode_plan.route)
 
     def _encode_miss_texts(texts: list[str]) -> np.ndarray:
         """Encode prepared miss texts through the shared OOM-retry ladder.
@@ -1587,6 +1610,7 @@ def _compute_embeddings_unlocked(
             revision=resolved_revision,
             trust_remote_code=resolved_trust_remote_code,
             stage="embedding inference",
+            prompt=encode_plan.prompt,
         )
 
     miss_vectors = _encode_miss_texts(miss_texts)
@@ -1831,22 +1855,19 @@ def _find_similar_to_query_unlocked(
         semantic_task,
         default_task=DEFAULT_SEARCH_SEMANTIC_TASK,
     )
-    instruction = _resolve_instruction_prefix(
-        profile,
-        "query",
-        instruction_prefix,
-        semantic_task=resolved_task,
-    )
-    query_text = _prefix_embedding_text(instruction, query)
+    encode_plan = _resolve_encode_plan(profile, "query", resolved_task, instruction_prefix)
+    query_text = query
 
     cache = get_embedding_cache() if (use_cache and cache_scope is not None) else None
     cache_revision = (
         _resolve_revision_for_cache(model_name, revision) if cache is not None else None
     )
     cache_variant = (
-        _cache_variant_for(profile, device, mps_fallback=mps_fallback) if cache is not None else ""
+        _cache_variant_for(profile, device, encode_plan, mps_fallback=mps_fallback)
+        if cache is not None
+        else ""
     )
-    cache_namespace = _embedding_cache_namespace("query", instruction, cache_variant)
+    cache_namespace = _embedding_cache_namespace("query", cache_variant)
     cache_key = (
         compute_cache_key(
             profile.canonical_name, cache_revision, query_text, mode="query", variant=cache_variant
@@ -1927,9 +1948,7 @@ def _find_similar_to_query_unlocked(
                 query_embedding = _validated_query_hit(hit.get(cache_key))
 
         if query_embedding is None:
-            encode_fn = model.encode
-            if profile.family == "embeddinggemma" and hasattr(model, "encode_query"):
-                encode_fn = model.encode_query
+            encode_fn = _select_encode_fn(model, encode_plan.route)
 
             query_embeddings = _encode_with_retries(
                 model,
@@ -1942,6 +1961,7 @@ def _find_similar_to_query_unlocked(
                 revision=resolved_revision,
                 trust_remote_code=resolved_trust_remote_code,
                 stage="query embedding",
+                prompt=encode_plan.prompt,
             )
             query_embedding = query_embeddings[0]
 
