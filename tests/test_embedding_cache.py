@@ -581,7 +581,9 @@ def test_invalid_size_cap_uses_default(monkeypatch, value: str):
     )
 
 
-def test_namespace_compaction_prunes_stale_code_keys_and_preserves_queries(tmp_path):
+def test_put_many_retains_keys_absent_from_current_write(tmp_path):
+    # A write never treats its own key set as the whole live corpus: keys from
+    # other invocations (and other namespaces) survive until eviction.
     cache = EmbeddingCache()
     scope = tmp_path / "proj"
     scope.mkdir()
@@ -595,55 +597,49 @@ def test_namespace_compaction_prunes_stale_code_keys_and_preserves_queries(tmp_p
         "rev1",
         [("code-a", vector(1.0)), ("code-b", vector(2.0))],
         namespace="check",
-        active_keys={"code-a", "code-b"},
     )
-    cache.put_many(
-        scope,
-        "model-a",
-        "rev1",
-        [("query", vector(3.0))],
-        namespace="query",
-    )
-    previous_key = "code-a"
+    cache.put_many(scope, "model-a", "rev1", [("query", vector(3.0))], namespace="query")
     for index in range(3):
-        current_key = f"edited-{index}"
         cache.put_many(
             scope,
             "model-a",
             "rev1",
-            [(current_key, vector(10.0 + index))],
+            [(f"edited-{index}", vector(10.0 + index))],
             namespace="check",
-            active_keys={"code-b", current_key},
         )
-        previous_key = current_key
 
-    hits = cache.get_many(
-        scope,
-        "model-a",
-        "rev1",
-        ["code-a", "edited-0", "edited-1", "code-b", previous_key, "query"],
-    )
-    assert set(hits) == {"code-b", previous_key, "query"}
-    assert cache.stats()["entries"] == 3
+    all_keys = ["code-a", "code-b", "edited-0", "edited-1", "edited-2", "query"]
+    hits = cache.get_many(scope, "model-a", "rev1", all_keys)
+    assert set(hits) == set(all_keys)
+    assert cache.stats()["entries"] == 6
 
 
-def test_full_hit_compacts_units_deleted_from_corpus(tmp_path, monkeypatch):
+def test_narrow_invocation_keeps_full_directory_run_warm(tmp_path, monkeypatch):
+    # Full directory -> single file -> full directory: the narrow middle run
+    # must not evict its siblings' vectors, so the final run encodes nothing.
     units = _five_units(tmp_path)
     model = CountingModel()
     get_model_counts = _patch_get_model(monkeypatch, model)
     monkeypatch.setattr(semantic, "_get_loaded_model_commit_hash", lambda _model: None)
 
     compute_embeddings(units, model_name="test-model", revision=REVISION_1, cache_scope=tmp_path)
+    assert get_model_counts["count"] == 1
+    assert len(model.encode_calls) == 1
+
     compute_embeddings(
         units[:1],
         model_name="test-model",
         revision=REVISION_1,
         cache_scope=tmp_path,
     )
+    full_run = compute_embeddings(
+        units, model_name="test-model", revision=REVISION_1, cache_scope=tmp_path
+    )
 
+    assert full_run.shape == (5, 4)
     assert get_model_counts["count"] == 1
     assert len(model.encode_calls) == 1
-    assert EmbeddingCache().stats()["entries"] == 1
+    assert EmbeddingCache().stats()["entries"] == 5
 
 
 def test_resolve_cache_dir_env_precedence(monkeypatch, tmp_path):

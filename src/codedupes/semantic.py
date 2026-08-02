@@ -1828,14 +1828,6 @@ def _compute_embeddings_unlocked(
     # Duplicate code units share one cache key, so compare against the covered
     # keys rather than the unique-hit count: len(hits) undercounts coverage.
     if cache_keys is not None and all(key in hits for key in cache_keys):
-        assert cache is not None and cache_scope is not None
-        cache.compact(
-            cache_scope,
-            profile.canonical_name,
-            cache_revision,
-            namespace=cache_namespace,
-            active_keys=set(cache_keys),
-        )
         return _assemble_cached_matrix(cache_keys, hits)
 
     resolved_revision = _resolve_load_revision(model_name, revision)
@@ -1882,14 +1874,6 @@ def _compute_embeddings_unlocked(
             ]
             hits = cache.get_many(cache_scope, profile.canonical_name, cache_revision, cache_keys)
             if all(key in hits for key in cache_keys):
-                assert cache_scope is not None
-                cache.compact(
-                    cache_scope,
-                    profile.canonical_name,
-                    cache_revision,
-                    namespace=cache_namespace,
-                    active_keys=set(cache_keys),
-                )
                 return _assemble_cached_matrix(cache_keys, hits)
 
     miss_indices = _select_cache_miss_indices(cache_keys, hits, len(units))
@@ -1977,7 +1961,6 @@ def _compute_embeddings_unlocked(
                 for local_idx, global_idx in enumerate(miss_indices)
             ],
             namespace=cache_namespace,
-            active_keys=set(cache_keys),
         )
 
     return matrix

@@ -37,7 +37,6 @@ DEFAULT_CACHE_MAX_MB = 2048
 _SCHEMA_VERSION = 3
 _PRUNE_TARGET_RATIO = 0.8
 _TOUCH_INTERVAL_SECONDS = 3600.0
-_COMPACTION_LIVE_MULTIPLIER = 2
 _SANITIZE_PATTERN = re.compile(r"[^A-Za-z0-9._-]+")
 _GENERATION_PATTERN = re.compile(r"^[0-9a-f]{32}$")
 _TMP_FILE_GLOB = "*.tmp-*"
@@ -594,10 +593,9 @@ def _write_shard_entries(
     entries: Sequence[tuple[str, np.ndarray]],
     *,
     namespace: str,
-    active_keys: set[str] | None,
     max_namespace_keys: int | None = None,
 ) -> None:
-    """Append/heal embedding rows and compact stale or overflowing namespace keys.
+    """Append/heal embedding rows and cap overflowing namespace keys.
 
     :param shard_dir: Shard directory to update.
     :param canonical_model: Canonical model identifier.
@@ -605,13 +603,11 @@ def _write_shard_entries(
     :param entries: Sequence of ``(key, vector)`` pairs to append or, for keys that
         already exist with a poisoned (NaN/Inf) stored row, heal in place.
     :param namespace: Stable identifier for one mode/instruction/dtype combination.
-    :param active_keys: Complete live key set for ``namespace``, or ``None`` to skip
-        stale-key compaction.
     :param max_namespace_keys: Maximum keys to retain in ``namespace`` after this
         write, oldest (lowest row index) dropped first, or ``None`` for no cap.
     :return: ``None``.
     """
-    if not entries and active_keys is None:
+    if not entries:
         return
     try:
         unique_entries = list(dict(entries).items())
@@ -681,24 +677,6 @@ def _write_shard_entries(
                     namespaces[key] = namespace
                     digests[key] = _row_digest(new_rows[offset])
 
-            stale_keys: set[str] = set()
-            if active_keys is not None:
-                namespace_keys = {
-                    key for key, key_namespace in namespaces.items() if key_namespace == namespace
-                }
-                stale_keys = namespace_keys - active_keys
-                if len(namespace_keys) <= _COMPACTION_LIVE_MULTIPLIER * max(1, len(active_keys)):
-                    stale_keys.clear()
-
-            if stale_keys:
-                retained_keys = sorted(
-                    (key for key in keys_map if key not in stale_keys),
-                    key=keys_map.__getitem__,
-                )
-                vectors, keys_map, namespaces, digests = _rebuild_matrix_retaining(
-                    vectors, keys_map, namespaces, digests, dim, retained_keys
-                )
-
             capped_namespace = False
             if max_namespace_keys is not None:
                 namespace_keys_by_row = sorted(
@@ -721,7 +699,7 @@ def _write_shard_entries(
                     )
                     capped_namespace = True
 
-            if missing_entries or overwrite_entries or stale_keys or capped_namespace:
+            if missing_entries or overwrite_entries or capped_namespace:
                 _atomic_write_shard(
                     shard_dir,
                     canonical_model,
@@ -924,23 +902,20 @@ class EmbeddingCache:
         entries: Sequence[tuple[str, np.ndarray]],
         *,
         namespace: str = "default",
-        active_keys: set[str] | None = None,
         max_namespace_keys: int | None = None,
     ) -> None:
-        """Insert vectors, compact stale/overflowing namespace entries, enforce the size cap.
+        """Insert vectors, cap overflowing namespaces, enforce the global size cap.
 
         :param cache_scope: Analyzed corpus root path.
         :param canonical_model: Canonical model identifier.
         :param revision: Resolved model revision, or ``None`` when unpinned.
         :param entries: Sequence of ``(key, vector)`` pairs to store.
         :param namespace: Stable identifier for one mode/instruction/dtype combination.
-        :param active_keys: Complete live key set for ``namespace``, or ``None`` to
-            preserve every existing key.
         :param max_namespace_keys: Maximum keys to retain in ``namespace`` after this
             write, oldest dropped first, or ``None`` for no cap.
         :return: ``None``.
         """
-        if not entries and active_keys is None:
+        if not entries:
             return
         shard_dir = self.shard_dir(cache_scope, canonical_model, revision)
         _write_shard_entries(
@@ -949,37 +924,9 @@ class EmbeddingCache:
             revision,
             entries,
             namespace=namespace,
-            active_keys=active_keys,
             max_namespace_keys=max_namespace_keys,
         )
         _maybe_evict(self.repos_dir, protect=shard_dir)
-
-    def compact(
-        self,
-        cache_scope: Path,
-        canonical_model: str,
-        revision: str | None,
-        *,
-        namespace: str,
-        active_keys: set[str],
-    ) -> None:
-        """Compact stale entries after a fully cached corpus run.
-
-        :param cache_scope: Analyzed corpus root path.
-        :param canonical_model: Canonical model identifier.
-        :param revision: Resolved model revision, or ``None`` when unpinned.
-        :param namespace: Stable identifier for one mode/instruction/dtype combination.
-        :param active_keys: Complete live keys for ``namespace``.
-        :return: ``None``.
-        """
-        self.put_many(
-            cache_scope,
-            canonical_model,
-            revision,
-            [],
-            namespace=namespace,
-            active_keys=active_keys,
-        )
 
     def stats(self) -> dict[str, Any]:
         """Summarize cache location, size, and per-model/per-repo entry counts.
