@@ -23,6 +23,7 @@ from codedupes.models import AnalysisResult, CodeUnit, CodeUnitType, DuplicatePa
 from codedupes.pairs import ordered_pair_key
 from codedupes.semantic import (
     SemanticBackendError,
+    compute_embeddings,
     get_code_unit_statement_count,
     get_semantic_runtime_versions,
     run_semantic_analysis,
@@ -482,23 +483,12 @@ class CodeAnalyzer:
         self._resolved_search_semantic_task = None
         self._cache_scope = cache_scope
 
-    def analyze(self, path: Path | str) -> AnalysisResult:
+    def _extract_corpus_units(self, path: Path) -> list[CodeUnit]:
+        """Extract code units from a resolved directory or single-file path.
+
+        :param path: Resolved existing path to a directory or Python file.
+        :return: Extracted code units.
         """
-        Run full analysis on a directory or file.
-
-        Args:
-            path: Path to directory or single Python file
-
-        Returns:
-            AnalysisResult with all findings
-        """
-        path = Path(path).resolve()
-
-        if not path.exists():
-            raise FileNotFoundError(f"Path does not exist: {path}")
-
-        self._reset_analysis_state(path.parent if path.is_file() else path)
-
         logger.info(f"Extracting code units from {path}")
 
         if path.is_file():
@@ -517,8 +507,42 @@ class CodeAnalyzer:
             )
             units = extractor.extract_all()
 
-        self._units = units
         logger.info(f"Extracted {len(units)} code units")
+        return units
+
+    def _select_semantic_candidates(self, units: list[CodeUnit]) -> list[CodeUnit]:
+        """Filter units eligible for semantic embedding by type and statement count.
+
+        :param units: Extracted code units.
+        :return: Units passing the semantic type filter and statement-count gate.
+        """
+        semantic_type_filter = _resolve_semantic_unit_type_filter(self.config.semantic_unit_types)
+        return [
+            unit
+            for unit in units
+            if unit.unit_type in semantic_type_filter
+            and get_code_unit_statement_count(unit) >= self.config.min_semantic_statements
+        ]
+
+    def analyze(self, path: Path | str) -> AnalysisResult:
+        """
+        Run full analysis on a directory or file.
+
+        Args:
+            path: Path to directory or single Python file
+
+        Returns:
+            AnalysisResult with all findings
+        """
+        path = Path(path).resolve()
+
+        if not path.exists():
+            raise FileNotFoundError(f"Path does not exist: {path}")
+
+        self._reset_analysis_state(path.parent if path.is_file() else path)
+
+        units = self._extract_corpus_units(path)
+        self._units = units
 
         if not units:
             return AnalysisResult(
@@ -545,15 +569,7 @@ class CodeAnalyzer:
 
         semantic_candidates: list[CodeUnit] = []
         if self.config.run_semantic:
-            semantic_type_filter = _resolve_semantic_unit_type_filter(
-                self.config.semantic_unit_types
-            )
-            semantic_candidates = [
-                unit
-                for unit in units
-                if unit.unit_type in semantic_type_filter
-                and get_code_unit_statement_count(unit) >= self.config.min_semantic_statements
-            ]
+            semantic_candidates = self._select_semantic_candidates(units)
             self._semantic_units = semantic_candidates
 
         if self.config.run_traditional:
@@ -702,22 +718,68 @@ class CodeAnalyzer:
             semantic_fallback_reason=semantic_fallback_reason,
         )
 
+    def index(self, path: Path | str) -> int:
+        """Build the semantic search corpus without mining duplicate pairs.
+
+        Extracts code units, filters semantic candidates, and computes (or
+        loads from cache) their embeddings so :meth:`search` can run. Unlike
+        :meth:`analyze`, no all-pairs duplicate scan, traditional analysis, or
+        unused-code analysis happens, so indexing stays linear in corpus size.
+
+        :param path: Path to directory or single Python file.
+        :return: Number of code units embedded for search.
+        :raises FileNotFoundError: If ``path`` does not exist.
+        """
+        path = Path(path).resolve()
+
+        if not path.exists():
+            raise FileNotFoundError(f"Path does not exist: {path}")
+
+        self._reset_analysis_state(path.parent if path.is_file() else path)
+
+        units = self._extract_corpus_units(path)
+        self._units = units
+        self._resolved_search_semantic_task = self.config.semantic_task or (
+            DEFAULT_CHECK_SEMANTIC_TASK
+        )
+        semantic_candidates = self._select_semantic_candidates(units)
+        self._semantic_units = semantic_candidates
+
+        self._embeddings = compute_embeddings(
+            semantic_candidates,
+            model_name=self.config.model_name,
+            instruction_prefix=self.config.instruction_prefix,
+            batch_size=self.config.batch_size,
+            revision=self.config.model_revision,
+            trust_remote_code=self.config.trust_remote_code,
+            semantic_task=self._resolved_search_semantic_task,
+            device=self.config.device,
+            mps_fallback=self.config.mps_fallback,
+            mps_memory_fraction=self.config.mps_memory_fraction,
+            use_cache=self.config.embedding_cache,
+            cache_scope=self._cache_scope,
+        )
+        return len(semantic_candidates)
+
     def search(self, query: str, top_k: int = 10) -> list[tuple[CodeUnit, float]]:
         """
         Search for code units matching a natural language query.
 
-        Must run analyze() first to compute embeddings. Any non-``None``
-        ``config.semantic_threshold`` applies to search as well, so leave it
-        ``None`` (do not pre-resolve a duplicate-detection default into it) to
-        get the model profile search default, which is far looser because
-        query-to-code similarity runs well below code-to-code similarity.
+        Must run index() (or analyze() with semantic analysis enabled) first to
+        compute embeddings. Any non-``None`` ``config.semantic_threshold``
+        applies to search as well, so leave it ``None`` (do not pre-resolve a
+        duplicate-detection default into it) to get the model profile search
+        default, which is far looser because query-to-code similarity runs well
+        below code-to-code similarity.
 
         :param query: Search query string.
         :param top_k: Maximum results to return.
         :return: List of code units and cosine scores.
         """
         if self._units is None or self._embeddings is None:
-            raise RuntimeError("Must run analyze() with run_semantic=True before search().")
+            raise RuntimeError(
+                "Must run index() or analyze() with run_semantic=True before search()."
+            )
 
         if not self._semantic_units:
             return []

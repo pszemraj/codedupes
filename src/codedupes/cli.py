@@ -1445,7 +1445,7 @@ def search_command(
     with _configured_cli_output(as_json=as_json, verbose=verbose, output_width=output_width):
         analyzer = CodeAnalyzer(config)
         _run_cli_action(
-            lambda: analyzer.analyze(path),
+            lambda: analyzer.index(path),
             error_label="search",
             verbose=verbose,
         )

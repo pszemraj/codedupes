@@ -62,14 +62,16 @@ analyzer = CodeAnalyzer(
     )
 )
 
-analyzer.analyze("./src")
+analyzer.index("./src")
 hits = analyzer.search("load csv data", top_k=10)
 
 for unit, score in hits:
     print(f"{score:.3f}", unit.qualified_name)
 ```
 
-Each `analyze()` call replaces the analyzer's corpus-specific state before extraction. `search()` therefore targets only the most recent analysis and requires that run to have semantic embeddings. A later empty or nonsemantic analysis cannot reuse an older corpus accidentally.
+`index()` extracts the corpus and computes (or loads from cache) its embeddings without the all-pairs duplicate scan, traditional analysis, or unused-code analysis that `analyze()` runs, so building a search corpus stays linear in corpus size. `search()` also works after an `analyze()` run with semantic analysis enabled, when duplicate results and search share one corpus.
+
+Each `index()` or `analyze()` call replaces the analyzer's corpus-specific state before extraction. `search()` therefore targets only the most recent run and requires it to have semantic embeddings. A later empty or nonsemantic analysis cannot reuse an older corpus accidentally.
 
 ## Apple Silicon configuration
 

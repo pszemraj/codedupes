@@ -877,6 +877,60 @@ def test_search_threshold_defaults_to_none_and_honors_explicit_config(
     assert captured["query_threshold"] == 0.7
 
 
+def test_index_embeds_corpus_without_mining_duplicates(tmp_path: Path, monkeypatch) -> None:
+    source = "def entry(x):\n    return x + 1\n"
+    project = create_project(tmp_path, source)
+    captured: dict[str, object] = {}
+    embedded_units: list[CodeUnit] = []
+
+    def fail_duplicate_mining(*_args, **_kwargs):
+        raise AssertionError("index()/search() must never mine duplicate pairs")
+
+    monkeypatch.setattr(analyzer_module, "run_semantic_analysis", fail_duplicate_mining)
+    monkeypatch.setattr(semantic_module, "find_semantic_duplicates", fail_duplicate_mining)
+
+    def fake_compute_embeddings(units, **kwargs):
+        embedded_units.extend(units)
+        captured.update(kwargs)
+        return np.zeros((len(units), 2), dtype=np.float32)
+
+    monkeypatch.setattr(analyzer_module, "compute_embeddings", fake_compute_embeddings)
+    monkeypatch.setattr(
+        semantic_module,
+        "find_similar_to_query",
+        _capture_query_runner(captured),
+    )
+
+    analyzer = CodeAnalyzer(
+        AnalyzerConfig(
+            run_traditional=False,
+            run_semantic=True,
+            run_unused=False,
+            min_semantic_statements=0,
+        )
+    )
+    indexed = analyzer.index(project)
+    results = analyzer.search("entry")
+
+    assert indexed == 1
+    assert [unit.name for unit in embedded_units] == ["entry"]
+    assert results == []
+    assert captured["semantic_task"] == analyzer_module.DEFAULT_CHECK_SEMANTIC_TASK
+    assert captured["query_semantic_task"] == analyzer_module.DEFAULT_CHECK_SEMANTIC_TASK
+    assert captured["cache_scope"] == project.resolve()
+
+
+def test_index_empty_corpus_yields_empty_search(tmp_path: Path) -> None:
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    analyzer = CodeAnalyzer(
+        AnalyzerConfig(run_traditional=False, run_semantic=True, run_unused=False)
+    )
+
+    assert analyzer.index(empty) == 0
+    assert analyzer.search("anything") == []
+
+
 def test_semantic_only_fails_hard_on_runtime_semantic_error(tmp_path: Path, monkeypatch) -> None:
     source = "def entry(x):\n    return x + 1\n"
     project = create_project(tmp_path, source)

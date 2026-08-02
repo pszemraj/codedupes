@@ -110,6 +110,34 @@ def test_cli_json_output_hybrid_default(monkeypatch, tmp_path):
     assert search_output["results"][0]["name"] == "entry"
 
 
+def test_cli_search_indexes_without_running_full_analysis(monkeypatch, tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+
+    class IndexOnlyAnalyzer:
+        def __init__(self, config):
+            del config
+
+        def analyze(self, _path):
+            raise AssertionError("search must build its corpus via index(), not analyze()")
+
+        def index(self, _path):
+            return 1
+
+        def search(self, query, top_k=10):
+            del query, top_k
+            return [(_build_unit(tmp_path), 0.99)]
+
+    monkeypatch.setattr(cli, "CodeAnalyzer", IndexOnlyAnalyzer)
+    runner = CliRunner()
+
+    result = runner.invoke(cli.cli, ["search", str(path), "entry", "--json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["results"][0]["name"] == "entry"
+
+
 def test_cli_json_show_all_includes_raw_sections(monkeypatch, tmp_path):
     path = tmp_path / "sample.py"
     path.write_text("def entry():\n    return 1\n")
@@ -929,6 +957,9 @@ def test_cli_semantic_required_modes_fail_on_semantic_backend_error(
     from codedupes import analyzer as analyzer_module
 
     monkeypatch.setattr(analyzer_module, "run_semantic_analysis", _raise_semantic_backend_error)
+    # `search` builds its corpus through index()/compute_embeddings, not the
+    # duplicate-mining entry point.
+    monkeypatch.setattr(analyzer_module, "compute_embeddings", _raise_semantic_backend_error)
 
     runner = CliRunner()
     result = runner.invoke(cli.cli, [args[0], str(path), *args[1:]])

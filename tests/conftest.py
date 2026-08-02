@@ -108,6 +108,9 @@ def patch_cli_analyzer(
         def analyze(self, _path: Path) -> AnalysisResult:
             return analyze_result() if callable(analyze_result) else analyze_result
 
+        def index(self, _path: Path) -> int:
+            return 0
+
         def search(self, query: str, top_k: int = 10) -> list[tuple[CodeUnit, float]]:
             if callable(search_results):
                 return search_results(query, top_k)
