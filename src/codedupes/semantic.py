@@ -677,8 +677,37 @@ def _get_effective_model_device(model: object, fallback: str) -> str:
     return _coerce_device_name(getattr(model, "device", None), fallback)
 
 
+class _ExecutableStatementCounter(ast.NodeVisitor):
+    """Count executable statements recursively, stopping at nested scopes."""
+
+    def __init__(self) -> None:
+        self.count = 0
+
+    def generic_visit(self, node: ast.AST) -> None:
+        if isinstance(node, ast.stmt):
+            self.count += 1
+        super().generic_visit(node)
+
+    # Nested scopes count as one declaration; their implementation belongs to a
+    # separate CodeUnit and must not inflate the enclosing unit's count.
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        self.count += 1
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        self.count += 1
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        self.count += 1
+
+
 def get_code_unit_statement_count(unit: CodeUnit) -> int:
     """Get effective statement count for a unit, excluding docstring.
+
+    Statements are counted recursively through control-flow bodies (``try``,
+    ``with``, loops, conditionals, ``match``) so a large function implemented
+    inside one outer block is not measured as a single statement. Nested
+    function/class definitions count as one declaration each; their bodies
+    belong to their own units.
 
     :param unit: Unit to measure.
     :return: Number of executable statements.
@@ -705,10 +734,18 @@ def get_code_unit_statement_count(unit: CodeUnit) -> int:
     else:
         body = tree.body
 
-    if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant):
+    if (
+        body
+        and isinstance(body[0], ast.Expr)
+        and isinstance(body[0].value, ast.Constant)
+        and isinstance(body[0].value.value, str)
+    ):
         body = body[1:]
 
-    return len(body)
+    counter = _ExecutableStatementCounter()
+    for statement in body:
+        counter.visit(statement)
+    return counter.count
 
 
 def _resolve_embeddinggemma_torch_dtype(device: str) -> Any:

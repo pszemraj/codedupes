@@ -39,7 +39,7 @@ config = AnalyzerConfig(
     run_semantic=True,
     run_unused=False,
     semantic_unit_types=("function", "method", "class"),
-    min_semantic_lines=1,
+    min_semantic_statements=1,
 )
 
 analyzer = CodeAnalyzer(config)

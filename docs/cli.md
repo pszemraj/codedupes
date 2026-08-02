@@ -37,7 +37,7 @@ Options:
 - `--tiny-near-jaccard-min <float>`: Minimum Jaccard similarity to keep tiny near-duplicate pairs (default `0.93`)
 - `--show-all`: Also print raw traditional + raw semantic duplicate lists in combined mode
 - `--full-table`: Disable table row truncation and print all rows in terminal output
-- `--min-lines <int>`: Minimum statement count for semantic candidate code units (default `3`). In default combined mode this also narrows traditional duplicate scope.
+- `--min-statements <int>`: Minimum statement count for semantic candidate code units (default `3`). In default combined mode this also narrows traditional duplicate scope.
 - `--model <name>`: Embedding model alias, Hugging Face ID, or complete local `save_pretrained`/`hf download` directory (default `gte-modernbert-base`)
 - `--device <name>`: Semantic inference device: `auto`, `cpu`, `cuda`, or `mps` (default `auto`; priority CUDA, then MPS, then CPU)
 - `--mps-fallback`: Enable PyTorch CPU fallback for unsupported MPS operators
@@ -86,7 +86,7 @@ Options:
 - `--threshold <float>`: Shared semantic threshold override
 - `--semantic-threshold <float>`: Override semantic threshold
 - `--batch-size <int>`: Embedding batch size (default `8`)
-- `--min-lines <int>`: Minimum statement count for semantic candidate code units (default `3`)
+- `--min-statements <int>`: Minimum statement count for semantic candidate code units (default `3`)
 - `--no-private`: Exclude private (`_name`) functions/classes
 - `--exclude <glob>`: Replace the default test-file globs with one or more file path globs (repeat for multiple patterns). Built-in artifact-directory exclusions still apply.
 - `--include-stubs`: Include `*.pyi` files
@@ -111,7 +111,7 @@ Clear all cached embeddings or only entries for one model. See [Embedding cache]
 
 - Threshold values must be in `[0.0, 1.0]`
 - `--batch-size` and `--top-k` must be greater than `0`
-- `--min-lines` must be greater than or equal to `0`
+- `--min-statements` must be greater than or equal to `0`
 - `--output-width` must be at least `80`
 - `--show-all` is only valid in default combined `check` mode (not with `--semantic-only` or `--traditional-only`)
 - Default combined `check` fails if semantic backend fails; opt in to degraded combined fallback with `--allow-semantic-fallback`

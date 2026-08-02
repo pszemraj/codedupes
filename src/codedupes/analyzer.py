@@ -11,7 +11,7 @@ import numpy as np
 from codedupes.constants import (
     DEFAULT_BATCH_SIZE,
     DEFAULT_CHECK_SEMANTIC_TASK,
-    DEFAULT_MIN_SEMANTIC_LINES,
+    DEFAULT_MIN_SEMANTIC_STATEMENTS,
     DEFAULT_MODEL,
     DEFAULT_SEMANTIC_DEVICE,
     DEFAULT_TRADITIONAL_THRESHOLD,
@@ -339,7 +339,7 @@ class AnalyzerConfig:
     mps_fallback: bool | None = None
     mps_memory_fraction: float | None = None
     batch_size: int = DEFAULT_BATCH_SIZE
-    min_semantic_lines: int = DEFAULT_MIN_SEMANTIC_LINES
+    min_semantic_statements: int = DEFAULT_MIN_SEMANTIC_STATEMENTS
     semantic_unit_types: tuple[str, ...] = DEFAULT_SEMANTIC_UNIT_TYPES
     include_stubs: bool = False
     allow_semantic_fallback: bool = False
@@ -371,8 +371,8 @@ class AnalyzerConfig:
         if self.batch_size <= 0:
             raise ValueError("batch_size must be > 0")
 
-        if self.min_semantic_lines < 0:
-            raise ValueError("min_semantic_lines must be >= 0")
+        if self.min_semantic_statements < 0:
+            raise ValueError("min_semantic_statements must be >= 0")
 
         if not self.semantic_unit_types:
             raise ValueError("semantic_unit_types must contain at least one unit type")
@@ -552,7 +552,7 @@ class CodeAnalyzer:
                 unit
                 for unit in units
                 if unit.unit_type in semantic_type_filter
-                and get_code_unit_statement_count(unit) >= self.config.min_semantic_lines
+                and get_code_unit_statement_count(unit) >= self.config.min_semantic_statements
             ]
             self._semantic_units = semantic_candidates
 
@@ -759,7 +759,7 @@ def analyze_directory(
     device: str = DEFAULT_SEMANTIC_DEVICE,
     mps_fallback: bool | None = None,
     mps_memory_fraction: float | None = None,
-    min_semantic_lines: int = DEFAULT_MIN_SEMANTIC_LINES,
+    min_semantic_statements: int = DEFAULT_MIN_SEMANTIC_STATEMENTS,
     semantic_unit_types: tuple[str, ...] = DEFAULT_SEMANTIC_UNIT_TYPES,
     filter_tiny_traditional: bool = True,
     tiny_unit_statement_cutoff: int = DEFAULT_TINY_UNIT_STATEMENT_CUTOFF,
@@ -788,7 +788,7 @@ def analyze_directory(
             ``None`` enables the safe automatic policy while respecting an existing
             ``PYTORCH_ENABLE_MPS_FALLBACK`` environment setting.
         mps_memory_fraction: Optional PyTorch MPS allocator fraction in ``(0, 2]``.
-        min_semantic_lines: Minimum statement count required for semantic analysis.
+        min_semantic_statements: Minimum statement count required for semantic analysis.
         semantic_unit_types: Unit types eligible for semantic embeddings.
         filter_tiny_traditional: Filter tiny traditional duplicates when true.
         tiny_unit_statement_cutoff: Tiny function/method cutoff (exclusive).
@@ -814,7 +814,7 @@ def analyze_directory(
         device=device,
         mps_fallback=mps_fallback,
         mps_memory_fraction=mps_memory_fraction,
-        min_semantic_lines=min_semantic_lines,
+        min_semantic_statements=min_semantic_statements,
         semantic_unit_types=semantic_unit_types,
         filter_tiny_traditional=filter_tiny_traditional,
         tiny_unit_statement_cutoff=tiny_unit_statement_cutoff,

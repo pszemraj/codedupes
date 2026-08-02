@@ -180,7 +180,7 @@ def main() -> int:
         help="Embedding batch size used for the candidate extraction run.",
     )
     parser.add_argument(
-        "--min-lines",
+        "--min-statements",
         type=int,
         default=0,
         help="Minimum statement count for semantic candidate extraction.",
@@ -220,7 +220,7 @@ def main() -> int:
         run_semantic=True,
         run_unused=False,
         include_private=True,
-        min_semantic_lines=args.min_lines,
+        min_semantic_statements=args.min_statements,
         jaccard_threshold=args.traditional_threshold,
         semantic_threshold=args.semantic_threshold,
         model_name=args.model,

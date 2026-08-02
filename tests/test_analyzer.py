@@ -297,7 +297,7 @@ def test_analyze_directory_uses_auto_revision_for_custom_model(tmp_path: Path, m
     analyze_directory(
         project,
         model_name="sentence-transformers/all-MiniLM-L6-v2",
-        min_semantic_lines=0,
+        min_semantic_statements=0,
         run_unused=False,
     )
 
@@ -359,7 +359,7 @@ def test_combined_mode_preserves_near_dupes_for_semantic_confirmation(
             run_traditional=True,
             run_semantic=True,
             run_unused=False,
-            min_semantic_lines=0,
+            min_semantic_statements=0,
             jaccard_threshold=0.85,
             semantic_threshold=0.82,
             filter_tiny_traditional=False,
@@ -393,7 +393,7 @@ def test_short_functions_are_skipped_from_semantic(tmp_path: Path) -> None:
             run_traditional=False,
             run_semantic=True,
             run_unused=False,
-            min_semantic_lines=3,
+            min_semantic_statements=3,
         )
     )
     result = analyzer.analyze(project)
@@ -436,7 +436,7 @@ def test_semantic_unit_scope(
         "run_traditional": False,
         "run_semantic": True,
         "run_unused": False,
-        "min_semantic_lines": 0,
+        "min_semantic_statements": 0,
     }
     if semantic_unit_types is not None:
         config_kwargs["semantic_unit_types"] = semantic_unit_types
@@ -488,7 +488,7 @@ def test_traditional_scope_depends_on_semantic_mode(
             run_traditional=True,
             run_semantic=run_semantic,
             run_unused=False,
-            min_semantic_lines=2,
+            min_semantic_statements=2,
         )
     )
     analyzer.analyze(project)
@@ -606,7 +606,7 @@ def test_analyzer_resolves_profile_default_semantic_threshold(tmp_path: Path, mo
             run_traditional=False,
             run_semantic=True,
             run_unused=False,
-            min_semantic_lines=0,
+            min_semantic_statements=0,
             semantic_threshold=None,
         )
     )
@@ -649,7 +649,7 @@ def test_unused_semantic_pairs_are_filtered(tmp_path: Path, monkeypatch) -> None
             run_traditional=False,
             run_semantic=True,
             run_unused=True,
-            min_semantic_lines=0,
+            min_semantic_statements=0,
             strict_unused=False,
         )
     )
@@ -678,7 +678,7 @@ def test_semantic_only_pre_excludes_exact_hash_pairs(tmp_path: Path, monkeypatch
             run_traditional=False,
             run_semantic=True,
             run_unused=False,
-            min_semantic_lines=0,
+            min_semantic_statements=0,
         )
     )
 
@@ -704,7 +704,7 @@ def test_combined_mode_fails_hard_on_runtime_semantic_error_by_default(
             run_traditional=True,
             run_semantic=True,
             run_unused=False,
-            min_semantic_lines=0,
+            min_semantic_statements=0,
             filter_tiny_traditional=False,
         )
     )
@@ -767,7 +767,7 @@ def test_combined_mode_fallback_keeps_scoped_traditional_units(tmp_path: Path, m
             run_semantic=True,
             allow_semantic_fallback=True,
             run_unused=False,
-            min_semantic_lines=2,
+            min_semantic_statements=2,
             filter_tiny_traditional=False,
         )
     )
@@ -798,7 +798,7 @@ def test_combined_mode_fallback_marks_semantic_degradation(tmp_path: Path, monke
             run_semantic=True,
             allow_semantic_fallback=True,
             run_unused=False,
-            min_semantic_lines=0,
+            min_semantic_statements=0,
             filter_tiny_traditional=False,
         )
     )
@@ -831,7 +831,7 @@ def test_search_uses_index_task_when_unset(tmp_path: Path, monkeypatch) -> None:
             run_traditional=False,
             run_semantic=True,
             run_unused=False,
-            min_semantic_lines=0,
+            min_semantic_statements=0,
         )
     )
     analyzer.analyze(project)
@@ -864,7 +864,7 @@ def test_search_threshold_defaults_to_none_and_honors_explicit_config(
         "run_traditional": False,
         "run_semantic": True,
         "run_unused": False,
-        "min_semantic_lines": 0,
+        "min_semantic_statements": 0,
     }
     analyzer = CodeAnalyzer(AnalyzerConfig(**base_config))
     analyzer.analyze(project)
@@ -892,7 +892,7 @@ def test_semantic_only_fails_hard_on_runtime_semantic_error(tmp_path: Path, monk
             run_traditional=False,
             run_semantic=True,
             run_unused=False,
-            min_semantic_lines=0,
+            min_semantic_statements=0,
         )
     )
 
@@ -955,7 +955,7 @@ def test_suppress_test_semantic_matches_filters_test_named_pairs(
             run_traditional=False,
             run_semantic=True,
             run_unused=False,
-            min_semantic_lines=0,
+            min_semantic_statements=0,
             suppress_test_semantic_matches=True,
         )
     )
@@ -1112,7 +1112,7 @@ def test_mixed_mode_semantic_failure_still_builds_hybrid_from_traditional(
             run_semantic=True,
             allow_semantic_fallback=True,
             run_unused=False,
-            min_semantic_lines=0,
+            min_semantic_statements=0,
             filter_tiny_traditional=False,
         )
     )
@@ -1160,7 +1160,7 @@ def test_single_method_modes_bypass_hybrid_synthesis(tmp_path: Path, monkeypatch
             run_traditional=True,
             run_semantic=False,
             run_unused=False,
-            min_semantic_lines=0,
+            min_semantic_statements=0,
             filter_tiny_traditional=False,
         )
     ).analyze(project)
@@ -1172,7 +1172,7 @@ def test_single_method_modes_bypass_hybrid_synthesis(tmp_path: Path, monkeypatch
             run_traditional=False,
             run_semantic=True,
             run_unused=False,
-            min_semantic_lines=0,
+            min_semantic_statements=0,
         )
     ).analyze(project)
     assert len(semantic_result.semantic_duplicates) == 1
@@ -1206,7 +1206,7 @@ def test_empty_reanalysis_clears_previous_search_state(tmp_path: Path, monkeypat
             run_traditional=False,
             run_semantic=True,
             run_unused=False,
-            min_semantic_lines=0,
+            min_semantic_statements=0,
         )
     )
 
@@ -1336,7 +1336,7 @@ def test_semantic_failures_raise_when_semantic_required(
             run_traditional=False,
             run_semantic=True,
             run_unused=run_unused,
-            min_semantic_lines=0,
+            min_semantic_statements=0,
         )
     )
 
@@ -1430,7 +1430,7 @@ def test_analyzer_passes_semantic_controls_to_index_and_query(
             run_traditional=False,
             run_semantic=True,
             run_unused=False,
-            min_semantic_lines=0,
+            min_semantic_statements=0,
             **config_overrides,
         )
     )
@@ -1463,7 +1463,7 @@ def test_analyzer_default_embedding_cache_enabled_and_scoped_to_analyzed_root(
             run_traditional=False,
             run_semantic=True,
             run_unused=False,
-            min_semantic_lines=0,
+            min_semantic_statements=0,
         )
     )
     analyzer.analyze(project)

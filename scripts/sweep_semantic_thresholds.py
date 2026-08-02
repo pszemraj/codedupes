@@ -100,7 +100,7 @@ def _run_model_sweep(
     model_name: str,
     corpus_path: Path,
     labels: dict[str, Any],
-    min_lines: int,
+    min_statements: int,
     batch_size: int,
 ) -> ModelSweep:
     profile = resolve_model_profile(model_name)
@@ -111,7 +111,7 @@ def _run_model_sweep(
         include_private=True,
         model_name=model_name,
         semantic_threshold=THRESHOLD_START,
-        min_semantic_lines=min_lines,
+        min_semantic_statements=min_statements,
         batch_size=batch_size,
     )
     analyzer = CodeAnalyzer(config)
@@ -169,7 +169,7 @@ def main() -> int:
         help="Model keys or IDs to sweep. Defaults to all built-in profiles.",
     )
     parser.add_argument(
-        "--min-lines",
+        "--min-statements",
         type=int,
         default=0,
         help="Minimum statement count for semantic candidate extraction.",
@@ -203,7 +203,7 @@ def main() -> int:
                 model_name=model_name,
                 corpus_path=args.corpus_path,
                 labels=labels,
-                min_lines=args.min_lines,
+                min_statements=args.min_statements,
                 batch_size=args.batch_size,
             )
         )

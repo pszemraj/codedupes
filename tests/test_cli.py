@@ -628,7 +628,7 @@ def test_cli_rejects_conflicting_paired_flags(
         (["--trust-remote-code"], "--trust-remote-code"),
         (["--no-trust-remote-code"], "--no-trust-remote-code"),
         (["--batch-size", "4"], "--batch-size"),
-        (["--min-lines", "1"], "--min-lines"),
+        (["--min-statements", "1"], "--min-statements"),
         (["--semantic-unit-type", "class"], "--semantic-unit-type"),
         (["--suppress-test-semantic"], "--suppress-test-semantic"),
     ],
@@ -866,7 +866,7 @@ def test_cli_check_fails_on_semantic_backend_error_without_fallback(monkeypatch,
     monkeypatch.setattr(analyzer_module, "run_semantic_analysis", _raise_semantic_backend_error)
 
     runner = CliRunner()
-    result = runner.invoke(cli.cli, ["check", str(path), "--min-lines", "0"])
+    result = runner.invoke(cli.cli, ["check", str(path), "--min-statements", "0"])
     assert result.exit_code == 1
     assert "Error during analysis" in result.output
     assert "--allow-semantic-fallback" in result.output
@@ -883,7 +883,7 @@ def test_cli_check_degrades_on_semantic_backend_error_with_fallback(monkeypatch,
     runner = CliRunner()
     result = runner.invoke(
         cli.cli,
-        ["check", str(path), "--min-lines", "0", "--allow-semantic-fallback"],
+        ["check", str(path), "--min-statements", "0", "--allow-semantic-fallback"],
     )
     assert result.exit_code == 1
     assert "Semantic analysis unavailable" in result.output
@@ -900,7 +900,7 @@ def test_cli_check_degrades_on_semantic_backend_error_in_json(monkeypatch, tmp_p
     runner = CliRunner()
     result = runner.invoke(
         cli.cli,
-        ["check", str(path), "--min-lines", "0", "--allow-semantic-fallback", "--json"],
+        ["check", str(path), "--min-statements", "0", "--allow-semantic-fallback", "--json"],
     )
     assert result.exit_code == 1
 
@@ -916,7 +916,7 @@ def test_cli_check_degrades_on_semantic_backend_error_in_json(monkeypatch, tmp_p
 @pytest.mark.parametrize(
     ("args", "expected_message"),
     [
-        (["check", "--semantic-only", "--min-lines", "0"], "Error during analysis"),
+        (["check", "--semantic-only", "--min-statements", "0"], "Error during analysis"),
         (["search", "entry"], "Error during search"),
     ],
 )

@@ -8,7 +8,8 @@ Default semantic candidate selection:
 
 - unit types: `function`, `method`
 - class units are excluded by default from semantic embedding
-- minimum statement count: `3` (via `min_semantic_lines`)
+- minimum statement count: `3` (via `min_semantic_statements`)
+- statements are counted recursively through control-flow bodies (`try`, `with`, loops, conditionals, `match`), so a large function implemented inside one outer block is not measured as a single statement; nested function/class definitions count as one declaration each
 
 Combined-mode alignment rule:
 
@@ -19,7 +20,7 @@ Override via CLI:
 
 ```bash
 codedupes check ./src --semantic-unit-type class
-codedupes check ./src --min-lines 0
+codedupes check ./src --min-statements 0
 ```
 
 Override via Python API:
@@ -27,7 +28,7 @@ Override via Python API:
 ```python
 AnalyzerConfig(
     semantic_unit_types=("function", "method", "class"),
-    min_semantic_lines=0,
+    min_semantic_statements=0,
 )
 ```
 

@@ -23,7 +23,7 @@ from codedupes.analyzer import AnalyzerConfig, CodeAnalyzer
 from codedupes.constants import (
     DEFAULT_BATCH_SIZE,
     DEFAULT_CHECK_SEMANTIC_TASK,
-    DEFAULT_MIN_SEMANTIC_LINES,
+    DEFAULT_MIN_SEMANTIC_STATEMENTS,
     DEFAULT_MODEL,
     DEFAULT_SEARCH_SEMANTIC_TASK,
     DEFAULT_SEMANTIC_DEVICE,
@@ -50,7 +50,7 @@ from codedupes.semantic_profiles import (
 )
 
 DEFAULT_THRESHOLD = get_default_semantic_threshold(DEFAULT_MODEL)
-DEFAULT_MIN_LINES = DEFAULT_MIN_SEMANTIC_LINES
+DEFAULT_MIN_STATEMENTS = DEFAULT_MIN_SEMANTIC_STATEMENTS
 DEFAULT_OUTPUT_WIDTH = 160
 MIN_OUTPUT_WIDTH = 80
 DEFAULT_TABLE_ROWS = 20
@@ -812,7 +812,7 @@ def _add_common_analysis_options(
     :return: Decorator that applies click options to command functions.
     """
     if command_name == "check":
-        min_lines_help = (
+        min_statements_help = (
             "Skip semantic comparison for code units with fewer body statements "
             "(also narrows traditional duplicate scope in combined mode)"
         )
@@ -821,7 +821,7 @@ def _add_common_analysis_options(
             "also narrows traditional duplicate scope in combined mode)"
         )
     else:
-        min_lines_help = "Skip semantic comparison for code units with fewer body statements"
+        min_statements_help = "Skip semantic comparison for code units with fewer body statements"
         semantic_unit_help = (
             "Unit type(s) eligible for semantic embedding (repeat option to add more)"
         )
@@ -833,12 +833,12 @@ def _add_common_analysis_options(
             help="Exclude private functions/classes",
         ),
         click.option(
-            "--min-lines",
+            "--min-statements",
             type=int,
-            default=DEFAULT_MIN_LINES,
+            default=DEFAULT_MIN_STATEMENTS,
             show_default=True,
             callback=_validate_non_negative_int,
-            help=min_lines_help,
+            help=min_statements_help,
         ),
         click.option(
             "--semantic-unit-type",
@@ -1060,7 +1060,7 @@ def check_command(
     show_source: bool,
     full_table: bool,
     no_private: bool,
-    min_lines: int,
+    min_statements: int,
     semantic_unit_type: tuple[str, ...],
     model: str,
     semantic_task: str,
@@ -1101,7 +1101,7 @@ def check_command(
     :param show_source: Show source code snippets for duplicate pairs.
     :param full_table: Show all table rows.
     :param no_private: Exclude private symbols.
-    :param min_lines: Minimum code body statement lines for semantic candidate code units.
+    :param min_statements: Minimum code body statement lines for semantic candidate code units.
     :param semantic_unit_type: Unit type(s) eligible for semantic embedding.
     :param model: Semantic model alias/identifier.
     :param semantic_task: Semantic task used during duplicate detection.
@@ -1158,7 +1158,7 @@ def check_command(
             "no_mps_fallback",
             "mps_memory_fraction",
             "batch_size",
-            "min_lines",
+            "min_statements",
             "semantic_unit_type",
             "suppress_test_semantic",
         ]
@@ -1230,7 +1230,7 @@ def check_command(
             run_semantic=not traditional_only,
             allow_semantic_fallback=allow_semantic_fallback,
             run_unused=not no_unused,
-            min_semantic_lines=min_lines,
+            min_semantic_statements=min_statements,
             semantic_unit_types=semantic_unit_type,
             filter_tiny_traditional=not no_tiny_filter,
             tiny_unit_statement_cutoff=tiny_cutoff,
@@ -1359,7 +1359,7 @@ def search_command(
     semantic_threshold: float | None,
     semantic_task: str,
     no_private: bool,
-    min_lines: int,
+    min_statements: int,
     semantic_unit_type: tuple[str, ...],
     model: str,
     instruction_prefix: str | None,
@@ -1388,7 +1388,7 @@ def search_command(
     :param semantic_threshold: Semantic threshold override.
     :param semantic_task: Semantic task used for search.
     :param no_private: Exclude private symbols.
-    :param min_lines: Minimum code body statement lines for semantic candidate code units.
+    :param min_statements: Minimum code body statement lines for semantic candidate code units.
     :param semantic_unit_type: Unit type(s) eligible for semantic embedding.
     :param model: Semantic model alias/identifier.
     :param instruction_prefix: Optional custom embedding prefix.
@@ -1433,7 +1433,7 @@ def search_command(
             mps_memory_fraction=mps_memory_fraction,
             run_traditional=False,
             run_unused=False,
-            min_semantic_lines=min_lines,
+            min_semantic_statements=min_statements,
             semantic_unit_types=semantic_unit_type,
             batch_size=batch_size,
             include_stubs=include_stubs,
@@ -1497,7 +1497,7 @@ def info_command() -> None:
     click.echo(f"Default traditional threshold: {DEFAULT_TRADITIONAL_THRESHOLD}")
     click.echo(f"Default semantic task for check: {DEFAULT_CHECK_SEMANTIC_TASK}")
     click.echo(f"Default semantic task for search: {DEFAULT_SEARCH_SEMANTIC_TASK}")
-    click.echo(f"Default min_lines for semantic: {DEFAULT_MIN_LINES}")
+    click.echo(f"Default min_statements for semantic: {DEFAULT_MIN_STATEMENTS}")
     click.echo(f"Default output width: {DEFAULT_OUTPUT_WIDTH}")
     click.echo("Default combined semantic fallback: disabled")
     click.echo("Default built-in exclude globs:")

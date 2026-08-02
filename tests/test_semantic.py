@@ -82,6 +82,78 @@ def test_code_unit_statement_count_ignores_docstring(tmp_path: Path) -> None:
     assert get_code_unit_statement_count(unit) == 2
 
 
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        pytest.param(
+            """
+            def guarded():
+                try:
+                    a = 1
+                    b = 2
+                    c = 3
+                    return a + b + c
+                except ValueError:
+                    return 0
+            """,
+            # try + 4 body statements + handler return; the except clause itself
+            # is an ast.excepthandler, not a statement.
+            6,
+            id="single-try",
+        ),
+        pytest.param(
+            """
+            def managed(path):
+                with open(path) as handle:
+                    first = handle.readline()
+                    second = handle.readline()
+                    return first + second
+            """,
+            4,
+            id="single-with",
+        ),
+        pytest.param(
+            """
+            def looped(items):
+                for item in items:
+                    if item:
+                        yield item
+                    else:
+                        continue
+            """,
+            4,
+            id="single-loop",
+        ),
+    ],
+)
+def test_statement_count_recurses_into_control_flow(
+    tmp_path: Path, source: str, expected: int
+) -> None:
+    unit = extract_arithmetic_units(tmp_path)[0]
+    unit.source = source
+    assert get_code_unit_statement_count(unit) == expected
+
+
+def test_statement_count_stops_at_nested_scopes(tmp_path: Path) -> None:
+    source = """
+    def outer():
+        def inner():
+            a = 1
+            b = 2
+            return a + b
+
+        class Helper:
+            def method(self):
+                return 1
+
+        return inner
+    """
+    unit = extract_arithmetic_units(tmp_path)[0]
+    unit.source = source
+    # inner (1) + Helper (1) + return (1); nested bodies belong to their own units.
+    assert get_code_unit_statement_count(unit) == 3
+
+
 def test_prepare_code_for_embedding_default_model_no_prefix(tmp_path: Path) -> None:
     units = extract_arithmetic_units(tmp_path)
     prepared = semantic.prepare_code_for_embedding(units[0], mode="query")
