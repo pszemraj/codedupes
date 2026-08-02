@@ -55,18 +55,21 @@ The harness uses the same analyzer synthesis logic and model/revision defaults a
 
 ## Semantic threshold sweep (model profiles)
 
-Run the semantic threshold sweep for built-in model profiles:
+Run the duplicate and search threshold sweeps for built-in model profiles:
 
 ```bash
 CUDA_VISIBLE_DEVICES='' python scripts/sweep_semantic_thresholds.py --top-n 10
 ```
 
-Default report path:
+Default report paths:
 
-- [`../test_fixtures/hybrid_tuning/semantic_threshold_report.json`](../test_fixtures/hybrid_tuning/semantic_threshold_report.json)
+- [`../test_fixtures/hybrid_tuning/semantic_threshold_report.json`](../test_fixtures/hybrid_tuning/semantic_threshold_report.json) — duplicate thresholds
+- [`../test_fixtures/hybrid_tuning/search_threshold_report.json`](../test_fixtures/hybrid_tuning/search_threshold_report.json) — search thresholds, evaluated against [`../test_fixtures/hybrid_tuning/search_probes.json`](../test_fixtures/hybrid_tuning/search_probes.json)
+
+Each report records the full calibration identity per model: the pinned immutable commit, embedding pipeline schema and runtime fingerprint, encode plan (route and prompt per input mode), device and dtype, embedding dimension, candidate policy, and SHA-256 digests of the corpus and labels/probes. The sweep refuses to run for a model that cannot be pinned to a 40-character commit — pass `--model-revision` or pin the profile's `default_revision`.
 
 Selection policy is deterministic:
 
-- sort by `f1` (desc), `precision` (desc), `recall` (desc), `fp` (asc)
+- sort by `f1` (desc), `precision` (desc), `recall` (desc), `fp` (asc), then prefer the looser threshold on remaining ties
 
-Production gate values are listed in [Analysis defaults](analysis-defaults.md). Model-specific semantic thresholds are listed in [Model profiles](model-profiles.md).
+Transferring a swept value into a profile default is a reviewed decision, not automatic: re-validate on at least one real repository, and prefer recall when stepping off the F1-best row. Production gate values are listed in [Analysis defaults](analysis-defaults.md). Model-specific semantic thresholds are listed in [Model profiles](model-profiles.md).

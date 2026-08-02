@@ -35,6 +35,9 @@ class SemanticModelProfile:
         return (self.key, self.canonical_name, *self.aliases)
 
 
+# Calibrated thresholds are only meaningful against the exact checkpoint they
+# were swept on, so every builtin profile pins the immutable commit recorded in
+# test_fixtures/hybrid_tuning/semantic_threshold_report.json.
 _BUILTIN_MODEL_PROFILES: tuple[SemanticModelProfile, ...] = (
     SemanticModelProfile(
         key="gte-modernbert-base",
@@ -44,6 +47,7 @@ _BUILTIN_MODEL_PROFILES: tuple[SemanticModelProfile, ...] = (
             "alibaba-nlp/gte-modernbert-base",
         ),
         family="gte-modernbert",
+        default_revision="e7f32e3c00f91d699e8c43b53106206bcc72bb22",
         default_semantic_threshold=0.96,
         default_search_threshold=0.50,
     ),
@@ -56,8 +60,9 @@ _BUILTIN_MODEL_PROFILES: tuple[SemanticModelProfile, ...] = (
             "embeddinggemma",
         ),
         family="embeddinggemma",
+        default_revision="bfa3c846ac738e62aa61806ef9112d34acb1dc5a",
         default_semantic_threshold=0.86,
-        default_search_threshold=0.40,
+        default_search_threshold=0.52,
     ),
 )
 
@@ -178,7 +183,6 @@ _BUILTIN_ALIAS_MAP = {
     for profile in _BUILTIN_MODEL_PROFILES
     for alias in profile.all_aliases()
 }
-_BUILTIN_FAMILY_PROFILES = {profile.family: profile for profile in _BUILTIN_MODEL_PROFILES}
 
 
 def _true_case_path(path: Path) -> Path:
@@ -243,20 +247,26 @@ def _build_dynamic_profile(
     model_name: str,
     family: CalibratedModelFamily,
 ) -> SemanticModelProfile:
-    """Build a calibrated family profile for a non-builtin model.
+    """Build a family-aware profile for a non-builtin model.
+
+    Family membership selects loading and prompt behavior only. Calibrated
+    thresholds are a property of the exact pinned checkpoint they were swept
+    on, and a name or config that merely resembles a family (a fine-tune, a
+    modified local copy) can have an entirely different score distribution, so
+    dynamic profiles keep the uncalibrated generic thresholds. Pass an explicit
+    threshold to override.
 
     :param model_name: Model name or local directory path.
-    :param family: Built-in family whose calibrated thresholds should be inherited.
-    :return: Dynamic family-appropriate profile.
+    :param family: Built-in family whose loading/prompt behavior applies.
+    :return: Dynamic family-appropriate profile with generic thresholds.
     """
-    builtin = _BUILTIN_FAMILY_PROFILES[family]
     return SemanticModelProfile(
         key=model_name,
         canonical_name=model_name,
         aliases=(),
         family=family,
-        default_semantic_threshold=builtin.default_semantic_threshold,
-        default_search_threshold=builtin.default_search_threshold,
+        default_semantic_threshold=_GENERIC_PROFILE.default_semantic_threshold,
+        default_search_threshold=_GENERIC_PROFILE.default_search_threshold,
     )
 
 

@@ -6,22 +6,23 @@ Profiles resolve model aliases, thresholds, revisions, trust settings, and task-
 
 | profile key | canonical model ID | family | duplicate threshold | search threshold | default revision | default trust mode |
 | --- | --- | --- | --- | --- | --- | --- |
-| `gte-modernbert-base` | `Alibaba-NLP/gte-modernbert-base` | `gte-modernbert` | `0.96` | `0.50` | `auto` (unpinned) | `False` |
-| `embeddinggemma-300m` | `unsloth/embeddinggemma-300m` | `embeddinggemma` | `0.86` | `0.40` | `auto` (unpinned) | `False` |
+| `gte-modernbert-base` | `Alibaba-NLP/gte-modernbert-base` | `gte-modernbert` | `0.96` | `0.50` | `e7f32e3c00f91d699e8c43b53106206bcc72bb22` | `False` |
+| `embeddinggemma-300m` | `unsloth/embeddinggemma-300m` | `embeddinggemma` | `0.86` | `0.52` | `bfa3c846ac738e62aa61806ef9112d34acb1dc5a` | `False` |
 
 Notes:
 
 - The duplicate threshold gates `check` pair reporting; the search threshold is the floor for `search` query matches. Query-to-code similarity runs far below code-to-code duplicate similarity, so search defaults are intentionally much lower.
-- Search defaults are calibrated recall-safe: across seven real corpora, genuinely relevant hits start near `0.59` while fully off-topic queries ceiling near `0.48` on most corpora. Vocabulary overlap from a shared domain (GPU kernels vs a graphics query) or even a single shared word ("pattern", "parse", "warp") can push off-topic matches to `0.52`-`0.65`; those carry visible scores and rank below real hits, but raise `--semantic-threshold` toward `0.6` if they clutter results. No fixed floor separates them everywhere, and the default deliberately favors recall over precision.
+- Every builtin default revision is a pinned immutable commit: a calibrated threshold is only a property of the exact checkpoint, prompt plan, and pipeline it was swept on, and the calibration identity for each default is recorded in `test_fixtures/hybrid_tuning/semantic_threshold_report.json` (duplicates) and `search_threshold_report.json` (search). Pinning also keeps the warm no-model-load cache path stable after the hub cache is cleared.
+- The gte-modernbert search default is calibrated recall-safe against real corpora: genuinely relevant hits start near `0.59` while fully off-topic queries ceiling near `0.48` on most corpora. Vocabulary overlap from a shared domain (GPU kernels vs a graphics query) or even a single shared word ("pattern", "parse", "warp") can push off-topic matches to `0.52`-`0.65`; those carry visible scores and rank below real hits, but raise `--semantic-threshold` toward `0.6` if they clutter results. No fixed floor separates them everywhere, and the default deliberately favors recall over precision. The synthetic-corpus search sweep saturates for this model (every unit shares one domain), so its report is a guardrail, not the default's source.
+- The EmbeddingGemma search default comes from the labeled probe sweep under the fixed prompt pipeline: `0.54` maximizes F1, and the default takes one step looser (`0.52`, full probe recall) per the recall-first policy. The pre-prompt-fix `0.40` belonged to a different vector space and was not carried forward.
 - Generic/unknown models fall back to duplicate threshold `0.82` and search threshold `0.35` unless you override `--semantic-threshold` / `semantic_threshold`.
 
 ## Alias resolution rules
 
 - Built-in alias keys and known aliases resolve to the profile's canonical model ID.
 - A model name that is an existing directory on disk is treated as a local model copy before built-in aliases are considered, then canonicalized to its resolved absolute path — including the on-disk letter case on case-insensitive filesystems such as macOS — so relative, absolute, and differently-cased spellings share one cache identity.
-- Known local model families are inferred from a recognizable directory name, Hugging Face cache ancestor, saved configuration, or model-card title. Unrecognized local models use the generic thresholds.
-- Any model name containing `embeddinggemma` resolves to a dynamic EmbeddingGemma-family profile with the built-in profile's thresholds and encode entry points.
-- Any model name containing `gte-modernbert` resolves to a dynamic gte-modernbert-family profile with the built-in profile's calibrated thresholds.
+- Known local model families are inferred from a recognizable directory name, Hugging Face cache ancestor, saved configuration, or model-card title.
+- Family inference selects loading and prompt behavior only. Any non-builtin model — a hub name or local directory containing `embeddinggemma` or `gte-modernbert`, a fine-tune, an arbitrary copy — keeps the family's encode entry points and prompts but uses the uncalibrated generic thresholds: calibrated thresholds belong to the exact pinned builtin checkpoint they were swept on, and a lookalike name proves nothing about a model's score distribution. Pass `--threshold`/`--semantic-threshold` for tuned weights.
 - Other unknown model IDs resolve to the generic profile.
 
 ### Local model directories and offline use

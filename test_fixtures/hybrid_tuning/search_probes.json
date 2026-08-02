@@ -1,0 +1,86 @@
+{
+  "description": "Labeled natural-language search probes over the crab_visibility corpus for search-threshold calibration.",
+  "probes": [
+    {
+      "query": "normalize a longitude angle in degrees into the 0 to 360 range",
+      "expected": [
+        "geometry.py::normalize_longitude_deg",
+        "sidereal.py::normalize_longitude_deg"
+      ]
+    },
+    {
+      "query": "format a count of minutes as an hours minutes seconds string",
+      "expected": [
+        "windowing.py::minutes_to_hms",
+        "reporting.py::format_minutes_hms",
+        "legacy_report.py::minutes_to_hms_legacy"
+      ]
+    },
+    {
+      "query": "classify how good a night is for observing based on visible minutes",
+      "expected": [
+        "predict.py::classify_night_quality",
+        "nightly_batch.py::rank_night_quality"
+      ]
+    },
+    {
+      "query": "estimate how many minutes a target stays visible above the horizon",
+      "expected": [
+        "predict.py::estimate_visibility_minutes",
+        "nightly_batch.py::estimate_observable_minutes"
+      ]
+    },
+    {
+      "query": "merge overlapping time windows into disjoint intervals",
+      "expected": [
+        "windowing.py::merge_overlapping_windows"
+      ]
+    },
+    {
+      "query": "convert a UTC datetime into a Julian day number",
+      "expected": [
+        "sidereal.py::utc_to_julian_day"
+      ]
+    },
+    {
+      "query": "angular separation between two sky coordinates in degrees",
+      "expected": [
+        "geometry.py::angular_separation_deg"
+      ]
+    },
+    {
+      "query": "check whether the target altitude is above the minimum horizon floor",
+      "expected": [
+        "predict.py::is_cancer_above_horizon",
+        "nightly_batch.py::is_crab_above_horizon",
+        "predict.py::verbose_visibility_flag",
+        "planner_alt.py::fast_visibility_flag"
+      ]
+    },
+    {
+      "query": "parse a latitude comma longitude string from the command line",
+      "expected": [
+        "predict_cli.py::parse_lat_lon"
+      ]
+    },
+    {
+      "query": "compute local sidereal time in hours for a longitude",
+      "expected": [
+        "sidereal.py::local_sidereal_time_hours"
+      ]
+    },
+    {
+      "query": "build a markdown table row summarizing a site's visibility",
+      "expected": [
+        "reporting.py::build_markdown_row"
+      ]
+    },
+    {
+      "query": "compute continuous bands of visibility above an altitude threshold",
+      "expected": [
+        "planner.py::compute_visibility_bands",
+        "planner_alt.py::derive_observable_bands"
+      ]
+    }
+  ]
+}

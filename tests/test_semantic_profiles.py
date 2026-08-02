@@ -6,6 +6,7 @@ import pytest
 
 from codedupes.semantic_profiles import (
     DEFAULT_FALLBACK_SEARCH_THRESHOLD,
+    DEFAULT_FALLBACK_SEMANTIC_THRESHOLD,
     _true_case_path,
     get_default_search_threshold,
     get_default_semantic_threshold,
@@ -134,15 +135,24 @@ def test_existing_local_directory_takes_precedence_over_builtin_alias(
     assert profile.family == "gte-modernbert"
 
 
+def test_builtin_profiles_pin_immutable_revisions() -> None:
+    for profile in list_supported_models():
+        revision = profile.default_revision
+        assert revision is not None
+        assert len(revision) == 40
+        assert all(character in "0123456789abcdef" for character in revision)
+
+
 def test_local_directory_family_inferred_from_basename(tmp_path: Path) -> None:
     gemma_dir = tmp_path / "embeddinggemma-work-copy"
     gemma_dir.mkdir()
     gemma = resolve_model_profile(str(gemma_dir))
     assert gemma.family == "embeddinggemma"
     assert gemma.canonical_name == str(gemma_dir.resolve())
-    builtin = resolve_model_profile("embeddinggemma")
-    assert gemma.default_semantic_threshold == builtin.default_semantic_threshold
-    assert gemma.default_search_threshold == builtin.default_search_threshold
+    # Family selects loading/prompt behavior only; calibrated thresholds belong
+    # to the pinned builtin checkpoint, and an arbitrary local copy may not be it.
+    assert gemma.default_semantic_threshold == DEFAULT_FALLBACK_SEMANTIC_THRESHOLD
+    assert gemma.default_search_threshold == DEFAULT_FALLBACK_SEARCH_THRESHOLD
 
 
 def test_hash_named_hf_snapshot_infers_family_from_cache_ancestor(tmp_path: Path) -> None:
@@ -157,7 +167,7 @@ def test_hash_named_hf_snapshot_infers_family_from_cache_ancestor(tmp_path: Path
     profile = resolve_model_profile(str(snapshot))
 
     assert profile.family == "gte-modernbert"
-    assert profile.default_search_threshold == get_default_search_threshold("gte-modernbert-base")
+    assert profile.default_search_threshold == DEFAULT_FALLBACK_SEARCH_THRESHOLD
 
 
 def test_arbitrary_local_directory_infers_embeddinggemma_from_config(tmp_path: Path) -> None:
@@ -170,9 +180,7 @@ def test_arbitrary_local_directory_infers_embeddinggemma_from_config(tmp_path: P
     profile = resolve_model_profile(str(model_dir))
 
     assert profile.family == "embeddinggemma"
-    assert profile.default_semantic_threshold == get_default_semantic_threshold(
-        "embeddinggemma-300m"
-    )
+    assert profile.default_semantic_threshold == DEFAULT_FALLBACK_SEMANTIC_THRESHOLD
 
 
 def test_arbitrary_local_directory_infers_gte_family_from_model_card(tmp_path: Path) -> None:
@@ -197,11 +205,13 @@ def test_dynamic_embeddinggemma_profile_for_non_builtin_hub_id() -> None:
     assert profile.canonical_name == "someone/embeddinggemma-300m-code-ft"
 
 
-def test_dynamic_gte_modernbert_profile_matches_builtin_thresholds(tmp_path: Path) -> None:
+def test_dynamic_gte_modernbert_profile_keeps_family_but_not_calibration(tmp_path: Path) -> None:
     local_dir = tmp_path / "gte-modernbert-base"
     local_dir.mkdir()
     profile = resolve_model_profile(str(local_dir))
     builtin = resolve_model_profile("gte-modernbert-base")
     assert profile.family == "gte-modernbert"
-    assert profile.default_semantic_threshold == builtin.default_semantic_threshold
-    assert profile.default_search_threshold == builtin.default_search_threshold
+    assert profile.default_revision is None
+    assert profile.default_semantic_threshold != builtin.default_semantic_threshold
+    assert profile.default_semantic_threshold == DEFAULT_FALLBACK_SEMANTIC_THRESHOLD
+    assert profile.default_search_threshold == DEFAULT_FALLBACK_SEARCH_THRESHOLD
