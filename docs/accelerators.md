@@ -69,13 +69,13 @@ MLX and PyTorch both consume Apple unified memory but manage it separately. `cod
 
 ## Hardware validation
 
-To validate your installed PyTorch wheel and the default model end to end on Apple Silicon hardware, run the opt-in smoke test:
+MPS behavior is validated on real Apple Silicon hardware only — the test suite contains no simulated MPS. `tests/test_semantic_mps.py` runs automatically wherever PyTorch reports a usable MPS device and skips only where the hardware is genuinely absent (a non-Mac host, or a sandbox that blocks Metal device access — a skipped run performs zero MPS validation, so run it from an environment with device access):
 
 ```bash
-CODEDUPES_SMOKE_MPS=1 pytest -m mps tests/test_semantic_smoke.py
+pytest tests/test_semantic_mps.py
 ```
 
-This test downloads the default model if it is not already cached.
+The suite loads the pinned default model on `mps`, checks CPU/MPS embedding parity, validates explicit `--device mps` requests against a warm embedding cache, and provokes genuine Metal allocator out-of-memory (by lowering `torch.mps.set_per_process_memory_fraction`) to prove load-time CPU fallback, the batch-halving ladder, and query-encode recovery work on the real allocator. The default model must already be cached locally (any prior `codedupes check` or `hf download` does this).
 
 A companion opt-in smoke test validates search quality against the probe corpus in `test_fixtures/search_probes/`: every relevant query must surface its expected function at the default search threshold and every off-topic query must return nothing:
 

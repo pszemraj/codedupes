@@ -44,10 +44,10 @@
 
 ## Validation boundary
 
-The offline suite covers deterministic MPS simulations and ordinary regressions. Physical Apple Silicon validation is an explicit release step:
+MPS is validated on real Apple Silicon hardware only; the suite contains no simulated MPS. `tests/test_semantic_mps.py` exercises model loading and encoding on the live device, CPU/MPS embedding parity, warm-cache explicit-device validation, and genuine Metal allocator out-of-memory recovery (load-time CPU fallback, the batch-halving ladder, and query-encode recovery, provoked through `torch.mps.set_per_process_memory_fraction`). The module skips only where the hardware is genuinely absent, and a skipped run performs zero MPS validation:
 
 ```bash
-CODEDUPES_SMOKE_MPS=1 pytest -m mps tests/test_semantic_smoke.py
+pytest tests/test_semantic_mps.py
 ```
 
-For this release it was performed on an Apple M5 (32 GB unified memory, macOS Tahoe, PyTorch 2.13.0): the smoke test passed with the model on `mps`, a full `codedupes check` of this repo ran roughly 38x faster on MPS than on CPU with bit-identical duplicate scores across the two devices, and strict `--no-mps-fallback` runs completed without hitting unsupported operators.
+For this release the hardware suite passed on an Apple M5 (32 GB unified memory, macOS Tahoe, PyTorch 2.13.0). On the same machine, a full `codedupes check` of this repo ran roughly 38x faster on MPS than on CPU with bit-identical duplicate scores across the two devices, and strict `--no-mps-fallback` runs completed without hitting unsupported operators.

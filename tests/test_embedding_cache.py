@@ -126,46 +126,6 @@ def test_symbolic_revision_revalidates_before_cache_hit(tmp_path, monkeypatch):
     np.testing.assert_array_equal(first, second)
 
 
-def test_auto_device_cache_key_shares_float32_macos_devices(tmp_path, monkeypatch):
-    units = _five_units(tmp_path)
-    model = CountingModel()
-    get_model_counts = _patch_get_model(monkeypatch, model)
-    selected_device = {"value": "cpu"}
-    resolution_count = {"value": 0}
-    monkeypatch.setattr(semantic, "_configure_semantic_runtime_env", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(semantic.sys, "platform", "darwin")
-
-    def resolve_device(_request):
-        resolution_count["value"] += 1
-        return selected_device["value"]
-
-    monkeypatch.setattr(semantic, "resolve_semantic_device", resolve_device)
-    monkeypatch.setattr(semantic, "_get_loaded_model_commit_hash", lambda _model: None)
-
-    kwargs = {
-        "model_name": "embeddinggemma-300m",
-        "revision": REVISION_1,
-        "device": "auto",
-        "cache_scope": tmp_path,
-    }
-    compute_embeddings(units, **kwargs)
-    assert get_model_counts["count"] == 1
-    assert len(model.encode_calls) == 1
-    assert resolution_count["value"] == 1
-
-    selected_device["value"] = "mps"
-    second = compute_embeddings(units, **kwargs)
-    assert get_model_counts["count"] == 1
-    assert len(model.encode_calls) == 1
-    assert resolution_count["value"] == 1
-    assert second.shape == (5, model.dim)
-
-    compute_embeddings(units, **kwargs)
-    assert get_model_counts["count"] == 1
-    assert len(model.encode_calls) == 1
-    assert resolution_count["value"] == 1
-
-
 def test_embeddinggemma_cache_variant_scopes_only_nondefault_dtype(monkeypatch):
     profile = semantic.resolve_model_profile("embeddinggemma-300m")
     monkeypatch.setattr(

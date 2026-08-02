@@ -741,6 +741,28 @@ def test_prepare_semantic_device_ignores_fraction_on_non_mps(caplog) -> None:
     assert "mps_memory_fraction ignored: resolved device is cpu" in caplog.text
 
 
+def test_encode_texts_does_not_hide_unrelated_type_error() -> None:
+    calls = 0
+
+    def broken_encode(_texts, **_kwargs):
+        nonlocal calls
+        calls += 1
+        raise TypeError("internal tensor type mismatch")
+
+    with pytest.raises(TypeError, match="tensor type mismatch"):
+        semantic._encode_texts(
+            broken_encode,
+            ["code"],
+            batch_size=1,
+            show_progress_bar=False,
+            convert_to_numpy=True,
+            normalize_embeddings=True,
+            device="cpu",
+        )
+
+    assert calls == 1
+
+
 def test_get_model_wraps_known_backend_error(monkeypatch) -> None:
     def fake_ctor(*args, **kwargs):
         raise RuntimeError("EmbeddingGemma tokenizer backend is incompatible")
