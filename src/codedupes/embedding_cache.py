@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 CACHE_SUBDIR = "repos"
 INDEX_FILENAME = "index.json"
 DEFAULT_CACHE_MAX_MB = 2048
-_SCHEMA_VERSION = 2
+_SCHEMA_VERSION = 3
 _PRUNE_TARGET_RATIO = 0.8
 _TOUCH_INTERVAL_SECONDS = 3600.0
 _COMPACTION_LIVE_MULTIPLIER = 2
@@ -52,8 +52,21 @@ class _ShardData:
     vectors: np.ndarray
     keys: dict[str, int]
     namespaces: dict[str, str]
+    digests: dict[str, str]
     last_used_at: float
     generation: str
+
+
+def _row_digest(vector: np.ndarray) -> str:
+    """Digest one embedding row for read-time integrity verification.
+
+    :param vector: Contiguous float32 embedding row.
+    :return: Hex digest of the row's exact bytes.
+    """
+    return hashlib.blake2b(
+        np.ascontiguousarray(vector, dtype=np.float32).tobytes(),
+        digest_size=16,
+    ).hexdigest()
 
 
 def _warn_once(action: str, exc: Exception) -> None:
@@ -302,6 +315,7 @@ def _validate_shard_metadata(payload: Any) -> dict[str, Any] | None:
     dim = payload.get("dim")
     keys_map = payload.get("keys")
     namespaces = payload.get("namespaces")
+    digests = payload.get("digests")
     generation = payload.get("generation")
     if not isinstance(model, str) or not isinstance(revision, str):
         return None
@@ -318,6 +332,14 @@ def _validate_shard_metadata(payload: Any) -> dict[str, Any] | None:
         or not all(
             isinstance(key, str) and isinstance(namespace, str)
             for key, namespace in namespaces.items()
+        )
+    ):
+        return None
+    if (
+        not isinstance(digests, dict)
+        or set(digests) != set(keys_map)
+        or not all(
+            isinstance(key, str) and isinstance(digest, str) for key, digest in digests.items()
         )
     ):
         return None
@@ -341,6 +363,7 @@ def _validate_shard_metadata(payload: Any) -> dict[str, Any] | None:
         "dim": dim,
         "keys": dict(keys_map),
         "namespaces": dict(namespaces),
+        "digests": dict(digests),
         "last_used_at": normalized_last_used_at,
         "generation": generation,
     }
@@ -404,6 +427,7 @@ def _read_shard(shard_dir: Path) -> _ShardData | None:
         vectors=vectors,
         keys=metadata["keys"],
         namespaces=metadata["namespaces"],
+        digests=metadata["digests"],
         last_used_at=metadata["last_used_at"],
         generation=metadata["generation"],
     )
@@ -435,6 +459,7 @@ def _atomic_write_shard(
     vectors: np.ndarray,
     keys_map: dict[str, int],
     namespaces: dict[str, str],
+    digests: dict[str, str],
     dim: int,
 ) -> None:
     """Publish a complete shard generation through one atomic index replacement.
@@ -451,7 +476,8 @@ def _atomic_write_shard(
     :param revision: Resolved model revision, or ``None`` when unpinned.
     :param vectors: Full float32 vector matrix to persist.
     :param keys_map: Key-to-row mapping to persist.
-    :param namespaces: Key-to-input-namespace mapping used for safe compaction.
+    :param namespaces: Key-to-input-namespace mapping used for namespace capping.
+    :param digests: Key-to-row-digest mapping used for read-time integrity checks.
     :param dim: Embedding dimensionality.
     :return: ``None``.
     """
@@ -476,6 +502,7 @@ def _atomic_write_shard(
             "dim": dim,
             "keys": keys_map,
             "namespaces": namespaces,
+            "digests": digests,
             "last_used_at": time.time(),
             "generation": generation,
         }
@@ -528,20 +555,20 @@ def _rebuild_matrix_retaining(
     vectors: np.ndarray,
     keys_map: dict[str, int],
     namespaces: dict[str, str],
+    digests: dict[str, str],
     dim: int,
     retained_keys: list[str],
-) -> tuple[np.ndarray, dict[str, int], dict[str, str]]:
+) -> tuple[np.ndarray, dict[str, int], dict[str, str], dict[str, str]]:
     """Rebuild a shard's vector matrix and key maps keeping only the given keys.
-
-    Shared by stale-key compaction and namespace-key-count capping so both
-    densely renumber rows the same way.
 
     :param vectors: Current vector matrix indexed by ``keys_map``.
     :param keys_map: Current key-to-row mapping.
     :param namespaces: Current key-to-input-namespace mapping.
+    :param digests: Current key-to-row-digest mapping.
     :param dim: Embedding dimensionality.
     :param retained_keys: Keys to keep, in their new row order.
-    :return: Rebuilt ``(vectors, keys_map, namespaces)`` with densely renumbered rows.
+    :return: Rebuilt ``(vectors, keys_map, namespaces, digests)`` with densely
+        renumbered rows.
     """
     new_vectors = (
         np.stack(
@@ -556,7 +583,8 @@ def _rebuild_matrix_retaining(
     )
     new_keys_map = {key: row for row, key in enumerate(retained_keys)}
     new_namespaces = {key: namespaces[key] for key in retained_keys}
-    return new_vectors, new_keys_map, new_namespaces
+    new_digests = {key: digests[key] for key in retained_keys}
+    return new_vectors, new_keys_map, new_namespaces, new_digests
 
 
 def _write_shard_entries(
@@ -602,6 +630,7 @@ def _write_shard_entries(
                 vectors = existing.vectors
                 keys_map = existing.keys
                 namespaces = existing.namespaces
+                digests = existing.digests
                 dim = int(vectors.shape[1])
             else:
                 if entry_dim is None:
@@ -610,6 +639,7 @@ def _write_shard_entries(
                 vectors = np.empty((0, dim), dtype=np.float32)
                 keys_map = {}
                 namespaces = {}
+                digests = {}
             existing = None
 
             missing_entries: list[tuple[str, np.ndarray]] = []
@@ -618,9 +648,11 @@ def _write_shard_entries(
                 row = keys_map.get(key)
                 if row is None:
                     missing_entries.append((key, vector))
-                elif not _is_finite_row(vectors[row]):
-                    # A poisoned stored row (NaN/Inf) is a permanent miss for
-                    # get_many (see its matching _is_finite_row check), so a
+                elif not _is_finite_row(vectors[row]) or digests.get(key) != _row_digest(
+                    vectors[row]
+                ):
+                    # A poisoned or digest-mismatched stored row is a permanent
+                    # miss for get_many (see its matching checks), so a
                     # recomputed value for the same key must overwrite it here
                     # or the unit would re-embed on every future run forever.
                     overwrite_entries.append((key, vector))
@@ -629,10 +661,10 @@ def _write_shard_entries(
                 # existing.vectors is a read-only mmap; copy before mutating rows.
                 vectors = np.array(vectors, dtype=np.float32, copy=True)
                 for key, vector in overwrite_entries:
-                    vectors[keys_map[key]] = np.ascontiguousarray(vector, dtype=np.float32).reshape(
-                        dim
-                    )
+                    healed = np.ascontiguousarray(vector, dtype=np.float32).reshape(dim)
+                    vectors[keys_map[key]] = healed
                     namespaces[key] = namespace
+                    digests[key] = _row_digest(healed)
 
             if missing_entries:
                 start_row = vectors.shape[0]
@@ -647,6 +679,7 @@ def _write_shard_entries(
                 for offset, (key, _vector) in enumerate(missing_entries):
                     keys_map[key] = start_row + offset
                     namespaces[key] = namespace
+                    digests[key] = _row_digest(new_rows[offset])
 
             stale_keys: set[str] = set()
             if active_keys is not None:
@@ -662,8 +695,8 @@ def _write_shard_entries(
                     (key for key in keys_map if key not in stale_keys),
                     key=keys_map.__getitem__,
                 )
-                vectors, keys_map, namespaces = _rebuild_matrix_retaining(
-                    vectors, keys_map, namespaces, dim, retained_keys
+                vectors, keys_map, namespaces, digests = _rebuild_matrix_retaining(
+                    vectors, keys_map, namespaces, digests, dim, retained_keys
                 )
 
             capped_namespace = False
@@ -683,8 +716,8 @@ def _write_shard_entries(
                         (key for key in keys_map if key not in drop_keys),
                         key=keys_map.__getitem__,
                     )
-                    vectors, keys_map, namespaces = _rebuild_matrix_retaining(
-                        vectors, keys_map, namespaces, dim, retained_keys
+                    vectors, keys_map, namespaces, digests = _rebuild_matrix_retaining(
+                        vectors, keys_map, namespaces, digests, dim, retained_keys
                     )
                     capped_namespace = True
 
@@ -696,6 +729,7 @@ def _write_shard_entries(
                     vectors,
                     keys_map,
                     namespaces,
+                    digests,
                     dim,
                 )
     except Exception as exc:  # noqa: BLE001 - cache writes must never break analysis
@@ -871,10 +905,12 @@ class EmbeddingCache:
             if row is None:
                 continue
             vector = np.array(loaded.vectors[row], dtype=np.float32, copy=True)
-            # A NaN/Inf row would silently poison every similarity it touches on
-            # every future run; treat it as a miss so it gets recomputed (and, in
-            # _write_shard_entries, healed in place using this same predicate).
-            if _is_finite_row(vector):
+            # A NaN/Inf row would silently poison every similarity it touches,
+            # and a finite row whose bytes no longer match the digest recorded
+            # at write time is corruption that would otherwise look valid
+            # forever. Both degrade to a per-key miss so the unit is recomputed
+            # (and, in _write_shard_entries, healed in place).
+            if _is_finite_row(vector) and loaded.digests.get(key) == _row_digest(vector):
                 hits[key] = vector
         if hits and (time.time() - loaded.last_used_at) > _TOUCH_INTERVAL_SECONDS:
             _touch_shard(shard_dir)

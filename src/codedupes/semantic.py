@@ -157,6 +157,63 @@ class SemanticBackendError(RuntimeError):
     """Raised when semantic model loading or inference backend is incompatible."""
 
 
+class InvalidEmbeddingError(RuntimeError):
+    """Raised when an embedding matrix violates the similarity-math invariants.
+
+    ``retryable`` marks value-level corruption (NaN/Inf/zero rows) that a CPU
+    re-encode may fix; structural mismatches (wrong shape or row count) indicate
+    a code or backend bug and must fail immediately.
+    """
+
+    def __init__(self, message: str, *, retryable: bool = False) -> None:
+        super().__init__(message)
+        self.retryable = retryable
+
+
+def canonicalize_embeddings(
+    values: object,
+    *,
+    expected_rows: int,
+    expected_dim: int | None = None,
+) -> np.ndarray:
+    """Validate and renormalize one embedding matrix.
+
+    Dot product equals cosine similarity only for finite, nonzero,
+    unit-normalized rows, so every freshly encoded matrix passes through here
+    before it is cached, compared, or returned.
+
+    :param values: Backend encode output.
+    :param expected_rows: Required row count (one per input text).
+    :param expected_dim: Required embedding dimensionality, or ``None`` to accept any.
+    :return: Contiguous float32 matrix with unit-normalized rows.
+    :raises InvalidEmbeddingError: If shape, row count, dimensionality, finiteness,
+        or norm invariants are violated.
+    """
+    matrix = np.asarray(values, dtype=np.float32)
+
+    if matrix.ndim != 2:
+        raise InvalidEmbeddingError(f"Expected a 2D embedding matrix, got shape {matrix.shape!r}")
+    if matrix.shape[0] != expected_rows:
+        raise InvalidEmbeddingError(f"Expected {expected_rows} rows, got {matrix.shape[0]}")
+    if expected_dim is not None and matrix.shape[1] != expected_dim:
+        raise InvalidEmbeddingError(f"Expected dimension {expected_dim}, got {matrix.shape[1]}")
+
+    if not np.isfinite(matrix).all():
+        raise InvalidEmbeddingError(
+            "Embedding matrix contains NaN or infinity",
+            retryable=True,
+        )
+
+    norms = np.linalg.norm(matrix, axis=1, keepdims=True)
+    if not np.isfinite(norms).all() or np.any(norms <= 1e-12):
+        raise InvalidEmbeddingError(
+            "Embedding matrix contains a zero or invalid vector",
+            retryable=True,
+        )
+
+    return np.ascontiguousarray(matrix / norms, dtype=np.float32)
+
+
 def _configure_semantic_runtime_env(
     device: str | None = DEFAULT_SEMANTIC_DEVICE,
     *,
@@ -1364,8 +1421,10 @@ def _encode_with_retries(
     :param trust_remote_code: Trust setting reported in backend error messages.
     :param stage: Short stage label used in warnings and error messages.
     :param prompt: Explicit prompt for the backend to prepend exactly once.
-    :return: Embedding matrix for ``texts``.
+    :return: Canonicalized (validated, unit-normalized) embedding matrix for ``texts``.
     :raises SemanticBackendError: If a non-OOM failure matches a known backend issue.
+    :raises InvalidEmbeddingError: If encode output violates embedding invariants and
+        no CPU retry remains.
     :raises RuntimeError: If OOM persists at batch size one with no fallback left.
     """
     current_batch_size = max(1, batch_size)
@@ -1375,9 +1434,10 @@ def _encode_with_retries(
     while True:
         oom_device: str | None = None
         oom_error: RuntimeError | None = None
+        result: np.ndarray | None = None
 
         try:
-            return _encode_texts(
+            result = _encode_texts(
                 encode_fn,
                 texts,
                 batch_size=current_batch_size,
@@ -1412,6 +1472,32 @@ def _encode_with_retries(
                     stage=f"{stage} on {active_device}",
                 )
             raise
+
+        if result is not None:
+            try:
+                return canonicalize_embeddings(result, expected_rows=len(texts))
+            except InvalidEmbeddingError as exc:
+                retry_on_cpu = (
+                    exc.retryable
+                    and active_device in {"cuda", "mps"}
+                    and not attempted_cpu_fallback
+                )
+                if not retry_on_cpu:
+                    raise
+                logger.warning(
+                    "%s produced invalid embedding values during %s (%s); "
+                    "clearing the allocator cache and retrying once on CPU",
+                    active_device.upper(),
+                    stage,
+                    exc,
+                )
+                del result
+                clear_device_cache(active_device, synchronize=True, collect=True)
+                _move_model_to_cpu(model)
+                active_device = "cpu"
+                attempted_cpu_fallback = True
+                current_batch_size = max(1, batch_size)
+                continue
 
         # This block runs outside the exception handler so the original traceback
         # no longer retains inference frames while the allocator cache is cleared.
@@ -1811,9 +1897,11 @@ def find_semantic_duplicates(
             unit_a = units[global_idx]
 
             for j in range(global_idx + 1, n):
-                sim = similarities[local_idx, j]
+                sim = float(similarities[local_idx, j])
 
-                if sim < threshold:
+                # NaN fails every comparison, so `sim < threshold` alone would
+                # let a corrupted similarity through as a reported duplicate.
+                if not np.isfinite(sim) or sim < threshold:
                     continue
 
                 unit_b = units[j]

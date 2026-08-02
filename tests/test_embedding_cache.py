@@ -40,9 +40,10 @@ def epsilon(x):
 
 
 def _vector_for_text(text: str, dim: int = 4) -> np.ndarray:
-    """Derive a small deterministic float32 vector from a text's MD5 digest."""
+    """Derive a deterministic unit-normalized float32 vector from a text's MD5 digest."""
     digest = hashlib.md5(text.encode()).digest()
-    return np.array([float(b) for b in digest[:dim]], dtype=np.float32)
+    raw = np.array([float(b) + 1.0 for b in digest[:dim]], dtype=np.float32)
+    return (raw / np.linalg.norm(raw)).astype(np.float32)
 
 
 class CountingModel:
@@ -688,6 +689,35 @@ def test_unconfirmable_loaded_revision_disables_cache(tmp_path, monkeypatch):
     assert len(model.encode_calls) == 2
     assert EmbeddingCache().stats()["entries"] == 0
     np.testing.assert_array_equal(first, second)
+
+
+def test_finite_on_disk_mutation_degrades_to_per_key_miss(tmp_path):
+    cache = EmbeddingCache()
+    scope = tmp_path / "proj"
+    scope.mkdir()
+    entries = [
+        ("k1", np.array([1.0, 0.0], dtype=np.float32)),
+        ("k2", np.array([0.0, 1.0], dtype=np.float32)),
+    ]
+    cache.put_many(scope, "model-a", "rev1", entries)
+    shard_dir = cache.shard_dir(scope, "model-a", "rev1")
+
+    # Corrupt k1's stored row with different *finite* values, bypassing put_many.
+    payload = json.loads((shard_dir / embedding_cache.INDEX_FILENAME).read_text(encoding="utf-8"))
+    vectors_path = shard_dir / embedding_cache._vectors_filename(payload["generation"])
+    vectors = np.load(vectors_path, allow_pickle=False)
+    vectors[payload["keys"]["k1"]] = np.array([0.5, 0.5], dtype=np.float32)
+    with open(vectors_path, "wb") as handle:
+        np.save(handle, vectors)
+
+    hits = cache.get_many(scope, "model-a", "rev1", ["k1", "k2"])
+    assert "k1" not in hits
+    np.testing.assert_array_equal(hits["k2"], entries[1][1])
+
+    # A recompute for the corrupted key heals it in place.
+    cache.put_many(scope, "model-a", "rev1", [("k1", entries[0][1])])
+    healed = cache.get_many(scope, "model-a", "rev1", ["k1", "k2"])
+    np.testing.assert_array_equal(healed["k1"], entries[0][1])
 
 
 def test_nonfinite_cached_vector_treated_as_miss(tmp_path):

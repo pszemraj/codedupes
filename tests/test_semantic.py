@@ -373,6 +373,101 @@ def test_find_similar_to_query_default_threshold_is_search_default(
     assert results[0][1] == pytest.approx(0.6, abs=1e-6)
 
 
+def test_find_semantic_duplicates_ignores_nan_similarity(tmp_path: Path) -> None:
+    units = extract_arithmetic_units(tmp_path)
+    embeddings = np.array(
+        [
+            [np.nan, 0.0],
+            [1.0, 0.0],
+        ],
+        dtype=np.float32,
+    )
+
+    duplicates = find_semantic_duplicates(units, embeddings, threshold=0.5)
+
+    assert duplicates == []
+
+
+def test_compute_embeddings_rejects_nonfinite_model_output(tmp_path: Path, monkeypatch) -> None:
+    units = extract_arithmetic_units(tmp_path)
+
+    class NanModel:
+        def encode(self, texts, **kwargs):
+            return np.array([[np.nan, 0.0]] * len(texts), dtype=np.float32)
+
+    monkeypatch.setattr(semantic, "get_model", lambda *args, **kwargs: NanModel())
+
+    with pytest.raises(semantic.InvalidEmbeddingError, match="NaN or infinity"):
+        compute_embeddings(units, device="cpu")
+
+
+def test_compute_embeddings_rejects_zero_vector_output(tmp_path: Path, monkeypatch) -> None:
+    units = extract_arithmetic_units(tmp_path)
+
+    class ZeroModel:
+        def encode(self, texts, **kwargs):
+            return np.zeros((len(texts), 2), dtype=np.float32)
+
+    monkeypatch.setattr(semantic, "get_model", lambda *args, **kwargs: ZeroModel())
+
+    with pytest.raises(semantic.InvalidEmbeddingError, match="zero or invalid vector"):
+        compute_embeddings(units, device="cpu")
+
+
+def test_compute_embeddings_rejects_wrong_row_count(tmp_path: Path, monkeypatch) -> None:
+    units = extract_arithmetic_units(tmp_path)
+
+    class ShortModel:
+        def encode(self, texts, **kwargs):
+            return np.array([[1.0, 0.0]], dtype=np.float32)
+
+    monkeypatch.setattr(semantic, "get_model", lambda *args, **kwargs: ShortModel())
+
+    with pytest.raises(semantic.InvalidEmbeddingError, match="rows"):
+        compute_embeddings(units, device="cpu")
+
+
+def test_accelerator_nonfinite_output_retries_once_on_cpu(tmp_path: Path, monkeypatch) -> None:
+    units = extract_arithmetic_units(tmp_path)
+    devices_seen: list[str | None] = []
+
+    class FlakyAcceleratorModel:
+        device = "cuda"
+
+        def encode(self, texts, **kwargs):
+            devices_seen.append(kwargs.get("device"))
+            if kwargs.get("device") != "cpu":
+                return np.array([[np.nan, 0.0]] * len(texts), dtype=np.float32)
+            return np.array(
+                [[1.0, 0.0] if i == 0 else [0.0, 1.0] for i in range(len(texts))],
+                dtype=np.float32,
+            )
+
+    monkeypatch.setattr(semantic, "get_model", lambda *args, **kwargs: FlakyAcceleratorModel())
+    monkeypatch.setattr(semantic, "_prepare_semantic_device", lambda *_args, **_kwargs: "cuda")
+    monkeypatch.setattr(semantic, "_validate_explicit_device_request", lambda *_a, **_k: None)
+
+    embeddings = compute_embeddings(units, device="cuda")
+
+    assert devices_seen == [None, "cpu"]
+    assert embeddings.shape == (2, 2)
+    assert np.isfinite(embeddings).all()
+
+
+def test_fresh_embeddings_are_renormalized_centrally(tmp_path: Path, monkeypatch) -> None:
+    units = extract_arithmetic_units(tmp_path)
+
+    class UnnormalizedModel:
+        def encode(self, texts, **kwargs):
+            return np.array([[3.0, 4.0]] * len(texts), dtype=np.float32)
+
+    monkeypatch.setattr(semantic, "get_model", lambda *args, **kwargs: UnnormalizedModel())
+
+    embeddings = compute_embeddings(units, device="cpu")
+
+    np.testing.assert_allclose(embeddings, [[0.6, 0.8]] * len(units), atol=1e-6)
+
+
 def test_find_semantic_duplicates_skips_incompatible_unit_types(tmp_path: Path) -> None:
     source_path = tmp_path / "sample.py"
     source_path.write_text("class C:\n    pass\n\ndef f():\n    return 1\n")
