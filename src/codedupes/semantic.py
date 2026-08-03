@@ -390,17 +390,22 @@ def _manifest_digest_for(entry: object, identity: tuple[int, int, int, int]) -> 
     return digest
 
 
-def _load_local_model_manifest(model_dir: Path) -> dict[str, dict[str, object]]:
+def _load_local_model_manifest(
+    model_dir: Path,
+    *,
+    persist_manifest: bool,
+) -> dict[str, dict[str, object]]:
     """Load the digest manifest for a local model directory, tolerating any failure.
 
     :param model_dir: Resolved local model directory.
+    :param persist_manifest: Whether the on-disk digest manifest may be read.
     :return: Mapping of relative path to digest entry; empty when unavailable.
     """
     with _local_model_manifest_lock:
         memo = _local_model_manifest_memo.get(str(model_dir))
         if memo is not None:
             return memo
-    if is_cache_disabled():
+    if not persist_manifest or is_cache_disabled():
         return {}
     try:
         payload = json.loads(_local_model_manifest_path(model_dir).read_text(encoding="utf-8"))
@@ -416,17 +421,20 @@ def _store_local_model_manifest(
     model_dir: Path,
     files: dict[str, dict[str, object]],
     previous: dict[str, dict[str, object]],
+    *,
+    persist_manifest: bool,
 ) -> None:
     """Persist the digest manifest in-process and, best effort, on disk.
 
     :param model_dir: Resolved local model directory.
     :param files: Fresh manifest entries keyed by relative path.
     :param previous: Manifest the fingerprint walk started from, to skip no-op writes.
+    :param persist_manifest: Whether the digest manifest may be written to disk.
     :return: ``None``.
     """
     with _local_model_manifest_lock:
         _local_model_manifest_memo[str(model_dir)] = files
-    if is_cache_disabled() or files == previous:
+    if not persist_manifest or is_cache_disabled() or files == previous:
         return
     manifest_path = _local_model_manifest_path(model_dir)
     tmp_path = manifest_path.with_name(f"{manifest_path.name}.{os.getpid()}.tmp")
@@ -451,7 +459,11 @@ def _store_local_model_manifest(
                 tmp_path.unlink()
 
 
-def _fingerprint_local_model_dir(model_dir: Path) -> str | None:
+def _fingerprint_local_model_dir(
+    model_dir: Path,
+    *,
+    persist_manifest: bool = True,
+) -> str | None:
     """Fingerprint a local model directory's contents for use as a cache revision.
 
     The fingerprint hashes each model file's relative path and content digest,
@@ -463,9 +475,14 @@ def _fingerprint_local_model_dir(model_dir: Path) -> str | None:
     keeping warm-path key derivation cheap enough to run before any model import.
 
     :param model_dir: Resolved local model directory.
+    :param persist_manifest: Whether per-file digests may be loaded from and saved
+        to the persistent manifest. In-memory digest reuse remains enabled.
     :return: ``"dir-<hex>"`` fingerprint, or ``None`` when the walk fails.
     """
-    manifest = _load_local_model_manifest(model_dir)
+    manifest = _load_local_model_manifest(
+        model_dir,
+        persist_manifest=persist_manifest,
+    )
     fresh_manifest: dict[str, dict[str, object]] = {}
     entries: list[tuple[str, str]] = []
     hf_download_metadata = model_dir / ".cache" / "huggingface"
@@ -493,7 +510,12 @@ def _fingerprint_local_model_dir(model_dir: Path) -> str | None:
         return None
     if not entries:
         return None
-    _store_local_model_manifest(model_dir, fresh_manifest, manifest)
+    _store_local_model_manifest(
+        model_dir,
+        fresh_manifest,
+        manifest,
+        persist_manifest=persist_manifest,
+    )
     digest = hashlib.blake2b(repr(entries).encode(), digest_size=12).hexdigest()
     return f"dir-{digest}"
 
@@ -1136,6 +1158,7 @@ def _get_model_unlocked(
     device: str = DEFAULT_SEMANTIC_DEVICE,
     mps_fallback: bool | None = None,
     mps_memory_fraction: float | None = None,
+    persist_local_model_manifest: bool = True,
 ) -> object:
     """Lazy-load the embedding model on an explicit resolved device.
 
@@ -1145,6 +1168,8 @@ def _get_model_unlocked(
     :param device: ``auto``, ``cpu``, ``cuda``, or ``mps``.
     :param mps_fallback: MPS unsupported-op CPU fallback behavior.
     :param mps_memory_fraction: Optional MPS allocator limit in ``(0, 2]``.
+    :param persist_local_model_manifest: Whether local-model file digests may be
+        read from and saved to the persistent cache manifest.
     :return: Loaded model instance.
     """
     global _model, _model_name, _model_revision, _model_trust_remote_code
@@ -1164,7 +1189,12 @@ def _get_model_unlocked(
     if local_model_path is not None:
         _validate_local_model_directory(local_model_path)
     local_model_fingerprint = (
-        _fingerprint_local_model_dir(local_model_path) if local_model_path is not None else None
+        _fingerprint_local_model_dir(
+            local_model_path,
+            persist_manifest=persist_local_model_manifest,
+        )
+        if local_model_path is not None
+        else None
     )
     resolved_revision = _resolve_model_revision(model_name, revision)
     if resolved_revision is not None and local_model_path is not None:
@@ -1309,7 +1339,10 @@ def _get_model_unlocked(
             # persistent reuse is already disabled and every call reloads.
             if local_model_path is None or local_model_fingerprint is None:
                 break
-            post_load_fingerprint = _fingerprint_local_model_dir(local_model_path)
+            post_load_fingerprint = _fingerprint_local_model_dir(
+                local_model_path,
+                persist_manifest=persist_local_model_manifest,
+            )
             if post_load_fingerprint == local_model_fingerprint:
                 break
             if reload_attempt == 0:
@@ -1357,6 +1390,7 @@ def get_model(
     device: str = DEFAULT_SEMANTIC_DEVICE,
     mps_fallback: bool | None = None,
     mps_memory_fraction: float | None = None,
+    persist_local_model_manifest: bool = True,
 ) -> object:
     """Thread-safe wrapper around the process-wide semantic model cache.
 
@@ -1369,6 +1403,8 @@ def get_model(
     :param mps_fallback: MPS unsupported-op CPU fallback behavior; ``None`` keeps the
         automatic behavior.
     :param mps_memory_fraction: Optional MPS allocator limit in ``(0, 2]``.
+    :param persist_local_model_manifest: Whether local-model file digests may be
+        read from and saved to the persistent cache manifest.
     :return: Cached model instance, reloaded when any cache key changed.
     """
     with _model_lock:
@@ -1379,6 +1415,7 @@ def get_model(
             device=device,
             mps_fallback=mps_fallback,
             mps_memory_fraction=mps_memory_fraction,
+            persist_local_model_manifest=persist_local_model_manifest,
         )
 
 
@@ -1890,6 +1927,7 @@ def _compute_embeddings_unlocked(
         device=resolved_device,
         mps_fallback=mps_fallback,
         mps_memory_fraction=mps_memory_fraction,
+        persist_local_model_manifest=use_cache and cache_scope is not None,
     )
     execution_device = _get_effective_model_device(model, resolved_device)
 
@@ -2267,6 +2305,7 @@ def _find_similar_to_query_unlocked(
             device=resolved_device,
             mps_fallback=mps_fallback,
             mps_memory_fraction=mps_memory_fraction,
+            persist_local_model_manifest=use_cache and cache_scope is not None,
         )
         execution_device = _get_effective_model_device(model, resolved_device)
 

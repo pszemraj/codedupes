@@ -603,6 +603,48 @@ def test_get_model_loads_local_directory_without_hub_revision(tmp_path: Path, mo
     ]
 
 
+def test_local_model_no_cache_run_does_not_persist_fingerprint_manifest(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    model_dir = tmp_path / "local-model"
+    model_dir.mkdir()
+    (model_dir / "config.json").write_text('{"model_type": "test"}')
+    (model_dir / "model.safetensors").write_text("weights")
+    units = extract_arithmetic_units(tmp_path)
+
+    class FakeSentenceTransformer:
+        def __init__(self, *_args, **_kwargs) -> None:
+            pass
+
+        def encode(self, texts, **_kwargs):
+            return np.stack(
+                [
+                    np.array([1.0, float(index + 1)], dtype=np.float32)
+                    for index, _ in enumerate(texts)
+                ]
+            )
+
+    monkeypatch.setattr(semantic, "_check_semantic_dependencies", lambda: None)
+    monkeypatch.setattr(semantic, "_prepare_semantic_device", lambda *_args, **_kwargs: "cpu")
+    monkeypatch.setattr(sentence_transformers, "SentenceTransformer", FakeSentenceTransformer)
+    semantic.clear_model_cache()
+
+    try:
+        embeddings = compute_embeddings(
+            units,
+            model_name=str(model_dir),
+            device="cpu",
+            use_cache=False,
+            cache_scope=tmp_path,
+        )
+    finally:
+        semantic.clear_model_cache()
+
+    assert embeddings.shape[0] == len(units)
+    assert not (tmp_path / "embedding-cache").exists()
+
+
 def test_get_model_reloads_local_directory_after_weights_change(
     tmp_path: Path,
     monkeypatch,
