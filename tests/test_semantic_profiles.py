@@ -50,6 +50,12 @@ def test_supported_model_list_contains_two_profiles() -> None:
     assert keys == ["gte-modernbert-base", "embeddinggemma-300m"]
 
 
+def test_builtin_profile_alias_lists_are_unique() -> None:
+    for profile in list_supported_models():
+        aliases = profile.all_aliases()
+        assert len(aliases) == len(set(aliases))
+
+
 def test_model_threshold_lookup_works_for_builtin_and_unknown() -> None:
     assert get_default_semantic_threshold("gte-modernbert-base") > 0
     assert get_default_semantic_threshold("unknown/model-id") > 0

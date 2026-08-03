@@ -32,7 +32,7 @@ class SemanticModelProfile:
 
         :return: Tuple of alias strings including canonical profile keys.
         """
-        return (self.key, self.canonical_name, *self.aliases)
+        return tuple(dict.fromkeys((self.key, self.canonical_name, *self.aliases)))
 
 
 # Calibrated thresholds are only meaningful against the exact checkpoint they
@@ -55,7 +55,6 @@ _BUILTIN_MODEL_PROFILES: tuple[SemanticModelProfile, ...] = (
         key="embeddinggemma-300m",
         canonical_name="unsloth/embeddinggemma-300m",
         aliases=(
-            "unsloth/embeddinggemma-300m",
             "google/embeddinggemma-300m",
             "embeddinggemma",
         ),
