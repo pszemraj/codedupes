@@ -20,9 +20,9 @@ Notes:
 ## Alias resolution rules
 
 - Built-in alias keys and known aliases resolve to the profile's canonical model ID.
-- A model name that is an existing directory on disk is treated as a local model copy before built-in aliases are considered, then canonicalized to its resolved absolute path — including the on-disk letter case on case-insensitive filesystems such as macOS — so relative, absolute, and differently-cased spellings share one cache identity.
+- A model name that is an existing directory on disk is treated as a local model copy before built-in aliases are considered, then canonicalized to its resolved absolute path - including the on-disk letter case on case-insensitive filesystems such as macOS - so relative, absolute, and differently-cased spellings share one cache identity.
 - Known local model families are inferred from a recognizable directory name, Hugging Face cache ancestor, saved configuration, or model-card title.
-- Family inference selects loading and prompt behavior only. Any non-builtin model — a hub name or local directory containing `embeddinggemma` or `gte-modernbert`, a fine-tune, an arbitrary copy — keeps the family's encode entry points and prompts but uses the uncalibrated generic thresholds: calibrated thresholds belong to the exact pinned builtin checkpoint they were swept on, and a lookalike name proves nothing about a model's score distribution. Pass `--threshold`/`--semantic-threshold` for tuned weights.
+- Family inference selects loading and prompt behavior only. Any non-builtin model - a hub name or local directory containing `embeddinggemma` or `gte-modernbert`, a fine-tune, an arbitrary copy - keeps the family's encode entry points and prompts but uses the uncalibrated generic thresholds: calibrated thresholds belong to the exact pinned builtin checkpoint they were swept on, and a lookalike name proves nothing about a model's score distribution. Pass `--threshold`/`--semantic-threshold` for tuned weights.
 - Other unknown model IDs resolve to the generic profile.
 
 ### Local model directories and offline use
@@ -60,7 +60,7 @@ CLI task defaults:
 - `codedupes check`: `semantic-similarity`
 - `codedupes search`: `code-retrieval`
 
-These defaults belong to the CLI commands. In the Python API, an unset `AnalyzerConfig.semantic_task` resolves to `semantic-similarity` everywhere — including `CodeAnalyzer.index()`/`search()` — so retrieval-style search through the API needs `semantic_task="code-retrieval"` set explicitly.
+These defaults belong to the CLI commands. In the Python API, an unset `AnalyzerConfig.semantic_task` resolves to `semantic-similarity` everywhere - including `CodeAnalyzer.index()`/`search()` - so retrieval-style search through the API needs `semantic_task="code-retrieval"` set explicitly.
 
 Allowed task names:
 

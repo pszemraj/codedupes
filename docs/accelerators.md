@@ -69,7 +69,7 @@ MLX and PyTorch both consume Apple unified memory but manage it separately. `cod
 
 ## Hardware validation
 
-MPS behavior is validated on real Apple Silicon hardware only — the test suite contains no simulated MPS. `tests/test_semantic_mps.py` runs automatically wherever PyTorch reports a usable MPS device and skips only where the hardware is genuinely absent (a non-Mac host, or a sandbox that blocks Metal device access — a skipped run performs zero MPS validation, so run it from an environment with device access):
+MPS behavior is validated on real Apple Silicon hardware only - the test suite contains no simulated MPS. `tests/test_semantic_mps.py` runs automatically wherever PyTorch reports a usable MPS device and skips only where the hardware is genuinely absent (a non-Mac host, or a sandbox that blocks Metal device access - a skipped run performs zero MPS validation, so run it from an environment with device access):
 
 ```bash
 pytest tests/test_semantic_mps.py
