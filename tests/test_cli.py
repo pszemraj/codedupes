@@ -1253,3 +1253,15 @@ def test_cli_cache_clear_scoped_to_model(tmp_path):
     remaining = cache.stats()
     assert remaining["entries"] == 1
     assert remaining["models"] == {"other/model": 1}
+
+
+def test_cli_cache_clear_reports_failure(monkeypatch):
+    def fail_clear(_self, model=None):
+        raise PermissionError("cache is read-only")
+
+    monkeypatch.setattr(cli.EmbeddingCache, "clear", fail_clear)
+
+    result = CliRunner().invoke(cli.cli, ["cache", "clear"])
+
+    assert result.exit_code == 1
+    assert "Cache clear failed: cache is read-only" in result.output
