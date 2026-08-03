@@ -50,9 +50,13 @@ class CodeUnit:
     def uid(self) -> str:
         """Build a stable unique identifier for this code unit.
 
-        :return: ``"<path>::<qualified_name>"``.
+        The source line disambiguates legal same-scope redefinitions that share
+        a file path and qualified name. Pair synthesis and reference bookkeeping
+        require physical definitions to remain distinct.
+
+        :return: ``"<path>::<qualified_name>@<lineno>"``.
         """
-        return f"{self.file_path}::{self.qualified_name}"
+        return f"{self.file_path}::{self.qualified_name}@{self.lineno}"
 
     @property
     def is_likely_api(self) -> bool:

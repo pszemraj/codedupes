@@ -33,6 +33,34 @@ def test_exact_duplicates_via_ast_hash(tmp_path: Path) -> None:
     assert methods == {"ast_hash"}
 
 
+def test_same_scope_redefinitions_keep_distinct_pair_identities(tmp_path: Path) -> None:
+    source = dedent(
+        """
+        def same(x):
+            first = x + 1
+            return first
+
+        def same(y):
+            second = y + 1
+            return second
+
+        def same(z):
+            third = z + 1
+            return third
+        """
+    ).strip()
+    units = extract_units(tmp_path, source, include_private=True)
+
+    exact, _near = run_traditional_analysis(units)
+
+    assert len({unit.uid for unit in units}) == 3
+    assert {tuple(sorted((pair.unit_a.lineno, pair.unit_b.lineno))) for pair in exact} == {
+        (1, 5),
+        (1, 9),
+        (5, 9),
+    }
+
+
 def test_near_duplicates_threshold_boundary(tmp_path: Path) -> None:
     source = dedent(
         """
