@@ -35,9 +35,21 @@ from codedupes.semantic_profiles import (
 )
 
 try:
-    from .sweep_common import build_positive_pairs, metrics, resolve_label_unit
+    from .sweep_common import (
+        add_common_sweep_arguments,
+        build_positive_pairs,
+        metrics,
+        rank_sweep_rows,
+        resolve_label_unit,
+    )
 except ImportError:
-    from sweep_common import build_positive_pairs, metrics, resolve_label_unit
+    from sweep_common import (
+        add_common_sweep_arguments,
+        build_positive_pairs,
+        metrics,
+        rank_sweep_rows,
+        resolve_label_unit,
+    )
 
 DUPLICATE_THRESHOLD_START = 0.70
 DUPLICATE_THRESHOLD_STOP = 0.96
@@ -187,16 +199,7 @@ def _evaluate_thresholds(
             )
         )
     # Ties prefer the looser threshold: recall over precision at equal F1.
-    rows.sort(
-        key=lambda row: (
-            row.f1,
-            row.precision,
-            row.recall,
-            -row.fp,
-            -row.threshold,
-        ),
-        reverse=True,
-    )
+    rank_sweep_rows(rows, extra_key=lambda row: (-row.threshold,))
     return rows
 
 
@@ -394,18 +397,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         description="Sweep duplicate and search thresholds across built-in model profiles."
     )
-    parser.add_argument(
-        "--corpus-path",
-        type=Path,
-        default=Path("test_fixtures/hybrid_tuning/crab_visibility"),
-        help="Root path of the synthetic corpus package/scripts.",
-    )
-    parser.add_argument(
-        "--labels-path",
-        type=Path,
-        default=Path("test_fixtures/hybrid_tuning/labels.json"),
-        help="Path to labels.json with expected duplicate groups.",
-    )
+    add_common_sweep_arguments(parser)
     parser.add_argument(
         "--search-probes-path",
         type=Path,
@@ -428,24 +420,6 @@ def main() -> int:
         "--device",
         default="cpu",
         help="Embedding device for the sweep. Defaults to cpu for reproducible float32.",
-    )
-    parser.add_argument(
-        "--min-statements",
-        type=int,
-        default=0,
-        help="Minimum statement count for semantic candidate extraction.",
-    )
-    parser.add_argument(
-        "--batch-size",
-        type=int,
-        default=4,
-        help="Embedding batch size used for candidate extraction.",
-    )
-    parser.add_argument(
-        "--top-n",
-        type=int,
-        default=10,
-        help="Number of best rows to print per model.",
     )
     parser.add_argument(
         "--skip-search",

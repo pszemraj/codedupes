@@ -19,9 +19,19 @@ from codedupes.models import HybridDuplicate
 from codedupes.pairs import ordered_pair_key
 
 try:
-    from .sweep_common import build_positive_pairs, metrics
+    from .sweep_common import (
+        add_common_sweep_arguments,
+        build_positive_pairs,
+        metrics,
+        rank_sweep_rows,
+    )
 except ImportError:
-    from sweep_common import build_positive_pairs, metrics
+    from sweep_common import (
+        add_common_sweep_arguments,
+        build_positive_pairs,
+        metrics,
+        rank_sweep_rows,
+    )
 
 
 @dataclass(frozen=True)
@@ -97,7 +107,7 @@ def _run_sweep(
             )
         )
 
-    rows.sort(key=lambda row: (row.f1, row.precision, row.recall, -row.fp), reverse=True)
+    rank_sweep_rows(rows)
     return rows, baseline
 
 
@@ -119,18 +129,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         description="Sweep hybrid semantic-only gate thresholds on a labeled synthetic corpus."
     )
-    parser.add_argument(
-        "--corpus-path",
-        type=Path,
-        default=Path("test_fixtures/hybrid_tuning/crab_visibility"),
-        help="Root path of the synthetic corpus package/scripts.",
-    )
-    parser.add_argument(
-        "--labels-path",
-        type=Path,
-        default=Path("test_fixtures/hybrid_tuning/labels.json"),
-        help="Path to labels.json with expected duplicate groups.",
-    )
+    add_common_sweep_arguments(parser)
     parser.add_argument(
         "--semantic-threshold",
         type=float,
@@ -173,18 +172,6 @@ def main() -> int:
         default=None,
         help=("Model revision / commit hash. If omitted, uses the model-profile default."),
     )
-    parser.add_argument(
-        "--batch-size",
-        type=int,
-        default=4,
-        help="Embedding batch size used for the candidate extraction run.",
-    )
-    parser.add_argument(
-        "--min-statements",
-        type=int,
-        default=0,
-        help="Minimum statement count for semantic candidate extraction.",
-    )
     trust_group = parser.add_mutually_exclusive_group()
     trust_group.add_argument(
         "--trust-remote-code",
@@ -199,12 +186,6 @@ def main() -> int:
         help="Disable model remote code execution during load.",
     )
     parser.set_defaults(trust_remote_code=None)
-    parser.add_argument(
-        "--top-n",
-        type=int,
-        default=10,
-        help="Number of best rows to print.",
-    )
     parser.add_argument(
         "--json-out",
         type=Path,

@@ -2,11 +2,80 @@
 
 from __future__ import annotations
 
+import argparse
+from collections.abc import Callable
 from itertools import combinations
+from pathlib import Path
 from typing import Any
 
 from codedupes.models import CodeUnit
 from codedupes.pairs import ordered_pair_key
+
+
+def add_common_sweep_arguments(parser: argparse.ArgumentParser) -> None:
+    """Register the corpus/labels/extraction options shared by all sweep scripts.
+
+    :param argparse.ArgumentParser parser: Sweep script argument parser.
+    :return None: ``None``.
+    """
+    parser.add_argument(
+        "--corpus-path",
+        type=Path,
+        default=Path("test_fixtures/hybrid_tuning/crab_visibility"),
+        help="Root path of the synthetic corpus package/scripts.",
+    )
+    parser.add_argument(
+        "--labels-path",
+        type=Path,
+        default=Path("test_fixtures/hybrid_tuning/labels.json"),
+        help="Path to labels.json with expected duplicate groups.",
+    )
+    parser.add_argument(
+        "--min-statements",
+        type=int,
+        default=0,
+        help="Minimum statement count for semantic candidate extraction.",
+    )
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=4,
+        help="Embedding batch size used for candidate extraction.",
+    )
+    parser.add_argument(
+        "--top-n",
+        type=int,
+        default=10,
+        help="Number of best rows to print.",
+    )
+
+
+def rank_sweep_rows(
+    rows: list[Any],
+    *,
+    extra_key: Callable[[Any], tuple[Any, ...]] | None = None,
+) -> None:
+    """Sort sweep rows in place, best first, by the shared recall-preferring policy.
+
+    Rows rank by ``(f1, precision, recall, -fp)`` descending. ``extra_key`` appends
+    trailing tiebreak terms, for example ``-threshold`` so equal-metric ties prefer
+    the looser threshold (recall over precision).
+
+    :param list[Any] rows: Sweep rows exposing ``f1``, ``precision``, ``recall``, ``fp``.
+    :param Callable extra_key: Optional builder of trailing tiebreak terms.
+    :return None: ``None``.
+    """
+
+    def sort_key(row: Any) -> tuple[Any, ...]:
+        """Build one row's full ranking tuple.
+
+        :param Any row: Sweep row to rank.
+        :return tuple[Any, ...]: Ranking terms, highest-first under ``reverse=True``.
+        """
+        base = (row.f1, row.precision, row.recall, -row.fp)
+        return base + (extra_key(row) if extra_key is not None else ())
+
+    rows.sort(key=sort_key, reverse=True)
 
 
 def parse_label_spec(spec: str) -> tuple[str, str]:
