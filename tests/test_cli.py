@@ -15,26 +15,15 @@ from codedupes.embedding_cache import EmbeddingCache
 from codedupes.models import (
     AnalysisResult,
     CodeUnit,
-    CodeUnitType,
     DuplicatePair,
     HybridDuplicate,
 )
 from codedupes.semantic import SemanticBackendError
-from tests.conftest import patch_cli_analyzer
+from tests.conftest import make_code_unit, patch_cli_analyzer
 
 
 def _build_unit(tmp_path: Path) -> CodeUnit:
-    return CodeUnit(
-        name="entry",
-        qualified_name="sample.entry",
-        unit_type=CodeUnitType.FUNCTION,
-        file_path=tmp_path / "sample.py",
-        lineno=1,
-        end_lineno=2,
-        source="def entry():\n    return 1",
-        is_public=True,
-        is_exported=False,
-    )
+    return make_code_unit(tmp_path, name="entry", source="def entry():\n    return 1")
 
 
 def _build_result(tmp_path: Path) -> AnalysisResult:

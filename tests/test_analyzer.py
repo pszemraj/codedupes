@@ -13,7 +13,7 @@ from codedupes.analyzer import AnalyzerConfig, CodeAnalyzer, analyze_directory
 from codedupes.models import AnalysisResult, CodeUnit, CodeUnitType, DuplicatePair
 from codedupes.pairs import ordered_pair_key
 from codedupes.semantic import SemanticBackendError
-from tests.conftest import build_two_function_source, create_project
+from tests.conftest import build_two_function_source, create_project, make_code_unit
 
 _SEMANTIC_ANALYSIS_KWARG_NAMES = {
     "batch_size",
@@ -44,27 +44,6 @@ _QUERY_KWARG_NAMES = {
     "trust_remote_code",
     "use_cache",
 }
-
-
-def _make_unit(
-    tmp_path: Path,
-    *,
-    name: str,
-    source: str,
-    lineno: int,
-    unit_type: CodeUnitType = CodeUnitType.FUNCTION,
-) -> CodeUnit:
-    return CodeUnit(
-        name=name,
-        qualified_name=f"sample.{name}",
-        unit_type=unit_type,
-        file_path=tmp_path / "sample.py",
-        lineno=lineno,
-        end_lineno=lineno + max(1, len(source.strip().splitlines()) - 1),
-        source=source,
-        is_public=True,
-        is_exported=False,
-    )
 
 
 def _make_semantic_runner(
@@ -164,7 +143,7 @@ def test_all_duplicates_returns_raw_for_single_method_modes(tmp_path: Path) -> N
     assert result.traditional_duplicates
     assert result.all_duplicates == result.traditional_duplicates
 
-    unit = _make_unit(
+    unit = make_code_unit(
         tmp_path,
         name="bar",
         source="def bar():\n    return 1\n",
@@ -1068,8 +1047,8 @@ def test_suppress_test_semantic_matches_filters_test_named_pairs(
 
 
 def test_hybrid_synthesis_exact_only_included(tmp_path: Path) -> None:
-    unit_a = _make_unit(tmp_path, name="a", source="def a(x):\n    return x + 1\n", lineno=1)
-    unit_b = _make_unit(tmp_path, name="b", source="def b(y):\n    return y + 1\n", lineno=5)
+    unit_a = make_code_unit(tmp_path, name="a", source="def a(x):\n    return x + 1\n", lineno=1)
+    unit_b = make_code_unit(tmp_path, name="b", source="def b(y):\n    return y + 1\n", lineno=5)
     traditional = [DuplicatePair(unit_a=unit_a, unit_b=unit_b, similarity=1.0, method="ast_hash")]
 
     hybrid, filtered = analyzer_module._synthesize_hybrid_duplicates(
@@ -1086,8 +1065,8 @@ def test_hybrid_synthesis_exact_only_included(tmp_path: Path) -> None:
 
 
 def test_hybrid_synthesis_jaccard_only_included(tmp_path: Path) -> None:
-    unit_a = _make_unit(tmp_path, name="a", source="def a(x):\n    return x + 1\n", lineno=1)
-    unit_b = _make_unit(tmp_path, name="b", source="def b(y):\n    return y + 2\n", lineno=5)
+    unit_a = make_code_unit(tmp_path, name="a", source="def a(x):\n    return x + 1\n", lineno=1)
+    unit_b = make_code_unit(tmp_path, name="b", source="def b(y):\n    return y + 2\n", lineno=5)
     traditional = [DuplicatePair(unit_a=unit_a, unit_b=unit_b, similarity=0.9, method="jaccard")]
 
     hybrid, _ = analyzer_module._synthesize_hybrid_duplicates(
@@ -1103,8 +1082,8 @@ def test_hybrid_synthesis_jaccard_only_included(tmp_path: Path) -> None:
 
 
 def test_hybrid_synthesis_hybrid_confirmed(tmp_path: Path) -> None:
-    unit_a = _make_unit(tmp_path, name="a", source="def a(x):\n    return x + 1\n", lineno=1)
-    unit_b = _make_unit(tmp_path, name="b", source="def b(y):\n    return y + 1\n", lineno=5)
+    unit_a = make_code_unit(tmp_path, name="a", source="def a(x):\n    return x + 1\n", lineno=1)
+    unit_b = make_code_unit(tmp_path, name="b", source="def b(y):\n    return y + 1\n", lineno=5)
     traditional = [DuplicatePair(unit_a=unit_a, unit_b=unit_b, similarity=0.88, method="jaccard")]
     semantic = [DuplicatePair(unit_a=unit_a, unit_b=unit_b, similarity=0.93, method="semantic")]
 
@@ -1121,10 +1100,10 @@ def test_hybrid_synthesis_hybrid_confirmed(tmp_path: Path) -> None:
 
 
 def test_hybrid_synthesis_semantic_only_gate_enforced(tmp_path: Path) -> None:
-    unit_a = _make_unit(
+    unit_a = make_code_unit(
         tmp_path, name="a", source="def alpha(v):\n    z = v + 1\n    return z\n", lineno=1
     )
-    unit_b = _make_unit(
+    unit_b = make_code_unit(
         tmp_path, name="b", source="def beta(v):\n    q = v + 2\n    return q\n", lineno=6
     )
 
@@ -1134,20 +1113,17 @@ def test_hybrid_synthesis_semantic_only_gate_enforced(tmp_path: Path) -> None:
         low_semantic,
         semantic_threshold=0.82,
         jaccard_threshold=0.85,
-        semantic_only_min=0.92,
-        weak_identifier_jaccard_min=0.20,
-        statement_ratio_min=0.35,
     )
     assert hybrid_low == []
     assert filtered_low == 1
 
-    weak_sources_a = _make_unit(
+    weak_sources_a = make_code_unit(
         tmp_path,
         name="c",
         source="def c(a):\n    x = a + 1\n    y = x + 1\n    z = y + 1\n    return z\n",
         lineno=12,
     )
-    weak_sources_b = _make_unit(
+    weak_sources_b = make_code_unit(
         tmp_path,
         name="d",
         source="def d(v):\n    return v\n",

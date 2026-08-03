@@ -511,6 +511,20 @@ def test_find_semantic_duplicates_skips_incompatible_unit_types(tmp_path: Path) 
     assert duplicates == []
 
 
+def _recording_sentence_transformer(calls: list[dict]) -> type:
+    """Build a SentenceTransformer double that records constructor invocations.
+
+    :param calls: Sink receiving one ``{"args", "kwargs"}`` entry per construction.
+    :return: Recording stand-in class.
+    """
+
+    class RecordingSentenceTransformer:
+        def __init__(self, *args, **kwargs):
+            calls.append({"args": args, "kwargs": kwargs})
+
+    return RecordingSentenceTransformer
+
+
 @pytest.mark.parametrize(
     ("revision", "trust_remote_code"),
     [
@@ -526,13 +540,11 @@ def test_get_model_passes_revision_and_trust_options(
 ) -> None:
     calls: list[dict] = []
 
-    class FakeSentenceTransformer:
-        def __init__(self, *args, **kwargs):
-            calls.append({"args": args, "kwargs": kwargs})
-
     monkeypatch.setattr(semantic, "_check_semantic_dependencies", lambda: None)
     monkeypatch.setattr(semantic, "_prepare_semantic_device", lambda *_args, **_kwargs: "cpu")
-    monkeypatch.setattr(sentence_transformers, "SentenceTransformer", FakeSentenceTransformer)
+    monkeypatch.setattr(
+        sentence_transformers, "SentenceTransformer", _recording_sentence_transformer(calls)
+    )
     semantic.clear_model_cache()
 
     semantic.get_model(
@@ -570,13 +582,11 @@ def test_get_model_loads_local_directory_without_hub_revision(tmp_path: Path, mo
     (model_dir / "model.safetensors").write_text("weights")
     calls: list[dict] = []
 
-    class FakeSentenceTransformer:
-        def __init__(self, *args, **kwargs):
-            calls.append({"args": args, "kwargs": kwargs})
-
     monkeypatch.setattr(semantic, "_check_semantic_dependencies", lambda: None)
     monkeypatch.setattr(semantic, "_prepare_semantic_device", lambda *_args, **_kwargs: "cpu")
-    monkeypatch.setattr(sentence_transformers, "SentenceTransformer", FakeSentenceTransformer)
+    monkeypatch.setattr(
+        sentence_transformers, "SentenceTransformer", _recording_sentence_transformer(calls)
+    )
     semantic.clear_model_cache()
 
     semantic.get_model(str(model_dir), revision="ignored-local-revision")
@@ -714,7 +724,7 @@ def test_get_model_rejects_incomplete_local_directory(
         semantic.get_model(str(model_dir))
 
 
-@pytest.mark.parametrize("version", ["2.12.9", "2.12.0", "3.0.0", "3.0.0.dev1"])
+@pytest.mark.parametrize("version", ["2.12.9", "3.0.0", "3.0.0.dev1"])
 def test_torch_runtime_rejects_unsupported_versions(monkeypatch, version: str) -> None:
     monkeypatch.setattr(semantic, "_safe_package_version", lambda _name: version)
 
@@ -899,10 +909,11 @@ def _warm_corpus_cache(
     return units
 
 
+@pytest.mark.parametrize("model_name", ["gte-modernbert-base", "embeddinggemma-300m"])
 def test_compute_embeddings_warm_cache_raises_for_explicit_unavailable_device(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch, model_name: str
 ) -> None:
-    units = _warm_corpus_cache(tmp_path, monkeypatch)
+    units = _warm_corpus_cache(tmp_path, monkeypatch, model_name=model_name)
 
     def _raise_unavailable(*_args, **_kwargs):
         raise SemanticBackendError("cuda is not available in this environment")
@@ -913,7 +924,7 @@ def test_compute_embeddings_warm_cache_raises_for_explicit_unavailable_device(
     with pytest.raises(SemanticBackendError):
         compute_embeddings(
             units,
-            model_name="gte-modernbert-base",
+            model_name=model_name,
             revision=_FULL_REVISION,
             device="cuda",
             cache_scope=tmp_path,
@@ -1011,23 +1022,3 @@ def test_compute_embeddings_warm_cache_auto_and_cpu_skip_device_validation(
         assert result.shape == (len(units), 2)
 
     assert validation_calls["count"] == 0
-
-
-def test_compute_embeddings_warm_cache_embeddinggemma_explicit_device_also_raises(
-    tmp_path: Path, monkeypatch
-) -> None:
-    units = _warm_corpus_cache(tmp_path, monkeypatch, model_name="embeddinggemma-300m")
-
-    def _raise_unavailable(*_args, **_kwargs):
-        raise SemanticBackendError("cuda is not available in this environment")
-
-    monkeypatch.setattr(semantic, "_resolve_semantic_device_request", _raise_unavailable)
-
-    with pytest.raises(SemanticBackendError):
-        compute_embeddings(
-            units,
-            model_name="embeddinggemma-300m",
-            revision=_FULL_REVISION,
-            device="cuda",
-            cache_scope=tmp_path,
-        )

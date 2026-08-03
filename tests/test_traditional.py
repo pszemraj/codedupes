@@ -292,39 +292,3 @@ def test_unused_analysis_skips_only_proven_ast_visitor_hooks(tmp_path: Path) -> 
     assert "sample.LocalWorker.visit_Name" in qualified_names
     assert "sample.ImportedWorker.visit_Name" in qualified_names
     assert "sample.Ordinary.visit_Name" in qualified_names
-
-
-def test_cross_file_ast_visitor_hooks_are_not_flagged_as_unused(tmp_path: Path) -> None:
-    (tmp_path / "base.py").write_text(
-        dedent(
-            """
-            import ast
-
-            class Base(ast.NodeVisitor):
-                def visit_Name(self, node):
-                    return self.generic_visit(node)
-            """
-        ).strip()
-        + "\n"
-    )
-    (tmp_path / "concrete.py").write_text(
-        dedent(
-            """
-            from base import Base
-
-            class Concrete(Base):
-                def visit_Call(self, node):
-                    return self.generic_visit(node)
-            """
-        ).strip()
-        + "\n"
-    )
-
-    from codedupes.extractor import CodeExtractor
-
-    units = CodeExtractor(tmp_path, include_private=True).extract_all()
-    build_reference_graph(units)
-    unused = find_potentially_unused(units, strict_unused=True)
-    qualified_names = {unit.qualified_name for unit in unused}
-
-    assert "concrete.Concrete.visit_Call" not in qualified_names

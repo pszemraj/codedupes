@@ -532,7 +532,9 @@ def test_size_cap_preserves_fresh_shard_larger_than_cap(tmp_path, monkeypatch, c
     assert "still exceeds its size target after eviction" in caplog.text
 
 
-@pytest.mark.parametrize("value", ["invalid", "nan", "inf", "-inf"])
+# "invalid" fails float() itself; "nan" passes float() and hits the isfinite
+# rejection — "inf"/"-inf" would exercise that identical branch again.
+@pytest.mark.parametrize("value", ["invalid", "nan"])
 def test_invalid_size_cap_uses_default(monkeypatch, value: str):
     monkeypatch.setenv("CODEDUPES_CACHE_MAX_MB", value)
 

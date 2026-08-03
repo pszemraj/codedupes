@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 
 from codedupes.extractor import CodeExtractor
-from codedupes.models import AnalysisResult, CodeUnit
+from codedupes.models import AnalysisResult, CodeUnit, CodeUnitType
 
 
 @pytest.fixture(autouse=True)
@@ -20,6 +20,36 @@ def _isolated_embedding_cache_dir(tmp_path: Path, monkeypatch: Any) -> None:
     :return: ``None``.
     """
     monkeypatch.setenv("CODEDUPES_CACHE_DIR", str(tmp_path / "embedding-cache"))
+
+
+def make_code_unit(
+    tmp_path: Path,
+    *,
+    name: str,
+    source: str,
+    lineno: int = 1,
+    unit_type: CodeUnitType = CodeUnitType.FUNCTION,
+) -> CodeUnit:
+    """Build one minimal public code unit for tests.
+
+    :param tmp_path: Test directory the unit's file path points into.
+    :param name: Unit name; the qualified name becomes ``sample.<name>``.
+    :param source: Unit source text.
+    :param lineno: Starting line number, defaults to 1.
+    :param unit_type: Unit type, defaults to ``FUNCTION``.
+    :return: Constructed code unit.
+    """
+    return CodeUnit(
+        name=name,
+        qualified_name=f"sample.{name}",
+        unit_type=unit_type,
+        file_path=tmp_path / "sample.py",
+        lineno=lineno,
+        end_lineno=lineno + max(1, len(source.strip().splitlines()) - 1),
+        source=source,
+        is_public=True,
+        is_exported=False,
+    )
 
 
 def write_source_file(tmp_path: Path, source: str, filename: str = "sample.py") -> Path:
