@@ -65,6 +65,36 @@ def test_format_bytes_always_returns_largest_supported_unit() -> None:
     assert devices.format_bytes(1024**5) == "1024.0 TiB"
 
 
+def test_load_torch_reports_missing_dependency(monkeypatch) -> None:
+    def missing_torch(name: str):
+        assert name == "torch"
+        error = ModuleNotFoundError("No module named 'torch'")
+        error.name = "torch"
+        raise error
+
+    monkeypatch.setattr(devices.importlib, "import_module", missing_torch)
+
+    with pytest.raises(DeviceConfigurationError, match="PyTorch is required"):
+        devices._load_torch()
+
+
+def test_device_diagnostics_degrades_cleanly_without_torch(monkeypatch) -> None:
+    def unavailable_torch():
+        raise DeviceConfigurationError("PyTorch unavailable for test")
+
+    monkeypatch.setattr(devices, "_load_torch", unavailable_torch)
+
+    diagnostics = devices.get_device_diagnostics("mps")
+
+    assert diagnostics.requested == "mps"
+    assert diagnostics.resolved is None
+    assert diagnostics.torch_available is False
+    assert diagnostics.cuda_available is False
+    assert diagnostics.mps_built is False
+    assert diagnostics.mps_available is False
+    assert diagnostics.error == "PyTorch unavailable for test"
+
+
 def test_auto_prefers_cuda_when_available(monkeypatch) -> None:
     # CUDA hardware can never exist on this Apple Silicon machine, so the CUDA
     # half of the auto-priority rule is the one branch checked through a stubbed
