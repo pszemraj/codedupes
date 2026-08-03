@@ -33,6 +33,7 @@ logger = logging.getLogger(__name__)
 
 CACHE_SUBDIR = "repos"
 LOCAL_MODELS_SUBDIR = "local-models"
+LOCKS_SUBDIR = "locks"
 INDEX_FILENAME = "index.json"
 DEFAULT_CACHE_MAX_MB = 2048
 _SCHEMA_VERSION = 3
@@ -239,6 +240,25 @@ def _shard_dir_for(
     return repos_dir / _repo_dir_name(cache_scope) / shard_name
 
 
+def _shard_lock_path(shard_dir: Path) -> Path:
+    """Resolve the stable advisory-lock path for one cache shard.
+
+    Lock files must live outside ``shard_dir`` because cache clearing and LRU
+    eviction delete that directory recursively. Unlinking a held lock file lets
+    another process recreate the pathname on a new inode and acquire an
+    independent lock while the original inode is still locked. A digest of the
+    resolved shard path keeps the lock identity stable across shard deletion and
+    recreation without exposing long model/revision names in lock filenames.
+
+    :param shard_dir: Cache shard path under ``<cache-root>/repos/<repo>/<model>``.
+    :return: Lock path under the cache root's persistent ``locks`` directory.
+    """
+    cache_root = shard_dir.parents[2]
+    identity = str(shard_dir.resolve())
+    lock_name = f"{hashlib.blake2b(identity.encode(), digest_size=16).hexdigest()}.lock"
+    return cache_root / LOCKS_SUBDIR / lock_name
+
+
 def _tmp_suffix() -> str:
     """Build a collision-resistant temp-file suffix for atomic replacement writes.
 
@@ -295,7 +315,9 @@ def _shard_write_lock(shard_dir: Path, *, blocking: bool = False) -> Iterator[bo
     lock_flags = fcntl.LOCK_EX if blocking else fcntl.LOCK_EX | fcntl.LOCK_NB
     lock_fd: int | None = None
     try:
-        lock_fd = os.open(shard_dir / ".lock", os.O_CREAT | os.O_RDWR, 0o644)
+        lock_path = _shard_lock_path(shard_dir)
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o644)
         fcntl.flock(lock_fd, lock_flags)
     except OSError:
         if lock_fd is not None:

@@ -815,7 +815,9 @@ def test_put_many_skips_write_when_shard_lock_held(tmp_path):
     scope.mkdir()
     shard_dir = cache.shard_dir(scope, "model-a", "rev1")
     shard_dir.mkdir(parents=True)
-    lock_fd = os.open(shard_dir / ".lock", os.O_CREAT | os.O_RDWR)
+    lock_path = embedding_cache._shard_lock_path(shard_dir)
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR)
     fcntl.flock(lock_fd, fcntl.LOCK_EX)
     try:
         cache.put_many(scope, "model-a", "rev1", [("k1", np.array([1.0], dtype=np.float32))])
@@ -1130,7 +1132,9 @@ def test_eviction_skips_shard_whose_lock_is_held(tmp_path, monkeypatch):
     cache.put_many(locked_scope, "model-x", "rev1", [("k0", np.zeros(dim, dtype=np.float32))])
     assert locked_shard_dir.exists()
 
-    lock_fd = os.open(locked_shard_dir / ".lock", os.O_CREAT | os.O_RDWR)
+    lock_path = embedding_cache._shard_lock_path(locked_shard_dir)
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR)
     fcntl.flock(lock_fd, fcntl.LOCK_EX)
     try:
         # Write enough other shards to push the cache well past its tiny cap and
@@ -1155,7 +1159,9 @@ def test_clear_waits_for_held_lock_then_removes_shard(tmp_path):
     cache.put_many(scope, "model-a", "rev1", [("k1", np.array([1.0], dtype=np.float32))])
     shard_dir = cache.shard_dir(scope, "model-a", "rev1")
 
-    lock_fd = os.open(shard_dir / ".lock", os.O_CREAT | os.O_RDWR)
+    lock_path = embedding_cache._shard_lock_path(shard_dir)
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR)
     fcntl.flock(lock_fd, fcntl.LOCK_EX)
 
     def release_after_delay() -> None:
@@ -1180,6 +1186,27 @@ def test_clear_waits_for_held_lock_then_removes_shard(tmp_path):
     assert not clearer.is_alive()
     assert result.get("removed") == 1
     assert not shard_dir.exists()
+
+
+def test_shard_deletion_cannot_split_the_advisory_lock_domain(tmp_path):
+    pytest.importorskip("fcntl")
+    cache = EmbeddingCache()
+    scope = tmp_path / "proj"
+    scope.mkdir()
+    cache.put_many(scope, "model-a", "rev1", [("k1", np.array([1.0], dtype=np.float32))])
+    shard_dir = cache.shard_dir(scope, "model-a", "rev1")
+
+    with embedding_cache._shard_write_lock(shard_dir, blocking=True) as outer_acquired:
+        assert outer_acquired is True
+        assert embedding_cache._delete_cache_tree(shard_dir, action="test delete") is True
+        shard_dir.mkdir(parents=True)
+
+        # Recreating a shard directory must not create a fresh lock inode that
+        # bypasses the still-held lock for the same logical shard.
+        with embedding_cache._shard_write_lock(shard_dir) as inner_acquired:
+            assert inner_acquired is False
+
+    assert embedding_cache._shard_lock_path(shard_dir).is_file()
 
 
 def test_orphaned_tmp_file_reclaimed_by_next_write(tmp_path):
