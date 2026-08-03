@@ -35,9 +35,9 @@ class CodeUnit:
     _ast_hash: str | None = field(default=None, repr=False)
     _token_hash: str | None = field(default=None, repr=False)
 
-    # For call graph / usage analysis
-    calls: set[str] = field(default_factory=set)
-    references: set[str] = field(default_factory=set)  # who calls this
+    # For reference-graph / usage analysis
+    referenced_names: set[str] = field(default_factory=set)  # names this unit references
+    references: set[str] = field(default_factory=set)  # uids of units referencing this unit
 
     # API exposure markers
     is_public: bool = False

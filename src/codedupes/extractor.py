@@ -165,27 +165,42 @@ class NormalizedASTHasher(ast.NodeTransformer):
         return node
 
 
-class CallGraphVisitor(ast.NodeVisitor):
-    """Extract function/method calls from an AST node."""
+class ReferenceVisitor(ast.NodeVisitor):
+    """Collect names a definition references via calls, loads, or attribute access.
+
+    Load-context ``Name`` and ``Attribute`` nodes subsume call targets (a call's
+    ``func`` is itself a loaded name or attribute) while also covering non-call
+    references the reference graph must see: callback-style arguments
+    (``callback=validate``), property access (``self.cached_value``), decorators,
+    and type annotations.
+    """
 
     def __init__(self) -> None:
-        """Initialize a fresh call graph accumulator."""
-        self.calls: set[str] = set()
+        """Initialize a fresh reference accumulator."""
+        self.names: set[str] = set()
 
-    def visit_Call(self, node: ast.Call) -> None:
-        """Collect direct and attribute call targets from ``Call`` nodes.
+    def visit_Name(self, node: ast.Name) -> None:
+        """Collect loaded bare-name references, including non-call uses.
 
-        :param node: AST call node.
+        :param node: AST name node.
         :return: ``None``.
         """
-        if isinstance(node.func, ast.Name):
-            self.calls.add(node.func.id)
-        elif isinstance(node.func, ast.Attribute):
-            # self.method() or obj.method()
-            self.calls.add(node.func.attr)
-            # Also track the full chain if it's a simple attribute access
-            if isinstance(node.func.value, ast.Name):
-                self.calls.add(f"{node.func.value.id}.{node.func.attr}")
+        if isinstance(node.ctx, ast.Load):
+            self.names.add(node.id)
+        self.generic_visit(node)
+
+    def visit_Attribute(self, node: ast.Attribute) -> None:
+        """Collect loaded attribute references such as method and property access.
+
+        :param node: AST attribute node.
+        :return: ``None``.
+        """
+        if isinstance(node.ctx, ast.Load):
+            self.names.add(node.attr)
+            # Also track the full chain for simple obj.attr access so alias
+            # resolution can map module-qualified references.
+            if isinstance(node.value, ast.Name):
+                self.names.add(f"{node.value.id}.{node.attr}")
         self.generic_visit(node)
 
 
@@ -741,8 +756,8 @@ class CodeExtractor:
         """
         unit_type = CodeUnitType.METHOD if class_member else CodeUnitType.FUNCTION
 
-        call_visitor = CallGraphVisitor()
-        call_visitor.visit(node)
+        reference_visitor = ReferenceVisitor()
+        reference_visitor.visit(node)
 
         return self._build_code_unit(
             node,
@@ -751,7 +766,7 @@ class CodeExtractor:
             module_name,
             scope_prefix,
             unit_type=unit_type,
-            calls=call_visitor.calls,
+            referenced_names=reference_visitor.names,
             exported=exported,
             dynamic_dispatch_hook=(
                 class_member and is_dynamic_dispatch_class and node.name.startswith("visit_")
@@ -777,6 +792,9 @@ class CodeExtractor:
         :param exported: Exported names from module __all__.
         :return: Constructed class unit.
         """
+        reference_visitor = ReferenceVisitor()
+        reference_visitor.visit(node)
+
         return self._build_code_unit(
             node,
             file_path=file_path,
@@ -784,7 +802,7 @@ class CodeExtractor:
             module_name=module_name,
             scope_prefix=scope_prefix,
             unit_type=CodeUnitType.CLASS,
-            calls=set(),
+            referenced_names=reference_visitor.names,
             exported=exported,
             dynamic_dispatch_hook=False,
         )
@@ -797,7 +815,7 @@ class CodeExtractor:
         module_name: str,
         scope_prefix: list[str],
         unit_type: CodeUnitType,
-        calls: set[str],
+        referenced_names: set[str],
         exported: set[str],
         dynamic_dispatch_hook: bool,
     ) -> CodeUnit:
@@ -809,7 +827,7 @@ class CodeExtractor:
         :param module_name: Module name.
         :param scope_prefix: Scope prefix stack.
         :param unit_type: Emitted unit type.
-        :param calls: Direct call targets found in the definition.
+        :param referenced_names: Names the definition references.
         :param exported: Exported names from module ``__all__``.
         :param dynamic_dispatch_hook: Whether runtime visitor dispatch reaches this method.
         :return: Constructed code unit.
@@ -825,7 +843,7 @@ class CodeExtractor:
             end_lineno=node.end_lineno or node.lineno,
             source=unit_source,
             docstring=extract_docstring(node),
-            calls=calls,
+            referenced_names=referenced_names,
             is_public=not name.startswith("_"),
             is_dunder=unit_type != CodeUnitType.CLASS
             and name.startswith("__")

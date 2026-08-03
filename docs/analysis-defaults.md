@@ -56,7 +56,7 @@ The following units are not reported:
 - `test_*` definitions and definitions in files whose names contain `_test`
 - units containing `# noqa: codedupes` or `# codedupes: ignore`
 
-Default mode also skips public top-level functions. Strict mode (`--strict-unused` or `strict_unused=True`) removes only that last suppression; the other API and runtime exclusions still apply. Dynamic registration and reflection remain outside the static call graph, so unused findings require review.
+A unit counts as referenced when its name is used anywhere in the analyzed corpus — called, passed as a callback argument, accessed as an attribute or property, used as a decorator, or named in a type annotation — not only when it is called. Default mode also skips public top-level functions. Strict mode (`--strict-unused` or `strict_unused=True`) removes only that last suppression; the other API and runtime exclusions still apply. Dynamic registration, reflection, and string-based lookups remain outside the static reference graph, so unused findings require review.
 
 ## Tiny Traditional Duplicate Filtering Defaults
 

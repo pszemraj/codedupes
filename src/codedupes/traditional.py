@@ -160,28 +160,28 @@ def _dedupe_duplicate_pairs(duplicates: list[DuplicatePair]) -> list[DuplicatePa
     return deduped
 
 
-def _resolve_call_targets(call: str, aliases: dict[str, str]) -> set[str]:
-    """Resolve direct and alias-mapped call targets.
+def _resolve_reference_targets(reference: str, aliases: dict[str, str]) -> set[str]:
+    """Resolve direct and alias-mapped reference targets.
 
-    :param call: Raw call expression string.
+    :param reference: Raw referenced-name string.
     :param aliases: Alias map from local symbols to full targets.
-    :return: Candidate call target names.
+    :return: Candidate reference target names.
     """
-    candidates = {call}
-    if call in aliases:
-        candidates.add(aliases[call])
-    if "." in call:
-        head, _, tail = call.partition(".")
+    candidates = {reference}
+    if reference in aliases:
+        candidates.add(aliases[reference])
+    if "." in reference:
+        head, _, tail = reference.partition(".")
         if head in aliases:
             candidates.add(f"{aliases[head]}.{tail}")
     return candidates
 
 
-def _extract_main_block_calls(file_path: Path) -> set[str]:
-    """Extract function names called from an if-``__main__`` block.
+def _extract_main_block_references(file_path: Path) -> set[str]:
+    """Extract names referenced from an if-``__main__`` block.
 
     :param file_path: Path to inspect.
-    :return: Function names called from the module entry block.
+    :return: Names referenced from the module entry block.
     """
     try:
         source = file_path.read_text(encoding="utf-8")
@@ -189,10 +189,10 @@ def _extract_main_block_calls(file_path: Path) -> set[str]:
     except (OSError, SyntaxError, UnicodeDecodeError):
         return set()
 
-    from codedupes.extractor import CallGraphVisitor
+    from codedupes.extractor import ReferenceVisitor
 
-    calls: set[str] = set()
-    visitor = CallGraphVisitor()
+    references: set[str] = set()
+    visitor = ReferenceVisitor()
 
     for node in tree.body:
         if not isinstance(node, ast.If):
@@ -224,8 +224,8 @@ def _extract_main_block_calls(file_path: Path) -> set[str]:
         for stmt in node.body:
             visitor.visit(stmt)
 
-    calls.update(visitor.calls)
-    return calls
+    references.update(visitor.names)
+    return references
 
 
 def _extract_pyproject_entry_points(project_root: Path) -> set[str]:
@@ -266,7 +266,7 @@ def _extract_pyproject_entry_points(project_root: Path) -> set[str]:
 
 
 def build_reference_graph(units: list[CodeUnit], project_root: Path | None = None) -> None:
-    """Populate references from direct calls, entrypoints, and ``__main__`` blocks.
+    """Populate references from collected name references, entrypoints, and ``__main__`` blocks.
 
     :param units: Collected code units.
     :param project_root: Optional root for entry point resolution.
@@ -284,11 +284,11 @@ def build_reference_graph(units: list[CodeUnit], project_root: Path | None = Non
         if unit.file_path not in alias_map_by_file:
             alias_map_by_file[unit.file_path] = _extract_aliases(unit.file_path)
 
-    # Populate references from call graph.
+    # Populate references from each unit's collected name references.
     for unit in units:
         file_aliases = alias_map_by_file.get(unit.file_path, {})
-        for call in unit.calls:
-            for target in _resolve_call_targets(call, file_aliases):
+        for reference in unit.referenced_names:
+            for target in _resolve_reference_targets(reference, file_aliases):
                 for candidate in by_name.get(target, []):
                     if candidate.uid != unit.uid:
                         candidate.references.add(unit.uid)
@@ -296,8 +296,8 @@ def build_reference_graph(units: list[CodeUnit], project_root: Path | None = Non
     # Seed references from __main__ blocks.
     for file_path, file_aliases in alias_map_by_file.items():
         caller_uid = f"__main__::{file_path}"
-        for call in _extract_main_block_calls(file_path):
-            for target in _resolve_call_targets(call, file_aliases):
+        for reference in _extract_main_block_references(file_path):
+            for target in _resolve_reference_targets(reference, file_aliases):
                 for candidate in by_name.get(target, []):
                     candidate.references.add(caller_uid)
 

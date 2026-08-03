@@ -167,7 +167,7 @@ def test_pyproject_entry_points_mark_as_used(tmp_path: Path) -> None:
     assert "helper" in names
 
 
-def test_main_block_calls_are_resolved_once_per_file(tmp_path: Path, monkeypatch) -> None:
+def test_main_block_references_are_resolved_once_per_file(tmp_path: Path, monkeypatch) -> None:
     source = dedent(
         """
         def first():
@@ -181,32 +181,76 @@ def test_main_block_calls_are_resolved_once_per_file(tmp_path: Path, monkeypatch
         """
     ).strip()
     units = extract_units(tmp_path, source, include_private=True)
-    calls: list[Path] = []
+    extractions: list[Path] = []
     resolutions: list[str] = []
 
-    def fake_extract_main_block_calls(path: Path) -> set[str]:
-        calls.append(path)
+    def fake_extract_main_block_references(path: Path) -> set[str]:
+        extractions.append(path)
         return {"first"}
 
-    def fake_resolve_call_targets(call: str, _aliases: dict[str, str]) -> set[str]:
-        resolutions.append(call)
-        return {call}
+    def fake_resolve_reference_targets(reference: str, _aliases: dict[str, str]) -> set[str]:
+        resolutions.append(reference)
+        return {reference}
 
     monkeypatch.setattr(
         traditional_module,
-        "_extract_main_block_calls",
-        fake_extract_main_block_calls,
+        "_extract_main_block_references",
+        fake_extract_main_block_references,
     )
     monkeypatch.setattr(
         traditional_module,
-        "_resolve_call_targets",
-        fake_resolve_call_targets,
+        "_resolve_reference_targets",
+        fake_resolve_reference_targets,
     )
 
     build_reference_graph(units)
 
-    assert len(calls) == 1
+    assert len(extractions) == 1
     assert resolutions == ["first"]
+
+
+def test_non_call_references_count_as_usage(tmp_path: Path) -> None:
+    """Callback-style, property, and annotation references must mark units as used."""
+    source = dedent(
+        '''
+        class Marker:
+            """Annotation-only class."""
+
+        class Config:
+            """Holds a property accessed without a call."""
+
+            @property
+            def cached_value(self):
+                return 1
+
+        def validate(value):
+            return value
+
+        def register(callback):
+            return callback
+
+        def annotate(value: Marker) -> Marker:
+            return value
+
+        def wire():
+            register(callback=validate)
+            return Config().cached_value
+
+        def orphan():
+            return None
+        '''
+    ).strip()
+    units = extract_units(tmp_path, source, include_private=True)
+    build_reference_graph(units)
+    unused_names = {unit.name for unit in find_potentially_unused(units, strict_unused=True)}
+
+    # validate is only a keyword-argument reference, cached_value only a
+    # property access, Marker only an annotation — none are calls.
+    assert "validate" not in unused_names
+    assert "cached_value" not in unused_names
+    assert "Marker" not in unused_names
+    # A genuinely unreferenced unit is still flagged.
+    assert "orphan" in unused_names
 
 
 def test_unused_analysis_skips_only_proven_ast_visitor_hooks(tmp_path: Path) -> None:
