@@ -905,7 +905,11 @@ class CodeExtractor:
         :return: Constructed code unit.
         """
         name = node.name
-        unit_source = "".join(source_lines[node.lineno - 1 : node.end_lineno])
+        source_start_lineno = min(
+            (decorator.lineno for decorator in node.decorator_list),
+            default=node.lineno,
+        )
+        unit_source = "".join(source_lines[source_start_lineno - 1 : node.end_lineno])
         return CodeUnit(
             name=name,
             qualified_name=self._qualified_name(module_name, scope_prefix, name),

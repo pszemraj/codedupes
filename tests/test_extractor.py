@@ -60,6 +60,23 @@ def test_compute_token_hash_ignores_formatting() -> None:
     )
 
 
+def test_extracted_source_includes_the_full_decorator_block(tmp_path: Path) -> None:
+    code = dedent(
+        """
+        @first
+        @configured(mode="strict")
+        def decorated(value):
+            return value
+        """
+    ).strip()
+
+    (unit,) = extract_units(tmp_path, code, include_private=True)
+
+    assert unit.lineno == 3
+    assert unit.source == code + "\n"
+    assert {"first", "configured"} <= unit.referenced_names
+
+
 def test_parse_error_is_skipped(tmp_path: Path) -> None:
     root = tmp_path / "project"
     root.mkdir()
