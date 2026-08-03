@@ -59,7 +59,7 @@ Successful batches do not clear the allocator cache. Embeddings are converted to
 
 The built-in EmbeddingGemma dtype override uses float32 on MPS instead of forcing bfloat16 on Apple Silicon. CUDA may use bfloat16 when the hardware reports support. Generic HuggingFace models follow their own model defaults and may not support MPS.
 
-`codedupes` deliberately does not set `PYTORCH_MPS_FAST_MATH` or `PYTORCH_MPS_PREFER_METAL`. Fast math may change floating-point results around tuned similarity thresholds, while forcing a particular matmul implementation is a workload-specific optimization. You can experiment with those variables externally, but re-run the hybrid tuning guardrail and a representative repository before adopting altered thresholds.
+`codedupes` deliberately does not set `PYTORCH_MPS_FAST_MATH` or `PYTORCH_MPS_PREFER_METAL`. Fast math may change floating-point results around tuned similarity thresholds, while forcing a particular matmul implementation is a workload-specific optimization. You can experiment with those variables externally, but re-run the hybrid tuning guardrail and a representative repository before adopting altered thresholds. The persistent embedding cache keys `PYTORCH_MPS_FAST_MATH` into its vector identity whenever MPS can execute the request, so toggling the policy re-embeds instead of serving vectors computed under the other math mode; `PYTORCH_MPS_PREFER_METAL` only selects among faithful float32 implementations and intentionally shares the key space, like CPU and MPS float32 do.
 
 For a native macOS installation, use the default `gte-modernbert-base` profile first; evaluate `embeddinggemma-300m` only after the default path is stable.
 

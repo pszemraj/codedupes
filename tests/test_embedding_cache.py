@@ -6,6 +6,7 @@ import hashlib
 import itertools
 import json
 import os
+import sys
 import threading
 import time
 from pathlib import Path
@@ -177,6 +178,55 @@ def test_cache_variant_includes_encode_plan_identity():
         profile, "cpu", semantic.EncodePlan(route="document"), mps_fallback=None
     )
     assert len({plain, prompted, routed}) == 3
+
+
+def test_cache_variant_keys_mps_fast_math_policy(monkeypatch):
+    profile = semantic.resolve_model_profile("test-model")
+    plan = semantic.EncodePlan(route="symmetric")
+
+    monkeypatch.delenv("PYTORCH_MPS_FAST_MATH", raising=False)
+    baseline = semantic._cache_variant_for(profile, "mps", plan, mps_fallback=None)
+    cpu_baseline = semantic._cache_variant_for(profile, "cpu", plan, mps_fallback=None)
+
+    # Disabled fast math is the same policy as an unset variable.
+    monkeypatch.setenv("PYTORCH_MPS_FAST_MATH", "0")
+    assert semantic._cache_variant_for(profile, "mps", plan, mps_fallback=None) == baseline
+
+    # An enabled policy must split the key space wherever MPS can execute.
+    monkeypatch.setenv("PYTORCH_MPS_FAST_MATH", "1")
+    assert semantic._cache_variant_for(profile, "mps", plan, mps_fallback=None) != baseline
+
+    # Devices that can never execute Metal kernels ignore the policy.
+    assert semantic._cache_variant_for(profile, "cpu", plan, mps_fallback=None) == cpu_baseline
+
+    # On macOS, ``auto`` can resolve to MPS, so it splits with the policy too.
+    monkeypatch.setattr(sys, "platform", "darwin")
+    auto_fast = semantic._cache_variant_for(profile, "auto", plan, mps_fallback=None)
+    monkeypatch.delenv("PYTORCH_MPS_FAST_MATH")
+    assert semantic._cache_variant_for(profile, "auto", plan, mps_fallback=None) != auto_fast
+
+
+def test_mps_fast_math_policy_change_invalidates_warm_cache(tmp_path, monkeypatch):
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.delenv("PYTORCH_MPS_FAST_MATH", raising=False)
+    units = _five_units(tmp_path)
+    model = CountingModel()
+    _patch_get_model(monkeypatch, model)
+    monkeypatch.setattr(semantic, "_get_loaded_model_commit_hash", lambda _model: None)
+
+    compute_embeddings(units, model_name="test-model", revision=REVISION_1, cache_scope=tmp_path)
+    assert len(model.encode_calls) == 1
+
+    # Same request under an altered Metal math policy: faithful-float32 rows
+    # must not satisfy hits, so the whole corpus re-embeds.
+    monkeypatch.setenv("PYTORCH_MPS_FAST_MATH", "1")
+    compute_embeddings(units, model_name="test-model", revision=REVISION_1, cache_scope=tmp_path)
+    assert len(model.encode_calls) == 2
+    assert len(model.encode_calls[-1]) == len(units)
+
+    # The fast-math key space warms independently.
+    compute_embeddings(units, model_name="test-model", revision=REVISION_1, cache_scope=tmp_path)
+    assert len(model.encode_calls) == 2
 
 
 def test_compute_embeddings_passes_raw_text_with_prompt_config(tmp_path, monkeypatch):

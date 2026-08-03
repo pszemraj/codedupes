@@ -800,6 +800,33 @@ def _dtype_variant_for(
     return f"dtype={dtype_name}"
 
 
+def _mps_fast_math_variant(device: str) -> str:
+    """Build the Metal math-policy component of the cache variant.
+
+    ``PYTORCH_MPS_FAST_MATH`` switches MPS kernels to approximate math, which can
+    move similarity scores across tuned thresholds, so vectors computed under a
+    fast-math policy must never satisfy hits for the shared faithful-float32 key
+    space (or vice versa). The raw setting is recorded so distinct policies never
+    mix even if PyTorch's interpretation of unusual values changes.
+
+    ``PYTORCH_MPS_PREFER_METAL`` and ``PYTORCH_ENABLE_MPS_FALLBACK`` are
+    deliberately not keyed: both select among faithful float32 implementations,
+    the same tolerance class as the intentional CPU/MPS shared key space.
+
+    :param device: Requested device string (``auto``, ``cpu``, ``cuda``, ``mps``).
+    :return: Math-policy fingerprint, empty when MPS cannot execute or fast math is off.
+    """
+    normalized_device = device.strip().lower()
+    if normalized_device != "mps" and not (
+        normalized_device == "auto" and sys.platform == "darwin"
+    ):
+        return ""
+    raw = os.environ.get("PYTORCH_MPS_FAST_MATH", "").strip()
+    if raw in {"", "0"}:
+        return ""
+    return f"mpsfm={raw}"
+
+
 def _cache_variant_for(
     profile: SemanticModelProfile,
     device: str,
@@ -812,21 +839,22 @@ def _cache_variant_for(
 
     The variant deliberately excludes the device name itself: devices that
     provably embed identically (CPU/MPS float32) share one key space, while
-    behavior that changes vectors (dtype, runtime versions, encode plan,
-    remote-code execution path) always splits it.
+    behavior that changes vectors (dtype, Metal math policy, runtime versions,
+    encode plan, remote-code execution path) always splits it.
 
     :param profile: Resolved model profile.
     :param device: Requested device string (``auto``, ``cpu``, ``cuda``, ``mps``).
     :param plan: Resolved encode plan (route and effective prompt).
     :param mps_fallback: MPS unsupported-op CPU fallback behavior.
     :param trust_remote_code: Resolved remote-code trust setting.
-    :return: Variant fingerprint combining plan, dtype, runtime, and trust identity.
+    :return: Variant fingerprint combining plan, dtype, math policy, runtime, and trust.
     """
     dtype_variant = _dtype_variant_for(profile, device, mps_fallback=mps_fallback)
     return "\x00".join(
         (
             plan.cache_identity(),
             dtype_variant,
+            _mps_fast_math_variant(device),
             _embedding_runtime_fingerprint(),
             f"trc={int(trust_remote_code)}",
         )
