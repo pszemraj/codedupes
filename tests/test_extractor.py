@@ -726,3 +726,39 @@ def test_control_flow_dependent_class_does_not_confer_cross_file_proof(tmp_path:
         by_qualified_name["platform_visitor.PlatformVisitor.visit_Call"].is_dynamic_dispatch_hook
         is True
     )
+
+
+def test_all_exports_come_only_from_module_scope(tmp_path: Path) -> None:
+    source = dedent(
+        """
+        import sys
+
+        if sys.platform == "darwin":
+            __all__ = ["platform_api"]
+
+        def platform_api():
+            return 1
+
+        def build_exports():
+            __all__ = ["local_only"]
+            return __all__
+
+        def local_only():
+            return 2
+
+        class Config:
+            __all__ = ["config_attr"]
+
+        def config_attr():
+            return 3
+        """
+    ).strip()
+    units = extract_units(tmp_path, source, include_private=True)
+    by_name = {unit.name: unit for unit in units}
+
+    # Module-level exports count even inside module-level control flow...
+    assert by_name["platform_api"].is_exported is True
+    # ...but an ``__all__`` local to a function or class body never exempts
+    # module names from unused analysis.
+    assert by_name["local_only"].is_exported is False
+    assert by_name["config_attr"].is_exported is False

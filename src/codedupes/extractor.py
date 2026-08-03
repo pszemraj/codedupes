@@ -833,13 +833,36 @@ def compute_token_hash(source: str) -> str:
     return hashlib.sha256(str(tokens).encode()).hexdigest()[:16]
 
 
+def _iter_module_level_statements(tree: ast.Module) -> Iterator[ast.stmt]:
+    """Yield statements executing in module scope, including inside control flow.
+
+    Function and class bodies are excluded: a name assigned there is a local or
+    a class attribute, never a module-level binding.
+
+    :param tree: Parsed module AST.
+    :return: Iterator over module-scope statements in breadth-first order.
+    """
+    pending: list[ast.stmt] = list(tree.body)
+    while pending:
+        statement = pending.pop(0)
+        if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            continue
+        yield statement
+        pending.extend(
+            child for child in ast.iter_child_nodes(statement) if isinstance(child, ast.stmt)
+        )
+
+
 def get_exported_names(tree: ast.Module) -> set[str]:
-    """Extract names from ``__all__`` if present.
+    """Extract names from a module-level ``__all__`` if present.
+
+    An ``__all__`` local to a function or class body is not the module export
+    list and never exempts names from unused analysis.
 
     :param tree: Parsed module AST.
     :return: Set of exported names.
     """
-    for node in ast.walk(tree):
+    for node in _iter_module_level_statements(tree):
         if isinstance(node, ast.Assign):
             for target in node.targets:
                 if (
