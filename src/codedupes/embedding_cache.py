@@ -689,6 +689,15 @@ def _write_shard_entries(
             else:
                 if entry_dim is None:
                     return
+                if existing is not None:
+                    logger.warning(
+                        "Embedding cache vector dimension changed from %d to %d for %s; "
+                        "replacing all %d entries in the incompatible shard.",
+                        existing.vectors.shape[1],
+                        entry_dim,
+                        shard_dir,
+                        len(existing.keys),
+                    )
                 dim = entry_dim
                 vectors = np.empty((0, dim), dtype=np.float32)
                 keys_map = {}

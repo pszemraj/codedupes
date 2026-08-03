@@ -605,6 +605,31 @@ def test_put_many_retains_keys_absent_from_current_write(tmp_path):
     assert cache.stats()["entries"] == 6
 
 
+def test_dimension_change_warns_before_replacing_incompatible_shard(tmp_path, caplog):
+    cache = EmbeddingCache()
+    scope = tmp_path / "proj"
+    scope.mkdir()
+    cache.put_many(
+        scope,
+        "model-a",
+        "rev1",
+        [
+            ("first", np.array([1.0, 2.0], dtype=np.float32)),
+            ("second", np.array([3.0, 4.0], dtype=np.float32)),
+        ],
+    )
+    replacement = np.array([5.0, 6.0, 7.0], dtype=np.float32)
+
+    with caplog.at_level("WARNING", logger="codedupes.embedding_cache"):
+        cache.put_many(scope, "model-a", "rev1", [("replacement", replacement)])
+
+    hits = cache.get_many(scope, "model-a", "rev1", ["first", "second", "replacement"])
+    assert set(hits) == {"replacement"}
+    np.testing.assert_array_equal(hits["replacement"], replacement)
+    assert "vector dimension changed from 2 to 3" in caplog.text
+    assert "replacing all 2 entries" in caplog.text
+
+
 def test_narrow_invocation_keeps_full_directory_run_warm(tmp_path, monkeypatch):
     # Full directory -> single file -> full directory: the narrow middle run
     # must not evict its siblings' vectors, so the final run encodes nothing.
