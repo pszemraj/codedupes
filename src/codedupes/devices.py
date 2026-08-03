@@ -15,12 +15,15 @@ import math
 import os
 import platform
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Literal, cast
+from typing import Any, Literal, TypeVar, cast
 
 from codedupes.constants import DEFAULT_SEMANTIC_DEVICE, SEMANTIC_DEVICE_CHOICES
 
 logger = logging.getLogger(__name__)
+
+_T = TypeVar("_T")
 
 SemanticDeviceRequest = Literal["auto", "cpu", "cuda", "mps"]
 ResolvedSemanticDevice = Literal["cpu", "cuda", "mps"]
@@ -144,24 +147,23 @@ def _load_torch() -> Any:
         ) from exc
 
 
-def _safe_bool_call(owner: Any, name: str) -> bool:
-    """Call an optional boolean capability function safely.
+def _safe_call(owner: Any, name: str, coerce: Callable[[Any], _T], default: _T) -> _T:
+    """Call an optional zero-argument runtime query function safely.
 
-    :param owner: Object that may expose the capability function.
-    :param name: Attribute name of the zero-argument capability function.
-    :return: Result coerced to ``bool``, or ``False`` when the attribute is missing,
-        not callable, or raises.
+    :param owner: Object that may expose the query function.
+    :param name: Attribute name of the zero-argument query function.
+    :param coerce: Conversion applied to the call result.
+    :param default: Returned when the attribute is missing, not callable, or raises.
+    :return: Coerced result, or ``default`` on any failure.
     """
     callback = getattr(owner, name, None)
     if not callable(callback):
-        return False
+        return default
     try:
-        return bool(callback())
+        return coerce(callback())
     except Exception:
-        logger.debug(
-            "Device capability check %s.%s failed", type(owner).__name__, name, exc_info=True
-        )
-        return False
+        logger.debug("Device runtime query %s.%s failed", type(owner).__name__, name, exc_info=True)
+        return default
 
 
 def _cuda_available(torch_module: Any) -> bool:
@@ -171,7 +173,7 @@ def _cuda_available(torch_module: Any) -> bool:
     :return: ``True`` when ``torch.cuda.is_available()`` reports availability.
     """
     cuda = getattr(torch_module, "cuda", None)
-    return cuda is not None and _safe_bool_call(cuda, "is_available")
+    return cuda is not None and _safe_call(cuda, "is_available", bool, False)
 
 
 def _mps_capabilities(torch_module: Any) -> tuple[bool, bool]:
@@ -185,12 +187,12 @@ def _mps_capabilities(torch_module: Any) -> tuple[bool, bool]:
     backend_mps = getattr(backends, "mps", None) if backends is not None else None
     torch_mps = getattr(torch_module, "mps", None)
 
-    built = backend_mps is not None and _safe_bool_call(backend_mps, "is_built")
+    built = backend_mps is not None and _safe_call(backend_mps, "is_built", bool, False)
     available = False
     if torch_mps is not None:
-        available = _safe_bool_call(torch_mps, "is_available")
+        available = _safe_call(torch_mps, "is_available", bool, False)
     if not available and backend_mps is not None:
-        available = _safe_bool_call(backend_mps, "is_available")
+        available = _safe_call(backend_mps, "is_available", bool, False)
 
     # Some test doubles and older runtimes expose is_available without is_built.
     if available and backend_mps is not None and not hasattr(backend_mps, "is_built"):
@@ -302,24 +304,6 @@ def configure_mps_memory_fraction(
         ) from exc
 
 
-def _safe_int_call(owner: Any, name: str) -> int | None:
-    """Call an optional integer-returning runtime function safely.
-
-    :param owner: Object that may expose the query function.
-    :param name: Attribute name of the zero-argument query function.
-    :return: Result coerced to ``int``, or ``None`` when the attribute is missing,
-        not callable, or raises.
-    """
-    callback = getattr(owner, name, None)
-    if not callable(callback):
-        return None
-    try:
-        return int(callback())
-    except Exception:
-        logger.debug("Device memory query %s failed", name, exc_info=True)
-        return None
-
-
 def _read_mps_memory_snapshot(torch_module: Any) -> dict[str, int]:
     """Read allocator statistics from an available PyTorch MPS runtime.
 
@@ -330,10 +314,10 @@ def _read_mps_memory_snapshot(torch_module: Any) -> dict[str, int]:
     if mps is None:
         return {}
 
-    mapping = {
-        "current_allocated": _safe_int_call(mps, "current_allocated_memory"),
-        "driver_allocated": _safe_int_call(mps, "driver_allocated_memory"),
-        "recommended_max": _safe_int_call(mps, "recommended_max_memory"),
+    mapping: dict[str, int | None] = {
+        "current_allocated": _safe_call(mps, "current_allocated_memory", int, None),
+        "driver_allocated": _safe_call(mps, "driver_allocated_memory", int, None),
+        "recommended_max": _safe_call(mps, "recommended_max_memory", int, None),
     }
     return {key: value for key, value in mapping.items() if value is not None}
 
@@ -479,24 +463,14 @@ def get_device_diagnostics(
     :param requested_device: Device request to resolve for the diagnostic.
     :return: Immutable capability and memory summary.
     """
-    try:
-        requested = normalize_semantic_device(requested_device)
-    except ValueError as exc:
-        return DeviceDiagnostics(
-            requested=str(requested_device),
-            resolved=None,
-            torch_available=False,
-            cuda_available=False,
-            mps_built=False,
-            mps_available=False,
-            mps_fallback_env=os.environ.get("PYTORCH_ENABLE_MPS_FALLBACK", "unset"),
-            mlx_loaded=is_mlx_loaded(),
-            error=str(exc),
-        )
 
-    try:
-        torch_module = _load_torch()
-    except DeviceConfigurationError as exc:
+    def torchless_diagnostics(requested: str, error: Exception) -> DeviceDiagnostics:
+        """Build the all-unavailable diagnostics for a pre-torch failure.
+
+        :param requested: Requested device string as far as it was normalized.
+        :param error: Failure that prevented device inspection.
+        :return: Diagnostics with every capability reported unavailable.
+        """
         return DeviceDiagnostics(
             requested=requested,
             resolved=None,
@@ -506,8 +480,18 @@ def get_device_diagnostics(
             mps_available=False,
             mps_fallback_env=os.environ.get("PYTORCH_ENABLE_MPS_FALLBACK", "unset"),
             mlx_loaded=is_mlx_loaded(),
-            error=str(exc),
+            error=str(error),
         )
+
+    try:
+        requested = normalize_semantic_device(requested_device)
+    except ValueError as exc:
+        return torchless_diagnostics(str(requested_device), exc)
+
+    try:
+        torch_module = _load_torch()
+    except DeviceConfigurationError as exc:
+        return torchless_diagnostics(requested, exc)
 
     cuda_available = _cuda_available(torch_module)
     mps_built, mps_available = _mps_capabilities(torch_module)
