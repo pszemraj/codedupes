@@ -798,11 +798,21 @@ def _iter_shard_dirs(repos_dir: Path) -> list[Path]:
     """
     if not repos_dir.exists():
         return []
-    return [
-        shard_dir
-        for repo_dir in sorted(p for p in repos_dir.iterdir() if p.is_dir())
-        for shard_dir in sorted(p for p in repo_dir.iterdir() if p.is_dir())
-    ]
+    try:
+        repo_dirs = sorted(path for path in repos_dir.iterdir() if path.is_dir())
+    except OSError:
+        return []
+
+    shard_dirs: list[Path] = []
+    for repo_dir in repo_dirs:
+        try:
+            shard_dirs.extend(sorted(path for path in repo_dir.iterdir() if path.is_dir()))
+        except OSError:
+            # Cache clear or another process's eviction may remove this repo
+            # directory after the root snapshot. The remaining repos are still
+            # useful and safe to inventory.
+            continue
+    return shard_dirs
 
 
 def _read_shard_meta(shard_dir: Path) -> dict[str, Any] | None:
@@ -827,7 +837,20 @@ def _shard_size_bytes(shard_dir: Path) -> int:
     :param shard_dir: Shard directory to measure.
     :return: Total bytes used by files directly inside ``shard_dir``.
     """
-    return sum(f.stat().st_size for f in shard_dir.glob("*") if f.is_file())
+    total = 0
+    try:
+        files = list(shard_dir.glob("*"))
+    except OSError:
+        return 0
+    for file_path in files:
+        try:
+            if file_path.is_file():
+                total += file_path.stat().st_size
+        except OSError:
+            # A whole-shard deletion can race the gap between is_file() and
+            # stat(); omit that vanished file and continue the inventory.
+            continue
+    return total
 
 
 def _prune_empty_repo_dirs(repos_dir: Path) -> None:
@@ -838,9 +861,18 @@ def _prune_empty_repo_dirs(repos_dir: Path) -> None:
     """
     if not repos_dir.exists():
         return
-    for repo_dir in list(repos_dir.iterdir()):
-        if repo_dir.is_dir() and not any(repo_dir.iterdir()):
-            repo_dir.rmdir()
+    try:
+        repo_dirs = list(repos_dir.iterdir())
+    except OSError:
+        return
+    for repo_dir in repo_dirs:
+        try:
+            if repo_dir.is_dir() and not any(repo_dir.iterdir()):
+                repo_dir.rmdir()
+        except OSError:
+            # Another process may populate or delete the directory after the
+            # emptiness check; either outcome needs no corrective action here.
+            continue
 
 
 def _delete_cache_tree(path: Path, *, action: str) -> bool:
@@ -870,9 +902,14 @@ def _maybe_evict(repos_dir: Path, protect: Path | None = None) -> None:
     """
     try:
         max_bytes = _resolve_max_bytes()
-        sized = [
-            (shard_dir, _shard_size_bytes(shard_dir)) for shard_dir in _iter_shard_dirs(repos_dir)
-        ]
+        sized: list[tuple[Path, int]] = []
+        for shard_dir in _iter_shard_dirs(repos_dir):
+            try:
+                sized.append((shard_dir, _shard_size_bytes(shard_dir)))
+            except OSError:
+                # A concurrently deleted shard must not prevent other shards
+                # from being considered for the global cap.
+                continue
         total = sum(size for _, size in sized)
         if total <= max_bytes:
             return
@@ -1038,9 +1075,14 @@ class EmbeddingCache:
         repo_totals: dict[str, dict[str, int]] = {}
         try:
             for shard_dir in _iter_shard_dirs(self.repos_dir):
-                meta = _read_shard_meta(shard_dir)
-                count = len(meta.get("keys", {})) if meta else 0
-                size = _shard_size_bytes(shard_dir)
+                try:
+                    meta = _read_shard_meta(shard_dir)
+                    count = len(meta.get("keys", {})) if meta else 0
+                    size = _shard_size_bytes(shard_dir)
+                except OSError:
+                    # Report the rest of the cache when clear/eviction removes
+                    # this shard between directory discovery and aggregation.
+                    continue
                 info["entries"] += count
                 info["size_bytes"] += size
                 if meta is not None:

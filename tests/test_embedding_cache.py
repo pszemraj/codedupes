@@ -396,6 +396,64 @@ def test_reader_discards_shard_replaced_during_vector_load(tmp_path, monkeypatch
     np.testing.assert_array_equal(hits["second"], second)
 
 
+def test_reader_treats_whole_shard_deletion_during_vector_load_as_miss(tmp_path, monkeypatch):
+    cache = EmbeddingCache()
+    scope = tmp_path / "proj"
+    scope.mkdir()
+    vector = np.array([1.0, 2.0], dtype=np.float32)
+    cache.put_many(scope, "model-a", "rev1", [("key", vector)])
+    shard_dir = cache.shard_dir(scope, "model-a", "rev1")
+
+    original_load = embedding_cache.np.load
+
+    def deleting_load(*args, **kwargs):
+        vectors = original_load(*args, **kwargs)
+        assert embedding_cache._delete_cache_tree(shard_dir, action="test eviction") is True
+        return vectors
+
+    monkeypatch.setattr(embedding_cache.np, "load", deleting_load)
+
+    assert cache.get_many(scope, "model-a", "rev1", ["key"]) == {}
+
+
+def test_stats_and_eviction_continue_after_one_shard_vanishes(tmp_path, monkeypatch):
+    cache = EmbeddingCache()
+    first_scope = tmp_path / "first"
+    second_scope = tmp_path / "second"
+    first_scope.mkdir()
+    second_scope.mkdir()
+    cache.put_many(
+        first_scope,
+        "model-a",
+        "rev1",
+        [("first", np.zeros(256, dtype=np.float32))],
+    )
+    cache.put_many(
+        second_scope,
+        "model-b",
+        "rev1",
+        [("second", np.ones(256, dtype=np.float32))],
+    )
+    vanished = cache.shard_dir(first_scope, "model-a", "rev1")
+    surviving = cache.shard_dir(second_scope, "model-b", "rev1")
+    original_size = embedding_cache._shard_size_bytes
+
+    def racing_size(shard_dir: Path) -> int:
+        if shard_dir == vanished:
+            raise FileNotFoundError(shard_dir)
+        return original_size(shard_dir)
+
+    monkeypatch.setattr(embedding_cache, "_shard_size_bytes", racing_size)
+
+    stats = cache.stats()
+    assert stats["entries"] == 1
+    assert stats["models"] == {"model-b": 1}
+
+    monkeypatch.setattr(embedding_cache, "_resolve_max_bytes", lambda: 1)
+    embedding_cache._maybe_evict(cache.repos_dir)
+    assert not surviving.exists()
+
+
 def test_stale_index_row_out_of_range_recomputes_without_crash(tmp_path, monkeypatch, caplog):
     monkeypatch.setattr(embedding_cache, "_warned_cache_error", False)
     units = _five_units(tmp_path)
