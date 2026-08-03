@@ -12,11 +12,11 @@ import codedupes.analyzer as analyzer_module
 from codedupes.analyzer import AnalyzerConfig, CodeAnalyzer
 from codedupes.constants import (
     DEFAULT_MODEL,
-    DEFAULT_SEMANTIC_THRESHOLD,
     DEFAULT_TRADITIONAL_THRESHOLD,
 )
 from codedupes.models import HybridDuplicate
 from codedupes.pairs import ordered_pair_key
+from codedupes.semantic_profiles import get_default_semantic_threshold
 
 try:
     from .sweep_common import (
@@ -63,6 +63,22 @@ def _parse_csv_floats(value: str) -> list[float]:
         msg = "Expected at least one float value."
         raise argparse.ArgumentTypeError(msg)
     return out
+
+
+def _resolve_hybrid_semantic_threshold(
+    model_name: str,
+    override: float | None,
+) -> float:
+    """Resolve the hybrid-confirmation threshold for the selected model profile.
+
+    :param str model_name: Model alias or identifier being swept.
+    :param float override: Explicit threshold override, or ``None`` for the
+        selected model profile's production default.
+    :return float: Effective semantic threshold used by hybrid synthesis.
+    """
+    if override is not None:
+        return override
+    return get_default_semantic_threshold(model_name)
 
 
 def _run_sweep(
@@ -139,8 +155,11 @@ def main() -> int:
     parser.add_argument(
         "--hybrid-semantic-threshold",
         type=float,
-        default=DEFAULT_SEMANTIC_THRESHOLD,
-        help="Semantic threshold passed into hybrid synthesis for mixed-evidence pairs.",
+        default=None,
+        help=(
+            "Semantic threshold passed into hybrid synthesis for mixed-evidence pairs. "
+            "Defaults to the selected model profile's production threshold."
+        ),
     )
     parser.add_argument(
         "--traditional-threshold",
@@ -226,7 +245,10 @@ def main() -> int:
         traditional_duplicates=result.traditional_duplicates,
         semantic_duplicates=result.semantic_duplicates,
         positive_pairs=positive_pairs,
-        semantic_threshold=args.hybrid_semantic_threshold,
+        semantic_threshold=_resolve_hybrid_semantic_threshold(
+            args.model,
+            args.hybrid_semantic_threshold,
+        ),
         traditional_threshold=args.traditional_threshold,
         grid=grid,
     )

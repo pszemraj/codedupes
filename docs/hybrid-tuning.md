@@ -52,6 +52,7 @@ python scripts/sweep_hybrid_gates.py \
 ```
 
 The harness uses the same analyzer synthesis logic and model/revision defaults as the CLI, so sweep results transfer directly to production gate values.
+Its mixed-evidence semantic threshold also resolves from the selected model profile (`0.96` for the default `gte-modernbert-base`, `0.86` for `embeddinggemma-300m`); use `--hybrid-semantic-threshold` only when intentionally evaluating a non-production override.
 
 ## Semantic threshold sweep (model profiles)
 

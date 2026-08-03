@@ -15,6 +15,7 @@ from codedupes.semantic_profiles import (
     resolve_local_model_path,
     resolve_model_profile,
 )
+from scripts.sweep_hybrid_gates import _resolve_hybrid_semantic_threshold
 
 
 def _filesystem_is_case_insensitive(tmp_path: Path) -> bool:
@@ -59,6 +60,12 @@ def test_search_threshold_is_looser_than_duplicate_threshold() -> None:
         assert 0 < profile.default_search_threshold < profile.default_semantic_threshold
     assert get_default_search_threshold("gte-modernbert-base") == 0.50
     assert get_default_search_threshold("unknown/model-id") == DEFAULT_FALLBACK_SEARCH_THRESHOLD
+
+
+def test_hybrid_sweep_uses_selected_profile_threshold_unless_overridden() -> None:
+    assert _resolve_hybrid_semantic_threshold("gte-modernbert-base", None) == 0.96
+    assert _resolve_hybrid_semantic_threshold("embeddinggemma-300m", None) == 0.86
+    assert _resolve_hybrid_semantic_threshold("gte-modernbert-base", 0.73) == 0.73
 
 
 def test_resolve_local_model_path_only_matches_existing_directories(tmp_path: Path) -> None:
