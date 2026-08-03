@@ -209,30 +209,6 @@ def _dotted_expression_name(node: ast.expr) -> str | None:
     return None
 
 
-def _get_ast_visitor_base_names(tree: ast.Module) -> set[str]:
-    """Return names bound to AST visitor classes by module-level imports.
-
-    :param tree: Parsed module AST.
-    :return: Base expressions proven to resolve to visitor classes from ``ast``.
-    """
-    base_names: set[str] = set()
-    for node in tree.body:
-        if isinstance(node, ast.Import):
-            for alias in node.names:
-                if alias.name == "ast":
-                    qualifier = alias.asname or alias.name
-                    base_names.update(
-                        f"{qualifier}.{class_name}" for class_name in AST_VISITOR_CLASS_NAMES
-                    )
-        elif isinstance(node, ast.ImportFrom) and node.module == "ast":
-            for alias in node.names:
-                if alias.name == "*":
-                    base_names.update(AST_VISITOR_CLASS_NAMES)
-                elif alias.name in AST_VISITOR_CLASS_NAMES:
-                    base_names.add(alias.asname or alias.name)
-    return base_names
-
-
 # Deliberately NOT importlib.util.resolve_name: this must never raise, must return
 # None for beyond-top-level imports, and must best-effort resolve relative imports
 # from root-level files (package == ""), where the stdlib raises ImportError.
@@ -256,60 +232,13 @@ def _resolve_relative_module(package: str, level: int, module: str | None) -> st
     return base or None
 
 
-def _get_cross_file_import_map(
-    tree: ast.Module, module_name: str, is_package_init: bool
-) -> tuple[dict[str, str], set[str]]:
-    """Resolve module-level imports to corpus-qualified identities for base-class lookup.
+@dataclass(frozen=True)
+class _NameBinding:
+    """Identity currently bound to one name in a lexical scope."""
 
-    Handles ``from pkg.mod import Base [as B]`` (including relative variants) and plain
-    ``import pkg.mod`` (matched against ``pkg.mod.Base`` base expressions). Star imports,
-    aliased ``import ... as`` module bindings, and imports guarded inside conditionals are
-    left unresolved.
-
-    :param tree: Parsed module AST.
-    :param module_name: Dotted module name for this file, as returned by module-name resolution.
-    :param is_package_init: Whether this file is a package ``__init__.py``.
-    :return: Bare-name-to-identity map from ``from`` imports, and dotted module paths bound by
-        plain ``import`` statements.
-    """
-    from_import_map: dict[str, str] = {}
-    imported_module_names: set[str] = set()
-    package = module_name if is_package_init else module_name.rpartition(".")[0]
-
-    for node in tree.body:
-        if isinstance(node, ast.Import):
-            for alias in node.names:
-                if alias.asname is None:
-                    imported_module_names.add(alias.name)
-        elif isinstance(node, ast.ImportFrom):
-            resolved_module = _resolve_relative_module(package, node.level, node.module)
-            if resolved_module is None:
-                continue
-            for alias in node.names:
-                if alias.name == "*":
-                    continue
-                bound_name = alias.asname or alias.name
-                from_import_map[bound_name] = f"{resolved_module}.{alias.name}"
-
-    return from_import_map, imported_module_names
-
-
-def _resolve_base_identity(
-    base_name: str, from_import_map: dict[str, str], imported_module_names: set[str]
-) -> str | None:
-    """Resolve a base-class expression to a corpus-qualified identity via this file's imports.
-
-    :param base_name: Dotted or bare base-class expression from a class definition.
-    :param from_import_map: Bare names bound to resolved identities via ``from`` imports.
-    :param imported_module_names: Dotted module paths bound via plain ``import`` statements.
-    :return: Resolved ``module.ClassName`` identity, or ``None`` if unresolved.
-    """
-    if base_name in from_import_map:
-        return from_import_map[base_name]
-    module_part, sep, class_part = base_name.rpartition(".")
-    if sep and module_part in imported_module_names:
-        return f"{module_part}.{class_part}"
-    return None
+    identity: str | None = None
+    module: str | None = None
+    is_ast_visitor: bool = False
 
 
 @dataclass
@@ -332,9 +261,6 @@ class _CodeUnitCollector(ast.NodeVisitor):
         module_name: str,
         inheritance_module_name: str,
         exported: set[str],
-        ast_visitor_base_names: set[str],
-        from_import_map: dict[str, str],
-        imported_module_names: set[str],
     ) -> None:
         """Create a collector bound to an extractor and source context.
 
@@ -345,19 +271,18 @@ class _CodeUnitCollector(ast.NodeVisitor):
         :param inheritance_module_name: Importable module identity used by the
             corpus-wide inheritance graph.
         :param exported: Export names from module-level ``__all__``.
-        :param ast_visitor_base_names: Base names resolved from module-level ``ast`` imports.
-        :param from_import_map: Bare names bound to resolved identities via ``from`` imports.
-        :param imported_module_names: Dotted module paths bound via plain ``import`` statements.
         """
         self.extractor = extractor
         self.file_path = file_path
         self.source_lines = source.splitlines(keepends=True)
         self.module_name = module_name
         self.inheritance_module_name = inheritance_module_name
+        self.import_package = (
+            inheritance_module_name
+            if file_path.name in {"__init__.py", "__init__.pyi"}
+            else inheritance_module_name.rpartition(".")[0]
+        )
         self.exported = exported
-        self.ast_visitor_base_names = ast_visitor_base_names
-        self.from_import_map = from_import_map
-        self.imported_module_names = imported_module_names
         self.units: list[CodeUnit] = []
         self.class_facts: list[_ClassFact] = []
 
@@ -367,15 +292,138 @@ class _CodeUnitCollector(ast.NodeVisitor):
         self.class_stack: list[str] = []
         self.function_stack: list[str] = []
         self.dynamic_dispatch_stack: list[bool] = []
-        # Current class binding state by bare name in document order. Overwriting
-        # a proven visitor name with an unrelated class must revoke that proof.
-        self.dynamic_dispatch_class_bindings: dict[str, bool] = {}
-        # Most recently defined class per bare name in this file, for same-file base lookups
-        # feeding the corpus-wide cross-file inheritance graph.
-        self.local_class_identity_by_name: dict[str, str] = {}
+        self.binding_scopes: list[dict[str, _NameBinding]] = [{}]
+
+    def _bind_name(self, name: str, binding: _NameBinding) -> None:
+        """Update one name in the current lexical scope.
+
+        :param name: Bound bare name.
+        :param binding: Identity now visible through ``name``.
+        :return: ``None``.
+        """
+        self.binding_scopes[-1][name] = binding
+
+    def _lookup_name(self, name: str) -> _NameBinding | None:
+        """Resolve the nearest currently visible binding for a bare name.
+
+        :param name: Bare name to look up.
+        :return: Current binding, or ``None`` when no visited scope binds it.
+        """
+        for scope in reversed(self.binding_scopes):
+            if name in scope:
+                return scope[name]
+        return None
+
+    def _resolve_base_binding(self, base_name: str) -> _NameBinding | None:
+        """Resolve a dotted class-base expression through current lexical bindings.
+
+        :param base_name: Dotted or bare base-class expression.
+        :return: Resolved binding, or ``None`` when the expression is unbound.
+        """
+        bound_name, _, suffix = base_name.partition(".")
+        binding = self._lookup_name(bound_name)
+        if binding is None or not suffix:
+            return binding
+        if binding.module is not None:
+            identity = f"{binding.module}.{suffix}"
+            if binding.module == "ast" and suffix in AST_VISITOR_CLASS_NAMES:
+                return _NameBinding(
+                    identity=_CROSS_FILE_AST_VISITOR_ROOT,
+                    is_ast_visitor=True,
+                )
+            return _NameBinding(identity=identity)
+        if binding.identity is not None:
+            return _NameBinding(identity=f"{binding.identity}.{suffix}")
+        return binding
+
+    def visit_Import(self, node: ast.Import) -> None:
+        """Record module bindings at their document-order import position.
+
+        :param node: Import statement.
+        :return: ``None``.
+        """
+        for alias in node.names:
+            bound_name = alias.asname or alias.name.partition(".")[0]
+            module = alias.name if alias.asname else bound_name
+            self._bind_name(bound_name, _NameBinding(module=module))
+
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+        """Record from-import bindings at their document-order position.
+
+        :param node: From-import statement.
+        :return: ``None``.
+        """
+        resolved_module = _resolve_relative_module(
+            self.import_package,
+            node.level,
+            node.module,
+        )
+        for alias in node.names:
+            if alias.name == "*":
+                if resolved_module == "ast":
+                    for class_name in AST_VISITOR_CLASS_NAMES:
+                        self._bind_name(
+                            class_name,
+                            _NameBinding(
+                                identity=_CROSS_FILE_AST_VISITOR_ROOT,
+                                is_ast_visitor=True,
+                            ),
+                        )
+                continue
+            bound_name = alias.asname or alias.name
+            if resolved_module == "ast" and alias.name in AST_VISITOR_CLASS_NAMES:
+                binding = _NameBinding(
+                    identity=_CROSS_FILE_AST_VISITOR_ROOT,
+                    is_ast_visitor=True,
+                )
+            elif resolved_module is None:
+                binding = _NameBinding()
+            else:
+                binding = _NameBinding(identity=f"{resolved_module}.{alias.name}")
+            self._bind_name(bound_name, binding)
+
+    def visit_Name(self, node: ast.Name) -> None:
+        """Track assignment and deletion of names in the current lexical scope.
+
+        :param node: Name expression.
+        :return: ``None``.
+        """
+        if isinstance(node.ctx, ast.Store):
+            self._bind_name(node.id, _NameBinding())
+        elif isinstance(node.ctx, ast.Del):
+            self.binding_scopes[-1].pop(node.id, None)
+
+    def _bind_function_arguments(self, arguments: ast.arguments) -> None:
+        """Seed a function scope with its parameter bindings.
+
+        :param arguments: Parsed function arguments.
+        :return: ``None``.
+        """
+        positional = [*arguments.posonlyargs, *arguments.args, *arguments.kwonlyargs]
+        for argument in positional:
+            self._bind_name(argument.arg, _NameBinding())
+        if arguments.vararg is not None:
+            self._bind_name(arguments.vararg.arg, _NameBinding())
+        if arguments.kwarg is not None:
+            self._bind_name(arguments.kwarg.arg, _NameBinding())
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
         """Collect function code units and recurse into nested definitions."""
+        self._visit_function_definition(node)
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        """Collect async functions using the same logic as normal functions."""
+        self._visit_function_definition(node)
+
+    def _visit_function_definition(
+        self,
+        node: ast.FunctionDef | ast.AsyncFunctionDef,
+    ) -> None:
+        """Collect one function and visit its body in a fresh binding scope.
+
+        :param node: Function or async-function definition.
+        :return: ``None``.
+        """
         is_method = bool(self.class_stack) and not self.function_stack
         scope_prefix = self.class_stack + self.function_stack
 
@@ -395,13 +443,14 @@ class _CodeUnitCollector(ast.NodeVisitor):
                 )
             )
 
+        self._bind_name(node.name, _NameBinding())
         self.function_stack.append(node.name)
-        self.generic_visit(node)
+        self.binding_scopes.append({})
+        self._bind_function_arguments(node.args)
+        for statement in node.body:
+            self.visit(statement)
+        self.binding_scopes.pop()
         self.function_stack.pop()
-
-    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
-        """Collect async functions using the same logic as normal functions."""
-        self.visit_FunctionDef(node)
 
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
         """Collect class units and descend into exported/visible class bodies."""
@@ -420,65 +469,47 @@ class _CodeUnitCollector(ast.NodeVisitor):
                 )
             )
 
-            base_names = {
-                base_name
-                for base in node.bases
-                if (base_name := _dotted_expression_name(base)) is not None
-            }
-            is_dynamic_dispatch_class = any(
-                base_name in self.ast_visitor_base_names
-                or self.dynamic_dispatch_class_bindings.get(base_name, False)
-                for base_name in base_names
+        base_bindings = [
+            binding
+            for base in node.bases
+            if (base_name := _dotted_expression_name(base)) is not None
+            and (binding := self._resolve_base_binding(base_name)) is not None
+        ]
+        is_dynamic_dispatch_class = any(binding.is_ast_visitor for binding in base_bindings)
+        qualified_name = self.extractor._qualified_name(self.module_name, scope_prefix, node.name)
+        inheritance_identity = self.extractor._qualified_name(
+            self.inheritance_module_name, scope_prefix, node.name
+        )
+        resolved_base_identities = {
+            binding.identity for binding in base_bindings if binding.identity is not None
+        }
+        self.class_facts.append(
+            _ClassFact(
+                qualified_name,
+                inheritance_identity,
+                resolved_base_identities,
             )
-            self.dynamic_dispatch_class_bindings[node.name] = is_dynamic_dispatch_class
+        )
 
-            qualified_name = self.extractor._qualified_name(
-                self.module_name, scope_prefix, node.name
-            )
-            inheritance_identity = self.extractor._qualified_name(
-                self.inheritance_module_name, scope_prefix, node.name
-            )
-            self.class_facts.append(
-                _ClassFact(
-                    qualified_name,
-                    inheritance_identity,
-                    self._resolve_cross_file_base_identities(base_names),
-                )
-            )
-            self.local_class_identity_by_name[node.name] = inheritance_identity
-
+        if should_enter:
             self.class_stack.append(node.name)
             self.dynamic_dispatch_stack.append(is_dynamic_dispatch_class)
-            self.generic_visit(node)
+            self.binding_scopes.append({})
+            for statement in node.body:
+                self.visit(statement)
+            self.binding_scopes.pop()
             self.dynamic_dispatch_stack.pop()
             self.class_stack.pop()
         else:
             # If class is excluded, skip descendants to avoid leaking private internals.
             logger.debug("Skipping private class %s in %s", node.name, self.file_path)
-
-    def _resolve_cross_file_base_identities(self, base_names: set[str]) -> set[str]:
-        """Resolve base-class expressions to identities usable by the corpus-wide graph.
-
-        :param base_names: Dotted or bare base-class expressions for one class definition.
-        :return: Resolved identities: the AST-visitor root sentinel, import-resolved
-            ``module.ClassName`` identities, and/or same-file class qualified names.
-        """
-        resolved: set[str] = set()
-        for base_name in base_names:
-            if base_name in self.ast_visitor_base_names:
-                resolved.add(_CROSS_FILE_AST_VISITOR_ROOT)
-                continue
-            imported_identity = _resolve_base_identity(
-                base_name, self.from_import_map, self.imported_module_names
-            )
-            if imported_identity is not None:
-                resolved.add(imported_identity)
-                continue
-            if "." not in base_name:
-                local_identity = self.local_class_identity_by_name.get(base_name)
-                if local_identity is not None:
-                    resolved.add(local_identity)
-        return resolved
+        self._bind_name(
+            node.name,
+            _NameBinding(
+                identity=inheritance_identity,
+                is_ast_visitor=is_dynamic_dispatch_class,
+            ),
+        )
 
 
 def _resolve_cross_file_dynamic_dispatch_hooks(
@@ -710,12 +741,6 @@ class CodeExtractor:
         module_name = self._get_module_name(file_path)
         inheritance_module_name = self._get_inheritance_module_name(file_path)
         exported = get_exported_names(tree)
-        ast_visitor_base_names = _get_ast_visitor_base_names(tree)
-        from_import_map, imported_module_names = _get_cross_file_import_map(
-            tree,
-            inheritance_module_name,
-            is_package_init=file_path.name == "__init__.py",
-        )
         collector = _CodeUnitCollector(
             self,
             file_path,
@@ -723,9 +748,6 @@ class CodeExtractor:
             module_name,
             inheritance_module_name,
             exported,
-            ast_visitor_base_names,
-            from_import_map,
-            imported_module_names,
         )
         collector.visit(tree)
         return collector

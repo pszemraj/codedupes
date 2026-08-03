@@ -397,26 +397,70 @@ def test_cross_file_unrelated_class_named_node_visitor_is_not_marked(tmp_path: P
     assert by_qualified_name["concrete.Concrete.visit_Call"].is_dynamic_dispatch_hook is False
 
 
-def test_redefined_visitor_base_name_does_not_mark_later_subclass(tmp_path: Path) -> None:
-    source = dedent(
-        """
-        import ast
+def test_visitor_base_bindings_follow_scope_and_document_order(tmp_path: Path) -> None:
+    (tmp_path / "bindings.py").write_text(
+        dedent(
+            """
+            import ast
+            from ast import NodeVisitor as ImportedBase
 
-        class Base(ast.NodeVisitor):
-            pass
+            class AssignmentBase(ast.NodeVisitor):
+                pass
 
-        class Base:
-            pass
+            AssignmentBase = object
 
-        class Worker(Base):
-            def visit_Name(self, node):
-                return node
-        """
-    ).strip()
-    file_path = tmp_path / "visitors.py"
-    file_path.write_text(source)
+            class AssignmentWorker(AssignmentBase):
+                def visit_Name(self, node):
+                    return node
 
-    units = list(CodeExtractor(tmp_path, include_private=True).extract_from_file(file_path))
+            class ImportedBase:
+                pass
+
+            class ImportWorker(ImportedBase):
+                def visit_Name(self, node):
+                    return node
+
+            class GlobalBase:
+                pass
+
+            class Outer:
+                class GlobalBase(ast.NodeVisitor):
+                    pass
+
+            class ScopeWorker(GlobalBase):
+                def visit_Name(self, node):
+                    return node
+            """
+        ).strip()
+        + "\n"
+    )
+    (tmp_path / "base.py").write_text(_base_visitor_source() + "\n")
+    (tmp_path / "concrete.py").write_text(
+        dedent(
+            """
+            from base import Base
+
+            class Base:
+                pass
+
+            class CrossFileWorker(Base):
+                def visit_Name(self, node):
+                    return node
+            """
+        ).strip()
+        + "\n"
+    )
+
+    units = CodeExtractor(tmp_path, include_private=True).extract_all()
     by_qualified_name = {unit.qualified_name: unit for unit in units}
 
-    assert by_qualified_name["visitors.Worker.visit_Name"].is_dynamic_dispatch_hook is False
+    unrelated_workers = {
+        "bindings.AssignmentWorker.visit_Name",
+        "bindings.ImportWorker.visit_Name",
+        "bindings.ScopeWorker.visit_Name",
+        "concrete.CrossFileWorker.visit_Name",
+    }
+    assert all(
+        by_qualified_name[qualified_name].is_dynamic_dispatch_hook is False
+        for qualified_name in unrelated_workers
+    )
