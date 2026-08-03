@@ -14,7 +14,7 @@
 pip install "codedupes @ git+https://github.com/pszemraj/codedupes.git"
 ```
 
-See [Installation](docs/install.md) for Python and runtime requirements.
+See [Installation](https://github.com/pszemraj/codedupes/blob/main/docs/install.md) for Python and runtime requirements.
 
 ## Quick Start
 
@@ -27,20 +27,20 @@ codedupes info
 codedupes check ./src --device mps
 ```
 
-See [Output and exit codes](docs/output.md) for report modes and CI behavior.
+See [Output and exit codes](https://github.com/pszemraj/codedupes/blob/main/docs/output.md) for report modes and CI behavior.
 
 ## Documentation
 
-- [Installation](docs/install.md)
-- [CLI reference](docs/cli.md)
-- [Usage guide](docs/usage.md)
-- [Python API](docs/python-api.md)
-- [Output and exit codes](docs/output.md)
-- [Analysis defaults and heuristics](docs/analysis-defaults.md)
-- [Semantic model profiles and tasks](docs/model-profiles.md)
-- [Embedding cache](docs/caching.md)
-- [Accelerators and Apple Silicon](docs/accelerators.md)
-- [Hybrid gate tuning](docs/hybrid-tuning.md)
+- [Installation](https://github.com/pszemraj/codedupes/blob/main/docs/install.md)
+- [CLI reference](https://github.com/pszemraj/codedupes/blob/main/docs/cli.md)
+- [Usage guide](https://github.com/pszemraj/codedupes/blob/main/docs/usage.md)
+- [Python API](https://github.com/pszemraj/codedupes/blob/main/docs/python-api.md)
+- [Output and exit codes](https://github.com/pszemraj/codedupes/blob/main/docs/output.md)
+- [Analysis defaults and heuristics](https://github.com/pszemraj/codedupes/blob/main/docs/analysis-defaults.md)
+- [Semantic model profiles and tasks](https://github.com/pszemraj/codedupes/blob/main/docs/model-profiles.md)
+- [Embedding cache](https://github.com/pszemraj/codedupes/blob/main/docs/caching.md)
+- [Accelerators and Apple Silicon](https://github.com/pszemraj/codedupes/blob/main/docs/accelerators.md)
+- [Hybrid gate tuning](https://github.com/pszemraj/codedupes/blob/main/docs/hybrid-tuning.md)
 
 ## Notes and limits
 
