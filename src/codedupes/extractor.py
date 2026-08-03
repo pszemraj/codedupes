@@ -249,6 +249,9 @@ class _ClassFact:
     inheritance_identity: str
     source_path: Path
     resolved_base_identities: set[str] = field(default_factory=set)
+    # True when the definition executes conditionally (branch, loop, or
+    # handler), so the import identity may not be this class at runtime.
+    conditionally_defined: bool = False
 
 
 class _CodeUnitCollector(ast.NodeVisitor):
@@ -294,6 +297,7 @@ class _CodeUnitCollector(ast.NodeVisitor):
         self.function_stack: list[str] = []
         self.dynamic_dispatch_stack: list[bool] = []
         self.binding_scopes: list[dict[str, _NameBinding]] = [{}]
+        self.conditional_depth = 0
 
     def _bind_name(self, name: str, binding: _NameBinding) -> None:
         """Update one name in the current lexical scope.
@@ -394,6 +398,193 @@ class _CodeUnitCollector(ast.NodeVisitor):
         elif isinstance(node.ctx, ast.Del):
             self.binding_scopes[-1].pop(node.id, None)
 
+    @staticmethod
+    def _joined_bindings(
+        outcomes: list[dict[str, _NameBinding]],
+    ) -> dict[str, _NameBinding]:
+        """Join alternative branch outcomes into one conservative binding state.
+
+        A name keeps its binding only when every reachable path agrees; any
+        disagreement, including being unbound on some path, degrades it to an
+        anonymous binding so neither visitor proof nor an import identity
+        survives control-flow uncertainty. The anonymous binding also shadows
+        outer scopes, matching how a conditional local assignment poisons the
+        whole enclosing scope at runtime.
+
+        :param outcomes: Innermost-scope binding states, one per reachable path.
+        :return: Joined binding state.
+        """
+        joined: dict[str, _NameBinding] = {}
+        for name in {name for outcome in outcomes for name in outcome}:
+            bindings = [outcome.get(name) for outcome in outcomes]
+            first = bindings[0]
+            if first is not None and all(binding == first for binding in bindings[1:]):
+                joined[name] = first
+            else:
+                joined[name] = _NameBinding()
+        return joined
+
+    def _visit_statement_suite(self, suite: list[ast.stmt]) -> None:
+        """Visit the statements of one suite in document order.
+
+        :param suite: Statement suite.
+        :return: ``None``.
+        """
+        for statement in suite:
+            self.visit(statement)
+
+    def _visit_conditional_suite(self, suite: list[ast.stmt]) -> None:
+        """Visit a suite that may be skipped at runtime and join both outcomes.
+
+        :param suite: Possibly skipped statement suite.
+        :return: ``None``.
+        """
+        if not suite:
+            return
+        pre_state = dict(self.binding_scopes[-1])
+        self.conditional_depth += 1
+        self._visit_statement_suite(suite)
+        self.conditional_depth -= 1
+        self.binding_scopes[-1] = self._joined_bindings([pre_state, self.binding_scopes[-1]])
+
+    def visit_If(self, node: ast.If) -> None:
+        """Join name bindings across both paths of a conditional.
+
+        :param node: If statement.
+        :return: ``None``.
+        """
+        self.visit(node.test)
+        pre_state = dict(self.binding_scopes[-1])
+        outcomes: list[dict[str, _NameBinding]] = []
+        self.conditional_depth += 1
+        for suite in (node.body, node.orelse):
+            self.binding_scopes[-1] = dict(pre_state)
+            self._visit_statement_suite(suite)
+            outcomes.append(self.binding_scopes[-1])
+        self.conditional_depth -= 1
+        self.binding_scopes[-1] = self._joined_bindings(outcomes)
+
+    def visit_While(self, node: ast.While) -> None:
+        """Join bindings across the untaken, looped, and else paths of a while.
+
+        :param node: While statement.
+        :return: ``None``.
+        """
+        self.visit(node.test)
+        self._visit_conditional_suite(node.body)
+        self._visit_conditional_suite(node.orelse)
+
+    def visit_For(self, node: ast.For) -> None:
+        """Join bindings across the zero-iteration and looped paths."""
+        self._visit_loop(node)
+
+    def visit_AsyncFor(self, node: ast.AsyncFor) -> None:
+        """Join async-for bindings using the same logic as ``for``."""
+        self._visit_loop(node)
+
+    def _visit_loop(self, node: ast.For | ast.AsyncFor) -> None:
+        """Join bindings across a loop's skipped, iterated, and else paths.
+
+        The iterable expression always evaluates; the target assignment and
+        body run zero or more times; ``break`` skips the ``else`` suite.
+
+        :param node: For or async-for statement.
+        :return: ``None``.
+        """
+        self.visit(node.iter)
+        pre_state = dict(self.binding_scopes[-1])
+        self.conditional_depth += 1
+        self.visit(node.target)
+        self._visit_statement_suite(node.body)
+        self.conditional_depth -= 1
+        self.binding_scopes[-1] = self._joined_bindings([pre_state, self.binding_scopes[-1]])
+        self._visit_conditional_suite(node.orelse)
+
+    def visit_Try(self, node: ast.Try) -> None:
+        """Join bindings across the body, handler, else, and finally paths.
+
+        A handler can begin after any prefix of the body, so its entry state
+        joins every statement boundary the body can reach. The ``finally``
+        suite runs unconditionally after the join.
+
+        :param node: Try statement (``try*`` shares the binding structure).
+        :return: ``None``.
+        """
+        prefix_states = [dict(self.binding_scopes[-1])]
+        for statement in node.body:
+            self.visit(statement)
+            prefix_states.append(dict(self.binding_scopes[-1]))
+        self.conditional_depth += 1
+        self._visit_statement_suite(node.orelse)
+        outcomes = [self.binding_scopes[-1]]
+        handler_entry = self._joined_bindings(prefix_states)
+        for handler in node.handlers:
+            self.binding_scopes[-1] = dict(handler_entry)
+            if handler.type is not None:
+                self.visit(handler.type)
+            if handler.name is not None:
+                self._bind_name(handler.name, _NameBinding())
+            self._visit_statement_suite(handler.body)
+            outcome = self.binding_scopes[-1]
+            if handler.name is not None:
+                # Python unbinds the exception alias when the handler exits.
+                outcome.pop(handler.name, None)
+            outcomes.append(outcome)
+        self.conditional_depth -= 1
+        self.binding_scopes[-1] = self._joined_bindings(outcomes)
+        self._visit_statement_suite(node.finalbody)
+
+    visit_TryStar = visit_Try
+
+    def visit_Match(self, node: ast.Match) -> None:
+        """Join bindings across the match cases and the no-match fall-through.
+
+        Case patterns bind their capture names even when a later guard rejects
+        the match, so every capture degrades to an anonymous binding here.
+
+        :param node: Match statement.
+        :return: ``None``.
+        """
+        self.visit(node.subject)
+        pre_state = dict(self.binding_scopes[-1])
+        outcomes = [dict(pre_state)]
+        self.conditional_depth += 1
+        for case in node.cases:
+            self.binding_scopes[-1] = dict(pre_state)
+            self._bind_match_captures(case.pattern)
+            if case.guard is not None:
+                self.visit(case.guard)
+            self._visit_statement_suite(case.body)
+            outcomes.append(self.binding_scopes[-1])
+        self.conditional_depth -= 1
+        self.binding_scopes[-1] = self._joined_bindings(outcomes)
+
+    def _bind_match_captures(self, pattern: ast.pattern) -> None:
+        """Bind every capture name one match pattern can introduce.
+
+        :param pattern: Match pattern node.
+        :return: ``None``.
+        """
+        if isinstance(pattern, ast.MatchAs):
+            if pattern.pattern is not None:
+                self._bind_match_captures(pattern.pattern)
+            if pattern.name is not None:
+                self._bind_name(pattern.name, _NameBinding())
+        elif isinstance(pattern, ast.MatchStar):
+            if pattern.name is not None:
+                self._bind_name(pattern.name, _NameBinding())
+        elif isinstance(pattern, ast.MatchMapping):
+            for sub_pattern in pattern.patterns:
+                self._bind_match_captures(sub_pattern)
+            if pattern.rest is not None:
+                self._bind_name(pattern.rest, _NameBinding())
+        elif isinstance(pattern, (ast.MatchSequence, ast.MatchOr)):
+            for sub_pattern in pattern.patterns:
+                self._bind_match_captures(sub_pattern)
+        elif isinstance(pattern, ast.MatchClass):
+            for sub_pattern in (*pattern.patterns, *pattern.kwd_patterns):
+                self._bind_match_captures(sub_pattern)
+
     def _bind_function_arguments(self, arguments: ast.arguments) -> None:
         """Seed a function scope with its parameter bindings.
 
@@ -484,14 +675,20 @@ class _CodeUnitCollector(ast.NodeVisitor):
         resolved_base_identities = {
             binding.identity for binding in base_bindings if binding.identity is not None
         }
-        self.class_facts.append(
-            _ClassFact(
-                qualified_name,
-                inheritance_identity,
-                self.file_path,
-                resolved_base_identities,
+        # Function-local classes are invisible to importers, and their method
+        # units carry the function scope in their qualified prefix, so they can
+        # neither confer nor receive cross-file proof. Recording them would only
+        # pollute the module-level identity they appear to share.
+        if not self.function_stack:
+            self.class_facts.append(
+                _ClassFact(
+                    qualified_name,
+                    inheritance_identity,
+                    self.file_path,
+                    resolved_base_identities,
+                    conditionally_defined=self.conditional_depth > 0,
+                )
             )
-        )
 
         if should_enter:
             self.class_stack.append(node.name)
@@ -523,7 +720,9 @@ def _resolve_cross_file_dynamic_dispatch_hooks(
     the corpus-wide class graph built from per-file inheritance evidence, then flags any
     not-yet-marked ``visit_*`` method belonging to a class proven only through that closure.
     Unresolvable bases (third-party imports, star imports, dynamic bases) never enter the
-    graph, so they stay unproven, same as the existing same-file behavior.
+    graph, so they stay unproven, same as the existing same-file behavior. Identities whose
+    definition is control-flow dependent are likewise barred from conferring proof, since
+    the runtime attribute may be a different object on the executed path.
 
     :param units: All code units collected across the corpus (mutated in place).
     :param class_facts: Per-class base-identity evidence gathered during extraction.
@@ -532,10 +731,10 @@ def _resolve_cross_file_dynamic_dispatch_hooks(
     identity_paths: dict[str, set[Path]] = {}
     for fact in class_facts:
         identity_paths.setdefault(fact.inheritance_identity, set()).add(fact.source_path)
-    ambiguous_identities = {
+    collision_identities = {
         identity for identity, source_paths in identity_paths.items() if len(source_paths) > 1
     }
-    for identity in sorted(ambiguous_identities):
+    for identity in sorted(collision_identities):
         source_paths = ", ".join(str(path) for path in sorted(identity_paths[identity]))
         logger.warning(
             "Disabling cross-file inheritance proof for ambiguous import identity %s: %s",
@@ -543,10 +742,15 @@ def _resolve_cross_file_dynamic_dispatch_hooks(
             source_paths,
         )
 
-    # A physical-file collision makes both the class identity and any import of
-    # that identity ambiguous. Excluding both sides keeps this optimization
-    # proof-based: ambiguity may create an unused-code false positive, but never
-    # suppresses a genuinely unused method as though inheritance were proven.
+    # A physical-file collision or a control-flow-dependent definition (branch,
+    # loop, or handler) makes both the class identity and any import of that
+    # identity ambiguous: the runtime attribute may not be the recorded class.
+    # Excluding both sides keeps this optimization proof-based: ambiguity may
+    # create an unused-code false positive, but never suppresses a genuinely
+    # unused method as though inheritance were proven.
+    ambiguous_identities = collision_identities | {
+        fact.inheritance_identity for fact in class_facts if fact.conditionally_defined
+    }
     edges = {
         fact.inheritance_identity: fact.resolved_base_identities - ambiguous_identities
         for fact in class_facts
@@ -562,12 +766,21 @@ def _resolve_cross_file_dynamic_dispatch_hooks(
                 proven.add(qualified_name)
                 changed = True
 
-    if len(proven) <= 1:
-        return
-
+    # Marking is per definition, not per identity: a redefined class name is
+    # proven only when every physical definition's own base evidence is proven,
+    # because emitted method units share the qualified-name prefix across
+    # redefinitions. Ambiguous identities can still receive proof through their
+    # unambiguous bases; they only stop conferring proof to importers.
+    facts_by_qualified_name: dict[str, list[_ClassFact]] = {}
+    for fact in class_facts:
+        facts_by_qualified_name.setdefault(fact.qualified_name, []).append(fact)
     proven_qualified_names = {
-        fact.qualified_name for fact in class_facts if fact.inheritance_identity in proven
+        qualified_name
+        for qualified_name, facts in facts_by_qualified_name.items()
+        if all((fact.resolved_base_identities - ambiguous_identities) & proven for fact in facts)
     }
+    if not proven_qualified_names:
+        return
     for unit in units:
         if (
             unit.unit_type == CodeUnitType.METHOD

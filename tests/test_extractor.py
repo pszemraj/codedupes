@@ -557,3 +557,172 @@ def test_visitor_base_bindings_follow_scope_and_document_order(tmp_path: Path) -
         by_qualified_name[qualified_name].is_dynamic_dispatch_hook is False
         for qualified_name in unrelated_workers
     )
+
+
+def test_visitor_proof_joins_across_control_flow_paths(tmp_path: Path) -> None:
+    file_path = tmp_path / "flow.py"
+    file_path.write_text(
+        dedent(
+            """
+            FLAG = False
+
+            class Plain:
+                pass
+
+            if FLAG:
+                from ast import NodeVisitor as Plain
+
+            class BranchWorker(Plain):
+                def visit_dead(self, node):
+                    return node
+
+            if FLAG:
+                from ast import NodeVisitor as Agreed
+            else:
+                from ast import NodeTransformer as Agreed
+
+            class AgreedWorker(Agreed):
+                def visit_kept(self, node):
+                    return node
+
+            try:
+                from ast import NodeVisitor as Guarded
+            except ImportError:
+                Guarded = object
+
+            class GuardedWorker(Guarded):
+                def visit_dead(self, node):
+                    return node
+
+            try:
+                from ast import NodeVisitor as Retried
+            except ImportError:
+                from ast import NodeTransformer as Retried
+
+            class RetriedWorker(Retried):
+                def visit_kept(self, node):
+                    return node
+
+            from ast import NodeVisitor as Looped
+
+            for Looped in [object]:
+                pass
+
+            class LoopWorker(Looped):
+                def visit_dead(self, node):
+                    return node
+
+            from ast import NodeVisitor as Captured
+
+            match object():
+                case Captured:
+                    pass
+
+            class MatchWorker(Captured):
+                def visit_dead(self, node):
+                    return node
+            """
+        ).strip()
+        + "\n"
+    )
+
+    units = list(CodeExtractor(tmp_path, include_private=True).extract_from_file(file_path))
+    by_qualified_name = {unit.qualified_name: unit for unit in units}
+
+    # A binding is proof only when every reachable path establishes it.
+    assert by_qualified_name["flow.AgreedWorker.visit_kept"].is_dynamic_dispatch_hook is True
+    assert by_qualified_name["flow.RetriedWorker.visit_kept"].is_dynamic_dispatch_hook is True
+    revoked_workers = {
+        "flow.BranchWorker.visit_dead",
+        "flow.GuardedWorker.visit_dead",
+        "flow.LoopWorker.visit_dead",
+        "flow.MatchWorker.visit_dead",
+    }
+    assert all(
+        by_qualified_name[qualified_name].is_dynamic_dispatch_hook is False
+        for qualified_name in revoked_workers
+    )
+
+
+def test_control_flow_dependent_class_does_not_confer_cross_file_proof(tmp_path: Path) -> None:
+    (tmp_path / "base.py").write_text(_base_visitor_source() + "\n")
+    (tmp_path / "maybe.py").write_text(
+        dedent(
+            """
+            import ast
+
+            FLAG = False
+
+            if FLAG:
+                class Exported(ast.NodeVisitor):
+                    pass
+            else:
+                class Exported:
+                    pass
+            """
+        ).strip()
+        + "\n"
+    )
+    (tmp_path / "factory.py").write_text(
+        dedent(
+            """
+            import ast
+
+            class Local:
+                pass
+
+            def build():
+                class Local(ast.NodeVisitor):
+                    pass
+
+                return Local
+            """
+        ).strip()
+        + "\n"
+    )
+    (tmp_path / "platform_visitor.py").write_text(
+        dedent(
+            """
+            import sys
+
+            from base import Base
+
+            if sys.platform == "darwin":
+                class PlatformVisitor(Base):
+                    def visit_Call(self, node):
+                        return self.generic_visit(node)
+            """
+        ).strip()
+        + "\n"
+    )
+    (tmp_path / "user.py").write_text(
+        dedent(
+            """
+            from factory import Local
+            from maybe import Exported
+
+            class MaybeWorker(Exported):
+                def visit_dead(self, node):
+                    return node
+
+            class FactoryWorker(Local):
+                def visit_dead(self, node):
+                    return node
+            """
+        ).strip()
+        + "\n"
+    )
+
+    units = CodeExtractor(tmp_path, include_private=True).extract_all()
+    by_qualified_name = {unit.qualified_name: unit for unit in units}
+
+    # Identities whose definition depends on control flow (or lives inside a
+    # function) never confer proof to importers...
+    assert by_qualified_name["user.MaybeWorker.visit_dead"].is_dynamic_dispatch_hook is False
+    assert by_qualified_name["user.FactoryWorker.visit_dead"].is_dynamic_dispatch_hook is False
+    # ...but a conditionally defined class with certain bases still receives
+    # proof for its own methods.
+    assert (
+        by_qualified_name["platform_visitor.PlatformVisitor.visit_Call"].is_dynamic_dispatch_hook
+        is True
+    )
