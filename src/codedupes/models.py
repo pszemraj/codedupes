@@ -29,7 +29,6 @@ class CodeUnit:
     lineno: int
     end_lineno: int
     source: str
-    docstring: str | None = None
 
     # Computed on demand
     _ast_hash: str | None = field(default=None, repr=False)
@@ -69,24 +68,36 @@ class CodeUnit:
         )
 
 
-@dataclass
-class DuplicatePair:
+class _PairIdentityMixin:
+    """Equality and hashing on the unordered unit pair, ignoring score fields.
+
+    Same-type comparison only: pair classes never compare equal across types.
+    Subclasses must be declared with ``@dataclass(eq=False)`` — dataclass-generated
+    equality would otherwise override these inherited dunders.
+    """
+
+    unit_a: CodeUnit
+    unit_b: CodeUnit
+
+    def __hash__(self) -> int:
+        return hash(ordered_pair_key(self.unit_a, self.unit_b))
+
+    def __eq__(self, other: object) -> bool:
+        if type(other) is not type(self):
+            return False
+        return ordered_pair_key(self.unit_a, self.unit_b) == ordered_pair_key(
+            other.unit_a, other.unit_b
+        )
+
+
+@dataclass(eq=False)
+class DuplicatePair(_PairIdentityMixin):
     """A pair of code units identified as duplicates."""
 
     unit_a: CodeUnit
     unit_b: CodeUnit
     similarity: float
     method: str  # "ast_hash", "token_hash", "semantic"
-
-    def __hash__(self) -> int:
-        return hash(ordered_pair_key(self.unit_a, self.unit_b))
-
-    def __eq__(self, other: object) -> bool:
-        if not isinstance(other, DuplicatePair):
-            return False
-        return ordered_pair_key(self.unit_a, self.unit_b) == ordered_pair_key(
-            other.unit_a, other.unit_b
-        )
 
 
 HybridTier = Literal[
@@ -99,8 +110,8 @@ HybridTier = Literal[
 AnalysisMode = Literal["combined", "traditional", "semantic", "none"]
 
 
-@dataclass
-class HybridDuplicate:
+@dataclass(eq=False)
+class HybridDuplicate(_PairIdentityMixin):
     """A synthesized duplicate candidate combining traditional + semantic evidence."""
 
     unit_a: CodeUnit
@@ -112,16 +123,6 @@ class HybridDuplicate:
     semantic_similarity: float | None = None
     weak_identifier_jaccard: float | None = None
     statement_count_ratio: float | None = None
-
-    def __hash__(self) -> int:
-        return hash(ordered_pair_key(self.unit_a, self.unit_b))
-
-    def __eq__(self, other: object) -> bool:
-        if not isinstance(other, HybridDuplicate):
-            return False
-        return ordered_pair_key(self.unit_a, self.unit_b) == ordered_pair_key(
-            other.unit_a, other.unit_b
-        )
 
 
 @dataclass

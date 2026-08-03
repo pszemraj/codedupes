@@ -61,22 +61,13 @@ AST_VISITOR_CLASS_NAMES = {"NodeVisitor", "NodeTransformer"}
 _CROSS_FILE_AST_VISITOR_ROOT = "<ast-visitor-root>"
 
 
-def extract_docstring(node: DefinitionNode) -> str | None:
-    """Extract an unmodified leading docstring from a definition.
-
-    :param node: Function or class node to inspect.
-    :return: Leading docstring if present, otherwise ``None``.
-    """
-    return ast.get_docstring(node, clean=False)
-
-
 def _remove_leading_docstring(node: DefinitionNode) -> None:
     """Remove one leading docstring expression from a definition body.
 
     :param node: Function or class node to modify.
     :return: ``None``.
     """
-    if extract_docstring(node) is not None:
+    if ast.get_docstring(node) is not None:
         node.body = node.body[1:]
 
 
@@ -842,7 +833,6 @@ class CodeExtractor:
             lineno=node.lineno,
             end_lineno=node.end_lineno or node.lineno,
             source=unit_source,
-            docstring=extract_docstring(node),
             referenced_names=referenced_names,
             is_public=not name.startswith("_"),
             is_dunder=unit_type != CodeUnitType.CLASS
