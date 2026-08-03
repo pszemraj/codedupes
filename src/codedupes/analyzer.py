@@ -55,6 +55,26 @@ DEFAULT_TINY_UNIT_STATEMENT_CUTOFF = 3
 DEFAULT_TINY_NEAR_JACCARD_MIN = 0.93
 
 
+def _reject_mode_gated_fields(
+    mode_enabled: bool,
+    required_flag: str,
+    field_checks: tuple[tuple[str, bool], ...],
+) -> None:
+    """Reject non-default mode-gated fields when their mode is disabled.
+
+    :param mode_enabled: Whether the gating mode is enabled.
+    :param required_flag: Config flag name the fields require.
+    :param field_checks: Pairs of field name and is-non-default flag.
+    :raises ValueError: When any field is non-default while the mode is off.
+    """
+    if mode_enabled:
+        return
+    flagged = [name for name, is_set in field_checks if is_set]
+    if flagged:
+        listed = ", ".join(sorted(flagged))
+        raise ValueError(f"{listed} require {required_flag}=True")
+
+
 def _is_test_function_unit(unit: CodeUnit) -> bool:
     """Return whether the unit is a pytest-style test function.
 
@@ -383,45 +403,39 @@ class AnalyzerConfig:
         if not self.run_unused and self.strict_unused:
             raise ValueError("strict_unused requires run_unused=True")
 
-        if not self.run_semantic:
-            semantic_only_fields: list[str] = []
-            if self.semantic_threshold is not None:
-                semantic_only_fields.append("semantic_threshold")
-            if self.semantic_task is not None:
-                semantic_only_fields.append("semantic_task")
-            if self.instruction_prefix is not None:
-                semantic_only_fields.append("instruction_prefix")
-            if self.model_revision is not None:
-                semantic_only_fields.append("model_revision")
-            if self.trust_remote_code is not None:
-                semantic_only_fields.append("trust_remote_code")
-            if self.device != DEFAULT_SEMANTIC_DEVICE:
-                semantic_only_fields.append("device")
-            if self.mps_fallback is not None:
-                semantic_only_fields.append("mps_fallback")
-            if self.mps_memory_fraction is not None:
-                semantic_only_fields.append("mps_memory_fraction")
-            if self.batch_size != DEFAULT_BATCH_SIZE:
-                semantic_only_fields.append("batch_size")
-            if self.suppress_test_semantic_matches:
-                semantic_only_fields.append("suppress_test_semantic_matches")
-            if semantic_only_fields:
-                listed = ", ".join(sorted(semantic_only_fields))
-                raise ValueError(f"{listed} require run_semantic=True")
+        _reject_mode_gated_fields(
+            self.run_semantic,
+            "run_semantic",
+            (
+                ("semantic_threshold", self.semantic_threshold is not None),
+                ("semantic_task", self.semantic_task is not None),
+                ("instruction_prefix", self.instruction_prefix is not None),
+                ("model_revision", self.model_revision is not None),
+                ("trust_remote_code", self.trust_remote_code is not None),
+                ("device", self.device != DEFAULT_SEMANTIC_DEVICE),
+                ("mps_fallback", self.mps_fallback is not None),
+                ("mps_memory_fraction", self.mps_memory_fraction is not None),
+                ("batch_size", self.batch_size != DEFAULT_BATCH_SIZE),
+                ("suppress_test_semantic_matches", self.suppress_test_semantic_matches),
+            ),
+        )
 
-        if not self.run_traditional:
-            traditional_only_fields: list[str] = []
-            if self.jaccard_threshold != DEFAULT_TRADITIONAL_THRESHOLD:
-                traditional_only_fields.append("jaccard_threshold")
-            if not self.filter_tiny_traditional:
-                traditional_only_fields.append("filter_tiny_traditional")
-            if self.tiny_unit_statement_cutoff != DEFAULT_TINY_UNIT_STATEMENT_CUTOFF:
-                traditional_only_fields.append("tiny_unit_statement_cutoff")
-            if self.tiny_near_jaccard_min != DEFAULT_TINY_NEAR_JACCARD_MIN:
-                traditional_only_fields.append("tiny_near_jaccard_min")
-            if traditional_only_fields:
-                listed = ", ".join(sorted(traditional_only_fields))
-                raise ValueError(f"{listed} require run_traditional=True")
+        _reject_mode_gated_fields(
+            self.run_traditional,
+            "run_traditional",
+            (
+                ("jaccard_threshold", self.jaccard_threshold != DEFAULT_TRADITIONAL_THRESHOLD),
+                ("filter_tiny_traditional", not self.filter_tiny_traditional),
+                (
+                    "tiny_unit_statement_cutoff",
+                    self.tiny_unit_statement_cutoff != DEFAULT_TINY_UNIT_STATEMENT_CUTOFF,
+                ),
+                (
+                    "tiny_near_jaccard_min",
+                    self.tiny_near_jaccard_min != DEFAULT_TINY_NEAR_JACCARD_MIN,
+                ),
+            ),
+        )
 
         if self.allow_semantic_fallback and (not self.run_semantic or not self.run_traditional):
             raise ValueError(
