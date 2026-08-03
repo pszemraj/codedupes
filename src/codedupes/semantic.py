@@ -25,7 +25,6 @@ from codedupes.constants import (
     DEFAULT_MODEL,
     DEFAULT_SEARCH_SEMANTIC_TASK,
     DEFAULT_SEMANTIC_DEVICE,
-    DEFAULT_SEMANTIC_THRESHOLD,
     DEFAULT_TOP_K,
     SemanticTask,
     normalize_semantic_task,
@@ -2020,7 +2019,7 @@ def compute_embeddings(
 def find_semantic_duplicates(
     units: list[CodeUnit],
     embeddings: np.ndarray,
-    threshold: float = DEFAULT_SEMANTIC_THRESHOLD,
+    threshold: float,
     exclude_exact: set[tuple[str, str]] | None = None,
 ) -> list[DuplicatePair]:
     """Find semantically similar code units via embedding cosine similarity.
