@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import contextlib
 import hashlib
 import importlib
 import json
@@ -39,6 +40,7 @@ from codedupes.devices import (
     resolve_semantic_device,
 )
 from codedupes.embedding_cache import (
+    LOCAL_MODELS_SUBDIR,
     compute_cache_key,
     get_embedding_cache,
     is_cache_disabled,
@@ -363,7 +365,7 @@ def _local_model_manifest_path(model_dir: Path) -> Path:
     :return: Manifest path under the codedupes cache root.
     """
     key = hashlib.blake2b(str(model_dir).encode(), digest_size=8).hexdigest()
-    return resolve_cache_dir() / "local-models" / f"{key}.json"
+    return resolve_cache_dir() / LOCAL_MODELS_SUBDIR / f"{key}.json"
 
 
 def _manifest_digest_for(entry: object, identity: tuple[int, int, int, int]) -> str | None:
@@ -426,6 +428,7 @@ def _store_local_model_manifest(
     if is_cache_disabled() or files == previous:
         return
     manifest_path = _local_model_manifest_path(model_dir)
+    tmp_path = manifest_path.with_name(f"{manifest_path.name}.{os.getpid()}.tmp")
     try:
         manifest_path.parent.mkdir(parents=True, exist_ok=True)
         payload = json.dumps(
@@ -435,13 +438,16 @@ def _store_local_model_manifest(
                 "files": files,
             }
         )
-        tmp_path = manifest_path.with_name(f"{manifest_path.name}.{os.getpid()}.tmp")
         tmp_path.write_text(payload, encoding="utf-8")
         os.replace(tmp_path, manifest_path)
     except OSError:
         logger.debug(
             "Could not persist local-model digest manifest for %s", model_dir, exc_info=True
         )
+    finally:
+        if tmp_path.exists():
+            with contextlib.suppress(OSError):
+                tmp_path.unlink()
 
 
 def _fingerprint_local_model_dir(model_dir: Path) -> str | None:

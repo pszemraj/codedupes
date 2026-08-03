@@ -32,6 +32,7 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 CACHE_SUBDIR = "repos"
+LOCAL_MODELS_SUBDIR = "local-models"
 INDEX_FILENAME = "index.json"
 DEFAULT_CACHE_MAX_MB = 2048
 _SCHEMA_VERSION = 3
@@ -165,13 +166,22 @@ def _sanitize_component(value: str) -> str:
     return cleaned or "root"
 
 
+def _hex_digest(value: str) -> str:
+    """Build the short hex digest used for collision-safe cache path components.
+
+    :param value: String to digest.
+    :return: 12-character blake2b hex digest.
+    """
+    return hashlib.blake2b(value.encode(), digest_size=6).hexdigest()
+
+
 def _scope_hash(resolved_scope: Path) -> str:
     """Hash a resolved repository root path for collision-safe shard naming.
 
     :param resolved_scope: Absolute, resolved repository root path.
     :return: 12-character hex digest of the path.
     """
-    return hashlib.blake2b(str(resolved_scope).encode(), digest_size=6).hexdigest()
+    return _hex_digest(str(resolved_scope))
 
 
 def _model_slug(canonical_model: str) -> str:
@@ -187,7 +197,7 @@ def _model_slug(canonical_model: str) -> str:
     """
     path = Path(canonical_model)
     if path.is_absolute():
-        digest = hashlib.blake2b(canonical_model.encode(), digest_size=6).hexdigest()
+        digest = _hex_digest(canonical_model)
         return f"local--{_sanitize_component(path.name)}-{digest}"
     return _sanitize_component(canonical_model.replace("/", "--"))
 
@@ -388,6 +398,24 @@ def _validate_shard(index: Any, vectors: Any) -> dict[str, Any] | None:
     return metadata
 
 
+def _peek_generation(payload: Any) -> str | None:
+    """Extract a well-formed generation identifier from a parsed index payload.
+
+    Cheap first-pass check for :func:`_read_shard`: only the generation is needed
+    to pick the vectors file, so full metadata validation waits for the confirmed
+    re-read.
+
+    :param payload: Parsed ``index.json`` payload.
+    :return: Generation hex string, or ``None`` when absent or malformed.
+    """
+    if not isinstance(payload, dict):
+        return None
+    generation = payload.get("generation")
+    if not isinstance(generation, str) or _GENERATION_PATTERN.fullmatch(generation) is None:
+        return None
+    return generation
+
+
 def _read_shard(shard_dir: Path) -> _ShardData | None:
     """Load and validate one shard's vectors and key index.
 
@@ -405,10 +433,10 @@ def _read_shard(shard_dir: Path) -> _ShardData | None:
 
     try:
         index = json.loads(index_path.read_text(encoding="utf-8"))
-        initial_metadata = _validate_shard_metadata(index)
-        if initial_metadata is None:
+        initial_generation = _peek_generation(index)
+        if initial_generation is None:
             raise ValueError(f"invalid shard metadata at {shard_dir}")
-        vectors_path = shard_dir / _vectors_filename(initial_metadata["generation"])
+        vectors_path = shard_dir / _vectors_filename(initial_generation)
         # Memory-mapped so sparse lookups (for example a single query key) only
         # fault in the rows they touch; hit rows are copied before being returned.
         vectors = np.load(vectors_path, mmap_mode="r", allow_pickle=False)
@@ -418,7 +446,7 @@ def _read_shard(shard_dir: Path) -> _ShardData | None:
         return None
 
     metadata = _validate_shard(confirmed_index, vectors)
-    if metadata is None or metadata["generation"] != initial_metadata["generation"]:
+    if metadata is None or metadata["generation"] != initial_generation:
         _warn_once("read shard", ValueError(f"inconsistent shard at {shard_dir}"))
         return None
 
@@ -451,6 +479,23 @@ def _reclaim_stale_tmp_files(shard_dir: Path, keep: frozenset[Path] = frozenset(
                 stale_tmp.unlink()
 
 
+def _publish_index(shard_dir: Path, payload: dict[str, Any]) -> None:
+    """Atomically replace a shard's ``index.json``, cleaning its tmp file on failure.
+
+    :param shard_dir: Shard directory holding the index; caller must hold its write lock.
+    :param payload: JSON-serializable index payload.
+    :return: ``None``.
+    """
+    index_tmp = shard_dir / f"{INDEX_FILENAME}{_tmp_suffix()}"
+    try:
+        index_tmp.write_text(json.dumps(payload), encoding="utf-8")
+        os.replace(index_tmp, shard_dir / INDEX_FILENAME)
+    finally:
+        if index_tmp.exists():
+            with contextlib.suppress(OSError):
+                index_tmp.unlink()
+
+
 def _atomic_write_shard(
     shard_dir: Path,
     canonical_model: str,
@@ -481,46 +526,39 @@ def _atomic_write_shard(
     :return: ``None``.
     """
     shard_dir.mkdir(parents=True, exist_ok=True)
-    suffix = _tmp_suffix()
     generation = uuid.uuid4().hex
     vectors_filename = _vectors_filename(generation)
     vectors_path = shard_dir / vectors_filename
-    index_path = shard_dir / INDEX_FILENAME
-    vectors_tmp = shard_dir / f"{vectors_filename}{suffix}"
-    index_tmp = shard_dir / f"{INDEX_FILENAME}{suffix}"
-    _reclaim_stale_tmp_files(shard_dir, keep=frozenset({vectors_tmp, index_tmp}))
+    vectors_tmp = shard_dir / f"{vectors_filename}{_tmp_suffix()}"
+    _reclaim_stale_tmp_files(shard_dir, keep=frozenset({vectors_tmp}))
     try:
         with open(vectors_tmp, "wb") as handle:
             np.save(handle, np.ascontiguousarray(vectors, dtype=np.float32))
         os.replace(vectors_tmp, vectors_path)
 
-        payload = {
-            "schema": _SCHEMA_VERSION,
-            "model": canonical_model,
-            "revision": revision if revision is not None else "unpinned",
-            "dim": dim,
-            "keys": keys_map,
-            "namespaces": namespaces,
-            "digests": digests,
-            "last_used_at": time.time(),
-            "generation": generation,
-        }
-        index_tmp.write_text(json.dumps(payload), encoding="utf-8")
-        os.replace(index_tmp, index_path)
+        _publish_index(
+            shard_dir,
+            {
+                "schema": _SCHEMA_VERSION,
+                "model": canonical_model,
+                "revision": revision if revision is not None else "unpinned",
+                "dim": dim,
+                "keys": keys_map,
+                "namespaces": namespaces,
+                "digests": digests,
+                "last_used_at": time.time(),
+                "generation": generation,
+            },
+        )
 
         for stale_vectors in shard_dir.glob("vectors-*.npy"):
             if stale_vectors != vectors_path:
                 with contextlib.suppress(OSError):
                     stale_vectors.unlink()
-        with contextlib.suppress(OSError):
-            (shard_dir / "vectors.npy").unlink()
     finally:
-        for tmp_path in (vectors_tmp, index_tmp):
-            if tmp_path.exists():
-                try:
-                    tmp_path.unlink()
-                except OSError:
-                    pass
+        if vectors_tmp.exists():
+            with contextlib.suppress(OSError):
+                vectors_tmp.unlink()
 
 
 def _touch_shard(shard_dir: Path) -> None:
@@ -543,9 +581,7 @@ def _touch_shard(shard_dir: Path) -> None:
             if payload is None:
                 return
             payload["last_used_at"] = time.time()
-            index_tmp = shard_dir / f"{INDEX_FILENAME}{_tmp_suffix()}"
-            index_tmp.write_text(json.dumps(payload), encoding="utf-8")
-            os.replace(index_tmp, shard_dir / INDEX_FILENAME)
+            _publish_index(shard_dir, payload)
     except OSError as exc:
         _warn_once("touch shard", exc)
 
@@ -959,6 +995,11 @@ class EmbeddingCache:
                 totals["shards"] += 1
                 totals["entries"] += count
                 totals["size_bytes"] += size
+            local_models_dir = self.cache_root / LOCAL_MODELS_SUBDIR
+            if local_models_dir.is_dir():
+                info["size_bytes"] += sum(
+                    f.stat().st_size for f in local_models_dir.glob("*") if f.is_file()
+                )
         except OSError as exc:
             _warn_once("stats", exc)
         info["repos"] = [{"repo": name, **totals} for name, totals in sorted(repo_totals.items())]
@@ -968,7 +1009,7 @@ class EmbeddingCache:
         """Delete cached embeddings, optionally scoped to one canonical model.
 
         :param model: Canonical model name to scope deletion to, or ``None`` to
-            clear every shard across every repo.
+            clear every shard across every repo plus local-model digest manifests.
         :return: Number of cached entries removed, ``0`` on failure.
         """
         removed = 0
@@ -985,6 +1026,10 @@ class EmbeddingCache:
                         continue
                     shutil.rmtree(shard_dir, ignore_errors=True)
             _prune_empty_repo_dirs(self.repos_dir)
+            if model is None:
+                # Manifests are keyed by local model directory, not canonical model
+                # name, so they are only removed on a full clear.
+                shutil.rmtree(self.cache_root / LOCAL_MODELS_SUBDIR, ignore_errors=True)
         except OSError as exc:
             _warn_once("clear", exc)
         return removed
