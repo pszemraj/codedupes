@@ -247,6 +247,7 @@ class _ClassFact:
 
     qualified_name: str
     inheritance_identity: str
+    source_path: Path
     resolved_base_identities: set[str] = field(default_factory=set)
 
 
@@ -487,6 +488,7 @@ class _CodeUnitCollector(ast.NodeVisitor):
             _ClassFact(
                 qualified_name,
                 inheritance_identity,
+                self.file_path,
                 resolved_base_identities,
             )
         )
@@ -527,7 +529,29 @@ def _resolve_cross_file_dynamic_dispatch_hooks(
     :param class_facts: Per-class base-identity evidence gathered during extraction.
     :return: ``None``.
     """
-    edges = {fact.inheritance_identity: fact.resolved_base_identities for fact in class_facts}
+    identity_paths: dict[str, set[Path]] = {}
+    for fact in class_facts:
+        identity_paths.setdefault(fact.inheritance_identity, set()).add(fact.source_path)
+    ambiguous_identities = {
+        identity for identity, source_paths in identity_paths.items() if len(source_paths) > 1
+    }
+    for identity in sorted(ambiguous_identities):
+        source_paths = ", ".join(str(path) for path in sorted(identity_paths[identity]))
+        logger.warning(
+            "Disabling cross-file inheritance proof for ambiguous import identity %s: %s",
+            identity,
+            source_paths,
+        )
+
+    # A physical-file collision makes both the class identity and any import of
+    # that identity ambiguous. Excluding both sides keeps this optimization
+    # proof-based: ambiguity may create an unused-code false positive, but never
+    # suppresses a genuinely unused method as though inheritance were proven.
+    edges = {
+        fact.inheritance_identity: fact.resolved_base_identities - ambiguous_identities
+        for fact in class_facts
+        if fact.inheritance_identity not in ambiguous_identities
+    }
     proven: set[str] = {_CROSS_FILE_AST_VISITOR_ROOT}
 
     changed = True

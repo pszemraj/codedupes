@@ -51,13 +51,15 @@ Unused detection runs by default and builds a conservative reference graph from 
 
 The following units are not reported:
 
-- referenced units and proven `ast.NodeVisitor` or `ast.NodeTransformer` dispatch hooks (inheritance is proven through imports across the analyzed files, including relative imports; unresolvable third-party bases stay eligible for reporting)
+- referenced units and proven `ast.NodeVisitor` or `ast.NodeTransformer` dispatch hooks (inheritance is proven through imports across the analyzed files, including relative imports; unresolvable third-party bases and local-module star re-exports stay eligible for reporting)
 - names exported through `__all__`, public classes, and dunder/API lifecycle methods such as `__init__`, `__new__`, and `__call__`
 - `get_*`, `set_*`, and abstract methods
 - `test_*` definitions and definitions in files whose names contain `_test`
 - units containing `# noqa: codedupes` or `# codedupes: ignore`
 
 A unit counts as referenced when its name is used anywhere in the analyzed corpus - called, passed as a callback argument, accessed as an attribute or property, used as a decorator, or named in a type annotation - not only when it is called. Default mode also skips public non-method functions - module-level and nested alike. Strict mode (`--strict-unused` or `strict_unused=True`) removes only that last suppression; the other API and runtime exclusions still apply. Dynamic registration, reflection, and string-based lookups remain outside the static reference graph, so unused findings require review.
+
+Cross-file visitor inheritance is accepted only when one import identity maps to one physical source file. If parallel layouts (for example `pkg/mod.py` and `src/pkg/mod.py`) map distinct files to the same import identity, codedupes warns and disables cross-file proof through that identity instead of merging unrelated classes.
 
 ## Tiny Traditional Duplicate Filtering Defaults
 

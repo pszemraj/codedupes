@@ -196,6 +196,8 @@ def test_ast_visitor_methods_are_marked_as_dynamic_dispatch_hooks(tmp_path: Path
     source = dedent(
         """
         import ast
+        import ast as renamed_ast
+        from ast import *
 
         class DirectVisitor(ast.NodeVisitor):
             def visit_Name(self, node):
@@ -206,6 +208,18 @@ def test_ast_visitor_methods_are_marked_as_dynamic_dispatch_hooks(tmp_path: Path
 
         class DerivedVisitor(DirectVisitor):
             def visit_Call(self, node):
+                return self.generic_visit(node)
+
+        class DirectTransformer(ast.NodeTransformer):
+            def visit_BinOp(self, node):
+                return self.generic_visit(node)
+
+        class AliasedVisitor(renamed_ast.NodeVisitor):
+            def visit_Constant(self, node):
+                return self.generic_visit(node)
+
+        class StarImportedTransformer(NodeTransformer):
+            def visit_UnaryOp(self, node):
                 return self.generic_visit(node)
 
         class OrdinaryWalker:
@@ -221,6 +235,16 @@ def test_ast_visitor_methods_are_marked_as_dynamic_dispatch_hooks(tmp_path: Path
 
     assert by_qualified_name["visitors.DirectVisitor.visit_Name"].is_dynamic_dispatch_hook is True
     assert by_qualified_name["visitors.DerivedVisitor.visit_Call"].is_dynamic_dispatch_hook is True
+    assert (
+        by_qualified_name["visitors.DirectTransformer.visit_BinOp"].is_dynamic_dispatch_hook is True
+    )
+    assert (
+        by_qualified_name["visitors.AliasedVisitor.visit_Constant"].is_dynamic_dispatch_hook is True
+    )
+    assert (
+        by_qualified_name["visitors.StarImportedTransformer.visit_UnaryOp"].is_dynamic_dispatch_hook
+        is True
+    )
     assert by_qualified_name["visitors.DirectVisitor.helper"].is_dynamic_dispatch_hook is False
     assert by_qualified_name["visitors.OrdinaryWalker.visit_Name"].is_dynamic_dispatch_hook is False
 
@@ -340,6 +364,58 @@ def test_cross_file_transitive_import_chain_marks_visitor_hook(tmp_path: Path) -
     by_qualified_name = {unit.qualified_name: unit for unit in units}
 
     assert by_qualified_name["c.Concrete.visit_Call"].is_dynamic_dispatch_hook is True
+
+
+def test_cross_file_diamond_inheritance_marks_visitor_hook(tmp_path: Path) -> None:
+    (tmp_path / "base.py").write_text(_base_visitor_source() + "\n")
+    (tmp_path / "left.py").write_text("from base import Base\n\nclass Left(Base):\n    pass\n")
+    (tmp_path / "right.py").write_text("from base import Base\n\nclass Right(Base):\n    pass\n")
+    (tmp_path / "concrete.py").write_text(
+        dedent(
+            """
+            from left import Left
+            from right import Right
+
+            class Concrete(Left, Right):
+                def visit_Call(self, node):
+                    return self.generic_visit(node)
+            """
+        ).strip()
+        + "\n"
+    )
+
+    units = CodeExtractor(tmp_path, include_private=True).extract_all()
+    by_qualified_name = {unit.qualified_name: unit for unit in units}
+
+    assert by_qualified_name["concrete.Concrete.visit_Call"].is_dynamic_dispatch_hook is True
+
+
+def test_cross_file_identity_collision_does_not_share_visitor_proof(tmp_path: Path, caplog) -> None:
+    # A regular top-level package and a conventional ``src`` package can both
+    # import as ``pkg.mod``. Their classes remain separate proof nodes even when
+    # the user-facing source-qualified names differ.
+    top_package = tmp_path / "pkg"
+    top_package.mkdir()
+    (top_package / "__init__.py").write_text("")
+    (top_package / "mod.py").write_text(
+        "class Helper:\n    def visit_thing(self, node):\n        return node\n"
+    )
+
+    src_package = tmp_path / "src" / "pkg"
+    src_package.mkdir(parents=True)
+    (src_package / "__init__.py").write_text("")
+    (src_package / "mod.py").write_text(
+        "import ast\n\nclass Helper(ast.NodeVisitor):\n"
+        "    def visit_thing(self, node):\n        return self.generic_visit(node)\n"
+    )
+
+    with caplog.at_level("WARNING", logger="codedupes.extractor"):
+        units = CodeExtractor(tmp_path, include_private=True).extract_all()
+    by_qualified_name = {unit.qualified_name: unit for unit in units}
+
+    assert by_qualified_name["pkg.mod.Helper.visit_thing"].is_dynamic_dispatch_hook is False
+    assert by_qualified_name["src.pkg.mod.Helper.visit_thing"].is_dynamic_dispatch_hook is True
+    assert "ambiguous import identity pkg.mod.Helper" in caplog.text
 
 
 def test_cross_file_import_alias_marks_visitor_hook(tmp_path: Path) -> None:
