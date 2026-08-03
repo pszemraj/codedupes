@@ -803,6 +803,23 @@ def _prune_empty_repo_dirs(repos_dir: Path) -> None:
             repo_dir.rmdir()
 
 
+def _delete_cache_tree(path: Path, *, action: str) -> bool:
+    """Delete one cache directory without hiding whether removal failed.
+
+    :param path: Cache directory to remove recursively.
+    :param action: Short label used in the best-effort cache warning.
+    :return: ``True`` when the directory is absent after the call.
+    """
+    try:
+        shutil.rmtree(path)
+    except FileNotFoundError:
+        return True
+    except OSError as exc:
+        _warn_once(action, exc)
+        return False
+    return True
+
+
 def _maybe_evict(repos_dir: Path, protect: Path | None = None) -> None:
     """Evict least-recently-used shards once the cache exceeds its size cap.
 
@@ -846,8 +863,8 @@ def _maybe_evict(repos_dir: Path, protect: Path | None = None) -> None:
             with _shard_write_lock(shard_dir) as acquired:
                 if not acquired:
                     continue
-                shutil.rmtree(shard_dir, ignore_errors=True)
-                total -= size
+                if _delete_cache_tree(shard_dir, action="evict shard"):
+                    total -= size
         _prune_empty_repo_dirs(repos_dir)
         if total > target:
             logger.warning(
@@ -1018,18 +1035,21 @@ class EmbeddingCache:
                 meta = _read_shard_meta(shard_dir)
                 if model is not None and (meta is None or meta.get("model") != model):
                     continue
-                removed += len(meta.get("keys", {})) if meta else 0
                 # Wait for any concurrent writer rather than deleting under it: writers
                 # hold this lock only briefly, and a dead holder's flock self-releases.
                 with _shard_write_lock(shard_dir, blocking=True) as acquired:
                     if not acquired:
                         continue
-                    shutil.rmtree(shard_dir, ignore_errors=True)
+                    if _delete_cache_tree(shard_dir, action="clear shard"):
+                        removed += len(meta.get("keys", {})) if meta else 0
             _prune_empty_repo_dirs(self.repos_dir)
             if model is None:
                 # Manifests are keyed by local model directory, not canonical model
                 # name, so they are only removed on a full clear.
-                shutil.rmtree(self.cache_root / LOCAL_MODELS_SUBDIR, ignore_errors=True)
+                _delete_cache_tree(
+                    self.cache_root / LOCAL_MODELS_SUBDIR,
+                    action="clear local-model manifests",
+                )
         except OSError as exc:
             _warn_once("clear", exc)
         return removed

@@ -532,6 +532,34 @@ def test_size_cap_preserves_fresh_shard_larger_than_cap(tmp_path, monkeypatch, c
     assert "still exceeds its size target after eviction" in caplog.text
 
 
+def test_size_cap_keeps_failed_deletion_in_total(tmp_path, monkeypatch, caplog):
+    monkeypatch.setattr(embedding_cache, "_warned_cache_error", False)
+    cache = EmbeddingCache()
+    scope = tmp_path / "proj"
+    scope.mkdir()
+    shard_dir = cache.shard_dir(scope, "model-x", "rev1")
+    cache.put_many(
+        scope,
+        "model-x",
+        "rev1",
+        [("key", np.zeros(256, dtype=np.float32))],
+    )
+    monkeypatch.setattr(embedding_cache, "_resolve_max_bytes", lambda: 1)
+
+    def fail_delete(path, *_args, **_kwargs):
+        if Path(path) == shard_dir:
+            raise PermissionError("read-only cache shard")
+
+    monkeypatch.setattr(embedding_cache.shutil, "rmtree", fail_delete)
+
+    with caplog.at_level("WARNING"):
+        embedding_cache._maybe_evict(cache.repos_dir)
+
+    assert shard_dir.exists()
+    assert "Embedding cache evict shard failed" in caplog.text
+    assert "still exceeds its size target after eviction" in caplog.text
+
+
 # "invalid" fails float() itself; "nan" passes float() and hits the isfinite
 # rejection — "inf"/"-inf" would exercise that identical branch again.
 @pytest.mark.parametrize("value", ["invalid", "nan"])
@@ -630,6 +658,35 @@ def test_clear_scopes_to_one_model(tmp_path):
     remaining = cache.stats()
     assert remaining["entries"] == 1
     assert remaining["models"] == {"model-b": 1}
+
+
+def test_clear_does_not_count_failed_shard_deletion(tmp_path, monkeypatch, caplog):
+    monkeypatch.setattr(embedding_cache, "_warned_cache_error", False)
+    cache = EmbeddingCache()
+    scope = tmp_path / "proj"
+    scope.mkdir()
+    shard_dir = cache.shard_dir(scope, "model-a", "rev1")
+    cache.put_many(
+        scope,
+        "model-a",
+        "rev1",
+        [("key", np.array([1.0, 2.0], dtype=np.float32))],
+    )
+    original_rmtree = embedding_cache.shutil.rmtree
+
+    def fail_shard_delete(path, *args, **kwargs):
+        if Path(path) == shard_dir:
+            raise PermissionError("read-only cache shard")
+        return original_rmtree(path, *args, **kwargs)
+
+    monkeypatch.setattr(embedding_cache.shutil, "rmtree", fail_shard_delete)
+
+    with caplog.at_level("WARNING"):
+        cleared = cache.clear()
+
+    assert cleared == 0
+    assert shard_dir.exists()
+    assert "Embedding cache clear shard failed" in caplog.text
 
 
 def test_unconfirmable_loaded_revision_disables_cache(tmp_path, monkeypatch):

@@ -9,7 +9,7 @@ Environment variables:
 - `CODEDUPES_CACHE_DIR`: explicit cache root. Takes precedence over everything else.
 - `XDG_CACHE_HOME`: when `CODEDUPES_CACHE_DIR` is unset, the cache root is `$XDG_CACHE_HOME/codedupes`.
 - Default (both unset): `~/.cache/codedupes`.
-- `CODEDUPES_CACHE_MAX_MB`: size cap in megabytes (default `2048`). When a write pushes the cache over the cap, least-recently-used shards are deleted until usage falls to about 80% of the cap. The shard just written is never deleted; if it alone exceeds the cap, it stays usable and a warning recommends raising the limit.
+- `CODEDUPES_CACHE_MAX_MB`: size cap in megabytes (default `2048`). When a write pushes the cache over the cap, least-recently-used shards are deleted until usage falls to about 80% of the cap. The shard just written is never deleted; if it alone exceeds the cap, it stays usable and a warning recommends raising the limit. A shard that cannot be deleted remains included in the measured total and also produces a warning.
 - `CODEDUPES_NO_CACHE=1`: disable the cache for the whole process, every command. Nothing is read or written.
 
 CLI:
