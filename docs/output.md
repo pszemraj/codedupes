@@ -129,6 +129,11 @@ Each unit object includes:
 - `2`: CLI usage/validation error (Click)
 - Semantic backend note: `search` requires semantic inference and fails hard if semantic backend loading/inference fails.
 
-`info`:
+`info` and `cache info`:
 
 - `0`: completed successfully
+
+`cache clear`:
+
+- `0`: cleared successfully
+- `1`: failed to clear cache state
