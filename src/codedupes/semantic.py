@@ -41,6 +41,7 @@ from codedupes.devices import (
 )
 from codedupes.embedding_cache import (
     LOCAL_MODELS_SUBDIR,
+    EmbeddingCache,
     compute_cache_key,
     get_embedding_cache,
     is_cache_disabled,
@@ -1503,6 +1504,49 @@ def _embedding_cache_namespace(mode: str, variant: str) -> str:
     return hashlib.blake2b(payload, digest_size=8).hexdigest()
 
 
+def _prepare_cache_context(
+    mode: Literal["code", "query"],
+    profile: SemanticModelProfile,
+    model_name: str,
+    revision: str | None,
+    device: str | None,
+    encode_plan: EncodePlan,
+    *,
+    mps_fallback: bool | None,
+    trust_remote_code: bool,
+    use_cache: bool,
+    cache_scope: Path | None,
+) -> tuple[EmbeddingCache | None, str | None, str, str]:
+    """Resolve the shared embedding-cache addressing context for one encode call.
+
+    :param mode: Embedding input mode the cache namespace is derived from.
+    :param profile: Resolved model profile.
+    :param model_name: Requested model identifier.
+    :param revision: Explicit model revision request.
+    :param device: Requested inference device.
+    :param encode_plan: Resolved encode route and prompt.
+    :param mps_fallback: Explicit MPS unsupported-op fallback request.
+    :param trust_remote_code: Resolved remote-code trust decision.
+    :param use_cache: Whether the caller enabled the persistent cache.
+    :param cache_scope: Corpus root addressing the cache shard; ``None`` disables caching.
+    :return: ``(cache, cache_revision, cache_variant, cache_namespace)``.
+    """
+    cache = get_embedding_cache() if (use_cache and cache_scope is not None) else None
+    cache_revision = _resolve_revision_for_cache(model_name, revision) if cache is not None else None
+    cache_variant = (
+        _cache_variant_for(
+            profile,
+            device,
+            encode_plan,
+            mps_fallback=mps_fallback,
+            trust_remote_code=trust_remote_code,
+        )
+        if cache is not None
+        else ""
+    )
+    return cache, cache_revision, cache_variant, _embedding_cache_namespace(mode, cache_variant)
+
+
 def resolve_encode_plan(
     model_name: str = DEFAULT_MODEL,
     mode: Literal["code", "query"] = "code",
@@ -1800,22 +1844,18 @@ def _compute_embeddings_unlocked(
     resolved_trust_remote_code = _resolve_trust_remote_code(model_name, trust_remote_code)
     prepared_texts = [unit.source.strip() for unit in units]
 
-    cache = get_embedding_cache() if (use_cache and cache_scope is not None) else None
-    cache_revision = (
-        _resolve_revision_for_cache(model_name, revision) if cache is not None else None
+    cache, cache_revision, cache_variant, cache_namespace = _prepare_cache_context(
+        "code",
+        profile,
+        model_name,
+        revision,
+        device,
+        encode_plan,
+        mps_fallback=mps_fallback,
+        trust_remote_code=resolved_trust_remote_code,
+        use_cache=use_cache,
+        cache_scope=cache_scope,
     )
-    cache_variant = (
-        _cache_variant_for(
-            profile,
-            device,
-            encode_plan,
-            mps_fallback=mps_fallback,
-            trust_remote_code=resolved_trust_remote_code,
-        )
-        if cache is not None
-        else ""
-    )
-    cache_namespace = _embedding_cache_namespace("code", cache_variant)
     cache_keys = (
         [
             compute_cache_key(profile.canonical_name, cache_revision, text, variant=cache_variant)
@@ -2168,22 +2208,18 @@ def _find_similar_to_query_unlocked(
     resolved_trust_remote_code = _resolve_trust_remote_code(model_name, trust_remote_code)
     query_text = query
 
-    cache = get_embedding_cache() if (use_cache and cache_scope is not None) else None
-    cache_revision = (
-        _resolve_revision_for_cache(model_name, revision) if cache is not None else None
+    cache, cache_revision, cache_variant, cache_namespace = _prepare_cache_context(
+        "query",
+        profile,
+        model_name,
+        revision,
+        device,
+        encode_plan,
+        mps_fallback=mps_fallback,
+        trust_remote_code=resolved_trust_remote_code,
+        use_cache=use_cache,
+        cache_scope=cache_scope,
     )
-    cache_variant = (
-        _cache_variant_for(
-            profile,
-            device,
-            encode_plan,
-            mps_fallback=mps_fallback,
-            trust_remote_code=resolved_trust_remote_code,
-        )
-        if cache is not None
-        else ""
-    )
-    cache_namespace = _embedding_cache_namespace("query", cache_variant)
     cache_key = (
         compute_cache_key(
             profile.canonical_name, cache_revision, query_text, mode="query", variant=cache_variant
