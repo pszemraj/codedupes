@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Literal, cast
+from typing import Literal, cast, get_args
 
 SemanticTask = Literal[
     "semantic-similarity",
@@ -24,15 +24,7 @@ DEFAULT_MIN_SEMANTIC_STATEMENTS = 3
 DEFAULT_TOP_K = 10
 DEFAULT_CHECK_SEMANTIC_TASK: SemanticTask = "semantic-similarity"
 DEFAULT_SEARCH_SEMANTIC_TASK: SemanticTask = "code-retrieval"
-SEMANTIC_TASK_CHOICES: tuple[SemanticTask, ...] = (
-    "semantic-similarity",
-    "code-retrieval",
-    "retrieval",
-    "question-answering",
-    "fact-verification",
-    "classification",
-    "clustering",
-)
+SEMANTIC_TASK_CHOICES: tuple[SemanticTask, ...] = get_args(SemanticTask)
 
 
 def normalize_semantic_task(
