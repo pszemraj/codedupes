@@ -603,7 +603,7 @@ def test_get_model_loads_local_directory_without_hub_revision(tmp_path: Path, mo
     ]
 
 
-def test_local_model_no_cache_run_does_not_persist_fingerprint_manifest(
+def test_local_model_manifest_persists_only_after_cache_enabled_run(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -642,7 +642,11 @@ def test_local_model_no_cache_run_does_not_persist_fingerprint_manifest(
         semantic.clear_model_cache()
 
     assert embeddings.shape[0] == len(units)
-    assert not (tmp_path / "embedding-cache").exists()
+    manifest_path = semantic._local_model_manifest_path(model_dir)
+    assert not manifest_path.exists()
+
+    assert semantic._fingerprint_local_model_dir(model_dir, persist_manifest=True) is not None
+    assert manifest_path.is_file()
 
 
 def test_get_model_reloads_local_directory_after_weights_change(

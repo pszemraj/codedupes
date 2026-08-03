@@ -76,7 +76,17 @@ _warned_cpu_fallback_reuse = False
 # fingerprinting stays a stat walk instead of rehashing gigabytes of weights.
 _LOCAL_MODEL_MANIFEST_VERSION = 1
 _local_model_manifest_lock = threading.Lock()
-_local_model_manifest_memo: dict[str, dict[str, dict[str, object]]] = {}
+
+
+@dataclass(frozen=True)
+class _LocalModelManifestState:
+    """In-memory digest manifest and whether the same content is on disk."""
+
+    files: dict[str, dict[str, object]]
+    persisted: bool
+
+
+_local_model_manifest_memo: dict[str, _LocalModelManifestState] = {}
 
 _TORCH_MIN_RELEASE = (2, 13)
 _TORCH_MAX_EXCLUSIVE_RELEASE = (3,)
@@ -401,10 +411,11 @@ def _load_local_model_manifest(
     :param persist_manifest: Whether the on-disk digest manifest may be read.
     :return: Mapping of relative path to digest entry; empty when unavailable.
     """
+    memo_key = str(model_dir)
     with _local_model_manifest_lock:
-        memo = _local_model_manifest_memo.get(str(model_dir))
-        if memo is not None:
-            return memo
+        state = _local_model_manifest_memo.get(memo_key)
+        if state is not None:
+            return state.files
     if not persist_manifest or is_cache_disabled():
         return {}
     try:
@@ -414,13 +425,19 @@ def _load_local_model_manifest(
     if not isinstance(payload, dict) or payload.get("version") != _LOCAL_MODEL_MANIFEST_VERSION:
         return {}
     files = payload.get("files")
-    return files if isinstance(files, dict) else {}
+    if not isinstance(files, dict):
+        return {}
+    with _local_model_manifest_lock:
+        _local_model_manifest_memo[memo_key] = _LocalModelManifestState(
+            files=files,
+            persisted=True,
+        )
+    return files
 
 
 def _store_local_model_manifest(
     model_dir: Path,
     files: dict[str, dict[str, object]],
-    previous: dict[str, dict[str, object]],
     *,
     persist_manifest: bool,
 ) -> None:
@@ -428,15 +445,26 @@ def _store_local_model_manifest(
 
     :param model_dir: Resolved local model directory.
     :param files: Fresh manifest entries keyed by relative path.
-    :param previous: Manifest the fingerprint walk started from, to skip no-op writes.
     :param persist_manifest: Whether the digest manifest may be written to disk.
     :return: ``None``.
     """
+    memo_key = str(model_dir)
     with _local_model_manifest_lock:
-        _local_model_manifest_memo[str(model_dir)] = files
-    if not persist_manifest or is_cache_disabled() or files == previous:
+        previous_state = _local_model_manifest_memo.get(memo_key)
+        already_persisted = (
+            previous_state is not None
+            and previous_state.persisted
+            and previous_state.files == files
+        )
+        _local_model_manifest_memo[memo_key] = _LocalModelManifestState(
+            files=files,
+            persisted=already_persisted,
+        )
+    if not persist_manifest or is_cache_disabled():
         return
     manifest_path = _local_model_manifest_path(model_dir)
+    if already_persisted and manifest_path.is_file():
+        return
     tmp_path = manifest_path.with_name(f"{manifest_path.name}.{os.getpid()}.tmp")
     try:
         manifest_path.parent.mkdir(parents=True, exist_ok=True)
@@ -449,6 +477,13 @@ def _store_local_model_manifest(
         )
         tmp_path.write_text(payload, encoding="utf-8")
         os.replace(tmp_path, manifest_path)
+        with _local_model_manifest_lock:
+            current_state = _local_model_manifest_memo.get(memo_key)
+            if current_state is not None and current_state.files == files:
+                _local_model_manifest_memo[memo_key] = _LocalModelManifestState(
+                    files=files,
+                    persisted=True,
+                )
     except OSError:
         logger.debug(
             "Could not persist local-model digest manifest for %s", model_dir, exc_info=True
@@ -513,7 +548,6 @@ def _fingerprint_local_model_dir(
     _store_local_model_manifest(
         model_dir,
         fresh_manifest,
-        manifest,
         persist_manifest=persist_manifest,
     )
     digest = hashlib.blake2b(repr(entries).encode(), digest_size=12).hexdigest()
