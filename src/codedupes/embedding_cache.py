@@ -482,14 +482,16 @@ def _read_shard(shard_dir: Path) -> _ShardData | None:
     )
 
 
-def _reclaim_stale_tmp_files(shard_dir: Path, keep: frozenset[Path] = frozenset()) -> None:
-    """Delete leftover tmp files abandoned by a writer that never reached cleanup.
+def _reclaim_stale_shard_files(shard_dir: Path, keep: frozenset[Path] = frozenset()) -> None:
+    """Delete unpublished files abandoned by a writer that never reached cleanup.
 
     Tmp files are only ever created by a writer holding this shard's exclusive
     lock, so any tmp file found here while that lock is held (as it is by every
     caller of this helper) was orphaned by a process that died mid-write (SIGKILL,
-    power loss) before its own ``finally`` block could remove it. Left alone, they
-    linger forever and inflate the shard's size-cap accounting.
+    power loss) before its own ``finally`` block could remove it. A process that
+    dies after renaming its vector matrix but before publishing the index leaves a
+    properly named generation orphan instead. The index is authoritative, so every
+    generation other than the one it names is equally safe to reclaim under lock.
 
     :param shard_dir: Shard directory to sweep; caller must hold its write lock.
     :param keep: Tmp paths belonging to the current write, left untouched.
@@ -499,6 +501,15 @@ def _reclaim_stale_tmp_files(shard_dir: Path, keep: frozenset[Path] = frozenset(
         if stale_tmp not in keep:
             with contextlib.suppress(OSError):
                 stale_tmp.unlink()
+
+    metadata = _read_shard_meta(shard_dir)
+    active_vectors = (
+        shard_dir / _vectors_filename(metadata["generation"]) if metadata is not None else None
+    )
+    for stale_vectors in shard_dir.glob("vectors-*.npy"):
+        if stale_vectors != active_vectors and stale_vectors not in keep:
+            with contextlib.suppress(OSError):
+                stale_vectors.unlink()
 
 
 def _publish_index(shard_dir: Path, payload: dict[str, Any]) -> None:
@@ -535,7 +546,7 @@ def _atomic_write_shard(
     so readers can never pair an older key map with a rebuilt matrix. A crash
     before the index replacement leaves only an unreferenced file; a crash after
     it leaves the new generation complete. Always runs under the shard write lock,
-    so it also reclaims any tmp files orphaned by a prior writer that crashed.
+    so it also reclaims files orphaned by a prior writer that crashed.
 
     :param shard_dir: Shard directory to write into (created if missing).
     :param canonical_model: Canonical model identifier.
@@ -552,7 +563,7 @@ def _atomic_write_shard(
     vectors_filename = _vectors_filename(generation)
     vectors_path = shard_dir / vectors_filename
     vectors_tmp = shard_dir / f"{vectors_filename}{_tmp_suffix()}"
-    _reclaim_stale_tmp_files(shard_dir, keep=frozenset({vectors_tmp}))
+    _reclaim_stale_shard_files(shard_dir, keep=frozenset({vectors_tmp}))
     try:
         with open(vectors_tmp, "wb") as handle:
             np.save(handle, np.ascontiguousarray(vectors, dtype=np.float32))
@@ -573,10 +584,7 @@ def _atomic_write_shard(
             },
         )
 
-        for stale_vectors in shard_dir.glob("vectors-*.npy"):
-            if stale_vectors != vectors_path:
-                with contextlib.suppress(OSError):
-                    stale_vectors.unlink()
+        _reclaim_stale_shard_files(shard_dir, keep=frozenset({vectors_path}))
     finally:
         if vectors_tmp.exists():
             with contextlib.suppress(OSError):
@@ -598,7 +606,7 @@ def _touch_shard(shard_dir: Path) -> None:
         with _shard_write_lock(shard_dir) as acquired:
             if not acquired:
                 return
-            _reclaim_stale_tmp_files(shard_dir)
+            _reclaim_stale_shard_files(shard_dir)
             payload = _read_shard_meta(shard_dir)
             if payload is None:
                 return
@@ -677,6 +685,7 @@ def _write_shard_entries(
         with _shard_write_lock(shard_dir) as acquired:
             if not acquired:
                 return
+            _reclaim_stale_shard_files(shard_dir)
             existing = _read_shard(shard_dir)
             if existing is not None and (
                 entry_dim is None or existing.vectors.shape[1] == entry_dim

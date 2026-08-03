@@ -1250,6 +1250,29 @@ def test_orphaned_tmp_file_reclaimed_by_next_write(tmp_path):
     assert not orphan.exists()
 
 
+def test_unpublished_vector_generation_reclaimed_by_next_write_attempt(tmp_path):
+    cache = EmbeddingCache()
+    scope = tmp_path / "proj"
+    scope.mkdir()
+    vector = np.array([1.0, 2.0], dtype=np.float32)
+    cache.put_many(scope, "model-a", "rev1", [("k1", vector)])
+    shard_dir = cache.shard_dir(scope, "model-a", "rev1")
+    active_vectors = _active_vectors_path(shard_dir)
+
+    # Reproduce a crash after the generation rename but before index publication.
+    orphan = shard_dir / "vectors-deadbeefdeadbeefdeadbeefdeadbeef.npy"
+    np.save(orphan, np.array([[9.0, 9.0]], dtype=np.float32))
+    assert orphan.exists()
+
+    # The incoming row is already valid, so this exercises cleanup even when the
+    # write attempt does not need to publish a replacement generation.
+    cache.put_many(scope, "model-a", "rev1", [("k1", vector)])
+
+    assert active_vectors.exists()
+    assert not orphan.exists()
+    np.testing.assert_array_equal(cache.get_many(scope, "model-a", "rev1", ["k1"])["k1"], vector)
+
+
 def test_max_namespace_keys_drops_oldest_and_spares_other_namespaces(tmp_path):
     cache = EmbeddingCache()
     scope = tmp_path / "proj"
