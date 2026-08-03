@@ -1418,6 +1418,7 @@ def search_command(
 @cli.command("info", help="Print tool and model defaults")
 def info_command() -> None:
     """Print version and default settings."""
+    default_profile = resolve_model_profile(DEFAULT_MODEL)
     click.echo(f"codedupes {__version__}")
     runtime_versions = get_semantic_runtime_versions()
     click.echo(f"Python: {runtime_versions['python']}")
@@ -1443,7 +1444,7 @@ def info_command() -> None:
     if diagnostics.error is not None:
         click.echo(f"Device diagnostic error: {diagnostics.error}")
     click.echo(f"Default model: {DEFAULT_MODEL}")
-    click.echo("Default model revision: auto")
+    click.echo(f"Default model revision: {default_profile.default_revision or 'auto'}")
     click.echo(f"Default semantic threshold ({DEFAULT_MODEL}): {DEFAULT_THRESHOLD}")
     click.echo(f"Default traditional threshold: {DEFAULT_TRADITIONAL_THRESHOLD}")
     click.echo(f"Default semantic task for check: {DEFAULT_CHECK_SEMANTIC_TASK}")

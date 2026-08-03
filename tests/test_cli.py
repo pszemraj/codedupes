@@ -715,6 +715,8 @@ def test_cli_info_exit_zero():
     assert "mlx loaded in process:" in result.output.lower()
     assert "built-in semantic model aliases" in result.output.lower()
     assert "semantic_threshold=0.96 search_threshold=0.5" in result.output
+    default_revision = cli.resolve_model_profile(cli.DEFAULT_MODEL).default_revision
+    assert f"Default model revision: {default_revision}" in result.output
 
 
 def test_cli_info_configures_mps_environment_before_diagnostics(monkeypatch):
