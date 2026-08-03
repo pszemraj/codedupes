@@ -377,6 +377,9 @@ def find_potentially_unused(units: list[CodeUnit], strict_unused: bool = False) 
             continue
         if "@abstractmethod" in unit.source or "@abc.abstractmethod" in unit.source:
             continue
+        # Deliberately broader than analyzer._is_test_function_unit (any unit type,
+        # plus file-name matching): unused reporting should stay quiet for anything
+        # test-shaped, while duplicate suppression must stay narrow.
         if unit.name.startswith("test_") or "_test" in unit.file_path.name:
             continue
 

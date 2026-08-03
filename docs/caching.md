@@ -28,7 +28,7 @@ codedupes check ./src --no-cache                   # bypass for one run; on-disk
 - Editing a code unit invalidates only that unit's entry; every other unit still hits.
 - Different models and different revisions never share entries.
 - `check` and `search` embed the corpus under different task instructions, which produce genuinely different vectors, so each command warms its own entries: a warm `check` does not make the first `search` against that corpus warm, and vice versa.
-- Repeating an identical search is a full cache hit end to end — query embeddings are cached in the same shard as the corpus they were searched against.
+- Repeating an identical search is a full cache hit end to end — query embeddings are cached in the same shard as the corpus they were searched against. The flip side of that shared, immutable shard design: persisting one new query vector rewrites the whole shard matrix on disk, so scripted loops issuing many novel queries against a large corpus pay a full-matrix write per query (repeat queries cost nothing).
 - Local model directories (`--model /path/to/model`) are keyed by a content fingerprint of the directory instead of a hub revision, so swapping updated weights into the same path invalidates cached vectors automatically — even when the replacement preserves file sizes and modification times. Metadata-only changes (a touched mtime) do not invalidate anything.
 - If you suspect stale results anyway (for example after hand-editing cache files), run `codedupes cache clear`, or add `--no-cache` for a one-off run that bypasses the cache.
 

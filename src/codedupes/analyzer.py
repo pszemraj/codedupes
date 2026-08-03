@@ -78,6 +78,11 @@ def _reject_mode_gated_fields(
 def _is_test_function_unit(unit: CodeUnit) -> bool:
     """Return whether the unit is a pytest-style test function.
 
+    Deliberately narrower than the test check in ``find_potentially_unused``
+    (no file-name matching, function/method only): this predicate suppresses
+    semantic duplicate pairs, where a class or a helper in a ``_test`` file must
+    stay eligible for matching.
+
     :param unit: Code unit under inspection.
     :return: ``True`` for function/method units whose names start with ``test_``.
     """

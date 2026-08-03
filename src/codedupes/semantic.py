@@ -1532,7 +1532,9 @@ def _prepare_cache_context(
     :return: ``(cache, cache_revision, cache_variant, cache_namespace)``.
     """
     cache = get_embedding_cache() if (use_cache and cache_scope is not None) else None
-    cache_revision = _resolve_revision_for_cache(model_name, revision) if cache is not None else None
+    cache_revision = (
+        _resolve_revision_for_cache(model_name, revision) if cache is not None else None
+    )
     cache_variant = (
         _cache_variant_for(
             profile,

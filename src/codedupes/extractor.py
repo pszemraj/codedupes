@@ -233,6 +233,9 @@ def _get_ast_visitor_base_names(tree: ast.Module) -> set[str]:
     return base_names
 
 
+# Deliberately NOT importlib.util.resolve_name: this must never raise, must return
+# None for beyond-top-level imports, and must best-effort resolve relative imports
+# from root-level files (package == ""), where the stdlib raises ImportError.
 def _resolve_relative_module(package: str, level: int, module: str | None) -> str | None:
     """Resolve a relative import to an absolute dotted module path.
 
