@@ -69,6 +69,8 @@ for unit, score in hits:
     print(f"{score:.3f}", unit.qualified_name)
 ```
 
+`semantic_task="code-retrieval"` is set explicitly above because the `code-retrieval` default belongs to the CLI `search` command only; an unset `AnalyzerConfig.semantic_task` falls back to `semantic-similarity` even for `search()`. See [task defaults](model-profiles.md#semantic-task-defaults-and-choices).
+
 `index()` extracts the corpus and computes (or loads from cache) its embeddings without the all-pairs duplicate scan, traditional analysis, or unused-code analysis that `analyze()` runs, so building a search corpus stays linear in corpus size. `search()` also works after an `analyze()` run with semantic analysis enabled, when duplicate results and search share one corpus.
 
 Each `index()` or `analyze()` call replaces the analyzer's corpus-specific state before extraction. `search()` therefore targets only the most recent run and requires it to have semantic embeddings. A later empty or nonsemantic analysis cannot reuse an older corpus accidentally.

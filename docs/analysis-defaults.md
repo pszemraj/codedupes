@@ -46,7 +46,7 @@ A nonempty `AnalyzerConfig.exclude_patterns` list or one or more CLI `--exclude`
 
 ## Potentially Unused Defaults
 
-Unused detection runs by default and builds a conservative reference graph from direct calls, module-level aliases, `if __name__ == "__main__"` blocks, and `[project.scripts]` or `[project.gui-scripts]` entries in `pyproject.toml`.
+Unused detection runs by default and builds a conservative reference graph from name references in analyzed code, module-level aliases, `if __name__ == "__main__"` blocks, and `[project.scripts]` or `[project.gui-scripts]` entries in `pyproject.toml`.
 
 The following units are not reported:
 
@@ -56,7 +56,7 @@ The following units are not reported:
 - `test_*` definitions and definitions in files whose names contain `_test`
 - units containing `# noqa: codedupes` or `# codedupes: ignore`
 
-A unit counts as referenced when its name is used anywhere in the analyzed corpus — called, passed as a callback argument, accessed as an attribute or property, used as a decorator, or named in a type annotation — not only when it is called. Default mode also skips public top-level functions. Strict mode (`--strict-unused` or `strict_unused=True`) removes only that last suppression; the other API and runtime exclusions still apply. Dynamic registration, reflection, and string-based lookups remain outside the static reference graph, so unused findings require review.
+A unit counts as referenced when its name is used anywhere in the analyzed corpus — called, passed as a callback argument, accessed as an attribute or property, used as a decorator, or named in a type annotation — not only when it is called. Default mode also skips public non-method functions — module-level and nested alike. Strict mode (`--strict-unused` or `strict_unused=True`) removes only that last suppression; the other API and runtime exclusions still apply. Dynamic registration, reflection, and string-based lookups remain outside the static reference graph, so unused findings require review.
 
 ## Tiny Traditional Duplicate Filtering Defaults
 
