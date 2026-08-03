@@ -46,10 +46,10 @@ The option calls `torch.mps.set_per_process_memory_fraction()` and accepts `(0, 
 Inference OOM recovery is deterministic:
 
 1. Detach the failed traceback so temporary tensors are no longer retained by Python frames.
-2. Log MPS tensor, driver, and recommended-memory statistics when available.
+2. Log one warning per failed attempt, including MPS tensor, driver, and recommended-memory statistics when available.
 3. Synchronize queued MPS work, run garbage collection, and call `torch.mps.empty_cache()`.
 4. Halve the embedding batch size until it reaches one.
-5. If an accelerator still OOMs at batch size one, move the cached model to CPU once and retry from the originally requested batch size; host memory has different limits, and a CPU OOM re-enters the halving ladder above before aborting.
+5. If an accelerator still OOMs at batch size one, move the cached model to CPU once and retry from the originally requested batch size; host memory has different limits, and a CPU OOM re-enters the halving ladder above before aborting. The fallback deliberately keeps the model's load-time dtype (including CUDA-selected bfloat16) to preserve the accepted numeric format and reduce memory pressure on this last-resort path.
 
 A model-loading MPS OOM has no batch to shrink, so it clears the MPS cache and retries loading once on CPU. After an MPS-to-CPU OOM fallback, the CPU model remains sticky for that model in a long-lived process. Call `codedupes.semantic.clear_model_cache()` to force a fresh accelerator load.
 

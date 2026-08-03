@@ -238,7 +238,7 @@ def test_load_oom_falls_back_to_cpu_and_reuse_warns_once(caplog) -> None:
     assert caplog.text.count("after an earlier mps-to-CPU OOM fallback") == 1
 
 
-def test_encode_oom_halves_batch_then_falls_back_to_cpu(tmp_path: Path) -> None:
+def test_encode_oom_halves_batch_then_falls_back_to_cpu(tmp_path: Path, caplog) -> None:
     units = extract_arithmetic_units(tmp_path)
     model = semantic.get_model(DEFAULT_MODEL, device="mps")
 
@@ -255,12 +255,20 @@ def test_encode_oom_halves_batch_then_falls_back_to_cpu(tmp_path: Path) -> None:
     # MPS allocation raises the allocator's genuine OOM error.
     torch.mps.set_per_process_memory_fraction(_TINY_MEMORY_FRACTION)
 
-    embeddings = semantic.compute_embeddings(units, device="mps", batch_size=8)
+    with caplog.at_level(logging.WARNING, logger="codedupes.semantic"):
+        embeddings = semantic.compute_embeddings(units, device="mps", batch_size=8)
 
     assert attempts == [(8, None), (4, None), (2, None), (1, None), (8, "cpu")]
     assert semantic._model_execution_device == "cpu"
     assert embeddings.shape[0] == len(units)
     assert np.isfinite(embeddings).all()
+    oom_warnings = [
+        message
+        for message in caplog.messages
+        if message.startswith("MPS OOM during embedding inference")
+    ]
+    assert len(oom_warnings) == 4
+    assert all("tensor=" in message for message in oom_warnings)
 
 
 def test_query_oom_recovers_on_cpu(tmp_path: Path) -> None:

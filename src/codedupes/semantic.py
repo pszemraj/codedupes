@@ -1510,6 +1510,9 @@ def _move_model_to_cpu(model: object) -> None:
     """Move a model to CPU and update cached execution-device state."""
     global _model_execution_device
     if hasattr(model, "to"):
+        # Deliberately preserve the load-time dtype on the last-resort CPU path:
+        # fallback follows an accelerator OOM, so retaining bf16 halves model and
+        # activation memory while keeping the same accepted numeric format.
         model.to("cpu")
     if model is _model:
         _model_execution_device = "cpu"
@@ -1809,21 +1812,16 @@ def _encode_with_retries(
 
         # This block runs outside the exception handler so the original traceback
         # no longer retains inference frames while the allocator cache is cleared.
-        if oom_device == "mps":
-            logger.warning(
-                "MPS OOM during %s at batch_size=%d (%s)",
-                stage,
-                current_batch_size,
-                format_mps_memory_snapshot(),
-            )
+        memory_context = f" ({format_mps_memory_snapshot()})" if oom_device == "mps" else ""
 
         if current_batch_size > 1:
             next_batch_size = max(1, current_batch_size // 2)
             logger.warning(
-                "%s OOM during %s at batch_size=%d; retrying with batch_size=%d",
+                "%s OOM during %s at batch_size=%d%s; retrying with batch_size=%d",
                 oom_device.upper(),
                 stage,
                 current_batch_size,
+                memory_context,
                 next_batch_size,
             )
             current_batch_size = next_batch_size
@@ -1833,10 +1831,11 @@ def _encode_with_retries(
         source_device = oom_device if oom_device in {"cuda", "mps"} else active_device
         if source_device in {"cuda", "mps"} and not attempted_cpu_fallback:
             logger.warning(
-                "%s OOM during %s at batch_size=1; moving the model to CPU and retrying "
+                "%s OOM during %s at batch_size=1%s; moving the model to CPU and retrying "
                 "from batch_size=%d",
                 source_device.upper(),
                 stage,
+                memory_context,
                 max(1, batch_size),
             )
             clear_device_cache(source_device, synchronize=True, collect=True)
