@@ -1,7 +1,6 @@
 # Hybrid gate tuning fixtures
 
-This directory contains the synthetic corpus and labels used by the
-[hybrid gate tuning workflow](../../docs/hybrid-tuning.md).
+This directory contains the synthetic corpus and labels used by the [hybrid gate tuning workflow](../../docs/hybrid-tuning.md).
 
 ## Contents
 
