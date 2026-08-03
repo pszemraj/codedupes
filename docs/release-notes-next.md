@@ -41,13 +41,11 @@
 - Reusing a `CodeAnalyzer` now clears corpus-specific state before each analysis, so an empty or nonsemantic run cannot leave stale embeddings available to `search()`. See [Python API](python-api.md#semantic-query-search).
 - Any path-like token (absolute, `.`, `./relative`, `~/home-relative`) passed without the required `check` or `search` command now produces a CLI usage error instead of help with exit code zero, on every supported click version.
 - `--traditional-only --no-cache` is accepted as a no-op instead of rejected as a contradictory semantic setting.
+- Unused-code detection now counts any name reference — callback-style arguments, decorators, type annotations, attribute and property access — not only direct calls, and class bodies contribute references too. A self-scan of this repository dropped from 11 unused-code false positives to 2, both genuinely outside static reach. See [Analysis defaults](analysis-defaults.md#potentially-unused-defaults).
+- Combined mode now excludes exact duplicates from semantic/hybrid output using the same either-hash rule traditional detection uses to pair them, so an exact pair suppressed by the tiny filter can no longer resurface as a lower-confidence semantic finding.
 
 ## Validation boundary
 
-MPS is validated on real Apple Silicon hardware only; the suite contains no simulated MPS. `tests/test_semantic_mps.py` exercises model loading and encoding on the live device, CPU/MPS embedding parity, warm-cache explicit-device validation, and genuine Metal allocator out-of-memory recovery (load-time CPU fallback, the batch-halving ladder, and query-encode recovery, provoked through `torch.mps.set_per_process_memory_fraction`). The module skips only where the hardware is genuinely absent, and a skipped run performs zero MPS validation:
-
-```bash
-pytest tests/test_semantic_mps.py
-```
+MPS is validated on real Apple Silicon hardware only; the suite contains no simulated MPS. What `tests/test_semantic_mps.py` exercises, and when it may skip, is described in [Accelerators](accelerators.md#hardware-validation).
 
 For this release the hardware suite passed on an Apple M5 (32 GB unified memory, macOS Tahoe, PyTorch 2.13.0). On the same machine, a full `codedupes check` of this repo ran roughly 38x faster on MPS than on CPU with bit-identical duplicate scores across the two devices, and strict `--no-mps-fallback` runs completed without hitting unsupported operators.
