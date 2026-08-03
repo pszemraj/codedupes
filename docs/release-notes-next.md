@@ -37,7 +37,7 @@
 ## Static-analysis fixes
 
 - Identifier normalization now filters Python's actual built-in names through the `builtins` module. Traditional Jaccard and hybrid scores can therefore change for code that uses built-in functions or types.
-- `visit_*` hooks are excluded from unused-code results only when their base resolves through an `ast.NodeVisitor` or `ast.NodeTransformer` import, including aliases, or through a proven subclass - including inheritance chains that span multiple analyzed files via absolute or relative imports. Unrelated local or imported visitor classes remain eligible for unused-code analysis.
+- `visit_*` hooks are excluded from unused-code results only when their base resolves through an `ast.NodeVisitor` or `ast.NodeTransformer` import, including aliases, or through a proven subclass - including inheritance chains that span multiple analyzed files via absolute or relative imports and conventional source-layout roots such as `src/`. Rebinding a proven visitor class name to an unrelated class revokes that proof for later subclasses; unrelated local or imported visitor classes remain eligible for unused-code analysis.
 - Reusing a `CodeAnalyzer` now clears corpus-specific state before each analysis, so an empty or nonsemantic run cannot leave stale embeddings available to `search()`. See [Python API](python-api.md#semantic-query-search).
 - Any path-like token (absolute, `.`, `./relative`, `~/home-relative`) passed without the required `check` or `search` command now produces a CLI usage error instead of help with exit code zero, on every supported click version.
 - `--traditional-only --no-cache` is accepted as a no-op instead of rejected as a contradictory semantic setting.

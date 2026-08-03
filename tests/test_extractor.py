@@ -266,6 +266,32 @@ def test_cross_file_package_relative_import_marks_visitor_hook(tmp_path: Path) -
     assert by_qualified_name["pkg.concrete.Concrete.visit_Call"].is_dynamic_dispatch_hook is True
 
 
+def test_cross_file_src_layout_import_marks_visitor_hook(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    pkg = project / "src" / "pkg"
+    pkg.mkdir(parents=True)
+    (pkg / "base.py").write_text(_base_visitor_source() + "\n")
+    (pkg / "concrete.py").write_text(
+        dedent(
+            """
+            from pkg.base import Base
+
+            class Concrete(Base):
+                def visit_Call(self, node):
+                    return self.generic_visit(node)
+            """
+        ).strip()
+        + "\n"
+    )
+
+    units = CodeExtractor(project, include_private=True).extract_all()
+    by_qualified_name = {unit.qualified_name: unit for unit in units}
+
+    assert (
+        by_qualified_name["src.pkg.concrete.Concrete.visit_Call"].is_dynamic_dispatch_hook is True
+    )
+
+
 def test_cross_file_transitive_import_chain_marks_visitor_hook(tmp_path: Path) -> None:
     (tmp_path / "a.py").write_text(_base_visitor_source() + "\n")
     (tmp_path / "b.py").write_text(
@@ -369,3 +395,28 @@ def test_cross_file_unrelated_class_named_node_visitor_is_not_marked(tmp_path: P
 
     assert by_qualified_name["base.NodeVisitor.visit_Name"].is_dynamic_dispatch_hook is False
     assert by_qualified_name["concrete.Concrete.visit_Call"].is_dynamic_dispatch_hook is False
+
+
+def test_redefined_visitor_base_name_does_not_mark_later_subclass(tmp_path: Path) -> None:
+    source = dedent(
+        """
+        import ast
+
+        class Base(ast.NodeVisitor):
+            pass
+
+        class Base:
+            pass
+
+        class Worker(Base):
+            def visit_Name(self, node):
+                return node
+        """
+    ).strip()
+    file_path = tmp_path / "visitors.py"
+    file_path.write_text(source)
+
+    units = list(CodeExtractor(tmp_path, include_private=True).extract_from_file(file_path))
+    by_qualified_name = {unit.qualified_name: unit for unit in units}
+
+    assert by_qualified_name["visitors.Worker.visit_Name"].is_dynamic_dispatch_hook is False

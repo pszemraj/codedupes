@@ -317,6 +317,7 @@ class _ClassFact:
     """Cross-file inheritance evidence recorded for one emitted class."""
 
     qualified_name: str
+    inheritance_identity: str
     resolved_base_identities: set[str] = field(default_factory=set)
 
 
@@ -329,6 +330,7 @@ class _CodeUnitCollector(ast.NodeVisitor):
         file_path: Path,
         source: str,
         module_name: str,
+        inheritance_module_name: str,
         exported: set[str],
         ast_visitor_base_names: set[str],
         from_import_map: dict[str, str],
@@ -340,6 +342,8 @@ class _CodeUnitCollector(ast.NodeVisitor):
         :param file_path: Source file path.
         :param source: Full file source text.
         :param module_name: Deduced module name.
+        :param inheritance_module_name: Importable module identity used by the
+            corpus-wide inheritance graph.
         :param exported: Export names from module-level ``__all__``.
         :param ast_visitor_base_names: Base names resolved from module-level ``ast`` imports.
         :param from_import_map: Bare names bound to resolved identities via ``from`` imports.
@@ -349,6 +353,7 @@ class _CodeUnitCollector(ast.NodeVisitor):
         self.file_path = file_path
         self.source_lines = source.splitlines(keepends=True)
         self.module_name = module_name
+        self.inheritance_module_name = inheritance_module_name
         self.exported = exported
         self.ast_visitor_base_names = ast_visitor_base_names
         self.from_import_map = from_import_map
@@ -362,11 +367,12 @@ class _CodeUnitCollector(ast.NodeVisitor):
         self.class_stack: list[str] = []
         self.function_stack: list[str] = []
         self.dynamic_dispatch_stack: list[bool] = []
-        self.dynamic_dispatch_class_names: set[str] = set()
+        # Current class binding state by bare name in document order. Overwriting
+        # a proven visitor name with an unrelated class must revoke that proof.
+        self.dynamic_dispatch_class_bindings: dict[str, bool] = {}
         # Most recently defined class per bare name in this file, for same-file base lookups
-        # feeding the corpus-wide cross-file inheritance graph (mirrors dynamic_dispatch_class_names'
-        # document-order semantics but keeps qualified identities instead of a proven/not flag).
-        self.local_class_qualified_by_name: dict[str, str] = {}
+        # feeding the corpus-wide cross-file inheritance graph.
+        self.local_class_identity_by_name: dict[str, str] = {}
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
         """Collect function code units and recurse into nested definitions."""
@@ -421,19 +427,25 @@ class _CodeUnitCollector(ast.NodeVisitor):
             }
             is_dynamic_dispatch_class = any(
                 base_name in self.ast_visitor_base_names
-                or base_name in self.dynamic_dispatch_class_names
+                or self.dynamic_dispatch_class_bindings.get(base_name, False)
                 for base_name in base_names
             )
-            if is_dynamic_dispatch_class:
-                self.dynamic_dispatch_class_names.add(node.name)
+            self.dynamic_dispatch_class_bindings[node.name] = is_dynamic_dispatch_class
 
             qualified_name = self.extractor._qualified_name(
                 self.module_name, scope_prefix, node.name
             )
-            self.class_facts.append(
-                _ClassFact(qualified_name, self._resolve_cross_file_base_identities(base_names))
+            inheritance_identity = self.extractor._qualified_name(
+                self.inheritance_module_name, scope_prefix, node.name
             )
-            self.local_class_qualified_by_name[node.name] = qualified_name
+            self.class_facts.append(
+                _ClassFact(
+                    qualified_name,
+                    inheritance_identity,
+                    self._resolve_cross_file_base_identities(base_names),
+                )
+            )
+            self.local_class_identity_by_name[node.name] = inheritance_identity
 
             self.class_stack.append(node.name)
             self.dynamic_dispatch_stack.append(is_dynamic_dispatch_class)
@@ -463,7 +475,7 @@ class _CodeUnitCollector(ast.NodeVisitor):
                 resolved.add(imported_identity)
                 continue
             if "." not in base_name:
-                local_identity = self.local_class_qualified_by_name.get(base_name)
+                local_identity = self.local_class_identity_by_name.get(base_name)
                 if local_identity is not None:
                     resolved.add(local_identity)
         return resolved
@@ -484,7 +496,7 @@ def _resolve_cross_file_dynamic_dispatch_hooks(
     :param class_facts: Per-class base-identity evidence gathered during extraction.
     :return: ``None``.
     """
-    edges = {fact.qualified_name: fact.resolved_base_identities for fact in class_facts}
+    edges = {fact.inheritance_identity: fact.resolved_base_identities for fact in class_facts}
     proven: set[str] = {_CROSS_FILE_AST_VISITOR_ROOT}
 
     changed = True
@@ -498,12 +510,15 @@ def _resolve_cross_file_dynamic_dispatch_hooks(
     if len(proven) <= 1:
         return
 
+    proven_qualified_names = {
+        fact.qualified_name for fact in class_facts if fact.inheritance_identity in proven
+    }
     for unit in units:
         if (
             unit.unit_type == CodeUnitType.METHOD
             and not unit.is_dynamic_dispatch_hook
             and unit.name.startswith("visit_")
-            and unit.qualified_name.rsplit(".", 1)[0] in proven
+            and unit.qualified_name.rsplit(".", 1)[0] in proven_qualified_names
         ):
             unit.is_dynamic_dispatch_hook = True
 
@@ -638,6 +653,43 @@ class CodeExtractor:
             parts[-1] = Path(parts[-1]).stem
         return ".".join(parts) if parts else ""
 
+    def _get_inheritance_module_name(self, file_path: Path) -> str:
+        """Resolve the importable module identity used for inheritance matching.
+
+        Directory names above the nearest regular Python package are source roots,
+        not import path components. Keeping them out of the graph identity lets a
+        file discovered as ``src.pkg.base`` match ``from pkg.base import Base``
+        without changing the user-facing qualified names emitted for that file.
+
+        :param file_path: File path under the configured root.
+        :return: Importable dotted module name for inheritance resolution.
+        """
+        rel = file_path.relative_to(self.root)
+        if len(rel.parts) > 1 and rel.parts[0] == "src":
+            source_root = self.root / "src"
+            if not any(
+                (source_root / init_name).is_file() for init_name in ("__init__.py", "__init__.pyi")
+            ):
+                source_parts = list(rel.parts[1:])
+                if source_parts[-1] == "__init__.py":
+                    source_parts = source_parts[:-1]
+                else:
+                    source_parts[-1] = Path(source_parts[-1]).stem
+                return ".".join(source_parts)
+
+        module_parts = [] if file_path.name == "__init__.py" else [file_path.stem]
+        package_dir = file_path.parent
+        while package_dir == self.root or self.root in package_dir.parents:
+            if not any(
+                (package_dir / init_name).is_file() for init_name in ("__init__.py", "__init__.pyi")
+            ):
+                break
+            module_parts.insert(0, package_dir.name)
+            if package_dir == self.root:
+                break
+            package_dir = package_dir.parent
+        return ".".join(module_parts)
+
     def _collect_file(self, file_path: Path) -> _CodeUnitCollector | None:
         """Parse one file and run the code-unit collector over it.
 
@@ -656,16 +708,20 @@ class CodeExtractor:
             return None
 
         module_name = self._get_module_name(file_path)
+        inheritance_module_name = self._get_inheritance_module_name(file_path)
         exported = get_exported_names(tree)
         ast_visitor_base_names = _get_ast_visitor_base_names(tree)
         from_import_map, imported_module_names = _get_cross_file_import_map(
-            tree, module_name, is_package_init=file_path.name == "__init__.py"
+            tree,
+            inheritance_module_name,
+            is_package_init=file_path.name == "__init__.py",
         )
         collector = _CodeUnitCollector(
             self,
             file_path,
             source,
             module_name,
+            inheritance_module_name,
             exported,
             ast_visitor_base_names,
             from_import_map,
