@@ -11,6 +11,7 @@ import codedupes.semantic as semantic_module
 from codedupes import analyzer as analyzer_module
 from codedupes.analyzer import AnalyzerConfig, CodeAnalyzer, analyze_directory
 from codedupes.models import AnalysisResult, CodeUnit, CodeUnitType, DuplicatePair
+from codedupes.pairs import ordered_pair_key
 from codedupes.semantic import SemanticBackendError
 from tests.conftest import build_two_function_source, create_project
 
@@ -685,6 +686,49 @@ def test_semantic_only_pre_excludes_exact_hash_pairs(tmp_path: Path, monkeypatch
     result = analyzer.analyze(project)
     assert result.semantic_duplicates == []
     assert not captured_exclude_pairs
+
+
+def test_combined_mode_excludes_tiny_filtered_ast_only_exact_pairs(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Tiny-filtered ast-hash-only exact pairs must stay excluded from semantic scoring."""
+    project = tmp_path / "src"
+    project.mkdir()
+    (project / "__init__.py").write_text("")
+    (project / "a.py").write_text(
+        "def alpha(x):\n    first = x + 1\n    second = first * 2\n    return second\n"
+    )
+    (project / "b.py").write_text(
+        "def beta(y):\n    one = y + 1\n    two = one * 2\n    return two\n"
+    )
+
+    captured_exclude_pairs: set[tuple[str, str]] = set()
+    monkeypatch.setattr(
+        analyzer_module,
+        "run_semantic_analysis",
+        _make_semantic_runner(capture_exclude_pairs=captured_exclude_pairs),
+    )
+
+    analyzer = CodeAnalyzer(
+        AnalyzerConfig(
+            run_unused=False,
+            # Both functions have 3 statements: semantic candidates at the default
+            # min_semantic_statements, and tiny under this raised cutoff.
+            tiny_unit_statement_cutoff=4,
+        )
+    )
+    result = analyzer.analyze(project)
+
+    unit_by_name = {unit.name: unit for unit in result.units}
+    pair = ordered_pair_key(unit_by_name["alpha"], unit_by_name["beta"])
+
+    # Same normalized AST, different identifiers: an ast_hash-only exact pair.
+    assert unit_by_name["alpha"]._ast_hash == unit_by_name["beta"]._ast_hash
+    assert unit_by_name["alpha"]._token_hash != unit_by_name["beta"]._token_hash
+    # The tiny filter strips the pair from traditional output...
+    assert result.traditional_duplicates == []
+    # ...but semantic scoring must still treat it as an already-known exact pair.
+    assert pair in captured_exclude_pairs
 
 
 def test_combined_mode_fails_hard_on_runtime_semantic_error_by_default(

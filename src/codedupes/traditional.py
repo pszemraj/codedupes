@@ -44,6 +44,21 @@ def _find_exact_duplicates(
     return duplicates
 
 
+def find_exact_pair_keys(units: list[CodeUnit]) -> set[tuple[str, str]]:
+    """Return ordered uid pair keys for every exact-duplicate pair.
+
+    Uses the same predicate as :func:`run_traditional_analysis` exact detection:
+    two units are exact duplicates when they share ``_ast_hash`` or ``_token_hash``.
+
+    :param units: Candidate units to compare.
+    :return: Ordered uid pair keys covering all exact-duplicate pairs.
+    """
+    pairs = _find_exact_duplicates(units, "_ast_hash", "ast_hash") + _find_exact_duplicates(
+        units, "_token_hash", "token_hash"
+    )
+    return {ordered_pair_key(pair.unit_a, pair.unit_b) for pair in pairs}
+
+
 def jaccard_similarity(set_a: set[str], set_b: set[str]) -> float:
     """Jaccard similarity between two sets.
 

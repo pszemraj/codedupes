@@ -32,6 +32,7 @@ from codedupes.semantic_profiles import get_default_semantic_threshold
 from codedupes.traditional import (
     build_reference_graph,
     extract_identifiers,
+    find_exact_pair_keys,
     find_potentially_unused,
     jaccard_similarity,
     run_traditional_analysis,
@@ -50,32 +51,6 @@ SEMANTIC_UNIT_TYPE_TO_ENUM: dict[str, CodeUnitType] = {
 }
 DEFAULT_TINY_UNIT_STATEMENT_CUTOFF = 3
 DEFAULT_TINY_NEAR_JACCARD_MIN = 0.93
-
-
-def _build_exact_hash_exclusions(units: list[CodeUnit]) -> set[tuple[str, str]]:
-    """Build exclusion pairs for exact-duplicate units using precomputed hashes.
-
-    :param units: Code units to scan for shared hash pairs.
-    :return: Set of unit uid pairs that should be treated as exact duplicates.
-    """
-    buckets: dict[tuple[str, str], list[CodeUnit]] = {}
-    for unit in units:
-        ast_hash = unit._ast_hash
-        token_hash = unit._token_hash
-        if not ast_hash or not token_hash:
-            continue
-        key = (ast_hash, token_hash)
-        buckets.setdefault(key, []).append(unit)
-
-    exclude: set[tuple[str, str]] = set()
-    for bucket_units in buckets.values():
-        if len(bucket_units) < 2:
-            continue
-        for i, unit_a in enumerate(bucket_units):
-            for unit_b in bucket_units[i + 1 :]:
-                exclude.add(ordered_pair_key(unit_a, unit_b))
-
-    return exclude
 
 
 def _is_test_function_unit(unit: CodeUnit) -> bool:
@@ -601,14 +576,12 @@ class CodeAnalyzer:
             exclude: set[tuple[str, str]] = set()
 
             if self.config.run_traditional:
-                exclude = {
-                    ordered_pair_key(duplicate.unit_a, duplicate.unit_b)
-                    for duplicate in traditional_duplicates
-                    if duplicate.method in {"ast_hash", "token_hash"}
-                }
-                # Keep near-duplicate pairs out of exclusion so semantic scoring can confirm
-                # traditional evidence and enable hybrid_confirmed scoring.
-                exclude.update(_build_exact_hash_exclusions(semantic_candidates))
+                # Exclude every exact-hash pair — including pairs the tiny filter stripped
+                # from traditional output — so semantic scoring can never re-report an
+                # exact duplicate as a new lower-confidence match. Near-duplicate (jaccard)
+                # pairs stay out of exclusion so semantic scoring can confirm traditional
+                # evidence and enable hybrid_confirmed scoring.
+                exclude = find_exact_pair_keys(semantic_candidates)
 
             try:
                 semantic_kwargs: dict[str, object] = {
