@@ -19,7 +19,12 @@ from rich.syntax import Syntax
 from rich.table import Table
 
 from codedupes import __version__
-from codedupes.analyzer import AnalyzerConfig, CodeAnalyzer
+from codedupes.analyzer import (
+    DEFAULT_SEMANTIC_UNIT_TYPES,
+    SEMANTIC_UNIT_TYPE_CHOICES,
+    AnalyzerConfig,
+    CodeAnalyzer,
+)
 from codedupes.constants import (
     DEFAULT_BATCH_SIZE,
     DEFAULT_CHECK_SEMANTIC_TASK,
@@ -36,7 +41,6 @@ from codedupes.devices import (
     configure_mps_environment,
     format_mps_memory_snapshot,
     get_device_diagnostics,
-    validate_mps_memory_fraction,
 )
 from codedupes.embedding_cache import EmbeddingCache
 from codedupes.extractor import DEFAULT_EXCLUDE_DIR_NAMES, DEFAULT_EXCLUDE_PATTERNS
@@ -204,26 +208,12 @@ def _run_cli_action(
         raise click.exceptions.Exit(1) from exc
 
 
-def _validate_threshold(
-    _ctx: click.Context, _param: click.Parameter, value: float | None
-) -> float | None:
-    """Validate a threshold in the ``[0.0, 1.0]`` range.
-
-    :param _ctx: Click callback context (unused).
-    :param _param: Click callback parameter metadata (unused).
-    :param value: Optional float to validate.
-    :return: Validated threshold value.
-    :raises click.BadParameter: When value is outside the allowed range.
-    """
-    if value is None:
-        return None
-    if not 0.0 <= value <= 1.0:
-        raise click.BadParameter("must be in [0.0, 1.0]")
-    return value
-
-
 def _validate_positive_int(_ctx: click.Context, _param: click.Parameter, value: int) -> int:
-    """Validate a positive integer option value.
+    """Validate a positive integer option that never reaches ``AnalyzerConfig``.
+
+    Numeric options forwarded into ``AnalyzerConfig`` rely on its ``__post_init__``
+    range checks instead of CLI callbacks; this callback exists only for options
+    (``--top-k``) the library layer never sees.
 
     :param _ctx: Click callback context (unused).
     :param _param: Click callback parameter metadata (unused).
@@ -234,39 +224,6 @@ def _validate_positive_int(_ctx: click.Context, _param: click.Parameter, value: 
     if value <= 0:
         raise click.BadParameter("must be > 0")
     return value
-
-
-def _validate_non_negative_int(_ctx: click.Context, _param: click.Parameter, value: int) -> int:
-    """Validate a non-negative integer option value.
-
-    :param _ctx: Click callback context (unused).
-    :param _param: Click callback parameter metadata (unused).
-    :param value: Candidate value.
-    :return: Value if it is ``>= 0``.
-    :raises click.BadParameter: When value is negative.
-    """
-    if value < 0:
-        raise click.BadParameter("must be >= 0")
-    return value
-
-
-def _validate_mps_memory_fraction(
-    _ctx: click.Context,
-    _param: click.Parameter,
-    value: float | None,
-) -> float | None:
-    """Validate an optional PyTorch MPS allocator fraction.
-
-    :param _ctx: Click callback context (unused).
-    :param _param: Click callback parameter metadata (unused).
-    :param value: Optional allocator fraction.
-    :return: Validated fraction or ``None``.
-    :raises click.BadParameter: When value is unsafe or outside ``(0, 2]``.
-    """
-    try:
-        return validate_mps_memory_fraction(value)
-    except ValueError as exc:
-        raise click.BadParameter(str(exc)) from exc
 
 
 def _validate_output_width(_ctx: click.Context, _param: click.Parameter, value: int) -> int:
@@ -837,15 +794,14 @@ def _add_common_analysis_options(
             type=int,
             default=DEFAULT_MIN_STATEMENTS,
             show_default=True,
-            callback=_validate_non_negative_int,
             help=min_statements_help,
         ),
         click.option(
             "--semantic-unit-type",
             "semantic_unit_type",
             multiple=True,
-            type=click.Choice(["function", "method", "class"]),
-            default=("function", "method"),
+            type=click.Choice(SEMANTIC_UNIT_TYPE_CHOICES),
+            default=DEFAULT_SEMANTIC_UNIT_TYPES,
             show_default=True,
             help=semantic_unit_help,
         ),
@@ -897,7 +853,6 @@ def _add_common_analysis_options(
             "--mps-memory-fraction",
             type=float,
             default=None,
-            callback=_validate_mps_memory_fraction,
             help=(
                 "Optional PyTorch MPS allocator limit as a fraction of the recommended "
                 "working set, in (0, 2]. Values above 1 increase system memory pressure."
@@ -908,7 +863,6 @@ def _add_common_analysis_options(
             type=int,
             default=DEFAULT_BATCH_SIZE,
             show_default=True,
-            callback=_validate_positive_int,
             help="Batch size for embeddings",
         ),
         click.option(
@@ -923,7 +877,11 @@ def _add_common_analysis_options(
             multiple=True,
             help=DEFAULT_EXCLUDE_HELP_HINT,
         ),
-        click.option("--include-stubs", is_flag=True, help="Include .pyi files"),
+        click.option(
+            "--include-stubs",
+            is_flag=True,
+            help="Include .pyi files when scanning a directory (single-file targets are analyzed as given)",
+        ),
         click.option(
             "--no-cache",
             is_flag=True,
@@ -968,19 +926,16 @@ def cli() -> None:
     type=float,
     default=None,
     show_default=False,
-    callback=_validate_threshold,
     help="Shared threshold override for semantic and traditional checks",
 )
 @click.option(
     "--semantic-threshold",
     type=float,
-    callback=_validate_threshold,
     help="Override semantic similarity threshold",
 )
 @click.option(
     "--traditional-threshold",
     type=float,
-    callback=_validate_threshold,
     help="Override traditional (Jaccard) threshold",
 )
 @click.option(
@@ -1021,7 +976,6 @@ def cli() -> None:
     type=int,
     default=3,
     show_default=True,
-    callback=_validate_non_negative_int,
     help="Tiny function/method statement cutoff (exclusive) for traditional filtering",
 )
 @click.option(
@@ -1029,7 +983,6 @@ def cli() -> None:
     type=float,
     default=0.93,
     show_default=True,
-    callback=_validate_threshold,
     help="Minimum Jaccard similarity to keep tiny near-duplicate pairs",
 )
 @click.option(
@@ -1332,13 +1285,11 @@ def check_command(
     type=float,
     default=None,
     show_default=False,
-    callback=_validate_threshold,
     help="Shared threshold override for semantic search",
 )
 @click.option(
     "--semantic-threshold",
     type=float,
-    callback=_validate_threshold,
     help="Override semantic threshold",
 )
 @click.option(
@@ -1519,13 +1470,8 @@ def info_command() -> None:
         if profile.default_revision is not None:
             click.echo(f"      default_revision: {profile.default_revision}")
         click.echo(f"      default_trust_remote_code: {profile.default_trust_remote_code}")
-    cache_stats = EmbeddingCache().stats()
-    click.echo(f"Embedding cache path: {cache_stats['path']}")
-    click.echo(
-        f"Embedding cache entries: {cache_stats['entries']} "
-        f"({cache_stats['size_bytes']} bytes on disk)"
-    )
-    click.echo(f"Embedding cache disabled via CODEDUPES_NO_CACHE: {cache_stats['disabled']}")
+    click.echo("Embedding cache:")
+    _echo_cache_summary(EmbeddingCache().stats())
     click.echo("Run with --help for CLI usage")
 
 
@@ -1534,14 +1480,23 @@ def cache_group() -> None:
     """Group namespace for embedding-cache management subcommands."""
 
 
-@cache_group.command("info", help="Show embedding cache location, size, and breakdown")
-def cache_info_command() -> None:
-    """Print embedding cache path, entry counts, size, and per-model/per-repo breakdown."""
-    stats = EmbeddingCache().stats()
+def _echo_cache_summary(stats: dict[str, Any]) -> None:
+    """Print the embedding-cache summary lines shared by ``info`` and ``cache info``.
+
+    :param stats: Mapping returned by ``EmbeddingCache.stats()``.
+    :return: ``None``.
+    """
     click.echo(f"Cache path: {stats['path']}")
     click.echo(f"Disabled via CODEDUPES_NO_CACHE: {stats['disabled']}")
     click.echo(f"Entries: {stats['entries']}")
     click.echo(f"Size on disk: {stats['size_bytes']} bytes")
+
+
+@cache_group.command("info", help="Show embedding cache location, size, and breakdown")
+def cache_info_command() -> None:
+    """Print embedding cache path, entry counts, size, and per-model/per-repo breakdown."""
+    stats = EmbeddingCache().stats()
+    _echo_cache_summary(stats)
     if stats["models"]:
         click.echo("Per-model entry counts:")
         for model_name, count in sorted(stats["models"].items()):

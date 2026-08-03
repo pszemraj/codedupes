@@ -49,6 +49,8 @@ SEMANTIC_UNIT_TYPE_TO_ENUM: dict[str, CodeUnitType] = {
     "method": CodeUnitType.METHOD,
     "class": CodeUnitType.CLASS,
 }
+# Derived so the CLI choice list can never drift from the accepted unit types.
+SEMANTIC_UNIT_TYPE_CHOICES: tuple[str, ...] = tuple(SEMANTIC_UNIT_TYPE_TO_ENUM)
 DEFAULT_TINY_UNIT_STATEMENT_CUTOFF = 3
 DEFAULT_TINY_NEAR_JACCARD_MIN = 0.93
 
