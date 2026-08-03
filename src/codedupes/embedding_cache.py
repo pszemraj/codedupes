@@ -1032,13 +1032,13 @@ class EmbeddingCache:
         removed = 0
         try:
             for shard_dir in _iter_shard_dirs(self.repos_dir):
-                meta = _read_shard_meta(shard_dir)
-                if model is not None and (meta is None or meta.get("model") != model):
-                    continue
                 # Wait for any concurrent writer rather than deleting under it: writers
                 # hold this lock only briefly, and a dead holder's flock self-releases.
                 with _shard_write_lock(shard_dir, blocking=True) as acquired:
                     if not acquired:
+                        continue
+                    meta = _read_shard_meta(shard_dir)
+                    if model is not None and (meta is None or meta.get("model") != model):
                         continue
                     if _delete_cache_tree(shard_dir, action="clear shard"):
                         removed += len(meta.get("keys", {})) if meta else 0

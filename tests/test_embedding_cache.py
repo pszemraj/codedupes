@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import copy
 import hashlib
 import itertools
@@ -687,6 +688,38 @@ def test_clear_does_not_count_failed_shard_deletion(tmp_path, monkeypatch, caplo
     assert cleared == 0
     assert shard_dir.exists()
     assert "Embedding cache clear shard failed" in caplog.text
+
+
+def test_clear_counts_entries_added_before_lock_acquisition(tmp_path, monkeypatch):
+    cache = EmbeddingCache()
+    scope = tmp_path / "proj"
+    scope.mkdir()
+    cache.put_many(
+        scope,
+        "model-a",
+        "rev1",
+        [("first", np.array([1.0, 2.0], dtype=np.float32))],
+    )
+    original_lock = embedding_cache._shard_write_lock
+    injected_write = False
+
+    @contextlib.contextmanager
+    def lock_after_concurrent_write(shard_dir, *, blocking=False):
+        nonlocal injected_write
+        if blocking and not injected_write:
+            injected_write = True
+            cache.put_many(
+                scope,
+                "model-a",
+                "rev1",
+                [("second", np.array([3.0, 4.0], dtype=np.float32))],
+            )
+        with original_lock(shard_dir, blocking=blocking) as acquired:
+            yield acquired
+
+    monkeypatch.setattr(embedding_cache, "_shard_write_lock", lock_after_concurrent_write)
+
+    assert cache.clear() == 2
 
 
 def test_unconfirmable_loaded_revision_disables_cache(tmp_path, monkeypatch):
