@@ -254,9 +254,43 @@ def _shard_lock_path(shard_dir: Path) -> Path:
     :return: Lock path under the cache root's persistent ``locks`` directory.
     """
     cache_root = shard_dir.parents[2]
-    identity = str(shard_dir.resolve())
+    # Hash the logical path without following a pre-planted symlink. Following
+    # one here would split lock identity from the cache-managed shard name before
+    # the writer has a chance to reject that symlink.
+    identity = os.path.abspath(shard_dir)
     lock_name = f"{hashlib.blake2b(identity.encode(), digest_size=16).hexdigest()}.lock"
     return cache_root / LOCKS_SUBDIR / lock_name
+
+
+def _ensure_managed_directory(path: Path) -> None:
+    """Create one cache-managed directory without accepting a symlink in its place.
+
+    The user-selected cache root may intentionally be a symlink, but deterministic
+    descendants owned by codedupes (``repos``, repo/model shards, and ``locks``)
+    must be real directories so a pre-planted link cannot redirect cache writes.
+
+    :param path: One cache-managed directory whose parent already exists.
+    :raises OSError: If ``path`` is or becomes a symlink/non-directory.
+    :return: ``None``.
+    """
+    if path.is_symlink():
+        raise OSError(f"Refusing symlinked cache directory: {path}")
+    path.mkdir(exist_ok=True)
+    if path.is_symlink() or not path.is_dir():
+        raise OSError(f"Cache path is not a real directory: {path}")
+
+
+def _ensure_shard_directory(shard_dir: Path) -> None:
+    """Create the deterministic cache hierarchy for one shard without symlinks.
+
+    :param shard_dir: Target shard under ``<cache-root>/repos/<repo>/<model>``.
+    :raises OSError: If a cache-managed component is a symlink/non-directory.
+    :return: ``None``.
+    """
+    cache_root = shard_dir.parents[2]
+    cache_root.mkdir(parents=True, exist_ok=True)
+    for managed_dir in (shard_dir.parents[1], shard_dir.parent, shard_dir):
+        _ensure_managed_directory(managed_dir)
 
 
 def _tmp_suffix() -> str:
@@ -316,7 +350,8 @@ def _shard_write_lock(shard_dir: Path, *, blocking: bool = False) -> Iterator[bo
     lock_fd: int | None = None
     try:
         lock_path = _shard_lock_path(shard_dir)
-        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        lock_path.parent.parent.mkdir(parents=True, exist_ok=True)
+        _ensure_managed_directory(lock_path.parent)
         lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o644)
         fcntl.flock(lock_fd, lock_flags)
     except OSError:
@@ -558,7 +593,7 @@ def _atomic_write_shard(
     :param dim: Embedding dimensionality.
     :return: ``None``.
     """
-    shard_dir.mkdir(parents=True, exist_ok=True)
+    _ensure_shard_directory(shard_dir)
     generation = uuid.uuid4().hex
     vectors_filename = _vectors_filename(generation)
     vectors_path = shard_dir / vectors_filename
@@ -681,7 +716,7 @@ def _write_shard_entries(
             int(np.asarray(unique_entries[0][1]).reshape(-1).shape[0]) if unique_entries else None
         )
 
-        shard_dir.mkdir(parents=True, exist_ok=True)
+        _ensure_shard_directory(shard_dir)
         with _shard_write_lock(shard_dir) as acquired:
             if not acquired:
                 return

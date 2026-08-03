@@ -12,6 +12,8 @@ Environment variables:
 - `CODEDUPES_CACHE_MAX_MB`: size cap in megabytes (default `2048`). When a write pushes the cache over the cap, least-recently-used shards are deleted until usage falls to about 80% of the cap. The shard just written is never deleted; if it alone exceeds the cap, it stays usable and a warning recommends raising the limit. A shard that cannot be deleted remains included in the measured total and also produces a warning.
 - `CODEDUPES_NO_CACHE=1`: disable the cache for the whole process, every command. Nothing is read or written.
 
+The configured cache root itself may intentionally be a symlink, but codedupes refuses pre-existing symlinks in the deterministic `repos`, repo/model shard, and `locks` directories it manages. Keep `CODEDUPES_CACHE_DIR` private to the account running codedupes; advisory locks coordinate cooperating processes but do not make an attacker-writable shared directory a security boundary.
+
 CLI:
 
 ```bash

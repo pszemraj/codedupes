@@ -1292,6 +1292,39 @@ def test_shard_deletion_cannot_split_the_advisory_lock_domain(tmp_path):
     assert embedding_cache._shard_lock_path(shard_dir).is_file()
 
 
+@pytest.mark.parametrize("managed_component", ["repos", "repo", "shard", "locks"])
+def test_cache_write_refuses_symlinked_managed_directory(tmp_path, managed_component):
+    cache = EmbeddingCache()
+    scope = tmp_path / "proj"
+    scope.mkdir()
+    shard_dir = cache.shard_dir(scope, "model-a", "rev1")
+    redirected = tmp_path / "redirected"
+    redirected.mkdir()
+
+    if managed_component == "repos":
+        cache.cache_root.mkdir(parents=True)
+        link_path = cache.repos_dir
+    elif managed_component == "repo":
+        cache.repos_dir.mkdir(parents=True)
+        link_path = shard_dir.parent
+    elif managed_component == "shard":
+        shard_dir.parent.mkdir(parents=True)
+        link_path = shard_dir
+    else:
+        cache.cache_root.mkdir(parents=True)
+        link_path = cache.cache_root / embedding_cache.LOCKS_SUBDIR
+    link_path.symlink_to(redirected, target_is_directory=True)
+
+    cache.put_many(
+        scope,
+        "model-a",
+        "rev1",
+        [("key", np.array([1.0, 2.0], dtype=np.float32))],
+    )
+
+    assert list(redirected.iterdir()) == []
+
+
 def test_orphaned_tmp_file_reclaimed_by_next_write(tmp_path):
     cache = EmbeddingCache()
     scope = tmp_path / "proj"
