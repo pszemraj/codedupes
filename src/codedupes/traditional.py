@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import builtins
 import keyword
 import logging
 import tomllib
@@ -99,7 +100,10 @@ def _normalize_identifiers(identifiers: set[str]) -> set[str]:
     :param identifiers: Raw identifier names.
     :return: Normalized filtered identifiers.
     """
-    ignored = set(keyword.kwlist) | set(dir(__builtins__))
+    # dir(builtins) rather than dir(__builtins__): the latter is a plain dict
+    # inside imported modules, so it would filter dict methods instead of
+    # builtin names.
+    ignored = set(keyword.kwlist) | set(dir(builtins))
     normalized = set()
     for ident in identifiers:
         if not ident:
