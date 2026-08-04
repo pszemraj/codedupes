@@ -43,6 +43,8 @@ _TOUCH_INTERVAL_SECONDS = 3600.0
 _SANITIZE_PATTERN = re.compile(r"[^A-Za-z0-9._-]+")
 _GENERATION_PATTERN = re.compile(r"^[0-9a-f]{32}$")
 _TMP_FILE_GLOB = "*.tmp-*"
+_CACHE_DIRECTORY_MODE = 0o700
+_CACHE_FILE_MODE = 0o600
 
 _warned_cache_error = False
 
@@ -276,9 +278,31 @@ def _ensure_managed_directory(path: Path) -> None:
     """
     if path.is_symlink():
         raise OSError(f"Refusing symlinked cache directory: {path}")
-    path.mkdir(exist_ok=True)
+    path.mkdir(mode=_CACHE_DIRECTORY_MODE, exist_ok=True)
     if path.is_symlink() or not path.is_dir():
         raise OSError(f"Cache path is not a real directory: {path}")
+    path.chmod(_CACHE_DIRECTORY_MODE)
+
+
+def _ensure_cache_subdirectory(cache_root: Path, name: str) -> Path:
+    """Create a private cache root and one real managed child directory.
+
+    The configured root may intentionally be a symlink, so only its target is
+    validated and permission-hardened. Deterministic child names remain subject
+    to the stricter no-symlink rule in :func:`_ensure_managed_directory`.
+
+    :param cache_root: User-selected codedupes cache root.
+    :param name: Direct child directory managed by codedupes.
+    :raises OSError: If the root/child is not a directory or permissions fail.
+    :return: Created managed child path.
+    """
+    cache_root.mkdir(mode=_CACHE_DIRECTORY_MODE, parents=True, exist_ok=True)
+    if not cache_root.is_dir():
+        raise OSError(f"Cache root is not a directory: {cache_root}")
+    cache_root.chmod(_CACHE_DIRECTORY_MODE)
+    managed_dir = cache_root / name
+    _ensure_managed_directory(managed_dir)
+    return managed_dir
 
 
 def _ensure_shard_directory(shard_dir: Path) -> None:
@@ -289,8 +313,10 @@ def _ensure_shard_directory(shard_dir: Path) -> None:
     :return: ``None``.
     """
     cache_root = shard_dir.parents[2]
-    cache_root.mkdir(parents=True, exist_ok=True)
-    for managed_dir in (shard_dir.parents[1], shard_dir.parent, shard_dir):
+    repos_dir = _ensure_cache_subdirectory(cache_root, CACHE_SUBDIR)
+    if shard_dir.parents[1] != repos_dir:
+        raise OSError(f"Cache shard is outside the managed repository directory: {shard_dir}")
+    for managed_dir in (shard_dir.parent, shard_dir):
         _ensure_managed_directory(managed_dir)
 
 
@@ -351,9 +377,9 @@ def _shard_write_lock(shard_dir: Path, *, blocking: bool = False) -> Iterator[bo
     lock_fd: int | None = None
     try:
         lock_path = _shard_lock_path(shard_dir)
-        lock_path.parent.parent.mkdir(parents=True, exist_ok=True)
-        _ensure_managed_directory(lock_path.parent)
-        lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o644)
+        _ensure_cache_subdirectory(lock_path.parent.parent, LOCKS_SUBDIR)
+        lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, _CACHE_FILE_MODE)
+        os.fchmod(lock_fd, _CACHE_FILE_MODE)
         fcntl.flock(lock_fd, lock_flags)
     except OSError:
         if lock_fd is not None:
@@ -557,7 +583,13 @@ def _publish_index(shard_dir: Path, payload: dict[str, Any]) -> None:
     """
     index_tmp = shard_dir / f"{INDEX_FILENAME}{_tmp_suffix()}"
     try:
-        index_tmp.write_text(json.dumps(payload), encoding="utf-8")
+        index_fd = os.open(
+            index_tmp,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+            _CACHE_FILE_MODE,
+        )
+        with os.fdopen(index_fd, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle)
         os.replace(index_tmp, shard_dir / INDEX_FILENAME)
     finally:
         if index_tmp.exists():
@@ -601,7 +633,12 @@ def _atomic_write_shard(
     vectors_tmp = shard_dir / f"{vectors_filename}{_tmp_suffix()}"
     _reclaim_stale_shard_files(shard_dir, keep=frozenset({vectors_tmp}))
     try:
-        with open(vectors_tmp, "wb") as handle:
+        vectors_fd = os.open(
+            vectors_tmp,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+            _CACHE_FILE_MODE,
+        )
+        with os.fdopen(vectors_fd, "wb") as handle:
             np.save(handle, np.ascontiguousarray(vectors, dtype=np.float32))
         os.replace(vectors_tmp, vectors_path)
 

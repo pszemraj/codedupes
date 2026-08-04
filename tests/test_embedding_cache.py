@@ -6,6 +6,7 @@ import hashlib
 import itertools
 import json
 import os
+import stat
 import sys
 import threading
 import time
@@ -1373,6 +1374,35 @@ def test_cache_write_refuses_symlinked_managed_directory(tmp_path, managed_compo
     )
 
     assert list(redirected.iterdir()) == []
+
+
+def test_cache_writes_private_directories_and_files(tmp_path):
+    cache = EmbeddingCache()
+    scope = tmp_path / "proj"
+    scope.mkdir()
+    cache.put_many(
+        scope,
+        "model-a",
+        "rev1",
+        [("key", np.array([1.0, 2.0], dtype=np.float32))],
+    )
+    shard_dir = cache.shard_dir(scope, "model-a", "rev1")
+
+    directories = (
+        cache.cache_root,
+        cache.repos_dir,
+        shard_dir.parent,
+        shard_dir,
+        cache.cache_root / embedding_cache.LOCKS_SUBDIR,
+    )
+    files = (
+        shard_dir / embedding_cache.INDEX_FILENAME,
+        _active_vectors_path(shard_dir),
+        embedding_cache._shard_lock_path(shard_dir),
+    )
+
+    assert all(stat.S_IMODE(path.stat().st_mode) == 0o700 for path in directories)
+    assert all(stat.S_IMODE(path.stat().st_mode) == 0o600 for path in files)
 
 
 def test_orphaned_tmp_file_reclaimed_by_next_write(tmp_path):

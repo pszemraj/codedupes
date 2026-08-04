@@ -43,6 +43,7 @@ from codedupes.devices import (
 from codedupes.embedding_cache import (
     LOCAL_MODELS_SUBDIR,
     EmbeddingCache,
+    _ensure_cache_subdirectory,
     compute_cache_key,
     get_embedding_cache,
     is_cache_disabled,
@@ -468,7 +469,7 @@ def _store_local_model_manifest(
         return
     tmp_path = manifest_path.with_name(f"{manifest_path.name}.{os.getpid()}.tmp")
     try:
-        manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        _ensure_cache_subdirectory(resolve_cache_dir(), LOCAL_MODELS_SUBDIR)
         payload = json.dumps(
             {
                 "version": _LOCAL_MODEL_MANIFEST_VERSION,
@@ -476,7 +477,16 @@ def _store_local_model_manifest(
                 "files": files,
             }
         )
-        tmp_path.write_text(payload, encoding="utf-8")
+        manifest_fd = os.open(
+            tmp_path,
+            os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
+            0o600,
+        )
+        with os.fdopen(manifest_fd, "w", encoding="utf-8") as handle:
+            # File mode bits are a POSIX concern; Windows has no ``fchmod``.
+            with contextlib.suppress(AttributeError):
+                os.fchmod(handle.fileno(), 0o600)
+            handle.write(payload)
         os.replace(tmp_path, manifest_path)
         with _local_model_manifest_lock:
             current_state = _local_model_manifest_memo.get(memo_key)

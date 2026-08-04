@@ -12,7 +12,7 @@ Environment variables:
 - `CODEDUPES_CACHE_MAX_MB`: size cap in megabytes (default `2048`). After each nonempty batched cache write, codedupes inventories file sizes across the on-disk shards, then deletes least-recently-used shards until usage falls to about 80% of the cap when necessary. Reading the shared filesystem is intentional: cooperating processes cannot keep one in-memory byte ledger correct, and the inventory cost scales with shard count rather than code-unit count. The shard just written is never deleted; if it alone exceeds the cap, it stays usable and a warning recommends raising the limit. A shard that cannot be deleted remains included in the measured total and also produces a warning.
 - `CODEDUPES_NO_CACHE=1`: disable the cache for the whole process, every command. Nothing is read or written.
 
-The configured cache root itself may intentionally be a symlink, but codedupes refuses pre-existing symlinks in the deterministic `repos`, repo/model shard, and `locks` directories it manages. Keep `CODEDUPES_CACHE_DIR` private to the account running codedupes; advisory locks coordinate cooperating processes but do not make an attacker-writable shared directory a security boundary.
+The configured cache root itself may intentionally be a symlink, but codedupes refuses pre-existing symlinks in the deterministic `repos`, repo/model shard, `local-models`, and `locks` directories it manages. Newly used cache roots and managed directories are restricted to the current account (`0700`), and every vector, index, lock, and local-model manifest is published with mode `0600`. Advisory locks coordinate cooperating processes but do not make an attacker-writable parent directory a security boundary.
 
 CLI:
 

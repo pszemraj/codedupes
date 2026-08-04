@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import stat
 from pathlib import Path
 
 import numpy as np
@@ -673,6 +674,8 @@ def test_local_model_manifest_persists_only_after_cache_enabled_run(
 
     assert semantic._fingerprint_local_model_dir(model_dir, persist_manifest=True) is not None
     assert manifest_path.is_file()
+    assert stat.S_IMODE(manifest_path.parent.stat().st_mode) == 0o700
+    assert stat.S_IMODE(manifest_path.stat().st_mode) == 0o600
 
 
 def test_get_model_reloads_local_directory_after_weights_change(
