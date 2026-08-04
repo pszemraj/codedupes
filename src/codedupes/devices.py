@@ -13,7 +13,6 @@ import importlib
 import logging
 import math
 import os
-import platform
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -108,9 +107,7 @@ def configure_mps_environment(
     :return: ``None``.
     """
     normalized = normalize_semantic_device(requested_device)
-    possible_mps_run = normalized == "mps" or (
-        normalized == "auto" and platform.system() == "Darwin"
-    )
+    possible_mps_run = normalized == "mps" or (normalized == "auto" and sys.platform == "darwin")
     if not possible_mps_run:
         return
 
