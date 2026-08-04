@@ -219,19 +219,18 @@ def _true_case_path(path: Path) -> Path:
 def resolve_local_model_path(model_name: str) -> Path | None:
     """Resolve a model identifier to a local model directory when one exists.
 
-    A model identifier is treated as a local ``save_pretrained``-style directory
-    when it points at an existing directory on disk (after ``~`` expansion). Hub
-    identifiers like ``org/name`` never resolve here unless a directory of that
-    relative name actually exists, mirroring how ``sentence-transformers``
-    disambiguates local paths from hub repositories. The resolved path is
-    additionally true-case canonicalized so differently-cased spellings of the
-    same directory on case-insensitive filesystems share one cache identity.
+    Only an absolute, dot-relative, or home-relative argument is treated as a
+    ``save_pretrained``-style directory. Requiring explicit path syntax prevents
+    a same-named directory in the current working directory from shadowing a
+    built-in alias or Hub model ID. The resolved path is additionally true-case
+    canonicalized so differently-cased spellings of the same directory on
+    case-insensitive filesystems share one cache identity.
 
     :param model_name: Alias, hub identifier, or filesystem path.
     :return: Resolved absolute directory path, or ``None`` for non-local names.
     """
     candidate = model_name.strip()
-    if not candidate:
+    if not candidate or not is_explicit_local_model_path(candidate):
         return None
     try:
         path = Path(candidate).expanduser()
@@ -272,12 +271,12 @@ def _build_dynamic_profile(
 def resolve_model_profile(model_name: str) -> SemanticModelProfile:
     """Resolve a user model identifier into a concrete model profile.
 
-    Built-in aliases resolve to their profiles. An existing local directory
-    (a ``save_pretrained``-style model copy) canonicalizes to its resolved,
-    true-cased absolute path so relative, absolute, and differently-cased
-    spellings share one cache identity, and its family is inferred from that
-    true-cased directory name. Remaining hub-style
-    names fall back to name-based family inference.
+    Built-in aliases resolve to their profiles. An explicit local directory (a
+    ``save_pretrained``-style model copy passed as an absolute, dot-relative, or
+    home-relative path) canonicalizes to its resolved, true-cased absolute path
+    so equivalent path spellings share one cache identity, and its family is
+    inferred from that true-cased directory name. Remaining hub-style names fall
+    back to name-based family inference.
 
     :param model_name: Alias, hub model name, or local model directory path.
     :return: Matching profile from builtins or a dynamic fallback.

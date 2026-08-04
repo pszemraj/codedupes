@@ -60,7 +60,7 @@ Options, in addition to the [shared options](#options-shared-by-check-and-search
 - `--semantic-threshold <float>`: Override the semantic threshold only
 - `--semantic-unit-type <name>`: Semantic candidate unit type (`function`, `method`, `class`); repeat option to include multiple types (default `function, method`). In default combined `check` mode this also narrows traditional duplicate scope.
 - `--min-statements <int>`: Minimum statement count for semantic candidate code units (default `3`). In default combined `check` mode this also narrows traditional duplicate scope.
-- `--model <name>`: Embedding model alias, Hugging Face ID, or complete local `save_pretrained`/`hf download` directory (default `gte-modernbert-base`)
+- `--model <name>`: Embedding model alias, Hugging Face ID, or explicit path (absolute, `./`/`../`, or `~`) to a complete local `save_pretrained`/`hf download` directory (default `gte-modernbert-base`)
 - `--model-revision <rev>`: Model revision/commit hash (defaults to the profile's pinned calibration commit for built-in models, unpinned otherwise)
 - `--trust-remote-code` / `--no-trust-remote-code`: Allow or disallow model remote code execution
 - `--device <name>`: Semantic inference device: `auto`, `cpu`, `cuda`, or `mps` (default `auto`; priority CUDA, then MPS, then CPU)

@@ -20,14 +20,14 @@ Notes:
 ## Alias resolution rules
 
 - Built-in alias keys and known aliases resolve to the profile's canonical model ID.
-- A model name that is an existing directory on disk is treated as a local model copy before built-in aliases are considered, then canonicalized to its resolved absolute path - including the on-disk letter case on case-insensitive filesystems such as macOS - so relative, absolute, and differently-cased spellings share one cache identity.
+- Built-in aliases and Hub IDs cannot be shadowed by same-named directories in the current working directory. A local model must use explicit path syntax (an absolute path, `./` or `../`, or `~`); it is then canonicalized to its resolved absolute path - including the on-disk letter case on case-insensitive filesystems such as macOS - so equivalent explicit spellings share one cache identity.
 - Known local model families are inferred from a recognizable directory name, Hugging Face cache ancestor, saved configuration, or model-card title.
 - Family inference selects loading and prompt behavior only. Any non-builtin model - a hub name or local directory containing `embeddinggemma` or `gte-modernbert`, a fine-tune, an arbitrary copy - keeps the family's encode entry points and prompts but uses the uncalibrated generic thresholds: calibrated thresholds belong to the exact pinned builtin checkpoint they were swept on, and a lookalike name proves nothing about a model's score distribution. Pass `--threshold`/`--semantic-threshold` for tuned weights.
 - Other unknown model IDs resolve to the generic profile.
 
 ### Local model directories and offline use
 
-Both `check` and `search` accept a directory written by `save_pretrained()` or a complete Hugging Face repository download. Local paths are passed to Sentence Transformers with `local_files_only=True`.
+Both `check` and `search` accept an explicit path to a directory written by `save_pretrained()` or a complete Hugging Face repository download. Local paths are passed to Sentence Transformers with `local_files_only=True`; prefix a relative path with `./` or `../` so it cannot be confused with a model alias or Hub ID.
 
 ```bash
 hf download Alibaba-NLP/gte-modernbert-base \

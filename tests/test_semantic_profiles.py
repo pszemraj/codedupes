@@ -79,6 +79,7 @@ def test_resolve_local_model_path_only_matches_existing_directories(tmp_path: Pa
     model_dir.mkdir()
     resolved = resolve_local_model_path(str(model_dir))
     assert resolved == model_dir.resolve()
+    assert resolve_local_model_path("my-model") is None
     assert resolve_local_model_path("Alibaba-NLP/gte-modernbert-base") is None
     assert resolve_local_model_path(str(tmp_path / "missing")) is None
     assert resolve_local_model_path("") is None
@@ -134,7 +135,7 @@ def test_true_case_path_falls_back_gracefully_for_missing_tail(tmp_path: Path) -
     assert _true_case_path(missing) == missing
 
 
-def test_existing_local_directory_takes_precedence_over_builtin_alias(
+def test_builtin_alias_requires_explicit_path_to_use_same_named_local_directory(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -142,10 +143,14 @@ def test_existing_local_directory_takes_precedence_over_builtin_alias(
     model_dir.mkdir()
     monkeypatch.chdir(tmp_path)
 
-    profile = resolve_model_profile("gte-modernbert-base")
+    builtin = resolve_model_profile("gte-modernbert-base")
+    local = resolve_model_profile("./gte-modernbert-base")
 
-    assert profile.canonical_name == str(model_dir.resolve())
-    assert profile.family == "gte-modernbert"
+    assert builtin.canonical_name == "Alibaba-NLP/gte-modernbert-base"
+    assert builtin.default_revision is not None
+    assert local.canonical_name == str(model_dir.resolve())
+    assert local.family == "gte-modernbert"
+    assert local.default_revision is None
 
 
 def test_builtin_profiles_pin_immutable_revisions() -> None:
@@ -209,6 +214,8 @@ def test_explicit_local_path_detection() -> None:
     assert is_explicit_local_model_path("./models/local-copy")
     assert is_explicit_local_model_path("../models/local-copy")
     assert is_explicit_local_model_path("~/models/local-copy")
+    assert not is_explicit_local_model_path("models/local-copy")
+    assert not is_explicit_local_model_path("local-copy")
     assert not is_explicit_local_model_path("Alibaba-NLP/gte-modernbert-base")
 
 
