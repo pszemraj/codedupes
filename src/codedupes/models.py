@@ -35,7 +35,12 @@ class CodeUnit:
     _token_hash: str | None = field(default=None, repr=False)
 
     # For reference-graph / usage analysis
+    module_name: str = ""  # root-relative module identity
+    import_module_name: str = ""  # importable module identity (may omit a source root)
     referenced_names: set[str] = field(default_factory=set)  # names this unit references
+    resolved_referenced_names: set[str] = field(default_factory=set)  # proven identities
+    referenced_attributes: set[str] = field(default_factory=set)  # unresolved attribute tails
+    module_attribute_references: set[str] = field(default_factory=set)  # module-rooted paths
     references: set[str] = field(default_factory=set)  # uids of units referencing this unit
 
     # API exposure markers

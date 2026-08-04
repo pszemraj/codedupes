@@ -10,11 +10,20 @@ from collections import defaultdict
 from itertools import combinations
 from pathlib import Path
 
+from codedupes._reference_flow import (
+    BranchingVisitor,
+    comprehension_definitely_runs,
+    comprehension_exact_result_count,
+    iterable_definitely_empty,
+    iterable_definitely_nonempty,
+)
 from codedupes.constants import DEFAULT_TRADITIONAL_THRESHOLD
 from codedupes.models import CodeUnit, CodeUnitType, DuplicatePair
 from codedupes.pairs import ordered_pair_key
 
 logger = logging.getLogger(__name__)
+
+_OPAQUE_ALIAS = "\0opaque"
 
 
 def _find_exact_duplicates(
@@ -160,39 +169,84 @@ def _dedupe_duplicate_pairs(duplicates: list[DuplicatePair]) -> list[DuplicatePa
     return deduped
 
 
-def _resolve_reference_targets(reference: str, aliases: dict[str, str]) -> set[str]:
-    """Resolve direct and alias-mapped reference targets.
+def _resolve_reference_targets(reference: str, aliases: dict[str, set[str]]) -> set[str]:
+    """Resolve a reference through every possible module alias.
 
     :param reference: Raw referenced-name string.
     :param aliases: Alias map from local symbols to full targets.
     :return: Candidate reference target names.
     """
-    candidates = {reference}
     if reference in aliases:
-        candidates.add(aliases[reference])
+        return {target for target in aliases[reference] if not target.startswith(_OPAQUE_ALIAS)}
     if "." in reference:
         head, _, tail = reference.partition(".")
         if head in aliases:
-            candidates.add(f"{aliases[head]}.{tail}")
-    return candidates
+            return {
+                f"{target}.{tail}"
+                for target in aliases[head]
+                if not target.startswith(_OPAQUE_ALIAS)
+            }
+    return {reference}
 
 
-def _extract_main_block_references(file_path: Path) -> set[str]:
+def _reference_candidates(
+    target: str,
+    module_name: str,
+    import_module_name: str,
+    by_qualified_name: dict[str, list[CodeUnit]],
+    by_import_name: dict[str, list[CodeUnit]],
+) -> list[CodeUnit]:
+    """Resolve one direct target, preferring the caller's own module namespace.
+
+    :param target: Alias-resolved bare or dotted target.
+    :param module_name: Root-relative module containing the caller.
+    :param import_module_name: Importable module containing the caller.
+    :param by_qualified_name: Exact emitted qualified-name index.
+    :param by_import_name: Exact importable qualified-name index.
+    :return: Best available candidate units.
+    """
+    exact = {unit.uid: unit for unit in by_qualified_name.get(target, [])}
+    exact.update({unit.uid: unit for unit in by_import_name.get(target, [])})
+    if exact:
+        return list(exact.values())
+    for containing_module in (import_module_name, module_name):
+        if not containing_module or target.startswith(f"{containing_module}."):
+            continue
+        scoped_target = f"{containing_module}.{target}"
+        scoped = {unit.uid: unit for unit in by_qualified_name.get(scoped_target, [])}
+        scoped.update({unit.uid: unit for unit in by_import_name.get(scoped_target, [])})
+        if scoped:
+            return list(scoped.values())
+    return []
+
+
+def _extract_main_block_references(
+    file_path: Path,
+    module_name: str,
+) -> tuple[set[str], set[str], set[str]]:
     """Extract names referenced from an if-``__main__`` block.
 
     :param file_path: Path to inspect.
-    :return: Names referenced from the module entry block.
+    :param module_name: Root-relative identity of the containing module.
+    :return: Unresolved names, resolved names, and unresolved attribute names.
     """
     try:
         source = file_path.read_text(encoding="utf-8")
         tree = ast.parse(source)
     except (OSError, SyntaxError, UnicodeDecodeError):
-        return set()
+        return set(), set(), set()
 
     from codedupes.extractor import ReferenceVisitor
 
-    references: set[str] = set()
-    visitor = ReferenceVisitor()
+    import_package = (
+        module_name
+        if file_path.name in {"__init__.py", "__init__.pyi"}
+        else module_name.rpartition(".")[0]
+    )
+    visitor = ReferenceVisitor(
+        qualified_name=module_name,
+        import_package=import_package,
+    )
 
     for node in tree.body:
         if not isinstance(node, ast.If):
@@ -224,8 +278,7 @@ def _extract_main_block_references(file_path: Path) -> set[str]:
         for stmt in node.body:
             visitor.visit(stmt)
 
-    references.update(visitor.names)
-    return references
+    return visitor.names, visitor.resolved_names, visitor.attributes
 
 
 def _extract_pyproject_entry_points(project_root: Path) -> set[str]:
@@ -255,12 +308,11 @@ def _extract_pyproject_entry_points(project_root: Path) -> set[str]:
         for value in script_entries.values():
             if not isinstance(value, str):
                 continue
-            target = value.split(":", 1)[-1]
-            if "." in target:
-                target = target.rsplit(".", 1)[-1]
-            target = target.strip()
-            if target:
-                targets.add(target)
+            module, separator, callable_path = value.partition(":")
+            module = module.strip()
+            callable_path = callable_path.strip()
+            if separator and module and callable_path:
+                targets.add(f"{module}.{callable_path}")
 
     return targets
 
@@ -272,48 +324,397 @@ def build_reference_graph(units: list[CodeUnit], project_root: Path | None = Non
     :param project_root: Optional root for entry point resolution.
     :return: ``None``.
     """
-    by_name: dict[str, list[CodeUnit]] = defaultdict(list)
+    by_qualified_name: dict[str, list[CodeUnit]] = defaultdict(list)
+    by_import_name: dict[str, list[CodeUnit]] = defaultdict(list)
+    by_attribute: dict[str, list[CodeUnit]] = defaultdict(list)
     for unit in units:
-        parts = unit.qualified_name.split(".")
-        aliases = {unit.name, *(".".join(parts[i:]) for i in range(len(parts)))}
-        for alias in aliases:
-            by_name[alias].append(unit)
+        unit.references.clear()
+        by_qualified_name[unit.qualified_name].append(unit)
+        import_name = unit.qualified_name
+        if unit.import_module_name:
+            suffix = unit.qualified_name
+            if unit.module_name:
+                suffix = suffix.removeprefix(f"{unit.module_name}.")
+            import_name = f"{unit.import_module_name}.{suffix}"
+        by_import_name[import_name].append(unit)
+        if unit.unit_type in {CodeUnitType.METHOD, CodeUnitType.CLASS}:
+            by_attribute[unit.name].append(unit)
 
-    alias_map_by_file: dict[Path, dict[str, str]] = {}
+    alias_map_by_file: dict[Path, dict[str, set[str]]] = {}
     for unit in units:
         if unit.file_path not in alias_map_by_file:
-            alias_map_by_file[unit.file_path] = _extract_aliases(unit.file_path)
+            alias_map_by_file[unit.file_path] = _extract_aliases(
+                unit.file_path,
+                unit.import_module_name or unit.module_name,
+            )
 
     # Populate references from each unit's collected name references.
     for unit in units:
         file_aliases = alias_map_by_file.get(unit.file_path, {})
-        for reference in unit.referenced_names:
+        for reference in unit.referenced_names - unit.resolved_referenced_names:
             for target in _resolve_reference_targets(reference, file_aliases):
-                for candidate in by_name.get(target, []):
+                for candidate in _reference_candidates(
+                    target,
+                    unit.module_name,
+                    unit.import_module_name,
+                    by_qualified_name,
+                    by_import_name,
+                ):
                     if candidate.uid != unit.uid:
                         candidate.references.add(unit.uid)
-
+        for target in unit.resolved_referenced_names:
+            for candidate in _reference_candidates(
+                target,
+                unit.module_name,
+                unit.import_module_name,
+                by_qualified_name,
+                by_import_name,
+            ):
+                if candidate.uid != unit.uid:
+                    candidate.references.add(unit.uid)
+        for reference in unit.module_attribute_references:
+            head = reference.partition(".")[0]
+            targets = file_aliases.get(head)
+            if targets is not None and (
+                not targets or any(target.startswith(_OPAQUE_ALIAS) for target in targets)
+            ):
+                attribute = reference.rpartition(".")[2]
+                for candidate in by_attribute.get(attribute, []):
+                    if candidate.uid != unit.uid:
+                        candidate.references.add(unit.uid)
+        for attribute in unit.referenced_attributes:
+            for candidate in by_attribute.get(attribute, []):
+                if candidate.uid != unit.uid:
+                    candidate.references.add(unit.uid)
     # Seed references from __main__ blocks.
     for file_path, file_aliases in alias_map_by_file.items():
         caller_uid = f"__main__::{file_path}"
-        for reference in _extract_main_block_references(file_path):
+        file_unit = next((unit for unit in units if unit.file_path == file_path), None)
+        module_name = file_unit.module_name if file_unit is not None else ""
+        import_module_name = file_unit.import_module_name if file_unit is not None else module_name
+        main_references, resolved_main_references, main_attributes = _extract_main_block_references(
+            file_path,
+            import_module_name,
+        )
+        for reference in main_references - resolved_main_references:
             for target in _resolve_reference_targets(reference, file_aliases):
-                for candidate in by_name.get(target, []):
+                for candidate in _reference_candidates(
+                    target,
+                    module_name,
+                    import_module_name,
+                    by_qualified_name,
+                    by_import_name,
+                ):
                     candidate.references.add(caller_uid)
-
+        for target in resolved_main_references:
+            for candidate in _reference_candidates(
+                target,
+                module_name,
+                import_module_name,
+                by_qualified_name,
+                by_import_name,
+            ):
+                candidate.references.add(caller_uid)
+        for attribute in main_attributes:
+            for candidate in by_attribute.get(attribute, []):
+                candidate.references.add(caller_uid)
     # Seed references from project entry points.
     if project_root is not None:
         root = project_root if project_root.is_dir() else project_root.parent
         for target in _extract_pyproject_entry_points(root):
-            for candidate in by_name.get(target, []):
+            candidates = {unit.uid: unit for unit in by_qualified_name.get(target, [])}
+            candidates.update({unit.uid: unit for unit in by_import_name.get(target, [])})
+            for candidate in candidates.values():
                 candidate.references.add("project.entrypoint")
 
 
-def _extract_aliases(file_path: Path) -> dict[str, str]:
+class _ModuleAliasVisitor(BranchingVisitor[dict[str, set[str]]]):
+    """Resolve possible module bindings without entering function or class bodies."""
+
+    def __init__(self, module_name: str, import_package: str) -> None:
+        """Initialize a module alias collector.
+
+        :param module_name: Importable identity of the current module.
+        :param import_package: Package used to resolve relative imports.
+        """
+        super().__init__()
+        self.module_name = module_name
+        self.import_package = import_package
+        self.aliases: dict[str, set[str]] = {}
+
+    def _snapshot_bindings(self) -> dict[str, set[str]]:
+        """Copy possible bindings at the current program point.
+
+        :return: An independent alias-binding snapshot.
+        """
+        return {name: set(targets) for name, targets in self.aliases.items()}
+
+    def _restore_bindings(self, state: dict[str, set[str]]) -> None:
+        """Restore possible bindings at one program point."""
+        self.aliases = {name: set(targets) for name, targets in state.items()}
+
+    @staticmethod
+    def _merge_bindings(states: list[dict[str, set[str]]]) -> dict[str, set[str]]:
+        """Join possible bindings from alternative control-flow paths.
+
+        :param states: Alternative alias-binding states.
+        :return: The conservative union of all aliases.
+        """
+        return {
+            name: {
+                *(target for state in states for target in state.get(name, set())),
+                *(
+                    {_OPAQUE_ALIAS}
+                    if any(name in state and not state[name] for state in states)
+                    else set()
+                ),
+            }
+            for name in {name for state in states for name in state}
+        }
+
+    @staticmethod
+    def _target_names(target: ast.AST) -> set[str]:
+        """Collect bare names rebound by an assignment-style target.
+
+        :param target: Assignment-style target expression.
+        :return: Bare names bound by the target.
+        """
+        if isinstance(target, ast.Name):
+            return {target.id}
+        if isinstance(target, (ast.Tuple, ast.List)):
+            return {
+                name
+                for element in target.elts
+                for name in _ModuleAliasVisitor._target_names(element)
+            }
+        if isinstance(target, ast.Starred):
+            return _ModuleAliasVisitor._target_names(target.value)
+        return set()
+
+    def _expression_targets(self, node: ast.AST) -> set[str]:
+        """Resolve simple name and attribute expressions through known aliases.
+
+        :param node: Expression whose possible qualified targets are needed.
+        :return: Possible qualified targets for the expression.
+        """
+        if isinstance(node, ast.Name):
+            return set(self.aliases[node.id]) if node.id in self.aliases else {node.id}
+        if isinstance(node, ast.Attribute):
+            return {f"{target}.{node.attr}" for target in self._expression_targets(node.value)}
+        return set()
+
+    def visit_Import(self, node: ast.Import) -> None:
+        """Collect module import bindings."""
+        for alias in node.names:
+            name = alias.asname or alias.name.partition(".")[0]
+            target = alias.name if alias.asname else name
+            self.aliases[name] = {target}
+
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+        """Collect absolute identities for from-import bindings."""
+        from codedupes.extractor import _resolve_relative_module
+
+        module = _resolve_relative_module(self.import_package, node.level, node.module)
+        for alias in node.names:
+            if alias.name == "*":
+                continue
+            name = alias.asname or alias.name
+            target = f"{module}.{alias.name}" if module else alias.name
+            self.aliases[name] = {target}
+
+    def visit_Assign(self, node: ast.Assign) -> None:
+        """Collect simple alias assignments and inspect their value expressions."""
+        targets = self._expression_targets(node.value)
+        self.visit(node.value)
+        for target in node.targets:
+            for name in self._target_names(target):
+                self.aliases[name] = set(targets)
+
+    def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
+        """Collect a simple annotated alias assignment."""
+        if node.value is not None:
+            targets = self._expression_targets(node.value)
+            self.visit(node.value)
+            for name in self._target_names(node.target):
+                self.aliases[name] = set(targets)
+
+    def visit_NamedExpr(self, node: ast.NamedExpr) -> None:
+        """Apply a module assignment-expression binding after its value."""
+        targets = self._expression_targets(node.value)
+        self.visit(node.value)
+        for name in self._target_names(node.target):
+            self.aliases[name] = set(targets)
+
+    def visit_AugAssign(self, node: ast.AugAssign) -> None:
+        """Treat augmented assignment results as opaque bindings."""
+        self.visit(node.target)
+        self.visit(node.value)
+        for name in self._target_names(node.target):
+            self.aliases[name] = set()
+
+    def visit_Delete(self, node: ast.Delete) -> None:
+        """Record deleted bare names as unbound rather than stale aliases."""
+        for target in node.targets:
+            for name in self._target_names(target):
+                self.aliases[name] = set()
+
+    def visit_With(self, node: ast.With) -> None:
+        """Apply ``with ... as`` rebinding before visiting the suite."""
+        for item in node.items:
+            self.visit(item.context_expr)
+            if item.optional_vars is not None:
+                for name in self._target_names(item.optional_vars):
+                    self.aliases[name] = set()
+        self._visit_suite(node.body)
+
+    visit_AsyncWith = visit_With
+
+    def _visit_comprehension(
+        self,
+        generators: list[ast.comprehension],
+        values: tuple[ast.AST, ...],
+        *,
+        eager: bool,
+    ) -> None:
+        """Collect module walrus bindings without leaking generator targets.
+
+        :param generators: Comprehension generators in evaluation order.
+        :param values: Result expressions evaluated in the comprehension scope.
+        :param eager: Whether the comprehension executes eagerly.
+        :return: ``None``.
+        """
+        if not generators:
+            return
+        self.visit(generators[0].iter)
+        if iterable_definitely_empty(generators[0].iter):
+            return
+        base = self._snapshot_bindings()
+        guaranteed_state = base
+        guaranteed_reach = iterable_definitely_nonempty(generators[0].iter)
+        stopped = False
+        conditions_are_conditional = False
+        for condition in generators[0].ifs:
+            condition_base = self._snapshot_bindings()
+            self.visit(condition)
+            if conditions_are_conditional:
+                self._restore_bindings(
+                    self._merge_bindings([condition_base, self._snapshot_bindings()])
+                )
+            if isinstance(condition, ast.Constant) and not bool(condition.value):
+                stopped = True
+                break
+            if not (isinstance(condition, ast.Constant) and bool(condition.value)):
+                conditions_are_conditional = True
+        if guaranteed_reach:
+            guaranteed_state = self._snapshot_bindings()
+        if generators[0].ifs:
+            guaranteed_reach = False
+        for generator in generators[1:] if not stopped else ():
+            self.visit(generator.iter)
+            if guaranteed_reach:
+                guaranteed_state = self._snapshot_bindings()
+            if iterable_definitely_empty(generator.iter):
+                stopped = True
+                break
+            conditions_are_conditional = False
+            for condition in generator.ifs:
+                condition_base = self._snapshot_bindings()
+                self.visit(condition)
+                if conditions_are_conditional:
+                    self._restore_bindings(
+                        self._merge_bindings([condition_base, self._snapshot_bindings()])
+                    )
+                if isinstance(condition, ast.Constant) and not bool(condition.value):
+                    stopped = True
+                    break
+                if not (isinstance(condition, ast.Constant) and bool(condition.value)):
+                    conditions_are_conditional = True
+            if stopped:
+                break
+            if guaranteed_reach:
+                guaranteed_state = self._snapshot_bindings()
+            if generator.ifs or not iterable_definitely_nonempty(generator.iter):
+                guaranteed_reach = False
+        exact_count = None if stopped else comprehension_exact_result_count(generators)
+        repetitions = exact_count if exact_count is not None else int(not stopped)
+        for _ in range(repetitions):
+            for value in values:
+                self.visit(value)
+        if not eager:
+            self._restore_bindings(base)
+        elif stopped or not comprehension_definitely_runs(generators):
+            self._restore_bindings(
+                self._merge_bindings([guaranteed_state, self._snapshot_bindings()])
+            )
+
+    def visit_ListComp(self, node: ast.ListComp) -> None:
+        """Collect an eager list comprehension's module walrus bindings."""
+        self._visit_comprehension(node.generators, (node.elt,), eager=True)
+
+    visit_SetComp = visit_ListComp
+
+    def visit_GeneratorExp(self, node: ast.GeneratorExp) -> None:
+        """Join deferred generator-expression bindings with the module base state."""
+        self._visit_comprehension(node.generators, (node.elt,), eager=False)
+
+    def visit_DictComp(self, node: ast.DictComp) -> None:
+        """Collect an eager dictionary comprehension's module walrus bindings."""
+        self._visit_comprehension(node.generators, (node.key, node.value), eager=True)
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        """Bind a module function after evaluating its header."""
+        for expression in (
+            *node.decorator_list,
+            *node.args.defaults,
+            *(default for default in node.args.kw_defaults if default is not None),
+        ):
+            self.visit(expression)
+        target = f"{self.module_name}.{node.name}" if self.module_name else node.name
+        self.aliases[node.name] = {target}
+
+    visit_AsyncFunctionDef = visit_FunctionDef
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        """Bind a module class after evaluating its header."""
+        for expression in (
+            *node.decorator_list,
+            *node.bases,
+            *(keyword.value for keyword in node.keywords),
+        ):
+            self.visit(expression)
+        target = f"{self.module_name}.{node.name}" if self.module_name else node.name
+        self.aliases[node.name] = {target}
+
+    def _visit_loop_target(self, target: ast.expr) -> None:
+        """Clear aliases rebound by a loop target."""
+        for name in self._target_names(target):
+            self.aliases[name] = set()
+
+    def _enter_exception_handler(self, handler: ast.ExceptHandler) -> None:
+        """Clear an imported alias rebound by an exception handler."""
+        if handler.name is not None:
+            self.aliases[handler.name] = set()
+
+    def _exit_exception_handler(self, handler: ast.ExceptHandler) -> None:
+        """Keep an exception alias unbound after handler cleanup."""
+        if handler.name is not None:
+            self.aliases[handler.name] = set()
+
+    def _visit_match_pattern(self, pattern: ast.pattern) -> None:
+        """Clear aliases rebound by match captures."""
+        for part in ast.walk(pattern):
+            if isinstance(part, (ast.MatchAs, ast.MatchStar)) and part.name is not None:
+                self.aliases[part.name] = set()
+            elif isinstance(part, ast.MatchMapping) and part.rest is not None:
+                self.aliases[part.rest] = set()
+
+
+def _extract_aliases(file_path: Path, module_name: str) -> dict[str, set[str]]:
     """Extract a conservative alias map from module-level imports and assignments.
 
     :param file_path: Python source path.
-    :return: Alias map for name resolution.
+    :param module_name: Root-relative identity of the containing module.
+    :return: Possible alias targets for name resolution.
     """
     try:
         source = file_path.read_text(encoding="utf-8")
@@ -321,32 +722,15 @@ def _extract_aliases(file_path: Path) -> dict[str, str]:
     except (OSError, SyntaxError, UnicodeDecodeError):
         return {}
 
-    aliases: dict[str, str] = {}
-
+    import_package = (
+        module_name
+        if file_path.name in {"__init__.py", "__init__.pyi"}
+        else module_name.rpartition(".")[0]
+    )
+    visitor = _ModuleAliasVisitor(module_name, import_package)
     for node in tree.body:
-        if isinstance(node, ast.Import):
-            for alias in node.names:
-                name = alias.name
-                asname = alias.asname or name.rsplit(".", 1)[-1]
-                aliases[asname] = name
-        elif isinstance(node, ast.ImportFrom):
-            base = node.module or ""
-            for alias in node.names:
-                imported = alias.name
-                asname = alias.asname or imported
-                aliases[asname] = f"{base}.{imported}" if base else imported
-        elif (
-            isinstance(node, ast.Assign)
-            and len(node.targets) == 1
-            and isinstance(node.targets[0], ast.Name)
-        ):
-            target = node.targets[0].id
-            value = node.value
-            if isinstance(value, ast.Name):
-                aliases[target] = value.id
-            elif isinstance(value, ast.Attribute) and isinstance(value.value, ast.Name):
-                aliases[target] = f"{value.value.id}.{value.attr}"
-    return aliases
+        visitor.visit(node)
+    return dict(visitor.aliases)
 
 
 def find_potentially_unused(units: list[CodeUnit], strict_unused: bool = False) -> list[CodeUnit]:

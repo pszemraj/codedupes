@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import ast
+import sys
 from pathlib import Path
 from textwrap import dedent
+
+import pytest
 
 from codedupes.extractor import CodeExtractor, compute_ast_hash, compute_token_hash
 from codedupes.models import CodeUnitType
@@ -16,7 +19,11 @@ def test_nested_scope_extraction_and_private_filtering(tmp_path: Path) -> None:
             def nested(value):
                 return value * 2
 
-            return nested(value)
+            class Local:
+                def method(self):
+                    return value
+
+            return nested(value), Local
 
         class Container:
             def method(self, value):
@@ -39,6 +46,8 @@ def test_nested_scope_extraction_and_private_filtering(tmp_path: Path) -> None:
 
     assert names["sample.top_level"] == CodeUnitType.FUNCTION
     assert names["sample.top_level.nested"] == CodeUnitType.FUNCTION
+    assert names["sample.top_level.Local"] == CodeUnitType.CLASS
+    assert names["sample.top_level.Local.method"] == CodeUnitType.METHOD
     assert names["sample.Container"] == CodeUnitType.CLASS
     assert names["sample.Container.method"] == CodeUnitType.METHOD
     assert names["sample.Container.Inner"] == CodeUnitType.CLASS
@@ -75,6 +84,323 @@ def test_extracted_source_includes_the_full_decorator_block(tmp_path: Path) -> N
     assert unit.lineno == 3
     assert unit.source == code + "\n"
     assert {"first", "configured"} <= unit.referenced_names
+
+
+def test_reference_extraction_separates_function_headers_from_local_bindings(
+    tmp_path: Path,
+) -> None:
+    code = dedent(
+        """
+        def decorate(function):
+            return function
+
+        class Annotation:
+            pass
+
+        def make_default():
+            return 0
+
+        def parameter():
+            return "module parameter"
+
+        def local():
+            return "module local"
+
+        def item():
+            return "module item"
+
+        @decorate
+        def target(parameter: Annotation = make_default()):
+            local = 1
+            values = (1, 2)
+            return parameter, local, [item for item in values]
+        """
+    ).strip()
+
+    units = extract_units(tmp_path, code, include_private=True)
+    target = next(unit for unit in units if unit.qualified_name == "sample.target")
+
+    assert {"sample.decorate", "sample.Annotation", "sample.make_default"} <= (
+        target.referenced_names
+    )
+    assert {"parameter", "local", "item", "values"}.isdisjoint(target.referenced_names)
+
+
+def test_reference_extraction_preserves_qualified_lexical_targets(tmp_path: Path) -> None:
+    code = dedent(
+        """
+        from remote import imported as module_alias
+
+        def target():
+            return "module"
+
+        def late():
+            return "module"
+
+        def outer():
+            def target():
+                return "enclosing"
+
+            def use_nonlocal():
+                nonlocal target
+                return target()
+
+            def use_global():
+                global target
+                return target()
+
+            def use_late_binding():
+                return late()
+
+            def late():
+                return "nested"
+
+            def use_imports():
+                from other import imported as local_alias
+
+                return module_alias(), local_alias()
+
+            def rebound():
+                return "nested"
+
+            rebound = 2
+
+            def use_rebound():
+                return rebound
+
+            replacement = 2
+
+            def replacement():
+                return "nested replacement"
+
+            def use_replacement():
+                return replacement
+
+            def use_conditional_import(flag):
+                if flag:
+                    from first import imported as selected
+                else:
+                    from second import imported as selected
+
+                return selected()
+
+            def use_try_import():
+                try:
+                    from first import imported as selected
+                    risky()
+                    from second import imported as selected
+                except RuntimeError:
+                    pass
+
+                return selected()
+
+            def walrus_rebound():
+                return "nested walrus"
+
+            [walrus_rebound := 2 for _ in [0]]
+
+            def use_walrus_rebound():
+                return walrus_rebound
+
+            def maybe_kept():
+                return "nested maybe"
+
+            [maybe_kept := 2 for _ in []]
+
+            def use_maybe_kept():
+                return maybe_kept
+
+            def nested_rebound():
+                return "nested comprehension"
+
+            [[(nested_rebound := 2) for _ in [0]] for _ in [0]]
+
+            def use_nested_rebound():
+                return nested_rebound
+
+            def short_circuit_kept():
+                return "nested bool"
+
+            flag and (short_circuit_kept := 2)
+
+            def use_short_circuit_kept():
+                return short_circuit_kept
+
+            def assert_kept():
+                return "nested assert"
+
+            assert flag, (assert_kept := 2)
+
+            def use_assert_kept():
+                return assert_kept
+
+            def comparison_kept():
+                return "nested comparison"
+
+            flag < 0 < (comparison_kept := 2)
+
+            def use_comparison_kept():
+                return comparison_kept
+
+            return (
+                use_nonlocal,
+                use_global,
+                use_late_binding,
+                use_imports,
+                use_rebound,
+                use_replacement,
+                use_conditional_import,
+                use_try_import,
+                use_walrus_rebound,
+                use_maybe_kept,
+                use_nested_rebound,
+                use_short_circuit_kept,
+                use_assert_kept,
+                use_comparison_kept,
+            )
+        """
+    ).strip()
+
+    units = extract_units(tmp_path, code, include_private=True)
+    by_name = {unit.qualified_name: unit for unit in units}
+
+    assert by_name["sample.outer.use_nonlocal"].referenced_names == {"sample.outer.target"}
+    assert by_name["sample.outer.use_global"].referenced_names == {"target"}
+    assert by_name["sample.outer.use_late_binding"].referenced_names == {"sample.outer.late"}
+    assert by_name["sample.outer.use_imports"].referenced_names == {
+        "module_alias",
+        "other.imported",
+    }
+    assert "sample.outer.rebound" not in by_name["sample.outer.use_rebound"].referenced_names
+    assert by_name["sample.outer.use_replacement"].referenced_names == {"sample.outer.replacement"}
+    assert by_name["sample.outer.use_conditional_import"].referenced_names == {
+        "first.imported",
+        "second.imported",
+    }
+    assert {"first.imported", "second.imported"} <= by_name[
+        "sample.outer.use_try_import"
+    ].referenced_names
+    assert (
+        "sample.outer.walrus_rebound"
+        not in by_name["sample.outer.use_walrus_rebound"].referenced_names
+    )
+    assert by_name["sample.outer.use_maybe_kept"].referenced_names == {"sample.outer.maybe_kept"}
+    assert (
+        "sample.outer.nested_rebound"
+        not in by_name["sample.outer.use_nested_rebound"].referenced_names
+    )
+    assert (
+        "sample.outer.short_circuit_kept"
+        in by_name["sample.outer.use_short_circuit_kept"].referenced_names
+    )
+    assert "sample.outer.assert_kept" in by_name["sample.outer.use_assert_kept"].referenced_names
+    assert (
+        "sample.outer.comparison_kept"
+        in by_name["sample.outer.use_comparison_kept"].referenced_names
+    )
+
+
+def test_nested_definition_headers_use_the_parent_runtime_state(tmp_path: Path) -> None:
+    code = dedent(
+        """
+        def target():
+            return "module"
+
+        def outer():
+            @target
+            def target(value=target):
+                return value
+
+            class Local(Local):
+                pass
+        """
+    ).strip()
+
+    units = extract_units(tmp_path, code, include_private=True)
+    outer = next(unit for unit in units if unit.qualified_name == "sample.outer")
+
+    assert "target" not in outer.referenced_names
+    assert "sample.outer.target" not in outer.referenced_names
+    assert "Local" not in outer.referenced_names
+
+
+def test_reference_extraction_uses_python_class_lookup_rules(tmp_path: Path) -> None:
+    code = dedent(
+        """
+        def hook():
+            return "module"
+
+        class Early:
+            before = hook()
+
+            def hook(self):
+                return "early"
+
+        class Late:
+            def hook(self):
+                return "late"
+
+            after = hook
+
+            def caller(self):
+                return hook()
+
+        class Iterates:
+            for item in hook():
+                pass
+
+        class Finalizes:
+            try:
+                risky()
+                hook = 0
+            finally:
+                seen = hook
+
+        """
+    ).strip()
+
+    units = extract_units(tmp_path, code, include_private=True)
+    by_name = {unit.qualified_name: unit for unit in units}
+
+    assert by_name["sample.Early"].referenced_names == {"sample.hook"}
+    assert {"hook", "sample.Late.hook"} <= by_name["sample.Late"].referenced_names
+    assert by_name["sample.Late.caller"].referenced_names == {"hook"}
+    assert "sample.hook" in by_name["sample.Iterates"].referenced_names
+    assert "sample.hook" in by_name["sample.Finalizes"].referenced_names
+
+
+@pytest.mark.skipif(sys.version_info < (3, 12), reason="PEP 695 requires Python 3.12")
+def test_type_parameters_shadow_same_named_module_definitions(tmp_path: Path) -> None:
+    code = dedent(
+        """
+        class _T:
+            pass
+
+        def generic[_T](value: _T) -> _T:
+            return _T
+
+        def Target():
+            return "module annotation"
+
+        def annotated[T](value: Target):
+            Target = 2
+            return value
+
+        class Generic[_T]:
+            value: _T
+
+            def method(self) -> _T:
+                return _T
+        """
+    ).strip()
+
+    units = extract_units(tmp_path, code, include_private=True)
+    by_name = {unit.qualified_name: unit for unit in units}
+
+    assert "_T" not in by_name["sample.generic"].referenced_names
+    assert "_T" not in by_name["sample.Generic"].referenced_names
+    assert "_T" not in by_name["sample.Generic.method"].referenced_names
+    assert "sample.Target" in by_name["sample.annotated"].referenced_names
 
 
 def test_parse_error_is_skipped(tmp_path: Path) -> None:

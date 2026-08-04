@@ -11,6 +11,13 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from codedupes._reference_flow import (
+    BranchingVisitor,
+    comprehension_definitely_runs,
+    comprehension_exact_result_count,
+    iterable_definitely_empty,
+    iterable_definitely_nonempty,
+)
 from codedupes.models import CodeUnit, CodeUnitType
 
 logger = logging.getLogger(__name__)
@@ -156,43 +163,1080 @@ class NormalizedASTHasher(ast.NodeTransformer):
         return node
 
 
-class ReferenceVisitor(ast.NodeVisitor):
-    """Collect names a definition references via calls, loads, or attribute access.
+@dataclass(frozen=True)
+class _ReferenceScope:
+    """Compile-time lexical slots and resolvable code targets for one function."""
 
-    Load-context ``Name`` and ``Attribute`` nodes subsume call targets (a call's
-    ``func`` is itself a loaded name or attribute) while also covering non-call
-    references the reference graph must see: callback-style arguments
-    (``callback=validate``), property access (``self.cached_value``), decorators,
-    and type annotations.
+    local_names: frozenset[str]
+    global_names: frozenset[str]
+    nonlocal_names: frozenset[str]
+    targets: dict[str, frozenset[str]]
+
+
+def _function_header_expressions(
+    node: ast.FunctionDef | ast.AsyncFunctionDef,
+) -> Iterator[ast.AST]:
+    """Yield expressions evaluated outside a function body's lexical scope.
+
+    :param node: Function definition whose header is being inspected.
+    :return: Decorators, defaults, annotations, and type parameters.
     """
+    yield from node.decorator_list
+    yield from node.args.defaults
+    yield from (default for default in node.args.kw_defaults if default is not None)
+    arguments = [*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs]
+    if node.args.vararg is not None:
+        arguments.append(node.args.vararg)
+    if node.args.kwarg is not None:
+        arguments.append(node.args.kwarg)
+    yield from (argument.annotation for argument in arguments if argument.annotation is not None)
+    if node.returns is not None:
+        yield node.returns
+    yield from getattr(node, "type_params", ())
 
-    def __init__(self) -> None:
-        """Initialize a fresh reference accumulator."""
-        self.names: set[str] = set()
+
+def _type_parameter_names(node: DefinitionNode) -> frozenset[str]:
+    """Return PEP 695 type-parameter names introduced by a definition.
+
+    :param node: Function or class definition.
+    :return: Names local to the definition's annotation scope.
+    """
+    return frozenset(
+        parameter.name
+        for parameter in getattr(node, "type_params", ())
+        if isinstance(parameter.name, str)
+    )
+
+
+def _function_outer_header_expressions(
+    node: ast.FunctionDef | ast.AsyncFunctionDef,
+) -> Iterator[ast.AST]:
+    """Yield function header expressions outside any type-parameter scope.
+
+    :param node: Function definition to inspect.
+    :return: Decorators and default-value expressions.
+    """
+    yield from node.decorator_list
+    yield from node.args.defaults
+    yield from (default for default in node.args.kw_defaults if default is not None)
+
+
+def _function_annotation_expressions(
+    node: ast.FunctionDef | ast.AsyncFunctionDef,
+) -> Iterator[ast.AST]:
+    """Yield type parameters and annotations evaluated in their annotation scope.
+
+    :param node: Function definition to inspect.
+    :return: Type parameters and annotation expressions.
+    """
+    yield from getattr(node, "type_params", ())
+    arguments = [*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs]
+    if node.args.vararg is not None:
+        arguments.append(node.args.vararg)
+    if node.args.kwarg is not None:
+        arguments.append(node.args.kwarg)
+    yield from (argument.annotation for argument in arguments if argument.annotation is not None)
+    if node.returns is not None:
+        yield node.returns
+
+
+def _class_header_expressions(node: ast.ClassDef) -> Iterator[ast.AST]:
+    """Yield expressions evaluated before a class namespace exists.
+
+    :param node: Class definition whose header is being inspected.
+    :return: Decorators, bases, keyword values, and type parameters.
+    """
+    yield from node.decorator_list
+    yield from node.bases
+    yield from (keyword.value for keyword in node.keywords)
+    yield from getattr(node, "type_params", ())
+
+
+def _bound_target_names(target: ast.AST) -> set[str]:
+    """Collect bare names bound by one assignment-style target.
+
+    :param target: Assignment, loop, with, or comprehension target.
+    :return: Bare bound names.
+    """
+    if isinstance(target, ast.Name):
+        return {target.id}
+    if isinstance(target, (ast.Tuple, ast.List)):
+        return {name for element in target.elts for name in _bound_target_names(element)}
+    if isinstance(target, ast.Starred):
+        return _bound_target_names(target.value)
+    return set()
+
+
+def _match_capture_names(pattern: ast.pattern) -> set[str]:
+    """Collect names captured by one structural-match pattern.
+
+    :param pattern: Match pattern to inspect.
+    :return: Bare capture names.
+    """
+    if isinstance(pattern, ast.MatchAs):
+        names = _match_capture_names(pattern.pattern) if pattern.pattern is not None else set()
+        if pattern.name is not None:
+            names.add(pattern.name)
+        return names
+    if isinstance(pattern, ast.MatchStar):
+        return {pattern.name} if pattern.name is not None else set()
+    if isinstance(pattern, ast.MatchMapping):
+        names = {name for child in pattern.patterns for name in _match_capture_names(child)}
+        if pattern.rest is not None:
+            names.add(pattern.rest)
+        return names
+    if isinstance(pattern, (ast.MatchSequence, ast.MatchOr)):
+        return {name for child in pattern.patterns for name in _match_capture_names(child)}
+    if isinstance(pattern, ast.MatchClass):
+        return {
+            name
+            for child in (*pattern.patterns, *pattern.kwd_patterns)
+            for name in _match_capture_names(child)
+        }
+    return set()
+
+
+class _FunctionScopeCollector(BranchingVisitor[dict[str, set[str]]]):
+    """Collect compile-time function slots without descending into nested bodies."""
+
+    def __init__(
+        self,
+        qualified_name: str,
+        import_package: str,
+        arguments: ast.arguments,
+    ) -> None:
+        """Initialize a function-scope prepass.
+
+        :param qualified_name: Full name used to qualify nested definitions.
+        :param import_package: Package used to resolve relative imports.
+        :param arguments: Function or lambda parameters.
+        """
+        super().__init__()
+        self.qualified_name = qualified_name
+        self.import_package = import_package
+        self.local_names: set[str] = set()
+        self.global_names: set[str] = set()
+        self.nonlocal_names: set[str] = set()
+        self.targets: dict[str, set[str]] = {}
+        positional = [*arguments.posonlyargs, *arguments.args, *arguments.kwonlyargs]
+        self.local_names.update(argument.arg for argument in positional)
+        if arguments.vararg is not None:
+            self.local_names.add(arguments.vararg.arg)
+        if arguments.kwarg is not None:
+            self.local_names.add(arguments.kwarg.arg)
+
+    def _bind(self, name: str, target: str | None = None) -> None:
+        """Record one compile-time local slot and optional code identity.
+
+        :param name: Local binding name.
+        :param target: Optional qualified code identity.
+        :return: ``None``.
+        """
+        self.local_names.add(name)
+        self.targets[name] = {target} if target is not None else set()
+
+    def _snapshot_bindings(self) -> dict[str, set[str]]:
+        """Copy possible code identities at the current program point.
+
+        :return: Independent binding-state copy.
+        """
+        return {name: set(targets) for name, targets in self.targets.items()}
+
+    def _restore_bindings(self, targets: dict[str, set[str]]) -> None:
+        """Restore possible code identities at one program point."""
+        self.targets = {name: set(values) for name, values in targets.items()}
+
+    @staticmethod
+    def _merge_bindings(states: list[dict[str, set[str]]]) -> dict[str, set[str]]:
+        """Join possible code identities from alternative control-flow paths.
+
+        :param states: Reachable binding states.
+        :return: Union of possible targets per name.
+        """
+        return {
+            name: {
+                *(target for state in states for target in state.get(name, set())),
+                *({name} if any(name in state and not state[name] for state in states) else set()),
+            }
+            for name in {name for state in states for name in state}
+        }
 
     def visit_Name(self, node: ast.Name) -> None:
-        """Collect loaded bare-name references, including non-call uses.
+        """Record assignment and deletion targets as local slots."""
+        if isinstance(node.ctx, (ast.Store, ast.Del)):
+            self._bind(node.id)
+
+    def visit_Global(self, node: ast.Global) -> None:
+        """Record names explicitly resolved in module scope."""
+        self.global_names.update(node.names)
+
+    def visit_Nonlocal(self, node: ast.Nonlocal) -> None:
+        """Record names explicitly resolved in an enclosing function scope."""
+        self.nonlocal_names.update(node.names)
+
+    def visit_Import(self, node: ast.Import) -> None:
+        """Record function-local module import identities."""
+        for alias in node.names:
+            name = alias.asname or alias.name.partition(".")[0]
+            target = alias.name if alias.asname else name
+            self._bind(name, target)
+
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+        """Record function-local from-import identities."""
+        module = _resolve_relative_module(self.import_package, node.level, node.module)
+        for alias in node.names:
+            if alias.name == "*":
+                continue
+            name = alias.asname or alias.name
+            target = f"{module}.{alias.name}" if module else alias.name
+            self._bind(name, target)
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        """Bind a nested function and inspect only its enclosing-scope header."""
+        for expression in _function_header_expressions(node):
+            self.visit(expression)
+        self._bind(node.name, f"{self.qualified_name}.{node.name}")
+
+    visit_AsyncFunctionDef = visit_FunctionDef
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        """Bind a nested class and inspect only its enclosing-scope header."""
+        for expression in _class_header_expressions(node):
+            self.visit(expression)
+        self._bind(node.name, f"{self.qualified_name}.{node.name}")
+
+    def visit_Lambda(self, node: ast.Lambda) -> None:
+        """Inspect lambda defaults but keep its body in the lambda's own scope."""
+        for default in (*node.args.defaults, *node.args.kw_defaults):
+            if default is not None:
+                self.visit(default)
+
+    def _visit_comprehension(
+        self,
+        generators: list[ast.comprehension],
+        values: tuple[ast.AST, ...],
+        *,
+        eager: bool,
+    ) -> None:
+        """Inspect comprehension expressions without leaking generator targets.
+
+        :param generators: Comprehension generator clauses.
+        :param values: Result expressions evaluated in the implicit scope.
+        :param eager: Whether result evaluation begins during construction.
+        :return: ``None``.
+        """
+        if not generators:
+            return
+        self.visit(generators[0].iter)
+        if iterable_definitely_empty(generators[0].iter):
+            return
+        base = self._snapshot_bindings()
+        guaranteed_state = base
+        guaranteed_reach = iterable_definitely_nonempty(generators[0].iter)
+        stopped = False
+        conditions_are_conditional = False
+        for condition in generators[0].ifs:
+            condition_base = self._snapshot_bindings()
+            self.visit(condition)
+            if conditions_are_conditional:
+                self._restore_bindings(
+                    self._merge_bindings([condition_base, self._snapshot_bindings()])
+                )
+            if isinstance(condition, ast.Constant) and not bool(condition.value):
+                stopped = True
+                break
+            if not (isinstance(condition, ast.Constant) and bool(condition.value)):
+                conditions_are_conditional = True
+        if guaranteed_reach:
+            guaranteed_state = self._snapshot_bindings()
+        if generators[0].ifs:
+            guaranteed_reach = False
+        for generator in generators[1:] if not stopped else ():
+            self.visit(generator.iter)
+            if guaranteed_reach:
+                guaranteed_state = self._snapshot_bindings()
+            if iterable_definitely_empty(generator.iter):
+                stopped = True
+                break
+            conditions_are_conditional = False
+            for condition in generator.ifs:
+                condition_base = self._snapshot_bindings()
+                self.visit(condition)
+                if conditions_are_conditional:
+                    self._restore_bindings(
+                        self._merge_bindings([condition_base, self._snapshot_bindings()])
+                    )
+                if isinstance(condition, ast.Constant) and not bool(condition.value):
+                    stopped = True
+                    break
+                if not (isinstance(condition, ast.Constant) and bool(condition.value)):
+                    conditions_are_conditional = True
+            if stopped:
+                break
+            if guaranteed_reach:
+                guaranteed_state = self._snapshot_bindings()
+            if generator.ifs or not iterable_definitely_nonempty(generator.iter):
+                guaranteed_reach = False
+        exact_count = None if stopped else comprehension_exact_result_count(generators)
+        repetitions = exact_count if exact_count is not None else int(not stopped)
+        for _ in range(repetitions):
+            for value in values:
+                self.visit(value)
+        if not eager:
+            self._restore_bindings(base)
+        elif stopped or not comprehension_definitely_runs(generators):
+            self._restore_bindings(
+                self._merge_bindings([guaranteed_state, self._snapshot_bindings()])
+            )
+
+    def visit_ListComp(self, node: ast.ListComp) -> None:
+        """Inspect list-comprehension expressions for outer walrus bindings."""
+        self._visit_comprehension(node.generators, (node.elt,), eager=True)
+
+    visit_SetComp = visit_ListComp
+
+    def visit_GeneratorExp(self, node: ast.GeneratorExp) -> None:
+        """Join deferred generator-expression assignment targets with the base state."""
+        self._visit_comprehension(node.generators, (node.elt,), eager=False)
+
+    def visit_DictComp(self, node: ast.DictComp) -> None:
+        """Inspect dictionary-comprehension expressions for outer bindings."""
+        self._visit_comprehension(node.generators, (node.key, node.value), eager=True)
+
+    def _enter_exception_handler(self, handler: ast.ExceptHandler) -> None:
+        """Bind a function-local exception alias on handler entry."""
+        if handler.name is not None:
+            self._bind(handler.name)
+
+    def _exit_exception_handler(self, handler: ast.ExceptHandler) -> None:
+        """Leave a function-local exception alias unbound after cleanup."""
+        if handler.name is not None:
+            self._bind(handler.name)
+
+    def _visit_loop_target(self, target: ast.expr) -> None:
+        """Apply a loop target to the function's compile-time slots."""
+        self.visit(target)
+
+    def _visit_match_pattern(self, pattern: ast.pattern) -> None:
+        """Bind every capture introduced by a match pattern."""
+        for name in _match_capture_names(pattern):
+            self._bind(name)
+
+    def build(self) -> _ReferenceScope:
+        """Freeze the collected scope after applying declarations.
+
+        :return: Immutable reference-scope description.
+        """
+        local_names = self.local_names - self.global_names - self.nonlocal_names
+        return _ReferenceScope(
+            local_names=frozenset(local_names),
+            global_names=frozenset(self.global_names),
+            nonlocal_names=frozenset(self.nonlocal_names),
+            targets={
+                name: frozenset(targets)
+                for name, targets in self.targets.items()
+                if name in local_names
+            },
+        )
+
+
+def _collect_function_reference_scope(
+    node: ast.FunctionDef | ast.AsyncFunctionDef,
+    qualified_name: str,
+    import_package: str,
+) -> _ReferenceScope:
+    """Build lexical reference metadata for one emitted function.
+
+    :param node: Function definition to inspect.
+    :param qualified_name: Full emitted name.
+    :param import_package: Package used for relative imports.
+    :return: Function lexical scope.
+    """
+    collector = _FunctionScopeCollector(qualified_name, import_package, node.args)
+    collector.local_names.update(_type_parameter_names(node))
+    collector._visit_suite(node.body)
+    return collector.build()
+
+
+_ReferenceBindingState = tuple[
+    dict[str, set[str]],
+    dict[str, set[str]],
+    dict[str, set[str]],
+]
+
+
+class ReferenceVisitor(BranchingVisitor[_ReferenceBindingState]):
+    """Resolve references through Python lexical scopes without flattening locals."""
+
+    def __init__(
+        self,
+        *,
+        qualified_name: str = "",
+        import_package: str = "",
+        scope: _ReferenceScope | None = None,
+        enclosing_scopes: tuple[_ReferenceScope, ...] = (),
+        walrus_owner: ReferenceVisitor | None = None,
+        module_bindings: dict[str, set[str]] | None = None,
+    ) -> None:
+        """Initialize a scope-aware reference accumulator.
+
+        :param qualified_name: Qualified identity of the unit being inspected.
+        :param import_package: Package used to resolve relative imports.
+        :param scope: Function lexical scope, or ``None`` for module/class execution.
+        :param enclosing_scopes: Lexically enclosing function scopes, outermost first.
+        :param walrus_owner: Containing scope updated by comprehension assignment expressions.
+        :param module_bindings: Import identities visible when immediate code executes.
+        """
+        super().__init__()
+        self.qualified_name = qualified_name
+        self.import_package = import_package
+        self.scope = scope
+        self.enclosing_scopes = enclosing_scopes
+        self.walrus_owner = walrus_owner
+        self.module_bindings = {
+            name: set(targets) for name, targets in (module_bindings or {}).items()
+        }
+        self.names: set[str] = set()
+        self.resolved_names: set[str] = set()
+        self.attributes: set[str] = set()
+        self.module_attributes: set[str] = set()
+        self._current_bindings: dict[str, set[str]] = {}
+        self._global_bindings: dict[str, set[str]] = {}
+        self._nonlocal_bindings: dict[str, set[str]] = {}
+        self._in_header = False
+        self._type_parameter_bindings: set[str] = set()
+
+    def collect_definition(self, node: DefinitionNode, *, include_header: bool = True) -> None:
+        """Collect one definition while separating its header and body scopes.
+
+        :param node: Root emitted definition.
+        :param include_header: Whether this unit owns header evaluation; enclosing
+            function/class units own headers for nested definitions.
+        :return: ``None``.
+        """
+        type_parameter_names = _type_parameter_names(node)
+        if isinstance(node, ast.ClassDef):
+            if include_header:
+                self._in_header = True
+                for decorator in node.decorator_list:
+                    self.visit(decorator)
+                self._in_header = False
+            if type_parameter_names:
+                type_scope = _ReferenceScope(
+                    local_names=type_parameter_names,
+                    global_names=frozenset(),
+                    nonlocal_names=frozenset(),
+                    targets={},
+                )
+                self.enclosing_scopes = (*self.enclosing_scopes, type_scope)
+                for name in type_parameter_names:
+                    self._current_bindings[name] = set()
+            if include_header:
+                for expression in (
+                    *getattr(node, "type_params", ()),
+                    *node.bases,
+                    *(keyword.value for keyword in node.keywords),
+                ):
+                    self.visit(expression)
+        elif include_header:
+            self._in_header = True
+            for expression in _function_outer_header_expressions(node):
+                self.visit(expression)
+            previous_type_parameters = set(self._type_parameter_bindings)
+            self._type_parameter_bindings.update(type_parameter_names)
+            for expression in _function_annotation_expressions(node):
+                self.visit(expression)
+            self._type_parameter_bindings = previous_type_parameters
+            self._in_header = False
+        self._visit_suite(node.body)
+
+    def _resolve_enclosing_name(self, name: str) -> set[str]:
+        """Resolve a free/nonlocal slot through enclosing functions or the module.
+
+        :param name: Loaded bare name.
+        :return: Possible qualified targets or the unresolved spelling.
+        """
+        for enclosing in reversed(self.enclosing_scopes):
+            if name in enclosing.global_names:
+                break
+            if name in enclosing.local_names:
+                return set(enclosing.targets.get(name, frozenset()))
+        if (self._in_header or self.scope is None) and name in self.module_bindings:
+            return set(self.module_bindings[name])
+        return {name}
+
+    def _enclosing_name_is_resolved(self, name: str) -> bool:
+        """Return whether an enclosing lexical slot supplies a code identity.
+
+        :param name: Loaded bare name.
+        :return: Whether an enclosing scope proves a target identity.
+        """
+        for enclosing in reversed(self.enclosing_scopes):
+            if name in enclosing.global_names:
+                return False
+            if name in enclosing.local_names:
+                targets = enclosing.targets.get(name, frozenset())
+                return bool(targets) and name not in targets
+        if (self._in_header or self.scope is None) and name in self.module_bindings:
+            targets = self.module_bindings[name]
+            return bool(targets) and name not in targets
+        return False
+
+    def _resolve_name(self, name: str) -> set[str]:
+        """Resolve one loaded name to code identities visible at this location.
+
+        :param name: Loaded bare name.
+        :return: Possible qualified targets or the unresolved spelling.
+        """
+        if name in self._type_parameter_bindings:
+            return set()
+        if self._in_header:
+            return self._resolve_enclosing_name(name)
+        if self.scope is not None:
+            if name in self.scope.global_names:
+                return set(self._global_bindings.get(name, {name}))
+            if name in self.scope.nonlocal_names and name in self._nonlocal_bindings:
+                return set(self._nonlocal_bindings[name])
+            if name in self.scope.local_names:
+                return set(self._current_bindings.get(name, set()))
+            return self._resolve_enclosing_name(name)
+        if name in self._current_bindings:
+            return set(self._current_bindings[name])
+        return self._resolve_enclosing_name(name)
+
+    def _name_is_resolved(self, name: str) -> bool:
+        """Return whether a loaded name came from a proven lexical binding.
+
+        :param name: Loaded bare name.
+        :return: Whether current lexical state proves a target identity.
+        """
+        if name in self._type_parameter_bindings:
+            return False
+        if self._in_header:
+            return self._enclosing_name_is_resolved(name)
+        if self.scope is not None:
+            if name in self.scope.global_names:
+                targets = self._global_bindings.get(name, set())
+                return bool(targets) and name not in targets
+            if name in self.scope.nonlocal_names and name in self._nonlocal_bindings:
+                targets = self._nonlocal_bindings[name]
+                return bool(targets) and name not in targets
+            if name in self.scope.local_names:
+                targets = self._current_bindings.get(name, set())
+                return bool(targets) and name not in targets
+            return self._enclosing_name_is_resolved(name)
+        if name in self._current_bindings:
+            targets = self._current_bindings[name]
+            return bool(targets) and name not in targets
+        return self._enclosing_name_is_resolved(name)
+
+    def _record_name_load(self, name: str) -> None:
+        """Record one loaded name with its lexical-resolution provenance."""
+        targets = self._resolve_name(name)
+        self.names.update(targets)
+        # A mixed branch can retain the raw name for an opaque runtime value
+        # alongside exact import targets. Preserve provenance per target: the
+        # exact identities bypass later module-alias rewriting while the raw
+        # spelling remains unresolved.
+        self.resolved_names.update(targets - {name})
+
+    def _expression_is_resolved(self, node: ast.AST) -> bool:
+        """Return whether a dotted receiver has a proven lexical identity.
+
+        :param node: Receiver expression.
+        :return: Whether its root name has a proven target.
+        """
+        if isinstance(node, ast.Name):
+            return self._name_is_resolved(node.id)
+        if isinstance(node, ast.Attribute):
+            return self._expression_is_resolved(node.value)
+        return False
+
+    def _name_uses_module_aliases(self, name: str) -> bool:
+        """Return whether a free name should use the file's final alias map.
+
+        :param name: Root name of an unresolved dotted expression.
+        :return: Whether module-level alias resolution applies.
+        """
+        if name in self._type_parameter_bindings:
+            return False
+        if self.scope is not None:
+            if name in self.scope.global_names:
+                return True
+            if name in self.scope.local_names or name in self.scope.nonlocal_names:
+                return False
+            for enclosing in reversed(self.enclosing_scopes):
+                if name in enclosing.global_names:
+                    return True
+                if name in enclosing.local_names:
+                    return False
+            return True
+        return name not in self._current_bindings
+
+    def _bind_name(self, name: str, targets: set[str] | None = None) -> None:
+        """Update a name's current runtime value category.
+
+        :param name: Name being rebound.
+        :param targets: Possible qualified code identities.
+        :return: ``None``.
+        """
+        targets = set() if targets is None else set(targets)
+        if self.scope is not None and name in self.scope.global_names:
+            self._global_bindings[name] = targets
+        elif self.scope is not None and name in self.scope.nonlocal_names:
+            self._nonlocal_bindings[name] = targets
+        else:
+            self._current_bindings[name] = targets
+
+    def _bind_target(self, target: ast.AST, targets: set[str] | None = None) -> None:
+        """Bind every bare name in an assignment-style target.
+
+        :param target: Assignment-style target expression.
+        :param targets: Possible qualified code identities.
+        :return: ``None``.
+        """
+        for name in _bound_target_names(target):
+            self._bind_name(name, targets)
+
+    def _visit_target_lookups(self, target: ast.AST) -> None:
+        """Collect receiver/index loads required to evaluate a store or delete target."""
+        if isinstance(target, ast.Attribute):
+            self.visit(target.value)
+        elif isinstance(target, ast.Subscript):
+            self.visit(target.value)
+            self.visit(target.slice)
+        elif isinstance(target, (ast.Tuple, ast.List)):
+            for element in target.elts:
+                self._visit_target_lookups(element)
+        elif isinstance(target, ast.Starred):
+            self._visit_target_lookups(target.value)
+
+    def _snapshot_bindings(
+        self,
+    ) -> tuple[dict[str, set[str]], dict[str, set[str]], dict[str, set[str]]]:
+        """Copy the current local, global, and nonlocal target bindings.
+
+        :return: Independent snapshots of the three binding maps.
+        """
+        return tuple(
+            {name: set(targets) for name, targets in bindings.items()}
+            for bindings in (
+                self._current_bindings,
+                self._global_bindings,
+                self._nonlocal_bindings,
+            )
+        )
+
+    def _restore_bindings(
+        self,
+        state: tuple[dict[str, set[str]], dict[str, set[str]], dict[str, set[str]]],
+    ) -> None:
+        """Restore a previously captured binding state."""
+        current, global_bindings, nonlocal_bindings = state
+        self._current_bindings = {name: set(targets) for name, targets in current.items()}
+        self._global_bindings = {name: set(targets) for name, targets in global_bindings.items()}
+        self._nonlocal_bindings = {
+            name: set(targets) for name, targets in nonlocal_bindings.items()
+        }
+
+    def _merge_bindings(
+        self,
+        states: list[tuple[dict[str, set[str]], dict[str, set[str]], dict[str, set[str]]]],
+    ) -> tuple[dict[str, set[str]], dict[str, set[str]], dict[str, set[str]]]:
+        """Join possible control-flow states without discarding any code target.
+
+        :param states: Alternative local, global, and nonlocal binding states.
+        :return: The conservative union of every alternative state.
+        """
+
+        def merge_map(index: int) -> dict[str, set[str]]:
+            """Merge one binding-map position from every state.
+
+            :param index: Tuple position of the binding map to merge.
+            :return: The merged binding map.
+            """
+            maps = [state[index] for state in states]
+            names = {name for mapping in maps for name in mapping}
+            merged: dict[str, set[str]] = {}
+            for name in names:
+                targets = {target for mapping in maps for target in mapping.get(name, set())}
+                if any(name in mapping and not mapping[name] for mapping in maps):
+                    # Preserve the possibility of an arbitrary runtime value;
+                    # the raw spelling keeps attribute dispatch conservative.
+                    targets.add(name)
+                if any(name not in mapping for mapping in maps):
+                    if index == 1:
+                        targets.add(name)
+                    elif index == 2 or self.scope is None:
+                        targets.update(self._resolve_enclosing_name(name))
+                merged[name] = targets
+            return merged
+
+        return merge_map(0), merge_map(1), merge_map(2)
+
+    def visit_Name(self, node: ast.Name) -> None:
+        """Collect only targets reached by a loaded name's lexical binding.
 
         :param node: AST name node.
         :return: ``None``.
         """
         if isinstance(node.ctx, ast.Load):
-            self.names.add(node.id)
-        self.generic_visit(node)
+            self._record_name_load(node.id)
+        elif isinstance(node.ctx, (ast.Store, ast.Del)):
+            self._bind_name(node.id)
+
+    def _expression_targets(self, node: ast.AST) -> set[str]:
+        """Resolve a simple dotted expression without recording its loads twice.
+
+        :param node: Expression whose possible qualified targets are needed.
+        :return: Possible qualified targets for the expression.
+        """
+        if isinstance(node, ast.Name):
+            return self._resolve_name(node.id)
+        if isinstance(node, ast.Attribute):
+            return {f"{target}.{node.attr}" for target in self._expression_targets(node.value)}
+        return set()
+
+    def _resolved_expression_targets(self, node: ast.AST) -> set[str]:
+        """Return only proven identities within a dotted expression.
+
+        :param node: Expression whose exact targets are needed.
+        :return: Proven qualified targets for the expression.
+        """
+        if isinstance(node, ast.Name):
+            return self._resolve_name(node.id) - {node.id}
+        if isinstance(node, ast.Attribute):
+            return {
+                f"{target}.{node.attr}" for target in self._resolved_expression_targets(node.value)
+            }
+        return set()
 
     def visit_Attribute(self, node: ast.Attribute) -> None:
-        """Collect loaded attribute references such as method and property access.
+        """Keep resolved receiver identities separate from unknown attribute tails.
 
         :param node: AST attribute node.
         :return: ``None``.
         """
         if isinstance(node.ctx, ast.Load):
-            self.names.add(node.attr)
-            # Also track the full chain for simple obj.attr access so alias
-            # resolution can map module-qualified references.
-            if isinstance(node.value, ast.Name):
-                self.names.add(f"{node.value.id}.{node.attr}")
-        self.generic_visit(node)
+            receiver_is_resolved = self._expression_is_resolved(node.value)
+            if not receiver_is_resolved:
+                dotted_name = _dotted_expression_name(node)
+                root_name = dotted_name.partition(".")[0] if dotted_name else ""
+                if dotted_name and self._name_uses_module_aliases(root_name):
+                    self.module_attributes.add(dotted_name)
+                else:
+                    # ``self``/arbitrary objects can dispatch through subclasses
+                    # or dynamic attributes, so their tails stay broad.
+                    self.attributes.add(node.attr)
+            receiver_targets = self._expression_targets(node.value)
+            attribute_targets = {f"{target}.{node.attr}" for target in receiver_targets}
+            self.names.update(attribute_targets)
+            self.resolved_names.update(
+                f"{target}.{node.attr}" for target in self._resolved_expression_targets(node.value)
+            )
+        self.visit(node.value)
+
+    def visit_Assign(self, node: ast.Assign) -> None:
+        """Evaluate assignment values before replacing target bindings."""
+        self.visit(node.value)
+        for target in node.targets:
+            self._visit_target_lookups(target)
+            self._bind_target(target)
+
+    def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
+        """Collect annotation/value references before binding the target."""
+        self.visit(node.annotation)
+        if node.value is not None:
+            self.visit(node.value)
+        self._visit_target_lookups(node.target)
+        self._bind_target(node.target)
+
+    def visit_NamedExpr(self, node: ast.NamedExpr) -> None:
+        """Evaluate a walrus value before updating its target."""
+        self.visit(node.value)
+        self._visit_target_lookups(node.target)
+        self._bind_target(node.target)
+        if self.walrus_owner is not None:
+            self.walrus_owner._bind_target(node.target)
+
+    def visit_AugAssign(self, node: ast.AugAssign) -> None:
+        """Treat an augmented-assignment target as both loaded and rebound."""
+        if isinstance(node.target, ast.Name):
+            self._record_name_load(node.target.id)
+        elif isinstance(node.target, ast.Attribute):
+            loaded = ast.Attribute(value=node.target.value, attr=node.target.attr, ctx=ast.Load())
+            self.visit(loaded)
+        else:
+            self.visit(node.target)
+        self.visit(node.value)
+        self._bind_target(node.target)
+
+    def visit_Delete(self, node: ast.Delete) -> None:
+        """Remove class/module bindings or leave function slots unbound."""
+        for target in node.targets:
+            self._visit_target_lookups(target)
+            for name in _bound_target_names(target):
+                if self.scope is None:
+                    self._current_bindings.pop(name, None)
+                else:
+                    self._bind_name(name)
+
+    def visit_Import(self, node: ast.Import) -> None:
+        """Bind imports to qualified module identities."""
+        for alias in node.names:
+            name = alias.asname or alias.name.partition(".")[0]
+            target = alias.name if alias.asname else name
+            self._bind_name(name, {target})
+
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+        """Bind from-imports to qualified object identities."""
+        module = _resolve_relative_module(self.import_package, node.level, node.module)
+        for alias in node.names:
+            if alias.name == "*":
+                continue
+            name = alias.asname or alias.name
+            target = f"{module}.{alias.name}" if module else alias.name
+            self._bind_name(name, {target})
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        """Inspect a nested function and aggregate its deferred body references."""
+        for expression in _function_outer_header_expressions(node):
+            self.visit(expression)
+        previous_type_parameters = set(self._type_parameter_bindings)
+        self._type_parameter_bindings.update(_type_parameter_names(node))
+        for expression in _function_annotation_expressions(node):
+            self.visit(expression)
+        self._type_parameter_bindings = previous_type_parameters
+        target = f"{self.qualified_name}.{node.name}"
+        enclosing = self.enclosing_scopes
+        if self.scope is not None:
+            enclosing = (*enclosing, self.scope)
+        child = ReferenceVisitor(
+            qualified_name=target,
+            import_package=self.import_package,
+            scope=_collect_function_reference_scope(
+                node,
+                target,
+                self.import_package,
+            ),
+            enclosing_scopes=enclosing,
+            module_bindings=self.module_bindings,
+        )
+        child.collect_definition(node, include_header=False)
+        self.names.update(child.names)
+        self.resolved_names.update(child.resolved_names)
+        self.attributes.update(child.attributes)
+        self.module_attributes.update(child.module_attributes)
+        self._bind_name(node.name, {target})
+
+    visit_AsyncFunctionDef = visit_FunctionDef
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        """Inspect a nested class and aggregate its executed body references."""
+        for decorator in node.decorator_list:
+            self.visit(decorator)
+        previous_type_parameters = set(self._type_parameter_bindings)
+        self._type_parameter_bindings.update(_type_parameter_names(node))
+        for expression in (
+            *getattr(node, "type_params", ()),
+            *node.bases,
+            *(keyword.value for keyword in node.keywords),
+        ):
+            self.visit(expression)
+        self._type_parameter_bindings = previous_type_parameters
+        target = f"{self.qualified_name}.{node.name}"
+        child = ReferenceVisitor(
+            qualified_name=target,
+            import_package=self.import_package,
+            enclosing_scopes=self.enclosing_scopes
+            if self.scope is None
+            else (*self.enclosing_scopes, self.scope),
+            module_bindings=self.module_bindings,
+        )
+        child.collect_definition(node, include_header=False)
+        self.names.update(child.names)
+        self.resolved_names.update(child.resolved_names)
+        self.attributes.update(child.attributes)
+        self.module_attributes.update(child.module_attributes)
+        self._bind_name(node.name, {target})
+
+    def visit_Lambda(self, node: ast.Lambda) -> None:
+        """Evaluate defaults outside, then collect the deferred lambda body."""
+        for default in (*node.args.defaults, *node.args.kw_defaults):
+            if default is not None:
+                self.visit(default)
+        collector = _FunctionScopeCollector(
+            self.qualified_name,
+            self.import_package,
+            node.args,
+        )
+        collector.visit(node.body)
+        enclosing = self.enclosing_scopes
+        if self.scope is not None:
+            enclosing = (*enclosing, self.scope)
+        child = ReferenceVisitor(
+            qualified_name=self.qualified_name,
+            import_package=self.import_package,
+            scope=collector.build(),
+            enclosing_scopes=enclosing,
+            module_bindings=self.module_bindings,
+        )
+        child.visit(node.body)
+        self.names.update(child.names)
+        self.resolved_names.update(child.resolved_names)
+        self.attributes.update(child.attributes)
+        self.module_attributes.update(child.module_attributes)
+
+    def _visit_comprehension(
+        self,
+        generators: list[ast.comprehension],
+        values: tuple[ast.AST, ...],
+        *,
+        eager: bool,
+    ) -> None:
+        """Collect a comprehension with its first iterable in the outer scope.
+
+        :param generators: Comprehension generators in evaluation order.
+        :param values: Result expressions evaluated in the comprehension scope.
+        :param eager: Whether the comprehension executes eagerly.
+        :return: ``None``.
+        """
+        if not generators:
+            return
+        self.visit(generators[0].iter)
+        if iterable_definitely_empty(generators[0].iter):
+            return
+        owner = self.walrus_owner or self
+        owner_base = owner._snapshot_bindings()
+        guaranteed_state = owner_base
+        guaranteed_reach = iterable_definitely_nonempty(generators[0].iter)
+        local_names = {
+            name for generator in generators for name in _bound_target_names(generator.target)
+        }
+        scope = _ReferenceScope(
+            local_names=frozenset(local_names),
+            global_names=frozenset(),
+            nonlocal_names=frozenset(),
+            targets={},
+        )
+        enclosing = self.enclosing_scopes
+        if self.scope is not None:
+            enclosing = (*enclosing, self.scope)
+        child = ReferenceVisitor(
+            qualified_name=self.qualified_name,
+            import_package=self.import_package,
+            scope=scope,
+            enclosing_scopes=enclosing,
+            walrus_owner=owner,
+            module_bindings=self.module_bindings,
+        )
+        child._bind_target(generators[0].target)
+        stopped = False
+        conditions_are_conditional = False
+        for condition in generators[0].ifs:
+            condition_base = owner._snapshot_bindings()
+            child.visit(condition)
+            if conditions_are_conditional:
+                owner._restore_bindings(
+                    owner._merge_bindings([condition_base, owner._snapshot_bindings()])
+                )
+            if isinstance(condition, ast.Constant) and not bool(condition.value):
+                stopped = True
+                break
+            if not (isinstance(condition, ast.Constant) and bool(condition.value)):
+                conditions_are_conditional = True
+        if guaranteed_reach:
+            guaranteed_state = owner._snapshot_bindings()
+        if generators[0].ifs:
+            guaranteed_reach = False
+        for generator in generators[1:] if not stopped else ():
+            child.visit(generator.iter)
+            if guaranteed_reach:
+                guaranteed_state = owner._snapshot_bindings()
+            if iterable_definitely_empty(generator.iter):
+                stopped = True
+                break
+            child._bind_target(generator.target)
+            conditions_are_conditional = False
+            for condition in generator.ifs:
+                condition_base = owner._snapshot_bindings()
+                child.visit(condition)
+                if conditions_are_conditional:
+                    owner._restore_bindings(
+                        owner._merge_bindings([condition_base, owner._snapshot_bindings()])
+                    )
+                if isinstance(condition, ast.Constant) and not bool(condition.value):
+                    stopped = True
+                    break
+                if not (isinstance(condition, ast.Constant) and bool(condition.value)):
+                    conditions_are_conditional = True
+            if stopped:
+                break
+            if guaranteed_reach:
+                guaranteed_state = owner._snapshot_bindings()
+            if generator.ifs or not iterable_definitely_nonempty(generator.iter):
+                guaranteed_reach = False
+        exact_count = None if stopped else comprehension_exact_result_count(generators)
+        repetitions = exact_count if exact_count is not None else int(not stopped)
+        for _ in range(repetitions):
+            for value in values:
+                child.visit(value)
+        self.names.update(child.names)
+        self.resolved_names.update(child.resolved_names)
+        self.attributes.update(child.attributes)
+        self.module_attributes.update(child.module_attributes)
+        if not eager:
+            owner._restore_bindings(owner_base)
+        elif stopped or not comprehension_definitely_runs(generators):
+            owner._restore_bindings(
+                owner._merge_bindings([guaranteed_state, owner._snapshot_bindings()])
+            )
+
+    def visit_ListComp(self, node: ast.ListComp) -> None:
+        """Collect a list comprehension in its implicit function scope."""
+        self._visit_comprehension(node.generators, (node.elt,), eager=True)
+
+    visit_SetComp = visit_ListComp
+
+    def visit_GeneratorExp(self, node: ast.GeneratorExp) -> None:
+        """Collect a deferred generator expression without forcing its walrus effects."""
+        self._visit_comprehension(node.generators, (node.elt,), eager=False)
+
+    def visit_DictComp(self, node: ast.DictComp) -> None:
+        """Collect a dictionary comprehension in its implicit function scope."""
+        self._visit_comprehension(node.generators, (node.key, node.value), eager=True)
+
+    def visit_With(self, node: ast.With) -> None:
+        """Evaluate context managers before binding ``as`` targets."""
+        for item in node.items:
+            self.visit(item.context_expr)
+            if item.optional_vars is not None:
+                self._visit_target_lookups(item.optional_vars)
+                self._bind_target(item.optional_vars)
+        self._visit_suite(node.body)
+
+    visit_AsyncWith = visit_With
+
+    def _visit_loop_target(self, target: ast.expr) -> None:
+        """Collect loop-target receiver loads and bind its bare names."""
+        self._visit_target_lookups(target)
+        self._bind_target(target)
+
+    def _enter_exception_handler(self, handler: ast.ExceptHandler) -> None:
+        """Bind an exception alias on handler entry."""
+        if handler.name is not None:
+            self._bind_name(handler.name)
+
+    def _exit_exception_handler(self, handler: ast.ExceptHandler) -> None:
+        """Clear an exception alias after its handler."""
+        if handler.name is not None:
+            self._bind_name(handler.name)
+
+    def _visit_match_pattern(self, pattern: ast.pattern) -> None:
+        """Collect pattern expression loads and bind every capture."""
+        self.visit(pattern)
+        for name in _match_capture_names(pattern):
+            self._bind_name(name)
 
 
 def _dotted_expression_name(node: ast.expr) -> str | None:
@@ -205,7 +1249,7 @@ def _dotted_expression_name(node: ast.expr) -> str | None:
         return node.id
     if isinstance(node, ast.Attribute):
         parent = _dotted_expression_name(node.value)
-        return f"{parent}.{node.attr}" if parent else node.attr
+        return f"{parent}.{node.attr}" if parent else None
     return None
 
 
@@ -239,6 +1283,8 @@ class _NameBinding:
     identity: str | None = None
     module: str | None = None
     is_ast_visitor: bool = False
+    reference_targets: frozenset[str] = frozenset()
+    may_be_opaque: bool = False
 
 
 @dataclass
@@ -290,13 +1336,11 @@ class _CodeUnitCollector(ast.NodeVisitor):
         self.units: list[CodeUnit] = []
         self.class_facts: list[_ClassFact] = []
 
-        # Scope stacks while walking AST:
-        # - class_stack tracks nested class scope.
-        # - function_stack tracks nested local function scope.
-        self.class_stack: list[str] = []
-        self.function_stack: list[str] = []
+        # Ordered lexical frames preserve interleaved function/class nesting.
+        self.scope_stack: list[tuple[str, str]] = []
         self.dynamic_dispatch_stack: list[bool] = []
         self.binding_scopes: list[dict[str, _NameBinding]] = [{}]
+        self.reference_function_scopes: list[_ReferenceScope] = []
         self.conditional_depth = 0
 
     def _bind_name(self, name: str, binding: _NameBinding) -> None:
@@ -307,6 +1351,33 @@ class _CodeUnitCollector(ast.NodeVisitor):
         :return: ``None``.
         """
         self.binding_scopes[-1][name] = binding
+
+    @staticmethod
+    def _reference_targets(name: str, binding: _NameBinding) -> set[str]:
+        """Convert a collector binding into static reference targets.
+
+        :param name: Bare name holding the binding.
+        :param binding: Current collector binding.
+        :return: Known identities plus a raw fallback for opaque values.
+        """
+        targets = set(binding.reference_targets)
+        if binding.identity is not None:
+            targets.add(binding.identity)
+        if binding.module is not None:
+            targets.add(binding.module)
+        if binding.may_be_opaque:
+            targets.add(name)
+        return targets
+
+    def _module_reference_bindings(self) -> dict[str, set[str]]:
+        """Return import identities visible at the current module position.
+
+        :return: Program-point module bindings for immediate definition code.
+        """
+        return {
+            name: self._reference_targets(name, binding)
+            for name, binding in self.binding_scopes[0].items()
+        }
 
     def _lookup_name(self, name: str) -> _NameBinding | None:
         """Resolve the nearest currently visible binding for a bare name.
@@ -382,7 +1453,7 @@ class _CodeUnitCollector(ast.NodeVisitor):
                     is_ast_visitor=True,
                 )
             elif resolved_module is None:
-                binding = _NameBinding()
+                binding = _NameBinding(may_be_opaque=True)
             else:
                 binding = _NameBinding(identity=f"{resolved_module}.{alias.name}")
             self._bind_name(bound_name, binding)
@@ -394,9 +1465,79 @@ class _CodeUnitCollector(ast.NodeVisitor):
         :return: ``None``.
         """
         if isinstance(node.ctx, ast.Store):
-            self._bind_name(node.id, _NameBinding())
+            self._bind_name(node.id, _NameBinding(may_be_opaque=True))
         elif isinstance(node.ctx, ast.Del):
             self.binding_scopes[-1].pop(node.id, None)
+
+    def _reference_expression_binding(self, node: ast.AST) -> _NameBinding:
+        """Resolve a simple assignment value for program-point references.
+
+        :param node: Assignment value expression.
+        :return: Known reference targets and opacity for the resulting value.
+        """
+        if isinstance(node, ast.Name):
+            binding = self._lookup_name(node.id)
+            return binding if binding is not None else _NameBinding(may_be_opaque=True)
+        if isinstance(node, ast.Attribute):
+            parent = self._reference_expression_binding(node.value)
+            targets = {
+                f"{target}.{node.attr}" for target in self._reference_targets("", parent) if target
+            }
+            return _NameBinding(
+                reference_targets=frozenset(targets),
+                may_be_opaque=parent.may_be_opaque,
+            )
+        return _NameBinding(may_be_opaque=True)
+
+    def visit_Assign(self, node: ast.Assign) -> None:
+        """Propagate simple assignment aliases in document order.
+
+        :param node: Assignment statement.
+        :return: ``None``.
+        """
+        self.visit(node.value)
+        binding = self._reference_expression_binding(node.value)
+        for target in node.targets:
+            if isinstance(target, ast.Name):
+                self._bind_name(target.id, binding)
+            else:
+                self.visit(target)
+
+    def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
+        """Propagate a simple annotated assignment alias.
+
+        :param node: Annotated assignment statement.
+        :return: ``None``.
+        """
+        self.visit(node.annotation)
+        if node.value is None:
+            return
+        self.visit(node.value)
+        if isinstance(node.target, ast.Name):
+            self._bind_name(node.target.id, self._reference_expression_binding(node.value))
+        else:
+            self.visit(node.target)
+
+    def visit_NamedExpr(self, node: ast.NamedExpr) -> None:
+        """Propagate an assignment-expression alias after its value.
+
+        :param node: Assignment expression.
+        :return: ``None``.
+        """
+        self.visit(node.value)
+        if isinstance(node.target, ast.Name):
+            self._bind_name(node.target.id, self._reference_expression_binding(node.value))
+
+    def visit_AugAssign(self, node: ast.AugAssign) -> None:
+        """Treat an augmented-assignment result as opaque.
+
+        :param node: Augmented assignment statement.
+        :return: ``None``.
+        """
+        self.visit(node.target)
+        self.visit(node.value)
+        if isinstance(node.target, ast.Name):
+            self._bind_name(node.target.id, _NameBinding(may_be_opaque=True))
 
     @staticmethod
     def _joined_bindings(
@@ -421,7 +1562,17 @@ class _CodeUnitCollector(ast.NodeVisitor):
             if first is not None and all(binding == first for binding in bindings[1:]):
                 joined[name] = first
             else:
-                joined[name] = _NameBinding()
+                concrete = [binding for binding in bindings if binding is not None]
+                targets = {
+                    target
+                    for binding in concrete
+                    for target in _CodeUnitCollector._reference_targets(name, binding)
+                    if target != name
+                }
+                joined[name] = _NameBinding(
+                    reference_targets=frozenset(targets),
+                    may_be_opaque=any(binding.may_be_opaque for binding in concrete),
+                )
         return joined
 
     def _visit_statement_suite(self, suite: list[ast.stmt]) -> None:
@@ -432,6 +1583,8 @@ class _CodeUnitCollector(ast.NodeVisitor):
         """
         for statement in suite:
             self.visit(statement)
+            if not BranchingVisitor._statement_falls_through(statement):
+                break
 
     def _visit_conditional_suite(self, suite: list[ast.stmt]) -> None:
         """Visit a suite that may be skipped at runtime and join both outcomes.
@@ -523,7 +1676,7 @@ class _CodeUnitCollector(ast.NodeVisitor):
             if handler.type is not None:
                 self.visit(handler.type)
             if handler.name is not None:
-                self._bind_name(handler.name, _NameBinding())
+                self._bind_name(handler.name, _NameBinding(may_be_opaque=True))
             self._visit_statement_suite(handler.body)
             outcome = self.binding_scopes[-1]
             if handler.name is not None:
@@ -569,15 +1722,15 @@ class _CodeUnitCollector(ast.NodeVisitor):
             if pattern.pattern is not None:
                 self._bind_match_captures(pattern.pattern)
             if pattern.name is not None:
-                self._bind_name(pattern.name, _NameBinding())
+                self._bind_name(pattern.name, _NameBinding(may_be_opaque=True))
         elif isinstance(pattern, ast.MatchStar):
             if pattern.name is not None:
-                self._bind_name(pattern.name, _NameBinding())
+                self._bind_name(pattern.name, _NameBinding(may_be_opaque=True))
         elif isinstance(pattern, ast.MatchMapping):
             for sub_pattern in pattern.patterns:
                 self._bind_match_captures(sub_pattern)
             if pattern.rest is not None:
-                self._bind_name(pattern.rest, _NameBinding())
+                self._bind_name(pattern.rest, _NameBinding(may_be_opaque=True))
         elif isinstance(pattern, (ast.MatchSequence, ast.MatchOr)):
             for sub_pattern in pattern.patterns:
                 self._bind_match_captures(sub_pattern)
@@ -593,11 +1746,11 @@ class _CodeUnitCollector(ast.NodeVisitor):
         """
         positional = [*arguments.posonlyargs, *arguments.args, *arguments.kwonlyargs]
         for argument in positional:
-            self._bind_name(argument.arg, _NameBinding())
+            self._bind_name(argument.arg, _NameBinding(may_be_opaque=True))
         if arguments.vararg is not None:
-            self._bind_name(arguments.vararg.arg, _NameBinding())
+            self._bind_name(arguments.vararg.arg, _NameBinding(may_be_opaque=True))
         if arguments.kwarg is not None:
-            self._bind_name(arguments.kwarg.arg, _NameBinding())
+            self._bind_name(arguments.kwarg.arg, _NameBinding(may_be_opaque=True))
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
         """Collect function code units and recurse into nested definitions."""
@@ -616,9 +1769,18 @@ class _CodeUnitCollector(ast.NodeVisitor):
         :param node: Function or async-function definition.
         :return: ``None``.
         """
-        is_method = bool(self.class_stack) and not self.function_stack
-        scope_prefix = self.class_stack + self.function_stack
-
+        is_method = bool(self.scope_stack) and self.scope_stack[-1][0] == "class"
+        scope_prefix = [name for _, name in self.scope_stack]
+        qualified_name = self.extractor._qualified_name(
+            self.module_name,
+            scope_prefix,
+            node.name,
+        )
+        reference_scope = _collect_function_reference_scope(
+            node,
+            qualified_name,
+            self.import_package,
+        )
         if self.extractor._should_emit_name(node.name):
             self.units.append(
                 self.extractor._emit_function(
@@ -632,21 +1794,42 @@ class _CodeUnitCollector(ast.NodeVisitor):
                         self.dynamic_dispatch_stack[-1] if is_method else False
                     ),
                     exported=self.exported,
+                    import_package=self.import_package,
+                    import_module_name=self.inheritance_module_name,
+                    reference_scope=reference_scope,
+                    enclosing_reference_scopes=tuple(self.reference_function_scopes),
+                    module_bindings=self._module_reference_bindings(),
                 )
             )
 
-        self._bind_name(node.name, _NameBinding())
-        self.function_stack.append(node.name)
+        for expression in (
+            *_function_outer_header_expressions(node),
+            *_function_annotation_expressions(node),
+        ):
+            self.visit(expression)
+
+        import_identity = self.extractor._qualified_name(
+            self.inheritance_module_name,
+            scope_prefix,
+            node.name,
+        )
+        self._bind_name(
+            node.name,
+            _NameBinding(reference_targets=frozenset({import_identity})),
+        )
+        self.scope_stack.append(("function", node.name))
         self.binding_scopes.append({})
+        self.reference_function_scopes.append(reference_scope)
         self._bind_function_arguments(node.args)
         for statement in node.body:
             self.visit(statement)
+        self.reference_function_scopes.pop()
         self.binding_scopes.pop()
-        self.function_stack.pop()
+        self.scope_stack.pop()
 
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
         """Collect class units and descend into exported/visible class bodies."""
-        scope_prefix = self.class_stack
+        scope_prefix = [name for _, name in self.scope_stack]
         should_enter = self.extractor._should_emit_name(node.name)
 
         if should_enter:
@@ -658,6 +1841,10 @@ class _CodeUnitCollector(ast.NodeVisitor):
                     self.module_name,
                     scope_prefix=scope_prefix,
                     exported=self.exported,
+                    import_package=self.import_package,
+                    import_module_name=self.inheritance_module_name,
+                    enclosing_reference_scopes=tuple(self.reference_function_scopes),
+                    module_bindings=self._module_reference_bindings(),
                 )
             )
 
@@ -675,11 +1862,18 @@ class _CodeUnitCollector(ast.NodeVisitor):
         resolved_base_identities = {
             binding.identity for binding in base_bindings if binding.identity is not None
         }
+        for expression in (
+            *node.decorator_list,
+            *getattr(node, "type_params", ()),
+            *node.bases,
+            *(keyword.value for keyword in node.keywords),
+        ):
+            self.visit(expression)
         # Function-local classes are invisible to importers, and their method
         # units carry the function scope in their qualified prefix, so they can
         # neither confer nor receive cross-file proof. Recording them would only
         # pollute the module-level identity they appear to share.
-        if not self.function_stack:
+        if not any(kind == "function" for kind, _ in self.scope_stack):
             self.class_facts.append(
                 _ClassFact(
                     qualified_name,
@@ -691,14 +1885,26 @@ class _CodeUnitCollector(ast.NodeVisitor):
             )
 
         if should_enter:
-            self.class_stack.append(node.name)
+            self.scope_stack.append(("class", node.name))
             self.dynamic_dispatch_stack.append(is_dynamic_dispatch_class)
             self.binding_scopes.append({})
+            type_parameter_names = _type_parameter_names(node)
+            if type_parameter_names:
+                self.reference_function_scopes.append(
+                    _ReferenceScope(
+                        local_names=type_parameter_names,
+                        global_names=frozenset(),
+                        nonlocal_names=frozenset(),
+                        targets={},
+                    )
+                )
             for statement in node.body:
                 self.visit(statement)
+            if type_parameter_names:
+                self.reference_function_scopes.pop()
             self.binding_scopes.pop()
             self.dynamic_dispatch_stack.pop()
-            self.class_stack.pop()
+            self.scope_stack.pop()
         else:
             # If class is excluded, skip descendants to avoid leaking private internals.
             logger.debug("Skipping private class %s in %s", node.name, self.file_path)
@@ -1073,6 +2279,11 @@ class CodeExtractor:
         class_member: bool,
         is_dynamic_dispatch_class: bool,
         exported: set[str],
+        import_package: str,
+        import_module_name: str,
+        reference_scope: _ReferenceScope,
+        enclosing_reference_scopes: tuple[_ReferenceScope, ...],
+        module_bindings: dict[str, set[str]],
     ) -> CodeUnit:
         """Build one function or method code unit.
 
@@ -1084,12 +2295,24 @@ class CodeExtractor:
         :param class_member: Whether node is a method.
         :param is_dynamic_dispatch_class: Whether the containing class uses AST visitor dispatch.
         :param exported: Exported names from module __all__.
+        :param import_package: Package used to resolve relative imports.
+        :param import_module_name: Importable identity of the containing module.
+        :param reference_scope: Function compile-time lexical scope.
+        :param enclosing_reference_scopes: Lexically enclosing function scopes.
+        :param module_bindings: Import identities visible at the definition statement.
         :return: Constructed function or method unit.
         """
         unit_type = CodeUnitType.METHOD if class_member else CodeUnitType.FUNCTION
+        qualified_name = self._qualified_name(module_name, scope_prefix, node.name)
 
-        reference_visitor = ReferenceVisitor()
-        reference_visitor.visit(node)
+        reference_visitor = ReferenceVisitor(
+            qualified_name=qualified_name,
+            import_package=import_package,
+            scope=reference_scope,
+            enclosing_scopes=enclosing_reference_scopes,
+            module_bindings=module_bindings,
+        )
+        reference_visitor.collect_definition(node, include_header=not scope_prefix)
 
         return self._build_code_unit(
             node,
@@ -1099,10 +2322,14 @@ class CodeExtractor:
             scope_prefix,
             unit_type=unit_type,
             referenced_names=reference_visitor.names,
+            resolved_referenced_names=reference_visitor.resolved_names,
+            referenced_attributes=reference_visitor.attributes,
+            module_attribute_references=reference_visitor.module_attributes,
             exported=exported,
             dynamic_dispatch_hook=(
                 class_member and is_dynamic_dispatch_class and node.name.startswith("visit_")
             ),
+            import_module_name=import_module_name,
         )
 
     def _emit_class(
@@ -1113,6 +2340,10 @@ class CodeExtractor:
         module_name: str,
         scope_prefix: list[str],
         exported: set[str],
+        import_package: str,
+        import_module_name: str,
+        enclosing_reference_scopes: tuple[_ReferenceScope, ...],
+        module_bindings: dict[str, set[str]],
     ) -> CodeUnit:
         """Build one class code unit.
 
@@ -1122,10 +2353,20 @@ class CodeExtractor:
         :param module_name: Module name.
         :param scope_prefix: Scope prefix stack.
         :param exported: Exported names from module __all__.
+        :param import_package: Package used to resolve relative imports.
+        :param import_module_name: Importable identity of the containing module.
+        :param enclosing_reference_scopes: Lexically enclosing function scopes.
+        :param module_bindings: Import identities visible at the class statement.
         :return: Constructed class unit.
         """
-        reference_visitor = ReferenceVisitor()
-        reference_visitor.visit(node)
+        qualified_name = self._qualified_name(module_name, scope_prefix, node.name)
+        reference_visitor = ReferenceVisitor(
+            qualified_name=qualified_name,
+            import_package=import_package,
+            enclosing_scopes=enclosing_reference_scopes,
+            module_bindings=module_bindings,
+        )
+        reference_visitor.collect_definition(node, include_header=not scope_prefix)
 
         return self._build_code_unit(
             node,
@@ -1135,8 +2376,12 @@ class CodeExtractor:
             scope_prefix=scope_prefix,
             unit_type=CodeUnitType.CLASS,
             referenced_names=reference_visitor.names,
+            resolved_referenced_names=reference_visitor.resolved_names,
+            referenced_attributes=reference_visitor.attributes,
+            module_attribute_references=reference_visitor.module_attributes,
             exported=exported,
             dynamic_dispatch_hook=False,
+            import_module_name=import_module_name,
         )
 
     def _build_code_unit(
@@ -1148,8 +2393,12 @@ class CodeExtractor:
         scope_prefix: list[str],
         unit_type: CodeUnitType,
         referenced_names: set[str],
+        resolved_referenced_names: set[str],
+        referenced_attributes: set[str],
+        module_attribute_references: set[str],
         exported: set[str],
         dynamic_dispatch_hook: bool,
+        import_module_name: str,
     ) -> CodeUnit:
         """Build shared source and metadata fields for one code unit.
 
@@ -1160,8 +2409,12 @@ class CodeExtractor:
         :param scope_prefix: Scope prefix stack.
         :param unit_type: Emitted unit type.
         :param referenced_names: Names the definition references.
+        :param resolved_referenced_names: References with proven lexical identities.
+        :param referenced_attributes: Attribute names whose receiver type is unresolved.
+        :param module_attribute_references: Dotted paths rooted in unresolved module globals.
         :param exported: Exported names from module ``__all__``.
         :param dynamic_dispatch_hook: Whether runtime visitor dispatch reaches this method.
+        :param import_module_name: Importable identity of the containing module.
         :return: Constructed code unit.
         """
         name = node.name
@@ -1178,7 +2431,12 @@ class CodeExtractor:
             lineno=node.lineno,
             end_lineno=node.end_lineno or node.lineno,
             source=unit_source,
+            module_name=module_name,
+            import_module_name=import_module_name,
             referenced_names=referenced_names,
+            resolved_referenced_names=resolved_referenced_names,
+            referenced_attributes=referenced_attributes,
+            module_attribute_references=module_attribute_references,
             is_public=not name.startswith("_"),
             is_dunder=unit_type != CodeUnitType.CLASS
             and name.startswith("__")
