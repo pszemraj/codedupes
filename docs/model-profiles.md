@@ -60,7 +60,7 @@ CLI task defaults:
 - `codedupes check`: `semantic-similarity`
 - `codedupes search`: `code-retrieval`
 
-These defaults belong to the CLI commands. In the Python API, an unset `AnalyzerConfig.semantic_task` resolves to `semantic-similarity` everywhere - including `CodeAnalyzer.index()`/`search()` - so retrieval-style search through the API needs `semantic_task="code-retrieval"` set explicitly.
+The Python API resolves the same defaults by operation: an unset `AnalyzerConfig.semantic_task` uses `semantic-similarity` for `CodeAnalyzer.analyze()` and `code-retrieval` for `CodeAnalyzer.index()`. A later `search()` uses the task that produced its current corpus embeddings; an explicit task overrides either default.
 
 Allowed task names:
 

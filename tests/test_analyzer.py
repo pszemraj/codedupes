@@ -873,7 +873,7 @@ def test_combined_mode_fallback_marks_semantic_degradation(tmp_path: Path, monke
     assert "backend unavailable" in result.semantic_fallback_reason
 
 
-def test_search_uses_index_task_when_unset(tmp_path: Path, monkeypatch) -> None:
+def test_search_after_analyze_uses_analysis_task_when_unset(tmp_path: Path, monkeypatch) -> None:
     source = "def entry(x):\n    return x + 1\n"
     project = create_project(tmp_path, source)
     captured: dict[str, object] = {}
@@ -979,8 +979,8 @@ def test_index_embeds_corpus_without_mining_duplicates(tmp_path: Path, monkeypat
     assert indexed == 1
     assert [unit.name for unit in embedded_units] == ["entry"]
     assert results == []
-    assert captured["semantic_task"] == analyzer_module.DEFAULT_CHECK_SEMANTIC_TASK
-    assert captured["query_semantic_task"] == analyzer_module.DEFAULT_CHECK_SEMANTIC_TASK
+    assert captured["semantic_task"] == analyzer_module.DEFAULT_SEARCH_SEMANTIC_TASK
+    assert captured["query_semantic_task"] == analyzer_module.DEFAULT_SEARCH_SEMANTIC_TASK
     assert captured["cache_scope"] == project.resolve()
 
 

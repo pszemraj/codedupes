@@ -13,6 +13,7 @@ from codedupes.constants import (
     DEFAULT_CHECK_SEMANTIC_TASK,
     DEFAULT_MIN_SEMANTIC_STATEMENTS,
     DEFAULT_MODEL,
+    DEFAULT_SEARCH_SEMANTIC_TASK,
     DEFAULT_SEMANTIC_DEVICE,
     DEFAULT_TRADITIONAL_THRESHOLD,
     normalize_semantic_task,
@@ -733,8 +734,8 @@ class CodeAnalyzer:
 
         units = self._extract_corpus_units(path)
         self._units = units
-        self._resolved_search_semantic_task = self.config.semantic_task or (
-            DEFAULT_CHECK_SEMANTIC_TASK
+        self._resolved_search_semantic_task = (
+            self.config.semantic_task or DEFAULT_SEARCH_SEMANTIC_TASK
         )
         semantic_candidates = self._select_semantic_candidates(units)
         self._semantic_units = semantic_candidates
