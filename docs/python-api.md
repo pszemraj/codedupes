@@ -109,7 +109,7 @@ clear_model_cache()
 - `AnalysisResult.potentially_unused`: heuristic unused candidates
 - `AnalysisResult.all_duplicates`: hybrid duplicates in combined mode; raw duplicates in single-method mode
 - `AnalysisResult.analysis_mode`: `"combined"`, `"traditional"`, `"semantic"`, or `"none"`
-- `CodeUnit.uid`: physical-definition identity (`path`, qualified name, and source line), so legal same-scope redefinitions remain distinct in pair and reference results
+- `CodeUnit.uid`: definition identity (`path` and qualified name)
 
 ## Notes
 

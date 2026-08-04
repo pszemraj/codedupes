@@ -47,19 +47,17 @@ A nonempty `AnalyzerConfig.exclude_patterns` list or one or more CLI `--exclude`
 
 ## Potentially Unused Defaults
 
-Unused detection runs by default and builds a conservative reference graph from name references in analyzed code, module-level aliases, `if __name__ == "__main__"` blocks, and `[project.scripts]` or `[project.gui-scripts]` entries in `pyproject.toml`.
+Unused detection runs by default and builds a conservative reference graph from direct calls in analyzed code, module-level import and assignment aliases, `if __name__ == "__main__"` blocks, and `[project.scripts]` or `[project.gui-scripts]` entries in `pyproject.toml`.
 
 The following units are not reported:
 
-- referenced units and proven `ast.NodeVisitor` or `ast.NodeTransformer` dispatch hooks (inheritance is proven through imports across the analyzed files, including relative imports; unresolvable third-party bases and local-module star re-exports stay eligible for reporting)
-- names exported through `__all__`, public classes, and dunder/API lifecycle methods such as `__init__`, `__new__`, and `__call__`
+- referenced units (any analyzed call resolving to the unit's name or a qualified-name suffix counts)
+- names exported through `__all__`, public classes, and dunder methods such as `__init__`
 - `get_*`, `set_*`, and abstract methods
 - `test_*` definitions and definitions in files whose names contain `_test`
 - units containing `# noqa: codedupes` or `# codedupes: ignore`
 
-A unit counts as referenced when a lexically resolved load reaches it - called, passed as a callback argument, accessed as an attribute or property, used as a decorator, or named in a type annotation - not only when it is called. Function slots follow Python's compile-time rules across the complete function syntax, including unreachable assignments, while reference values follow only reachable control flow. Direct nested calls, callable aliases, synchronous local callback wrappers, closure returns, and `nonlocal` writes retain their program-point target identities; coroutine and generator bodies use their activation state rather than their object-creation call. Function parameters, ordinary locals, comprehension targets, and closure variables therefore do not mark unrelated same-spelled definitions as used. Nested definitions, imports, `global`/`nonlocal`, class-body ordering, `__main__` blocks, and project entry points retain their resolvable module/scope identity. An attribute whose runtime receiver type cannot be proven remains conservative and can match a same-named method; this includes instance access that may dispatch through a subclass. Default mode also skips public non-method functions - module-level and nested alike. Strict mode (`--strict-unused` or `strict_unused=True`) removes only that last suppression; the other API and runtime exclusions still apply. Dynamic registration, reflection, and string-based lookups remain outside the static reference graph, so unused findings require review.
-
-Cross-file visitor inheritance is accepted only when one import identity maps to one physical source file. If parallel layouts (for example `pkg/mod.py` and `src/pkg/mod.py`) map distinct files to the same import identity, codedupes warns and disables cross-file proof through that identity instead of merging unrelated classes.
+Call matching is name-based rather than scope-resolved: a call to any same-named symbol keeps every candidate definition out of the report, trading missed dead code for fewer false "unused" flags. Default mode also skips public non-method functions. Strict mode (`--strict-unused` or `strict_unused=True`) removes only that suppression; the other API and runtime exclusions still apply. Dynamic registration, reflection, and string-based lookups remain outside the static reference graph, so unused findings require review.
 
 ## Tiny Traditional Duplicate Filtering Defaults
 
