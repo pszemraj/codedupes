@@ -296,6 +296,115 @@ def _match_capture_names(pattern: ast.pattern) -> set[str]:
     return set()
 
 
+class _FunctionLexicalSlotCollector(ast.NodeVisitor):
+    """Collect function symbol-table slots from syntax, regardless of reachability."""
+
+    def __init__(self, arguments: ast.arguments) -> None:
+        """Initialize lexical slots with the function parameters.
+
+        :param arguments: Function or lambda parameters.
+        """
+        self.local_names: set[str] = set()
+        self.global_names: set[str] = set()
+        self.nonlocal_names: set[str] = set()
+        positional = [*arguments.posonlyargs, *arguments.args, *arguments.kwonlyargs]
+        self.local_names.update(argument.arg for argument in positional)
+        if arguments.vararg is not None:
+            self.local_names.add(arguments.vararg.arg)
+        if arguments.kwarg is not None:
+            self.local_names.add(arguments.kwarg.arg)
+
+    def visit_Name(self, node: ast.Name) -> None:
+        """Record every syntactic store or delete as a function-local slot."""
+        if isinstance(node.ctx, (ast.Store, ast.Del)):
+            self.local_names.add(node.id)
+
+    def visit_Global(self, node: ast.Global) -> None:
+        """Record module-scope declarations from the entire function block."""
+        self.global_names.update(node.names)
+
+    def visit_Nonlocal(self, node: ast.Nonlocal) -> None:
+        """Record enclosing-scope declarations from the entire function block."""
+        self.nonlocal_names.update(node.names)
+
+    def visit_Import(self, node: ast.Import) -> None:
+        """Record names introduced by imports."""
+        for alias in node.names:
+            self.local_names.add(alias.asname or alias.name.partition(".")[0])
+
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+        """Record names introduced by explicit from-imports."""
+        self.local_names.update(
+            alias.asname or alias.name for alias in node.names if alias.name != "*"
+        )
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        """Bind a nested function without entering its separate lexical body."""
+        self.local_names.add(node.name)
+        for expression in _function_header_expressions(node):
+            self.visit(expression)
+
+    visit_AsyncFunctionDef = visit_FunctionDef
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        """Bind a nested class and inspect only its outer-evaluated header."""
+        self.local_names.add(node.name)
+        for expression in _class_header_expressions(node):
+            self.visit(expression)
+
+    def visit_Lambda(self, node: ast.Lambda) -> None:
+        """Inspect lambda defaults while leaving its body in the lambda scope."""
+        for default in (*node.args.defaults, *node.args.kw_defaults):
+            if default is not None:
+                self.visit(default)
+
+    def visit_ExceptHandler(self, node: ast.ExceptHandler) -> None:
+        """Record an exception alias and inspect the complete handler suite."""
+        if node.type is not None:
+            self.visit(node.type)
+        if node.name is not None:
+            self.local_names.add(node.name)
+        for statement in node.body:
+            self.visit(statement)
+
+    def visit_match_case(self, node: ast.match_case) -> None:
+        """Record pattern captures and inspect the guard and complete case suite."""
+        self.local_names.update(_match_capture_names(node.pattern))
+        if node.guard is not None:
+            self.visit(node.guard)
+        for statement in node.body:
+            self.visit(statement)
+
+    def _visit_comprehension(
+        self,
+        generators: list[ast.comprehension],
+        values: tuple[ast.AST, ...],
+    ) -> None:
+        """Collect enclosing walrus slots without leaking implicit-scope targets.
+
+        :param generators: Comprehension generator clauses.
+        :param values: Result expressions evaluated in the implicit scope.
+        :return: ``None``.
+        """
+        for generator in generators:
+            self.visit(generator.iter)
+            for condition in generator.ifs:
+                self.visit(condition)
+        for value in values:
+            self.visit(value)
+
+    def visit_ListComp(self, node: ast.ListComp) -> None:
+        """Collect enclosing slots from a list comprehension."""
+        self._visit_comprehension(node.generators, (node.elt,))
+
+    visit_SetComp = visit_ListComp
+    visit_GeneratorExp = visit_ListComp
+
+    def visit_DictComp(self, node: ast.DictComp) -> None:
+        """Collect enclosing slots from a dictionary comprehension."""
+        self._visit_comprehension(node.generators, (node.key, node.value))
+
+
 class _FunctionScopeCollector(BranchingVisitor[dict[str, set[str]]]):
     """Collect compile-time function slots without descending into nested bodies."""
 
@@ -552,9 +661,16 @@ def _collect_function_reference_scope(
     :param import_package: Package used for relative imports.
     :return: Function lexical scope.
     """
+    slot_collector = _FunctionLexicalSlotCollector(node.args)
+    slot_collector.local_names.update(_type_parameter_names(node))
+    for statement in node.body:
+        slot_collector.visit(statement)
+
     collector = _FunctionScopeCollector(qualified_name, import_package, node.args)
-    collector.local_names.update(_type_parameter_names(node))
     collector._visit_suite(node.body)
+    collector.local_names.update(slot_collector.local_names)
+    collector.global_names.update(slot_collector.global_names)
+    collector.nonlocal_names.update(slot_collector.nonlocal_names)
     return collector.build()
 
 

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from pathlib import Path
-from textwrap import dedent
+from textwrap import dedent, indent
+
+import pytest
 
 from codedupes import traditional as traditional_module
 from codedupes.traditional import (
@@ -292,6 +294,64 @@ def test_reference_graph_keeps_nested_global_and_nonlocal_targets_distinct(
     assert nonlocal_caller.uid not in module_target.references
     assert late_caller.uid in nested_late.references
     assert late_caller.uid not in module_late.references
+
+
+@pytest.mark.parametrize(
+    "unreachable_binding",
+    [
+        "_dead = 2",
+        "from elsewhere import _dead",
+        "_dead: int",
+        "for _dead in ():\n    pass",
+        "with context() as _dead:\n    pass",
+        "try:\n    pass\nexcept Exception as _dead:\n    pass",
+        "(_dead := 2)",
+        "match value:\n    case _dead:\n        pass",
+        "del _dead",
+        "_dead += 1",
+        "[_dead := 2 for _ in []]",
+    ],
+)
+def test_reference_graph_honors_unreachable_compile_time_slots(
+    tmp_path: Path,
+    unreachable_binding: str,
+) -> None:
+    source = (
+        'def _dead():\n    return "module"\n\n'
+        "def caller():\n"
+        "    _dead()\n"
+        "    return\n"
+        f"{indent(unreachable_binding, '    ')}\n"
+    )
+    units = extract_units(tmp_path, source, include_private=True)
+    by_name = {unit.qualified_name: unit for unit in units}
+
+    build_reference_graph(units)
+    unused = {unit.qualified_name for unit in find_potentially_unused(units, strict_unused=True)}
+
+    assert by_name["sample.caller"].uid not in by_name["sample._dead"].references
+    assert "sample._dead" in unused
+
+
+def test_unreachable_binding_respects_global_declaration(tmp_path: Path) -> None:
+    source = dedent(
+        """
+        def _target():
+            return "module"
+
+        def caller():
+            global _target
+            _target()
+            return
+            _target = 2
+        """
+    ).strip()
+    units = extract_units(tmp_path, source, include_private=True)
+    by_name = {unit.qualified_name: unit for unit in units}
+
+    build_reference_graph(units)
+
+    assert by_name["sample.caller"].uid in by_name["sample._target"].references
 
 
 def test_reference_graph_qualifies_module_and_function_local_import_aliases(
