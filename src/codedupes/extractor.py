@@ -257,7 +257,7 @@ class _CodeUnitCollector(ast.NodeVisitor):
             self.class_stack.pop()
         else:
             # If class is excluded, skip descendants to avoid leaking private internals.
-            logger.debug("Skipping private class %s in %s", node.name, self.file_path)
+            logger.debug(f"Skipping private class {node.name} in {self.file_path}")
 
 
 def compute_ast_hash(node: ast.AST) -> str:
@@ -413,7 +413,7 @@ class CodeExtractor:
         :return: Iterator over discovered code units.
         """
         if self._should_exclude(file_path):
-            logger.debug("Skipping excluded file %s", file_path)
+            logger.debug(f"Skipping excluded file {file_path}")
             return
 
         try:

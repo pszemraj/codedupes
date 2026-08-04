@@ -139,14 +139,33 @@ def test_embeddinggemma_cache_variant_scopes_only_nondefault_dtype(monkeypatch):
     selected_dtype = {"value": "torch.bfloat16"}
     monkeypatch.setattr(
         semantic,
-        "_resolve_embeddinggemma_torch_dtype",
-        lambda _device: selected_dtype["value"],
+        "_resolve_model_dtype",
+        lambda _family, _device: selected_dtype["value"],
     )
 
     assert semantic._dtype_variant_for(profile, "cuda", mps_fallback=None) == "dtype=torch.bfloat16"
 
     selected_dtype["value"] = "torch.float32"
     assert semantic._dtype_variant_for(profile, "cuda", mps_fallback=None) == ""
+
+
+def test_cuda_dtype_variant_applies_to_every_family(monkeypatch):
+    profile = semantic.resolve_model_profile("test-model")
+    monkeypatch.setattr(
+        semantic,
+        "_resolve_semantic_device_request",
+        lambda *_args, **_kwargs: "cuda",
+    )
+    monkeypatch.setattr(
+        semantic,
+        "_resolve_model_dtype",
+        lambda _family, _device: "torch.bfloat16",
+    )
+
+    assert semantic._dtype_variant_for(profile, "cuda", mps_fallback=None) == "dtype=torch.bfloat16"
+    # CPU/MPS requests never resolve a device and stay in the shared float32 space.
+    assert semantic._dtype_variant_for(profile, "cpu", mps_fallback=None) == ""
+    assert semantic._dtype_variant_for(profile, "mps", mps_fallback=None) == ""
 
 
 def test_runtime_upgrade_invalidates_whole_corpus_not_row_subset(tmp_path, monkeypatch):
@@ -219,13 +238,34 @@ def test_mps_fast_math_policy_change_invalidates_warm_cache(tmp_path, monkeypatc
     assert len(model.encode_calls) == 1
 
     # Same request under an altered Metal math policy: faithful-float32 rows
-    # must not satisfy hits, so the whole corpus re-embeds.
+    # must not satisfy hits, so the whole corpus re-embeds. The fake reports
+    # MPS execution so the fast-math key space accepts its writes.
     monkeypatch.setenv("PYTORCH_MPS_FAST_MATH", "1")
+    model.device = "mps"
     compute_embeddings(units, model_name="test-model", revision=REVISION_1, cache_scope=tmp_path)
     assert len(model.encode_calls) == 2
     assert len(model.encode_calls[-1]) == len(units)
 
     # The fast-math key space warms independently.
+    compute_embeddings(units, model_name="test-model", revision=REVISION_1, cache_scope=tmp_path)
+    assert len(model.encode_calls) == 2
+
+
+def test_fast_math_variant_skips_cache_writes_when_execution_leaves_mps(tmp_path, monkeypatch):
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setenv("PYTORCH_MPS_FAST_MATH", "1")
+    units = _five_units(tmp_path)
+    model = CountingModel()
+    _patch_get_model(monkeypatch, model)
+    monkeypatch.setattr(semantic, "_get_loaded_model_commit_hash", lambda _model: None)
+
+    # The variant is keyed for fast math (darwin + auto), but execution lands on
+    # CPU - the MPS-unavailable/OOM-fallback shape - so faithful float32 vectors
+    # must not be published into the fast-math key space.
+    model.device = "cpu"
+    compute_embeddings(units, model_name="test-model", revision=REVISION_1, cache_scope=tmp_path)
+    assert len(model.encode_calls) == 1
+
     compute_embeddings(units, model_name="test-model", revision=REVISION_1, cache_scope=tmp_path)
     assert len(model.encode_calls) == 2
 
@@ -1514,3 +1554,99 @@ def test_namespace_cap_amortizes_matrix_compaction(tmp_path, monkeypatch):
     )
     assert set(hits) == {"code", "query-2", "query-3", "query-4", "query-5", "query-6"}
     assert rebuild_count == 1
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="permission bits do not bind as root")
+def test_get_many_degrades_to_miss_on_unreadable_shard(tmp_path):
+    cache = EmbeddingCache()
+    scope = tmp_path / "proj"
+    scope.mkdir()
+    vector = np.array([1.0, 2.0], dtype=np.float32)
+    cache.put_many(scope, "model-a", "rev1", [("key", vector)])
+    shard_dir = cache.shard_dir(scope, "model-a", "rev1")
+
+    shard_dir.chmod(0o000)
+    try:
+        assert cache.get_many(scope, "model-a", "rev1", ["key"]) == {}
+    finally:
+        shard_dir.chmod(0o700)
+
+    hits = cache.get_many(scope, "model-a", "rev1", ["key"])
+    np.testing.assert_array_equal(hits["key"], vector)
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="permission bits do not bind as root")
+def test_clear_continues_past_unreadable_shard(tmp_path):
+    cache = EmbeddingCache()
+    scopes = []
+    for name in ("aaa", "bbb", "ccc"):
+        scope = tmp_path / name
+        scope.mkdir()
+        scopes.append(scope)
+        cache.put_many(scope, "model-a", "rev1", [(name, np.array([1.0, 2.0], dtype=np.float32))])
+    shard_dirs = [cache.shard_dir(scope, "model-a", "rev1") for scope in scopes]
+
+    # Repo directories sweep in sorted order, so blocking the middle shard
+    # proves the sweep continued past a failure rather than never reaching it.
+    shard_dirs[1].chmod(0o000)
+    try:
+        cleared = cache.clear()
+    finally:
+        shard_dirs[1].chmod(0o700)
+
+    assert cleared == 2
+    assert not shard_dirs[0].exists()
+    assert shard_dirs[1].exists()
+    assert not shard_dirs[2].exists()
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="permission bits do not bind as root")
+def test_eviction_survives_unreadable_shard(tmp_path, monkeypatch):
+    cache = EmbeddingCache()
+    readable_scope = tmp_path / "readable"
+    blocked_scope = tmp_path / "blocked"
+    readable_scope.mkdir()
+    blocked_scope.mkdir()
+    cache.put_many(
+        readable_scope,
+        "model-a",
+        "rev1",
+        [("r", np.zeros(256, dtype=np.float32))],
+    )
+    cache.put_many(
+        blocked_scope,
+        "model-b",
+        "rev1",
+        [("b", np.ones(256, dtype=np.float32))],
+    )
+    readable_shard = cache.shard_dir(readable_scope, "model-a", "rev1")
+    blocked_shard = cache.shard_dir(blocked_scope, "model-b", "rev1")
+    monkeypatch.setattr(embedding_cache, "_resolve_max_bytes", lambda: 1)
+
+    blocked_shard.chmod(0o000)
+    try:
+        embedding_cache._maybe_evict(cache.repos_dir)
+    finally:
+        blocked_shard.chmod(0o700)
+
+    assert not readable_shard.exists()
+    assert blocked_shard.exists()
+
+
+def test_hostile_deeply_nested_index_degrades_for_stats_and_clear(tmp_path):
+    cache = EmbeddingCache()
+    scope = tmp_path / "proj"
+    scope.mkdir()
+    cache.put_many(scope, "model-a", "rev1", [("key", np.array([1.0, 2.0], dtype=np.float32))])
+    shard_dir = cache.shard_dir(scope, "model-a", "rev1")
+    depth = 100_000
+    (shard_dir / embedding_cache.INDEX_FILENAME).write_text(
+        "[" * depth + "]" * depth, encoding="utf-8"
+    )
+
+    stats = cache.stats()
+    assert stats["entries"] == 0
+
+    cleared = cache.clear()
+    assert cleared == 0
+    assert not shard_dir.exists()

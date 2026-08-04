@@ -85,10 +85,8 @@ def _warn_once(action: str, exc: Exception) -> None:
         return
     _warned_cache_error = True
     logger.warning(
-        "Embedding cache %s failed (%s: %s); continuing without cache benefits for this run.",
-        action,
-        type(exc).__name__,
-        exc,
+        f"Embedding cache {action} failed ({type(exc).__name__}: {exc}); "
+        "continuing without cache benefits for this run."
     )
 
 
@@ -251,6 +249,23 @@ def _shard_dir_for(
     return repos_dir / _repo_dir_name(cache_scope) / shard_name
 
 
+def _path_exists(path: Path) -> bool:
+    """Check existence without letting a stat failure escape.
+
+    ``Path.exists()`` re-raises stat errors other than the ENOENT family, so an
+    unreadable cache tree (foreign-owned ``0700`` directories, restrictive ACLs)
+    would crash code paths that promise never-fatal degradation. A failed stat
+    reads as absent; the write path still warns once when it also fails.
+
+    :param path: Path to check.
+    :return: ``True`` when the path exists and is stat-able, else ``False``.
+    """
+    try:
+        return path.exists()
+    except OSError:
+        return False
+
+
 def _shard_lock_path(shard_dir: Path) -> Path:
     """Resolve the stable advisory-lock path for one cache shard.
 
@@ -267,8 +282,10 @@ def _shard_lock_path(shard_dir: Path) -> Path:
     cache_root = shard_dir.parents[2]
     # Hash the logical path without following a pre-planted symlink. Following
     # one here would split lock identity from the cache-managed shard name before
-    # the writer has a chance to reject that symlink.
-    identity = os.path.abspath(shard_dir)
+    # the writer has a chance to reject that symlink. ``absolute()`` rather than
+    # ``resolve()`` keeps symlinks unfollowed; inputs are already normalized
+    # because shards derive from the resolved cache root.
+    identity = str(shard_dir.absolute())
     lock_name = f"{hashlib.blake2b(identity.encode(), digest_size=16).hexdigest()}.lock"
     return cache_root / LOCKS_SUBDIR / lock_name
 
@@ -546,7 +563,7 @@ def _read_shard(shard_dir: Path) -> _ShardData | None:
         internally inconsistent, or replaced by a concurrent writer.
     """
     index_path = shard_dir / INDEX_FILENAME
-    if not index_path.exists():
+    if not _path_exists(index_path):
         return None
 
     try:
@@ -604,10 +621,10 @@ def _reclaim_stale_shard_files(shard_dir: Path, keep: frozenset[Path] = frozense
 
     active_vectors: Path | None = None
     index_path = shard_dir / INDEX_FILENAME
-    if index_path.exists():
+    if _path_exists(index_path):
         try:
             payload: Any = json.loads(index_path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
+        except (OSError, ValueError, RecursionError):
             payload = None
         generation = _peek_generation(payload)
         if generation is None:
@@ -637,7 +654,7 @@ def _publish_index(shard_dir: Path, payload: dict[str, Any]) -> None:
             json.dump(payload, handle)
         os.replace(index_tmp, shard_dir / INDEX_FILENAME)
     finally:
-        if index_tmp.exists():
+        if _path_exists(index_tmp):
             with contextlib.suppress(OSError):
                 index_tmp.unlink()
 
@@ -704,7 +721,7 @@ def _atomic_write_shard(
 
         _reclaim_stale_shard_files(shard_dir, keep=frozenset({vectors_path}))
     finally:
-        if vectors_tmp.exists():
+        if _path_exists(vectors_tmp):
             with contextlib.suppress(OSError):
                 vectors_tmp.unlink()
 
@@ -819,12 +836,9 @@ def _write_shard_entries(
                     return
                 if existing is not None:
                     logger.warning(
-                        "Embedding cache vector dimension changed from %d to %d for %s; "
-                        "replacing all %d entries in the incompatible shard.",
-                        existing.vectors.shape[1],
-                        entry_dim,
-                        shard_dir,
-                        len(existing.keys),
+                        "Embedding cache vector dimension changed from "
+                        f"{existing.vectors.shape[1]} to {entry_dim} for {shard_dir}; "
+                        f"replacing all {len(existing.keys)} entries in the incompatible shard."
                     )
                 dim = entry_dim
                 vectors = np.empty((0, dim), dtype=np.float32)
@@ -920,7 +934,7 @@ def _iter_shard_dirs(repos_dir: Path) -> list[Path]:
     :param repos_dir: Root directory holding all per-repo shard directories.
     :return: Sorted list of shard directory paths, empty when ``repos_dir`` is absent.
     """
-    if not repos_dir.exists():
+    if not _path_exists(repos_dir):
         return []
     try:
         repo_dirs = sorted(path for path in repos_dir.iterdir() if path.is_dir())
@@ -946,12 +960,12 @@ def _read_shard_meta(shard_dir: Path) -> dict[str, Any] | None:
     :return: Parsed index payload, or ``None`` when missing/unreadable.
     """
     index_path = shard_dir / INDEX_FILENAME
-    if not index_path.exists():
+    if not _path_exists(index_path):
         return None
     try:
         payload = json.loads(index_path.read_text(encoding="utf-8"))
         return _validate_shard_metadata(payload)
-    except (OSError, ValueError):
+    except (OSError, ValueError, RecursionError):
         return None
 
 
@@ -983,7 +997,7 @@ def _prune_empty_repo_dirs(repos_dir: Path) -> None:
     :param repos_dir: Root directory holding all per-repo shard directories.
     :return: ``None``.
     """
-    if not repos_dir.exists():
+    if not _path_exists(repos_dir):
         return
     try:
         repo_dirs = list(repos_dir.iterdir())
@@ -1073,9 +1087,7 @@ def _maybe_evict(repos_dir: Path, protect: Path | None = None) -> None:
         if total > target:
             logger.warning(
                 "Embedding cache still exceeds its size target after eviction "
-                "(%d bytes > %d); consider raising CODEDUPES_CACHE_MAX_MB.",
-                total,
-                target,
+                f"({total} bytes > {target}); consider raising CODEDUPES_CACHE_MAX_MB."
             )
     except OSError as exc:
         _warn_once("evict", exc)
@@ -1242,17 +1254,23 @@ class EmbeddingCache:
         removed = 0
         try:
             for shard_dir in _iter_shard_dirs(self.repos_dir):
-                # Wait for any concurrent writer rather than deleting under it: writers
-                # hold this lock only briefly, and a dead holder's flock self-releases.
-                with _shard_write_lock(shard_dir, blocking=True) as acquired:
-                    if not acquired:
-                        continue
-                    meta = _read_shard_meta(shard_dir)
-                    if model is not None and (meta is None or meta.get("model") != model):
-                        continue
-                    if _delete_cache_tree(shard_dir, action="clear shard"):
-                        removed += len(meta.get("keys", {})) if meta else 0
-                        _remove_shard_lock_file(shard_dir)
+                try:
+                    # Wait for any concurrent writer rather than deleting under it:
+                    # writers hold this lock only briefly, and a dead holder's flock
+                    # self-releases.
+                    with _shard_write_lock(shard_dir, blocking=True) as acquired:
+                        if not acquired:
+                            continue
+                        meta = _read_shard_meta(shard_dir)
+                        if model is not None and (meta is None or meta.get("model") != model):
+                            continue
+                        if _delete_cache_tree(shard_dir, action="clear shard"):
+                            removed += len(meta.get("keys", {})) if meta else 0
+                            _remove_shard_lock_file(shard_dir)
+                except OSError as exc:
+                    # One unreadable or undeletable shard must not abort the sweep;
+                    # every other shard still gets cleared and counted.
+                    _warn_once("clear", exc)
             _prune_empty_repo_dirs(self.repos_dir)
             if model is None:
                 # Manifests are keyed by local model directory, not canonical model

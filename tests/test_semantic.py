@@ -8,6 +8,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 import sentence_transformers
+import torch
 
 from codedupes import semantic
 from codedupes.embedding_cache import EmbeddingCache
@@ -586,9 +587,13 @@ def test_get_model_passes_revision_and_trust_options(
     expected_trust = trust_remote_code is True
     assert kwargs["trust_remote_code"] is expected_trust
 
+    # Every load pins an explicit dtype so checkpoint-declared float16 configs
+    # cannot leak into inference (transformers 5 defaults dtype="auto").
+    assert kwargs["model_kwargs"]["dtype"] is torch.float32
+
     if revision is None:
         assert "revision" not in kwargs
-        assert "model_kwargs" not in kwargs
+        assert kwargs["model_kwargs"] == {"dtype": torch.float32}
         assert "processor_kwargs" not in kwargs
         assert "config_kwargs" not in kwargs
         return
@@ -642,6 +647,7 @@ def test_get_model_loads_local_directory_without_hub_revision(tmp_path: Path, mo
                 "trust_remote_code": False,
                 "device": "cpu",
                 "local_files_only": True,
+                "model_kwargs": {"dtype": torch.float32},
             },
         }
     ]

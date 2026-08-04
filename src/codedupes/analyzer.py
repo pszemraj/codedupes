@@ -656,10 +656,7 @@ class CodeAnalyzer:
                     f"[{version_text}]. "
                     f"Retry with `codedupes check {path} --traditional-only`."
                 )
-                logger.warning(
-                    "%s",
-                    semantic_fallback_reason,
-                )
+                logger.warning(semantic_fallback_reason)
 
             if self.config.suppress_test_semantic_matches:
                 semantic_duplicates = [

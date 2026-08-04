@@ -53,7 +53,7 @@ The following units are not reported:
 
 - referenced units (any analyzed call resolving to the unit's name or a qualified-name suffix counts)
 - names exported through `__all__`, public classes, and dunder methods such as `__init__`
-- `get_*` and `set_*` methods
+- `get_*` and `set_*` definitions of any unit type (not only methods - a module-level `get_thing()` is suppressed too, even in strict mode)
 - `test_*` definitions and definitions in files whose names contain `_test`
 - units containing `# noqa: codedupes` or `# codedupes: ignore`
 

@@ -504,7 +504,7 @@ def _store_local_model_manifest(
                 )
     except OSError:
         logger.debug(
-            "Could not persist local-model digest manifest for %s", model_dir, exc_info=True
+            f"Could not persist local-model digest manifest for {model_dir}", exc_info=True
         )
     finally:
         if tmp_path.exists():
@@ -746,12 +746,10 @@ def _select_cache_miss_indices(
     return miss_indices
 
 
-_DEVICE_DTYPE_FAMILIES = frozenset({"embeddinggemma"})
-
 # Bump whenever codedupes' own embedding pipeline changes in a vector-affecting
-# way (prompt handling, routing, normalization, truncation policy), so cached
-# vectors from an older pipeline can never mix into a new matrix.
-EMBEDDING_PIPELINE_SCHEMA = 2
+# way (prompt handling, routing, normalization, truncation policy, load dtype),
+# so cached vectors from an older pipeline can never mix into a new matrix.
+EMBEDDING_PIPELINE_SCHEMA = 3
 
 
 def _embedding_runtime_fingerprint() -> str:
@@ -784,28 +782,26 @@ _MAX_CACHED_QUERY_KEYS = 512
 
 def _dtype_variant_for(
     profile: SemanticModelProfile,
-    device: str,
+    device: str | None,
     *,
     mps_fallback: bool | None,
 ) -> str:
     """Build the dtype component of the cache variant for one model family.
 
-    EmbeddingGemma selects its torch dtype from the execution device (bfloat16 vs
-    float32), so its cache identity records only a non-default dtype. CPU and MPS
-    both use float32 and therefore share a key space without importing PyTorch to
-    resolve the device. On macOS, ``auto`` can only select MPS or CPU, so it shares
-    that same model-free warm path.
-    Families that embed identically across devices share one key space.
+    Every load pins an explicit dtype, so the empty fingerprint truthfully
+    means float32. CPU and MPS always use float32 and therefore share a key
+    space without importing PyTorch to resolve the device; on macOS, ``auto``
+    can only select MPS or CPU, so it shares that same model-free warm path.
+    Requests that can reach CUDA resolve the device and record the selected
+    bfloat16 as a non-default dtype.
 
     :param profile: Resolved model profile.
-    :param device: Requested device string (``auto``, ``cpu``, ``cuda``, ``mps``).
+    :param device: Requested device string (``auto``, ``cpu``, ``cuda``, ``mps``),
+        ``None`` meaning the default request.
     :param mps_fallback: MPS unsupported-op CPU fallback behavior.
-    :return: Dtype fingerprint, empty for device-independent families.
+    :return: Dtype fingerprint, empty for float32.
     """
-    if profile.family not in _DEVICE_DTYPE_FAMILIES:
-        return ""
-
-    normalized_device = device.strip().lower()
+    normalized_device = (device or DEFAULT_SEMANTIC_DEVICE).strip().lower()
     if normalized_device in {"cpu", "mps"} or (
         normalized_device == "auto" and sys.platform == "darwin"
     ):
@@ -815,14 +811,14 @@ def _dtype_variant_for(
         device,
         mps_fallback=mps_fallback,
     )
-    selected_dtype = _resolve_embeddinggemma_torch_dtype(resolved_device)
+    selected_dtype = _resolve_model_dtype(profile.family, resolved_device)
     dtype_name = str(selected_dtype) if selected_dtype is not None else "default"
     if dtype_name in {"float32", "fp32", "torch.float32"}:
         return ""
     return f"dtype={dtype_name}"
 
 
-def _mps_fast_math_variant(device: str) -> str:
+def _mps_fast_math_variant(device: str | None) -> str:
     """Build the Metal math-policy component of the cache variant.
 
     ``PYTORCH_MPS_FAST_MATH`` switches MPS kernels to approximate math, which can
@@ -835,10 +831,11 @@ def _mps_fast_math_variant(device: str) -> str:
     deliberately not keyed: both select among faithful float32 implementations,
     the same tolerance class as the intentional CPU/MPS shared key space.
 
-    :param device: Requested device string (``auto``, ``cpu``, ``cuda``, ``mps``).
+    :param device: Requested device string (``auto``, ``cpu``, ``cuda``, ``mps``),
+        ``None`` meaning the default request.
     :return: Math-policy fingerprint, empty when MPS cannot execute or fast math is off.
     """
-    normalized_device = device.strip().lower()
+    normalized_device = (device or DEFAULT_SEMANTIC_DEVICE).strip().lower()
     if normalized_device != "mps" and not (
         normalized_device == "auto" and sys.platform == "darwin"
     ):
@@ -849,9 +846,28 @@ def _mps_fast_math_variant(device: str) -> str:
     return f"mpsfm={raw}"
 
 
+def _fast_math_write_allowed(device: str | None, execution_device: str) -> bool:
+    """Decide whether cache writes under a fast-math-keyed variant are valid.
+
+    The fast-math variant derives from the requested device before PyTorch
+    loads, so a run that then executes elsewhere (MPS unavailable under
+    ``auto``, or the documented load-time OOM fallback to CPU) would publish
+    faithful float32 vectors into the fast-math key space. Skipping the write
+    keeps the two spaces unmixed, at the cost of recomputing those vectors on
+    the next run.
+
+    :param device: Requested device string as given to the public API.
+    :param execution_device: Normalized device the loaded model executes on.
+    :return: ``True`` when writing under the derived variant is representative.
+    """
+    if not _mps_fast_math_variant(device):
+        return True
+    return execution_device == "mps"
+
+
 def _cache_variant_for(
     profile: SemanticModelProfile,
-    device: str,
+    device: str | None,
     plan: EncodePlan,
     *,
     mps_fallback: bool | None,
@@ -1029,8 +1045,8 @@ def _resolve_semantic_device_request(
     :return: Concrete device name.
     :raises SemanticBackendError: If device configuration fails.
     """
-    _configure_semantic_runtime_env(device, mps_fallback=mps_fallback)
     try:
+        _configure_semantic_runtime_env(device, mps_fallback=mps_fallback)
         return resolve_semantic_device(device)
     except (DeviceConfigurationError, ValueError) as exc:
         raise SemanticBackendError(str(exc)) from exc
@@ -1087,7 +1103,7 @@ def _prepare_semantic_device(
         if resolved_device == "mps":
             configure_mps_memory_fraction(resolved_device, mps_memory_fraction)
         elif mps_memory_fraction is not None:
-            logger.info("mps_memory_fraction ignored: resolved device is %s", resolved_device)
+            logger.info(f"mps_memory_fraction ignored: resolved device is {resolved_device}")
     except (DeviceConfigurationError, ValueError) as exc:
         raise SemanticBackendError(str(exc)) from exc
 
@@ -1224,11 +1240,23 @@ def get_code_unit_statement_count(unit: CodeUnit) -> int:
     return counter.count
 
 
-def _resolve_embeddinggemma_torch_dtype(device: str) -> Any:
-    """Choose a stable EmbeddingGemma dtype for the selected device.
+def _resolve_model_dtype(family: str, device: str) -> Any:
+    """Choose the explicitly pinned dtype for one model family and device.
 
+    Transformers 5 loads checkpoints in their config-declared dtype by default
+    (``dtype="auto"``), so the default profile's float16 checkpoint would
+    otherwise embed in half precision - an order of magnitude slower on CPU and
+    outside the documented faithful-float32 tolerance. Every load therefore
+    pins an explicit dtype: bfloat16 on CUDA hardware that reports support,
+    float32 everywhere else. Measured on Apple Silicon (M-series, 96 real code
+    chunks): CPU bfloat16 is emulated and ~16x slower than float32; MPS
+    bfloat16 halves model memory but gains only ~13% runtime while drifting
+    pair similarities ~1e-2 - tuned-threshold scale - so CPU and MPS stay
+    faithful float32 and keep their shared cache key space.
+
+    :param family: Resolved model profile family, reserved for per-family policy.
     :param device: Concrete execution device.
-    :return: Suggested dtype object for Torch models.
+    :return: Dtype object for Torch model loading.
     """
     import torch
 
@@ -1290,9 +1318,8 @@ def _get_model_unlocked(
     resolved_revision = _resolve_model_revision(model_name, revision)
     if resolved_revision is not None and local_model_path is not None:
         logger.warning(
-            "Ignoring revision %r for local model directory %s; on-disk weights are unpinned",
-            resolved_revision,
-            resolved_model_name,
+            f"Ignoring revision {resolved_revision!r} for local model directory "
+            f"{resolved_model_name}; on-disk weights are unpinned"
         )
         resolved_revision = None
     resolved_trust_remote_code = _resolve_trust_remote_code(model_name, trust_remote_code)
@@ -1325,7 +1352,7 @@ def _get_model_unlocked(
         if _model is not None:
             _clear_model_cache_unlocked()
 
-        logger.info("Loading embedding model %s on %s", resolved_model_name, resolved_device)
+        logger.info(f"Loading embedding model {resolved_model_name} on {resolved_device}")
         try:
             from sentence_transformers import SentenceTransformer
         except ModuleNotFoundError as exc:
@@ -1348,15 +1375,9 @@ def _get_model_unlocked(
         processor_kwargs: dict[str, object] = {}
         config_kwargs: dict[str, object] = {}
 
-        if profile.family == "embeddinggemma":
-            selected_dtype = _resolve_embeddinggemma_torch_dtype(resolved_device)
-            if selected_dtype is not None:
-                model_kwargs["torch_dtype"] = selected_dtype
-                logger.info(
-                    "Using EmbeddingGemma torch dtype on %s: %s",
-                    resolved_device,
-                    selected_dtype,
-                )
+        selected_dtype = _resolve_model_dtype(profile.family, resolved_device)
+        model_kwargs["dtype"] = selected_dtype
+        logger.info(f"Pinning torch dtype on {resolved_device}: {selected_dtype}")
 
         if resolved_revision is not None:
             model_kwargs["revision"] = resolved_revision
@@ -1385,9 +1406,9 @@ def _get_model_unlocked(
                     exc.__traceback__ = None
                     exc.__context__ = None
                     logger.warning(
-                        "MPS OOM while loading %s (%s); clearing Metal cache and retrying on CPU",
-                        resolved_model_name,
-                        format_mps_memory_snapshot(),
+                        f"MPS OOM while loading {resolved_model_name} "
+                        f"({format_mps_memory_snapshot()}); "
+                        "clearing Metal cache and retrying on CPU"
                     )
                     clear_device_cache("mps", synchronize=True, collect=True)
                     cpu_kwargs = dict(st_kwargs)
@@ -1438,9 +1459,8 @@ def _get_model_unlocked(
                 break
             if reload_attempt == 0:
                 logger.warning(
-                    "Local model directory %s changed while loading; "
-                    "reloading from the current on-disk state",
-                    resolved_model_name,
+                    f"Local model directory {resolved_model_name} changed while loading; "
+                    "reloading from the current on-disk state"
                 )
                 del loaded_model
                 local_model_fingerprint = post_load_fingerprint
@@ -1463,11 +1483,9 @@ def _get_model_unlocked(
         _warned_cpu_fallback_reuse = False
     elif _model_execution_device != resolved_device and not _warned_cpu_fallback_reuse:
         logger.warning(
-            "Reusing cached model on %s after an earlier %s-to-CPU OOM fallback; "
-            "call clear_model_cache() to force a fresh %s load",
-            _model_execution_device,
-            resolved_device,
-            resolved_device,
+            f"Reusing cached model on {_model_execution_device} after an earlier "
+            f"{resolved_device}-to-CPU OOM fallback; call clear_model_cache() to force a fresh "
+            f"{resolved_device} load"
         )
         _warned_cpu_fallback_reuse = True
 
@@ -1593,7 +1611,7 @@ def _truncate_code_if_needed(text: str, unit_name: str, model: Any) -> str:
         token_ids = tokenizer.encode(text, add_special_tokens=False)
     except Exception:
         logger.debug(
-            "Tokenization failed while preparing '%s'; using full text", unit_name, exc_info=True
+            f"Tokenization failed while preparing '{unit_name}'; using full text", exc_info=True
         )
         return text
 
@@ -1602,10 +1620,8 @@ def _truncate_code_if_needed(text: str, unit_name: str, model: Any) -> str:
         return text
 
     logger.warning(
-        "Code unit '%s' is long (%d tokens), truncating to %d tokens for semantic embedding",
-        unit_name,
-        token_count,
-        max_tokens,
+        f"Code unit '{unit_name}' is long ({token_count} tokens), truncating to {max_tokens} "
+        "tokens for semantic embedding"
     )
     try:
         truncated_ids = tokenizer.encode(
@@ -1617,8 +1633,7 @@ def _truncate_code_if_needed(text: str, unit_name: str, model: Any) -> str:
         return tokenizer.decode(truncated_ids, skip_special_tokens=True)
     except Exception:
         logger.debug(
-            "Token decode failed while truncating '%s'; using char fallback",
-            unit_name,
+            f"Token decode failed while truncating '{unit_name}'; using char fallback",
             exc_info=True,
         )
         return text[: max_tokens * 4]
@@ -1853,11 +1868,8 @@ def _encode_with_retries(
                 if not retry_on_cpu:
                     raise
                 logger.warning(
-                    "%s produced invalid embedding values during %s (%s); "
-                    "clearing the allocator cache and retrying once on CPU",
-                    active_device.upper(),
-                    stage,
-                    exc,
+                    f"{active_device.upper()} produced invalid embedding values during {stage} "
+                    f"({exc}); clearing the allocator cache and retrying once on CPU"
                 )
                 del result
                 clear_device_cache(active_device, synchronize=True, collect=True)
@@ -1874,12 +1886,8 @@ def _encode_with_retries(
         if current_batch_size > 1:
             next_batch_size = max(1, current_batch_size // 2)
             logger.warning(
-                "%s OOM during %s at batch_size=%d%s; retrying with batch_size=%d",
-                oom_device.upper(),
-                stage,
-                current_batch_size,
-                memory_context,
-                next_batch_size,
+                f"{oom_device.upper()} OOM during {stage} at batch_size={current_batch_size}"
+                f"{memory_context}; retrying with batch_size={next_batch_size}"
             )
             current_batch_size = next_batch_size
             clear_device_cache(oom_device, synchronize=True, collect=True)
@@ -1888,12 +1896,8 @@ def _encode_with_retries(
         source_device = oom_device if oom_device in {"cuda", "mps"} else active_device
         if source_device in {"cuda", "mps"} and not attempted_cpu_fallback:
             logger.warning(
-                "%s OOM during %s at batch_size=1%s; moving the model to CPU and retrying "
-                "from batch_size=%d",
-                source_device.upper(),
-                stage,
-                memory_context,
-                max(1, batch_size),
+                f"{source_device.upper()} OOM during {stage} at batch_size=1{memory_context}; "
+                f"moving the model to CPU and retrying from batch_size={max(1, batch_size)}"
             )
             clear_device_cache(source_device, synchronize=True, collect=True)
             _move_model_to_cpu(model)
@@ -1904,11 +1908,7 @@ def _encode_with_retries(
             current_batch_size = max(1, batch_size)
             continue
 
-        logger.warning(
-            "OOM persisted during %s at batch_size=1 on %s; aborting",
-            stage,
-            active_device,
-        )
+        logger.warning(f"OOM persisted during {stage} at batch_size=1 on {active_device}; aborting")
         raise oom_error
 
 
@@ -2030,8 +2030,7 @@ def _compute_embeddings_unlocked(
         if confirmed_revision is None:
             logger.debug(
                 "Could not tie the loaded model to a concrete revision; "
-                "bypassing persistent embeddings assumed under %s",
-                cache_revision,
+                f"bypassing persistent embeddings assumed under {cache_revision}"
             )
             cache = None
             cache_revision = None
@@ -2062,12 +2061,8 @@ def _compute_embeddings_unlocked(
     reused_duplicate_rows = len(units) - cache_covered_rows - len(miss_indices)
 
     logger.info(
-        "Computing embeddings for %d unique inputs on %s "
-        "(%d cache-covered rows, %d duplicate rows reused)",
-        len(miss_texts),
-        execution_device,
-        cache_covered_rows,
-        reused_duplicate_rows,
+        f"Computing embeddings for {len(miss_texts)} unique inputs on {execution_device} "
+        f"({cache_covered_rows} cache-covered rows, {reused_duplicate_rows} duplicate rows reused)"
     )
     encode_fn = _select_encode_fn(model, encode_plan.route)
 
@@ -2100,11 +2095,8 @@ def _compute_embeddings_unlocked(
             # A shard can be self-consistent on disk yet disagree with the live
             # model's dimensionality; trusting it would corrupt the matrix.
             logger.warning(
-                "Discarding %d cached embeddings whose dimensionality (%d) does not "
-                "match the loaded model (%d); re-embedding all units.",
-                len(hits),
-                hit_dim,
-                dim,
+                f"Discarding {len(hits)} cached embeddings whose dimensionality ({hit_dim}) does "
+                f"not match the loaded model ({dim}); re-embedding all units."
             )
             hits = {}
             miss_indices = _select_cache_miss_indices(cache_keys, hits, len(units))
@@ -2126,7 +2118,13 @@ def _compute_embeddings_unlocked(
         )
         matrix = _assemble_cached_matrix(cache_keys, vectors_by_key)
 
-    if cache is not None and cache_keys is not None and cache_revision is not None and miss_indices:
+    if (
+        cache is not None
+        and cache_keys is not None
+        and cache_revision is not None
+        and miss_indices
+        and _fast_math_write_allowed(device, execution_device)
+    ):
         cache.put_many(
             cache_scope,
             profile.canonical_name,
@@ -2209,7 +2207,7 @@ def find_semantic_duplicates(
     exclude_exact = exclude_exact or set()
     n = len(units)
 
-    logger.info("Computing pairwise similarities for %d units", n)
+    logger.info(f"Computing pairwise similarities for {n} units")
 
     duplicates = []
 
@@ -2272,7 +2270,7 @@ def find_semantic_duplicates(
 
     duplicates.sort(key=lambda x: x.similarity, reverse=True)
 
-    logger.info("Found %d semantic duplicates above threshold %s", len(duplicates), threshold)
+    logger.info(f"Found {len(duplicates)} semantic duplicates above threshold {threshold}")
     return duplicates
 
 
@@ -2326,6 +2324,11 @@ def _find_similar_to_query_unlocked(
     """
     _validate_explicit_device_request(device, mps_fallback=mps_fallback)
 
+    # After the explicit-device contract above: an empty corpus can match
+    # nothing, so return before embedding the query (or loading the model).
+    if not units:
+        return []
+
     profile = resolve_model_profile(model_name)
     resolved_threshold = (
         threshold if threshold is not None else get_default_search_threshold(model_name)
@@ -2368,10 +2371,9 @@ def _find_similar_to_query_unlocked(
             return None
         if embeddings.size and candidate.shape[-1] != embeddings.shape[1]:
             logger.warning(
-                "Discarding a cached query embedding whose dimensionality (%d) does "
-                "not match the corpus matrix (%d); re-encoding the query.",
-                candidate.shape[-1],
-                embeddings.shape[1],
+                "Discarding a cached query embedding whose dimensionality "
+                f"({candidate.shape[-1]}) does not match the corpus matrix "
+                f"({embeddings.shape[1]}); re-encoding the query."
             )
             return None
         return candidate
@@ -2408,8 +2410,7 @@ def _find_similar_to_query_unlocked(
             if confirmed_revision is None:
                 logger.debug(
                     "Could not tie the loaded model to a concrete revision; "
-                    "bypassing persistent query embedding assumed under %s",
-                    cache_revision,
+                    f"bypassing persistent query embedding assumed under {cache_revision}"
                 )
                 cache = None
                 cache_revision = None
@@ -2446,7 +2447,12 @@ def _find_similar_to_query_unlocked(
             )
             query_embedding = query_embeddings[0]
 
-            if cache is not None and cache_key is not None and cache_revision is not None:
+            if (
+                cache is not None
+                and cache_key is not None
+                and cache_revision is not None
+                and _fast_math_write_allowed(device, execution_device)
+            ):
                 cache.put_many(
                     cache_scope,
                     profile.canonical_name,

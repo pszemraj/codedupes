@@ -45,15 +45,15 @@
       "calibration": {
         "model": "Alibaba-NLP/gte-modernbert-base",
         "resolved_revision": "e7f32e3c00f91d699e8c43b53106206bcc72bb22",
-        "embedding_pipeline_schema": 2,
-        "embedding_runtime_identity": "e67f5d0f4bfdfe7d4584",
+        "embedding_pipeline_schema": 3,
+        "embedding_runtime_identity": "d3b3ba48b44192d46a8c",
         "runtime_versions": {
           "python": "3.12.13",
           "torch": "2.13.0",
           "transformers": "5.14.1",
           "sentence-transformers": "5.6.1"
         },
-        "codedupes_version": "0.3.1.dev52+gc53550760",
+        "codedupes_version": "0.3.1.dev121+gf2eff62d5.d20260804",
         "mode": "search",
         "semantic_task": "code-retrieval",
         "encode_plan": {
@@ -98,13 +98,13 @@
         },
         {
           "threshold": 0.68,
-          "predicted": 70,
+          "predicted": 71,
           "tp": 21,
-          "fp": 49,
+          "fp": 50,
           "fn": 0,
-          "precision": 0.3,
+          "precision": 0.29577464788732394,
           "recall": 1.0,
-          "f1": 0.4615384615384615
+          "f1": 0.45652173913043476
         },
         {
           "threshold": 0.66,
@@ -128,13 +128,13 @@
         },
         {
           "threshold": 0.62,
-          "predicted": 149,
+          "predicted": 150,
           "tp": 21,
-          "fp": 128,
+          "fp": 129,
           "fn": 0,
-          "precision": 0.14093959731543623,
+          "precision": 0.14,
           "recall": 1.0,
-          "f1": 0.24705882352941178
+          "f1": 0.24561403508771928
         },
         {
           "threshold": 0.6,
@@ -168,13 +168,13 @@
         },
         {
           "threshold": 0.54,
-          "predicted": 322,
+          "predicted": 321,
           "tp": 21,
-          "fp": 301,
+          "fp": 300,
           "fn": 0,
-          "precision": 0.06521739130434782,
+          "precision": 0.06542056074766354,
           "recall": 1.0,
-          "f1": 0.12244897959183672
+          "f1": 0.12280701754385964
         },
         {
           "threshold": 0.52,
@@ -365,15 +365,15 @@
       "calibration": {
         "model": "unsloth/embeddinggemma-300m",
         "resolved_revision": "bfa3c846ac738e62aa61806ef9112d34acb1dc5a",
-        "embedding_pipeline_schema": 2,
-        "embedding_runtime_identity": "e67f5d0f4bfdfe7d4584",
+        "embedding_pipeline_schema": 3,
+        "embedding_runtime_identity": "d3b3ba48b44192d46a8c",
         "runtime_versions": {
           "python": "3.12.13",
           "torch": "2.13.0",
           "transformers": "5.14.1",
           "sentence-transformers": "5.6.1"
         },
-        "codedupes_version": "0.3.1.dev52+gc53550760",
+        "codedupes_version": "0.3.1.dev121+gf2eff62d5.d20260804",
         "mode": "search",
         "semantic_task": "code-retrieval",
         "encode_plan": {

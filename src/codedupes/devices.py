@@ -121,9 +121,8 @@ def configure_mps_environment(
     current = os.environ.get(env_name)
     if "torch" in sys.modules and previous != current:
         logger.warning(
-            "%s changed after PyTorch was imported; restart the process if the setting is not "
-            "honored by the existing MPS runtime",
-            env_name,
+            f"{env_name} changed after PyTorch was imported; restart the process if the setting "
+            "is not honored by the existing MPS runtime"
         )
 
 
@@ -177,7 +176,7 @@ def _safe_call(owner: Any, name: str, coerce: Callable[[Any], _T], default: _T) 
     try:
         return coerce(callback())
     except Exception:
-        logger.debug("Device runtime query %s.%s failed", type(owner).__name__, name, exc_info=True)
+        logger.debug(f"Device runtime query {type(owner).__name__}.{name} failed", exc_info=True)
         return default
 
 
@@ -307,9 +306,8 @@ def configure_mps_memory_fraction(
 
     if value > 1.0:
         logger.warning(
-            "MPS memory fraction %.3f exceeds the device recommended working-set size; this can "
-            "increase system-wide memory pressure",
-            value,
+            f"MPS memory fraction {value:.3f} exceeds the device recommended working-set size; "
+            "this can increase system-wide memory pressure"
         )
     try:
         setter(value)
@@ -444,9 +442,7 @@ def clear_device_cache(
                 # An OOM can leave a failed command in flight. Cache release is
                 # still worth attempting after synchronization fails.
                 logger.debug(
-                    "%s synchronization failed during cache cleanup",
-                    target.upper(),
-                    exc_info=True,
+                    f"{target.upper()} synchronization failed during cache cleanup", exc_info=True
                 )
 
     if collect:
@@ -461,11 +457,7 @@ def clear_device_cache(
             empty_fn()
             cleared = True
         except Exception:
-            logger.debug(
-                "%s cache cleanup failed",
-                target.upper(),
-                exc_info=True,
-            )
+            logger.debug(f"{target.upper()} cache cleanup failed", exc_info=True)
 
     return cleared
 

@@ -147,7 +147,7 @@ def test_mlx_contention_warning_is_emitted_once(monkeypatch, caplog) -> None:
 
 
 def test_embeddinggemma_dtype_on_mps_is_float32() -> None:
-    assert semantic._resolve_embeddinggemma_torch_dtype("mps") is torch.float32
+    assert semantic._resolve_model_dtype("embeddinggemma", "mps") is torch.float32
 
 
 def test_model_loads_and_encodes_on_mps(tmp_path: Path) -> None:
