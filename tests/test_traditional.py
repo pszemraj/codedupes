@@ -6,6 +6,7 @@ from textwrap import dedent
 from codedupes import traditional as traditional_module
 from codedupes.traditional import (
     build_reference_graph,
+    extract_identifiers,
     find_potentially_unused,
     run_traditional_analysis,
 )
@@ -189,3 +190,19 @@ def test_main_block_calls_are_parsed_once_per_file(tmp_path: Path, monkeypatch) 
     build_reference_graph(units)
 
     assert len(calls) == 1
+
+
+def test_extract_identifiers_filters_builtin_names() -> None:
+    source = dedent(
+        """
+        def helper(items):
+            total = len(items)
+            print(total)
+            return sorted(items)
+        """
+    ).strip()
+
+    identifiers = extract_identifiers(source)
+
+    assert {"helper", "items", "total"} <= identifiers
+    assert not {"len", "print", "sorted"} & identifiers

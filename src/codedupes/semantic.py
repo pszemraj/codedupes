@@ -1189,9 +1189,8 @@ def get_code_unit_statement_count(unit: CodeUnit) -> int:
     if not unit.source:
         return 0
 
-    # Extracted nested methods/classes retain their file indentation, and the
-    # source starts at the first decorator. Dedent the complete definition as a
-    # block before parsing so decorators and ``def`` stay at the same AST level.
+    # Extracted nested methods/classes retain their file indentation. Dedent
+    # the definition before parsing so it parses at module level.
     text = textwrap.dedent(unit.source).strip()
     if not text:
         return 0

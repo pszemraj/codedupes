@@ -9,8 +9,8 @@ Default semantic candidate selection:
 - unit types: `function`, `method`
 - class units are excluded by default from semantic embedding
 - minimum statement count: `3` (via `min_semantic_statements`)
-- statements are counted recursively through control-flow bodies (`try`, `with`, loops, conditionals, `match`), so a large function implemented inside one outer block is not measured as a single statement; nested function/class definitions count as one declaration each, and indented definitions are dedented as a complete block so decorated methods count identically to undecorated methods
-- each semantic input is one complete logical definition, including its full decorator block, signature, docstring, and body; functions are not split into arbitrary text chunks
+- statements are counted recursively through control-flow bodies (`try`, `with`, loops, conditionals, `match`), so a large function implemented inside one outer block is not measured as a single statement; nested function/class definitions count as one declaration each, and indented definitions are dedented before counting
+- each semantic input is one complete logical definition - signature, docstring, and body, starting at the `def`/`class` line (decorators are not included); functions are not split into arbitrary text chunks
 
 Combined-mode alignment rule:
 
@@ -53,11 +53,11 @@ The following units are not reported:
 
 - referenced units (any analyzed call resolving to the unit's name or a qualified-name suffix counts)
 - names exported through `__all__`, public classes, and dunder methods such as `__init__`
-- `get_*`, `set_*`, and abstract methods
+- `get_*` and `set_*` methods
 - `test_*` definitions and definitions in files whose names contain `_test`
 - units containing `# noqa: codedupes` or `# codedupes: ignore`
 
-Call matching is name-based rather than scope-resolved: a call to any same-named symbol keeps every candidate definition out of the report, trading missed dead code for fewer false "unused" flags. Default mode also skips public non-method functions. Strict mode (`--strict-unused` or `strict_unused=True`) removes only that suppression; the other API and runtime exclusions still apply. Dynamic registration, reflection, and string-based lookups remain outside the static reference graph, so unused findings require review.
+Call matching is name-based rather than scope-resolved: a call to any same-named symbol keeps every candidate definition out of the report, trading missed dead code for fewer false "unused" flags. Default mode also skips public non-method functions. Strict mode (`--strict-unused` or `strict_unused=True`) removes only that suppression; the other API and runtime exclusions still apply. Only call expressions count as references: attribute access without a call, decorator usage, callbacks passed as arguments, and type annotations do not, so framework-dispatched methods (for example `ast.NodeVisitor` `visit_*` hooks) surface as candidates. Dynamic registration, reflection, and string-based lookups likewise remain outside the static reference graph, so unused findings require review.
 
 ## Tiny Traditional Duplicate Filtering Defaults
 
