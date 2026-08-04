@@ -100,9 +100,10 @@ def _capture_traditional_units_runner(captured_units: list[CodeUnit]):
     def fake_traditional(
         units,
         jaccard_threshold=0.85,
+        compute_unused=True,
     ):
         captured_units.extend(units)
-        return [], []
+        return [], [], []
 
     return fake_traditional
 
@@ -113,10 +114,12 @@ def _traditional_single_jaccard_runner(similarity: float = 0.9):
     def fake_traditional(
         units,
         jaccard_threshold=0.85,
+        compute_unused=True,
     ):
         first, second = units[:2]
         return (
             [DuplicatePair(unit_a=first, unit_b=second, similarity=similarity, method="jaccard")],
+            [],
             [],
         )
 
@@ -308,6 +311,7 @@ def test_combined_mode_preserves_near_dupes_for_semantic_confirmation(
     def fake_traditional(
         units,
         jaccard_threshold=0.85,
+        compute_unused=True,
     ):
         first, second, third = units
         nonlocal expected_exact_pair
@@ -315,6 +319,7 @@ def test_combined_mode_preserves_near_dupes_for_semantic_confirmation(
         return (
             [DuplicatePair(unit_a=first, unit_b=second, similarity=1.0, method="ast_hash")],
             [DuplicatePair(unit_a=second, unit_b=third, similarity=0.9, method="jaccard")],
+            [],
         )
 
     monkeypatch.setattr(analyzer_module, "run_traditional_analysis", fake_traditional)
@@ -585,6 +590,7 @@ def test_tiny_near_duplicates_use_high_jaccard_floor(
     def fake_traditional(
         units,
         jaccard_threshold=0.85,
+        compute_unused=True,
     ):
         return (
             [],
@@ -593,6 +599,7 @@ def test_tiny_near_duplicates_use_high_jaccard_floor(
                     unit_a=units[0], unit_b=units[1], similarity=similarity, method="jaccard"
                 )
             ],
+            [],
         )
 
     monkeypatch.setattr(analyzer_module, "run_traditional_analysis", fake_traditional)
@@ -812,11 +819,12 @@ def test_combined_mode_fallback_keeps_scoped_traditional_units(tmp_path: Path, m
     def fake_traditional(
         units,
         jaccard_threshold=0.85,
+        compute_unused=True,
     ):
         traditional_calls.append(
             (tuple(unit.name for unit in units), [unit.name for unit in units])
         )
-        return [], []
+        return [], [], []
 
     monkeypatch.setattr(analyzer_module, "run_traditional_analysis", fake_traditional)
     monkeypatch.setattr(

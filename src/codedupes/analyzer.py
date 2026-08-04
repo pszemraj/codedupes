@@ -575,9 +575,10 @@ class CodeAnalyzer:
                 # In combined mode, keep traditional duplicate scope aligned with semantic scope.
                 traditional_duplicate_units = semantic_candidates
 
-            exact_dupes, near_dupes = run_traditional_analysis(
+            exact_dupes, near_dupes, _ = run_traditional_analysis(
                 traditional_duplicate_units,
                 jaccard_threshold=self.config.jaccard_threshold,
+                compute_unused=False,
             )
             if self.config.filter_tiny_traditional:
                 exact_dupes, near_dupes = _filter_tiny_traditional_duplicates(
