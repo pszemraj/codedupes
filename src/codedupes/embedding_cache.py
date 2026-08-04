@@ -38,6 +38,7 @@ INDEX_FILENAME = "index.json"
 DEFAULT_CACHE_MAX_MB = 2048
 _SCHEMA_VERSION = 3
 _PRUNE_TARGET_RATIO = 0.8
+_NAMESPACE_PRUNE_TARGET_RATIO = 0.8
 _TOUCH_INTERVAL_SECONDS = 3600.0
 _SANITIZE_PATTERN = re.compile(r"[^A-Za-z0-9._-]+")
 _GENERATION_PATTERN = re.compile(r"^[0-9a-f]{32}$")
@@ -704,8 +705,9 @@ def _write_shard_entries(
     :param entries: Sequence of ``(key, vector)`` pairs to append or, for keys that
         already exist with a poisoned (NaN/Inf) stored row, heal in place.
     :param namespace: Stable identifier for one mode/instruction/dtype combination.
-    :param max_namespace_keys: Maximum keys to retain in ``namespace`` after this
-        write, oldest (lowest row index) dropped first, or ``None`` for no cap.
+    :param max_namespace_keys: Maximum keys allowed in ``namespace`` before an
+        amortized prune drops the oldest rows to 80% of the cap, or ``None`` for
+        no cap.
     :return: ``None``.
     """
     if not entries:
@@ -798,9 +800,14 @@ def _write_shard_entries(
                     ),
                     key=keys_map.__getitem__,
                 )
-                overflow = len(namespace_keys_by_row) - max_namespace_keys
-                if overflow > 0:
-                    drop_keys = set(namespace_keys_by_row[:overflow])
+                if len(namespace_keys_by_row) > max_namespace_keys:
+                    prune_target = (
+                        max(1, int(max_namespace_keys * _NAMESPACE_PRUNE_TARGET_RATIO))
+                        if max_namespace_keys > 0
+                        else 0
+                    )
+                    drop_count = len(namespace_keys_by_row) - prune_target
+                    drop_keys = set(namespace_keys_by_row[:drop_count])
                     retained_keys = sorted(
                         (key for key in keys_map if key not in drop_keys),
                         key=keys_map.__getitem__,
@@ -1076,8 +1083,9 @@ class EmbeddingCache:
         :param revision: Resolved model revision, or ``None`` when unpinned.
         :param entries: Sequence of ``(key, vector)`` pairs to store.
         :param namespace: Stable identifier for one mode/instruction/dtype combination.
-        :param max_namespace_keys: Maximum keys to retain in ``namespace`` after this
-            write, oldest dropped first, or ``None`` for no cap.
+        :param max_namespace_keys: Maximum keys allowed in ``namespace`` before an
+            amortized prune drops the oldest rows to 80% of the cap, or ``None``
+            for no cap.
         :return: ``None``.
         """
         if not entries:

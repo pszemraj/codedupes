@@ -1443,3 +1443,44 @@ def test_max_namespace_keys_drops_oldest_and_spares_other_namespaces(tmp_path):
     )
     hits_with_code = cache.get_many(scope, "model-a", "rev1", [*all_query_keys, "code-a"])
     assert set(hits_with_code) == {"code-a", "query-2", "query-3", "query-4"}
+
+
+def test_namespace_cap_amortizes_matrix_compaction(tmp_path, monkeypatch):
+    cache = EmbeddingCache()
+    scope = tmp_path / "proj"
+    scope.mkdir()
+    cache.put_many(
+        scope,
+        "model-a",
+        "rev1",
+        [("code", np.array([9.0, 9.0], dtype=np.float32))],
+        namespace="check",
+    )
+    rebuild_count = 0
+    original_rebuild = embedding_cache._rebuild_matrix_retaining
+
+    def recording_rebuild(*args, **kwargs):
+        nonlocal rebuild_count
+        rebuild_count += 1
+        return original_rebuild(*args, **kwargs)
+
+    monkeypatch.setattr(embedding_cache, "_rebuild_matrix_retaining", recording_rebuild)
+
+    for index in range(7):
+        cache.put_many(
+            scope,
+            "model-a",
+            "rev1",
+            [(f"query-{index}", np.array([float(index), 1.0], dtype=np.float32))],
+            namespace="query",
+            max_namespace_keys=5,
+        )
+
+    hits = cache.get_many(
+        scope,
+        "model-a",
+        "rev1",
+        ["code", *(f"query-{index}" for index in range(7))],
+    )
+    assert set(hits) == {"code", "query-2", "query-3", "query-4", "query-5", "query-6"}
+    assert rebuild_count == 1
