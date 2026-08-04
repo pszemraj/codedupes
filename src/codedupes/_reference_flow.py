@@ -184,6 +184,29 @@ class BranchingVisitor(ast.NodeVisitor, ABC, Generic[BindingState]):
             return cls._suite_has_explicit_raise(statement.body)
         return False
 
+    @staticmethod
+    def _statement_cannot_raise(statement: ast.stmt) -> bool:
+        """Return whether one simple statement is provably exception-free.
+
+        :param statement: Candidate statement.
+        :return: Whether evaluating it cannot transfer to an exception handler.
+        """
+        if isinstance(statement, (ast.Pass, ast.Global, ast.Nonlocal)):
+            return True
+        if isinstance(statement, ast.Assign):
+            return isinstance(statement.value, ast.Constant) and all(
+                isinstance(target, ast.Name) for target in statement.targets
+            )
+        return False
+
+    def _exception_occurs_after_effects(self, statement: ast.stmt) -> bool:
+        """Return whether a known exception can occur only after statement effects.
+
+        :param statement: Candidate statement.
+        :return: Whether handler entry should exclude the pre-statement state.
+        """
+        return False
+
     @classmethod
     def _statement_falls_through(cls, statement: ast.stmt) -> bool:
         """Return whether one statement has a structural fall-through path.
@@ -288,6 +311,9 @@ class BranchingVisitor(ast.NodeVisitor, ABC, Generic[BindingState]):
         """Evaluate a loop iterable and iterate bindings to a conservative fixed point."""
         self.visit(node.iter)
         base = self._snapshot_bindings()
+        if iterable_definitely_empty(node.iter):
+            self._visit_suite(node.orelse)
+            return
         iteration_entry = base
         normal_states: list[BindingState] = []
         break_states: list[BindingState] = []
@@ -431,24 +457,39 @@ class BranchingVisitor(ast.NodeVisitor, ABC, Generic[BindingState]):
         initial_state = self._snapshot_bindings()
         transfer_mark = len(self._control_transfers)
         prefix_states = [self._snapshot_bindings()]
+        exceptional_states: list[BindingState] = []
         for statement in node.body:
+            before_statement = self._snapshot_bindings()
             self.visit(statement)
-            prefix_states.append(self._snapshot_bindings())
+            after_statement = self._snapshot_bindings()
+            prefix_states.append(after_statement)
+            if not self._statement_cannot_raise(statement):
+                if self._exception_occurs_after_effects(statement):
+                    exceptional_states.append(after_statement)
+                else:
+                    exceptional_states.extend((before_statement, after_statement))
             if not self._statement_falls_through(statement):
                 break
-        exceptional_states = list(prefix_states)
         else_prefixes = [self._snapshot_bindings()]
         for statement in node.orelse:
+            before_statement = self._snapshot_bindings()
             self.visit(statement)
-            else_prefixes.append(self._snapshot_bindings())
+            after_statement = self._snapshot_bindings()
+            else_prefixes.append(after_statement)
+            if not self._statement_cannot_raise(statement):
+                if self._exception_occurs_after_effects(statement):
+                    exceptional_states.append(after_statement)
+                else:
+                    exceptional_states.extend((before_statement, after_statement))
             if not self._statement_falls_through(statement):
                 break
-        exceptional_states.extend(else_prefixes)
         states = []
         if self._suite_falls_through(node.body) and self._suite_falls_through(node.orelse):
             states.append(self._snapshot_bindings())
-        handler_base = self._merge_bindings(prefix_states)
+        handler_base = self._merge_bindings(exceptional_states or [initial_state])
         for handler in node.handlers:
+            if not exceptional_states:
+                break
             self._restore_bindings(handler_base)
             if handler.type is not None:
                 self.visit(handler.type)

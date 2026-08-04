@@ -354,6 +354,1112 @@ def test_unreachable_binding_respects_global_declaration(tmp_path: Path) -> None
     assert by_name["sample.caller"].uid in by_name["sample._target"].references
 
 
+def test_reference_graph_resolves_closures_at_reachable_call_states(tmp_path: Path) -> None:
+    source = dedent(
+        """
+        def outer():
+            def _before():
+                return "before"
+
+            def call_before():
+                return _before()
+
+            call_before()
+            _before = 2
+
+            def _after():
+                return "after"
+
+            def call_after():
+                return _after()
+
+            _after = 2
+            call_after()
+
+            def _both():
+                return "both"
+
+            def call_both():
+                return _both()
+
+            alias = call_both
+            alias()
+            _both = 2
+            call_both()
+
+            def _walrus():
+                return "walrus"
+
+            def call_walrus():
+                return _walrus()
+
+            (walrus_alias := call_walrus)()
+            _walrus = 2
+
+            def _transitive():
+                return "transitive"
+
+            def second():
+                return _transitive()
+
+            def first():
+                return second()
+
+            first()
+            _transitive = 2
+
+            def _empty_loop():
+                return "empty"
+
+            def call_empty_loop():
+                return _empty_loop()
+
+            for _ in []:
+                call_empty_loop()
+            _empty_loop = 2
+
+            return call_before, call_after, call_both, call_walrus, first, call_empty_loop
+        """
+    ).strip()
+    units = extract_units(tmp_path, source, include_private=True)
+    by_name = {unit.qualified_name: unit for unit in units}
+
+    build_reference_graph(units)
+    unused = {unit.qualified_name for unit in find_potentially_unused(units, strict_unused=True)}
+
+    before = by_name["sample.outer._before"]
+    after = by_name["sample.outer._after"]
+    both = by_name["sample.outer._both"]
+    walrus = by_name["sample.outer._walrus"]
+    transitive = by_name["sample.outer._transitive"]
+    empty_loop = by_name["sample.outer._empty_loop"]
+    assert "sample.outer._before" in by_name["sample.outer.call_before"].referenced_names
+    assert "sample.outer._after" not in by_name["sample.outer.call_after"].referenced_names
+    assert "sample.outer._both" in by_name["sample.outer.call_both"].referenced_names
+    assert by_name["sample.outer.call_before"].uid in before.references
+    assert not after.references
+    assert by_name["sample.outer.call_both"].uid in both.references
+    assert by_name["sample.outer.call_walrus"].uid in walrus.references
+    assert by_name["sample.outer.second"].uid in transitive.references
+    assert not empty_loop.references
+    assert "sample.outer._before" not in unused
+    assert "sample.outer._after" in unused
+    assert "sample.outer._both" not in unused
+    assert "sample.outer._walrus" not in unused
+    assert "sample.outer._transitive" not in unused
+    assert "sample.outer._empty_loop" in unused
+
+
+def test_reference_graph_joins_each_reachable_closure_call_binding(tmp_path: Path) -> None:
+    from codedupes.extractor import CodeExtractor
+
+    (tmp_path / "a.py").write_text("def work():\n    return 'a'\n")
+    (tmp_path / "b.py").write_text("def work():\n    return 'b'\n")
+    (tmp_path / "sample.py").write_text(
+        dedent(
+            """
+            def outer():
+                from a import work as selected
+
+                def closure():
+                    return selected()
+
+                closure()
+                from b import work as selected
+                closure()
+            """
+        ).strip()
+    )
+    units = CodeExtractor(tmp_path, exclude_patterns=[], include_private=True).extract_all()
+    by_name = {unit.qualified_name: unit for unit in units}
+
+    build_reference_graph(units)
+
+    closure = by_name["sample.outer.closure"]
+    assert closure.referenced_names == {"a.work", "b.work"}
+    assert closure.uid in by_name["a.work"].references
+    assert closure.uid in by_name["b.work"].references
+
+
+def test_uncertain_local_cell_does_not_fall_back_to_module_name(tmp_path: Path) -> None:
+    source = dedent(
+        """
+        def _target():
+            return "module"
+
+        def outer(flag):
+            if flag:
+                _target = 2
+
+            def closure():
+                return _target()
+
+            return closure
+        """
+    ).strip()
+    units = extract_units(tmp_path, source, include_private=True)
+    by_name = {unit.qualified_name: unit for unit in units}
+
+    build_reference_graph(units)
+    unused = {unit.qualified_name for unit in find_potentially_unused(units, strict_unused=True)}
+
+    assert "_target" not in by_name["sample.outer.closure"].referenced_names
+    assert not by_name["sample._target"].references
+    assert "sample._target" in unused
+
+
+def test_closure_calls_apply_nonlocal_effects_and_callback_entries(tmp_path: Path) -> None:
+    from codedupes.extractor import CodeExtractor
+
+    (tmp_path / "a.py").write_text("def work():\n    return 'a'\n")
+    (tmp_path / "b.py").write_text("def work():\n    return 'b'\n")
+    (tmp_path / "sample.py").write_text(
+        dedent(
+            """
+            def direct_mutation():
+                from a import work as selected
+
+                def mutate():
+                    nonlocal selected
+                    from b import work as selected
+
+                mutate()
+
+                def closure():
+                    return selected()
+
+                return closure
+
+            def class_mutation():
+                from a import work as selected
+
+                class Mutate:
+                    nonlocal selected
+                    from b import work as selected
+
+                def closure():
+                    return selected()
+
+                return closure
+
+            def callback_before_rebind():
+                from a import work as selected
+
+                def closure():
+                    return selected()
+
+                def invoke(callback):
+                    return callback()
+
+                invoke(closure)
+                from b import work as selected
+
+            def returned_callback():
+                from a import work as selected
+
+                def factory():
+                    def child():
+                        return selected()
+
+                    return child
+
+                callback = factory()
+                from b import work as selected
+                return callback
+            """
+        ).strip()
+    )
+    units = CodeExtractor(tmp_path, exclude_patterns=[], include_private=True).extract_all()
+    by_name = {unit.qualified_name: unit for unit in units}
+
+    build_reference_graph(units)
+
+    direct = by_name["sample.direct_mutation.closure"]
+    class_body = by_name["sample.class_mutation.closure"]
+    callback = by_name["sample.callback_before_rebind.closure"]
+    returned = by_name["sample.returned_callback.factory.child"]
+    assert direct.referenced_names == {"b.work"}
+    assert class_body.referenced_names == {"b.work"}
+    assert "a.work" in callback.referenced_names
+    assert returned.referenced_names == {"b.work"}
+    assert direct.uid in by_name["b.work"].references
+    assert class_body.uid in by_name["b.work"].references
+    assert callback.uid in by_name["a.work"].references
+    assert returned.uid in by_name["b.work"].references
+    assert returned.uid not in by_name["a.work"].references
+
+
+def test_returned_and_deferred_closures_use_activation_state(tmp_path: Path) -> None:
+    source = dedent(
+        """
+        def returned_grandchild():
+            def _dead():
+                return "old"
+
+            def middle():
+                def inner():
+                    return _dead()
+
+                return inner
+
+            saved = middle()
+            _dead = 2
+            saved()
+
+        async def coroutine_after_rebind():
+            def _dead():
+                return "old"
+
+            async def delayed():
+                return _dead()
+
+            pending = delayed()
+            _dead = 2
+            await pending
+
+        async def coroutine_before_rebind():
+            def _live():
+                return "old"
+
+            async def immediate():
+                return _live()
+
+            await immediate()
+            _live = 2
+
+        def generator_after_rebind():
+            def _dead():
+                return "old"
+
+            def delayed():
+                yield _dead()
+
+            pending = delayed()
+            _dead = 2
+            next(pending)
+
+        def generator_before_rebind():
+            def _live():
+                return "old"
+
+            def immediate():
+                yield _live()
+
+            pending = immediate()
+            next(pending)
+            _live = 2
+        """
+    ).strip()
+    units = extract_units(tmp_path, source, include_private=True)
+
+    build_reference_graph(units)
+    unused = {unit.qualified_name for unit in find_potentially_unused(units, strict_unused=True)}
+
+    assert "sample.returned_grandchild._dead" in unused
+    assert "sample.coroutine_after_rebind._dead" in unused
+    assert "sample.coroutine_before_rebind._live" not in unused
+    assert "sample.generator_after_rebind._dead" in unused
+    assert "sample.generator_before_rebind._live" not in unused
+
+
+def test_closure_summaries_preserve_effect_order_and_parameter_flow(tmp_path: Path) -> None:
+    source = dedent(
+        """
+        def no_op_nonlocal():
+            def _live():
+                return "live"
+
+            def noop():
+                nonlocal _live
+
+            def use():
+                return _live()
+
+            noop()
+            use()
+
+        def conditional_nonlocal(flag):
+            def _live():
+                return "live"
+
+            def maybe_mutate():
+                nonlocal _live
+                if flag:
+                    _live = 2
+
+            def use():
+                return _live()
+
+            maybe_mutate()
+            use()
+
+        def ordered_effects():
+            def _dead():
+                return "dead"
+
+            def mutate():
+                nonlocal _dead
+                _dead = 2
+
+            def use():
+                return _dead()
+
+            def wrapper():
+                mutate()
+                use()
+
+            wrapper()
+
+        def returned_sibling():
+            def _live():
+                return "live"
+
+            def second():
+                return _live()
+
+            def factory():
+                return second
+
+            saved = factory()
+            saved()
+            _live = 2
+
+        def ignored_callback():
+            def _dead():
+                return "dead"
+
+            def inner():
+                return _dead()
+
+            def ignore(callback):
+                return None
+
+            ignore(inner)
+            _dead = 2
+
+        def returned_callback():
+            def _dead():
+                return "dead"
+
+            def inner():
+                return _dead()
+
+            def identity(callback):
+                return callback
+
+            saved = identity(inner)
+            _dead = 2
+            saved()
+
+        def suspended_generator():
+            def _live():
+                return "live"
+
+            def delayed():
+                nonlocal _live
+                yield None
+                _live = 2
+
+            pending = delayed()
+            next(pending)
+
+            def use():
+                return _live()
+
+            use()
+
+        def activated_coroutine():
+            def _live():
+                return "live"
+
+            async def delayed():
+                return _live()
+
+            def schedule(coroutine):
+                try:
+                    coroutine.send(None)
+                except StopIteration:
+                    pass
+
+            schedule(delayed())
+            _live = 2
+
+        def own_ordered_effects():
+            def _live():
+                return "live"
+
+            def use():
+                return _live()
+
+            def wrapper():
+                nonlocal _live
+                use()
+                _live = 2
+
+            wrapper()
+
+        def conditional_ordered_effects(flag):
+            def _live():
+                return "live"
+
+            def mutate():
+                nonlocal _live
+                _live = 2
+
+            def use():
+                return _live()
+
+            def wrapper():
+                if flag:
+                    mutate()
+                else:
+                    use()
+
+            wrapper()
+
+        def ignored_keyword_callback():
+            def _dead():
+                return "dead"
+
+            def inner():
+                return _dead()
+
+            def ignore(*, callback):
+                return None
+
+            ignore(callback=inner)
+            _dead = 2
+
+        def returned_keyword_callback():
+            def _dead():
+                return "dead"
+
+            def inner():
+                return _dead()
+
+            def identity(*, callback):
+                return callback
+
+            saved = identity(callback=inner)
+            _dead = 2
+            saved()
+
+        def transitive_returned_callback():
+            def _live():
+                return "live"
+
+            def inner():
+                return _live()
+
+            def factory():
+                return inner
+
+            def second_factory():
+                return factory()
+
+            saved = second_factory()
+            saved()
+            _live = 2
+
+        def generator_effect_before_yield():
+            def _dead():
+                return "dead"
+
+            def delayed():
+                nonlocal _dead
+                _dead = 2
+                yield None
+
+            def use():
+                return _dead()
+
+            pending = delayed()
+            next(pending)
+            use()
+
+        def generator_effect_second_activation():
+            def _dead():
+                return "dead"
+
+            def delayed():
+                nonlocal _dead
+                yield None
+                _dead = 2
+                yield None
+
+            def use():
+                return _dead()
+
+            pending = delayed()
+            next(pending)
+            next(pending)
+            use()
+
+        async def keyword_activated_coroutine():
+            def _live():
+                return "live"
+
+            async def delayed():
+                return _live()
+
+            async def schedule(*, coroutine):
+                return await coroutine
+
+            await schedule(coroutine=delayed())
+            _live = 2
+
+        def direct_generator_send():
+            def _live():
+                return "live"
+
+            def delayed():
+                yield _live()
+
+            pending = delayed()
+            pending.send(None)
+            _live = 2
+
+        def conditional_effect_then_use(flag):
+            def _live():
+                return "live"
+
+            def mutate():
+                nonlocal _live
+                _live = 2
+
+            def use():
+                return _live()
+
+            def wrapper():
+                if flag:
+                    mutate()
+                use()
+
+            wrapper()
+
+        def default_callbacks():
+            def _dead_ignored():
+                return "dead"
+
+            def ignored_inner():
+                return _dead_ignored()
+
+            def ignore(callback=ignored_inner):
+                return None
+
+            ignore()
+            _dead_ignored = 2
+
+            def _dead_returned():
+                return "dead"
+
+            def returned_inner():
+                return _dead_returned()
+
+            def identity(callback=returned_inner):
+                return callback
+
+            saved = identity()
+            _dead_returned = 2
+            saved()
+
+        def exhausted_generator_effect():
+            def _dead():
+                return "dead"
+
+            def delayed():
+                nonlocal _dead
+                yield None
+                _dead = 2
+
+            def use():
+                return _dead()
+
+            pending = delayed()
+            next(pending)
+            next(pending, None)
+            use()
+
+        def conditional_generator_effect(flag):
+            def _live():
+                return "live"
+
+            def mutate():
+                nonlocal _live
+                _live = 2
+
+            def delayed():
+                if flag:
+                    mutate()
+                yield None
+
+            def use():
+                return _live()
+
+            pending = delayed()
+            next(pending)
+            use()
+
+        def finally_ordered_effect():
+            def _dead():
+                return "dead"
+
+            def use():
+                return _dead()
+
+            def wrapper():
+                nonlocal _dead
+                try:
+                    _dead = 2
+                finally:
+                    use()
+
+            wrapper()
+
+        def exact_loop_order():
+            def _live():
+                return "live"
+
+            def use():
+                return _live()
+
+            def wrapper():
+                nonlocal _live
+                for _ in [0]:
+                    use()
+                    _live = 2
+
+            wrapper()
+
+        def variadic_callbacks():
+            def _live_args():
+                return "live"
+
+            def args_inner():
+                return _live_args()
+
+            def invoke_args(*callbacks):
+                return callbacks[0]()
+
+            invoke_args(args_inner)
+            _live_args = 2
+
+            def _live_kwargs():
+                return "live"
+
+            def kwargs_inner():
+                return _live_kwargs()
+
+            def invoke_kwargs(**callbacks):
+                return callbacks["callback"]()
+
+            invoke_kwargs(callback=kwargs_inner)
+            _live_kwargs = 2
+
+            def _dead_returned():
+                return "dead"
+
+            def returned_inner():
+                return _dead_returned()
+
+            def identity(**callbacks):
+                return callbacks.get("callback")
+
+            saved = identity(callback=returned_inner)
+            _dead_returned = 2
+            saved()
+
+        def recursive_factory():
+            def _live():
+                return "live"
+
+            def inner():
+                return _live()
+
+            def choose(flag):
+                if flag:
+                    return choose(False)
+                return inner
+
+            saved = choose(True)
+            saved()
+            _live = 2
+
+        def alternative_yields(flag):
+            def _live():
+                return "live"
+
+            def delayed():
+                nonlocal _live
+                if flag:
+                    _live = 2
+                    yield None
+                else:
+                    yield None
+
+            def use():
+                return _live()
+
+            pending = delayed()
+            next(pending)
+            use()
+
+        def aliased_generator_instance():
+            def _dead():
+                return "dead"
+
+            def delayed():
+                nonlocal _dead
+                yield None
+                _dead = 2
+                yield None
+
+            def use():
+                return _dead()
+
+            pending = delayed()
+            alias = pending
+            next(alias)
+            next(pending)
+            use()
+
+        def delegated_generator():
+            def _live():
+                return "live"
+
+            def child():
+                yield _live()
+
+            def parent():
+                yield from child()
+
+            pending = parent()
+            next(pending)
+            _live = 2
+
+        async def transitive_coroutine():
+            def _live():
+                return "live"
+
+            async def delayed():
+                return _live()
+
+            async def second(coroutine):
+                return await coroutine
+
+            async def first(coroutine):
+                return await second(coroutine)
+
+            await first(delayed())
+            _live = 2
+
+        async def iterated_async_generator():
+            def _live():
+                return "live"
+
+            async def delayed():
+                yield _live()
+
+            async for _ in delayed():
+                break
+            _live = 2
+
+        def correlated_conditions(flag):
+            def _dead():
+                return "dead"
+
+            def mutate():
+                nonlocal _dead
+                _dead = 2
+
+            def use():
+                return _dead()
+
+            def wrapper():
+                if flag:
+                    mutate()
+                if flag:
+                    use()
+
+            wrapper()
+
+        def aliased_activators():
+            def _dead():
+                return "dead"
+
+            def delayed():
+                nonlocal _dead
+                _dead = 2
+                yield None
+
+            def use():
+                return _dead()
+
+            pending = delayed()
+            advance = pending.send
+            advance(None)
+            use()
+
+            def _live():
+                return "live"
+
+            async def immediate():
+                return _live()
+
+            coroutine = immediate()
+            send = coroutine.send
+            try:
+                send(None)
+            except StopIteration:
+                pass
+            _live = 2
+
+        def dynamic_variadic_key(key):
+            def _live():
+                return "live"
+
+            def inner():
+                return _live()
+
+            def invoke(**callbacks):
+                return callbacks[key]()
+
+            invoke(callback=inner)
+            _live = 2
+
+        def parameter_activators():
+            def _live():
+                return "live"
+
+            def delayed():
+                yield _live()
+
+            def advance(iterator):
+                return next(iterator)
+
+            pending = delayed()
+            advance(pending)
+            _live = 2
+
+        def delegated_parameter():
+            def _live():
+                return "live"
+
+            def child():
+                yield _live()
+
+            def parent(iterator):
+                yield from iterator
+
+            pending = parent(child())
+            next(pending)
+            _live = 2
+
+        def consumed_generators():
+            def _live():
+                return "live"
+
+            def breaking():
+                yield _live()
+
+            for _ in breaking():
+                break
+            _live = 2
+
+            def _dead():
+                return "dead"
+
+            def exhausting():
+                nonlocal _dead
+                yield None
+                _dead = 2
+
+            for _ in exhausting():
+                pass
+
+            def use():
+                return _dead()
+
+            use()
+
+        async def consumed_async_generator():
+            def _dead():
+                return "dead"
+
+            async def exhausting():
+                nonlocal _dead
+                yield None
+                _dead = 2
+
+            async for _ in exhausting():
+                pass
+
+            def use():
+                return _dead()
+
+            use()
+
+        def caught_generator_exhaustion():
+            def _dead():
+                return "dead"
+
+            def delayed():
+                nonlocal _dead
+                yield None
+                _dead = 2
+
+            pending = delayed()
+            next(pending)
+            try:
+                next(pending)
+            except StopIteration:
+                pass
+
+            def use():
+                return _dead()
+
+            use()
+
+        def variadic_selection_and_fallback():
+            def _dead_selected():
+                return "dead"
+
+            def selected_inner():
+                return _dead_selected()
+
+            def invoke_last(*callbacks):
+                return callbacks[-1]()
+
+            invoke_last(selected_inner, lambda: None)
+            _dead_selected = 2
+
+            def _live_fallback():
+                return "live"
+
+            def fallback_inner():
+                return _live_fallback()
+
+            def invoke_fallback(**callbacks):
+                return callbacks.get("missing", fallback_inner)()
+
+            invoke_fallback()
+            _live_fallback = 2
+
+        def delegated_factory_effect():
+            def _dead():
+                return "dead"
+
+            def child():
+                nonlocal _dead
+                _dead = 2
+                yield None
+
+            def make():
+                return child()
+
+            def parent():
+                yield from make()
+
+            pending = parent()
+            next(pending)
+
+            def use():
+                return _dead()
+
+            use()
+
+        async def coroutine_effect():
+            def _dead():
+                return "dead"
+
+            async def delayed():
+                nonlocal _dead
+                _dead = 2
+
+            await delayed()
+
+            def use():
+                return _dead()
+
+            use()
+        """
+    ).strip()
+    units = extract_units(tmp_path, source, include_private=True)
+    by_name = {unit.qualified_name: unit for unit in units}
+
+    build_reference_graph(units)
+    unused = {unit.qualified_name for unit in find_potentially_unused(units, strict_unused=True)}
+
+    assert "sample.no_op_nonlocal._live" not in unused
+    assert "sample.conditional_nonlocal._live" not in unused
+    assert "sample.ordered_effects._dead" in unused
+    assert "sample.returned_sibling._live" not in unused
+    assert "sample.ignored_callback._dead" in unused
+    assert "sample.returned_callback._dead" in unused
+    assert "sample.suspended_generator._live" not in unused
+    assert "sample.activated_coroutine._live" not in unused
+    assert "sample.own_ordered_effects._live" not in unused
+    assert "sample.conditional_ordered_effects._live" not in unused
+    assert "sample.ignored_keyword_callback._dead" in unused
+    assert "sample.returned_keyword_callback._dead" in unused
+    assert "sample.transitive_returned_callback._live" not in unused
+    assert "sample.generator_effect_before_yield._dead" in unused
+    assert "sample.generator_effect_second_activation._dead" in unused
+    assert "sample.keyword_activated_coroutine._live" not in unused
+    assert "sample.direct_generator_send._live" not in unused
+    assert "sample.conditional_effect_then_use._live" not in unused
+    assert "sample.default_callbacks._dead_ignored" in unused
+    assert "sample.default_callbacks._dead_returned" in unused
+    assert "sample.exhausted_generator_effect._dead" in unused
+    assert "sample.conditional_generator_effect._live" not in unused
+    assert "sample.finally_ordered_effect._dead" in unused
+    assert "sample.exact_loop_order._live" not in unused
+    assert "sample.variadic_callbacks._live_args" not in unused
+    assert "sample.variadic_callbacks._live_kwargs" not in unused
+    assert "sample.variadic_callbacks._dead_returned" in unused
+    assert "sample.recursive_factory._live" not in unused
+    assert "sample.alternative_yields._live" not in unused
+    assert "sample.aliased_generator_instance._dead" in unused
+    assert "sample.delegated_generator._live" not in unused
+    assert "sample.transitive_coroutine._live" not in unused
+    assert "sample.iterated_async_generator._live" not in unused
+    assert "sample.correlated_conditions._dead" in unused
+    assert "sample.aliased_activators._dead" in unused
+    assert "sample.aliased_activators._live" not in unused
+    assert "sample.dynamic_variadic_key._live" not in unused
+    assert "sample.parameter_activators._live" not in unused
+    assert "sample.delegated_parameter._live" not in unused
+    assert "sample.consumed_generators._live" not in unused
+    assert "sample.consumed_generators._dead" in unused
+    assert "sample.consumed_async_generator._dead" in unused
+    assert "sample.caught_generator_exhaustion._dead" in unused
+    assert "sample.variadic_selection_and_fallback._dead_selected" in unused
+    assert "sample.variadic_selection_and_fallback._live_fallback" not in unused
+    assert "sample.delegated_factory_effect._dead" in unused
+    assert "sample.coroutine_effect._dead" in unused
+    assert by_name["sample.ordered_effects._dead"].references == set()
+    assert by_name["sample.ignored_callback._dead"].references == set()
+    assert by_name["sample.returned_callback._dead"].references == set()
+    assert by_name["sample.ignored_keyword_callback._dead"].references == set()
+    assert by_name["sample.returned_keyword_callback._dead"].references == set()
+    assert by_name["sample.generator_effect_before_yield._dead"].references == set()
+    assert by_name["sample.generator_effect_second_activation._dead"].references == set()
+    assert by_name["sample.default_callbacks._dead_ignored"].references == set()
+    assert by_name["sample.default_callbacks._dead_returned"].references == set()
+    assert by_name["sample.exhausted_generator_effect._dead"].references == set()
+    assert by_name["sample.finally_ordered_effect._dead"].references == set()
+    assert by_name["sample.variadic_callbacks._dead_returned"].references == set()
+    assert by_name["sample.aliased_generator_instance._dead"].references == set()
+    assert by_name["sample.correlated_conditions._dead"].references == set()
+    assert by_name["sample.aliased_activators._dead"].references == set()
+    assert by_name["sample.consumed_generators._dead"].references == set()
+    assert by_name["sample.consumed_async_generator._dead"].references == set()
+    assert by_name["sample.caught_generator_exhaustion._dead"].references == set()
+    assert by_name["sample.variadic_selection_and_fallback._dead_selected"].references == set()
+    assert by_name["sample.delegated_factory_effect._dead"].references == set()
+    assert by_name["sample.coroutine_effect._dead"].references == set()
+
+
 def test_reference_graph_qualifies_module_and_function_local_import_aliases(
     tmp_path: Path,
 ) -> None:
