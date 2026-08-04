@@ -588,12 +588,12 @@ def test_get_model_passes_revision_and_trust_options(
     if revision is None:
         assert "revision" not in kwargs
         assert "model_kwargs" not in kwargs
-        assert "tokenizer_kwargs" not in kwargs
+        assert "processor_kwargs" not in kwargs
         assert "config_kwargs" not in kwargs
         return
 
     assert kwargs["revision"] == revision
-    for nested_name in ("model_kwargs", "tokenizer_kwargs", "config_kwargs"):
+    for nested_name in ("model_kwargs", "processor_kwargs", "config_kwargs"):
         nested = kwargs[nested_name]
         assert nested["revision"] == revision
         if expected_trust:

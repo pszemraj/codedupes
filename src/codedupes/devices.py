@@ -130,17 +130,30 @@ def configure_mps_environment(
 def _load_torch() -> Any:
     """Import PyTorch lazily.
 
+    A broken install (wrong-arch wheel, missing native dependency) must map to
+    the same recoverable error as an absent one: callers such as ``codedupes
+    info`` report "torch unavailable" diagnostics instead of dying on the
+    import traceback.
+
     :return: Imported ``torch`` module.
-    :raises DeviceConfigurationError: If PyTorch is unavailable.
+    :raises DeviceConfigurationError: If PyTorch is missing or fails to import.
     """
     try:
         return importlib.import_module("torch")
     except ModuleNotFoundError as exc:
-        if exc.name != "torch":
-            raise
+        if exc.name != "torch" and not (exc.name or "").startswith("torch."):
+            raise DeviceConfigurationError(
+                f"PyTorch import failed on a missing dependency ({exc}). Reinstall codedupes "
+                "with its semantic dependencies."
+            ) from exc
         raise DeviceConfigurationError(
             "PyTorch is required for semantic device selection. Install codedupes with its "
             "semantic dependencies."
+        ) from exc
+    except (ImportError, OSError) as exc:
+        raise DeviceConfigurationError(
+            f"PyTorch is installed but failed to import ({exc}). Reinstall a build matching "
+            "this platform and architecture."
         ) from exc
 
 

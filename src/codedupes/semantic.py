@@ -123,9 +123,16 @@ class EncodePlan:
     def cache_identity(self) -> str:
         """Serialize the vector-affecting encode configuration for cache keys.
 
+        ``None`` (backend applies its saved prompt) and ``""`` (explicitly
+        empty prompt) reach the backend differently, so they must not share
+        an identity.
+
         :return: Stable string covering route and effective prompt.
         """
-        return f"route={self.route}\x00prompt={self.prompt or ''}"
+        return (
+            f"route={self.route}\x00prompt_set={int(self.prompt is not None)}"
+            f"\x00prompt={self.prompt or ''}"
+        )
 
 
 def _resolve_encode_plan(
@@ -514,11 +521,15 @@ def _fingerprint_local_model_dir(
 
     The fingerprint hashes each model file's relative path and content digest,
     excluding Hugging Face's ``--local-dir`` download metadata, so replacing or
-    retraining weights in place always changes the cache revision — even when
-    file size and mtime are preserved — while metadata-only touches keep it
-    stable. Digests are reused from a manifest keyed on the full stat identity
-    ``(size, mtime_ns, ctime_ns, inode)``; unchanged files are never rehashed,
-    keeping warm-path key derivation cheap enough to run before any model import.
+    retraining weights in place changes the cache revision while metadata-only
+    touches keep it stable. Digests are reused from a manifest keyed on the
+    full stat identity ``(size, mtime_ns, ctime_ns, inode)``; unchanged files
+    are never rehashed, keeping warm-path key derivation cheap enough to run
+    before any model import. The in-place guarantee is POSIX-specific: there
+    ``st_ctime`` is the inode-change time, which every content write moves even
+    when size and mtime are restored. On Windows ``st_ctime`` is the creation
+    time, so a same-size in-place overwrite with a preserved mtime could reuse
+    a stale digest.
 
     :param model_dir: Resolved local model directory.
     :param persist_manifest: Whether per-file digests may be loaded from and saved
@@ -848,10 +859,15 @@ def _cache_variant_for(
 ) -> str:
     """Build the complete vector-affecting cache-key variant for one encode call.
 
-    The variant deliberately excludes the device name itself: devices that
-    provably embed identically (CPU/MPS float32) share one key space, while
-    behavior that changes vectors (dtype, Metal math policy, runtime versions,
-    encode plan, remote-code execution path) always splits it.
+    The variant deliberately excludes the device name itself: CPU and MPS
+    float32 share one key space even though their kernels differ at float
+    rounding scale (measured ~5e-4 elementwise, ~2e-4 on pair similarity for
+    the default profile), so a warm cache may serve vectors computed on the
+    other device. That tolerance is accepted to keep device switches cheap;
+    ``codedupes cache clear`` restores a single-device baseline when an exact
+    reference run matters. Behavior that meaningfully changes vectors (dtype,
+    Metal math policy, runtime versions, encode plan, remote-code execution
+    path) always splits the key space.
 
     :param profile: Resolved model profile.
     :param device: Requested device string (``auto``, ``cpu``, ``cuda``, ``mps``).
@@ -1330,7 +1346,7 @@ def _get_model_unlocked(
             st_kwargs["revision"] = resolved_revision
 
         model_kwargs: dict[str, object] = {}
-        tokenizer_kwargs: dict[str, object] = {}
+        processor_kwargs: dict[str, object] = {}
         config_kwargs: dict[str, object] = {}
 
         if profile.family == "embeddinggemma":
@@ -1345,18 +1361,18 @@ def _get_model_unlocked(
 
         if resolved_revision is not None:
             model_kwargs["revision"] = resolved_revision
-            tokenizer_kwargs["revision"] = resolved_revision
+            processor_kwargs["revision"] = resolved_revision
             config_kwargs["revision"] = resolved_revision
 
         if resolved_trust_remote_code:
             model_kwargs["trust_remote_code"] = True
-            tokenizer_kwargs["trust_remote_code"] = True
+            processor_kwargs["trust_remote_code"] = True
             config_kwargs["trust_remote_code"] = True
 
         if model_kwargs:
             st_kwargs["model_kwargs"] = model_kwargs
-        if tokenizer_kwargs:
-            st_kwargs["tokenizer_kwargs"] = tokenizer_kwargs
+        if processor_kwargs:
+            st_kwargs["processor_kwargs"] = processor_kwargs
         if config_kwargs:
             st_kwargs["config_kwargs"] = config_kwargs
 

@@ -108,7 +108,9 @@ def resolve_cache_dir() -> Path:
     """
     override = os.environ.get("CODEDUPES_CACHE_DIR")
     if override:
-        return Path(override).expanduser()
+        # Resolve so a relative override keeps one identity (locks key on the
+        # absolute path) even if the process later changes directory.
+        return Path(override).expanduser().resolve()
     xdg_cache = os.environ.get("XDG_CACHE_HOME")
     if xdg_cache:
         return Path(xdg_cache).expanduser() / "codedupes"
@@ -265,6 +267,24 @@ def _shard_lock_path(shard_dir: Path) -> Path:
     return cache_root / LOCKS_SUBDIR / lock_name
 
 
+def _remove_shard_lock_file(shard_dir: Path) -> None:
+    """Unlink a deleted shard's lock file so ``locks/`` cannot grow forever.
+
+    Must be called while still holding the shard's write lock, immediately after
+    the shard directory itself was deleted. A waiter already blocked on the old
+    inode can acquire it after release while a newcomer locks the recreated
+    pathname, leaving two writers serialized on different inodes; that needs a
+    clear/evict racing two writers of a just-deleted shard, and the generation
+    re-confirmation in ``_read_shard`` keeps the fallout availability-only, so
+    reclaiming the directory entry is worth the narrow race.
+
+    :param shard_dir: Shard directory whose lock file should be reclaimed.
+    :return: ``None``.
+    """
+    with contextlib.suppress(OSError):
+        _shard_lock_path(shard_dir).unlink()
+
+
 def _ensure_managed_directory(path: Path) -> None:
     """Create one cache-managed directory without accepting a symlink in its place.
 
@@ -296,10 +316,14 @@ def _ensure_cache_subdirectory(cache_root: Path, name: str) -> Path:
     :raises OSError: If the root/child is not a directory or permissions fail.
     :return: Created managed child path.
     """
+    root_existed = cache_root.is_dir()
     cache_root.mkdir(mode=_CACHE_DIRECTORY_MODE, parents=True, exist_ok=True)
     if not cache_root.is_dir():
         raise OSError(f"Cache root is not a directory: {cache_root}")
-    cache_root.chmod(_CACHE_DIRECTORY_MODE)
+    if not root_existed:
+        # Harden only roots this process created; a pre-existing user-chosen
+        # root may be deliberately shared with other tools or accounts.
+        cache_root.chmod(_CACHE_DIRECTORY_MODE)
     managed_dir = cache_root / name
     _ensure_managed_directory(managed_dir)
     return managed_dir
@@ -554,6 +578,10 @@ def _reclaim_stale_shard_files(shard_dir: Path, keep: frozenset[Path] = frozense
     dies after renaming its vector matrix but before publishing the index leaves a
     properly named generation orphan instead. The index is authoritative, so every
     generation other than the one it names is equally safe to reclaim under lock.
+    When an index exists but no well-formed generation can be peeked from it
+    (foreign schema, torn write, transient read error), the vectors sweep is
+    skipped entirely: deleting what might be another codedupes version's active
+    generation would silently destroy its shard, and orphans cost only disk.
 
     :param shard_dir: Shard directory to sweep; caller must hold its write lock.
     :param keep: Tmp paths belonging to the current write, left untouched.
@@ -564,10 +592,17 @@ def _reclaim_stale_shard_files(shard_dir: Path, keep: frozenset[Path] = frozense
             with contextlib.suppress(OSError):
                 stale_tmp.unlink()
 
-    metadata = _read_shard_meta(shard_dir)
-    active_vectors = (
-        shard_dir / _vectors_filename(metadata["generation"]) if metadata is not None else None
-    )
+    active_vectors: Path | None = None
+    index_path = shard_dir / INDEX_FILENAME
+    if index_path.exists():
+        try:
+            payload: Any = json.loads(index_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            payload = None
+        generation = _peek_generation(payload)
+        if generation is None:
+            return
+        active_vectors = shard_dir / _vectors_filename(generation)
     for stale_vectors in shard_dir.glob("vectors-*.npy"):
         if stale_vectors != active_vectors and stale_vectors not in keep:
             with contextlib.suppress(OSError):
@@ -1021,6 +1056,7 @@ def _maybe_evict(repos_dir: Path, protect: Path | None = None) -> None:
                     continue
                 if _delete_cache_tree(shard_dir, action="evict shard"):
                     total -= size
+                    _remove_shard_lock_file(shard_dir)
         _prune_empty_repo_dirs(repos_dir)
         if total > target:
             logger.warning(
@@ -1204,6 +1240,7 @@ class EmbeddingCache:
                         continue
                     if _delete_cache_tree(shard_dir, action="clear shard"):
                         removed += len(meta.get("keys", {})) if meta else 0
+                        _remove_shard_lock_file(shard_dir)
             _prune_empty_repo_dirs(self.repos_dir)
             if model is None:
                 # Manifests are keyed by local model directory, not canonical model
