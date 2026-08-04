@@ -380,6 +380,47 @@ def test_short_functions_are_skipped_from_semantic(tmp_path: Path) -> None:
     assert result.semantic_duplicates == []
 
 
+def test_decorated_methods_survive_semantic_and_tiny_filters(tmp_path: Path, monkeypatch) -> None:
+    source = dedent(
+        """
+        class First:
+            @property
+            def area(self):
+                width = self.width
+                height = self.height
+                scale = self.scale
+                return width * height * scale
+
+        class Second:
+            @property
+            def area(self):
+                width = self.width
+                height = self.height
+                scale = self.scale
+                return width * height * scale
+        """
+    ).strip()
+    project = create_project(tmp_path, source, module="decorated.py")
+    semantic_units: list[CodeUnit] = []
+
+    def capture_semantic_candidates(units, **_kwargs):
+        semantic_units.extend(units)
+        return np.zeros((len(units), 2), dtype=np.float32), []
+
+    monkeypatch.setattr(analyzer_module, "run_semantic_analysis", capture_semantic_candidates)
+    result = CodeAnalyzer(AnalyzerConfig(run_unused=False)).analyze(project)
+
+    assert {unit.qualified_name for unit in semantic_units} == {
+        "decorated.First.area",
+        "decorated.Second.area",
+    }
+    assert any(
+        {duplicate.unit_a.qualified_name, duplicate.unit_b.qualified_name}
+        == {"decorated.First.area", "decorated.Second.area"}
+        for duplicate in result.traditional_duplicates
+    )
+
+
 @pytest.mark.parametrize(
     ("semantic_unit_types", "expected_types"),
     [

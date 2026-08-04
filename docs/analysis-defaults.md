@@ -9,7 +9,7 @@ Default semantic candidate selection:
 - unit types: `function`, `method`
 - class units are excluded by default from semantic embedding
 - minimum statement count: `3` (via `min_semantic_statements`)
-- statements are counted recursively through control-flow bodies (`try`, `with`, loops, conditionals, `match`), so a large function implemented inside one outer block is not measured as a single statement; nested function/class definitions count as one declaration each
+- statements are counted recursively through control-flow bodies (`try`, `with`, loops, conditionals, `match`), so a large function implemented inside one outer block is not measured as a single statement; nested function/class definitions count as one declaration each, and indented definitions are dedented as a complete block so decorated methods count identically to undecorated methods
 - each semantic input is one complete logical definition, including its full decorator block, signature, docstring, and body; functions are not split into arbitrary text chunks
 
 Combined-mode alignment rule:

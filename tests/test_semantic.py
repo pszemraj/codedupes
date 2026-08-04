@@ -18,7 +18,7 @@ from codedupes.semantic import (
     get_code_unit_statement_count,
     run_semantic_analysis,
 )
-from tests.conftest import extract_arithmetic_units
+from tests.conftest import extract_arithmetic_units, extract_units
 
 
 class FakeModel:
@@ -80,6 +80,32 @@ def test_code_unit_statement_count_ignores_docstring(tmp_path: Path) -> None:
     unit = extract_arithmetic_units(tmp_path)[0]
     unit.source = source
     assert get_code_unit_statement_count(unit) == 2
+
+
+def test_statement_count_dedents_decorated_method_source(tmp_path: Path) -> None:
+    units = extract_units(
+        tmp_path,
+        """
+        class Widget:
+            @property
+            def area(self):
+                width = self.width
+                height = self.height
+                scale = self.scale
+                return width * height * scale
+
+            def perimeter(self):
+                width = self.width
+                height = self.height
+                scale = self.scale
+                return (width + height) * 2 * scale
+        """,
+        include_private=True,
+    )
+    by_name = {unit.name: unit for unit in units}
+
+    assert get_code_unit_statement_count(by_name["area"]) == 4
+    assert get_code_unit_statement_count(by_name["perimeter"]) == 4
 
 
 @pytest.mark.parametrize(
