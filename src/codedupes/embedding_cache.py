@@ -104,17 +104,23 @@ def resolve_cache_dir() -> Path:
     """Resolve the embedding cache root directory from environment overrides.
 
     :return: ``CODEDUPES_CACHE_DIR`` if set, else ``$XDG_CACHE_HOME/codedupes`` if
-        ``XDG_CACHE_HOME`` is set, else ``~/.cache/codedupes``.
+        ``XDG_CACHE_HOME`` is set, else ``~/.cache/codedupes``; always fully
+        resolved (symlinks dereferenced, relative paths absolutized).
     """
     override = os.environ.get("CODEDUPES_CACHE_DIR")
     if override:
-        # Resolve so a relative override keeps one identity (locks key on the
-        # absolute path) even if the process later changes directory.
-        return Path(override).expanduser().resolve()
-    xdg_cache = os.environ.get("XDG_CACHE_HOME")
-    if xdg_cache:
-        return Path(xdg_cache).expanduser() / "codedupes"
-    return Path.home() / ".cache" / "codedupes"
+        root = Path(override).expanduser()
+    else:
+        xdg_cache = os.environ.get("XDG_CACHE_HOME")
+        root = (
+            Path(xdg_cache).expanduser() / "codedupes"
+            if xdg_cache
+            else Path.home() / ".cache" / "codedupes"
+        )
+    # Resolve every branch so each spelling of one physical root (a relative
+    # override, a symlinked ~/.cache) yields one identity: shard lock names key
+    # on the absolute path, so unresolved spellings would split the lock domain.
+    return root.resolve()
 
 
 def _resolve_max_bytes() -> int:
@@ -252,7 +258,7 @@ def _shard_lock_path(shard_dir: Path) -> Path:
     eviction delete that directory recursively. Unlinking a held lock file lets
     another process recreate the pathname on a new inode and acquire an
     independent lock while the original inode is still locked. A digest of the
-    resolved shard path keeps the lock identity stable across shard deletion and
+    absolute shard path keeps the lock identity stable across shard deletion and
     recreation without exposing long model/revision names in lock filenames.
 
     :param shard_dir: Cache shard path under ``<cache-root>/repos/<repo>/<model>``.
@@ -270,13 +276,17 @@ def _shard_lock_path(shard_dir: Path) -> Path:
 def _remove_shard_lock_file(shard_dir: Path) -> None:
     """Unlink a deleted shard's lock file so ``locks/`` cannot grow forever.
 
-    Must be called while still holding the shard's write lock, immediately after
-    the shard directory itself was deleted. A waiter already blocked on the old
-    inode can acquire it after release while a newcomer locks the recreated
-    pathname, leaving two writers serialized on different inodes; that needs a
-    clear/evict racing two writers of a just-deleted shard, and the generation
-    re-confirmation in ``_read_shard`` keeps the fallout availability-only, so
-    reclaiming the directory entry is worth the narrow race.
+    Must be called while still holding the shard's write lock, and only when
+    this process itself deleted the shard directory - an already-absent shard
+    means a concurrent deleter owns reclamation, and unlinking here could take
+    out a lock file a recreating writer currently holds. A waiter already
+    blocked on the old inode can still acquire it after release while a
+    newcomer locks the recreated pathname, leaving two writers serialized on
+    different inodes; that needs two overlapping deleters (concurrent ``clear``
+    calls, or ``clear`` racing eviction) plus a writer recreating the shard,
+    and the generation re-confirmation in ``_read_shard`` keeps the fallout
+    availability-only, so reclaiming the directory entry is worth the narrow
+    race.
 
     :param shard_dir: Shard directory whose lock file should be reclaimed.
     :return: ``None``.
@@ -994,12 +1004,14 @@ def _delete_cache_tree(path: Path, *, action: str) -> bool:
 
     :param path: Cache directory to remove recursively.
     :param action: Short label used in the best-effort cache warning.
-    :return: ``True`` when the directory is absent after the call.
+    :return: ``True`` when this call removed the directory; ``False`` when it
+        was already absent (a concurrent deleter got there first) or removal
+        failed.
     """
     try:
         shutil.rmtree(path)
     except FileNotFoundError:
-        return True
+        return False
     except OSError as exc:
         _warn_once(action, exc)
         return False

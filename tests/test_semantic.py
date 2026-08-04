@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import logging
 import stat
 from pathlib import Path
@@ -600,6 +601,22 @@ def test_get_model_passes_revision_and_trust_options(
             assert nested["trust_remote_code"] is True
         else:
             assert "trust_remote_code" not in nested
+
+
+def test_constructor_kwargs_bind_to_real_sentence_transformer_signature() -> None:
+    # The recording double above swallows **kwargs, so nothing else binds the
+    # kwarg names to the installed SentenceTransformer, whose __init__ takes no
+    # **kwargs; a renamed or misspelled key would otherwise only fail on a real
+    # model load.
+    parameters = inspect.signature(sentence_transformers.SentenceTransformer.__init__).parameters
+    for name in (
+        "revision",
+        "trust_remote_code",
+        "model_kwargs",
+        "processor_kwargs",
+        "config_kwargs",
+    ):
+        assert name in parameters
 
 
 def test_get_model_loads_local_directory_without_hub_revision(tmp_path: Path, monkeypatch) -> None:

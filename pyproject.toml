@@ -11,7 +11,7 @@ license = "Apache-2.0"
 requires-python = ">=3.11"
 dependencies = [
     "click>=8.2.1",
-    "sentence-transformers>=5.6.1,<6",
+    "sentence-transformers>=5.6,<6",
     "transformers>=5.1,<6",
     "torch>=2.13.0,<3",
     "numpy>=2.1.0,<3",

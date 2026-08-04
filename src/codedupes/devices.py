@@ -141,16 +141,21 @@ def _load_torch() -> Any:
     try:
         return importlib.import_module("torch")
     except ModuleNotFoundError as exc:
-        if exc.name != "torch" and not (exc.name or "").startswith("torch."):
+        if exc.name == "torch":
             raise DeviceConfigurationError(
-                f"PyTorch import failed on a missing dependency ({exc}). Reinstall codedupes "
-                "with its semantic dependencies."
+                "PyTorch is required for semantic device selection. Install codedupes with its "
+                "semantic dependencies."
+            ) from exc
+        if (exc.name or "").startswith("torch."):
+            raise DeviceConfigurationError(
+                f"PyTorch is installed but incomplete ({exc}). Reinstall a build matching "
+                "this platform and architecture."
             ) from exc
         raise DeviceConfigurationError(
-            "PyTorch is required for semantic device selection. Install codedupes with its "
-            "semantic dependencies."
+            f"PyTorch import failed on a missing dependency ({exc}). Reinstall codedupes "
+            "with its semantic dependencies."
         ) from exc
-    except (ImportError, OSError) as exc:
+    except (ImportError, OSError, RuntimeError) as exc:
         raise DeviceConfigurationError(
             f"PyTorch is installed but failed to import ({exc}). Reinstall a build matching "
             "this platform and architecture."
