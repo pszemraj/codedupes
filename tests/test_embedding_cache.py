@@ -270,6 +270,75 @@ def test_fast_math_variant_skips_cache_writes_when_execution_leaves_mps(tmp_path
     assert len(model.encode_calls) == 2
 
 
+class _MidEncodeCpuFallbackModel(CountingModel):
+    """Fake that lands on CPU during encode, like the OOM/invalid-output retry ladder."""
+
+    def encode(self, texts, **kwargs):
+        result = super().encode(texts, **kwargs)
+        self.device = "cpu"
+        return result
+
+
+def test_fast_math_variant_skips_corpus_writes_after_mid_encode_cpu_fallback(tmp_path, monkeypatch):
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setenv("PYTORCH_MPS_FAST_MATH", "1")
+    units = _five_units(tmp_path)
+    model = _MidEncodeCpuFallbackModel()
+    model.device = "mps"
+    _patch_get_model(monkeypatch, model)
+    monkeypatch.setattr(semantic, "_get_loaded_model_commit_hash", lambda _model: None)
+
+    # Execution starts on MPS but the retry ladder lands on CPU mid-encode: the
+    # CPU vectors must not be published under the fast-math variant.
+    compute_embeddings(units, model_name="test-model", revision=REVISION_1, cache_scope=tmp_path)
+    assert len(model.encode_calls) == 1
+
+    # A later true-MPS fast-math run must re-embed, not reuse CPU vectors.
+    model.device = "mps"
+    compute_embeddings(units, model_name="test-model", revision=REVISION_1, cache_scope=tmp_path)
+    assert len(model.encode_calls) == 2
+
+
+def test_fast_math_variant_skips_query_write_after_mid_encode_cpu_fallback(tmp_path, monkeypatch):
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setenv("PYTORCH_MPS_FAST_MATH", "1")
+    units = _five_units(tmp_path)
+    model = _MidEncodeCpuFallbackModel()
+    model.device = "mps"
+    _patch_get_model(monkeypatch, model)
+    monkeypatch.setattr(semantic, "_get_loaded_model_commit_hash", lambda _model: None)
+
+    embeddings = compute_embeddings(
+        units, model_name="test-model", revision=REVISION_1, cache_scope=tmp_path
+    )
+
+    model.device = "mps"
+    find_similar_to_query(
+        "find addition",
+        units,
+        embeddings,
+        model_name="test-model",
+        revision=REVISION_1,
+        cache_scope=tmp_path,
+        top_k=3,
+    )
+    query_encodes = len(model.encode_calls)
+
+    # The query vector was computed on CPU mid-encode; a later MPS fast-math
+    # search must re-embed the query rather than hit a wrong-math-policy row.
+    model.device = "mps"
+    find_similar_to_query(
+        "find addition",
+        units,
+        embeddings,
+        model_name="test-model",
+        revision=REVISION_1,
+        cache_scope=tmp_path,
+        top_k=3,
+    )
+    assert len(model.encode_calls) == query_encodes + 1
+
+
 def test_compute_embeddings_passes_raw_text_with_prompt_config(tmp_path, monkeypatch):
     units = _five_units(tmp_path)
     model = CountingModel()

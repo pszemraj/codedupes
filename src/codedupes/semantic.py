@@ -851,13 +851,14 @@ def _fast_math_write_allowed(device: str | None, execution_device: str) -> bool:
 
     The fast-math variant derives from the requested device before PyTorch
     loads, so a run that then executes elsewhere (MPS unavailable under
-    ``auto``, or the documented load-time OOM fallback to CPU) would publish
-    faithful float32 vectors into the fast-math key space. Skipping the write
-    keeps the two spaces unmixed, at the cost of recomputing those vectors on
-    the next run.
+    ``auto``, or an OOM/invalid-output fallback to CPU before or during
+    encoding) would publish faithful float32 vectors into the fast-math key
+    space. Skipping the write keeps the two spaces unmixed, at the cost of
+    recomputing those vectors on the next run.
 
     :param device: Requested device string as given to the public API.
-    :param execution_device: Normalized device the loaded model executes on.
+    :param execution_device: Normalized device the model actually executed on,
+        read after encoding so mid-encode CPU fallbacks are reflected.
     :return: ``True`` when writing under the derived variant is representative.
     """
     if not _mps_fast_math_variant(device):
@@ -2123,7 +2124,9 @@ def _compute_embeddings_unlocked(
         and cache_keys is not None
         and cache_revision is not None
         and miss_indices
-        and _fast_math_write_allowed(device, execution_device)
+        # Re-read the device: the retry ladder may have moved the model to CPU
+        # mid-encode, and those vectors must not enter the fast-math key space.
+        and _fast_math_write_allowed(device, _get_effective_model_device(model, resolved_device))
     ):
         cache.put_many(
             cache_scope,
@@ -2451,7 +2454,12 @@ def _find_similar_to_query_unlocked(
                 cache is not None
                 and cache_key is not None
                 and cache_revision is not None
-                and _fast_math_write_allowed(device, execution_device)
+                # Re-read the device: the retry ladder may have moved the model
+                # to CPU mid-encode, and a CPU query vector must not be
+                # persisted into the fast-math key space.
+                and _fast_math_write_allowed(
+                    device, _get_effective_model_device(model, resolved_device)
+                )
             ):
                 cache.put_many(
                     cache_scope,
