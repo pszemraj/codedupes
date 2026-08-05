@@ -100,6 +100,8 @@ from codedupes.semantic import clear_model_cache
 clear_model_cache()
 ```
 
+An `mps_memory_fraction` override is also process-global. A later analyzer that uses the default `None` restores PyTorch's environment/default high-watermark ratio before its next MPS load; clearing the model alone does not reset the allocator cap.
+
 ## Key Result Types
 
 - `AnalysisResult.units`: extracted functions, methods, and classes

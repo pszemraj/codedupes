@@ -14,6 +14,7 @@ import logging
 import math
 import os
 import sys
+import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Literal, TypeVar, cast
@@ -26,6 +27,11 @@ _T = TypeVar("_T")
 
 SemanticDeviceRequest = Literal["auto", "cpu", "cuda", "mps"]
 ResolvedSemanticDevice = Literal["cpu", "cuda", "mps"]
+
+_PYTORCH_DEFAULT_MPS_HIGH_WATERMARK_RATIO = 1.7
+_mps_memory_fraction_lock = threading.Lock()
+_mps_memory_fraction_managed = False
+_mps_memory_fraction_restore_value: float | None = None
 
 
 class DeviceConfigurationError(RuntimeError):
@@ -88,6 +94,36 @@ def validate_mps_memory_fraction(fraction: float | None) -> float | None:
     if not math.isfinite(value) or not 0.0 < value <= 2.0:
         raise ValueError("mps_memory_fraction must be finite and in the interval (0.0, 2.0]")
     return value
+
+
+def _resolve_mps_memory_fraction_restore_value() -> float:
+    """Resolve the allocator limit restored after a codedupes override.
+
+    PyTorch initializes the MPS high-watermark ratio from
+    ``PYTORCH_MPS_HIGH_WATERMARK_RATIO`` and otherwise uses ``1.7``. Its public
+    setter has no matching getter, so this environment/default value is the
+    only recoverable baseline before codedupes applies its first custom cap.
+
+    :return: PyTorch environment override or default high-watermark ratio.
+    """
+    raw = os.environ.get("PYTORCH_MPS_HIGH_WATERMARK_RATIO")
+    if raw is None:
+        return _PYTORCH_DEFAULT_MPS_HIGH_WATERMARK_RATIO
+
+    try:
+        value = float(raw)
+    except ValueError:
+        value = math.nan
+    if math.isfinite(value) and 0.0 <= value <= 2.0:
+        return value
+
+    logger.warning(
+        "Ignoring invalid PYTORCH_MPS_HIGH_WATERMARK_RATIO=%r while resolving the "
+        "allocator reset target; restoring PyTorch's default %.1f",
+        raw,
+        _PYTORCH_DEFAULT_MPS_HIGH_WATERMARK_RATIO,
+    )
+    return _PYTORCH_DEFAULT_MPS_HIGH_WATERMARK_RATIO
 
 
 def configure_mps_environment(
@@ -294,43 +330,66 @@ def configure_mps_memory_fraction(
     resolved_device: str,
     fraction: float | None,
 ) -> None:
-    """Apply an optional PyTorch MPS per-process allocator limit.
+    """Apply or restore the PyTorch MPS per-process allocator limit.
 
     :param resolved_device: Concrete semantic execution device.
     :param fraction: Allocator fraction in ``(0, 2]`` or ``None``.
     :return: ``None``.
     :raises DeviceConfigurationError: If used without MPS or unsupported by torch.
     """
+    global _mps_memory_fraction_managed, _mps_memory_fraction_restore_value
+
     value = validate_mps_memory_fraction(fraction)
-    if value is None:
+    if value is None and resolved_device != "mps":
         return
-    if resolved_device != "mps":
+    if value is not None and resolved_device != "mps":
         raise DeviceConfigurationError(
             "mps_memory_fraction was set, but semantic inference did not resolve to MPS. "
             "Remove the setting or select --device mps."
         )
 
-    torch_module = _load_torch()
-    mps = getattr(torch_module, "mps", None)
-    setter = getattr(mps, "set_per_process_memory_fraction", None)
-    if not callable(setter):
-        raise DeviceConfigurationError(
-            "This PyTorch build does not expose torch.mps.set_per_process_memory_fraction(), "
-            "which usually means it was built without MPS support. Install a macOS PyTorch "
-            "wheel with MPS support or remove the mps_memory_fraction setting."
-        )
-
-    if value > 1.0:
+    if value is not None and value > 1.0:
         logger.warning(
             f"MPS memory fraction {value:.3f} exceeds the device recommended working-set size; "
             "this can increase system-wide memory pressure"
         )
-    try:
-        setter(value)
-    except Exception as exc:
-        raise DeviceConfigurationError(
-            f"Could not set the PyTorch MPS memory fraction to {value}: {exc}"
-        ) from exc
+
+    with _mps_memory_fraction_lock:
+        if value is None and not _mps_memory_fraction_managed:
+            return
+
+        torch_module = _load_torch()
+        mps = getattr(torch_module, "mps", None)
+        setter = getattr(mps, "set_per_process_memory_fraction", None)
+        if not callable(setter):
+            raise DeviceConfigurationError(
+                "This PyTorch build does not expose "
+                "torch.mps.set_per_process_memory_fraction(), which usually means it was "
+                "built without MPS support. Install a macOS PyTorch wheel with MPS support "
+                "or remove the mps_memory_fraction setting."
+            )
+
+        restore_value = _mps_memory_fraction_restore_value
+        if not _mps_memory_fraction_managed:
+            restore_value = _resolve_mps_memory_fraction_restore_value()
+        target = restore_value if value is None else value
+        if target is None:
+            raise DeviceConfigurationError("Could not resolve the default MPS memory fraction")
+
+        try:
+            setter(target)
+        except Exception as exc:
+            action = "restore" if value is None else "set"
+            raise DeviceConfigurationError(
+                f"Could not {action} the PyTorch MPS memory fraction to {target}: {exc}"
+            ) from exc
+
+        if value is None:
+            _mps_memory_fraction_managed = False
+            _mps_memory_fraction_restore_value = None
+        else:
+            _mps_memory_fraction_managed = True
+            _mps_memory_fraction_restore_value = restore_value
 
 
 def _read_mps_memory_snapshot(torch_module: Any) -> dict[str, int]:

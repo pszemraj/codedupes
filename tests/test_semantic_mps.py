@@ -42,11 +42,14 @@ _DEFAULT_MEMORY_FRACTION = 1.7
 
 @pytest.fixture(autouse=True)
 def _reset_real_mps_state():
+    devices.configure_mps_memory_fraction("mps", None)
+    torch.mps.set_per_process_memory_fraction(_DEFAULT_MEMORY_FRACTION)
     semantic.clear_model_cache()
     semantic._warned_mlx_mps_contention = False
     yield
     semantic.clear_model_cache()
     semantic._warned_mlx_mps_contention = False
+    devices.configure_mps_memory_fraction("mps", None)
     torch.mps.set_per_process_memory_fraction(_DEFAULT_MEMORY_FRACTION)
 
 
@@ -221,7 +224,7 @@ def test_clear_model_cache_drops_mps_model_without_cpu_migration() -> None:
     assert semantic._model is None
 
 
-def test_load_oom_falls_back_to_cpu_and_reuse_warns_once(caplog) -> None:
+def test_load_oom_fallback_default_reset_allows_fresh_mps_load(caplog) -> None:
     with caplog.at_level(logging.WARNING, logger="codedupes.semantic"):
         model = semantic.get_model(
             DEFAULT_MODEL,
@@ -236,6 +239,16 @@ def test_load_oom_falls_back_to_cpu_and_reuse_warns_once(caplog) -> None:
     assert semantic._model_execution_device == "cpu"
     assert not str(getattr(model, "device", "")).startswith("mps")
     assert caplog.text.count("after an earlier mps-to-CPU OOM fallback") == 1
+
+    semantic.clear_model_cache()
+    fresh_model = semantic.get_model(
+        DEFAULT_MODEL,
+        device="mps",
+        mps_memory_fraction=None,
+    )
+
+    assert semantic._model_execution_device == "mps"
+    assert str(getattr(fresh_model, "device", "")).startswith("mps")
 
 
 def test_encode_oom_halves_batch_then_falls_back_to_cpu(tmp_path: Path, caplog) -> None:
