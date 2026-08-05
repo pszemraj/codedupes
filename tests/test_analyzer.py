@@ -32,6 +32,7 @@ _SEMANTIC_ANALYSIS_KWARG_NAMES = {
 }
 _QUERY_KWARG_NAMES = {
     "cache_scope",
+    "corpus_identity",
     "device",
     "instruction_prefix",
     "model_name",
@@ -1001,6 +1002,63 @@ def test_index_empty_corpus_yields_empty_search(tmp_path: Path) -> None:
 
     assert analyzer.index(empty) == 0
     assert analyzer.search("anything") == []
+
+
+def test_search_requires_reindex_when_local_model_contents_change(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    project = create_project(tmp_path, "def entry(x):\n    return x + 1\n")
+    model_dir = tmp_path / "local-model"
+    model_dir.mkdir()
+    (model_dir / "config.json").write_text("{}")
+    weights_path = model_dir / "model.safetensors"
+    weights_path.write_bytes(b"first weights")
+
+    monkeypatch.setattr(
+        analyzer_module,
+        "compute_embeddings",
+        lambda units, **_kwargs: np.zeros((len(units), 2), dtype=np.float32),
+    )
+    analyzer = CodeAnalyzer(
+        AnalyzerConfig(
+            model_name=str(model_dir),
+            device="cpu",
+            embedding_cache=False,
+            min_semantic_statements=0,
+        )
+    )
+    analyzer.index(project)
+
+    weights_path.write_bytes(b"second weights")
+
+    with pytest.raises(RuntimeError, match=r"changed since this corpus was indexed.*index\(\)"):
+        analyzer.search("entry")
+
+
+def test_search_requires_reindex_when_embedding_runtime_variant_changes(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    project = create_project(tmp_path, "def entry(x):\n    return x + 1\n")
+    monkeypatch.setattr(
+        analyzer_module,
+        "compute_embeddings",
+        lambda units, **_kwargs: np.zeros((len(units), 2), dtype=np.float32),
+    )
+    analyzer = CodeAnalyzer(
+        AnalyzerConfig(
+            device="cpu",
+            embedding_cache=False,
+            min_semantic_statements=0,
+        )
+    )
+    analyzer.index(project)
+
+    analyzer.config.instruction_prefix = "Represent this code differently: "
+
+    with pytest.raises(RuntimeError, match=r"changed since this corpus was indexed.*index\(\)"):
+        analyzer.search("entry")
 
 
 def test_semantic_only_fails_hard_on_runtime_semantic_error(tmp_path: Path, monkeypatch) -> None:

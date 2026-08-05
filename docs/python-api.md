@@ -72,7 +72,7 @@ An unset `AnalyzerConfig.semantic_task` resolves by operation: `index()` uses `c
 
 `index()` extracts the corpus and computes (or loads from cache) its embeddings without the all-pairs duplicate scan, traditional analysis, or unused-code analysis that `analyze()` runs, so building a search corpus stays linear in corpus size. `search()` also works after an `analyze()` run with semantic analysis enabled, when duplicate results and search share one corpus and therefore use the analysis task that produced those embeddings.
 
-Each `index()` or `analyze()` call replaces the analyzer's corpus-specific state before extraction. `search()` therefore targets only the most recent run and requires it to have semantic embeddings. A later empty or nonsemantic analysis cannot reuse an older corpus accidentally.
+Each `index()` or `analyze()` call replaces the analyzer's corpus-specific state before extraction. `search()` therefore targets only the most recent run and requires it to have semantic embeddings. A later empty or nonsemantic analysis cannot reuse an older corpus accidentally. The analyzer also binds the matrix to its canonical model, concrete Hub revision or local-directory content fingerprint, and vector-affecting runtime configuration. If any of those changes before a query—for example, local weights are replaced in place—`search()` requires a fresh `index()`/`analyze()` instead of comparing vectors from different coordinate systems. Search identities that cannot resolve a concrete revision fail closed; use a pinned revision.
 
 ## Apple Silicon configuration
 

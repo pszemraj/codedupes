@@ -135,6 +135,15 @@ class EncodePlan:
         )
 
 
+@dataclass(frozen=True)
+class EmbeddingSpaceIdentity:
+    """Identity of the coordinate system used for one corpus matrix."""
+
+    model_name: str
+    resolved_revision: str | None
+    runtime_variant: str
+
+
 def _resolve_encode_plan(
     profile: SemanticModelProfile,
     mode: Literal["code", "query"],
@@ -906,6 +915,99 @@ def _cache_variant_for(
             f"trc={int(trust_remote_code)}",
         )
     )
+
+
+def resolve_embedding_space_identity(
+    model_name: str = DEFAULT_MODEL,
+    instruction_prefix: str | None = None,
+    revision: str | None = None,
+    trust_remote_code: bool | None = None,
+    semantic_task: str | None = None,
+    device: str = DEFAULT_SEMANTIC_DEVICE,
+    mps_fallback: bool | None = None,
+    persist_local_model_manifest: bool = True,
+) -> EmbeddingSpaceIdentity:
+    """Resolve the vector-space identity for code corpus embeddings.
+
+    :param model_name: Model alias, Hub identifier, or local directory.
+    :param instruction_prefix: Optional instruction override for code inputs.
+    :param revision: Optional model revision; ``None`` uses the profile default.
+    :param trust_remote_code: Optional remote-code trust setting.
+    :param semantic_task: Semantic task used to embed the corpus.
+    :param device: Requested semantic inference device.
+    :param mps_fallback: MPS unsupported-op CPU fallback behavior.
+    :param persist_local_model_manifest: Whether local-model digests may be persisted.
+    :return: Canonical model, concrete revision/fingerprint, and runtime variant.
+    """
+    profile = resolve_model_profile(model_name)
+    resolved_task = normalize_semantic_task(
+        semantic_task,
+        default_task=DEFAULT_CHECK_SEMANTIC_TASK,
+    )
+    encode_plan = _resolve_encode_plan(profile, "code", resolved_task, instruction_prefix)
+    resolved_trust_remote_code = _resolve_trust_remote_code(model_name, trust_remote_code)
+    local_model_path = resolve_local_model_path(profile.canonical_name)
+    if local_model_path is not None:
+        resolved_revision = _fingerprint_local_model_dir(
+            local_model_path,
+            persist_manifest=persist_local_model_manifest,
+        )
+    else:
+        resolved_revision = _resolve_revision_for_cache(model_name, revision)
+
+    return EmbeddingSpaceIdentity(
+        model_name=profile.canonical_name,
+        resolved_revision=resolved_revision,
+        runtime_variant=_cache_variant_for(
+            profile,
+            device,
+            encode_plan,
+            mps_fallback=mps_fallback,
+            trust_remote_code=resolved_trust_remote_code,
+        ),
+    )
+
+
+def _require_current_embedding_space(
+    expected: EmbeddingSpaceIdentity,
+    *,
+    model_name: str,
+    instruction_prefix: str | None,
+    revision: str | None,
+    trust_remote_code: bool | None,
+    semantic_task: str,
+    device: str,
+    mps_fallback: bool | None,
+    persist_local_model_manifest: bool,
+) -> None:
+    """Require the configured corpus vector space to match its stored identity.
+
+    :param expected: Identity captured when the corpus matrix was embedded.
+    :param model_name: Current model configuration.
+    :param instruction_prefix: Current corpus instruction override.
+    :param revision: Current revision configuration.
+    :param trust_remote_code: Current remote-code trust configuration.
+    :param semantic_task: Task that produced the corpus matrix.
+    :param device: Current inference-device request.
+    :param mps_fallback: Current MPS fallback configuration.
+    :param persist_local_model_manifest: Whether local digests may be persisted.
+    :raises RuntimeError: If the identity changed or cannot be pinned concretely.
+    """
+    current = resolve_embedding_space_identity(
+        model_name=model_name,
+        instruction_prefix=instruction_prefix,
+        revision=revision,
+        trust_remote_code=trust_remote_code,
+        semantic_task=semantic_task,
+        device=device,
+        mps_fallback=mps_fallback,
+        persist_local_model_manifest=persist_local_model_manifest,
+    )
+    if current != expected or current.resolved_revision is None:
+        raise RuntimeError(
+            "The semantic model or embedding runtime changed since this corpus was indexed. "
+            "Run index() or analyze() again before search()."
+        )
 
 
 def _safe_package_version(package_name: str) -> str | None:
@@ -2303,6 +2405,7 @@ def _find_similar_to_query_unlocked(
     mps_memory_fraction: float | None = None,
     use_cache: bool = True,
     cache_scope: Path | None = None,
+    corpus_identity: EmbeddingSpaceIdentity | None = None,
 ) -> list[tuple[CodeUnit, float]]:
     """Find code units most similar to a natural-language query.
 
@@ -2330,6 +2433,8 @@ def _find_similar_to_query_unlocked(
     :param use_cache: Whether to consult/update the persistent embedding cache.
     :param cache_scope: Analyzed corpus root path used to address the cache shard;
         ``None`` disables caching for this call regardless of ``use_cache``.
+    :param corpus_identity: Optional identity captured with ``embeddings``; when
+        provided, model/revision/runtime drift requires rebuilding the corpus.
     :return: Up to ``top_k`` ``(unit, similarity)`` pairs at or above the threshold,
         sorted by descending similarity.
     :raises SemanticBackendError: If an explicitly requested device is unavailable,
@@ -2350,8 +2455,21 @@ def _find_similar_to_query_unlocked(
         semantic_task,
         default_task=DEFAULT_SEARCH_SEMANTIC_TASK,
     )
-    encode_plan = _resolve_encode_plan(profile, "query", resolved_task, instruction_prefix)
     resolved_trust_remote_code = _resolve_trust_remote_code(model_name, trust_remote_code)
+    if corpus_identity is not None:
+        _require_current_embedding_space(
+            corpus_identity,
+            model_name=model_name,
+            instruction_prefix=instruction_prefix,
+            revision=revision,
+            trust_remote_code=trust_remote_code,
+            semantic_task=resolved_task,
+            device=device,
+            mps_fallback=mps_fallback,
+            persist_local_model_manifest=use_cache and cache_scope is not None,
+        )
+
+    encode_plan = _resolve_encode_plan(profile, "query", resolved_task, instruction_prefix)
     query_text = query
 
     cache, cache_revision, cache_variant, cache_namespace = _prepare_cache_context(
@@ -2414,12 +2532,18 @@ def _find_similar_to_query_unlocked(
         )
         execution_device = _get_effective_model_device(model, resolved_device)
 
-        if cache is not None:
-            confirmed_revision = _confirm_cache_revision_after_load(
-                model,
-                model_name,
-                resolved_revision,
+        confirmed_revision = _confirm_cache_revision_after_load(
+            model,
+            model_name,
+            resolved_revision,
+        )
+        if corpus_identity is not None and confirmed_revision != corpus_identity.resolved_revision:
+            raise RuntimeError(
+                "The semantic model changed while preparing this search query. "
+                "Run index() or analyze() again before search()."
             )
+
+        if cache is not None:
             if confirmed_revision is None:
                 logger.debug(
                     "Could not tie the loaded model to a concrete revision; "
@@ -2504,6 +2628,7 @@ def find_similar_to_query(
     mps_memory_fraction: float | None = None,
     use_cache: bool = True,
     cache_scope: Path | None = None,
+    corpus_identity: EmbeddingSpaceIdentity | None = None,
 ) -> list[tuple[CodeUnit, float]]:
     """Search embeddings while serializing shared-model lifecycle and inference.
 
@@ -2527,6 +2652,8 @@ def find_similar_to_query(
     :param use_cache: Whether to consult/update the persistent embedding cache.
     :param cache_scope: Analyzed corpus root path used to address the cache shard;
         ``None`` disables caching for this call regardless of ``use_cache``.
+    :param corpus_identity: Optional identity captured with ``embeddings``; when
+        provided, model/revision/runtime drift requires rebuilding the corpus.
     :return: Up to ``top_k`` ``(unit, similarity)`` pairs at or above the threshold,
         sorted by descending similarity.
     """
@@ -2547,6 +2674,7 @@ def find_similar_to_query(
             mps_memory_fraction=mps_memory_fraction,
             use_cache=use_cache,
             cache_scope=cache_scope,
+            corpus_identity=corpus_identity,
         )
 
 

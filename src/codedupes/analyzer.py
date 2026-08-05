@@ -23,10 +23,12 @@ from codedupes.extractor import CodeExtractor
 from codedupes.models import AnalysisResult, CodeUnit, CodeUnitType, DuplicatePair, HybridDuplicate
 from codedupes.pairs import ordered_pair_key
 from codedupes.semantic import (
+    EmbeddingSpaceIdentity,
     SemanticBackendError,
     compute_embeddings,
     get_code_unit_statement_count,
     get_semantic_runtime_versions,
+    resolve_embedding_space_identity,
     run_semantic_analysis,
 )
 from codedupes.semantic_profiles import get_default_semantic_threshold
@@ -466,6 +468,7 @@ class CodeAnalyzer:
         self._embeddings: np.ndarray | None = None
         self._semantic_units: list[CodeUnit] | None = None
         self._resolved_search_semantic_task: str | None = None
+        self._embedding_space_identity: EmbeddingSpaceIdentity | None = None
         self._cache_scope: Path | None = None
 
     def _reset_analysis_state(self, cache_scope: Path) -> None:
@@ -478,7 +481,25 @@ class CodeAnalyzer:
         self._embeddings = None
         self._semantic_units = None
         self._resolved_search_semantic_task = None
+        self._embedding_space_identity = None
         self._cache_scope = cache_scope
+
+    def _resolve_corpus_embedding_space(self, semantic_task: str) -> EmbeddingSpaceIdentity:
+        """Snapshot the model/runtime identity used for corpus embeddings.
+
+        :param semantic_task: Resolved semantic task used for the corpus.
+        :return: Concrete corpus embedding-space identity.
+        """
+        return resolve_embedding_space_identity(
+            model_name=self.config.model_name,
+            instruction_prefix=self.config.instruction_prefix,
+            revision=self.config.model_revision,
+            trust_remote_code=self.config.trust_remote_code,
+            semantic_task=semantic_task,
+            device=self.config.device,
+            mps_fallback=self.config.mps_fallback,
+            persist_local_model_manifest=self.config.embedding_cache,
+        )
 
     def _extract_corpus_units(self, path: Path) -> list[CodeUnit]:
         """Extract code units from a resolved directory or single-file path.
@@ -607,6 +628,7 @@ class CodeAnalyzer:
                 exclude = find_exact_pair_keys(semantic_candidates)
 
             try:
+                self._embedding_space_identity = self._resolve_corpus_embedding_space(semantic_task)
                 semantic_kwargs: dict[str, object] = {
                     "model_name": self.config.model_name,
                     "instruction_prefix": self.config.instruction_prefix,
@@ -627,6 +649,7 @@ class CodeAnalyzer:
                     **semantic_kwargs,
                 )
             except (ModuleNotFoundError, SemanticBackendError, RuntimeError) as exc:
+                self._embedding_space_identity = None
                 # If semantic is the only duplicate-detection method requested,
                 # fail hard instead of silently degrading to unused-only output.
                 if not self.config.run_traditional:
@@ -737,21 +760,28 @@ class CodeAnalyzer:
         )
         semantic_candidates = self._select_semantic_candidates(units)
         self._semantic_units = semantic_candidates
-
-        self._embeddings = compute_embeddings(
-            semantic_candidates,
-            model_name=self.config.model_name,
-            instruction_prefix=self.config.instruction_prefix,
-            batch_size=self.config.batch_size,
-            revision=self.config.model_revision,
-            trust_remote_code=self.config.trust_remote_code,
-            semantic_task=self._resolved_search_semantic_task,
-            device=self.config.device,
-            mps_fallback=self.config.mps_fallback,
-            mps_memory_fraction=self.config.mps_memory_fraction,
-            use_cache=self.config.embedding_cache,
-            cache_scope=self._cache_scope,
+        self._embedding_space_identity = self._resolve_corpus_embedding_space(
+            self._resolved_search_semantic_task
         )
+
+        try:
+            self._embeddings = compute_embeddings(
+                semantic_candidates,
+                model_name=self.config.model_name,
+                instruction_prefix=self.config.instruction_prefix,
+                batch_size=self.config.batch_size,
+                revision=self.config.model_revision,
+                trust_remote_code=self.config.trust_remote_code,
+                semantic_task=self._resolved_search_semantic_task,
+                device=self.config.device,
+                mps_fallback=self.config.mps_fallback,
+                mps_memory_fraction=self.config.mps_memory_fraction,
+                use_cache=self.config.embedding_cache,
+                cache_scope=self._cache_scope,
+            )
+        except Exception:
+            self._embedding_space_identity = None
+            raise
         return len(semantic_candidates)
 
     def search(self, query: str, top_k: int = 10) -> list[tuple[CodeUnit, float]]:
@@ -798,6 +828,7 @@ class CodeAnalyzer:
             mps_memory_fraction=self.config.mps_memory_fraction,
             use_cache=self.config.embedding_cache,
             cache_scope=self._cache_scope,
+            corpus_identity=self._embedding_space_identity,
         )
 
 
