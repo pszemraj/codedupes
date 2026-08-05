@@ -888,6 +888,26 @@ def test_narrow_invocation_keeps_full_directory_run_warm(tmp_path, monkeypatch):
     assert EmbeddingCache().stats()["entries"] == 5
 
 
+def test_get_embedding_cache_degrades_when_construction_raises(monkeypatch, caplog):
+    monkeypatch.setattr(embedding_cache, "_warned_cache_error", False)
+    monkeypatch.delenv("CODEDUPES_NO_CACHE", raising=False)
+    monkeypatch.delenv("CODEDUPES_CACHE_DIR", raising=False)
+    monkeypatch.delenv("XDG_CACHE_HOME", raising=False)
+
+    def raising_home():
+        raise RuntimeError("Could not determine home directory")
+
+    monkeypatch.setattr(Path, "home", raising_home)
+
+    with caplog.at_level("WARNING"):
+        cache = embedding_cache.get_embedding_cache()
+
+    # Construction failure degrades to the same disabled shape as
+    # CODEDUPES_NO_CACHE, never raises into the caller (analysis path).
+    assert cache is None
+    assert "Embedding cache initialize failed" in caplog.text
+
+
 def test_resolve_cache_dir_env_precedence(monkeypatch, tmp_path):
     monkeypatch.delenv("CODEDUPES_CACHE_DIR", raising=False)
     monkeypatch.delenv("XDG_CACHE_HOME", raising=False)

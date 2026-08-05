@@ -1100,8 +1100,12 @@ class EmbeddingCache:
         """Bind a cache handle to a cache root directory.
 
         :param cache_root: Explicit cache root, defaults to :func:`resolve_cache_dir`.
+            Always fully resolved (symlinks dereferenced, relative paths
+            absolutized) so an unresolved spelling of one physical root can
+            never split the advisory-lock domain :func:`_shard_lock_path` keys
+            on resolved paths.
         """
-        self.cache_root = cache_root or resolve_cache_dir()
+        self.cache_root = (cache_root or resolve_cache_dir()).resolve()
 
     @property
     def repos_dir(self) -> Path:
@@ -1287,9 +1291,18 @@ class EmbeddingCache:
 def get_embedding_cache() -> EmbeddingCache | None:
     """Build a fresh embedding cache handle unless caching is globally disabled.
 
+    Construction itself (resolving the cache root, which may call ``Path.home()``)
+    is wrapped like every other public cache operation: a failure here must
+    degrade to the same cache-disabled shape ``CODEDUPES_NO_CACHE`` produces,
+    never propagate into the analysis path.
+
     :return: New :class:`EmbeddingCache` instance, or ``None`` when
-        ``CODEDUPES_NO_CACHE`` is set.
+        ``CODEDUPES_NO_CACHE`` is set or cache construction itself fails.
     """
     if is_cache_disabled():
         return None
-    return EmbeddingCache()
+    try:
+        return EmbeddingCache()
+    except Exception as exc:  # noqa: BLE001 - cache construction must never break analysis
+        _warn_once("initialize", exc)
+        return None
