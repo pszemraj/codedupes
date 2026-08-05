@@ -271,6 +271,27 @@ def test_encode_oom_halves_batch_then_falls_back_to_cpu(tmp_path: Path, caplog) 
     assert all("tensor=" in message for message in oom_warnings)
 
 
+def test_fast_math_keyed_encode_oom_skips_cache_writes(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("PYTORCH_MPS_FAST_MATH", "1")
+    units = extract_arithmetic_units(tmp_path)
+    semantic.get_model(DEFAULT_MODEL, device="mps")
+
+    # The model's weights already exceed the lowered ceiling, so the encode
+    # itself hits the allocator's genuine OOM and lands on CPU mid-encode.
+    torch.mps.set_per_process_memory_fraction(_TINY_MEMORY_FRACTION)
+
+    embeddings = semantic.compute_embeddings(
+        units, device="mps", batch_size=8, cache_scope=tmp_path
+    )
+
+    assert semantic._model_execution_device == "cpu"
+    assert embeddings.shape[0] == len(units)
+    # The run was keyed for fast math but executed on CPU, so nothing may be
+    # published: the fast-math key space stays unmixed on real mid-encode
+    # fallbacks, not just the simulated ones in test_embedding_cache.
+    assert not list((tmp_path / "embedding-cache").rglob("vectors-*.npy"))
+
+
 def test_query_oom_recovers_on_cpu(tmp_path: Path) -> None:
     units = extract_arithmetic_units(tmp_path)
     embeddings = semantic.compute_embeddings(units, device="cpu", use_cache=False)
