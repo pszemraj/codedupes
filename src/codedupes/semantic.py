@@ -908,7 +908,11 @@ def _dtype_variant_for(
         device,
         mps_fallback=mps_fallback,
     )
-    selected_dtype = _resolve_model_dtype(profile.family, concrete_device)
+    selected_dtype = _resolve_model_dtype(
+        profile.family,
+        concrete_device,
+        persist_machine_record=persist_machine_record,
+    )
     dtype_name = str(selected_dtype) if selected_dtype is not None else "default"
     if dtype_name in {"float32", "fp32", "torch.float32"}:
         return ""
@@ -1616,7 +1620,7 @@ def get_code_unit_statement_count(unit: CodeUnit) -> int:
     return counter.count
 
 
-def _resolve_model_dtype(family: str, device: str) -> Any:
+def _resolve_model_dtype(family: str, device: str, *, persist_machine_record: bool = True) -> Any:
     """Choose the explicitly pinned dtype for one model family and device.
 
     Transformers 5 loads checkpoints in their config-declared dtype by default
@@ -1643,6 +1647,9 @@ def _resolve_model_dtype(family: str, device: str) -> Any:
 
     :param family: Resolved model profile family, reserved for per-family policy.
     :param device: Concrete execution device.
+    :param persist_machine_record: Whether the on-disk CPU capability record may
+        be read from and written to; ``--no-cache`` runs must leave the cache
+        root untouched even when they load a model, defaults to ``True``.
     :return: Dtype object for Torch model loading.
     """
     import torch
@@ -1657,10 +1664,7 @@ def _resolve_model_dtype(family: str, device: str) -> Any:
     ):
         return torch.bfloat16
 
-    # persist=True: an actual model load (or CPU dtype re-pin after an
-    # accelerator OOM) is real semantic work, not a for-info-only identity
-    # computation, so the capability record is always allowed to persist here.
-    if device == "cpu" and resolve_cpu_bf16_native():
+    if device == "cpu" and resolve_cpu_bf16_native(persist=persist_machine_record):
         return torch.bfloat16
 
     return torch.float32
@@ -1771,7 +1775,11 @@ def _get_model_unlocked(
         processor_kwargs: dict[str, object] = {}
         config_kwargs: dict[str, object] = {}
 
-        selected_dtype = _resolve_model_dtype(profile.family, resolved_device)
+        selected_dtype = _resolve_model_dtype(
+            profile.family,
+            resolved_device,
+            persist_machine_record=persist_local_model_manifest,
+        )
         model_kwargs["dtype"] = selected_dtype
         logger.info(f"Pinning torch dtype on {resolved_device}: {selected_dtype}")
 
@@ -1824,7 +1832,11 @@ def _get_model_unlocked(
                         cpu_model_kwargs = dict(
                             cast(dict[str, object], cpu_kwargs.get("model_kwargs") or {})
                         )
-                        cpu_model_kwargs["dtype"] = _resolve_model_dtype(profile.family, "cpu")
+                        cpu_model_kwargs["dtype"] = _resolve_model_dtype(
+                            profile.family,
+                            "cpu",
+                            persist_machine_record=persist_local_model_manifest,
+                        )
                         cpu_kwargs["model_kwargs"] = cpu_model_kwargs
                     try:
                         loaded_model = SentenceTransformer(resolved_model_name, **cpu_kwargs)
@@ -2018,7 +2030,10 @@ def _move_model_to_cpu(model: object) -> None:
     if hasattr(model, "to"):
         current_dtype = _model_parameter_dtype(model)
         if current_dtype is not None and str(current_dtype) == "torch.bfloat16":
-            if resolve_cpu_bf16_native():
+            # persist=False: the encode ladder has no cache-enablement context
+            # here, and torch is already imported, so a live probe is cheap and
+            # a --no-cache run stays free of cache-root writes.
+            if resolve_cpu_bf16_native(persist=False):
                 logger.info(
                     "CPU fallback keeps bfloat16: this CPU has a native bf16 GEMM backend "
                     "(mkldnn), halving memory pressure at native speed"

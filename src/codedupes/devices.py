@@ -357,13 +357,18 @@ def _resolve_machine_record_path() -> Path | None:
 
     Imports :mod:`codedupes.embedding_cache` lazily (it has no dependency back
     on this module, so there is no import cycle) and only when a record lookup
-    is actually needed.
+    is actually needed. The embedding cache's own ``CODEDUPES_NO_CACHE`` kill
+    switch is honored through its :func:`~codedupes.embedding_cache.is_cache_disabled`
+    so the two can never drift apart.
 
-    :return: Record path, or ``None`` when the cache root cannot be resolved.
+    :return: Record path, or ``None`` when caching is disabled or the cache
+        root cannot be resolved.
     """
     try:
-        from codedupes.embedding_cache import resolve_cache_dir
+        from codedupes.embedding_cache import is_cache_disabled, resolve_cache_dir
 
+        if is_cache_disabled():
+            return None
         return resolve_cache_dir() / _MACHINE_RECORD_FILENAME
     except Exception:
         logger.debug("Could not resolve the CPU capability record path", exc_info=True)
@@ -435,13 +440,7 @@ def resolve_cpu_bf16_native(*, persist: bool = True) -> bool:
         defaults to ``True``.
     :return: ``True`` iff native bf16 ISA is present and a GEMM backend can use it.
     """
-    no_cache = os.environ.get("CODEDUPES_NO_CACHE", "").strip().lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }
-    record_path = None if (no_cache or not persist) else _resolve_machine_record_path()
+    record_path = _resolve_machine_record_path() if persist else None
 
     if record_path is not None:
         cached_verdict = _read_machine_record(record_path)

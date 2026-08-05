@@ -570,21 +570,34 @@ def test_cuda_bf16_selection_excludes_emulated_support(monkeypatch) -> None:
 
 
 def test_resolve_model_dtype_cpu_follows_capability_gate(monkeypatch) -> None:
-    monkeypatch.setattr(semantic, "resolve_cpu_bf16_native", lambda: True)
+    monkeypatch.setattr(semantic, "resolve_cpu_bf16_native", lambda **_kwargs: True)
     assert semantic._resolve_model_dtype("test-model", "cpu") is torch.bfloat16
 
-    monkeypatch.setattr(semantic, "resolve_cpu_bf16_native", lambda: False)
+    monkeypatch.setattr(semantic, "resolve_cpu_bf16_native", lambda **_kwargs: False)
     assert semantic._resolve_model_dtype("test-model", "cpu") is torch.float32
+
+
+def test_resolve_model_dtype_no_persist_leaves_cache_root_untouched(tmp_path, monkeypatch) -> None:
+    # A --no-cache run that loads a model on CPU must not create machine.json:
+    # the documented promise is that the on-disk cache stays untouched.
+    monkeypatch.setenv("CODEDUPES_CACHE_DIR", str(tmp_path / "cache"))
+    monkeypatch.delenv("CODEDUPES_NO_CACHE", raising=False)
+
+    semantic._resolve_model_dtype("test-model", "cpu", persist_machine_record=False)
+    assert not (tmp_path / "cache").exists()
+
+    semantic._resolve_model_dtype("test-model", "cpu")
+    assert (tmp_path / "cache" / "machine.json").exists()
 
 
 def test_resolve_model_dtype_mps_always_float32_regardless_of_cpu_gate(monkeypatch) -> None:
     # MPS is never CPU: the gate must not leak into the MPS branch.
-    monkeypatch.setattr(semantic, "resolve_cpu_bf16_native", lambda: True)
+    monkeypatch.setattr(semantic, "resolve_cpu_bf16_native", lambda **_kwargs: True)
     assert semantic._resolve_model_dtype("test-model", "mps") is torch.float32
 
 
 def test_dtype_variant_for_mps_is_always_empty(monkeypatch) -> None:
-    monkeypatch.setattr(semantic, "resolve_cpu_bf16_native", lambda: True)
+    monkeypatch.setattr(semantic, "resolve_cpu_bf16_native", lambda **_kwargs: True)
     profile = semantic.resolve_model_profile("gte-modernbert-base")
 
     assert semantic._dtype_variant_for(profile, "mps", mps_fallback=None) == ""

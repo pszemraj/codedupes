@@ -142,7 +142,7 @@ def test_embeddinggemma_cache_variant_scopes_only_nondefault_dtype(monkeypatch):
     monkeypatch.setattr(
         semantic,
         "_resolve_model_dtype",
-        lambda _family, _device: selected_dtype["value"],
+        lambda _family, _device, **_kwargs: selected_dtype["value"],
     )
 
     assert semantic._dtype_variant_for(profile, "cuda", mps_fallback=None) == "dtype=torch.bfloat16"
@@ -161,7 +161,7 @@ def test_cuda_dtype_variant_applies_to_every_family(monkeypatch):
     monkeypatch.setattr(
         semantic,
         "_resolve_model_dtype",
-        lambda _family, _device: "torch.bfloat16",
+        lambda _family, _device, **_kwargs: "torch.bfloat16",
     )
 
     assert semantic._dtype_variant_for(profile, "cuda", mps_fallback=None) == "dtype=torch.bfloat16"
