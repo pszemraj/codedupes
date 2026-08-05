@@ -17,6 +17,16 @@ from codedupes import devices
 from codedupes.devices import DeviceConfigurationError
 
 
+def test_describe_mps_fallback_env_matches_torch_interpretation() -> None:
+    assert devices.describe_mps_fallback_env(None) == "disabled"
+    assert devices.describe_mps_fallback_env("unset") == "disabled"
+    assert devices.describe_mps_fallback_env("0") == "disabled"
+    assert devices.describe_mps_fallback_env("1") == "enabled"
+    # torch enables the fallback for any set value except the literal "0".
+    assert devices.describe_mps_fallback_env("false") == "enabled"
+    assert devices.describe_mps_fallback_env("") == "enabled"
+
+
 def test_normalize_semantic_device() -> None:
     assert devices.normalize_semantic_device(None) == "auto"
     assert devices.normalize_semantic_device(" MPS ") == "mps"

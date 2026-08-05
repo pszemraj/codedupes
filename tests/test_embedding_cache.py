@@ -216,6 +216,14 @@ def test_cache_variant_keys_mps_fast_math_policy(monkeypatch):
     monkeypatch.setenv("PYTORCH_MPS_FAST_MATH", "1")
     assert semantic._cache_variant_for(profile, "mps", plan, mps_fallback=None) != baseline
 
+    # torch enables fast math for any set value except the literal "0": the
+    # empty string and whitespace-wrapped zeros must key as fast-math variants.
+    monkeypatch.setenv("PYTORCH_MPS_FAST_MATH", "")
+    assert semantic._cache_variant_for(profile, "mps", plan, mps_fallback=None) != baseline
+    monkeypatch.setenv("PYTORCH_MPS_FAST_MATH", " 0")
+    assert semantic._cache_variant_for(profile, "mps", plan, mps_fallback=None) != baseline
+    monkeypatch.setenv("PYTORCH_MPS_FAST_MATH", "1")
+
     # Devices that can never execute Metal kernels ignore the policy.
     assert semantic._cache_variant_for(profile, "cpu", plan, mps_fallback=None) == cpu_baseline
 

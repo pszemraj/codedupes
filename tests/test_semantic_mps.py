@@ -271,6 +271,18 @@ def test_encode_oom_halves_batch_then_falls_back_to_cpu(tmp_path: Path, caplog) 
     assert all("tensor=" in message for message in oom_warnings)
 
 
+def test_oversized_buffer_allocation_classifies_as_mps_oom() -> None:
+    limit = torch._C._mps_maxBufferLength()
+    with pytest.raises(RuntimeError) as excinfo:
+        torch.empty(limit + 16, dtype=torch.uint8, device="mps")
+
+    # The real allocator message is "Invalid buffer size: <n>" with no
+    # "out of memory" phrase; it must still classify as MPS so the batch-halving
+    # ladder engages instead of re-raising.
+    assert "out of memory" not in str(excinfo.value).lower()
+    assert semantic._classify_oom_device(excinfo.value, "mps") == "mps"
+
+
 def test_fast_math_keyed_encode_oom_skips_cache_writes(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("PYTORCH_MPS_FAST_MATH", "1")
     units = extract_arithmetic_units(tmp_path)

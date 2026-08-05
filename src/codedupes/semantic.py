@@ -840,8 +840,11 @@ def _mps_fast_math_variant(device: str | None) -> str:
         normalized_device == "auto" and sys.platform == "darwin"
     ):
         return ""
-    raw = os.environ.get("PYTORCH_MPS_FAST_MATH", "").strip()
-    if raw in {"", "0"}:
+    raw = os.environ.get("PYTORCH_MPS_FAST_MATH")
+    # Mirror torch's own decision exactly: fast math is enabled whenever the
+    # variable is set to anything except the literal string "0" - an empty
+    # string and whitespace-wrapped zeros all enable it in the Metal compiler.
+    if raw is None or raw == "0":
         return ""
     return f"mpsfm={raw}"
 
@@ -1575,6 +1578,10 @@ def _classify_oom_device(error: RuntimeError, active_device: str) -> str | None:
         or "mps out of memory" in message
         or ("mps" in message and "out of memory" in message)
         or ("metal" in message and "out of memory" in message)
+        # The MPS allocator rejects a single buffer above Metal's per-buffer cap
+        # with "Invalid buffer size: <n>" - no "out of memory" phrase - and batch
+        # halving is the correct recovery for that failure too.
+        or "invalid buffer size" in message
     ):
         return "mps"
     if "out of memory" in message or "cannot allocate memory" in message:

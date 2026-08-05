@@ -126,6 +126,22 @@ def configure_mps_environment(
         )
 
 
+def describe_mps_fallback_env(value: str | None) -> str:
+    """Describe how PyTorch interprets a ``PYTORCH_ENABLE_MPS_FALLBACK`` value.
+
+    PyTorch enables the operator CPU fallback whenever the variable is set to
+    anything except the literal string ``0`` - ``false``, ``no``, and even the
+    empty string all enable it - so diagnostics must not present the raw value
+    as the decision.
+
+    :param value: Raw environment value, or ``None``/``"unset"`` when absent.
+    :return: ``"enabled"`` or ``"disabled"``.
+    """
+    if value is None or value in {"unset", "0"}:
+        return "disabled"
+    return "enabled"
+
+
 def _load_torch() -> Any:
     """Import PyTorch lazily.
 

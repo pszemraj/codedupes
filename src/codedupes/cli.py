@@ -39,6 +39,7 @@ from codedupes.constants import (
 )
 from codedupes.devices import (
     configure_mps_environment,
+    describe_mps_fallback_env,
     format_mps_memory_snapshot,
     get_device_diagnostics,
 )
@@ -1434,7 +1435,10 @@ def info_command() -> None:
     click.echo(f"Resolved semantic device: {diagnostics.resolved or 'unavailable'}")
     click.echo(f"CUDA available: {diagnostics.cuda_available}")
     click.echo(f"MPS built/available: {diagnostics.mps_built}/{diagnostics.mps_available}")
-    click.echo(f"PYTORCH_ENABLE_MPS_FALLBACK: {diagnostics.mps_fallback_env}")
+    click.echo(
+        f"PYTORCH_ENABLE_MPS_FALLBACK: {diagnostics.mps_fallback_env} "
+        f"(torch reads this as: {describe_mps_fallback_env(diagnostics.mps_fallback_env)})"
+    )
     click.echo(
         f"MLX loaded in process: {diagnostics.mlx_loaded} "
         "(MLX allocator is not managed by codedupes)"
