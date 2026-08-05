@@ -104,7 +104,7 @@ def test_full_cache_hit_skips_model_load_and_encode(tmp_path, monkeypatch):
     np.testing.assert_array_equal(first, second)
 
 
-def test_symbolic_revision_revalidates_before_cache_hit(tmp_path, monkeypatch):
+def test_strict_symbolic_revision_revalidates_before_cache_hit(tmp_path, monkeypatch):
     units = _five_units(tmp_path)
     model = CountingModel()
     get_model_counts = _patch_get_model(monkeypatch, model)
@@ -116,12 +116,14 @@ def test_symbolic_revision_revalidates_before_cache_hit(tmp_path, monkeypatch):
         model_name="test-model",
         revision="main",
         cache_scope=tmp_path,
+        strict_revision_cache=True,
     )
     second = compute_embeddings(
         units,
         model_name="test-model",
         revision="main",
         cache_scope=tmp_path,
+        strict_revision_cache=True,
     )
 
     assert get_model_counts["count"] == 2
@@ -446,14 +448,22 @@ def test_shuffled_partial_hit_matches_fully_uncached_compute(tmp_path, monkeypat
     np.testing.assert_allclose(cached_result, uncached_result)
 
 
-def test_revision_drift_after_model_load_discards_stale_prefetched_hits(tmp_path, monkeypatch):
+def test_strict_revision_drift_after_model_load_discards_stale_prefetched_hits(
+    tmp_path, monkeypatch
+):
     units = _five_units(tmp_path)
     model = CountingModel()
     _patch_get_model(monkeypatch, model)
 
     monkeypatch.setattr(semantic, "_resolve_hf_cached_revision", lambda _model: "rev-a")
     monkeypatch.setattr(semantic, "_get_loaded_model_commit_hash", lambda _model: "rev-a")
-    compute_embeddings(units, model_name="drift-model", revision=None, cache_scope=tmp_path)
+    compute_embeddings(
+        units,
+        model_name="drift-model",
+        revision=None,
+        cache_scope=tmp_path,
+        strict_revision_cache=True,
+    )
     assert len(model.encode_calls) == 1
     assert len(model.encode_calls[0]) == 5
 
@@ -463,7 +473,11 @@ def test_revision_drift_after_model_load_discards_stale_prefetched_hits(tmp_path
     monkeypatch.setattr(semantic, "_get_loaded_model_commit_hash", lambda _model: "rev-b")
 
     result = compute_embeddings(
-        mixed_units, model_name="drift-model", revision=None, cache_scope=tmp_path
+        mixed_units,
+        model_name="drift-model",
+        revision=None,
+        cache_scope=tmp_path,
+        strict_revision_cache=True,
     )
 
     assert len(model.encode_calls) == 2
@@ -1022,17 +1036,21 @@ def test_clear_counts_entries_added_before_lock_acquisition(tmp_path, monkeypatc
     assert cache.clear() == 2
 
 
-def test_unconfirmable_loaded_revision_disables_cache(tmp_path, monkeypatch):
+def test_strict_unconfirmable_loaded_revision_disables_cache(tmp_path, monkeypatch):
     units = _five_units(tmp_path)
     model = CountingModel()
     get_model_counts = _patch_get_model(monkeypatch, model)
     monkeypatch.setattr(semantic, "_resolve_hf_cached_revision", lambda _model: "rev-a")
     monkeypatch.setattr(semantic, "_get_loaded_model_commit_hash", lambda _model: None)
 
-    first = compute_embeddings(units, model_name="test-model", cache_scope=tmp_path)
+    first = compute_embeddings(
+        units, model_name="test-model", cache_scope=tmp_path, strict_revision_cache=True
+    )
     assert len(model.encode_calls) == 1
 
-    second = compute_embeddings(units, model_name="test-model", cache_scope=tmp_path)
+    second = compute_embeddings(
+        units, model_name="test-model", cache_scope=tmp_path, strict_revision_cache=True
+    )
     assert get_model_counts["count"] == 2
     assert len(model.encode_calls) == 2
     assert EmbeddingCache().stats()["entries"] == 0
