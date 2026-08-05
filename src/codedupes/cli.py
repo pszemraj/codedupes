@@ -1443,6 +1443,13 @@ def info_command() -> None:
         f"MLX loaded in process: {diagnostics.mlx_loaded} "
         "(MLX allocator is not managed by codedupes)"
     )
+    click.echo(
+        f"CPU: {diagnostics.cpu_name or 'unknown'} ({diagnostics.cpu_architecture or 'unknown'})"
+    )
+    click.echo(
+        f"CPU bfloat16 GEMM capable: {diagnostics.cpu_bf16_native} "
+        f"(native bf16 ISA={diagnostics.cpu_bf16_isa}, mkldnn available={diagnostics.cpu_mkldnn_available})"
+    )
     if diagnostics.mps_memory_bytes:
         click.echo(f"MPS memory: {format_mps_memory_snapshot(diagnostics.mps_memory_bytes)}")
     if diagnostics.error is not None:

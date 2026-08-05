@@ -78,7 +78,7 @@ Options, in addition to the [shared options](#options-shared-by-check-and-search
 
 ## `codedupes info`
 
-Print version and runtime versions, the effective default model and pinned revision, the built-in alias table, per-task semantic thresholds, analysis defaults (minimum statements, exclude globs, output width), resolved device capabilities, MPS memory statistics when available, whether MLX is already loaded in the process, and an embedding-cache summary (path, entry count, size on disk).
+Print version and runtime versions, the effective default model and pinned revision, the built-in alias table, per-task semantic thresholds, analysis defaults (minimum statements, exclude globs, output width), resolved device capabilities, MPS memory statistics when available, whether MLX is already loaded in the process, CPU identity and its capability-gated bfloat16 verdict (native ISA and mkldnn availability, see [Accelerators](accelerators.md#precision-and-metal-environment-variables)), and an embedding-cache summary (path, entry count, size on disk).
 
 ## `codedupes cache info`
 
