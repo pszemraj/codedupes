@@ -9,7 +9,9 @@ state, so nothing here simulates MPS.
 
 from __future__ import annotations
 
+import json
 import math
+from pathlib import Path
 
 import pytest
 
@@ -127,3 +129,163 @@ def test_explicit_cuda_request_fails_for_real_without_cuda() -> None:
 def test_mps_memory_fraction_rejected_for_non_mps_device() -> None:
     with pytest.raises(DeviceConfigurationError, match="did not resolve to MPS"):
         devices.configure_mps_memory_fraction("cpu", 0.8)
+
+
+def test_cpu_bf16_capability_matches_live_isa_and_mkldnn_conjunction() -> None:
+    torch = pytest.importorskip("torch")
+
+    caps = torch.cpu.get_capabilities()
+    architecture = str(caps.get("architecture", "")).lower()
+    if "arm" in architecture or "aarch64" in architecture:
+        expected_isa = bool(caps.get("bf16"))
+    else:
+        expected_isa = bool(caps.get("amx_bf16")) or bool(caps.get("avx512_bf16"))
+    expected = expected_isa and torch.backends.mkldnn.is_available()
+
+    assert devices.cpu_bf16_capability(torch) is expected
+
+
+def test_cpu_bf16_capability_defensive_on_probe_failure() -> None:
+    class BrokenTorch:
+        class cpu:  # mirrors torch's module-shaped attribute access
+            @staticmethod
+            def get_capabilities():
+                raise RuntimeError("boom")
+
+    assert devices.cpu_bf16_capability(BrokenTorch) is False
+
+
+def _machine_record_path(cache_dir: Path) -> Path:
+    """Resolve the on-disk machine-capability record path under a cache dir.
+
+    :param cache_dir: Root cache directory used for this test.
+    :return: Expected ``machine.json`` path.
+    """
+    return cache_dir / devices._MACHINE_RECORD_FILENAME
+
+
+def test_resolve_cpu_bf16_native_persists_a_fresh_probe(tmp_path: Path, monkeypatch) -> None:
+    pytest.importorskip("torch")
+    monkeypatch.setenv("CODEDUPES_CACHE_DIR", str(tmp_path))
+
+    verdict = devices.resolve_cpu_bf16_native()
+
+    record_path = _machine_record_path(tmp_path)
+    assert record_path.is_file()
+    payload = json.loads(record_path.read_text(encoding="utf-8"))
+    assert payload == {
+        "torch": devices.importlib_metadata.version("torch"),
+        "cpu_bf16_native": verdict,
+    }
+
+
+def test_resolve_cpu_bf16_native_trusts_a_valid_record_without_probing(
+    tmp_path: Path, monkeypatch
+) -> None:
+    pytest.importorskip("torch")
+    monkeypatch.setenv("CODEDUPES_CACHE_DIR", str(tmp_path))
+    record_path = _machine_record_path(tmp_path)
+    record_path.write_text(
+        json.dumps({"torch": devices.importlib_metadata.version("torch"), "cpu_bf16_native": True}),
+        encoding="utf-8",
+    )
+
+    def _fail_if_probed() -> None:
+        raise AssertionError("a valid record must be trusted without a live probe")
+
+    monkeypatch.setattr(devices, "_load_torch", _fail_if_probed)
+
+    assert devices.resolve_cpu_bf16_native() is True
+
+
+def test_resolve_cpu_bf16_native_reprobes_on_stale_torch_version(
+    tmp_path: Path, monkeypatch
+) -> None:
+    pytest.importorskip("torch")
+    monkeypatch.setenv("CODEDUPES_CACHE_DIR", str(tmp_path))
+    record_path = _machine_record_path(tmp_path)
+    record_path.write_text(
+        json.dumps({"torch": "0.0.0-does-not-exist", "cpu_bf16_native": True}),
+        encoding="utf-8",
+    )
+
+    # A stale-version record is untrusted, so this falls back to the live
+    # probe and overwrites the record with the current torch version.
+    devices.resolve_cpu_bf16_native()
+
+    payload = json.loads(record_path.read_text(encoding="utf-8"))
+    assert payload["torch"] == devices.importlib_metadata.version("torch")
+
+
+def test_resolve_cpu_bf16_native_reprobes_on_corrupt_json(tmp_path: Path, monkeypatch) -> None:
+    pytest.importorskip("torch")
+    monkeypatch.setenv("CODEDUPES_CACHE_DIR", str(tmp_path))
+    record_path = _machine_record_path(tmp_path)
+    record_path.write_text("{not valid json", encoding="utf-8")
+
+    probed = {"called": False}
+    real_load_torch = devices._load_torch
+
+    def _tracking_load_torch():
+        probed["called"] = True
+        return real_load_torch()
+
+    monkeypatch.setattr(devices, "_load_torch", _tracking_load_torch)
+
+    devices.resolve_cpu_bf16_native()
+
+    assert probed["called"] is True
+
+
+def test_resolve_cpu_bf16_native_skips_cache_when_disabled(tmp_path: Path, monkeypatch) -> None:
+    pytest.importorskip("torch")
+    monkeypatch.setenv("CODEDUPES_CACHE_DIR", str(tmp_path))
+    monkeypatch.setenv("CODEDUPES_NO_CACHE", "1")
+
+    devices.resolve_cpu_bf16_native()
+
+    assert not _machine_record_path(tmp_path).exists()
+
+
+def test_restore_mps_memory_fraction_noop_when_nothing_managed(monkeypatch) -> None:
+    monkeypatch.setattr(devices, "_mps_memory_fraction_managed", False)
+    calls: list[tuple] = []
+    monkeypatch.setattr(
+        devices, "configure_mps_memory_fraction", lambda *a, **k: calls.append((a, k))
+    )
+
+    devices.restore_mps_memory_fraction_if_managed()
+
+    assert calls == []
+
+
+def test_restore_mps_memory_fraction_skips_when_torch_not_imported(monkeypatch) -> None:
+    monkeypatch.setattr(devices, "_mps_memory_fraction_managed", True)
+    monkeypatch.delitem(devices.sys.modules, "torch", raising=False)
+    calls: list[tuple] = []
+    monkeypatch.setattr(
+        devices, "configure_mps_memory_fraction", lambda *a, **k: calls.append((a, k))
+    )
+
+    devices.restore_mps_memory_fraction_if_managed()
+
+    assert calls == []
+
+
+def test_restore_mps_memory_fraction_uses_real_torch_when_managed(monkeypatch) -> None:
+    # No MPS state is faked here: torch is real and already imported, and the
+    # setter itself is stubbed so no allocator call happens; only the branch
+    # decision (does this build report MPS built?) is read from live torch.
+    torch = pytest.importorskip("torch")
+    monkeypatch.setattr(devices, "_mps_memory_fraction_managed", True)
+    calls: list[tuple] = []
+    monkeypatch.setattr(
+        devices, "configure_mps_memory_fraction", lambda *a, **k: calls.append((a, k))
+    )
+
+    devices.restore_mps_memory_fraction_if_managed()
+
+    if torch.backends.mps.is_built():
+        assert calls == [(("mps", None), {})]
+    else:
+        assert calls == []

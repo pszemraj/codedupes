@@ -72,13 +72,14 @@ Options, in addition to the [shared options](#options-shared-by-check-and-search
 - `--exclude <glob>`: Replace the default test-file globs with one or more file path globs (repeat for multiple patterns). Built-in artifact-directory exclusions still apply.
 - `--include-stubs`: Include `.pyi` files when scanning a directory (single-file `.pyi` targets are analyzed as given)
 - `--no-cache`: Disable the persistent on-disk embedding cache for this run
+- `--strict-revision-cache`: Key an unpinned hub model's cache revision to a resolved commit hash instead of the requested revision label, disabling caching when a branch/tag can't be mapped offline (default: key by the requested label, so branch moves never invalidate the cache; see [Embedding cache](caching.md#what-invalidates-what))
 - `--output-width <int>`: Rich render width for non-JSON output (default `160`, min `80`)
 - `--json`: Emit JSON instead of rich tables
 - `-v, --verbose`: Verbose logs
 
 ## `codedupes info`
 
-Print version and runtime versions, the effective default model and pinned revision, the built-in alias table, per-task semantic thresholds, analysis defaults (minimum statements, exclude globs, output width), resolved device capabilities, MPS memory statistics when available, whether MLX is already loaded in the process, and an embedding-cache summary (path, entry count, size on disk).
+Print version and runtime versions, the effective default model and pinned revision, the built-in alias table, per-task semantic thresholds, analysis defaults (minimum statements, exclude globs, output width), resolved device capabilities, MPS memory statistics when available, whether MLX is already loaded in the process, CPU identity and its capability-gated bfloat16 verdict (native ISA and mkldnn availability, see [Accelerators](accelerators.md#precision-and-metal-environment-variables)), and an embedding-cache summary (path, entry count, size on disk).
 
 ## `codedupes cache info`
 
@@ -104,7 +105,7 @@ Clear all cached embeddings or only entries for one model. See [Embedding cache]
 - `--trust-remote-code` and `--no-trust-remote-code` are mutually exclusive
 - `--mps-fallback` and `--no-mps-fallback` are mutually exclusive
 - `--mps-memory-fraction` must be finite and in `(0, 2]`; it requires `--device mps` or `--device auto`
-- Explicit semantic-analysis controls are rejected with `--traditional-only`, including model/task, candidate-scope, and device/runtime options. `--no-cache` is accepted as a harmless no-op.
+- Explicit semantic-analysis controls are rejected with `--traditional-only`, including model/task, candidate-scope, device/runtime options, and `--strict-revision-cache`. `--no-cache` is accepted as a harmless no-op.
 - Explicit traditional-analysis controls are rejected with `--semantic-only`: `--traditional-threshold`, `--no-tiny-filter`, `--tiny-cutoff`, and `--tiny-near-jaccard-min`
 - Unsupported-op fallback and codedupes OOM recovery are separate policies; `--no-mps-fallback` does not disable OOM recovery
 - `search` applies semantic threshold filtering before returning `top-k` matches; without an explicit `--threshold`/`--semantic-threshold` it uses the model profile search default (for example `0.50` for `gte-modernbert-base`), not the stricter duplicate threshold

@@ -8,15 +8,19 @@ Apple unified memory.
 
 from __future__ import annotations
 
+import contextlib
 import gc
 import importlib
+import json
 import logging
 import math
 import os
 import sys
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+from importlib import metadata as importlib_metadata
+from pathlib import Path
 from typing import Any, Literal, TypeVar, cast
 
 from codedupes.constants import DEFAULT_SEMANTIC_DEVICE, SEMANTIC_DEVICE_CHOICES
@@ -50,6 +54,11 @@ class DeviceDiagnostics:
     mps_available: bool
     mps_fallback_env: str
     mlx_loaded: bool
+    cpu_name: str | None
+    cpu_architecture: str | None
+    cpu_bf16_isa: bool
+    cpu_mkldnn_available: bool
+    cpu_bf16_native: bool
     mps_memory_bytes: dict[str, int] = field(default_factory=dict)
     error: str | None = None
 
@@ -264,6 +273,219 @@ def _mps_capabilities(torch_module: Any) -> tuple[bool, bool]:
     if available and backend_mps is not None and not hasattr(backend_mps, "is_built"):
         built = True
     return built, available
+
+
+def _read_cpu_capabilities(torch_module: Any) -> Mapping[str, Any]:
+    """Read torch's live CPU capability probe, defensively.
+
+    ``torch.cpu.get_capabilities()`` returns a read-only ``mappingproxy``, not
+    a plain ``dict``, so callers must check against :class:`~collections.abc.Mapping`.
+
+    :param torch_module: Imported ``torch`` module or a compatible test double.
+    :return: Capability mapping from ``torch.cpu.get_capabilities()``, or an
+        empty mapping when the probe is unavailable or fails.
+    """
+    cpu = getattr(torch_module, "cpu", None)
+    caps_fn = getattr(cpu, "get_capabilities", None)
+    if not callable(caps_fn):
+        return {}
+    try:
+        caps = caps_fn()
+    except Exception:
+        logger.debug("torch.cpu.get_capabilities() failed", exc_info=True)
+        return {}
+    return caps if isinstance(caps, Mapping) else {}
+
+
+def _cpu_bf16_isa_present(caps: Mapping[str, Any], architecture: str) -> bool:
+    """Return whether the CPU ISA itself supports bfloat16, before any backend check.
+
+    ARM (``bf16``) and x86 (``amx_bf16``/``avx512_bf16``) report native bf16 support
+    under different keys; plain ``avx512`` is deliberately excluded, since AVX-512
+    alone does not imply a bf16 execution unit.
+
+    :param caps: Capability mapping from ``torch.cpu.get_capabilities()``.
+    :param architecture: Reported ``architecture`` value, for example ``"arm64"``.
+    :return: ``True`` when the reported ISA includes native bf16.
+    """
+    normalized_arch = architecture.lower()
+    if "arm" in normalized_arch or "aarch64" in normalized_arch:
+        return bool(caps.get("bf16"))
+    return bool(caps.get("amx_bf16")) or bool(caps.get("avx512_bf16"))
+
+
+def cpu_bf16_capability(torch_module: Any) -> bool:
+    """Probe whether this CPU can execute native, fast bfloat16 GEMM.
+
+    A native bf16 ISA alone is not enough: without a backend (oneDNN/mkldnn)
+    able to exploit it, bf16 GEMM falls back to a slow reference path. Measured
+    on an Apple M5 (torch 2.13.0, macOS arm64 wheel): ``get_capabilities()``
+    reports ``bf16: true`` and ``architecture: "arm64"``, but
+    ``torch.backends.mkldnn.is_available()`` is ``False`` (no oneDNN backend),
+    and a 1024x1024x1024 bf16 matmul measured 1015 ms versus 1.207 ms for
+    float32 - 841x slower with no backend to exploit the ISA. The gate is
+    therefore native ISA *and* a usable GEMM backend. This is a pure, stateless
+    probe; use :func:`resolve_cpu_bf16_native` for the record-backed accessor
+    that avoids importing torch on a warm path.
+
+    ``torch.backends.cpu.get_cpu_capability()`` is deliberately never consulted
+    here: it reports the build-tier baseline (for example ``"DEFAULT"``) the
+    wheel was compiled with, not what the running CPU can actually execute.
+
+    :param torch_module: Imported ``torch`` module or a compatible test double.
+    :return: ``True`` iff native bf16 ISA is present and a GEMM backend can use
+        it; ``False`` on any probe failure (float32 is always safe).
+    """
+    try:
+        caps = _read_cpu_capabilities(torch_module)
+        architecture = str(caps.get("architecture", ""))
+        has_isa = _cpu_bf16_isa_present(caps, architecture)
+        backends = getattr(torch_module, "backends", None)
+        mkldnn = getattr(backends, "mkldnn", None) if backends is not None else None
+        has_mkldnn = _safe_call(mkldnn, "is_available", bool, False)
+        return has_isa and has_mkldnn
+    except Exception:
+        logger.debug("CPU bf16 capability probe failed", exc_info=True)
+        return False
+
+
+_MACHINE_RECORD_FILENAME = "machine.json"
+
+
+def _resolve_machine_record_path() -> Path | None:
+    """Resolve the on-disk machine-capability record path.
+
+    Imports :mod:`codedupes.embedding_cache` lazily (it has no dependency back
+    on this module, so there is no import cycle) and only when a record lookup
+    is actually needed.
+
+    :return: Record path, or ``None`` when the cache root cannot be resolved.
+    """
+    try:
+        from codedupes.embedding_cache import resolve_cache_dir
+
+        return resolve_cache_dir() / _MACHINE_RECORD_FILENAME
+    except Exception:
+        logger.debug("Could not resolve the CPU capability record path", exc_info=True)
+        return None
+
+
+def _read_machine_record(record_path: Path) -> bool | None:
+    """Read a trustworthy CPU bf16 verdict from an on-disk machine record.
+
+    :param record_path: Candidate record path.
+    :return: Recorded verdict, or ``None`` when missing, unreadable, corrupt,
+        or stamped with a different installed torch version.
+    """
+    try:
+        current_torch_version = importlib_metadata.version("torch")
+    except importlib_metadata.PackageNotFoundError:
+        return None
+    try:
+        payload = json.loads(record_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(payload, dict) or payload.get("torch") != current_torch_version:
+        return None
+    verdict = payload.get("cpu_bf16_native")
+    return verdict if isinstance(verdict, bool) else None
+
+
+def _persist_machine_record(record_path: Path, verdict: bool) -> None:
+    """Best-effort atomic write of the CPU bf16 capability record.
+
+    :param record_path: Destination record path.
+    :param verdict: Freshly probed capability verdict to persist.
+    :return: ``None``.
+    """
+    try:
+        torch_version = importlib_metadata.version("torch")
+    except importlib_metadata.PackageNotFoundError:
+        return
+    tmp_path = record_path.with_name(f"{record_path.name}.{os.getpid()}.tmp")
+    try:
+        record_path.parent.mkdir(parents=True, exist_ok=True)
+        payload = json.dumps({"torch": torch_version, "cpu_bf16_native": verdict})
+        tmp_path.write_text(payload, encoding="utf-8")
+        os.replace(tmp_path, record_path)
+    except OSError:
+        logger.debug("Could not persist the CPU bf16 capability record", exc_info=True)
+    finally:
+        with contextlib.suppress(OSError):
+            if tmp_path.exists():
+                tmp_path.unlink()
+
+
+def resolve_cpu_bf16_native(*, persist: bool = True) -> bool:
+    """Return whether this machine's CPU can execute native, fast bfloat16 GEMM.
+
+    Backed by an on-disk record (``<cache_root>/machine.json``) so repeated,
+    warm-path cache-key derivation never imports torch: a machine's CPU
+    capabilities cannot change under one installed torch build, so a record
+    stamped with the currently installed torch version is trusted without
+    re-probing. A missing, unreadable, corrupt, or stale-version record falls
+    back to a live :func:`cpu_bf16_capability` probe, which is then persisted
+    best-effort for the next call. ``CODEDUPES_NO_CACHE`` disables both the
+    read and the write, matching the embedding cache's kill switch; so does
+    ``persist=False``, mirroring how callers that disabled the on-disk
+    embedding cache for one call (see ``persist_manifest`` on the local-model
+    digest manifest) keep that call free of unrelated cache-directory writes.
+
+    :param persist: Whether the on-disk record may be read from and written to,
+        defaults to ``True``.
+    :return: ``True`` iff native bf16 ISA is present and a GEMM backend can use it.
+    """
+    no_cache = os.environ.get("CODEDUPES_NO_CACHE", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    record_path = None if (no_cache or not persist) else _resolve_machine_record_path()
+
+    if record_path is not None:
+        cached_verdict = _read_machine_record(record_path)
+        if cached_verdict is not None:
+            return cached_verdict
+
+    verdict = cpu_bf16_capability(_load_torch())
+    if record_path is not None:
+        _persist_machine_record(record_path, verdict)
+    return verdict
+
+
+def _mps_backend_built_without_import() -> bool:
+    """Check MPS build support from an already-imported torch, without importing it.
+
+    :return: ``True`` when torch is already imported and reports MPS support built.
+    """
+    torch_module = sys.modules.get("torch")
+    if torch_module is None:
+        return False
+    backends = getattr(torch_module, "backends", None)
+    backend_mps = getattr(backends, "mps", None) if backends is not None else None
+    if backend_mps is None:
+        return False
+    return _safe_call(backend_mps, "is_built", bool, False)
+
+
+def restore_mps_memory_fraction_if_managed() -> None:
+    """Restore the MPS allocator baseline once resolution moves away from MPS.
+
+    A custom ``--mps-memory-fraction`` applied for an earlier MPS run must not
+    stay stuck for the rest of a long-lived process once a later call resolves
+    to CPU or CUDA. This never imports torch merely to check: it is a no-op
+    when nothing is currently managed, and a no-op when torch is not already
+    imported or does not report MPS built, so an unrelated CPU/CUDA run can
+    never fail because this build lacks MPS support.
+
+    :return: ``None``.
+    """
+    if not _mps_memory_fraction_managed:
+        return
+    if not _mps_backend_built_without_import():
+        return
+    configure_mps_memory_fraction("mps", None)
 
 
 def _resolve_semantic_device_with_torch(
@@ -562,6 +784,11 @@ def get_device_diagnostics(
             mps_available=False,
             mps_fallback_env=os.environ.get("PYTORCH_ENABLE_MPS_FALLBACK", "unset"),
             mlx_loaded=is_mlx_loaded(),
+            cpu_name=None,
+            cpu_architecture=None,
+            cpu_bf16_isa=False,
+            cpu_mkldnn_available=False,
+            cpu_bf16_native=False,
             error=str(error),
         )
 
@@ -577,6 +804,14 @@ def get_device_diagnostics(
 
     cuda_available = _cuda_available(torch_module)
     mps_built, mps_available = _mps_capabilities(torch_module)
+    cpu_caps = _read_cpu_capabilities(torch_module)
+    cpu_name = cpu_caps.get("cpu_name")
+    cpu_architecture_raw = cpu_caps.get("architecture")
+    cpu_architecture = cpu_architecture_raw if isinstance(cpu_architecture_raw, str) else None
+    cpu_bf16_isa = _cpu_bf16_isa_present(cpu_caps, cpu_architecture or "")
+    cpu_backends = getattr(torch_module, "backends", None)
+    cpu_mkldnn = getattr(cpu_backends, "mkldnn", None) if cpu_backends is not None else None
+    cpu_mkldnn_available = _safe_call(cpu_mkldnn, "is_available", bool, False)
     try:
         resolved = _resolve_semantic_device_with_torch(requested, torch_module)
         error = None
@@ -594,6 +829,11 @@ def get_device_diagnostics(
         mps_available=mps_available,
         mps_fallback_env=os.environ.get("PYTORCH_ENABLE_MPS_FALLBACK", "unset"),
         mlx_loaded=is_mlx_loaded(),
+        cpu_name=cpu_name if isinstance(cpu_name, str) else None,
+        cpu_architecture=cpu_architecture,
+        cpu_bf16_isa=cpu_bf16_isa,
+        cpu_mkldnn_available=cpu_mkldnn_available,
+        cpu_bf16_native=cpu_bf16_isa and cpu_mkldnn_available,
         mps_memory_bytes=memory,
         error=error,
     )

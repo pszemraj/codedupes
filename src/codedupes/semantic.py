@@ -38,7 +38,9 @@ from codedupes.devices import (
     configure_mps_memory_fraction,
     format_mps_memory_snapshot,
     is_mlx_loaded,
+    resolve_cpu_bf16_native,
     resolve_semantic_device,
+    restore_mps_memory_fraction_if_managed,
 )
 from codedupes.embedding_cache import (
     LOCAL_MODELS_SUBDIR,
@@ -531,14 +533,17 @@ def _fingerprint_local_model_dir(
     The fingerprint hashes each model file's relative path and content digest,
     excluding Hugging Face's ``--local-dir`` download metadata, so replacing or
     retraining weights in place changes the cache revision while metadata-only
-    touches keep it stable. Digests are reused from a manifest keyed on the
-    full stat identity ``(size, mtime_ns, ctime_ns, inode)``; unchanged files
-    are never rehashed, keeping warm-path key derivation cheap enough to run
-    before any model import. The in-place guarantee is POSIX-specific: there
-    ``st_ctime`` is the inode-change time, which every content write moves even
-    when size and mtime are restored. On Windows ``st_ctime`` is the creation
-    time, so a same-size in-place overwrite with a preserved mtime could reuse
-    a stale digest.
+    touches keep it stable. The walk follows symlinks
+    (``os.walk(..., followlinks=True)``) so weight shards stored behind a
+    symlinked subdirectory move the fingerprint too; a visited-realpath set
+    guards against symlink cycles. Digests are reused from a manifest keyed on
+    the full stat identity ``(size, mtime_ns, ctime_ns, inode)``; unchanged
+    files are never rehashed, keeping warm-path key derivation cheap enough to
+    run before any model import. The in-place guarantee is POSIX-specific:
+    there ``st_ctime`` is the inode-change time, which every content write
+    moves even when size and mtime are restored. On Windows ``st_ctime`` is
+    the creation time, so a same-size in-place overwrite with a preserved
+    mtime could reuse a stale digest.
 
     :param model_dir: Resolved local model directory.
     :param persist_manifest: Whether per-file digests may be loaded from and saved
@@ -552,30 +557,41 @@ def _fingerprint_local_model_dir(
     fresh_manifest: dict[str, dict[str, object]] = {}
     entries: list[tuple[str, str]] = []
     hf_download_metadata = model_dir / ".cache" / "huggingface"
+    visited_dirs: set[str] = set()
     try:
-        for file_path in sorted(model_dir.rglob("*")):
-            if not file_path.is_file():
+        for dirpath, dirnames, filenames in os.walk(model_dir, followlinks=True):
+            real_dir = os.path.realpath(dirpath)
+            if real_dir in visited_dirs:
+                # A symlink cycle looped back to an already-processed real
+                # directory: stop descending and skip re-processing its files.
+                dirnames[:] = []
                 continue
-            if file_path.is_relative_to(hf_download_metadata):
-                continue
-            stat = file_path.stat()
-            relative = file_path.relative_to(model_dir).as_posix()
-            identity = (stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns, stat.st_ino)
-            content_digest = _manifest_digest_for(manifest.get(relative), identity)
-            if content_digest is None:
-                content_digest = _hash_file_content(file_path)
-            fresh_manifest[relative] = {
-                "size": identity[0],
-                "mtime_ns": identity[1],
-                "ctime_ns": identity[2],
-                "ino": identity[3],
-                "digest": content_digest,
-            }
-            entries.append((relative, content_digest))
+            visited_dirs.add(real_dir)
+            for filename in filenames:
+                file_path = Path(dirpath) / filename
+                if not file_path.is_file():
+                    continue
+                if file_path.is_relative_to(hf_download_metadata):
+                    continue
+                stat = file_path.stat()
+                relative = file_path.relative_to(model_dir).as_posix()
+                identity = (stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns, stat.st_ino)
+                content_digest = _manifest_digest_for(manifest.get(relative), identity)
+                if content_digest is None:
+                    content_digest = _hash_file_content(file_path)
+                fresh_manifest[relative] = {
+                    "size": identity[0],
+                    "mtime_ns": identity[1],
+                    "ctime_ns": identity[2],
+                    "ino": identity[3],
+                    "digest": content_digest,
+                }
+                entries.append((relative, content_digest))
     except OSError:
         return None
     if not entries:
         return None
+    entries.sort()
     _store_local_model_manifest(
         model_dir,
         fresh_manifest,
@@ -628,24 +644,54 @@ def _resolve_load_revision(model_name: str, explicit_revision: str | None) -> st
     return _resolve_model_revision(model_name, explicit_revision)
 
 
-def _resolve_revision_for_cache(model_name: str, explicit_revision: str | None) -> str | None:
-    """Resolve a concrete revision usable as a cache key component, without loading the model.
+def _resolve_revision_for_cache(
+    model_name: str,
+    explicit_revision: str | None,
+    *,
+    strict: bool = False,
+) -> str | None:
+    """Resolve a revision usable as a cache key component, without loading the model.
 
-    Pinned profiles (or an explicit override) resolve immediately. Local model
-    directories resolve to a content fingerprint of the directory (an explicit
-    revision is ignored for them because nothing pins on-disk weights). Unpinned
-    hub models fall back to reading the locally cached HuggingFace commit hash so
-    cache keys stay stable across runs even before the model is loaded.
+    Pinned profiles (or an explicit full commit hash override) resolve to that
+    hash immediately in both modes. Local model directories resolve to a
+    content fingerprint of the directory (an explicit revision is ignored for
+    them because nothing pins on-disk weights) regardless of ``strict``.
+
+    The default (loose, ``strict=False``) policy keys an unpinned hub revision
+    by the requested LABEL itself - the explicit ``--model-revision`` value,
+    or ``"main"`` when none was given - without ever resolving it to a
+    concrete commit or disabling persistent caching. An upstream branch move
+    (even a metadata-only commit) never invalidates the cache under this
+    policy; the cost is that a real weight change behind a moving branch is
+    not tracked, so run ``codedupes cache clear --model`` or pass
+    ``strict=True`` when that matters.
+
+    ``strict=True`` restores the pre-loose policy: an unpinned hub model
+    falls back to reading the locally cached HuggingFace commit hash so cache
+    keys stay stable across runs even before the model is loaded, and returns
+    ``None`` (disabling persistent caching for the run) when a branch or tag
+    cannot be mapped offline - loading the model would be required before
+    cached vectors could be trusted.
 
     :param model_name: Requested model identifier.
     :param explicit_revision: Optional explicit revision override.
-    :return: Concrete revision string, or ``None`` when it cannot be resolved offline.
+    :param strict: Whether to resolve an unpinned hub revision to a concrete
+        commit hash (and disable caching when that mapping fails) instead of
+        keying by the requested revision label, defaults to ``False``.
+    :return: Concrete revision string, revision label, or (strict mode only)
+        ``None`` when it cannot be resolved offline.
     """
     canonical_model = resolve_model_profile(model_name).canonical_name
     local_dir = resolve_local_model_path(canonical_model)
     if local_dir is not None:
         return _fingerprint_local_model_dir(local_dir)
     load_revision = _resolve_model_revision(model_name, explicit_revision)
+
+    if not strict:
+        if load_revision is not None and _is_hf_commit_hash(load_revision):
+            return load_revision
+        return load_revision or "main"
+
     if load_revision is None:
         return _resolve_hf_cached_revision(canonical_model)
 
@@ -680,21 +726,38 @@ def _confirm_cache_revision_after_load(
     model: object,
     model_name: str,
     resolved_revision: str | None,
+    *,
+    strict: bool = False,
 ) -> str | None:
     """Resolve a vector-safe cache revision after loading an embedding model.
 
     Local directories resolve to the content fingerprint verified while this
-    model was loaded, never the caller's pre-load assumption: a directory
-    swapped mid-load would otherwise key fresh vectors — and retain stale
-    hits — under a fingerprint the loaded weights no longer match. Hub models
-    require either the loaded config's concrete commit hash or an explicitly
-    pinned full commit hash; a symbolic branch/tag is unsafe when the backend
-    cannot report what it loaded.
+    model was loaded, never the caller's pre-load assumption, regardless of
+    ``strict``: a directory swapped mid-load would otherwise key fresh vectors
+    — and retain stale hits — under a fingerprint the loaded weights no
+    longer match.
+
+    For hub models, the default (loose, ``strict=False``) policy never
+    reconciles against what the backend actually loaded: an explicit or
+    profile-pinned full commit hash keys as-is (unchanged either way);
+    otherwise the pre-load revision label (or ``"main"``) is trusted as-is,
+    mirroring :func:`_resolve_revision_for_cache` exactly so the two can never
+    disagree and force a spurious rekey.
+
+    ``strict=True`` restores the pre-loose policy: it requires either the
+    loaded config's concrete commit hash or an explicitly pinned full commit
+    hash, returning ``None`` (disabling persistent reuse for this run) when a
+    symbolic branch/tag is unsafe because the backend cannot report what it
+    loaded.
 
     :param model: Loaded embedding model.
     :param model_name: Requested model alias, Hub ID, or local directory.
     :param resolved_revision: Revision passed to the model loader.
-    :return: Safe cache revision, or ``None`` when persistent reuse must be disabled.
+    :param strict: Whether to require post-load commit-hash confirmation for
+        hub models instead of trusting the pre-load revision label, defaults
+        to ``False``.
+    :return: Safe cache revision, or (strict mode only) ``None`` when
+        persistent reuse must be disabled.
     """
     canonical_model = resolve_model_profile(model_name).canonical_name
     local_dir = resolve_local_model_path(canonical_model)
@@ -707,6 +770,11 @@ def _confirm_cache_revision_after_load(
         # bracket exists for it; the directory's current state is the best
         # available identity.
         return _fingerprint_local_model_dir(local_dir)
+
+    if not strict:
+        if resolved_revision is not None and _is_hf_commit_hash(resolved_revision):
+            return resolved_revision
+        return resolved_revision or "main"
 
     loaded_commit = _get_loaded_model_commit_hash(model)
     if loaded_commit is not None:
@@ -795,14 +863,23 @@ def _dtype_variant_for(
     *,
     mps_fallback: bool | None,
     resolved_device: str | None = None,
+    persist_machine_record: bool = True,
 ) -> str:
     """Build the dtype component of the cache variant for one model family.
 
     Every load pins an explicit dtype, so the empty fingerprint truthfully
-    means float32. CPU and MPS always use float32 and therefore share a key
-    space without importing PyTorch to resolve the device; on macOS, ``auto``
-    can only select MPS or CPU, so it shares that same model-free warm path.
-    Requests that can reach CUDA resolve the device and record the selected
+    means float32. ``mps`` always resolves float32 (measured: bf16 gains only
+    ~13% runtime while drifting pair similarities ~1e-2, not worth splitting
+    the shared key space) and returns without importing PyTorch. ``cpu``
+    resolves float32 or bfloat16 from this machine's capability-gated verdict
+    (:func:`codedupes.devices.resolve_cpu_bf16_native`), read from an on-disk
+    record so this warm path also never imports torch. On darwin, ``auto`` can
+    only select MPS or CPU: when the CPU gate is false both possible targets
+    are float32 (today's reality on every Mac without an mkldnn backend), so
+    the variant resolves without picking a concrete device; when the gate is
+    true, resolution falls through to inspect the concrete target because only
+    a CPU pick would differ from MPS. Requests that can reach CUDA, and
+    non-darwin ``auto``, always resolve the device and record a selected
     bfloat16 as a non-default dtype.
 
     :param profile: Resolved model profile.
@@ -810,11 +887,20 @@ def _dtype_variant_for(
         ``None`` meaning the default request.
     :param mps_fallback: MPS unsupported-op CPU fallback behavior.
     :param resolved_device: Already resolved execution target, when available.
+    :param persist_machine_record: Whether the on-disk CPU capability record may
+        be read from and written to, defaults to ``True``.
     :return: Dtype fingerprint, empty for float32.
     """
     normalized_device = (device or DEFAULT_SEMANTIC_DEVICE).strip().lower()
-    if normalized_device in {"cpu", "mps"} or (
-        normalized_device == "auto" and sys.platform == "darwin"
+    if normalized_device == "mps":
+        return ""
+    if normalized_device == "cpu":
+        gate = resolve_cpu_bf16_native(persist=persist_machine_record)
+        return "dtype=torch.bfloat16" if gate else ""
+    if (
+        normalized_device == "auto"
+        and sys.platform == "darwin"
+        and not resolve_cpu_bf16_native(persist=persist_machine_record)
     ):
         return ""
 
@@ -888,6 +974,7 @@ def _cache_variant_for(
     mps_fallback: bool | None,
     trust_remote_code: bool = False,
     resolved_device: str | None = None,
+    persist_machine_record: bool = True,
 ) -> str:
     """Build the complete vector-affecting cache-key variant for one encode call.
 
@@ -907,6 +994,8 @@ def _cache_variant_for(
     :param mps_fallback: MPS unsupported-op CPU fallback behavior.
     :param trust_remote_code: Resolved remote-code trust setting.
     :param resolved_device: Already resolved execution target, when available.
+    :param persist_machine_record: Whether the on-disk CPU capability record may
+        be read from and written to, defaults to ``True``.
     :return: Variant fingerprint combining plan, dtype, math policy, runtime, and trust.
     """
     dtype_variant = _dtype_variant_for(
@@ -914,6 +1003,7 @@ def _cache_variant_for(
         device,
         mps_fallback=mps_fallback,
         resolved_device=resolved_device,
+        persist_machine_record=persist_machine_record,
     )
     return "\x00".join(
         (
@@ -935,6 +1025,7 @@ def _build_embedding_space_identity(
     mps_fallback: bool | None,
     trust_remote_code: bool,
     resolved_device: str | None = None,
+    persist_machine_record: bool = True,
 ) -> EmbeddingSpaceIdentity:
     """Build one corpus identity from already resolved embedding inputs.
 
@@ -945,6 +1036,8 @@ def _build_embedding_space_identity(
     :param mps_fallback: MPS unsupported-op CPU fallback behavior.
     :param trust_remote_code: Resolved remote-code trust setting.
     :param resolved_device: Already resolved execution target, when available.
+    :param persist_machine_record: Whether the on-disk CPU capability record may
+        be read from and written to, defaults to ``True``.
     :return: Complete embedding-space identity.
     """
     return EmbeddingSpaceIdentity(
@@ -957,6 +1050,7 @@ def _build_embedding_space_identity(
             mps_fallback=mps_fallback,
             trust_remote_code=trust_remote_code,
             resolved_device=resolved_device,
+            persist_machine_record=persist_machine_record,
         ),
     )
 
@@ -970,6 +1064,7 @@ def resolve_embedding_space_identity(
     device: str = DEFAULT_SEMANTIC_DEVICE,
     mps_fallback: bool | None = None,
     persist_local_model_manifest: bool = True,
+    strict_revision_cache: bool = False,
 ) -> EmbeddingSpaceIdentity:
     """Resolve the vector-space identity for code corpus embeddings.
 
@@ -980,7 +1075,11 @@ def resolve_embedding_space_identity(
     :param semantic_task: Semantic task used to embed the corpus.
     :param device: Requested semantic inference device.
     :param mps_fallback: MPS unsupported-op CPU fallback behavior.
-    :param persist_local_model_manifest: Whether local-model digests may be persisted.
+    :param persist_local_model_manifest: Whether local-model digests and the CPU
+        capability record may be persisted.
+    :param strict_revision_cache: Whether an unpinned hub revision resolves to a
+        concrete commit hash (disabling caching when unmappable) instead of the
+        requested revision label, defaults to ``False``.
     :return: Canonical model, concrete revision/fingerprint, and runtime variant.
     """
     profile = resolve_model_profile(model_name)
@@ -997,7 +1096,11 @@ def resolve_embedding_space_identity(
             persist_manifest=persist_local_model_manifest,
         )
     else:
-        resolved_revision = _resolve_revision_for_cache(model_name, revision)
+        resolved_revision = _resolve_revision_for_cache(
+            model_name,
+            revision,
+            strict=strict_revision_cache,
+        )
 
     return _build_embedding_space_identity(
         profile,
@@ -1006,6 +1109,7 @@ def resolve_embedding_space_identity(
         device,
         mps_fallback=mps_fallback,
         trust_remote_code=resolved_trust_remote_code,
+        persist_machine_record=persist_local_model_manifest,
     )
 
 
@@ -1020,6 +1124,7 @@ def _require_current_embedding_space(
     device: str,
     mps_fallback: bool | None,
     persist_local_model_manifest: bool,
+    strict_revision_cache: bool = False,
 ) -> str:
     """Require the configured corpus vector space to match its stored identity.
 
@@ -1032,6 +1137,9 @@ def _require_current_embedding_space(
     :param device: Current inference-device request.
     :param mps_fallback: Current MPS fallback configuration.
     :param persist_local_model_manifest: Whether local digests may be persisted.
+    :param strict_revision_cache: Whether unpinned hub revisions resolve to a
+        concrete commit hash instead of the requested revision label; must
+        match the mode used to build ``expected``.
     :return: Device policy that keeps query vectors in the stored corpus space.
     :raises RuntimeError: If the identity changed or cannot be pinned concretely.
     """
@@ -1044,6 +1152,7 @@ def _require_current_embedding_space(
         device=device,
         mps_fallback=mps_fallback,
         persist_local_model_manifest=persist_local_model_manifest,
+        strict_revision_cache=strict_revision_cache,
     )
     if current == expected and current.resolved_revision is not None:
         return device
@@ -1061,6 +1170,7 @@ def _require_current_embedding_space(
             device="cpu",
             mps_fallback=mps_fallback,
             persist_local_model_manifest=persist_local_model_manifest,
+            strict_revision_cache=strict_revision_cache,
         )
         if cpu_identity == expected and cpu_identity.resolved_revision is not None:
             return "cpu"
@@ -1269,8 +1379,14 @@ def _prepare_semantic_device(
         # so the strict low-level check is only applied once MPS is the real target.
         if resolved_device == "mps":
             configure_mps_memory_fraction(resolved_device, mps_memory_fraction)
-        elif mps_memory_fraction is not None:
-            logger.info(f"mps_memory_fraction ignored: resolved device is {resolved_device}")
+        else:
+            if mps_memory_fraction is not None:
+                logger.info(f"mps_memory_fraction ignored: resolved device is {resolved_device}")
+            # A prior call may have applied a custom MPS allocator cap; this
+            # call resolved away from MPS, so restore the baseline instead of
+            # leaving the cap stuck in this process until some later call
+            # happens to resolve back to MPS with no fraction set.
+            restore_mps_memory_fraction_if_managed()
     except (DeviceConfigurationError, ValueError) as exc:
         raise SemanticBackendError(str(exc)) from exc
 
@@ -1311,6 +1427,99 @@ def _get_effective_model_device(model: object, fallback: str) -> str:
     if model is _model and _model_execution_device is not None:
         return _model_execution_device
     return _coerce_device_name(getattr(model, "device", None), fallback)
+
+
+def _model_parameter_dtype(model: object) -> Any | None:
+    """Best-effort read of a loaded model's current parameter dtype.
+
+    :param model: Model instance to inspect.
+    :return: Dtype of the model's first parameter, or ``None`` when unavailable.
+    """
+    try:
+        return next(model.parameters()).dtype
+    except Exception:  # noqa: BLE001 - defensive introspection of an arbitrary model object
+        return None
+
+
+def _dtype_coherence_broken(
+    profile: SemanticModelProfile,
+    device: str | None,
+    mps_fallback: bool | None,
+    resolved_device: str,
+    model: object,
+    *,
+    persist_machine_record: bool = True,
+) -> bool:
+    """Detect whether a keyed bfloat16 dtype variant no longer matches live execution.
+
+    An accelerator OOM can move a model keyed under a non-default (bfloat16)
+    dtype variant to CPU and, when this CPU fails the capability gate, cast it
+    to float32 (see :func:`_move_model_to_cpu`). The keyed variant then
+    describes vectors this run can no longer produce; mixing newly computed
+    float32 rows with any cache hits recorded under the bfloat16 key would
+    silently corrupt the matrix. The check derives from the model's actual
+    live parameter dtype, never from a replayed pre-fallback assumption.
+
+    :param profile: Resolved model profile.
+    :param device: Requested device string as given to the public API.
+    :param mps_fallback: MPS unsupported-op CPU fallback behavior.
+    :param resolved_device: Device resolved before model load.
+    :param model: Loaded model instance, possibly moved mid-call.
+    :param persist_machine_record: Whether the on-disk CPU capability record may
+        be read from and written to, defaults to ``True``.
+    :return: ``True`` when the keyed dtype variant is no longer representative.
+    """
+    dtype_variant = _dtype_variant_for(
+        profile,
+        device,
+        mps_fallback=mps_fallback,
+        resolved_device=resolved_device,
+        persist_machine_record=persist_machine_record,
+    )
+    if not dtype_variant:
+        return False
+    current_dtype = _model_parameter_dtype(model)
+    return current_dtype is not None and str(current_dtype) != "torch.bfloat16"
+
+
+def _cache_write_allowed(
+    profile: SemanticModelProfile,
+    device: str | None,
+    mps_fallback: bool | None,
+    resolved_device: str,
+    model: object,
+    *,
+    persist_machine_record: bool = True,
+) -> bool:
+    """Decide whether fresh vectors may be written under their keyed cache variant.
+
+    Generalizes :func:`_fast_math_write_allowed` to also cover dtype
+    coherence: a write is safe only when the actual post-encode execution
+    state - device and dtype, re-read from the model rather than replayed
+    pre-encode assumptions - still matches what the keyed variant promises.
+    Skipping an unsafe write costs a cache miss on the next run; it never
+    risks mixing vectors from two coordinate systems under one key.
+
+    :param profile: Resolved model profile.
+    :param device: Requested device string as given to the public API.
+    :param mps_fallback: MPS unsupported-op CPU fallback behavior.
+    :param resolved_device: Device resolved before model load.
+    :param model: Loaded model instance, possibly moved mid-call.
+    :param persist_machine_record: Whether the on-disk CPU capability record may
+        be read from and written to, defaults to ``True``.
+    :return: ``True`` when writing under the derived variant is representative.
+    """
+    execution_device = _get_effective_model_device(model, resolved_device)
+    if not _fast_math_write_allowed(device, execution_device):
+        return False
+    return not _dtype_coherence_broken(
+        profile,
+        device,
+        mps_fallback,
+        resolved_device,
+        model,
+        persist_machine_record=persist_machine_record,
+    )
 
 
 class _ExecutableStatementCounter(ast.NodeVisitor):
@@ -1414,12 +1623,23 @@ def _resolve_model_dtype(family: str, device: str) -> Any:
     (``dtype="auto"``), so the default profile's float16 checkpoint would
     otherwise embed in half precision - an order of magnitude slower on CPU and
     outside the documented faithful-float32 tolerance. Every load therefore
-    pins an explicit dtype: bfloat16 on CUDA hardware with native support,
-    float32 everywhere else. Measured on Apple Silicon (M-series, 96 real code
-    chunks): CPU bfloat16 is emulated and ~16x slower than float32; MPS
-    bfloat16 halves model memory but gains only ~13% runtime while drifting
-    pair similarities ~1e-2 - tuned-threshold scale - so CPU and MPS stay
-    faithful float32 and keep their shared cache key space.
+    pins an explicit dtype under a capability-gated policy rather than a
+    hardcoded machine truth: bfloat16 on CUDA hardware with native support
+    (unchanged); bfloat16 on CPU iff this machine passes the two-part gate in
+    :func:`codedupes.devices.resolve_cpu_bf16_native` - native bf16 ISA *and*
+    a GEMM backend (oneDNN/mkldnn) able to exploit it; float32 everywhere
+    else, including every MPS run. Measured on an Apple M5 (torch 2.13.0,
+    macOS arm64 wheel): ``torch.cpu.get_capabilities()`` reports a native bf16
+    ISA (``bf16: true``, ``architecture: "arm64"``) but
+    ``torch.backends.mkldnn.is_available()`` is ``False``, so a
+    1024x1024x1024 bf16 matmul measured 1015 ms versus 1.207 ms for float32 -
+    841x slower with an ISA but no backend to exploit it. The gate exists so a
+    future machine with both the ISA and mkldnn gets the real speed and
+    memory benefit instead of this machine's negative result being hardcoded
+    forever. MPS bfloat16 halves model memory but gains only ~13% runtime
+    while drifting pair similarities ~1e-2 - tuned-threshold scale - so MPS
+    stays faithful float32 and keeps its shared cache key space with CPU
+    float32 runs.
 
     :param family: Resolved model profile family, reserved for per-family policy.
     :param device: Concrete execution device.
@@ -1435,6 +1655,12 @@ def _resolve_model_dtype(family: str, device: str) -> Any:
         # tensors through emulation, the failure mode this policy exists to avoid.
         and torch.cuda.is_bf16_supported(including_emulation=False)
     ):
+        return torch.bfloat16
+
+    # persist=True: an actual model load (or CPU dtype re-pin after an
+    # accelerator OOM) is real semantic work, not a for-info-only identity
+    # computation, so the capability record is always allowed to persist here.
+    if device == "cpu" and resolve_cpu_bf16_native():
         return torch.bfloat16
 
     return torch.float32
@@ -1572,17 +1798,34 @@ def _get_model_unlocked(
                 loaded_model = SentenceTransformer(resolved_model_name, **st_kwargs)
             except RuntimeError as exc:
                 oom_device = _classify_oom_device(exc, resolved_device)
-                if resolved_device == "mps" and oom_device == "mps":
+                accelerator_load_oom = (
+                    resolved_device in {"cuda", "mps"} and oom_device == resolved_device
+                )
+                if accelerator_load_oom:
                     exc.__traceback__ = None
                     exc.__context__ = None
-                    logger.warning(
-                        f"MPS OOM while loading {resolved_model_name} "
-                        f"({format_mps_memory_snapshot()}); "
-                        "clearing Metal cache and retrying on CPU"
+                    memory_context = (
+                        f" ({format_mps_memory_snapshot()})" if resolved_device == "mps" else ""
                     )
-                    clear_device_cache("mps", synchronize=True, collect=True)
+                    cache_label = "Metal cache" if resolved_device == "mps" else "CUDA cache"
+                    logger.warning(
+                        f"{resolved_device.upper()} OOM while loading {resolved_model_name}"
+                        f"{memory_context}; clearing {cache_label} and retrying on CPU"
+                    )
+                    clear_device_cache(resolved_device, synchronize=True, collect=True)
                     cpu_kwargs = dict(st_kwargs)
                     cpu_kwargs["device"] = "cpu"
+                    if resolved_device == "cuda":
+                        # An accelerator-resolved dtype (bfloat16 on CUDA) must
+                        # never be blindly inherited by the CPU retry: re-pin
+                        # through the same capability gate a fresh CPU load
+                        # would use. MPS already always resolves float32, so
+                        # its inherited model_kwargs dtype needs no re-pin.
+                        cpu_model_kwargs = dict(
+                            cast(dict[str, object], cpu_kwargs.get("model_kwargs") or {})
+                        )
+                        cpu_model_kwargs["dtype"] = _resolve_model_dtype(profile.family, "cpu")
+                        cpu_kwargs["model_kwargs"] = cpu_model_kwargs
                     try:
                         loaded_model = SentenceTransformer(resolved_model_name, **cpu_kwargs)
                     except Exception as retry_exc:
@@ -1592,7 +1835,9 @@ def _get_model_unlocked(
                                 model_name=resolved_model_name,
                                 revision=resolved_revision,
                                 trust_remote_code=resolved_trust_remote_code,
-                                stage="CPU model-loading retry after MPS OOM",
+                                stage=(
+                                    f"CPU model-loading retry after {resolved_device.upper()} OOM"
+                                ),
                             )
                         raise
                     load_device = "cpu"
@@ -1756,13 +2001,39 @@ def _classify_oom_device(error: RuntimeError, active_device: str) -> str | None:
 
 
 def _move_model_to_cpu(model: object) -> None:
-    """Move a model to CPU and update cached execution-device state."""
+    """Move a model to CPU, re-checking the bf16 capability gate on the way down.
+
+    Every accelerator-to-CPU fallback re-checks the same capability gate that
+    governs load-time dtype selection (:func:`_resolve_model_dtype`): a model
+    loaded in bfloat16 must not silently keep executing bf16 on a CPU that
+    fails :func:`codedupes.devices.resolve_cpu_bf16_native`, where it measures
+    up to 841x slower than float32 with no GEMM backend to exploit the ISA
+    (measured on an Apple M5). When the gate is true, bf16 is kept: it halves
+    memory pressure on this last-resort path at native CPU speed.
+
+    :param model: Model to move, mutated in place.
+    :return: ``None``.
+    """
     global _model_execution_device
     if hasattr(model, "to"):
-        # Deliberately preserve the load-time dtype on the last-resort CPU path:
-        # fallback follows an accelerator OOM, so retaining bf16 halves model and
-        # activation memory while keeping the same accepted numeric format.
-        model.to("cpu")
+        current_dtype = _model_parameter_dtype(model)
+        if current_dtype is not None and str(current_dtype) == "torch.bfloat16":
+            if resolve_cpu_bf16_native():
+                logger.info(
+                    "CPU fallback keeps bfloat16: this CPU has a native bf16 GEMM backend "
+                    "(mkldnn), halving memory pressure at native speed"
+                )
+                model.to("cpu")
+            else:
+                logger.warning(
+                    "CPU fallback casts bfloat16 to float32: this CPU has no native bf16 GEMM "
+                    "backend (mkldnn), where bf16 measures far slower than float32"
+                )
+                import torch
+
+                model.to(device="cpu", dtype=torch.float32)
+        else:
+            model.to("cpu")
     if model is _model:
         _model_execution_device = "cpu"
 
@@ -1836,6 +2107,7 @@ def _prepare_cache_context(
     trust_remote_code: bool,
     use_cache: bool,
     cache_scope: Path | None,
+    strict_revision_cache: bool = False,
 ) -> tuple[EmbeddingCache | None, str | None, str, str]:
     """Resolve the shared embedding-cache addressing context for one encode call.
 
@@ -1849,11 +2121,16 @@ def _prepare_cache_context(
     :param trust_remote_code: Resolved remote-code trust decision.
     :param use_cache: Whether the caller enabled the persistent cache.
     :param cache_scope: Corpus root addressing the cache shard; ``None`` disables caching.
+    :param strict_revision_cache: Whether an unpinned hub revision resolves to a
+        concrete commit hash (disabling caching when unmappable) instead of the
+        requested revision label, defaults to ``False``.
     :return: ``(cache, cache_revision, cache_variant, cache_namespace)``.
     """
     cache = get_embedding_cache() if (use_cache and cache_scope is not None) else None
     cache_revision = (
-        _resolve_revision_for_cache(model_name, revision) if cache is not None else None
+        _resolve_revision_for_cache(model_name, revision, strict=strict_revision_cache)
+        if cache is not None
+        else None
     )
     cache_variant = (
         _cache_variant_for(
@@ -2099,6 +2376,7 @@ def _compute_embeddings_unlocked(
     mps_memory_fraction: float | None = None,
     use_cache: bool = True,
     cache_scope: Path | None = None,
+    strict_revision_cache: bool = False,
 ) -> tuple[np.ndarray, EmbeddingSpaceIdentity]:
     """Compute normalized NumPy embeddings for all code units.
 
@@ -2126,6 +2404,9 @@ def _compute_embeddings_unlocked(
     :param use_cache: Whether to consult/update the persistent embedding cache.
     :param cache_scope: Analyzed corpus root path used to address the cache shard;
         ``None`` disables caching for this call regardless of ``use_cache``.
+    :param strict_revision_cache: Whether an unpinned hub revision resolves to a
+        concrete commit hash (disabling caching when unmappable) instead of the
+        requested revision label, defaults to ``False``.
     :return: Normalized embedding matrix and its effective vector-space identity.
     :raises ValueError: If ``batch_size`` is not positive.
     :raises SemanticBackendError: If an explicitly requested device is unavailable,
@@ -2143,6 +2424,7 @@ def _compute_embeddings_unlocked(
             device=device,
             mps_fallback=mps_fallback,
             persist_local_model_manifest=use_cache and cache_scope is not None,
+            strict_revision_cache=strict_revision_cache,
         )
 
     _validate_explicit_device_request(device, mps_fallback=mps_fallback)
@@ -2161,7 +2443,7 @@ def _compute_embeddings_unlocked(
             persist_manifest=use_cache and cache_scope is not None,
         )
         if identity_local_model_path is not None
-        else _resolve_revision_for_cache(model_name, revision)
+        else _resolve_revision_for_cache(model_name, revision, strict=strict_revision_cache)
     )
     prepared_texts = [unit.source.strip() for unit in units]
 
@@ -2185,16 +2467,18 @@ def _compute_embeddings_unlocked(
             mps_fallback=mps_fallback,
             trust_remote_code=resolved_trust_remote_code,
             resolved_device=concrete_device,
+            persist_machine_record=use_cache and cache_scope is not None,
         )
 
-    def _restart_faithfully_on_cpu() -> tuple[np.ndarray, EmbeddingSpaceIdentity]:
-        """Restart corpus assembly under faithful CPU cache and math policy.
+    def _restart_faithfully_on_cpu(reason: str) -> tuple[np.ndarray, EmbeddingSpaceIdentity]:
+        """Restart corpus assembly under one faithful CPU cache and dtype/math policy.
 
+        :param reason: Short human-readable cause logged once before the restart.
         :return: CPU-faithful matrix and identity.
         """
         logger.warning(
-            "Fast-math corpus execution left MPS; discarding fast-math cache hits "
-            "and restarting the complete matrix under the faithful CPU policy"
+            f"{reason}; discarding cache hits and restarting the complete matrix "
+            "under one faithful CPU policy"
         )
         return _compute_embeddings_unlocked(
             units,
@@ -2209,7 +2493,33 @@ def _compute_embeddings_unlocked(
             mps_memory_fraction=None,
             use_cache=use_cache,
             cache_scope=cache_scope,
+            strict_revision_cache=strict_revision_cache,
         )
+
+    def _coherence_break_reason(current_model: object) -> str | None:
+        """Return why this run cannot stay coherent, or ``None`` when it still can.
+
+        Checks both preconditions that force a discard-and-restart: fast-math
+        corpus execution that left MPS (see :func:`_mps_fast_math_variant`),
+        and a keyed bfloat16 dtype variant whose live execution can no longer
+        produce bfloat16 (see :func:`_dtype_coherence_broken`).
+
+        :param current_model: Loaded model instance, re-inspected for live state.
+        :return: Human-readable cause, or ``None``.
+        """
+        current_execution_device = _get_effective_model_device(current_model, resolved_device)
+        if _mps_fast_math_variant(device) and current_execution_device != "mps":
+            return "Fast-math corpus execution left MPS"
+        if _dtype_coherence_broken(
+            profile,
+            device,
+            mps_fallback,
+            resolved_device,
+            current_model,
+            persist_machine_record=use_cache and cache_scope is not None,
+        ):
+            return "An accelerator OOM fallback cast this run's keyed bfloat16 vectors to float32"
+        return None
 
     cache, cache_revision, cache_variant, cache_namespace = _prepare_cache_context(
         "code",
@@ -2222,6 +2532,7 @@ def _compute_embeddings_unlocked(
         trust_remote_code=resolved_trust_remote_code,
         use_cache=use_cache,
         cache_scope=cache_scope,
+        strict_revision_cache=strict_revision_cache,
     )
     cache_keys = (
         [
@@ -2262,13 +2573,15 @@ def _compute_embeddings_unlocked(
     )
     execution_device = _get_effective_model_device(model, resolved_device)
 
-    if _mps_fast_math_variant(device) and execution_device != "mps":
-        return _restart_faithfully_on_cpu()
+    coherence_break_reason = _coherence_break_reason(model)
+    if coherence_break_reason is not None:
+        return _restart_faithfully_on_cpu(coherence_break_reason)
 
     confirmed_revision = _confirm_cache_revision_after_load(
         model,
         model_name,
         resolved_revision,
+        strict=strict_revision_cache,
     )
     if confirmed_revision is not None:
         identity_revision = confirmed_revision
@@ -2338,11 +2651,9 @@ def _compute_embeddings_unlocked(
         )
 
     miss_vectors = _encode_miss_texts(miss_texts)
-    if (
-        _mps_fast_math_variant(device)
-        and _get_effective_model_device(model, resolved_device) != "mps"
-    ):
-        return _restart_faithfully_on_cpu()
+    coherence_break_reason = _coherence_break_reason(model)
+    if coherence_break_reason is not None:
+        return _restart_faithfully_on_cpu(coherence_break_reason)
 
     dim = miss_vectors.shape[1]
     if hits:
@@ -2356,17 +2667,20 @@ def _compute_embeddings_unlocked(
             )
             hits = {}
             miss_indices = _select_cache_miss_indices(cache_keys, hits, len(units))
+            # Re-read the live device: a mid-encode accelerator fallback during
+            # the first encode call is not reflected by replaying the stale
+            # execution_device captured before that call, and this closure
+            # variable is what _encode_miss_texts passes as initial_device.
+            execution_device = _get_effective_model_device(model, resolved_device)
             miss_vectors = _encode_miss_texts(
                 [
                     _truncate_code_if_needed(prepared_texts[i], units[i].qualified_name, model)
                     for i in miss_indices
                 ]
             )
-            if (
-                _mps_fast_math_variant(device)
-                and _get_effective_model_device(model, resolved_device) != "mps"
-            ):
-                return _restart_faithfully_on_cpu()
+            coherence_break_reason = _coherence_break_reason(model)
+            if coherence_break_reason is not None:
+                return _restart_faithfully_on_cpu(coherence_break_reason)
     if cache_keys is None:
         matrix = np.empty((len(units), dim), dtype=np.float32)
         for local_idx, global_idx in enumerate(miss_indices):
@@ -2384,9 +2698,11 @@ def _compute_embeddings_unlocked(
         and cache_keys is not None
         and cache_revision is not None
         and miss_indices
-        # Re-read the device: the retry ladder may have moved the model to CPU
-        # mid-encode, and those vectors must not enter the fast-math key space.
-        and _fast_math_write_allowed(device, _get_effective_model_device(model, resolved_device))
+        # Re-read live device and dtype: the retry ladder may have moved the
+        # model to CPU (or cast it to float32) mid-encode, and those vectors
+        # must not enter a key space (fast-math or bfloat16) they can no
+        # longer represent.
+        and _cache_write_allowed(profile, device, mps_fallback, resolved_device, model)
     ):
         cache.put_many(
             cache_scope,
@@ -2415,6 +2731,7 @@ def compute_embeddings_with_identity(
     mps_memory_fraction: float | None = None,
     use_cache: bool = True,
     cache_scope: Path | None = None,
+    strict_revision_cache: bool = False,
 ) -> tuple[np.ndarray, EmbeddingSpaceIdentity]:
     """Compute embeddings and identity under the shared model lock.
 
@@ -2434,6 +2751,9 @@ def compute_embeddings_with_identity(
     :param use_cache: Whether to consult/update the persistent embedding cache.
     :param cache_scope: Analyzed corpus root path used to address the cache shard;
         ``None`` disables caching for this call regardless of ``use_cache``.
+    :param strict_revision_cache: Whether an unpinned hub revision resolves to a
+        concrete commit hash (disabling caching when unmappable) instead of the
+        requested revision label, defaults to ``False``.
     :return: Normalized embedding matrix and its effective vector-space identity.
     """
     with _model_lock:
@@ -2450,6 +2770,7 @@ def compute_embeddings_with_identity(
             cache_scope=cache_scope,
             mps_fallback=mps_fallback,
             mps_memory_fraction=mps_memory_fraction,
+            strict_revision_cache=strict_revision_cache,
         )
 
 
@@ -2466,6 +2787,7 @@ def compute_embeddings(
     mps_memory_fraction: float | None = None,
     use_cache: bool = True,
     cache_scope: Path | None = None,
+    strict_revision_cache: bool = False,
 ) -> np.ndarray:
     """Compute embeddings while serializing shared-model lifecycle and inference.
 
@@ -2485,6 +2807,9 @@ def compute_embeddings(
     :param use_cache: Whether to consult/update the persistent embedding cache.
     :param cache_scope: Analyzed corpus root path used to address the cache shard;
         ``None`` disables caching for this call regardless of ``use_cache``.
+    :param strict_revision_cache: Whether an unpinned hub revision resolves to a
+        concrete commit hash (disabling caching when unmappable) instead of the
+        requested revision label, defaults to ``False``.
     :return: Normalized embedding matrix row-aligned with ``units``.
     """
     embeddings, _identity = compute_embeddings_with_identity(
@@ -2500,6 +2825,7 @@ def compute_embeddings(
         mps_memory_fraction=mps_memory_fraction,
         use_cache=use_cache,
         cache_scope=cache_scope,
+        strict_revision_cache=strict_revision_cache,
     )
     return embeddings
 
@@ -2605,6 +2931,7 @@ def _find_similar_to_query_unlocked(
     use_cache: bool = True,
     cache_scope: Path | None = None,
     corpus_identity: EmbeddingSpaceIdentity | None = None,
+    strict_revision_cache: bool = False,
 ) -> list[tuple[CodeUnit, float]]:
     """Find code units most similar to a natural-language query.
 
@@ -2634,6 +2961,10 @@ def _find_similar_to_query_unlocked(
         ``None`` disables caching for this call regardless of ``use_cache``.
     :param corpus_identity: Optional identity captured with ``embeddings``; when
         provided, model/revision/runtime drift requires rebuilding the corpus.
+    :param strict_revision_cache: Whether an unpinned hub revision resolves to a
+        concrete commit hash (disabling caching when unmappable) instead of the
+        requested revision label, defaults to ``False``. Must match the mode
+        used to build ``corpus_identity``.
     :return: Up to ``top_k`` ``(unit, similarity)`` pairs at or above the threshold,
         sorted by descending similarity.
     :raises SemanticBackendError: If an explicitly requested device is unavailable,
@@ -2667,6 +2998,7 @@ def _find_similar_to_query_unlocked(
             device=device,
             mps_fallback=mps_fallback,
             persist_local_model_manifest=use_cache and cache_scope is not None,
+            strict_revision_cache=strict_revision_cache,
         )
 
     encode_plan = _resolve_encode_plan(profile, "query", resolved_task, instruction_prefix)
@@ -2683,6 +3015,7 @@ def _find_similar_to_query_unlocked(
         trust_remote_code=resolved_trust_remote_code,
         use_cache=use_cache,
         cache_scope=cache_scope,
+        strict_revision_cache=strict_revision_cache,
     )
     cache_key = (
         compute_cache_key(
@@ -2736,6 +3069,7 @@ def _find_similar_to_query_unlocked(
             model,
             model_name,
             resolved_revision,
+            strict=strict_revision_cache,
         )
         corpus_encode_plan = _resolve_encode_plan(
             profile,
@@ -2770,6 +3104,7 @@ def _find_similar_to_query_unlocked(
                 effective_policy_device,
                 mps_fallback=mps_fallback,
                 trust_remote_code=resolved_trust_remote_code,
+                persist_machine_record=use_cache and cache_scope is not None,
             )
             if loaded_identity != corpus_identity:
                 raise RuntimeError(
@@ -2825,12 +3160,12 @@ def _find_similar_to_query_unlocked(
                 cache is not None
                 and cache_key is not None
                 and cache_revision is not None
-                # Re-read the device: the retry ladder may have moved the model
-                # to CPU mid-encode, and a CPU query vector must not be
-                # persisted into the fast-math key space.
-                and _fast_math_write_allowed(
-                    embedding_device,
-                    _get_effective_model_device(model, resolved_device),
+                # Re-read live device and dtype: the retry ladder may have
+                # moved the model to CPU (or cast it to float32) mid-encode,
+                # and that query vector must not be persisted into a key
+                # space (fast-math or bfloat16) it can no longer represent.
+                and _cache_write_allowed(
+                    profile, embedding_device, mps_fallback, resolved_device, model
                 )
             ):
                 cache.put_many(
@@ -2867,6 +3202,7 @@ def find_similar_to_query(
     use_cache: bool = True,
     cache_scope: Path | None = None,
     corpus_identity: EmbeddingSpaceIdentity | None = None,
+    strict_revision_cache: bool = False,
 ) -> list[tuple[CodeUnit, float]]:
     """Search embeddings while serializing shared-model lifecycle and inference.
 
@@ -2892,6 +3228,10 @@ def find_similar_to_query(
         ``None`` disables caching for this call regardless of ``use_cache``.
     :param corpus_identity: Optional identity captured with ``embeddings``; when
         provided, model/revision/runtime drift requires rebuilding the corpus.
+    :param strict_revision_cache: Whether an unpinned hub revision resolves to a
+        concrete commit hash (disabling caching when unmappable) instead of the
+        requested revision label, defaults to ``False``. Must match the mode
+        used to build ``corpus_identity``.
     :return: Up to ``top_k`` ``(unit, similarity)`` pairs at or above the threshold,
         sorted by descending similarity.
     """
@@ -2913,6 +3253,7 @@ def find_similar_to_query(
             use_cache=use_cache,
             cache_scope=cache_scope,
             corpus_identity=corpus_identity,
+            strict_revision_cache=strict_revision_cache,
         )
 
 
@@ -2931,6 +3272,7 @@ def run_semantic_analysis_with_identity(
     mps_memory_fraction: float | None = None,
     use_cache: bool = True,
     cache_scope: Path | None = None,
+    strict_revision_cache: bool = False,
 ) -> tuple[np.ndarray, list[DuplicatePair], EmbeddingSpaceIdentity]:
     """Run semantic duplicate detection and return the corpus identity.
 
@@ -2952,6 +3294,9 @@ def run_semantic_analysis_with_identity(
     :param use_cache: Whether to consult/update the persistent embedding cache.
     :param cache_scope: Analyzed corpus root path used to address the cache shard;
         ``None`` disables caching for this call regardless of ``use_cache``.
+    :param strict_revision_cache: Whether an unpinned hub revision resolves to a
+        concrete commit hash (disabling caching when unmappable) instead of the
+        requested revision label, defaults to ``False``.
     :return: ``(embeddings, duplicates, identity)``.
     """
     resolved_threshold = (
@@ -2971,6 +3316,7 @@ def run_semantic_analysis_with_identity(
         mps_memory_fraction=mps_memory_fraction,
         use_cache=use_cache,
         cache_scope=cache_scope,
+        strict_revision_cache=strict_revision_cache,
     )
     if not units:
         return embeddings, [], identity
@@ -3000,6 +3346,7 @@ def run_semantic_analysis(
     mps_memory_fraction: float | None = None,
     use_cache: bool = True,
     cache_scope: Path | None = None,
+    strict_revision_cache: bool = False,
 ) -> tuple[np.ndarray, list[DuplicatePair]]:
     """Run full semantic duplicate detection.
 
@@ -3021,6 +3368,9 @@ def run_semantic_analysis(
     :param use_cache: Whether to consult/update the persistent embedding cache.
     :param cache_scope: Analyzed corpus root path used to address the cache shard;
         ``None`` disables caching for this call regardless of ``use_cache``.
+    :param strict_revision_cache: Whether an unpinned hub revision resolves to a
+        concrete commit hash (disabling caching when unmappable) instead of the
+        requested revision label, defaults to ``False``.
     :return: ``(embeddings, duplicates)``; both are empty when ``units`` is empty.
     """
     embeddings, duplicates, _identity = run_semantic_analysis_with_identity(
@@ -3038,5 +3388,6 @@ def run_semantic_analysis(
         mps_memory_fraction=mps_memory_fraction,
         use_cache=use_cache,
         cache_scope=cache_scope,
+        strict_revision_cache=strict_revision_cache,
     )
     return embeddings, duplicates
