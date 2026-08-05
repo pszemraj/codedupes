@@ -1280,6 +1280,31 @@ def test_cli_cache_info_reports_populated_cache(tmp_path):
     assert "some/model: 1" in result.output
 
 
+def test_cli_cache_info_errors_when_cache_construction_fails(monkeypatch):
+    def _raise(*_args, **_kwargs):
+        raise RuntimeError("no home directory")
+
+    monkeypatch.setattr(cli, "EmbeddingCache", _raise)
+
+    result = CliRunner().invoke(cli.cli, ["cache", "info"])
+
+    assert result.exit_code == 1
+    assert "Cache unavailable: no home directory" in result.output
+
+
+def test_cli_info_survives_cache_construction_failure(monkeypatch):
+    def _raise(*_args, **_kwargs):
+        raise RuntimeError("no home directory")
+
+    monkeypatch.setattr(cli, "EmbeddingCache", _raise)
+
+    result = CliRunner().invoke(cli.cli, ["info"])
+
+    assert result.exit_code == 0
+    assert "unavailable: no home directory" in result.output
+    assert "Run with --help for CLI usage" in result.output
+
+
 def test_cli_cache_clear_removes_all_entries(tmp_path):
     cache = EmbeddingCache()
     scope = tmp_path / "proj"

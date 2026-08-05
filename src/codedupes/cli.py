@@ -1502,7 +1502,10 @@ def info_command() -> None:
             click.echo(f"      default_revision: {profile.default_revision}")
         click.echo(f"      default_trust_remote_code: {profile.default_trust_remote_code}")
     click.echo("Embedding cache:")
-    _echo_cache_summary(EmbeddingCache().stats())
+    try:
+        _echo_cache_summary(EmbeddingCache().stats())
+    except Exception as exc:  # noqa: BLE001 - info is diagnostics; report and keep printing
+        click.echo(f"  unavailable: {exc}")
     click.echo("Run with --help for CLI usage")
 
 
@@ -1526,7 +1529,11 @@ def _echo_cache_summary(stats: dict[str, Any]) -> None:
 @cache_group.command("info", help="Show embedding cache location, size, and breakdown")
 def cache_info_command() -> None:
     """Print embedding cache path, entry counts, size, and per-model/per-repo breakdown."""
-    stats = EmbeddingCache().stats()
+    try:
+        stats = EmbeddingCache().stats()
+    except Exception as exc:
+        click.echo(f"Cache unavailable: {exc}")
+        raise click.exceptions.Exit(1) from exc
     _echo_cache_summary(stats)
     if stats["models"]:
         click.echo("Per-model entry counts:")
