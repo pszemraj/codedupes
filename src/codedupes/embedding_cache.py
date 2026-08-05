@@ -1103,7 +1103,7 @@ def _maybe_evict(repos_dir: Path, protect: Path | None = None) -> None:
                 "Embedding cache still exceeds its size target after eviction "
                 f"({total} bytes > {target}); consider raising CODEDUPES_CACHE_MAX_MB."
             )
-    except OSError as exc:
+    except Exception as exc:  # noqa: BLE001 - eviction must never break analysis
         _warn_once("evict", exc)
 
 
@@ -1257,7 +1257,7 @@ class EmbeddingCache:
                 info["size_bytes"] += sum(
                     f.stat().st_size for f in local_models_dir.glob("*") if f.is_file()
                 )
-        except OSError as exc:
+        except Exception as exc:  # noqa: BLE001 - stats must never break analysis
             _warn_once("stats", exc)
         info["repos"] = [{"repo": name, **totals} for name, totals in sorted(repo_totals.items())]
         return info
@@ -1297,7 +1297,7 @@ class EmbeddingCache:
                     self.cache_root / LOCAL_MODELS_SUBDIR,
                     action="clear local-model manifests",
                 )
-        except OSError as exc:
+        except Exception as exc:  # noqa: BLE001 - clear must never break analysis
             _warn_once("clear", exc)
         return removed
 
