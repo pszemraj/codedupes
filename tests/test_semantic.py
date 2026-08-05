@@ -10,7 +10,7 @@ import pytest
 import sentence_transformers
 import torch
 
-from codedupes import semantic
+from codedupes import devices, semantic
 from codedupes.embedding_cache import EmbeddingCache
 from codedupes.models import CodeUnit, CodeUnitType
 from codedupes.semantic import (
@@ -569,6 +569,64 @@ def test_cuda_bf16_selection_excludes_emulated_support(monkeypatch) -> None:
     assert recorded_kwargs == {"including_emulation": False}
 
 
+def test_resolve_model_dtype_cpu_follows_capability_gate(monkeypatch) -> None:
+    monkeypatch.setattr(semantic, "resolve_cpu_bf16_native", lambda: True)
+    assert semantic._resolve_model_dtype("test-model", "cpu") is torch.bfloat16
+
+    monkeypatch.setattr(semantic, "resolve_cpu_bf16_native", lambda: False)
+    assert semantic._resolve_model_dtype("test-model", "cpu") is torch.float32
+
+
+def test_resolve_model_dtype_mps_always_float32_regardless_of_cpu_gate(monkeypatch) -> None:
+    # MPS is never CPU: the gate must not leak into the MPS branch.
+    monkeypatch.setattr(semantic, "resolve_cpu_bf16_native", lambda: True)
+    assert semantic._resolve_model_dtype("test-model", "mps") is torch.float32
+
+
+def test_dtype_variant_for_mps_is_always_empty(monkeypatch) -> None:
+    monkeypatch.setattr(semantic, "resolve_cpu_bf16_native", lambda: True)
+    profile = semantic.resolve_model_profile("gte-modernbert-base")
+
+    assert semantic._dtype_variant_for(profile, "mps", mps_fallback=None) == ""
+
+
+def test_dtype_variant_for_cpu_follows_capability_gate(monkeypatch) -> None:
+    profile = semantic.resolve_model_profile("gte-modernbert-base")
+
+    monkeypatch.setattr(semantic, "resolve_cpu_bf16_native", lambda **_kwargs: False)
+    assert semantic._dtype_variant_for(profile, "cpu", mps_fallback=None) == ""
+
+    monkeypatch.setattr(semantic, "resolve_cpu_bf16_native", lambda **_kwargs: True)
+    assert semantic._dtype_variant_for(profile, "cpu", mps_fallback=None) == "dtype=torch.bfloat16"
+
+
+def test_dtype_variant_for_auto_on_darwin_skips_resolution_when_gate_false(monkeypatch) -> None:
+    profile = semantic.resolve_model_profile("gte-modernbert-base")
+    monkeypatch.setattr(semantic, "resolve_cpu_bf16_native", lambda **_kwargs: False)
+    monkeypatch.setattr(semantic.sys, "platform", "darwin")
+
+    def _fail_if_called(*_a, **_k):
+        raise AssertionError("must not resolve a concrete device when the CPU gate is false")
+
+    monkeypatch.setattr(semantic, "_resolve_semantic_device_request", _fail_if_called)
+
+    assert semantic._dtype_variant_for(profile, "auto", mps_fallback=None) == ""
+
+
+def test_dtype_variant_matches_pre_capability_gate_baseline_when_gate_is_false() -> None:
+    # On a machine without a CPU bf16 GEMM backend, cpu/mps/darwin-auto must
+    # key byte-identically to the pre-capability-gate policy (empty variant):
+    # EMBEDDING_PIPELINE_SCHEMA is not bumped, so old and new code must agree
+    # here or warm caches on every non-mkldnn machine would silently miss.
+    if devices.resolve_cpu_bf16_native():
+        pytest.skip("This machine's CPU passes the bf16 capability gate.")
+    profile = semantic.resolve_model_profile("gte-modernbert-base")
+
+    assert semantic._dtype_variant_for(profile, "cpu", mps_fallback=None) == ""
+    assert semantic._dtype_variant_for(profile, "mps", mps_fallback=None) == ""
+    assert semantic._dtype_variant_for(profile, "auto", mps_fallback=None) == ""
+
+
 @pytest.mark.parametrize(
     ("revision", "trust_remote_code"),
     [
@@ -978,6 +1036,49 @@ def test_compute_embeddings_cpu_fallback_retries_once_and_bails_on_persistent_oo
     ]
 
 
+@pytest.mark.parametrize(
+    ("message", "active_device", "expected"),
+    [
+        pytest.param("CUDA out of memory. Tried to allocate 20 MiB", "cpu", "cuda", id="cuda-oom"),
+        pytest.param("cuda runtime error: out of memory", "mps", "cuda", id="cuda-oom-word-order"),
+        pytest.param(
+            "MPS backend out of memory (MPS allocated: 1 GB)", "cpu", "mps", id="mps-oom-backend"
+        ),
+        pytest.param("Invalid buffer size: 123456", "mps", "mps", id="mps-invalid-buffer-size"),
+        pytest.param("Metal error: out of memory", "cpu", "mps", id="mps-oom-metal-word"),
+        pytest.param(
+            "RuntimeError: out of memory", "cpu", "cpu", id="generic-out-of-memory-active-device"
+        ),
+        pytest.param(
+            "cannot allocate memory", "cuda", "cuda", id="generic-cannot-allocate-active-device"
+        ),
+        pytest.param("some unrelated failure", "cpu", None, id="non-oom-returns-none"),
+    ],
+)
+def test_classify_oom_device_covers_all_branches(
+    message: str, active_device: str, expected: str | None
+) -> None:
+    assert semantic._classify_oom_device(RuntimeError(message), active_device) == expected
+
+
+def test_move_model_to_cpu_casts_bf16_only_when_gate_is_false() -> None:
+    module = torch.nn.Linear(4, 4).to(dtype=torch.bfloat16)
+
+    semantic._move_model_to_cpu(module)
+
+    expected_dtype = torch.bfloat16 if devices.resolve_cpu_bf16_native() else torch.float32
+    assert next(module.parameters()).dtype is expected_dtype
+    assert str(next(module.parameters()).device) == "cpu"
+
+
+def test_move_model_to_cpu_leaves_float32_models_untouched() -> None:
+    module = torch.nn.Linear(4, 4)
+
+    semantic._move_model_to_cpu(module)
+
+    assert next(module.parameters()).dtype is torch.float32
+
+
 _FULL_REVISION = "1" * 40
 
 
@@ -1135,3 +1236,191 @@ def test_compute_embeddings_warm_cache_auto_and_cpu_skip_device_validation(
         assert result.shape == (len(units), 2)
 
     assert validation_calls["count"] == 0
+
+
+class _BfloatAcceleratorFallbackModel:
+    """Fake bf16 accelerator model whose encode OOMs down to a real CPU dtype cast."""
+
+    def __init__(self) -> None:
+        self._dtype = torch.bfloat16
+
+    def parameters(self):
+        yield torch.zeros(1, dtype=self._dtype)
+
+    def to(self, device=None, dtype=None):
+        if dtype is not None:
+            self._dtype = dtype
+        return self
+
+    def encode(self, texts, **kwargs):
+        if kwargs.get("device") != "cpu":
+            raise RuntimeError("CUDA out of memory")
+        return np.array([[1.0, 0.0]] * len(texts), dtype=np.float32)
+
+
+def test_dtype_diverging_accelerator_fallback_skips_bf16_keyed_cache_write(
+    tmp_path: Path, monkeypatch
+) -> None:
+    # No MPS is touched anywhere here: torch.cuda.is_bf16_supported is the
+    # only stub, matching the repo's existing convention for exercising
+    # CUDA-only branches on a CUDA-less host (see
+    # test_cuda_bf16_selection_excludes_emulated_support).
+    monkeypatch.setattr(torch.cuda, "is_bf16_supported", lambda **_kwargs: True)
+    monkeypatch.setattr(semantic, "_resolve_semantic_device_request", lambda *_a, **_k: "cuda")
+    units = extract_arithmetic_units(tmp_path)
+    model = _BfloatAcceleratorFallbackModel()
+    monkeypatch.setattr(semantic, "get_model", lambda *_a, **_k: model)
+
+    profile = semantic.resolve_model_profile("gte-modernbert-base")
+    plan = semantic.resolve_encode_plan("gte-modernbert-base", mode="code")
+    bf16_variant = semantic._cache_variant_for(
+        profile,
+        "cuda",
+        plan,
+        mps_fallback=None,
+        trust_remote_code=False,
+        resolved_device="cuda",
+    )
+    assert "dtype=torch.bfloat16" in bf16_variant
+    bf16_namespace = semantic._embedding_cache_namespace("code", bf16_variant)
+
+    put_calls: list[dict] = []
+    original_put_many = EmbeddingCache.put_many
+
+    def _recording_put_many(self, *args, **kwargs):
+        put_calls.append({"args": args, "kwargs": kwargs})
+        return original_put_many(self, *args, **kwargs)
+
+    monkeypatch.setattr(EmbeddingCache, "put_many", _recording_put_many)
+
+    embeddings = compute_embeddings(
+        units,
+        model_name="gte-modernbert-base",
+        revision=_FULL_REVISION,
+        device="cuda",
+        batch_size=1,
+        cache_scope=tmp_path,
+    )
+
+    assert embeddings.shape[0] == len(units)
+    # A dtype-diverging fallback (bf16 CUDA -> float32 CPU on this gate-false
+    # machine) must never write float32 vectors under the bf16-keyed
+    # namespace: the coherence-restart discards that run and recomputes under
+    # a fresh, correctly-keyed identity instead, so *some* write is expected -
+    # just never one landing in the original bf16 key space.
+    bf16_writes = [call for call in put_calls if call["kwargs"].get("namespace") == bf16_namespace]
+    assert bf16_writes == []
+    if not devices.resolve_cpu_bf16_native():
+        assert len(put_calls) == 1
+
+
+def test_dimension_mismatch_reencode_reads_live_device(tmp_path: Path, monkeypatch) -> None:
+    """Regression test: the dimension-mismatch re-encode must observe the live
+    effective device, not the value captured before the first encode call.
+
+    Previously ``execution_device`` was captured once and only read again
+    inside a fast-math-specific check; a mid-encode accelerator fallback that
+    changed the model's real device was not reflected for the second
+    ``_encode_miss_texts`` call, which could misclassify a later CPU
+    allocator failure as an accelerator OOM.
+    """
+    units = extract_arithmetic_units(tmp_path)
+
+    class DriftingDeviceModel:
+        """Model whose reported ``.device`` flips to cpu mid-first-encode."""
+
+        def __init__(self) -> None:
+            self.device = "cuda"
+
+        def encode(self, texts, **kwargs):
+            self.device = "cpu"
+            return np.array([[1.0, 0.0]] * len(texts), dtype=np.float32)
+
+    model = DriftingDeviceModel()
+    monkeypatch.setattr(semantic, "get_model", lambda *_a, **_k: model)
+    monkeypatch.setattr(semantic, "_resolve_semantic_device_request", lambda *_a, **_k: "cuda")
+
+    recorded_initial_devices: list[str] = []
+    original_encode_with_retries = semantic._encode_with_retries
+
+    def _recording_encode_with_retries(*args, **kwargs):
+        recorded_initial_devices.append(kwargs["initial_device"])
+        return original_encode_with_retries(*args, **kwargs)
+
+    monkeypatch.setattr(semantic, "_encode_with_retries", _recording_encode_with_retries)
+
+    profile = semantic.resolve_model_profile("gte-modernbert-base")
+    plan = semantic.resolve_encode_plan("gte-modernbert-base", mode="code")
+    cache, cache_revision, cache_variant, cache_namespace = semantic._prepare_cache_context(
+        "code",
+        profile,
+        "gte-modernbert-base",
+        _FULL_REVISION,
+        "cuda",
+        plan,
+        mps_fallback=None,
+        trust_remote_code=False,
+        use_cache=True,
+        cache_scope=tmp_path,
+    )
+    assert cache is not None
+    assert cache_revision is not None
+    prepared_texts = [unit.source.strip() for unit in units]
+    cache_keys = [
+        semantic.compute_cache_key(
+            profile.canonical_name, cache_revision, text, variant=cache_variant
+        )
+        for text in prepared_texts
+    ]
+    # Seed a mismatched-dimensionality hit for the first unit so the live
+    # model's real 2-dim output forces the dimension-mismatch re-encode.
+    cache.put_many(
+        tmp_path,
+        profile.canonical_name,
+        cache_revision,
+        [(cache_keys[0], np.array([1.0, 0.0, 0.0], dtype=np.float32))],
+        namespace=cache_namespace,
+    )
+
+    compute_embeddings(
+        units,
+        model_name="gte-modernbert-base",
+        revision=_FULL_REVISION,
+        device="cuda",
+        cache_scope=tmp_path,
+    )
+
+    assert recorded_initial_devices == ["cuda", "cpu"]
+
+
+def test_fingerprint_local_model_dir_follows_symlinked_subdirectories(tmp_path: Path) -> None:
+    model_dir = tmp_path / "model"
+    model_dir.mkdir()
+    (model_dir / "config.json").write_text("{}")
+
+    real_shards_dir = tmp_path / "real-shards"
+    real_shards_dir.mkdir()
+    shard_path = real_shards_dir / "model-00001.safetensors"
+    shard_path.write_text("weights-v1")
+    (model_dir / "shards").symlink_to(real_shards_dir, target_is_directory=True)
+
+    before = semantic._fingerprint_local_model_dir(model_dir, persist_manifest=False)
+
+    shard_path.write_text("weights-v2-changed")
+
+    after = semantic._fingerprint_local_model_dir(model_dir, persist_manifest=False)
+
+    assert before is not None
+    assert after is not None
+    assert before != after
+
+
+def test_fingerprint_local_model_dir_handles_symlink_cycles(tmp_path: Path) -> None:
+    model_dir = tmp_path / "model"
+    model_dir.mkdir()
+    (model_dir / "config.json").write_text("{}")
+    (model_dir / "loop").symlink_to(model_dir, target_is_directory=True)
+
+    fingerprint = semantic._fingerprint_local_model_dir(model_dir, persist_manifest=False)
+
+    assert fingerprint is not None

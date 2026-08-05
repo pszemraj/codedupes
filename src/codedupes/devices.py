@@ -416,7 +416,7 @@ def _persist_machine_record(record_path: Path, verdict: bool) -> None:
                 tmp_path.unlink()
 
 
-def resolve_cpu_bf16_native() -> bool:
+def resolve_cpu_bf16_native(*, persist: bool = True) -> bool:
     """Return whether this machine's CPU can execute native, fast bfloat16 GEMM.
 
     Backed by an on-disk record (``<cache_root>/machine.json``) so repeated,
@@ -426,8 +426,13 @@ def resolve_cpu_bf16_native() -> bool:
     re-probing. A missing, unreadable, corrupt, or stale-version record falls
     back to a live :func:`cpu_bf16_capability` probe, which is then persisted
     best-effort for the next call. ``CODEDUPES_NO_CACHE`` disables both the
-    read and the write, matching the embedding cache's kill switch.
+    read and the write, matching the embedding cache's kill switch; so does
+    ``persist=False``, mirroring how callers that disabled the on-disk
+    embedding cache for one call (see ``persist_manifest`` on the local-model
+    digest manifest) keep that call free of unrelated cache-directory writes.
 
+    :param persist: Whether the on-disk record may be read from and written to,
+        defaults to ``True``.
     :return: ``True`` iff native bf16 ISA is present and a GEMM backend can use it.
     """
     no_cache = os.environ.get("CODEDUPES_NO_CACHE", "").strip().lower() in {
@@ -436,7 +441,7 @@ def resolve_cpu_bf16_native() -> bool:
         "yes",
         "on",
     }
-    record_path = None if no_cache else _resolve_machine_record_path()
+    record_path = None if (no_cache or not persist) else _resolve_machine_record_path()
 
     if record_path is not None:
         cached_verdict = _read_machine_record(record_path)

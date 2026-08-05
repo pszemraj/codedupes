@@ -38,7 +38,9 @@ from codedupes.devices import (
     configure_mps_memory_fraction,
     format_mps_memory_snapshot,
     is_mlx_loaded,
+    resolve_cpu_bf16_native,
     resolve_semantic_device,
+    restore_mps_memory_fraction_if_managed,
 )
 from codedupes.embedding_cache import (
     LOCAL_MODELS_SUBDIR,
@@ -531,14 +533,17 @@ def _fingerprint_local_model_dir(
     The fingerprint hashes each model file's relative path and content digest,
     excluding Hugging Face's ``--local-dir`` download metadata, so replacing or
     retraining weights in place changes the cache revision while metadata-only
-    touches keep it stable. Digests are reused from a manifest keyed on the
-    full stat identity ``(size, mtime_ns, ctime_ns, inode)``; unchanged files
-    are never rehashed, keeping warm-path key derivation cheap enough to run
-    before any model import. The in-place guarantee is POSIX-specific: there
-    ``st_ctime`` is the inode-change time, which every content write moves even
-    when size and mtime are restored. On Windows ``st_ctime`` is the creation
-    time, so a same-size in-place overwrite with a preserved mtime could reuse
-    a stale digest.
+    touches keep it stable. The walk follows symlinks
+    (``os.walk(..., followlinks=True)``) so weight shards stored behind a
+    symlinked subdirectory move the fingerprint too; a visited-realpath set
+    guards against symlink cycles. Digests are reused from a manifest keyed on
+    the full stat identity ``(size, mtime_ns, ctime_ns, inode)``; unchanged
+    files are never rehashed, keeping warm-path key derivation cheap enough to
+    run before any model import. The in-place guarantee is POSIX-specific:
+    there ``st_ctime`` is the inode-change time, which every content write
+    moves even when size and mtime are restored. On Windows ``st_ctime`` is
+    the creation time, so a same-size in-place overwrite with a preserved
+    mtime could reuse a stale digest.
 
     :param model_dir: Resolved local model directory.
     :param persist_manifest: Whether per-file digests may be loaded from and saved
@@ -552,30 +557,41 @@ def _fingerprint_local_model_dir(
     fresh_manifest: dict[str, dict[str, object]] = {}
     entries: list[tuple[str, str]] = []
     hf_download_metadata = model_dir / ".cache" / "huggingface"
+    visited_dirs: set[str] = set()
     try:
-        for file_path in sorted(model_dir.rglob("*")):
-            if not file_path.is_file():
+        for dirpath, dirnames, filenames in os.walk(model_dir, followlinks=True):
+            real_dir = os.path.realpath(dirpath)
+            if real_dir in visited_dirs:
+                # A symlink cycle looped back to an already-processed real
+                # directory: stop descending and skip re-processing its files.
+                dirnames[:] = []
                 continue
-            if file_path.is_relative_to(hf_download_metadata):
-                continue
-            stat = file_path.stat()
-            relative = file_path.relative_to(model_dir).as_posix()
-            identity = (stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns, stat.st_ino)
-            content_digest = _manifest_digest_for(manifest.get(relative), identity)
-            if content_digest is None:
-                content_digest = _hash_file_content(file_path)
-            fresh_manifest[relative] = {
-                "size": identity[0],
-                "mtime_ns": identity[1],
-                "ctime_ns": identity[2],
-                "ino": identity[3],
-                "digest": content_digest,
-            }
-            entries.append((relative, content_digest))
+            visited_dirs.add(real_dir)
+            for filename in filenames:
+                file_path = Path(dirpath) / filename
+                if not file_path.is_file():
+                    continue
+                if file_path.is_relative_to(hf_download_metadata):
+                    continue
+                stat = file_path.stat()
+                relative = file_path.relative_to(model_dir).as_posix()
+                identity = (stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns, stat.st_ino)
+                content_digest = _manifest_digest_for(manifest.get(relative), identity)
+                if content_digest is None:
+                    content_digest = _hash_file_content(file_path)
+                fresh_manifest[relative] = {
+                    "size": identity[0],
+                    "mtime_ns": identity[1],
+                    "ctime_ns": identity[2],
+                    "ino": identity[3],
+                    "digest": content_digest,
+                }
+                entries.append((relative, content_digest))
     except OSError:
         return None
     if not entries:
         return None
+    entries.sort()
     _store_local_model_manifest(
         model_dir,
         fresh_manifest,
@@ -795,14 +811,23 @@ def _dtype_variant_for(
     *,
     mps_fallback: bool | None,
     resolved_device: str | None = None,
+    persist_machine_record: bool = True,
 ) -> str:
     """Build the dtype component of the cache variant for one model family.
 
     Every load pins an explicit dtype, so the empty fingerprint truthfully
-    means float32. CPU and MPS always use float32 and therefore share a key
-    space without importing PyTorch to resolve the device; on macOS, ``auto``
-    can only select MPS or CPU, so it shares that same model-free warm path.
-    Requests that can reach CUDA resolve the device and record the selected
+    means float32. ``mps`` always resolves float32 (measured: bf16 gains only
+    ~13% runtime while drifting pair similarities ~1e-2, not worth splitting
+    the shared key space) and returns without importing PyTorch. ``cpu``
+    resolves float32 or bfloat16 from this machine's capability-gated verdict
+    (:func:`codedupes.devices.resolve_cpu_bf16_native`), read from an on-disk
+    record so this warm path also never imports torch. On darwin, ``auto`` can
+    only select MPS or CPU: when the CPU gate is false both possible targets
+    are float32 (today's reality on every Mac without an mkldnn backend), so
+    the variant resolves without picking a concrete device; when the gate is
+    true, resolution falls through to inspect the concrete target because only
+    a CPU pick would differ from MPS. Requests that can reach CUDA, and
+    non-darwin ``auto``, always resolve the device and record a selected
     bfloat16 as a non-default dtype.
 
     :param profile: Resolved model profile.
@@ -810,11 +835,20 @@ def _dtype_variant_for(
         ``None`` meaning the default request.
     :param mps_fallback: MPS unsupported-op CPU fallback behavior.
     :param resolved_device: Already resolved execution target, when available.
+    :param persist_machine_record: Whether the on-disk CPU capability record may
+        be read from and written to, defaults to ``True``.
     :return: Dtype fingerprint, empty for float32.
     """
     normalized_device = (device or DEFAULT_SEMANTIC_DEVICE).strip().lower()
-    if normalized_device in {"cpu", "mps"} or (
-        normalized_device == "auto" and sys.platform == "darwin"
+    if normalized_device == "mps":
+        return ""
+    if normalized_device == "cpu":
+        gate = resolve_cpu_bf16_native(persist=persist_machine_record)
+        return "dtype=torch.bfloat16" if gate else ""
+    if (
+        normalized_device == "auto"
+        and sys.platform == "darwin"
+        and not resolve_cpu_bf16_native(persist=persist_machine_record)
     ):
         return ""
 
@@ -888,6 +922,7 @@ def _cache_variant_for(
     mps_fallback: bool | None,
     trust_remote_code: bool = False,
     resolved_device: str | None = None,
+    persist_machine_record: bool = True,
 ) -> str:
     """Build the complete vector-affecting cache-key variant for one encode call.
 
@@ -907,6 +942,8 @@ def _cache_variant_for(
     :param mps_fallback: MPS unsupported-op CPU fallback behavior.
     :param trust_remote_code: Resolved remote-code trust setting.
     :param resolved_device: Already resolved execution target, when available.
+    :param persist_machine_record: Whether the on-disk CPU capability record may
+        be read from and written to, defaults to ``True``.
     :return: Variant fingerprint combining plan, dtype, math policy, runtime, and trust.
     """
     dtype_variant = _dtype_variant_for(
@@ -914,6 +951,7 @@ def _cache_variant_for(
         device,
         mps_fallback=mps_fallback,
         resolved_device=resolved_device,
+        persist_machine_record=persist_machine_record,
     )
     return "\x00".join(
         (
@@ -935,6 +973,7 @@ def _build_embedding_space_identity(
     mps_fallback: bool | None,
     trust_remote_code: bool,
     resolved_device: str | None = None,
+    persist_machine_record: bool = True,
 ) -> EmbeddingSpaceIdentity:
     """Build one corpus identity from already resolved embedding inputs.
 
@@ -945,6 +984,8 @@ def _build_embedding_space_identity(
     :param mps_fallback: MPS unsupported-op CPU fallback behavior.
     :param trust_remote_code: Resolved remote-code trust setting.
     :param resolved_device: Already resolved execution target, when available.
+    :param persist_machine_record: Whether the on-disk CPU capability record may
+        be read from and written to, defaults to ``True``.
     :return: Complete embedding-space identity.
     """
     return EmbeddingSpaceIdentity(
@@ -957,6 +998,7 @@ def _build_embedding_space_identity(
             mps_fallback=mps_fallback,
             trust_remote_code=trust_remote_code,
             resolved_device=resolved_device,
+            persist_machine_record=persist_machine_record,
         ),
     )
 
@@ -980,7 +1022,8 @@ def resolve_embedding_space_identity(
     :param semantic_task: Semantic task used to embed the corpus.
     :param device: Requested semantic inference device.
     :param mps_fallback: MPS unsupported-op CPU fallback behavior.
-    :param persist_local_model_manifest: Whether local-model digests may be persisted.
+    :param persist_local_model_manifest: Whether local-model digests and the CPU
+        capability record may be persisted.
     :return: Canonical model, concrete revision/fingerprint, and runtime variant.
     """
     profile = resolve_model_profile(model_name)
@@ -1006,6 +1049,7 @@ def resolve_embedding_space_identity(
         device,
         mps_fallback=mps_fallback,
         trust_remote_code=resolved_trust_remote_code,
+        persist_machine_record=persist_local_model_manifest,
     )
 
 
@@ -1269,8 +1313,14 @@ def _prepare_semantic_device(
         # so the strict low-level check is only applied once MPS is the real target.
         if resolved_device == "mps":
             configure_mps_memory_fraction(resolved_device, mps_memory_fraction)
-        elif mps_memory_fraction is not None:
-            logger.info(f"mps_memory_fraction ignored: resolved device is {resolved_device}")
+        else:
+            if mps_memory_fraction is not None:
+                logger.info(f"mps_memory_fraction ignored: resolved device is {resolved_device}")
+            # A prior call may have applied a custom MPS allocator cap; this
+            # call resolved away from MPS, so restore the baseline instead of
+            # leaving the cap stuck in this process until some later call
+            # happens to resolve back to MPS with no fraction set.
+            restore_mps_memory_fraction_if_managed()
     except (DeviceConfigurationError, ValueError) as exc:
         raise SemanticBackendError(str(exc)) from exc
 
@@ -1311,6 +1361,99 @@ def _get_effective_model_device(model: object, fallback: str) -> str:
     if model is _model and _model_execution_device is not None:
         return _model_execution_device
     return _coerce_device_name(getattr(model, "device", None), fallback)
+
+
+def _model_parameter_dtype(model: object) -> Any | None:
+    """Best-effort read of a loaded model's current parameter dtype.
+
+    :param model: Model instance to inspect.
+    :return: Dtype of the model's first parameter, or ``None`` when unavailable.
+    """
+    try:
+        return next(model.parameters()).dtype
+    except Exception:  # noqa: BLE001 - defensive introspection of an arbitrary model object
+        return None
+
+
+def _dtype_coherence_broken(
+    profile: SemanticModelProfile,
+    device: str | None,
+    mps_fallback: bool | None,
+    resolved_device: str,
+    model: object,
+    *,
+    persist_machine_record: bool = True,
+) -> bool:
+    """Detect whether a keyed bfloat16 dtype variant no longer matches live execution.
+
+    An accelerator OOM can move a model keyed under a non-default (bfloat16)
+    dtype variant to CPU and, when this CPU fails the capability gate, cast it
+    to float32 (see :func:`_move_model_to_cpu`). The keyed variant then
+    describes vectors this run can no longer produce; mixing newly computed
+    float32 rows with any cache hits recorded under the bfloat16 key would
+    silently corrupt the matrix. The check derives from the model's actual
+    live parameter dtype, never from a replayed pre-fallback assumption.
+
+    :param profile: Resolved model profile.
+    :param device: Requested device string as given to the public API.
+    :param mps_fallback: MPS unsupported-op CPU fallback behavior.
+    :param resolved_device: Device resolved before model load.
+    :param model: Loaded model instance, possibly moved mid-call.
+    :param persist_machine_record: Whether the on-disk CPU capability record may
+        be read from and written to, defaults to ``True``.
+    :return: ``True`` when the keyed dtype variant is no longer representative.
+    """
+    dtype_variant = _dtype_variant_for(
+        profile,
+        device,
+        mps_fallback=mps_fallback,
+        resolved_device=resolved_device,
+        persist_machine_record=persist_machine_record,
+    )
+    if not dtype_variant:
+        return False
+    current_dtype = _model_parameter_dtype(model)
+    return current_dtype is not None and str(current_dtype) != "torch.bfloat16"
+
+
+def _cache_write_allowed(
+    profile: SemanticModelProfile,
+    device: str | None,
+    mps_fallback: bool | None,
+    resolved_device: str,
+    model: object,
+    *,
+    persist_machine_record: bool = True,
+) -> bool:
+    """Decide whether fresh vectors may be written under their keyed cache variant.
+
+    Generalizes :func:`_fast_math_write_allowed` to also cover dtype
+    coherence: a write is safe only when the actual post-encode execution
+    state - device and dtype, re-read from the model rather than replayed
+    pre-encode assumptions - still matches what the keyed variant promises.
+    Skipping an unsafe write costs a cache miss on the next run; it never
+    risks mixing vectors from two coordinate systems under one key.
+
+    :param profile: Resolved model profile.
+    :param device: Requested device string as given to the public API.
+    :param mps_fallback: MPS unsupported-op CPU fallback behavior.
+    :param resolved_device: Device resolved before model load.
+    :param model: Loaded model instance, possibly moved mid-call.
+    :param persist_machine_record: Whether the on-disk CPU capability record may
+        be read from and written to, defaults to ``True``.
+    :return: ``True`` when writing under the derived variant is representative.
+    """
+    execution_device = _get_effective_model_device(model, resolved_device)
+    if not _fast_math_write_allowed(device, execution_device):
+        return False
+    return not _dtype_coherence_broken(
+        profile,
+        device,
+        mps_fallback,
+        resolved_device,
+        model,
+        persist_machine_record=persist_machine_record,
+    )
 
 
 class _ExecutableStatementCounter(ast.NodeVisitor):
@@ -1414,12 +1557,23 @@ def _resolve_model_dtype(family: str, device: str) -> Any:
     (``dtype="auto"``), so the default profile's float16 checkpoint would
     otherwise embed in half precision - an order of magnitude slower on CPU and
     outside the documented faithful-float32 tolerance. Every load therefore
-    pins an explicit dtype: bfloat16 on CUDA hardware with native support,
-    float32 everywhere else. Measured on Apple Silicon (M-series, 96 real code
-    chunks): CPU bfloat16 is emulated and ~16x slower than float32; MPS
-    bfloat16 halves model memory but gains only ~13% runtime while drifting
-    pair similarities ~1e-2 - tuned-threshold scale - so CPU and MPS stay
-    faithful float32 and keep their shared cache key space.
+    pins an explicit dtype under a capability-gated policy rather than a
+    hardcoded machine truth: bfloat16 on CUDA hardware with native support
+    (unchanged); bfloat16 on CPU iff this machine passes the two-part gate in
+    :func:`codedupes.devices.resolve_cpu_bf16_native` - native bf16 ISA *and*
+    a GEMM backend (oneDNN/mkldnn) able to exploit it; float32 everywhere
+    else, including every MPS run. Measured on an Apple M5 (torch 2.13.0,
+    macOS arm64 wheel): ``torch.cpu.get_capabilities()`` reports a native bf16
+    ISA (``bf16: true``, ``architecture: "arm64"``) but
+    ``torch.backends.mkldnn.is_available()`` is ``False``, so a
+    1024x1024x1024 bf16 matmul measured 1015 ms versus 1.207 ms for float32 -
+    841x slower with an ISA but no backend to exploit it. The gate exists so a
+    future machine with both the ISA and mkldnn gets the real speed and
+    memory benefit instead of this machine's negative result being hardcoded
+    forever. MPS bfloat16 halves model memory but gains only ~13% runtime
+    while drifting pair similarities ~1e-2 - tuned-threshold scale - so MPS
+    stays faithful float32 and keeps its shared cache key space with CPU
+    float32 runs.
 
     :param family: Resolved model profile family, reserved for per-family policy.
     :param device: Concrete execution device.
@@ -1435,6 +1589,12 @@ def _resolve_model_dtype(family: str, device: str) -> Any:
         # tensors through emulation, the failure mode this policy exists to avoid.
         and torch.cuda.is_bf16_supported(including_emulation=False)
     ):
+        return torch.bfloat16
+
+    # persist=True: an actual model load (or CPU dtype re-pin after an
+    # accelerator OOM) is real semantic work, not a for-info-only identity
+    # computation, so the capability record is always allowed to persist here.
+    if device == "cpu" and resolve_cpu_bf16_native():
         return torch.bfloat16
 
     return torch.float32
@@ -1572,17 +1732,34 @@ def _get_model_unlocked(
                 loaded_model = SentenceTransformer(resolved_model_name, **st_kwargs)
             except RuntimeError as exc:
                 oom_device = _classify_oom_device(exc, resolved_device)
-                if resolved_device == "mps" and oom_device == "mps":
+                accelerator_load_oom = (
+                    resolved_device in {"cuda", "mps"} and oom_device == resolved_device
+                )
+                if accelerator_load_oom:
                     exc.__traceback__ = None
                     exc.__context__ = None
-                    logger.warning(
-                        f"MPS OOM while loading {resolved_model_name} "
-                        f"({format_mps_memory_snapshot()}); "
-                        "clearing Metal cache and retrying on CPU"
+                    memory_context = (
+                        f" ({format_mps_memory_snapshot()})" if resolved_device == "mps" else ""
                     )
-                    clear_device_cache("mps", synchronize=True, collect=True)
+                    cache_label = "Metal cache" if resolved_device == "mps" else "CUDA cache"
+                    logger.warning(
+                        f"{resolved_device.upper()} OOM while loading {resolved_model_name}"
+                        f"{memory_context}; clearing {cache_label} and retrying on CPU"
+                    )
+                    clear_device_cache(resolved_device, synchronize=True, collect=True)
                     cpu_kwargs = dict(st_kwargs)
                     cpu_kwargs["device"] = "cpu"
+                    if resolved_device == "cuda":
+                        # An accelerator-resolved dtype (bfloat16 on CUDA) must
+                        # never be blindly inherited by the CPU retry: re-pin
+                        # through the same capability gate a fresh CPU load
+                        # would use. MPS already always resolves float32, so
+                        # its inherited model_kwargs dtype needs no re-pin.
+                        cpu_model_kwargs = dict(
+                            cast(dict[str, object], cpu_kwargs.get("model_kwargs") or {})
+                        )
+                        cpu_model_kwargs["dtype"] = _resolve_model_dtype(profile.family, "cpu")
+                        cpu_kwargs["model_kwargs"] = cpu_model_kwargs
                     try:
                         loaded_model = SentenceTransformer(resolved_model_name, **cpu_kwargs)
                     except Exception as retry_exc:
@@ -1592,7 +1769,9 @@ def _get_model_unlocked(
                                 model_name=resolved_model_name,
                                 revision=resolved_revision,
                                 trust_remote_code=resolved_trust_remote_code,
-                                stage="CPU model-loading retry after MPS OOM",
+                                stage=(
+                                    f"CPU model-loading retry after {resolved_device.upper()} OOM"
+                                ),
                             )
                         raise
                     load_device = "cpu"
@@ -1756,13 +1935,39 @@ def _classify_oom_device(error: RuntimeError, active_device: str) -> str | None:
 
 
 def _move_model_to_cpu(model: object) -> None:
-    """Move a model to CPU and update cached execution-device state."""
+    """Move a model to CPU, re-checking the bf16 capability gate on the way down.
+
+    Every accelerator-to-CPU fallback re-checks the same capability gate that
+    governs load-time dtype selection (:func:`_resolve_model_dtype`): a model
+    loaded in bfloat16 must not silently keep executing bf16 on a CPU that
+    fails :func:`codedupes.devices.resolve_cpu_bf16_native`, where it measures
+    up to 841x slower than float32 with no GEMM backend to exploit the ISA
+    (measured on an Apple M5). When the gate is true, bf16 is kept: it halves
+    memory pressure on this last-resort path at native CPU speed.
+
+    :param model: Model to move, mutated in place.
+    :return: ``None``.
+    """
     global _model_execution_device
     if hasattr(model, "to"):
-        # Deliberately preserve the load-time dtype on the last-resort CPU path:
-        # fallback follows an accelerator OOM, so retaining bf16 halves model and
-        # activation memory while keeping the same accepted numeric format.
-        model.to("cpu")
+        current_dtype = _model_parameter_dtype(model)
+        if current_dtype is not None and str(current_dtype) == "torch.bfloat16":
+            if resolve_cpu_bf16_native():
+                logger.info(
+                    "CPU fallback keeps bfloat16: this CPU has a native bf16 GEMM backend "
+                    "(mkldnn), halving memory pressure at native speed"
+                )
+                model.to("cpu")
+            else:
+                logger.warning(
+                    "CPU fallback casts bfloat16 to float32: this CPU has no native bf16 GEMM "
+                    "backend (mkldnn), where bf16 measures far slower than float32"
+                )
+                import torch
+
+                model.to(device="cpu", dtype=torch.float32)
+        else:
+            model.to("cpu")
     if model is _model:
         _model_execution_device = "cpu"
 
@@ -2185,16 +2390,18 @@ def _compute_embeddings_unlocked(
             mps_fallback=mps_fallback,
             trust_remote_code=resolved_trust_remote_code,
             resolved_device=concrete_device,
+            persist_machine_record=use_cache and cache_scope is not None,
         )
 
-    def _restart_faithfully_on_cpu() -> tuple[np.ndarray, EmbeddingSpaceIdentity]:
-        """Restart corpus assembly under faithful CPU cache and math policy.
+    def _restart_faithfully_on_cpu(reason: str) -> tuple[np.ndarray, EmbeddingSpaceIdentity]:
+        """Restart corpus assembly under one faithful CPU cache and dtype/math policy.
 
+        :param reason: Short human-readable cause logged once before the restart.
         :return: CPU-faithful matrix and identity.
         """
         logger.warning(
-            "Fast-math corpus execution left MPS; discarding fast-math cache hits "
-            "and restarting the complete matrix under the faithful CPU policy"
+            f"{reason}; discarding cache hits and restarting the complete matrix "
+            "under one faithful CPU policy"
         )
         return _compute_embeddings_unlocked(
             units,
@@ -2210,6 +2417,31 @@ def _compute_embeddings_unlocked(
             use_cache=use_cache,
             cache_scope=cache_scope,
         )
+
+    def _coherence_break_reason(current_model: object) -> str | None:
+        """Return why this run cannot stay coherent, or ``None`` when it still can.
+
+        Checks both preconditions that force a discard-and-restart: fast-math
+        corpus execution that left MPS (see :func:`_mps_fast_math_variant`),
+        and a keyed bfloat16 dtype variant whose live execution can no longer
+        produce bfloat16 (see :func:`_dtype_coherence_broken`).
+
+        :param current_model: Loaded model instance, re-inspected for live state.
+        :return: Human-readable cause, or ``None``.
+        """
+        current_execution_device = _get_effective_model_device(current_model, resolved_device)
+        if _mps_fast_math_variant(device) and current_execution_device != "mps":
+            return "Fast-math corpus execution left MPS"
+        if _dtype_coherence_broken(
+            profile,
+            device,
+            mps_fallback,
+            resolved_device,
+            current_model,
+            persist_machine_record=use_cache and cache_scope is not None,
+        ):
+            return "An accelerator OOM fallback cast this run's keyed bfloat16 vectors to float32"
+        return None
 
     cache, cache_revision, cache_variant, cache_namespace = _prepare_cache_context(
         "code",
@@ -2262,8 +2494,9 @@ def _compute_embeddings_unlocked(
     )
     execution_device = _get_effective_model_device(model, resolved_device)
 
-    if _mps_fast_math_variant(device) and execution_device != "mps":
-        return _restart_faithfully_on_cpu()
+    coherence_break_reason = _coherence_break_reason(model)
+    if coherence_break_reason is not None:
+        return _restart_faithfully_on_cpu(coherence_break_reason)
 
     confirmed_revision = _confirm_cache_revision_after_load(
         model,
@@ -2338,11 +2571,9 @@ def _compute_embeddings_unlocked(
         )
 
     miss_vectors = _encode_miss_texts(miss_texts)
-    if (
-        _mps_fast_math_variant(device)
-        and _get_effective_model_device(model, resolved_device) != "mps"
-    ):
-        return _restart_faithfully_on_cpu()
+    coherence_break_reason = _coherence_break_reason(model)
+    if coherence_break_reason is not None:
+        return _restart_faithfully_on_cpu(coherence_break_reason)
 
     dim = miss_vectors.shape[1]
     if hits:
@@ -2356,17 +2587,20 @@ def _compute_embeddings_unlocked(
             )
             hits = {}
             miss_indices = _select_cache_miss_indices(cache_keys, hits, len(units))
+            # Re-read the live device: a mid-encode accelerator fallback during
+            # the first encode call is not reflected by replaying the stale
+            # execution_device captured before that call, and this closure
+            # variable is what _encode_miss_texts passes as initial_device.
+            execution_device = _get_effective_model_device(model, resolved_device)
             miss_vectors = _encode_miss_texts(
                 [
                     _truncate_code_if_needed(prepared_texts[i], units[i].qualified_name, model)
                     for i in miss_indices
                 ]
             )
-            if (
-                _mps_fast_math_variant(device)
-                and _get_effective_model_device(model, resolved_device) != "mps"
-            ):
-                return _restart_faithfully_on_cpu()
+            coherence_break_reason = _coherence_break_reason(model)
+            if coherence_break_reason is not None:
+                return _restart_faithfully_on_cpu(coherence_break_reason)
     if cache_keys is None:
         matrix = np.empty((len(units), dim), dtype=np.float32)
         for local_idx, global_idx in enumerate(miss_indices):
@@ -2384,9 +2618,11 @@ def _compute_embeddings_unlocked(
         and cache_keys is not None
         and cache_revision is not None
         and miss_indices
-        # Re-read the device: the retry ladder may have moved the model to CPU
-        # mid-encode, and those vectors must not enter the fast-math key space.
-        and _fast_math_write_allowed(device, _get_effective_model_device(model, resolved_device))
+        # Re-read live device and dtype: the retry ladder may have moved the
+        # model to CPU (or cast it to float32) mid-encode, and those vectors
+        # must not enter a key space (fast-math or bfloat16) they can no
+        # longer represent.
+        and _cache_write_allowed(profile, device, mps_fallback, resolved_device, model)
     ):
         cache.put_many(
             cache_scope,
@@ -2770,6 +3006,7 @@ def _find_similar_to_query_unlocked(
                 effective_policy_device,
                 mps_fallback=mps_fallback,
                 trust_remote_code=resolved_trust_remote_code,
+                persist_machine_record=use_cache and cache_scope is not None,
             )
             if loaded_identity != corpus_identity:
                 raise RuntimeError(
@@ -2825,12 +3062,12 @@ def _find_similar_to_query_unlocked(
                 cache is not None
                 and cache_key is not None
                 and cache_revision is not None
-                # Re-read the device: the retry ladder may have moved the model
-                # to CPU mid-encode, and a CPU query vector must not be
-                # persisted into the fast-math key space.
-                and _fast_math_write_allowed(
-                    embedding_device,
-                    _get_effective_model_device(model, resolved_device),
+                # Re-read live device and dtype: the retry ladder may have
+                # moved the model to CPU (or cast it to float32) mid-encode,
+                # and that query vector must not be persisted into a key
+                # space (fast-math or bfloat16) it can no longer represent.
+                and _cache_write_allowed(
+                    profile, embedding_device, mps_fallback, resolved_device, model
                 )
             ):
                 cache.put_many(

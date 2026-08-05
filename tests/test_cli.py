@@ -736,6 +736,11 @@ def test_cli_info_configures_mps_environment_before_diagnostics(monkeypatch):
             mps_available=False,
             mps_fallback_env="1",
             mlx_loaded=False,
+            cpu_name="Test CPU",
+            cpu_architecture="arm64",
+            cpu_bf16_isa=False,
+            cpu_mkldnn_available=False,
+            cpu_bf16_native=False,
         )
 
     monkeypatch.setattr(cli, "configure_mps_environment", _record_configure)
