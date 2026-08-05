@@ -8,6 +8,7 @@ import pytest
 
 from codedupes.constants import DEFAULT_MODEL
 from codedupes.semantic import clear_model_cache, compute_embeddings, get_model
+from codedupes.semantic_profiles import SemanticModelProfile, list_supported_models
 
 
 @pytest.mark.network
@@ -47,7 +48,14 @@ def test_gpu_smoke_default_model_encode() -> None:
 
 
 @pytest.mark.network
-def test_search_smoke_default_threshold_separates_relevant_from_noise() -> None:
+@pytest.mark.parametrize(
+    "profile",
+    list_supported_models(),
+    ids=lambda profile: profile.key,
+)
+def test_search_smoke_default_threshold_separates_relevant_from_noise(
+    profile: SemanticModelProfile,
+) -> None:
     if os.getenv("CODEDUPES_SMOKE_SEARCH") != "1":
         pytest.skip("Set CODEDUPES_SMOKE_SEARCH=1 to enable search smoke tests.")
 
@@ -60,17 +68,28 @@ def test_search_smoke_default_threshold_separates_relevant_from_noise() -> None:
     assert {unit.name for unit in units} == {probe["expected"] for probe in spec["relevant"]}
 
     clear_model_cache()
-    embeddings = compute_embeddings(units, model_name=DEFAULT_MODEL)
+    embeddings = compute_embeddings(units, model_name=profile.key)
 
     for probe in spec["relevant"]:
-        results = find_similar_to_query(probe["query"], units, embeddings, top_k=3)
+        results = find_similar_to_query(
+            probe["query"],
+            units,
+            embeddings,
+            model_name=profile.key,
+            top_k=3,
+        )
         names = [unit.name for unit, _score in results]
-        assert probe["expected"] in names, f"{probe['query']!r} missed its target: {names}"
+        assert probe["expected"] in names, (
+            f"{profile.key}: {probe['query']!r} missed its target: {names}"
+        )
 
-    # The default model is revision-unpinned, so a future upstream revision could
-    # shift scores across the 0.50 floor; a failure here means the search default
-    # needs recalibration, which is exactly what this opt-in smoke test is for.
     for query in spec["noise"]:
-        results = find_similar_to_query(query, units, embeddings, top_k=3)
+        results = find_similar_to_query(
+            query,
+            units,
+            embeddings,
+            model_name=profile.key,
+            top_k=3,
+        )
         hits = [(unit.name, score) for unit, score in results]
-        assert not hits, f"noise query {query!r} cleared the search floor: {hits}"
+        assert not hits, f"{profile.key}: noise query {query!r} cleared the search floor: {hits}"

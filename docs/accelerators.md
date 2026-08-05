@@ -77,7 +77,7 @@ pytest tests/test_semantic_mps.py
 
 The suite loads the pinned default model on `mps`, checks CPU/MPS embedding parity, validates explicit `--device mps` requests against a warm embedding cache, and provokes genuine Metal allocator out-of-memory (by lowering `torch.mps.set_per_process_memory_fraction`) to prove load-time CPU fallback, the batch-halving ladder, and query-encode recovery work on the real allocator. The default model must already be cached locally (any prior `codedupes check` or `hf download` does this).
 
-A companion opt-in smoke test validates search quality against the probe corpus in `test_fixtures/search_probes/`: every relevant query must surface its expected function at the default search threshold and every off-topic query must return nothing:
+A companion opt-in smoke test validates every built-in profile against the multi-domain probe corpus in `test_fixtures/search_probes/`: every relevant query must surface its expected function at that profile's default search threshold and every off-topic query must return nothing:
 
 ```bash
 CODEDUPES_SMOKE_SEARCH=1 pytest tests/test_semantic_smoke.py

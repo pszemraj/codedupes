@@ -61,7 +61,7 @@ _BUILTIN_MODEL_PROFILES: tuple[SemanticModelProfile, ...] = (
         family="embeddinggemma",
         default_revision="bfa3c846ac738e62aa61806ef9112d34acb1dc5a",
         default_semantic_threshold=0.86,
-        default_search_threshold=0.52,
+        default_search_threshold=0.40,
     ),
 )
 

@@ -65,6 +65,7 @@ def test_search_threshold_is_looser_than_duplicate_threshold() -> None:
     for profile in list_supported_models():
         assert 0 < profile.default_search_threshold < profile.default_semantic_threshold
     assert get_default_search_threshold("gte-modernbert-base") == 0.50
+    assert get_default_search_threshold("embeddinggemma-300m") == 0.40
     assert get_default_search_threshold("unknown/model-id") == DEFAULT_FALLBACK_SEARCH_THRESHOLD
 
 
