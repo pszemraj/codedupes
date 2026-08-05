@@ -794,6 +794,7 @@ def _dtype_variant_for(
     device: str | None,
     *,
     mps_fallback: bool | None,
+    resolved_device: str | None = None,
 ) -> str:
     """Build the dtype component of the cache variant for one model family.
 
@@ -808,6 +809,7 @@ def _dtype_variant_for(
     :param device: Requested device string (``auto``, ``cpu``, ``cuda``, ``mps``),
         ``None`` meaning the default request.
     :param mps_fallback: MPS unsupported-op CPU fallback behavior.
+    :param resolved_device: Already resolved execution target, when available.
     :return: Dtype fingerprint, empty for float32.
     """
     normalized_device = (device or DEFAULT_SEMANTIC_DEVICE).strip().lower()
@@ -816,11 +818,11 @@ def _dtype_variant_for(
     ):
         return ""
 
-    resolved_device = _resolve_semantic_device_request(
+    concrete_device = resolved_device or _resolve_semantic_device_request(
         device,
         mps_fallback=mps_fallback,
     )
-    selected_dtype = _resolve_model_dtype(profile.family, resolved_device)
+    selected_dtype = _resolve_model_dtype(profile.family, concrete_device)
     dtype_name = str(selected_dtype) if selected_dtype is not None else "default"
     if dtype_name in {"float32", "fp32", "torch.float32"}:
         return ""
@@ -885,6 +887,7 @@ def _cache_variant_for(
     *,
     mps_fallback: bool | None,
     trust_remote_code: bool = False,
+    resolved_device: str | None = None,
 ) -> str:
     """Build the complete vector-affecting cache-key variant for one encode call.
 
@@ -903,9 +906,15 @@ def _cache_variant_for(
     :param plan: Resolved encode plan (route and effective prompt).
     :param mps_fallback: MPS unsupported-op CPU fallback behavior.
     :param trust_remote_code: Resolved remote-code trust setting.
+    :param resolved_device: Already resolved execution target, when available.
     :return: Variant fingerprint combining plan, dtype, math policy, runtime, and trust.
     """
-    dtype_variant = _dtype_variant_for(profile, device, mps_fallback=mps_fallback)
+    dtype_variant = _dtype_variant_for(
+        profile,
+        device,
+        mps_fallback=mps_fallback,
+        resolved_device=resolved_device,
+    )
     return "\x00".join(
         (
             plan.cache_identity(),
@@ -914,6 +923,41 @@ def _cache_variant_for(
             _embedding_runtime_fingerprint(),
             f"trc={int(trust_remote_code)}",
         )
+    )
+
+
+def _build_embedding_space_identity(
+    profile: SemanticModelProfile,
+    resolved_revision: str | None,
+    encode_plan: EncodePlan,
+    device: str,
+    *,
+    mps_fallback: bool | None,
+    trust_remote_code: bool,
+    resolved_device: str | None = None,
+) -> EmbeddingSpaceIdentity:
+    """Build one corpus identity from already resolved embedding inputs.
+
+    :param profile: Resolved model profile.
+    :param resolved_revision: Concrete Hub revision or local-content fingerprint.
+    :param encode_plan: Corpus encode route and prompt.
+    :param device: Device policy that produced the vectors.
+    :param mps_fallback: MPS unsupported-op CPU fallback behavior.
+    :param trust_remote_code: Resolved remote-code trust setting.
+    :param resolved_device: Already resolved execution target, when available.
+    :return: Complete embedding-space identity.
+    """
+    return EmbeddingSpaceIdentity(
+        model_name=profile.canonical_name,
+        resolved_revision=resolved_revision,
+        runtime_variant=_cache_variant_for(
+            profile,
+            device,
+            encode_plan,
+            mps_fallback=mps_fallback,
+            trust_remote_code=trust_remote_code,
+            resolved_device=resolved_device,
+        ),
     )
 
 
@@ -955,16 +999,13 @@ def resolve_embedding_space_identity(
     else:
         resolved_revision = _resolve_revision_for_cache(model_name, revision)
 
-    return EmbeddingSpaceIdentity(
-        model_name=profile.canonical_name,
-        resolved_revision=resolved_revision,
-        runtime_variant=_cache_variant_for(
-            profile,
-            device,
-            encode_plan,
-            mps_fallback=mps_fallback,
-            trust_remote_code=resolved_trust_remote_code,
-        ),
+    return _build_embedding_space_identity(
+        profile,
+        resolved_revision,
+        encode_plan,
+        device,
+        mps_fallback=mps_fallback,
+        trust_remote_code=resolved_trust_remote_code,
     )
 
 
@@ -979,7 +1020,7 @@ def _require_current_embedding_space(
     device: str,
     mps_fallback: bool | None,
     persist_local_model_manifest: bool,
-) -> None:
+) -> str:
     """Require the configured corpus vector space to match its stored identity.
 
     :param expected: Identity captured when the corpus matrix was embedded.
@@ -991,6 +1032,7 @@ def _require_current_embedding_space(
     :param device: Current inference-device request.
     :param mps_fallback: Current MPS fallback configuration.
     :param persist_local_model_manifest: Whether local digests may be persisted.
+    :return: Device policy that keeps query vectors in the stored corpus space.
     :raises RuntimeError: If the identity changed or cannot be pinned concretely.
     """
     current = resolve_embedding_space_identity(
@@ -1003,11 +1045,30 @@ def _require_current_embedding_space(
         mps_fallback=mps_fallback,
         persist_local_model_manifest=persist_local_model_manifest,
     )
-    if current != expected or current.resolved_revision is None:
-        raise RuntimeError(
-            "The semantic model or embedding runtime changed since this corpus was indexed. "
-            "Run index() or analyze() again before search()."
+    if current == expected and current.resolved_revision is not None:
+        return device
+
+    # A fast-math MPS corpus may have restarted wholly on CPU after fallback.
+    # Keep its queries on that recorded faithful policy even though the analyzer's
+    # requested device remains MPS/auto.
+    if _mps_fast_math_variant(device):
+        cpu_identity = resolve_embedding_space_identity(
+            model_name=model_name,
+            instruction_prefix=instruction_prefix,
+            revision=revision,
+            trust_remote_code=trust_remote_code,
+            semantic_task=semantic_task,
+            device="cpu",
+            mps_fallback=mps_fallback,
+            persist_local_model_manifest=persist_local_model_manifest,
         )
+        if cpu_identity == expected and cpu_identity.resolved_revision is not None:
+            return "cpu"
+
+    raise RuntimeError(
+        "The semantic model or embedding runtime changed since this corpus was indexed. "
+        "Run index() or analyze() again before search()."
+    )
 
 
 def _safe_package_version(package_name: str) -> str | None:
@@ -2038,7 +2099,7 @@ def _compute_embeddings_unlocked(
     mps_memory_fraction: float | None = None,
     use_cache: bool = True,
     cache_scope: Path | None = None,
-) -> np.ndarray:
+) -> tuple[np.ndarray, EmbeddingSpaceIdentity]:
     """Compute normalized NumPy embeddings for all code units.
 
     Embeddings are converted to NumPy immediately, keeping pairwise similarity
@@ -2065,7 +2126,7 @@ def _compute_embeddings_unlocked(
     :param use_cache: Whether to consult/update the persistent embedding cache.
     :param cache_scope: Analyzed corpus root path used to address the cache shard;
         ``None`` disables caching for this call regardless of ``use_cache``.
-    :return: Normalized embedding matrix row-aligned with ``units``.
+    :return: Normalized embedding matrix and its effective vector-space identity.
     :raises ValueError: If ``batch_size`` is not positive.
     :raises SemanticBackendError: If an explicitly requested device is unavailable,
         even when every embedding is already cached.
@@ -2073,7 +2134,16 @@ def _compute_embeddings_unlocked(
     if batch_size <= 0:
         raise ValueError("batch_size must be > 0")
     if not units:
-        return np.zeros((0, 0), dtype=np.float32)
+        return np.zeros((0, 0), dtype=np.float32), resolve_embedding_space_identity(
+            model_name=model_name,
+            instruction_prefix=instruction_prefix,
+            revision=revision,
+            trust_remote_code=trust_remote_code,
+            semantic_task=semantic_task,
+            device=device,
+            mps_fallback=mps_fallback,
+            persist_local_model_manifest=use_cache and cache_scope is not None,
+        )
 
     _validate_explicit_device_request(device, mps_fallback=mps_fallback)
 
@@ -2084,7 +2154,62 @@ def _compute_embeddings_unlocked(
     )
     encode_plan = _resolve_encode_plan(profile, "code", resolved_task, instruction_prefix)
     resolved_trust_remote_code = _resolve_trust_remote_code(model_name, trust_remote_code)
+    identity_local_model_path = resolve_local_model_path(profile.canonical_name)
+    identity_revision = (
+        _fingerprint_local_model_dir(
+            identity_local_model_path,
+            persist_manifest=use_cache and cache_scope is not None,
+        )
+        if identity_local_model_path is not None
+        else _resolve_revision_for_cache(model_name, revision)
+    )
     prepared_texts = [unit.source.strip() for unit in units]
+
+    def _effective_identity(
+        effective_device: str,
+        resolved_identity_revision: str | None = identity_revision,
+        concrete_device: str | None = None,
+    ) -> EmbeddingSpaceIdentity:
+        """Build the identity for the policy that produced the returned matrix.
+
+        :param effective_device: Device policy used for every matrix row.
+        :param resolved_identity_revision: Concrete revision/fingerprint for the rows.
+        :param concrete_device: Already resolved execution target, when available.
+        :return: Effective corpus embedding-space identity.
+        """
+        return _build_embedding_space_identity(
+            profile,
+            resolved_identity_revision,
+            encode_plan,
+            effective_device,
+            mps_fallback=mps_fallback,
+            trust_remote_code=resolved_trust_remote_code,
+            resolved_device=concrete_device,
+        )
+
+    def _restart_faithfully_on_cpu() -> tuple[np.ndarray, EmbeddingSpaceIdentity]:
+        """Restart corpus assembly under faithful CPU cache and math policy.
+
+        :return: CPU-faithful matrix and identity.
+        """
+        logger.warning(
+            "Fast-math corpus execution left MPS; discarding fast-math cache hits "
+            "and restarting the complete matrix under the faithful CPU policy"
+        )
+        return _compute_embeddings_unlocked(
+            units,
+            model_name=model_name,
+            instruction_prefix=instruction_prefix,
+            batch_size=batch_size,
+            revision=revision,
+            trust_remote_code=trust_remote_code,
+            semantic_task=resolved_task,
+            device="cpu",
+            mps_fallback=mps_fallback,
+            mps_memory_fraction=None,
+            use_cache=use_cache,
+            cache_scope=cache_scope,
+        )
 
     cache, cache_revision, cache_variant, cache_namespace = _prepare_cache_context(
         "code",
@@ -2115,7 +2240,10 @@ def _compute_embeddings_unlocked(
     # Duplicate code units share one cache key, so compare against the covered
     # keys rather than the unique-hit count: len(hits) undercounts coverage.
     if cache_keys is not None and all(key in hits for key in cache_keys):
-        return _assemble_cached_matrix(cache_keys, hits)
+        return _assemble_cached_matrix(cache_keys, hits), _effective_identity(
+            device,
+            cache_revision,
+        )
 
     resolved_revision = _resolve_load_revision(model_name, revision)
     resolved_device = _prepare_semantic_device(
@@ -2134,12 +2262,18 @@ def _compute_embeddings_unlocked(
     )
     execution_device = _get_effective_model_device(model, resolved_device)
 
+    if _mps_fast_math_variant(device) and execution_device != "mps":
+        return _restart_faithfully_on_cpu()
+
+    confirmed_revision = _confirm_cache_revision_after_load(
+        model,
+        model_name,
+        resolved_revision,
+    )
+    if confirmed_revision is not None:
+        identity_revision = confirmed_revision
+
     if cache is not None:
-        confirmed_revision = _confirm_cache_revision_after_load(
-            model,
-            model_name,
-            resolved_revision,
-        )
         if confirmed_revision is None:
             logger.debug(
                 "Could not tie the loaded model to a concrete revision; "
@@ -2161,7 +2295,11 @@ def _compute_embeddings_unlocked(
             ]
             hits = cache.get_many(cache_scope, profile.canonical_name, cache_revision, cache_keys)
             if all(key in hits for key in cache_keys):
-                return _assemble_cached_matrix(cache_keys, hits)
+                return _assemble_cached_matrix(cache_keys, hits), _effective_identity(
+                    device,
+                    confirmed_revision,
+                    resolved_device,
+                )
 
     miss_indices = _select_cache_miss_indices(cache_keys, hits, len(units))
     miss_texts = [
@@ -2200,6 +2338,11 @@ def _compute_embeddings_unlocked(
         )
 
     miss_vectors = _encode_miss_texts(miss_texts)
+    if (
+        _mps_fast_math_variant(device)
+        and _get_effective_model_device(model, resolved_device) != "mps"
+    ):
+        return _restart_faithfully_on_cpu()
 
     dim = miss_vectors.shape[1]
     if hits:
@@ -2219,6 +2362,11 @@ def _compute_embeddings_unlocked(
                     for i in miss_indices
                 ]
             )
+            if (
+                _mps_fast_math_variant(device)
+                and _get_effective_model_device(model, resolved_device) != "mps"
+            ):
+                return _restart_faithfully_on_cpu()
     if cache_keys is None:
         matrix = np.empty((len(units), dim), dtype=np.float32)
         for local_idx, global_idx in enumerate(miss_indices):
@@ -2251,7 +2399,58 @@ def _compute_embeddings_unlocked(
             namespace=cache_namespace,
         )
 
-    return matrix
+    return matrix, _effective_identity(device, identity_revision, resolved_device)
+
+
+def compute_embeddings_with_identity(
+    units: list[CodeUnit],
+    model_name: str = DEFAULT_MODEL,
+    instruction_prefix: str | None = None,
+    batch_size: int = DEFAULT_BATCH_SIZE,
+    revision: str | None = None,
+    trust_remote_code: bool | None = None,
+    semantic_task: str | None = None,
+    device: str = DEFAULT_SEMANTIC_DEVICE,
+    mps_fallback: bool | None = None,
+    mps_memory_fraction: float | None = None,
+    use_cache: bool = True,
+    cache_scope: Path | None = None,
+) -> tuple[np.ndarray, EmbeddingSpaceIdentity]:
+    """Compute embeddings and identity under the shared model lock.
+
+    :param units: Code units to embed, preserved in input order.
+    :param model_name: Model alias or identifier, defaults to ``DEFAULT_MODEL``.
+    :param instruction_prefix: Optional instruction override for embedding inputs.
+    :param batch_size: Initial encode batch size, defaults to ``DEFAULT_BATCH_SIZE``.
+    :param revision: Optional model revision; ``None`` uses the profile default.
+    :param trust_remote_code: Optional remote-code trust setting; ``None`` uses the
+        profile default.
+    :param semantic_task: Optional task override; ``None`` uses
+        ``DEFAULT_CHECK_SEMANTIC_TASK``.
+    :param device: ``auto``, ``cpu``, ``cuda``, or ``mps``, defaults to
+        ``DEFAULT_SEMANTIC_DEVICE``.
+    :param mps_fallback: MPS unsupported-op CPU fallback behavior.
+    :param mps_memory_fraction: Optional MPS allocator limit in ``(0, 2]``.
+    :param use_cache: Whether to consult/update the persistent embedding cache.
+    :param cache_scope: Analyzed corpus root path used to address the cache shard;
+        ``None`` disables caching for this call regardless of ``use_cache``.
+    :return: Normalized embedding matrix and its effective vector-space identity.
+    """
+    with _model_lock:
+        return _compute_embeddings_unlocked(
+            units,
+            model_name=model_name,
+            instruction_prefix=instruction_prefix,
+            batch_size=batch_size,
+            revision=revision,
+            trust_remote_code=trust_remote_code,
+            semantic_task=semantic_task,
+            device=device,
+            use_cache=use_cache,
+            cache_scope=cache_scope,
+            mps_fallback=mps_fallback,
+            mps_memory_fraction=mps_memory_fraction,
+        )
 
 
 def compute_embeddings(
@@ -2288,21 +2487,21 @@ def compute_embeddings(
         ``None`` disables caching for this call regardless of ``use_cache``.
     :return: Normalized embedding matrix row-aligned with ``units``.
     """
-    with _model_lock:
-        return _compute_embeddings_unlocked(
-            units,
-            model_name=model_name,
-            instruction_prefix=instruction_prefix,
-            batch_size=batch_size,
-            revision=revision,
-            trust_remote_code=trust_remote_code,
-            semantic_task=semantic_task,
-            device=device,
-            use_cache=use_cache,
-            cache_scope=cache_scope,
-            mps_fallback=mps_fallback,
-            mps_memory_fraction=mps_memory_fraction,
-        )
+    embeddings, _identity = compute_embeddings_with_identity(
+        units,
+        model_name=model_name,
+        instruction_prefix=instruction_prefix,
+        batch_size=batch_size,
+        revision=revision,
+        trust_remote_code=trust_remote_code,
+        semantic_task=semantic_task,
+        device=device,
+        mps_fallback=mps_fallback,
+        mps_memory_fraction=mps_memory_fraction,
+        use_cache=use_cache,
+        cache_scope=cache_scope,
+    )
+    return embeddings
 
 
 def find_semantic_duplicates(
@@ -2456,8 +2655,9 @@ def _find_similar_to_query_unlocked(
         default_task=DEFAULT_SEARCH_SEMANTIC_TASK,
     )
     resolved_trust_remote_code = _resolve_trust_remote_code(model_name, trust_remote_code)
+    embedding_device = device
     if corpus_identity is not None:
-        _require_current_embedding_space(
+        embedding_device = _require_current_embedding_space(
             corpus_identity,
             model_name=model_name,
             instruction_prefix=instruction_prefix,
@@ -2477,7 +2677,7 @@ def _find_similar_to_query_unlocked(
         profile,
         model_name,
         revision,
-        device,
+        embedding_device,
         encode_plan,
         mps_fallback=mps_fallback,
         trust_remote_code=resolved_trust_remote_code,
@@ -2517,9 +2717,9 @@ def _find_similar_to_query_unlocked(
     if query_embedding is None:
         resolved_revision = _resolve_load_revision(model_name, revision)
         resolved_device = _prepare_semantic_device(
-            device,
+            embedding_device,
             mps_fallback=mps_fallback,
-            mps_memory_fraction=mps_memory_fraction,
+            mps_memory_fraction=(None if embedding_device == "cpu" else mps_memory_fraction),
         )
         model = get_model(
             model_name,
@@ -2527,7 +2727,7 @@ def _find_similar_to_query_unlocked(
             trust_remote_code=resolved_trust_remote_code,
             device=resolved_device,
             mps_fallback=mps_fallback,
-            mps_memory_fraction=mps_memory_fraction,
+            mps_memory_fraction=(None if embedding_device == "cpu" else mps_memory_fraction),
             persist_local_model_manifest=use_cache and cache_scope is not None,
         )
         execution_device = _get_effective_model_device(model, resolved_device)
@@ -2537,11 +2737,47 @@ def _find_similar_to_query_unlocked(
             model_name,
             resolved_revision,
         )
-        if corpus_identity is not None and confirmed_revision != corpus_identity.resolved_revision:
-            raise RuntimeError(
-                "The semantic model changed while preparing this search query. "
-                "Run index() or analyze() again before search()."
+        corpus_encode_plan = _resolve_encode_plan(
+            profile,
+            "code",
+            resolved_task,
+            instruction_prefix,
+        )
+
+        def _require_compatible_query_execution() -> None:
+            """Reject an execution policy that cannot match the corpus vectors.
+
+            :raises RuntimeError: If query execution left the corpus math policy.
+            """
+            current_execution_device = _get_effective_model_device(model, resolved_device)
+            effective_policy_device = embedding_device
+            if _mps_fast_math_variant(embedding_device) and current_execution_device != "mps":
+                effective_policy_device = "cpu"
+
+            if corpus_identity is None:
+                if effective_policy_device != embedding_device:
+                    raise RuntimeError(
+                        "Fast-math query execution left MPS before the similarity comparison. "
+                        "Rebuild the corpus and search with device='cpu' so both sides use one "
+                        "embedding policy."
+                    )
+                return
+
+            loaded_identity = _build_embedding_space_identity(
+                profile,
+                confirmed_revision,
+                corpus_encode_plan,
+                effective_policy_device,
+                mps_fallback=mps_fallback,
+                trust_remote_code=resolved_trust_remote_code,
             )
+            if loaded_identity != corpus_identity:
+                raise RuntimeError(
+                    "The semantic model or execution policy changed while preparing this "
+                    "search query. Run index() or analyze() again before search()."
+                )
+
+        _require_compatible_query_execution()
 
         if cache is not None:
             if confirmed_revision is None:
@@ -2582,6 +2818,7 @@ def _find_similar_to_query_unlocked(
                 stage="query embedding",
                 prompt=encode_plan.prompt,
             )
+            _require_compatible_query_execution()
             query_embedding = query_embeddings[0]
 
             if (
@@ -2592,7 +2829,8 @@ def _find_similar_to_query_unlocked(
                 # to CPU mid-encode, and a CPU query vector must not be
                 # persisted into the fast-math key space.
                 and _fast_math_write_allowed(
-                    device, _get_effective_model_device(model, resolved_device)
+                    embedding_device,
+                    _get_effective_model_device(model, resolved_device),
                 )
             ):
                 cache.put_many(
@@ -2678,6 +2916,75 @@ def find_similar_to_query(
         )
 
 
+def run_semantic_analysis_with_identity(
+    units: list[CodeUnit],
+    model_name: str = DEFAULT_MODEL,
+    instruction_prefix: str | None = None,
+    threshold: float | None = None,
+    exclude_pairs: set[tuple[str, str]] | None = None,
+    batch_size: int = DEFAULT_BATCH_SIZE,
+    revision: str | None = None,
+    trust_remote_code: bool | None = None,
+    semantic_task: str | None = None,
+    device: str = DEFAULT_SEMANTIC_DEVICE,
+    mps_fallback: bool | None = None,
+    mps_memory_fraction: float | None = None,
+    use_cache: bool = True,
+    cache_scope: Path | None = None,
+) -> tuple[np.ndarray, list[DuplicatePair], EmbeddingSpaceIdentity]:
+    """Run semantic duplicate detection and return the corpus identity.
+
+    :param units: Code units to embed and compare.
+    :param model_name: Model alias or identifier, defaults to ``DEFAULT_MODEL``.
+    :param instruction_prefix: Optional instruction override for embedding inputs.
+    :param threshold: Minimum cosine similarity; ``None`` uses the model profile default.
+    :param exclude_pairs: Ordered pair keys to omit from the semantic results.
+    :param batch_size: Initial encode batch size, defaults to ``DEFAULT_BATCH_SIZE``.
+    :param revision: Optional model revision; ``None`` uses the profile default.
+    :param trust_remote_code: Optional remote-code trust setting; ``None`` uses the
+        profile default.
+    :param semantic_task: Optional task override; ``None`` uses
+        ``DEFAULT_CHECK_SEMANTIC_TASK``.
+    :param device: ``auto``, ``cpu``, ``cuda``, or ``mps``, defaults to
+        ``DEFAULT_SEMANTIC_DEVICE``.
+    :param mps_fallback: MPS unsupported-op CPU fallback behavior.
+    :param mps_memory_fraction: Optional MPS allocator limit in ``(0, 2]``.
+    :param use_cache: Whether to consult/update the persistent embedding cache.
+    :param cache_scope: Analyzed corpus root path used to address the cache shard;
+        ``None`` disables caching for this call regardless of ``use_cache``.
+    :return: ``(embeddings, duplicates, identity)``.
+    """
+    resolved_threshold = (
+        threshold if threshold is not None else get_default_semantic_threshold(model_name)
+    )
+
+    embeddings, identity = compute_embeddings_with_identity(
+        units,
+        model_name=model_name,
+        instruction_prefix=instruction_prefix,
+        batch_size=batch_size,
+        revision=revision,
+        trust_remote_code=trust_remote_code,
+        semantic_task=semantic_task,
+        device=device,
+        mps_fallback=mps_fallback,
+        mps_memory_fraction=mps_memory_fraction,
+        use_cache=use_cache,
+        cache_scope=cache_scope,
+    )
+    if not units:
+        return embeddings, [], identity
+
+    duplicates = find_semantic_duplicates(
+        units,
+        embeddings,
+        threshold=resolved_threshold,
+        exclude_exact=exclude_pairs,
+    )
+
+    return embeddings, duplicates, identity
+
+
 def run_semantic_analysis(
     units: list[CodeUnit],
     model_name: str = DEFAULT_MODEL,
@@ -2716,16 +3023,12 @@ def run_semantic_analysis(
         ``None`` disables caching for this call regardless of ``use_cache``.
     :return: ``(embeddings, duplicates)``; both are empty when ``units`` is empty.
     """
-    if not units:
-        return np.array([]), []
-    resolved_threshold = (
-        threshold if threshold is not None else get_default_semantic_threshold(model_name)
-    )
-
-    embeddings = compute_embeddings(
+    embeddings, duplicates, _identity = run_semantic_analysis_with_identity(
         units,
         model_name=model_name,
         instruction_prefix=instruction_prefix,
+        threshold=threshold,
+        exclude_pairs=exclude_pairs,
         batch_size=batch_size,
         revision=revision,
         trust_remote_code=trust_remote_code,
@@ -2736,11 +3039,4 @@ def run_semantic_analysis(
         use_cache=use_cache,
         cache_scope=cache_scope,
     )
-    duplicates = find_semantic_duplicates(
-        units,
-        embeddings,
-        threshold=resolved_threshold,
-        exclude_exact=exclude_pairs,
-    )
-
     return embeddings, duplicates

@@ -283,25 +283,62 @@ def test_oversized_buffer_allocation_classifies_as_mps_oom() -> None:
     assert semantic._classify_oom_device(excinfo.value, "mps") == "mps"
 
 
-def test_fast_math_keyed_encode_oom_skips_cache_writes(tmp_path: Path, monkeypatch) -> None:
+def test_fast_math_partial_cache_oom_rebuilds_complete_cpu_matrix(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
     monkeypatch.setenv("PYTORCH_MPS_FAST_MATH", "1")
     units = extract_arithmetic_units(tmp_path)
-    semantic.get_model(DEFAULT_MODEL, device="mps")
+
+    _warm_embeddings, warm_identity = semantic.compute_embeddings_with_identity(
+        units[:1],
+        device="mps",
+        cache_scope=tmp_path,
+    )
+    assert "mpsfm=1" in warm_identity.runtime_variant
 
     # The model's weights already exceed the lowered ceiling, so the encode
-    # itself hits the allocator's genuine OOM and lands on CPU mid-encode.
+    # miss hits a genuine allocator OOM and lands on CPU mid-encode.
     torch.mps.set_per_process_memory_fraction(_TINY_MEMORY_FRACTION)
 
-    embeddings = semantic.compute_embeddings(
+    embeddings, identity = semantic.compute_embeddings_with_identity(
         units, device="mps", batch_size=8, cache_scope=tmp_path
     )
 
     assert semantic._model_execution_device == "cpu"
     assert embeddings.shape[0] == len(units)
-    # The run was keyed for fast math but executed on CPU, so nothing may be
-    # published: the fast-math key space stays unmixed on real mid-encode
-    # fallbacks, not just the simulated ones in test_embedding_cache.
-    assert not list((tmp_path / "embedding-cache").rglob("vectors-*.npy"))
+    assert "mpsfm=" not in identity.runtime_variant
+
+    cpu_reference = semantic.compute_embeddings(
+        units,
+        device="cpu",
+        use_cache=False,
+    )
+    np.testing.assert_array_equal(embeddings, cpu_reference)
+
+
+def test_fast_math_query_oom_aborts_before_similarity(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("PYTORCH_MPS_FAST_MATH", "1")
+    units = extract_arithmetic_units(tmp_path)
+    embeddings, identity = semantic.compute_embeddings_with_identity(
+        units,
+        device="mps",
+        use_cache=False,
+    )
+    assert "mpsfm=1" in identity.runtime_variant
+
+    torch.mps.set_per_process_memory_fraction(_TINY_MEMORY_FRACTION)
+
+    with pytest.raises(RuntimeError, match="execution policy changed"):
+        semantic.find_similar_to_query(
+            "addition",
+            units,
+            embeddings,
+            device="mps",
+            threshold=0.0,
+            use_cache=False,
+            corpus_identity=identity,
+        )
 
 
 def test_query_oom_recovers_on_cpu(tmp_path: Path) -> None:

@@ -259,7 +259,7 @@ def test_mps_fast_math_policy_change_invalidates_warm_cache(tmp_path, monkeypatc
     assert len(model.encode_calls) == 2
 
 
-def test_fast_math_variant_skips_cache_writes_when_execution_leaves_mps(tmp_path, monkeypatch):
+def test_fast_math_variant_restarts_under_faithful_cpu_cache(tmp_path, monkeypatch):
     monkeypatch.setattr(sys, "platform", "darwin")
     monkeypatch.setenv("PYTORCH_MPS_FAST_MATH", "1")
     units = _five_units(tmp_path)
@@ -267,15 +267,16 @@ def test_fast_math_variant_skips_cache_writes_when_execution_leaves_mps(tmp_path
     _patch_get_model(monkeypatch, model)
     monkeypatch.setattr(semantic, "_get_loaded_model_commit_hash", lambda _model: None)
 
-    # The variant is keyed for fast math (darwin + auto), but execution lands on
-    # CPU - the MPS-unavailable/OOM-fallback shape - so faithful float32 vectors
-    # must not be published into the fast-math key space.
+    # The request is keyed for fast math, but execution lands on CPU. Corpus
+    # assembly restarts under the faithful policy and publishes that complete
+    # matrix to the CPU/MPS-float32 key space.
     model.device = "cpu"
     compute_embeddings(units, model_name="test-model", revision=REVISION_1, cache_scope=tmp_path)
     assert len(model.encode_calls) == 1
 
+    # Another fallback-shaped request reuses the complete faithful matrix.
     compute_embeddings(units, model_name="test-model", revision=REVISION_1, cache_scope=tmp_path)
-    assert len(model.encode_calls) == 2
+    assert len(model.encode_calls) == 1
 
 
 class _MidEncodeCpuFallbackModel(CountingModel):
@@ -287,7 +288,7 @@ class _MidEncodeCpuFallbackModel(CountingModel):
         return result
 
 
-def test_fast_math_variant_skips_corpus_writes_after_mid_encode_cpu_fallback(tmp_path, monkeypatch):
+def test_fast_math_variant_rebuilds_corpus_after_mid_encode_cpu_fallback(tmp_path, monkeypatch):
     monkeypatch.setattr(sys, "platform", "darwin")
     monkeypatch.setenv("PYTORCH_MPS_FAST_MATH", "1")
     units = _five_units(tmp_path)
@@ -296,18 +297,20 @@ def test_fast_math_variant_skips_corpus_writes_after_mid_encode_cpu_fallback(tmp
     _patch_get_model(monkeypatch, model)
     monkeypatch.setattr(semantic, "_get_loaded_model_commit_hash", lambda _model: None)
 
-    # Execution starts on MPS but the retry ladder lands on CPU mid-encode: the
-    # CPU vectors must not be published under the fast-math variant.
-    compute_embeddings(units, model_name="test-model", revision=REVISION_1, cache_scope=tmp_path)
-    assert len(model.encode_calls) == 1
-
-    # A later true-MPS fast-math run must re-embed, not reuse CPU vectors.
-    model.device = "mps"
+    # Execution starts on MPS but lands on CPU mid-encode. The first vectors are
+    # discarded and every row is encoded again under the faithful CPU policy.
     compute_embeddings(units, model_name="test-model", revision=REVISION_1, cache_scope=tmp_path)
     assert len(model.encode_calls) == 2
+    assert all(len(call) == len(units) for call in model.encode_calls)
+
+    # A later request cannot consume the faithful rows as fast-math hits. This
+    # model lands on CPU again, after which the faithful restart is already warm.
+    model.device = "mps"
+    compute_embeddings(units, model_name="test-model", revision=REVISION_1, cache_scope=tmp_path)
+    assert len(model.encode_calls) == 3
 
 
-def test_fast_math_variant_skips_query_write_after_mid_encode_cpu_fallback(tmp_path, monkeypatch):
+def test_fast_math_query_aborts_before_mixed_policy_dot_product(tmp_path, monkeypatch):
     monkeypatch.setattr(sys, "platform", "darwin")
     monkeypatch.setenv("PYTORCH_MPS_FAST_MATH", "1")
     units = _five_units(tmp_path)
@@ -321,29 +324,30 @@ def test_fast_math_variant_skips_query_write_after_mid_encode_cpu_fallback(tmp_p
     )
 
     model.device = "mps"
-    find_similar_to_query(
-        "find addition",
-        units,
-        embeddings,
-        model_name="test-model",
-        revision=REVISION_1,
-        cache_scope=tmp_path,
-        top_k=3,
-    )
+    with pytest.raises(RuntimeError, match="Fast-math query execution left MPS"):
+        find_similar_to_query(
+            "find addition",
+            units,
+            embeddings,
+            model_name="test-model",
+            revision=REVISION_1,
+            cache_scope=tmp_path,
+            top_k=3,
+        )
     query_encodes = len(model.encode_calls)
 
-    # The query vector was computed on CPU mid-encode; a later MPS fast-math
-    # search must re-embed the query rather than hit a wrong-math-policy row.
+    # The rejected CPU query was not cached in the fast-math key space.
     model.device = "mps"
-    find_similar_to_query(
-        "find addition",
-        units,
-        embeddings,
-        model_name="test-model",
-        revision=REVISION_1,
-        cache_scope=tmp_path,
-        top_k=3,
-    )
+    with pytest.raises(RuntimeError, match="Fast-math query execution left MPS"):
+        find_similar_to_query(
+            "find addition",
+            units,
+            embeddings,
+            model_name="test-model",
+            revision=REVISION_1,
+            cache_scope=tmp_path,
+            top_k=3,
+        )
     assert len(model.encode_calls) == query_encodes + 1
 
 

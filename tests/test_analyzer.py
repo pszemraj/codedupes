@@ -47,13 +47,27 @@ _QUERY_KWARG_NAMES = {
 }
 
 
+def _embedding_identity_from_kwargs(kwargs: dict[str, object]):
+    """Build the effective test identity for forwarded semantic arguments."""
+    return semantic_module.resolve_embedding_space_identity(
+        model_name=str(kwargs.get("model_name", analyzer_module.DEFAULT_MODEL)),
+        instruction_prefix=kwargs.get("instruction_prefix"),
+        revision=kwargs.get("revision"),
+        trust_remote_code=kwargs.get("trust_remote_code"),
+        semantic_task=kwargs.get("semantic_task"),
+        device=str(kwargs.get("device", "cpu")),
+        mps_fallback=kwargs.get("mps_fallback"),
+        persist_local_model_manifest=False,
+    )
+
+
 def _make_semantic_runner(
     *,
     duplicate_factory: Callable[[list[CodeUnit]], list[DuplicatePair]] | None = None,
     capture: dict[str, object] | None = None,
     capture_exclude_pairs: set[tuple[str, str]] | None = None,
     error: Exception | None = None,
-) -> Callable[..., tuple[np.ndarray, list[DuplicatePair]]]:
+) -> Callable[..., tuple[np.ndarray, list[DuplicatePair], object]]:
     """Build a reusable semantic-analysis test double."""
 
     def fake_run_semantic(units, **kwargs):
@@ -66,7 +80,11 @@ def _make_semantic_runner(
             raise error
 
         duplicates = duplicate_factory(units) if duplicate_factory is not None else []
-        return np.zeros((len(units), 2), dtype=np.float32), duplicates
+        return (
+            np.zeros((len(units), 2), dtype=np.float32),
+            duplicates,
+            _embedding_identity_from_kwargs(kwargs),
+        )
 
     return fake_run_semantic
 
@@ -90,7 +108,11 @@ def _capture_semantic_unit_types(captured_types: list[CodeUnitType]):
 
     def fake_run_semantic(units, **_kwargs):
         captured_types.extend(unit.unit_type for unit in units)
-        return np.zeros((len(units), 2), dtype=np.float32), []
+        return (
+            np.zeros((len(units), 2), dtype=np.float32),
+            [],
+            _embedding_identity_from_kwargs(_kwargs),
+        )
 
     return fake_run_semantic
 
@@ -411,7 +433,11 @@ def test_decorated_methods_survive_semantic_and_tiny_filters(tmp_path: Path, mon
 
     def capture_semantic_candidates(units, **_kwargs):
         semantic_units.extend(units)
-        return np.zeros((len(units), 2), dtype=np.float32), []
+        return (
+            np.zeros((len(units), 2), dtype=np.float32),
+            [],
+            _embedding_identity_from_kwargs(_kwargs),
+        )
 
     monkeypatch.setattr(analyzer_module, "run_semantic_analysis", capture_semantic_candidates)
     result = CodeAnalyzer(AnalyzerConfig(run_unused=False)).analyze(project)
@@ -965,7 +991,10 @@ def test_index_embeds_corpus_without_mining_duplicates(tmp_path: Path, monkeypat
     def fake_compute_embeddings(units, **kwargs):
         embedded_units.extend(units)
         captured.update(kwargs)
-        return np.zeros((len(units), 2), dtype=np.float32)
+        return (
+            np.zeros((len(units), 2), dtype=np.float32),
+            _embedding_identity_from_kwargs(kwargs),
+        )
 
     monkeypatch.setattr(analyzer_module, "compute_embeddings", fake_compute_embeddings)
     monkeypatch.setattr(
@@ -1018,7 +1047,10 @@ def test_search_requires_reindex_when_local_model_contents_change(
     monkeypatch.setattr(
         analyzer_module,
         "compute_embeddings",
-        lambda units, **_kwargs: np.zeros((len(units), 2), dtype=np.float32),
+        lambda units, **kwargs: (
+            np.zeros((len(units), 2), dtype=np.float32),
+            _embedding_identity_from_kwargs(kwargs),
+        ),
     )
     analyzer = CodeAnalyzer(
         AnalyzerConfig(
@@ -1044,7 +1076,10 @@ def test_search_requires_reindex_when_embedding_runtime_variant_changes(
     monkeypatch.setattr(
         analyzer_module,
         "compute_embeddings",
-        lambda units, **_kwargs: np.zeros((len(units), 2), dtype=np.float32),
+        lambda units, **kwargs: (
+            np.zeros((len(units), 2), dtype=np.float32),
+            _embedding_identity_from_kwargs(kwargs),
+        ),
     )
     analyzer = CodeAnalyzer(
         AnalyzerConfig(
@@ -1117,7 +1152,7 @@ def test_suppress_test_semantic_matches_filters_test_named_pairs(
         **_device_kwargs,
     ):
         by_name = {unit.name: unit for unit in units}
-        return np.zeros((len(units), 2), dtype=np.float32), [
+        duplicates = [
             DuplicatePair(
                 unit_a=by_name["test_alpha"],
                 unit_b=by_name["test_beta"],
@@ -1131,6 +1166,19 @@ def test_suppress_test_semantic_matches_filters_test_named_pairs(
                 method="semantic",
             ),
         ]
+        identity_kwargs = {
+            "model_name": model_name,
+            "instruction_prefix": instruction_prefix,
+            "revision": revision,
+            "trust_remote_code": trust_remote_code,
+            "semantic_task": semantic_task,
+            **_device_kwargs,
+        }
+        return (
+            np.zeros((len(units), 2), dtype=np.float32),
+            duplicates,
+            _embedding_identity_from_kwargs(identity_kwargs),
+        )
 
     monkeypatch.setattr(analyzer_module, "run_semantic_analysis", fake_run_semantic)
 
