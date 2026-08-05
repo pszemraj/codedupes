@@ -47,6 +47,7 @@ _CACHE_DIRECTORY_MODE = 0o700
 _CACHE_FILE_MODE = 0o600
 
 _warned_cache_error = False
+_warned_invalid_cache_max_mb = False
 
 
 @dataclass
@@ -124,18 +125,31 @@ def resolve_cache_dir() -> Path:
 def _resolve_max_bytes() -> int:
     """Resolve the opportunistic cache size cap in bytes.
 
+    ``0`` and negative values are rejected the same way an unparsable value is,
+    rather than clamped up to a minimum 1 MB: silently substituting a thrashing
+    1 MB cache for a value that looks like an attempt to disable the cap would
+    surprise the caller, and there is no supported way to disable the cap via
+    this variable (use ``CODEDUPES_NO_CACHE`` instead).
+
     :return: Size cap in bytes from ``CODEDUPES_CACHE_MAX_MB``, defaulting to
-        ``DEFAULT_CACHE_MAX_MB`` megabytes when unset or unparsable.
+        ``DEFAULT_CACHE_MAX_MB`` megabytes when unset, unparsable, or not a
+        positive number.
     """
+    global _warned_invalid_cache_max_mb
     raw = os.environ.get("CODEDUPES_CACHE_MAX_MB")
     if raw:
         try:
             value = float(raw)
-            if not math.isfinite(value):
+            if not math.isfinite(value) or value <= 0:
                 raise ValueError
             return max(1, int(value)) * 1024 * 1024
         except (OverflowError, ValueError):
-            pass
+            if not _warned_invalid_cache_max_mb:
+                _warned_invalid_cache_max_mb = True
+                logger.warning(
+                    f"Ignoring CODEDUPES_CACHE_MAX_MB={raw!r} (must be a positive number "
+                    f"of megabytes); using the default {DEFAULT_CACHE_MAX_MB} MB cap."
+                )
     return DEFAULT_CACHE_MAX_MB * 1024 * 1024
 
 

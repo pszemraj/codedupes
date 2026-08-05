@@ -792,14 +792,39 @@ def test_size_cap_keeps_failed_deletion_in_total(tmp_path, monkeypatch, caplog):
 
 
 # "invalid" fails float() itself; "nan" passes float() and hits the isfinite
-# rejection — "inf"/"-inf" would exercise that identical branch again.
-@pytest.mark.parametrize("value", ["invalid", "nan"])
+# rejection — "inf"/"-inf" would exercise that identical branch again. "0" and
+# "-5" pass float() and isfinite but must fall back to the default like any
+# other unparsable value, rather than being clamped up to a thrashing 1 MB cache.
+@pytest.mark.parametrize("value", ["invalid", "nan", "0", "-5"])
 def test_invalid_size_cap_uses_default(monkeypatch, value: str):
+    monkeypatch.setattr(embedding_cache, "_warned_invalid_cache_max_mb", False)
     monkeypatch.setenv("CODEDUPES_CACHE_MAX_MB", value)
 
     assert (
         embedding_cache._resolve_max_bytes() == embedding_cache.DEFAULT_CACHE_MAX_MB * 1024 * 1024
     )
+
+
+def test_non_positive_size_cap_warns_once(monkeypatch, caplog):
+    monkeypatch.setattr(embedding_cache, "_warned_invalid_cache_max_mb", False)
+    monkeypatch.setenv("CODEDUPES_CACHE_MAX_MB", "0")
+
+    with caplog.at_level("WARNING"):
+        embedding_cache._resolve_max_bytes()
+        embedding_cache._resolve_max_bytes()
+
+    assert caplog.text.count("CODEDUPES_CACHE_MAX_MB") == 1
+
+
+def test_small_positive_size_cap_clamps_to_one_mb_without_warning(monkeypatch, caplog):
+    monkeypatch.setattr(embedding_cache, "_warned_invalid_cache_max_mb", False)
+    monkeypatch.setenv("CODEDUPES_CACHE_MAX_MB", "0.5")
+
+    with caplog.at_level("WARNING"):
+        max_bytes = embedding_cache._resolve_max_bytes()
+
+    assert max_bytes == 1024 * 1024
+    assert "CODEDUPES_CACHE_MAX_MB" not in caplog.text
 
 
 def test_put_many_retains_keys_absent_from_current_write(tmp_path):
