@@ -26,6 +26,7 @@ _SEMANTIC_ANALYSIS_KWARG_NAMES = {
     "mps_memory_fraction",
     "revision",
     "semantic_task",
+    "strict_revision_cache",
     "threshold",
     "trust_remote_code",
     "use_cache",
@@ -40,6 +41,7 @@ _QUERY_KWARG_NAMES = {
     "mps_memory_fraction",
     "revision",
     "semantic_task",
+    "strict_revision_cache",
     "threshold",
     "top_k",
     "trust_remote_code",
@@ -58,6 +60,7 @@ def _embedding_identity_from_kwargs(kwargs: dict[str, object]):
         device=str(kwargs.get("device", "cpu")),
         mps_fallback=kwargs.get("mps_fallback"),
         persist_local_model_manifest=False,
+        strict_revision_cache=bool(kwargs.get("strict_revision_cache", False)),
     )
 
 
@@ -1609,6 +1612,9 @@ def test_analyzer_config_rejects_device_controls_without_semantic_mode() -> None
     with pytest.raises(ValueError, match="mps_memory_fraction.*require run_semantic=True"):
         AnalyzerConfig(run_semantic=False, mps_memory_fraction=0.8)
 
+    with pytest.raises(ValueError, match="strict_revision_cache.*require run_semantic=True"):
+        AnalyzerConfig(run_semantic=False, strict_revision_cache=True)
+
 
 @pytest.mark.parametrize(
     ("config_overrides", "expected_values"),
@@ -1630,6 +1636,11 @@ def test_analyzer_config_rejects_device_controls_without_semantic_mode() -> None
             {"embedding_cache": False},
             {"use_cache": False},
             id="cache-control",
+        ),
+        pytest.param(
+            {"strict_revision_cache": True},
+            {"strict_revision_cache": True},
+            id="strict-revision-cache-control",
         ),
     ],
 )

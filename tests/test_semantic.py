@@ -1424,3 +1424,200 @@ def test_fingerprint_local_model_dir_handles_symlink_cycles(tmp_path: Path) -> N
     fingerprint = semantic._fingerprint_local_model_dir(model_dir, persist_manifest=False)
 
     assert fingerprint is not None
+
+
+# --- T7: loose-by-default cache revision keying, strict opt-in -------------
+
+
+def test_resolve_revision_for_cache_loose_default_labels_unpinned_model(monkeypatch) -> None:
+    def _fail_if_called(*_args, **_kwargs):
+        raise AssertionError("loose mode must never consult the offline hub-cache lookup")
+
+    monkeypatch.setattr(semantic, "_resolve_hf_cached_revision", _fail_if_called)
+
+    assert semantic._resolve_revision_for_cache("some-generic-model", None) == "main"
+    assert (
+        semantic._resolve_revision_for_cache("some-generic-model", "feature-branch")
+        == "feature-branch"
+    )
+
+
+def test_resolve_revision_for_cache_explicit_commit_hash_keys_as_is_either_mode() -> None:
+    commit_hash = "a" * 40
+
+    assert semantic._resolve_revision_for_cache("some-generic-model", commit_hash) == commit_hash
+    assert (
+        semantic._resolve_revision_for_cache("some-generic-model", commit_hash, strict=True)
+        == commit_hash
+    )
+
+
+def test_resolve_revision_for_cache_strict_resolves_commit_and_disables_on_unmappable(
+    monkeypatch,
+) -> None:
+    def _fake_resolve(_canonical_model, revision="main"):
+        return "resolved-hash" if revision == "main" else None
+
+    monkeypatch.setattr(semantic, "_resolve_hf_cached_revision", _fake_resolve)
+
+    assert (
+        semantic._resolve_revision_for_cache("some-generic-model", None, strict=True)
+        == "resolved-hash"
+    )
+    # A branch/tag that cannot be mapped offline disables caching in strict mode
+    # (never in loose mode, where the same input keys by its label instead).
+    assert (
+        semantic._resolve_revision_for_cache("some-generic-model", "feature-branch", strict=True)
+        is None
+    )
+    assert (
+        semantic._resolve_revision_for_cache("some-generic-model", "feature-branch")
+        == "feature-branch"
+    )
+
+
+def test_confirm_cache_revision_after_load_loose_default_trusts_pre_load_label() -> None:
+    # Loose mode never inspects the model at all: an arbitrary object without
+    # the introspection surface _get_loaded_model_commit_hash expects proves
+    # that no post-load reconciliation happens.
+    sentinel_model = object()
+
+    assert (
+        semantic._confirm_cache_revision_after_load(sentinel_model, "some-generic-model", "main")
+        == "main"
+    )
+    assert (
+        semantic._confirm_cache_revision_after_load(sentinel_model, "some-generic-model", None)
+        == "main"
+    )
+    commit_hash = "b" * 40
+    assert (
+        semantic._confirm_cache_revision_after_load(
+            sentinel_model, "some-generic-model", commit_hash
+        )
+        == commit_hash
+    )
+
+
+def test_confirm_cache_revision_after_load_strict_requires_loaded_commit(monkeypatch) -> None:
+    monkeypatch.setattr(semantic, "_get_loaded_model_commit_hash", lambda _model: None)
+
+    assert (
+        semantic._confirm_cache_revision_after_load(
+            object(), "some-generic-model", "main", strict=True
+        )
+        is None
+    )
+
+    monkeypatch.setattr(semantic, "_get_loaded_model_commit_hash", lambda _model: "loaded-hash")
+
+    assert (
+        semantic._confirm_cache_revision_after_load(
+            object(), "some-generic-model", "main", strict=True
+        )
+        == "loaded-hash"
+    )
+
+
+def test_loose_default_cache_survives_simulated_branch_move(tmp_path: Path, monkeypatch) -> None:
+    """A warm loose-mode cache must not invalidate when an upstream ref moves.
+
+    Uses an unpinned (generic-profile) model name so the default request
+    genuinely goes through the symbolic-revision path rather than a built-in
+    profile's pinned commit hash. The label ("main") is the whole key; there
+    is no hub-cache lookup to go stale, so re-pointing what a branch would
+    resolve to has no effect.
+    """
+    units = extract_arithmetic_units(tmp_path)
+    model = _WarmCacheModel()
+    monkeypatch.setattr(semantic, "get_model", lambda *_a, **_k: model)
+    monkeypatch.setattr(semantic, "_get_loaded_model_commit_hash", lambda _model: None)
+
+    def _fail_if_called(*_args, **_kwargs):
+        raise AssertionError("loose mode must never consult the offline hub-cache lookup")
+
+    monkeypatch.setattr(semantic, "_resolve_hf_cached_revision", _fail_if_called)
+
+    first = compute_embeddings(
+        units, model_name="some-generic-model", device="cpu", cache_scope=tmp_path
+    )
+    assert model.encode_calls == 1
+
+    second = compute_embeddings(
+        units, model_name="some-generic-model", device="cpu", cache_scope=tmp_path
+    )
+
+    assert model.encode_calls == 1
+    np.testing.assert_array_equal(first, second)
+
+
+def test_strict_revision_cache_reencodes_after_simulated_branch_move(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A moved branch changes the resolved commit hash, invalidating a strict-mode warm cache.
+
+    Uses an unpinned (generic-profile) model name with no explicit revision,
+    so the resolved commit is entirely a function of the (stubbed) offline
+    hub-cache lookup and the (stubbed) post-load reported commit - both are
+    moved together to simulate a real branch move.
+    """
+    units = extract_arithmetic_units(tmp_path)
+    model = _WarmCacheModel()
+    monkeypatch.setattr(semantic, "get_model", lambda *_a, **_k: model)
+    monkeypatch.setattr(semantic, "_resolve_hf_cached_revision", lambda *_a, **_k: "commit-a")
+    monkeypatch.setattr(semantic, "_get_loaded_model_commit_hash", lambda _model: "commit-a")
+
+    compute_embeddings(
+        units,
+        model_name="some-generic-model",
+        device="cpu",
+        cache_scope=tmp_path,
+        strict_revision_cache=True,
+    )
+    assert model.encode_calls == 1
+
+    # Same resolved commit: a warm hit needs no model load at all.
+    compute_embeddings(
+        units,
+        model_name="some-generic-model",
+        device="cpu",
+        cache_scope=tmp_path,
+        strict_revision_cache=True,
+    )
+    assert model.encode_calls == 1
+
+    # Simulate an upstream branch move to a new commit.
+    monkeypatch.setattr(semantic, "_resolve_hf_cached_revision", lambda *_a, **_k: "commit-b")
+    monkeypatch.setattr(semantic, "_get_loaded_model_commit_hash", lambda _model: "commit-b")
+
+    compute_embeddings(
+        units,
+        model_name="some-generic-model",
+        device="cpu",
+        cache_scope=tmp_path,
+        strict_revision_cache=True,
+    )
+
+    assert model.encode_calls == 2
+
+
+def test_strict_revision_cache_disables_caching_for_unmappable_symbolic_ref(
+    tmp_path: Path, monkeypatch
+) -> None:
+    units = extract_arithmetic_units(tmp_path)
+    model = _WarmCacheModel()
+    monkeypatch.setattr(semantic, "get_model", lambda *_a, **_k: model)
+    monkeypatch.setattr(semantic, "_get_loaded_model_commit_hash", lambda _model: None)
+    monkeypatch.setattr(semantic, "_resolve_hf_cached_revision", lambda *_a, **_k: None)
+
+    for _ in range(2):
+        compute_embeddings(
+            units,
+            model_name="gte-modernbert-base",
+            revision="unmappable-branch",
+            device="cpu",
+            cache_scope=tmp_path,
+            strict_revision_cache=True,
+        )
+
+    assert model.encode_calls == 2

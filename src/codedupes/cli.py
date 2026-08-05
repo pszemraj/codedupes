@@ -889,6 +889,16 @@ def _add_common_analysis_options(
             help="Disable the persistent on-disk embedding cache for this run",
         ),
         click.option(
+            "--strict-revision-cache",
+            is_flag=True,
+            help=(
+                "Key an unpinned hub model's cache revision to a resolved commit hash instead of "
+                "the requested revision label, disabling caching when a branch/tag can't be "
+                "mapped offline (default: key by the requested label; branch moves never "
+                "invalidate the cache, but weight changes behind a moving branch are untracked)"
+            ),
+        ),
+        click.option(
             "--output-width",
             type=int,
             default=DEFAULT_OUTPUT_WIDTH,
@@ -1032,6 +1042,7 @@ def check_command(
     exclude: tuple[str, ...],
     include_stubs: bool,
     no_cache: bool,
+    strict_revision_cache: bool,
     output_width: int,
 ) -> None:
     """Run duplicate and unused-code analysis.
@@ -1073,6 +1084,8 @@ def check_command(
     :param exclude: Glob patterns to exclude.
     :param include_stubs: Include ``.pyi`` files.
     :param no_cache: Disable the persistent on-disk embedding cache for this run.
+    :param strict_revision_cache: Key an unpinned hub revision to a resolved commit hash
+        instead of the requested revision label.
     :param output_width: Width used for rich output.
     :return: ``None``.
     """
@@ -1115,6 +1128,7 @@ def check_command(
             "min_statements",
             "semantic_unit_type",
             "suppress_test_semantic",
+            "strict_revision_cache",
         ]
         specified_ignored = [
             option_name
@@ -1194,6 +1208,7 @@ def check_command(
             batch_size=batch_size,
             include_stubs=include_stubs,
             embedding_cache=not no_cache,
+            strict_revision_cache=strict_revision_cache,
         )
     except ValueError as exc:
         raise click.UsageError(str(exc)) from exc
@@ -1328,6 +1343,7 @@ def search_command(
     exclude: tuple[str, ...],
     include_stubs: bool,
     no_cache: bool,
+    strict_revision_cache: bool,
     output_width: int,
 ) -> None:
     """Run semantic search over extracted code units.
@@ -1357,6 +1373,8 @@ def search_command(
     :param exclude: Glob patterns to exclude.
     :param include_stubs: Include ``.pyi`` files.
     :param no_cache: Disable the persistent on-disk embedding cache for this run.
+    :param strict_revision_cache: Key an unpinned hub revision to a resolved commit hash
+        instead of the requested revision label.
     :param output_width: Width used for rich output.
     :return: ``None``.
     """
@@ -1390,6 +1408,7 @@ def search_command(
             batch_size=batch_size,
             include_stubs=include_stubs,
             embedding_cache=not no_cache,
+            strict_revision_cache=strict_revision_cache,
         )
     except ValueError as exc:
         raise click.UsageError(str(exc)) from exc

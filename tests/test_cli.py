@@ -1113,6 +1113,7 @@ def test_cli_rejects_mps_memory_fraction_with_cpu_device(tmp_path):
         (["--mps-fallback"], "--mps-fallback"),
         (["--no-mps-fallback"], "--no-mps-fallback"),
         (["--mps-memory-fraction", "0.8"], "--mps-memory-fraction"),
+        (["--strict-revision-cache"], "--strict-revision-cache"),
     ],
 )
 def test_cli_rejects_device_controls_with_traditional_only(
@@ -1199,6 +1200,61 @@ def test_cli_check_defaults_to_embedding_cache_enabled(monkeypatch, tmp_path):
 
     assert result.exit_code == 1
     assert captured[0].embedding_cache is True
+
+
+@pytest.mark.parametrize(
+    ("command", "tail_args", "expected_exit_code"),
+    [("check", [], 1), ("search", ["entry"], 0)],
+)
+def test_cli_strict_revision_cache_flag_plumbs_to_config(
+    monkeypatch,
+    tmp_path,
+    command,
+    tail_args,
+    expected_exit_code,
+):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+
+    captured = []
+    patch_cli_analyzer(
+        monkeypatch,
+        cli,
+        analyze_result=lambda: _build_result(tmp_path),
+        search_results=[(_build_unit(tmp_path), 0.9)],
+        captured_configs=captured,
+    )
+    runner = CliRunner()
+    result = runner.invoke(cli.cli, [command, str(path), *tail_args, "--strict-revision-cache"])
+
+    assert result.exit_code == expected_exit_code
+    assert captured[0].strict_revision_cache is True
+
+
+def test_cli_defaults_to_loose_revision_cache(monkeypatch, tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+
+    captured = []
+    patch_cli_analyzer(
+        monkeypatch,
+        cli,
+        analyze_result=lambda: _build_result(tmp_path),
+        captured_configs=captured,
+    )
+    runner = CliRunner()
+    result = runner.invoke(cli.cli, ["check", str(path)])
+
+    assert result.exit_code == 1
+    assert captured[0].strict_revision_cache is False
+
+
+@pytest.mark.parametrize("command", ["check", "search"])
+def test_cli_help_documents_strict_revision_cache_flag(command):
+    result = CliRunner().invoke(cli.cli, [command, "--help"])
+
+    assert result.exit_code == 0
+    assert "--strict-revision-cache" in result.output
 
 
 def test_cli_cache_info_reports_empty_cache():

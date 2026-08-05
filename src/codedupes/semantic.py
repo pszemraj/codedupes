@@ -644,24 +644,54 @@ def _resolve_load_revision(model_name: str, explicit_revision: str | None) -> st
     return _resolve_model_revision(model_name, explicit_revision)
 
 
-def _resolve_revision_for_cache(model_name: str, explicit_revision: str | None) -> str | None:
-    """Resolve a concrete revision usable as a cache key component, without loading the model.
+def _resolve_revision_for_cache(
+    model_name: str,
+    explicit_revision: str | None,
+    *,
+    strict: bool = False,
+) -> str | None:
+    """Resolve a revision usable as a cache key component, without loading the model.
 
-    Pinned profiles (or an explicit override) resolve immediately. Local model
-    directories resolve to a content fingerprint of the directory (an explicit
-    revision is ignored for them because nothing pins on-disk weights). Unpinned
-    hub models fall back to reading the locally cached HuggingFace commit hash so
-    cache keys stay stable across runs even before the model is loaded.
+    Pinned profiles (or an explicit full commit hash override) resolve to that
+    hash immediately in both modes. Local model directories resolve to a
+    content fingerprint of the directory (an explicit revision is ignored for
+    them because nothing pins on-disk weights) regardless of ``strict``.
+
+    The default (loose, ``strict=False``) policy keys an unpinned hub revision
+    by the requested LABEL itself - the explicit ``--model-revision`` value,
+    or ``"main"`` when none was given - without ever resolving it to a
+    concrete commit or disabling persistent caching. An upstream branch move
+    (even a metadata-only commit) never invalidates the cache under this
+    policy; the cost is that a real weight change behind a moving branch is
+    not tracked, so run ``codedupes cache clear --model`` or pass
+    ``strict=True`` when that matters.
+
+    ``strict=True`` restores the pre-loose policy: an unpinned hub model
+    falls back to reading the locally cached HuggingFace commit hash so cache
+    keys stay stable across runs even before the model is loaded, and returns
+    ``None`` (disabling persistent caching for the run) when a branch or tag
+    cannot be mapped offline - loading the model would be required before
+    cached vectors could be trusted.
 
     :param model_name: Requested model identifier.
     :param explicit_revision: Optional explicit revision override.
-    :return: Concrete revision string, or ``None`` when it cannot be resolved offline.
+    :param strict: Whether to resolve an unpinned hub revision to a concrete
+        commit hash (and disable caching when that mapping fails) instead of
+        keying by the requested revision label, defaults to ``False``.
+    :return: Concrete revision string, revision label, or (strict mode only)
+        ``None`` when it cannot be resolved offline.
     """
     canonical_model = resolve_model_profile(model_name).canonical_name
     local_dir = resolve_local_model_path(canonical_model)
     if local_dir is not None:
         return _fingerprint_local_model_dir(local_dir)
     load_revision = _resolve_model_revision(model_name, explicit_revision)
+
+    if not strict:
+        if load_revision is not None and _is_hf_commit_hash(load_revision):
+            return load_revision
+        return load_revision or "main"
+
     if load_revision is None:
         return _resolve_hf_cached_revision(canonical_model)
 
@@ -696,21 +726,38 @@ def _confirm_cache_revision_after_load(
     model: object,
     model_name: str,
     resolved_revision: str | None,
+    *,
+    strict: bool = False,
 ) -> str | None:
     """Resolve a vector-safe cache revision after loading an embedding model.
 
     Local directories resolve to the content fingerprint verified while this
-    model was loaded, never the caller's pre-load assumption: a directory
-    swapped mid-load would otherwise key fresh vectors — and retain stale
-    hits — under a fingerprint the loaded weights no longer match. Hub models
-    require either the loaded config's concrete commit hash or an explicitly
-    pinned full commit hash; a symbolic branch/tag is unsafe when the backend
-    cannot report what it loaded.
+    model was loaded, never the caller's pre-load assumption, regardless of
+    ``strict``: a directory swapped mid-load would otherwise key fresh vectors
+    — and retain stale hits — under a fingerprint the loaded weights no
+    longer match.
+
+    For hub models, the default (loose, ``strict=False``) policy never
+    reconciles against what the backend actually loaded: an explicit or
+    profile-pinned full commit hash keys as-is (unchanged either way);
+    otherwise the pre-load revision label (or ``"main"``) is trusted as-is,
+    mirroring :func:`_resolve_revision_for_cache` exactly so the two can never
+    disagree and force a spurious rekey.
+
+    ``strict=True`` restores the pre-loose policy: it requires either the
+    loaded config's concrete commit hash or an explicitly pinned full commit
+    hash, returning ``None`` (disabling persistent reuse for this run) when a
+    symbolic branch/tag is unsafe because the backend cannot report what it
+    loaded.
 
     :param model: Loaded embedding model.
     :param model_name: Requested model alias, Hub ID, or local directory.
     :param resolved_revision: Revision passed to the model loader.
-    :return: Safe cache revision, or ``None`` when persistent reuse must be disabled.
+    :param strict: Whether to require post-load commit-hash confirmation for
+        hub models instead of trusting the pre-load revision label, defaults
+        to ``False``.
+    :return: Safe cache revision, or (strict mode only) ``None`` when
+        persistent reuse must be disabled.
     """
     canonical_model = resolve_model_profile(model_name).canonical_name
     local_dir = resolve_local_model_path(canonical_model)
@@ -723,6 +770,11 @@ def _confirm_cache_revision_after_load(
         # bracket exists for it; the directory's current state is the best
         # available identity.
         return _fingerprint_local_model_dir(local_dir)
+
+    if not strict:
+        if resolved_revision is not None and _is_hf_commit_hash(resolved_revision):
+            return resolved_revision
+        return resolved_revision or "main"
 
     loaded_commit = _get_loaded_model_commit_hash(model)
     if loaded_commit is not None:
@@ -1012,6 +1064,7 @@ def resolve_embedding_space_identity(
     device: str = DEFAULT_SEMANTIC_DEVICE,
     mps_fallback: bool | None = None,
     persist_local_model_manifest: bool = True,
+    strict_revision_cache: bool = False,
 ) -> EmbeddingSpaceIdentity:
     """Resolve the vector-space identity for code corpus embeddings.
 
@@ -1024,6 +1077,9 @@ def resolve_embedding_space_identity(
     :param mps_fallback: MPS unsupported-op CPU fallback behavior.
     :param persist_local_model_manifest: Whether local-model digests and the CPU
         capability record may be persisted.
+    :param strict_revision_cache: Whether an unpinned hub revision resolves to a
+        concrete commit hash (disabling caching when unmappable) instead of the
+        requested revision label, defaults to ``False``.
     :return: Canonical model, concrete revision/fingerprint, and runtime variant.
     """
     profile = resolve_model_profile(model_name)
@@ -1040,7 +1096,11 @@ def resolve_embedding_space_identity(
             persist_manifest=persist_local_model_manifest,
         )
     else:
-        resolved_revision = _resolve_revision_for_cache(model_name, revision)
+        resolved_revision = _resolve_revision_for_cache(
+            model_name,
+            revision,
+            strict=strict_revision_cache,
+        )
 
     return _build_embedding_space_identity(
         profile,
@@ -1064,6 +1124,7 @@ def _require_current_embedding_space(
     device: str,
     mps_fallback: bool | None,
     persist_local_model_manifest: bool,
+    strict_revision_cache: bool = False,
 ) -> str:
     """Require the configured corpus vector space to match its stored identity.
 
@@ -1076,6 +1137,9 @@ def _require_current_embedding_space(
     :param device: Current inference-device request.
     :param mps_fallback: Current MPS fallback configuration.
     :param persist_local_model_manifest: Whether local digests may be persisted.
+    :param strict_revision_cache: Whether unpinned hub revisions resolve to a
+        concrete commit hash instead of the requested revision label; must
+        match the mode used to build ``expected``.
     :return: Device policy that keeps query vectors in the stored corpus space.
     :raises RuntimeError: If the identity changed or cannot be pinned concretely.
     """
@@ -1088,6 +1152,7 @@ def _require_current_embedding_space(
         device=device,
         mps_fallback=mps_fallback,
         persist_local_model_manifest=persist_local_model_manifest,
+        strict_revision_cache=strict_revision_cache,
     )
     if current == expected and current.resolved_revision is not None:
         return device
@@ -1105,6 +1170,7 @@ def _require_current_embedding_space(
             device="cpu",
             mps_fallback=mps_fallback,
             persist_local_model_manifest=persist_local_model_manifest,
+            strict_revision_cache=strict_revision_cache,
         )
         if cpu_identity == expected and cpu_identity.resolved_revision is not None:
             return "cpu"
@@ -2041,6 +2107,7 @@ def _prepare_cache_context(
     trust_remote_code: bool,
     use_cache: bool,
     cache_scope: Path | None,
+    strict_revision_cache: bool = False,
 ) -> tuple[EmbeddingCache | None, str | None, str, str]:
     """Resolve the shared embedding-cache addressing context for one encode call.
 
@@ -2054,11 +2121,16 @@ def _prepare_cache_context(
     :param trust_remote_code: Resolved remote-code trust decision.
     :param use_cache: Whether the caller enabled the persistent cache.
     :param cache_scope: Corpus root addressing the cache shard; ``None`` disables caching.
+    :param strict_revision_cache: Whether an unpinned hub revision resolves to a
+        concrete commit hash (disabling caching when unmappable) instead of the
+        requested revision label, defaults to ``False``.
     :return: ``(cache, cache_revision, cache_variant, cache_namespace)``.
     """
     cache = get_embedding_cache() if (use_cache and cache_scope is not None) else None
     cache_revision = (
-        _resolve_revision_for_cache(model_name, revision) if cache is not None else None
+        _resolve_revision_for_cache(model_name, revision, strict=strict_revision_cache)
+        if cache is not None
+        else None
     )
     cache_variant = (
         _cache_variant_for(
@@ -2304,6 +2376,7 @@ def _compute_embeddings_unlocked(
     mps_memory_fraction: float | None = None,
     use_cache: bool = True,
     cache_scope: Path | None = None,
+    strict_revision_cache: bool = False,
 ) -> tuple[np.ndarray, EmbeddingSpaceIdentity]:
     """Compute normalized NumPy embeddings for all code units.
 
@@ -2331,6 +2404,9 @@ def _compute_embeddings_unlocked(
     :param use_cache: Whether to consult/update the persistent embedding cache.
     :param cache_scope: Analyzed corpus root path used to address the cache shard;
         ``None`` disables caching for this call regardless of ``use_cache``.
+    :param strict_revision_cache: Whether an unpinned hub revision resolves to a
+        concrete commit hash (disabling caching when unmappable) instead of the
+        requested revision label, defaults to ``False``.
     :return: Normalized embedding matrix and its effective vector-space identity.
     :raises ValueError: If ``batch_size`` is not positive.
     :raises SemanticBackendError: If an explicitly requested device is unavailable,
@@ -2348,6 +2424,7 @@ def _compute_embeddings_unlocked(
             device=device,
             mps_fallback=mps_fallback,
             persist_local_model_manifest=use_cache and cache_scope is not None,
+            strict_revision_cache=strict_revision_cache,
         )
 
     _validate_explicit_device_request(device, mps_fallback=mps_fallback)
@@ -2366,7 +2443,7 @@ def _compute_embeddings_unlocked(
             persist_manifest=use_cache and cache_scope is not None,
         )
         if identity_local_model_path is not None
-        else _resolve_revision_for_cache(model_name, revision)
+        else _resolve_revision_for_cache(model_name, revision, strict=strict_revision_cache)
     )
     prepared_texts = [unit.source.strip() for unit in units]
 
@@ -2416,6 +2493,7 @@ def _compute_embeddings_unlocked(
             mps_memory_fraction=None,
             use_cache=use_cache,
             cache_scope=cache_scope,
+            strict_revision_cache=strict_revision_cache,
         )
 
     def _coherence_break_reason(current_model: object) -> str | None:
@@ -2454,6 +2532,7 @@ def _compute_embeddings_unlocked(
         trust_remote_code=resolved_trust_remote_code,
         use_cache=use_cache,
         cache_scope=cache_scope,
+        strict_revision_cache=strict_revision_cache,
     )
     cache_keys = (
         [
@@ -2502,6 +2581,7 @@ def _compute_embeddings_unlocked(
         model,
         model_name,
         resolved_revision,
+        strict=strict_revision_cache,
     )
     if confirmed_revision is not None:
         identity_revision = confirmed_revision
@@ -2651,6 +2731,7 @@ def compute_embeddings_with_identity(
     mps_memory_fraction: float | None = None,
     use_cache: bool = True,
     cache_scope: Path | None = None,
+    strict_revision_cache: bool = False,
 ) -> tuple[np.ndarray, EmbeddingSpaceIdentity]:
     """Compute embeddings and identity under the shared model lock.
 
@@ -2670,6 +2751,9 @@ def compute_embeddings_with_identity(
     :param use_cache: Whether to consult/update the persistent embedding cache.
     :param cache_scope: Analyzed corpus root path used to address the cache shard;
         ``None`` disables caching for this call regardless of ``use_cache``.
+    :param strict_revision_cache: Whether an unpinned hub revision resolves to a
+        concrete commit hash (disabling caching when unmappable) instead of the
+        requested revision label, defaults to ``False``.
     :return: Normalized embedding matrix and its effective vector-space identity.
     """
     with _model_lock:
@@ -2686,6 +2770,7 @@ def compute_embeddings_with_identity(
             cache_scope=cache_scope,
             mps_fallback=mps_fallback,
             mps_memory_fraction=mps_memory_fraction,
+            strict_revision_cache=strict_revision_cache,
         )
 
 
@@ -2702,6 +2787,7 @@ def compute_embeddings(
     mps_memory_fraction: float | None = None,
     use_cache: bool = True,
     cache_scope: Path | None = None,
+    strict_revision_cache: bool = False,
 ) -> np.ndarray:
     """Compute embeddings while serializing shared-model lifecycle and inference.
 
@@ -2721,6 +2807,9 @@ def compute_embeddings(
     :param use_cache: Whether to consult/update the persistent embedding cache.
     :param cache_scope: Analyzed corpus root path used to address the cache shard;
         ``None`` disables caching for this call regardless of ``use_cache``.
+    :param strict_revision_cache: Whether an unpinned hub revision resolves to a
+        concrete commit hash (disabling caching when unmappable) instead of the
+        requested revision label, defaults to ``False``.
     :return: Normalized embedding matrix row-aligned with ``units``.
     """
     embeddings, _identity = compute_embeddings_with_identity(
@@ -2736,6 +2825,7 @@ def compute_embeddings(
         mps_memory_fraction=mps_memory_fraction,
         use_cache=use_cache,
         cache_scope=cache_scope,
+        strict_revision_cache=strict_revision_cache,
     )
     return embeddings
 
@@ -2841,6 +2931,7 @@ def _find_similar_to_query_unlocked(
     use_cache: bool = True,
     cache_scope: Path | None = None,
     corpus_identity: EmbeddingSpaceIdentity | None = None,
+    strict_revision_cache: bool = False,
 ) -> list[tuple[CodeUnit, float]]:
     """Find code units most similar to a natural-language query.
 
@@ -2870,6 +2961,10 @@ def _find_similar_to_query_unlocked(
         ``None`` disables caching for this call regardless of ``use_cache``.
     :param corpus_identity: Optional identity captured with ``embeddings``; when
         provided, model/revision/runtime drift requires rebuilding the corpus.
+    :param strict_revision_cache: Whether an unpinned hub revision resolves to a
+        concrete commit hash (disabling caching when unmappable) instead of the
+        requested revision label, defaults to ``False``. Must match the mode
+        used to build ``corpus_identity``.
     :return: Up to ``top_k`` ``(unit, similarity)`` pairs at or above the threshold,
         sorted by descending similarity.
     :raises SemanticBackendError: If an explicitly requested device is unavailable,
@@ -2903,6 +2998,7 @@ def _find_similar_to_query_unlocked(
             device=device,
             mps_fallback=mps_fallback,
             persist_local_model_manifest=use_cache and cache_scope is not None,
+            strict_revision_cache=strict_revision_cache,
         )
 
     encode_plan = _resolve_encode_plan(profile, "query", resolved_task, instruction_prefix)
@@ -2919,6 +3015,7 @@ def _find_similar_to_query_unlocked(
         trust_remote_code=resolved_trust_remote_code,
         use_cache=use_cache,
         cache_scope=cache_scope,
+        strict_revision_cache=strict_revision_cache,
     )
     cache_key = (
         compute_cache_key(
@@ -2972,6 +3069,7 @@ def _find_similar_to_query_unlocked(
             model,
             model_name,
             resolved_revision,
+            strict=strict_revision_cache,
         )
         corpus_encode_plan = _resolve_encode_plan(
             profile,
@@ -3104,6 +3202,7 @@ def find_similar_to_query(
     use_cache: bool = True,
     cache_scope: Path | None = None,
     corpus_identity: EmbeddingSpaceIdentity | None = None,
+    strict_revision_cache: bool = False,
 ) -> list[tuple[CodeUnit, float]]:
     """Search embeddings while serializing shared-model lifecycle and inference.
 
@@ -3129,6 +3228,10 @@ def find_similar_to_query(
         ``None`` disables caching for this call regardless of ``use_cache``.
     :param corpus_identity: Optional identity captured with ``embeddings``; when
         provided, model/revision/runtime drift requires rebuilding the corpus.
+    :param strict_revision_cache: Whether an unpinned hub revision resolves to a
+        concrete commit hash (disabling caching when unmappable) instead of the
+        requested revision label, defaults to ``False``. Must match the mode
+        used to build ``corpus_identity``.
     :return: Up to ``top_k`` ``(unit, similarity)`` pairs at or above the threshold,
         sorted by descending similarity.
     """
@@ -3150,6 +3253,7 @@ def find_similar_to_query(
             use_cache=use_cache,
             cache_scope=cache_scope,
             corpus_identity=corpus_identity,
+            strict_revision_cache=strict_revision_cache,
         )
 
 
@@ -3168,6 +3272,7 @@ def run_semantic_analysis_with_identity(
     mps_memory_fraction: float | None = None,
     use_cache: bool = True,
     cache_scope: Path | None = None,
+    strict_revision_cache: bool = False,
 ) -> tuple[np.ndarray, list[DuplicatePair], EmbeddingSpaceIdentity]:
     """Run semantic duplicate detection and return the corpus identity.
 
@@ -3189,6 +3294,9 @@ def run_semantic_analysis_with_identity(
     :param use_cache: Whether to consult/update the persistent embedding cache.
     :param cache_scope: Analyzed corpus root path used to address the cache shard;
         ``None`` disables caching for this call regardless of ``use_cache``.
+    :param strict_revision_cache: Whether an unpinned hub revision resolves to a
+        concrete commit hash (disabling caching when unmappable) instead of the
+        requested revision label, defaults to ``False``.
     :return: ``(embeddings, duplicates, identity)``.
     """
     resolved_threshold = (
@@ -3208,6 +3316,7 @@ def run_semantic_analysis_with_identity(
         mps_memory_fraction=mps_memory_fraction,
         use_cache=use_cache,
         cache_scope=cache_scope,
+        strict_revision_cache=strict_revision_cache,
     )
     if not units:
         return embeddings, [], identity
@@ -3237,6 +3346,7 @@ def run_semantic_analysis(
     mps_memory_fraction: float | None = None,
     use_cache: bool = True,
     cache_scope: Path | None = None,
+    strict_revision_cache: bool = False,
 ) -> tuple[np.ndarray, list[DuplicatePair]]:
     """Run full semantic duplicate detection.
 
@@ -3258,6 +3368,9 @@ def run_semantic_analysis(
     :param use_cache: Whether to consult/update the persistent embedding cache.
     :param cache_scope: Analyzed corpus root path used to address the cache shard;
         ``None`` disables caching for this call regardless of ``use_cache``.
+    :param strict_revision_cache: Whether an unpinned hub revision resolves to a
+        concrete commit hash (disabling caching when unmappable) instead of the
+        requested revision label, defaults to ``False``.
     :return: ``(embeddings, duplicates)``; both are empty when ``units`` is empty.
     """
     embeddings, duplicates, _identity = run_semantic_analysis_with_identity(
@@ -3275,5 +3388,6 @@ def run_semantic_analysis(
         mps_memory_fraction=mps_memory_fraction,
         use_cache=use_cache,
         cache_scope=cache_scope,
+        strict_revision_cache=strict_revision_cache,
     )
     return embeddings, duplicates

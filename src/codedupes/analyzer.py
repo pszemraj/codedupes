@@ -356,6 +356,7 @@ class AnalyzerConfig:
     tiny_unit_statement_cutoff: int = DEFAULT_TINY_UNIT_STATEMENT_CUTOFF
     tiny_near_jaccard_min: float = DEFAULT_TINY_NEAR_JACCARD_MIN
     embedding_cache: bool = True
+    strict_revision_cache: bool = False
 
     # What to run
     run_traditional: bool = True
@@ -426,6 +427,7 @@ class AnalyzerConfig:
                 ("device", self.device != DEFAULT_SEMANTIC_DEVICE),
                 ("mps_fallback", self.mps_fallback is not None),
                 ("mps_memory_fraction", self.mps_memory_fraction is not None),
+                ("strict_revision_cache", self.strict_revision_cache),
                 ("batch_size", self.batch_size != DEFAULT_BATCH_SIZE),
                 ("suppress_test_semantic_matches", self.suppress_test_semantic_matches),
             ),
@@ -628,6 +630,7 @@ class CodeAnalyzer:
                     "mps_memory_fraction": self.config.mps_memory_fraction,
                     "use_cache": self.config.embedding_cache,
                     "cache_scope": self._cache_scope,
+                    "strict_revision_cache": self.config.strict_revision_cache,
                 }
                 (
                     self._embeddings,
@@ -761,6 +764,7 @@ class CodeAnalyzer:
                 mps_memory_fraction=self.config.mps_memory_fraction,
                 use_cache=self.config.embedding_cache,
                 cache_scope=self._cache_scope,
+                strict_revision_cache=self.config.strict_revision_cache,
             )
         except Exception:
             self._embedding_space_identity = None
@@ -812,6 +816,7 @@ class CodeAnalyzer:
             use_cache=self.config.embedding_cache,
             cache_scope=self._cache_scope,
             corpus_identity=self._embedding_space_identity,
+            strict_revision_cache=self.config.strict_revision_cache,
         )
 
 
