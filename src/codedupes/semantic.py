@@ -1251,7 +1251,7 @@ def _resolve_model_dtype(family: str, device: str) -> Any:
     (``dtype="auto"``), so the default profile's float16 checkpoint would
     otherwise embed in half precision - an order of magnitude slower on CPU and
     outside the documented faithful-float32 tolerance. Every load therefore
-    pins an explicit dtype: bfloat16 on CUDA hardware that reports support,
+    pins an explicit dtype: bfloat16 on CUDA hardware with native support,
     float32 everywhere else. Measured on Apple Silicon (M-series, 96 real code
     chunks): CPU bfloat16 is emulated and ~16x slower than float32; MPS
     bfloat16 halves model memory but gains only ~13% runtime while drifting
@@ -1267,7 +1267,10 @@ def _resolve_model_dtype(family: str, device: str) -> Any:
     if (
         device == "cuda"
         and hasattr(torch.cuda, "is_bf16_supported")
-        and torch.cuda.is_bf16_supported()
+        # including_emulation=False keeps this a native-support check: torch's
+        # default returns True on pre-Ampere GPUs that merely construct bf16
+        # tensors through emulation, the failure mode this policy exists to avoid.
+        and torch.cuda.is_bf16_supported(including_emulation=False)
     ):
         return torch.bfloat16
 

@@ -554,6 +554,21 @@ def _recording_sentence_transformer(calls: list[dict]) -> type:
     return RecordingSentenceTransformer
 
 
+def test_cuda_bf16_selection_excludes_emulated_support(monkeypatch) -> None:
+    recorded_kwargs: dict = {}
+
+    def fake_is_bf16_supported(**kwargs):
+        recorded_kwargs.update(kwargs)
+        return True
+
+    monkeypatch.setattr(torch.cuda, "is_bf16_supported", fake_is_bf16_supported)
+
+    assert semantic._resolve_model_dtype("test-model", "cuda") is torch.bfloat16
+    # Pre-Ampere GPUs pass torch's default emulation probe; the policy must ask
+    # for native support only.
+    assert recorded_kwargs == {"including_emulation": False}
+
+
 @pytest.mark.parametrize(
     ("revision", "trust_remote_code"),
     [
