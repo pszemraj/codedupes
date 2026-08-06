@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 
+from codedupes import devices
 from codedupes.extractor import CodeExtractor
 from codedupes.models import AnalysisResult, CodeUnit, CodeUnitType
 
@@ -23,6 +24,9 @@ def _isolated_embedding_cache_dir(tmp_path: Path, monkeypatch: Any) -> None:
     # The experimental CPU bf16 opt-in must never leak from the invoking shell:
     # tests assert the float32 default unless they opt in explicitly.
     monkeypatch.delenv("CODEDUPES_CPU_BF16", raising=False)
+    # The live CPU bf16 probe is memoized per process; without a reset a
+    # verdict cached by one test would leak into the next.
+    devices._reset_cpu_bf16_probe_cache()
 
 
 def make_code_unit(

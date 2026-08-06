@@ -881,7 +881,6 @@ def _dtype_variant_for(
     *,
     mps_fallback: bool | None,
     resolved_device: str | None = None,
-    persist_machine_record: bool = True,
 ) -> str:
     """Build the dtype component of the cache variant for one model family.
 
@@ -891,36 +890,34 @@ def _dtype_variant_for(
     the shared key space) and returns without importing PyTorch. ``cpu``
     resolves float32 or bfloat16 from the CPU inference policy
     (:func:`codedupes.devices.resolve_cpu_bf16_inference` - the experimental
-    ``CODEDUPES_CPU_BF16=1`` opt-in plus this machine's capability gate); a
-    non-opted-in run resolves float32 without touching the capability record
-    or importing torch. On darwin, ``auto`` can only select MPS or CPU: when
-    the CPU policy is float32 both possible targets agree (every run without
-    the opt-in, and every Mac without an mkldnn backend), so the variant
-    resolves without picking a concrete device; when the policy enables bf16,
-    resolution falls through to inspect the concrete target because only a
-    CPU pick would differ from MPS. Requests that can reach CUDA, and
-    non-darwin ``auto``, always resolve the device and record a selected
-    bfloat16 as a non-default dtype.
+    ``CODEDUPES_CPU_BF16=1`` opt-in plus this machine's live capability gate);
+    a non-opted-in run resolves float32 without ever importing torch. On
+    darwin, ``auto`` can only select MPS or CPU: when the CPU policy is
+    float32 both possible targets agree (every run without the opt-in, and
+    every Mac without an mkldnn backend), so the variant resolves without
+    picking a concrete device; when the policy enables bf16, resolution falls
+    through to inspect the concrete target because only a CPU pick would
+    differ from MPS. Requests that can reach CUDA, and non-darwin ``auto``,
+    always resolve the device and record a selected bfloat16 as a non-default
+    dtype.
 
     :param profile: Resolved model profile.
     :param device: Requested device string (``auto``, ``cpu``, ``cuda``, ``mps``),
         ``None`` meaning the default request.
     :param mps_fallback: MPS unsupported-op CPU fallback behavior.
     :param resolved_device: Already resolved execution target, when available.
-    :param persist_machine_record: Whether the on-disk CPU capability record may
-        be read from and written to, defaults to ``True``.
     :return: Dtype fingerprint, empty for float32.
     """
     normalized_device = (device or DEFAULT_SEMANTIC_DEVICE).strip().lower()
     if normalized_device == "mps":
         return ""
     if normalized_device == "cpu":
-        gate = resolve_cpu_bf16_inference(persist=persist_machine_record)
+        gate = resolve_cpu_bf16_inference()
         return "dtype=torch.bfloat16" if gate else ""
     if (
         normalized_device == "auto"
         and sys.platform == "darwin"
-        and not resolve_cpu_bf16_inference(persist=persist_machine_record)
+        and not resolve_cpu_bf16_inference()
     ):
         return ""
 
@@ -928,11 +925,7 @@ def _dtype_variant_for(
         device,
         mps_fallback=mps_fallback,
     )
-    selected_dtype = _resolve_model_dtype(
-        profile.family,
-        concrete_device,
-        persist_machine_record=persist_machine_record,
-    )
+    selected_dtype = _resolve_model_dtype(profile.family, concrete_device)
     dtype_name = str(selected_dtype) if selected_dtype is not None else "default"
     if dtype_name in {"float32", "fp32", "torch.float32"}:
         return ""
@@ -998,7 +991,6 @@ def _cache_variant_for(
     mps_fallback: bool | None,
     trust_remote_code: bool = False,
     resolved_device: str | None = None,
-    persist_machine_record: bool = True,
 ) -> str:
     """Build the complete vector-affecting cache-key variant for one encode call.
 
@@ -1018,8 +1010,6 @@ def _cache_variant_for(
     :param mps_fallback: MPS unsupported-op CPU fallback behavior.
     :param trust_remote_code: Resolved remote-code trust setting.
     :param resolved_device: Already resolved execution target, when available.
-    :param persist_machine_record: Whether the on-disk CPU capability record may
-        be read from and written to, defaults to ``True``.
     :return: Variant fingerprint combining plan, dtype, math policy, runtime, and trust.
     """
     dtype_variant = _dtype_variant_for(
@@ -1027,7 +1017,6 @@ def _cache_variant_for(
         device,
         mps_fallback=mps_fallback,
         resolved_device=resolved_device,
-        persist_machine_record=persist_machine_record,
     )
     return "\x00".join(
         (
@@ -1049,7 +1038,6 @@ def _build_embedding_space_identity(
     mps_fallback: bool | None,
     trust_remote_code: bool,
     resolved_device: str | None = None,
-    persist_machine_record: bool = True,
 ) -> EmbeddingSpaceIdentity:
     """Build one corpus identity from already resolved embedding inputs.
 
@@ -1060,8 +1048,6 @@ def _build_embedding_space_identity(
     :param mps_fallback: MPS unsupported-op CPU fallback behavior.
     :param trust_remote_code: Resolved remote-code trust setting.
     :param resolved_device: Already resolved execution target, when available.
-    :param persist_machine_record: Whether the on-disk CPU capability record may
-        be read from and written to, defaults to ``True``.
     :return: Complete embedding-space identity.
     """
     return EmbeddingSpaceIdentity(
@@ -1074,7 +1060,6 @@ def _build_embedding_space_identity(
             mps_fallback=mps_fallback,
             trust_remote_code=trust_remote_code,
             resolved_device=resolved_device,
-            persist_machine_record=persist_machine_record,
         ),
     )
 
@@ -1099,8 +1084,8 @@ def resolve_embedding_space_identity(
     :param semantic_task: Semantic task used to embed the corpus.
     :param device: Requested semantic inference device.
     :param mps_fallback: MPS unsupported-op CPU fallback behavior.
-    :param persist_local_model_manifest: Whether local-model digests and the CPU
-        capability record may be persisted.
+    :param persist_local_model_manifest: Whether local-model digests may be
+        read from and saved to the persistent cache manifest.
     :param strict_revision_cache: Whether an unpinned hub revision resolves to a
         concrete commit hash (disabling caching when unmappable) instead of the
         requested revision label, defaults to ``False``.
@@ -1136,7 +1121,6 @@ def resolve_embedding_space_identity(
         device,
         mps_fallback=mps_fallback,
         trust_remote_code=resolved_trust_remote_code,
-        persist_machine_record=persist_local_model_manifest,
     )
 
 
@@ -1480,8 +1464,6 @@ def _dtype_coherence_broken(
     mps_fallback: bool | None,
     resolved_device: str,
     model: object,
-    *,
-    persist_machine_record: bool = True,
 ) -> bool:
     """Detect whether a keyed bfloat16 dtype variant no longer matches live execution.
 
@@ -1498,8 +1480,6 @@ def _dtype_coherence_broken(
     :param mps_fallback: MPS unsupported-op CPU fallback behavior.
     :param resolved_device: Device resolved before model load.
     :param model: Loaded model instance, possibly moved mid-call.
-    :param persist_machine_record: Whether the on-disk CPU capability record may
-        be read from and written to, defaults to ``True``.
     :return: ``True`` when the keyed dtype variant is no longer representative.
     """
     dtype_variant = _dtype_variant_for(
@@ -1507,7 +1487,6 @@ def _dtype_coherence_broken(
         device,
         mps_fallback=mps_fallback,
         resolved_device=resolved_device,
-        persist_machine_record=persist_machine_record,
     )
     if not dtype_variant:
         return False
@@ -1521,8 +1500,6 @@ def _cache_write_allowed(
     mps_fallback: bool | None,
     resolved_device: str,
     model: object,
-    *,
-    persist_machine_record: bool = True,
 ) -> bool:
     """Decide whether fresh vectors may be written under their keyed cache variant.
 
@@ -1538,8 +1515,6 @@ def _cache_write_allowed(
     :param mps_fallback: MPS unsupported-op CPU fallback behavior.
     :param resolved_device: Device resolved before model load.
     :param model: Loaded model instance, possibly moved mid-call.
-    :param persist_machine_record: Whether the on-disk CPU capability record may
-        be read from and written to, defaults to ``True``.
     :return: ``True`` when writing under the derived variant is representative.
     """
     execution_device = _get_effective_model_device(model, resolved_device)
@@ -1551,7 +1526,6 @@ def _cache_write_allowed(
         mps_fallback,
         resolved_device,
         model,
-        persist_machine_record=persist_machine_record,
     )
 
 
@@ -1649,7 +1623,7 @@ def get_code_unit_statement_count(unit: CodeUnit) -> int:
     return counter.count
 
 
-def _resolve_model_dtype(family: str, device: str, *, persist_machine_record: bool = True) -> Any:
+def _resolve_model_dtype(family: str, device: str) -> Any:
     """Choose the explicitly pinned dtype for one model family and device.
 
     Transformers 5 loads checkpoints in their config-declared dtype by default
@@ -1661,7 +1635,8 @@ def _resolve_model_dtype(family: str, device: str, *, persist_machine_record: bo
     (unchanged); bfloat16 on CPU iff the experimental ``CODEDUPES_CPU_BF16=1``
     opt-in is set *and* this machine passes the two-part gate in
     :func:`codedupes.devices.resolve_cpu_bf16_native` - native bf16 ISA *and*
-    a GEMM backend (oneDNN/mkldnn) able to exploit it; float32 everywhere
+    a GEMM backend (oneDNN/mkldnn) able to exploit it, probed live from torch
+    at most once per process and never persisted to disk; float32 everywhere
     else, including every MPS run. The opt-in guard exists because no
     gate-passing machine has yet validated the positive path: the duplicate
     and search thresholds are calibrated under float32, and the gate proves
@@ -1681,9 +1656,6 @@ def _resolve_model_dtype(family: str, device: str, *, persist_machine_record: bo
 
     :param family: Resolved model profile family, reserved for per-family policy.
     :param device: Concrete execution device.
-    :param persist_machine_record: Whether the on-disk CPU capability record may
-        be read from and written to; ``--no-cache`` runs must leave the cache
-        root untouched even when they load a model, defaults to ``True``.
     :return: Dtype object for Torch model loading.
     """
     import torch
@@ -1698,7 +1670,7 @@ def _resolve_model_dtype(family: str, device: str, *, persist_machine_record: bo
     ):
         return torch.bfloat16
 
-    if device == "cpu" and resolve_cpu_bf16_inference(persist=persist_machine_record):
+    if device == "cpu" and resolve_cpu_bf16_inference():
         return torch.bfloat16
 
     return torch.float32
@@ -1809,11 +1781,7 @@ def _get_model_unlocked(
         processor_kwargs: dict[str, object] = {}
         config_kwargs: dict[str, object] = {}
 
-        selected_dtype = _resolve_model_dtype(
-            profile.family,
-            resolved_device,
-            persist_machine_record=persist_local_model_manifest,
-        )
+        selected_dtype = _resolve_model_dtype(profile.family, resolved_device)
         model_kwargs["dtype"] = selected_dtype
         logger.info(f"Pinning torch dtype on {resolved_device}: {selected_dtype}")
 
@@ -1866,11 +1834,7 @@ def _get_model_unlocked(
                         cpu_model_kwargs = dict(
                             cast(dict[str, object], cpu_kwargs.get("model_kwargs") or {})
                         )
-                        cpu_model_kwargs["dtype"] = _resolve_model_dtype(
-                            profile.family,
-                            "cpu",
-                            persist_machine_record=persist_local_model_manifest,
-                        )
+                        cpu_model_kwargs["dtype"] = _resolve_model_dtype(profile.family, "cpu")
                         cpu_kwargs["model_kwargs"] = cpu_model_kwargs
                     try:
                         loaded_model = SentenceTransformer(resolved_model_name, **cpu_kwargs)
@@ -2068,10 +2032,10 @@ def _move_model_to_cpu(model: object) -> None:
     if hasattr(model, "to"):
         current_dtype = _model_parameter_dtype(model)
         if current_dtype is not None and str(current_dtype) == "torch.bfloat16":
-            # persist=False: the encode ladder has no cache-enablement context
-            # here, and torch is already imported, so a live probe is cheap and
-            # a --no-cache run stays free of cache-root writes.
-            if resolve_cpu_bf16_inference(persist=False):
+            # The live probe is memoized per process and torch is already
+            # imported on this path, so re-checking here is cheap and never
+            # touches disk regardless of cache enablement.
+            if resolve_cpu_bf16_inference():
                 logger.info(
                     "CPU fallback keeps bfloat16: CODEDUPES_CPU_BF16=1 is set and this CPU "
                     "has a native bf16 GEMM backend (mkldnn), halving memory pressure at "
@@ -2521,7 +2485,6 @@ def _compute_embeddings_unlocked(
             mps_fallback=mps_fallback,
             trust_remote_code=resolved_trust_remote_code,
             resolved_device=concrete_device,
-            persist_machine_record=use_cache and cache_scope is not None,
         )
 
     def _restart_faithfully_on_cpu(reason: str) -> tuple[np.ndarray, EmbeddingSpaceIdentity]:
@@ -2570,7 +2533,6 @@ def _compute_embeddings_unlocked(
             mps_fallback,
             resolved_device,
             current_model,
-            persist_machine_record=use_cache and cache_scope is not None,
         ):
             return "An accelerator OOM fallback cast this run's keyed bfloat16 vectors to float32"
         return None
@@ -3195,7 +3157,6 @@ def _find_similar_to_query_unlocked(
                 mps_fallback,
                 resolved_device,
                 model,
-                persist_machine_record=use_cache and cache_scope is not None,
             ):
                 raise RuntimeError(
                     "An accelerator fallback cast query execution to float32, but the "
@@ -3222,7 +3183,6 @@ def _find_similar_to_query_unlocked(
                 effective_policy_device,
                 mps_fallback=mps_fallback,
                 trust_remote_code=resolved_trust_remote_code,
-                persist_machine_record=use_cache and cache_scope is not None,
             )
             if loaded_identity != corpus_identity:
                 raise RuntimeError(
