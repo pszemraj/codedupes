@@ -1,7 +1,9 @@
 """Sweep duplicate and search thresholds for built-in semantic model profiles.
 
 Every sweep records a full calibration manifest (pinned model commit, embedding
-pipeline schema and runtime identity, encode plan, dtype, dimension, candidate
+pipeline schema and runtime identity, encode plan, the effective embedding-space
+identity the analyzer actually produced (covering dtype and Metal math policy
+even when an accelerator request fell back to CPU mid-run), dimension, candidate
 policy, and corpus/label digests) so a selected threshold is always tied to a
 reproducible model and pipeline identity. Calibration refuses to run when the
 model cannot be pinned to an immutable 40-character commit.
@@ -23,7 +25,7 @@ from codedupes.models import DuplicatePair
 from codedupes.pairs import ordered_pair_key
 from codedupes.semantic import (
     EMBEDDING_PIPELINE_SCHEMA,
-    _dtype_variant_for,
+    EmbeddingSpaceIdentity,
     _embedding_runtime_fingerprint,
     get_semantic_runtime_versions,
     resolve_encode_plan,
@@ -133,14 +135,22 @@ def _calibration_manifest(
     resolved_revision: str,
     mode: str,
     semantic_task: str,
-    device: str,
+    requested_device: str,
+    identity: EmbeddingSpaceIdentity,
     dimension: int,
     min_statements: int,
     batch_size: int,
     corpus_path: Path,
     labels_path: Path,
 ) -> dict[str, Any]:
-    """Assemble the reproducible identity under which one threshold was swept."""
+    """Assemble the reproducible identity under which one threshold was swept.
+
+    ``identity`` is the analyzer's effective embedding-space identity, recorded
+    verbatim: it reflects the policy that produced the swept matrix (dtype and
+    Metal math policy included) even when the requested accelerator fell back
+    and the run restarted on CPU, so thresholds are never labeled with a device
+    or dtype that did not produce them.
+    """
     code_plan = resolve_encode_plan(profile.canonical_name, "code", None, semantic_task)
     manifest: dict[str, Any] = {
         "model": profile.canonical_name,
@@ -152,8 +162,8 @@ def _calibration_manifest(
         "mode": mode,
         "semantic_task": semantic_task,
         "encode_plan": {"code": {"route": code_plan.route, "prompt": code_plan.prompt}},
-        "device": device,
-        "dtype_variant": _dtype_variant_for(profile, device, mps_fallback=None) or "float32",
+        "requested_device": requested_device,
+        "embedding_space": asdict(identity),
         "dimension": dimension,
         "normalized": True,
         "candidate_policy": {
@@ -263,6 +273,8 @@ def _run_duplicate_sweep(
     result = analyzer.analyze(corpus_path)
     embeddings = analyzer._embeddings
     dimension = int(embeddings.shape[1]) if embeddings is not None and embeddings.size else 0
+    identity = analyzer._embedding_space_identity
+    assert identity is not None
 
     positive_pairs = build_positive_pairs(result.units, labels)
     rows = _evaluate_thresholds(
@@ -281,7 +293,8 @@ def _run_duplicate_sweep(
             resolved_revision=revision,
             mode="duplicate",
             semantic_task=DEFAULT_CHECK_SEMANTIC_TASK,
-            device=device,
+            requested_device=device,
+            identity=identity,
             dimension=dimension,
             min_statements=min_statements,
             batch_size=batch_size,
@@ -318,6 +331,8 @@ def _run_search_sweep(
     indexed = analyzer.index(corpus_path)
     embeddings = analyzer._embeddings
     dimension = int(embeddings.shape[1]) if embeddings is not None and embeddings.size else 0
+    identity = analyzer._embedding_space_identity
+    assert identity is not None
     assert analyzer._semantic_units is not None
 
     scored_pairs: list[tuple[tuple[str, str], float]] = []
@@ -344,7 +359,8 @@ def _run_search_sweep(
         resolved_revision=revision,
         mode="search",
         semantic_task=DEFAULT_SEARCH_SEMANTIC_TASK,
-        device=device,
+        requested_device=device,
+        identity=identity,
         dimension=dimension,
         min_statements=min_statements,
         batch_size=batch_size,
