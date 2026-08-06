@@ -2630,6 +2630,7 @@ def _compute_embeddings_unlocked(
                     resolved_device,
                 )
 
+    corpus_source_commit: str | None = None
     if (
         cache is not None
         and cache_revision is not None
@@ -2638,17 +2639,23 @@ def _compute_embeddings_unlocked(
         # Loose label keying cannot see an upstream branch move on the warm
         # no-load path, but this run loaded the model and knows its commit.
         # Mixing old-commit hits with new-commit misses is only possible here,
-        # so a drifted shard is purged and every pre-load hit discarded.
+        # so a drifted (or provenance-less) shard is purged and every pre-load
+        # hit discarded. An unknown loaded commit stays fail-open by design:
+        # loose mode keeps serving warm even when a backend cannot report its
+        # checkpoint, and the provenance-less rows it writes are purged by the
+        # first commit-reporting load.
         loaded_commit = _get_loaded_model_commit_hash(model)
-        if loaded_commit is not None and not cache.confirm_source_commit(
-            cache_scope, profile.canonical_name, cache_revision, loaded_commit
-        ):
-            logger.warning(
-                f"Model branch {cache_revision!r} moved to commit {loaded_commit[:12]}; "
-                f"discarding {len(hits)} cached vectors recorded under the previous commit "
-                "and re-embedding so one matrix never mixes two checkpoints"
-            )
-            hits = {}
+        if loaded_commit is not None:
+            corpus_source_commit = loaded_commit
+            if not cache.confirm_source_commit(
+                cache_scope, profile.canonical_name, cache_revision, loaded_commit
+            ):
+                logger.warning(
+                    f"Cached vectors for branch {cache_revision!r} cannot be tied to loaded "
+                    f"commit {loaded_commit[:12]}; discarding {len(hits)} of them and "
+                    "re-embedding so one matrix never mixes two checkpoints"
+                )
+                hits = {}
 
     miss_indices = _select_cache_miss_indices(cache_keys, hits, len(units))
     miss_texts = [
@@ -2749,6 +2756,7 @@ def _compute_embeddings_unlocked(
                 for local_idx, global_idx in enumerate(miss_indices)
             ],
             namespace=cache_namespace,
+            expected_source_commit=corpus_source_commit,
         )
 
     return matrix, _effective_identity(device, identity_revision, resolved_device)
@@ -3112,6 +3120,7 @@ def _find_similar_to_query_unlocked(
             strict=strict_revision_cache,
         )
 
+        query_source_commit: str | None = None
         if (
             cache is not None
             and cache_revision is not None
@@ -3121,16 +3130,19 @@ def _find_similar_to_query_unlocked(
             # guard can run. Drift here means the corpus matrix was assembled
             # from old-commit cached vectors on the warm no-load path while
             # this query would embed under the new commit: the shard is
-            # purged and the comparison must not happen.
+            # purged and the comparison must not happen. An unknown loaded
+            # commit stays fail-open by design (see the corpus-side guard).
             loaded_commit = _get_loaded_model_commit_hash(model)
-            if loaded_commit is not None and not cache.confirm_source_commit(
-                cache_scope, profile.canonical_name, cache_revision, loaded_commit
-            ):
-                raise RuntimeError(
-                    f"Model branch {cache_revision!r} moved to a different commit since "
-                    "this corpus was indexed; its cached vectors were purged. Run index() "
-                    "or analyze() again before search()."
-                )
+            if loaded_commit is not None:
+                query_source_commit = loaded_commit
+                if not cache.confirm_source_commit(
+                    cache_scope, profile.canonical_name, cache_revision, loaded_commit
+                ):
+                    raise RuntimeError(
+                        f"Model branch {cache_revision!r} moved to a different commit since "
+                        "this corpus was indexed; its cached vectors were purged. Run index() "
+                        "or analyze() again before search()."
+                    )
 
         corpus_encode_plan = _resolve_encode_plan(
             profile,
@@ -3253,6 +3265,7 @@ def _find_similar_to_query_unlocked(
                     [(cache_key, query_embedding)],
                     namespace=cache_namespace,
                     max_namespace_keys=_MAX_CACHED_QUERY_KEYS,
+                    expected_source_commit=query_source_commit,
                 )
 
     similarities = embeddings @ query_embedding

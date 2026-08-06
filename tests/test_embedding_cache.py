@@ -485,15 +485,20 @@ def test_strict_revision_drift_after_model_load_discards_stale_prefetched_hits(
     assert result.shape == (3, model.dim)
 
 
-def test_confirm_source_commit_adopts_matches_and_purges_on_drift(tmp_path):
+def test_confirm_source_commit_matches_and_purges_on_drift(tmp_path):
     cache = EmbeddingCache(tmp_path)
     scope = tmp_path / "repo"
     scope.mkdir()
     key = embedding_cache.compute_cache_key("some/model", "main", "text-a")
-    cache.put_many(scope, "some/model", "main", [(key, np.array([1.0, 0.0], dtype=np.float32))])
+    cache.put_many(
+        scope,
+        "some/model",
+        "main",
+        [(key, np.array([1.0, 0.0], dtype=np.float32))],
+        expected_source_commit="a" * 40,
+    )
 
-    # First sighting adopts the commit; a matching commit confirms and keeps hits.
-    assert cache.confirm_source_commit(scope, "some/model", "main", "a" * 40) is True
+    # The write stamped provenance; a matching commit confirms and keeps hits.
     assert cache.confirm_source_commit(scope, "some/model", "main", "a" * 40) is True
     assert set(cache.get_many(scope, "some/model", "main", [key])) == {key}
 
@@ -501,6 +506,83 @@ def test_confirm_source_commit_adopts_matches_and_purges_on_drift(tmp_path):
     assert cache.confirm_source_commit(scope, "some/model", "main", "b" * 40) is False
     assert cache.get_many(scope, "some/model", "main", [key]) == {}
     assert cache.confirm_source_commit(scope, "some/model", "main", "b" * 40) is True
+
+
+def test_provenance_lives_inside_the_atomic_index(tmp_path):
+    cache = EmbeddingCache(tmp_path)
+    scope = tmp_path / "repo"
+    scope.mkdir()
+    key_a = embedding_cache.compute_cache_key("some/model", "main", "text-a")
+    key_b = embedding_cache.compute_cache_key("some/model", "main", "text-b")
+    vector = np.array([1.0, 0.0], dtype=np.float32)
+
+    cache.put_many(scope, "some/model", "main", [(key_a, vector)], expected_source_commit="a" * 40)
+    cache.put_many(scope, "some/model", "main", [(key_b, vector)], expected_source_commit="a" * 40)
+
+    shard_dir = cache.shard_dir(scope, "some/model", "main")
+    meta = embedding_cache._read_shard_meta(shard_dir)
+    assert meta is not None
+    assert meta["source_commit"] == "a" * 40
+    assert set(meta["keys"]) == {key_a, key_b}
+
+    # Immutable-revision shards carry no provenance: the revision is the truth.
+    cache.put_many(scope, "some/model", REVISION_1, [(key_a, vector)])
+    pinned_meta = embedding_cache._read_shard_meta(cache.shard_dir(scope, "some/model", REVISION_1))
+    assert pinned_meta is not None
+    assert pinned_meta["source_commit"] is None
+
+
+def test_rows_without_provenance_are_purged_not_adopted(tmp_path):
+    """Reviewer repro (round 2): lost provenance must degrade to recompute, never
+    to trusting unverifiable rows under a newly observed commit."""
+    cache = EmbeddingCache(tmp_path)
+    scope = tmp_path / "repo"
+    scope.mkdir()
+    key = embedding_cache.compute_cache_key("some/model", "main", "text-a")
+    vector = np.array([1.0, 0.0], dtype=np.float32)
+    cache.put_many(scope, "some/model", "main", [(key, vector)], expected_source_commit="a" * 40)
+
+    # Strip the provenance in place, simulating corruption or a legacy writer.
+    shard_dir = cache.shard_dir(scope, "some/model", "main")
+    index_path = shard_dir / embedding_cache.INDEX_FILENAME
+    payload = json.loads(index_path.read_text(encoding="utf-8"))
+    payload["source_commit"] = None
+    index_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    assert cache.confirm_source_commit(scope, "some/model", "main", "a" * 40) is False
+    assert cache.get_many(scope, "some/model", "main", [key]) == {}
+
+    # Rows written with no provenance at all behave identically on first confirm.
+    cache.put_many(scope, "some/model", "main", [(key, vector)])
+    assert cache.confirm_source_commit(scope, "some/model", "main", "a" * 40) is False
+    assert cache.get_many(scope, "some/model", "main", [key]) == {}
+
+
+def test_put_many_rejects_batch_after_provenance_moved(tmp_path):
+    """Reviewer repro (round 2): a writer that confirmed commit a must not publish
+    its batch after another process re-confirmed the shard under commit b."""
+    cache = EmbeddingCache(tmp_path)
+    scope = tmp_path / "repo"
+    scope.mkdir()
+    key_a = embedding_cache.compute_cache_key("some/model", "main", "text-a")
+    key_b = embedding_cache.compute_cache_key("some/model", "main", "text-b")
+    vector = np.array([1.0, 0.0], dtype=np.float32)
+
+    # Writer A confirms on the empty shard, then stalls during inference.
+    assert cache.confirm_source_commit(scope, "some/model", "main", "a" * 40) is True
+
+    # Writer B confirms under commit b and publishes its rows.
+    assert cache.confirm_source_commit(scope, "some/model", "main", "b" * 40) is True
+    cache.put_many(scope, "some/model", "main", [(key_b, vector)], expected_source_commit="b" * 40)
+
+    # Writer A wakes up and publishes late: the stale batch must be dropped.
+    cache.put_many(scope, "some/model", "main", [(key_a, vector)], expected_source_commit="a" * 40)
+
+    hits = cache.get_many(scope, "some/model", "main", [key_a, key_b])
+    assert set(hits) == {key_b}
+    meta = embedding_cache._read_shard_meta(cache.shard_dir(scope, "some/model", "main"))
+    assert meta is not None
+    assert meta["source_commit"] == "b" * 40
 
 
 def test_loose_branch_move_never_mixes_two_checkpoints(tmp_path, monkeypatch):
@@ -565,6 +647,24 @@ def test_loose_branch_move_purges_shard_and_aborts_search(tmp_path, monkeypatch)
     assert len(model.encode_calls[-1]) == len(units)
 
 
+def test_loose_corpus_writes_stamp_the_loaded_commit(tmp_path, monkeypatch):
+    """The semantic write path must hand its loaded commit to the cache, so the
+    TOCTOU rejection in put_many has a truth to compare against."""
+    units = _five_units(tmp_path)
+    model = CountingModel()
+    _patch_get_model(monkeypatch, model)
+    monkeypatch.setattr(semantic, "_get_loaded_model_commit_hash", lambda _model: "a" * 40)
+
+    compute_embeddings(units, model_name="drift-model", revision="main", cache_scope=tmp_path)
+
+    cache = embedding_cache.get_embedding_cache()
+    assert cache is not None
+    canonical = semantic.resolve_model_profile("drift-model").canonical_name
+    meta = embedding_cache._read_shard_meta(cache.shard_dir(tmp_path, canonical, "main"))
+    assert meta is not None
+    assert meta["source_commit"] == "a" * 40
+
+
 def test_pinned_revision_shards_skip_the_source_commit_guard(tmp_path, monkeypatch):
     units = _five_units(tmp_path)
     model = CountingModel()
@@ -585,20 +685,6 @@ def test_pinned_revision_shards_skip_the_source_commit_guard(tmp_path, monkeypat
 
     assert len(model.encode_calls[-1]) == 1
     assert result.shape == (3, model.dim)
-
-
-def test_full_clear_removes_machine_capability_records(tmp_path):
-    cache = EmbeddingCache(tmp_path)
-    records_dir = tmp_path / embedding_cache.MACHINE_RECORDS_SUBDIR
-    records_dir.mkdir(parents=True)
-    (records_dir / "deadbeef.json").write_text("{}", encoding="utf-8")
-
-    # Scoped clears keep per-environment records; a full clear removes them.
-    cache.clear(model="some/model")
-    assert records_dir.is_dir()
-
-    cache.clear()
-    assert not records_dir.exists()
 
 
 def test_revision_is_mutable_label_classification(tmp_path, monkeypatch):

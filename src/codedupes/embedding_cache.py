@@ -33,7 +33,6 @@ logger = logging.getLogger(__name__)
 
 CACHE_SUBDIR = "repos"
 LOCAL_MODELS_SUBDIR = "local-models"
-MACHINE_RECORDS_SUBDIR = "machines"
 LOCKS_SUBDIR = "locks"
 INDEX_FILENAME = "index.json"
 DEFAULT_CACHE_MAX_MB = 2048
@@ -61,6 +60,7 @@ class _ShardData:
     digests: dict[str, str]
     last_used_at: float
     generation: str
+    source_commit: str | None
 
 
 def _row_digest(vector: np.ndarray) -> str:
@@ -403,36 +403,6 @@ def _vectors_filename(generation: str) -> str:
     return f"vectors-{generation}.npy"
 
 
-SOURCE_COMMIT_FILENAME = "source_commit.json"
-
-
-def _read_source_commit(marker_path: Path) -> str | None:
-    """Read the commit a shard's vectors were recorded under.
-
-    :param marker_path: Shard-local marker file path.
-    :return: Recorded commit hash, or ``None`` when missing/unreadable/corrupt.
-    """
-    try:
-        payload = json.loads(marker_path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
-    commit = payload.get("commit") if isinstance(payload, dict) else None
-    return commit if isinstance(commit, str) and commit else None
-
-
-def _write_source_commit(marker_path: Path, commit: str) -> None:
-    """Atomically record the commit a shard's vectors derive from.
-
-    :param marker_path: Shard-local marker file path.
-    :param commit: Loaded model commit hash to record.
-    :raises OSError: If the marker cannot be written.
-    :return: ``None``.
-    """
-    tmp_path = marker_path.with_name(f"{marker_path.name}{_tmp_suffix()}")
-    tmp_path.write_text(json.dumps({"commit": commit}), encoding="utf-8")
-    os.replace(tmp_path, marker_path)
-
-
 def _is_finite_row(vector: np.ndarray) -> bool:
     """Check whether a stored or candidate embedding row is usable.
 
@@ -535,6 +505,10 @@ def _validate_shard_metadata(payload: Any) -> dict[str, Any] | None:
     if not isinstance(generation, str) or _GENERATION_PATTERN.fullmatch(generation) is None:
         return None
 
+    source_commit = payload.get("source_commit")
+    if source_commit is not None and (not isinstance(source_commit, str) or not source_commit):
+        return None
+
     last_used_at = payload.get("last_used_at", 0.0)
     if isinstance(last_used_at, bool) or not isinstance(last_used_at, (int, float)):
         return None
@@ -555,6 +529,7 @@ def _validate_shard_metadata(payload: Any) -> dict[str, Any] | None:
         "digests": dict(digests),
         "last_used_at": normalized_last_used_at,
         "generation": generation,
+        "source_commit": source_commit,
     }
 
 
@@ -637,6 +612,7 @@ def _read_shard(shard_dir: Path) -> _ShardData | None:
         digests=metadata["digests"],
         last_used_at=metadata["last_used_at"],
         generation=metadata["generation"],
+        source_commit=metadata["source_commit"],
     )
 
 
@@ -713,6 +689,7 @@ def _atomic_write_shard(
     namespaces: dict[str, str],
     digests: dict[str, str],
     dim: int,
+    source_commit: str | None,
 ) -> None:
     """Publish a complete shard generation through one atomic index replacement.
 
@@ -731,6 +708,10 @@ def _atomic_write_shard(
     :param namespaces: Key-to-input-namespace mapping used for namespace capping.
     :param digests: Key-to-row-digest mapping used for read-time integrity checks.
     :param dim: Embedding dimensionality.
+    :param source_commit: Concrete checkpoint commit the vectors derive from, or
+        ``None`` when the revision itself is immutable. Lives inside the atomically
+        switched index so provenance can never desynchronize from the generation
+        it describes.
     :return: ``None``.
     """
     _ensure_shard_directory(shard_dir)
@@ -761,6 +742,7 @@ def _atomic_write_shard(
                 "digests": digests,
                 "last_used_at": time.time(),
                 "generation": generation,
+                "source_commit": source_commit,
             },
         )
 
@@ -840,6 +822,7 @@ def _write_shard_entries(
     *,
     namespace: str,
     max_namespace_keys: int | None = None,
+    expected_source_commit: str | None = None,
 ) -> None:
     """Append/heal embedding rows and cap overflowing namespace keys.
 
@@ -852,6 +835,11 @@ def _write_shard_entries(
     :param max_namespace_keys: Maximum keys allowed in ``namespace`` before an
         amortized prune drops the oldest rows to 80% of the cap, or ``None`` for
         no cap.
+    :param expected_source_commit: Checkpoint commit the entries were computed
+        under, for mutable-label shards. Revalidated here, under the same lock
+        that publishes the generation: a shard whose recorded provenance no
+        longer matches rejects the whole batch rather than assembling rows from
+        two checkpoints into one generation.
     :return: ``None``.
     """
     if not entries:
@@ -868,6 +856,23 @@ def _write_shard_entries(
                 return
             _reclaim_stale_shard_files(shard_dir)
             existing = _read_shard(shard_dir)
+            if (
+                expected_source_commit is not None
+                and existing is not None
+                and existing.keys
+                and existing.source_commit != expected_source_commit
+            ):
+                # Time-of-check/time-of-use guard: between this writer's
+                # pre-inference commit confirmation and now, another process
+                # re-confirmed the shard under a different checkpoint (or the
+                # rows carry no provenance at all). Publishing this batch would
+                # assemble two checkpoints into one generation, so the stale
+                # batch is dropped; the next run re-confirms and recomputes.
+                logger.warning(
+                    f"Discarding {len(unique_entries)} computed embeddings for {shard_dir.name}: "
+                    "the shard's recorded source commit changed while they were being computed"
+                )
+                return
             if existing is not None and (
                 entry_dim is None or existing.vectors.shape[1] == entry_dim
             ):
@@ -876,6 +881,11 @@ def _write_shard_entries(
                 namespaces = existing.namespaces
                 digests = existing.digests
                 dim = int(vectors.shape[1])
+                publish_source_commit = (
+                    expected_source_commit
+                    if expected_source_commit is not None
+                    else existing.source_commit
+                )
             else:
                 if entry_dim is None:
                     return
@@ -890,6 +900,9 @@ def _write_shard_entries(
                 keys_map = {}
                 namespaces = {}
                 digests = {}
+                # Any prior rows are discarded with the incompatible matrix, so
+                # only the incoming batch's provenance describes this generation.
+                publish_source_commit = expected_source_commit
             existing = None
 
             missing_entries: list[tuple[str, np.ndarray]] = []
@@ -968,6 +981,7 @@ def _write_shard_entries(
                     namespaces,
                     digests,
                     dim,
+                    publish_source_commit,
                 )
     except Exception as exc:  # noqa: BLE001 - cache writes must never break analysis
         _warn_once("write shard", exc)
@@ -1221,6 +1235,7 @@ class EmbeddingCache:
         *,
         namespace: str = "default",
         max_namespace_keys: int | None = None,
+        expected_source_commit: str | None = None,
     ) -> None:
         """Insert vectors, cap overflowing namespaces, enforce the global size cap.
 
@@ -1232,6 +1247,9 @@ class EmbeddingCache:
         :param max_namespace_keys: Maximum keys allowed in ``namespace`` before an
             amortized prune drops the oldest rows to 80% of the cap, or ``None``
             for no cap.
+        :param expected_source_commit: Checkpoint commit the entries were computed
+            under, required for mutable-label shards; the write is rejected under
+            the shard lock when the shard's recorded provenance no longer matches.
         :return: ``None``.
         """
         if not entries:
@@ -1244,6 +1262,7 @@ class EmbeddingCache:
             entries,
             namespace=namespace,
             max_namespace_keys=max_namespace_keys,
+            expected_source_commit=expected_source_commit,
         )
         _maybe_evict(self.repos_dir, protect=shard_dir)
 
@@ -1260,40 +1279,41 @@ class EmbeddingCache:
         label, so an upstream branch move would otherwise let cache hits
         computed under the old commit assemble into one matrix with fresh
         vectors from the new commit. Mixing requires a model load, and a load
-        knows its commit: the shard records the commit its vectors came from,
-        a matching or freshly adopted marker confirms coherence, and a
-        mismatch purges the entire shard (old-commit code and query vectors
-        alike) before recording the new commit. Never raises; an unverifiable
-        marker behaves as confirmed so cache errors keep degrading to plain
-        loose-keying behavior.
+        knows its commit: provenance lives inside the atomically switched
+        shard index, so vectors and the commit that produced them can never
+        desynchronize. Rows whose recorded commit differs from the loaded one
+        - or whose index records no commit at all, the corruption/legacy case -
+        cannot be tied to this checkpoint and the whole shard is purged
+        (old-commit code and query vectors alike). The write path stamps the
+        loaded commit when the fresh rows publish. Never raises; a cache-layer
+        error keeps degrading to plain loose-keying behavior.
 
         :param cache_scope: Analyzed corpus root path.
         :param canonical_model: Canonical model identifier.
         :param revision: Mutable revision label addressing the shard.
         :param loaded_commit: Commit hash reported by the loaded model.
-        :return: ``False`` when drift purged the shard, so callers must discard
+        :return: ``False`` when the shard was purged, so callers must discard
             any pre-load hits; ``True`` when the shard is coherent.
         """
         try:
             shard_dir = self.shard_dir(cache_scope, canonical_model, revision)
-            marker_path = shard_dir / SOURCE_COMMIT_FILENAME
-            if _read_source_commit(marker_path) == loaded_commit:
+            meta = _read_shard_meta(shard_dir)
+            if meta is None or not meta["keys"] or meta["source_commit"] == loaded_commit:
+                # Nothing readable to protect (misses recompute anyway), or
+                # provenance already matches: lock-free fast path.
                 return True
             with _shard_write_lock(shard_dir, blocking=True) as acquired:
                 if not acquired:
                     return True
-                recorded = _read_source_commit(marker_path)
-                if recorded == loaded_commit:
+                meta = _read_shard_meta(shard_dir)
+                if meta is None or not meta["keys"] or meta["source_commit"] == loaded_commit:
                     return True
-                drifted = recorded is not None
-                if drifted:
-                    # Everything under this label predates the branch move. The
-                    # shard lock file stays: the shard is recreated immediately
-                    # and generation re-confirmation covers racing readers.
-                    _delete_cache_tree(shard_dir, action="purge drifted shard")
-                _ensure_shard_directory(shard_dir)
-                _write_source_commit(marker_path, loaded_commit)
-                return not drifted
+                # Everything under this label predates the branch move or has
+                # no provable checkpoint. The shard lock file stays: the shard
+                # is recreated immediately and generation re-confirmation
+                # covers racing readers.
+                _delete_cache_tree(shard_dir, action="purge drifted shard")
+                return False
         except Exception as exc:  # noqa: BLE001 - cache must never break analysis
             _warn_once("confirm source commit", exc)
             return True
@@ -1379,10 +1399,6 @@ class EmbeddingCache:
                 _delete_cache_tree(
                     self.cache_root / LOCAL_MODELS_SUBDIR,
                     action="clear local-model manifests",
-                )
-                _delete_cache_tree(
-                    self.cache_root / MACHINE_RECORDS_SUBDIR,
-                    action="clear machine capability records",
                 )
         except Exception as exc:  # noqa: BLE001 - clear must never break analysis
             _warn_once("clear", exc)
