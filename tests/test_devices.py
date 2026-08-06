@@ -11,11 +11,12 @@ from __future__ import annotations
 
 import json
 import math
+import os
 from pathlib import Path
 
 import pytest
 
-from codedupes import devices
+from codedupes import devices, embedding_cache
 from codedupes.devices import DeviceConfigurationError
 
 
@@ -172,7 +173,7 @@ def _machine_records_dir(cache_dir: Path) -> Path:
     :param cache_dir: Root cache directory used for this test.
     :return: Expected ``machines/`` directory path.
     """
-    return cache_dir / devices._MACHINE_RECORDS_DIRNAME
+    return cache_dir / embedding_cache.MACHINE_RECORDS_SUBDIR
 
 
 def _legacy_machine_record_path(cache_dir: Path) -> Path:
@@ -358,6 +359,33 @@ def test_resolve_cpu_bf16_native_removes_legacy_record_on_persist(
     devices.resolve_cpu_bf16_native()
 
     assert not legacy_path.exists()
+
+
+def test_persist_machine_record_prunes_oldest_beyond_cap(tmp_path: Path, monkeypatch) -> None:
+    pytest.importorskip("torch")
+    monkeypatch.setenv("CODEDUPES_CACHE_DIR", str(tmp_path))
+    records_dir = _machine_records_dir(tmp_path)
+    records_dir.mkdir(parents=True)
+
+    # An environment with unstable identity fields (e.g. randomized container
+    # hostnames) leaves one digest-named record per run; the persist path must
+    # bound that growth, evicting the oldest records first.
+    for index in range(devices._MACHINE_RECORDS_CAP + 3):
+        stale = records_dir / f"{index:040d}.json"
+        stale.write_text("{}", encoding="utf-8")
+        os.utime(stale, (1_000_000 + index, 1_000_000 + index))
+
+    verdict = devices.resolve_cpu_bf16_native()
+
+    environment = devices.CpuCapabilityEnvironment.current()
+    current_record = records_dir / f"{environment.digest()}.json"
+    assert current_record.is_file()
+    remaining = sorted(path.name for path in records_dir.glob("*.json"))
+    assert len(remaining) == devices._MACHINE_RECORDS_CAP
+    # The oldest fillers were evicted; the freshly written record survives.
+    assert f"{0:040d}.json" not in remaining
+    assert current_record.name in remaining
+    assert isinstance(verdict, bool)
 
 
 def test_resolve_cpu_bf16_inference_requires_opt_in(monkeypatch) -> None:

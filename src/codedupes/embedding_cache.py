@@ -33,6 +33,7 @@ logger = logging.getLogger(__name__)
 
 CACHE_SUBDIR = "repos"
 LOCAL_MODELS_SUBDIR = "local-models"
+MACHINE_RECORDS_SUBDIR = "machines"
 LOCKS_SUBDIR = "locks"
 INDEX_FILENAME = "index.json"
 DEFAULT_CACHE_MAX_MB = 2048
@@ -1373,10 +1374,15 @@ class EmbeddingCache:
             _prune_empty_repo_dirs(self.repos_dir)
             if model is None:
                 # Manifests are keyed by local model directory, not canonical model
-                # name, so they are only removed on a full clear.
+                # name, so they are only removed on a full clear. Machine capability
+                # records are per-environment, not per-model, and follow the same rule.
                 _delete_cache_tree(
                     self.cache_root / LOCAL_MODELS_SUBDIR,
                     action="clear local-model manifests",
+                )
+                _delete_cache_tree(
+                    self.cache_root / MACHINE_RECORDS_SUBDIR,
+                    action="clear machine capability records",
                 )
         except Exception as exc:  # noqa: BLE001 - clear must never break analysis
             _warn_once("clear", exc)

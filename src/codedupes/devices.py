@@ -363,7 +363,6 @@ def cpu_bf16_capability(torch_module: Any) -> bool:
 CPU_CAPABILITY_RECORD_SCHEMA = 2
 """Schema version stamped on every persisted CPU bf16 capability record."""
 
-_MACHINE_RECORDS_DIRNAME = "machines"
 _LEGACY_MACHINE_RECORD_FILENAME = "machine.json"
 
 
@@ -440,12 +439,16 @@ def _resolve_machine_record_path() -> Path | None:
         installed, or resolution otherwise fails.
     """
     try:
-        from codedupes.embedding_cache import is_cache_disabled, resolve_cache_dir
+        from codedupes.embedding_cache import (
+            MACHINE_RECORDS_SUBDIR,
+            is_cache_disabled,
+            resolve_cache_dir,
+        )
 
         if is_cache_disabled():
             return None
         environment = CpuCapabilityEnvironment.current()
-        return resolve_cache_dir() / _MACHINE_RECORDS_DIRNAME / f"{environment.digest()}.json"
+        return resolve_cache_dir() / MACHINE_RECORDS_SUBDIR / f"{environment.digest()}.json"
     except importlib_metadata.PackageNotFoundError:
         return None
     except Exception:
@@ -534,12 +537,42 @@ def _persist_machine_record(record_path: Path, torch_module: Any, verdict: bool)
         legacy_path = record_path.parent.parent / _LEGACY_MACHINE_RECORD_FILENAME
         with contextlib.suppress(OSError):
             legacy_path.unlink()
+        _prune_machine_records(record_path.parent, record_path)
     except OSError:
         logger.debug("Could not persist the CPU bf16 capability record", exc_info=True)
     finally:
         with contextlib.suppress(OSError):
             if tmp_path.exists():
                 tmp_path.unlink()
+
+
+_MACHINE_RECORDS_CAP = 16
+
+
+def _prune_machine_records(records_dir: Path, keep_path: Path) -> None:
+    """Bound the machine-record directory for hosts with unstable identities.
+
+    An environment whose identity fields change per run (for example a
+    randomized container hostname over a persisted cache volume) writes a
+    fresh digest-named record every time; without a cap the directory grows
+    forever. Keeps the newest records by modification time, always retaining
+    the just-written record.
+
+    :param records_dir: ``<cache_root>/machines`` directory.
+    :param keep_path: Just-written record that must survive pruning.
+    :return: ``None``.
+    """
+    try:
+        others = [path for path in records_dir.glob("*.json") if path != keep_path]
+        overflow = len(others) + 1 - _MACHINE_RECORDS_CAP
+        if overflow <= 0:
+            return
+        others.sort(key=lambda path: path.stat().st_mtime)
+        for stale in others[:overflow]:
+            with contextlib.suppress(OSError):
+                stale.unlink()
+    except OSError:
+        logger.debug("Could not prune machine capability records", exc_info=True)
 
 
 def resolve_cpu_bf16_native(*, persist: bool = True) -> bool:

@@ -587,6 +587,20 @@ def test_pinned_revision_shards_skip_the_source_commit_guard(tmp_path, monkeypat
     assert result.shape == (3, model.dim)
 
 
+def test_full_clear_removes_machine_capability_records(tmp_path):
+    cache = EmbeddingCache(tmp_path)
+    records_dir = tmp_path / embedding_cache.MACHINE_RECORDS_SUBDIR
+    records_dir.mkdir(parents=True)
+    (records_dir / "deadbeef.json").write_text("{}", encoding="utf-8")
+
+    # Scoped clears keep per-environment records; a full clear removes them.
+    cache.clear(model="some/model")
+    assert records_dir.is_dir()
+
+    cache.clear()
+    assert not records_dir.exists()
+
+
 def test_revision_is_mutable_label_classification(tmp_path, monkeypatch):
     assert semantic._revision_is_mutable_label("test-model", "main") is True
     assert semantic._revision_is_mutable_label("test-model", REVISION_1) is False
