@@ -166,13 +166,22 @@ def test_cpu_bf16_capability_defensive_on_probe_failure() -> None:
     assert devices.cpu_bf16_capability(BrokenTorch) is False
 
 
-def _machine_record_path(cache_dir: Path) -> Path:
-    """Resolve the on-disk machine-capability record path under a cache dir.
+def _machine_records_dir(cache_dir: Path) -> Path:
+    """Resolve the on-disk machine-capability records directory under a cache dir.
 
     :param cache_dir: Root cache directory used for this test.
-    :return: Expected ``machine.json`` path.
+    :return: Expected ``machines/`` directory path.
     """
-    return cache_dir / devices._MACHINE_RECORD_FILENAME
+    return cache_dir / devices._MACHINE_RECORDS_DIRNAME
+
+
+def _legacy_machine_record_path(cache_dir: Path) -> Path:
+    """Resolve the legacy, non-namespaced machine-capability record path.
+
+    :param cache_dir: Root cache directory used for this test.
+    :return: Expected legacy ``machine.json`` path.
+    """
+    return cache_dir / devices._LEGACY_MACHINE_RECORD_FILENAME
 
 
 def test_resolve_cpu_bf16_native_persists_a_fresh_probe(tmp_path: Path, monkeypatch) -> None:
@@ -181,13 +190,15 @@ def test_resolve_cpu_bf16_native_persists_a_fresh_probe(tmp_path: Path, monkeypa
 
     verdict = devices.resolve_cpu_bf16_native()
 
-    record_path = _machine_record_path(tmp_path)
+    environment = devices.CpuCapabilityEnvironment.current()
+    record_path = _machine_records_dir(tmp_path) / f"{environment.digest()}.json"
     assert record_path.is_file()
     payload = json.loads(record_path.read_text(encoding="utf-8"))
-    assert payload == {
-        "torch": devices.importlib_metadata.version("torch"),
-        "cpu_bf16_native": verdict,
-    }
+    assert payload["schema"] == devices.CPU_CAPABILITY_RECORD_SCHEMA
+    assert payload["environment"] == environment.as_dict()
+    assert payload["cpu_bf16_native"] == verdict
+    assert isinstance(payload["capabilities"], dict)
+    assert isinstance(payload["mkldnn_available"], bool)
 
 
 def test_resolve_cpu_bf16_native_trusts_a_valid_record_without_probing(
@@ -195,9 +206,19 @@ def test_resolve_cpu_bf16_native_trusts_a_valid_record_without_probing(
 ) -> None:
     pytest.importorskip("torch")
     monkeypatch.setenv("CODEDUPES_CACHE_DIR", str(tmp_path))
-    record_path = _machine_record_path(tmp_path)
+    environment = devices.CpuCapabilityEnvironment.current()
+    record_path = _machine_records_dir(tmp_path) / f"{environment.digest()}.json"
+    record_path.parent.mkdir(parents=True, exist_ok=True)
     record_path.write_text(
-        json.dumps({"torch": devices.importlib_metadata.version("torch"), "cpu_bf16_native": True}),
+        json.dumps(
+            {
+                "schema": devices.CPU_CAPABILITY_RECORD_SCHEMA,
+                "environment": environment.as_dict(),
+                "capabilities": {},
+                "mkldnn_available": True,
+                "cpu_bf16_native": True,
+            }
+        ),
         encoding="utf-8",
     )
 
@@ -209,29 +230,71 @@ def test_resolve_cpu_bf16_native_trusts_a_valid_record_without_probing(
     assert devices.resolve_cpu_bf16_native() is True
 
 
-def test_resolve_cpu_bf16_native_reprobes_on_stale_torch_version(
+def test_resolve_cpu_bf16_native_reprobes_on_environment_mismatch(
     tmp_path: Path, monkeypatch
 ) -> None:
     pytest.importorskip("torch")
     monkeypatch.setenv("CODEDUPES_CACHE_DIR", str(tmp_path))
-    record_path = _machine_record_path(tmp_path)
+    # Write a record at the CURRENT identity's digest path, but with a payload
+    # environment that does not match: this proves payload validation is
+    # enforced independent of the (correct) filename.
+    environment = devices.CpuCapabilityEnvironment.current()
+    record_path = _machine_records_dir(tmp_path) / f"{environment.digest()}.json"
+    record_path.parent.mkdir(parents=True, exist_ok=True)
+    mismatched_environment = dict(environment.as_dict())
+    mismatched_environment["hostname"] = f"{mismatched_environment['hostname']}-stale"
     record_path.write_text(
-        json.dumps({"torch": "0.0.0-does-not-exist", "cpu_bf16_native": True}),
+        json.dumps(
+            {
+                "schema": devices.CPU_CAPABILITY_RECORD_SCHEMA,
+                "environment": mismatched_environment,
+                "capabilities": {},
+                "mkldnn_available": True,
+                "cpu_bf16_native": True,
+            }
+        ),
         encoding="utf-8",
     )
 
-    # A stale-version record is untrusted, so this falls back to the live
-    # probe and overwrites the record with the current torch version.
+    # A payload/identity mismatch is untrusted, so this falls back to the live
+    # probe and overwrites the record with the current environment identity.
     devices.resolve_cpu_bf16_native()
 
     payload = json.loads(record_path.read_text(encoding="utf-8"))
-    assert payload["torch"] == devices.importlib_metadata.version("torch")
+    assert payload["environment"] == environment.as_dict()
+
+
+def test_resolve_cpu_bf16_native_reprobes_on_schema_mismatch(tmp_path: Path, monkeypatch) -> None:
+    pytest.importorskip("torch")
+    monkeypatch.setenv("CODEDUPES_CACHE_DIR", str(tmp_path))
+    environment = devices.CpuCapabilityEnvironment.current()
+    record_path = _machine_records_dir(tmp_path) / f"{environment.digest()}.json"
+    record_path.parent.mkdir(parents=True, exist_ok=True)
+    record_path.write_text(
+        json.dumps(
+            {
+                "schema": devices.CPU_CAPABILITY_RECORD_SCHEMA - 1,
+                "environment": environment.as_dict(),
+                "capabilities": {},
+                "mkldnn_available": True,
+                "cpu_bf16_native": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    devices.resolve_cpu_bf16_native()
+
+    payload = json.loads(record_path.read_text(encoding="utf-8"))
+    assert payload["schema"] == devices.CPU_CAPABILITY_RECORD_SCHEMA
 
 
 def test_resolve_cpu_bf16_native_reprobes_on_corrupt_json(tmp_path: Path, monkeypatch) -> None:
     pytest.importorskip("torch")
     monkeypatch.setenv("CODEDUPES_CACHE_DIR", str(tmp_path))
-    record_path = _machine_record_path(tmp_path)
+    environment = devices.CpuCapabilityEnvironment.current()
+    record_path = _machine_records_dir(tmp_path) / f"{environment.digest()}.json"
+    record_path.parent.mkdir(parents=True, exist_ok=True)
     record_path.write_text("{not valid json", encoding="utf-8")
 
     probed = {"called": False}
@@ -255,7 +318,46 @@ def test_resolve_cpu_bf16_native_skips_cache_when_disabled(tmp_path: Path, monke
 
     devices.resolve_cpu_bf16_native()
 
-    assert not _machine_record_path(tmp_path).exists()
+    assert not _machine_records_dir(tmp_path).exists()
+
+
+def test_resolve_cpu_bf16_native_namespaces_records_by_environment(
+    tmp_path: Path, monkeypatch
+) -> None:
+    pytest.importorskip("torch")
+    monkeypatch.setenv("CODEDUPES_CACHE_DIR", str(tmp_path))
+
+    devices.resolve_cpu_bf16_native()
+    first_environment = devices.CpuCapabilityEnvironment.current()
+    first_record_path = _machine_records_dir(tmp_path) / f"{first_environment.digest()}.json"
+    assert first_record_path.is_file()
+    first_payload = first_record_path.read_text(encoding="utf-8")
+
+    monkeypatch.setattr(devices.platform, "node", lambda: "a-different-host")
+    devices.resolve_cpu_bf16_native()
+    second_environment = devices.CpuCapabilityEnvironment.current()
+    second_record_path = _machine_records_dir(tmp_path) / f"{second_environment.digest()}.json"
+
+    assert second_record_path != first_record_path
+    assert second_record_path.is_file()
+    # The first environment's record is untouched by the second probe/write.
+    assert first_record_path.read_text(encoding="utf-8") == first_payload
+
+
+def test_resolve_cpu_bf16_native_removes_legacy_record_on_persist(
+    tmp_path: Path, monkeypatch
+) -> None:
+    pytest.importorskip("torch")
+    monkeypatch.setenv("CODEDUPES_CACHE_DIR", str(tmp_path))
+    legacy_path = _legacy_machine_record_path(tmp_path)
+    legacy_path.parent.mkdir(parents=True, exist_ok=True)
+    legacy_path.write_text(
+        json.dumps({"torch": "0.0.0-does-not-exist", "cpu_bf16_native": True}), encoding="utf-8"
+    )
+
+    devices.resolve_cpu_bf16_native()
+
+    assert not legacy_path.exists()
 
 
 def test_resolve_cpu_bf16_inference_requires_opt_in(monkeypatch) -> None:
