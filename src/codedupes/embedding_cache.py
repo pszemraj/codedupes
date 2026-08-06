@@ -402,6 +402,36 @@ def _vectors_filename(generation: str) -> str:
     return f"vectors-{generation}.npy"
 
 
+SOURCE_COMMIT_FILENAME = "source_commit.json"
+
+
+def _read_source_commit(marker_path: Path) -> str | None:
+    """Read the commit a shard's vectors were recorded under.
+
+    :param marker_path: Shard-local marker file path.
+    :return: Recorded commit hash, or ``None`` when missing/unreadable/corrupt.
+    """
+    try:
+        payload = json.loads(marker_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    commit = payload.get("commit") if isinstance(payload, dict) else None
+    return commit if isinstance(commit, str) and commit else None
+
+
+def _write_source_commit(marker_path: Path, commit: str) -> None:
+    """Atomically record the commit a shard's vectors derive from.
+
+    :param marker_path: Shard-local marker file path.
+    :param commit: Loaded model commit hash to record.
+    :raises OSError: If the marker cannot be written.
+    :return: ``None``.
+    """
+    tmp_path = marker_path.with_name(f"{marker_path.name}{_tmp_suffix()}")
+    tmp_path.write_text(json.dumps({"commit": commit}), encoding="utf-8")
+    os.replace(tmp_path, marker_path)
+
+
 def _is_finite_row(vector: np.ndarray) -> bool:
     """Check whether a stored or candidate embedding row is usable.
 
@@ -1215,6 +1245,57 @@ class EmbeddingCache:
             max_namespace_keys=max_namespace_keys,
         )
         _maybe_evict(self.repos_dir, protect=shard_dir)
+
+    def confirm_source_commit(
+        self,
+        cache_scope: Path,
+        canonical_model: str,
+        revision: str | None,
+        loaded_commit: str,
+    ) -> bool:
+        """Confirm a mutable-label shard's vectors derive from one loaded commit.
+
+        Loose revision keying addresses a shard by the requested branch/tag
+        label, so an upstream branch move would otherwise let cache hits
+        computed under the old commit assemble into one matrix with fresh
+        vectors from the new commit. Mixing requires a model load, and a load
+        knows its commit: the shard records the commit its vectors came from,
+        a matching or freshly adopted marker confirms coherence, and a
+        mismatch purges the entire shard (old-commit code and query vectors
+        alike) before recording the new commit. Never raises; an unverifiable
+        marker behaves as confirmed so cache errors keep degrading to plain
+        loose-keying behavior.
+
+        :param cache_scope: Analyzed corpus root path.
+        :param canonical_model: Canonical model identifier.
+        :param revision: Mutable revision label addressing the shard.
+        :param loaded_commit: Commit hash reported by the loaded model.
+        :return: ``False`` when drift purged the shard, so callers must discard
+            any pre-load hits; ``True`` when the shard is coherent.
+        """
+        try:
+            shard_dir = self.shard_dir(cache_scope, canonical_model, revision)
+            marker_path = shard_dir / SOURCE_COMMIT_FILENAME
+            if _read_source_commit(marker_path) == loaded_commit:
+                return True
+            with _shard_write_lock(shard_dir, blocking=True) as acquired:
+                if not acquired:
+                    return True
+                recorded = _read_source_commit(marker_path)
+                if recorded == loaded_commit:
+                    return True
+                drifted = recorded is not None
+                if drifted:
+                    # Everything under this label predates the branch move. The
+                    # shard lock file stays: the shard is recreated immediately
+                    # and generation re-confirmation covers racing readers.
+                    _delete_cache_tree(shard_dir, action="purge drifted shard")
+                _ensure_shard_directory(shard_dir)
+                _write_source_commit(marker_path, loaded_commit)
+                return not drifted
+        except Exception as exc:  # noqa: BLE001 - cache must never break analysis
+            _warn_once("confirm source commit", exc)
+            return True
 
     def stats(self) -> dict[str, Any]:
         """Summarize cache location, size, and per-model/per-repo entry counts.

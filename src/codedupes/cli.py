@@ -895,8 +895,9 @@ def _add_common_analysis_options(
             help=(
                 "Key an unpinned hub model's cache revision to a resolved commit hash instead of "
                 "the requested revision label, disabling caching when a branch/tag can't be "
-                "mapped offline (default: key by the requested label; branch moves never "
-                "invalidate the cache, but weight changes behind a moving branch are untracked)"
+                "mapped offline (default: key by the requested label; a branch move is detected "
+                "whenever a run loads the model, purging that shard so two checkpoints never "
+                "mix, while fully warm runs keep serving the pre-move vectors coherently)"
             ),
         ),
         click.option(

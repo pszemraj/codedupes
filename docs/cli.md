@@ -72,7 +72,7 @@ Options, in addition to the [shared options](#options-shared-by-check-and-search
 - `--exclude <glob>`: Replace the default test-file globs with one or more file path globs (repeat for multiple patterns). Built-in artifact-directory exclusions still apply.
 - `--include-stubs`: Include `.pyi` files when scanning a directory (single-file `.pyi` targets are analyzed as given)
 - `--no-cache`: Disable the persistent on-disk embedding cache for this run
-- `--strict-revision-cache`: Key an unpinned hub model's cache revision to a resolved commit hash instead of the requested revision label, disabling caching when a branch/tag can't be mapped offline (default: key by the requested label, so branch moves never invalidate the cache; see [Embedding cache](caching.md#what-invalidates-what))
+- `--strict-revision-cache`: Key an unpinned hub model's cache revision to a resolved commit hash instead of the requested revision label, disabling caching when a branch/tag can't be mapped offline (default: key by the requested label; a branch move is detected whenever a run loads the model, purging that shard so two checkpoints never mix, while fully warm runs keep serving the pre-move vectors coherently; see [Embedding cache](caching.md#what-invalidates-what))
 - `--output-width <int>`: Rich render width for non-JSON output (default `160`, min `80`)
 - `--json`: Emit JSON instead of rich tables
 - `-v, --verbose`: Verbose logs

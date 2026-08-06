@@ -485,6 +485,117 @@ def test_strict_revision_drift_after_model_load_discards_stale_prefetched_hits(
     assert result.shape == (3, model.dim)
 
 
+def test_confirm_source_commit_adopts_matches_and_purges_on_drift(tmp_path):
+    cache = EmbeddingCache(tmp_path)
+    scope = tmp_path / "repo"
+    scope.mkdir()
+    key = embedding_cache.compute_cache_key("some/model", "main", "text-a")
+    cache.put_many(scope, "some/model", "main", [(key, np.array([1.0, 0.0], dtype=np.float32))])
+
+    # First sighting adopts the commit; a matching commit confirms and keeps hits.
+    assert cache.confirm_source_commit(scope, "some/model", "main", "a" * 40) is True
+    assert cache.confirm_source_commit(scope, "some/model", "main", "a" * 40) is True
+    assert set(cache.get_many(scope, "some/model", "main", [key])) == {key}
+
+    # A different loaded commit is drift: the whole label shard is purged.
+    assert cache.confirm_source_commit(scope, "some/model", "main", "b" * 40) is False
+    assert cache.get_many(scope, "some/model", "main", [key]) == {}
+    assert cache.confirm_source_commit(scope, "some/model", "main", "b" * 40) is True
+
+
+def test_loose_branch_move_never_mixes_two_checkpoints(tmp_path, monkeypatch):
+    """Reviewer repro (Issue 4): a branch move plus a partial warm hit must re-embed
+    the whole corpus rather than assembling old-commit hits beside new-commit rows."""
+    units = _five_units(tmp_path)
+    model = CountingModel()
+    _patch_get_model(monkeypatch, model)
+    monkeypatch.setattr(semantic, "_get_loaded_model_commit_hash", lambda _model: "a" * 40)
+
+    compute_embeddings(units, model_name="drift-model", revision="main", cache_scope=tmp_path)
+    assert len(model.encode_calls) == 1
+
+    # Upstream, "main" moves to checkpoint b; locally one source unit changes,
+    # so the next run has a genuine miss and must load the model.
+    changed = copy.copy(units[1])
+    changed.source = "def other(x):\n    return x + 777\n"
+    mixed_units = [units[0], changed, units[2]]
+    monkeypatch.setattr(semantic, "_get_loaded_model_commit_hash", lambda _model: "b" * 40)
+
+    result = compute_embeddings(
+        mixed_units, model_name="drift-model", revision="main", cache_scope=tmp_path
+    )
+
+    # All three rows were re-embedded under checkpoint b - never one changed
+    # row computed by b assembled beside two checkpoint-a cache hits.
+    assert len(model.encode_calls) == 2
+    assert len(model.encode_calls[-1]) == 3
+    assert result.shape == (3, model.dim)
+
+    # The purged shard was rebuilt coherently: a repeat run is fully warm.
+    compute_embeddings(mixed_units, model_name="drift-model", revision="main", cache_scope=tmp_path)
+    assert len(model.encode_calls) == 2
+
+
+def test_loose_branch_move_purges_shard_and_aborts_search(tmp_path, monkeypatch):
+    units = _five_units(tmp_path)
+    model = CountingModel()
+    _patch_get_model(monkeypatch, model)
+    monkeypatch.setattr(semantic, "_get_loaded_model_commit_hash", lambda _model: "a" * 40)
+
+    embeddings = compute_embeddings(
+        units, model_name="drift-model", revision="main", cache_scope=tmp_path
+    )
+
+    # The branch moves before the first uncached query: the query load
+    # discovers the drift, purges the label shard, and refuses to compare a
+    # checkpoint-b query vector against the checkpoint-a corpus matrix.
+    monkeypatch.setattr(semantic, "_get_loaded_model_commit_hash", lambda _model: "b" * 40)
+    with pytest.raises(RuntimeError, match="moved to a different commit"):
+        find_similar_to_query(
+            "find addition",
+            units,
+            embeddings,
+            model_name="drift-model",
+            revision="main",
+            cache_scope=tmp_path,
+        )
+
+    # The purge emptied the shard, so reindexing re-embeds everything under b.
+    compute_embeddings(units, model_name="drift-model", revision="main", cache_scope=tmp_path)
+    assert len(model.encode_calls[-1]) == len(units)
+
+
+def test_pinned_revision_shards_skip_the_source_commit_guard(tmp_path, monkeypatch):
+    units = _five_units(tmp_path)
+    model = CountingModel()
+    _patch_get_model(monkeypatch, model)
+    # Immutable commit-hash keys can never drift, whatever the backend reports.
+    monkeypatch.setattr(semantic, "_get_loaded_model_commit_hash", lambda _model: REVISION_2)
+
+    compute_embeddings(units, model_name="test-model", revision=REVISION_1, cache_scope=tmp_path)
+
+    changed = copy.copy(units[1])
+    changed.source = "def other(x):\n    return x + 777\n"
+    result = compute_embeddings(
+        [units[0], changed, units[2]],
+        model_name="test-model",
+        revision=REVISION_1,
+        cache_scope=tmp_path,
+    )
+
+    assert len(model.encode_calls[-1]) == 1
+    assert result.shape == (3, model.dim)
+
+
+def test_revision_is_mutable_label_classification(tmp_path, monkeypatch):
+    assert semantic._revision_is_mutable_label("test-model", "main") is True
+    assert semantic._revision_is_mutable_label("test-model", REVISION_1) is False
+    assert semantic._revision_is_mutable_label("test-model", None) is False
+
+    monkeypatch.setattr(semantic, "resolve_local_model_path", lambda _name: tmp_path)
+    assert semantic._revision_is_mutable_label("test-model", "content-fingerprint") is False
+
+
 def test_repeated_identical_search_skips_model_load_when_corpus_cached(tmp_path, monkeypatch):
     units = _five_units(tmp_path)
     model = CountingModel()

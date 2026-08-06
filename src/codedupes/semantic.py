@@ -784,6 +784,24 @@ def _confirm_cache_revision_after_load(
     return None
 
 
+def _revision_is_mutable_label(model_name: str, cache_revision: str | None) -> bool:
+    """Check whether a cache revision is a mutable hub label rather than immutable identity.
+
+    Pinned or explicit full commit hashes and local-directory content
+    fingerprints identify exact weights, so their shards can never drift.
+    Everything else under loose keying is a branch/tag label whose upstream
+    target can move, which is what the per-shard source-commit guard exists
+    to detect.
+
+    :param model_name: Requested model alias, Hub ID, or local directory.
+    :param cache_revision: Revision component the cache shard is keyed by.
+    :return: ``True`` when the shard is keyed by a movable label.
+    """
+    if cache_revision is None or _is_hf_commit_hash(cache_revision):
+        return False
+    return resolve_local_model_path(resolve_model_profile(model_name).canonical_name) is None
+
+
 def _assemble_cached_matrix(keys: list[str], hits: dict[str, np.ndarray]) -> np.ndarray:
     """Assemble a row-aligned embedding matrix entirely from cache hits.
 
@@ -2650,6 +2668,26 @@ def _compute_embeddings_unlocked(
                     resolved_device,
                 )
 
+    if (
+        cache is not None
+        and cache_revision is not None
+        and _revision_is_mutable_label(model_name, cache_revision)
+    ):
+        # Loose label keying cannot see an upstream branch move on the warm
+        # no-load path, but this run loaded the model and knows its commit.
+        # Mixing old-commit hits with new-commit misses is only possible here,
+        # so a drifted shard is purged and every pre-load hit discarded.
+        loaded_commit = _get_loaded_model_commit_hash(model)
+        if loaded_commit is not None and not cache.confirm_source_commit(
+            cache_scope, profile.canonical_name, cache_revision, loaded_commit
+        ):
+            logger.warning(
+                f"Model branch {cache_revision!r} moved to commit {loaded_commit[:12]}; "
+                f"discarding {len(hits)} cached vectors recorded under the previous commit "
+                "and re-embedding so one matrix never mixes two checkpoints"
+            )
+            hits = {}
+
     miss_indices = _select_cache_miss_indices(cache_keys, hits, len(units))
     miss_texts = [
         _truncate_code_if_needed(prepared_texts[i], units[i].qualified_name, model)
@@ -3111,6 +3149,27 @@ def _find_similar_to_query_unlocked(
             resolved_revision,
             strict=strict_revision_cache,
         )
+
+        if (
+            cache is not None
+            and cache_revision is not None
+            and _revision_is_mutable_label(model_name, cache_revision)
+        ):
+            # A query miss loaded the model, so the shard's source-commit
+            # guard can run. Drift here means the corpus matrix was assembled
+            # from old-commit cached vectors on the warm no-load path while
+            # this query would embed under the new commit: the shard is
+            # purged and the comparison must not happen.
+            loaded_commit = _get_loaded_model_commit_hash(model)
+            if loaded_commit is not None and not cache.confirm_source_commit(
+                cache_scope, profile.canonical_name, cache_revision, loaded_commit
+            ):
+                raise RuntimeError(
+                    f"Model branch {cache_revision!r} moved to a different commit since "
+                    "this corpus was indexed; its cached vectors were purged. Run index() "
+                    "or analyze() again before search()."
+                )
+
         corpus_encode_plan = _resolve_encode_plan(
             profile,
             "code",
