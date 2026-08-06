@@ -50,6 +50,7 @@ def test_validate_mps_memory_fraction_accepts_supported_range() -> None:
 
 
 def test_configure_mps_environment_auto_respects_existing_override(monkeypatch) -> None:
+    monkeypatch.setattr(devices.sys, "platform", "darwin")
     monkeypatch.setenv("PYTORCH_ENABLE_MPS_FALLBACK", "0")
 
     devices.configure_mps_environment("auto", fallback=None)
@@ -58,11 +59,21 @@ def test_configure_mps_environment_auto_respects_existing_override(monkeypatch) 
 
 
 def test_configure_mps_environment_auto_enables_on_darwin(monkeypatch) -> None:
+    monkeypatch.setattr(devices.sys, "platform", "darwin")
     monkeypatch.delenv("PYTORCH_ENABLE_MPS_FALLBACK", raising=False)
 
     devices.configure_mps_environment("auto", fallback=None)
 
     assert devices.os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] == "1"
+
+
+def test_configure_mps_environment_auto_is_inert_off_darwin(monkeypatch) -> None:
+    monkeypatch.setattr(devices.sys, "platform", "linux")
+    monkeypatch.delenv("PYTORCH_ENABLE_MPS_FALLBACK", raising=False)
+
+    devices.configure_mps_environment("auto", fallback=None)
+
+    assert "PYTORCH_ENABLE_MPS_FALLBACK" not in devices.os.environ
 
 
 def test_configure_mps_environment_explicit_setting_overrides_environment(monkeypatch) -> None:

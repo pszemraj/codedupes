@@ -1224,31 +1224,51 @@ def test_query_embedding_cache_put_is_fifo_capped(tmp_path: Path, monkeypatch) -
     assert captured["max_namespace_keys"] == semantic._MAX_CACHED_QUERY_KEYS
 
 
-def test_compute_embeddings_warm_cache_auto_and_cpu_skip_device_validation(
-    tmp_path: Path, monkeypatch
+@pytest.mark.parametrize(
+    ("platform_name", "device", "expects_resolution"),
+    [
+        ("darwin", "auto", False),
+        ("darwin", "cpu", False),
+        ("linux", "cpu", False),
+        ("linux", "auto", True),
+    ],
+)
+def test_warm_cache_device_resolution_matches_dtype_policy(
+    tmp_path: Path,
+    monkeypatch,
+    platform_name: str,
+    device: str,
+    expects_resolution: bool,
 ) -> None:
+    """Warm-cache keying resolves a concrete device only when the dtype may differ.
+
+    On darwin, ``auto`` can only pick MPS or CPU and both share the float32
+    key space, so no resolution (and no torch import) is needed. Off darwin,
+    ``auto`` may select CUDA and its bfloat16 dtype namespace, so the device
+    must be resolved before the cache key is trustworthy.
+    """
     units = _warm_corpus_cache(tmp_path, monkeypatch)
+    monkeypatch.setattr(semantic.sys, "platform", platform_name)
 
-    validation_calls = {"count": 0}
+    resolution_calls = {"count": 0}
 
-    def _count_and_raise(*_args, **_kwargs):
-        validation_calls["count"] += 1
-        raise SemanticBackendError("must not be called for auto/cpu on a warm cache")
+    def _count_and_resolve(*_args, **_kwargs) -> str:
+        resolution_calls["count"] += 1
+        return "cpu"
 
-    monkeypatch.setattr(semantic, "_resolve_semantic_device_request", _count_and_raise)
+    monkeypatch.setattr(semantic, "_resolve_semantic_device_request", _count_and_resolve)
     monkeypatch.setattr(semantic, "get_model", _fail_if_called)
 
-    for device in ("auto", "cpu"):
-        result = compute_embeddings(
-            units,
-            model_name="gte-modernbert-base",
-            revision=_FULL_REVISION,
-            device=device,
-            cache_scope=tmp_path,
-        )
-        assert result.shape == (len(units), 2)
+    result = compute_embeddings(
+        units,
+        model_name="gte-modernbert-base",
+        revision=_FULL_REVISION,
+        device=device,
+        cache_scope=tmp_path,
+    )
 
-    assert validation_calls["count"] == 0
+    assert result.shape == (len(units), 2)
+    assert (resolution_calls["count"] > 0) == expects_resolution
 
 
 class _BfloatAcceleratorFallbackModel:
