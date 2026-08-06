@@ -1413,6 +1413,133 @@ def test_dtype_diverging_accelerator_fallback_skips_bf16_keyed_cache_write(
     assert len(put_calls) == 1
 
 
+def test_cpu_restarted_accelerator_corpus_stays_searchable(tmp_path: Path, monkeypatch) -> None:
+    """A CUDA-bf16 corpus that restarted faithfully on CPU keeps working for search.
+
+    Reviewer repro: the coherence restart used to record a CPU identity that
+    only the MPS fast-math branch of the query-space check could rediscover,
+    so a CUDA-fallback corpus raised "reindex" forever. The CPU-policy retry
+    must now engage for every accelerator request.
+    """
+    monkeypatch.setattr(torch.cuda, "is_bf16_supported", lambda **_kwargs: True)
+    monkeypatch.setattr(
+        semantic,
+        "_resolve_semantic_device_request",
+        lambda device, **_k: "cpu" if device == "cpu" else "cuda",
+    )
+    units = extract_arithmetic_units(tmp_path)
+    model = _BfloatAcceleratorFallbackModel()
+    monkeypatch.setattr(semantic, "get_model", lambda *_a, **_k: model)
+
+    embeddings, identity = semantic.compute_embeddings_with_identity(
+        units,
+        model_name="gte-modernbert-base",
+        revision=_FULL_REVISION,
+        device="cuda",
+        batch_size=1,
+        cache_scope=tmp_path,
+    )
+    # The OOM fallback cast bf16 to float32, so the whole corpus restarted
+    # under the faithful CPU identity.
+    assert "dtype=torch.bfloat16" not in identity.runtime_variant
+
+    query_device = semantic._require_current_embedding_space(
+        identity,
+        model_name="gte-modernbert-base",
+        instruction_prefix=None,
+        revision=_FULL_REVISION,
+        trust_remote_code=None,
+        semantic_task=semantic.DEFAULT_CHECK_SEMANTIC_TASK,
+        device="cuda",
+        mps_fallback=None,
+        persist_local_model_manifest=True,
+    )
+    assert query_device == "cpu"
+
+    hits = find_similar_to_query(
+        "add two numbers",
+        units,
+        embeddings,
+        model_name="gte-modernbert-base",
+        revision=_FULL_REVISION,
+        semantic_task=semantic.DEFAULT_CHECK_SEMANTIC_TASK,
+        device=query_device,
+        threshold=0.0,
+        cache_scope=tmp_path,
+        corpus_identity=identity,
+    )
+    assert hits
+
+
+class _QueryOOMBfloatModel:
+    """Fake bf16 CUDA model whose corpus encode succeeds but whose query encode OOMs."""
+
+    def __init__(self) -> None:
+        self._dtype = torch.bfloat16
+        self.corpus_encoded = False
+
+    def parameters(self):
+        yield torch.zeros(1, dtype=self._dtype)
+
+    def to(self, device=None, dtype=None):
+        if dtype is not None:
+            self._dtype = dtype
+        return self
+
+    def encode(self, texts, **kwargs):
+        if not self.corpus_encoded:
+            self.corpus_encoded = True
+            return np.array([[1.0, 0.0]] * len(texts), dtype=np.float32)
+        if kwargs.get("device") != "cpu":
+            raise RuntimeError("CUDA out of memory")
+        return np.array([[1.0, 0.0]] * len(texts), dtype=np.float32)
+
+
+def test_query_dtype_fallback_never_reaches_the_dot_product(tmp_path: Path, monkeypatch) -> None:
+    """A query cast to float32 mid-encode must not be compared with a bf16 corpus.
+
+    Reviewer repro: the corpus embeds successfully under CUDA-bf16, the query
+    encode OOMs down to a CPU float32 cast, and the similarity comparison
+    used to proceed anyway because the compatibility check rebuilt the
+    identity from the requested device policy. The live-dtype check must
+    abort before the dot product.
+    """
+    monkeypatch.setattr(torch.cuda, "is_bf16_supported", lambda **_kwargs: True)
+    monkeypatch.setattr(
+        semantic,
+        "_resolve_semantic_device_request",
+        lambda device, **_k: "cpu" if device == "cpu" else "cuda",
+    )
+    units = extract_arithmetic_units(tmp_path)
+    model = _QueryOOMBfloatModel()
+    monkeypatch.setattr(semantic, "get_model", lambda *_a, **_k: model)
+
+    embeddings, identity = semantic.compute_embeddings_with_identity(
+        units,
+        model_name="gte-modernbert-base",
+        revision=_FULL_REVISION,
+        device="cuda",
+        batch_size=8,
+        cache_scope=tmp_path,
+    )
+    assert "dtype=torch.bfloat16" in identity.runtime_variant
+
+    with pytest.raises(RuntimeError, match="bfloat16 policy"):
+        find_similar_to_query(
+            "add two numbers",
+            units,
+            embeddings,
+            model_name="gte-modernbert-base",
+            revision=_FULL_REVISION,
+            semantic_task=semantic.DEFAULT_CHECK_SEMANTIC_TASK,
+            device="cuda",
+            threshold=0.0,
+            cache_scope=tmp_path,
+            corpus_identity=identity,
+        )
+    assert str(next(iter(model.parameters())).dtype) == "torch.float32"
+
+
 def test_dimension_mismatch_reencode_reads_live_device(tmp_path: Path, monkeypatch) -> None:
     """Regression test: the dimension-mismatch re-encode must observe the live
     effective device, not the value captured before the first encode call.

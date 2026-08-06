@@ -1166,10 +1166,16 @@ def _require_current_embedding_space(
     if current == expected and current.resolved_revision is not None:
         return device
 
-    # A fast-math MPS corpus may have restarted wholly on CPU after fallback.
-    # Keep its queries on that recorded faithful policy even though the analyzer's
-    # requested device remains MPS/auto.
-    if _mps_fast_math_variant(device):
+    # Any coherence break - fast-math execution leaving MPS, or an accelerator
+    # OOM casting a bfloat16 run to float32 - discards the partial corpus and
+    # rebuilds it wholly under the faithful CPU policy, recording the CPU
+    # identity. A corpus whose stored identity matches that CPU policy must
+    # therefore stay searchable: keep its queries on the recorded CPU space
+    # even though the analyzer's requested device remains the accelerator/auto
+    # request. The remap only engages when the stored identity is exactly the
+    # CPU identity, so a genuine model/revision/runtime change still raises.
+    normalized_device = (device or DEFAULT_SEMANTIC_DEVICE).strip().lower()
+    if normalized_device != "cpu":
         cpu_identity = resolve_embedding_space_identity(
             model_name=model_name,
             instruction_prefix=instruction_prefix,
@@ -3113,11 +3119,30 @@ def _find_similar_to_query_unlocked(
         )
 
         def _require_compatible_query_execution() -> None:
-            """Reject an execution policy that cannot match the corpus vectors.
+            """Reject an execution policy or live dtype that cannot match the corpus vectors.
 
-            :raises RuntimeError: If query execution left the corpus math policy.
+            :raises RuntimeError: If query execution left the corpus math or dtype policy.
             """
             current_execution_device = _get_effective_model_device(model, resolved_device)
+            # The identity rebuilt below derives its dtype from the requested
+            # device policy, which cannot see a mid-encode accelerator OOM
+            # that cast the live model to float32. Check the live parameter
+            # dtype directly: a query vector that can no longer be produced
+            # under the corpus's keyed bfloat16 policy must never reach the
+            # dot product, even though the cache write is already suppressed.
+            if _dtype_coherence_broken(
+                profile,
+                embedding_device,
+                mps_fallback,
+                resolved_device,
+                model,
+                persist_machine_record=use_cache and cache_scope is not None,
+            ):
+                raise RuntimeError(
+                    "An accelerator fallback cast query execution to float32, but the "
+                    "corpus vectors are keyed under a bfloat16 policy. Rebuild the "
+                    "corpus with index() or analyze() before search()."
+                )
             effective_policy_device = embedding_device
             if _mps_fast_math_variant(embedding_device) and current_execution_device != "mps":
                 effective_policy_device = "cpu"
