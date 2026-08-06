@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import inspect
 import logging
+import os
 import stat
 from pathlib import Path
 
@@ -1269,6 +1270,37 @@ def test_warm_cache_device_resolution_matches_dtype_policy(
 
     assert result.shape == (len(units), 2)
     assert (resolution_calls["count"] > 0) == expects_resolution
+
+
+def test_runtime_env_configured_before_capability_probe_can_import_torch(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The MPS fallback variable is set before any torch-importing probe runs.
+
+    The first darwin ``auto`` invocation with no machine capability record
+    derives a cache variant, which can probe CPU capabilities and import
+    torch. ``PYTORCH_ENABLE_MPS_FALLBACK`` must already be configured at that
+    moment - this is a pure initialization-order check; real fallback
+    behavior stays in the live MPS suite.
+    """
+    monkeypatch.setattr(semantic.sys, "platform", "darwin")
+    monkeypatch.setenv("CODEDUPES_CACHE_DIR", str(tmp_path / "cache"))
+    monkeypatch.delenv("PYTORCH_ENABLE_MPS_FALLBACK", raising=False)
+
+    env_at_torch_probe: list[str | None] = []
+    real_load_torch = devices._load_torch
+
+    def _spying_load_torch():
+        env_at_torch_probe.append(os.environ.get("PYTORCH_ENABLE_MPS_FALLBACK"))
+        return real_load_torch()
+
+    monkeypatch.setattr(devices, "_load_torch", _spying_load_torch)
+
+    semantic.resolve_embedding_space_identity(device="auto")
+
+    assert os.environ.get("PYTORCH_ENABLE_MPS_FALLBACK") == "1"
+    assert env_at_torch_probe, "expected the capability probe to require torch"
+    assert all(value == "1" for value in env_at_torch_probe)
 
 
 class _BfloatAcceleratorFallbackModel:

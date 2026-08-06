@@ -1086,6 +1086,9 @@ def resolve_embedding_space_identity(
         requested revision label, defaults to ``False``.
     :return: Canonical model, concrete revision/fingerprint, and runtime variant.
     """
+    # Same contract as compute_embeddings_with_identity: configure
+    # import-sensitive runtime variables before anything can import torch.
+    _configure_semantic_runtime_env(device, mps_fallback=mps_fallback)
     profile = resolve_model_profile(model_name)
     resolved_task = normalize_semantic_task(
         semantic_task,
@@ -1943,6 +1946,9 @@ def get_model(
         read from and saved to the persistent cache manifest.
     :return: Cached model instance, reloaded when any cache key changed.
     """
+    # Same contract as compute_embeddings_with_identity: configure
+    # import-sensitive runtime variables before anything can import torch.
+    _configure_semantic_runtime_env(device, mps_fallback=mps_fallback)
     with _model_lock:
         return _get_model_unlocked(
             model_name,
@@ -2771,6 +2777,10 @@ def compute_embeddings_with_identity(
         requested revision label, defaults to ``False``.
     :return: Normalized embedding matrix and its effective vector-space identity.
     """
+    # Import-sensitive runtime variables (MPS operator fallback above all) must
+    # be set before any path below can import torch - cache-variant derivation
+    # may probe CPU capabilities, which is already too late.
+    _configure_semantic_runtime_env(device, mps_fallback=mps_fallback)
     with _model_lock:
         return _compute_embeddings_unlocked(
             units,
@@ -3250,6 +3260,9 @@ def find_similar_to_query(
     :return: Up to ``top_k`` ``(unit, similarity)`` pairs at or above the threshold,
         sorted by descending similarity.
     """
+    # Same contract as compute_embeddings_with_identity: configure
+    # import-sensitive runtime variables before anything can import torch.
+    _configure_semantic_runtime_env(device, mps_fallback=mps_fallback)
     with _model_lock:
         return _find_similar_to_query_unlocked(
             query,
