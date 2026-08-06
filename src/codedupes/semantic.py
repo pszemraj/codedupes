@@ -71,6 +71,7 @@ _model_revision: str | None = None
 _model_trust_remote_code: bool | None = None
 _model_local_fingerprint: str | None = None
 _model_device_key: str | None = None
+_model_dtype_key: str | None = None
 _model_execution_device: str | None = None
 _model_lock = threading.RLock()
 _warned_mlx_mps_contention = False
@@ -1489,6 +1490,10 @@ def _dtype_coherence_broken(
         resolved_device=resolved_device,
     )
     if not dtype_variant:
+        # An empty variant means float32 - and a float32 request can never be
+        # served bfloat16 weights, because the process model cache keys on the
+        # resolved dtype policy and reloads on any change (_get_model_unlocked),
+        # so this one-directional check is exhaustive.
         return False
     current_dtype = _model_parameter_dtype(model)
     return current_dtype is not None and str(current_dtype) != "torch.bfloat16"
@@ -1699,7 +1704,8 @@ def _get_model_unlocked(
     """
     global _model, _model_name, _model_revision, _model_trust_remote_code
     global _model_local_fingerprint
-    global _model_device_key, _model_execution_device, _warned_cpu_fallback_reuse
+    global _model_device_key, _model_dtype_key, _model_execution_device
+    global _warned_cpu_fallback_reuse
 
     requested_local_path = resolve_local_model_path(model_name)
     if requested_local_path is None and is_explicit_local_model_path(model_name):
@@ -1740,6 +1746,17 @@ def _get_model_unlocked(
         mps_memory_fraction=mps_memory_fraction,
     )
 
+    # The pinned dtype is part of the model's identity, so it must be resolved
+    # before the hit decision: a cached model whose load-time policy no longer
+    # matches the currently resolved one (only reachable by mutating the
+    # CODEDUPES_CPU_BF16 opt-in mid-process, which is unsupported) reloads
+    # instead of being reused, so a policy change can neither serve bfloat16
+    # weights under a float32 key space nor recurse through the coherence
+    # restart against the same stale instance. On a hit torch is already
+    # imported (a model is loaded), so this costs no new import.
+    selected_dtype = _resolve_model_dtype(profile.family, resolved_device)
+    dtype_key = str(selected_dtype)
+
     cache_miss = any(
         (
             _model is None,
@@ -1748,6 +1765,7 @@ def _get_model_unlocked(
             _model_trust_remote_code != resolved_trust_remote_code,
             _model_local_fingerprint != local_model_fingerprint,
             _model_device_key != resolved_device,
+            _model_dtype_key != dtype_key,
             # Without a reliable fingerprint, reloading is the only safe way to
             # avoid retaining stale weights from a mutable local directory.
             local_model_path is not None and local_model_fingerprint is None,
@@ -1781,7 +1799,6 @@ def _get_model_unlocked(
         processor_kwargs: dict[str, object] = {}
         config_kwargs: dict[str, object] = {}
 
-        selected_dtype = _resolve_model_dtype(profile.family, resolved_device)
         model_kwargs["dtype"] = selected_dtype
         logger.info(f"Pinning torch dtype on {resolved_device}: {selected_dtype}")
 
@@ -1901,6 +1918,10 @@ def _get_model_unlocked(
         _model_trust_remote_code = resolved_trust_remote_code
         _model_local_fingerprint = local_model_fingerprint
         _model_device_key = resolved_device
+        # Keyed by the request's resolved policy, not any fallback-load dtype:
+        # a later identical request must still hit and reuse the sticky
+        # CPU-fallback model instead of retrying the accelerator load.
+        _model_dtype_key = dtype_key
         _model_execution_device = _coerce_device_name(
             getattr(loaded_model, "device", None),
             load_device,
@@ -1960,7 +1981,8 @@ def _clear_model_cache_unlocked() -> None:
     """Release the cached model and its accelerator allocator cache."""
     global _model, _model_name, _model_revision, _model_trust_remote_code
     global _model_local_fingerprint
-    global _model_device_key, _model_execution_device, _warned_cpu_fallback_reuse
+    global _model_device_key, _model_dtype_key, _model_execution_device
+    global _warned_cpu_fallback_reuse
 
     model = _model
     execution_device = _model_execution_device
@@ -1974,6 +1996,7 @@ def _clear_model_cache_unlocked() -> None:
     _model_trust_remote_code = None
     _model_local_fingerprint = None
     _model_device_key = None
+    _model_dtype_key = None
     _model_execution_device = None
     _warned_cpu_fallback_reuse = False
 

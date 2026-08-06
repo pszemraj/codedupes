@@ -578,6 +578,38 @@ def test_resolve_model_dtype_cpu_follows_inference_policy(monkeypatch) -> None:
     assert semantic._resolve_model_dtype("test-model", "cpu") is torch.float32
 
 
+def test_model_cache_reloads_when_dtype_policy_changes(monkeypatch) -> None:
+    """Hardening (round-2 review): flipping the CPU bf16 policy mid-process is not
+    a supported lifecycle, but if it happens the process model cache must reload
+    under the newly pinned dtype rather than serve the stale instance - stale
+    reuse is what could answer a float32 key space with bfloat16 weights, or send
+    the coherence restart into unbounded recursion against the same cached model."""
+    calls: list[dict] = []
+    monkeypatch.setattr(semantic, "_check_semantic_dependencies", lambda: None)
+    monkeypatch.setattr(semantic, "_prepare_semantic_device", lambda *_args, **_kwargs: "cpu")
+    monkeypatch.setattr(
+        sentence_transformers, "SentenceTransformer", _recording_sentence_transformer(calls)
+    )
+    semantic.clear_model_cache()
+
+    monkeypatch.setattr(semantic, "resolve_cpu_bf16_inference", lambda: False)
+    first = semantic.get_model("sentence-transformers/all-MiniLM-L6-v2")
+    assert semantic.get_model("sentence-transformers/all-MiniLM-L6-v2") is first
+    assert len(calls) == 1
+    assert calls[0]["kwargs"]["model_kwargs"]["dtype"] is torch.float32
+
+    monkeypatch.setattr(semantic, "resolve_cpu_bf16_inference", lambda: True)
+    second = semantic.get_model("sentence-transformers/all-MiniLM-L6-v2")
+    assert second is not first
+    assert len(calls) == 2
+    assert calls[1]["kwargs"]["model_kwargs"]["dtype"] is torch.bfloat16
+
+    # An unchanged policy keeps hitting: no reload churn on the supported path.
+    assert semantic.get_model("sentence-transformers/all-MiniLM-L6-v2") is second
+    assert len(calls) == 2
+    semantic.clear_model_cache()
+
+
 def test_resolve_model_dtype_cpu_stays_float32_without_opt_in(monkeypatch) -> None:
     # Even on a gate-passing machine, automatic CPU bf16 is unvalidated: the
     # experimental CODEDUPES_CPU_BF16=1 opt-in is required for the positive path.
