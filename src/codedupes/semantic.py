@@ -38,7 +38,7 @@ from codedupes.devices import (
     configure_mps_memory_fraction,
     format_mps_memory_snapshot,
     is_mlx_loaded,
-    resolve_cpu_bf16_native,
+    resolve_cpu_bf16_inference,
     resolve_semantic_device,
     restore_mps_memory_fraction_if_managed,
 )
@@ -871,14 +871,16 @@ def _dtype_variant_for(
     means float32. ``mps`` always resolves float32 (measured: bf16 gains only
     ~13% runtime while drifting pair similarities ~1e-2, not worth splitting
     the shared key space) and returns without importing PyTorch. ``cpu``
-    resolves float32 or bfloat16 from this machine's capability-gated verdict
-    (:func:`codedupes.devices.resolve_cpu_bf16_native`), read from an on-disk
-    record so this warm path also never imports torch. On darwin, ``auto`` can
-    only select MPS or CPU: when the CPU gate is false both possible targets
-    are float32 (today's reality on every Mac without an mkldnn backend), so
-    the variant resolves without picking a concrete device; when the gate is
-    true, resolution falls through to inspect the concrete target because only
-    a CPU pick would differ from MPS. Requests that can reach CUDA, and
+    resolves float32 or bfloat16 from the CPU inference policy
+    (:func:`codedupes.devices.resolve_cpu_bf16_inference` - the experimental
+    ``CODEDUPES_CPU_BF16=1`` opt-in plus this machine's capability gate); a
+    non-opted-in run resolves float32 without touching the capability record
+    or importing torch. On darwin, ``auto`` can only select MPS or CPU: when
+    the CPU policy is float32 both possible targets agree (every run without
+    the opt-in, and every Mac without an mkldnn backend), so the variant
+    resolves without picking a concrete device; when the policy enables bf16,
+    resolution falls through to inspect the concrete target because only a
+    CPU pick would differ from MPS. Requests that can reach CUDA, and
     non-darwin ``auto``, always resolve the device and record a selected
     bfloat16 as a non-default dtype.
 
@@ -895,12 +897,12 @@ def _dtype_variant_for(
     if normalized_device == "mps":
         return ""
     if normalized_device == "cpu":
-        gate = resolve_cpu_bf16_native(persist=persist_machine_record)
+        gate = resolve_cpu_bf16_inference(persist=persist_machine_record)
         return "dtype=torch.bfloat16" if gate else ""
     if (
         normalized_device == "auto"
         and sys.platform == "darwin"
-        and not resolve_cpu_bf16_native(persist=persist_machine_record)
+        and not resolve_cpu_bf16_inference(persist=persist_machine_record)
     ):
         return ""
 
@@ -1632,10 +1634,15 @@ def _resolve_model_dtype(family: str, device: str, *, persist_machine_record: bo
     outside the documented faithful-float32 tolerance. Every load therefore
     pins an explicit dtype under a capability-gated policy rather than a
     hardcoded machine truth: bfloat16 on CUDA hardware with native support
-    (unchanged); bfloat16 on CPU iff this machine passes the two-part gate in
+    (unchanged); bfloat16 on CPU iff the experimental ``CODEDUPES_CPU_BF16=1``
+    opt-in is set *and* this machine passes the two-part gate in
     :func:`codedupes.devices.resolve_cpu_bf16_native` - native bf16 ISA *and*
     a GEMM backend (oneDNN/mkldnn) able to exploit it; float32 everywhere
-    else, including every MPS run. Measured on an Apple M5 (torch 2.13.0,
+    else, including every MPS run. The opt-in guard exists because no
+    gate-passing machine has yet validated the positive path: the duplicate
+    and search thresholds are calibrated under float32, and the gate proves
+    fast executability, not decision parity, so automatic CPU bf16 waits for
+    that evidence. Measured on an Apple M5 (torch 2.13.0,
     macOS arm64 wheel): ``torch.cpu.get_capabilities()`` reports a native bf16
     ISA (``bf16: true``, ``architecture: "arm64"``) but
     ``torch.backends.mkldnn.is_available()`` is ``False``, so a
@@ -1667,7 +1674,7 @@ def _resolve_model_dtype(family: str, device: str, *, persist_machine_record: bo
     ):
         return torch.bfloat16
 
-    if device == "cpu" and resolve_cpu_bf16_native(persist=persist_machine_record):
+    if device == "cpu" and resolve_cpu_bf16_inference(persist=persist_machine_record):
         return torch.bfloat16
 
     return torch.float32
@@ -2019,15 +2026,16 @@ def _classify_oom_device(error: RuntimeError, active_device: str) -> str | None:
 
 
 def _move_model_to_cpu(model: object) -> None:
-    """Move a model to CPU, re-checking the bf16 capability gate on the way down.
+    """Move a model to CPU, re-checking the CPU bf16 inference policy on the way down.
 
-    Every accelerator-to-CPU fallback re-checks the same capability gate that
-    governs load-time dtype selection (:func:`_resolve_model_dtype`): a model
-    loaded in bfloat16 must not silently keep executing bf16 on a CPU that
-    fails :func:`codedupes.devices.resolve_cpu_bf16_native`, where it measures
-    up to 841x slower than float32 with no GEMM backend to exploit the ISA
-    (measured on an Apple M5). When the gate is true, bf16 is kept: it halves
-    memory pressure on this last-resort path at native CPU speed.
+    Every accelerator-to-CPU fallback re-checks the same policy that governs
+    load-time dtype selection (:func:`_resolve_model_dtype`): a model loaded
+    in bfloat16 must not silently keep executing bf16 on a CPU where the
+    policy resolves float32 - either the experimental ``CODEDUPES_CPU_BF16=1``
+    opt-in is absent, or the capability gate fails and bf16 measures up to
+    841x slower than float32 with no GEMM backend to exploit the ISA
+    (measured on an Apple M5). When the policy enables bf16, it is kept: it
+    halves memory pressure on this last-resort path at native CPU speed.
 
     :param model: Model to move, mutated in place.
     :return: ``None``.
@@ -2039,16 +2047,17 @@ def _move_model_to_cpu(model: object) -> None:
             # persist=False: the encode ladder has no cache-enablement context
             # here, and torch is already imported, so a live probe is cheap and
             # a --no-cache run stays free of cache-root writes.
-            if resolve_cpu_bf16_native(persist=False):
+            if resolve_cpu_bf16_inference(persist=False):
                 logger.info(
-                    "CPU fallback keeps bfloat16: this CPU has a native bf16 GEMM backend "
-                    "(mkldnn), halving memory pressure at native speed"
+                    "CPU fallback keeps bfloat16: CODEDUPES_CPU_BF16=1 is set and this CPU "
+                    "has a native bf16 GEMM backend (mkldnn), halving memory pressure at "
+                    "native speed"
                 )
                 model.to("cpu")
             else:
                 logger.warning(
-                    "CPU fallback casts bfloat16 to float32: this CPU has no native bf16 GEMM "
-                    "backend (mkldnn), where bf16 measures far slower than float32"
+                    "CPU fallback casts bfloat16 to float32: CPU bfloat16 inference is not "
+                    "enabled (requires CODEDUPES_CPU_BF16=1 and a native bf16 GEMM backend)"
                 )
                 import torch
 

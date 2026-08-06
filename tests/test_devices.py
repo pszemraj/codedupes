@@ -258,6 +258,27 @@ def test_resolve_cpu_bf16_native_skips_cache_when_disabled(tmp_path: Path, monke
     assert not _machine_record_path(tmp_path).exists()
 
 
+def test_resolve_cpu_bf16_inference_requires_opt_in(monkeypatch) -> None:
+    monkeypatch.delenv("CODEDUPES_CPU_BF16", raising=False)
+
+    def _fail_if_called(**_kwargs):
+        raise AssertionError("the capability gate must not be consulted without the opt-in")
+
+    monkeypatch.setattr(devices, "resolve_cpu_bf16_native", _fail_if_called)
+
+    assert devices.resolve_cpu_bf16_inference() is False
+
+
+def test_resolve_cpu_bf16_inference_follows_gate_when_opted_in(monkeypatch) -> None:
+    monkeypatch.setenv("CODEDUPES_CPU_BF16", "1")
+
+    monkeypatch.setattr(devices, "resolve_cpu_bf16_native", lambda **_kwargs: True)
+    assert devices.resolve_cpu_bf16_inference() is True
+
+    monkeypatch.setattr(devices, "resolve_cpu_bf16_native", lambda **_kwargs: False)
+    assert devices.resolve_cpu_bf16_inference() is False
+
+
 def test_restore_mps_memory_fraction_noop_when_nothing_managed(monkeypatch) -> None:
     monkeypatch.setattr(devices, "_mps_memory_fraction_managed", False)
     calls: list[tuple] = []

@@ -20,6 +20,9 @@ def _isolated_embedding_cache_dir(tmp_path: Path, monkeypatch: Any) -> None:
     :return: ``None``.
     """
     monkeypatch.setenv("CODEDUPES_CACHE_DIR", str(tmp_path / "embedding-cache"))
+    # The experimental CPU bf16 opt-in must never leak from the invoking shell:
+    # tests assert the float32 default unless they opt in explicitly.
+    monkeypatch.delenv("CODEDUPES_CPU_BF16", raising=False)
 
 
 def make_code_unit(

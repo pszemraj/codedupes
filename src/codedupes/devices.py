@@ -453,6 +453,38 @@ def resolve_cpu_bf16_native(*, persist: bool = True) -> bool:
     return verdict
 
 
+_CPU_BF16_OPT_IN_ENV = "CODEDUPES_CPU_BF16"
+
+
+def cpu_bf16_opted_in() -> bool:
+    """Check the experimental ``CODEDUPES_CPU_BF16=1`` CPU bfloat16 inference opt-in.
+
+    :return: ``True`` iff the environment variable is set to the literal ``1``.
+    """
+    return os.environ.get(_CPU_BF16_OPT_IN_ENV, "").strip() == "1"
+
+
+def resolve_cpu_bf16_inference(*, persist: bool = True) -> bool:
+    """Decide whether CPU model inference may run in bfloat16.
+
+    Requires both the experimental ``CODEDUPES_CPU_BF16=1`` opt-in and this
+    machine's capability gate (:func:`resolve_cpu_bf16_native`). The opt-in
+    exists because the positive path is unvalidated: the gate proves the CPU
+    can execute bf16 GEMM fast, not that the float32-calibrated duplicate and
+    search thresholds survive bfloat16's numeric shift on the built-in
+    models. Until a gate-passing machine validates speed and decision parity,
+    automatic CPU inference stays float32. The opt-in is checked first so a
+    non-opted-in run never reads the capability record or imports torch.
+
+    :param persist: Whether the on-disk capability record may be read from and
+        written to, defaults to ``True``.
+    :return: ``True`` iff opted in and the capability gate passes.
+    """
+    if not cpu_bf16_opted_in():
+        return False
+    return resolve_cpu_bf16_native(persist=persist)
+
+
 def _mps_backend_built_without_import() -> bool:
     """Check MPS build support from an already-imported torch, without importing it.
 

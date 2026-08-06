@@ -39,6 +39,7 @@ from codedupes.constants import (
 )
 from codedupes.devices import (
     configure_mps_environment,
+    cpu_bf16_opted_in,
     describe_mps_fallback_env,
     format_mps_memory_snapshot,
     get_device_diagnostics,
@@ -1469,6 +1470,17 @@ def info_command() -> None:
         f"CPU bfloat16 GEMM capable: {diagnostics.cpu_bf16_native} "
         f"(native bf16 ISA={diagnostics.cpu_bf16_isa}, mkldnn available={diagnostics.cpu_mkldnn_available})"
     )
+    if cpu_bf16_opted_in():
+        cpu_bf16_policy = (
+            "enabled (experimental)"
+            if diagnostics.cpu_bf16_native
+            else "disabled (CODEDUPES_CPU_BF16=1 set, but the capability gate failed)"
+        )
+    else:
+        cpu_bf16_policy = (
+            "disabled (experimental; set CODEDUPES_CPU_BF16=1 on gate-capable hardware)"
+        )
+    click.echo(f"CPU bfloat16 inference: {cpu_bf16_policy}")
     if diagnostics.mps_memory_bytes:
         click.echo(f"MPS memory: {format_mps_memory_snapshot(diagnostics.mps_memory_bytes)}")
     if diagnostics.error is not None:

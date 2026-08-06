@@ -570,17 +570,31 @@ def test_cuda_bf16_selection_excludes_emulated_support(monkeypatch) -> None:
     assert recorded_kwargs == {"including_emulation": False}
 
 
-def test_resolve_model_dtype_cpu_follows_capability_gate(monkeypatch) -> None:
-    monkeypatch.setattr(semantic, "resolve_cpu_bf16_native", lambda **_kwargs: True)
+def test_resolve_model_dtype_cpu_follows_inference_policy(monkeypatch) -> None:
+    monkeypatch.setattr(semantic, "resolve_cpu_bf16_inference", lambda **_kwargs: True)
     assert semantic._resolve_model_dtype("test-model", "cpu") is torch.bfloat16
 
-    monkeypatch.setattr(semantic, "resolve_cpu_bf16_native", lambda **_kwargs: False)
+    monkeypatch.setattr(semantic, "resolve_cpu_bf16_inference", lambda **_kwargs: False)
     assert semantic._resolve_model_dtype("test-model", "cpu") is torch.float32
 
 
+def test_resolve_model_dtype_cpu_stays_float32_without_opt_in(monkeypatch) -> None:
+    # Even on a gate-passing machine, automatic CPU bf16 is unvalidated: the
+    # experimental CODEDUPES_CPU_BF16=1 opt-in is required for the positive path.
+    monkeypatch.delenv("CODEDUPES_CPU_BF16", raising=False)
+    monkeypatch.setattr(devices, "resolve_cpu_bf16_native", lambda **_kwargs: True)
+
+    assert semantic._resolve_model_dtype("test-model", "cpu") is torch.float32
+
+    monkeypatch.setenv("CODEDUPES_CPU_BF16", "1")
+    assert semantic._resolve_model_dtype("test-model", "cpu") is torch.bfloat16
+
+
 def test_resolve_model_dtype_no_persist_leaves_cache_root_untouched(tmp_path, monkeypatch) -> None:
-    # A --no-cache run that loads a model on CPU must not create machine.json:
-    # the documented promise is that the on-disk cache stays untouched.
+    # A --no-cache run that loads a model on CPU must not create the machine
+    # capability record: the documented promise is that the on-disk cache stays
+    # untouched. The opt-in is required to reach the record logic at all.
+    monkeypatch.setenv("CODEDUPES_CPU_BF16", "1")
     monkeypatch.setenv("CODEDUPES_CACHE_DIR", str(tmp_path / "cache"))
     monkeypatch.delenv("CODEDUPES_NO_CACHE", raising=False)
 
@@ -588,35 +602,38 @@ def test_resolve_model_dtype_no_persist_leaves_cache_root_untouched(tmp_path, mo
     assert not (tmp_path / "cache").exists()
 
     semantic._resolve_model_dtype("test-model", "cpu")
-    assert (tmp_path / "cache" / "machine.json").exists()
+    record_path = devices._resolve_machine_record_path()
+    assert record_path is not None and record_path.exists()
 
 
-def test_resolve_model_dtype_mps_always_float32_regardless_of_cpu_gate(monkeypatch) -> None:
-    # MPS is never CPU: the gate must not leak into the MPS branch.
-    monkeypatch.setattr(semantic, "resolve_cpu_bf16_native", lambda **_kwargs: True)
+def test_resolve_model_dtype_mps_always_float32_regardless_of_cpu_policy(monkeypatch) -> None:
+    # MPS is never CPU: the CPU inference policy must not leak into the MPS branch.
+    monkeypatch.setattr(semantic, "resolve_cpu_bf16_inference", lambda **_kwargs: True)
     assert semantic._resolve_model_dtype("test-model", "mps") is torch.float32
 
 
 def test_dtype_variant_for_mps_is_always_empty(monkeypatch) -> None:
-    monkeypatch.setattr(semantic, "resolve_cpu_bf16_native", lambda **_kwargs: True)
+    monkeypatch.setattr(semantic, "resolve_cpu_bf16_inference", lambda **_kwargs: True)
     profile = semantic.resolve_model_profile("gte-modernbert-base")
 
     assert semantic._dtype_variant_for(profile, "mps", mps_fallback=None) == ""
 
 
-def test_dtype_variant_for_cpu_follows_capability_gate(monkeypatch) -> None:
+def test_dtype_variant_for_cpu_follows_inference_policy(monkeypatch) -> None:
     profile = semantic.resolve_model_profile("gte-modernbert-base")
 
-    monkeypatch.setattr(semantic, "resolve_cpu_bf16_native", lambda **_kwargs: False)
+    monkeypatch.setattr(semantic, "resolve_cpu_bf16_inference", lambda **_kwargs: False)
     assert semantic._dtype_variant_for(profile, "cpu", mps_fallback=None) == ""
 
-    monkeypatch.setattr(semantic, "resolve_cpu_bf16_native", lambda **_kwargs: True)
+    monkeypatch.setattr(semantic, "resolve_cpu_bf16_inference", lambda **_kwargs: True)
     assert semantic._dtype_variant_for(profile, "cpu", mps_fallback=None) == "dtype=torch.bfloat16"
 
 
-def test_dtype_variant_for_auto_on_darwin_skips_resolution_when_gate_false(monkeypatch) -> None:
+def test_dtype_variant_for_auto_on_darwin_skips_resolution_when_policy_float32(
+    monkeypatch,
+) -> None:
     profile = semantic.resolve_model_profile("gte-modernbert-base")
-    monkeypatch.setattr(semantic, "resolve_cpu_bf16_native", lambda **_kwargs: False)
+    monkeypatch.setattr(semantic, "resolve_cpu_bf16_inference", lambda **_kwargs: False)
     monkeypatch.setattr(semantic.sys, "platform", "darwin")
 
     def _fail_if_called(*_a, **_k):
@@ -627,13 +644,16 @@ def test_dtype_variant_for_auto_on_darwin_skips_resolution_when_gate_false(monke
     assert semantic._dtype_variant_for(profile, "auto", mps_fallback=None) == ""
 
 
-def test_dtype_variant_matches_pre_capability_gate_baseline_when_gate_is_false() -> None:
-    # On a machine without a CPU bf16 GEMM backend, cpu/mps/darwin-auto must
-    # key byte-identically to the pre-capability-gate policy (empty variant):
+def test_dtype_variant_matches_pre_capability_gate_baseline_without_opt_in(
+    monkeypatch,
+) -> None:
+    # Without the experimental CODEDUPES_CPU_BF16 opt-in, cpu/mps/darwin-auto
+    # must key byte-identically to the pre-capability-gate policy (empty
+    # variant) on every machine, gate-passing or not:
     # EMBEDDING_PIPELINE_SCHEMA is not bumped, so old and new code must agree
-    # here or warm caches on every non-mkldnn machine would silently miss.
-    if devices.resolve_cpu_bf16_native():
-        pytest.skip("This machine's CPU passes the bf16 capability gate.")
+    # here or warm caches would silently miss.
+    monkeypatch.delenv("CODEDUPES_CPU_BF16", raising=False)
+    monkeypatch.setattr(semantic.sys, "platform", "darwin")
     profile = semantic.resolve_model_profile("gte-modernbert-base")
 
     assert semantic._dtype_variant_for(profile, "cpu", mps_fallback=None) == ""
@@ -1075,13 +1095,25 @@ def test_classify_oom_device_covers_all_branches(
     assert semantic._classify_oom_device(RuntimeError(message), active_device) == expected
 
 
-def test_move_model_to_cpu_casts_bf16_only_when_gate_is_false() -> None:
+def test_move_model_to_cpu_casts_bf16_when_inference_policy_is_float32(monkeypatch) -> None:
+    # Without the experimental opt-in the CPU inference policy is float32 on
+    # every machine, so an accelerator bf16 model is always cast on the way down.
+    monkeypatch.delenv("CODEDUPES_CPU_BF16", raising=False)
     module = torch.nn.Linear(4, 4).to(dtype=torch.bfloat16)
 
     semantic._move_model_to_cpu(module)
 
-    expected_dtype = torch.bfloat16 if devices.resolve_cpu_bf16_native() else torch.float32
-    assert next(module.parameters()).dtype is expected_dtype
+    assert next(module.parameters()).dtype is torch.float32
+    assert str(next(module.parameters()).device) == "cpu"
+
+
+def test_move_model_to_cpu_keeps_bf16_when_inference_policy_allows(monkeypatch) -> None:
+    monkeypatch.setattr(semantic, "resolve_cpu_bf16_inference", lambda **_kwargs: True)
+    module = torch.nn.Linear(4, 4).to(dtype=torch.bfloat16)
+
+    semantic._move_model_to_cpu(module)
+
+    assert next(module.parameters()).dtype is torch.bfloat16
     assert str(next(module.parameters()).device) == "cpu"
 
 
@@ -1285,6 +1317,9 @@ def test_runtime_env_configured_before_capability_probe_can_import_torch(
     """
     monkeypatch.setattr(semantic.sys, "platform", "darwin")
     monkeypatch.setenv("CODEDUPES_CACHE_DIR", str(tmp_path / "cache"))
+    # The opt-in makes darwin-auto variant derivation consult the capability
+    # gate, which is the torch-importing probe this ordering test exists for.
+    monkeypatch.setenv("CODEDUPES_CPU_BF16", "1")
     monkeypatch.delenv("PYTORCH_ENABLE_MPS_FALLBACK", raising=False)
 
     env_at_torch_probe: list[str | None] = []
@@ -1368,15 +1403,14 @@ def test_dtype_diverging_accelerator_fallback_skips_bf16_keyed_cache_write(
     )
 
     assert embeddings.shape[0] == len(units)
-    # A dtype-diverging fallback (bf16 CUDA -> float32 CPU on this gate-false
-    # machine) must never write float32 vectors under the bf16-keyed
+    # A dtype-diverging fallback (bf16 CUDA -> float32 CPU under the default
+    # no-opt-in policy) must never write float32 vectors under the bf16-keyed
     # namespace: the coherence-restart discards that run and recomputes under
     # a fresh, correctly-keyed identity instead, so *some* write is expected -
     # just never one landing in the original bf16 key space.
     bf16_writes = [call for call in put_calls if call["kwargs"].get("namespace") == bf16_namespace]
     assert bf16_writes == []
-    if not devices.resolve_cpu_bf16_native():
-        assert len(put_calls) == 1
+    assert len(put_calls) == 1
 
 
 def test_dimension_mismatch_reencode_reads_live_device(tmp_path: Path, monkeypatch) -> None:

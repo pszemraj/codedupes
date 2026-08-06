@@ -49,7 +49,7 @@ Inference OOM recovery is deterministic. An MPS `Invalid buffer size` failure - 
 2. Log one warning per failed attempt, including MPS tensor, driver, and recommended-memory statistics when available.
 3. Synchronize queued MPS work, run garbage collection, and call `torch.mps.empty_cache()`.
 4. Halve the embedding batch size until it reaches one.
-5. If an accelerator still OOMs at batch size one, move the cached model to CPU once and retry from the originally requested batch size; host memory has different limits, and a CPU OOM re-enters the halving ladder above before aborting. The move re-checks the CPU capability gate described below: a model loaded in bfloat16 is cast to float32 when this CPU cannot run bf16 fast, or kept in bfloat16 when it can.
+5. If an accelerator still OOMs at batch size one, move the cached model to CPU once and retry from the originally requested batch size; host memory has different limits, and a CPU OOM re-enters the halving ladder above before aborting. The move re-checks the CPU bfloat16 inference policy described below: a model loaded in bfloat16 is cast to float32 unless the experimental opt-in is set and this CPU passes the capability gate.
 
 A model-loading MPS OOM has no batch to shrink, so it clears the MPS cache and retries loading once on CPU. After an MPS-to-CPU OOM fallback, the CPU model remains sticky for that model in a long-lived process. Call `codedupes.semantic.clear_model_cache()` to force a fresh accelerator load.
 
@@ -65,15 +65,17 @@ CUDA hardware with native bf16 support (Ampere or newer; pre-Ampere emulated bf1
 
 MPS always pins float32: bfloat16 on MPS gains only ~13% runtime while drifting pair similarities ~1e-2 (tuned-threshold scale), not worth cold-splitting the shared CPU/MPS cache key space.
 
-CPU pins bfloat16 only when this machine passes a two-part capability gate - a native bf16 ISA (`bf16` on ARM, `amx_bf16`/`avx512_bf16` on x86) *and* a GEMM backend able to exploit it (`torch.backends.mkldnn.is_available()`) - otherwise float32. `torch.backends.cpu.get_cpu_capability()` is never used for this decision: it reports the wheel's build-tier baseline (for example `"DEFAULT"`), not what the running CPU can execute.
+CPU pins float32 by default. Setting `CODEDUPES_CPU_BF16=1` (experimental) enables bfloat16 when this machine also passes a two-part capability gate - a native bf16 ISA (`bf16` on ARM, `amx_bf16`/`avx512_bf16` on x86) *and* a GEMM backend able to exploit it (`torch.backends.mkldnn.is_available()`). `torch.backends.cpu.get_cpu_capability()` is never used for this decision: it reports the wheel's build-tier baseline (for example `"DEFAULT"`), not what the running CPU can execute.
 
-Measured on an Apple M5 (torch 2.13.0, macOS arm64 wheel): `torch.cpu.get_capabilities()` reports a native bf16 ISA (`bf16: true`, `architecture: "arm64"`) but no mkldnn backend, and a 1024x1024x1024 bf16 matmul measured 1015 ms versus 1.207 ms for float32 - 841x slower with an ISA but no backend to exploit it, so this machine's CPU pins float32.
+The opt-in guard exists because the positive path is unvalidated: the gate proves the CPU can execute bf16 GEMM fast, not that the float32-calibrated duplicate and search thresholds survive bfloat16's numeric shift on the built-in models. Automatic enablement waits for a gate-passing machine (AMX/AVX512-bf16 x86, or ARM bf16 with an mkldnn backend) to validate speed and decision parity end to end.
 
-`codedupes info` prints the live verdict: CPU name and architecture, whether the native bf16 ISA is present, whether mkldnn is available, and the combined gate.
+Measured on an Apple M5 (torch 2.13.0, macOS arm64 wheel): `torch.cpu.get_capabilities()` reports a native bf16 ISA (`bf16: true`, `architecture: "arm64"`) but no mkldnn backend, and a 1024x1024x1024 bf16 matmul measured 1015 ms versus 1.207 ms for float32 - 841x slower with an ISA but no backend to exploit it, so this machine's CPU pins float32 with or without the opt-in.
 
-The gate's verdict is cached on disk (`<cache_root>/machine.json`, stamped with the installed torch version) so repeat runs never re-import torch merely to derive a cache key; a run with `--no-cache` or `CODEDUPES_NO_CACHE` set never reads or writes that record either.
+`codedupes info` prints the live verdict: CPU name and architecture, whether the native bf16 ISA is present, whether mkldnn is available, the combined gate, and the effective inference policy (opt-in plus gate).
 
-Every accelerator-to-CPU OOM fallback (see the recovery ladder above) re-checks this same gate before deciding whether to keep or cast away bfloat16, and a load-time OOM retry (CUDA or MPS falling back to a CPU load) re-pins the CPU dtype fresh rather than inheriting the accelerator's dtype.
+The gate's verdict is cached on disk (`<cache_root>/machine.json`, stamped with the installed torch version) so opted-in repeat runs never re-import torch merely to derive a cache key; a run without the opt-in never consults the record at all, and a run with `--no-cache` or `CODEDUPES_NO_CACHE` set never reads or writes it either.
+
+Every accelerator-to-CPU OOM fallback (see the recovery ladder above) re-checks this same inference policy (opt-in plus gate) before deciding whether to keep or cast away bfloat16, and a load-time OOM retry (CUDA or MPS falling back to a CPU load) re-pins the CPU dtype fresh rather than inheriting the accelerator's dtype.
 
 A run keyed under a non-default (bfloat16) dtype variant whose live execution can no longer produce bfloat16 - an accelerator OOM cast the model to float32 mid-run - discards any cache hits recorded under that key and recomputes the whole corpus in one coherent policy, mirroring the fast-math precedent below; a write that would otherwise land in the wrong key space is skipped instead, costing a cache miss next run rather than a poisoned key space.
 
