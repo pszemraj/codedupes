@@ -10,15 +10,17 @@ from __future__ import annotations
 
 import contextlib
 import gc
+import hashlib
 import importlib
 import json
 import logging
 import math
 import os
+import platform
 import sys
 import threading
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from importlib import metadata as importlib_metadata
 from pathlib import Path
 from typing import Any, Literal, TypeVar, cast
@@ -297,21 +299,30 @@ def _read_cpu_capabilities(torch_module: Any) -> Mapping[str, Any]:
     return caps if isinstance(caps, Mapping) else {}
 
 
-def _cpu_bf16_isa_present(caps: Mapping[str, Any], architecture: str) -> bool:
-    """Return whether the CPU ISA itself supports bfloat16, before any backend check.
+def _cpu_bf16_isa_keys(architecture: str) -> tuple[str, ...]:
+    """Return the architecture-relevant bf16 ISA capability keys.
 
     ARM (``bf16``) and x86 (``amx_bf16``/``avx512_bf16``) report native bf16 support
     under different keys; plain ``avx512`` is deliberately excluded, since AVX-512
     alone does not imply a bf16 execution unit.
 
+    :param architecture: Reported ``architecture`` value, for example ``"arm64"``.
+    :return: ``("bf16",)`` on ARM, otherwise ``("amx_bf16", "avx512_bf16")``.
+    """
+    normalized_arch = architecture.lower()
+    if "arm" in normalized_arch or "aarch64" in normalized_arch:
+        return ("bf16",)
+    return ("amx_bf16", "avx512_bf16")
+
+
+def _cpu_bf16_isa_present(caps: Mapping[str, Any], architecture: str) -> bool:
+    """Return whether the CPU ISA itself supports bfloat16, before any backend check.
+
     :param caps: Capability mapping from ``torch.cpu.get_capabilities()``.
     :param architecture: Reported ``architecture`` value, for example ``"arm64"``.
     :return: ``True`` when the reported ISA includes native bf16.
     """
-    normalized_arch = architecture.lower()
-    if "arm" in normalized_arch or "aarch64" in normalized_arch:
-        return bool(caps.get("bf16"))
-    return bool(caps.get("amx_bf16")) or bool(caps.get("avx512_bf16"))
+    return any(bool(caps.get(key)) for key in _cpu_bf16_isa_keys(architecture))
 
 
 def cpu_bf16_capability(torch_module: Any) -> bool:
@@ -349,27 +360,94 @@ def cpu_bf16_capability(torch_module: Any) -> bool:
         return False
 
 
-_MACHINE_RECORD_FILENAME = "machine.json"
+CPU_CAPABILITY_RECORD_SCHEMA = 2
+"""Schema version stamped on every persisted CPU bf16 capability record."""
+
+_MACHINE_RECORDS_DIRNAME = "machines"
+_LEGACY_MACHINE_RECORD_FILENAME = "machine.json"
+
+
+@dataclass(frozen=True)
+class CpuCapabilityEnvironment:
+    """Environment identity that scopes a persisted CPU bf16 capability record.
+
+    A cache directory can outlive or move across conda envs, survive a torch
+    wheel reinstall of the same version, live on a synced/NFS home directory,
+    or follow a container image to a replaced machine - two installs can both
+    report torch version ``"2.13.0"`` while only one has an mkldnn backend.
+    Every field here is derivable without importing torch, so resolving and
+    validating a candidate record path never pays torch's import cost.
+    """
+
+    system: str
+    release: str
+    machine: str
+    processor: str
+    hostname: str
+    python_executable: str
+    python_prefix: str
+    torch_version: str
+    torch_distribution_root: str
+
+    @classmethod
+    def current(cls) -> CpuCapabilityEnvironment:
+        """Build the identity for the currently running interpreter and torch install.
+
+        :return: Environment identity for the current process.
+        :raises importlib.metadata.PackageNotFoundError: If torch is not installed.
+        """
+        distribution = importlib_metadata.distribution("torch")
+        return cls(
+            system=platform.system(),
+            release=platform.release(),
+            machine=platform.machine(),
+            processor=platform.processor(),
+            hostname=platform.node(),
+            python_executable=str(Path(sys.executable).resolve()),
+            python_prefix=str(Path(sys.prefix).resolve()),
+            torch_version=str(distribution.version),
+            torch_distribution_root=str(Path(distribution.locate_file("")).resolve()),
+        )
+
+    def as_dict(self) -> dict[str, str]:
+        """Return the identity fields as a plain dict for JSON payloads and digesting.
+
+        :return: Field name to value mapping.
+        """
+        return asdict(self)
+
+    def digest(self) -> str:
+        """Derive the stable filename digest identifying this environment.
+
+        :return: 20-byte blake2b hex digest of the canonical identity JSON.
+        """
+        canonical = json.dumps(self.as_dict(), sort_keys=True, separators=(",", ":"))
+        return hashlib.blake2b(canonical.encode("utf-8"), digest_size=20).hexdigest()
 
 
 def _resolve_machine_record_path() -> Path | None:
-    """Resolve the on-disk machine-capability record path.
+    """Resolve the on-disk, environment-namespaced CPU capability record path.
 
     Imports :mod:`codedupes.embedding_cache` lazily (it has no dependency back
     on this module, so there is no import cycle) and only when a record lookup
     is actually needed. The embedding cache's own ``CODEDUPES_NO_CACHE`` kill
     switch is honored through its :func:`~codedupes.embedding_cache.is_cache_disabled`
-    so the two can never drift apart.
+    so the two can never drift apart. The filename is a digest of the current
+    :class:`CpuCapabilityEnvironment`, so records from different hosts or
+    environments sharing one cache root can never collide or be cross-trusted.
 
-    :return: Record path, or ``None`` when caching is disabled or the cache
-        root cannot be resolved.
+    :return: Record path, or ``None`` when caching is disabled, torch is not
+        installed, or resolution otherwise fails.
     """
     try:
         from codedupes.embedding_cache import is_cache_disabled, resolve_cache_dir
 
         if is_cache_disabled():
             return None
-        return resolve_cache_dir() / _MACHINE_RECORD_FILENAME
+        environment = CpuCapabilityEnvironment.current()
+        return resolve_cache_dir() / _MACHINE_RECORDS_DIRNAME / f"{environment.digest()}.json"
+    except importlib_metadata.PackageNotFoundError:
+        return None
     except Exception:
         logger.debug("Could not resolve the CPU capability record path", exc_info=True)
         return None
@@ -378,41 +456,84 @@ def _resolve_machine_record_path() -> Path | None:
 def _read_machine_record(record_path: Path) -> bool | None:
     """Read a trustworthy CPU bf16 verdict from an on-disk machine record.
 
+    The digest-named path alone is belt, not braces: a record is trusted only
+    when it also parses as JSON, its ``schema`` matches
+    :data:`CPU_CAPABILITY_RECORD_SCHEMA`, and its stored ``environment`` equals
+    the current :class:`CpuCapabilityEnvironment` exactly.
+
     :param record_path: Candidate record path.
     :return: Recorded verdict, or ``None`` when missing, unreadable, corrupt,
-        or stamped with a different installed torch version.
+        schema-mismatched, or stamped with a different environment identity.
     """
     try:
-        current_torch_version = importlib_metadata.version("torch")
+        environment = CpuCapabilityEnvironment.current()
     except importlib_metadata.PackageNotFoundError:
         return None
     try:
         payload = json.loads(record_path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
-    if not isinstance(payload, dict) or payload.get("torch") != current_torch_version:
+    if not isinstance(payload, dict):
+        return None
+    if payload.get("schema") != CPU_CAPABILITY_RECORD_SCHEMA:
+        return None
+    if payload.get("environment") != environment.as_dict():
         return None
     verdict = payload.get("cpu_bf16_native")
     return verdict if isinstance(verdict, bool) else None
 
 
-def _persist_machine_record(record_path: Path, verdict: bool) -> None:
+def _cpu_capability_payload(torch_module: Any) -> tuple[dict[str, Any], bool]:
+    """Capture the raw, arch-relevant bf16 capability values for record debuggability.
+
+    :param torch_module: Imported ``torch`` module or a compatible test double.
+    :return: ``(capabilities, mkldnn_available)``; ``capabilities`` holds
+        ``architecture`` plus the decisive ISA keys observed for that architecture.
+    """
+    caps = _read_cpu_capabilities(torch_module)
+    architecture = str(caps.get("architecture", ""))
+    capabilities: dict[str, Any] = {"architecture": architecture}
+    for key in _cpu_bf16_isa_keys(architecture):
+        capabilities[key] = bool(caps.get(key))
+    backends = getattr(torch_module, "backends", None)
+    mkldnn = getattr(backends, "mkldnn", None) if backends is not None else None
+    mkldnn_available = _safe_call(mkldnn, "is_available", bool, False)
+    return capabilities, mkldnn_available
+
+
+def _persist_machine_record(record_path: Path, torch_module: Any, verdict: bool) -> None:
     """Best-effort atomic write of the CPU bf16 capability record.
 
+    Also opportunistically removes the legacy, non-namespaced
+    ``<cache_root>/machine.json`` record left by older codedupes versions;
+    this branch is unreleased, so no further migration is needed.
+
     :param record_path: Destination record path.
+    :param torch_module: Imported ``torch`` module used to source the raw
+        capability values stored for debuggability.
     :param verdict: Freshly probed capability verdict to persist.
     :return: ``None``.
     """
     try:
-        torch_version = importlib_metadata.version("torch")
+        environment = CpuCapabilityEnvironment.current()
     except importlib_metadata.PackageNotFoundError:
         return
+    capabilities, mkldnn_available = _cpu_capability_payload(torch_module)
+    payload = {
+        "schema": CPU_CAPABILITY_RECORD_SCHEMA,
+        "environment": environment.as_dict(),
+        "capabilities": capabilities,
+        "mkldnn_available": mkldnn_available,
+        "cpu_bf16_native": verdict,
+    }
     tmp_path = record_path.with_name(f"{record_path.name}.{os.getpid()}.tmp")
     try:
         record_path.parent.mkdir(parents=True, exist_ok=True)
-        payload = json.dumps({"torch": torch_version, "cpu_bf16_native": verdict})
-        tmp_path.write_text(payload, encoding="utf-8")
+        tmp_path.write_text(json.dumps(payload), encoding="utf-8")
         os.replace(tmp_path, record_path)
+        legacy_path = record_path.parent.parent / _LEGACY_MACHINE_RECORD_FILENAME
+        with contextlib.suppress(OSError):
+            legacy_path.unlink()
     except OSError:
         logger.debug("Could not persist the CPU bf16 capability record", exc_info=True)
     finally:
@@ -424,17 +545,21 @@ def _persist_machine_record(record_path: Path, verdict: bool) -> None:
 def resolve_cpu_bf16_native(*, persist: bool = True) -> bool:
     """Return whether this machine's CPU can execute native, fast bfloat16 GEMM.
 
-    Backed by an on-disk record (``<cache_root>/machine.json``) so repeated,
-    warm-path cache-key derivation never imports torch: a machine's CPU
-    capabilities cannot change under one installed torch build, so a record
-    stamped with the currently installed torch version is trusted without
-    re-probing. A missing, unreadable, corrupt, or stale-version record falls
-    back to a live :func:`cpu_bf16_capability` probe, which is then persisted
-    best-effort for the next call. ``CODEDUPES_NO_CACHE`` disables both the
-    read and the write, matching the embedding cache's kill switch; so does
-    ``persist=False``, mirroring how callers that disabled the on-disk
-    embedding cache for one call (see ``persist_manifest`` on the local-model
-    digest manifest) keep that call free of unrelated cache-directory writes.
+    Backed by an on-disk record namespaced per environment identity
+    (``<cache_root>/machines/<digest>.json``) so repeated, warm-path
+    cache-key derivation never imports torch: a record is trusted only when
+    both its digest-named path and its stored environment identity (host,
+    interpreter, torch install) match the current process, since a cache
+    directory can outlive or move across machines and conda envs while an
+    installed torch *version* string alone stays the same. A missing,
+    unreadable, corrupt, schema-mismatched, or identity-mismatched record
+    falls back to a live :func:`cpu_bf16_capability` probe, which is then
+    persisted best-effort for the next call at this environment's own path.
+    ``CODEDUPES_NO_CACHE`` disables both the read and the write, matching the
+    embedding cache's kill switch; so does ``persist=False``, mirroring how
+    callers that disabled the on-disk embedding cache for one call (see
+    ``persist_manifest`` on the local-model digest manifest) keep that call
+    free of unrelated cache-directory writes.
 
     :param persist: Whether the on-disk record may be read from and written to,
         defaults to ``True``.
@@ -447,9 +572,10 @@ def resolve_cpu_bf16_native(*, persist: bool = True) -> bool:
         if cached_verdict is not None:
             return cached_verdict
 
-    verdict = cpu_bf16_capability(_load_torch())
+    torch_module = _load_torch()
+    verdict = cpu_bf16_capability(torch_module)
     if record_path is not None:
-        _persist_machine_record(record_path, verdict)
+        _persist_machine_record(record_path, torch_module, verdict)
     return verdict
 
 
