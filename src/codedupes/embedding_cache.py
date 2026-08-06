@@ -63,6 +63,14 @@ class _ShardData:
     source_commit: str | None
 
 
+@dataclass(frozen=True)
+class CacheLookup:
+    """Cached vectors plus the provenance of the one shard snapshot they were read from."""
+
+    vectors: dict[str, np.ndarray]
+    source_commit: str | None
+
+
 def _row_digest(vector: np.ndarray) -> str:
     """Digest one embedding row for read-time integrity verification.
 
@@ -1184,14 +1192,20 @@ class EmbeddingCache:
         """
         return _shard_dir_for(self.repos_dir, cache_scope, canonical_model, revision)
 
-    def get_many(
+    def get_many_with_provenance(
         self,
         cache_scope: Path,
         canonical_model: str,
         revision: str | None,
         keys: list[str],
-    ) -> dict[str, np.ndarray]:
-        """Look up cached embedding vectors, refreshing the recency stamp at most hourly.
+    ) -> CacheLookup:
+        """Look up cached vectors plus the source commit of the snapshot they came from.
+
+        The vectors and the source commit are taken from one ``_read_shard``
+        snapshot, so the caller can later prove which checkpoint produced every
+        returned row even after a concurrent writer purges and republishes the
+        shard - the shard's *current* provenance says nothing about vectors
+        copied out of an earlier generation.
 
         The recency stamp only feeds shard-granularity LRU eviction, so refreshing it
         on every read would waste an index rewrite per lookup and widen the window in
@@ -1201,14 +1215,15 @@ class EmbeddingCache:
         :param canonical_model: Canonical model identifier.
         :param revision: Resolved model revision, or ``None`` when unpinned.
         :param keys: Cache keys to look up.
-        :return: Mapping of hit keys to owned float32 embedding vectors.
+        :return: Hit vectors and the snapshot's recorded source commit (``None``
+            for a miss, an immutable-revision shard, or provenance-less rows).
         """
         if not keys:
-            return {}
+            return CacheLookup(vectors={}, source_commit=None)
         shard_dir = self.shard_dir(cache_scope, canonical_model, revision)
         loaded = _read_shard(shard_dir)
         if loaded is None:
-            return {}
+            return CacheLookup(vectors={}, source_commit=None)
         hits: dict[str, np.ndarray] = {}
         for key in keys:
             row = loaded.keys.get(key)
@@ -1224,7 +1239,24 @@ class EmbeddingCache:
                 hits[key] = vector
         if hits and (time.time() - loaded.last_used_at) > _TOUCH_INTERVAL_SECONDS:
             _touch_shard(shard_dir)
-        return hits
+        return CacheLookup(vectors=hits, source_commit=loaded.source_commit)
+
+    def get_many(
+        self,
+        cache_scope: Path,
+        canonical_model: str,
+        revision: str | None,
+        keys: list[str],
+    ) -> dict[str, np.ndarray]:
+        """Look up cached embedding vectors, refreshing the recency stamp at most hourly.
+
+        :param cache_scope: Analyzed corpus root path.
+        :param canonical_model: Canonical model identifier.
+        :param revision: Resolved model revision, or ``None`` when unpinned.
+        :param keys: Cache keys to look up.
+        :return: Mapping of hit keys to owned float32 embedding vectors.
+        """
+        return self.get_many_with_provenance(cache_scope, canonical_model, revision, keys).vectors
 
     def put_many(
         self,
@@ -1281,19 +1313,27 @@ class EmbeddingCache:
         vectors from the new commit. Mixing requires a model load, and a load
         knows its commit: provenance lives inside the atomically switched
         shard index, so vectors and the commit that produced them can never
-        desynchronize. Rows whose recorded commit differs from the loaded one
-        - or whose index records no commit at all, the corruption/legacy case -
-        cannot be tied to this checkpoint and the whole shard is purged
-        (old-commit code and query vectors alike). The write path stamps the
-        loaded commit when the fresh rows publish. Never raises; a cache-layer
-        error keeps degrading to plain loose-keying behavior.
+        desynchronize on disk. Rows whose recorded commit differs from the
+        loaded one - or whose index records no commit at all, the
+        corruption/legacy case - cannot be tied to this checkpoint and the
+        whole shard is purged (old-commit code and query vectors alike). The
+        write path stamps the loaded commit when the fresh rows publish. Never
+        raises; a cache-layer error keeps degrading to plain loose-keying
+        behavior.
+
+        Confirmation vouches only for the shard's *current* generation. A
+        concurrent run may have purged and republished the shard under the
+        loaded commit after this caller copied hits out of an earlier
+        snapshot, so callers holding pre-load hits must additionally compare
+        the snapshot's own provenance from ``get_many_with_provenance``.
 
         :param cache_scope: Analyzed corpus root path.
         :param canonical_model: Canonical model identifier.
         :param revision: Mutable revision label addressing the shard.
         :param loaded_commit: Commit hash reported by the loaded model.
         :return: ``False`` when the shard was purged, so callers must discard
-            any pre-load hits; ``True`` when the shard is coherent.
+            any pre-load hits; ``True`` when the current shard is coherent
+            with ``loaded_commit``.
         """
         try:
             shard_dir = self.shard_dir(cache_scope, canonical_model, revision)

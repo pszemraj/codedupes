@@ -585,6 +585,95 @@ def test_put_many_rejects_batch_after_provenance_moved(tmp_path):
     assert meta["source_commit"] == "b" * 40
 
 
+def test_get_many_with_provenance_returns_the_snapshot_commit(tmp_path):
+    cache = EmbeddingCache(tmp_path)
+    scope = tmp_path / "repo"
+    scope.mkdir()
+    key = embedding_cache.compute_cache_key("some/model", "main", "text-a")
+    vector = np.array([1.0, 0.0], dtype=np.float32)
+
+    empty = cache.get_many_with_provenance(scope, "some/model", "main", [key])
+    assert empty.vectors == {}
+    assert empty.source_commit is None
+
+    cache.put_many(scope, "some/model", "main", [(key, vector)], expected_source_commit="a" * 40)
+    lookup = cache.get_many_with_provenance(scope, "some/model", "main", [key])
+    assert set(lookup.vectors) == {key}
+    assert lookup.source_commit == "a" * 40
+
+    # Immutable-revision shards report no provenance: the revision is the truth.
+    cache.put_many(scope, "some/model", REVISION_1, [(key, vector)])
+    pinned = cache.get_many_with_provenance(scope, "some/model", REVISION_1, [key])
+    assert set(pinned.vectors) == {key}
+    assert pinned.source_commit is None
+
+
+def test_concurrent_republish_between_lookup_and_load_discards_stale_hits(tmp_path, monkeypatch):
+    """Reviewer repro (round 3): partial checkpoint-a hits copied before the model
+    load must not survive a concurrent purge-and-republish under checkpoint b, even
+    though the shard's current provenance matches the loaded commit."""
+    units = _five_units(tmp_path)
+    model = CountingModel()
+    monkeypatch.setattr(semantic, "_get_loaded_model_commit_hash", lambda _model: "a" * 40)
+
+    cache = embedding_cache.get_embedding_cache()
+    assert cache is not None
+    canonical = semantic.resolve_model_profile("drift-model").canonical_name
+    loads = {"count": 0}
+
+    def fake_get_model(*_args, **_kwargs):
+        loads["count"] += 1
+        if loads["count"] == 2:
+            # Concurrent run: sees main move to b upstream, purges the
+            # checkpoint-a shard, and publishes its own b generation - all
+            # after this run copied its warm hits out of the a snapshot.
+            assert cache.confirm_source_commit(tmp_path, canonical, "main", "b" * 40) is False
+            cache.put_many(
+                tmp_path,
+                canonical,
+                "main",
+                [
+                    (
+                        embedding_cache.compute_cache_key(canonical, "main", "concurrent-unit"),
+                        np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32),
+                    )
+                ],
+                expected_source_commit="b" * 40,
+            )
+            # This run's own load then observes the moved branch.
+            monkeypatch.setattr(semantic, "_get_loaded_model_commit_hash", lambda _model: "b" * 40)
+        return model
+
+    monkeypatch.setattr(semantic, "get_model", fake_get_model)
+
+    compute_embeddings(units, model_name="drift-model", revision="main", cache_scope=tmp_path)
+    assert loads["count"] == 1
+
+    # One local source change gives the next run a genuine miss beside warm hits.
+    changed = copy.copy(units[1])
+    changed.source = "def other(x):\n    return x + 777\n"
+    mixed_units = [units[0], changed, units[2]]
+
+    result = compute_embeddings(
+        mixed_units, model_name="drift-model", revision="main", cache_scope=tmp_path
+    )
+
+    # confirm_source_commit passes here (the current shard already says b), so
+    # only the snapshot provenance carried by the lookup can catch the stale
+    # hits: every row must re-encode under b, never two a hits beside one b row.
+    assert loads["count"] == 2
+    assert len(model.encode_calls[-1]) == 3
+    assert result.shape == (3, model.dim)
+
+    meta = embedding_cache._read_shard_meta(cache.shard_dir(tmp_path, canonical, "main"))
+    assert meta is not None
+    assert meta["source_commit"] == "b" * 40
+
+    # The rebuilt shard is coherent: an identical rerun is fully warm, no load.
+    compute_embeddings(mixed_units, model_name="drift-model", revision="main", cache_scope=tmp_path)
+    assert loads["count"] == 2
+
+
 def test_loose_branch_move_never_mixes_two_checkpoints(tmp_path, monkeypatch):
     """Reviewer repro (Issue 4): a branch move plus a partial warm hit must re-embed
     the whole corpus rather than assembling old-commit hits beside new-commit rows."""

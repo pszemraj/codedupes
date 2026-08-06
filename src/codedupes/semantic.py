@@ -2581,11 +2581,14 @@ def _compute_embeddings_unlocked(
         if cache is not None and cache_revision is not None
         else None
     )
-    hits: dict[str, np.ndarray] = (
-        cache.get_many(cache_scope, profile.canonical_name, cache_revision, cache_keys)
-        if cache is not None and cache_keys is not None
-        else {}
-    )
+    hits: dict[str, np.ndarray] = {}
+    hit_source_commit: str | None = None
+    if cache is not None and cache_keys is not None:
+        lookup = cache.get_many_with_provenance(
+            cache_scope, profile.canonical_name, cache_revision, cache_keys
+        )
+        hits = lookup.vectors
+        hit_source_commit = lookup.source_commit
 
     # Duplicate code units share one cache key, so compare against the covered
     # keys rather than the unique-hit count: len(hits) undercounts coverage.
@@ -2645,7 +2648,11 @@ def _compute_embeddings_unlocked(
                 )
                 for text in prepared_texts
             ]
-            hits = cache.get_many(cache_scope, profile.canonical_name, cache_revision, cache_keys)
+            lookup = cache.get_many_with_provenance(
+                cache_scope, profile.canonical_name, cache_revision, cache_keys
+            )
+            hits = lookup.vectors
+            hit_source_commit = lookup.source_commit
             if all(key in hits for key in cache_keys):
                 return _assemble_cached_matrix(cache_keys, hits), _effective_identity(
                     device,
@@ -2663,10 +2670,13 @@ def _compute_embeddings_unlocked(
         # no-load path, but this run loaded the model and knows its commit.
         # Mixing old-commit hits with new-commit misses is only possible here,
         # so a drifted (or provenance-less) shard is purged and every pre-load
-        # hit discarded. An unknown loaded commit stays fail-open by design:
-        # loose mode keeps serving warm even when a backend cannot report its
-        # checkpoint, and the provenance-less rows it writes are purged by the
-        # first commit-reporting load.
+        # hit discarded. A coherent current shard is not enough on its own: a
+        # concurrent run can purge and republish the shard under the loaded
+        # commit after this run copied its hits, so the hits' own snapshot
+        # provenance is compared as well. An unknown loaded commit stays
+        # fail-open by design: loose mode keeps serving warm even when a
+        # backend cannot report its checkpoint, and the provenance-less rows
+        # it writes are purged by the first commit-reporting load.
         loaded_commit = _get_loaded_model_commit_hash(model)
         if loaded_commit is not None:
             corpus_source_commit = loaded_commit
@@ -2677,6 +2687,18 @@ def _compute_embeddings_unlocked(
                     f"Cached vectors for branch {cache_revision!r} cannot be tied to loaded "
                     f"commit {loaded_commit[:12]}; discarding {len(hits)} of them and "
                     "re-embedding so one matrix never mixes two checkpoints"
+                )
+                hits = {}
+            elif hits and hit_source_commit != loaded_commit:
+                snapshot = (
+                    f"commit {hit_source_commit[:12]}"
+                    if hit_source_commit
+                    else "an unstamped shard"
+                )
+                logger.warning(
+                    f"Cached vectors for branch {cache_revision!r} were read from {snapshot}, "
+                    f"but this run loaded commit {loaded_commit[:12]}; discarding "
+                    f"{len(hits)} pre-load hits so one matrix never mixes two checkpoints"
                 )
                 hits = {}
 
