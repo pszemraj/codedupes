@@ -73,7 +73,7 @@ Measured on an Apple M5 (torch 2.13.0, macOS arm64 wheel): `torch.cpu.get_capabi
 
 `codedupes info` prints the live verdict: CPU name and architecture, whether the native bf16 ISA is present, whether mkldnn is available, the combined gate, and the effective inference policy (opt-in plus gate).
 
-The gate's verdict is cached on disk (`<cache_root>/machine.json`, stamped with the installed torch version) so opted-in repeat runs never re-import torch merely to derive a cache key; a run without the opt-in never consults the record at all, and a run with `--no-cache` or `CODEDUPES_NO_CACHE` set never reads or writes it either.
+The gate's verdict is cached on disk under `<cache_root>/machines/<digest>.json`, where the digest identifies this exact host and Python/torch environment (platform system/release/arch, hostname, Python executable and prefix, torch version and install location, plus a record schema), so opted-in repeat runs never re-import torch merely to derive a cache key. A cache directory that travels across machines, conda envs, or same-version torch reinstalls can never apply one environment's verdict to another - each environment re-probes once and records the raw ISA and mkldnn values behind its verdict. A run without the opt-in never consults the record at all, and a run with `--no-cache` or `CODEDUPES_NO_CACHE` set never reads or writes it either.
 
 Every accelerator-to-CPU OOM fallback (see the recovery ladder above) re-checks this same inference policy (opt-in plus gate) before deciding whether to keep or cast away bfloat16, and a load-time OOM retry (CUDA or MPS falling back to a CPU load) re-pins the CPU dtype fresh rather than inheriting the accelerator's dtype.
 
