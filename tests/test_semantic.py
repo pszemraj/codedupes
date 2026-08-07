@@ -526,6 +526,32 @@ def test_accelerator_nonfinite_output_retries_once_on_cpu(tmp_path: Path, monkey
     assert np.isfinite(embeddings).all()
 
 
+def test_invalid_output_cpu_retry_restarts_at_capped_batch(tmp_path: Path, monkeypatch) -> None:
+    units = extract_arithmetic_units(tmp_path)
+    seen_batches: list[tuple[int, str | None]] = []
+
+    class FlakyAcceleratorModel:
+        device = "cuda"
+
+        def encode(self, texts, **kwargs):
+            seen_batches.append((kwargs.get("batch_size"), kwargs.get("device")))
+            if kwargs.get("device") != "cpu":
+                return np.array([[np.nan, 0.0]] * len(texts), dtype=np.float32)
+            return np.array(
+                [[1.0, 0.0] if i == 0 else [0.0, 1.0] for i in range(len(texts))],
+                dtype=np.float32,
+            )
+
+    monkeypatch.setattr(semantic, "get_model", lambda *args, **kwargs: FlakyAcceleratorModel())
+    monkeypatch.setattr(semantic, "_prepare_semantic_device", lambda *_args, **_kwargs: "cuda")
+    monkeypatch.setattr(semantic, "_validate_explicit_device_request", lambda *_a, **_k: None)
+
+    embeddings = compute_embeddings(units, device="cuda", batch_size=512)
+
+    assert seen_batches == [(512, None), (CPU_FALLBACK_MAX_BATCH_SIZE, "cpu")]
+    assert embeddings.shape == (2, 2)
+
+
 def test_fresh_embeddings_are_renormalized_centrally(tmp_path: Path, monkeypatch) -> None:
     units = extract_arithmetic_units(tmp_path)
 
@@ -1409,6 +1435,19 @@ def test_compute_embeddings_warm_cache_raises_for_explicit_unavailable_device(
         )
 
 
+def test_compute_embeddings_empty_corpus_raises_for_explicit_unavailable_device(
+    tmp_path: Path, monkeypatch
+) -> None:
+    def _raise_unavailable(*_args, **_kwargs):
+        raise SemanticBackendError("mps is not available in this environment")
+
+    monkeypatch.setattr(semantic, "_resolve_semantic_device_request", _raise_unavailable)
+    monkeypatch.setattr(semantic, "get_model", _fail_if_called)
+
+    with pytest.raises(SemanticBackendError):
+        compute_embeddings([], device="mps", cache_scope=tmp_path)
+
+
 def test_find_similar_to_query_warm_cache_raises_for_explicit_unavailable_device(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -1444,6 +1483,68 @@ def test_find_similar_to_query_warm_cache_raises_for_explicit_unavailable_device
             device="cuda",
             cache_scope=tmp_path,
         )
+
+
+def test_warm_cache_returns_with_unset_fraction_restore_managed_mps_cap(
+    tmp_path: Path, monkeypatch
+) -> None:
+    units = _warm_corpus_cache(tmp_path, monkeypatch)
+    embeddings = np.array([[1.0, 0.0], [0.0, 1.0]], dtype=np.float32)
+    find_similar_to_query(
+        "find addition",
+        units,
+        embeddings,
+        model_name="gte-modernbert-base",
+        revision=_FULL_REVISION,
+        device="cpu",
+        cache_scope=tmp_path,
+    )
+
+    restore_calls: list[bool] = []
+    monkeypatch.setattr(
+        semantic,
+        "restore_mps_memory_fraction_if_managed",
+        lambda: restore_calls.append(True),
+    )
+    monkeypatch.setattr(semantic, "get_model", _fail_if_called)
+    monkeypatch.setattr(semantic, "_prepare_semantic_device", _fail_if_called)
+
+    # Fully cache-covered corpus run: the warm return must still restore a
+    # previously managed allocator cap when this run leaves the fraction unset.
+    compute_embeddings(
+        units,
+        model_name="gte-modernbert-base",
+        revision=_FULL_REVISION,
+        device="cpu",
+        cache_scope=tmp_path,
+    )
+    assert restore_calls == [True]
+
+    # Warm query hit: same contract on the search path.
+    restore_calls.clear()
+    find_similar_to_query(
+        "find addition",
+        units,
+        embeddings,
+        model_name="gte-modernbert-base",
+        revision=_FULL_REVISION,
+        device="cpu",
+        cache_scope=tmp_path,
+    )
+    assert restore_calls == [True]
+
+    # A run that requests its own fraction is not "unset": the warm corpus
+    # return must leave cap management to the next real device preparation.
+    restore_calls.clear()
+    compute_embeddings(
+        units,
+        model_name="gte-modernbert-base",
+        revision=_FULL_REVISION,
+        device="cpu",
+        mps_memory_fraction=0.9,
+        cache_scope=tmp_path,
+    )
+    assert restore_calls == []
 
 
 def test_query_embedding_cache_put_is_fifo_capped(tmp_path: Path, monkeypatch) -> None:

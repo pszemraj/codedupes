@@ -18,7 +18,11 @@ import pytest
 from codedupes import embedding_cache, semantic
 from codedupes.embedding_cache import EmbeddingCache
 from codedupes.models import CodeUnit
-from codedupes.semantic import compute_embeddings, find_similar_to_query
+from codedupes.semantic import (
+    compute_embeddings,
+    compute_embeddings_with_identity,
+    find_similar_to_query,
+)
 from tests.conftest import extract_units
 
 REVISION_1 = "1" * 40
@@ -795,6 +799,70 @@ def test_loose_branch_move_purges_shard_and_aborts_search(tmp_path, monkeypatch)
     # The purge emptied the shard, so reindexing re-embeds everything under b.
     compute_embeddings(units, model_name="drift-model", revision="main", cache_scope=tmp_path)
     assert len(model.encode_calls[-1]) == len(units)
+
+
+def test_republished_shard_query_hit_never_reaches_stale_corpus(tmp_path, monkeypatch):
+    """A warm query hit must carry the corpus's checkpoint, not just its dimension.
+
+    A concurrent process can purge and republish the label shard under a new
+    commit while a long-lived analyzer still holds the old-commit matrix in
+    memory; the republished shard is internally coherent, so only the corpus
+    identity's recorded source commit can refuse the comparison.
+    """
+    units = _five_units(tmp_path)
+    model = CountingModel()
+    _patch_get_model(monkeypatch, model)
+    monkeypatch.setattr(semantic, "_get_loaded_model_commit_hash", lambda _model: "a" * 40)
+
+    embeddings, identity = compute_embeddings_with_identity(
+        units, model_name="drift-model", revision="main", cache_scope=tmp_path
+    )
+    assert identity.source_commit == "a" * 40
+    find_similar_to_query(
+        "find addition",
+        units,
+        embeddings,
+        model_name="drift-model",
+        revision="main",
+        cache_scope=tmp_path,
+        corpus_identity=identity,
+    )
+
+    # A concurrent process loads commit b, purges the drifted shard, and
+    # republishes everything - code rows and the same query vector - under b.
+    monkeypatch.setattr(semantic, "_get_loaded_model_commit_hash", lambda _model: "b" * 40)
+    cache = embedding_cache.get_embedding_cache()
+    assert cache is not None
+    canonical = semantic.resolve_model_profile("drift-model").canonical_name
+    assert cache.confirm_source_commit(tmp_path, canonical, "main", "b" * 40) is False
+    fresh_embeddings, fresh_identity = compute_embeddings_with_identity(
+        units, model_name="drift-model", revision="main", cache_scope=tmp_path
+    )
+    assert fresh_identity.source_commit == "b" * 40
+    find_similar_to_query(
+        "find addition",
+        units,
+        fresh_embeddings,
+        model_name="drift-model",
+        revision="main",
+        cache_scope=tmp_path,
+        corpus_identity=fresh_identity,
+    )
+
+    # Provenance is metadata, not identity: the label-keyed coordinate-system
+    # policy is unchanged, so only the source-commit comparison stands between
+    # the commit-b query vector and the commit-a matrix.
+    assert fresh_identity == identity
+    with pytest.raises(RuntimeError, match="moved to a different commit"):
+        find_similar_to_query(
+            "find addition",
+            units,
+            embeddings,
+            model_name="drift-model",
+            revision="main",
+            cache_scope=tmp_path,
+            corpus_identity=identity,
+        )
 
 
 def test_loose_corpus_writes_stamp_the_loaded_commit(tmp_path, monkeypatch):

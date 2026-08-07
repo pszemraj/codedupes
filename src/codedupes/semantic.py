@@ -13,7 +13,7 @@ import sys
 import textwrap
 import threading
 from collections.abc import Callable, Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from importlib import metadata as importlib_metadata
 from pathlib import Path
 from typing import Any, Literal, TypeVar, cast
@@ -154,11 +154,20 @@ class EncodePlan:
 
 @dataclass(frozen=True)
 class EmbeddingSpaceIdentity:
-    """Identity of the coordinate system used for one corpus matrix."""
+    """Identity of the coordinate system used for one corpus matrix.
+
+    ``source_commit`` is provenance metadata, not identity: it records the
+    checkpoint commit a mutable-label (loose-keyed) corpus's vectors derive
+    from, so a later query can refuse to compare against a shard snapshot from
+    a different checkpoint. It is excluded from equality because the identity
+    comparison answers "same coordinate-system policy", which a branch label
+    keys by label, not by commit.
+    """
 
     model_name: str
     resolved_revision: str | None
     runtime_variant: str
+    source_commit: str | None = field(default=None, compare=False)
 
 
 def _resolve_encode_plan(
@@ -1139,6 +1148,7 @@ def _build_embedding_space_identity(
     mps_fallback: bool | None,
     trust_remote_code: bool,
     resolved_device: str | None = None,
+    source_commit: str | None = None,
 ) -> EmbeddingSpaceIdentity:
     """Build one corpus identity from already resolved embedding inputs.
 
@@ -1149,6 +1159,8 @@ def _build_embedding_space_identity(
     :param mps_fallback: MPS unsupported-op CPU fallback behavior.
     :param trust_remote_code: Resolved remote-code trust setting.
     :param resolved_device: Already resolved execution target, when available.
+    :param source_commit: Checkpoint commit a mutable-label corpus's vectors
+        derive from, when known.
     :return: Complete embedding-space identity.
     """
     return EmbeddingSpaceIdentity(
@@ -1162,6 +1174,7 @@ def _build_embedding_space_identity(
             trust_remote_code=trust_remote_code,
             resolved_device=resolved_device,
         ),
+        source_commit=source_commit,
     )
 
 
@@ -2409,7 +2422,8 @@ def _encode_with_retries(
 
     Recovery first halves the batch until one item remains. Accelerator OOM at
     batch size one then moves the cached model to CPU exactly once, restarting from
-    the requested batch size capped at ``CPU_FALLBACK_MAX_BATCH_SIZE``. OOM
+    the requested batch size capped at ``CPU_FALLBACK_MAX_BATCH_SIZE``; a retryable
+    invalid-output CPU fallback restarts from the same capped size. OOM
     traceback references are detached before
     synchronization/garbage collection so temporary tensors do not remain live
     during allocator cleanup.
@@ -2489,16 +2503,22 @@ def _encode_with_retries(
                 )
                 if not retry_on_cpu:
                     raise
+                # Same cap as the accelerator-OOM CPU restart below: a host OOM
+                # can be an uncatchable OOM-killer SIGKILL, so an
+                # accelerator-sized requested batch must not carry over here
+                # either.
+                cpu_retry_batch_size = min(max(1, batch_size), CPU_FALLBACK_MAX_BATCH_SIZE)
                 logger.warning(
                     f"{active_device.upper()} produced invalid embedding values during {stage} "
-                    f"({exc}); clearing the allocator cache and retrying once on CPU"
+                    f"({exc}); clearing the allocator cache and retrying once on CPU "
+                    f"from batch_size={cpu_retry_batch_size}"
                 )
                 del result
                 clear_device_cache(active_device, synchronize=True, collect=True)
                 _move_model_to_cpu(model)
                 active_device = "cpu"
                 attempted_cpu_fallback = True
-                current_batch_size = max(1, batch_size)
+                current_batch_size = cpu_retry_batch_size
                 continue
 
         # This block runs outside the exception handler so the original traceback
@@ -2585,10 +2605,16 @@ def _compute_embeddings_unlocked(
     :return: Normalized embedding matrix and its effective vector-space identity.
     :raises ValueError: If ``batch_size`` is not positive.
     :raises SemanticBackendError: If an explicitly requested device is unavailable,
-        even when every embedding is already cached.
+        even when the corpus is empty or every embedding is already cached.
     """
     if batch_size <= 0:
         raise ValueError("batch_size must be > 0")
+
+    # Before the empty-corpus return: an explicit unavailable --device must be
+    # an error even when there is nothing to embed, matching the contract
+    # enforced for warm and nonempty corpora (see find_similar_code).
+    _validate_explicit_device_request(device, mps_fallback=mps_fallback)
+
     if not units:
         return np.zeros((0, 0), dtype=np.float32), resolve_embedding_space_identity(
             model_name=model_name,
@@ -2601,8 +2627,6 @@ def _compute_embeddings_unlocked(
             persist_local_model_manifest=use_cache and cache_scope is not None,
             strict_revision_cache=strict_revision_cache,
         )
-
-    _validate_explicit_device_request(device, mps_fallback=mps_fallback)
 
     profile = resolve_model_profile(model_name)
     resolved_task = normalize_semantic_task(
@@ -2626,12 +2650,15 @@ def _compute_embeddings_unlocked(
         effective_device: str,
         resolved_identity_revision: str | None = identity_revision,
         concrete_device: str | None = None,
+        source_commit: str | None = None,
     ) -> EmbeddingSpaceIdentity:
         """Build the identity for the policy that produced the returned matrix.
 
         :param effective_device: Device policy used for every matrix row.
         :param resolved_identity_revision: Concrete revision/fingerprint for the rows.
         :param concrete_device: Already resolved execution target, when available.
+        :param source_commit: Checkpoint commit every matrix row derives from,
+            when known for a mutable-label revision.
         :return: Effective corpus embedding-space identity.
         """
         return _build_embedding_space_identity(
@@ -2642,6 +2669,7 @@ def _compute_embeddings_unlocked(
             mps_fallback=mps_fallback,
             trust_remote_code=resolved_trust_remote_code,
             resolved_device=concrete_device,
+            source_commit=source_commit,
         )
 
     def _restart_faithfully_on_cpu(reason: str) -> tuple[np.ndarray, EmbeddingSpaceIdentity]:
@@ -2741,9 +2769,19 @@ def _compute_embeddings_unlocked(
     # Duplicate code units share one cache key, so compare against the covered
     # keys rather than the unique-hit count: len(hits) undercounts coverage.
     if cache_keys is not None and all(key in hits for key in cache_keys):
+        if mps_memory_fraction is None:
+            # This warm return skips _prepare_semantic_device, the only other
+            # path that restores the process-global allocator baseline, but the
+            # documented contract still applies: a run whose configuration
+            # leaves the fraction unset must not inherit an earlier managed cap
+            # (no-op unless one is currently managed).
+            restore_mps_memory_fraction_if_managed()
+        # The hits all came from one shard snapshot, so its recorded commit is
+        # the provenance of every matrix row this warm return assembles.
         return _assemble_cached_matrix(cache_keys, hits), _effective_identity(
             device,
             cache_revision,
+            source_commit=hit_source_commit,
         )
 
     resolved_revision = _resolve_load_revision(model_name, revision)
@@ -2801,6 +2839,7 @@ def _compute_embeddings_unlocked(
                     device,
                     confirmed_revision,
                     resolved_device,
+                    source_commit=hit_source_commit,
                 )
 
     corpus_source_commit: str | None = None
@@ -2953,7 +2992,9 @@ def _compute_embeddings_unlocked(
             expected_source_commit=corpus_source_commit,
         )
 
-    return matrix, _effective_identity(device, identity_revision, resolved_device)
+    return matrix, _effective_identity(
+        device, identity_revision, resolved_device, source_commit=corpus_source_commit
+    )
 
 
 def compute_embeddings_with_identity(
@@ -3204,7 +3245,9 @@ def _find_similar_to_query_unlocked(
     :param cache_scope: Analyzed corpus root path used to address the cache shard;
         ``None`` disables caching for this call regardless of ``use_cache``.
     :param corpus_identity: Optional identity captured with ``embeddings``; when
-        provided, model/revision/runtime drift requires rebuilding the corpus.
+        provided, model/revision/runtime drift requires rebuilding the corpus,
+        and its recorded source commit rejects mutable-label query vectors -
+        cached or freshly encoded - from any other checkpoint.
     :param strict_revision_cache: Whether an unpinned hub revision resolves to a
         concrete commit hash (disabling caching when unmappable) instead of the
         requested revision label, defaults to ``False``. Must match the mode
@@ -3286,10 +3329,41 @@ def _find_similar_to_query_unlocked(
             return None
         return candidate
 
+    corpus_source_commit = corpus_identity.source_commit if corpus_identity is not None else None
+
     query_embedding: np.ndarray | None = None
     if cache_key is not None:
-        hit = cache.get_many(cache_scope, profile.canonical_name, cache_revision, [cache_key])
-        query_embedding = _validated_query_hit(hit.get(cache_key))
+        lookup = cache.get_many_with_provenance(
+            cache_scope, profile.canonical_name, cache_revision, [cache_key]
+        )
+        query_embedding = _validated_query_hit(lookup.vectors.get(cache_key))
+        if (
+            query_embedding is not None
+            and corpus_source_commit is not None
+            and _revision_is_mutable_label(model_name, cache_revision)
+            and lookup.source_commit != corpus_source_commit
+        ):
+            # A concurrent run can purge and republish this shard under a new
+            # checkpoint between corpus assembly and this warm hit; the hit's
+            # own snapshot provenance is the only proof it shares the corpus
+            # matrix's coordinate system.
+            snapshot = (
+                f"commit {lookup.source_commit[:12]}"
+                if lookup.source_commit
+                else "an unstamped shard"
+            )
+            logger.warning(
+                f"Discarding a cached query embedding read from {snapshot}: the corpus "
+                f"matrix derives from commit {corpus_source_commit[:12]}, and a vector "
+                "from another checkpoint must never reach the dot product."
+            )
+            query_embedding = None
+
+    if query_embedding is not None and (mps_memory_fraction is None or embedding_device == "cpu"):
+        # A warm query hit skips _prepare_semantic_device; same allocator
+        # contract as the warm corpus return: an effectively unset fraction
+        # must not inherit an earlier managed cap.
+        restore_mps_memory_fraction_if_managed()
 
     if query_embedding is None:
         resolved_revision = _resolve_load_revision(model_name, revision)
@@ -3331,6 +3405,17 @@ def _find_similar_to_query_unlocked(
             loaded_commit = _get_loaded_model_commit_hash(model)
             if loaded_commit is not None:
                 query_source_commit = loaded_commit
+                if corpus_source_commit is not None and loaded_commit != corpus_source_commit:
+                    # The shard alone cannot prove this: a republished shard
+                    # can already be coherent with the newly loaded commit
+                    # while the in-memory corpus matrix still derives from the
+                    # old one.
+                    raise RuntimeError(
+                        f"Model branch {cache_revision!r} moved to a different commit since "
+                        f"this corpus was indexed (corpus {corpus_source_commit[:12]}, "
+                        f"loaded {loaded_commit[:12]}). Run index() or analyze() again "
+                        "before search()."
+                    )
                 if not cache.confirm_source_commit(
                     cache_scope, profile.canonical_name, cache_revision, loaded_commit
                 ):

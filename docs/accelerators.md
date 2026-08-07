@@ -18,7 +18,7 @@ codedupes search ./src "normalize request payload" --device mps
 2. MPS when the MPS backend is available
 3. CPU
 
-An explicit unavailable accelerator is an error. `codedupes` does not silently reinterpret `--device mps` as CPU, and the check applies even when a warm embedding cache makes inference unnecessary. The only automatic CPU transitions are the documented unsupported-op and out-of-memory recovery paths below.
+An explicit unavailable accelerator is an error. `codedupes` does not silently reinterpret `--device mps` as CPU, and the check applies even when a warm embedding cache makes inference unnecessary or extraction finds no semantic units to embed. The only automatic CPU transitions are the documented unsupported-op and out-of-memory recovery paths below.
 
 ## Unsupported MPS operators
 
@@ -41,7 +41,7 @@ No allocator cap is imposed by default. On memory-constrained systems, start wit
 codedupes check ./src --device mps --mps-memory-fraction 0.9
 ```
 
-The option calls `torch.mps.set_per_process_memory_fraction()` and accepts `(0, 2]`. `codedupes` rejects `0` because PyTorch defines it as unlimited allocation, which can permit a system-wide OOM. Values above `1` are accepted for parity with PyTorch but emit a warning because they exceed the device-recommended working-set size. A cap can cause an earlier, controlled OOM; it is not a performance setting. The setting is process-global: after codedupes applies a custom cap, the next MPS run whose configuration leaves the option unset restores the allocator baseline captured from `PYTORCH_MPS_HIGH_WATERMARK_RATIO`, or PyTorch's `1.7` default when the environment is unset. `clear_model_cache()` releases weights but does not itself change allocator policy.
+The option calls `torch.mps.set_per_process_memory_fraction()` and accepts `(0, 2]`. `codedupes` rejects `0` because PyTorch defines it as unlimited allocation, which can permit a system-wide OOM. Values above `1` are accepted for parity with PyTorch but emit a warning because they exceed the device-recommended working-set size. A cap can cause an earlier, controlled OOM; it is not a performance setting. The setting is process-global: after codedupes applies a custom cap, the next run whose configuration leaves the option unset restores the allocator baseline captured from `PYTORCH_MPS_HIGH_WATERMARK_RATIO`, or PyTorch's `1.7` default when the environment is unset - including fully cache-covered runs and warm query hits, which never prepare a device. `clear_model_cache()` releases weights but does not itself change allocator policy.
 
 Inference OOM recovery is deterministic. An MPS `Invalid buffer size` failure - a single tensor above Metal's per-buffer cap, raised without any "out of memory" phrase - classifies as MPS OOM and recovers through the same ladder:
 
