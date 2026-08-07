@@ -9,6 +9,7 @@ state, so nothing here simulates MPS.
 
 from __future__ import annotations
 
+import logging
 import math
 
 import pytest
@@ -138,6 +139,42 @@ def test_explicit_cuda_request_fails_for_real_without_cuda() -> None:
 def test_mps_memory_fraction_rejected_for_non_mps_device() -> None:
     with pytest.raises(DeviceConfigurationError, match="did not resolve to MPS"):
         devices.configure_mps_memory_fraction("cpu", 0.8)
+
+
+def test_resolve_mps_memory_fraction_restore_value_defaults_without_env_override(
+    monkeypatch,
+) -> None:
+    monkeypatch.delenv("PYTORCH_MPS_HIGH_WATERMARK_RATIO", raising=False)
+
+    assert (
+        devices._resolve_mps_memory_fraction_restore_value()
+        == devices._PYTORCH_DEFAULT_MPS_HIGH_WATERMARK_RATIO
+    )
+
+
+@pytest.mark.parametrize("raw, expected", [("1.2", 1.2), ("0.0", 0.0), ("2.0", 2.0)])
+def test_resolve_mps_memory_fraction_restore_value_captures_valid_env_override(
+    monkeypatch, raw: str, expected: float
+) -> None:
+    # 0.0 and 2.0 are captured verbatim here even though validate_mps_memory_fraction
+    # rejects both: this helper only recovers PyTorch's own baseline and does not
+    # re-apply codedupes' narrower (0.0, 2.0] safety interval to it.
+    monkeypatch.setenv("PYTORCH_MPS_HIGH_WATERMARK_RATIO", raw)
+
+    assert devices._resolve_mps_memory_fraction_restore_value() == expected
+
+
+@pytest.mark.parametrize("raw", ["not-a-number", "-0.1", "2.1", "nan", "inf"])
+def test_resolve_mps_memory_fraction_restore_value_falls_back_on_invalid_env_value(
+    monkeypatch, caplog, raw: str
+) -> None:
+    monkeypatch.setenv("PYTORCH_MPS_HIGH_WATERMARK_RATIO", raw)
+
+    with caplog.at_level(logging.WARNING, logger="codedupes.devices"):
+        result = devices._resolve_mps_memory_fraction_restore_value()
+
+    assert result == devices._PYTORCH_DEFAULT_MPS_HIGH_WATERMARK_RATIO
+    assert "Ignoring invalid PYTORCH_MPS_HIGH_WATERMARK_RATIO" in caplog.text
 
 
 def test_cpu_bf16_capability_matches_live_isa_and_mkldnn_conjunction() -> None:

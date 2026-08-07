@@ -134,24 +134,26 @@ def resolve_cache_dir() -> Path:
 def _resolve_max_bytes() -> int:
     """Resolve the opportunistic cache size cap in bytes.
 
-    ``0`` and negative values are rejected the same way an unparsable value is,
-    rather than clamped up to a minimum 1 MB: silently substituting a thrashing
-    1 MB cache for a value that looks like an attempt to disable the cap would
+    ``0``, negative, and sub-1-MB fractional values (for example ``"0.5"``) are
+    all rejected the same way an unparsable value is, rather than clamped up
+    to a minimum 1 MB: silently substituting a thrashing 1 MB cache for a
+    value that looks like an attempt to disable the cap, or a typo, would
     surprise the caller, and there is no supported way to disable the cap via
     this variable (use ``CODEDUPES_NO_CACHE`` instead).
 
     :return: Size cap in bytes from ``CODEDUPES_CACHE_MAX_MB``, defaulting to
-        ``DEFAULT_CACHE_MAX_MB`` megabytes when unset, unparsable, or not a
-        positive number.
+        ``DEFAULT_CACHE_MAX_MB`` megabytes when unset, unparsable, or less than
+        1 MB; values at or above 1 MB are floored to a whole number of
+        megabytes.
     """
     global _warned_invalid_cache_max_mb
     raw = os.environ.get("CODEDUPES_CACHE_MAX_MB")
     if raw:
         try:
             value = float(raw)
-            if not math.isfinite(value) or value <= 0:
+            if not math.isfinite(value) or value < 1:
                 raise ValueError
-            return max(1, int(value)) * 1024 * 1024
+            return int(value) * 1024 * 1024
         except (OverflowError, ValueError):
             if not _warned_invalid_cache_max_mb:
                 _warned_invalid_cache_max_mb = True
@@ -1406,6 +1408,13 @@ class EmbeddingCache:
 
     def clear(self, model: str | None = None) -> int:
         """Delete cached embeddings, optionally scoped to one canonical model.
+
+        When ``model`` is given, a shard whose ``index.json`` cannot be read or
+        parsed is skipped rather than deleted, since its recorded model name is
+        unknown and cannot be matched against the filter; a corrupt shard for
+        the targeted model can therefore survive a scoped clear. A full
+        unscoped ``clear()`` (``model=None``) does not consult per-shard
+        metadata to decide whether to delete, so it still removes such shards.
 
         :param model: Canonical model name to scope deletion to, or ``None`` to
             clear every shard across every repo plus local-model digest manifests.

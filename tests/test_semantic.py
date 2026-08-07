@@ -418,6 +418,47 @@ def test_find_semantic_duplicates_ignores_nan_similarity(tmp_path: Path) -> None
     assert duplicates == []
 
 
+def test_find_semantic_duplicates_rejects_nan_and_inf_but_keeps_finite_pair(
+    tmp_path: Path,
+) -> None:
+    # Rounds out the isfinite guard's coverage (see the comment above the
+    # pair loop in find_semantic_duplicates): both a NaN similarity and a
+    # +inf similarity must be dropped, and neither should suppress a genuine
+    # finite above-threshold pair computed in the same run.
+    units = extract_units(
+        tmp_path,
+        """
+        def first(x):
+            return x + 1
+
+        def second(x):
+            return x + 2
+
+        def third(x):
+            return x + 3
+
+        def fourth(x):
+            return x + 4
+        """,
+    )
+    embeddings = np.array(
+        [
+            [np.nan, 0.0],  # first: every pair involving this row is NaN.
+            [1.0, 0.0],  # second
+            [1.0, 0.0],  # third: (second, third) is a legitimate finite pair.
+            [np.inf, 0.0],  # fourth: every pair involving this row is +inf.
+        ],
+        dtype=np.float32,
+    )
+
+    duplicates = find_semantic_duplicates(units, embeddings, threshold=0.9)
+
+    assert len(duplicates) == 1
+    kept = duplicates[0]
+    assert {kept.unit_a.name, kept.unit_b.name} == {"second", "third"}
+    assert kept.similarity == pytest.approx(1.0)
+
+
 def test_compute_embeddings_rejects_nonfinite_model_output(tmp_path: Path, monkeypatch) -> None:
     units = extract_arithmetic_units(tmp_path)
 
@@ -714,36 +755,39 @@ def test_get_model_passes_revision_and_trust_options(
     )
     semantic.clear_model_cache()
 
-    semantic.get_model(
-        "sentence-transformers/all-MiniLM-L6-v2",
-        revision=revision,
-        trust_remote_code=trust_remote_code,
-    )
+    try:
+        semantic.get_model(
+            "sentence-transformers/all-MiniLM-L6-v2",
+            revision=revision,
+            trust_remote_code=trust_remote_code,
+        )
 
-    assert len(calls) == 1
-    kwargs = calls[0]["kwargs"]
-    expected_trust = trust_remote_code is True
-    assert kwargs["trust_remote_code"] is expected_trust
+        assert len(calls) == 1
+        kwargs = calls[0]["kwargs"]
+        expected_trust = trust_remote_code is True
+        assert kwargs["trust_remote_code"] is expected_trust
 
-    # Every load pins an explicit dtype so checkpoint-declared float16 configs
-    # cannot leak into inference (transformers 5 defaults dtype="auto").
-    assert kwargs["model_kwargs"]["dtype"] is torch.float32
+        # Every load pins an explicit dtype so checkpoint-declared float16 configs
+        # cannot leak into inference (transformers 5 defaults dtype="auto").
+        assert kwargs["model_kwargs"]["dtype"] is torch.float32
 
-    if revision is None:
-        assert "revision" not in kwargs
-        assert kwargs["model_kwargs"] == {"dtype": torch.float32}
-        assert "processor_kwargs" not in kwargs
-        assert "config_kwargs" not in kwargs
-        return
+        if revision is None:
+            assert "revision" not in kwargs
+            assert kwargs["model_kwargs"] == {"dtype": torch.float32}
+            assert "processor_kwargs" not in kwargs
+            assert "config_kwargs" not in kwargs
+            return
 
-    assert kwargs["revision"] == revision
-    for nested_name in ("model_kwargs", "processor_kwargs", "config_kwargs"):
-        nested = kwargs[nested_name]
-        assert nested["revision"] == revision
-        if expected_trust:
-            assert nested["trust_remote_code"] is True
-        else:
-            assert "trust_remote_code" not in nested
+        assert kwargs["revision"] == revision
+        for nested_name in ("model_kwargs", "processor_kwargs", "config_kwargs"):
+            nested = kwargs[nested_name]
+            assert nested["revision"] == revision
+            if expected_trust:
+                assert nested["trust_remote_code"] is True
+            else:
+                assert "trust_remote_code" not in nested
+    finally:
+        semantic.clear_model_cache()
 
 
 def test_constructor_kwargs_bind_to_real_sentence_transformer_signature() -> None:
@@ -776,19 +820,22 @@ def test_get_model_loads_local_directory_without_hub_revision(tmp_path: Path, mo
     )
     semantic.clear_model_cache()
 
-    semantic.get_model(str(model_dir), revision="ignored-local-revision")
+    try:
+        semantic.get_model(str(model_dir), revision="ignored-local-revision")
 
-    assert calls == [
-        {
-            "args": (str(model_dir.resolve()),),
-            "kwargs": {
-                "trust_remote_code": False,
-                "device": "cpu",
-                "local_files_only": True,
-                "model_kwargs": {"dtype": torch.float32},
-            },
-        }
-    ]
+        assert calls == [
+            {
+                "args": (str(model_dir.resolve()),),
+                "kwargs": {
+                    "trust_remote_code": False,
+                    "device": "cpu",
+                    "local_files_only": True,
+                    "model_kwargs": {"dtype": torch.float32},
+                },
+            }
+        ]
+    finally:
+        semantic.clear_model_cache()
 
 
 def test_local_model_manifest_persists_only_after_cache_enabled_run(
@@ -859,14 +906,17 @@ def test_get_model_reloads_local_directory_after_weights_change(
     monkeypatch.setattr(sentence_transformers, "SentenceTransformer", FakeSentenceTransformer)
     semantic.clear_model_cache()
 
-    first = semantic.get_model(str(model_dir))
-    unchanged = semantic.get_model(str(model_dir))
-    weights_path.write_text("weights-v2-longer")
-    changed = semantic.get_model(str(model_dir))
+    try:
+        first = semantic.get_model(str(model_dir))
+        unchanged = semantic.get_model(str(model_dir))
+        weights_path.write_text("weights-v2-longer")
+        changed = semantic.get_model(str(model_dir))
 
-    assert first is unchanged
-    assert changed is not first
-    assert loaded_models == [first, changed]
+        assert first is unchanged
+        assert changed is not first
+        assert loaded_models == [first, changed]
+    finally:
+        semantic.clear_model_cache()
 
 
 def test_get_model_reloads_once_when_local_dir_changes_during_load(
@@ -893,13 +943,16 @@ def test_get_model_reloads_once_when_local_dir_changes_during_load(
     )
     semantic.clear_model_cache()
 
-    model = semantic.get_model(str(model_dir))
+    try:
+        model = semantic.get_model(str(model_dir))
 
-    # The first load raced the swap and was discarded; the kept model was
-    # verified against a stable post-swap fingerprint.
-    assert len(loaded_models) == 2
-    assert model is loaded_models[1]
-    assert semantic._model_local_fingerprint == semantic._fingerprint_local_model_dir(model_dir)
+        # The first load raced the swap and was discarded; the kept model was
+        # verified against a stable post-swap fingerprint.
+        assert len(loaded_models) == 2
+        assert model is loaded_models[1]
+        assert semantic._model_local_fingerprint == semantic._fingerprint_local_model_dir(model_dir)
+    finally:
+        semantic.clear_model_cache()
 
 
 def test_get_model_fails_when_local_dir_keeps_changing_during_load(
@@ -1099,6 +1152,48 @@ def test_compute_embeddings_cpu_fallback_retries_once_and_bails_on_persistent_oo
         (2, "cpu"),
         (1, "cpu"),
     ]
+
+
+def test_get_model_load_time_accelerator_oom_falls_back_to_cpu(monkeypatch) -> None:
+    """An OOM raised while constructing the model on an accelerator (not while
+    encoding) must retry the load on CPU rather than propagate.
+
+    Mirrors the encode-time OOM ladder tests above
+    (``test_compute_embeddings_retries_with_reduced_batch_before_cpu`` and
+    ``test_compute_embeddings_cpu_fallback_retries_once_and_bails_on_persistent_oom``),
+    but exercises the model-*load* fallback inside ``_get_model_unlocked``,
+    which previously had no offline coverage.
+    """
+    calls: list[dict] = []
+
+    class LoadTimeOomThenRecoverSentenceTransformer:
+        def __init__(self, *args, **kwargs):
+            calls.append({"args": args, "kwargs": kwargs})
+            if kwargs.get("device") != "cpu":
+                raise RuntimeError("CUDA out of memory. Tried to allocate 20 MiB")
+
+    monkeypatch.setattr(semantic, "_check_semantic_dependencies", lambda: None)
+    monkeypatch.setattr(semantic, "_prepare_semantic_device", lambda *_args, **_kwargs: "cuda")
+    monkeypatch.setattr(
+        sentence_transformers,
+        "SentenceTransformer",
+        LoadTimeOomThenRecoverSentenceTransformer,
+    )
+    semantic.clear_model_cache()
+
+    try:
+        model = semantic.get_model("sentence-transformers/all-MiniLM-L6-v2", device="cuda")
+
+        assert isinstance(model, LoadTimeOomThenRecoverSentenceTransformer)
+        assert [call["kwargs"]["device"] for call in calls] == ["cuda", "cpu"]
+        # The sticky-reuse cache key stays the *requested* device so an
+        # identical later request hits this CPU-fallback instance instead of
+        # retrying the accelerator load; the tracked execution device is what
+        # actually ran the model.
+        assert semantic._model_device_key == "cuda"
+        assert semantic._model_execution_device == "cpu"
+    finally:
+        semantic.clear_model_cache()
 
 
 @pytest.mark.parametrize(

@@ -608,6 +608,67 @@ def test_get_many_with_provenance_returns_the_snapshot_commit(tmp_path):
     assert pinned.source_commit is None
 
 
+def test_get_many_touches_shard_after_interval_elapses(tmp_path, monkeypatch):
+    # _touch_shard feeds LRU eviction ordering: a read hit only refreshes the
+    # shard's recorded last_used_at once it is more than _TOUCH_INTERVAL_SECONDS
+    # stale, throttling index rewrites on a hot read path.
+    fake_time = {"value": 1_000_000.0}
+    monkeypatch.setattr(embedding_cache.time, "time", lambda: fake_time["value"])
+    touch_calls: list[Path] = []
+    original_touch = embedding_cache._touch_shard
+
+    def spying_touch(shard_dir: Path) -> None:
+        touch_calls.append(shard_dir)
+        original_touch(shard_dir)
+
+    monkeypatch.setattr(embedding_cache, "_touch_shard", spying_touch)
+
+    cache = EmbeddingCache()
+    scope = tmp_path / "proj"
+    scope.mkdir()
+    vector = np.array([1.0, 2.0], dtype=np.float32)
+    cache.put_many(scope, "model-a", "rev1", [("key", vector)])
+    shard_dir = cache.shard_dir(scope, "model-a", "rev1")
+    written_meta = embedding_cache._read_shard_meta(shard_dir)
+    assert written_meta is not None
+    assert written_meta["last_used_at"] == fake_time["value"]
+
+    # Advance past the touch interval; the read hit must refresh the stamp.
+    fake_time["value"] += embedding_cache._TOUCH_INTERVAL_SECONDS + 1.0
+    assert "key" in cache.get_many(scope, "model-a", "rev1", ["key"])
+
+    assert touch_calls == [shard_dir]
+    refreshed_meta = embedding_cache._read_shard_meta(shard_dir)
+    assert refreshed_meta is not None
+    assert refreshed_meta["last_used_at"] == fake_time["value"]
+    assert refreshed_meta["last_used_at"] > written_meta["last_used_at"]
+
+
+def test_get_many_skips_touch_within_interval(tmp_path, monkeypatch):
+    fake_time = {"value": 1_000_000.0}
+    monkeypatch.setattr(embedding_cache.time, "time", lambda: fake_time["value"])
+    touch_calls: list[Path] = []
+    monkeypatch.setattr(
+        embedding_cache, "_touch_shard", lambda shard_dir: touch_calls.append(shard_dir)
+    )
+
+    cache = EmbeddingCache()
+    scope = tmp_path / "proj"
+    scope.mkdir()
+    vector = np.array([1.0, 2.0], dtype=np.float32)
+    cache.put_many(scope, "model-a", "rev1", [("key", vector)])
+    shard_dir = cache.shard_dir(scope, "model-a", "rev1")
+
+    # Advance, but stay strictly under the touch interval: no refresh happens.
+    fake_time["value"] += embedding_cache._TOUCH_INTERVAL_SECONDS - 1.0
+    assert "key" in cache.get_many(scope, "model-a", "rev1", ["key"])
+
+    assert touch_calls == []
+    meta = embedding_cache._read_shard_meta(shard_dir)
+    assert meta is not None
+    assert meta["last_used_at"] == 1_000_000.0
+
+
 def test_concurrent_republish_between_lookup_and_load_discards_stale_hits(tmp_path, monkeypatch):
     """Reviewer repro (round 3): partial checkpoint-a hits copied before the model
     load must not survive a concurrent purge-and-republish under checkpoint b, even
@@ -1106,10 +1167,12 @@ def test_size_cap_keeps_failed_deletion_in_total(tmp_path, monkeypatch, caplog):
 
 
 # "invalid" fails float() itself; "nan" passes float() and hits the isfinite
-# rejection — "inf"/"-inf" would exercise that identical branch again. "0" and
-# "-5" pass float() and isfinite but must fall back to the default like any
-# other unparsable value, rather than being clamped up to a thrashing 1 MB cache.
-@pytest.mark.parametrize("value", ["invalid", "nan", "0", "-5"])
+# rejection — "inf"/"-inf" would exercise that identical branch again. "0",
+# "-5", and "0.5" all pass float() and isfinite but must fall back to the
+# default like any other unparsable value, rather than being clamped up to a
+# thrashing 1 MB cache: "0.5" is the fractional-below-1-MB case (reviewer
+# regression — it used to silently clamp to exactly 1 MB instead of rejecting).
+@pytest.mark.parametrize("value", ["invalid", "nan", "0", "-5", "0.5"])
 def test_invalid_size_cap_uses_default(monkeypatch, value: str):
     monkeypatch.setattr(embedding_cache, "_warned_invalid_cache_max_mb", False)
     monkeypatch.setenv("CODEDUPES_CACHE_MAX_MB", value)
@@ -1130,9 +1193,25 @@ def test_non_positive_size_cap_warns_once(monkeypatch, caplog):
     assert caplog.text.count("CODEDUPES_CACHE_MAX_MB") == 1
 
 
-def test_small_positive_size_cap_clamps_to_one_mb_without_warning(monkeypatch, caplog):
+def test_fractional_size_cap_below_one_mb_falls_back_with_warning(monkeypatch, caplog):
+    # Reviewer fix: "0.5" MB used to silently clamp to a thrashing 1 MB cache,
+    # contradicting the docstring's claim that degenerate values are rejected.
+    # It must now be rejected through the same warn-once/fallback path as "0".
     monkeypatch.setattr(embedding_cache, "_warned_invalid_cache_max_mb", False)
     monkeypatch.setenv("CODEDUPES_CACHE_MAX_MB", "0.5")
+
+    with caplog.at_level("WARNING"):
+        max_bytes = embedding_cache._resolve_max_bytes()
+
+    assert max_bytes == embedding_cache.DEFAULT_CACHE_MAX_MB * 1024 * 1024
+    assert "CODEDUPES_CACHE_MAX_MB" in caplog.text
+
+
+def test_one_mb_size_cap_is_the_accepted_boundary(monkeypatch, caplog):
+    # "1" is the smallest value the cap accepts outright: resolves to exactly
+    # 1 MB with no fallback and no warning, unlike "0.5" just below it.
+    monkeypatch.setattr(embedding_cache, "_warned_invalid_cache_max_mb", False)
+    monkeypatch.setenv("CODEDUPES_CACHE_MAX_MB", "1")
 
     with caplog.at_level("WARNING"):
         max_bytes = embedding_cache._resolve_max_bytes()

@@ -2973,9 +2973,11 @@ def find_semantic_duplicates(
             for j in range(global_idx + 1, n):
                 sim = float(similarities[local_idx, j])
 
-                # NaN fails every comparison, so `sim < threshold` alone would
-                # let a corrupted similarity through as a reported duplicate.
-                if not np.isfinite(sim) or sim < threshold:
+                # Threshold first so the common below-threshold pair skips the
+                # numpy scalar call; NaN fails ``<`` and +inf exceeds it, so
+                # both still land on the isfinite guard instead of slipping
+                # through as reported duplicates.
+                if sim < threshold or not np.isfinite(sim):
                     continue
 
                 unit_b = units[j]

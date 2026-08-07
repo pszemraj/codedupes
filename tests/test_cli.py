@@ -1029,14 +1029,21 @@ def test_main_propagates_check_exit_code(monkeypatch, tmp_path):
 
 
 @pytest.mark.parametrize(
-    ("command", "tail_args"),
-    [("check", []), ("search", ["entry"])],
+    ("command", "tail_args", "mps_fallback_flag", "expected_mps_fallback"),
+    [
+        ("check", [], "--no-mps-fallback", False),
+        ("search", ["entry"], "--no-mps-fallback", False),
+        ("check", [], "--mps-fallback", True),
+        ("search", ["entry"], "--mps-fallback", True),
+    ],
 )
 def test_cli_device_controls_pass_through(
     monkeypatch,
     tmp_path,
     command,
     tail_args,
+    mps_fallback_flag,
+    expected_mps_fallback,
 ):
     path = tmp_path / "sample.py"
     path.write_text("def entry():\n    return 1\n")
@@ -1058,7 +1065,7 @@ def test_cli_device_controls_pass_through(
             *tail_args,
             "--device",
             "mps",
-            "--no-mps-fallback",
+            mps_fallback_flag,
             "--mps-memory-fraction",
             "0.8",
         ],
@@ -1067,7 +1074,7 @@ def test_cli_device_controls_pass_through(
     expected_exit = 1 if command == "check" else 0
     assert result.exit_code == expected_exit, result.output
     assert captured[0].device == "mps"
-    assert captured[0].mps_fallback is False
+    assert captured[0].mps_fallback is expected_mps_fallback
     assert captured[0].mps_memory_fraction == 0.8
 
 
