@@ -517,7 +517,7 @@ def test_accelerator_nonfinite_output_retries_once_on_cpu(tmp_path: Path, monkey
 
     monkeypatch.setattr(semantic, "get_model", lambda *args, **kwargs: FlakyAcceleratorModel())
     monkeypatch.setattr(semantic, "_prepare_semantic_device", lambda *_args, **_kwargs: "cuda")
-    monkeypatch.setattr(semantic, "_validate_explicit_device_request", lambda *_a, **_k: None)
+    monkeypatch.setattr(semantic, "validate_explicit_device_request", lambda *_a, **_k: None)
 
     embeddings = compute_embeddings(units, device="cuda")
 
@@ -544,7 +544,7 @@ def test_invalid_output_cpu_retry_restarts_at_capped_batch(tmp_path: Path, monke
 
     monkeypatch.setattr(semantic, "get_model", lambda *args, **kwargs: FlakyAcceleratorModel())
     monkeypatch.setattr(semantic, "_prepare_semantic_device", lambda *_args, **_kwargs: "cuda")
-    monkeypatch.setattr(semantic, "_validate_explicit_device_request", lambda *_a, **_k: None)
+    monkeypatch.setattr(semantic, "validate_explicit_device_request", lambda *_a, **_k: None)
 
     embeddings = compute_embeddings(units, device="cuda", batch_size=512)
 

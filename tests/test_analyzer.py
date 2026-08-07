@@ -1501,6 +1501,39 @@ def test_empty_directory_analysis(tmp_path: Path) -> None:
     assert result.potentially_unused == []
 
 
+def test_empty_extraction_still_validates_explicit_device(tmp_path: Path, monkeypatch) -> None:
+    """An empty corpus must not turn an unavailable explicit device into a success.
+
+    ``analyze()`` returns before the semantic layer runs when extraction finds
+    no units, so the explicit-device contract has to be enforced on that
+    shortcut too; only a combined-mode fallback opt-in may downgrade it.
+    """
+
+    def _raise_unavailable(*_args, **_kwargs):
+        raise SemanticBackendError("mps is not available in this environment")
+
+    def _fail_if_called(*_args, **_kwargs):
+        raise AssertionError("an empty corpus must not reach the semantic backend")
+
+    monkeypatch.setattr(semantic_module, "_resolve_semantic_device_request", _raise_unavailable)
+    monkeypatch.setattr(analyzer_module, "run_semantic_analysis", _fail_if_called)
+    empty_project = tmp_path / "empty"
+    empty_project.mkdir()
+
+    with pytest.raises(SemanticBackendError, match="mps is not available"):
+        CodeAnalyzer(AnalyzerConfig(device="mps")).analyze(empty_project)
+
+    # Opting into combined-mode semantic fallback degrades instead of raising.
+    fallback_result = CodeAnalyzer(
+        AnalyzerConfig(device="mps", allow_semantic_fallback=True)
+    ).analyze(empty_project)
+    assert fallback_result.units == []
+
+    # A device that always has a CPU path stays torch-import-free.
+    monkeypatch.setattr(semantic_module, "_resolve_semantic_device_request", _fail_if_called)
+    assert CodeAnalyzer(AnalyzerConfig(device="auto")).analyze(empty_project).units == []
+
+
 @pytest.mark.parametrize(
     "semantic_error",
     [

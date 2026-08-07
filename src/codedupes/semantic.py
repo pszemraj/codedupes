@@ -1460,7 +1460,7 @@ def _resolve_semantic_device_request(
         raise SemanticBackendError(str(exc)) from exc
 
 
-def _validate_explicit_device_request(
+def validate_explicit_device_request(
     device: str | None,
     *,
     mps_fallback: bool | None,
@@ -1474,6 +1474,10 @@ def _validate_explicit_device_request(
     documented :class:`SemanticBackendError` for an unavailable accelerator even
     when every embedding for this call is already cached: an explicit unavailable
     ``--device`` must always be an error, never a silent cache-driven no-op.
+
+    Public because :class:`~codedupes.analyzer.CodeAnalyzer` returns an empty
+    result without entering this module at all when extraction finds no units,
+    and that path owes the caller the same check.
 
     :param device: Requested device name.
     :param mps_fallback: MPS unsupported-op fallback behavior.
@@ -2613,7 +2617,7 @@ def _compute_embeddings_unlocked(
     # Before the empty-corpus return: an explicit unavailable --device must be
     # an error even when there is nothing to embed, matching the contract
     # enforced for warm and nonempty corpora (see find_similar_code).
-    _validate_explicit_device_request(device, mps_fallback=mps_fallback)
+    validate_explicit_device_request(device, mps_fallback=mps_fallback)
 
     if not units:
         return np.zeros((0, 0), dtype=np.float32), resolve_embedding_space_identity(
@@ -3257,7 +3261,7 @@ def _find_similar_to_query_unlocked(
     :raises SemanticBackendError: If an explicitly requested device is unavailable,
         even when the query embedding is already cached.
     """
-    _validate_explicit_device_request(device, mps_fallback=mps_fallback)
+    validate_explicit_device_request(device, mps_fallback=mps_fallback)
 
     # After the explicit-device contract above: an empty corpus can match
     # nothing, so return before embedding the query (or loading the model).
