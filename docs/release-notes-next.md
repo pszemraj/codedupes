@@ -58,4 +58,6 @@
 
 MPS is validated on real Apple Silicon hardware only; the suite contains no simulated MPS. What `tests/test_semantic_mps.py` exercises, and when it may skip, is described in [Accelerators](accelerators.md#hardware-validation).
 
+CUDA gets the same treatment in `tests/test_semantic_cuda.py`, which runs automatically wherever `torch.cuda.is_available()` is true: native-only bfloat16 selection, cold inference and CPU agreement, real allocator OOM through load-time fallback and the capped batch ladder, coherent float32 rebuild of a keyed-bfloat16 corpus, and the query-side abort before the dot product. This suite is the CUDA release gate; the bfloat16 cases skip on pre-Ampere hardware, where CUDA keys as float32.
+
 For this release the hardware suite passed on an Apple M5 (32 GB unified memory, macOS Tahoe, PyTorch 2.13.0). On the same machine, a full `codedupes check` of this repo ran roughly 38x faster on MPS than on CPU and reported the same duplicate pairs on both devices (raw similarities agree to about 2e-4 - CPU and MPS float32 kernels round differently), and strict `--no-mps-fallback` runs completed without hitting unsupported operators.

@@ -99,6 +99,14 @@ pytest tests/test_semantic_mps.py
 
 The suite loads the pinned default model on `mps`, checks CPU/MPS embedding parity, validates explicit `--device mps` requests against a warm embedding cache, and provokes genuine Metal allocator out-of-memory (by lowering `torch.mps.set_per_process_memory_fraction`) to prove load-time CPU fallback, the batch-halving ladder, and query-encode recovery work on the real allocator. The default model must already be cached locally (any prior `codedupes check` or `hf download` does this).
 
+CUDA behavior is validated the same way, on real GPUs only. `tests/test_semantic_cuda.py` runs automatically wherever `torch.cuda.is_available()` is true and skips otherwise:
+
+```bash
+pytest tests/test_semantic_cuda.py
+```
+
+It covers the five behaviors this documentation advertises for CUDA hosts: bfloat16 is pinned only where `torch.cuda.is_bf16_supported(including_emulation=False)` is true and the loaded model's live parameter dtype agrees; cold CUDA inference completes and tracks CPU within the tolerance its dtype allows; a genuine allocator out-of-memory (provoked by lowering `torch.cuda.set_per_process_memory_fraction`) drives the load-time CPU fallback with a re-pinned CPU dtype, the batch-halving ladder, and the capped CPU restart; a keyed-bfloat16 corpus that lands on CPU rebuilds as one coherent float32 matrix that stays searchable; and a query whose fallback casts it to float32 aborts before the dot product instead of comparing across policies. Tests that require native bfloat16 skip on pre-Ampere hardware, where CUDA keys as float32 and those paths do not exist. The bfloat16 tests are the only CUDA-specific coverage of the dtype re-pin: MPS always resolves float32, so the MPS suite cannot exercise it.
+
 A companion opt-in smoke test validates every built-in profile against the multi-domain probe corpus in `test_fixtures/search_probes/`: every relevant query must surface its expected function at that profile's default search threshold and every off-topic query must return nothing:
 
 ```bash
