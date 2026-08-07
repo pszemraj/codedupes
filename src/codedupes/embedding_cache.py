@@ -22,7 +22,7 @@ import re
 import shutil
 import time
 import uuid
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator, MutableMapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -52,7 +52,13 @@ _warned_invalid_cache_max_mb = False
 
 @dataclass
 class _ShardData:
-    """Validated vector shard loaded from one immutable generation."""
+    """Validated vector shard loaded from one immutable generation.
+
+    ``keys``, ``namespaces``, and ``digests`` must always agree on membership
+    (same key set) and stay in row-bounds with ``vectors``; the mutation
+    methods below are the only sanctioned way to change any of the three
+    together, so a caller can never advance one without the others.
+    """
 
     vectors: np.ndarray
     keys: dict[str, int]
@@ -61,6 +67,92 @@ class _ShardData:
     last_used_at: float
     generation: str
     source_commit: str | None
+
+    def overwrite_rows(self, entries: Sequence[tuple[str, np.ndarray]], namespace: str) -> None:
+        """Heal existing rows in place, keeping keys/namespaces/digests atomic.
+
+        :param entries: ``(key, vector)`` pairs; every ``key`` must already
+            have a row in :attr:`keys`.
+        :param namespace: Namespace label to stamp on every healed key.
+        :return: ``None``.
+        """
+        if not entries:
+            return
+        if not self.vectors.flags.writeable:
+            # ``self.vectors`` may still be the read-only mmap a loaded shard
+            # was returned with; healing rows in place requires an owned copy.
+            self.vectors = np.array(self.vectors, dtype=np.float32, copy=True)
+        dim = self.vectors.shape[1]
+        for key, vector in entries:
+            row = self.keys[key]
+            healed = np.ascontiguousarray(vector, dtype=np.float32).reshape(dim)
+            self.vectors[row] = healed
+            self.namespaces[key] = namespace
+            self.digests[key] = _row_digest(healed)
+
+    def append_rows(self, entries: Sequence[tuple[str, np.ndarray]], namespace: str) -> None:
+        """Append new rows, keeping keys/namespaces/digests atomic and densely numbered.
+
+        :param entries: ``(key, vector)`` pairs; every ``key`` must be absent
+            from :attr:`keys`.
+        :param namespace: Namespace label to stamp on every appended key.
+        :return: ``None``.
+        """
+        if not entries:
+            return
+        dim = self.vectors.shape[1]
+        start_row = self.vectors.shape[0]
+        new_rows = np.stack(
+            [
+                np.ascontiguousarray(vector, dtype=np.float32).reshape(dim)
+                for _key, vector in entries
+            ],
+            axis=0,
+        )
+        self.vectors = np.concatenate([self.vectors, new_rows], axis=0)
+        for offset, (key, _vector) in enumerate(entries):
+            self.keys[key] = start_row + offset
+            self.namespaces[key] = namespace
+            self.digests[key] = _row_digest(new_rows[offset])
+
+    def retain(self, retained_keys: list[str]) -> None:
+        """Rebuild vectors/keys/namespaces/digests keeping only the given keys.
+
+        Delegates the matrix compaction itself to
+        :func:`_rebuild_matrix_retaining` and publishes the four results back
+        onto this shard together, so no caller can observe a partially
+        rebuilt shard.
+
+        :param retained_keys: Keys to keep, in their new row order.
+        :return: ``None``.
+        """
+        dim = self.vectors.shape[1]
+        self.vectors, self.keys, self.namespaces, self.digests = _rebuild_matrix_retaining(
+            self.vectors, self.keys, self.namespaces, self.digests, dim, retained_keys
+        )
+
+    def assert_consistent(self) -> None:
+        """Fail loudly when keys/namespaces/digests/vectors have drifted apart.
+
+        Cheap invariant check meant to run at write time (see
+        :func:`_atomic_write_shard`), catching a mutation-path bug before it
+        reaches disk instead of letting it silently degrade to an
+        invalid-shard miss on the next read.
+
+        :raises AssertionError: If the structures disagree on membership, a
+            key references a row outside the matrix, or two keys collide on
+            one row.
+        :return: ``None``.
+        """
+        assert set(self.keys) == set(self.namespaces) == set(self.digests), (
+            "embedding cache shard keys/namespaces/digests diverged"
+        )
+        n_rows = self.vectors.shape[0]
+        rows = list(self.keys.values())
+        assert all(0 <= row < n_rows for row in rows), (
+            "embedding cache shard key references a row outside the vector matrix"
+        )
+        assert len(set(rows)) == len(rows), "embedding cache shard rows are not uniquely assigned"
 
 
 @dataclass(frozen=True)
@@ -83,20 +175,63 @@ def _row_digest(vector: np.ndarray) -> str:
     ).hexdigest()
 
 
-def _warn_once(action: str, exc: Exception) -> None:
+def log_warning_once(
+    namespace: MutableMapping[str, Any],
+    flag_name: str,
+    message: str,
+    *,
+    warning_logger: logging.Logger = logger,
+) -> None:
+    """Log one warning gated by a named boolean flag stored in ``namespace``.
+
+    Generalizes this module's own one-shot warning gate for reuse by other
+    modules. ``namespace`` is typically the caller's own ``globals()``, so the
+    flag stays a real module-level attribute that existing tests can
+    monkeypatch directly (for example ``semantic._warned_mlx_mps_contention =
+    False``), and ``warning_logger`` lets the message keep the calling
+    module's logger name so a caller scoping ``caplog`` to its own logger
+    (``caplog.at_level(..., logger="codedupes.semantic")``) still captures it.
+    Callers passing the same ``(namespace, flag_name)`` pair share one warning
+    budget, so distinct warning categories must use distinct flag names or one
+    would silence the other.
+
+    :param namespace: Mutable mapping holding the named boolean flag, typically
+        a module's ``globals()``.
+    :param flag_name: Name of the boolean flag gating this warning.
+    :param message: Fully formatted warning text to log the first time.
+    :param warning_logger: Logger to emit through; defaults to this module's logger.
+    :return: ``None``.
+    """
+    if namespace[flag_name]:
+        return
+    namespace[flag_name] = True
+    warning_logger.warning(message)
+
+
+def _log_warning_once(flag_name: str, message: str) -> None:
+    """Log one process-wide warning gated by a named module-level flag.
+
+    Thin wrapper around :func:`log_warning_once` bound to this module's own
+    globals and logger, kept for this module's internal call sites.
+
+    :param flag_name: Name of the module-level boolean flag gating this warning.
+    :param message: Fully formatted warning text to log the first time.
+    :return: ``None``.
+    """
+    log_warning_once(globals(), flag_name, message)
+
+
+def warn_once(action: str, exc: Exception) -> None:
     """Log one process-wide warning for a cache failure, then stay quiet.
 
     :param action: Short label identifying the failing cache operation.
     :param exc: Captured exception.
     :return: ``None``.
     """
-    global _warned_cache_error
-    if _warned_cache_error:
-        return
-    _warned_cache_error = True
-    logger.warning(
+    _log_warning_once(
+        "_warned_cache_error",
         f"Embedding cache {action} failed ({type(exc).__name__}: {exc}); "
-        "continuing without cache benefits for this run."
+        "continuing without cache benefits for this run.",
     )
 
 
@@ -146,7 +281,6 @@ def _resolve_max_bytes() -> int:
         1 MB; values at or above 1 MB are floored to a whole number of
         megabytes.
     """
-    global _warned_invalid_cache_max_mb
     raw = os.environ.get("CODEDUPES_CACHE_MAX_MB")
     if raw:
         try:
@@ -155,12 +289,11 @@ def _resolve_max_bytes() -> int:
                 raise ValueError
             return int(value) * 1024 * 1024
         except (OverflowError, ValueError):
-            if not _warned_invalid_cache_max_mb:
-                _warned_invalid_cache_max_mb = True
-                logger.warning(
-                    f"Ignoring CODEDUPES_CACHE_MAX_MB={raw!r} (must be a positive number "
-                    f"of megabytes); using the default {DEFAULT_CACHE_MAX_MB} MB cap."
-                )
+            _log_warning_once(
+                "_warned_invalid_cache_max_mb",
+                f"Ignoring CODEDUPES_CACHE_MAX_MB={raw!r} (must be a positive number "
+                f"of megabytes); using the default {DEFAULT_CACHE_MAX_MB} MB cap.",
+            )
     return DEFAULT_CACHE_MAX_MB * 1024 * 1024
 
 
@@ -356,7 +489,7 @@ def _ensure_managed_directory(path: Path) -> None:
     path.chmod(_CACHE_DIRECTORY_MODE)
 
 
-def _ensure_cache_subdirectory(cache_root: Path, name: str) -> Path:
+def ensure_cache_subdirectory(cache_root: Path, name: str) -> Path:
     """Create a private cache root and one real managed child directory.
 
     The configured root may intentionally be a symlink, so only its target is
@@ -389,7 +522,7 @@ def _ensure_shard_directory(shard_dir: Path) -> None:
     :return: ``None``.
     """
     cache_root = shard_dir.parents[2]
-    repos_dir = _ensure_cache_subdirectory(cache_root, CACHE_SUBDIR)
+    repos_dir = ensure_cache_subdirectory(cache_root, CACHE_SUBDIR)
     if shard_dir.parents[1] != repos_dir:
         raise OSError(f"Cache shard is outside the managed repository directory: {shard_dir}")
     for managed_dir in (shard_dir.parent, shard_dir):
@@ -453,7 +586,7 @@ def _shard_write_lock(shard_dir: Path, *, blocking: bool = False) -> Iterator[bo
     lock_fd: int | None = None
     try:
         lock_path = _shard_lock_path(shard_dir)
-        _ensure_cache_subdirectory(lock_path.parent.parent, LOCKS_SUBDIR)
+        ensure_cache_subdirectory(lock_path.parent.parent, LOCKS_SUBDIR)
         lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, _CACHE_FILE_MODE)
         os.fchmod(lock_fd, _CACHE_FILE_MODE)
         fcntl.flock(lock_fd, lock_flags)
@@ -581,6 +714,31 @@ def _peek_generation(payload: Any) -> str | None:
     return generation
 
 
+def _index_stat_signature(index_path: Path) -> tuple[int, int, int] | None:
+    """Cheaply fingerprint an index file's identity for the shard-read cache.
+
+    :param index_path: Path to one shard's ``index.json``.
+    :return: ``(inode, mtime_ns, size)``, or ``None`` when the file cannot be stat-ed.
+    """
+    try:
+        stat_result = index_path.stat()
+    except OSError:
+        return None
+    return (stat_result.st_ino, stat_result.st_mtime_ns, stat_result.st_size)
+
+
+# Per-process reuse of the last validated snapshot for each shard directory,
+# keyed by its resolved string path. ``os.replace`` (the only way ``index.json``
+# is ever updated - see ``_publish_index``) always targets a fresh inode, so a
+# matching (inode, mtime_ns, size) signature on the *current* index.json proves
+# no writer has replaced it since the cached snapshot was built; a mismatch
+# always falls through to a full re-read. This trades an unbounded-lifetime,
+# one-entry-per-shard dict for skipping a JSON parse + mmap open on every
+# repeated lookup against an unchanged shard, which matters because callers
+# like put_many-driven query-cache misses call _read_shard once per lookup.
+_shard_read_cache: dict[str, tuple[tuple[int, int, int], _ShardData]] = {}
+
+
 def _read_shard(shard_dir: Path) -> _ShardData | None:
     """Load and validate one shard's vectors and key index.
 
@@ -588,13 +746,26 @@ def _read_shard(shard_dir: Path) -> _ShardData | None:
     pointing past the end of its matrix, schema drift, and so on) is treated as an
     empty shard rather than raised, matching the never-fatal cache contract.
 
+    Reuses the last validated snapshot for this shard directory when
+    ``index.json``'s (inode, mtime, size) signature is unchanged since that
+    snapshot was built (see :data:`_shard_read_cache`); any concurrent writer
+    replacing the index is always visible as a signature change before the
+    stale snapshot could be returned.
+
     :param shard_dir: Shard directory to load.
     :return: Validated shard data, or ``None`` when the shard is missing, unreadable,
         internally inconsistent, or replaced by a concurrent writer.
     """
     index_path = shard_dir / INDEX_FILENAME
-    if not _path_exists(index_path):
+    cache_key = str(shard_dir)
+    pre_signature = _index_stat_signature(index_path)
+    if pre_signature is None:
+        _shard_read_cache.pop(cache_key, None)
         return None
+
+    cached = _shard_read_cache.get(cache_key)
+    if cached is not None and cached[0] == pre_signature:
+        return cached[1]
 
     try:
         index = json.loads(index_path.read_text(encoding="utf-8"))
@@ -607,15 +778,17 @@ def _read_shard(shard_dir: Path) -> _ShardData | None:
         vectors = np.load(vectors_path, mmap_mode="r", allow_pickle=False)
         confirmed_index = json.loads(index_path.read_text(encoding="utf-8"))
     except Exception as exc:  # noqa: BLE001 - corrupt on-disk data can fail in many ways
-        _warn_once("read shard", exc)
+        warn_once("read shard", exc)
+        _shard_read_cache.pop(cache_key, None)
         return None
 
     metadata = _validate_shard(confirmed_index, vectors)
     if metadata is None or metadata["generation"] != initial_generation:
-        _warn_once("read shard", ValueError(f"inconsistent shard at {shard_dir}"))
+        warn_once("read shard", ValueError(f"inconsistent shard at {shard_dir}"))
+        _shard_read_cache.pop(cache_key, None)
         return None
 
-    return _ShardData(
+    shard_data = _ShardData(
         vectors=vectors,
         keys=metadata["keys"],
         namespaces=metadata["namespaces"],
@@ -624,6 +797,16 @@ def _read_shard(shard_dir: Path) -> _ShardData | None:
         generation=metadata["generation"],
         source_commit=metadata["source_commit"],
     )
+
+    # Only cache when the index's stat signature is identical before and after
+    # this whole read: any writer racing the read is caught by a signature
+    # change, so a stale snapshot is never published into the cache.
+    post_signature = _index_stat_signature(index_path)
+    if post_signature == pre_signature:
+        _shard_read_cache[cache_key] = (post_signature, shard_data)
+    else:
+        _shard_read_cache.pop(cache_key, None)
+    return shard_data
 
 
 def _reclaim_stale_shard_files(shard_dir: Path, keep: frozenset[Path] = frozenset()) -> None:
@@ -667,6 +850,37 @@ def _reclaim_stale_shard_files(shard_dir: Path, keep: frozenset[Path] = frozense
                 stale_vectors.unlink()
 
 
+def atomic_write_json(path: Path, obj: Any) -> None:
+    """Atomically publish one JSON file via a temp-write-then-replace.
+
+    Writes ``obj`` to a collision-resistant temp path beside ``path`` (created
+    with ``O_EXCL`` so two writers can never share one temp file), then swaps
+    it into place with :func:`os.replace` so readers always see either the
+    prior complete file or the new one, never a partial write. The temp file
+    is best-effort cleaned up if anything raises before the swap.
+
+    :param path: Destination file path; its parent directory must already exist.
+    :param obj: JSON-serializable payload to write.
+    :raises OSError: If the temp file cannot be created, or the payload cannot
+        be serialized or written.
+    :return: ``None``.
+    """
+    tmp_path = path.parent / f"{path.name}{_tmp_suffix()}"
+    try:
+        tmp_fd = os.open(
+            tmp_path,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+            _CACHE_FILE_MODE,
+        )
+        with os.fdopen(tmp_fd, "w", encoding="utf-8") as handle:
+            json.dump(obj, handle)
+        os.replace(tmp_path, path)
+    finally:
+        if _path_exists(tmp_path):
+            with contextlib.suppress(OSError):
+                tmp_path.unlink()
+
+
 def _publish_index(shard_dir: Path, payload: dict[str, Any]) -> None:
     """Atomically replace a shard's ``index.json``, cleaning its tmp file on failure.
 
@@ -674,20 +888,7 @@ def _publish_index(shard_dir: Path, payload: dict[str, Any]) -> None:
     :param payload: JSON-serializable index payload.
     :return: ``None``.
     """
-    index_tmp = shard_dir / f"{INDEX_FILENAME}{_tmp_suffix()}"
-    try:
-        index_fd = os.open(
-            index_tmp,
-            os.O_WRONLY | os.O_CREAT | os.O_EXCL,
-            _CACHE_FILE_MODE,
-        )
-        with os.fdopen(index_fd, "w", encoding="utf-8") as handle:
-            json.dump(payload, handle)
-        os.replace(index_tmp, shard_dir / INDEX_FILENAME)
-    finally:
-        if _path_exists(index_tmp):
-            with contextlib.suppress(OSError):
-                index_tmp.unlink()
+    atomic_write_json(shard_dir / INDEX_FILENAME, payload)
 
 
 def _atomic_write_shard(
@@ -722,8 +923,23 @@ def _atomic_write_shard(
         ``None`` when the revision itself is immutable. Lives inside the atomically
         switched index so provenance can never desynchronize from the generation
         it describes.
+    :raises AssertionError: If ``keys_map``/``namespaces``/``digests`` have
+        drifted apart (see :meth:`_ShardData.assert_consistent`); this is the
+        single choke point every shard publish passes through, so it is
+        where a mutation-path bug fails loudly instead of quietly writing an
+        inconsistent shard that only degrades to a miss on the next read.
     :return: ``None``.
     """
+    _ShardData(
+        vectors=vectors,
+        keys=keys_map,
+        namespaces=namespaces,
+        digests=digests,
+        last_used_at=0.0,
+        generation="",
+        source_commit=source_commit,
+    ).assert_consistent()
+
     _ensure_shard_directory(shard_dir)
     generation = uuid.uuid4().hex
     vectors_filename = _vectors_filename(generation)
@@ -785,7 +1001,7 @@ def _touch_shard(shard_dir: Path) -> None:
             payload["last_used_at"] = time.time()
             _publish_index(shard_dir, payload)
     except OSError as exc:
-        _warn_once("touch shard", exc)
+        warn_once("touch shard", exc)
 
 
 def _rebuild_matrix_retaining(
@@ -886,11 +1102,22 @@ def _write_shard_entries(
             if existing is not None and (
                 entry_dim is None or existing.vectors.shape[1] == entry_dim
             ):
-                vectors = existing.vectors
-                keys_map = existing.keys
-                namespaces = existing.namespaces
-                digests = existing.digests
-                dim = int(vectors.shape[1])
+                dim = int(existing.vectors.shape[1])
+                # existing may be a cached _read_shard snapshot shared with other
+                # callers (see _read_shard's freshness cache): copy the key maps
+                # before mutating so a write can never corrupt a cached read.
+                # existing.vectors itself is only ever replaced wholesale below
+                # (never mutated in place while still possibly aliased), so it is
+                # safe to reuse directly here.
+                working = _ShardData(
+                    vectors=existing.vectors,
+                    keys=dict(existing.keys),
+                    namespaces=dict(existing.namespaces),
+                    digests=dict(existing.digests),
+                    last_used_at=existing.last_used_at,
+                    generation=existing.generation,
+                    source_commit=existing.source_commit,
+                )
                 publish_source_commit = (
                     expected_source_commit
                     if expected_source_commit is not None
@@ -906,10 +1133,15 @@ def _write_shard_entries(
                         f"replacing all {len(existing.keys)} entries in the incompatible shard."
                     )
                 dim = entry_dim
-                vectors = np.empty((0, dim), dtype=np.float32)
-                keys_map = {}
-                namespaces = {}
-                digests = {}
+                working = _ShardData(
+                    vectors=np.empty((0, dim), dtype=np.float32),
+                    keys={},
+                    namespaces={},
+                    digests={},
+                    last_used_at=0.0,
+                    generation="",
+                    source_commit=None,
+                )
                 # Any prior rows are discarded with the incompatible matrix, so
                 # only the incoming batch's provenance describes this generation.
                 publish_source_commit = expected_source_commit
@@ -918,51 +1150,32 @@ def _write_shard_entries(
             missing_entries: list[tuple[str, np.ndarray]] = []
             overwrite_entries: list[tuple[str, np.ndarray]] = []
             for key, vector in unique_entries:
-                row = keys_map.get(key)
+                row = working.keys.get(key)
                 if row is None:
                     missing_entries.append((key, vector))
-                elif not _is_finite_row(vectors[row]) or digests.get(key) != _row_digest(
-                    vectors[row]
-                ):
+                elif not _is_finite_row(working.vectors[row]) or working.digests.get(
+                    key
+                ) != _row_digest(working.vectors[row]):
                     # A poisoned or digest-mismatched stored row is a permanent
                     # miss for get_many (see its matching checks), so a
                     # recomputed value for the same key must overwrite it here
                     # or the unit would re-embed on every future run forever.
                     overwrite_entries.append((key, vector))
 
-            if overwrite_entries:
-                # existing.vectors is a read-only mmap; copy before mutating rows.
-                vectors = np.array(vectors, dtype=np.float32, copy=True)
-                for key, vector in overwrite_entries:
-                    healed = np.ascontiguousarray(vector, dtype=np.float32).reshape(dim)
-                    vectors[keys_map[key]] = healed
-                    namespaces[key] = namespace
-                    digests[key] = _row_digest(healed)
-
-            if missing_entries:
-                start_row = vectors.shape[0]
-                new_rows = np.stack(
-                    [
-                        np.ascontiguousarray(vector, dtype=np.float32).reshape(dim)
-                        for _key, vector in missing_entries
-                    ],
-                    axis=0,
-                )
-                vectors = np.concatenate([vectors, new_rows], axis=0)
-                for offset, (key, _vector) in enumerate(missing_entries):
-                    keys_map[key] = start_row + offset
-                    namespaces[key] = namespace
-                    digests[key] = _row_digest(new_rows[offset])
+            # overwrite_rows/append_rows update vectors/keys/namespaces/digests
+            # together, so the four structures can never observe a partial update.
+            working.overwrite_rows(overwrite_entries, namespace)
+            working.append_rows(missing_entries, namespace)
 
             capped_namespace = False
             if max_namespace_keys is not None:
                 namespace_keys_by_row = sorted(
                     (
                         key
-                        for key, key_namespace in namespaces.items()
+                        for key, key_namespace in working.namespaces.items()
                         if key_namespace == namespace
                     ),
-                    key=keys_map.__getitem__,
+                    key=working.keys.__getitem__,
                 )
                 if len(namespace_keys_by_row) > max_namespace_keys:
                     prune_target = (
@@ -973,12 +1186,10 @@ def _write_shard_entries(
                     drop_count = len(namespace_keys_by_row) - prune_target
                     drop_keys = set(namespace_keys_by_row[:drop_count])
                     retained_keys = sorted(
-                        (key for key in keys_map if key not in drop_keys),
-                        key=keys_map.__getitem__,
+                        (key for key in working.keys if key not in drop_keys),
+                        key=working.keys.__getitem__,
                     )
-                    vectors, keys_map, namespaces, digests = _rebuild_matrix_retaining(
-                        vectors, keys_map, namespaces, digests, dim, retained_keys
-                    )
+                    working.retain(retained_keys)
                     capped_namespace = True
 
             if missing_entries or overwrite_entries or capped_namespace:
@@ -986,15 +1197,15 @@ def _write_shard_entries(
                     shard_dir,
                     canonical_model,
                     revision,
-                    vectors,
-                    keys_map,
-                    namespaces,
-                    digests,
+                    working.vectors,
+                    working.keys,
+                    working.namespaces,
+                    working.digests,
                     dim,
                     publish_source_commit,
                 )
     except Exception as exc:  # noqa: BLE001 - cache writes must never break analysis
-        _warn_once("write shard", exc)
+        warn_once("write shard", exc)
 
 
 def _iter_shard_dirs(repos_dir: Path) -> list[Path]:
@@ -1096,13 +1307,71 @@ def _delete_cache_tree(path: Path, *, action: str) -> bool:
     except FileNotFoundError:
         return False
     except OSError as exc:
-        _warn_once(action, exc)
+        warn_once(action, exc)
         return False
+    # Drop any cached read snapshot promptly (see _shard_read_cache) instead of
+    # waiting for the next _read_shard call's stat mismatch to evict it, so a
+    # deleted shard's mmap file handle is released as soon as it is deleted.
+    _shard_read_cache.pop(str(path), None)
     return True
+
+
+_EVICT_SCAN_INTERVAL_SECONDS = 300.0
+_EVICT_SCAN_BYTES_RATIO = 0.02
+
+# Per-repos_dir throttle state for _should_scan_for_eviction: (last scan time,
+# bytes written since that scan). Keyed by the resolved string path so
+# multiple cache roots in one process (as in the test suite) never share a
+# throttle budget.
+_evict_scan_state: dict[str, tuple[float, int]] = {}
+
+
+def _should_scan_for_eviction(repos_dir: Path, written_bytes: int, max_bytes: int) -> bool:
+    """Decide whether one ``put_many`` call should pay for a full eviction scan.
+
+    ``_maybe_evict`` walks and ``stat()``s every file in every shard, so paying
+    that cost on every ``put_many`` call - as semantic.py does once per
+    single-entry query-cache miss - makes every miss O(total cache size). This
+    gate scans only when it is due: on the first call ever seen for
+    ``repos_dir`` (nothing scanned yet), once ``_EVICT_SCAN_INTERVAL_SECONDS``
+    has elapsed since the last scan, or once accumulated bytes written since
+    the last scan reach ``_EVICT_SCAN_BYTES_RATIO`` of the size cap.
+
+    Trade-off: between scans the cache can grow past its cap by up to
+    whichever bound fires first - roughly ``_EVICT_SCAN_BYTES_RATIO`` of the
+    cap in writes, or ``_EVICT_SCAN_INTERVAL_SECONDS`` of write traffic. The
+    cap is still enforced eventually (every call updates this gate's state, so
+    a burst of small writes cannot postpone a scan forever), just not on every
+    single call. A missed scan only delays eviction, never skips it outright.
+
+    :param repos_dir: Root directory holding all per-repo shard directories;
+        the throttle key.
+    :param written_bytes: Approximate bytes this call is about to write.
+    :param max_bytes: Resolved cache size cap in bytes.
+    :return: ``True`` when the caller should run :func:`_maybe_evict` now.
+    """
+    key = str(repos_dir)
+    now = time.time()
+    state = _evict_scan_state.get(key)
+    if state is None:
+        _evict_scan_state[key] = (now, 0)
+        return True
+
+    last_scan_at, pending_bytes = state
+    pending_bytes += max(written_bytes, 0)
+    threshold = max(1, int(max_bytes * _EVICT_SCAN_BYTES_RATIO))
+    due = (now - last_scan_at) >= _EVICT_SCAN_INTERVAL_SECONDS or pending_bytes >= threshold
+    _evict_scan_state[key] = (now, 0) if due else (last_scan_at, pending_bytes)
+    return due
 
 
 def _maybe_evict(repos_dir: Path, protect: Path | None = None) -> None:
     """Evict least-recently-used shards once the cache exceeds its size cap.
+
+    Callers on a hot path should gate this behind :func:`_should_scan_for_eviction`
+    (as ``put_many`` does) rather than calling it unconditionally, since every
+    call here walks and stats the whole cache tree; this function itself always
+    scans when called; it does not throttle itself.
 
     :param repos_dir: Root directory holding all per-repo shard directories.
     :param protect: Shard directory exempt from eviction (the one just written),
@@ -1159,7 +1428,7 @@ def _maybe_evict(repos_dir: Path, protect: Path | None = None) -> None:
                 f"({total} bytes > {target}); consider raising CODEDUPES_CACHE_MAX_MB."
             )
     except Exception as exc:  # noqa: BLE001 - eviction must never break analysis
-        _warn_once("evict", exc)
+        warn_once("evict", exc)
 
 
 class EmbeddingCache:
@@ -1298,7 +1567,13 @@ class EmbeddingCache:
             max_namespace_keys=max_namespace_keys,
             expected_source_commit=expected_source_commit,
         )
-        _maybe_evict(self.repos_dir, protect=shard_dir)
+        # Eviction scans the whole cache tree, so it is throttled rather than
+        # run on every call (see _should_scan_for_eviction) - callers that need
+        # an unconditional scan (tests, admin flows) call _maybe_evict directly.
+        max_bytes = _resolve_max_bytes()
+        written_bytes = sum(int(np.asarray(vector).nbytes) for _key, vector in entries)
+        if _should_scan_for_eviction(self.repos_dir, written_bytes, max_bytes):
+            _maybe_evict(self.repos_dir, protect=shard_dir)
 
     def confirm_source_commit(
         self,
@@ -1357,7 +1632,7 @@ class EmbeddingCache:
                 _delete_cache_tree(shard_dir, action="purge drifted shard")
                 return False
         except Exception as exc:  # noqa: BLE001 - cache must never break analysis
-            _warn_once("confirm source commit", exc)
+            warn_once("confirm source commit", exc)
             return True
 
     def stats(self) -> dict[str, Any]:
@@ -1402,7 +1677,7 @@ class EmbeddingCache:
                     f.stat().st_size for f in local_models_dir.glob("*") if f.is_file()
                 )
         except Exception as exc:  # noqa: BLE001 - stats must never break analysis
-            _warn_once("stats", exc)
+            warn_once("stats", exc)
         info["repos"] = [{"repo": name, **totals} for name, totals in sorted(repo_totals.items())]
         return info
 
@@ -1439,7 +1714,7 @@ class EmbeddingCache:
                 except OSError as exc:
                     # One unreadable or undeletable shard must not abort the sweep;
                     # every other shard still gets cleared and counted.
-                    _warn_once("clear", exc)
+                    warn_once("clear", exc)
             _prune_empty_repo_dirs(self.repos_dir)
             if model is None:
                 # Manifests are keyed by local model directory, not canonical model
@@ -1450,7 +1725,7 @@ class EmbeddingCache:
                     action="clear local-model manifests",
                 )
         except Exception as exc:  # noqa: BLE001 - clear must never break analysis
-            _warn_once("clear", exc)
+            warn_once("clear", exc)
         return removed
 
 
@@ -1470,5 +1745,5 @@ def get_embedding_cache() -> EmbeddingCache | None:
     try:
         return EmbeddingCache()
     except Exception as exc:  # noqa: BLE001 - cache construction must never break analysis
-        _warn_once("initialize", exc)
+        warn_once("initialize", exc)
         return None

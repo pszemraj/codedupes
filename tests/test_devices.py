@@ -48,6 +48,40 @@ def test_validate_mps_memory_fraction_accepts_supported_range() -> None:
     assert devices.validate_mps_memory_fraction(2.0) == 2.0
 
 
+@pytest.mark.parametrize(
+    ("requested_device", "platform_name", "expected"),
+    [
+        ("mps", "darwin", True),
+        ("mps", "linux", True),
+        ("mps", "win32", True),
+        (" MPS ", "darwin", True),
+        ("auto", "darwin", True),
+        ("auto", "linux", False),
+        ("auto", "win32", False),
+        ("cpu", "darwin", False),
+        ("cpu", "linux", False),
+        ("cuda", "darwin", False),
+        ("cuda", "linux", False),
+        (None, "darwin", True),
+        (None, "linux", False),
+        ("bogus-device", "darwin", False),
+    ],
+)
+def test_could_resolve_to_mps_mirrors_auto_resolution_priority(
+    monkeypatch, requested_device, platform_name, expected
+) -> None:
+    monkeypatch.setattr(devices.sys, "platform", platform_name)
+    assert devices.could_resolve_to_mps(requested_device) is expected
+
+
+def test_could_resolve_to_mps_never_raises_for_an_unrecognized_device(monkeypatch) -> None:
+    # normalize_semantic_device raises ValueError for this input; the
+    # extracted predicate must not, since callers on the warm cache-variant
+    # path do not pre-validate the device string.
+    monkeypatch.setattr(devices.sys, "platform", "darwin")
+    assert devices.could_resolve_to_mps("metal") is False
+
+
 def test_configure_mps_environment_auto_respects_existing_override(monkeypatch) -> None:
     monkeypatch.setattr(devices.sys, "platform", "darwin")
     monkeypatch.setenv("PYTORCH_ENABLE_MPS_FALLBACK", "0")

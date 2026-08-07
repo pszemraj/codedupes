@@ -12,7 +12,7 @@ import os
 import sys
 import textwrap
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from importlib import metadata as importlib_metadata
 from pathlib import Path
@@ -36,6 +36,7 @@ from codedupes.devices import (
     clear_device_cache,
     configure_mps_environment,
     configure_mps_memory_fraction,
+    could_resolve_to_mps,
     format_mps_memory_snapshot,
     is_mlx_loaded,
     resolve_cpu_bf16_inference,
@@ -45,10 +46,12 @@ from codedupes.devices import (
 from codedupes.embedding_cache import (
     LOCAL_MODELS_SUBDIR,
     EmbeddingCache,
-    _ensure_cache_subdirectory,
+    atomic_write_json,
     compute_cache_key,
+    ensure_cache_subdirectory,
     get_embedding_cache,
     is_cache_disabled,
+    log_warning_once,
     resolve_cache_dir,
 )
 from codedupes.models import CodeUnit, DuplicatePair
@@ -92,6 +95,15 @@ class _LocalModelManifestState:
 
 
 _local_model_manifest_memo: dict[str, _LocalModelManifestState] = {}
+
+# Call-scoped memo for local-model-directory fingerprint walks: valid only
+# while one of the top-level `_model_lock`-holding entry points
+# (_find_similar_to_query_unlocked, _compute_embeddings_unlocked) is running -
+# see _local_model_fingerprint_walk_scope and _fingerprint_local_model_dir_cached
+# for why the memo is deliberately request-scoped rather than process-lifetime.
+# Only the lock-holding thread ever reads or writes it, so no separate lock
+# guards it here.
+_local_model_fingerprint_scope: dict[str, str | None] | None = None
 
 _TORCH_MIN_RELEASE = (2, 13)
 _TORCH_MAX_EXCLUSIVE_RELEASE = (3,)
@@ -486,27 +498,16 @@ def _store_local_model_manifest(
     manifest_path = _local_model_manifest_path(model_dir)
     if already_persisted and manifest_path.is_file():
         return
-    tmp_path = manifest_path.with_name(f"{manifest_path.name}.{os.getpid()}.tmp")
     try:
-        _ensure_cache_subdirectory(resolve_cache_dir(), LOCAL_MODELS_SUBDIR)
-        payload = json.dumps(
+        ensure_cache_subdirectory(resolve_cache_dir(), LOCAL_MODELS_SUBDIR)
+        atomic_write_json(
+            manifest_path,
             {
                 "version": _LOCAL_MODEL_MANIFEST_VERSION,
                 "model_dir": str(model_dir),
                 "files": files,
-            }
+            },
         )
-        manifest_fd = os.open(
-            tmp_path,
-            os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
-            0o600,
-        )
-        with os.fdopen(manifest_fd, "w", encoding="utf-8") as handle:
-            # File mode bits are a POSIX concern; Windows has no ``fchmod``.
-            with contextlib.suppress(AttributeError):
-                os.fchmod(handle.fileno(), 0o600)
-            handle.write(payload)
-        os.replace(tmp_path, manifest_path)
         with _local_model_manifest_lock:
             current_state = _local_model_manifest_memo.get(memo_key)
             if current_state is not None and current_state.files == files:
@@ -518,10 +519,6 @@ def _store_local_model_manifest(
         logger.debug(
             f"Could not persist local-model digest manifest for {model_dir}", exc_info=True
         )
-    finally:
-        if tmp_path.exists():
-            with contextlib.suppress(OSError):
-                tmp_path.unlink()
 
 
 def _fingerprint_local_model_dir(
@@ -545,6 +542,13 @@ def _fingerprint_local_model_dir(
     moves even when size and mtime are restored. On Windows ``st_ctime`` is
     the creation time, so a same-size in-place overwrite with a preserved
     mtime could reuse a stale digest.
+
+    This always performs a fresh walk (only per-file content digests are
+    reused, never a previous fingerprint result). Callers on the
+    ``search()``/``compute_embeddings()`` identity path should use
+    :func:`_fingerprint_local_model_dir_cached` instead, which shares one
+    walk per resolved directory across the repeated lookups one such call
+    already makes.
 
     :param model_dir: Resolved local model directory.
     :param persist_manifest: Whether per-file digests may be loaded from and saved
@@ -600,6 +604,101 @@ def _fingerprint_local_model_dir(
     )
     digest = hashlib.blake2b(repr(entries).encode(), digest_size=12).hexdigest()
     return f"dir-{digest}"
+
+
+@contextlib.contextmanager
+def _local_model_fingerprint_walk_scope() -> Iterator[None]:
+    """Open (or extend) a call-scoped memo for local-model fingerprint walks.
+
+    Wraps one top-level ``_model_lock``-holding entry point
+    (:func:`_find_similar_to_query_unlocked`, :func:`_compute_embeddings_unlocked`)
+    so every :func:`_fingerprint_local_model_dir_cached` lookup made while it
+    runs shares a single walk per resolved directory, instead of the 2-3 walks
+    each of those functions currently makes for the same directory (identity
+    check, MPS/CPU coherence remap, cache-context revision resolution).
+    Reentrant: a nested call made while a scope is already active (the same
+    lock-holding thread recursing, for example the CPU-restart retry inside
+    ``_compute_embeddings_unlocked``) extends the existing scope instead of
+    resetting it, so the outermost call owns teardown.
+
+    :return: ``None``.
+    """
+    global _local_model_fingerprint_scope
+    if _local_model_fingerprint_scope is not None:
+        yield
+        return
+    _local_model_fingerprint_scope = {}
+    try:
+        yield
+    finally:
+        _local_model_fingerprint_scope = None
+
+
+def _remember_local_model_fingerprint_in_scope(model_dir: Path, fingerprint: str | None) -> None:
+    """Publish a freshly walked fingerprint into the active call-scoped memo, if any.
+
+    A no-op outside an active :func:`_local_model_fingerprint_walk_scope`.
+    Called after every genuine walk made for another reason (model load,
+    post-load verification) so later lookups in the same call reuse it
+    instead of re-walking.
+
+    :param model_dir: Resolved local model directory the fingerprint belongs to.
+    :param fingerprint: Freshly walked fingerprint, or ``None`` on walk failure.
+    :return: ``None``.
+    """
+    if _local_model_fingerprint_scope is not None:
+        _local_model_fingerprint_scope[str(model_dir)] = fingerprint
+
+
+def _fingerprint_local_model_dir_cached(
+    model_dir: Path,
+    *,
+    persist_manifest: bool = True,
+) -> str | None:
+    """Return a local model directory's fingerprint, memoized for the current call.
+
+    :func:`_fingerprint_local_model_dir` performs a full ``os.walk`` plus a
+    ``stat()`` of every file. A single ``search()`` (via
+    :func:`_require_current_embedding_space`) or ``compute_embeddings()`` call
+    currently repeats that walk 2-3 times for the very same directory before
+    reaching a decision, which is pure waste on a multi-shard checkpoint
+    directory with hundreds of files.
+
+    **Invalidation rule - deliberately call-scoped, not process-lifetime:**
+    the memo is valid only while
+    :func:`_local_model_fingerprint_walk_scope` is open, which
+    :func:`_find_similar_to_query_unlocked` and
+    :func:`_compute_embeddings_unlocked` each open for their own duration and
+    reset to empty on every fresh top-level call (outside a scope - for
+    example a caller invoking :func:`resolve_embedding_space_identity`
+    directly - this always walks, identically to
+    :func:`_fingerprint_local_model_dir`). A longer-lived memo was
+    considered and rejected: the fingerprint's job is to gate a decision
+    *before* any model load happens for that same call
+    (:func:`_require_current_embedding_space` runs before the query might be
+    encoded; a full-cache-hit path in :func:`_compute_embeddings_unlocked`
+    may never call :func:`get_model` at all), so a value that survived from
+    an earlier call could report "unchanged" right up to the moment a
+    same-call model load discovers otherwise and reloads - serving vectors
+    computed on either side of an undetected directory swap into one matrix.
+    Resetting every call closes that window at the cost of one walk per
+    top-level call instead of per internal lookup.
+
+    :param model_dir: Resolved local model directory.
+    :param persist_manifest: Whether per-file digests may be loaded from and saved
+        to the persistent manifest, forwarded to :func:`_fingerprint_local_model_dir`
+        on a memo miss. Ignored on a memo hit.
+    :return: ``"dir-<hex>"`` fingerprint, or ``None`` when the walk fails.
+    """
+    scope = _local_model_fingerprint_scope
+    if scope is None:
+        return _fingerprint_local_model_dir(model_dir, persist_manifest=persist_manifest)
+    memo_key = str(model_dir)
+    if memo_key in scope:
+        return scope[memo_key]
+    fingerprint = _fingerprint_local_model_dir(model_dir, persist_manifest=persist_manifest)
+    scope[memo_key] = fingerprint
+    return fingerprint
 
 
 def _validate_local_model_directory(model_dir: Path) -> None:
@@ -685,7 +784,7 @@ def _resolve_revision_for_cache(
     canonical_model = resolve_model_profile(model_name).canonical_name
     local_dir = resolve_local_model_path(canonical_model)
     if local_dir is not None:
-        return _fingerprint_local_model_dir(local_dir)
+        return _fingerprint_local_model_dir_cached(local_dir)
     load_revision = _resolve_model_revision(model_name, explicit_revision)
 
     if not strict:
@@ -769,8 +868,11 @@ def _confirm_cache_revision_after_load(
         # The model did not come from the process-wide cache (injected by tests
         # or displaced by a concurrent load), so no load-time verification
         # bracket exists for it; the directory's current state is the best
-        # available identity.
-        return _fingerprint_local_model_dir(local_dir)
+        # available identity. Publish it into an active call scope, if any,
+        # so later lookups in the same call reuse this fresh walk.
+        fingerprint = _fingerprint_local_model_dir(local_dir)
+        _remember_local_model_fingerprint_in_scope(local_dir, fingerprint)
+        return fingerprint
 
     if not strict:
         if resolved_revision is not None and _is_hf_commit_hash(resolved_revision):
@@ -915,11 +1017,10 @@ def _dtype_variant_for(
     if normalized_device == "cpu":
         gate = resolve_cpu_bf16_inference()
         return "dtype=torch.bfloat16" if gate else ""
-    if (
-        normalized_device == "auto"
-        and sys.platform == "darwin"
-        and not resolve_cpu_bf16_inference()
-    ):
+    # could_resolve_to_mps(device) is True here only for "auto" on darwin
+    # (the "mps" case already returned above), matching the darwin-only-MPS-
+    # or-CPU reasoning above.
+    if could_resolve_to_mps(device) and not resolve_cpu_bf16_inference():
         return ""
 
     concrete_device = resolved_device or _resolve_semantic_device_request(
@@ -950,10 +1051,7 @@ def _mps_fast_math_variant(device: str | None) -> str:
         ``None`` meaning the default request.
     :return: Math-policy fingerprint, empty when MPS cannot execute or fast math is off.
     """
-    normalized_device = (device or DEFAULT_SEMANTIC_DEVICE).strip().lower()
-    if normalized_device != "mps" and not (
-        normalized_device == "auto" and sys.platform == "darwin"
-    ):
+    if not could_resolve_to_mps(device):
         return ""
     raw = os.environ.get("PYTORCH_MPS_FAST_MATH")
     # Mirror torch's own decision exactly: fast math is enabled whenever the
@@ -1104,7 +1202,7 @@ def resolve_embedding_space_identity(
     resolved_trust_remote_code = _resolve_trust_remote_code(model_name, trust_remote_code)
     local_model_path = resolve_local_model_path(profile.canonical_name)
     if local_model_path is not None:
-        resolved_revision = _fingerprint_local_model_dir(
+        resolved_revision = _fingerprint_local_model_dir_cached(
             local_model_path,
             persist_manifest=persist_local_model_manifest,
         )
@@ -1408,14 +1506,15 @@ def _prepare_semantic_device(
     except (DeviceConfigurationError, ValueError) as exc:
         raise SemanticBackendError(str(exc)) from exc
 
-    global _warned_mlx_mps_contention
-    if resolved_device == "mps" and is_mlx_loaded() and not _warned_mlx_mps_contention:
-        logger.warning(
+    if resolved_device == "mps" and is_mlx_loaded():
+        log_warning_once(
+            globals(),
+            "_warned_mlx_mps_contention",
             "MLX is already loaded in this process and may share Apple unified-memory "
             "pressure with PyTorch MPS. codedupes manages only the PyTorch allocator; "
-            "the host application remains responsible for MLX cache policy."
+            "the host application remains responsible for MLX cache policy.",
+            warning_logger=logger,
         )
-        _warned_mlx_mps_contention = True
     return resolved_device
 
 
@@ -1432,6 +1531,22 @@ def _coerce_device_name(value: object, fallback: str) -> str:
     if candidate in {"cpu", "cuda", "mps"}:
         return candidate
     return fallback
+
+
+def _set_model_execution_device(value: str | None) -> None:
+    """Set the process-wide cached model's tracked execution device.
+
+    The single writer for ``_model_execution_device``: model load, model-cache
+    clear, and the CPU-fallback move each route their mutation through here
+    instead of a separate ``global`` declaration, so the write side has one
+    place to extend (for example a future cache-invalidation hook) without
+    touching every caller.
+
+    :param value: New tracked execution device, or ``None`` to clear it.
+    :return: ``None``.
+    """
+    global _model_execution_device
+    _model_execution_device = value
 
 
 def _get_effective_model_device(model: object, fallback: str) -> str:
@@ -1704,7 +1819,7 @@ def _get_model_unlocked(
     """
     global _model, _model_name, _model_revision, _model_trust_remote_code
     global _model_local_fingerprint
-    global _model_device_key, _model_dtype_key, _model_execution_device
+    global _model_device_key, _model_dtype_key
     global _warned_cpu_fallback_reuse
 
     requested_local_path = resolve_local_model_path(model_name)
@@ -1727,6 +1842,10 @@ def _get_model_unlocked(
         if local_model_path is not None
         else None
     )
+    if local_model_path is not None:
+        # Publish this fresh walk into an active call scope, if any, so a
+        # later identity/cache-context lookup in the same call reuses it.
+        _remember_local_model_fingerprint_in_scope(local_model_path, local_model_fingerprint)
     resolved_revision = _resolve_model_revision(model_name, revision)
     if resolved_revision is not None and local_model_path is not None:
         logger.warning(
@@ -1897,6 +2016,9 @@ def _get_model_unlocked(
                 local_model_path,
                 persist_manifest=persist_local_model_manifest,
             )
+            # Publish whichever fingerprint - matching or drifted - is now the
+            # truth into an active call scope, if any.
+            _remember_local_model_fingerprint_in_scope(local_model_path, post_load_fingerprint)
             if post_load_fingerprint == local_model_fingerprint:
                 break
             if reload_attempt == 0:
@@ -1922,18 +2044,19 @@ def _get_model_unlocked(
         # a later identical request must still hit and reuse the sticky
         # CPU-fallback model instead of retrying the accelerator load.
         _model_dtype_key = dtype_key
-        _model_execution_device = _coerce_device_name(
-            getattr(loaded_model, "device", None),
-            load_device,
+        _set_model_execution_device(
+            _coerce_device_name(getattr(loaded_model, "device", None), load_device)
         )
         _warned_cpu_fallback_reuse = False
-    elif _model_execution_device != resolved_device and not _warned_cpu_fallback_reuse:
-        logger.warning(
+    elif _model_execution_device != resolved_device:
+        log_warning_once(
+            globals(),
+            "_warned_cpu_fallback_reuse",
             f"Reusing cached model on {_model_execution_device} after an earlier "
             f"{resolved_device}-to-CPU OOM fallback; call clear_model_cache() to force a fresh "
-            f"{resolved_device} load"
+            f"{resolved_device} load",
+            warning_logger=logger,
         )
-        _warned_cpu_fallback_reuse = True
 
     return _model
 
@@ -1981,7 +2104,7 @@ def _clear_model_cache_unlocked() -> None:
     """Release the cached model and its accelerator allocator cache."""
     global _model, _model_name, _model_revision, _model_trust_remote_code
     global _model_local_fingerprint
-    global _model_device_key, _model_dtype_key, _model_execution_device
+    global _model_device_key, _model_dtype_key
     global _warned_cpu_fallback_reuse
 
     model = _model
@@ -1997,7 +2120,7 @@ def _clear_model_cache_unlocked() -> None:
     _model_local_fingerprint = None
     _model_device_key = None
     _model_dtype_key = None
-    _model_execution_device = None
+    _set_model_execution_device(None)
     _warned_cpu_fallback_reuse = False
 
     del model
@@ -2051,7 +2174,6 @@ def _move_model_to_cpu(model: object) -> None:
     :param model: Model to move, mutated in place.
     :return: ``None``.
     """
-    global _model_execution_device
     if hasattr(model, "to"):
         current_dtype = _model_parameter_dtype(model)
         if current_dtype is not None and str(current_dtype) == "torch.bfloat16":
@@ -2076,7 +2198,7 @@ def _move_model_to_cpu(model: object) -> None:
         else:
             model.to("cpu")
     if model is _model:
-        _model_execution_device = "cpu"
+        _set_model_execution_device("cpu")
 
 
 def _truncate_code_if_needed(text: str, unit_name: str, model: Any) -> str:
@@ -2479,7 +2601,7 @@ def _compute_embeddings_unlocked(
     resolved_trust_remote_code = _resolve_trust_remote_code(model_name, trust_remote_code)
     identity_local_model_path = resolve_local_model_path(profile.canonical_name)
     identity_revision = (
-        _fingerprint_local_model_dir(
+        _fingerprint_local_model_dir_cached(
             identity_local_model_path,
             persist_manifest=use_cache and cache_scope is not None,
         )
@@ -2573,11 +2695,25 @@ def _compute_embeddings_unlocked(
         cache_scope=cache_scope,
         strict_revision_cache=strict_revision_cache,
     )
-    cache_keys = (
-        [
-            compute_cache_key(profile.canonical_name, cache_revision, text, variant=cache_variant)
+
+    def _cache_keys_for_revision(active_revision: str) -> list[str]:
+        """Derive row-aligned cache keys for the prepared texts under one revision.
+
+        Used for both the pre-load lookup and the post-load re-key when the
+        loaded model's confirmed revision differs from the pre-load guess;
+        both must derive keys identically or a warm hit under one revision
+        could silently miss the same vector cached under the other.
+
+        :param active_revision: Cache revision the keys are addressed under.
+        :return: Cache keys row-aligned with ``prepared_texts``.
+        """
+        return [
+            compute_cache_key(profile.canonical_name, active_revision, text, variant=cache_variant)
             for text in prepared_texts
         ]
+
+    cache_keys = (
+        _cache_keys_for_revision(cache_revision)
         if cache is not None and cache_revision is not None
         else None
     )
@@ -2642,12 +2778,7 @@ def _compute_embeddings_unlocked(
             # Never mix vectors cached under a different resolved revision into
             # this matrix: discard any pre-load hits and re-key under the truth.
             cache_revision = confirmed_revision
-            cache_keys = [
-                compute_cache_key(
-                    profile.canonical_name, cache_revision, text, variant=cache_variant
-                )
-                for text in prepared_texts
-            ]
+            cache_keys = _cache_keys_for_revision(cache_revision)
             lookup = cache.get_many_with_provenance(
                 cache_scope, profile.canonical_name, cache_revision, cache_keys
             )
@@ -2702,11 +2833,22 @@ def _compute_embeddings_unlocked(
                 )
                 hits = {}
 
+    def _truncated_miss_texts(indices: list[int]) -> list[str]:
+        """Truncate prepared texts for the given miss-row indices.
+
+        Shared by the primary encode call and the dimension-mismatch retry so
+        both truncate identically against the currently loaded ``model``.
+
+        :param indices: Row indices requiring encoding.
+        :return: Possibly truncated texts, row-aligned with ``indices``.
+        """
+        return [
+            _truncate_code_if_needed(prepared_texts[i], units[i].qualified_name, model)
+            for i in indices
+        ]
+
     miss_indices = _select_cache_miss_indices(cache_keys, hits, len(units))
-    miss_texts = [
-        _truncate_code_if_needed(prepared_texts[i], units[i].qualified_name, model)
-        for i in miss_indices
-    ]
+    miss_texts = _truncated_miss_texts(miss_indices)
     cache_covered_rows = (
         sum(1 for key in cache_keys if key in hits) if cache_keys is not None else 0
     )
@@ -2760,12 +2902,7 @@ def _compute_embeddings_unlocked(
             # execution_device captured before that call, and this closure
             # variable is what _encode_miss_texts passes as initial_device.
             execution_device = _get_effective_model_device(model, resolved_device)
-            miss_vectors = _encode_miss_texts(
-                [
-                    _truncate_code_if_needed(prepared_texts[i], units[i].qualified_name, model)
-                    for i in miss_indices
-                ]
-            )
+            miss_vectors = _encode_miss_texts(_truncated_miss_texts(miss_indices))
             coherence_break_reason = _coherence_break_reason(model)
             if coherence_break_reason is not None:
                 return _restart_faithfully_on_cpu(coherence_break_reason)
@@ -2849,7 +2986,7 @@ def compute_embeddings_with_identity(
     # be set before any path below can import torch - cache-variant derivation
     # may probe CPU capabilities, which is already too late.
     _configure_semantic_runtime_env(device, mps_fallback=mps_fallback)
-    with _model_lock:
+    with _model_lock, _local_model_fingerprint_walk_scope():
         return _compute_embeddings_unlocked(
             units,
             model_name=model_name,
@@ -3376,7 +3513,7 @@ def find_similar_to_query(
     # Same contract as compute_embeddings_with_identity: configure
     # import-sensitive runtime variables before anything can import torch.
     _configure_semantic_runtime_env(device, mps_fallback=mps_fallback)
-    with _model_lock:
+    with _model_lock, _local_model_fingerprint_walk_scope():
         return _find_similar_to_query_unlocked(
             query,
             units,

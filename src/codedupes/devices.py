@@ -131,6 +131,31 @@ def _resolve_mps_memory_fraction_restore_value() -> float:
     return _PYTORCH_DEFAULT_MPS_HIGH_WATERMARK_RATIO
 
 
+def could_resolve_to_mps(requested_device: str | None) -> bool:
+    """Return whether a bare device request could possibly resolve to MPS.
+
+    Mirrors the pre-import resolution priority used throughout this module
+    (see :func:`configure_mps_environment`): an explicit ``mps`` request, or
+    an ``auto`` request on a possible-MPS host (``sys.platform == "darwin"``,
+    where CUDA is not a real possibility so automatic resolution can only
+    reach MPS or CPU). This is a cheap string predicate, not a live PyTorch
+    capability probe - it answers "could this request possibly select MPS on
+    this host", the question cache-variant derivation needs before torch is
+    ever imported. Callers that need the actual resolved device once PyTorch
+    is available should use :func:`resolve_semantic_device` instead.
+
+    Unlike :func:`normalize_semantic_device`, this never raises for an
+    unrecognized device string - it simply normalizes with the same
+    ``.strip().lower()`` transform and reports ``False`` - so callers on a
+    warm, validation-free path never need to guard against a new exception.
+
+    :param requested_device: Requested device name, or ``None`` for the default.
+    :return: ``True`` when the request is ``mps``, or ``auto`` on a possible-MPS host.
+    """
+    normalized = (requested_device or DEFAULT_SEMANTIC_DEVICE).strip().lower()
+    return normalized == "mps" or (normalized == "auto" and sys.platform == "darwin")
+
+
 def configure_mps_environment(
     requested_device: str | None,
     *,
@@ -147,8 +172,10 @@ def configure_mps_environment(
     :param fallback: Explicit fallback setting, or ``None`` for automatic.
     :return: ``None``.
     """
-    normalized = normalize_semantic_device(requested_device)
-    possible_mps_run = normalized == "mps" or (normalized == "auto" and sys.platform == "darwin")
+    # Validates the request (raises for an unsupported device name) before
+    # deferring to the shared predicate for the actual MPS-possibility check.
+    normalize_semantic_device(requested_device)
+    possible_mps_run = could_resolve_to_mps(requested_device)
     if not possible_mps_run:
         return
 

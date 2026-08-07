@@ -733,6 +733,71 @@ def test_dtype_variant_matches_pre_capability_gate_baseline_without_opt_in(
     assert semantic._dtype_variant_for(profile, "auto", mps_fallback=None) == ""
 
 
+# --- Finding 2: canonical "could resolve to MPS" predicate -----------------
+
+
+@pytest.mark.parametrize(
+    ("device", "platform_name", "expect_mps_possible"),
+    [
+        ("mps", "darwin", True),
+        ("mps", "linux", True),
+        ("mps", "win32", True),
+        ("auto", "darwin", True),
+        ("auto", "linux", False),
+        ("auto", "win32", False),
+        ("cpu", "darwin", False),
+        ("cuda", "darwin", False),
+        (None, "darwin", True),
+        (None, "linux", False),
+    ],
+)
+def test_mps_fast_math_variant_matches_could_resolve_to_mps(
+    monkeypatch, device, platform_name, expect_mps_possible
+) -> None:
+    """``_mps_fast_math_variant`` must gate on the same predicate as devices.py."""
+    monkeypatch.setattr(devices.sys, "platform", platform_name)
+    monkeypatch.setenv("PYTORCH_MPS_FAST_MATH", "1")
+
+    variant = semantic._mps_fast_math_variant(device)
+
+    assert bool(variant) is expect_mps_possible
+    assert devices.could_resolve_to_mps(device) is expect_mps_possible
+
+
+@pytest.mark.parametrize(
+    ("platform_name", "expect_mps_possible"),
+    [
+        ("darwin", True),
+        ("linux", False),
+        ("win32", False),
+    ],
+)
+def test_dtype_variant_for_auto_branch_matches_could_resolve_to_mps(
+    monkeypatch, platform_name, expect_mps_possible
+) -> None:
+    """The "auto" dtype shortcut fires exactly when could_resolve_to_mps("auto") does."""
+    profile = semantic.resolve_model_profile("gte-modernbert-base")
+    monkeypatch.setattr(semantic, "resolve_cpu_bf16_inference", lambda: False)
+    monkeypatch.setattr(semantic.sys, "platform", platform_name)
+    assert devices.could_resolve_to_mps("auto") is expect_mps_possible
+
+    if expect_mps_possible:
+
+        def _fail_if_called(*_a, **_k):
+            raise AssertionError("must not resolve a concrete device when the MPS shortcut applies")
+
+        monkeypatch.setattr(semantic, "_resolve_semantic_device_request", _fail_if_called)
+        assert semantic._dtype_variant_for(profile, "auto", mps_fallback=None) == ""
+    else:
+        # Falls through to concrete-device resolution instead of short-circuiting.
+        monkeypatch.setattr(semantic, "_resolve_semantic_device_request", lambda *_a, **_k: "cpu")
+        monkeypatch.setattr(semantic, "_resolve_model_dtype", lambda *_a, **_k: torch.bfloat16)
+        assert (
+            semantic._dtype_variant_for(profile, "auto", mps_fallback=None)
+            == "dtype=torch.bfloat16"
+        )
+
+
 @pytest.mark.parametrize(
     ("revision", "trust_remote_code"),
     [
@@ -1776,6 +1841,171 @@ def test_fingerprint_local_model_dir_handles_symlink_cycles(tmp_path: Path) -> N
     fingerprint = semantic._fingerprint_local_model_dir(model_dir, persist_manifest=False)
 
     assert fingerprint is not None
+
+
+# --- Finding 1: memoized identity-path fingerprint --------------------------
+
+
+def _counting_fingerprint_stub(monkeypatch, return_value="dir-stub"):
+    """Patch the raw walker with a call-counting stub and return the counter list."""
+    calls: list[Path] = []
+
+    def _stub(model_dir: Path, *, persist_manifest: bool = True) -> str | None:
+        calls.append(model_dir)
+        return return_value
+
+    monkeypatch.setattr(semantic, "_fingerprint_local_model_dir", _stub)
+    return calls
+
+
+def test_fingerprint_local_model_dir_cached_walks_once_within_an_open_scope(
+    tmp_path: Path, monkeypatch
+) -> None:
+    model_dir = tmp_path / "model"
+    calls = _counting_fingerprint_stub(monkeypatch)
+
+    with semantic._local_model_fingerprint_walk_scope():
+        first = semantic._fingerprint_local_model_dir_cached(model_dir)
+        second = semantic._fingerprint_local_model_dir_cached(model_dir)
+
+    assert first == "dir-stub"
+    assert second == "dir-stub"
+    assert len(calls) == 1
+
+
+def test_fingerprint_local_model_dir_cached_walks_fresh_outside_any_scope(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """No active scope (the default) must match ``_fingerprint_local_model_dir`` exactly.
+
+    This is the safe-by-default behavior every external caller of
+    :func:`resolve_embedding_space_identity`/``_resolve_revision_for_cache``
+    relies on: without an explicitly opened call scope, every lookup walks.
+    """
+    assert semantic._local_model_fingerprint_scope is None
+    model_dir = tmp_path / "model"
+    calls = _counting_fingerprint_stub(monkeypatch)
+
+    semantic._fingerprint_local_model_dir_cached(model_dir)
+    semantic._fingerprint_local_model_dir_cached(model_dir)
+
+    assert len(calls) == 2
+
+
+def test_fingerprint_local_model_dir_cached_recomputes_across_separate_scopes(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Each top-level scope starts empty: nothing survives from an earlier one."""
+    model_dir = tmp_path / "model"
+    calls = _counting_fingerprint_stub(monkeypatch)
+
+    with semantic._local_model_fingerprint_walk_scope():
+        semantic._fingerprint_local_model_dir_cached(model_dir)
+    with semantic._local_model_fingerprint_walk_scope():
+        semantic._fingerprint_local_model_dir_cached(model_dir)
+
+    assert len(calls) == 2
+
+
+def test_fingerprint_local_model_dir_cached_recomputes_for_a_different_path(
+    tmp_path: Path, monkeypatch
+) -> None:
+    calls = _counting_fingerprint_stub(monkeypatch)
+
+    with semantic._local_model_fingerprint_walk_scope():
+        semantic._fingerprint_local_model_dir_cached(tmp_path / "model-a")
+        semantic._fingerprint_local_model_dir_cached(tmp_path / "model-b")
+
+    assert len(calls) == 2
+
+
+def test_local_model_fingerprint_walk_scope_is_reentrant(tmp_path: Path, monkeypatch) -> None:
+    """A nested scope open (recursion under the same lock) extends the outer one."""
+    model_dir = tmp_path / "model"
+    calls = _counting_fingerprint_stub(monkeypatch)
+
+    with semantic._local_model_fingerprint_walk_scope():
+        semantic._fingerprint_local_model_dir_cached(model_dir)
+        with semantic._local_model_fingerprint_walk_scope():
+            # Reuses the outer scope's memo instead of starting a fresh one.
+            semantic._fingerprint_local_model_dir_cached(model_dir)
+        # The inner "with" must not have torn down the outer scope.
+        assert semantic._local_model_fingerprint_scope is not None
+        semantic._fingerprint_local_model_dir_cached(model_dir)
+
+    assert semantic._local_model_fingerprint_scope is None
+    assert len(calls) == 1
+
+
+def test_remember_local_model_fingerprint_in_scope_seeds_without_a_walk(
+    tmp_path: Path, monkeypatch
+) -> None:
+    model_dir = tmp_path / "model"
+    calls = _counting_fingerprint_stub(monkeypatch)
+
+    with semantic._local_model_fingerprint_walk_scope():
+        semantic._remember_local_model_fingerprint_in_scope(model_dir, "dir-from-load")
+        result = semantic._fingerprint_local_model_dir_cached(model_dir)
+
+    assert result == "dir-from-load"
+    assert calls == []
+
+
+def test_remember_local_model_fingerprint_in_scope_is_a_no_op_without_a_scope(
+    tmp_path: Path, monkeypatch
+) -> None:
+    assert semantic._local_model_fingerprint_scope is None
+    model_dir = tmp_path / "model"
+    calls = _counting_fingerprint_stub(monkeypatch)
+
+    semantic._remember_local_model_fingerprint_in_scope(model_dir, "dir-from-load")
+    result = semantic._fingerprint_local_model_dir_cached(model_dir)
+
+    assert result == "dir-stub"
+    assert len(calls) == 1
+
+
+def test_resolve_embedding_space_identity_shares_one_walk_within_an_open_scope(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Repeated identity resolution inside one open scope shares a single walk."""
+    model_dir = tmp_path / "model"
+    model_dir.mkdir()
+    (model_dir / "config.json").write_text('{"model_type": "test"}')
+    (model_dir / "model.safetensors").write_text("weights")
+
+    walk_calls = _counting_fingerprint_stub(monkeypatch, return_value="dir-once")
+
+    with semantic._local_model_fingerprint_walk_scope():
+        first = semantic.resolve_embedding_space_identity(model_name=str(model_dir), device="cpu")
+        second = semantic.resolve_embedding_space_identity(model_name=str(model_dir), device="cpu")
+
+    assert first == second
+    assert first.resolved_revision == "dir-once"
+    assert len(walk_calls) == 1
+
+
+def test_resolve_embedding_space_identity_detects_disk_changes_across_separate_calls(
+    tmp_path: Path,
+) -> None:
+    """Outside a shared scope, every call must reflect the live on-disk state.
+
+    This is the provenance guarantee finding 1 must preserve: without an
+    explicitly opened call scope (the state every caller outside
+    search()/compute_embeddings is in), a directory edit between two calls
+    must never be masked by a leftover memoized fingerprint.
+    """
+    model_dir = tmp_path / "model"
+    model_dir.mkdir()
+    (model_dir / "config.json").write_text('{"model_type": "test"}')
+    weights_path = model_dir / "model.safetensors"
+    weights_path.write_text("weights-v1")
+
+    before = semantic.resolve_embedding_space_identity(model_name=str(model_dir), device="cpu")
+    weights_path.write_text("weights-v2-changed")
+    after = semantic.resolve_embedding_space_identity(model_name=str(model_dir), device="cpu")
+
+    assert before.resolved_revision != after.resolved_revision
 
 
 # --- T7: loose-by-default cache revision keying, strict opt-in -------------

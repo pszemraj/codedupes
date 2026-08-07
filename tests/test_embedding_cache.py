@@ -2173,3 +2173,207 @@ def test_hostile_deeply_nested_index_degrades_for_stats_and_clear(tmp_path):
     cleared = cache.clear()
     assert cleared == 0
     assert not shard_dir.exists()
+
+
+def test_eviction_scan_throttled_across_put_many_calls_but_still_enforces_cap(
+    tmp_path, monkeypatch
+):
+    # Reviewer fix: put_many used to pay for a full cache-tree scan on every
+    # call, making every single-entry query-cache miss O(total cache size).
+    fake_time = {"value": 1_000_000.0}
+    monkeypatch.setattr(embedding_cache.time, "time", lambda: fake_time["value"])
+    monkeypatch.setattr(embedding_cache, "_resolve_max_bytes", lambda: 100_000)
+    cache = EmbeddingCache()
+    scan_calls: list[Path] = []
+    original_evict = embedding_cache._maybe_evict
+
+    def spying_evict(repos_dir, protect=None):
+        scan_calls.append(repos_dir)
+        original_evict(repos_dir, protect=protect)
+
+    monkeypatch.setattr(embedding_cache, "_maybe_evict", spying_evict)
+
+    dim = 64  # 256 bytes/vector, well under the 2% (2000 byte) scan threshold.
+    for i in range(5):
+        scope = tmp_path / f"proj{i}"
+        scope.mkdir()
+        cache.put_many(scope, "model-x", "rev1", [(f"key{i}", np.zeros(dim, dtype=np.float32))])
+
+    # The first call always scans (nothing scanned yet for this cache root);
+    # every later write stays under both the time and byte gates, so none of
+    # them should pay for a rescan of the whole cache tree.
+    assert len(scan_calls) == 1
+
+    # Once the scan interval elapses the next write must scan again, so the
+    # cap is still enforced eventually rather than postponed forever.
+    fake_time["value"] += embedding_cache._EVICT_SCAN_INTERVAL_SECONDS + 1.0
+    last_scope = tmp_path / "proj-last"
+    last_scope.mkdir()
+    cache.put_many(last_scope, "model-x", "rev1", [("key-last", np.zeros(dim, dtype=np.float32))])
+    assert len(scan_calls) == 2
+
+
+def test_eviction_scan_throttle_also_trips_on_accumulated_write_bytes(tmp_path, monkeypatch):
+    # Even with no time elapsed, a burst of writes whose total crosses the
+    # byte-ratio gate must force a scan rather than waiting out the interval.
+    monkeypatch.setattr(embedding_cache, "_resolve_max_bytes", lambda: 10_000)
+    cache = EmbeddingCache()
+    scan_calls: list[Path] = []
+    original_evict = embedding_cache._maybe_evict
+
+    def spying_evict(repos_dir, protect=None):
+        scan_calls.append(repos_dir)
+        original_evict(repos_dir, protect=protect)
+
+    monkeypatch.setattr(embedding_cache, "_maybe_evict", spying_evict)
+
+    # Threshold is 2% of 10_000 = 200 bytes; each 64-float32 vector is 256
+    # bytes, so every call after the bootstrap scan should also cross it.
+    dim = 64
+    for i in range(3):
+        scope = tmp_path / f"proj{i}"
+        scope.mkdir()
+        cache.put_many(scope, "model-x", "rev1", [(f"key{i}", np.zeros(dim, dtype=np.float32))])
+
+    assert len(scan_calls) == 3
+
+
+def test_read_shard_reuses_cached_snapshot_until_index_replaced(tmp_path, monkeypatch):
+    # Reviewer fix: _read_shard used to re-parse index.json and re-mmap the
+    # vectors file on every call, even for repeated lookups against an
+    # unchanged shard.
+    cache = EmbeddingCache()
+    scope = tmp_path / "proj"
+    scope.mkdir()
+    vector = np.array([1.0, 2.0], dtype=np.float32)
+    cache.put_many(scope, "model-a", "rev1", [("key", vector)])
+    shard_dir = cache.shard_dir(scope, "model-a", "rev1")
+
+    load_calls = {"count": 0}
+    original_load = embedding_cache.np.load
+
+    def counting_load(*args, **kwargs):
+        load_calls["count"] += 1
+        return original_load(*args, **kwargs)
+
+    monkeypatch.setattr(embedding_cache.np, "load", counting_load)
+
+    first = embedding_cache._read_shard(shard_dir)
+    assert first is not None
+    assert load_calls["count"] == 1
+
+    # A second read of the same, unchanged shard must reuse the cached
+    # snapshot rather than re-parsing the index and re-mmapping the vectors.
+    second = embedding_cache._read_shard(shard_dir)
+    assert second is first
+    assert load_calls["count"] == 1
+
+    # A write that replaces index.json (a new generation) must invalidate the
+    # cached snapshot: the next read observes the new content, never stale data.
+    cache.put_many(scope, "model-a", "rev1", [("key2", np.array([3.0, 4.0], dtype=np.float32))])
+    third = embedding_cache._read_shard(shard_dir)
+    assert third is not None
+    assert third is not first
+    assert load_calls["count"] == 2
+    assert set(third.keys) == {"key", "key2"}
+
+
+def test_read_shard_cache_invalidated_immediately_on_delete(tmp_path):
+    cache = EmbeddingCache()
+    scope = tmp_path / "proj"
+    scope.mkdir()
+    cache.put_many(scope, "model-a", "rev1", [("key", np.array([1.0, 2.0], dtype=np.float32))])
+    shard_dir = cache.shard_dir(scope, "model-a", "rev1")
+
+    assert embedding_cache._read_shard(shard_dir) is not None
+    assert str(shard_dir) in embedding_cache._shard_read_cache
+
+    assert cache.clear() == 1
+    assert str(shard_dir) not in embedding_cache._shard_read_cache
+    assert embedding_cache._read_shard(shard_dir) is None
+
+
+def test_atomic_write_shard_rejects_inconsistent_shard_state(tmp_path):
+    # Reviewer fix: keys/namespaces/digests used to be mutated as three
+    # separate dicts with no atomic setter; a mutation bug could publish a
+    # shard where they had drifted apart, only surfacing as a silent
+    # invalidate-on-read on some later run. The write path must now fail
+    # loudly instead.
+    cache = EmbeddingCache()
+    scope = tmp_path / "proj"
+    scope.mkdir()
+    shard_dir = cache.shard_dir(scope, "model-a", "rev1")
+    vectors = np.zeros((1, 2), dtype=np.float32)
+    keys_map = {"key": 0}
+    namespaces: dict[str, str] = {}  # missing "key": diverged from keys_map.
+    digests = {"key": "deadbeef"}
+
+    with pytest.raises(AssertionError, match="diverged"):
+        embedding_cache._atomic_write_shard(
+            shard_dir, "model-a", "rev1", vectors, keys_map, namespaces, digests, 2, None
+        )
+
+
+def test_shard_data_mutation_methods_keep_keys_namespaces_digests_atomic():
+    shard = embedding_cache._ShardData(
+        vectors=np.zeros((1, 2), dtype=np.float32),
+        keys={"a": 0},
+        namespaces={"a": "check"},
+        digests={"a": embedding_cache._row_digest(np.zeros(2, dtype=np.float32))},
+        last_used_at=0.0,
+        generation="0" * 32,
+        source_commit=None,
+    )
+    shard.assert_consistent()
+
+    shard.append_rows([("b", np.array([1.0, 1.0], dtype=np.float32))], "check")
+    shard.assert_consistent()
+    assert set(shard.keys) == {"a", "b"}
+    assert shard.vectors.shape == (2, 2)
+
+    shard.overwrite_rows([("a", np.array([9.0, 9.0], dtype=np.float32))], "check")
+    shard.assert_consistent()
+    np.testing.assert_array_equal(shard.vectors[shard.keys["a"]], np.array([9.0, 9.0]))
+
+    shard.retain(["b"])
+    shard.assert_consistent()
+    assert set(shard.keys) == {"b"}
+    assert shard.vectors.shape == (1, 2)
+
+
+def test_public_cache_seams_are_directly_usable(tmp_path):
+    # embedding_cache exposes these names for reuse by other modules
+    # (semantic.py in particular imports ensure_cache_subdirectory,
+    # atomic_write_json, and log_warning_once directly); this covers each one
+    # standalone, independent of any caller module.
+    managed = embedding_cache.ensure_cache_subdirectory(tmp_path / "root-a", "child")
+    assert managed.name == "child"
+    assert managed.is_dir()
+
+    payload = {"hello": "world"}
+    target = tmp_path / "manifest.json"
+    embedding_cache.atomic_write_json(target, payload)
+    assert json.loads(target.read_text(encoding="utf-8")) == payload
+
+    class _StubExc(Exception):
+        pass
+
+    embedding_cache.warn_once("stub action", _StubExc("boom"))
+
+
+def test_log_warning_once_gates_on_the_given_namespace_and_flag(caplog):
+    # semantic.py reuses this helper for its own ad hoc warn-once booleans
+    # (_warned_mlx_mps_contention, _warned_cpu_fallback_reuse); the flag must
+    # live in and mutate the caller's own namespace (so tests can monkeypatch
+    # it directly, e.g. `semantic._warned_mlx_mps_contention = False`) and the
+    # message must log through the caller's own logger (so caplog scoped to
+    # that logger name still captures it).
+    namespace = {"_warned_stub": False}
+
+    with caplog.at_level("WARNING"):
+        embedding_cache.log_warning_once(namespace, "_warned_stub", "stub warning one")
+        embedding_cache.log_warning_once(namespace, "_warned_stub", "stub warning two")
+
+    assert namespace["_warned_stub"] is True
+    assert caplog.text.count("stub warning") == 1
+    assert "stub warning one" in caplog.text
