@@ -7,32 +7,60 @@ from textwrap import dedent
 import numpy as np
 import pytest
 
+import codedupes.semantic as semantic_module
 from codedupes import analyzer as analyzer_module
 from codedupes.analyzer import AnalyzerConfig, CodeAnalyzer, analyze_directory
 from codedupes.models import AnalysisResult, CodeUnit, CodeUnitType, DuplicatePair
+from codedupes.pairs import ordered_pair_key
 from codedupes.semantic import SemanticBackendError
-import codedupes.semantic as semantic_module
-from tests.conftest import build_two_function_source, create_project
+from tests.conftest import build_two_function_source, create_project, make_code_unit
+
+_SEMANTIC_ANALYSIS_KWARG_NAMES = {
+    "batch_size",
+    "cache_scope",
+    "device",
+    "exclude_pairs",
+    "instruction_prefix",
+    "model_name",
+    "mps_fallback",
+    "mps_memory_fraction",
+    "revision",
+    "semantic_task",
+    "strict_revision_cache",
+    "threshold",
+    "trust_remote_code",
+    "use_cache",
+}
+_QUERY_KWARG_NAMES = {
+    "cache_scope",
+    "corpus_identity",
+    "device",
+    "instruction_prefix",
+    "model_name",
+    "mps_fallback",
+    "mps_memory_fraction",
+    "revision",
+    "semantic_task",
+    "strict_revision_cache",
+    "threshold",
+    "top_k",
+    "trust_remote_code",
+    "use_cache",
+}
 
 
-def _make_unit(
-    tmp_path: Path,
-    *,
-    name: str,
-    source: str,
-    lineno: int,
-    unit_type: CodeUnitType = CodeUnitType.FUNCTION,
-) -> CodeUnit:
-    return CodeUnit(
-        name=name,
-        qualified_name=f"sample.{name}",
-        unit_type=unit_type,
-        file_path=tmp_path / "sample.py",
-        lineno=lineno,
-        end_lineno=lineno + max(1, len(source.strip().splitlines()) - 1),
-        source=source,
-        is_public=True,
-        is_exported=False,
+def _embedding_identity_from_kwargs(kwargs: dict[str, object]):
+    """Build the effective test identity for forwarded semantic arguments."""
+    return semantic_module.resolve_embedding_space_identity(
+        model_name=str(kwargs.get("model_name", analyzer_module.DEFAULT_MODEL)),
+        instruction_prefix=kwargs.get("instruction_prefix"),
+        revision=kwargs.get("revision"),
+        trust_remote_code=kwargs.get("trust_remote_code"),
+        semantic_task=kwargs.get("semantic_task"),
+        device=str(kwargs.get("device", "cpu")),
+        mps_fallback=kwargs.get("mps_fallback"),
+        persist_local_model_manifest=False,
+        strict_revision_cache=bool(kwargs.get("strict_revision_cache", False)),
     )
 
 
@@ -42,38 +70,40 @@ def _make_semantic_runner(
     capture: dict[str, object] | None = None,
     capture_exclude_pairs: set[tuple[str, str]] | None = None,
     error: Exception | None = None,
-) -> Callable[..., tuple[np.ndarray, list[DuplicatePair]]]:
+) -> Callable[..., tuple[np.ndarray, list[DuplicatePair], object]]:
     """Build a reusable semantic-analysis test double."""
 
-    def fake_run_semantic(
-        units,
-        model_name="gte-modernbert-base",
-        instruction_prefix=None,
-        threshold=0.82,
-        exclude_pairs=None,
-        batch_size=32,
-        revision=None,
-        trust_remote_code=None,
-        semantic_task=None,
-    ):
+    def fake_run_semantic(units, **kwargs):
+        assert set(kwargs) == _SEMANTIC_ANALYSIS_KWARG_NAMES
         if capture is not None:
-            capture["model_name"] = model_name
-            capture["instruction_prefix"] = instruction_prefix
-            capture["threshold"] = threshold
-            capture["exclude_pairs"] = exclude_pairs
-            capture["batch_size"] = batch_size
-            capture["revision"] = revision
-            capture["trust_remote_code"] = trust_remote_code
-            capture["semantic_task"] = semantic_task
+            capture.update(kwargs)
         if capture_exclude_pairs is not None:
-            capture_exclude_pairs.update(exclude_pairs or set())
+            capture_exclude_pairs.update(kwargs["exclude_pairs"] or set())
         if error is not None:
             raise error
 
         duplicates = duplicate_factory(units) if duplicate_factory is not None else []
-        return np.zeros((len(units), 2), dtype=np.float32), duplicates
+        return (
+            np.zeros((len(units), 2), dtype=np.float32),
+            duplicates,
+            _embedding_identity_from_kwargs(kwargs),
+        )
 
     return fake_run_semantic
+
+
+def _capture_query_runner(
+    capture: dict[str, object],
+) -> Callable[..., list[tuple[CodeUnit, float]]]:
+    """Build a query runner that records and validates forwarded keyword arguments."""
+
+    def fake_find_similar_to_query(query, units, embeddings, **kwargs):
+        del query, units, embeddings
+        assert set(kwargs) == _QUERY_KWARG_NAMES
+        capture.update({f"query_{key}": value for key, value in kwargs.items()})
+        return []
+
+    return fake_find_similar_to_query
 
 
 def _capture_semantic_unit_types(captured_types: list[CodeUnitType]):
@@ -81,7 +111,11 @@ def _capture_semantic_unit_types(captured_types: list[CodeUnitType]):
 
     def fake_run_semantic(units, **_kwargs):
         captured_types.extend(unit.unit_type for unit in units)
-        return np.zeros((len(units), 2), dtype=np.float32), []
+        return (
+            np.zeros((len(units), 2), dtype=np.float32),
+            [],
+            _embedding_identity_from_kwargs(_kwargs),
+        )
 
     return fake_run_semantic
 
@@ -93,8 +127,6 @@ def _capture_traditional_units_runner(captured_units: list[CodeUnit]):
         units,
         jaccard_threshold=0.85,
         compute_unused=True,
-        strict_unused=False,
-        project_root=None,
     ):
         captured_units.extend(units)
         return [], [], []
@@ -109,8 +141,6 @@ def _traditional_single_jaccard_runner(similarity: float = 0.9):
         units,
         jaccard_threshold=0.85,
         compute_unused=True,
-        strict_unused=False,
-        project_root=None,
     ):
         first, second = units[:2]
         return (
@@ -142,7 +172,7 @@ def test_all_duplicates_returns_raw_for_single_method_modes(tmp_path: Path) -> N
     assert result.traditional_duplicates
     assert result.all_duplicates == result.traditional_duplicates
 
-    unit = _make_unit(
+    unit = make_code_unit(
         tmp_path,
         name="bar",
         source="def bar():\n    return 1\n",
@@ -276,7 +306,7 @@ def test_analyze_directory_uses_auto_revision_for_custom_model(tmp_path: Path, m
     analyze_directory(
         project,
         model_name="sentence-transformers/all-MiniLM-L6-v2",
-        min_semantic_lines=0,
+        min_semantic_statements=0,
         run_unused=False,
     )
 
@@ -308,8 +338,6 @@ def test_combined_mode_preserves_near_dupes_for_semantic_confirmation(
         units,
         jaccard_threshold=0.85,
         compute_unused=True,
-        strict_unused=False,
-        project_root=None,
     ):
         first, second, third = units
         nonlocal expected_exact_pair
@@ -342,7 +370,7 @@ def test_combined_mode_preserves_near_dupes_for_semantic_confirmation(
             run_traditional=True,
             run_semantic=True,
             run_unused=False,
-            min_semantic_lines=0,
+            min_semantic_statements=0,
             jaccard_threshold=0.85,
             semantic_threshold=0.82,
             filter_tiny_traditional=False,
@@ -376,14 +404,71 @@ def test_short_functions_are_skipped_from_semantic(tmp_path: Path) -> None:
             run_traditional=False,
             run_semantic=True,
             run_unused=False,
-            min_semantic_lines=3,
+            min_semantic_statements=3,
         )
     )
     result = analyzer.analyze(project)
     assert result.semantic_duplicates == []
 
 
-def test_semantic_defaults_exclude_class_units(tmp_path: Path, monkeypatch) -> None:
+def test_decorated_methods_survive_semantic_and_tiny_filters(tmp_path: Path, monkeypatch) -> None:
+    source = dedent(
+        """
+        class First:
+            @property
+            def area(self):
+                width = self.width
+                height = self.height
+                scale = self.scale
+                return width * height * scale
+
+        class Second:
+            @property
+            def area(self):
+                width = self.width
+                height = self.height
+                scale = self.scale
+                return width * height * scale
+        """
+    ).strip()
+    project = create_project(tmp_path, source, module="decorated.py")
+    semantic_units: list[CodeUnit] = []
+
+    def capture_semantic_candidates(units, **_kwargs):
+        semantic_units.extend(units)
+        return (
+            np.zeros((len(units), 2), dtype=np.float32),
+            [],
+            _embedding_identity_from_kwargs(_kwargs),
+        )
+
+    monkeypatch.setattr(analyzer_module, "run_semantic_analysis", capture_semantic_candidates)
+    result = CodeAnalyzer(AnalyzerConfig(run_unused=False)).analyze(project)
+
+    assert {unit.qualified_name for unit in semantic_units} == {
+        "decorated.First.area",
+        "decorated.Second.area",
+    }
+    assert any(
+        {duplicate.unit_a.qualified_name, duplicate.unit_b.qualified_name}
+        == {"decorated.First.area", "decorated.Second.area"}
+        for duplicate in result.traditional_duplicates
+    )
+
+
+@pytest.mark.parametrize(
+    ("semantic_unit_types", "expected_types"),
+    [
+        (None, {CodeUnitType.FUNCTION, CodeUnitType.METHOD}),
+        (("class",), {CodeUnitType.CLASS}),
+    ],
+)
+def test_semantic_unit_scope(
+    tmp_path: Path,
+    monkeypatch,
+    semantic_unit_types: tuple[str, ...] | None,
+    expected_types: set[CodeUnitType],
+) -> None:
     source = dedent(
         """
         class Box:
@@ -403,58 +488,36 @@ def test_semantic_defaults_exclude_class_units(tmp_path: Path, monkeypatch) -> N
         _capture_semantic_unit_types(captured_types),
     )
 
-    analyzer = CodeAnalyzer(
-        AnalyzerConfig(
-            run_traditional=False,
-            run_semantic=True,
-            run_unused=False,
-            min_semantic_lines=0,
-        )
-    )
-    analyzer.analyze(project)
-
-    assert CodeUnitType.CLASS not in captured_types
-    assert CodeUnitType.FUNCTION in captured_types
-    assert CodeUnitType.METHOD in captured_types
-
-
-def test_semantic_class_scope_can_be_enabled_explicitly(tmp_path: Path, monkeypatch) -> None:
-    source = dedent(
-        """
-        class Box:
-            def method(self):
-                return 1
-
-        def helper():
-            return 2
-        """
-    ).strip()
-    project = create_project(tmp_path, source, module="scope.py")
-    captured_types: list[CodeUnitType] = []
-
-    monkeypatch.setattr(
-        analyzer_module,
-        "run_semantic_analysis",
-        _capture_semantic_unit_types(captured_types),
-    )
-
-    analyzer = CodeAnalyzer(
-        AnalyzerConfig(
-            run_traditional=False,
-            run_semantic=True,
-            run_unused=False,
-            min_semantic_lines=0,
-            semantic_unit_types=("class",),
-        )
-    )
+    config_kwargs = {
+        "run_traditional": False,
+        "run_semantic": True,
+        "run_unused": False,
+        "min_semantic_statements": 0,
+    }
+    if semantic_unit_types is not None:
+        config_kwargs["semantic_unit_types"] = semantic_unit_types
+    analyzer = CodeAnalyzer(AnalyzerConfig(**config_kwargs))
     analyzer.analyze(project)
 
     assert captured_types
-    assert set(captured_types) == {CodeUnitType.CLASS}
+    assert set(captured_types) == expected_types
 
 
-def test_combined_mode_scopes_traditional_duplicates_to_semantic_candidates(
-    tmp_path: Path, monkeypatch
+@pytest.mark.parametrize(
+    ("run_semantic", "expected_types"),
+    [
+        (True, set()),
+        (
+            False,
+            {CodeUnitType.CLASS, CodeUnitType.METHOD, CodeUnitType.FUNCTION},
+        ),
+    ],
+)
+def test_traditional_scope_depends_on_semantic_mode(
+    tmp_path: Path,
+    monkeypatch,
+    run_semantic: bool,
+    expected_types: set[CodeUnitType],
 ) -> None:
     source = dedent(
         """
@@ -479,120 +542,58 @@ def test_combined_mode_scopes_traditional_duplicates_to_semantic_candidates(
     analyzer = CodeAnalyzer(
         AnalyzerConfig(
             run_traditional=True,
-            run_semantic=True,
+            run_semantic=run_semantic,
             run_unused=False,
-            min_semantic_lines=2,
+            min_semantic_statements=2,
         )
     )
     analyzer.analyze(project)
 
-    assert captured_traditional_units == []
+    assert {unit.unit_type for unit in captured_traditional_units} == expected_types
 
 
-def test_traditional_only_keeps_full_scope_even_with_semantic_filters(
-    tmp_path: Path, monkeypatch
+@pytest.mark.parametrize(
+    ("filter_tiny_traditional", "expected_exact_duplicate"),
+    [(None, False), (False, True)],
+)
+def test_tiny_exact_duplicate_filter(
+    tmp_path: Path,
+    filter_tiny_traditional: bool | None,
+    expected_exact_duplicate: bool,
 ) -> None:
     source = dedent(
         """
-        class Box:
-            def method(self):
-                return 1
+        def wrapper_a():
+            return helper_a()
 
-        def tiny():
-            return 2
+        def wrapper_b():
+            return helper_b()
+
+        def helper_a():
+            return 1
+
+        def helper_b():
+            return 1
         """
     ).strip()
-    project = create_project(tmp_path, source, module="scope.py")
-    captured_traditional_units: list[CodeUnit] = []
+    project = create_project(tmp_path, source, module="tiny_exact.py")
 
-    monkeypatch.setattr(
-        analyzer_module,
-        "run_traditional_analysis",
-        _capture_traditional_units_runner(captured_traditional_units),
-    )
-
-    analyzer = CodeAnalyzer(
-        AnalyzerConfig(
-            run_traditional=True,
-            run_semantic=False,
-            run_unused=False,
-            min_semantic_lines=2,
-        )
-    )
-    analyzer.analyze(project)
-
-    assert captured_traditional_units
-    assert {unit.unit_type for unit in captured_traditional_units} == {
-        CodeUnitType.CLASS,
-        CodeUnitType.METHOD,
-        CodeUnitType.FUNCTION,
+    config_kwargs = {
+        "run_traditional": True,
+        "run_semantic": False,
+        "run_unused": False,
+        "jaccard_threshold": 0.99,
     }
-
-
-def test_tiny_exact_duplicates_are_filtered_by_default(tmp_path: Path) -> None:
-    source = dedent(
-        """
-        def wrapper_a():
-            return helper_a()
-
-        def wrapper_b():
-            return helper_b()
-
-        def helper_a():
-            return 1
-
-        def helper_b():
-            return 1
-        """
-    ).strip()
-    project = create_project(tmp_path, source, module="tiny_exact.py")
-
-    analyzer = CodeAnalyzer(
-        AnalyzerConfig(
-            run_traditional=True,
-            run_semantic=False,
-            run_unused=False,
-            jaccard_threshold=0.99,
-        )
-    )
+    if filter_tiny_traditional is not None:
+        config_kwargs["filter_tiny_traditional"] = filter_tiny_traditional
+    analyzer = CodeAnalyzer(AnalyzerConfig(**config_kwargs))
     result = analyzer.analyze(project)
 
-    assert result.traditional_duplicates == []
-
-
-def test_tiny_exact_duplicates_can_be_restored(tmp_path: Path) -> None:
-    source = dedent(
-        """
-        def wrapper_a():
-            return helper_a()
-
-        def wrapper_b():
-            return helper_b()
-
-        def helper_a():
-            return 1
-
-        def helper_b():
-            return 1
-        """
-    ).strip()
-    project = create_project(tmp_path, source, module="tiny_exact.py")
-
-    analyzer = CodeAnalyzer(
-        AnalyzerConfig(
-            run_traditional=True,
-            run_semantic=False,
-            run_unused=False,
-            jaccard_threshold=0.99,
-            filter_tiny_traditional=False,
-        )
-    )
-    result = analyzer.analyze(project)
-
-    assert any(
+    has_exact_duplicate = any(
         duplicate.method in {"ast_hash", "token_hash"}
         for duplicate in result.traditional_duplicates
     )
+    assert has_exact_duplicate is expected_exact_duplicate
 
 
 @pytest.mark.parametrize(
@@ -620,8 +621,6 @@ def test_tiny_near_duplicates_use_high_jaccard_floor(
         units,
         jaccard_threshold=0.85,
         compute_unused=True,
-        strict_unused=False,
-        project_root=None,
     ):
         return (
             [],
@@ -665,7 +664,7 @@ def test_analyzer_resolves_profile_default_semantic_threshold(tmp_path: Path, mo
             run_traditional=False,
             run_semantic=True,
             run_unused=False,
-            min_semantic_lines=0,
+            min_semantic_statements=0,
             semantic_threshold=None,
         )
     )
@@ -708,7 +707,7 @@ def test_unused_semantic_pairs_are_filtered(tmp_path: Path, monkeypatch) -> None
             run_traditional=False,
             run_semantic=True,
             run_unused=True,
-            min_semantic_lines=0,
+            min_semantic_statements=0,
             strict_unused=False,
         )
     )
@@ -737,13 +736,56 @@ def test_semantic_only_pre_excludes_exact_hash_pairs(tmp_path: Path, monkeypatch
             run_traditional=False,
             run_semantic=True,
             run_unused=False,
-            min_semantic_lines=0,
+            min_semantic_statements=0,
         )
     )
 
     result = analyzer.analyze(project)
     assert result.semantic_duplicates == []
     assert not captured_exclude_pairs
+
+
+def test_combined_mode_excludes_tiny_filtered_ast_only_exact_pairs(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Tiny-filtered ast-hash-only exact pairs must stay excluded from semantic scoring."""
+    project = tmp_path / "src"
+    project.mkdir()
+    (project / "__init__.py").write_text("")
+    (project / "a.py").write_text(
+        "def alpha(x):\n    first = x + 1\n    second = first * 2\n    return second\n"
+    )
+    (project / "b.py").write_text(
+        "def beta(y):\n    one = y + 1\n    two = one * 2\n    return two\n"
+    )
+
+    captured_exclude_pairs: set[tuple[str, str]] = set()
+    monkeypatch.setattr(
+        analyzer_module,
+        "run_semantic_analysis",
+        _make_semantic_runner(capture_exclude_pairs=captured_exclude_pairs),
+    )
+
+    analyzer = CodeAnalyzer(
+        AnalyzerConfig(
+            run_unused=False,
+            # Both functions have 3 statements: semantic candidates at the default
+            # min_semantic_statements, and tiny under this raised cutoff.
+            tiny_unit_statement_cutoff=4,
+        )
+    )
+    result = analyzer.analyze(project)
+
+    unit_by_name = {unit.name: unit for unit in result.units}
+    pair = ordered_pair_key(unit_by_name["alpha"], unit_by_name["beta"])
+
+    # Same normalized AST, different identifiers: an ast_hash-only exact pair.
+    assert unit_by_name["alpha"]._ast_hash == unit_by_name["beta"]._ast_hash
+    assert unit_by_name["alpha"]._token_hash != unit_by_name["beta"]._token_hash
+    # The tiny filter strips the pair from traditional output...
+    assert result.traditional_duplicates == []
+    # ...but semantic scoring must still treat it as an already-known exact pair.
+    assert pair in captured_exclude_pairs
 
 
 def test_combined_mode_fails_hard_on_runtime_semantic_error_by_default(
@@ -763,7 +805,7 @@ def test_combined_mode_fails_hard_on_runtime_semantic_error_by_default(
             run_traditional=True,
             run_semantic=True,
             run_unused=False,
-            min_semantic_lines=0,
+            min_semantic_statements=0,
             filter_tiny_traditional=False,
         )
     )
@@ -808,8 +850,6 @@ def test_combined_mode_fallback_keeps_scoped_traditional_units(tmp_path: Path, m
         units,
         jaccard_threshold=0.85,
         compute_unused=True,
-        strict_unused=False,
-        project_root=None,
     ):
         traditional_calls.append(
             (tuple(unit.name for unit in units), [unit.name for unit in units])
@@ -829,7 +869,7 @@ def test_combined_mode_fallback_keeps_scoped_traditional_units(tmp_path: Path, m
             run_semantic=True,
             allow_semantic_fallback=True,
             run_unused=False,
-            min_semantic_lines=2,
+            min_semantic_statements=2,
             filter_tiny_traditional=False,
         )
     )
@@ -860,7 +900,7 @@ def test_combined_mode_fallback_marks_semantic_degradation(tmp_path: Path, monke
             run_semantic=True,
             allow_semantic_fallback=True,
             run_unused=False,
-            min_semantic_lines=0,
+            min_semantic_statements=0,
             filter_tiny_traditional=False,
         )
     )
@@ -871,7 +911,7 @@ def test_combined_mode_fallback_marks_semantic_degradation(tmp_path: Path, monke
     assert "backend unavailable" in result.semantic_fallback_reason
 
 
-def test_semantic_task_resolves_check_default_for_indexing(tmp_path: Path, monkeypatch) -> None:
+def test_search_after_analyze_uses_analysis_task_when_unset(tmp_path: Path, monkeypatch) -> None:
     source = "def entry(x):\n    return x + 1\n"
     project = create_project(tmp_path, source)
     captured: dict[str, object] = {}
@@ -882,60 +922,181 @@ def test_semantic_task_resolves_check_default_for_indexing(tmp_path: Path, monke
         _make_semantic_runner(capture=captured),
     )
 
-    analyzer = CodeAnalyzer(
-        AnalyzerConfig(
-            run_traditional=False,
-            run_semantic=True,
-            run_unused=False,
-            min_semantic_lines=0,
-        )
-    )
-    analyzer.analyze(project)
-
-    assert captured["semantic_task"] == analyzer_module.DEFAULT_CHECK_SEMANTIC_TASK
-
-
-def test_search_uses_index_task_when_unset(tmp_path: Path, monkeypatch) -> None:
-    source = "def entry(x):\n    return x + 1\n"
-    project = create_project(tmp_path, source)
-    captured: dict[str, object] = {}
-
     monkeypatch.setattr(
-        analyzer_module,
-        "run_semantic_analysis",
-        _make_semantic_runner(capture=captured),
+        semantic_module,
+        "find_similar_to_query",
+        _capture_query_runner(captured),
     )
-
-    def fake_find_similar_to_query(
-        query: str,
-        units,
-        embeddings,
-        model_name="gte-modernbert-base",
-        instruction_prefix=None,
-        top_k=10,
-        revision=None,
-        trust_remote_code=None,
-        threshold=None,
-        semantic_task=None,
-    ):
-        captured["query_task"] = semantic_task
-        return []
-
-    monkeypatch.setattr(semantic_module, "find_similar_to_query", fake_find_similar_to_query)
 
     analyzer = CodeAnalyzer(
         AnalyzerConfig(
             run_traditional=False,
             run_semantic=True,
             run_unused=False,
-            min_semantic_lines=0,
+            min_semantic_statements=0,
         )
     )
     analyzer.analyze(project)
     analyzer.search("entry")
 
     assert captured["semantic_task"] == analyzer_module.DEFAULT_CHECK_SEMANTIC_TASK
-    assert captured["query_task"] == analyzer_module.DEFAULT_CHECK_SEMANTIC_TASK
+    assert captured["query_semantic_task"] == analyzer_module.DEFAULT_CHECK_SEMANTIC_TASK
+
+
+def test_search_threshold_defaults_to_none_and_honors_explicit_config(
+    tmp_path: Path, monkeypatch
+) -> None:
+    source = "def entry(x):\n    return x + 1\n"
+    project = create_project(tmp_path, source)
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        analyzer_module,
+        "run_semantic_analysis",
+        _make_semantic_runner(capture=captured),
+    )
+
+    monkeypatch.setattr(
+        semantic_module,
+        "find_similar_to_query",
+        _capture_query_runner(captured),
+    )
+
+    base_config = {
+        "run_traditional": False,
+        "run_semantic": True,
+        "run_unused": False,
+        "min_semantic_statements": 0,
+    }
+    analyzer = CodeAnalyzer(AnalyzerConfig(**base_config))
+    analyzer.analyze(project)
+    analyzer.search("entry")
+    assert captured["query_threshold"] is None
+
+    explicit = CodeAnalyzer(AnalyzerConfig(semantic_threshold=0.7, **base_config))
+    explicit.analyze(project)
+    explicit.search("entry")
+    assert captured["query_threshold"] == 0.7
+
+
+def test_index_embeds_corpus_without_mining_duplicates(tmp_path: Path, monkeypatch) -> None:
+    source = "def entry(x):\n    return x + 1\n"
+    project = create_project(tmp_path, source)
+    captured: dict[str, object] = {}
+    embedded_units: list[CodeUnit] = []
+
+    def fail_duplicate_mining(*_args, **_kwargs):
+        raise AssertionError("index()/search() must never mine duplicate pairs")
+
+    monkeypatch.setattr(analyzer_module, "run_semantic_analysis", fail_duplicate_mining)
+    monkeypatch.setattr(semantic_module, "find_semantic_duplicates", fail_duplicate_mining)
+
+    def fake_compute_embeddings(units, **kwargs):
+        embedded_units.extend(units)
+        captured.update(kwargs)
+        return (
+            np.zeros((len(units), 2), dtype=np.float32),
+            _embedding_identity_from_kwargs(kwargs),
+        )
+
+    monkeypatch.setattr(analyzer_module, "compute_embeddings", fake_compute_embeddings)
+    monkeypatch.setattr(
+        semantic_module,
+        "find_similar_to_query",
+        _capture_query_runner(captured),
+    )
+
+    analyzer = CodeAnalyzer(
+        AnalyzerConfig(
+            run_traditional=False,
+            run_semantic=True,
+            run_unused=False,
+            min_semantic_statements=0,
+        )
+    )
+    indexed = analyzer.index(project)
+    results = analyzer.search("entry")
+
+    assert indexed == 1
+    assert [unit.name for unit in embedded_units] == ["entry"]
+    assert results == []
+    assert captured["semantic_task"] == analyzer_module.DEFAULT_SEARCH_SEMANTIC_TASK
+    assert captured["query_semantic_task"] == analyzer_module.DEFAULT_SEARCH_SEMANTIC_TASK
+    assert captured["cache_scope"] == project.resolve()
+
+
+def test_index_empty_corpus_yields_empty_search(tmp_path: Path) -> None:
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    analyzer = CodeAnalyzer(
+        AnalyzerConfig(run_traditional=False, run_semantic=True, run_unused=False)
+    )
+
+    assert analyzer.index(empty) == 0
+    assert analyzer.search("anything") == []
+
+
+def test_search_requires_reindex_when_local_model_contents_change(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    project = create_project(tmp_path, "def entry(x):\n    return x + 1\n")
+    model_dir = tmp_path / "local-model"
+    model_dir.mkdir()
+    (model_dir / "config.json").write_text("{}")
+    weights_path = model_dir / "model.safetensors"
+    weights_path.write_bytes(b"first weights")
+
+    monkeypatch.setattr(
+        analyzer_module,
+        "compute_embeddings",
+        lambda units, **kwargs: (
+            np.zeros((len(units), 2), dtype=np.float32),
+            _embedding_identity_from_kwargs(kwargs),
+        ),
+    )
+    analyzer = CodeAnalyzer(
+        AnalyzerConfig(
+            model_name=str(model_dir),
+            device="cpu",
+            embedding_cache=False,
+            min_semantic_statements=0,
+        )
+    )
+    analyzer.index(project)
+
+    weights_path.write_bytes(b"second weights")
+
+    with pytest.raises(RuntimeError, match=r"changed since this corpus was indexed.*index\(\)"):
+        analyzer.search("entry")
+
+
+def test_search_requires_reindex_when_embedding_runtime_variant_changes(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    project = create_project(tmp_path, "def entry(x):\n    return x + 1\n")
+    monkeypatch.setattr(
+        analyzer_module,
+        "compute_embeddings",
+        lambda units, **kwargs: (
+            np.zeros((len(units), 2), dtype=np.float32),
+            _embedding_identity_from_kwargs(kwargs),
+        ),
+    )
+    analyzer = CodeAnalyzer(
+        AnalyzerConfig(
+            device="cpu",
+            embedding_cache=False,
+            min_semantic_statements=0,
+        )
+    )
+    analyzer.index(project)
+
+    analyzer.config.instruction_prefix = "Represent this code differently: "
+
+    with pytest.raises(RuntimeError, match=r"changed since this corpus was indexed.*index\(\)"):
+        analyzer.search("entry")
 
 
 def test_semantic_only_fails_hard_on_runtime_semantic_error(tmp_path: Path, monkeypatch) -> None:
@@ -953,7 +1114,7 @@ def test_semantic_only_fails_hard_on_runtime_semantic_error(tmp_path: Path, monk
             run_traditional=False,
             run_semantic=True,
             run_unused=False,
-            min_semantic_lines=0,
+            min_semantic_statements=0,
         )
     )
 
@@ -983,7 +1144,7 @@ def test_suppress_test_semantic_matches_filters_test_named_pairs(
 
     def fake_run_semantic(
         units,
-        model_name="codefuse-ai/C2LLM-0.5B",
+        model_name="Alibaba-NLP/gte-modernbert-base",
         instruction_prefix=None,
         threshold=0.82,
         exclude_pairs=None,
@@ -991,9 +1152,10 @@ def test_suppress_test_semantic_matches_filters_test_named_pairs(
         revision=None,
         trust_remote_code=None,
         semantic_task=None,
+        **_device_kwargs,
     ):
         by_name = {unit.name: unit for unit in units}
-        return np.zeros((len(units), 2), dtype=np.float32), [
+        duplicates = [
             DuplicatePair(
                 unit_a=by_name["test_alpha"],
                 unit_b=by_name["test_beta"],
@@ -1007,6 +1169,19 @@ def test_suppress_test_semantic_matches_filters_test_named_pairs(
                 method="semantic",
             ),
         ]
+        identity_kwargs = {
+            "model_name": model_name,
+            "instruction_prefix": instruction_prefix,
+            "revision": revision,
+            "trust_remote_code": trust_remote_code,
+            "semantic_task": semantic_task,
+            **_device_kwargs,
+        }
+        return (
+            np.zeros((len(units), 2), dtype=np.float32),
+            duplicates,
+            _embedding_identity_from_kwargs(identity_kwargs),
+        )
 
     monkeypatch.setattr(analyzer_module, "run_semantic_analysis", fake_run_semantic)
 
@@ -1015,7 +1190,7 @@ def test_suppress_test_semantic_matches_filters_test_named_pairs(
             run_traditional=False,
             run_semantic=True,
             run_unused=False,
-            min_semantic_lines=0,
+            min_semantic_statements=0,
             suppress_test_semantic_matches=True,
         )
     )
@@ -1030,8 +1205,8 @@ def test_suppress_test_semantic_matches_filters_test_named_pairs(
 
 
 def test_hybrid_synthesis_exact_only_included(tmp_path: Path) -> None:
-    unit_a = _make_unit(tmp_path, name="a", source="def a(x):\n    return x + 1\n", lineno=1)
-    unit_b = _make_unit(tmp_path, name="b", source="def b(y):\n    return y + 1\n", lineno=5)
+    unit_a = make_code_unit(tmp_path, name="a", source="def a(x):\n    return x + 1\n", lineno=1)
+    unit_b = make_code_unit(tmp_path, name="b", source="def b(y):\n    return y + 1\n", lineno=5)
     traditional = [DuplicatePair(unit_a=unit_a, unit_b=unit_b, similarity=1.0, method="ast_hash")]
 
     hybrid, filtered = analyzer_module._synthesize_hybrid_duplicates(
@@ -1048,8 +1223,8 @@ def test_hybrid_synthesis_exact_only_included(tmp_path: Path) -> None:
 
 
 def test_hybrid_synthesis_jaccard_only_included(tmp_path: Path) -> None:
-    unit_a = _make_unit(tmp_path, name="a", source="def a(x):\n    return x + 1\n", lineno=1)
-    unit_b = _make_unit(tmp_path, name="b", source="def b(y):\n    return y + 2\n", lineno=5)
+    unit_a = make_code_unit(tmp_path, name="a", source="def a(x):\n    return x + 1\n", lineno=1)
+    unit_b = make_code_unit(tmp_path, name="b", source="def b(y):\n    return y + 2\n", lineno=5)
     traditional = [DuplicatePair(unit_a=unit_a, unit_b=unit_b, similarity=0.9, method="jaccard")]
 
     hybrid, _ = analyzer_module._synthesize_hybrid_duplicates(
@@ -1065,8 +1240,8 @@ def test_hybrid_synthesis_jaccard_only_included(tmp_path: Path) -> None:
 
 
 def test_hybrid_synthesis_hybrid_confirmed(tmp_path: Path) -> None:
-    unit_a = _make_unit(tmp_path, name="a", source="def a(x):\n    return x + 1\n", lineno=1)
-    unit_b = _make_unit(tmp_path, name="b", source="def b(y):\n    return y + 1\n", lineno=5)
+    unit_a = make_code_unit(tmp_path, name="a", source="def a(x):\n    return x + 1\n", lineno=1)
+    unit_b = make_code_unit(tmp_path, name="b", source="def b(y):\n    return y + 1\n", lineno=5)
     traditional = [DuplicatePair(unit_a=unit_a, unit_b=unit_b, similarity=0.88, method="jaccard")]
     semantic = [DuplicatePair(unit_a=unit_a, unit_b=unit_b, similarity=0.93, method="semantic")]
 
@@ -1083,10 +1258,10 @@ def test_hybrid_synthesis_hybrid_confirmed(tmp_path: Path) -> None:
 
 
 def test_hybrid_synthesis_semantic_only_gate_enforced(tmp_path: Path) -> None:
-    unit_a = _make_unit(
+    unit_a = make_code_unit(
         tmp_path, name="a", source="def alpha(v):\n    z = v + 1\n    return z\n", lineno=1
     )
-    unit_b = _make_unit(
+    unit_b = make_code_unit(
         tmp_path, name="b", source="def beta(v):\n    q = v + 2\n    return q\n", lineno=6
     )
 
@@ -1100,13 +1275,13 @@ def test_hybrid_synthesis_semantic_only_gate_enforced(tmp_path: Path) -> None:
     assert hybrid_low == []
     assert filtered_low == 1
 
-    weak_sources_a = _make_unit(
+    weak_sources_a = make_code_unit(
         tmp_path,
         name="c",
         source="def c(a):\n    x = a + 1\n    y = x + 1\n    z = y + 1\n    return z\n",
         lineno=12,
     )
-    weak_sources_b = _make_unit(
+    weak_sources_b = make_code_unit(
         tmp_path,
         name="d",
         source="def d(v):\n    return v\n",
@@ -1169,7 +1344,7 @@ def test_mixed_mode_semantic_failure_still_builds_hybrid_from_traditional(
             run_semantic=True,
             allow_semantic_fallback=True,
             run_unused=False,
-            min_semantic_lines=0,
+            min_semantic_statements=0,
             filter_tiny_traditional=False,
         )
     )
@@ -1217,7 +1392,7 @@ def test_single_method_modes_bypass_hybrid_synthesis(tmp_path: Path, monkeypatch
             run_traditional=True,
             run_semantic=False,
             run_unused=False,
-            min_semantic_lines=0,
+            min_semantic_statements=0,
             filter_tiny_traditional=False,
         )
     ).analyze(project)
@@ -1229,7 +1404,7 @@ def test_single_method_modes_bypass_hybrid_synthesis(tmp_path: Path, monkeypatch
             run_traditional=False,
             run_semantic=True,
             run_unused=False,
-            min_semantic_lines=0,
+            min_semantic_statements=0,
         )
     ).analyze(project)
     assert len(semantic_result.semantic_duplicates) == 1
@@ -1245,6 +1420,32 @@ def test_search_requires_embeddings(tmp_path: Path) -> None:
     )
 
     analyzer.analyze(project)
+    with pytest.raises(RuntimeError, match="run_semantic=True"):
+        analyzer.search("entry")
+
+
+def test_empty_reanalysis_clears_previous_search_state(tmp_path: Path, monkeypatch) -> None:
+    project = create_project(tmp_path, "def entry():\n    return 1\n")
+    empty_project = tmp_path / "empty"
+    empty_project.mkdir()
+    monkeypatch.setattr(
+        analyzer_module,
+        "run_semantic_analysis",
+        _make_semantic_runner(),
+    )
+    analyzer = CodeAnalyzer(
+        AnalyzerConfig(
+            run_traditional=False,
+            run_semantic=True,
+            run_unused=False,
+            min_semantic_statements=0,
+        )
+    )
+
+    analyzer.analyze(project)
+    result = analyzer.analyze(empty_project)
+
+    assert result.analysis_mode == "none"
     with pytest.raises(RuntimeError, match="run_semantic=True"):
         analyzer.search("entry")
 
@@ -1282,6 +1483,9 @@ def test_invalid_mode_dependency_raises() -> None:
     with pytest.raises(ValueError, match="require run_semantic=True"):
         AnalyzerConfig(run_semantic=False, model_revision="abc123")
 
+    config = AnalyzerConfig(run_semantic=False, embedding_cache=False)
+    assert config.embedding_cache is False
+
     with pytest.raises(ValueError, match="require run_traditional=True"):
         AnalyzerConfig(run_traditional=False, tiny_unit_statement_cutoff=5)
 
@@ -1295,6 +1499,39 @@ def test_empty_directory_analysis(tmp_path: Path) -> None:
     assert result.semantic_duplicates == []
     assert result.hybrid_duplicates == []
     assert result.potentially_unused == []
+
+
+def test_empty_extraction_still_validates_explicit_device(tmp_path: Path, monkeypatch) -> None:
+    """An empty corpus must not turn an unavailable explicit device into a success.
+
+    ``analyze()`` returns before the semantic layer runs when extraction finds
+    no units, so the explicit-device contract has to be enforced on that
+    shortcut too; only a combined-mode fallback opt-in may downgrade it.
+    """
+
+    def _raise_unavailable(*_args, **_kwargs):
+        raise SemanticBackendError("mps is not available in this environment")
+
+    def _fail_if_called(*_args, **_kwargs):
+        raise AssertionError("an empty corpus must not reach the semantic backend")
+
+    monkeypatch.setattr(semantic_module, "_resolve_semantic_device_request", _raise_unavailable)
+    monkeypatch.setattr(analyzer_module, "run_semantic_analysis", _fail_if_called)
+    empty_project = tmp_path / "empty"
+    empty_project.mkdir()
+
+    with pytest.raises(SemanticBackendError, match="mps is not available"):
+        CodeAnalyzer(AnalyzerConfig(device="mps")).analyze(empty_project)
+
+    # Opting into combined-mode semantic fallback degrades instead of raising.
+    fallback_result = CodeAnalyzer(
+        AnalyzerConfig(device="mps", allow_semantic_fallback=True)
+    ).analyze(empty_project)
+    assert fallback_result.units == []
+
+    # A device that always has a CPU path stays torch-import-free.
+    monkeypatch.setattr(semantic_module, "_resolve_semantic_device_request", _fail_if_called)
+    assert CodeAnalyzer(AnalyzerConfig(device="auto")).analyze(empty_project).units == []
 
 
 @pytest.mark.parametrize(
@@ -1364,9 +1601,145 @@ def test_semantic_failures_raise_when_semantic_required(
             run_traditional=False,
             run_semantic=True,
             run_unused=run_unused,
-            min_semantic_lines=0,
+            min_semantic_statements=0,
         )
     )
 
     with pytest.raises(type(semantic_error)):
         analyzer.analyze(project)
+
+
+def test_analyzer_config_normalizes_semantic_device_options() -> None:
+    config = AnalyzerConfig(
+        device=" MPS ",
+        mps_fallback=False,
+        mps_memory_fraction=0.8,
+    )
+
+    assert config.device == "mps"
+    assert config.mps_fallback is False
+    assert config.mps_memory_fraction == 0.8
+
+
+@pytest.mark.parametrize("device", ["cpu", "cuda"])
+def test_analyzer_config_rejects_mps_memory_fraction_for_non_mps_devices(
+    device: str,
+) -> None:
+    with pytest.raises(ValueError, match="requires device='mps' or device='auto'"):
+        AnalyzerConfig(device=device, mps_memory_fraction=0.8)
+
+
+@pytest.mark.parametrize("fraction", [0.0, -0.1, 2.1])
+def test_analyzer_config_rejects_unsafe_mps_memory_fraction(fraction: float) -> None:
+    with pytest.raises(ValueError, match=r"\(0.0, 2.0\]"):
+        AnalyzerConfig(mps_memory_fraction=fraction)
+
+
+def test_analyzer_config_rejects_device_controls_without_semantic_mode() -> None:
+    with pytest.raises(ValueError, match="device.*require run_semantic=True"):
+        AnalyzerConfig(run_semantic=False, device="mps")
+
+    with pytest.raises(ValueError, match="mps_fallback.*require run_semantic=True"):
+        AnalyzerConfig(run_semantic=False, mps_fallback=False)
+
+    with pytest.raises(ValueError, match="mps_memory_fraction.*require run_semantic=True"):
+        AnalyzerConfig(run_semantic=False, mps_memory_fraction=0.8)
+
+    with pytest.raises(ValueError, match="strict_revision_cache.*require run_semantic=True"):
+        AnalyzerConfig(run_semantic=False, strict_revision_cache=True)
+
+
+@pytest.mark.parametrize(
+    ("config_overrides", "expected_values"),
+    [
+        pytest.param(
+            {
+                "device": "mps",
+                "mps_fallback": False,
+                "mps_memory_fraction": 0.8,
+            },
+            {
+                "device": "mps",
+                "mps_fallback": False,
+                "mps_memory_fraction": 0.8,
+            },
+            id="device-controls",
+        ),
+        pytest.param(
+            {"embedding_cache": False},
+            {"use_cache": False},
+            id="cache-control",
+        ),
+        pytest.param(
+            {"strict_revision_cache": True},
+            {"strict_revision_cache": True},
+            id="strict-revision-cache-control",
+        ),
+    ],
+)
+def test_analyzer_passes_semantic_controls_to_index_and_query(
+    tmp_path: Path,
+    monkeypatch,
+    config_overrides: dict[str, object],
+    expected_values: dict[str, object],
+) -> None:
+    source = "def entry(x):\n    return x + 1\n"
+    project = create_project(tmp_path, source)
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        analyzer_module,
+        "run_semantic_analysis",
+        _make_semantic_runner(capture=captured),
+    )
+    monkeypatch.setattr(
+        semantic_module,
+        "find_similar_to_query",
+        _capture_query_runner(captured),
+    )
+
+    analyzer = CodeAnalyzer(
+        AnalyzerConfig(
+            run_traditional=False,
+            run_semantic=True,
+            run_unused=False,
+            min_semantic_statements=0,
+            **config_overrides,
+        )
+    )
+    analyzer.analyze(project)
+    analyzer.search("entry")
+
+    for key, expected in expected_values.items():
+        assert captured[key] == expected
+        assert captured[f"query_{key}"] == expected
+    assert captured["cache_scope"] == project
+    assert captured["query_cache_scope"] == project
+
+
+def test_analyzer_default_embedding_cache_enabled_and_scoped_to_analyzed_root(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    source = "def entry(x):\n    return x + 1\n"
+    project = create_project(tmp_path, source)
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        analyzer_module,
+        "run_semantic_analysis",
+        _make_semantic_runner(capture=captured),
+    )
+
+    analyzer = CodeAnalyzer(
+        AnalyzerConfig(
+            run_traditional=False,
+            run_semantic=True,
+            run_unused=False,
+            min_semantic_statements=0,
+        )
+    )
+    analyzer.analyze(project)
+
+    assert captured["use_cache"] is True
+    assert captured["cache_scope"] == project

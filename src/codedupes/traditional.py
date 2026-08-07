@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import builtins
 import keyword
 import logging
 import tomllib
@@ -43,6 +44,21 @@ def _find_exact_duplicates(
     return duplicates
 
 
+def find_exact_pair_keys(units: list[CodeUnit]) -> set[tuple[str, str]]:
+    """Return ordered uid pair keys for every exact-duplicate pair.
+
+    Uses the same predicate as :func:`run_traditional_analysis` exact detection:
+    two units are exact duplicates when they share ``_ast_hash`` or ``_token_hash``.
+
+    :param units: Candidate units to compare.
+    :return: Ordered uid pair keys covering all exact-duplicate pairs.
+    """
+    pairs = _find_exact_duplicates(units, "_ast_hash", "ast_hash") + _find_exact_duplicates(
+        units, "_token_hash", "token_hash"
+    )
+    return {ordered_pair_key(pair.unit_a, pair.unit_b) for pair in pairs}
+
+
 def jaccard_similarity(set_a: set[str], set_b: set[str]) -> float:
     """Jaccard similarity between two sets.
 
@@ -69,11 +85,7 @@ def extract_identifiers(source: str) -> set[str]:
         for node in ast.walk(tree):
             if isinstance(node, ast.Name):
                 identifiers.add(node.id)
-            elif isinstance(node, ast.FunctionDef):
-                identifiers.add(node.name)
-            elif isinstance(node, ast.ClassDef):
-                identifiers.add(node.name)
-            elif isinstance(node, ast.AsyncFunctionDef):
+            elif isinstance(node, (ast.FunctionDef, ast.ClassDef, ast.AsyncFunctionDef)):
                 identifiers.add(node.name)
             elif isinstance(node, ast.arg):
                 identifiers.add(node.arg)
@@ -88,7 +100,10 @@ def _normalize_identifiers(identifiers: set[str]) -> set[str]:
     :param identifiers: Raw identifier names.
     :return: Normalized filtered identifiers.
     """
-    ignored = set(keyword.kwlist) | set(dir(__builtins__))
+    # dir(builtins) rather than dir(__builtins__): the latter is a plain dict
+    # inside imported modules, so it would filter dict methods instead of
+    # builtin names.
+    ignored = set(keyword.kwlist) | set(dir(builtins))
     normalized = set()
     for ident in identifiers:
         if not ident:
@@ -207,9 +222,7 @@ def _extract_main_block_calls(file_path: Path) -> set[str]:
                     and left.id == "__name__"
                     and isinstance(right, ast.Constant)
                     and right.value == "__main__"
-                ):
-                    is_main = True
-                elif (
+                ) or (
                     isinstance(left, ast.Constant)
                     and left.value == "__main__"
                     and isinstance(right, ast.Name)
@@ -338,14 +351,17 @@ def _extract_aliases(file_path: Path) -> dict[str, str]:
                 imported = alias.name
                 asname = alias.asname or imported
                 aliases[asname] = f"{base}.{imported}" if base else imported
-        elif isinstance(node, ast.Assign):
-            if len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
-                target = node.targets[0].id
-                value = node.value
-                if isinstance(value, ast.Name):
-                    aliases[target] = value.id
-                elif isinstance(value, ast.Attribute) and isinstance(value.value, ast.Name):
-                    aliases[target] = f"{value.value.id}.{value.attr}"
+        elif (
+            isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+        ):
+            target = node.targets[0].id
+            value = node.value
+            if isinstance(value, ast.Name):
+                aliases[target] = value.id
+            elif isinstance(value, ast.Attribute) and isinstance(value.value, ast.Name):
+                aliases[target] = f"{value.value.id}.{value.attr}"
     return aliases
 
 

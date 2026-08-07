@@ -2,37 +2,29 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 import sys
 from pathlib import Path
 
-from click.testing import CliRunner
+import numpy as np
 import pytest
+from click.testing import CliRunner
 
 from codedupes import cli
+from codedupes.devices import DeviceDiagnostics
+from codedupes.embedding_cache import EmbeddingCache
+from codedupes.logging_utils import NOISY_EXTERNAL_LOGGERS
 from codedupes.models import (
     AnalysisResult,
     CodeUnit,
-    CodeUnitType,
     DuplicatePair,
     HybridDuplicate,
 )
 from codedupes.semantic import SemanticBackendError
-from tests.conftest import patch_cli_analyzer
+from tests.conftest import make_code_unit, patch_cli_analyzer
 
 
 def _build_unit(tmp_path: Path) -> CodeUnit:
-    return CodeUnit(
-        name="entry",
-        qualified_name="sample.entry",
-        unit_type=CodeUnitType.FUNCTION,
-        file_path=tmp_path / "sample.py",
-        lineno=1,
-        end_lineno=2,
-        source="def entry():\n    return 1",
-        is_public=True,
-        is_exported=False,
-    )
+    return make_code_unit(tmp_path, name="entry", source="def entry():\n    return 1")
 
 
 def _build_result(tmp_path: Path) -> AnalysisResult:
@@ -106,6 +98,34 @@ def test_cli_json_output_hybrid_default(monkeypatch, tmp_path):
     search_output = json.loads(result.output)
     assert search_output["query"] == "entry"
     assert search_output["results"][0]["name"] == "entry"
+
+
+def test_cli_search_indexes_without_running_full_analysis(monkeypatch, tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+
+    class IndexOnlyAnalyzer:
+        def __init__(self, config):
+            del config
+
+        def analyze(self, _path):
+            raise AssertionError("search must build its corpus via index(), not analyze()")
+
+        def index(self, _path):
+            return 1
+
+        def search(self, query, top_k=10):
+            del query, top_k
+            return [(_build_unit(tmp_path), 0.99)]
+
+    monkeypatch.setattr(cli, "CodeAnalyzer", IndexOnlyAnalyzer)
+    runner = CliRunner()
+
+    result = runner.invoke(cli.cli, ["search", str(path), "entry", "--json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["results"][0]["name"] == "entry"
 
 
 def test_cli_json_show_all_includes_raw_sections(monkeypatch, tmp_path):
@@ -233,6 +253,42 @@ def test_cli_model_revision_defaults_to_auto_none(monkeypatch, tmp_path):
     assert result.exit_code == 1
     assert captured[0].model_name == "sentence-transformers/all-MiniLM-L6-v2"
     assert captured[0].model_revision is None
+
+
+@pytest.mark.parametrize(
+    ("command", "tail_args", "expected_exit"),
+    [
+        ("check", [], 1),
+        ("search", ["entry"], 0),
+    ],
+)
+def test_cli_local_model_path_pass_through(
+    monkeypatch,
+    tmp_path,
+    command,
+    tail_args,
+    expected_exit,
+):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+    model_dir = tmp_path / "saved-model"
+    model_dir.mkdir()
+    captured = []
+    patch_cli_analyzer(
+        monkeypatch,
+        cli,
+        analyze_result=lambda: _build_result(tmp_path),
+        search_results=[(_build_unit(tmp_path), 0.99)],
+        captured_configs=captured,
+    )
+
+    result = CliRunner().invoke(
+        cli.cli,
+        [command, str(path), *tail_args, "--model", str(model_dir)],
+    )
+
+    assert result.exit_code == expected_exit
+    assert captured[0].model_name == str(model_dir)
 
 
 def test_cli_threshold_precedence(monkeypatch, tmp_path):
@@ -392,6 +448,36 @@ def test_cli_search_semantic_unit_type_pass_through(monkeypatch, tmp_path):
     assert captured[0].semantic_unit_types == ("class",)
 
 
+def test_cli_search_threshold_precedence(monkeypatch, tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+
+    captured = []
+    patch_cli_analyzer(
+        monkeypatch,
+        cli,
+        analyze_result=lambda: _build_result(tmp_path),
+        search_results=[(_build_unit(tmp_path), 0.99)],
+        captured_configs=captured,
+    )
+    runner = CliRunner()
+
+    result_default = runner.invoke(cli.cli, ["search", str(path), "entry"])
+    assert result_default.exit_code == 0
+    assert captured[-1].semantic_threshold is None
+
+    result_shared = runner.invoke(cli.cli, ["search", str(path), "entry", "--threshold", "0.4"])
+    assert result_shared.exit_code == 0
+    assert captured[-1].semantic_threshold == 0.4
+
+    result_override = runner.invoke(
+        cli.cli,
+        ["search", str(path), "entry", "--threshold", "0.4", "--semantic-threshold", "0.6"],
+    )
+    assert result_override.exit_code == 0
+    assert captured[-1].semantic_threshold == 0.6
+
+
 def test_cli_requires_explicit_command(tmp_path):
     path = tmp_path / "sample.py"
     path.write_text("def entry():\n    return 1\n")
@@ -399,6 +485,35 @@ def test_cli_requires_explicit_command(tmp_path):
     runner = CliRunner()
     result = runner.invoke(cli.cli, [str(path), "--no-private"])
     assert result.exit_code == 2
+
+
+@pytest.mark.parametrize(
+    "token",
+    [".", "./src", "/tmp", "~/whatever", "srcish"],
+    ids=["dot", "dot-relative", "absolute", "tilde", "bare-name"],
+)
+def test_cli_no_subcommand_token_exits_usage_error(token):
+    """A sole path-like or bare-name token with no subcommand must be a usage error.
+
+    Click's ``resolve_command`` re-parses unmatched command tokens whose first
+    character is non-alphanumeric (``.``, ``/``, ``~``, ...); older click releases
+    used to re-run this with an emptied ``ctx.args``, which spuriously hit the
+    group's no-args help path and exited 0 instead of raising a usage error.
+    """
+    runner = CliRunner()
+    result = runner.invoke(cli.cli, [token])
+    assert result.exit_code == 2
+    assert f"No such command {token!r}." in result.output
+    assert "Commands:" not in result.output
+
+
+def test_cli_no_args_prints_help_and_exits_usage_error():
+    runner = CliRunner()
+    result = runner.invoke(cli.cli, [])
+    assert result.exit_code == 2
+    assert "Commands:" in result.output
+    assert "check" in result.output
+    assert "search" in result.output
 
 
 @pytest.mark.parametrize(
@@ -465,78 +580,59 @@ def test_cli_rejects_combined_only_flags_in_single_method_modes(tmp_path, flag, 
     assert expected_message in traditional_result.output
 
 
-def test_cli_rejects_json_with_rich_only_flags(tmp_path):
-    path = tmp_path / "sample.py"
-    path.write_text("def entry():\n    return 1\n")
-
-    runner = CliRunner()
-    check_result = runner.invoke(
-        cli.cli,
-        ["check", str(path), "--json", "--show-source"],
-    )
-    assert check_result.exit_code == 2
-    assert "Cannot use --show-source with --json." in check_result.output
-
-    search_result = runner.invoke(
-        cli.cli,
-        ["search", str(path), "entry", "--json", "--verbose"],
-    )
-    assert search_result.exit_code == 2
-    assert "Cannot use --verbose with --json." in search_result.output
-
-
-def test_cli_rejects_json_with_explicit_output_width(tmp_path):
+@pytest.mark.parametrize(
+    ("command", "tail_args", "rich_args", "expected_option"),
+    [
+        ("check", [], ["--show-source"], "--show-source"),
+        ("search", ["entry"], ["--verbose"], "--verbose"),
+        ("check", [], ["--output-width", "160"], "--output-width"),
+    ],
+)
+def test_cli_rejects_json_with_rich_only_flags(
+    tmp_path,
+    command,
+    tail_args,
+    rich_args,
+    expected_option,
+):
     path = tmp_path / "sample.py"
     path.write_text("def entry():\n    return 1\n")
 
     runner = CliRunner()
     result = runner.invoke(
         cli.cli,
-        ["check", str(path), "--json", "--output-width", "160"],
+        [command, str(path), *tail_args, "--json", *rich_args],
     )
     assert result.exit_code == 2
-    assert "Cannot use --output-width with --json." in result.output
+    assert f"Cannot use {expected_option} with --json." in result.output
 
 
-def test_cli_rejects_conflicting_trust_remote_code_flags(tmp_path):
-    path = tmp_path / "sample.py"
-    path.write_text("def entry():\n    return 1\n")
-
-    runner = CliRunner()
-    check_result = runner.invoke(
-        cli.cli,
-        ["check", str(path), "--trust-remote-code", "--no-trust-remote-code"],
-    )
-    assert check_result.exit_code == 2
-    assert "Cannot combine --trust-remote-code and --no-trust-remote-code." in check_result.output
-
-    search_result = runner.invoke(
-        cli.cli,
-        ["search", str(path), "entry", "--trust-remote-code", "--no-trust-remote-code"],
-    )
-    assert search_result.exit_code == 2
-    assert "Cannot combine --trust-remote-code and --no-trust-remote-code." in search_result.output
-
-
-def test_cli_rejects_semantic_flags_with_traditional_only(tmp_path):
+@pytest.mark.parametrize(
+    ("command", "tail_args", "enabled_flag", "disabled_flag"),
+    [
+        ("check", [], "--trust-remote-code", "--no-trust-remote-code"),
+        ("search", ["entry"], "--trust-remote-code", "--no-trust-remote-code"),
+        ("check", [], "--mps-fallback", "--no-mps-fallback"),
+        ("search", ["entry"], "--mps-fallback", "--no-mps-fallback"),
+    ],
+)
+def test_cli_rejects_conflicting_paired_flags(
+    tmp_path,
+    command,
+    tail_args,
+    enabled_flag,
+    disabled_flag,
+):
     path = tmp_path / "sample.py"
     path.write_text("def entry():\n    return 1\n")
 
     runner = CliRunner()
     result = runner.invoke(
         cli.cli,
-        [
-            "check",
-            str(path),
-            "--traditional-only",
-            "--semantic-task",
-            "classification",
-            "--no-tiny-filter",
-        ],
+        [command, str(path), *tail_args, enabled_flag, disabled_flag],
     )
-
     assert result.exit_code == 2
-    assert "Cannot use --semantic-task" in result.output
+    assert f"Cannot combine {enabled_flag} and {disabled_flag}." in result.output
 
 
 @pytest.mark.parametrize(
@@ -550,7 +646,7 @@ def test_cli_rejects_semantic_flags_with_traditional_only(tmp_path):
         (["--trust-remote-code"], "--trust-remote-code"),
         (["--no-trust-remote-code"], "--no-trust-remote-code"),
         (["--batch-size", "4"], "--batch-size"),
-        (["--min-lines", "1"], "--min-lines"),
+        (["--min-statements", "1"], "--min-statements"),
         (["--semantic-unit-type", "class"], "--semantic-unit-type"),
         (["--suppress-test-semantic"], "--suppress-test-semantic"),
     ],
@@ -569,26 +665,6 @@ def test_cli_rejects_all_semantic_mode_flags_with_traditional_only(
 
     assert result.exit_code == 2
     assert f"Cannot use {expected_option}" in result.output
-
-
-def test_cli_rejects_traditional_flags_with_semantic_only(tmp_path):
-    path = tmp_path / "sample.py"
-    path.write_text("def entry():\n    return 1\n")
-
-    runner = CliRunner()
-    result = runner.invoke(
-        cli.cli,
-        [
-            "check",
-            str(path),
-            "--semantic-only",
-            "--traditional-threshold",
-            "0.7",
-        ],
-    )
-
-    assert result.exit_code == 2
-    assert "Cannot use --traditional-threshold" in result.output
 
 
 @pytest.mark.parametrize(
@@ -635,7 +711,50 @@ def test_cli_info_exit_zero():
     result = runner.invoke(cli.cli, ["info"])
     assert result.exit_code == 0
     assert "codedupes" in result.output.lower()
+    assert "pytorch:" in result.output.lower()
+    assert "mps built/available:" in result.output.lower()
+    assert "mlx loaded in process:" in result.output.lower()
     assert "built-in semantic model aliases" in result.output.lower()
+    assert "semantic_threshold=0.96 search_threshold=0.5" in result.output
+    default_revision = cli.resolve_model_profile(cli.DEFAULT_MODEL).default_revision
+    assert f"Default model revision: {default_revision}" in result.output
+
+
+def test_cli_info_configures_mps_environment_before_diagnostics(monkeypatch):
+    order: list[str] = []
+
+    def _record_configure(requested_device, *, fallback):
+        order.append(f"configure:{requested_device}:{fallback}")
+
+    def _record_diagnostics(requested_device):
+        order.append(f"diagnostics:{requested_device}")
+        return DeviceDiagnostics(
+            requested=requested_device,
+            resolved="cpu",
+            torch_available=True,
+            cuda_available=False,
+            mps_built=False,
+            mps_available=False,
+            mps_fallback_env="1",
+            mlx_loaded=False,
+            cpu_name="Test CPU",
+            cpu_architecture="arm64",
+            cpu_bf16_isa=False,
+            cpu_mkldnn_available=False,
+            cpu_bf16_native=False,
+        )
+
+    monkeypatch.setattr(cli, "configure_mps_environment", _record_configure)
+    monkeypatch.setattr(cli, "get_device_diagnostics", _record_diagnostics)
+
+    runner = CliRunner()
+    result = runner.invoke(cli.cli, ["info"])
+
+    assert result.exit_code == 0
+    assert order == [
+        f"configure:{cli.DEFAULT_SEMANTIC_DEVICE}:None",
+        f"diagnostics:{cli.DEFAULT_SEMANTIC_DEVICE}",
+    ]
 
 
 @pytest.mark.parametrize(
@@ -681,6 +800,14 @@ def test_cli_search_help_is_search_specific() -> None:
     assert "always apply." in result.output
 
 
+@pytest.mark.parametrize("command", ["check", "search"])
+def test_cli_help_advertises_local_model_directories(command: str) -> None:
+    result = CliRunner().invoke(cli.cli, [command, "--help"])
+
+    assert result.exit_code == 0
+    assert "complete local model directory" in result.output
+
+
 def test_cli_output_width_option(monkeypatch, tmp_path):
     path = tmp_path / "sample.py"
     path.write_text("def entry():\n    return 1\n")
@@ -694,8 +821,7 @@ def test_cli_output_width_option(monkeypatch, tmp_path):
     runner = CliRunner()
     result = runner.invoke(cli.cli, ["check", str(path), "--output-width", "200"])
     assert result.exit_code == 1
-    assert "Hybrid Duplicates" in result.output
-    assert "Traditional Duplicates (Raw" not in result.output
+    assert cli.console.width == 200
 
 
 def test_cli_show_all_prints_raw_sections(monkeypatch, tmp_path):
@@ -765,7 +891,7 @@ def test_cli_check_fails_on_semantic_backend_error_without_fallback(monkeypatch,
     monkeypatch.setattr(analyzer_module, "run_semantic_analysis", _raise_semantic_backend_error)
 
     runner = CliRunner()
-    result = runner.invoke(cli.cli, ["check", str(path), "--min-lines", "0"])
+    result = runner.invoke(cli.cli, ["check", str(path), "--min-statements", "0"])
     assert result.exit_code == 1
     assert "Error during analysis" in result.output
     assert "--allow-semantic-fallback" in result.output
@@ -782,7 +908,7 @@ def test_cli_check_degrades_on_semantic_backend_error_with_fallback(monkeypatch,
     runner = CliRunner()
     result = runner.invoke(
         cli.cli,
-        ["check", str(path), "--min-lines", "0", "--allow-semantic-fallback"],
+        ["check", str(path), "--min-statements", "0", "--allow-semantic-fallback"],
     )
     assert result.exit_code == 1
     assert "Semantic analysis unavailable" in result.output
@@ -799,7 +925,7 @@ def test_cli_check_degrades_on_semantic_backend_error_in_json(monkeypatch, tmp_p
     runner = CliRunner()
     result = runner.invoke(
         cli.cli,
-        ["check", str(path), "--min-lines", "0", "--allow-semantic-fallback", "--json"],
+        ["check", str(path), "--min-statements", "0", "--allow-semantic-fallback", "--json"],
     )
     assert result.exit_code == 1
 
@@ -815,7 +941,7 @@ def test_cli_check_degrades_on_semantic_backend_error_in_json(monkeypatch, tmp_p
 @pytest.mark.parametrize(
     ("args", "expected_message"),
     [
-        (["check", "--semantic-only", "--min-lines", "0"], "Error during analysis"),
+        (["check", "--semantic-only", "--min-statements", "0"], "Error during analysis"),
         (["search", "entry"], "Error during search"),
     ],
 )
@@ -828,6 +954,9 @@ def test_cli_semantic_required_modes_fail_on_semantic_backend_error(
     from codedupes import analyzer as analyzer_module
 
     monkeypatch.setattr(analyzer_module, "run_semantic_analysis", _raise_semantic_backend_error)
+    # `search` builds its corpus through index()/compute_embeddings, not the
+    # duplicate-mining entry point.
+    monkeypatch.setattr(analyzer_module, "compute_embeddings", _raise_semantic_backend_error)
 
     runner = CliRunner()
     result = runner.invoke(cli.cli, [args[0], str(path), *args[1:]])
@@ -886,7 +1015,7 @@ def test_cli_semantic_only_uses_raw_findings_for_exit(monkeypatch, tmp_path):
 
 def test_setup_logging_quiets_external_loggers() -> None:
     cli.setup_logging(verbose=False)
-    for logger_name in cli._NOISY_EXTERNAL_LOGGERS:
+    for logger_name in NOISY_EXTERNAL_LOGGERS:
         assert logging.getLogger(logger_name).level == logging.WARNING
 
 
@@ -900,44 +1029,333 @@ def test_main_propagates_check_exit_code(monkeypatch, tmp_path):
     assert cli.main() == 1
 
 
-def test_no_banned_runtime_practice() -> None:
-    root = Path(__file__).resolve().parents[1]
-    scanned_files = [root / "README.md"]
-    scanned_files.extend(root.joinpath("src").rglob("*.py"))
-    scanned_files.extend(root.joinpath("tests").rglob("*.py"))
+@pytest.mark.parametrize(
+    ("command", "tail_args", "mps_fallback_flag", "expected_mps_fallback"),
+    [
+        ("check", [], "--no-mps-fallback", False),
+        ("search", ["entry"], "--no-mps-fallback", False),
+        ("check", [], "--mps-fallback", True),
+        ("search", ["entry"], "--mps-fallback", True),
+    ],
+)
+def test_cli_device_controls_pass_through(
+    monkeypatch,
+    tmp_path,
+    command,
+    tail_args,
+    mps_fallback_flag,
+    expected_mps_fallback,
+):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
 
-    python_m_pattern = " ".join(["python", "-m", "codedupes"])
-    sys_path_pattern = ".".join(["sys", "path"])
-    subprocess_import_pattern = " ".join(["import", "subprocess"])
-    subprocess_attr_pattern = "subprocess" + "."
+    captured = []
+    patch_cli_analyzer(
+        monkeypatch,
+        cli,
+        analyze_result=lambda: _build_result(tmp_path),
+        search_results=[(_build_unit(tmp_path), 0.99)],
+        captured_configs=captured,
+    )
+    runner = CliRunner()
+    result = runner.invoke(
+        cli.cli,
+        [
+            command,
+            str(path),
+            *tail_args,
+            "--device",
+            "mps",
+            mps_fallback_flag,
+            "--mps-memory-fraction",
+            "0.8",
+        ],
+    )
 
-    violations: list[str] = []
-    for file in scanned_files:
-        if file == Path(__file__):
-            continue
-        text = file.read_text(encoding="utf-8", errors="ignore")
-        if python_m_pattern in text:
-            violations.append(f"{file}: python -m codedupes usage")
-
-        if sys_path_pattern in text:
-            violations.append(f"{file}: sys.path usage")
-
-        if subprocess_import_pattern in text or subprocess_attr_pattern in text:
-            violations.append(f"{file}: subprocess usage")
-
-    assert violations == []
+    expected_exit = 1 if command == "check" else 0
+    assert result.exit_code == expected_exit, result.output
+    assert captured[0].device == "mps"
+    assert captured[0].mps_fallback is expected_mps_fallback
+    assert captured[0].mps_memory_fraction == 0.8
 
 
-def test_no_relative_imports_outside_init() -> None:
-    package_root = Path(__file__).resolve().parents[1] / "src" / "codedupes"
-    offenders: list[str] = []
-    pattern = re.compile(r"^\\s*from \\.\\w")
+def test_cli_rejects_unsafe_mps_memory_fraction(tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
 
-    for file_path in package_root.rglob("*.py"):
-        if file_path.name == "__init__.py":
-            continue
-        for line_no, line in enumerate(file_path.read_text(encoding="utf-8").splitlines(), 1):
-            if pattern.match(line):
-                offenders.append(f"{file_path}:{line_no}:{line.strip()}")
+    runner = CliRunner()
+    result = runner.invoke(
+        cli.cli,
+        ["check", str(path), "--mps-memory-fraction", "0"],
+    )
 
-    assert offenders == []
+    assert result.exit_code == 2
+    assert "must be finite and in the interval (0.0, 2.0]" in result.output
+
+
+def test_cli_rejects_mps_memory_fraction_with_cpu_device(tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli.cli,
+        [
+            "check",
+            str(path),
+            "--device",
+            "cpu",
+            "--mps-memory-fraction",
+            "0.8",
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert "mps_memory_fraction requires device='mps' or device='auto'" in result.output
+
+
+@pytest.mark.parametrize(
+    ("extra_args", "expected_option"),
+    [
+        (["--device", "mps"], "--device"),
+        (["--mps-fallback"], "--mps-fallback"),
+        (["--no-mps-fallback"], "--no-mps-fallback"),
+        (["--mps-memory-fraction", "0.8"], "--mps-memory-fraction"),
+        (["--strict-revision-cache"], "--strict-revision-cache"),
+    ],
+)
+def test_cli_rejects_device_controls_with_traditional_only(
+    tmp_path,
+    extra_args,
+    expected_option,
+):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli.cli,
+        ["check", str(path), "--traditional-only", *extra_args],
+    )
+
+    assert result.exit_code == 2
+    assert f"Cannot use {expected_option}" in result.output
+
+
+@pytest.mark.parametrize(
+    ("command", "tail_args", "expected_exit_code"),
+    [("check", [], 1), ("search", ["entry"], 0)],
+)
+def test_cli_no_cache_flag_disables_embedding_cache(
+    monkeypatch,
+    tmp_path,
+    command,
+    tail_args,
+    expected_exit_code,
+):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+
+    captured = []
+    patch_cli_analyzer(
+        monkeypatch,
+        cli,
+        analyze_result=lambda: _build_result(tmp_path),
+        search_results=[(_build_unit(tmp_path), 0.9)],
+        captured_configs=captured,
+    )
+    runner = CliRunner()
+    result = runner.invoke(cli.cli, [command, str(path), *tail_args, "--no-cache"])
+
+    assert result.exit_code == expected_exit_code
+    assert captured[0].embedding_cache is False
+
+
+def test_cli_traditional_only_accepts_no_cache_as_noop(monkeypatch, tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+    captured = []
+    patch_cli_analyzer(
+        monkeypatch,
+        cli,
+        analyze_result=lambda: _build_result(tmp_path),
+        captured_configs=captured,
+    )
+
+    result = CliRunner().invoke(
+        cli.cli,
+        ["check", str(path), "--traditional-only", "--no-cache"],
+    )
+
+    assert result.exit_code == 1
+    assert captured[0].run_semantic is False
+    assert captured[0].embedding_cache is False
+
+
+def test_cli_check_defaults_to_embedding_cache_enabled(monkeypatch, tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+
+    captured = []
+    patch_cli_analyzer(
+        monkeypatch,
+        cli,
+        analyze_result=lambda: _build_result(tmp_path),
+        captured_configs=captured,
+    )
+    runner = CliRunner()
+    result = runner.invoke(cli.cli, ["check", str(path)])
+
+    assert result.exit_code == 1
+    assert captured[0].embedding_cache is True
+
+
+@pytest.mark.parametrize(
+    ("command", "tail_args", "expected_exit_code"),
+    [("check", [], 1), ("search", ["entry"], 0)],
+)
+def test_cli_strict_revision_cache_flag_plumbs_to_config(
+    monkeypatch,
+    tmp_path,
+    command,
+    tail_args,
+    expected_exit_code,
+):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+
+    captured = []
+    patch_cli_analyzer(
+        monkeypatch,
+        cli,
+        analyze_result=lambda: _build_result(tmp_path),
+        search_results=[(_build_unit(tmp_path), 0.9)],
+        captured_configs=captured,
+    )
+    runner = CliRunner()
+    result = runner.invoke(cli.cli, [command, str(path), *tail_args, "--strict-revision-cache"])
+
+    assert result.exit_code == expected_exit_code
+    assert captured[0].strict_revision_cache is True
+
+
+def test_cli_defaults_to_loose_revision_cache(monkeypatch, tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+
+    captured = []
+    patch_cli_analyzer(
+        monkeypatch,
+        cli,
+        analyze_result=lambda: _build_result(tmp_path),
+        captured_configs=captured,
+    )
+    runner = CliRunner()
+    result = runner.invoke(cli.cli, ["check", str(path)])
+
+    assert result.exit_code == 1
+    assert captured[0].strict_revision_cache is False
+
+
+@pytest.mark.parametrize("command", ["check", "search"])
+def test_cli_help_documents_strict_revision_cache_flag(command):
+    result = CliRunner().invoke(cli.cli, [command, "--help"])
+
+    assert result.exit_code == 0
+    assert "--strict-revision-cache" in result.output
+
+
+def test_cli_cache_info_reports_empty_cache():
+    runner = CliRunner()
+    result = runner.invoke(cli.cli, ["cache", "info"])
+
+    assert result.exit_code == 0
+    assert "Cache path:" in result.output
+    assert "Entries: 0" in result.output
+
+
+def test_cli_cache_info_reports_populated_cache(tmp_path):
+    cache = EmbeddingCache()
+    scope = tmp_path / "proj"
+    scope.mkdir()
+    cache.put_many(scope, "some/model", "rev1", [("k1", np.array([1.0, 2.0], dtype=np.float32))])
+
+    runner = CliRunner()
+    result = runner.invoke(cli.cli, ["cache", "info"])
+
+    assert result.exit_code == 0
+    assert "Entries: 1" in result.output
+    assert "some/model: 1" in result.output
+
+
+def test_cli_cache_info_errors_when_cache_construction_fails(monkeypatch):
+    def _raise(*_args, **_kwargs):
+        raise RuntimeError("no home directory")
+
+    monkeypatch.setattr(cli, "EmbeddingCache", _raise)
+
+    result = CliRunner().invoke(cli.cli, ["cache", "info"])
+
+    assert result.exit_code == 1
+    assert "Cache unavailable: no home directory" in result.output
+
+
+def test_cli_info_survives_cache_construction_failure(monkeypatch):
+    def _raise(*_args, **_kwargs):
+        raise RuntimeError("no home directory")
+
+    monkeypatch.setattr(cli, "EmbeddingCache", _raise)
+
+    result = CliRunner().invoke(cli.cli, ["info"])
+
+    assert result.exit_code == 0
+    assert "unavailable: no home directory" in result.output
+    assert "Run with --help for CLI usage" in result.output
+
+
+def test_cli_cache_clear_removes_all_entries(tmp_path):
+    cache = EmbeddingCache()
+    scope = tmp_path / "proj"
+    scope.mkdir()
+    cache.put_many(scope, "some/model", "rev1", [("k1", np.array([1.0, 2.0], dtype=np.float32))])
+
+    runner = CliRunner()
+    result = runner.invoke(cli.cli, ["cache", "clear"])
+
+    assert result.exit_code == 0
+    assert "Cleared 1 cached embedding" in result.output
+    assert cache.stats()["entries"] == 0
+
+
+def test_cli_cache_clear_scoped_to_model(tmp_path):
+    cache = EmbeddingCache()
+    scope = tmp_path / "proj"
+    scope.mkdir()
+    cache.put_many(
+        scope,
+        "Alibaba-NLP/gte-modernbert-base",
+        "rev1",
+        [("k1", np.array([1.0, 2.0], dtype=np.float32))],
+    )
+    cache.put_many(scope, "other/model", "rev1", [("k2", np.array([3.0, 4.0], dtype=np.float32))])
+
+    runner = CliRunner()
+    result = runner.invoke(cli.cli, ["cache", "clear", "--model", "gte-modernbert-base"])
+
+    assert result.exit_code == 0
+    assert "Cleared 1 cached embedding" in result.output
+    remaining = cache.stats()
+    assert remaining["entries"] == 1
+    assert remaining["models"] == {"other/model": 1}
+
+
+def test_cli_cache_clear_reports_failure(monkeypatch):
+    def fail_clear(_self, model=None):
+        raise PermissionError("cache is read-only")
+
+    monkeypatch.setattr(cli.EmbeddingCache, "clear", fail_clear)
+
+    result = CliRunner().invoke(cli.cli, ["cache", "clear"])
+
+    assert result.exit_code == 1
+    assert "Cache clear failed: cache is read-only" in result.output

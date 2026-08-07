@@ -1,27 +1,64 @@
-#!/usr/bin/env python
-"""Sweep semantic thresholds for built-in semantic model profiles."""
+"""Sweep duplicate and search thresholds for built-in semantic model profiles.
+
+Every sweep records a full calibration manifest (pinned model commit, embedding
+pipeline schema and runtime identity, encode plan, the effective embedding-space
+identity the analyzer actually produced (covering dtype and Metal math policy
+even when an accelerator request fell back to CPU mid-run), dimension, candidate
+policy, and corpus/label digests) so a selected threshold is always tied to a
+reproducible model and pipeline identity. Calibration refuses to run when the
+model cannot be pinned to an immutable 40-character commit.
+"""
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
-from codedupes.analyzer import AnalyzerConfig, CodeAnalyzer
+from codedupes import __version__
+from codedupes.analyzer import DEFAULT_SEMANTIC_UNIT_TYPES, AnalyzerConfig, CodeAnalyzer
+from codedupes.constants import DEFAULT_CHECK_SEMANTIC_TASK, DEFAULT_SEARCH_SEMANTIC_TASK
 from codedupes.models import DuplicatePair
 from codedupes.pairs import ordered_pair_key
-from codedupes.semantic_profiles import list_supported_models, resolve_model_profile
+from codedupes.semantic import (
+    EMBEDDING_PIPELINE_SCHEMA,
+    EmbeddingSpaceIdentity,
+    _embedding_runtime_fingerprint,
+    get_semantic_runtime_versions,
+    resolve_encode_plan,
+)
+from codedupes.semantic_profiles import (
+    SemanticModelProfile,
+    list_supported_models,
+    resolve_model_profile,
+)
 
 try:
-    from .sweep_common import build_positive_pairs, metrics
+    from .sweep_common import (
+        add_common_sweep_arguments,
+        build_positive_pairs,
+        metrics,
+        rank_sweep_rows,
+        resolve_label_unit,
+    )
 except ImportError:
-    from sweep_common import build_positive_pairs, metrics
+    from sweep_common import (
+        add_common_sweep_arguments,
+        build_positive_pairs,
+        metrics,
+        rank_sweep_rows,
+        resolve_label_unit,
+    )
 
-THRESHOLD_START = 0.70
-THRESHOLD_STOP = 0.96
+DUPLICATE_THRESHOLD_START = 0.70
+DUPLICATE_THRESHOLD_STOP = 0.96
+SEARCH_THRESHOLD_START = 0.20
+SEARCH_THRESHOLD_STOP = 0.70
 THRESHOLD_STEP = 0.02
+SEARCH_SWEEP_FLOOR = 0.01
 
 
 @dataclass(frozen=True)
@@ -40,36 +77,124 @@ class SweepRow:
 
 @dataclass(frozen=True)
 class ModelSweep:
-    """Sweep results for one model."""
+    """Sweep results and calibration identity for one model."""
 
     model_key: str
     canonical_name: str
     selected_threshold: float
+    manifest: dict[str, Any]
     rows: list[SweepRow]
 
 
-def _threshold_grid() -> list[float]:
+def _threshold_grid(start: float, stop: float) -> list[float]:
     values: list[float] = []
-    current = THRESHOLD_START
-    while current <= THRESHOLD_STOP + 1e-9:
+    current = start
+    while current <= stop + 1e-9:
         values.append(round(current, 2))
         current += THRESHOLD_STEP
     return values
 
 
+def _sha256_of_tree(root: Path, pattern: str = "*.py") -> str:
+    """Digest a fixture tree by sorted relative path and file contents."""
+    digest = hashlib.sha256()
+    for file_path in sorted(root.rglob(pattern)):
+        digest.update(file_path.relative_to(root).as_posix().encode())
+        digest.update(b"\x00")
+        digest.update(file_path.read_bytes())
+        digest.update(b"\x00")
+    return digest.hexdigest()
+
+
+def _sha256_of_file(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _require_immutable_revision(model_name: str, explicit_revision: str | None) -> str:
+    """Resolve the pinned commit for calibration, refusing mutable identities."""
+    profile = resolve_model_profile(model_name)
+    revision = explicit_revision or profile.default_revision
+    is_commit = (
+        revision is not None
+        and len(revision) == 40
+        and all(character in "0123456789abcdefABCDEF" for character in revision)
+    )
+    if not is_commit:
+        raise SystemExit(
+            f"Refusing to calibrate {model_name!r}: no immutable 40-character commit. "
+            "Pass --model-revision <commit> or pin the profile's default_revision. "
+            f"(resolved revision: {revision!r})"
+        )
+    assert revision is not None
+    return revision
+
+
+def _calibration_manifest(
+    *,
+    profile: SemanticModelProfile,
+    resolved_revision: str,
+    mode: str,
+    semantic_task: str,
+    requested_device: str,
+    identity: EmbeddingSpaceIdentity,
+    dimension: int,
+    min_statements: int,
+    batch_size: int,
+    corpus_path: Path,
+    labels_path: Path,
+) -> dict[str, Any]:
+    """Assemble the reproducible identity under which one threshold was swept.
+
+    ``identity`` is the analyzer's effective embedding-space identity, recorded
+    verbatim: it reflects the policy that produced the swept matrix (dtype and
+    Metal math policy included) even when the requested accelerator fell back
+    and the run restarted on CPU, so thresholds are never labeled with a device
+    or dtype that did not produce them.
+    """
+    code_plan = resolve_encode_plan(profile.canonical_name, "code", None, semantic_task)
+    manifest: dict[str, Any] = {
+        "model": profile.canonical_name,
+        "resolved_revision": resolved_revision,
+        "embedding_pipeline_schema": EMBEDDING_PIPELINE_SCHEMA,
+        "embedding_runtime_identity": _embedding_runtime_fingerprint(),
+        "runtime_versions": get_semantic_runtime_versions(),
+        "codedupes_version": __version__,
+        "mode": mode,
+        "semantic_task": semantic_task,
+        "encode_plan": {"code": {"route": code_plan.route, "prompt": code_plan.prompt}},
+        "requested_device": requested_device,
+        "embedding_space": asdict(identity),
+        "dimension": dimension,
+        "normalized": True,
+        "candidate_policy": {
+            "unit_types": list(DEFAULT_SEMANTIC_UNIT_TYPES),
+            "min_recursive_statements": min_statements,
+            "include_private": True,
+        },
+        "batch_size": batch_size,
+        "corpus_path": str(corpus_path),
+        "corpus_sha256": _sha256_of_tree(corpus_path),
+        "labels_path": str(labels_path),
+        "labels_sha256": _sha256_of_file(labels_path),
+    }
+    if mode == "search":
+        query_plan = resolve_encode_plan(profile.canonical_name, "query", None, semantic_task)
+        manifest["encode_plan"]["query"] = {
+            "route": query_plan.route,
+            "prompt": query_plan.prompt,
+        }
+    return manifest
+
+
 def _evaluate_thresholds(
-    duplicates: list[DuplicatePair],
+    scored_pairs: list[tuple[tuple[str, str], float]],
     positive_pairs: set[tuple[str, str]],
     *,
     thresholds: list[float],
 ) -> list[SweepRow]:
     rows: list[SweepRow] = []
     for threshold in thresholds:
-        predicted_pairs = {
-            ordered_pair_key(duplicate.unit_a, duplicate.unit_b)
-            for duplicate in duplicates
-            if duplicate.similarity >= threshold
-        }
+        predicted_pairs = {pair for pair, score in scored_pairs if score >= threshold}
         tp, fp, fn, precision, recall, f1 = metrics(predicted_pairs, positive_pairs)
         rows.append(
             SweepRow(
@@ -83,46 +208,79 @@ def _evaluate_thresholds(
                 f1=f1,
             )
         )
-    rows.sort(
-        key=lambda row: (
-            row.f1,
-            row.precision,
-            row.recall,
-            -row.fp,
-            -row.threshold,
-        ),
-        reverse=True,
-    )
+    # Ties prefer the looser threshold: recall over precision at equal F1.
+    rank_sweep_rows(rows, extra_key=lambda row: (-row.threshold,))
     return rows
 
 
-def _run_model_sweep(
+def _duplicate_scored_pairs(
+    duplicates: list[DuplicatePair],
+) -> list[tuple[tuple[str, str], float]]:
+    return [
+        (ordered_pair_key(duplicate.unit_a, duplicate.unit_b), duplicate.similarity)
+        for duplicate in duplicates
+    ]
+
+
+def _analyzer_config(
     *,
     model_name: str,
-    corpus_path: Path,
-    labels: dict[str, Any],
-    min_lines: int,
+    revision: str,
+    semantic_task: str,
+    semantic_threshold: float,
+    min_statements: int,
     batch_size: int,
-) -> ModelSweep:
-    profile = resolve_model_profile(model_name)
-    config = AnalyzerConfig(
+    device: str,
+) -> AnalyzerConfig:
+    return AnalyzerConfig(
         run_traditional=False,
         run_semantic=True,
         run_unused=False,
         include_private=True,
         model_name=model_name,
-        semantic_threshold=THRESHOLD_START,
-        min_semantic_lines=min_lines,
+        model_revision=revision,
+        semantic_task=semantic_task,
+        semantic_threshold=semantic_threshold,
+        min_semantic_statements=min_statements,
         batch_size=batch_size,
+        device=device,
     )
-    analyzer = CodeAnalyzer(config)
+
+
+def _run_duplicate_sweep(
+    *,
+    model_name: str,
+    revision: str,
+    corpus_path: Path,
+    labels_path: Path,
+    labels: dict[str, Any],
+    min_statements: int,
+    batch_size: int,
+    device: str,
+) -> ModelSweep:
+    profile = resolve_model_profile(model_name)
+    analyzer = CodeAnalyzer(
+        _analyzer_config(
+            model_name=model_name,
+            revision=revision,
+            semantic_task=DEFAULT_CHECK_SEMANTIC_TASK,
+            semantic_threshold=DUPLICATE_THRESHOLD_START,
+            min_statements=min_statements,
+            batch_size=batch_size,
+            device=device,
+        )
+    )
     result = analyzer.analyze(corpus_path)
+    embeddings = analyzer._embeddings
+    dimension = int(embeddings.shape[1]) if embeddings is not None and embeddings.size else 0
+    identity = analyzer._embedding_space_identity
+    assert identity is not None
 
     positive_pairs = build_positive_pairs(result.units, labels)
     rows = _evaluate_thresholds(
-        result.semantic_duplicates,
+        _duplicate_scored_pairs(result.semantic_duplicates),
         positive_pairs,
-        thresholds=_threshold_grid(),
+        thresholds=_threshold_grid(DUPLICATE_THRESHOLD_START, DUPLICATE_THRESHOLD_STOP),
     )
     selected = rows[0]
 
@@ -130,12 +288,99 @@ def _run_model_sweep(
         model_key=model_name,
         canonical_name=profile.canonical_name,
         selected_threshold=selected.threshold,
+        manifest=_calibration_manifest(
+            profile=profile,
+            resolved_revision=revision,
+            mode="duplicate",
+            semantic_task=DEFAULT_CHECK_SEMANTIC_TASK,
+            requested_device=device,
+            identity=identity,
+            dimension=dimension,
+            min_statements=min_statements,
+            batch_size=batch_size,
+            corpus_path=corpus_path,
+            labels_path=labels_path,
+        ),
+        rows=rows,
+    )
+
+
+def _run_search_sweep(
+    *,
+    model_name: str,
+    revision: str,
+    corpus_path: Path,
+    probes_path: Path,
+    probes: list[dict[str, Any]],
+    min_statements: int,
+    batch_size: int,
+    device: str,
+) -> ModelSweep:
+    profile = resolve_model_profile(model_name)
+    analyzer = CodeAnalyzer(
+        _analyzer_config(
+            model_name=model_name,
+            revision=revision,
+            semantic_task=DEFAULT_SEARCH_SEMANTIC_TASK,
+            semantic_threshold=SEARCH_SWEEP_FLOOR,
+            min_statements=min_statements,
+            batch_size=batch_size,
+            device=device,
+        )
+    )
+    indexed = analyzer.index(corpus_path)
+    embeddings = analyzer._embeddings
+    dimension = int(embeddings.shape[1]) if embeddings is not None and embeddings.size else 0
+    identity = analyzer._embedding_space_identity
+    assert identity is not None
+    assert analyzer._semantic_units is not None
+
+    scored_pairs: list[tuple[tuple[str, str], float]] = []
+    positive_pairs: set[tuple[str, str]] = set()
+    for probe_index, probe in enumerate(probes):
+        query = probe["query"]
+        query_key = f"probe-{probe_index}"
+        expected_units = {
+            resolve_label_unit(analyzer._semantic_units, spec).uid for spec in probe["expected"]
+        }
+        positive_pairs.update((query_key, uid) for uid in expected_units)
+        for unit, score in analyzer.search(query, top_k=indexed):
+            scored_pairs.append(((query_key, unit.uid), score))
+
+    rows = _evaluate_thresholds(
+        scored_pairs,
+        positive_pairs,
+        thresholds=_threshold_grid(SEARCH_THRESHOLD_START, SEARCH_THRESHOLD_STOP),
+    )
+    selected = rows[0]
+
+    manifest = _calibration_manifest(
+        profile=profile,
+        resolved_revision=revision,
+        mode="search",
+        semantic_task=DEFAULT_SEARCH_SEMANTIC_TASK,
+        requested_device=device,
+        identity=identity,
+        dimension=dimension,
+        min_statements=min_statements,
+        batch_size=batch_size,
+        corpus_path=corpus_path,
+        labels_path=probes_path,
+    )
+    manifest["probe_count"] = len(probes)
+
+    return ModelSweep(
+        model_key=model_name,
+        canonical_name=profile.canonical_name,
+        selected_threshold=selected.threshold,
+        manifest=manifest,
         rows=rows,
     )
 
 
 def _print_sweep(model_sweep: ModelSweep, top_n: int) -> None:
-    print(f"\nModel: {model_sweep.model_key}")
+    print(f"\nModel: {model_sweep.model_key} ({model_sweep.manifest['mode']})")
+    print(f"Revision: {model_sweep.manifest['resolved_revision']}")
     print(f"Selected threshold: {model_sweep.selected_threshold:.2f}")
     print("Top rows:")
     for idx, row in enumerate(model_sweep.rows[:top_n], start=1):
@@ -146,22 +391,34 @@ def _print_sweep(model_sweep: ModelSweep, top_n: int) -> None:
         )
 
 
+def _report_payload(results: list[ModelSweep], grid: list[float]) -> dict[str, Any]:
+    return {
+        "grid": grid,
+        "models": [
+            {
+                "model_key": item.model_key,
+                "canonical_name": item.canonical_name,
+                "selected_threshold": item.selected_threshold,
+                "selected_metrics": asdict(item.rows[0]),
+                "calibration": item.manifest,
+                "rows": [asdict(row) for row in item.rows],
+            }
+            for item in results
+        ],
+    }
+
+
 def main() -> int:
     """Entry point."""
     parser = argparse.ArgumentParser(
-        description="Sweep semantic thresholds across built-in model profiles."
+        description="Sweep duplicate and search thresholds across built-in model profiles."
     )
+    add_common_sweep_arguments(parser)
     parser.add_argument(
-        "--corpus-path",
+        "--search-probes-path",
         type=Path,
-        default=Path("test_fixtures/hybrid_tuning/crab_visibility"),
-        help="Root path of the synthetic corpus package/scripts.",
-    )
-    parser.add_argument(
-        "--labels-path",
-        type=Path,
-        default=Path("test_fixtures/hybrid_tuning/labels.json"),
-        help="Path to labels.json with expected duplicate groups.",
+        default=Path("test_fixtures/hybrid_tuning/search_probes.json"),
+        help="Path to search_probes.json with labeled query probes.",
     )
     parser.add_argument(
         "--models",
@@ -170,69 +427,101 @@ def main() -> int:
         help="Model keys or IDs to sweep. Defaults to all built-in profiles.",
     )
     parser.add_argument(
-        "--min-lines",
-        type=int,
-        default=0,
-        help="Minimum statement count for semantic candidate extraction.",
+        "--model-revision",
+        default=None,
+        help="Immutable 40-character commit to calibrate against. Defaults to the "
+        "profile's pinned default_revision; calibration refuses to run without one.",
     )
     parser.add_argument(
-        "--batch-size",
-        type=int,
-        default=4,
-        help="Embedding batch size used for candidate extraction.",
+        "--device",
+        default="cpu",
+        help="Embedding device for the sweep. Defaults to cpu for reproducible float32.",
     )
     parser.add_argument(
-        "--top-n",
-        type=int,
-        default=10,
-        help="Number of best rows to print per model.",
+        "--skip-search",
+        action="store_true",
+        help="Only sweep duplicate thresholds.",
     )
     parser.add_argument(
         "--json-out",
         type=Path,
         default=Path("test_fixtures/hybrid_tuning/semantic_threshold_report.json"),
-        help="Path to write full sweep output JSON.",
+        help="Path to write the duplicate-threshold sweep report JSON.",
+    )
+    parser.add_argument(
+        "--search-json-out",
+        type=Path,
+        default=Path("test_fixtures/hybrid_tuning/search_threshold_report.json"),
+        help="Path to write the search-threshold sweep report JSON.",
     )
     args = parser.parse_args()
 
     labels = json.loads(args.labels_path.read_text())
+    probes: list[dict[str, Any]] = []
+    if not args.skip_search:
+        probes = json.loads(args.search_probes_path.read_text())["probes"]
 
-    results: list[ModelSweep] = []
+    duplicate_results: list[ModelSweep] = []
+    search_results: list[ModelSweep] = []
     for model_name in args.models:
-        results.append(
-            _run_model_sweep(
+        revision = _require_immutable_revision(model_name, args.model_revision)
+        duplicate_results.append(
+            _run_duplicate_sweep(
                 model_name=model_name,
+                revision=revision,
                 corpus_path=args.corpus_path,
+                labels_path=args.labels_path,
                 labels=labels,
-                min_lines=args.min_lines,
+                min_statements=args.min_statements,
                 batch_size=args.batch_size,
+                device=args.device,
             )
         )
+        if not args.skip_search:
+            search_results.append(
+                _run_search_sweep(
+                    model_name=model_name,
+                    revision=revision,
+                    corpus_path=args.corpus_path,
+                    probes_path=args.search_probes_path,
+                    probes=probes,
+                    min_statements=args.min_statements,
+                    batch_size=args.batch_size,
+                    device=args.device,
+                )
+            )
 
     print("Semantic threshold sweep (synthetic corpus guardrail)")
     print(f"Corpus: {args.corpus_path}")
     print(f"Labels: {args.labels_path}")
 
-    for item in results:
+    for item in duplicate_results + search_results:
         _print_sweep(item, top_n=args.top_n)
 
-    payload = {
-        "corpus_path": str(args.corpus_path),
-        "labels_path": str(args.labels_path),
-        "grid": _threshold_grid(),
-        "models": [
-            {
-                "model_key": item.model_key,
-                "canonical_name": item.canonical_name,
-                "selected_threshold": item.selected_threshold,
-                "rows": [asdict(row) for row in item.rows],
-            }
-            for item in results
-        ],
-    }
     args.json_out.parent.mkdir(parents=True, exist_ok=True)
-    args.json_out.write_text(json.dumps(payload, indent=2))
-    print(f"\nWrote sweep report: {args.json_out}")
+    args.json_out.write_text(
+        json.dumps(
+            _report_payload(
+                duplicate_results,
+                _threshold_grid(DUPLICATE_THRESHOLD_START, DUPLICATE_THRESHOLD_STOP),
+            ),
+            indent=2,
+        )
+    )
+    print(f"\nWrote duplicate sweep report: {args.json_out}")
+
+    if not args.skip_search:
+        args.search_json_out.parent.mkdir(parents=True, exist_ok=True)
+        args.search_json_out.write_text(
+            json.dumps(
+                _report_payload(
+                    search_results,
+                    _threshold_grid(SEARCH_THRESHOLD_START, SEARCH_THRESHOLD_STOP),
+                ),
+                indent=2,
+            )
+        )
+        print(f"Wrote search sweep report: {args.search_json_out}")
 
     return 0
 

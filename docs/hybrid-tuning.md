@@ -1,19 +1,17 @@
-# Hybrid Gate Tuning (Best-Practice Workflow)
+# Hybrid Gate Tuning
 
-This page defines the recommended workflow for tuning hybrid semantic-only gates.
-
-Primary goal: keep hybrid output high-precision while preserving recall on known good pairs.
+Tune hybrid semantic-only gates for high precision while preserving recall on known good pairs.
 
 ## Guardrail corpus and labels
 
-- Corpus: [`test_fixtures/hybrid_tuning/crab_visibility`](https://github.com/pszemraj/codedupes/tree/main/test_fixtures/hybrid_tuning/crab_visibility)
-- Labels: [`test_fixtures/hybrid_tuning/labels.json`](https://github.com/pszemraj/codedupes/blob/main/test_fixtures/hybrid_tuning/labels.json)
-- Sweep harness: [`scripts/sweep_hybrid_gates.py`](https://github.com/pszemraj/codedupes/blob/main/scripts/sweep_hybrid_gates.py)
-- Semantic threshold harness: [`scripts/sweep_semantic_thresholds.py`](https://github.com/pszemraj/codedupes/blob/main/scripts/sweep_semantic_thresholds.py)
+- Corpus: [`../test_fixtures/hybrid_tuning/crab_visibility`](../test_fixtures/hybrid_tuning/crab_visibility)
+- Labels: [`../test_fixtures/hybrid_tuning/labels.json`](../test_fixtures/hybrid_tuning/labels.json)
+- Sweep harness: [`../scripts/sweep_hybrid_gates.py`](../scripts/sweep_hybrid_gates.py)
+- Semantic threshold harness: [`../scripts/sweep_semantic_thresholds.py`](../scripts/sweep_semantic_thresholds.py)
 
 This corpus is synthetic and tracked for reproducibility.
 
-Important boundary: this is a guardrail dataset, not a benchmark.
+Use it as a guardrail dataset, not a benchmark.
 
 ## Recommended process
 
@@ -25,13 +23,13 @@ Important boundary: this is a guardrail dataset, not a benchmark.
 ## Run the sweep
 
 ```bash
-conda run --name inf python scripts/sweep_hybrid_gates.py --top-n 15
+python scripts/sweep_hybrid_gates.py --top-n 15
 ```
 
 Write a machine-readable report:
 
 ```bash
-conda run --name inf python scripts/sweep_hybrid_gates.py \
+python scripts/sweep_hybrid_gates.py \
   --top-n 25 \
   --json-out scratch/hybrid_sweep_report.json
 ```
@@ -47,42 +45,32 @@ Defaults used by the harness:
 Override grids as needed:
 
 ```bash
-conda run --name inf python scripts/sweep_hybrid_gates.py \
+python scripts/sweep_hybrid_gates.py \
   --semantic-grid 0.88,0.90,0.92 \
   --weak-jaccard-grid 0.15,0.20,0.25 \
   --statement-ratio-grid 0.25,0.35,0.45
 ```
 
-## Model/runtime notes
-
-- Harness uses the same analyzer synthesis logic as production.
-- By default it uses the same model/revision defaults as the CLI.
-- Keep runtime metadata (model, revision, dependency versions) when recording decisions.
+The harness uses the same analyzer synthesis logic and model/revision defaults as the CLI, so sweep results transfer directly to production gate values.
+Its mixed-evidence semantic threshold also resolves from the selected model profile (`0.96` for the default `gte-modernbert-base`, `0.86` for `embeddinggemma-300m`); use `--hybrid-semantic-threshold` only when intentionally evaluating a non-production override.
 
 ## Semantic threshold sweep (model profiles)
 
-Run the semantic threshold sweep for built-in model profiles:
+Run the duplicate and search threshold sweeps for built-in model profiles:
 
 ```bash
-CUDA_VISIBLE_DEVICES='' conda run --name inf python scripts/sweep_semantic_thresholds.py --top-n 10
+CUDA_VISIBLE_DEVICES='' python scripts/sweep_semantic_thresholds.py --top-n 10
 ```
 
-Default report path:
+Default report paths:
 
-- [`test_fixtures/hybrid_tuning/semantic_threshold_report.json`](https://github.com/pszemraj/codedupes/blob/main/test_fixtures/hybrid_tuning/semantic_threshold_report.json)
+- [`../test_fixtures/hybrid_tuning/semantic_threshold_report.json`](../test_fixtures/hybrid_tuning/semantic_threshold_report.json) - duplicate thresholds
+- [`../test_fixtures/hybrid_tuning/search_threshold_report.json`](../test_fixtures/hybrid_tuning/search_threshold_report.json) - search thresholds, evaluated against [`../test_fixtures/hybrid_tuning/search_probes.json`](../test_fixtures/hybrid_tuning/search_probes.json)
+
+Each report records the full calibration identity per model: the pinned immutable commit, embedding pipeline schema and runtime fingerprint, encode plan (route and prompt per input mode), the requested device plus the effective embedding-space identity the analyzer actually produced (its runtime variant covers dtype and Metal math policy, and reflects an accelerator request that fell back and restarted on CPU - thresholds are never labeled with a device or dtype that did not produce them), embedding dimension, candidate policy, and SHA-256 digests of the corpus and labels/probes. The sweep refuses to run for a model that cannot be pinned to a 40-character commit - pass `--model-revision` or pin the profile's `default_revision`.
 
 Selection policy is deterministic:
 
-- sort by `f1` (desc), `precision` (desc), `recall` (desc), `fp` (asc)
+- sort by `f1` (desc), `precision` (desc), `recall` (desc), `fp` (asc), then prefer the looser threshold on remaining ties
 
-## Current defaults
-
-Current production gate defaults are defined in
-[`src/codedupes/analyzer.py`](https://github.com/pszemraj/codedupes/blob/main/src/codedupes/analyzer.py):
-
-- semantic-only minimum: `0.92`
-- weak identifier jaccard minimum: `0.20`
-- statement ratio minimum: `0.35`
-
-Current model-profile semantic thresholds are defined in
-[docs/model-profiles.md](https://github.com/pszemraj/codedupes/blob/main/docs/model-profiles.md).
+Transferring a swept value into a profile default is a reviewed decision, not automatic: re-validate on at least one real repository, and prefer recall when stepping off the F1-best row. Production gate values are listed in [Analysis defaults](analysis-defaults.md). Model-specific semantic thresholds are listed in [Model profiles](model-profiles.md).

@@ -7,8 +7,8 @@ import copy
 import hashlib
 import logging
 import os
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Iterator
 
 from codedupes.models import CodeUnit, CodeUnitType
 
@@ -182,7 +182,7 @@ class _CodeUnitCollector(ast.NodeVisitor):
 
     def __init__(
         self,
-        extractor: "CodeExtractor",
+        extractor: CodeExtractor,
         file_path: Path,
         source: str,
         module_name: str,
@@ -257,7 +257,7 @@ class _CodeUnitCollector(ast.NodeVisitor):
             self.class_stack.pop()
         else:
             # If class is excluded, skip descendants to avoid leaking private internals.
-            logger.debug("Skipping private class %s in %s", node.name, self.file_path)
+            logger.debug(f"Skipping private class {node.name} in {self.file_path}")
 
 
 def compute_ast_hash(node: ast.AST) -> str:
@@ -295,7 +295,7 @@ def compute_token_hash(source: str) -> str:
                 tokenize.ENCODING,
             ):
                 tokens.append((tok.type, tok.string))
-    except Exception:  # tokenize.TokenizeError and other parsing errors
+    except Exception:  # noqa: BLE001 - tokenize raises assorted parsing errors
         # Fall back to simple normalization
         tokens = [(0, w) for w in source.split()]
 
@@ -327,13 +327,16 @@ def get_exported_names(tree: ast.Module) -> set[str]:
     for node in ast.walk(tree):
         if isinstance(node, ast.Assign):
             for target in node.targets:
-                if isinstance(target, ast.Name) and target.id == "__all__":
-                    if isinstance(node.value, (ast.List, ast.Tuple)):
-                        return {
-                            elt.value
-                            for elt in node.value.elts
-                            if isinstance(elt, ast.Constant) and isinstance(elt.value, str)
-                        }
+                if (
+                    isinstance(target, ast.Name)
+                    and target.id == "__all__"
+                    and isinstance(node.value, (ast.List, ast.Tuple))
+                ):
+                    return {
+                        elt.value
+                        for elt in node.value.elts
+                        if isinstance(elt, ast.Constant) and isinstance(elt.value, str)
+                    }
     return set()
 
 
@@ -410,7 +413,7 @@ class CodeExtractor:
         :return: Iterator over discovered code units.
         """
         if self._should_exclude(file_path):
-            logger.debug("Skipping excluded file %s", file_path)
+            logger.debug(f"Skipping excluded file {file_path}")
             return
 
         try:
@@ -424,8 +427,7 @@ class CodeExtractor:
         exported = get_exported_names(tree)
         visitor = _CodeUnitCollector(self, file_path, source, module_name, exported)
         visitor.visit(tree)
-        for unit in visitor.units:
-            yield unit
+        yield from visitor.units
 
     def _should_emit_function(self, name: str) -> bool:
         """Respect private-function filtering.

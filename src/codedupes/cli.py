@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import json
 import logging
+import platform
 import sys
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Callable, Iterator, Literal, TypeVar, cast
+from typing import Any, Literal, TypeVar, cast
 
 import click
 from rich.console import Console
@@ -17,49 +19,55 @@ from rich.syntax import Syntax
 from rich.table import Table
 
 from codedupes import __version__
-from codedupes.analyzer import AnalyzerConfig, CodeAnalyzer
+from codedupes.analyzer import (
+    DEFAULT_SEMANTIC_UNIT_TYPES,
+    SEMANTIC_UNIT_TYPE_CHOICES,
+    AnalyzerConfig,
+    CodeAnalyzer,
+)
 from codedupes.constants import (
     DEFAULT_BATCH_SIZE,
     DEFAULT_CHECK_SEMANTIC_TASK,
-    DEFAULT_MIN_SEMANTIC_LINES,
+    DEFAULT_MIN_SEMANTIC_STATEMENTS,
     DEFAULT_MODEL,
     DEFAULT_SEARCH_SEMANTIC_TASK,
-    SEMANTIC_TASK_CHOICES,
+    DEFAULT_SEMANTIC_DEVICE,
     DEFAULT_TOP_K,
     DEFAULT_TRADITIONAL_THRESHOLD,
+    SEMANTIC_DEVICE_CHOICES,
+    SEMANTIC_TASK_CHOICES,
 )
+from codedupes.devices import (
+    configure_mps_environment,
+    cpu_bf16_opted_in,
+    describe_mps_fallback_env,
+    format_mps_memory_snapshot,
+    get_device_diagnostics,
+)
+from codedupes.embedding_cache import EmbeddingCache
 from codedupes.extractor import DEFAULT_EXCLUDE_DIR_NAMES, DEFAULT_EXCLUDE_PATTERNS
+from codedupes.logging_utils import quiet_dependency_loggers
 from codedupes.models import AnalysisResult, CodeUnit, DuplicatePair, HybridDuplicate
+from codedupes.semantic import get_semantic_runtime_versions
 from codedupes.semantic_profiles import (
+    get_default_search_threshold,
     get_default_semantic_threshold,
     list_supported_models,
+    resolve_model_profile,
 )
 
 DEFAULT_THRESHOLD = get_default_semantic_threshold(DEFAULT_MODEL)
-DEFAULT_MIN_LINES = DEFAULT_MIN_SEMANTIC_LINES
+DEFAULT_MIN_STATEMENTS = DEFAULT_MIN_SEMANTIC_STATEMENTS
 DEFAULT_OUTPUT_WIDTH = 160
 MIN_OUTPUT_WIDTH = 80
 DEFAULT_TABLE_ROWS = 20
 DEFAULT_EXCLUDE_HELP_HINT = (
-    "Additional glob patterns to exclude (repeat option for multiple patterns). "
-    "Built-in excludes for tests/common artifact directories always apply."
+    "Replace default test-file globs with patterns to exclude (repeat for multiple patterns). "
+    "Built-in common artifact-directory excludes always apply."
 )
 
 console = Console(width=DEFAULT_OUTPUT_WIDTH)
 TResult = TypeVar("TResult")
-
-_NOISY_EXTERNAL_LOGGERS = (
-    "deepspeed",
-    "httpx",
-    "huggingface_hub",
-    "jax",
-    "numexpr",
-    "sentence_transformers",
-    "tensorflow",
-    "torch.utils.cpp_extension",
-    "transformers",
-    "urllib3",
-)
 
 
 class _CodedupesLogFilter(logging.Filter):
@@ -127,9 +135,7 @@ def setup_logging(verbose: bool = False) -> None:
         handlers=[handler],
         force=True,
     )
-    quiet_level = logging.DEBUG if verbose else logging.WARNING
-    for logger_name in _NOISY_EXTERNAL_LOGGERS:
-        logging.getLogger(logger_name).setLevel(quiet_level)
+    quiet_dependency_loggers(logging.DEBUG if verbose else logging.WARNING)
 
 
 @contextmanager
@@ -191,26 +197,12 @@ def _run_cli_action(
         raise click.exceptions.Exit(1) from exc
 
 
-def _validate_threshold(
-    _ctx: click.Context, _param: click.Parameter, value: float | None
-) -> float | None:
-    """Validate a threshold in the ``[0.0, 1.0]`` range.
-
-    :param _ctx: Click callback context (unused).
-    :param _param: Click callback parameter metadata (unused).
-    :param value: Optional float to validate.
-    :return: Validated threshold value.
-    :raises click.BadParameter: When value is outside the allowed range.
-    """
-    if value is None:
-        return None
-    if not 0.0 <= value <= 1.0:
-        raise click.BadParameter("must be in [0.0, 1.0]")
-    return value
-
-
 def _validate_positive_int(_ctx: click.Context, _param: click.Parameter, value: int) -> int:
-    """Validate a positive integer option value.
+    """Validate a positive integer option that never reaches ``AnalyzerConfig``.
+
+    Numeric options forwarded into ``AnalyzerConfig`` rely on its ``__post_init__``
+    range checks instead of CLI callbacks; this callback exists only for options
+    (``--top-k``) the library layer never sees.
 
     :param _ctx: Click callback context (unused).
     :param _param: Click callback parameter metadata (unused).
@@ -220,20 +212,6 @@ def _validate_positive_int(_ctx: click.Context, _param: click.Parameter, value: 
     """
     if value <= 0:
         raise click.BadParameter("must be > 0")
-    return value
-
-
-def _validate_non_negative_int(_ctx: click.Context, _param: click.Parameter, value: int) -> int:
-    """Validate a non-negative integer option value.
-
-    :param _ctx: Click callback context (unused).
-    :param _param: Click callback parameter metadata (unused).
-    :param value: Candidate value.
-    :return: Value if it is ``>= 0``.
-    :raises click.BadParameter: When value is negative.
-    """
-    if value < 0:
-        raise click.BadParameter("must be >= 0")
     return value
 
 
@@ -289,21 +267,16 @@ def _resolve_check_thresholds(
 def _resolve_search_threshold(
     threshold: float | None,
     semantic_threshold: float | None,
-    *,
-    model_name: str,
-) -> float:
-    """Resolve semantic threshold for search mode.
+) -> float | None:
+    """Resolve the explicit semantic threshold override for search mode.
 
     :param threshold: Shared threshold override.
     :param semantic_threshold: Search-specific semantic threshold override.
-    :param model_name: Model name used for default threshold.
-    :return: Resolved semantic threshold.
+    :return: Explicit override, or ``None`` to use the model profile search default.
     """
     if semantic_threshold is not None:
         return semantic_threshold
-    if threshold is not None:
-        return threshold
-    return get_default_semantic_threshold(model_name)
+    return threshold
 
 
 def _is_cli_explicit(ctx: click.Context, option_name: str) -> bool:
@@ -316,23 +289,20 @@ def _is_cli_explicit(ctx: click.Context, option_name: str) -> bool:
     return ctx.get_parameter_source(option_name) == click.core.ParameterSource.COMMANDLINE
 
 
-def _resolve_trust_remote_code_flags(
-    *,
-    trust_remote_code: bool,
-    no_trust_remote_code: bool,
-) -> bool | None:
-    """Resolve trust-remote-code flags and reject contradictory input.
+def _resolve_paired_flags(enabled: bool, disabled: bool, flag: str) -> bool | None:
+    """Resolve a ``--<flag>``/``--no-<flag>`` pair and reject contradictory input.
 
-    :param trust_remote_code: Whether ``--trust-remote-code`` was provided.
-    :param no_trust_remote_code: Whether ``--no-trust-remote-code`` was provided.
+    :param enabled: Whether ``--<flag>`` was provided.
+    :param disabled: Whether ``--no-<flag>`` was provided.
+    :param flag: Flag name without the leading dashes, e.g. ``mps-fallback``.
     :return: ``True``/``False`` when explicitly set, otherwise ``None``.
     :raises click.UsageError: When both contradictory flags are provided.
     """
-    if trust_remote_code and no_trust_remote_code:
-        raise click.UsageError("Cannot combine --trust-remote-code and --no-trust-remote-code.")
-    if trust_remote_code:
+    if enabled and disabled:
+        raise click.UsageError(f"Cannot combine --{flag} and --no-{flag}.")
+    if enabled:
         return True
-    if no_trust_remote_code:
+    if disabled:
         return False
     return None
 
@@ -788,7 +758,7 @@ def _add_common_analysis_options(
     :return: Decorator that applies click options to command functions.
     """
     if command_name == "check":
-        min_lines_help = (
+        min_statements_help = (
             "Skip semantic comparison for code units with fewer body statements "
             "(also narrows traditional duplicate scope in combined mode)"
         )
@@ -797,7 +767,7 @@ def _add_common_analysis_options(
             "also narrows traditional duplicate scope in combined mode)"
         )
     else:
-        min_lines_help = "Skip semantic comparison for code units with fewer body statements"
+        min_statements_help = "Skip semantic comparison for code units with fewer body statements"
         semantic_unit_help = (
             "Unit type(s) eligible for semantic embedding (repeat option to add more)"
         )
@@ -809,19 +779,18 @@ def _add_common_analysis_options(
             help="Exclude private functions/classes",
         ),
         click.option(
-            "--min-lines",
+            "--min-statements",
             type=int,
-            default=DEFAULT_MIN_LINES,
+            default=DEFAULT_MIN_STATEMENTS,
             show_default=True,
-            callback=_validate_non_negative_int,
-            help=min_lines_help,
+            help=min_statements_help,
         ),
         click.option(
             "--semantic-unit-type",
             "semantic_unit_type",
             multiple=True,
-            type=click.Choice(["function", "method", "class"]),
-            default=("function", "method"),
+            type=click.Choice(SEMANTIC_UNIT_TYPE_CHOICES),
+            default=DEFAULT_SEMANTIC_UNIT_TYPES,
             show_default=True,
             help=semantic_unit_help,
         ),
@@ -829,7 +798,7 @@ def _add_common_analysis_options(
             "--model",
             default=DEFAULT_MODEL,
             show_default=True,
-            help="Embedding model alias or HuggingFace model ID",
+            help="Embedding model alias, Hugging Face model ID, or complete local model directory",
         ),
         click.option(
             "--instruction-prefix",
@@ -840,10 +809,7 @@ def _add_common_analysis_options(
             "--model-revision",
             default=None,
             show_default="auto",
-            help=(
-                "Model revision/commit. If omitted, uses model-profile default "
-                "(for example pinned for C2LLM 0.5B)."
-            ),
+            help=("Model revision/commit. If omitted, uses the model-profile default."),
         ),
         click.option(
             "--trust-remote-code",
@@ -856,11 +822,36 @@ def _add_common_analysis_options(
             help="Disallow execution of model-provided remote code during model loading",
         ),
         click.option(
+            "--device",
+            type=click.Choice(SEMANTIC_DEVICE_CHOICES),
+            default=DEFAULT_SEMANTIC_DEVICE,
+            show_default=True,
+            help="Semantic inference device (auto prefers CUDA, then MPS, then CPU)",
+        ),
+        click.option(
+            "--mps-fallback",
+            is_flag=True,
+            help="Allow unsupported MPS operators to fall back to CPU",
+        ),
+        click.option(
+            "--no-mps-fallback",
+            is_flag=True,
+            help="Disallow unsupported MPS operators from falling back to CPU",
+        ),
+        click.option(
+            "--mps-memory-fraction",
+            type=float,
+            default=None,
+            help=(
+                "Optional PyTorch MPS allocator limit as a fraction of the recommended "
+                "working set, in (0, 2]. Values above 1 increase system memory pressure."
+            ),
+        ),
+        click.option(
             "--batch-size",
             type=int,
             default=DEFAULT_BATCH_SIZE,
             show_default=True,
-            callback=_validate_positive_int,
             help="Batch size for embeddings",
         ),
         click.option(
@@ -875,7 +866,27 @@ def _add_common_analysis_options(
             multiple=True,
             help=DEFAULT_EXCLUDE_HELP_HINT,
         ),
-        click.option("--include-stubs", is_flag=True, help="Include .pyi files"),
+        click.option(
+            "--include-stubs",
+            is_flag=True,
+            help="Include .pyi files when scanning a directory (single-file targets are analyzed as given)",
+        ),
+        click.option(
+            "--no-cache",
+            is_flag=True,
+            help="Disable the persistent on-disk embedding cache for this run",
+        ),
+        click.option(
+            "--strict-revision-cache",
+            is_flag=True,
+            help=(
+                "Key an unpinned hub model's cache revision to a resolved commit hash instead of "
+                "the requested revision label, disabling caching when a branch/tag can't be "
+                "mapped offline (default: key by the requested label; a branch move is detected "
+                "whenever a run loads the model, purging that shard so two checkpoints never "
+                "mix, while fully warm runs keep serving the pre-move vectors coherently)"
+            ),
+        ),
         click.option(
             "--output-width",
             type=int,
@@ -899,7 +910,9 @@ def _add_common_analysis_options(
     return decorator
 
 
-@click.group(context_settings={"help_option_names": ["-h", "--help"]})
+@click.group(
+    context_settings={"help_option_names": ["-h", "--help"]},
+)
 @click.version_option(__version__, prog_name="codedupes")
 def cli() -> None:
     """Detect duplicate and unused Python code using AST and semantic analysis."""
@@ -913,19 +926,16 @@ def cli() -> None:
     type=float,
     default=None,
     show_default=False,
-    callback=_validate_threshold,
     help="Shared threshold override for semantic and traditional checks",
 )
 @click.option(
     "--semantic-threshold",
     type=float,
-    callback=_validate_threshold,
     help="Override semantic similarity threshold",
 )
 @click.option(
     "--traditional-threshold",
     type=float,
-    callback=_validate_threshold,
     help="Override traditional (Jaccard) threshold",
 )
 @click.option(
@@ -966,7 +976,6 @@ def cli() -> None:
     type=int,
     default=3,
     show_default=True,
-    callback=_validate_non_negative_int,
     help="Tiny function/method statement cutoff (exclusive) for traditional filtering",
 )
 @click.option(
@@ -974,7 +983,6 @@ def cli() -> None:
     type=float,
     default=0.93,
     show_default=True,
-    callback=_validate_threshold,
     help="Minimum Jaccard similarity to keep tiny near-duplicate pairs",
 )
 @click.option(
@@ -1005,7 +1013,7 @@ def check_command(
     show_source: bool,
     full_table: bool,
     no_private: bool,
-    min_lines: int,
+    min_statements: int,
     semantic_unit_type: tuple[str, ...],
     model: str,
     semantic_task: str,
@@ -1013,11 +1021,17 @@ def check_command(
     model_revision: str | None,
     trust_remote_code: bool,
     no_trust_remote_code: bool,
+    device: str,
+    mps_fallback: bool,
+    no_mps_fallback: bool,
+    mps_memory_fraction: float | None,
     batch_size: int,
     as_json: bool,
     verbose: bool,
     exclude: tuple[str, ...],
     include_stubs: bool,
+    no_cache: bool,
+    strict_revision_cache: bool,
     output_width: int,
 ) -> None:
     """Run duplicate and unused-code analysis.
@@ -1041,7 +1055,7 @@ def check_command(
     :param show_source: Show source code snippets for duplicate pairs.
     :param full_table: Show all table rows.
     :param no_private: Exclude private symbols.
-    :param min_lines: Minimum code body statement lines for semantic candidate code units.
+    :param min_statements: Minimum code body statement lines for semantic candidate code units.
     :param semantic_unit_type: Unit type(s) eligible for semantic embedding.
     :param model: Semantic model alias/identifier.
     :param semantic_task: Semantic task used during duplicate detection.
@@ -1049,11 +1063,18 @@ def check_command(
     :param model_revision: Optional model revision/commit override.
     :param trust_remote_code: Whether remote-code execution was explicitly enabled.
     :param no_trust_remote_code: Whether remote-code execution was explicitly disabled.
+    :param device: Semantic inference device.
+    :param mps_fallback: Explicitly enable unsupported MPS operator fallback.
+    :param no_mps_fallback: Explicitly disable unsupported MPS operator fallback.
+    :param mps_memory_fraction: Optional PyTorch MPS allocator fraction.
     :param batch_size: Embedding batch size.
     :param as_json: Output JSON instead of tables.
     :param verbose: Enable debug-level logging.
     :param exclude: Glob patterns to exclude.
     :param include_stubs: Include ``.pyi`` files.
+    :param no_cache: Disable the persistent on-disk embedding cache for this run.
+    :param strict_revision_cache: Key an unpinned hub revision to a resolved commit hash
+        instead of the requested revision label.
     :param output_width: Width used for rich output.
     :return: ``None``.
     """
@@ -1088,10 +1109,15 @@ def check_command(
             "model_revision",
             "trust_remote_code",
             "no_trust_remote_code",
+            "device",
+            "mps_fallback",
+            "no_mps_fallback",
+            "mps_memory_fraction",
             "batch_size",
-            "min_lines",
+            "min_statements",
             "semantic_unit_type",
             "suppress_test_semantic",
+            "strict_revision_cache",
         ]
         specified_ignored = [
             option_name
@@ -1122,10 +1148,10 @@ def check_command(
                 f"Cannot use {listed} with --semantic-only; traditional duplicate analysis is disabled."
             )
 
-    resolved_trust_remote_code = _resolve_trust_remote_code_flags(
-        trust_remote_code=trust_remote_code,
-        no_trust_remote_code=no_trust_remote_code,
+    resolved_trust_remote_code = _resolve_paired_flags(
+        trust_remote_code, no_trust_remote_code, "trust-remote-code"
     )
+    resolved_mps_fallback = _resolve_paired_flags(mps_fallback, no_mps_fallback, "mps-fallback")
 
     combined_mode = not semantic_only and not traditional_only
     table_max_items: int | None = None if full_table else DEFAULT_TABLE_ROWS
@@ -1154,11 +1180,14 @@ def check_command(
             instruction_prefix=instruction_prefix,
             model_revision=model_revision,
             trust_remote_code=resolved_trust_remote_code,
+            device=device,
+            mps_fallback=resolved_mps_fallback,
+            mps_memory_fraction=mps_memory_fraction,
             run_traditional=not semantic_only,
             run_semantic=not traditional_only,
             allow_semantic_fallback=allow_semantic_fallback,
             run_unused=not no_unused,
-            min_semantic_lines=min_lines,
+            min_semantic_statements=min_statements,
             semantic_unit_types=semantic_unit_type,
             filter_tiny_traditional=not no_tiny_filter,
             tiny_unit_statement_cutoff=tiny_cutoff,
@@ -1167,6 +1196,8 @@ def check_command(
             suppress_test_semantic_matches=suppress_test_semantic,
             batch_size=batch_size,
             include_stubs=include_stubs,
+            embedding_cache=not no_cache,
+            strict_revision_cache=strict_revision_cache,
         )
     except ValueError as exc:
         raise click.UsageError(str(exc)) from exc
@@ -1259,13 +1290,11 @@ def check_command(
     type=float,
     default=None,
     show_default=False,
-    callback=_validate_threshold,
     help="Shared threshold override for semantic search",
 )
 @click.option(
     "--semantic-threshold",
     type=float,
-    callback=_validate_threshold,
     help="Override semantic threshold",
 )
 @click.option(
@@ -1286,18 +1315,24 @@ def search_command(
     semantic_threshold: float | None,
     semantic_task: str,
     no_private: bool,
-    min_lines: int,
+    min_statements: int,
     semantic_unit_type: tuple[str, ...],
     model: str,
     instruction_prefix: str | None,
     model_revision: str | None,
     trust_remote_code: bool,
     no_trust_remote_code: bool,
+    device: str,
+    mps_fallback: bool,
+    no_mps_fallback: bool,
+    mps_memory_fraction: float | None,
     batch_size: int,
     as_json: bool,
     verbose: bool,
     exclude: tuple[str, ...],
     include_stubs: bool,
+    no_cache: bool,
+    strict_revision_cache: bool,
     output_width: int,
 ) -> None:
     """Run semantic search over extracted code units.
@@ -1310,18 +1345,25 @@ def search_command(
     :param semantic_threshold: Semantic threshold override.
     :param semantic_task: Semantic task used for search.
     :param no_private: Exclude private symbols.
-    :param min_lines: Minimum code body statement lines for semantic candidate code units.
+    :param min_statements: Minimum code body statement lines for semantic candidate code units.
     :param semantic_unit_type: Unit type(s) eligible for semantic embedding.
     :param model: Semantic model alias/identifier.
     :param instruction_prefix: Optional custom embedding prefix.
     :param model_revision: Optional model revision/commit override.
     :param trust_remote_code: Whether remote-code execution was explicitly enabled.
     :param no_trust_remote_code: Whether remote-code execution was explicitly disabled.
+    :param device: Semantic inference device.
+    :param mps_fallback: Explicitly enable unsupported MPS operator fallback.
+    :param no_mps_fallback: Explicitly disable unsupported MPS operator fallback.
+    :param mps_memory_fraction: Optional PyTorch MPS allocator fraction.
     :param batch_size: Embedding batch size.
     :param as_json: Output JSON result instead of table.
     :param verbose: Enable debug-level logging.
     :param exclude: Glob patterns to exclude.
     :param include_stubs: Include ``.pyi`` files.
+    :param no_cache: Disable the persistent on-disk embedding cache for this run.
+    :param strict_revision_cache: Key an unpinned hub revision to a resolved commit hash
+        instead of the requested revision label.
     :param output_width: Width used for rich output.
     :return: ``None``.
     """
@@ -1330,31 +1372,32 @@ def search_command(
         verbose=verbose,
         output_width_explicit=_is_cli_explicit(ctx, "output_width"),
     )
-    resolved_trust_remote_code = _resolve_trust_remote_code_flags(
-        trust_remote_code=trust_remote_code,
-        no_trust_remote_code=no_trust_remote_code,
+    resolved_trust_remote_code = _resolve_paired_flags(
+        trust_remote_code, no_trust_remote_code, "trust-remote-code"
     )
+    resolved_mps_fallback = _resolve_paired_flags(mps_fallback, no_mps_fallback, "mps-fallback")
 
     try:
         config = AnalyzerConfig(
             exclude_patterns=list(exclude) or None,
             include_private=not no_private,
-            semantic_threshold=_resolve_search_threshold(
-                threshold,
-                semantic_threshold,
-                model_name=model,
-            ),
+            semantic_threshold=_resolve_search_threshold(threshold, semantic_threshold),
             model_name=model,
             semantic_task=semantic_task,
             instruction_prefix=instruction_prefix,
             model_revision=model_revision,
             trust_remote_code=resolved_trust_remote_code,
+            device=device,
+            mps_fallback=resolved_mps_fallback,
+            mps_memory_fraction=mps_memory_fraction,
             run_traditional=False,
             run_unused=False,
-            min_semantic_lines=min_lines,
+            min_semantic_statements=min_statements,
             semantic_unit_types=semantic_unit_type,
             batch_size=batch_size,
             include_stubs=include_stubs,
+            embedding_cache=not no_cache,
+            strict_revision_cache=strict_revision_cache,
         )
     except ValueError as exc:
         raise click.UsageError(str(exc)) from exc
@@ -1362,7 +1405,7 @@ def search_command(
     with _configured_cli_output(as_json=as_json, verbose=verbose, output_width=output_width):
         analyzer = CodeAnalyzer(config)
         _run_cli_action(
-            lambda: analyzer.analyze(path),
+            lambda: analyzer.index(path),
             error_label="search",
             verbose=verbose,
         )
@@ -1384,14 +1427,59 @@ def search_command(
 @cli.command("info", help="Print tool and model defaults")
 def info_command() -> None:
     """Print version and default settings."""
+    default_profile = resolve_model_profile(DEFAULT_MODEL)
     click.echo(f"codedupes {__version__}")
+    runtime_versions = get_semantic_runtime_versions()
+    click.echo(f"Python: {runtime_versions['python']}")
+    click.echo(f"Platform: {platform.platform()}")
+    click.echo(f"PyTorch: {runtime_versions['torch']}")
+    click.echo(f"Transformers: {runtime_versions['transformers']}")
+    click.echo(f"Sentence Transformers: {runtime_versions['sentence-transformers']}")
+    # Diagnostics import torch, which reads PYTORCH_ENABLE_MPS_FALLBACK exactly once, so the
+    # environment must be settled first or a later semantic run in this process cannot enable it.
+    configure_mps_environment(DEFAULT_SEMANTIC_DEVICE, fallback=None)
+    diagnostics = get_device_diagnostics(DEFAULT_SEMANTIC_DEVICE)
+    click.echo(f"Default semantic device request: {DEFAULT_SEMANTIC_DEVICE}")
+    click.echo(f"Resolved semantic device: {diagnostics.resolved or 'unavailable'}")
+    click.echo(f"CUDA available: {diagnostics.cuda_available}")
+    click.echo(f"MPS built/available: {diagnostics.mps_built}/{diagnostics.mps_available}")
+    click.echo(
+        f"PYTORCH_ENABLE_MPS_FALLBACK: {diagnostics.mps_fallback_env} "
+        f"(torch reads this as: {describe_mps_fallback_env(diagnostics.mps_fallback_env)})"
+    )
+    click.echo(
+        f"MLX loaded in process: {diagnostics.mlx_loaded} "
+        "(MLX allocator is not managed by codedupes)"
+    )
+    click.echo(
+        f"CPU: {diagnostics.cpu_name or 'unknown'} ({diagnostics.cpu_architecture or 'unknown'})"
+    )
+    click.echo(
+        f"CPU bfloat16 GEMM capable: {diagnostics.cpu_bf16_native} "
+        f"(native bf16 ISA={diagnostics.cpu_bf16_isa}, mkldnn available={diagnostics.cpu_mkldnn_available})"
+    )
+    if cpu_bf16_opted_in():
+        cpu_bf16_policy = (
+            "enabled (experimental)"
+            if diagnostics.cpu_bf16_native
+            else "disabled (CODEDUPES_CPU_BF16=1 set, but the capability gate failed)"
+        )
+    else:
+        cpu_bf16_policy = (
+            "disabled (experimental; set CODEDUPES_CPU_BF16=1 on gate-capable hardware)"
+        )
+    click.echo(f"CPU bfloat16 inference: {cpu_bf16_policy}")
+    if diagnostics.mps_memory_bytes:
+        click.echo(f"MPS memory: {format_mps_memory_snapshot(diagnostics.mps_memory_bytes)}")
+    if diagnostics.error is not None:
+        click.echo(f"Device diagnostic error: {diagnostics.error}")
     click.echo(f"Default model: {DEFAULT_MODEL}")
-    click.echo("Default model revision: auto")
+    click.echo(f"Default model revision: {default_profile.default_revision or 'auto'}")
     click.echo(f"Default semantic threshold ({DEFAULT_MODEL}): {DEFAULT_THRESHOLD}")
     click.echo(f"Default traditional threshold: {DEFAULT_TRADITIONAL_THRESHOLD}")
     click.echo(f"Default semantic task for check: {DEFAULT_CHECK_SEMANTIC_TASK}")
     click.echo(f"Default semantic task for search: {DEFAULT_SEARCH_SEMANTIC_TASK}")
-    click.echo(f"Default min_lines for semantic: {DEFAULT_MIN_LINES}")
+    click.echo(f"Default min_statements for semantic: {DEFAULT_MIN_STATEMENTS}")
     click.echo(f"Default output width: {DEFAULT_OUTPUT_WIDTH}")
     click.echo("Default combined semantic fallback: disabled")
     click.echo("Default built-in exclude globs:")
@@ -1403,13 +1491,87 @@ def info_command() -> None:
     for profile in list_supported_models():
         aliases = ", ".join(profile.all_aliases())
         threshold = get_default_semantic_threshold(profile.key)
+        search_threshold = get_default_search_threshold(profile.key)
         click.echo(f"  - {profile.key} -> {profile.canonical_name}")
-        click.echo(f"      family={profile.family} semantic_threshold={threshold}")
+        click.echo(
+            f"      family={profile.family} semantic_threshold={threshold}"
+            f" search_threshold={search_threshold}"
+        )
         click.echo(f"      aliases: {aliases}")
         if profile.default_revision is not None:
             click.echo(f"      default_revision: {profile.default_revision}")
         click.echo(f"      default_trust_remote_code: {profile.default_trust_remote_code}")
+    click.echo("Embedding cache:")
+    try:
+        _echo_cache_summary(EmbeddingCache().stats())
+    except Exception as exc:  # noqa: BLE001 - info is diagnostics; report and keep printing
+        click.echo(f"  unavailable: {exc}")
     click.echo("Run with --help for CLI usage")
+
+
+@cli.group("cache", help="Inspect or clear the persistent embedding cache")
+def cache_group() -> None:
+    """Group namespace for embedding-cache management subcommands."""
+
+
+def _echo_cache_summary(stats: dict[str, Any]) -> None:
+    """Print the embedding-cache summary lines shared by ``info`` and ``cache info``.
+
+    :param stats: Mapping returned by ``EmbeddingCache.stats()``.
+    :return: ``None``.
+    """
+    click.echo(f"Cache path: {stats['path']}")
+    click.echo(f"Disabled via CODEDUPES_NO_CACHE: {stats['disabled']}")
+    click.echo(f"Entries: {stats['entries']}")
+    click.echo(f"Size on disk: {stats['size_bytes']} bytes")
+
+
+@cache_group.command("info", help="Show embedding cache location, size, and breakdown")
+def cache_info_command() -> None:
+    """Print embedding cache path, entry counts, size, and per-model/per-repo breakdown."""
+    try:
+        stats = EmbeddingCache().stats()
+    except Exception as exc:
+        click.echo(f"Cache unavailable: {exc}")
+        raise click.exceptions.Exit(1) from exc
+    _echo_cache_summary(stats)
+    if stats["models"]:
+        click.echo("Per-model entry counts:")
+        for model_name, count in sorted(stats["models"].items()):
+            click.echo(f"  - {model_name}: {count}")
+    if stats["repos"]:
+        click.echo("Per-repo breakdown:")
+        for repo in stats["repos"]:
+            click.echo(
+                f"  - {repo['repo']}: {repo['shards']} shard(s), {repo['entries']} entries, "
+                f"{repo['size_bytes']} bytes"
+            )
+
+
+@cache_group.command("clear", help="Clear cached embeddings")
+@click.option(
+    "--model",
+    default=None,
+    help="Only clear entries for this model alias or canonical HuggingFace ID",
+)
+def cache_clear_command(model: str | None) -> None:
+    """Clear cached embeddings, optionally scoped to a single model.
+
+    :param model: Optional model alias or canonical name filter.
+    :return: ``None``.
+    """
+    canonical_model = resolve_model_profile(model).canonical_name if model else None
+    try:
+        cleared = EmbeddingCache().clear(model=canonical_model)
+    except Exception as exc:
+        click.echo(f"Cache clear failed: {exc}")
+        raise click.exceptions.Exit(1) from exc
+    if model:
+        click.echo(
+            f"Cleared {cleared} cached embedding(s) for model '{model}' ({canonical_model})."
+        )
+    else:
+        click.echo(f"Cleared {cleared} cached embedding(s).")
 
 
 def main() -> int:

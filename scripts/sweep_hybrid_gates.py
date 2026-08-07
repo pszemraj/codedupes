@@ -1,4 +1,3 @@
-#!/usr/bin/env python
 """Sweep hybrid semantic-only gate thresholds against a labeled synthetic corpus."""
 
 from __future__ import annotations
@@ -13,16 +12,26 @@ import codedupes.analyzer as analyzer_module
 from codedupes.analyzer import AnalyzerConfig, CodeAnalyzer
 from codedupes.constants import (
     DEFAULT_MODEL,
-    DEFAULT_SEMANTIC_THRESHOLD,
     DEFAULT_TRADITIONAL_THRESHOLD,
 )
 from codedupes.models import HybridDuplicate
 from codedupes.pairs import ordered_pair_key
+from codedupes.semantic_profiles import get_default_semantic_threshold
 
 try:
-    from .sweep_common import build_positive_pairs, metrics
+    from .sweep_common import (
+        add_common_sweep_arguments,
+        build_positive_pairs,
+        metrics,
+        rank_sweep_rows,
+    )
 except ImportError:
-    from sweep_common import build_positive_pairs, metrics
+    from sweep_common import (
+        add_common_sweep_arguments,
+        build_positive_pairs,
+        metrics,
+        rank_sweep_rows,
+    )
 
 
 @dataclass(frozen=True)
@@ -56,6 +65,22 @@ def _parse_csv_floats(value: str) -> list[float]:
     return out
 
 
+def _resolve_hybrid_semantic_threshold(
+    model_name: str,
+    override: float | None,
+) -> float:
+    """Resolve the hybrid-confirmation threshold for the selected model profile.
+
+    :param str model_name: Model alias or identifier being swept.
+    :param float override: Explicit threshold override, or ``None`` for the
+        selected model profile's production default.
+    :return float: Effective semantic threshold used by hybrid synthesis.
+    """
+    if override is not None:
+        return override
+    return get_default_semantic_threshold(model_name)
+
+
 def _run_sweep(
     *,
     traditional_duplicates,
@@ -65,47 +90,41 @@ def _run_sweep(
     traditional_threshold: float,
     grid: list[GateConfig],
 ) -> tuple[list[SweepRow], dict[str, float]]:
-    old_values = {
+    baseline = {
         "semantic_min": float(analyzer_module.HYBRID_SEMANTIC_ONLY_MIN),
         "weak_min": float(analyzer_module.HYBRID_WEAK_JACCARD_MIN),
         "ratio_min": float(analyzer_module.HYBRID_STATEMENT_RATIO_MIN),
     }
 
     rows: list[SweepRow] = []
-    try:
-        for config in grid:
-            analyzer_module.HYBRID_SEMANTIC_ONLY_MIN = config.semantic_min
-            analyzer_module.HYBRID_WEAK_JACCARD_MIN = config.weak_identifier_jaccard_min
-            analyzer_module.HYBRID_STATEMENT_RATIO_MIN = config.statement_ratio_min
-
-            hybrid: list[HybridDuplicate]
-            hybrid, _ = analyzer_module._synthesize_hybrid_duplicates(
-                traditional_duplicates,
-                semantic_duplicates,
-                semantic_threshold=semantic_threshold,
-                jaccard_threshold=traditional_threshold,
+    for config in grid:
+        hybrid: list[HybridDuplicate]
+        hybrid, _ = analyzer_module._synthesize_hybrid_duplicates(
+            traditional_duplicates,
+            semantic_duplicates,
+            semantic_threshold=semantic_threshold,
+            jaccard_threshold=traditional_threshold,
+            semantic_only_min=config.semantic_min,
+            weak_identifier_jaccard_min=config.weak_identifier_jaccard_min,
+            statement_ratio_min=config.statement_ratio_min,
+        )
+        predicted_pairs = {ordered_pair_key(item.unit_a, item.unit_b) for item in hybrid}
+        tp, fp, fn, precision, recall, f1 = metrics(predicted_pairs, positive_pairs)
+        rows.append(
+            SweepRow(
+                config=config,
+                predicted=len(predicted_pairs),
+                tp=tp,
+                fp=fp,
+                fn=fn,
+                precision=precision,
+                recall=recall,
+                f1=f1,
             )
-            predicted_pairs = {ordered_pair_key(item.unit_a, item.unit_b) for item in hybrid}
-            tp, fp, fn, precision, recall, f1 = metrics(predicted_pairs, positive_pairs)
-            rows.append(
-                SweepRow(
-                    config=config,
-                    predicted=len(predicted_pairs),
-                    tp=tp,
-                    fp=fp,
-                    fn=fn,
-                    precision=precision,
-                    recall=recall,
-                    f1=f1,
-                )
-            )
-    finally:
-        analyzer_module.HYBRID_SEMANTIC_ONLY_MIN = old_values["semantic_min"]
-        analyzer_module.HYBRID_WEAK_JACCARD_MIN = old_values["weak_min"]
-        analyzer_module.HYBRID_STATEMENT_RATIO_MIN = old_values["ratio_min"]
+        )
 
-    rows.sort(key=lambda row: (row.f1, row.precision, row.recall, -row.fp), reverse=True)
-    return rows, old_values
+    rank_sweep_rows(rows)
+    return rows, baseline
 
 
 def _print_rows(rows: list[SweepRow], *, top_n: int) -> None:
@@ -126,18 +145,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         description="Sweep hybrid semantic-only gate thresholds on a labeled synthetic corpus."
     )
-    parser.add_argument(
-        "--corpus-path",
-        type=Path,
-        default=Path("test_fixtures/hybrid_tuning/crab_visibility"),
-        help="Root path of the synthetic corpus package/scripts.",
-    )
-    parser.add_argument(
-        "--labels-path",
-        type=Path,
-        default=Path("test_fixtures/hybrid_tuning/labels.json"),
-        help="Path to labels.json with expected duplicate groups.",
-    )
+    add_common_sweep_arguments(parser)
     parser.add_argument(
         "--semantic-threshold",
         type=float,
@@ -147,8 +155,11 @@ def main() -> int:
     parser.add_argument(
         "--hybrid-semantic-threshold",
         type=float,
-        default=DEFAULT_SEMANTIC_THRESHOLD,
-        help="Semantic threshold passed into hybrid synthesis for mixed-evidence pairs.",
+        default=None,
+        help=(
+            "Semantic threshold passed into hybrid synthesis for mixed-evidence pairs. "
+            "Defaults to the selected model profile's production threshold."
+        ),
     )
     parser.add_argument(
         "--traditional-threshold",
@@ -178,22 +189,7 @@ def main() -> int:
     parser.add_argument(
         "--model-revision",
         default=None,
-        help=(
-            "Model revision / commit hash. If omitted, uses model-profile default "
-            "(for example pinned for C2LLM 0.5B)."
-        ),
-    )
-    parser.add_argument(
-        "--batch-size",
-        type=int,
-        default=4,
-        help="Embedding batch size used for the candidate extraction run.",
-    )
-    parser.add_argument(
-        "--min-lines",
-        type=int,
-        default=0,
-        help="Minimum statement count for semantic candidate extraction.",
+        help=("Model revision / commit hash. If omitted, uses the model-profile default."),
     )
     trust_group = parser.add_mutually_exclusive_group()
     trust_group.add_argument(
@@ -210,12 +206,6 @@ def main() -> int:
     )
     parser.set_defaults(trust_remote_code=None)
     parser.add_argument(
-        "--top-n",
-        type=int,
-        default=10,
-        help="Number of best rows to print.",
-    )
-    parser.add_argument(
         "--json-out",
         type=Path,
         default=None,
@@ -230,7 +220,7 @@ def main() -> int:
         run_semantic=True,
         run_unused=False,
         include_private=True,
-        min_semantic_lines=args.min_lines,
+        min_semantic_statements=args.min_statements,
         jaccard_threshold=args.traditional_threshold,
         semantic_threshold=args.semantic_threshold,
         model_name=args.model,
@@ -255,7 +245,10 @@ def main() -> int:
         traditional_duplicates=result.traditional_duplicates,
         semantic_duplicates=result.semantic_duplicates,
         positive_pairs=positive_pairs,
-        semantic_threshold=args.hybrid_semantic_threshold,
+        semantic_threshold=_resolve_hybrid_semantic_threshold(
+            args.model,
+            args.hybrid_semantic_threshold,
+        ),
         traditional_threshold=args.traditional_threshold,
         grid=grid,
     )

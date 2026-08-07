@@ -18,6 +18,7 @@ Example:
 """
 
 from .analyzer import AnalyzerConfig, CodeAnalyzer, analyze_directory
+from .logging_utils import quiet_dependency_loggers
 from .models import AnalysisResult, CodeUnit, CodeUnitType, DuplicatePair, HybridDuplicate
 
 try:
@@ -37,4 +38,5 @@ __all__ = [
     "__version__",
     "__version_tuple__",
     "analyze_directory",
+    "quiet_dependency_loggers",
 ]

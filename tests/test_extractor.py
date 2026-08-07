@@ -6,7 +6,6 @@ from textwrap import dedent
 
 from codedupes.extractor import CodeExtractor, compute_ast_hash, compute_token_hash
 from codedupes.models import CodeUnitType
-
 from tests.conftest import extract_units
 
 

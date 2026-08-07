@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import json
 import os
+from pathlib import Path
 
 import pytest
 
 from codedupes.constants import DEFAULT_MODEL
-from codedupes.semantic import clear_model_cache, get_model
+from codedupes.semantic import clear_model_cache, compute_embeddings, get_model
+from codedupes.semantic_profiles import SemanticModelProfile, list_supported_models
 
 
 @pytest.mark.network
@@ -34,7 +37,7 @@ def test_gpu_smoke_default_model_encode() -> None:
         pytest.skip("CUDA is not available in this environment.")
 
     clear_model_cache()
-    model = get_model(DEFAULT_MODEL)
+    model = get_model(DEFAULT_MODEL, device="cuda")
     embeddings = model.encode(
         ["def gpu_smoke_test(x):\n    return x * 2"],
         convert_to_numpy=True,
@@ -42,3 +45,51 @@ def test_gpu_smoke_default_model_encode() -> None:
         device="cuda",
     )
     assert embeddings.shape[0] == 1
+
+
+@pytest.mark.network
+@pytest.mark.parametrize(
+    "profile",
+    list_supported_models(),
+    ids=lambda profile: profile.key,
+)
+def test_search_smoke_default_threshold_separates_relevant_from_noise(
+    profile: SemanticModelProfile,
+) -> None:
+    if os.getenv("CODEDUPES_SMOKE_SEARCH") != "1":
+        pytest.skip("Set CODEDUPES_SMOKE_SEARCH=1 to enable search smoke tests.")
+
+    from codedupes.extractor import CodeExtractor
+    from codedupes.semantic import find_similar_to_query
+
+    fixture_dir = Path(__file__).resolve().parent.parent / "test_fixtures" / "search_probes"
+    spec = json.loads((fixture_dir / "queries.json").read_text())
+    units = list(CodeExtractor(fixture_dir).extract_from_file(fixture_dir / "probes.py"))
+    assert {unit.name for unit in units} == {probe["expected"] for probe in spec["relevant"]}
+
+    clear_model_cache()
+    embeddings = compute_embeddings(units, model_name=profile.key)
+
+    for probe in spec["relevant"]:
+        results = find_similar_to_query(
+            probe["query"],
+            units,
+            embeddings,
+            model_name=profile.key,
+            top_k=3,
+        )
+        names = [unit.name for unit, _score in results]
+        assert probe["expected"] in names, (
+            f"{profile.key}: {probe['query']!r} missed its target: {names}"
+        )
+
+    for query in spec["noise"]:
+        results = find_similar_to_query(
+            query,
+            units,
+            embeddings,
+            model_name=profile.key,
+            top_k=3,
+        )
+        hits = [(unit.name, score) for unit, score in results]
+        assert not hits, f"{profile.key}: noise query {query!r} cleared the search floor: {hits}"

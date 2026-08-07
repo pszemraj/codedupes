@@ -1,11 +1,62 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 from textwrap import dedent
-from typing import Any, Callable
+from typing import Any
 
+import pytest
+
+from codedupes import devices
 from codedupes.extractor import CodeExtractor
-from codedupes.models import AnalysisResult, CodeUnit
+from codedupes.models import AnalysisResult, CodeUnit, CodeUnitType
+
+
+@pytest.fixture(autouse=True)
+def _isolated_embedding_cache_dir(tmp_path: Path, monkeypatch: Any) -> None:
+    """Point the embedding cache at a per-test directory so tests never touch ``~/.cache``.
+
+    :param tmp_path: Pytest per-test temporary directory.
+    :param monkeypatch: Pytest monkeypatch fixture.
+    :return: ``None``.
+    """
+    monkeypatch.setenv("CODEDUPES_CACHE_DIR", str(tmp_path / "embedding-cache"))
+    # The experimental CPU bf16 opt-in must never leak from the invoking shell:
+    # tests assert the float32 default unless they opt in explicitly.
+    monkeypatch.delenv("CODEDUPES_CPU_BF16", raising=False)
+    # The live CPU bf16 probe is memoized per process; without a reset a
+    # verdict cached by one test would leak into the next.
+    devices._reset_cpu_bf16_probe_cache()
+
+
+def make_code_unit(
+    tmp_path: Path,
+    *,
+    name: str,
+    source: str,
+    lineno: int = 1,
+    unit_type: CodeUnitType = CodeUnitType.FUNCTION,
+) -> CodeUnit:
+    """Build one minimal public code unit for tests.
+
+    :param tmp_path: Test directory the unit's file path points into.
+    :param name: Unit name; the qualified name becomes ``sample.<name>``.
+    :param source: Unit source text.
+    :param lineno: Starting line number, defaults to 1.
+    :param unit_type: Unit type, defaults to ``FUNCTION``.
+    :return: Constructed code unit.
+    """
+    return CodeUnit(
+        name=name,
+        qualified_name=f"sample.{name}",
+        unit_type=unit_type,
+        file_path=tmp_path / "sample.py",
+        lineno=lineno,
+        end_lineno=lineno + max(1, len(source.strip().splitlines()) - 1),
+        source=source,
+        is_public=True,
+        is_exported=False,
+    )
 
 
 def write_source_file(tmp_path: Path, source: str, filename: str = "sample.py") -> Path:
@@ -93,6 +144,9 @@ def patch_cli_analyzer(
 
         def analyze(self, _path: Path) -> AnalysisResult:
             return analyze_result() if callable(analyze_result) else analyze_result
+
+        def index(self, _path: Path) -> int:
+            return 0
 
         def search(self, query: str, top_k: int = 10) -> list[tuple[CodeUnit, float]]:
             if callable(search_results):
