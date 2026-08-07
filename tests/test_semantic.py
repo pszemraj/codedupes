@@ -12,6 +12,7 @@ import sentence_transformers
 import torch
 
 from codedupes import devices, semantic
+from codedupes.constants import CPU_FALLBACK_MAX_BATCH_SIZE
 from codedupes.embedding_cache import EmbeddingCache
 from codedupes.models import CodeUnit, CodeUnitType
 from codedupes.semantic import (
@@ -1217,6 +1218,32 @@ def test_compute_embeddings_cpu_fallback_retries_once_and_bails_on_persistent_oo
         (2, "cpu"),
         (1, "cpu"),
     ]
+
+
+def test_cpu_fallback_restart_batch_size_is_capped(monkeypatch, tmp_path) -> None:
+    """The CPU retry after an exhausted accelerator ladder must not inherit a huge
+    requested batch size: host OOM can be an uncatchable OOM-killer SIGKILL
+    (observed live on WSL2 with batch_size=512), so the restart is capped at
+    ``CPU_FALLBACK_MAX_BATCH_SIZE``.
+    """
+    units = extract_arithmetic_units(tmp_path)
+    seen_batches: list[tuple[int, str | None]] = []
+
+    class OomUntilCpuModel:
+        def encode(self, texts, **kwargs):
+            seen_batches.append((kwargs["batch_size"], kwargs.get("device")))
+            if kwargs.get("device") != "cpu":
+                raise RuntimeError("CUDA out of memory")
+            return np.array([[1.0, 0.0], [0.0, 1.0]], dtype=np.float32)
+
+    monkeypatch.setattr(semantic, "get_model", lambda *args, **kwargs: OomUntilCpuModel())
+
+    embeddings = compute_embeddings(units, batch_size=512)
+
+    assert embeddings.shape == (2, 2)
+    cuda_batches = [size for size, device in seen_batches if device != "cpu"]
+    assert cuda_batches == [512, 256, 128, 64, 32, 16, 8, 4, 2, 1]
+    assert seen_batches[-1] == (CPU_FALLBACK_MAX_BATCH_SIZE, "cpu")
 
 
 def test_get_model_load_time_accelerator_oom_falls_back_to_cpu(monkeypatch) -> None:

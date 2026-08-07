@@ -12,6 +12,7 @@ from click.testing import CliRunner
 from codedupes import cli
 from codedupes.devices import DeviceDiagnostics
 from codedupes.embedding_cache import EmbeddingCache
+from codedupes.logging_utils import NOISY_EXTERNAL_LOGGERS
 from codedupes.models import (
     AnalysisResult,
     CodeUnit,
@@ -1014,7 +1015,7 @@ def test_cli_semantic_only_uses_raw_findings_for_exit(monkeypatch, tmp_path):
 
 def test_setup_logging_quiets_external_loggers() -> None:
     cli.setup_logging(verbose=False)
-    for logger_name in cli._NOISY_EXTERNAL_LOGGERS:
+    for logger_name in NOISY_EXTERNAL_LOGGERS:
         assert logging.getLogger(logger_name).level == logging.WARNING
 
 

@@ -22,6 +22,7 @@ import numpy as np
 from packaging.version import InvalidVersion, Version
 
 from codedupes.constants import (
+    CPU_FALLBACK_MAX_BATCH_SIZE,
     DEFAULT_BATCH_SIZE,
     DEFAULT_CHECK_SEMANTIC_TASK,
     DEFAULT_MODEL,
@@ -54,6 +55,7 @@ from codedupes.embedding_cache import (
     log_warning_once,
     resolve_cache_dir,
 )
+from codedupes.logging_utils import quiet_unconfigured_dependency_loggers
 from codedupes.models import CodeUnit, DuplicatePair
 from codedupes.pairs import ordered_pair_key
 from codedupes.semantic_profiles import (
@@ -1822,6 +1824,10 @@ def _get_model_unlocked(
     global _model_device_key, _model_dtype_key
     global _warned_cpu_fallback_reuse
 
+    # Model loading triggers hub/HTTP traffic whose INFO chatter drowns API callers
+    # using a bare root-level logging config; explicit per-logger config is respected.
+    quiet_unconfigured_dependency_loggers()
+
     requested_local_path = resolve_local_model_path(model_name)
     if requested_local_path is None and is_explicit_local_model_path(model_name):
         raise SemanticBackendError(
@@ -2403,14 +2409,16 @@ def _encode_with_retries(
 
     Recovery first halves the batch until one item remains. Accelerator OOM at
     batch size one then moves the cached model to CPU exactly once, restarting from
-    the requested batch size. OOM traceback references are detached before
+    the requested batch size capped at ``CPU_FALLBACK_MAX_BATCH_SIZE``. OOM
+    traceback references are detached before
     synchronization/garbage collection so temporary tensors do not remain live
     during allocator cleanup.
 
     :param model: Loaded model, moved to CPU in place when accelerator OOM persists.
     :param encode_fn: Backend encode callable bound to ``model``.
     :param texts: Inputs to embed.
-    :param batch_size: Requested batch size, also the restart size for the CPU retry.
+    :param batch_size: Requested batch size, also the restart size for the CPU retry
+        (capped at ``CPU_FALLBACK_MAX_BATCH_SIZE``).
     :param show_progress_bar: Whether the backend should render a progress bar.
     :param initial_device: Device the model executes on before any CPU fallback.
     :param model_name: Model identifier reported in backend error messages.
@@ -2509,17 +2517,21 @@ def _encode_with_retries(
 
         source_device = oom_device if oom_device in {"cuda", "mps"} else active_device
         if source_device in {"cuda", "mps"} and not attempted_cpu_fallback:
+            # Host memory has different limits than the accelerator, so the CPU retry
+            # restarts near the requested batch size instead of inheriting
+            # batch_size=1 — but capped: host OOM can be an uncatchable OOM-killer
+            # SIGKILL this ladder never sees, so a huge accelerator-oriented request
+            # (e.g. 512) must not carry over to the CPU restart.
+            cpu_restart_batch_size = min(max(1, batch_size), CPU_FALLBACK_MAX_BATCH_SIZE)
             logger.warning(
                 f"{source_device.upper()} OOM during {stage} at batch_size=1{memory_context}; "
-                f"moving the model to CPU and retrying from batch_size={max(1, batch_size)}"
+                f"moving the model to CPU and retrying from batch_size={cpu_restart_batch_size}"
             )
             clear_device_cache(source_device, synchronize=True, collect=True)
             _move_model_to_cpu(model)
             active_device = "cpu"
             attempted_cpu_fallback = True
-            # Host memory has different limits than the accelerator, so the CPU retry
-            # restarts at the requested batch size instead of inheriting batch_size=1.
-            current_batch_size = max(1, batch_size)
+            current_batch_size = cpu_restart_batch_size
             continue
 
         logger.warning(f"OOM persisted during {stage} at batch_size=1 on {active_device}; aborting")

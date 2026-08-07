@@ -49,7 +49,7 @@ Inference OOM recovery is deterministic. An MPS `Invalid buffer size` failure - 
 2. Log one warning per failed attempt, including MPS tensor, driver, and recommended-memory statistics when available.
 3. Synchronize queued MPS work, run garbage collection, and call `torch.mps.empty_cache()`.
 4. Halve the embedding batch size until it reaches one.
-5. If an accelerator still OOMs at batch size one, move the cached model to CPU once and retry from the originally requested batch size; host memory has different limits, and a CPU OOM re-enters the halving ladder above before aborting. The move re-checks the CPU bfloat16 inference policy described below: a model loaded in bfloat16 is cast to float32 unless the experimental opt-in is set and this CPU passes the capability gate.
+5. If an accelerator still OOMs at batch size one, move the cached model to CPU once and retry from the originally requested batch size capped at 32 (`CPU_FALLBACK_MAX_BATCH_SIZE`); host memory has different limits, but host OOM can arrive as an uncatchable OOM-killer kill rather than a Python exception, so an accelerator-sized request (say 512) never carries over. A catchable CPU OOM re-enters the halving ladder above before aborting. The move re-checks the CPU bfloat16 inference policy described below: a model loaded in bfloat16 is cast to float32 unless the experimental opt-in is set and this CPU passes the capability gate.
 
 A model-loading MPS OOM has no batch to shrink, so it clears the MPS cache and retries loading once on CPU. After an MPS-to-CPU OOM fallback, the CPU model remains sticky for that model in a long-lived process. Call `codedupes.semantic.clear_model_cache()` to force a fresh accelerator load.
 

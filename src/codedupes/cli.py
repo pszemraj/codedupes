@@ -46,6 +46,7 @@ from codedupes.devices import (
 )
 from codedupes.embedding_cache import EmbeddingCache
 from codedupes.extractor import DEFAULT_EXCLUDE_DIR_NAMES, DEFAULT_EXCLUDE_PATTERNS
+from codedupes.logging_utils import quiet_dependency_loggers
 from codedupes.models import AnalysisResult, CodeUnit, DuplicatePair, HybridDuplicate
 from codedupes.semantic import get_semantic_runtime_versions
 from codedupes.semantic_profiles import (
@@ -67,18 +68,6 @@ DEFAULT_EXCLUDE_HELP_HINT = (
 
 console = Console(width=DEFAULT_OUTPUT_WIDTH)
 TResult = TypeVar("TResult")
-
-_NOISY_EXTERNAL_LOGGERS = (
-    "httpx",
-    "huggingface_hub",
-    "jax",
-    "numexpr",
-    "sentence_transformers",
-    "tensorflow",
-    "torch.utils.cpp_extension",
-    "transformers",
-    "urllib3",
-)
 
 
 class _CodedupesLogFilter(logging.Filter):
@@ -146,9 +135,7 @@ def setup_logging(verbose: bool = False) -> None:
         handlers=[handler],
         force=True,
     )
-    quiet_level = logging.DEBUG if verbose else logging.WARNING
-    for logger_name in _NOISY_EXTERNAL_LOGGERS:
-        logging.getLogger(logger_name).setLevel(quiet_level)
+    quiet_dependency_loggers(logging.DEBUG if verbose else logging.WARNING)
 
 
 @contextmanager

@@ -102,6 +102,16 @@ clear_model_cache()
 
 An `mps_memory_fraction` override is also process-global. A later analyzer that uses the default `None` restores PyTorch's environment/default high-watermark ratio before its next MPS load; clearing the model alone does not reset the allocator cap.
 
+## Logging
+
+Model loading quiets known-noisy dependency loggers (httpx request lines, transformers/sentence-transformers chatter) automatically, but only ones still inheriting the root level — any logger you configure explicitly is left alone. To pin them yourself, or to a different level:
+
+```python
+from codedupes import quiet_dependency_loggers
+
+quiet_dependency_loggers()  # or quiet_dependency_loggers(logging.ERROR)
+```
+
 ## Key Result Types
 
 - `AnalysisResult.units`: extracted functions, methods, and classes

@@ -17,6 +17,10 @@ SemanticTask = Literal[
 DEFAULT_MODEL = "gte-modernbert-base"
 DEFAULT_TRADITIONAL_THRESHOLD = 0.85
 DEFAULT_BATCH_SIZE = 8
+# CPU OOM can arrive as an uncatchable OOM-killer SIGKILL rather than a Python
+# exception (observed on WSL2), so the post-accelerator CPU retry must not restart
+# at an arbitrarily large requested batch size.
+CPU_FALLBACK_MAX_BATCH_SIZE = 32
 DEFAULT_SEMANTIC_DEVICE = "auto"
 SEMANTIC_DEVICE_CHOICES = ("auto", "cpu", "cuda", "mps")
 DEFAULT_MIN_SEMANTIC_STATEMENTS = 3
