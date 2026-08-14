@@ -59,9 +59,9 @@ def find_exact_pair_keys(units: list[CodeUnit]) -> set[tuple[str, str]]:
     :param units: Candidate units to compare.
     :return: Ordered uid pair keys covering all exact-duplicate pairs.
     """
-    pairs = _find_exact_duplicates(
-        units, "structural_hash", "ast_hash"
-    ) + _find_exact_duplicates(units, "_token_hash", "token_hash")
+    pairs = _find_exact_duplicates(units, "structural_hash", "ast_hash") + _find_exact_duplicates(
+        units, "token_hash", "token_hash"
+    )
     return {ordered_pair_key(pair.unit_a, pair.unit_b) for pair in pairs}
 
 
@@ -444,7 +444,7 @@ def run_traditional_analysis(
         build_reference_graph(units, project_root=project_root)
 
     ast_dupes = _find_exact_duplicates(units, "structural_hash", "ast_hash")
-    token_dupes = _find_exact_duplicates(units, "_token_hash", "token_hash")
+    token_dupes = _find_exact_duplicates(units, "token_hash", "token_hash")
     exact = _dedupe_duplicate_pairs(ast_dupes + token_dupes)
     logger.info(f"Found {len(exact)} exact duplicates")
 

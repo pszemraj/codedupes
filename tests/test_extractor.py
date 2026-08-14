@@ -177,11 +177,11 @@ def test_extract_all_double_star_pattern_matches_root_level_files(tmp_path: Path
 
 def test_python_byte_range_matches_emitted_source_with_unicode(tmp_path: Path) -> None:
     source = (
-        '# café before the unit\n'
-        '\n'
-        'def greet(name):\n'
+        "# café before the unit\n"
+        "\n"
+        "def greet(name):\n"
         '    message = "héllo " + name\n'
-        '    return message\n'
+        "    return message\n"
     )
     file_path = tmp_path / "unicode_sample.py"
     file_path.write_text(source, encoding="utf-8")
@@ -191,4 +191,4 @@ def test_python_byte_range_matches_emitted_source_with_unicode(tmp_path: Path) -
 
     assert encoded[unit.start_byte : unit.end_byte] == unit.source.encode("utf-8")
     assert unit.start_column == 0
-    assert unit.end_column == len(b'    return message')
+    assert unit.end_column == len(b"    return message")

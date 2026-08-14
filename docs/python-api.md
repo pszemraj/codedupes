@@ -149,7 +149,7 @@ quiet_dependency_loggers()  # or quiet_dependency_loggers(logging.ERROR)
 - `AnalysisResult.unused_excluded_units`: non-Python units intentionally excluded from unused analysis
 - `AnalysisResult.all_duplicates`: hybrid duplicates in combined mode; raw duplicates in single-method mode
 - `AnalysisResult.analysis_mode`: `"combined"`, `"traditional"`, `"semantic"`, or `"none"`
-- `CodeUnit.uid`: in-run definition identity (Python preserves the historical path/qualified-name form; non-Python units also include language and start byte)
+- `CodeUnit.uid`: in-run definition identity, `<path>::<language>::<qualified name>::<start byte>` for every language; the byte position keeps overloads and redefinitions distinct
 - `CodeUnit.language`, `dialect`, and `native_kind`: canonical language plus parser-specific syntax kind
 - `CodeUnit.start_byte`/`end_byte`: exact byte range used to slice the emitted source
 - `CodeUnit.structural_hash`, `identifiers`, and `statement_count`: backend-computed language-neutral features

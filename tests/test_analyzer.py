@@ -780,8 +780,8 @@ def test_combined_mode_excludes_tiny_filtered_ast_only_exact_pairs(
     pair = ordered_pair_key(unit_by_name["alpha"], unit_by_name["beta"])
 
     # Same normalized AST, different identifiers: an ast_hash-only exact pair.
-    assert unit_by_name["alpha"]._ast_hash == unit_by_name["beta"]._ast_hash
-    assert unit_by_name["alpha"]._token_hash != unit_by_name["beta"]._token_hash
+    assert unit_by_name["alpha"].structural_hash == unit_by_name["beta"].structural_hash
+    assert unit_by_name["alpha"].token_hash != unit_by_name["beta"].token_hash
     # The tiny filter strips the pair from traditional output...
     assert result.traditional_duplicates == []
     # ...but semantic scoring must still treat it as an already-known exact pair.

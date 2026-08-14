@@ -675,9 +675,8 @@ class CodeExtractor:
             is_public=not name.startswith("_"),
             is_dunder=name.startswith("__") and name.endswith("__"),
             is_exported=name in exported,
-            _ast_hash=ast_hash,
-            _structural_hash=ast_hash,
-            _token_hash=token_hash,
+            structural_hash=ast_hash,
+            token_hash=token_hash,
         )
 
     def _emit_class(
@@ -729,9 +728,8 @@ class CodeExtractor:
             is_public=not class_name.startswith("_"),
             is_dunder=False,
             is_exported=class_name in exported,
-            _ast_hash=ast_hash,
-            _structural_hash=ast_hash,
-            _token_hash=token_hash,
+            structural_hash=ast_hash,
+            token_hash=token_hash,
         )
 
     def extract_all(self) -> list[CodeUnit]:

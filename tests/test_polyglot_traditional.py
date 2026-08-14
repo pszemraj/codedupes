@@ -43,9 +43,8 @@ def _unit(
         dialect=language,
         start_byte=start_byte,
         end_byte=end_byte,
-        _ast_hash=structural_hash,
-        _structural_hash=structural_hash,
-        _token_hash=token_hash,
+        structural_hash=structural_hash,
+        token_hash=token_hash,
         identifiers=identifiers,
     )
 

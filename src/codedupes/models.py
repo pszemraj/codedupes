@@ -65,11 +65,11 @@ class CodeUnit:
     has_body: bool = True
     statement_count: int | None = None
 
-    # Structural/token features. `_ast_hash` is retained for one compatibility
-    # cycle; non-Python backends use `_structural_hash` as the primary field.
-    _ast_hash: str | None = field(default=None, repr=False)
-    _structural_hash: str | None = field(default=None, repr=False)
-    _token_hash: str | None = field(default=None, repr=False)
+    # Backend-computed structural/token fingerprints. Python derives both from
+    # its normalized CPython AST; Tree-sitter backends use the canonical
+    # fingerprint stream.
+    structural_hash: str | None = field(default=None, repr=False)
+    token_hash: str | None = field(default=None, repr=False)
     identifiers: frozenset[str] = field(default_factory=frozenset, repr=False)
 
     # For call graph / usage analysis.  Reference resolution is intentionally
@@ -83,21 +83,13 @@ class CodeUnit:
     is_exported: bool = False
 
     @property
-    def structural_hash(self) -> str | None:
-        """Return the backend-neutral structural fingerprint."""
-        return self._structural_hash or self._ast_hash
-
-    @property
     def uid(self) -> str:
         """Build an in-run unique identifier for this code unit.
 
-        Existing Python callers retain the historical ``<path>::<qualified>``
-        form.  Tree-sitter units include language and byte position because
-        overloads and repeated lexical names are legal in several supported
-        languages.
+        The byte position keeps the uid unique for overloads, conditional
+        redefinitions, and repeated lexical names, all of which are legal in
+        several supported languages (including Python).
         """
-        if self.language == "python":
-            return f"{self.file_path}::{self.qualified_name}"
         return f"{self.file_path}::{self.language}::{self.qualified_name}::{self.start_byte}"
 
     @property
