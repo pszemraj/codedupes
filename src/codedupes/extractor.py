@@ -195,7 +195,7 @@ class _CodeUnitCollector(ast.NodeVisitor):
         self,
         extractor: CodeExtractor,
         file_path: Path,
-        source: str,
+        source_map: _PythonSourceMap,
         module_name: str,
         exported: set[str],
     ) -> None:
@@ -203,13 +203,13 @@ class _CodeUnitCollector(ast.NodeVisitor):
 
         :param extractor: Owning code extractor.
         :param file_path: Source file path.
-        :param source: Full file source text.
+        :param source_map: Precomputed per-file line/byte tables.
         :param module_name: Deduced module name.
         :param exported: Export names from module-level ``__all__``.
         """
         self.extractor = extractor
         self.file_path = file_path
-        self.source = source
+        self.source_map = source_map
         self.module_name = module_name
         self.exported = exported
         self.units: list[CodeUnit] = []
@@ -230,7 +230,7 @@ class _CodeUnitCollector(ast.NodeVisitor):
                 self.extractor._emit_function(
                     node,
                     self.file_path,
-                    self.source,
+                    self.source_map,
                     self.module_name,
                     scope_prefix=scope_prefix,
                     class_member=is_method,
@@ -256,7 +256,7 @@ class _CodeUnitCollector(ast.NodeVisitor):
                 self.extractor._emit_class(
                     node,
                     self.file_path,
-                    self.source,
+                    self.source_map,
                     self.module_name,
                     scope_prefix=scope_prefix,
                     exported=self.exported,
@@ -406,25 +406,51 @@ def _python_identifiers(node: ast.AST) -> frozenset[str]:
     )
 
 
-def _python_byte_range(
-    source: str,
-    node: ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef,
-) -> tuple[int, int, int, int]:
-    """Return the byte range for the line-oriented Python snippet we emit.
+class _PythonSourceMap:
+    """Per-file line and byte-offset tables shared by every emitted unit.
 
-    Python extraction historically returns complete source lines, including any
-    indentation and the final line ending.  Keep that compatibility behavior and
-    make the range metadata describe the exact same bytes rather than the narrower
-    AST column span.
+    Python extraction returns complete source lines, including indentation and
+    the final line ending; the byte range describes those exact bytes rather
+    than the narrower AST column span. Splitting and encoding happen once per
+    file so per-unit work stays O(unit size) instead of O(file size).
     """
-    encoded_lines = source.encode("utf-8").splitlines(keepends=True)
-    start_line_index = max(0, node.lineno - 1)
-    end_line_index = max(start_line_index, (node.end_lineno or node.lineno) - 1)
-    start_byte = sum(len(line) for line in encoded_lines[:start_line_index])
-    end_byte = sum(len(line) for line in encoded_lines[: end_line_index + 1])
-    final_line = encoded_lines[end_line_index] if encoded_lines else b""
-    end_column = len(final_line.rstrip(b"\r\n"))
-    return start_byte, end_byte, 0, end_column
+
+    def __init__(self, source: str) -> None:
+        """Build line tables for one file's source text.
+
+        :param source: Entire file source text.
+        """
+        self.lines = source.splitlines(keepends=True)
+        self._encoded_lines = source.encode("utf-8").splitlines(keepends=True)
+        self._line_start_bytes = [0]
+        for line in self._encoded_lines:
+            self._line_start_bytes.append(self._line_start_bytes[-1] + len(line))
+
+    def snippet(self, node: ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef) -> str:
+        """Return the complete-line source snippet for one definition node.
+
+        :param node: Definition node with line span metadata.
+        :return: Source lines covering the node, endings included.
+        """
+        return "".join(self.lines[node.lineno - 1 : node.end_lineno])
+
+    def byte_range(
+        self,
+        node: ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef,
+    ) -> tuple[int, int, int, int]:
+        """Return ``(start_byte, end_byte, start_column, end_column)`` for a node.
+
+        :param node: Definition node with line span metadata.
+        :return: Byte range of the emitted snippet plus column bounds.
+        """
+        line_count = len(self._encoded_lines)
+        start_line_index = max(0, node.lineno - 1)
+        end_line_index = max(start_line_index, (node.end_lineno or node.lineno) - 1)
+        start_byte = self._line_start_bytes[min(start_line_index, line_count)]
+        end_byte = self._line_start_bytes[min(end_line_index + 1, line_count)]
+        final_line = self._encoded_lines[end_line_index] if end_line_index < line_count else b""
+        end_column = len(final_line.rstrip(b"\r\n"))
+        return start_byte, end_byte, 0, end_column
 
 
 class CodeExtractor:
@@ -563,7 +589,8 @@ class CodeExtractor:
 
         module_name = self._get_module_name(file_path)
         exported = get_exported_names(tree)
-        visitor = _CodeUnitCollector(self, file_path, source, module_name, exported)
+        source_map = _PythonSourceMap(source)
+        visitor = _CodeUnitCollector(self, file_path, source_map, module_name, exported)
         visitor.visit(tree)
         yield from visitor.units
 
@@ -619,7 +646,7 @@ class CodeExtractor:
         self,
         node: ast.FunctionDef | ast.AsyncFunctionDef,
         file_path: Path,
-        source: str,
+        source_map: _PythonSourceMap,
         module_name: str,
         scope_prefix: list[str],
         class_member: bool,
@@ -629,7 +656,7 @@ class CodeExtractor:
 
         :param node: Function or async function AST node.
         :param file_path: Source file path.
-        :param source: Entire file source text.
+        :param source_map: Precomputed per-file line/byte tables.
         :param module_name: Module name.
         :param scope_prefix: Scope prefix stack.
         :param class_member: Whether node is a method.
@@ -640,9 +667,7 @@ class CodeExtractor:
         qualified = self._qualified_name(module_name, scope_prefix, name)
         unit_type = CodeUnitType.METHOD if class_member else CodeUnitType.FUNCTION
 
-        # Extract source for this node
-        lines = source.splitlines(keepends=True)
-        func_source = "".join(lines[node.lineno - 1 : node.end_lineno])
+        func_source = source_map.snippet(node)
 
         # Build call graph
         call_visitor = CallGraphVisitor()
@@ -650,7 +675,7 @@ class CodeExtractor:
 
         ast_hash = compute_ast_hash(node)
         token_hash = compute_token_hash(func_source)
-        start_byte, end_byte, start_column, end_column = _python_byte_range(source, node)
+        start_byte, end_byte, start_column, end_column = source_map.byte_range(node)
 
         yield CodeUnit(
             name=name,
@@ -682,7 +707,7 @@ class CodeExtractor:
         self,
         node: ast.ClassDef,
         file_path: Path,
-        source: str,
+        source_map: _PythonSourceMap,
         module_name: str,
         scope_prefix: list[str],
         exported: set[str],
@@ -691,7 +716,7 @@ class CodeExtractor:
 
         :param node: Class AST node.
         :param file_path: Source file path.
-        :param source: Entire file source text.
+        :param source_map: Precomputed per-file line/byte tables.
         :param module_name: Module name.
         :param scope_prefix: Scope prefix stack.
         :param exported: Exported names from module __all__.
@@ -699,11 +724,10 @@ class CodeExtractor:
         """
         class_name = node.name
         qualified = self._qualified_name(module_name, scope_prefix, class_name)
-        lines = source.splitlines(keepends=True)
-        class_source = "".join(lines[node.lineno - 1 : node.end_lineno])
+        class_source = source_map.snippet(node)
         ast_hash = compute_ast_hash(node)
         token_hash = compute_token_hash(class_source)
-        start_byte, end_byte, start_column, end_column = _python_byte_range(source, node)
+        start_byte, end_byte, start_column, end_column = source_map.byte_range(node)
 
         yield CodeUnit(
             name=class_name,
