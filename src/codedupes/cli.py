@@ -456,12 +456,20 @@ def print_summary(
 
 
 def _language_counts(units: list[CodeUnit]) -> dict[str, int]:
-    """Count extracted units by canonical language."""
+    """Count extracted units by canonical language.
+
+    :param units: Extracted code units.
+    :return: Unit counts keyed by language, ordered by language name.
+    """
     return dict(sorted(Counter(unit.language for unit in units).items()))
 
 
 def _diagnostic_to_dict(diagnostic: ExtractionDiagnostic) -> dict[str, Any]:
-    """Convert an extraction diagnostic to a JSON-safe mapping."""
+    """Convert an extraction diagnostic to a JSON-safe mapping.
+
+    :param diagnostic: Diagnostic to convert.
+    :return: Dictionary of JSON-serializable diagnostic fields.
+    """
     return {
         "file": str(diagnostic.file_path),
         "language": diagnostic.language,
@@ -641,7 +649,11 @@ def _build_duplicates_table(*, hybrid: bool = False) -> Table:
 
 
 def _syntax_lexer(unit: CodeUnit) -> str:
-    """Return a stable Pygments lexer alias for a code unit."""
+    """Return a stable Pygments lexer alias for a code unit.
+
+    :param unit: Unit whose source will be highlighted.
+    :return: Pygments lexer alias, or ``"text"`` when the dialect is unknown.
+    """
     dialect = unit.dialect or unit.language
     return {
         "python": "python",

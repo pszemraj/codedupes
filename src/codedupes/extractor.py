@@ -355,26 +355,48 @@ class _PythonStatementCounter(ast.NodeVisitor):
     """Count executable Python statements without descending into nested scopes."""
 
     def __init__(self) -> None:
+        """Start the visitor with an empty statement count."""
         self.count = 0
 
     def generic_visit(self, node: ast.AST) -> None:
+        """Count ``node`` when it is a statement, then visit its children.
+
+        :param node: AST node being visited.
+        """
         if isinstance(node, ast.stmt):
             self.count += 1
         super().generic_visit(node)
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        """Count a nested function as one statement without entering its body.
+
+        :param node: Nested function definition node.
+        """
         self.count += 1
 
     def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        """Count a nested async function as one statement without entering its body.
+
+        :param node: Nested async function definition node.
+        """
         self.count += 1
 
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        """Count a nested class as one statement without entering its body.
+
+        :param node: Nested class definition node.
+        """
         self.count += 1
 
 
 def _count_python_statements(
     node: ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef,
 ) -> int:
+    """Count the executable statements in one definition, ignoring its docstring.
+
+    :param node: Definition node whose body is counted.
+    :return: Statement count, with nested scopes counted once each.
+    """
     body = list(node.body)
     if (
         body
@@ -390,6 +412,11 @@ def _count_python_statements(
 
 
 def _python_identifiers(node: ast.AST) -> frozenset[str]:
+    """Collect identifier names bound or referenced under one AST subtree.
+
+    :param node: AST subtree to scan.
+    :return: Identifier names excluding Python keywords and builtins.
+    """
     ignored = set(keyword.kwlist) | set(dir(builtins))
     identifiers: set[str] = set()
     for child in ast.walk(node):
@@ -526,7 +553,10 @@ class CodeExtractor:
         return ".".join(parts) if parts else ""
 
     def _allow_c_headers(self) -> bool:
-        """Resolve the repository-level C-header ambiguity policy once."""
+        """Resolve the repository-level C-header ambiguity policy once.
+
+        :return: ``True`` when ambiguous ``.h`` files may be parsed as C.
+        """
         if self._c_headers_allowed is None:
             self._c_headers_allowed = repository_allows_c_headers(self.root, self.languages)
         return self._c_headers_allowed
@@ -538,6 +568,9 @@ class CodeExtractor:
         are routed to pinned Tree-sitter grammar packages. Missing grammars are a
         hard configuration error; codedupes never silently falls back to line
         chunking.
+
+        :param file_path: File to extract code units from.
+        :return: Iterator over the code units found in the file.
         """
         file_path = file_path.resolve()
         if self._should_exclude(file_path):
@@ -567,7 +600,11 @@ class CodeExtractor:
         yield from self._extract_python_from_file(file_path)
 
     def _extract_python_from_file(self, file_path: Path) -> Iterator[CodeUnit]:
-        """Yield Python units using the original CPython AST implementation."""
+        """Yield Python units using the original CPython AST implementation.
+
+        :param file_path: Python file to parse.
+        :return: Iterator over the code units found in the file.
+        """
         try:
             source = file_path.read_text(encoding="utf-8")
             tree = ast.parse(source, filename=str(file_path))
@@ -755,7 +792,10 @@ class CodeExtractor:
         )
 
     def extract_all(self) -> list[CodeUnit]:
-        """Extract all supported code units from the configured directory tree."""
+        """Extract all supported code units from the configured directory tree.
+
+        :return: Every code unit extracted from the tree, in walk order.
+        """
         units: list[CodeUnit] = []
         seen: set[Path] = set()
         allow_c_header = self._allow_c_headers()

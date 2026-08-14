@@ -107,7 +107,11 @@ def _is_test_function_unit(unit: CodeUnit) -> bool:
 
 
 def _unit_identifier_set(unit: CodeUnit) -> set[str]:
-    """Return backend identifiers without reparsing non-Python source as Python."""
+    """Return backend identifiers without reparsing non-Python source as Python.
+
+    :param unit: Code unit whose identifiers are needed.
+    :return: Identifier names for the unit.
+    """
     if unit.identifiers or unit.language != "python":
         return set(unit.identifiers)
     return extract_identifiers(unit.source)

@@ -88,12 +88,17 @@ class CodeUnit:
         The byte position keeps the uid unique for overloads, conditional
         redefinitions, and repeated lexical names, all of which are legal in
         several supported languages (including Python).
+
+        :return: Identifier that is unique to this unit within one analysis run.
         """
         return f"{self.file_path}::{self.language}::{self.qualified_name}::{self.start_byte}"
 
     @property
     def is_likely_api(self) -> bool:
-        """Indicate whether this unit is likely public API surface."""
+        """Indicate whether this unit is likely public API surface.
+
+        :return: ``True`` when the unit looks externally reachable.
+        """
         return (
             self.is_exported
             or self.is_dunder
@@ -102,7 +107,11 @@ class CodeUnit:
         )
 
     def overlaps(self, other: CodeUnit) -> bool:
-        """Return whether two units occupy overlapping source ranges."""
+        """Return whether two units occupy overlapping source ranges.
+
+        :param other: Unit to compare against.
+        :return: ``True`` when both units share source range in the same file.
+        """
         if self.file_path != other.file_path:
             return False
         if self.end_byte > self.start_byte and other.end_byte > other.start_byte:
@@ -184,12 +193,18 @@ class AnalysisResult:
 
     @property
     def exact_duplicates(self) -> list[DuplicatePair]:
-        """Backward-compatible alias for traditional duplicates."""
+        """Backward-compatible alias for traditional duplicates.
+
+        :return: Traditional duplicate pairs.
+        """
         return self.traditional_duplicates
 
     @property
     def all_duplicates(self) -> list[HybridDuplicate] | list[DuplicatePair]:
-        """Return the available duplicate list for this analysis mode."""
+        """Return the available duplicate list for this analysis mode.
+
+        :return: Hybrid duplicates in combined mode, otherwise traditional plus semantic pairs.
+        """
         if self.analysis_mode == "combined":
             return self.hybrid_duplicates
         return self.traditional_duplicates + self.semantic_duplicates

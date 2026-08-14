@@ -110,7 +110,12 @@ _EXTENSION_SELECTIONS: Final[dict[str, LanguageSelection]] = {
 
 
 def normalize_languages(languages: tuple[str, ...] | list[str] | None) -> tuple[str, ...] | None:
-    """Canonicalize a requested language filter while preserving order."""
+    """Canonicalize a requested language filter while preserving order.
+
+    :param languages: Requested language names or aliases, if any.
+    :raises ValueError: If any requested value is not a supported language.
+    :return: Canonical language names, or ``None`` when no filter was requested.
+    """
     if languages is None or len(languages) == 0:
         return None
 
@@ -145,6 +150,12 @@ def language_for_path(
     TypeScript declaration files are intentionally excluded because they do not
     contain executable implementation bodies.  ``.h`` is accepted only when the
     caller has resolved its C/C++ ambiguity.
+
+    :param path: File whose language is being resolved.
+    :param include_stubs: Whether ``.pyi`` stub files are eligible.
+    :param selected_languages: Canonical language filter, or ``None`` for no filter.
+    :param allow_c_header: Whether ambiguous ``.h`` files may be treated as C.
+    :return: Language and dialect for the file, or ``None`` when unsupported.
     """
     name = path.name.lower()
     if name.endswith(DECLARATION_FILE_SUFFIXES):
@@ -170,6 +181,10 @@ def repository_allows_c_headers(root: Path, selected_languages: tuple[str, ...] 
     Explicit ``--language c`` selection wins.  Automatic detection accepts headers only
     when the scanned tree contains C source and no C++ source, pruning dependency and
     build directories so vendored code cannot accidentally change the decision.
+
+    :param root: Scan root for the analysis.
+    :param selected_languages: Canonical language filter, or ``None`` for auto-detection.
+    :return: ``True`` when ``.h`` files may be parsed as C.
     """
     if selected_languages is not None:
         return "c" in selected_languages
@@ -193,7 +208,14 @@ def get_backend(
     selection: LanguageSelection,
     include_private: bool,
 ) -> LanguageBackend:
-    """Construct a Tree-sitter backend without importing parser dependencies eagerly."""
+    """Construct a Tree-sitter backend without importing parser dependencies eagerly.
+
+    :param root: Extraction root used for qualified naming.
+    :param selection: Language and dialect chosen for the file.
+    :param include_private: Whether non-public units are extracted.
+    :raises ValueError: If ``selection`` names Python, which has a dedicated extractor.
+    :return: Backend for the selected language and dialect.
+    """
     if selection.language == "python":
         raise ValueError("Python extraction is implemented by codedupes.extractor.CodeExtractor")
 
@@ -214,6 +236,9 @@ def _probe_dialect(dialect: str) -> str | None:
     Version metadata alone cannot prove a native wheel is loadable: a wrong
     platform wheel, missing shared library, bad capsule, or Tree-sitter ABI
     mismatch all pass the version check and still fail at parser construction.
+
+    :param dialect: Parser dialect to probe.
+    :return: Error message describing the failure, or ``None`` when the parser loads.
     """
     from codedupes.languages.tree_sitter_backend import (
         GrammarProvider,
@@ -235,6 +260,8 @@ def get_grammar_statuses() -> tuple[GrammarStatus, ...]:
     Exact version pins are checked first; when they match, each dialect's
     parser is actually constructed (memoized per process) so a broken wheel is
     reported instead of surfacing later mid-analysis.
+
+    :return: Status for the core package and every pinned grammar dialect.
     """
     core_package, core_pinned = TREE_SITTER_PACKAGE
     try:

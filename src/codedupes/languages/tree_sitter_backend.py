@@ -66,7 +66,12 @@ class GrammarProvider:
 
     @classmethod
     def language(cls, dialect: str) -> Any:
-        """Return a cached Tree-sitter language for one parser dialect."""
+        """Return a cached Tree-sitter language for one parser dialect.
+
+        :param dialect: Parser dialect name.
+        :raises GrammarUnavailableError: If the pinned grammar package cannot be loaded.
+        :return: Cached ``tree_sitter.Language`` object for the dialect.
+        """
         grammar_key = "javascript" if dialect == "jsx" else dialect
         with cls._lock:
             if grammar_key in cls._languages:
@@ -110,7 +115,12 @@ class GrammarProvider:
 
     @classmethod
     def parser(cls, dialect: str) -> Any:
-        """Create a fresh parser for one parse operation."""
+        """Create a fresh parser for one parse operation.
+
+        :param dialect: Parser dialect name.
+        :raises GrammarUnavailableError: If the parser cannot be constructed.
+        :return: New ``tree_sitter.Parser`` bound to the dialect grammar.
+        """
         try:
             tree_sitter = importlib.import_module("tree_sitter")
             return tree_sitter.Parser(cls.language(dialect))
@@ -138,14 +148,30 @@ class UnitSpec:
 
 
 def _children(node: Any) -> tuple[Any, ...]:
+    """Return a node's children, tolerating parsers that expose none.
+
+    :param node: Tree-sitter node.
+    :return: Child nodes, empty when the node has no children.
+    """
     return tuple(getattr(node, "children", ()) or ())
 
 
 def _named_children(node: Any) -> tuple[Any, ...]:
+    """Return a node's named children, tolerating parsers that expose none.
+
+    :param node: Tree-sitter node.
+    :return: Named child nodes, empty when the node has none.
+    """
     return tuple(getattr(node, "named_children", ()) or ())
 
 
 def _child_by_field(node: Any, field: str) -> Any | None:
+    """Look up a child node by its grammar field name.
+
+    :param node: Tree-sitter node.
+    :param field: Grammar field name.
+    :return: Matching child node, or ``None`` when the field is absent.
+    """
     method = getattr(node, "child_by_field_name", None)
     if method is None:
         return None
@@ -156,12 +182,21 @@ def _child_by_field(node: Any, field: str) -> Any | None:
 
 
 def _first_node(*nodes: Any | None) -> Any | None:
-    """Return the first non-``None`` node without relying on extension-type truthiness."""
+    """Return the first non-``None`` node without relying on extension-type truthiness.
+
+    :param nodes: Candidate nodes in priority order.
+    :return: First non-``None`` candidate, or ``None`` when all candidates are ``None``.
+    """
     return next((node for node in nodes if node is not None), None)
 
 
 def _same_node(left: Any | None, right: Any | None) -> bool:
-    """Compare Tree-sitter nodes by stable source identity, not Python wrapper identity."""
+    """Compare Tree-sitter nodes by stable source identity, not Python wrapper identity.
+
+    :param left: First node.
+    :param right: Second node.
+    :return: ``True`` when both nodes share a syntax kind and byte span.
+    """
     if left is None or right is None:
         return False
     return (
@@ -172,6 +207,11 @@ def _same_node(left: Any | None, right: Any | None) -> bool:
 
 
 def _walk(node: Any) -> Iterable[Any]:
+    """Walk a subtree in preorder without recursing.
+
+    :param node: Root of the subtree.
+    :return: Iterator over ``node`` followed by all of its descendants.
+    """
     stack = [node]
     while stack:
         current = stack.pop()
@@ -180,6 +220,12 @@ def _walk(node: Any) -> Iterable[Any]:
 
 
 def _node_text(source: bytes, node: Any | None) -> str:
+    """Decode the source text covered by one node.
+
+    :param source: Full file source bytes.
+    :param node: Node whose byte span is decoded, or ``None``.
+    :return: Decoded text, empty when ``node`` is ``None``.
+    """
     if node is None:
         return ""
     start = max(0, int(getattr(node, "start_byte", 0)))
@@ -188,6 +234,11 @@ def _node_text(source: bytes, node: Any | None) -> str:
 
 
 def _point_parts(point: Any) -> tuple[int, int]:
+    """Normalize a Tree-sitter point into a row/column pair.
+
+    :param point: Point object or two-element tuple from the parser.
+    :return: Zero-based row and column, ``(0, 0)`` for unrecognized shapes.
+    """
     if hasattr(point, "row") and hasattr(point, "column"):
         return int(point.row), int(point.column)
     if isinstance(point, tuple) and len(point) == 2:
@@ -196,6 +247,12 @@ def _point_parts(point: Any) -> tuple[int, int]:
 
 
 def _first_descendant(node: Any | None, node_types: set[str]) -> Any | None:
+    """Find the first node in a subtree matching one of ``node_types``.
+
+    :param node: Root of the search, or ``None``.
+    :param node_types: Syntax kinds to match.
+    :return: First matching node in preorder, or ``None``.
+    """
     if node is None:
         return None
     for candidate in _walk(node):
@@ -205,6 +262,12 @@ def _first_descendant(node: Any | None, node_types: set[str]) -> Any | None:
 
 
 def _nearest_ancestor(node: Any, node_types: set[str]) -> Any | None:
+    """Find the closest ancestor matching one of ``node_types``.
+
+    :param node: Node whose ancestor chain is walked.
+    :param node_types: Syntax kinds to match.
+    :return: Nearest matching ancestor, or ``None``.
+    """
     current = getattr(node, "parent", None)
     while current is not None:
         if getattr(current, "type", "") in node_types:
@@ -214,11 +277,21 @@ def _nearest_ancestor(node: Any, node_types: set[str]) -> Any | None:
 
 
 def _has_ancestor(node: Any, node_types: set[str]) -> bool:
-    """Return whether ``node`` is nested beneath any syntax kind in ``node_types``."""
+    """Return whether ``node`` is nested beneath any syntax kind in ``node_types``.
+
+    :param node: Node whose ancestor chain is walked.
+    :param node_types: Syntax kinds to match.
+    :return: ``True`` when a matching ancestor exists.
+    """
     return _nearest_ancestor(node, node_types) is not None
 
 
 def _contains_error(node: Any) -> bool:
+    """Report whether a node is, or contains, a parse-error marker.
+
+    :param node: Node to inspect.
+    :return: ``True`` when the node is erroneous, missing, or covers recovery nodes.
+    """
     if bool(getattr(node, "has_error", False)):
         return True
     if bool(getattr(node, "is_error", False)) or bool(getattr(node, "is_missing", False)):
@@ -227,6 +300,13 @@ def _contains_error(node: Any) -> bool:
 
 
 def _module_prefix(root: Path, file_path: Path, language: str) -> str:
+    """Build the dotted module prefix that qualifies every unit in one file.
+
+    :param root: Extraction root the file path is made relative to.
+    :param file_path: File being extracted.
+    :param language: Canonical language name.
+    :return: Dotted prefix, with conventional entry-point stems collapsed away.
+    """
     try:
         rel = file_path.relative_to(root)
     except ValueError:
@@ -252,26 +332,55 @@ def _module_prefix(root: Path, file_path: Path, language: str) -> str:
 
 
 def _qualified(prefix: str, *parts: str) -> str:
+    """Join a module prefix and name segments into one dotted name.
+
+    :param prefix: Module prefix, possibly empty.
+    :param parts: Name segments in outermost-first order.
+    :return: Dotted qualified name with empty segments dropped.
+    """
     clean = [part for part in (prefix, *parts) if part]
     return ".".join(clean)
 
 
 def _clean_name(text: str) -> str:
+    """Strip every whitespace run from a source fragment.
+
+    :param text: Raw source text.
+    :return: Text with all whitespace removed.
+    """
     return re.sub(r"\s+", "", text.strip())
 
 
 def _stable_path(text: str) -> str | None:
+    """Accept a source fragment only when it forms a stable dotted identifier path.
+
+    :param text: Raw source text.
+    :return: Cleaned dotted path, or ``None`` when the text is not a stable name.
+    """
     candidate = _clean_name(text)
     return candidate if _STABLE_PATH_RE.fullmatch(candidate) else None
 
 
 def _leaf_nodes(node: Any) -> Iterable[Any]:
+    """Yield every childless node in a subtree.
+
+    :param node: Root of the subtree.
+    :return: Iterator over the subtree's leaf nodes.
+    """
     for candidate in _walk(node):
         if not _children(candidate):
             yield candidate
 
 
 def _structural_hash(node: Any, source: bytes, language: str, unit_type: CodeUnitType) -> str:
+    """Fingerprint a subtree with local identifiers, literals, and comments normalized.
+
+    :param node: Unit node to fingerprint.
+    :param source: Full file source bytes.
+    :param language: Canonical language name, mixed into the fingerprint.
+    :param unit_type: Unit kind, mixed into the fingerprint.
+    :return: Truncated SHA-256 digest of the normalized structural token stream.
+    """
     normalized_names: dict[str, str] = {}
     pieces: list[str] = [
         f"schema={FINGERPRINT_SCHEMA_VERSION}",
@@ -328,6 +437,12 @@ def _structural_hash(node: Any, source: bytes, language: str, unit_type: CodeUni
 
 
 def _token_hash(node: Any, source: bytes) -> str:
+    """Fingerprint a subtree's literal token stream, ignoring comments.
+
+    :param node: Unit node to fingerprint.
+    :param source: Full file source bytes.
+    :return: Truncated SHA-256 digest of the typed token stream.
+    """
     tokens: list[str] = []
     for leaf in _leaf_nodes(node):
         node_type = str(getattr(leaf, "type", ""))
@@ -340,6 +455,13 @@ def _token_hash(node: Any, source: bytes) -> str:
 
 
 def _collect_identifiers(node: Any, source: bytes, builtins: frozenset[str]) -> frozenset[str]:
+    """Collect identifier-like leaf names from a subtree, skipping language builtins.
+
+    :param node: Unit node to scan.
+    :param source: Full file source bytes.
+    :param builtins: Names treated as builtins and excluded.
+    :return: Identifier names found in the subtree.
+    """
     identifiers: set[str] = set()
     for leaf in _leaf_nodes(node):
         if getattr(leaf, "type", "") not in _IDENTIFIER_TYPES:
@@ -351,6 +473,12 @@ def _collect_identifiers(node: Any, source: bytes, builtins: frozenset[str]) -> 
 
 
 def _collect_calls(node: Any, source: bytes) -> set[str]:
+    """Collect callee names for calls, constructions, and macro invocations.
+
+    :param node: Unit node to scan.
+    :param source: Full file source bytes.
+    :return: Callee texts plus their trailing name segments.
+    """
     calls: set[str] = set()
     for candidate in _walk(node):
         node_type = getattr(candidate, "type", "")
@@ -390,14 +518,33 @@ class TreeSitterBackend:
     builtins: frozenset[str] = frozenset()
 
     def __init__(self, root: Path, dialect: str, include_private: bool) -> None:
+        """Store the extraction root, parser dialect, and visibility policy.
+
+        :param root: Extraction root used for qualified naming.
+        :param dialect: Parser dialect to parse files with.
+        :param include_private: Whether non-public units are extracted.
+        """
         self.root = root.resolve()
         self.dialect = dialect
         self.include_private = include_private
 
     def collect_specs(self, root_node: Any, source: bytes, file_path: Path) -> list[UnitSpec]:
+        """Collect the language-specific unit specs for one parsed file.
+
+        :param root_node: Root node of the parsed syntax tree.
+        :param source: Full file source bytes.
+        :param file_path: File being extracted.
+        :raises NotImplementedError: Always; concrete backends override this.
+        :return: Unit specs for every extractable unit in the file.
+        """
         raise NotImplementedError
 
     def _include_spec(self, spec: UnitSpec) -> bool:
+        """Decide whether one unit spec survives the visibility filter.
+
+        :param spec: Candidate unit spec.
+        :return: ``True`` when private units are included or the spec is public.
+        """
         # ``is_public`` already encodes each language's visibility rules (C
         # ``static``, Rust ``pub``, naming conventions, and TypeScript
         # accessibility modifiers), so filtering must use it rather than
@@ -405,6 +552,12 @@ class TreeSitterBackend:
         return self.include_private or spec.is_public
 
     def _statement_count(self, body: Any, unit_type: CodeUnitType) -> int:
+        """Count the statements or class members inside one unit body.
+
+        :param body: Body node of the unit, or ``None``.
+        :param unit_type: Kind of unit the body belongs to.
+        :return: Statement count, with nested scopes counted once each.
+        """
         if body is None:
             return 0
         if unit_type == CodeUnitType.CLASS:
@@ -442,6 +595,15 @@ class TreeSitterBackend:
         code: str,
         severity: str = "warning",
     ) -> ExtractionDiagnostic:
+        """Build an extraction diagnostic anchored to one node's line span.
+
+        :param file_path: File the diagnostic refers to.
+        :param node: Node whose span locates the diagnostic.
+        :param message: Human-readable diagnostic text.
+        :param code: Machine-readable diagnostic code.
+        :param severity: Diagnostic severity, defaults to ``"warning"``.
+        :return: Diagnostic describing the node.
+        """
         start_row, _ = _point_parts(getattr(node, "start_point", (0, 0)))
         end_row, _ = _point_parts(getattr(node, "end_point", (start_row, 0)))
         return ExtractionDiagnostic(
@@ -455,6 +617,11 @@ class TreeSitterBackend:
         )
 
     def extract_file(self, file_path: Path) -> BackendResult:
+        """Parse one file and build its code units and parse diagnostics.
+
+        :param file_path: File to extract.
+        :return: Extracted units together with any diagnostics raised while parsing.
+        """
         source = file_path.read_bytes()
         parser = GrammarProvider.parser(self.dialect)
         tree = parser.parse(source)
@@ -588,6 +755,12 @@ class CBackend(TreeSitterBackend):
 
     @staticmethod
     def _declarator_name(declarator: Any | None, source: bytes) -> str | None:
+        """Find the identifier that a possibly nested C declarator declares.
+
+        :param declarator: Declarator node, or ``None``.
+        :param source: Full file source bytes.
+        :return: Declared name, or ``None`` when no identifier is reachable.
+        """
         if declarator is None:
             return None
         node_type = getattr(declarator, "type", "")
@@ -607,6 +780,13 @@ class CBackend(TreeSitterBackend):
         return None
 
     def collect_specs(self, root_node: Any, source: bytes, file_path: Path) -> list[UnitSpec]:
+        """Collect C function definitions, skipping prototypes and declarations.
+
+        :param root_node: Root node of the parsed syntax tree.
+        :param source: Full file source bytes.
+        :param file_path: File being extracted.
+        :return: Unit specs for every named, body-bearing function definition.
+        """
         prefix = _module_prefix(self.root, file_path, self.language)
         specs: list[UnitSpec] = []
         for node in _walk(root_node):
@@ -676,6 +856,12 @@ class RustBackend(TreeSitterBackend):
 
     @staticmethod
     def _visibility(node: Any, source: bytes) -> bool:
+        """Report whether a Rust item carries a ``pub`` visibility modifier.
+
+        :param node: Item node to inspect.
+        :param source: Full file source bytes.
+        :return: ``True`` when the item is declared ``pub``.
+        """
         for child in _named_children(node):
             if getattr(child, "type", "") == "visibility_modifier":
                 return _node_text(source, child).strip().startswith("pub")
@@ -687,6 +873,9 @@ class RustBackend(TreeSitterBackend):
 
         tree-sitter-rust parses ``#[...]`` as a preceding named sibling of the
         item it annotates, not as a child of that item.
+
+        :param node: Item whose stacked attributes are collected.
+        :return: Attribute nodes directly above the item, nearest first.
         """
         parent = getattr(node, "parent", None)
         if parent is None:
@@ -714,6 +903,10 @@ class RustBackend(TreeSitterBackend):
         ``test``, ``cfg(test)``, and ``cfg(all(test, ...))``. ``cfg(not(test))``
         and ``cfg(any(test, ...))`` gate real production configurations and are
         not excluded.
+
+        :param node: Function item to classify.
+        :param source: Full file source bytes.
+        :return: ``True`` when the item or an enclosing item is test-scoped.
         """
         current = node
         while current is not None:
@@ -729,6 +922,12 @@ class RustBackend(TreeSitterBackend):
 
     @staticmethod
     def _context(node: Any, source: bytes) -> tuple[list[str], bool]:
+        """Collect the impl, trait, module, and function names enclosing one item.
+
+        :param node: Item whose enclosing scopes are walked.
+        :param source: Full file source bytes.
+        :return: Outermost-first context names and whether the item is a method.
+        """
         contexts: list[str] = []
         is_method = False
         inside_enclosing_function = False
@@ -773,6 +972,13 @@ class RustBackend(TreeSitterBackend):
         return contexts, is_method
 
     def collect_specs(self, root_node: Any, source: bytes, file_path: Path) -> list[UnitSpec]:
+        """Collect Rust free functions and body-bearing impl/trait methods.
+
+        :param root_node: Root node of the parsed syntax tree.
+        :param source: Full file source bytes.
+        :param file_path: File being extracted.
+        :return: Unit specs for every non-test, body-bearing function item.
+        """
         prefix = _module_prefix(self.root, file_path, self.language)
         specs: list[UnitSpec] = []
         for node in _walk(root_node):
@@ -892,6 +1098,12 @@ class ECMAScriptBackend(TreeSitterBackend):
     )
 
     def _name_field(self, node: Any, source: bytes) -> str | None:
+        """Read a node's declared name from its name, property, or key field.
+
+        :param node: Node whose declared name is read.
+        :param source: Full file source bytes.
+        :return: Stable dotted name, or ``None`` when missing or not stable.
+        """
         name_node = _first_node(
             _child_by_field(node, "name"),
             _child_by_field(node, "property"),
@@ -905,12 +1117,23 @@ class ECMAScriptBackend(TreeSitterBackend):
         return _stable_path(text)
 
     def _unwrap_value(self, node: Any) -> Any:
+        """Climb past transparent wrapper expressions around a value.
+
+        :param node: Value node to unwrap.
+        :return: Outermost node that still describes the same value.
+        """
         current = node
         while getattr(getattr(current, "parent", None), "type", "") in self.transparent_types:
             current = current.parent
         return current
 
     def _binding_for_value(self, node: Any, source: bytes) -> tuple[str, Any] | None:
+        """Resolve the stable name that a value expression is bound to.
+
+        :param node: Value node, typically a function or class expression.
+        :param source: Full file source bytes.
+        :return: Bound name with the node carrying the binding, or ``None``.
+        """
         current = self._unwrap_value(node)
         parent = getattr(current, "parent", None)
         if parent is None:
@@ -957,6 +1180,12 @@ class ECMAScriptBackend(TreeSitterBackend):
         return None
 
     def _class_context(self, node: Any, source: bytes) -> str | None:
+        """Resolve the name of the class enclosing a node.
+
+        :param node: Node nested inside a class body.
+        :param source: Full file source bytes.
+        :return: Class name, or ``None`` when there is no named enclosing class.
+        """
         class_node = _nearest_ancestor(node, set(self.class_declarations | self.class_expressions))
         if class_node is None:
             return None
@@ -967,7 +1196,13 @@ class ECMAScriptBackend(TreeSitterBackend):
         return binding[0] if binding else None
 
     def _contextual_binding(self, node: Any, bound_name: str, source: bytes) -> str:
-        """Qualify a stable binding with its enclosing lexical scopes."""
+        """Qualify a stable binding with its enclosing lexical scopes.
+
+        :param node: Node the binding was resolved from.
+        :param bound_name: Stable binding name.
+        :param source: Full file source bytes.
+        :return: Binding qualified by lexical context when that adds information.
+        """
         if bound_name.startswith(("exports.", "module.exports")):
             return bound_name
         context = ".".join(self._lexical_context(node, source))
@@ -976,6 +1211,12 @@ class ECMAScriptBackend(TreeSitterBackend):
         return f"{context}.{bound_name}"
 
     def _object_context(self, node: Any, source: bytes) -> str | None:
+        """Resolve the binding of the object literal enclosing a node.
+
+        :param node: Node nested inside an object literal.
+        :param source: Full file source bytes.
+        :return: Contextual binding of the object literal, or ``None``.
+        """
         object_node = _nearest_ancestor(node, {"object"})
         if object_node is None:
             return None
@@ -985,6 +1226,12 @@ class ECMAScriptBackend(TreeSitterBackend):
         return self._contextual_binding(object_node, binding[0], source)
 
     def _lexical_context(self, node: Any, source: bytes) -> list[str]:
+        """Collect the class, function, method, and module names enclosing a node.
+
+        :param node: Node whose lexical scope chain is walked.
+        :param source: Full file source bytes.
+        :return: Outermost-first scope names.
+        """
         contexts: list[str] = []
         current = getattr(node, "parent", None)
         while current is not None:
@@ -1014,7 +1261,13 @@ class ECMAScriptBackend(TreeSitterBackend):
 
     @staticmethod
     def _is_public_member(node: Any, source: bytes, name: str) -> bool:
-        """Apply naming and TypeScript accessibility rules to one member."""
+        """Apply naming and TypeScript accessibility rules to one member.
+
+        :param node: Member node to inspect.
+        :param source: Full file source bytes.
+        :param name: Member name.
+        :return: ``True`` when the member counts as public.
+        """
         if name.startswith(("_", "#")):
             return False
         for child in _named_children(node):
@@ -1026,6 +1279,13 @@ class ECMAScriptBackend(TreeSitterBackend):
 
     @staticmethod
     def _is_exported(node: Any, source: bytes, name: str) -> bool:
+        """Report whether a unit is reachable as a module export.
+
+        :param node: Unit node whose ancestors are walked.
+        :param source: Full file source bytes.
+        :param name: Unit name relative to the module prefix.
+        :return: ``True`` when the unit is exported or assigned onto ``exports``.
+        """
         current = node
         while current is not None:
             node_type = getattr(current, "type", "")
@@ -1046,6 +1306,13 @@ class ECMAScriptBackend(TreeSitterBackend):
         source: bytes,
         prefix: str,
     ) -> UnitSpec | None:
+        """Build a unit spec for one function declaration or function expression.
+
+        :param node: Function node.
+        :param source: Full file source bytes.
+        :param prefix: Module prefix for qualified names.
+        :return: Unit spec, or ``None`` when the function has no body or stable name.
+        """
         node_type = getattr(node, "type", "")
         if _has_ancestor(node, {"ambient_declaration"}):
             return None
@@ -1103,6 +1370,13 @@ class ECMAScriptBackend(TreeSitterBackend):
         )
 
     def _class_spec(self, node: Any, source: bytes, prefix: str) -> UnitSpec | None:
+        """Build a unit spec for one class declaration or class expression.
+
+        :param node: Class node.
+        :param source: Full file source bytes.
+        :param prefix: Module prefix for qualified names.
+        :return: Unit spec, or ``None`` when the class has no body or stable name.
+        """
         node_type = getattr(node, "type", "")
         if _has_ancestor(node, {"ambient_declaration"}):
             return None
@@ -1138,6 +1412,13 @@ class ECMAScriptBackend(TreeSitterBackend):
         )
 
     def _method_spec(self, node: Any, source: bytes, prefix: str) -> UnitSpec | None:
+        """Build a unit spec for one class or object-literal method definition.
+
+        :param node: Method definition node.
+        :param source: Full file source bytes.
+        :param prefix: Module prefix for qualified names.
+        :return: Unit spec, or ``None`` when the method has no body, name, or container.
+        """
         if _has_ancestor(node, {"ambient_declaration"}):
             return None
         body = _child_by_field(node, "body")
@@ -1164,6 +1445,13 @@ class ECMAScriptBackend(TreeSitterBackend):
         )
 
     def collect_specs(self, root_node: Any, source: bytes, file_path: Path) -> list[UnitSpec]:
+        """Collect JavaScript/TypeScript function, class, and method units.
+
+        :param root_node: Root node of the parsed syntax tree.
+        :param source: Full file source bytes.
+        :param file_path: File being extracted.
+        :return: Unit specs for every nameable, body-bearing unit in the file.
+        """
         prefix = _module_prefix(self.root, file_path, self.language)
         specs: list[UnitSpec] = []
         for node in _walk(root_node):
@@ -1202,7 +1490,15 @@ def create_backend(
     dialect: str,
     include_private: bool,
 ) -> TreeSitterBackend:
-    """Create the concrete backend for a canonical language."""
+    """Create the concrete backend for a canonical language.
+
+    :param root: Extraction root used for qualified naming.
+    :param language: Canonical language name.
+    :param dialect: Parser dialect to parse files with.
+    :param include_private: Whether non-public units are extracted.
+    :raises ValueError: If no Tree-sitter backend exists for ``language``.
+    :return: Backend instance for the language.
+    """
     backend_type: type[TreeSitterBackend]
     if language == "c":
         backend_type = CBackend

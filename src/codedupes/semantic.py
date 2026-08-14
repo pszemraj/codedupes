@@ -3152,7 +3152,12 @@ def find_semantic_duplicates(
     duplicates: list[DuplicatePair] = []
 
     def _types_compatible(unit_a: CodeUnit, unit_b: CodeUnit) -> bool:
-        """Check whether unit kinds are compatible for semantic comparison."""
+        """Check whether unit kinds are compatible for semantic comparison.
+
+        :param unit_a: First code unit.
+        :param unit_b: Second code unit.
+        :return: ``True`` when the kinds match or both units are function-like.
+        """
         if unit_a.unit_type == unit_b.unit_type:
             return True
         function_like = {"function", "method"}
