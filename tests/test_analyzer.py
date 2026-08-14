@@ -18,6 +18,7 @@ from tests.conftest import build_two_function_source, create_project, make_code_
 _SEMANTIC_ANALYSIS_KWARG_NAMES = {
     "batch_size",
     "cache_scope",
+    "cross_language",
     "device",
     "exclude_pairs",
     "instruction_prefix",
@@ -647,12 +648,16 @@ def test_tiny_near_duplicates_use_high_jaccard_floor(
     assert len(result.traditional_duplicates) == expected_count
 
 
-def test_analyzer_resolves_profile_default_semantic_threshold(tmp_path: Path, monkeypatch) -> None:
+def test_analyzer_resolves_per_language_semantic_gate(tmp_path: Path, monkeypatch) -> None:
     source = "def add_one(x):\n    return x + 1\n"
     project = create_project(tmp_path, source)
     captured: dict[str, object] = {}
 
-    monkeypatch.setattr(analyzer_module, "get_default_semantic_threshold", lambda _model: 0.77)
+    monkeypatch.setattr(
+        analyzer_module,
+        "get_semantic_threshold_for_language",
+        lambda _model, language: 0.77 if language == "python" else 0.99,
+    )
     monkeypatch.setattr(
         analyzer_module,
         "run_semantic_analysis",
@@ -671,6 +676,163 @@ def test_analyzer_resolves_profile_default_semantic_threshold(tmp_path: Path, mo
     analyzer.analyze(project)
 
     assert captured["threshold"] == 0.77
+
+
+def _create_two_language_project(tmp_path: Path) -> Path:
+    """Write a small mixed Python/JavaScript project for gate tests.
+
+    :param tmp_path: Test-scoped temporary directory.
+    :return: Project root containing one ``.py`` and one ``.js`` module.
+    """
+    project = tmp_path / "polyglot_project"
+    project.mkdir()
+    (project / "alpha.py").write_text(
+        "def alpha_one(x):\n    y = x + 1\n    return y\n\n"
+        "def alpha_two(x):\n    z = x + 2\n    return z\n"
+    )
+    (project / "beta.js").write_text(
+        "function betaOne(x) {\n  const y = x + 1;\n  return y;\n}\n\n"
+        "function betaTwo(x) {\n  const z = x + 2;\n  return z;\n}\n"
+    )
+    return project
+
+
+def test_semantic_pairs_are_gated_per_language(tmp_path: Path, monkeypatch) -> None:
+    project = _create_two_language_project(tmp_path)
+    captured: dict[str, object] = {}
+
+    def paired_duplicates(units: list[CodeUnit]) -> list[DuplicatePair]:
+        by_name = {unit.name: unit for unit in units}
+        return [
+            DuplicatePair(
+                unit_a=by_name["alpha_one"],
+                unit_b=by_name["alpha_two"],
+                similarity=0.75,
+                method="semantic",
+            ),
+            DuplicatePair(
+                unit_a=by_name["betaOne"],
+                unit_b=by_name["betaTwo"],
+                similarity=0.75,
+                method="semantic",
+            ),
+        ]
+
+    monkeypatch.setattr(
+        analyzer_module,
+        "get_semantic_threshold_for_language",
+        lambda _model, language: {"python": 0.90, "javascript": 0.60}.get(language, 0.99),
+    )
+    monkeypatch.setattr(
+        analyzer_module,
+        "run_semantic_analysis",
+        _make_semantic_runner(capture=captured, duplicate_factory=paired_duplicates),
+    )
+
+    analyzer = CodeAnalyzer(
+        AnalyzerConfig(
+            run_traditional=False,
+            run_semantic=True,
+            run_unused=False,
+            min_semantic_statements=0,
+        )
+    )
+    result = analyzer.analyze(project)
+
+    # The embedding scan runs at the loosest gate; each pair is then held to
+    # its own language's gate: 0.75 clears javascript's 0.60 but not python's 0.90.
+    assert captured["threshold"] == 0.60
+    assert [
+        (duplicate.unit_a.name, duplicate.unit_b.name) for duplicate in result.semantic_duplicates
+    ] == [("betaOne", "betaTwo")]
+
+
+def test_cross_language_pairs_require_opt_in_and_use_looser_gate(
+    tmp_path: Path, monkeypatch
+) -> None:
+    project = _create_two_language_project(tmp_path)
+
+    def mixed_duplicates(units: list[CodeUnit]) -> list[DuplicatePair]:
+        by_name = {unit.name: unit for unit in units}
+        return [
+            DuplicatePair(
+                unit_a=by_name["alpha_one"],
+                unit_b=by_name["betaOne"],
+                similarity=0.70,
+                method="semantic",
+            )
+        ]
+
+    monkeypatch.setattr(
+        analyzer_module,
+        "get_semantic_threshold_for_language",
+        lambda _model, language: {"python": 0.90, "javascript": 0.60}.get(language, 0.99),
+    )
+    monkeypatch.setattr(
+        analyzer_module,
+        "run_semantic_analysis",
+        _make_semantic_runner(duplicate_factory=mixed_duplicates),
+    )
+
+    base_config = {
+        "run_traditional": False,
+        "run_semantic": True,
+        "run_unused": False,
+        "min_semantic_statements": 0,
+    }
+    default_result = CodeAnalyzer(AnalyzerConfig(**base_config)).analyze(project)
+    assert default_result.semantic_duplicates == []
+
+    # Opted in, the mixed pair is held to the looser of its two language gates:
+    # 0.70 clears min(0.90, 0.60) but would fail the python gate alone.
+    opted_result = CodeAnalyzer(AnalyzerConfig(cross_language=True, **base_config)).analyze(project)
+    assert [
+        (duplicate.unit_a.name, duplicate.unit_b.name)
+        for duplicate in opted_result.semantic_duplicates
+    ] == [("alpha_one", "betaOne")]
+
+
+def test_explicit_semantic_threshold_applies_flat_across_languages(
+    tmp_path: Path, monkeypatch
+) -> None:
+    project = _create_two_language_project(tmp_path)
+    captured: dict[str, object] = {}
+
+    def paired_duplicates(units: list[CodeUnit]) -> list[DuplicatePair]:
+        by_name = {unit.name: unit for unit in units}
+        return [
+            DuplicatePair(
+                unit_a=by_name["alpha_one"],
+                unit_b=by_name["alpha_two"],
+                similarity=0.75,
+                method="semantic",
+            )
+        ]
+
+    monkeypatch.setattr(
+        analyzer_module,
+        "get_semantic_threshold_for_language",
+        lambda _model, _language: pytest.fail("explicit threshold must bypass profile gates"),
+    )
+    monkeypatch.setattr(
+        analyzer_module,
+        "run_semantic_analysis",
+        _make_semantic_runner(capture=captured, duplicate_factory=paired_duplicates),
+    )
+
+    analyzer = CodeAnalyzer(
+        AnalyzerConfig(
+            run_traditional=False,
+            run_semantic=True,
+            run_unused=False,
+            min_semantic_statements=0,
+            semantic_threshold=0.70,
+        )
+    )
+    result = analyzer.analyze(project)
+
+    assert captured["threshold"] == 0.70
+    assert len(result.semantic_duplicates) == 1
 
 
 def test_unused_semantic_pairs_are_filtered(tmp_path: Path, monkeypatch) -> None:
@@ -1212,7 +1374,6 @@ def test_hybrid_synthesis_exact_only_included(tmp_path: Path) -> None:
     hybrid, filtered = analyzer_module._synthesize_hybrid_duplicates(
         traditional,
         [],
-        semantic_threshold=0.82,
         jaccard_threshold=0.85,
     )
 
@@ -1230,7 +1391,6 @@ def test_hybrid_synthesis_jaccard_only_included(tmp_path: Path) -> None:
     hybrid, _ = analyzer_module._synthesize_hybrid_duplicates(
         traditional,
         [],
-        semantic_threshold=0.82,
         jaccard_threshold=0.85,
     )
 
@@ -1248,7 +1408,6 @@ def test_hybrid_synthesis_hybrid_confirmed(tmp_path: Path) -> None:
     hybrid, _ = analyzer_module._synthesize_hybrid_duplicates(
         traditional,
         semantic,
-        semantic_threshold=0.82,
         jaccard_threshold=0.85,
     )
 
@@ -1257,7 +1416,7 @@ def test_hybrid_synthesis_hybrid_confirmed(tmp_path: Path) -> None:
     assert hybrid[0].confidence == pytest.approx((0.5 * 0.93) + (0.5 * 0.88))
 
 
-def test_hybrid_synthesis_semantic_only_gate_enforced(tmp_path: Path) -> None:
+def test_hybrid_synthesis_semantic_only_guards_enforced(tmp_path: Path) -> None:
     unit_a = make_code_unit(
         tmp_path, name="a", source="def alpha(v):\n    z = v + 1\n    return z\n", lineno=1
     )
@@ -1265,15 +1424,20 @@ def test_hybrid_synthesis_semantic_only_gate_enforced(tmp_path: Path) -> None:
         tmp_path, name="b", source="def beta(v):\n    q = v + 2\n    return q\n", lineno=6
     )
 
-    low_semantic = [DuplicatePair(unit_a=unit_a, unit_b=unit_b, similarity=0.90, method="semantic")]
-    hybrid_low, filtered_low = analyzer_module._synthesize_hybrid_duplicates(
+    # Semantic pairs arrive pre-gated, so any similarity the upstream gate
+    # accepted is admitted once identifier and statement-ratio guards pass.
+    gated_semantic = [
+        DuplicatePair(unit_a=unit_a, unit_b=unit_b, similarity=0.75, method="semantic")
+    ]
+    hybrid, filtered = analyzer_module._synthesize_hybrid_duplicates(
         [],
-        low_semantic,
-        semantic_threshold=0.82,
+        gated_semantic,
         jaccard_threshold=0.85,
     )
-    assert hybrid_low == []
-    assert filtered_low == 1
+    assert len(hybrid) == 1
+    assert hybrid[0].tier == "semantic_high_confidence"
+    assert hybrid[0].confidence == pytest.approx(0.45 + (0.55 * 0.75))
+    assert filtered == 0
 
     weak_sources_a = make_code_unit(
         tmp_path,
@@ -1292,25 +1456,13 @@ def test_hybrid_synthesis_semantic_only_gate_enforced(tmp_path: Path) -> None:
             unit_a=weak_sources_a, unit_b=weak_sources_b, similarity=0.95, method="semantic"
         )
     ]
-    hybrid_weak, _ = analyzer_module._synthesize_hybrid_duplicates(
+    hybrid_weak, filtered_weak = analyzer_module._synthesize_hybrid_duplicates(
         [],
         weak_semantic,
-        semantic_threshold=0.82,
         jaccard_threshold=0.85,
     )
     assert hybrid_weak == []
-
-    strong_semantic = [
-        DuplicatePair(unit_a=unit_a, unit_b=unit_b, similarity=0.95, method="semantic")
-    ]
-    hybrid_strong, _ = analyzer_module._synthesize_hybrid_duplicates(
-        [],
-        strong_semantic,
-        semantic_threshold=0.82,
-        jaccard_threshold=0.85,
-    )
-    assert len(hybrid_strong) == 1
-    assert hybrid_strong[0].tier == "semantic_high_confidence"
+    assert filtered_weak == 1
 
 
 def test_mixed_mode_semantic_failure_still_builds_hybrid_from_traditional(

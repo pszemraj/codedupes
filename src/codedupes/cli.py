@@ -62,13 +62,12 @@ from codedupes.models import (
 )
 from codedupes.semantic import get_semantic_runtime_versions
 from codedupes.semantic_profiles import (
+    SemanticModelProfile,
     get_default_search_threshold,
-    get_default_semantic_threshold,
     list_supported_models,
     resolve_model_profile,
 )
 
-DEFAULT_THRESHOLD = get_default_semantic_threshold(DEFAULT_MODEL)
 DEFAULT_MIN_STATEMENTS = DEFAULT_MIN_SEMANTIC_STATEMENTS
 DEFAULT_OUTPUT_WIDTH = 160
 MIN_OUTPUT_WIDTH = 80
@@ -249,35 +248,41 @@ def _resolve_check_thresholds(
     threshold: float | None,
     semantic_threshold: float | None,
     traditional_threshold: float | None,
-    *,
-    model_name: str,
-) -> tuple[float, float]:
+) -> tuple[float | None, float]:
     """Resolve semantic and traditional thresholds using precedence rules.
+
+    The semantic result stays ``None`` when the user provided no override, so
+    the analyzer applies the model profile's calibrated per-language gates
+    instead of one flat value.
 
     :param threshold: Shared threshold override.
     :param semantic_threshold: Explicit semantic threshold override.
     :param traditional_threshold: Explicit traditional threshold override.
-    :param model_name: Model name used for default semantic threshold.
-    :return: Tuple of ``(semantic_threshold, traditional_threshold)``.
+    :return: Tuple of ``(semantic_threshold_or_none, traditional_threshold)``.
     """
-    default_semantic = get_default_semantic_threshold(model_name)
-    default_traditional = DEFAULT_TRADITIONAL_THRESHOLD
     return (
-        (
-            semantic_threshold
-            if semantic_threshold is not None
-            else threshold
-            if threshold is not None
-            else default_semantic
-        ),
+        semantic_threshold if semantic_threshold is not None else threshold,
         (
             traditional_threshold
             if traditional_threshold is not None
             else threshold
             if threshold is not None
-            else default_traditional
+            else DEFAULT_TRADITIONAL_THRESHOLD
         ),
     )
+
+
+def _format_language_gates(profile: SemanticModelProfile) -> str:
+    """Format a profile's per-language semantic duplicate gates for display.
+
+    :param profile: Semantic model profile.
+    :return: Comma-separated ``language=gate`` text with the fallback appended.
+    """
+    gates = ", ".join(
+        f"{language}={gate}" for language, gate in profile.language_semantic_thresholds.items()
+    )
+    fallback = f"fallback={profile.default_semantic_threshold}"
+    return f"{gates} ({fallback})" if gates else fallback
 
 
 def _resolve_search_threshold(
@@ -1055,12 +1060,23 @@ def cli(ctx: click.Context) -> None:
 @click.option(
     "--semantic-threshold",
     type=float,
-    help="Override semantic similarity threshold",
+    help=(
+        "Flat semantic similarity gate for every language "
+        "(default: the model profile's calibrated per-language gates)"
+    ),
 )
 @click.option(
     "--traditional-threshold",
     type=float,
     help="Override traditional (Jaccard) threshold",
+)
+@click.option(
+    "--cross-language",
+    is_flag=True,
+    help=(
+        "Also report semantic duplicate pairs across languages "
+        "(uncalibrated; a mixed pair uses the looser of its two language gates)"
+    ),
 )
 @click.option(
     "--semantic-task",
@@ -1124,6 +1140,7 @@ def check_command(
     threshold: float | None,
     semantic_threshold: float | None,
     traditional_threshold: float | None,
+    cross_language: bool,
     semantic_only: bool,
     traditional_only: bool,
     allow_semantic_fallback: bool,
@@ -1166,6 +1183,7 @@ def check_command(
     :param threshold: Optional shared threshold override.
     :param semantic_threshold: Semantic threshold override.
     :param traditional_threshold: Traditional threshold override.
+    :param cross_language: Also report semantic duplicate pairs across languages.
     :param semantic_only: If true, run semantic analysis only.
     :param traditional_only: If true, run traditional analysis only.
     :param allow_semantic_fallback: Continue with scoped traditional results when
@@ -1229,6 +1247,7 @@ def check_command(
     if traditional_only:
         ignored_in_traditional_only = [
             "semantic_threshold",
+            "cross_language",
             "semantic_task",
             "instruction_prefix",
             "model",
@@ -1286,7 +1305,6 @@ def check_command(
         threshold,
         semantic_threshold,
         traditional_threshold,
-        model_name=model,
     )
     semantic_task_value: str | None = semantic_task
     if semantic_only:
@@ -1302,6 +1320,7 @@ def check_command(
             languages=languages or None,
             jaccard_threshold=traditional_thresh,
             semantic_threshold=semantic_thresh,
+            cross_language=cross_language,
             model_name=model,
             semantic_task=semantic_task_value,
             instruction_prefix=instruction_prefix,
@@ -1605,7 +1624,9 @@ def info_command() -> None:
         click.echo(f"Device diagnostic error: {diagnostics.error}")
     click.echo(f"Default model: {DEFAULT_MODEL}")
     click.echo(f"Default model revision: {default_profile.default_revision or 'auto'}")
-    click.echo(f"Default semantic threshold ({DEFAULT_MODEL}): {DEFAULT_THRESHOLD}")
+    click.echo(
+        f"Semantic duplicate gates ({DEFAULT_MODEL}): {_format_language_gates(default_profile)}"
+    )
     click.echo(f"Default traditional threshold: {DEFAULT_TRADITIONAL_THRESHOLD}")
     click.echo(f"Default semantic task for check: {DEFAULT_CHECK_SEMANTIC_TASK}")
     click.echo(f"Default semantic task for search: {DEFAULT_SEARCH_SEMANTIC_TASK}")
@@ -1632,13 +1653,10 @@ def info_command() -> None:
     click.echo("Built-in semantic model aliases:")
     for profile in list_supported_models():
         aliases = ", ".join(profile.all_aliases())
-        threshold = get_default_semantic_threshold(profile.key)
         search_threshold = get_default_search_threshold(profile.key)
         click.echo(f"  - {profile.key} -> {profile.canonical_name}")
-        click.echo(
-            f"      family={profile.family} semantic_threshold={threshold}"
-            f" search_threshold={search_threshold}"
-        )
+        click.echo(f"      family={profile.family} search_threshold={search_threshold}")
+        click.echo(f"      semantic duplicate gates: {_format_language_gates(profile)}")
         click.echo(f"      aliases: {aliases}")
         if profile.default_revision is not None:
             click.echo(f"      default_revision: {profile.default_revision}")

@@ -16,7 +16,6 @@ from codedupes.constants import (
 )
 from codedupes.models import HybridDuplicate
 from codedupes.pairs import ordered_pair_key
-from codedupes.semantic_profiles import get_default_semantic_threshold
 
 try:
     from .sweep_common import (
@@ -36,7 +35,12 @@ except ImportError:
 
 @dataclass(frozen=True)
 class GateConfig:
-    """Threshold configuration for semantic-only hybrid gating."""
+    """Threshold configuration for semantic-only hybrid gating.
+
+    ``semantic_min`` emulates the per-language duplicate gate the analyzer
+    applies to semantic pairs before hybrid synthesis; the other two values are
+    the synthesis-time corroboration guards.
+    """
 
     semantic_min: float
     weak_identifier_jaccard_min: float
@@ -65,46 +69,31 @@ def _parse_csv_floats(value: str) -> list[float]:
     return out
 
 
-def _resolve_hybrid_semantic_threshold(
-    model_name: str,
-    override: float | None,
-) -> float:
-    """Resolve the hybrid-confirmation threshold for the selected model profile.
-
-    :param str model_name: Model alias or identifier being swept.
-    :param float override: Explicit threshold override, or ``None`` for the
-        selected model profile's production default.
-    :return float: Effective semantic threshold used by hybrid synthesis.
-    """
-    if override is not None:
-        return override
-    return get_default_semantic_threshold(model_name)
-
-
 def _run_sweep(
     *,
     traditional_duplicates,
     semantic_duplicates,
     positive_pairs: set[tuple[str, str]],
-    semantic_threshold: float,
     traditional_threshold: float,
     grid: list[GateConfig],
 ) -> tuple[list[SweepRow], dict[str, float]]:
     baseline = {
-        "semantic_min": float(analyzer_module.HYBRID_SEMANTIC_ONLY_MIN),
         "weak_min": float(analyzer_module.HYBRID_WEAK_JACCARD_MIN),
         "ratio_min": float(analyzer_module.HYBRID_STATEMENT_RATIO_MIN),
     }
 
     rows: list[SweepRow] = []
     for config in grid:
+        gated_semantic = [
+            duplicate
+            for duplicate in semantic_duplicates
+            if duplicate.similarity >= config.semantic_min
+        ]
         hybrid: list[HybridDuplicate]
         hybrid, _ = analyzer_module._synthesize_hybrid_duplicates(
             traditional_duplicates,
-            semantic_duplicates,
-            semantic_threshold=semantic_threshold,
+            gated_semantic,
             jaccard_threshold=traditional_threshold,
-            semantic_only_min=config.semantic_min,
             weak_identifier_jaccard_min=config.weak_identifier_jaccard_min,
             statement_ratio_min=config.statement_ratio_min,
         )
@@ -153,15 +142,6 @@ def main() -> int:
         help="Low semantic threshold used to collect raw semantic candidates for the sweep.",
     )
     parser.add_argument(
-        "--hybrid-semantic-threshold",
-        type=float,
-        default=None,
-        help=(
-            "Semantic threshold passed into hybrid synthesis for mixed-evidence pairs. "
-            "Defaults to the selected model profile's production threshold."
-        ),
-    )
-    parser.add_argument(
         "--traditional-threshold",
         type=float,
         default=DEFAULT_TRADITIONAL_THRESHOLD,
@@ -170,8 +150,11 @@ def main() -> int:
     parser.add_argument(
         "--semantic-grid",
         type=_parse_csv_floats,
-        default=[0.85, 0.88, 0.90, 0.92, 0.94],
-        help="Comma-separated semantic-only minimum values to sweep.",
+        default=[0.68, 0.72, 0.76, 0.80, 0.84, 0.88, 0.92],
+        help=(
+            "Comma-separated semantic gate values to sweep; each emulates the "
+            "per-language duplicate gate applied before hybrid synthesis."
+        ),
     )
     parser.add_argument(
         "--weak-jaccard-grid",
@@ -246,10 +229,6 @@ def main() -> int:
         traditional_duplicates=result.traditional_duplicates,
         semantic_duplicates=result.semantic_duplicates,
         positive_pairs=positive_pairs,
-        semantic_threshold=_resolve_hybrid_semantic_threshold(
-            args.model,
-            args.hybrid_semantic_threshold,
-        ),
         traditional_threshold=args.traditional_threshold,
         grid=grid,
     )
@@ -264,10 +243,10 @@ def main() -> int:
         f"semantic={len(result.semantic_duplicates)}"
     )
     print(
-        "Current defaults: "
-        f"semantic_min={baseline['semantic_min']:.3f} "
+        "Current guard defaults: "
         f"weak_id_jaccard_min={baseline['weak_min']:.3f} "
-        f"statement_ratio_min={baseline['ratio_min']:.3f}"
+        f"statement_ratio_min={baseline['ratio_min']:.3f} "
+        "(semantic_min rows emulate the analyzer's per-language duplicate gate)"
     )
     _print_rows(rows, top_n=args.top_n)
 

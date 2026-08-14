@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
@@ -26,6 +27,7 @@ class SemanticModelProfile:
     default_trust_remote_code: bool = False
     default_semantic_threshold: float = DEFAULT_FALLBACK_SEMANTIC_THRESHOLD
     default_search_threshold: float = DEFAULT_FALLBACK_SEARCH_THRESHOLD
+    language_semantic_thresholds: Mapping[str, float] = field(default_factory=dict)
 
     def all_aliases(self) -> tuple[str, ...]:
         """Return all user-facing names that map to this profile.
@@ -34,10 +36,27 @@ class SemanticModelProfile:
         """
         return tuple(dict.fromkeys((self.key, self.canonical_name, *self.aliases)))
 
+    def semantic_threshold_for_language(self, language: str | None) -> float:
+        """Return the duplicate-detection gate for one canonical language.
+
+        :param language: Canonical language name, or ``None`` when unknown.
+        :return: Calibrated per-language gate, or the profile fallback for
+            languages without a calibrated entry.
+        """
+        if language is not None:
+            calibrated = self.language_semantic_thresholds.get(language)
+            if calibrated is not None:
+                return calibrated
+        return self.default_semantic_threshold
+
 
 # Calibrated thresholds are only meaningful against the exact checkpoint they
 # were swept on, so every builtin profile pins the immutable commit recorded in
-# test_fixtures/hybrid_tuning/semantic_threshold_report.json.
+# test_fixtures/polyglot_calibration/reports/. Each per-language duplicate gate
+# is the loosest sweep threshold whose F1 stays near that language's best while
+# raw-pair precision remains workable (recall-first selection); the profile
+# fallback is the strictest calibrated gate and applies only to languages
+# without their own calibration entry.
 _BUILTIN_MODEL_PROFILES: tuple[SemanticModelProfile, ...] = (
     SemanticModelProfile(
         key="gte-modernbert-base",
@@ -48,8 +67,15 @@ _BUILTIN_MODEL_PROFILES: tuple[SemanticModelProfile, ...] = (
         ),
         family="gte-modernbert",
         default_revision="e7f32e3c00f91d699e8c43b53106206bcc72bb22",
-        default_semantic_threshold=0.96,
+        default_semantic_threshold=0.82,
         default_search_threshold=0.50,
+        language_semantic_thresholds={
+            "python": 0.80,
+            "c": 0.82,
+            "rust": 0.74,
+            "javascript": 0.70,
+            "typescript": 0.68,
+        },
     ),
     SemanticModelProfile(
         key="embeddinggemma-300m",
@@ -60,8 +86,15 @@ _BUILTIN_MODEL_PROFILES: tuple[SemanticModelProfile, ...] = (
         ),
         family="embeddinggemma",
         default_revision="bfa3c846ac738e62aa61806ef9112d34acb1dc5a",
-        default_semantic_threshold=0.86,
+        default_semantic_threshold=0.78,
         default_search_threshold=0.40,
+        language_semantic_thresholds={
+            "python": 0.74,
+            "c": 0.78,
+            "rust": 0.78,
+            "javascript": 0.72,
+            "typescript": 0.76,
+        },
     ),
 )
 
@@ -308,12 +341,26 @@ def resolve_model_profile(model_name: str) -> SemanticModelProfile:
 
 
 def get_default_semantic_threshold(model_name: str) -> float:
-    """Return semantic threshold default for the resolved model profile.
+    """Return the fallback semantic duplicate threshold for a model.
+
+    This is the gate for languages without a calibrated per-language entry;
+    prefer :func:`get_semantic_threshold_for_language` when the language is
+    known.
 
     :param model_name: Alias or model key.
-    :return: Default threshold for the resolved profile.
+    :return: Fallback duplicate threshold for the resolved profile.
     """
     return resolve_model_profile(model_name).default_semantic_threshold
+
+
+def get_semantic_threshold_for_language(model_name: str, language: str | None) -> float:
+    """Return the calibrated duplicate gate for a model/language combination.
+
+    :param model_name: Alias or model key.
+    :param language: Canonical language name, or ``None`` when unknown.
+    :return: Per-language calibrated gate, or the profile fallback.
+    """
+    return resolve_model_profile(model_name).semantic_threshold_for_language(language)
 
 
 def get_default_search_threshold(model_name: str) -> float:

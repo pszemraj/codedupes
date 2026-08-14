@@ -295,12 +295,6 @@ def test_cli_threshold_precedence(monkeypatch, tmp_path):
     path = tmp_path / "sample.py"
     path.write_text("def entry():\n    return 1\n")
 
-    monkeypatch.setattr(
-        cli,
-        "get_default_semantic_threshold",
-        lambda model_name: 0.73 if model_name == "gte-modernbert-base" else 0.82,
-    )
-
     captured = []
     patch_cli_analyzer(
         monkeypatch,
@@ -312,7 +306,8 @@ def test_cli_threshold_precedence(monkeypatch, tmp_path):
 
     result_default = runner.invoke(cli.cli, ["check", str(path)])
     assert result_default.exit_code == 1
-    assert captured[-1].semantic_threshold == 0.73
+    # No override: the analyzer applies the profile's per-language gates.
+    assert captured[-1].semantic_threshold is None
     assert captured[-1].jaccard_threshold == cli.DEFAULT_TRADITIONAL_THRESHOLD
     assert captured[-1].semantic_unit_types == ("function", "method")
     assert captured[-1].filter_tiny_traditional is True
@@ -406,6 +401,28 @@ def test_cli_traditional_only_shared_threshold_sets_only_traditional_threshold(
     assert captured[-1].jaccard_threshold == 0.9
     assert captured[-1].semantic_threshold is None
     assert captured[-1].semantic_task is None
+
+
+def test_cli_cross_language_flag_passes_through(monkeypatch, tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+
+    captured = []
+    patch_cli_analyzer(
+        monkeypatch,
+        cli,
+        analyze_result=lambda: _build_result(tmp_path),
+        captured_configs=captured,
+    )
+    runner = CliRunner()
+
+    result_default = runner.invoke(cli.cli, ["check", str(path)])
+    assert result_default.exit_code == 1
+    assert captured[-1].cross_language is False
+
+    result_flag = runner.invoke(cli.cli, ["check", str(path), "--cross-language"])
+    assert result_flag.exit_code == 1
+    assert captured[-1].cross_language is True
 
 
 def test_cli_search_defaults_to_code_retrieval_task(monkeypatch, tmp_path):
@@ -639,6 +656,7 @@ def test_cli_rejects_conflicting_paired_flags(
     ("extra_args", "expected_option"),
     [
         (["--semantic-threshold", "0.9"], "--semantic-threshold"),
+        (["--cross-language"], "--cross-language"),
         (["--semantic-task", "classification"], "--semantic-task"),
         (["--instruction-prefix", "prefix"], "--instruction-prefix"),
         (["--model", "sentence-transformers/all-MiniLM-L6-v2"], "--model"),
@@ -715,7 +733,11 @@ def test_cli_info_exit_zero():
     assert "mps built/available:" in result.output.lower()
     assert "mlx loaded in process:" in result.output.lower()
     assert "built-in semantic model aliases" in result.output.lower()
-    assert "semantic_threshold=0.96 search_threshold=0.5" in result.output
+    assert "family=gte-modernbert search_threshold=0.5" in result.output
+    assert (
+        "semantic duplicate gates: python=0.8, c=0.82, rust=0.74, "
+        "javascript=0.7, typescript=0.68 (fallback=0.82)" in result.output
+    )
     default_revision = cli.resolve_model_profile(cli.DEFAULT_MODEL).default_revision
     assert f"Default model revision: {default_revision}" in result.output
 

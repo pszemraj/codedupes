@@ -3125,27 +3125,34 @@ def find_semantic_duplicates(
     embeddings: np.ndarray,
     threshold: float,
     exclude_exact: set[tuple[str, str]] | None = None,
+    cross_language: bool = False,
 ) -> list[DuplicatePair]:
-    """Find same-language semantic duplicate candidates.
+    """Find semantic duplicate candidates, same-language by default.
 
     Query search intentionally spans languages, but duplicate claims are
-    calibrated within one language. Partitioning before the matrix multiply also
-    avoids paying for cross-language pairs that the product never reports.
+    calibrated within one language, so pair generation partitions by language
+    unless ``cross_language`` opts in. Partitioning before the matrix multiply
+    also avoids paying for cross-language pairs that the product never reports.
 
     :param units: Candidate units in the same order as ``embeddings``.
     :param embeddings: Embedding matrix.
     :param threshold: Minimum cosine similarity.
     :param exclude_exact: Pairs to exclude from semantic output.
-    :return: Similar same-language pairs sorted by confidence.
+    :param cross_language: Also generate pairs across languages (uncalibrated).
+    :return: Similar pairs sorted by confidence.
     """
     exclude_exact = exclude_exact or set()
     groups: dict[str, list[int]] = {}
-    for index, unit in enumerate(units):
-        groups.setdefault(unit.language, []).append(index)
+    if cross_language:
+        groups["*"] = list(range(len(units)))
+    else:
+        for index, unit in enumerate(units):
+            groups.setdefault(unit.language, []).append(index)
 
     pair_count = sum(len(indices) * (len(indices) - 1) // 2 for indices in groups.values())
+    scope = "cross-language" if cross_language else "same-language"
     logger.info(
-        "Computing same-language pairwise similarities for "
+        f"Computing {scope} pairwise similarities for "
         f"{len(units)} units ({pair_count} candidate pairs)"
     )
 
@@ -3659,6 +3666,7 @@ def run_semantic_analysis_with_identity(
     use_cache: bool = True,
     cache_scope: Path | None = None,
     strict_revision_cache: bool = False,
+    cross_language: bool = False,
 ) -> tuple[np.ndarray, list[DuplicatePair], EmbeddingSpaceIdentity]:
     """Run semantic duplicate detection and return the corpus identity.
 
@@ -3683,6 +3691,8 @@ def run_semantic_analysis_with_identity(
     :param strict_revision_cache: Whether an unpinned hub revision resolves to a
         concrete commit hash (disabling caching when unmappable) instead of the
         requested revision label, defaults to ``False``.
+    :param cross_language: Also generate duplicate pairs across languages
+        (uncalibrated), defaults to ``False``.
     :return: ``(embeddings, duplicates, identity)``.
     """
     resolved_threshold = (
@@ -3712,6 +3722,7 @@ def run_semantic_analysis_with_identity(
         embeddings,
         threshold=resolved_threshold,
         exclude_exact=exclude_pairs,
+        cross_language=cross_language,
     )
 
     return embeddings, duplicates, identity
@@ -3733,6 +3744,7 @@ def run_semantic_analysis(
     use_cache: bool = True,
     cache_scope: Path | None = None,
     strict_revision_cache: bool = False,
+    cross_language: bool = False,
 ) -> tuple[np.ndarray, list[DuplicatePair]]:
     """Run full semantic duplicate detection.
 
@@ -3757,6 +3769,8 @@ def run_semantic_analysis(
     :param strict_revision_cache: Whether an unpinned hub revision resolves to a
         concrete commit hash (disabling caching when unmappable) instead of the
         requested revision label, defaults to ``False``.
+    :param cross_language: Also generate duplicate pairs across languages
+        (uncalibrated), defaults to ``False``.
     :return: ``(embeddings, duplicates)``; both are empty when ``units`` is empty.
     """
     embeddings, duplicates, _identity = run_semantic_analysis_with_identity(
@@ -3775,5 +3789,6 @@ def run_semantic_analysis(
         use_cache=use_cache,
         cache_scope=cache_scope,
         strict_revision_cache=strict_revision_cache,
+        cross_language=cross_language,
     )
     return embeddings, duplicates

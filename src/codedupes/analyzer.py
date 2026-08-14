@@ -43,7 +43,7 @@ from codedupes.semantic import (
 from codedupes.semantic import (
     run_semantic_analysis_with_identity as run_semantic_analysis,
 )
-from codedupes.semantic_profiles import get_default_semantic_threshold
+from codedupes.semantic_profiles import get_semantic_threshold_for_language
 from codedupes.traditional import (
     build_reference_graph,
     extract_identifiers,
@@ -55,7 +55,6 @@ from codedupes.traditional import (
 
 logger = logging.getLogger(__name__)
 
-HYBRID_SEMANTIC_ONLY_MIN = 0.92
 HYBRID_WEAK_JACCARD_MIN = 0.20
 HYBRID_STATEMENT_RATIO_MIN = 0.35
 DEFAULT_SEMANTIC_UNIT_TYPES = ("function", "method")
@@ -222,19 +221,21 @@ def _synthesize_hybrid_duplicates(
     traditional_duplicates: list[DuplicatePair],
     semantic_duplicates: list[DuplicatePair],
     *,
-    semantic_threshold: float,
     jaccard_threshold: float,
-    semantic_only_min: float = HYBRID_SEMANTIC_ONLY_MIN,
     weak_identifier_jaccard_min: float = HYBRID_WEAK_JACCARD_MIN,
     statement_ratio_min: float = HYBRID_STATEMENT_RATIO_MIN,
 ) -> tuple[list[HybridDuplicate], int]:
     """Build ranked hybrid duplicates from traditional and semantic outputs.
 
+    ``semantic_duplicates`` must already be gated (the analyzer applies the
+    per-language calibrated gates, or an explicit flat override, before
+    synthesis), so a recorded semantic similarity is itself the evidence that
+    the pair cleared its duplicate gate. Semantic-only pairs additionally need
+    identifier-overlap and statement-ratio corroboration.
+
     :param traditional_duplicates: Traditional duplicate pairs (exact + Jaccard).
-    :param semantic_duplicates: Semantic duplicate pairs.
-    :param semantic_threshold: Minimum semantic similarity used for hybrid tiering.
+    :param semantic_duplicates: Gated semantic duplicate pairs.
     :param jaccard_threshold: Minimum Jaccard similarity used for hybrid tiering.
-    :param semantic_only_min: Minimum semantic score for semantic-only candidates.
     :param weak_identifier_jaccard_min: Minimum identifier overlap for semantic-only candidates.
     :param statement_ratio_min: Minimum statement-count ratio for semantic-only candidates.
     :return: Tuple of sorted hybrid duplicates and number filtered pairs.
@@ -295,7 +296,7 @@ def _synthesize_hybrid_duplicates(
             tier = "exact"
             confidence = 1.0
         elif jaccard_sim is not None and jaccard_sim >= jaccard_threshold:
-            if semantic_sim is not None and semantic_sim >= semantic_threshold:
+            if semantic_sim is not None:
                 tier = "hybrid_confirmed"
                 confidence = (0.5 * semantic_sim) + (0.5 * jaccard_sim)
             else:
@@ -308,8 +309,7 @@ def _synthesize_hybrid_duplicates(
             statement_ratio = _statement_count_ratio(unit_a, unit_b)
 
             if (
-                semantic_sim >= semantic_only_min
-                and weak_identifier_jaccard >= weak_identifier_jaccard_min
+                weak_identifier_jaccard >= weak_identifier_jaccard_min
                 and statement_ratio >= statement_ratio_min
             ):
                 tier = "semantic_high_confidence"
@@ -360,6 +360,7 @@ class AnalyzerConfig:
 
     # Semantic detection
     semantic_threshold: float | None = None
+    cross_language: bool = False
     model_name: str = DEFAULT_MODEL
     semantic_task: str | None = None
     instruction_prefix: str | None = None
@@ -443,6 +444,7 @@ class AnalyzerConfig:
             "run_semantic",
             (
                 ("semantic_threshold", self.semantic_threshold is not None),
+                ("cross_language", self.cross_language),
                 ("semantic_task", self.semantic_task is not None),
                 ("instruction_prefix", self.instruction_prefix is not None),
                 ("model_revision", self.model_revision is not None),
@@ -559,6 +561,40 @@ class CodeAnalyzer:
             and get_code_unit_statement_count(unit) >= self.config.min_semantic_statements
         ]
 
+    def _resolve_semantic_gates(
+        self, semantic_candidates: list[CodeUnit]
+    ) -> tuple[dict[str, float], float]:
+        """Resolve per-language duplicate gates and the embedding-scan floor.
+
+        An explicit ``config.semantic_threshold`` applies as one flat gate to
+        every language. Otherwise each candidate language gets its calibrated
+        gate from the model profile, and the pairwise embedding scan runs at
+        the loosest (minimum) gate so no language's filter step is starved of
+        candidate pairs.
+
+        :param semantic_candidates: Units eligible for semantic comparison.
+        :return: Tuple of the per-language gate map and the scan floor.
+        """
+        explicit = self.config.semantic_threshold
+        languages = sorted({unit.language for unit in semantic_candidates})
+        if explicit is not None:
+            return dict.fromkeys(languages, explicit), explicit
+
+        gates = {
+            language: get_semantic_threshold_for_language(self.config.model_name, language)
+            for language in languages
+        }
+        floor = min(
+            gates.values(),
+            default=get_semantic_threshold_for_language(self.config.model_name, None),
+        )
+        if gates:
+            gate_text = ", ".join(f"{language}={gate:.2f}" for language, gate in gates.items())
+            logger.info(
+                f"Per-language semantic duplicate gates: {gate_text} (scan floor {floor:.2f})"
+            )
+        return gates, floor
+
     def _validate_semantic_device_for_empty_corpus(self) -> None:
         """Enforce the explicit-device contract on the empty-extraction shortcut.
 
@@ -629,18 +665,16 @@ class CodeAnalyzer:
         unused: list[CodeUnit] = []
         semantic_fallback = False
         semantic_fallback_reason: str | None = None
-        semantic_threshold = (
-            self.config.semantic_threshold
-            if self.config.semantic_threshold is not None
-            else get_default_semantic_threshold(self.config.model_name)
-        )
         semantic_task = self.config.semantic_task or DEFAULT_CHECK_SEMANTIC_TASK
         self._resolved_search_semantic_task = semantic_task
 
         semantic_candidates: list[CodeUnit] = []
+        semantic_gates: dict[str, float] = {}
+        semantic_scan_floor = 0.0
         if self.config.run_semantic:
             semantic_candidates = self._select_semantic_candidates(units)
             self._semantic_units = semantic_candidates
+            semantic_gates, semantic_scan_floor = self._resolve_semantic_gates(semantic_candidates)
 
         if self.config.run_traditional:
             traditional_duplicate_units = units
@@ -685,7 +719,7 @@ class CodeAnalyzer:
                 semantic_kwargs: dict[str, object] = {
                     "model_name": self.config.model_name,
                     "instruction_prefix": self.config.instruction_prefix,
-                    "threshold": semantic_threshold,
+                    "threshold": semantic_scan_floor,
                     "exclude_pairs": exclude,
                     "batch_size": self.config.batch_size,
                     "revision": self.config.model_revision,
@@ -697,6 +731,7 @@ class CodeAnalyzer:
                     "use_cache": self.config.embedding_cache,
                     "cache_scope": self._cache_scope,
                     "strict_revision_cache": self.config.strict_revision_cache,
+                    "cross_language": self.config.cross_language,
                 }
                 (
                     self._embeddings,
@@ -736,14 +771,29 @@ class CodeAnalyzer:
                 )
                 logger.warning(semantic_fallback_reason)
 
-            # Duplicate checking is calibrated within a language. Cross-language
-            # retrieval remains available through search(), but default duplicate output
-            # never claims that implementations in different languages are clones.
-            semantic_duplicates = [
-                duplicate
-                for duplicate in semantic_duplicates
-                if duplicate.unit_a.language == duplicate.unit_b.language
-            ]
+            # Duplicate gates are calibrated within a language, so each pair is held
+            # to its own language's gate (the embedding scan ran at the loosest gate).
+            # Cross-language pairs are dropped unless cross_language opts in; those
+            # claims are uncalibrated, so an opted-in mixed pair uses the looser of
+            # its two language gates (recall-first).
+            if self.config.cross_language:
+                semantic_duplicates = [
+                    duplicate
+                    for duplicate in semantic_duplicates
+                    if duplicate.similarity
+                    >= min(
+                        semantic_gates.get(duplicate.unit_a.language, semantic_scan_floor),
+                        semantic_gates.get(duplicate.unit_b.language, semantic_scan_floor),
+                    )
+                ]
+            else:
+                semantic_duplicates = [
+                    duplicate
+                    for duplicate in semantic_duplicates
+                    if duplicate.unit_a.language == duplicate.unit_b.language
+                    and duplicate.similarity
+                    >= semantic_gates.get(duplicate.unit_a.language, semantic_scan_floor)
+                ]
 
             if self.config.suppress_test_semantic_matches:
                 semantic_duplicates = [
@@ -773,7 +823,6 @@ class CodeAnalyzer:
             hybrid_duplicates, filtered_raw_duplicates = _synthesize_hybrid_duplicates(
                 traditional_duplicates,
                 semantic_duplicates,
-                semantic_threshold=semantic_threshold,
                 jaccard_threshold=self.config.jaccard_threshold,
             )
 
@@ -900,6 +949,7 @@ class CodeAnalyzer:
 def analyze_directory(
     path: Path | str,
     semantic_threshold: float | None = None,
+    cross_language: bool = False,
     traditional_threshold: float = DEFAULT_TRADITIONAL_THRESHOLD,
     exclude_patterns: list[str] | None = None,
     languages: tuple[str, ...] | None = None,
@@ -926,7 +976,10 @@ def analyze_directory(
 
     Args:
         path: Directory to analyze
-        semantic_threshold: Cosine similarity threshold for semantic duplicates
+        semantic_threshold: Flat cosine gate applied to every language; ``None``
+            uses the model profile's calibrated per-language gates
+        cross_language: Report semantic duplicate pairs across languages
+            (uncalibrated; a mixed pair uses the looser of its two gates)
         traditional_threshold: Jaccard threshold for traditional near-duplicates
         exclude_patterns: Glob patterns for files to exclude
         languages: Optional language filter; omitted means auto-detect supported files.
@@ -957,6 +1010,7 @@ def analyze_directory(
     """
     config = AnalyzerConfig(
         semantic_threshold=semantic_threshold,
+        cross_language=cross_language,
         jaccard_threshold=traditional_threshold,
         exclude_patterns=exclude_patterns,
         languages=languages,

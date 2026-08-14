@@ -392,8 +392,8 @@ def test_find_similar_to_query_default_threshold_is_search_default(
     tmp_path: Path, monkeypatch
 ) -> None:
     units = extract_arithmetic_units(tmp_path)
-    # First row scores 0.6: above the search default (0.50) but far below the
-    # duplicate-detection default (0.96); second row scores 0.3 and is dropped.
+    # First row scores 0.6: above the search default (0.50) but below every
+    # duplicate-detection gate; second row scores 0.3 and is dropped.
     embeddings = np.array([[0.6, 0.8], [0.3, 0.9539392]], dtype=np.float32)
 
     class QueryModel:
@@ -616,6 +616,60 @@ def test_find_semantic_duplicates_skips_incompatible_unit_types(tmp_path: Path) 
     )
 
     assert duplicates == []
+
+
+def test_find_semantic_duplicates_cross_language_requires_opt_in(tmp_path: Path) -> None:
+    python_path = tmp_path / "sample.py"
+    python_path.write_text("def f():\n    return 1\n")
+    rust_path = tmp_path / "sample.rs"
+    rust_path.write_text("fn f() -> i64 { 1 }\n")
+
+    python_unit = CodeUnit(
+        name="f",
+        qualified_name="sample.f",
+        unit_type=CodeUnitType.FUNCTION,
+        file_path=python_path,
+        lineno=1,
+        end_lineno=2,
+        source="def f():\n    return 1",
+        is_public=True,
+        is_exported=False,
+        language="python",
+    )
+    rust_unit = CodeUnit(
+        name="f",
+        qualified_name="sample::f",
+        unit_type=CodeUnitType.FUNCTION,
+        file_path=rust_path,
+        lineno=1,
+        end_lineno=1,
+        source="fn f() -> i64 { 1 }",
+        is_public=True,
+        is_exported=False,
+        language="rust",
+    )
+    embeddings = np.array(
+        [
+            [1.0, 0.0],
+            [1.0, 0.0],
+        ],
+        dtype=np.float32,
+    )
+
+    same_language_only = find_semantic_duplicates(
+        units=[python_unit, rust_unit],
+        embeddings=embeddings,
+        threshold=0.9,
+    )
+    assert same_language_only == []
+
+    cross = find_semantic_duplicates(
+        units=[python_unit, rust_unit],
+        embeddings=embeddings,
+        threshold=0.9,
+        cross_language=True,
+    )
+    assert [(pair.unit_a.language, pair.unit_b.language) for pair in cross] == [("python", "rust")]
 
 
 def _recording_sentence_transformer(calls: list[dict]) -> type:
