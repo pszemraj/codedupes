@@ -191,4 +191,4 @@ def test_python_byte_range_matches_emitted_source_with_unicode(tmp_path: Path) -
 
     assert encoded[unit.start_byte : unit.end_byte] == unit.source.encode("utf-8")
     assert unit.start_column == 0
-    assert unit.end_column == len('    return message'.encode("utf-8"))
+    assert unit.end_column == len(b'    return message')

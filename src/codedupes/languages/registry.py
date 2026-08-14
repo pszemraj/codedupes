@@ -83,6 +83,14 @@ GRAMMAR_PACKAGES: Final[dict[str, tuple[str, str]]] = {
     "tsx": ("tree-sitter-typescript", "0.23.2"),
 }
 
+# Single source of truth for every exact parser pin. pyproject.toml must match
+# this mapping; tests enforce the invariant so a pin bump is always a reviewed,
+# two-location change instead of a transitive surprise.
+REQUIRED_PARSER_PACKAGES: Final[dict[str, str]] = {
+    TREE_SITTER_PACKAGE[0]: TREE_SITTER_PACKAGE[1],
+    **{package: version for package, version in GRAMMAR_PACKAGES.values()},
+}
+
 
 _EXTENSION_SELECTIONS: Final[dict[str, LanguageSelection]] = {
     ".py": LanguageSelection("python", "python"),
@@ -168,9 +176,7 @@ def repository_allows_c_headers(root: Path, selected_languages: tuple[str, ...] 
     scan_root = root if root.is_dir() else root.parent
     saw_c_source = False
     for directory, dirnames, filenames in os.walk(scan_root):
-        dirnames[:] = [
-            name for name in dirnames if name not in _HEADER_SCAN_IGNORED_DIRS
-        ]
+        dirnames[:] = [name for name in dirnames if name not in _HEADER_SCAN_IGNORED_DIRS]
         for filename in filenames:
             suffix = Path(filename).suffix.lower()
             if suffix in CPP_SUFFIXES:

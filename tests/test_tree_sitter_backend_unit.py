@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
 
 from codedupes.languages.tree_sitter_backend import (
     JavaScriptBackend,

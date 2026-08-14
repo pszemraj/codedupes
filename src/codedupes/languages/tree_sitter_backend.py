@@ -11,9 +11,10 @@ import hashlib
 import importlib
 import re
 import threading
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, ClassVar, Iterable
+from typing import Any, ClassVar
 
 from codedupes.languages.base import BackendResult
 from codedupes.languages.registry import GRAMMAR_PACKAGES
@@ -304,9 +305,7 @@ def _structural_hash(node: Any, source: bytes, language: str, unit_type: CodeUni
                 else:
                     value = normalized_names.setdefault(text, f"_v{len(normalized_names)}")
                 pieces.append(f"<{node_type}:{value}>")
-            elif any(marker in lower_type for marker in _NUMBER_MARKERS):
-                pieces.append(f"<{node_type}:{text}>")
-            elif bool(getattr(current, "is_named", False)):
+            elif any(marker in lower_type for marker in _NUMBER_MARKERS) or bool(getattr(current, "is_named", False)):
                 pieces.append(f"<{node_type}:{text}>")
             else:
                 pieces.append(text)
@@ -959,11 +958,7 @@ class ECMAScriptBackend(TreeSitterBackend):
                 binding = self._binding_for_value(current, source)
                 if binding:
                     contexts.append(binding[0].rsplit(".", 1)[-1])
-            elif node_type in self.method_types:
-                name = self._name_field(current, source)
-                if name:
-                    contexts.append(name)
-            elif node_type in {"internal_module", "module"}:
+            elif node_type in self.method_types or node_type in {"internal_module", "module"}:
                 name = self._name_field(current, source)
                 if name:
                     contexts.append(name)

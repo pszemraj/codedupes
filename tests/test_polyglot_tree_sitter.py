@@ -45,6 +45,38 @@ def _extract(
     return list(extractor.extract_from_file(path))
 
 
+@pytest.mark.parametrize(
+    ("filename", "source", "expected_qualified_name"),
+    [
+        ("sample.c", "int add(int left, int right) { return left + right; }\n", "sample.add"),
+        ("sample.rs", "pub fn add(left: i32, right: i32) -> i32 { left + right }\n", "sample.add"),
+        ("sample.js", "export const add = (left, right) => left + right;\n", "sample.add"),
+        (
+            "sample.ts",
+            "export function add(left: number, right: number): number { return left + right; }\n",
+            "sample.add",
+        ),
+        (
+            "component.tsx",
+            "export const Card = (props: { title: string }) => <h1>{props.title}</h1>;\n",
+            "component.Card",
+        ),
+    ],
+)
+def test_every_dialect_reproduces_unit_source_from_byte_ranges(
+    tmp_path: Path,
+    filename: str,
+    source: str,
+    expected_qualified_name: str,
+) -> None:
+    units = _extract(tmp_path, filename, source)
+    source_bytes = (tmp_path / filename).read_bytes()
+
+    assert expected_qualified_name in {unit.qualified_name for unit in units}
+    for unit in units:
+        assert source_bytes[unit.start_byte : unit.end_byte].decode("utf-8") == unit.source
+
+
 def test_c_extracts_definitions_and_ignores_prototypes(tmp_path: Path) -> None:
     units = _extract(
         tmp_path,
