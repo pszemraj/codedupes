@@ -1,0 +1,25 @@
+{
+  "description": "Expected duplicate groups for the C polyglot calibration corpus.",
+  "positive_groups": [
+    ["sensor_filter.c::clamp_i32", "calibration.c::clamp_i32"],
+    ["packet_codec.c::checksum8", "telemetry.c::checksum8"],
+    ["ring_buffer.c::buffer_is_full", "telemetry.c::buffer_is_full"],
+    ["signal_stats.c::compute_mean", "telemetry.c::running_average"],
+    ["calibration.c::scale_reading", "sensor_filter.c::convert_sample"],
+    ["signal_stats.c::find_peak_index", "ring_buffer.c::locate_max_slot"],
+    ["sensor_filter.c::moving_sum", "signal_stats.c::moving_sum"],
+    ["ring_buffer.c::wrap_index", "packet_codec.c::wrap_index"],
+    ["packet_codec.c::bytes_to_u16", "calibration.c::bytes_to_u16"],
+    ["sensor_filter.c::apply_deadband", "calibration.c::suppress_small_delta"],
+    ["sensor_filter.c::smooth_ema", "telemetry.c::exponential_blend"],
+    ["signal_stats.c::sum_positive", "telemetry.c::total_above_zero"],
+    ["ring_buffer.c::slots_available", "packet_codec.c::free_capacity"],
+    ["signal_stats.c::find_trough_index", "ring_buffer.c::locate_min_slot"],
+    ["calibration.c::permille_from_counts", "packet_codec.c::pack_permille"]
+  ],
+  "negative_controls": [
+    ["signal_stats.c::sum_positive", "packet_codec.c::checksum8"],
+    ["ring_buffer.c::locate_max_slot", "signal_stats.c::find_trough_index"],
+    ["sensor_filter.c::clamp_i32", "ring_buffer.c::wrap_index"]
+  ]
+}

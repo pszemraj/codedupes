@@ -1,0 +1,25 @@
+{
+  "description": "Expected duplicate groups for the Rust polyglot calibration corpus.",
+  "positive_groups": [
+    ["queue_core.rs::clamp_priority", "queue_metrics.rs::clamp_priority"],
+    ["dedup_index.rs::slot_for_key", "rate_window.rs::slot_for_key"],
+    ["rate_window.rs::is_saturated", "worker_lease.rs::is_saturated"],
+    ["retry_policy.rs::backoff_delay_ms", "worker_lease.rs::stall_wait_ms"],
+    ["rate_window.rs::window_utilization", "queue_metrics.rs::load_fraction"],
+    ["queue_core.rs::age_ms", "worker_lease.rs::idle_ms"],
+    ["retry_policy.rs::attempt_bucket", "queue_metrics.rs::attempt_bucket"],
+    ["dedup_index.rs::normalize_key_text", "queue_core.rs::normalize_key_text"],
+    ["queue_core.rs::occupancy_pct", "dedup_index.rs::occupancy_pct"],
+    ["retry_policy.rs::should_retry", "worker_lease.rs::can_reassign"],
+    ["retry_policy.rs::next_attempt_at_ms", "rate_window.rs::next_refill_at_ms"],
+    ["retry_policy.rs::record_failure", "worker_lease.rs::note_timeout"],
+    ["queue_core.rs::backlog_score", "queue_metrics.rs::pressure_score"],
+    ["dedup_index.rs::insert_key", "rate_window.rs::admit_hit"],
+    ["dedup_index.rs::key_fingerprint", "queue_metrics.rs::series_fingerprint"]
+  ],
+  "negative_controls": [
+    ["dedup_index.rs::key_fingerprint", "rate_window.rs::slot_for_key"],
+    ["queue_core.rs::clamp_priority", "retry_policy.rs::attempt_bucket"],
+    ["rate_window.rs::is_saturated", "queue_core.rs::occupancy_pct"]
+  ]
+}

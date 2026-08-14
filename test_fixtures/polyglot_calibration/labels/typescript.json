@@ -1,0 +1,55 @@
+{
+  "description": "Expected duplicate groups for the TypeScript polyglot calibration corpus.",
+  "positive_groups": [
+    [
+      "fieldNormalizers.ts::collapseWhitespace",
+      "legacyValidators.ts::collapseWhitespace",
+      "FieldControls.tsx::collapseWhitespace"
+    ],
+    [
+      "schemaChecks.ts::normalizeFieldKey",
+      "legacyValidators.ts::normalizeFieldKey",
+      "formState.ts::canonicalizeKey"
+    ],
+    [
+      "errorAggregation.ts::describe",
+      "legacyValidators.ts::describe",
+      "formState.ts::summarize"
+    ],
+    [
+      "fieldNormalizers.ts::truncateInput",
+      "legacyValidators.ts::shortenText",
+      "schemaChecks.ts::clipFieldText"
+    ],
+    [
+      "schemaChecks.ts::checkRequired",
+      "legacyValidators.ts::checkRequired"
+    ],
+    [
+      "schemaChecks.ts::validateRange",
+      "legacyValidators.ts::checkBounds"
+    ],
+    [
+      "FieldControls.tsx::EmailFieldRow",
+      "FieldControls.tsx::PhoneFieldRow"
+    ],
+    [
+      "formState.ts::summarizeState",
+      "legacyValidators.ts::reviewState"
+    ]
+  ],
+  "negative_controls": [
+    [
+      "fieldNormalizers.ts::stripNonDigits",
+      "legacyValidators.ts::collapseWhitespace"
+    ],
+    [
+      "schemaChecks.ts::matchesPattern",
+      "legacyValidators.ts::checkBounds"
+    ],
+    [
+      "errorAggregation.ts::pushIssue",
+      "formState.ts::summarizeState"
+    ]
+  ]
+}
