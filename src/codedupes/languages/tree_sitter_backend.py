@@ -536,7 +536,6 @@ class TreeSitterBackend:
                     end_byte=end_byte,
                     start_column=start_column,
                     end_column=end_column,
-                    has_body=spec.body is not None,
                     statement_count=self._statement_count(spec.body, spec.unit_type),
                     structural_hash=structural_hash,
                     token_hash=_token_hash(spec.node, source),

@@ -62,7 +62,6 @@ class CodeUnit:
     end_byte: int = 0
     start_column: int = 0
     end_column: int = 0
-    has_body: bool = True
     statement_count: int | None = None
 
     # Backend-computed structural/token fingerprints. Python derives both from

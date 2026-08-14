@@ -88,7 +88,7 @@ Each unit object includes:
 - Identity: `name`, `qualified_name`, and `type`
 - Language: `language`, `dialect`, and `native_kind`
 - Location: `file`, `line`, `end_line`, `start_byte`, `end_byte`, `start_column`, and `end_column`
-- Extraction metadata: `has_body` and `statement_count`
+- Extraction metadata: `statement_count`
 - Visibility: `is_public` and `is_exported`
 
 `extraction_diagnostics` contains file/language, severity, code, message, and optional line range. The terminal summary shows the first ten diagnostics. A `partial-parse` diagnostic means Tree-sitter recovered from invalid or incomplete source; units whose own subtree contains an error are omitted with `unit-parse-error`.

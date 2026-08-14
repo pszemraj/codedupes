@@ -493,7 +493,6 @@ def _unit_to_dict(unit: CodeUnit) -> dict[str, Any]:
         "end_byte": unit.end_byte,
         "start_column": unit.start_column,
         "end_column": unit.end_column,
-        "has_body": unit.has_body,
         "statement_count": unit.statement_count,
         "is_public": unit.is_public,
         "is_exported": unit.is_exported,
