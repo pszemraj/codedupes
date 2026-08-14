@@ -295,9 +295,20 @@ def _run_duplicate_sweep(
     assert identity is not None
 
     positive_pairs = build_positive_pairs(result.units, labels)
+    embedded_uids = {unit.uid for unit in analyzer._semantic_units or []}
+    scoreable_pairs = {
+        pair for pair in positive_pairs if pair[0] in embedded_uids and pair[1] in embedded_uids
+    }
+    excluded_pairs = len(positive_pairs) - len(scoreable_pairs)
+    if excluded_pairs:
+        print(
+            f"Excluding {excluded_pairs} labeled pairs outside the semantic candidate pool "
+            "(class-level or below-min-statement units); the semantic tier can never "
+            "predict them."
+        )
     rows = _evaluate_thresholds(
         _duplicate_scored_pairs(result.semantic_duplicates),
-        positive_pairs,
+        scoreable_pairs,
         thresholds=_threshold_grid(duplicate_start, duplicate_stop),
     )
     selected = rows[0]
