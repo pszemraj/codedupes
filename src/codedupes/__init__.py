@@ -1,8 +1,8 @@
 """
-codedupes - Detect duplicate and unused Python code.
+codedupes - Detect duplicate source code and conservative Python dead-code candidates.
 
 Uses dual-approach detection:
-1. Traditional: AST hashing, token hashing, Jaccard similarity
+1. Traditional: structural hashing, token hashing, Jaccard similarity
 2. Semantic: Code embedding similarity via model profiles (default gte-modernbert-base)
 
 Example:
@@ -19,7 +19,14 @@ Example:
 
 from .analyzer import AnalyzerConfig, CodeAnalyzer, analyze_directory
 from .logging_utils import quiet_dependency_loggers
-from .models import AnalysisResult, CodeUnit, CodeUnitType, DuplicatePair, HybridDuplicate
+from .models import (
+    AnalysisResult,
+    CodeUnit,
+    CodeUnitType,
+    DuplicatePair,
+    ExtractionDiagnostic,
+    HybridDuplicate,
+)
 
 try:
     from ._version import __version__, __version_tuple__
@@ -34,6 +41,7 @@ __all__ = [
     "CodeUnit",
     "CodeUnitType",
     "DuplicatePair",
+    "ExtractionDiagnostic",
     "HybridDuplicate",
     "__version__",
     "__version_tuple__",

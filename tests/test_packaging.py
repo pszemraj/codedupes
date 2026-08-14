@@ -60,3 +60,21 @@ def test_readme_documentation_links_work_outside_the_repository() -> None:
 
     assert "](docs/" not in readme
     assert "https://github.com/pszemraj/codedupes/blob/main/docs/" in readme
+
+
+def test_polyglot_tree_sitter_runtime_is_exactly_pinned() -> None:
+    """Grammar schema changes must be reviewed instead of arriving transitively."""
+    project = _pyproject()["project"]
+    dependencies = project["dependencies"]  # type: ignore[index]
+    requirements = {Requirement(item).name: Requirement(item) for item in dependencies}
+
+    expected = {
+        "tree-sitter": "0.25.2",
+        "tree-sitter-c": "0.24.2",
+        "tree-sitter-rust": "0.24.2",
+        "tree-sitter-javascript": "0.25.0",
+        "tree-sitter-typescript": "0.23.2",
+    }
+    for package, version in expected.items():
+        requirement = requirements[package]
+        assert str(requirement.specifier) == f"=={version}"

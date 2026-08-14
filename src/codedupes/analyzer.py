@@ -20,7 +20,15 @@ from codedupes.constants import (
 )
 from codedupes.devices import normalize_semantic_device, validate_mps_memory_fraction
 from codedupes.extractor import CodeExtractor
-from codedupes.models import AnalysisResult, CodeUnit, CodeUnitType, DuplicatePair, HybridDuplicate
+from codedupes.languages.registry import normalize_languages
+from codedupes.models import (
+    AnalysisResult,
+    CodeUnit,
+    CodeUnitType,
+    DuplicatePair,
+    ExtractionDiagnostic,
+    HybridDuplicate,
+)
 from codedupes.pairs import ordered_pair_key
 from codedupes.semantic import (
     EmbeddingSpaceIdentity,
@@ -96,6 +104,13 @@ def _is_test_function_unit(unit: CodeUnit) -> bool:
     return unit.unit_type in {CodeUnitType.FUNCTION, CodeUnitType.METHOD} and unit.name.startswith(
         "test_"
     )
+
+
+def _unit_identifier_set(unit: CodeUnit) -> set[str]:
+    """Return backend identifiers without reparsing non-Python source as Python."""
+    if unit.identifiers or unit.language != "python":
+        return set(unit.identifiers)
+    return extract_identifiers(unit.source)
 
 
 def _statement_count_ratio(unit_a: CodeUnit, unit_b: CodeUnit) -> float:
@@ -283,8 +298,8 @@ def _synthesize_hybrid_duplicates(
                 tier = "traditional_near"
                 confidence = 0.55 + (0.45 * jaccard_sim)
         elif semantic_sim is not None:
-            ids_a = identifier_cache.setdefault(unit_a.uid, extract_identifiers(unit_a.source))
-            ids_b = identifier_cache.setdefault(unit_b.uid, extract_identifiers(unit_b.source))
+            ids_a = identifier_cache.setdefault(unit_a.uid, _unit_identifier_set(unit_a))
+            ids_b = identifier_cache.setdefault(unit_b.uid, _unit_identifier_set(unit_b))
             weak_identifier_jaccard = jaccard_similarity(ids_a, ids_b)
             statement_ratio = _statement_count_ratio(unit_a, unit_b)
 
@@ -334,6 +349,7 @@ class AnalyzerConfig:
     # Extraction
     exclude_patterns: list[str] | None = None
     include_private: bool = True
+    languages: tuple[str, ...] | None = None
 
     # Traditional detection
     jaccard_threshold: float = DEFAULT_TRADITIONAL_THRESHOLD
@@ -367,6 +383,8 @@ class AnalyzerConfig:
     suppress_test_semantic_matches: bool = False
 
     def __post_init__(self) -> None:
+        self.languages = normalize_languages(self.languages)
+
         if not 0.0 <= self.jaccard_threshold <= 1.0:
             raise ValueError("jaccard_threshold must be in [0.0, 1.0]")
 
@@ -461,7 +479,7 @@ class CodeAnalyzer:
     """
     Main analyzer for detecting duplicate and unused code.
 
-    Combines traditional AST-based methods with semantic embedding similarity.
+    Combines structural/token methods with semantic embedding similarity.
     """
 
     def __init__(self, config: AnalyzerConfig | None = None) -> None:
@@ -476,6 +494,7 @@ class CodeAnalyzer:
         self._resolved_search_semantic_task: str | None = None
         self._embedding_space_identity: EmbeddingSpaceIdentity | None = None
         self._cache_scope: Path | None = None
+        self._extraction_diagnostics: list[ExtractionDiagnostic] = []
 
     def _reset_analysis_state(self, cache_scope: Path) -> None:
         """Clear corpus-specific state before one analysis run.
@@ -489,11 +508,12 @@ class CodeAnalyzer:
         self._resolved_search_semantic_task = None
         self._embedding_space_identity = None
         self._cache_scope = cache_scope
+        self._extraction_diagnostics = []
 
     def _extract_corpus_units(self, path: Path) -> list[CodeUnit]:
         """Extract code units from a resolved directory or single-file path.
 
-        :param path: Resolved existing path to a directory or Python file.
+        :param path: Resolved existing path to a directory or supported source file.
         :return: Extracted code units.
         """
         logger.info(f"Extracting code units from {path}")
@@ -503,6 +523,8 @@ class CodeAnalyzer:
                 path.parent,
                 exclude_patterns=self.config.exclude_patterns,
                 include_private=self.config.include_private,
+                include_stubs=self.config.include_stubs,
+                languages=self.config.languages,
             )
             units = list(extractor.extract_from_file(path))
         else:
@@ -511,9 +533,11 @@ class CodeAnalyzer:
                 exclude_patterns=self.config.exclude_patterns,
                 include_private=self.config.include_private,
                 include_stubs=self.config.include_stubs,
+                languages=self.config.languages,
             )
             units = extractor.extract_all()
 
+        self._extraction_diagnostics = list(extractor.diagnostics)
         logger.info(f"Extracted {len(units)} code units")
         return units
 
@@ -564,7 +588,7 @@ class CodeAnalyzer:
         Run full analysis on a directory or file.
 
         Args:
-            path: Path to directory or single Python file
+            path: Path to a supported source file or directory
 
         Returns:
             AnalysisResult with all findings
@@ -594,6 +618,7 @@ class CodeAnalyzer:
                 potentially_unused=[],
                 analysis_mode="none",
                 filtered_raw_duplicates=0,
+                extraction_diagnostics=list(self._extraction_diagnostics),
             )
 
         traditional_duplicates: list[DuplicatePair] = []
@@ -633,9 +658,11 @@ class CodeAnalyzer:
                 )
             traditional_duplicates = exact_dupes + near_dupes
 
+        unused_excluded_units = 0
         if self.config.run_unused:
             build_reference_graph(units, project_root=path)
             unused = find_potentially_unused(units, strict_unused=self.config.strict_unused)
+            unused_excluded_units = sum(unit.language != "python" for unit in units)
 
         semantic_duplicates: list[DuplicatePair] = []
 
@@ -705,6 +732,15 @@ class CodeAnalyzer:
                 )
                 logger.warning(semantic_fallback_reason)
 
+            # Duplicate checking is calibrated within a language. Cross-language
+            # retrieval remains available through search(), but default duplicate output
+            # never claims that implementations in different languages are clones.
+            semantic_duplicates = [
+                duplicate
+                for duplicate in semantic_duplicates
+                if duplicate.unit_a.language == duplicate.unit_b.language
+            ]
+
             if self.config.suppress_test_semantic_matches:
                 semantic_duplicates = [
                     duplicate
@@ -756,6 +792,8 @@ class CodeAnalyzer:
             filtered_raw_duplicates=filtered_raw_duplicates,
             semantic_fallback=semantic_fallback,
             semantic_fallback_reason=semantic_fallback_reason,
+            extraction_diagnostics=list(self._extraction_diagnostics),
+            unused_excluded_units=unused_excluded_units,
         )
 
     def index(self, path: Path | str) -> int:
@@ -766,7 +804,7 @@ class CodeAnalyzer:
         :meth:`analyze`, no all-pairs duplicate scan, traditional analysis, or
         unused-code analysis happens, so indexing stays linear in corpus size.
 
-        :param path: Path to directory or single Python file.
+        :param path: Path to a supported source file or directory.
         :return: Number of code units embedded for search.
         :raises FileNotFoundError: If ``path`` does not exist.
         """
@@ -860,6 +898,7 @@ def analyze_directory(
     semantic_threshold: float | None = None,
     traditional_threshold: float = DEFAULT_TRADITIONAL_THRESHOLD,
     exclude_patterns: list[str] | None = None,
+    languages: tuple[str, ...] | None = None,
     model_name: str = DEFAULT_MODEL,
     semantic_task: str | None = None,
     instruction_prefix: str | None = None,
@@ -886,6 +925,7 @@ def analyze_directory(
         semantic_threshold: Cosine similarity threshold for semantic duplicates
         traditional_threshold: Jaccard threshold for traditional near-duplicates
         exclude_patterns: Glob patterns for files to exclude
+        languages: Optional language filter; omitted means auto-detect supported files.
         model_name: HuggingFace model for embeddings
         semantic_task: Semantic task mode for prompt/inference behavior
         instruction_prefix: Custom instruction prefix prepended to semantic inputs
@@ -915,6 +955,7 @@ def analyze_directory(
         semantic_threshold=semantic_threshold,
         jaccard_threshold=traditional_threshold,
         exclude_patterns=exclude_patterns,
+        languages=languages,
         model_name=model_name,
         semantic_task=semantic_task,
         instruction_prefix=instruction_prefix,

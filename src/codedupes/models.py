@@ -1,4 +1,4 @@
-"""Data models for extracted code units."""
+"""Data models for extracted code units and analysis results."""
 
 from __future__ import annotations
 
@@ -18,12 +18,34 @@ class CodeUnitType(Enum):
     CLASS = auto()
 
 
+DiagnosticSeverity = Literal["info", "warning", "error"]
+
+
+@dataclass(frozen=True)
+class ExtractionDiagnostic:
+    """A recoverable or fatal issue observed while extracting one source file."""
+
+    file_path: Path
+    language: str
+    message: str
+    severity: DiagnosticSeverity = "warning"
+    code: str = "parse-warning"
+    lineno: int | None = None
+    end_lineno: int | None = None
+
+
 @dataclass
 class CodeUnit:
-    """Represents an extracted function, method, or class."""
+    """Represents an extracted function, method, or class.
+
+    Python remains the compatibility baseline, while the language-neutral fields
+    make the same model usable by Tree-sitter backends.  Backend-computed
+    features are stored on the unit so downstream duplicate and semantic stages
+    never need to reparse source in a language-specific way.
+    """
 
     name: str
-    qualified_name: str  # module.ClassName.method_name
+    qualified_name: str
     unit_type: CodeUnitType
     file_path: Path
     lineno: int
@@ -31,39 +53,70 @@ class CodeUnit:
     source: str
     docstring: str | None = None
 
-    # Computed on demand
-    _ast_hash: str | None = field(default=None, repr=False)
-    _token_hash: str | None = field(default=None, repr=False)
+    # Language and source-range metadata. Defaults preserve source compatibility
+    # for callers that manually construct Python CodeUnit instances.
+    language: str = "python"
+    dialect: str | None = None
+    native_kind: str | None = None
+    start_byte: int = 0
+    end_byte: int = 0
+    start_column: int = 0
+    end_column: int = 0
+    has_body: bool = True
+    statement_count: int | None = None
 
-    # For call graph / usage analysis
+    # Structural/token features. `_ast_hash` is retained for one compatibility
+    # cycle; non-Python backends use `_structural_hash` as the primary field.
+    _ast_hash: str | None = field(default=None, repr=False)
+    _structural_hash: str | None = field(default=None, repr=False)
+    _token_hash: str | None = field(default=None, repr=False)
+    identifiers: frozenset[str] = field(default_factory=frozenset, repr=False)
+
+    # For call graph / usage analysis.  Reference resolution is intentionally
+    # Python-only in the first polyglot release.
     calls: set[str] = field(default_factory=set)
-    references: set[str] = field(default_factory=set)  # who calls this
+    references: set[str] = field(default_factory=set)
 
     # API exposure markers
     is_public: bool = False
     is_dunder: bool = False
-    is_exported: bool = False  # in __all__
+    is_exported: bool = False
+
+    @property
+    def structural_hash(self) -> str | None:
+        """Return the backend-neutral structural fingerprint."""
+        return self._structural_hash or self._ast_hash
 
     @property
     def uid(self) -> str:
-        """Build a stable unique identifier for this code unit.
+        """Build an in-run unique identifier for this code unit.
 
-        :return: ``"<path>::<qualified_name>"``.
+        Existing Python callers retain the historical ``<path>::<qualified>``
+        form.  Tree-sitter units include language and byte position because
+        overloads and repeated lexical names are legal in several supported
+        languages.
         """
-        return f"{self.file_path}::{self.qualified_name}"
+        if self.language == "python":
+            return f"{self.file_path}::{self.qualified_name}"
+        return f"{self.file_path}::{self.language}::{self.qualified_name}::{self.start_byte}"
 
     @property
     def is_likely_api(self) -> bool:
-        """Indicate whether this unit is likely public API surface.
-
-        :return: ``True`` if the unit is likely intentionally exposed.
-        """
+        """Indicate whether this unit is likely public API surface."""
         return (
             self.is_exported
             or self.is_dunder
             or (self.is_public and self.unit_type == CodeUnitType.CLASS)
             or self.name in ("__init__", "__new__", "__call__")
         )
+
+    def overlaps(self, other: CodeUnit) -> bool:
+        """Return whether two units occupy overlapping source ranges."""
+        if self.file_path != other.file_path:
+            return False
+        if self.end_byte > self.start_byte and other.end_byte > other.start_byte:
+            return self.start_byte < other.end_byte and other.start_byte < self.end_byte
+        return self.lineno <= other.end_lineno and other.lineno <= self.end_lineno
 
 
 @dataclass
@@ -73,7 +126,7 @@ class DuplicatePair:
     unit_a: CodeUnit
     unit_b: CodeUnit
     similarity: float
-    method: str  # "ast_hash", "token_hash", "semantic"
+    method: str
 
     def __hash__(self) -> int:
         return hash(unordered_pair_key(self.unit_a, self.unit_b))
@@ -126,29 +179,26 @@ class AnalysisResult:
     """Full analysis result."""
 
     units: list[CodeUnit]
-    traditional_duplicates: list[DuplicatePair]  # AST/token/jaccard matches
-    semantic_duplicates: list[DuplicatePair]  # Embedding similarity
-    hybrid_duplicates: list[HybridDuplicate]  # Final combined output candidates
-    potentially_unused: list[CodeUnit]  # No references, not API
-    analysis_mode: AnalysisMode  # How duplicates were synthesized
+    traditional_duplicates: list[DuplicatePair]
+    semantic_duplicates: list[DuplicatePair]
+    hybrid_duplicates: list[HybridDuplicate]
+    potentially_unused: list[CodeUnit]
+    analysis_mode: AnalysisMode
     filtered_raw_duplicates: int = 0
     semantic_fallback: bool = False
     semantic_fallback_reason: str | None = None
+    extraction_diagnostics: list[ExtractionDiagnostic] = field(default_factory=list)
+    unused_supported_languages: tuple[str, ...] = ("python",)
+    unused_excluded_units: int = 0
 
     @property
     def exact_duplicates(self) -> list[DuplicatePair]:
-        """Backward-compatible alias for traditional duplicates.
-
-        :return: Exact/near duplicates from traditional analysis.
-        """
+        """Backward-compatible alias for traditional duplicates."""
         return self.traditional_duplicates
 
     @property
     def all_duplicates(self) -> list[HybridDuplicate] | list[DuplicatePair]:
-        """Return the available duplicate list for this analysis mode.
-
-        :return: Duplicate list for the selected analysis mode.
-        """
+        """Return the available duplicate list for this analysis mode."""
         if self.analysis_mode == "combined":
             return self.hybrid_duplicates
         return self.traditional_duplicates + self.semantic_duplicates

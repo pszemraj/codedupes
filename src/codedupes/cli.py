@@ -6,6 +6,7 @@ import json
 import logging
 import platform
 import sys
+from collections import Counter
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -46,8 +47,15 @@ from codedupes.devices import (
 )
 from codedupes.embedding_cache import EmbeddingCache
 from codedupes.extractor import DEFAULT_EXCLUDE_DIR_NAMES, DEFAULT_EXCLUDE_PATTERNS
+from codedupes.languages import SUPPORTED_LANGUAGES, get_grammar_statuses
 from codedupes.logging_utils import quiet_dependency_loggers
-from codedupes.models import AnalysisResult, CodeUnit, DuplicatePair, HybridDuplicate
+from codedupes.models import (
+    AnalysisResult,
+    CodeUnit,
+    DuplicatePair,
+    ExtractionDiagnostic,
+    HybridDuplicate,
+)
 from codedupes.semantic import get_semantic_runtime_versions
 from codedupes.semantic_profiles import (
     get_default_search_threshold,
@@ -383,6 +391,9 @@ def print_summary(
     summary.add_column(style="white", no_wrap=True)
 
     summary.add_row("Total code units", str(len(result.units)))
+    language_counts = Counter(unit.language for unit in result.units)
+    for language, count in sorted(language_counts.items()):
+        summary.add_row(f"  {language}", str(count))
     summary.add_row(
         "  Functions",
         str(sum(1 for unit in result.units if unit.unit_type.name.lower() == "function")),
@@ -411,8 +422,47 @@ def print_summary(
         summary.add_row("Semantic duplicates", str(len(result.semantic_duplicates)))
         summary.add_row("Potentially unused", str(len(result.potentially_unused)))
 
+    if result.extraction_diagnostics:
+        summary.add_row("Extraction diagnostics", str(len(result.extraction_diagnostics)))
+    if result.unused_excluded_units:
+        summary.add_row(
+            "Unused-analysis exclusions",
+            f"{result.unused_excluded_units} non-Python units",
+        )
+
     console.print(summary)
+    if result.extraction_diagnostics:
+        console.print("[bold yellow]Extraction diagnostics[/bold yellow]")
+        for diagnostic in result.extraction_diagnostics[:10]:
+            location = str(diagnostic.file_path)
+            if diagnostic.lineno is not None:
+                location += f":{diagnostic.lineno}"
+            console.print(
+                f"  [yellow]{diagnostic.severity}[/yellow] "
+                f"[{diagnostic.language}] {location}: {diagnostic.message}"
+            )
+        remaining = len(result.extraction_diagnostics) - 10
+        if remaining > 0:
+            console.print(f"  [dim]... and {remaining} more diagnostics[/dim]")
     console.print()
+
+
+def _language_counts(units: list[CodeUnit]) -> dict[str, int]:
+    """Count extracted units by canonical language."""
+    return dict(sorted(Counter(unit.language for unit in units).items()))
+
+
+def _diagnostic_to_dict(diagnostic: ExtractionDiagnostic) -> dict[str, Any]:
+    """Convert an extraction diagnostic to a JSON-safe mapping."""
+    return {
+        "file": str(diagnostic.file_path),
+        "language": diagnostic.language,
+        "severity": diagnostic.severity,
+        "code": diagnostic.code,
+        "message": diagnostic.message,
+        "line": diagnostic.lineno,
+        "end_line": diagnostic.end_lineno,
+    }
 
 
 def _unit_to_dict(unit: CodeUnit) -> dict[str, Any]:
@@ -425,9 +475,18 @@ def _unit_to_dict(unit: CodeUnit) -> dict[str, Any]:
         "name": unit.name,
         "qualified_name": unit.qualified_name,
         "type": unit.unit_type.name.lower(),
+        "language": unit.language,
+        "dialect": unit.dialect,
+        "native_kind": unit.native_kind,
         "file": str(unit.file_path),
         "line": unit.lineno,
         "end_line": unit.end_lineno,
+        "start_byte": unit.start_byte,
+        "end_byte": unit.end_byte,
+        "start_column": unit.start_column,
+        "end_column": unit.end_column,
+        "has_body": unit.has_body,
+        "statement_count": unit.statement_count,
         "is_public": unit.is_public,
         "is_exported": unit.is_exported,
     }
@@ -477,6 +536,7 @@ def print_check_json_combined(result: AnalysisResult, *, show_all: bool) -> None
         "analysis_mode": result.analysis_mode,
         "summary": {
             "total_units": len(result.units),
+            "units_by_language": _language_counts(result.units),
             "hybrid_duplicates": len(result.hybrid_duplicates),
             "potentially_unused": len(result.potentially_unused),
             "raw_traditional_duplicates": len(result.traditional_duplicates),
@@ -484,7 +544,13 @@ def print_check_json_combined(result: AnalysisResult, *, show_all: bool) -> None
             "filtered_raw_duplicates": result.filtered_raw_duplicates,
             "semantic_fallback": result.semantic_fallback,
             "semantic_fallback_reason": result.semantic_fallback_reason,
+            "extraction_diagnostics": len(result.extraction_diagnostics),
+            "unused_supported_languages": list(result.unused_supported_languages),
+            "unused_excluded_units": result.unused_excluded_units,
         },
+        "extraction_diagnostics": [
+            _diagnostic_to_dict(diagnostic) for diagnostic in result.extraction_diagnostics
+        ],
         "hybrid_duplicates": [
             _hybrid_dup_to_dict(duplicate) for duplicate in result.hybrid_duplicates
         ],
@@ -507,12 +573,19 @@ def print_check_json_raw(result: AnalysisResult) -> None:
         "analysis_mode": result.analysis_mode,
         "summary": {
             "total_units": len(result.units),
+            "units_by_language": _language_counts(result.units),
             "traditional_duplicates": len(result.traditional_duplicates),
             "semantic_duplicates": len(result.semantic_duplicates),
             "potentially_unused": len(result.potentially_unused),
             "semantic_fallback": result.semantic_fallback,
             "semantic_fallback_reason": result.semantic_fallback_reason,
+            "extraction_diagnostics": len(result.extraction_diagnostics),
+            "unused_supported_languages": list(result.unused_supported_languages),
+            "unused_excluded_units": result.unused_excluded_units,
         },
+        "extraction_diagnostics": [
+            _diagnostic_to_dict(diagnostic) for diagnostic in result.extraction_diagnostics
+        ],
         "traditional_duplicates": [
             _dup_to_dict(duplicate) for duplicate in result.traditional_duplicates
         ],
@@ -560,8 +633,22 @@ def _build_duplicates_table(*, hybrid: bool = False) -> Table:
     return table
 
 
+def _syntax_lexer(unit: CodeUnit) -> str:
+    """Return a stable Pygments lexer alias for a code unit."""
+    dialect = unit.dialect or unit.language
+    return {
+        "python": "python",
+        "c": "c",
+        "rust": "rust",
+        "javascript": "javascript",
+        "jsx": "javascript",
+        "typescript": "typescript",
+        "tsx": "typescript",
+    }.get(dialect, "text")
+
+
 def _print_source_panels(unit_a: CodeUnit, unit_b: CodeUnit) -> None:
-    """Print syntax-highlighted side-by-side source snippets for two units.
+    """Print syntax-highlighted source snippets for two units.
 
     :param unit_a: First code unit.
     :param unit_b: Second code unit.
@@ -569,14 +656,14 @@ def _print_source_panels(unit_a: CodeUnit, unit_b: CodeUnit) -> None:
     """
     console.print(
         Panel(
-            Syntax(truncate_source(unit_a.source), "python", theme="monokai"),
+            Syntax(truncate_source(unit_a.source), _syntax_lexer(unit_a), theme="monokai"),
             title=f"[cyan]{unit_a.qualified_name}[/cyan]",
             border_style="dim",
         )
     )
     console.print(
         Panel(
-            Syntax(truncate_source(unit_b.source), "python", theme="monokai"),
+            Syntax(truncate_source(unit_b.source), _syntax_lexer(unit_b), theme="monokai"),
             title=f"[cyan]{unit_b.qualified_name}[/cyan]",
             border_style="dim",
         )
@@ -774,6 +861,18 @@ def _add_common_analysis_options(
 
     options = [
         click.option(
+            "--language",
+            "languages",
+            multiple=True,
+            type=str,
+            metavar="LANGUAGE",
+            help=(
+                "Limit extraction to a language (repeat for multiple). "
+                "Aliases such as py, rs, js, jsx, ts, and tsx are accepted. "
+                "Omit to auto-detect all supported languages."
+            ),
+        ),
+        click.option(
             "--no-private",
             is_flag=True,
             help="Exclude private functions/classes",
@@ -912,10 +1011,16 @@ def _add_common_analysis_options(
 
 @click.group(
     context_settings={"help_option_names": ["-h", "--help"]},
+    no_args_is_help=False,
+    invoke_without_command=True,
 )
 @click.version_option(__version__, prog_name="codedupes")
-def cli() -> None:
-    """Detect duplicate and unused Python code using AST and semantic analysis."""
+@click.pass_context
+def cli(ctx: click.Context) -> None:
+    """Detect duplicate and unused source code using structural and semantic analysis."""
+    if ctx.invoked_subcommand is None:
+        click.echo(ctx.get_help())
+        ctx.exit(2)
 
 
 @cli.command("check", help="Run duplicate + unused analysis")
@@ -949,7 +1054,7 @@ def cli() -> None:
 @click.option(
     "--traditional-only",
     is_flag=True,
-    help="Only run traditional (AST/token) analysis",
+    help="Only run structural/token analysis",
 )
 @click.option(
     "--allow-semantic-fallback",
@@ -1012,6 +1117,7 @@ def check_command(
     show_all: bool,
     show_source: bool,
     full_table: bool,
+    languages: tuple[str, ...],
     no_private: bool,
     min_statements: int,
     semantic_unit_type: tuple[str, ...],
@@ -1054,6 +1160,7 @@ def check_command(
     :param show_all: Emit raw duplicate lists in combined mode.
     :param show_source: Show source code snippets for duplicate pairs.
     :param full_table: Show all table rows.
+    :param languages: Canonical language filters; empty means auto-detect.
     :param no_private: Exclude private symbols.
     :param min_statements: Minimum code body statement lines for semantic candidate code units.
     :param semantic_unit_type: Unit type(s) eligible for semantic embedding.
@@ -1173,6 +1280,7 @@ def check_command(
         config = AnalyzerConfig(
             exclude_patterns=list(exclude) or None,
             include_private=not no_private,
+            languages=languages or None,
             jaccard_threshold=traditional_thresh,
             semantic_threshold=semantic_thresh,
             model_name=model,
@@ -1236,7 +1344,7 @@ def check_command(
                     )
                     print_duplicates(
                         result.traditional_duplicates,
-                        "Traditional Duplicates (Raw AST/Token/Jaccard)",
+                        "Traditional Duplicates (Raw Structural/Token/Jaccard)",
                         show_source=show_source,
                         max_items=table_max_items,
                     )
@@ -1314,6 +1422,7 @@ def search_command(
     threshold: float | None,
     semantic_threshold: float | None,
     semantic_task: str,
+    languages: tuple[str, ...],
     no_private: bool,
     min_statements: int,
     semantic_unit_type: tuple[str, ...],
@@ -1344,6 +1453,7 @@ def search_command(
     :param threshold: Shared threshold override.
     :param semantic_threshold: Semantic threshold override.
     :param semantic_task: Semantic task used for search.
+    :param languages: Canonical language filters; empty means auto-detect.
     :param no_private: Exclude private symbols.
     :param min_statements: Minimum code body statement lines for semantic candidate code units.
     :param semantic_unit_type: Unit type(s) eligible for semantic embedding.
@@ -1381,6 +1491,7 @@ def search_command(
         config = AnalyzerConfig(
             exclude_patterns=list(exclude) or None,
             include_private=not no_private,
+            languages=languages or None,
             semantic_threshold=_resolve_search_threshold(threshold, semantic_threshold),
             model_name=model,
             semantic_task=semantic_task,
@@ -1482,6 +1593,18 @@ def info_command() -> None:
     click.echo(f"Default min_statements for semantic: {DEFAULT_MIN_STATEMENTS}")
     click.echo(f"Default output width: {DEFAULT_OUTPUT_WIDTH}")
     click.echo("Default combined semantic fallback: disabled")
+    click.echo(f"Supported languages: {', '.join(SUPPORTED_LANGUAGES)}")
+    click.echo("Unused-code analysis languages: python")
+    click.echo("Tree-sitter grammar packages:")
+    for status in get_grammar_statuses():
+        installed = status.installed_version or "not installed"
+        state = "ready" if status.available else "unavailable"
+        click.echo(
+            f"  - {status.dialect}: {status.package}=={status.pinned_version} "
+            f"(installed={installed}, {state})"
+        )
+        if status.error:
+            click.echo(f"      {status.error}")
     click.echo("Default built-in exclude globs:")
     for pattern in DEFAULT_EXCLUDE_PATTERNS:
         click.echo(f"  - {pattern}")

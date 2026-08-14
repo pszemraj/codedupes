@@ -121,6 +121,15 @@ See [Model profiles](model-profiles.md) for model-specific check and search thre
 
 ## Scope Control
 
+Auto-detection includes Python, C, Rust, JavaScript/JSX, and TypeScript/TSX. Restrict a mixed repository with a repeatable language filter:
+
+```bash
+codedupes check . --language python --language rust
+codedupes search . "validate session token" --language js --language ts
+```
+
+Explicit `--language c` opts `.h` files into C parsing. Without an explicit filter, headers are accepted only when C source is present and no C++ source/header extension is detected. TypeScript declaration files are always skipped. See [Polyglot language support](polyglot-languages.md).
+
 Exclude private names:
 
 ```bash
@@ -165,7 +174,7 @@ codedupes check ./src --strict-unused
 codedupes check ./src --no-unused
 ```
 
-See [Analysis defaults](analysis-defaults.md#potentially-unused-defaults) for the reference graph, suppressions, strict-mode behavior, and limitations.
+Unused-code analysis is Python-only; mixed-language runs report how many non-Python units were excluded. See [Analysis defaults](analysis-defaults.md#potentially-unused-defaults) for the Python reference graph, suppressions, strict-mode behavior, and limitations.
 
 ## Reduce Semantic Noise In Test Suites
 

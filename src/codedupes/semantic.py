@@ -1724,6 +1724,9 @@ def get_code_unit_statement_count(unit: CodeUnit) -> int:
     :param unit: Unit to measure.
     :return: Number of executable statements.
     """
+    if unit.statement_count is not None:
+        return unit.statement_count
+
     if not unit.source:
         return 0
 
@@ -3123,28 +3126,33 @@ def find_semantic_duplicates(
     threshold: float,
     exclude_exact: set[tuple[str, str]] | None = None,
 ) -> list[DuplicatePair]:
-    """Find semantically similar code units via embedding cosine similarity.
+    """Find same-language semantic duplicate candidates.
+
+    Query search intentionally spans languages, but duplicate claims are
+    calibrated within one language. Partitioning before the matrix multiply also
+    avoids paying for cross-language pairs that the product never reports.
 
     :param units: Candidate units in the same order as ``embeddings``.
     :param embeddings: Embedding matrix.
     :param threshold: Minimum cosine similarity.
     :param exclude_exact: Pairs to exclude from semantic output.
-    :return: Similar pairs sorted by confidence.
+    :return: Similar same-language pairs sorted by confidence.
     """
     exclude_exact = exclude_exact or set()
-    n = len(units)
+    groups: dict[str, list[int]] = {}
+    for index, unit in enumerate(units):
+        groups.setdefault(unit.language, []).append(index)
 
-    logger.info(f"Computing pairwise similarities for {n} units")
+    pair_count = sum(len(indices) * (len(indices) - 1) // 2 for indices in groups.values())
+    logger.info(
+        "Computing same-language pairwise similarities for "
+        f"{len(units)} units ({pair_count} candidate pairs)"
+    )
 
-    duplicates = []
+    duplicates: list[DuplicatePair] = []
 
     def _types_compatible(unit_a: CodeUnit, unit_b: CodeUnit) -> bool:
-        """Check whether unit kinds are compatible for semantic comparison.
-
-        :param unit_a: First unit.
-        :param unit_b: Second unit.
-        :return: ``True`` when types are comparable.
-        """
+        """Check whether unit kinds are compatible for semantic comparison."""
         if unit_a.unit_type == unit_b.unit_type:
             return True
         function_like = {"function", "method"}
@@ -3154,51 +3162,45 @@ def find_semantic_duplicates(
         )
 
     chunk_size = 500
-    for i in range(0, n, chunk_size):
-        end_i = min(i + chunk_size, n)
-        chunk_embeddings = embeddings[i:end_i]
+    for indices in groups.values():
+        group_embeddings = embeddings[indices]
+        group_size = len(indices)
+        for group_i in range(0, group_size, chunk_size):
+            end_i = min(group_i + chunk_size, group_size)
+            chunk_embeddings = group_embeddings[group_i:end_i]
+            similarities = chunk_embeddings @ group_embeddings.T
 
-        similarities = chunk_embeddings @ embeddings.T
+            for local_idx in range(end_i - group_i):
+                group_idx = group_i + local_idx
+                global_idx = indices[group_idx]
+                unit_a = units[global_idx]
 
-        for local_idx in range(end_i - i):
-            global_idx = i + local_idx
-            unit_a = units[global_idx]
+                for group_j in range(group_idx + 1, group_size):
+                    sim = float(similarities[local_idx, group_j])
 
-            for j in range(global_idx + 1, n):
-                sim = float(similarities[local_idx, j])
+                    # Threshold first so the common below-threshold pair skips
+                    # further Python work. NaN/+inf still hit the finite guard.
+                    if sim < threshold or not np.isfinite(sim):
+                        continue
 
-                # Threshold first so the common below-threshold pair skips the
-                # numpy scalar call; NaN fails ``<`` and +inf exceeds it, so
-                # both still land on the isfinite guard instead of slipping
-                # through as reported duplicates.
-                if sim < threshold or not np.isfinite(sim):
-                    continue
+                    unit_b = units[indices[group_j]]
+                    if not _types_compatible(unit_a, unit_b):
+                        continue
+                    if unit_a.overlaps(unit_b):
+                        continue
+                    if ordered_pair_key(unit_a, unit_b) in exclude_exact:
+                        continue
 
-                unit_b = units[j]
-
-                if not _types_compatible(unit_a, unit_b):
-                    continue
-
-                if unit_a.file_path == unit_b.file_path and not (
-                    unit_a.end_lineno < unit_b.lineno or unit_b.end_lineno < unit_a.lineno
-                ):
-                    continue
-
-                pair_key = ordered_pair_key(unit_a, unit_b)
-                if pair_key in exclude_exact:
-                    continue
-
-                duplicates.append(
-                    DuplicatePair(
-                        unit_a=unit_a,
-                        unit_b=unit_b,
-                        similarity=float(sim),
-                        method="semantic",
+                    duplicates.append(
+                        DuplicatePair(
+                            unit_a=unit_a,
+                            unit_b=unit_b,
+                            similarity=sim,
+                            method="semantic",
+                        )
                     )
-                )
 
-    duplicates.sort(key=lambda x: x.similarity, reverse=True)
-
+    duplicates.sort(key=lambda duplicate: duplicate.similarity, reverse=True)
     logger.info(f"Found {len(duplicates)} semantic duplicates above threshold {threshold}")
     return duplicates
 

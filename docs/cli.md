@@ -1,6 +1,6 @@
 # CLI Reference
 
-See [Output and exit codes](output.md) for JSON and process status, [Analysis defaults](analysis-defaults.md) for heuristics, [Model profiles](model-profiles.md) for semantic defaults, [Accelerators](accelerators.md) for device behavior, and [Embedding cache](caching.md) for persistent cache behavior.
+See [Output and exit codes](output.md) for JSON and process status, [Polyglot language support](polyglot-languages.md) for extraction semantics, [Analysis defaults](analysis-defaults.md) for heuristics, [Model profiles](model-profiles.md) for semantic defaults, [Accelerators](accelerators.md) for device behavior, and [Embedding cache](caching.md) for persistent cache behavior.
 
 ## `codedupes check <path>`
 
@@ -57,6 +57,7 @@ Options, in addition to the [shared options](#options-shared-by-check-and-search
 
 ## Options shared by `check` and `search`
 
+- `--language <name>`: Restrict extraction to a language; repeat for multiple languages. Canonical values are `python`, `c`, `rust`, `javascript`, and `typescript`; aliases `py`, `rs`, `js`, `jsx`, `ts`, and `tsx` are accepted. Omit the option to auto-detect all supported languages. Explicit `--language c` also opts ambiguous `.h` files into C parsing.
 - `--semantic-threshold <float>`: Override the semantic threshold only
 - `--semantic-unit-type <name>`: Semantic candidate unit type (`function`, `method`, `class`); repeat option to include multiple types (default `function, method`). In default combined `check` mode this also narrows traditional duplicate scope.
 - `--min-statements <int>`: Minimum statement count for semantic candidate code units (default `3`). In default combined `check` mode this also narrows traditional duplicate scope.
@@ -79,7 +80,7 @@ Options, in addition to the [shared options](#options-shared-by-check-and-search
 
 ## `codedupes info`
 
-Print version and runtime versions, the effective default model and pinned revision, the built-in alias table, per-task semantic thresholds, analysis defaults (minimum statements, exclude globs, output width), resolved device capabilities, MPS memory statistics when available, whether MLX is already loaded in the process, CPU identity with its capability-gated bfloat16 verdict and the effective CPU bfloat16 inference policy (native ISA, mkldnn availability, and the experimental `CODEDUPES_CPU_BF16=1` opt-in, see [Accelerators](accelerators.md#precision-and-metal-environment-variables)), and an embedding-cache summary (path, entry count, size on disk).
+Print version and runtime versions, supported languages and exact Tree-sitter package readiness, the effective default model and pinned revision, the built-in alias table, per-task semantic thresholds, analysis defaults (minimum statements, exclude globs, output width), resolved device capabilities, MPS memory statistics when available, whether MLX is already loaded in the process, CPU identity with its capability-gated bfloat16 verdict and the effective CPU bfloat16 inference policy (native ISA, mkldnn availability, and the experimental `CODEDUPES_CPU_BF16=1` opt-in, see [Accelerators](accelerators.md#precision-and-metal-environment-variables)), and an embedding-cache summary (path, entry count, size on disk).
 
 ## `codedupes cache info`
 
@@ -97,6 +98,9 @@ Clear all cached embeddings or only entries for one model. See [Embedding cache]
 - `--output-width` must be at least `80`
 - `--show-all` and `--allow-semantic-fallback` are only valid in default combined `check` mode (not with `--semantic-only` or `--traditional-only`)
 - Default combined `check` fails if semantic backend fails; opt in to degraded combined fallback with `--allow-semantic-fallback`
+- Missing/incompatible Tree-sitter grammars fail explicitly. Syntax recovery inside one source file is reported through extraction diagnostics, and affected units are skipped.
+- Duplicate comparison is same-language by default. Semantic search can retrieve across every selected language.
+- Unused-code analysis evaluates Python units only and reports the number of non-Python units excluded.
 - In `--json` mode, output is machine-parseable JSON only; warning text is surfaced via `summary.semantic_fallback` and `summary.semantic_fallback_reason` when fallback happens.
 - `--json` rejects rich-only display controls: `--show-source`, `--full-table`, `--verbose`, and explicit `--output-width`
 - `--semantic-only` and `--traditional-only` bypass hybrid synthesis and show raw method outputs

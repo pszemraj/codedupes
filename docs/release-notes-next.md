@@ -1,5 +1,15 @@
 # Next Release Engineering Notes
 
+## Polyglot extraction and duplicate analysis
+
+- Added first-class C, Rust, JavaScript/JSX, and TypeScript/TSX extraction behind the existing `CodeExtractor` facade. Python remains on CPython AST; the new languages use exact-pinned official Tree-sitter packages with no runtime grammar download or line-chunk fallback.
+- Added canonical language/dialect/native-kind and byte-range metadata to `CodeUnit`, plus backend-computed structural fingerprints, token fingerprints, identifier sets, calls, and statement counts so downstream analysis never reparses non-Python source as Python.
+- Added repeatable `--language` filtering with `py`, `rs`, `js`, `jsx`, `ts`, and `tsx` aliases. Automatic `.h` parsing is conservative, and TypeScript declaration files are excluded.
+- Traditional exact/Jaccard matching and semantic duplicate checking are same-language by default. Semantic search remains cross-language.
+- Unused-code analysis remains explicitly Python-only; mixed-language reports surface the number of excluded non-Python units.
+- Added language counts, extraction diagnostics, parser status reporting, and additive language/range fields in JSON output.
+- Added parser-independent fingerprint/registry tests and grammar-gated end-to-end extraction fixtures for every new dialect.
+
 ## Breaking baseline change
 
 - Minimum PyTorch version is now `2.13.0`; the supported range is `>=2.13.0,<3`. Dev and rc builds of an in-range release (for example `2.13.0.dev20250101`) are accepted.

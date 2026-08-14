@@ -1,16 +1,24 @@
-"""AST-based extraction of code units from Python files."""
+"""Language-aware extraction of functions, methods, and classes."""
 
 from __future__ import annotations
 
 import ast
+import builtins
 import copy
 import hashlib
+import keyword
 import logging
 import os
 from collections.abc import Iterator
 from pathlib import Path
 
-from codedupes.models import CodeUnit, CodeUnitType
+from codedupes.languages.registry import (
+    get_backend,
+    language_for_path,
+    normalize_languages,
+    repository_allows_c_headers,
+)
+from codedupes.models import CodeUnit, CodeUnitType, ExtractionDiagnostic
 
 logger = logging.getLogger(__name__)
 
@@ -48,8 +56,11 @@ DEFAULT_EXCLUDE_DIR_NAMES = {
 
 DEFAULT_EXCLUDE_PATTERNS = [
     "**/test_*",
-    "**/*_test.py",
+    "**/*_test.*",
+    "**/*.test.*",
+    "**/*.spec.*",
     "**/tests/**",
+    "**/__tests__/**",
 ]
 
 
@@ -340,8 +351,84 @@ def get_exported_names(tree: ast.Module) -> set[str]:
     return set()
 
 
+class _PythonStatementCounter(ast.NodeVisitor):
+    """Count executable Python statements without descending into nested scopes."""
+
+    def __init__(self) -> None:
+        self.count = 0
+
+    def generic_visit(self, node: ast.AST) -> None:
+        if isinstance(node, ast.stmt):
+            self.count += 1
+        super().generic_visit(node)
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        self.count += 1
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        self.count += 1
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        self.count += 1
+
+
+def _count_python_statements(
+    node: ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef,
+) -> int:
+    body = list(node.body)
+    if (
+        body
+        and isinstance(body[0], ast.Expr)
+        and isinstance(body[0].value, ast.Constant)
+        and isinstance(body[0].value.value, str)
+    ):
+        body = body[1:]
+    counter = _PythonStatementCounter()
+    for statement in body:
+        counter.visit(statement)
+    return counter.count
+
+
+def _python_identifiers(node: ast.AST) -> frozenset[str]:
+    ignored = set(keyword.kwlist) | set(dir(builtins))
+    identifiers: set[str] = set()
+    for child in ast.walk(node):
+        if isinstance(child, ast.Name):
+            identifiers.add(child.id)
+        elif isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            identifiers.add(child.name)
+        elif isinstance(child, ast.arg):
+            identifiers.add(child.arg)
+    return frozenset(
+        identifier
+        for identifier in identifiers
+        if identifier and identifier not in ignored and not identifier.isdigit()
+    )
+
+
+def _python_byte_range(
+    source: str,
+    node: ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef,
+) -> tuple[int, int, int, int]:
+    """Return the byte range for the line-oriented Python snippet we emit.
+
+    Python extraction historically returns complete source lines, including any
+    indentation and the final line ending.  Keep that compatibility behavior and
+    make the range metadata describe the exact same bytes rather than the narrower
+    AST column span.
+    """
+    encoded_lines = source.encode("utf-8").splitlines(keepends=True)
+    start_line_index = max(0, node.lineno - 1)
+    end_line_index = max(start_line_index, (node.end_lineno or node.lineno) - 1)
+    start_byte = sum(len(line) for line in encoded_lines[:start_line_index])
+    end_byte = sum(len(line) for line in encoded_lines[: end_line_index + 1])
+    final_line = encoded_lines[end_line_index] if encoded_lines else b""
+    end_column = len(final_line.rstrip(b"\r\n"))
+    return start_byte, end_byte, 0, end_column
+
+
 class CodeExtractor:
-    """Extract all code units from a directory of Python files."""
+    """Extract supported code units from a source tree or individual file."""
 
     def __init__(
         self,
@@ -349,6 +436,7 @@ class CodeExtractor:
         exclude_patterns: list[str] | None = None,
         include_private: bool = True,
         include_stubs: bool = False,
+        languages: tuple[str, ...] | list[str] | None = None,
     ) -> None:
         """Construct an extractor for a project root.
 
@@ -356,11 +444,16 @@ class CodeExtractor:
         :param exclude_patterns: Optional path glob patterns.
         :param include_private: Include private names when true.
         :param include_stubs: Include ``.pyi`` files.
+        :param languages: Optional canonical/alias language filter. Auto-detects
+            supported source files when omitted.
         """
         self.root = root.resolve()
         self.exclude_patterns = exclude_patterns or DEFAULT_EXCLUDE_PATTERNS.copy()
         self.include_private = include_private
         self.include_stubs = include_stubs
+        self.languages = normalize_languages(languages)
+        self.diagnostics: list[ExtractionDiagnostic] = []
+        self._c_headers_allowed: bool | None = None
 
     @staticmethod
     def _is_excluded_dir_name(name: str) -> bool:
@@ -406,21 +499,66 @@ class CodeExtractor:
             parts[-1] = Path(parts[-1]).stem
         return ".".join(parts) if parts else ""
 
-    def extract_from_file(self, file_path: Path) -> Iterator[CodeUnit]:
-        """Yield all code units from a single file.
+    def _allow_c_headers(self) -> bool:
+        """Resolve the repository-level C-header ambiguity policy once."""
+        if self._c_headers_allowed is None:
+            self._c_headers_allowed = repository_allows_c_headers(self.root, self.languages)
+        return self._c_headers_allowed
 
-        :param file_path: Source file to parse.
-        :return: Iterator over discovered code units.
+    def extract_from_file(self, file_path: Path) -> Iterator[CodeUnit]:
+        """Yield all supported code units from a single file.
+
+        Python keeps the CPython AST backend. C, Rust, JavaScript, and TypeScript
+        are routed to pinned Tree-sitter grammar packages. Missing grammars are a
+        hard configuration error; codedupes never silently falls back to line
+        chunking.
         """
+        file_path = file_path.resolve()
         if self._should_exclude(file_path):
             logger.debug(f"Skipping excluded file {file_path}")
             return
 
+        selection = language_for_path(
+            file_path,
+            include_stubs=self.include_stubs or file_path.suffix.lower() == ".pyi",
+            selected_languages=self.languages,
+            allow_c_header=self._allow_c_headers(),
+        )
+        if selection is None:
+            return
+
+        if selection.language != "python":
+            backend = get_backend(
+                root=self.root,
+                selection=selection,
+                include_private=self.include_private,
+            )
+            result = backend.extract_file(file_path)
+            self.diagnostics.extend(result.diagnostics)
+            yield from result.units
+            return
+
+        yield from self._extract_python_from_file(file_path)
+
+    def _extract_python_from_file(self, file_path: Path) -> Iterator[CodeUnit]:
+        """Yield Python units using the original CPython AST implementation."""
         try:
             source = file_path.read_text(encoding="utf-8")
             tree = ast.parse(source, filename=str(file_path))
-        except (SyntaxError, UnicodeDecodeError) as e:
-            logger.warning(f"Could not parse {file_path}: {e}")
+        except (SyntaxError, UnicodeDecodeError) as exc:
+            message = f"Could not parse {file_path}: {exc}"
+            logger.warning(message)
+            self.diagnostics.append(
+                ExtractionDiagnostic(
+                    file_path=file_path,
+                    language="python",
+                    message=str(exc),
+                    severity="warning",
+                    code="parse-error",
+                    lineno=getattr(exc, "lineno", None),
+                    end_lineno=getattr(exc, "end_lineno", None),
+                )
+            )
             return
 
         module_name = self._get_module_name(file_path)
@@ -512,6 +650,7 @@ class CodeExtractor:
 
         ast_hash = compute_ast_hash(node)
         token_hash = compute_token_hash(func_source)
+        start_byte, end_byte, start_column, end_column = _python_byte_range(source, node)
 
         yield CodeUnit(
             name=name,
@@ -522,11 +661,22 @@ class CodeExtractor:
             end_lineno=node.end_lineno or node.lineno,
             source=func_source,
             docstring=extract_docstring(node),
+            language="python",
+            dialect="python",
+            native_kind=type(node).__name__,
+            start_byte=start_byte,
+            end_byte=end_byte,
+            start_column=start_column,
+            end_column=end_column,
+            has_body=True,
+            statement_count=_count_python_statements(node),
+            identifiers=_python_identifiers(node),
             calls=call_visitor.calls,
             is_public=not name.startswith("_"),
             is_dunder=name.startswith("__") and name.endswith("__"),
             is_exported=name in exported,
             _ast_hash=ast_hash,
+            _structural_hash=ast_hash,
             _token_hash=token_hash,
         )
 
@@ -555,6 +705,7 @@ class CodeExtractor:
         class_source = "".join(lines[node.lineno - 1 : node.end_lineno])
         ast_hash = compute_ast_hash(node)
         token_hash = compute_token_hash(class_source)
+        start_byte, end_byte, start_column, end_column = _python_byte_range(source, node)
 
         yield CodeUnit(
             name=class_name,
@@ -565,44 +716,56 @@ class CodeExtractor:
             end_lineno=node.end_lineno or node.lineno,
             source=class_source,
             docstring=extract_docstring(node),
+            language="python",
+            dialect="python",
+            native_kind=type(node).__name__,
+            start_byte=start_byte,
+            end_byte=end_byte,
+            start_column=start_column,
+            end_column=end_column,
+            has_body=True,
+            statement_count=_count_python_statements(node),
+            identifiers=_python_identifiers(node),
             is_public=not class_name.startswith("_"),
             is_dunder=False,
             is_exported=class_name in exported,
             _ast_hash=ast_hash,
+            _structural_hash=ast_hash,
             _token_hash=token_hash,
         )
 
     def extract_all(self) -> list[CodeUnit]:
-        """Extract all code units from the configured directory tree.
-
-        :return: List of extracted code units.
-        """
+        """Extract all supported code units from the configured directory tree."""
         units: list[CodeUnit] = []
-        valid_suffixes = {".py"}
-        if self.include_stubs:
-            valid_suffixes.add(".pyi")
-
         seen: set[Path] = set()
+        allow_c_header = self._allow_c_headers()
+
         for dirpath, dirnames, filenames in os.walk(self.root, followlinks=False):
             dirnames[:] = [name for name in dirnames if not self._is_excluded_dir_name(name)]
             current_dir = Path(dirpath)
 
             for filename in filenames:
-                if Path(filename).suffix not in valid_suffixes:
+                source_file = current_dir / filename
+                selection = language_for_path(
+                    source_file,
+                    include_stubs=self.include_stubs,
+                    selected_languages=self.languages,
+                    allow_c_header=allow_c_header,
+                )
+                if selection is None:
                     continue
 
-                py_file = current_dir / filename
                 try:
-                    resolved = py_file.resolve()
+                    resolved = source_file.resolve()
                 except OSError:
-                    resolved = py_file
+                    resolved = source_file
                 if resolved in seen:
                     continue
                 seen.add(resolved)
 
-                if self._should_exclude(py_file):
+                if self._should_exclude(source_file):
                     continue
 
-                units.extend(self.extract_from_file(py_file))
+                units.extend(self.extract_from_file(source_file))
 
         return units

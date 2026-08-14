@@ -40,11 +40,37 @@ config = AnalyzerConfig(
     run_unused=False,
     semantic_unit_types=("function", "method", "class"),
     min_semantic_statements=1,
+    languages=("rust", "typescript"),
 )
 
 analyzer = CodeAnalyzer(config)
 result = analyzer.analyze("./src")
 ```
+
+## Language selection and extraction diagnostics
+
+Omit `languages` to auto-detect every supported source type, or pass canonical names/aliases through `AnalyzerConfig`:
+
+```python
+from codedupes import AnalyzerConfig, CodeAnalyzer
+
+analyzer = CodeAnalyzer(
+    AnalyzerConfig(
+        languages=("python", "rs", "ts"),
+        run_traditional=True,
+        run_semantic=False,
+        run_unused=True,
+    )
+)
+result = analyzer.analyze(".")
+
+for diagnostic in result.extraction_diagnostics:
+    print(diagnostic.code, diagnostic.language, diagnostic.file_path, diagnostic.message)
+
+print("non-Python units excluded from unused analysis:", result.unused_excluded_units)
+```
+
+`run_unused=True` remains valid for a mixed tree, but only Python units enter the reference graph. Traditional and semantic duplicate checking are same-language by default; semantic query search remains cross-language.
 
 ## Semantic Query Search
 
@@ -118,10 +144,15 @@ quiet_dependency_loggers()  # or quiet_dependency_loggers(logging.ERROR)
 - `AnalysisResult.hybrid_duplicates`: synthesized default duplicate candidates
 - `AnalysisResult.traditional_duplicates`: raw traditional duplicates (diagnostics)
 - `AnalysisResult.semantic_duplicates`: raw semantic duplicates (diagnostics)
-- `AnalysisResult.potentially_unused`: heuristic unused candidates
+- `AnalysisResult.potentially_unused`: Python-only heuristic unused candidates
+- `AnalysisResult.extraction_diagnostics`: recoverable parser diagnostics and skipped-unit reasons
+- `AnalysisResult.unused_excluded_units`: non-Python units intentionally excluded from unused analysis
 - `AnalysisResult.all_duplicates`: hybrid duplicates in combined mode; raw duplicates in single-method mode
 - `AnalysisResult.analysis_mode`: `"combined"`, `"traditional"`, `"semantic"`, or `"none"`
-- `CodeUnit.uid`: definition identity (`path` and qualified name)
+- `CodeUnit.uid`: in-run definition identity (Python preserves the historical path/qualified-name form; non-Python units also include language and start byte)
+- `CodeUnit.language`, `dialect`, and `native_kind`: canonical language plus parser-specific syntax kind
+- `CodeUnit.start_byte`/`end_byte`: exact byte range used to slice the emitted source
+- `CodeUnit.structural_hash`, `identifiers`, and `statement_count`: backend-computed language-neutral features
 
 ## Notes
 

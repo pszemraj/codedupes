@@ -27,18 +27,23 @@ def _find_exact_duplicates(
     :param method: Duplicate classification label.
     :return: Exact duplicate pairs for the selected hash field.
     """
-    by_hash: dict[str, list[CodeUnit]] = defaultdict(list)
+    by_hash: dict[tuple[str, CodeUnitType, str], list[CodeUnit]] = defaultdict(list)
 
     for unit in units:
         value = getattr(unit, hash_attr, None)
         if value:
-            by_hash[value].append(unit)
+            # Exact structural/token equality is intentionally same-language and
+            # same-unit-kind. A C function and Rust function cannot become an
+            # "exact duplicate" merely because their canonical token streams align.
+            by_hash[(unit.language, unit.unit_type, value)].append(unit)
 
     duplicates = []
     for group in by_hash.values():
         if len(group) <= 1:
             continue
         for a, b in combinations(group, 2):
+            if a.overlaps(b):
+                continue
             duplicates.append(DuplicatePair(unit_a=a, unit_b=b, similarity=1.0, method=method))
 
     return duplicates
@@ -48,14 +53,15 @@ def find_exact_pair_keys(units: list[CodeUnit]) -> set[tuple[str, str]]:
     """Return ordered uid pair keys for every exact-duplicate pair.
 
     Uses the same predicate as :func:`run_traditional_analysis` exact detection:
-    two units are exact duplicates when they share ``_ast_hash`` or ``_token_hash``.
+    two same-language, same-kind units are exact duplicates when they share
+    a structural or token fingerprint.
 
     :param units: Candidate units to compare.
     :return: Ordered uid pair keys covering all exact-duplicate pairs.
     """
-    pairs = _find_exact_duplicates(units, "_ast_hash", "ast_hash") + _find_exact_duplicates(
-        units, "_token_hash", "token_hash"
-    )
+    pairs = _find_exact_duplicates(
+        units, "structural_hash", "ast_hash"
+    ) + _find_exact_duplicates(units, "_token_hash", "token_hash")
     return {ordered_pair_key(pair.unit_a, pair.unit_b) for pair in pairs}
 
 
@@ -126,15 +132,25 @@ def find_near_duplicates_jaccard(
     :param threshold: Jaccard cutoff.
     :return: Near-duplicate pairs above threshold.
     """
-    identifier_sets = {unit.uid: extract_identifiers(unit.source) for unit in units}
+    identifier_sets = {
+        unit.uid: (
+            set(unit.identifiers)
+            if unit.identifiers or unit.language != "python"
+            else extract_identifiers(unit.source)
+        )
+        for unit in units
+    }
+
+    # Candidate blocking removes meaningless mixed-language/type comparisons
+    # before the quadratic pair loop.
+    groups: dict[tuple[str, CodeUnitType], list[CodeUnit]] = defaultdict(list)
+    for unit in units:
+        groups[(unit.language, unit.unit_type)].append(unit)
 
     duplicates = []
-    for i, a in enumerate(units):
-        for b in units[i + 1 :]:
-            # Skip if same file and overlapping lines (parent/child)
-            if a.file_path == b.file_path and not (
-                a.end_lineno < b.lineno or b.end_lineno < a.lineno
-            ):
+    for group in groups.values():
+        for a, b in combinations(group, 2):
+            if a.overlaps(b):
                 continue
 
             set_a = identifier_sets[a.uid]
@@ -284,6 +300,10 @@ def build_reference_graph(units: list[CodeUnit], project_root: Path | None = Non
     :param project_root: Optional root for entry point resolution.
     :return: ``None``.
     """
+    units = [unit for unit in units if unit.language == "python"]
+    if not units:
+        return
+
     by_name: dict[str, list[CodeUnit]] = defaultdict(list)
     for unit in units:
         by_name[unit.name].append(unit)
@@ -374,6 +394,8 @@ def find_potentially_unused(units: list[CodeUnit], strict_unused: bool = False) 
     """
     unused = []
     for unit in units:
+        if unit.language != "python":
+            continue
         if not strict_unused and unit.unit_type == CodeUnitType.FUNCTION and unit.is_public:
             continue
 
@@ -421,7 +443,7 @@ def run_traditional_analysis(
     if compute_unused:
         build_reference_graph(units, project_root=project_root)
 
-    ast_dupes = _find_exact_duplicates(units, "_ast_hash", "ast_hash")
+    ast_dupes = _find_exact_duplicates(units, "structural_hash", "ast_hash")
     token_dupes = _find_exact_duplicates(units, "_token_hash", "token_hash")
     exact = _dedupe_duplicate_pairs(ast_dupes + token_dupes)
     logger.info(f"Found {len(exact)} exact duplicates")
