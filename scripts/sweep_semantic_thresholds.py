@@ -272,6 +272,8 @@ def _run_duplicate_sweep(
     min_statements: int,
     batch_size: int,
     device: str,
+    duplicate_start: float = DUPLICATE_THRESHOLD_START,
+    duplicate_stop: float = DUPLICATE_THRESHOLD_STOP,
 ) -> ModelSweep:
     profile = resolve_model_profile(model_name)
     analyzer = CodeAnalyzer(
@@ -279,7 +281,7 @@ def _run_duplicate_sweep(
             model_name=model_name,
             revision=revision,
             semantic_task=DEFAULT_CHECK_SEMANTIC_TASK,
-            semantic_threshold=DUPLICATE_THRESHOLD_START,
+            semantic_threshold=duplicate_start,
             min_statements=min_statements,
             batch_size=batch_size,
             device=device,
@@ -296,7 +298,7 @@ def _run_duplicate_sweep(
     rows = _evaluate_thresholds(
         _duplicate_scored_pairs(result.semantic_duplicates),
         positive_pairs,
-        thresholds=_threshold_grid(DUPLICATE_THRESHOLD_START, DUPLICATE_THRESHOLD_STOP),
+        thresholds=_threshold_grid(duplicate_start, duplicate_stop),
     )
     selected = rows[0]
 
@@ -461,6 +463,20 @@ def main() -> int:
         help="Only sweep duplicate thresholds.",
     )
     parser.add_argument(
+        "--duplicate-start",
+        type=float,
+        default=DUPLICATE_THRESHOLD_START,
+        help="Duplicate-threshold grid floor; also the analyzer floor, so pairs "
+        "below it are never scored. Lower it for corpora whose positive pairs "
+        f"sit below the default {DUPLICATE_THRESHOLD_START:.2f}.",
+    )
+    parser.add_argument(
+        "--duplicate-stop",
+        type=float,
+        default=DUPLICATE_THRESHOLD_STOP,
+        help="Duplicate-threshold grid ceiling.",
+    )
+    parser.add_argument(
         "--json-out",
         type=Path,
         default=Path("test_fixtures/hybrid_tuning/semantic_threshold_report.json"),
@@ -494,6 +510,8 @@ def main() -> int:
                 min_statements=args.min_statements,
                 batch_size=args.batch_size,
                 device=args.device,
+                duplicate_start=args.duplicate_start,
+                duplicate_stop=args.duplicate_stop,
             )
         )
         if not args.skip_search:
@@ -523,7 +541,7 @@ def main() -> int:
         json.dumps(
             _report_payload(
                 duplicate_results,
-                _threshold_grid(DUPLICATE_THRESHOLD_START, DUPLICATE_THRESHOLD_STOP),
+                _threshold_grid(args.duplicate_start, args.duplicate_stop),
             ),
             indent=2,
         )
