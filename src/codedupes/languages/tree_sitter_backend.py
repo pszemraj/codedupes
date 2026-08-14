@@ -975,10 +975,17 @@ class ECMAScriptBackend(TreeSitterBackend):
     def _is_exported(node: Any, source: bytes, name: str) -> bool:
         current = node
         while current is not None:
-            if getattr(current, "type", "") == "export_statement":
+            node_type = getattr(current, "type", "")
+            if node_type == "export_statement":
                 return True
+            if node_type == "statement_block":
+                # A function body is an export boundary: units nested inside an
+                # exported function are local scope, not module exports. A
+                # class_body is deliberately not a boundary so members of an
+                # exported class stay exported.
+                break
             current = getattr(current, "parent", None)
-        return name.startswith("exports.") or name.startswith("module.exports")
+        return name.startswith(("exports.", "module.exports"))
 
     def _function_spec(
         self,

@@ -206,6 +206,36 @@ def test_javascript_extracts_modern_stable_unit_forms(tmp_path: Path) -> None:
     assert names["sample.default"] == CodeUnitType.FUNCTION
 
 
+def test_javascript_export_marking_stops_at_function_boundaries(tmp_path: Path) -> None:
+    units = _extract(
+        tmp_path,
+        "sample.js",
+        """
+        export function outer() {
+            const inner = (value) => value + 1;
+            function nested(value) { return value + 2; }
+            return nested(inner(0));
+        }
+        export class Api {
+            run(value) { return value + 3; }
+            handle = (value) => value + 4;
+        }
+        const helper = (value) => value + 5;
+        exports.legacy = (value) => value + 6;
+        """,
+    )
+    exported = {unit.qualified_name: unit.is_exported for unit in units}
+
+    assert exported["sample.outer"] is True
+    assert exported["sample.outer.inner"] is False
+    assert exported["sample.outer.nested"] is False
+    assert exported["sample.Api"] is True
+    assert exported["sample.Api.run"] is True
+    assert exported["sample.Api.handle"] is True
+    assert exported["sample.helper"] is False
+    assert exported["sample.exports.legacy"] is True
+
+
 def test_typescript_excludes_signatures_and_ambient_declarations(tmp_path: Path) -> None:
     units = _extract(
         tmp_path,
