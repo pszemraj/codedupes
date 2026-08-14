@@ -84,6 +84,9 @@ def test_code_unit_statement_count_ignores_docstring(tmp_path: Path) -> None:
     """
     unit = extract_arithmetic_units(tmp_path)[0]
     unit.source = source
+    # The precomputed extraction-time count no longer matches the swapped
+    # source; force the Python AST fallback these tests exercise.
+    unit.statement_count = None
     assert get_code_unit_statement_count(unit) == 2
 
 
@@ -162,6 +165,9 @@ def test_statement_count_recurses_into_control_flow(
 ) -> None:
     unit = extract_arithmetic_units(tmp_path)[0]
     unit.source = source
+    # The precomputed extraction-time count no longer matches the swapped
+    # source; force the Python AST fallback these tests exercise.
+    unit.statement_count = None
     assert get_code_unit_statement_count(unit) == expected
 
 
@@ -181,6 +187,9 @@ def test_statement_count_stops_at_nested_scopes(tmp_path: Path) -> None:
     """
     unit = extract_arithmetic_units(tmp_path)[0]
     unit.source = source
+    # The precomputed extraction-time count no longer matches the swapped
+    # source; force the Python AST fallback these tests exercise.
+    unit.statement_count = None
     # inner (1) + Helper (1) + return (1); nested bodies belong to their own units.
     assert get_code_unit_statement_count(unit) == 3
 
