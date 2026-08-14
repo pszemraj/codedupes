@@ -279,10 +279,19 @@ def _structural_hash(node: Any, source: bytes, language: str, unit_type: CodeUni
         f"unit={unit_type.name.lower()}",
     ]
 
-    def visit(current: Any) -> None:
+    # Iterative preorder walk with a close-paren sentinel: minified or
+    # generated sources nest deeply enough to blow the Python recursion limit.
+    close_marker = object()
+    stack: list[Any] = [node]
+    while stack:
+        current = stack.pop()
+        if current is close_marker:
+            pieces.append(")")
+            continue
+
         node_type = str(getattr(current, "type", ""))
         if node_type in _COMMENT_TYPES or "comment" in node_type:
-            return
+            continue
 
         text = _node_text(source, current)
         lower_type = node_type.lower()
@@ -292,7 +301,7 @@ def _structural_hash(node: Any, source: bytes, language: str, unit_type: CodeUni
             "template" in lower_type and children
         ):
             pieces.append(f"<{node_type}:STR>")
-            return
+            continue
 
         if not children:
             if node_type in _IDENTIFIER_TYPES:
@@ -309,14 +318,12 @@ def _structural_hash(node: Any, source: bytes, language: str, unit_type: CodeUni
                 pieces.append(f"<{node_type}:{text}>")
             else:
                 pieces.append(text)
-            return
+            continue
 
         pieces.append(f"({node_type}")
-        for child in children:
-            visit(child)
-        pieces.append(")")
+        stack.append(close_marker)
+        stack.extend(reversed(children))
 
-    visit(node)
     return hashlib.sha256("\x1f".join(pieces).encode("utf-8")).hexdigest()[:16]
 
 

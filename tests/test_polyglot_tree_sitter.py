@@ -77,6 +77,42 @@ def test_every_dialect_reproduces_unit_source_from_byte_ranges(
         assert source_bytes[unit.start_byte : unit.end_byte].decode("utf-8") == unit.source
 
 
+@pytest.mark.parametrize(
+    ("filename", "source", "expected_hash"),
+    [
+        ("sample.c", "int add(int a, int b) { return a + b; }", "d4c1889345f6cbb2"),
+        ("sample.rs", "pub fn add(a: i32, b: i32) -> i32 { a + b }", "ebe1b5fca595a210"),
+        ("sample.js", "function add(a, b) { return a + b; }", "cb3daad8bab7b59a"),
+        (
+            "sample.ts",
+            "function add(a: number, b: number): number { return a + b; }",
+            "da777fa591d4b571",
+        ),
+    ],
+)
+def test_structural_hash_golden_values_pin_the_fingerprint_schema(
+    tmp_path: Path,
+    filename: str,
+    source: str,
+    expected_hash: str,
+) -> None:
+    """Nothing else persists these hashes, so canonical-stream drift would
+    otherwise silently rename every non-Python fingerprint."""
+    units = _extract(tmp_path, filename, source)
+
+    assert [unit.structural_hash for unit in units] == [expected_hash]
+
+
+def test_deeply_nested_source_does_not_hit_the_recursion_limit(tmp_path: Path) -> None:
+    depth = 5000
+    source = f"int deep(int value) {{ return {'(' * depth}value{')' * depth}; }}"
+
+    units = _extract(tmp_path, "sample.c", source)
+
+    assert [unit.name for unit in units] == ["deep"]
+    assert units[0].structural_hash
+
+
 def test_c_extracts_definitions_and_ignores_prototypes(tmp_path: Path) -> None:
     units = _extract(
         tmp_path,
