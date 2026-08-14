@@ -38,7 +38,7 @@ python scripts/sweep_hybrid_gates.py \
 
 Defaults used by the harness:
 
-- semantic-only minimum: `0.85,0.88,0.90,0.92,0.94`
+- semantic gate: `0.68,0.72,0.76,0.80,0.84,0.88,0.92`
 - weak identifier jaccard minimum: `0.10,0.15,0.20,0.25,0.30`
 - statement ratio minimum: `0.20,0.25,0.35,0.45,0.55`
 
@@ -46,13 +46,13 @@ Override grids as needed:
 
 ```bash
 python scripts/sweep_hybrid_gates.py \
-  --semantic-grid 0.88,0.90,0.92 \
+  --semantic-grid 0.72,0.76,0.80 \
   --weak-jaccard-grid 0.15,0.20,0.25 \
   --statement-ratio-grid 0.25,0.35,0.45
 ```
 
 The harness uses the same analyzer synthesis logic and model/revision defaults as the CLI, so sweep results transfer directly to production gate values.
-Its mixed-evidence semantic threshold also resolves from the selected model profile (`0.96` for the default `gte-modernbert-base`, `0.86` for `embeddinggemma-300m`); use `--hybrid-semantic-threshold` only when intentionally evaluating a non-production override.
+Each `--semantic-grid` value emulates the per-language duplicate gate the analyzer applies to semantic pairs before hybrid synthesis (there is no separate synthesis-time semantic minimum); the production per-language gate values are listed in [Analysis defaults](analysis-defaults.md).
 
 ## Semantic threshold sweep (model profiles)
 

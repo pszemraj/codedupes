@@ -2,6 +2,22 @@
 
 These defaults apply to `codedupes check` and `AnalyzerConfig`. See the [CLI reference](cli.md) for syntax, [model profiles](model-profiles.md) for semantic thresholds and tasks, and [accelerators](accelerators.md) for device behavior.
 
+## Semantic Duplicate Gate Defaults
+
+Semantic duplicate detection is gated per language: each built-in model profile carries a calibrated cosine gate for every supported language, measured against `test_fixtures/polyglot_calibration/` with recall-leaning selection (the loosest threshold whose F1 stays near that language's best).
+
+| language | `gte-modernbert-base` | `embeddinggemma-300m` |
+|---|---|---|
+| python | `0.80` | `0.74` |
+| c | `0.82` | `0.78` |
+| rust | `0.74` | `0.78` |
+| javascript | `0.70` | `0.72` |
+| typescript | `0.68` | `0.76` |
+
+The profile fallback (`0.82` gte, `0.78` gemma) is the strictest calibrated gate and applies only to languages without their own entry. An explicit `--semantic-threshold`/`--threshold` (or `AnalyzerConfig.semantic_threshold`) replaces every per-language gate with one flat value. The pairwise embedding scan runs at the loosest gate among the languages present, then each pair is held to its own language's gate.
+
+Semantic duplicate pairs are same-language by default. `--cross-language` (or `AnalyzerConfig(cross_language=True)`) also reports cross-language pairs; those claims are uncalibrated, and an opted-in mixed pair is held to the looser of its two language gates.
+
 ## Semantic Candidate Defaults
 
 Default semantic candidate selection:
@@ -90,8 +106,8 @@ AnalyzerConfig(
 
 ## Hybrid Synthesis Gate Defaults
 
-- semantic-only minimum: `0.92`
+- semantic evidence: the per-language duplicate gate above (applied before synthesis; there is no separate semantic-only minimum)
 - weak identifier jaccard minimum: `0.20`
 - statement ratio minimum: `0.35`
 
-Tune these values with the [hybrid gate workflow](hybrid-tuning.md).
+A gated semantic-only pair must additionally pass the identifier-overlap and statement-ratio guards to reach the `semantic_high_confidence` tier. Tune the guards with the [hybrid gate workflow](hybrid-tuning.md).

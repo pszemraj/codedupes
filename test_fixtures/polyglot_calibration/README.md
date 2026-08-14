@@ -2,7 +2,7 @@
 
 Labeled per-language duplicate-detection corpora for C, Rust, JavaScript, TypeScript, and Python (~100 labeled decisions per language), used to measure how the built-in model profiles' similarity scales behave outside the Python production corpus. The Python corpus here is a control: its near clones are fully alpha-renamed, unlike `test_fixtures/hybrid_tuning/crab_visibility`, whose near pairs share identifier fragments.
 
-Recorded thresholds below are measurements, not shipped defaults. No per-language default has been wired into the engine; that is a separate product decision.
+These measurements are the source of the shipped per-language semantic duplicate gates in `codedupes.semantic_profiles` (gte: py 0.80 / c 0.82 / rs 0.74 / js 0.70 / ts 0.68; gemma: py 0.74 / c 0.78 / rs 0.78 / js 0.72 / ts 0.76), selected recall-first: the loosest sweep threshold whose F1 stays near that language's best while raw-pair precision remains workable. If a re-run moves the tables below, revisit the gates deliberately.
 
 ## Layout
 
@@ -52,9 +52,9 @@ Whole-tree status at shipped defaults (2026-08-14): 368 units across five langua
 
 Sweeps ran per language over a 0.40–0.96 duplicate grid (`--duplicate-start 0.40`; the default 0.70 floor would hide most non-Python near clones) with both models; search sweeps used the per-language probes. Class-level labeled pairs (2 in JavaScript) are excluded from duplicate-sweep scoring since classes never enter the semantic candidate pool. Reports: `reports/<lang>_semantic_threshold_report.json`, `reports/<lang>_search_threshold_report.json`, `reports/similarity_distributions.json`.
 
-Duplicate threshold, best F1 row per language (recall at the shipped default threshold shown for contrast):
+Duplicate threshold, best F1 row per language (recall at the pre-calibration flat gates, 0.96 gte / 0.86 gemma, shown for contrast):
 
-| language | gte-modernbert-base best (thr / F1 / P / R) | recall @ shipped 0.96 | embeddinggemma-300m best (thr / F1 / P / R) | recall @ shipped 0.86 |
+| language | gte-modernbert-base best (thr / F1 / P / R) | recall @ flat 0.96 | embeddinggemma-300m best (thr / F1 / P / R) | recall @ flat 0.86 |
 | --- | --- | --- | --- | --- |
 | c | 0.90 / 0.46 / 1.00 / 0.29 | 0.21 | 0.80 / 0.58 / 0.52 / 0.65 | 0.38 |
 | rust | 0.76 / 0.68 / 0.80 / 0.59 | 0.21 | 0.80 / 0.88 / 0.93 / 0.82 | 0.41 |
@@ -80,7 +80,7 @@ Distribution highlights (`reports/similarity_distributions.json`):
 - C is the hardest language for both models: deceptive negative controls reach 0.86 (gte) / 0.91 (gemma), overlapping the near-clone band, which caps best F1 at 0.46/0.58.
 - embeddinggemma-300m separates clones from negatives better than gte-modernbert-base on every language here, with best-F1 duplicate thresholds clustered at 0.74–0.80.
 
-Interpretation: the shipped semantic duplicate defaults (gte 0.96, gemma 0.86) only reach the deterministic-shaped categories in every language, including the Python control — semantic-tier recall at those gates is roughly 0.2–0.6. Usable per-language duplicate gates exist around 0.72–0.80 (gemma preferred), but wiring per-language defaults into the engine, and any loosening of shipped defaults, is a follow-up decision — record here first, change engine behavior separately.
+Interpretation: the pre-calibration flat gates (gte 0.96, gemma 0.86) only reached the deterministic-shaped categories in every language, including the Python control — semantic-tier recall at those gates was roughly 0.2–0.6. The shipped per-language gates listed at the top were selected from these grids recall-first (one to two steps looser than the best-F1 row where that buys recall without absurd precision loss) and are enforced by `codedupes.semantic_profiles` tests; keep this README, the reports, and the profile gates in sync.
 
 ## Re-running
 

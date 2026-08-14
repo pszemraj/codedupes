@@ -4,15 +4,15 @@ Profiles resolve model aliases, thresholds, revisions, trust settings, and task-
 
 ## Built-in profiles
 
-| profile key | canonical model ID | family | duplicate threshold | search threshold | default revision | default trust mode |
+| profile key | canonical model ID | family | duplicate gates (per language) | search threshold | default revision | default trust mode |
 | --- | --- | --- | --- | --- | --- | --- |
-| `gte-modernbert-base` | `Alibaba-NLP/gte-modernbert-base` | `gte-modernbert` | `0.96` | `0.50` | `e7f32e3c00f91d699e8c43b53106206bcc72bb22` | `False` |
-| `embeddinggemma-300m` | `unsloth/embeddinggemma-300m` | `embeddinggemma` | `0.86` | `0.40` | `bfa3c846ac738e62aa61806ef9112d34acb1dc5a` | `False` |
+| `gte-modernbert-base` | `Alibaba-NLP/gte-modernbert-base` | `gte-modernbert` | py `0.80` / c `0.82` / rs `0.74` / js `0.70` / ts `0.68` (fallback `0.82`) | `0.50` | `e7f32e3c00f91d699e8c43b53106206bcc72bb22` | `False` |
+| `embeddinggemma-300m` | `unsloth/embeddinggemma-300m` | `embeddinggemma` | py `0.74` / c `0.78` / rs `0.78` / js `0.72` / ts `0.76` (fallback `0.78`) | `0.40` | `bfa3c846ac738e62aa61806ef9112d34acb1dc5a` | `False` |
 
 Notes:
 
-- The duplicate threshold gates `check` pair reporting; the search threshold is the floor for `search` query matches. Query-to-code similarity runs far below code-to-code duplicate similarity, so search defaults are intentionally much lower.
-- Every builtin default revision is a pinned immutable commit: a calibrated threshold is only a property of the exact checkpoint, prompt plan, and pipeline it was swept on, and the calibration identity for each default is recorded in `test_fixtures/hybrid_tuning/semantic_threshold_report.json` (duplicates) and `search_threshold_report.json` (search). Pinning also keeps the warm no-model-load cache path stable after the hub cache is cleared.
+- The duplicate gates control `check` pair reporting per language (see [Analysis defaults](analysis-defaults.md#semantic-duplicate-gate-defaults) for selection rationale); the search threshold is the floor for `search` query matches. Query-to-code similarity runs far below code-to-code duplicate similarity, so search defaults are intentionally much lower.
+- Every builtin default revision is a pinned immutable commit: a calibrated threshold is only a property of the exact checkpoint, prompt plan, and pipeline it was swept on. Per-language duplicate gates are measured against `test_fixtures/polyglot_calibration/` (sweep and distribution reports in its `reports/` directory); search calibration identity is recorded in `test_fixtures/hybrid_tuning/search_threshold_report.json`. Pinning also keeps the warm no-model-load cache path stable after the hub cache is cleared.
 - The gte-modernbert search default is calibrated recall-safe against real corpora: genuinely relevant hits start near `0.59` while fully off-topic queries ceiling near `0.48` on most corpora. Vocabulary overlap from a shared domain (GPU kernels vs a graphics query) or even a single shared word ("pattern", "parse", "warp") can push off-topic matches to `0.52`-`0.65`; those carry visible scores and rank below real hits, but raise `--semantic-threshold` toward `0.6` if they clutter results. No fixed floor separates them everywhere, and the default deliberately favors recall over precision. The synthetic-corpus search sweep saturates for this model (every unit shares one domain), so its report is a guardrail, not the default's source.
 - The EmbeddingGemma search default is recall-calibrated against the held-out, multi-domain probes in `test_fixtures/search_probes/`. Under the pinned checkpoint and fixed prompt pipeline, relevant top hits bottom out near `0.45` while the off-topic ceiling stays below `0.28`; the `0.40` floor keeps margin on both sides. The single-domain synthetic sweep remains a reproducible guardrail, but its higher F1 optimum is not used as a production search floor.
 - Generic/unknown models fall back to duplicate threshold `0.82` and search threshold `0.35` unless you override `--semantic-threshold` / `semantic_threshold`.

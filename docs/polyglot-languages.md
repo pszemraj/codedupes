@@ -122,7 +122,7 @@ The structural stream includes significant anonymous operator tokens. `a + b` an
 
 Traditional exact and Jaccard comparisons are blocked by canonical language and public unit type before pair generation. Overlapping units in the same file, such as a parent function and its nested function, are not reported as duplicates of each other.
 
-Semantic duplicate checking is also same-language by default. The existing embedding model can rank code across languages, but cross-language clone detection needs separate calibration and user expectations. Semantic `search` remains cross-language because retrieval is exactly where that shared embedding space is useful.
+Semantic duplicate checking is also same-language by default, and each language is gated by its own calibrated duplicate threshold from the model profile (see [Analysis defaults](analysis-defaults.md#semantic-duplicate-gate-defaults)). `--cross-language` opts into cross-language semantic pairs; those claims are uncalibrated, so a mixed pair is held to the looser of its two language gates. Semantic `search` remains cross-language because retrieval is exactly where that shared embedding space is useful.
 
 ## Unused-code analysis
 
@@ -169,7 +169,7 @@ Treat every grammar update as a behavioral change:
 2. Construct its parser and run every extraction fixture (`pytest -m grammar`), including the golden structural-hash values.
 3. Review changes in unit names, ranges, native kinds, statement counts, and fingerprints.
 4. Run parser-independent normalization tests.
-5. Run the per-language validator, sweep, and distribution report over `test_fixtures/polyglot_calibration/` and diff against the recorded tables in its README. The corpora measure each language's similarity scale under both built-in models; recorded thresholds are reference measurements, and no per-language default is wired into the engine.
+5. Run the per-language validator, sweep, and distribution report over `test_fixtures/polyglot_calibration/` and diff against the recorded tables in its README. The corpora measure each language's similarity scale under both built-in models, and the shipped per-language duplicate gates in `codedupes.semantic_profiles` are derived from these measurements — if a pin bump moves a language's recorded numbers, decide explicitly whether its gate must move with them.
 6. Update the pin only after every difference is understood.
 
 A semver-compatible grammar update can still rename a node or field. Broad version ranges would let an ordinary dependency refresh silently change duplicate reports.

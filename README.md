@@ -55,7 +55,7 @@ See [Output and exit codes](https://github.com/pszemraj/codedupes/blob/main/docs
 
 ## Scope and limits
 
-- Duplicate checking is same-language by default. Semantic search can retrieve implementations across languages.
+- Duplicate checking is same-language by default, with per-language calibrated semantic gates; `--cross-language` opts into cross-language semantic pairs. Semantic search can retrieve implementations across languages.
 - Unused-code analysis is Python-only. Non-Python units are counted and explicitly excluded rather than evaluated with Python heuristics.
 - C preprocessing, Rust macro expansion, and JavaScript/TypeScript project-wide name resolution are outside the syntax-only extraction layer.
 - `.h` files are treated as C only when C is explicitly selected or the scanned tree contains C sources and no detected C++ sources.

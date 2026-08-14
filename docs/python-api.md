@@ -9,7 +9,7 @@ from codedupes import analyze_directory
 
 result = analyze_directory(
     "./src",
-    semantic_threshold=None,  # use model-profile default
+    semantic_threshold=None,  # use the profile's calibrated per-language gates
     traditional_threshold=0.85,
     model_name="gte-modernbert-base",
     semantic_task="semantic-similarity",
@@ -70,7 +70,7 @@ for diagnostic in result.extraction_diagnostics:
 print("non-Python units excluded from unused analysis:", result.unused_excluded_units)
 ```
 
-`run_unused=True` remains valid for a mixed tree, but only Python units enter the reference graph. Traditional and semantic duplicate checking are same-language by default; semantic query search remains cross-language.
+`run_unused=True` remains valid for a mixed tree, but only Python units enter the reference graph. Traditional and semantic duplicate checking are same-language by default, with each language gated by its calibrated profile threshold when `semantic_threshold` is `None`; `AnalyzerConfig(cross_language=True)` (or `analyze_directory(..., cross_language=True)`) also reports uncalibrated cross-language semantic pairs at the looser of the two gates. Semantic query search remains cross-language.
 
 ## Semantic Query Search
 
