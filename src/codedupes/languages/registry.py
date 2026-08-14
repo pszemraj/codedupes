@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from functools import cache
 from importlib import metadata
 from pathlib import Path
 from typing import Final
@@ -206,8 +207,35 @@ def get_backend(
     )
 
 
+@cache
+def _probe_dialect(dialect: str) -> str | None:
+    """Build a parser and run an empty parse; return an error message or ``None``.
+
+    Version metadata alone cannot prove a native wheel is loadable: a wrong
+    platform wheel, missing shared library, bad capsule, or Tree-sitter ABI
+    mismatch all pass the version check and still fail at parser construction.
+    """
+    from codedupes.languages.tree_sitter_backend import (
+        GrammarProvider,
+        GrammarUnavailableError,
+    )
+
+    try:
+        GrammarProvider.parser(dialect).parse(b"")
+    except GrammarUnavailableError as exc:
+        return str(exc)
+    except Exception as exc:  # noqa: BLE001 - native loader faults must become status text
+        return f"parser construction failed: {type(exc).__name__}: {exc}"
+    return None
+
+
 def get_grammar_statuses() -> tuple[GrammarStatus, ...]:
-    """Report whether every required parser package is installed at its pinned version."""
+    """Report whether every required parser package is installed and loadable.
+
+    Exact version pins are checked first; when they match, each dialect's
+    parser is actually constructed (memoized per process) so a broken wheel is
+    reported instead of surfacing later mid-analysis.
+    """
     core_package, core_pinned = TREE_SITTER_PACKAGE
     try:
         tree_sitter_version = metadata.version(core_package)
@@ -235,6 +263,10 @@ def get_grammar_statuses() -> tuple[GrammarStatus, ...]:
 
         language = "typescript" if dialect == "tsx" else dialect
         error_parts = [part for part in (tree_sitter_error, package_error) if part]
+        if not error_parts:
+            probe_error = _probe_dialect(dialect)
+            if probe_error:
+                error_parts.append(probe_error)
         statuses.append(
             GrammarStatus(
                 language=language,

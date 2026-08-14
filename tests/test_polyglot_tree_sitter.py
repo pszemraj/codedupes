@@ -14,9 +14,18 @@ pytest.importorskip("tree_sitter_javascript")
 pytest.importorskip("tree_sitter_typescript")
 
 from codedupes.extractor import CodeExtractor
+from codedupes.languages.registry import get_grammar_statuses
 from codedupes.models import CodeUnit, CodeUnitType
 
 pytestmark = pytest.mark.grammar
+
+
+def test_every_pinned_grammar_probes_ready_on_this_interpreter() -> None:
+    """The live probe must construct a real parser for all five dialects."""
+    statuses = get_grammar_statuses()
+
+    assert len(statuses) == 5
+    assert all(status.available and status.error is None for status in statuses)
 
 
 def _extract(

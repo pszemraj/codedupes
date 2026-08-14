@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from codedupes.languages import registry
 from codedupes.languages.registry import (
     GRAMMAR_PACKAGES,
     TREE_SITTER_PACKAGE,
@@ -140,6 +141,7 @@ def test_grammar_status_requires_exact_pins(monkeypatch: pytest.MonkeyPatch) -> 
     }
 
     monkeypatch.setattr(metadata, "version", installed.__getitem__)
+    monkeypatch.setattr(registry, "_probe_dialect", lambda dialect: None)
     statuses = get_grammar_statuses()
     assert statuses
     assert all(status.available and status.error is None for status in statuses)
@@ -149,3 +151,25 @@ def test_grammar_status_requires_exact_pins(monkeypatch: pytest.MonkeyPatch) -> 
     rust = next(status for status in statuses if status.dialect == "rust")
     assert not rust.available
     assert "tree-sitter-rust==0.24.2 is required" in (rust.error or "")
+
+
+def test_grammar_status_reports_wheels_that_fail_parser_construction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A right-version wheel that cannot build a parser must not report ready."""
+    installed = {
+        TREE_SITTER_PACKAGE[0]: TREE_SITTER_PACKAGE[1],
+        **{package: version for package, version in GRAMMAR_PACKAGES.values()},
+    }
+    monkeypatch.setattr(metadata, "version", installed.__getitem__)
+    monkeypatch.setattr(
+        registry,
+        "_probe_dialect",
+        lambda dialect: "parser construction failed: broken wheel" if dialect == "c" else None,
+    )
+
+    statuses = {status.dialect: status for status in get_grammar_statuses()}
+
+    assert not statuses["c"].available
+    assert "broken wheel" in (statuses["c"].error or "")
+    assert statuses["rust"].available
