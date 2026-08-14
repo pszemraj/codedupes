@@ -439,16 +439,27 @@ def _structural_hash(node: Any, source: bytes, language: str, unit_type: CodeUni
 def _token_hash(node: Any, source: bytes) -> str:
     """Fingerprint a subtree's literal token stream, ignoring comments.
 
+    Comment subtrees are pruned before flattening: some grammars (for example
+    tree-sitter-rust) parse comments with delimiter children whose leaf types
+    do not mention "comment", so a leaf-level filter alone would let ``//``
+    and ``/* */`` markers leak into the token stream.
+
     :param node: Unit node to fingerprint.
     :param source: Full file source bytes.
     :return: Truncated SHA-256 digest of the typed token stream.
     """
     tokens: list[str] = []
-    for leaf in _leaf_nodes(node):
-        node_type = str(getattr(leaf, "type", ""))
+    stack = [node]
+    while stack:
+        current = stack.pop()
+        node_type = str(getattr(current, "type", ""))
         if node_type in _COMMENT_TYPES or "comment" in node_type:
             continue
-        text = _node_text(source, leaf)
+        children = _children(current)
+        if children:
+            stack.extend(reversed(children))
+            continue
+        text = _node_text(source, current)
         if text.strip():
             tokens.append(f"{node_type}:{text}")
     return hashlib.sha256("\x1f".join(tokens).encode("utf-8")).hexdigest()[:16]

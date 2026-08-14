@@ -240,6 +240,34 @@ def test_rust_skips_cfg_test_modules_and_test_functions(tmp_path: Path) -> None:
     }
 
 
+def test_rust_token_hash_ignores_in_body_comments(tmp_path: Path) -> None:
+    """tree-sitter-rust comments carry delimiter children; pruning must catch them."""
+    [plain] = _extract(
+        tmp_path,
+        "plain.rs",
+        """
+        fn double_plus(value: i32) -> i32 {
+            let doubled = value * 2;
+            doubled + 1
+        }
+        """,
+    )
+    [commented] = _extract(
+        tmp_path,
+        "commented.rs",
+        """
+        fn double_plus(value: i32) -> i32 {
+            let doubled = value * 2; // inline note
+            /* block note */
+            doubled + 1
+        }
+        """,
+    )
+
+    assert plain.token_hash == commented.token_hash
+    assert plain.structural_hash == commented.structural_hash
+
+
 def test_javascript_extracts_modern_stable_unit_forms(tmp_path: Path) -> None:
     units = _extract(
         tmp_path,
