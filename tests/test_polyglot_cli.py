@@ -130,3 +130,25 @@ def test_source_highlighting_uses_unit_language(tmp_path: Path) -> None:
     unit.language = "typescript"
     unit.dialect = "tsx"
     assert cli._syntax_lexer(unit) == "typescript"
+
+
+def test_missing_grammar_reports_remediation_instead_of_a_generic_error(
+    monkeypatch, tmp_path: Path
+) -> None:
+    from codedupes.languages import GrammarUnavailableError
+
+    path = tmp_path / "sample.rs"
+    path.write_text("pub fn run() -> i32 { 1 }\n", encoding="utf-8")
+
+    def raise_grammar_error() -> AnalysisResult:
+        raise GrammarUnavailableError(
+            "Could not load the rust grammar from tree-sitter-rust==0.24.2: boom"
+        )
+
+    patch_cli_analyzer(monkeypatch, cli, analyze_result=raise_grammar_error)
+    result = CliRunner().invoke(cli.cli, ["check", str(path), "--traditional-only"])
+
+    assert result.exit_code == 1
+    assert "Parser unavailable" in result.output
+    assert "tree-sitter-rust==0.24.2" in result.output
+    assert "codedupes info" in result.output

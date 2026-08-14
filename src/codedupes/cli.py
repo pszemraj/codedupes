@@ -47,7 +47,11 @@ from codedupes.devices import (
 )
 from codedupes.embedding_cache import EmbeddingCache
 from codedupes.extractor import DEFAULT_EXCLUDE_DIR_NAMES, DEFAULT_EXCLUDE_PATTERNS
-from codedupes.languages import SUPPORTED_LANGUAGES, get_grammar_statuses
+from codedupes.languages import (
+    SUPPORTED_LANGUAGES,
+    GrammarUnavailableError,
+    get_grammar_statuses,
+)
 from codedupes.logging_utils import quiet_dependency_loggers
 from codedupes.models import (
     AnalysisResult,
@@ -197,6 +201,10 @@ def _run_cli_action(
         if not catch_file_not_found:
             raise
         console.print(f"[red]Error:[/red] {exc}")
+        raise click.exceptions.Exit(1) from exc
+    except GrammarUnavailableError as exc:
+        console.print(f"[red]Parser unavailable:[/red] {exc}")
+        console.print("Run `codedupes info` to check Tree-sitter parser package status.")
         raise click.exceptions.Exit(1) from exc
     except Exception as exc:
         console.print(f"[red]Error during {error_label}:[/red] {exc}")
