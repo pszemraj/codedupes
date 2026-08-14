@@ -22,9 +22,7 @@ from codedupes.models import CodeUnit, CodeUnitType, ExtractionDiagnostic
 
 FINGERPRINT_SCHEMA_VERSION = 1
 _IDENTIFIER_RE = re.compile(r"^[A-Za-z_$][A-Za-z0-9_$]*$")
-_STABLE_PATH_RE = re.compile(
-    r"^[A-Za-z_$#][A-Za-z0-9_$#]*(?:\.[A-Za-z_$#][A-Za-z0-9_$#]*)*$"
-)
+_STABLE_PATH_RE = re.compile(r"^[A-Za-z_$#][A-Za-z0-9_$#]*(?:\.[A-Za-z_$#][A-Za-z0-9_$#]*)*$")
 
 _COMMENT_TYPES = {
     "comment",
@@ -305,7 +303,9 @@ def _structural_hash(node: Any, source: bytes, language: str, unit_type: CodeUni
                 else:
                     value = normalized_names.setdefault(text, f"_v{len(normalized_names)}")
                 pieces.append(f"<{node_type}:{value}>")
-            elif any(marker in lower_type for marker in _NUMBER_MARKERS) or bool(getattr(current, "is_named", False)):
+            elif any(marker in lower_type for marker in _NUMBER_MARKERS) or bool(
+                getattr(current, "is_named", False)
+            ):
                 pieces.append(f"<{node_type}:{text}>")
             else:
                 pieces.append(text)
@@ -391,10 +391,11 @@ class TreeSitterBackend:
         raise NotImplementedError
 
     def _include_spec(self, spec: UnitSpec) -> bool:
-        if self.include_private:
-            return True
-        last = spec.name.rsplit(".", 1)[-1]
-        return not (last.startswith("_") and not last.startswith("__")) and not last.startswith("#")
+        # ``is_public`` already encodes each language's visibility rules (C
+        # ``static``, Rust ``pub``, naming conventions, and TypeScript
+        # accessibility modifiers), so filtering must use it rather than
+        # re-deriving a name-prefix subset of those rules.
+        return self.include_private or spec.is_public
 
     def _statement_count(self, body: Any, unit_type: CodeUnitType) -> int:
         if body is None:
@@ -580,9 +581,6 @@ class CBackend(TreeSitterBackend):
         }
     )
 
-    def _include_spec(self, spec: UnitSpec) -> bool:
-        return self.include_private or spec.is_public
-
     @staticmethod
     def _declarator_name(declarator: Any | None, source: bytes) -> str | None:
         if declarator is None:
@@ -670,9 +668,6 @@ class RustBackend(TreeSitterBackend):
             "false",
         }
     )
-
-    def _include_spec(self, spec: UnitSpec) -> bool:
-        return self.include_private or spec.is_public
 
     @staticmethod
     def _visibility(node: Any, source: bytes) -> bool:
@@ -765,9 +760,7 @@ class RustBackend(TreeSitterBackend):
 class ECMAScriptBackend(TreeSitterBackend):
     """Shared JavaScript/TypeScript extraction and stable lexical naming."""
 
-    function_declarations = frozenset(
-        {"function_declaration", "generator_function_declaration"}
-    )
+    function_declarations = frozenset({"function_declaration", "generator_function_declaration"})
     function_expressions = frozenset(
         {"function_expression", "generator_function", "arrow_function"}
     )

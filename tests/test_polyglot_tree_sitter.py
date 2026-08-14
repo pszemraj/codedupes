@@ -241,6 +241,39 @@ def test_typescript_excludes_signatures_and_ambient_declarations(tmp_path: Path)
     assert all(not name.endswith("required") for name in names)
 
 
+def test_typescript_accessibility_and_naming_rules_gate_private_extraction(
+    tmp_path: Path,
+) -> None:
+    source = """
+    class Widget {
+        private handle = (v: number): number => v + 1;
+        #secret = (v: number): number => v + 2;
+        _conventional = (v: number): number => v + 3;
+        private hidden(v: number): number { return v + 4; }
+        protected guarded(v: number): number { return v + 5; }
+        public shown(v: number): number { return v + 6; }
+    }
+    function _privateFn(v: number): number { return v; }
+    """
+
+    with_private = {unit.name for unit in _extract(tmp_path, "sample.ts", source)}
+    public_only = {
+        unit.name for unit in _extract(tmp_path, "sample.ts", source, include_private=False)
+    }
+
+    assert with_private == {
+        "Widget",
+        "handle",
+        "#secret",
+        "_conventional",
+        "hidden",
+        "guarded",
+        "shown",
+        "_privateFn",
+    }
+    assert public_only == {"Widget", "shown"}
+
+
 def test_tsx_and_unicode_use_exact_byte_slices(tmp_path: Path) -> None:
     units = _extract(
         tmp_path,
