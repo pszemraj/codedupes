@@ -31,6 +31,14 @@ def add_common_sweep_arguments(parser: argparse.ArgumentParser) -> None:
         help="Path to labels.json with expected duplicate groups.",
     )
     parser.add_argument(
+        "--language",
+        action="append",
+        dest="language",
+        default=None,
+        metavar="LANGUAGE",
+        help="Restrict extraction to a language (repeat for multiple); omit to auto-detect.",
+    )
+    parser.add_argument(
         "--min-statements",
         type=int,
         default=0,

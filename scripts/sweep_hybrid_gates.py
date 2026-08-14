@@ -220,6 +220,7 @@ def main() -> int:
         run_semantic=True,
         run_unused=False,
         include_private=True,
+        languages=tuple(args.language) if args.language else None,
         min_semantic_statements=args.min_statements,
         jaccard_threshold=args.traditional_threshold,
         semantic_threshold=args.semantic_threshold,

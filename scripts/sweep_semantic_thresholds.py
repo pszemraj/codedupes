@@ -95,11 +95,23 @@ def _threshold_grid(start: float, stop: float) -> list[float]:
     return values
 
 
-def _sha256_of_tree(root: Path, pattern: str = "*.py") -> str:
-    """Digest a fixture tree by sorted relative path and file contents."""
+def _sha256_of_tree(root: Path) -> str:
+    """Digest a fixture tree by sorted relative path and file contents.
+
+    Every regular source file participates so non-Python corpora do not digest
+    identically; caches and hidden files are excluded. For the historical
+    all-Python corpus this matches the previous ``*.py``-only digest.
+    """
     digest = hashlib.sha256()
-    for file_path in sorted(root.rglob(pattern)):
-        digest.update(file_path.relative_to(root).as_posix().encode())
+    for file_path in sorted(root.rglob("*")):
+        if not file_path.is_file():
+            continue
+        relative = file_path.relative_to(root).as_posix()
+        if "__pycache__" in relative or relative.endswith(".pyc"):
+            continue
+        if any(part.startswith(".") for part in file_path.relative_to(root).parts):
+            continue
+        digest.update(relative.encode())
         digest.update(b"\x00")
         digest.update(file_path.read_bytes())
         digest.update(b"\x00")
@@ -231,12 +243,14 @@ def _analyzer_config(
     min_statements: int,
     batch_size: int,
     device: str,
+    languages: tuple[str, ...] | None = None,
 ) -> AnalyzerConfig:
     return AnalyzerConfig(
         run_traditional=False,
         run_semantic=True,
         run_unused=False,
         include_private=True,
+        languages=languages,
         model_name=model_name,
         model_revision=revision,
         semantic_task=semantic_task,
@@ -251,6 +265,7 @@ def _run_duplicate_sweep(
     *,
     model_name: str,
     revision: str,
+    languages: tuple[str, ...] | None = None,
     corpus_path: Path,
     labels_path: Path,
     labels: dict[str, Any],
@@ -268,6 +283,7 @@ def _run_duplicate_sweep(
             min_statements=min_statements,
             batch_size=batch_size,
             device=device,
+            languages=languages,
         )
     )
     result = analyzer.analyze(corpus_path)
@@ -309,6 +325,7 @@ def _run_search_sweep(
     *,
     model_name: str,
     revision: str,
+    languages: tuple[str, ...] | None = None,
     corpus_path: Path,
     probes_path: Path,
     probes: list[dict[str, Any]],
@@ -326,6 +343,7 @@ def _run_search_sweep(
             min_statements=min_statements,
             batch_size=batch_size,
             device=device,
+            languages=languages,
         )
     )
     indexed = analyzer.index(corpus_path)
@@ -469,6 +487,7 @@ def main() -> int:
             _run_duplicate_sweep(
                 model_name=model_name,
                 revision=revision,
+                languages=tuple(args.language) if args.language else None,
                 corpus_path=args.corpus_path,
                 labels_path=args.labels_path,
                 labels=labels,
@@ -482,6 +501,7 @@ def main() -> int:
                 _run_search_sweep(
                     model_name=model_name,
                     revision=revision,
+                    languages=tuple(args.language) if args.language else None,
                     corpus_path=args.corpus_path,
                     probes_path=args.search_probes_path,
                     probes=probes,
