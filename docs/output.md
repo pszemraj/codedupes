@@ -112,6 +112,11 @@ Each unit object includes:
       "file": "src/pkg/mod.py",
       "line": 10,
       "end_line": 20,
+      "start_byte": 120,
+      "end_byte": 480,
+      "start_column": 0,
+      "end_column": 17,
+      "statement_count": 4,
       "is_public": true,
       "is_exported": false
     }

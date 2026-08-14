@@ -72,6 +72,8 @@ The declarator walker handles nested pointer, parenthesized, attributed, and fun
 
 Body-bearing `function_item` nodes are emitted. Free and nested functions are `FUNCTION` units. Functions inside `impl` or trait bodies are `METHOD` units. Trait methods with default bodies are included; required signatures without bodies are skipped.
 
+Inline test code is excluded by default: functions under a `#[cfg(test)]` (including `#[cfg(all(test, ...))]`) module or attribute, and free `#[test]` functions, are skipped. File-glob test exclusion cannot catch these because Rust inline test modules share source files with production code. `#[cfg(not(test))]` and `#[cfg(any(test, ...))]` gate real production configurations and stay extracted.
+
 Lexical qualification includes modules, enclosing functions, implementation targets, and traits where available. Structs, enums, traits, and `impl` blocks are not flattened into fake classes. Their methods remain independently analyzable.
 
 ### JavaScript and JSX
@@ -89,6 +91,8 @@ The backend covers common modern executable forms:
 - Stable assignment targets such as `exports.run` and `module.exports.run`
 
 Anonymous callbacks passed directly into calls are intentionally skipped. Their names and identities are unstable, and treating every callback as a top-level duplicate unit creates noise. An anonymous default export receives the deterministic name `default`.
+
+Export marking stops at function-body boundaries: a unit nested inside an exported function is local scope, not a module export. A class body is not a boundary, so members of an exported class stay exported.
 
 ### TypeScript and TSX
 
@@ -155,17 +159,17 @@ Inspect parser package readiness:
 codedupes info
 ```
 
-`info` reports each parser dialect, its exact required package version, the installed version, and whether it is ready.
+`info` reports each parser dialect, its exact required package version, the installed version, and whether it is ready. Readiness is verified by actually constructing a parser and running an empty parse, so a wrong-platform or ABI-broken wheel is reported here instead of failing mid-analysis.
 
 ## Grammar upgrade procedure
 
 Treat every grammar update as a behavioral change:
 
-1. Change one exact package pin.
-2. Construct its parser and run every extraction fixture.
+1. Change one exact package pin in `codedupes.languages.registry` and `pyproject.toml` (tests enforce that both match).
+2. Construct its parser and run every extraction fixture (`pytest -m grammar`), including the golden structural-hash values.
 3. Review changes in unit names, ranges, native kinds, statement counts, and fingerprints.
 4. Run parser-independent normalization tests.
-5. Run the per-language duplicate calibration corpus.
+5. Run the per-language sweep over `test_fixtures/polyglot_calibration/` (see its README for the expected recall/precision floor). These corpora sanity-check the Python-calibrated thresholds; no per-language default thresholds have been derived from them.
 6. Update the pin only after every difference is understood.
 
 A semver-compatible grammar update can still rename a node or field. Broad version ranges would let an ordinary dependency refresh silently change duplicate reports.

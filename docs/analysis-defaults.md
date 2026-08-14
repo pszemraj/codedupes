@@ -40,8 +40,11 @@ Directory-name exclusions always apply. They cover common artifact, vendor, and 
 When no nonempty `exclude_patterns` list is supplied, these file globs apply:
 
 - `**/test_*`
-- `**/*_test.py`
+- `**/*_test.*`
+- `**/*.test.*`
+- `**/*.spec.*`
 - `**/tests/**`
+- `**/__tests__/**`
 
 A nonempty `AnalyzerConfig.exclude_patterns` list or one or more CLI `--exclude` options replaces those file globs. Directory-name exclusions still apply. Repeat any built-in file globs that you want to preserve alongside custom patterns.
 

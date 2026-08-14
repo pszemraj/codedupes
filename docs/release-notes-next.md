@@ -8,7 +8,16 @@
 - Traditional exact/Jaccard matching and semantic duplicate checking are same-language by default. Semantic search remains cross-language.
 - Unused-code analysis remains explicitly Python-only; mixed-language reports surface the number of excluded non-Python units.
 - Added language counts, extraction diagnostics, parser status reporting, and additive language/range fields in JSON output.
-- Added parser-independent fingerprint/registry tests and grammar-gated end-to-end extraction fixtures for every new dialect.
+- Added parser-independent fingerprint/registry tests and grammar-gated end-to-end extraction fixtures for every new dialect, including golden structural-hash values that pin the fingerprint schema across grammar upgrades.
+- `include_private=False` now filters on each language's computed visibility (C `static`, Rust `pub`, TypeScript `private`/`protected`/`#`-fields) instead of a name-prefix subset of those rules.
+- Rust functions under `#[cfg(test)]`/`#[cfg(all(test, ...))]` modules and free `#[test]` functions are skipped by default; file globs cannot catch inline test modules.
+- JavaScript/TypeScript export marking stops at function-body boundaries: units nested inside an exported function are no longer reported as exported. Members of an exported class remain exported.
+- The structural fingerprint walk is iterative, so deeply nested or minified sources no longer risk Python's recursion limit; the canonical stream (and every hash) is unchanged.
+- `codedupes info` grammar readiness now constructs each parser and runs an empty parse (memoized per process), so a right-version but unloadable wheel reports its error instead of failing mid-analysis. A missing grammar surfaces in the CLI as a dedicated error naming the pinned package with a pointer to `codedupes info`.
+- The registry is the single source of grammar pins (`REQUIRED_PARSER_PACKAGES`); tests enforce that `pyproject.toml` matches it.
+- `CodeUnit.structural_hash` and `CodeUnit.token_hash` are plain public fields; the private `_ast_hash` alias is gone. `CodeUnit.uid` uses one form for every language, `<path>::<language>::<qualified>::<start_byte>`, fixing latent identity collisions for overloads and conditional redefinitions. The always-`True` `has_body` field (and its JSON key) was removed.
+- Python extraction builds per-file line/byte tables once instead of re-encoding the file for every emitted unit.
+- Added per-language duplicate calibration corpora under `test_fixtures/polyglot_calibration/` and made the sweep harness language-aware (`--language`, corpus digests now cover non-Python files). These corpora sanity-check the Python-calibrated thresholds; no per-language defaults were derived.
 
 ## Breaking baseline change
 
