@@ -1,0 +1,78 @@
+{
+  "description": "Labeled natural-language and symbol-style search probes over the TypeScript polyglot calibration corpus for search-threshold calibration.",
+  "probes": [
+    {
+      "query": "collapseWhitespace",
+      "expected": [
+        "fieldNormalizers.ts::collapseWhitespace",
+        "legacyValidators.ts::collapseWhitespace",
+        "FieldControls.tsx::collapseWhitespace"
+      ]
+    },
+    {
+      "query": "normalizeFieldKey",
+      "expected": [
+        "schemaChecks.ts::normalizeFieldKey",
+        "legacyValidators.ts::normalizeFieldKey",
+        "formState.ts::canonicalizeKey"
+      ]
+    },
+    {
+      "query": "FieldRow",
+      "expected": [
+        "FieldControls.tsx::EmailFieldRow",
+        "FieldControls.tsx::PhoneFieldRow"
+      ]
+    },
+    {
+      "query": "checkRequired",
+      "expected": [
+        "schemaChecks.ts::checkRequired",
+        "legacyValidators.ts::checkRequired"
+      ]
+    },
+    {
+      "query": "find the smallest and largest string length across a list of strings",
+      "expected": [
+        "pipelineVariants.ts::fieldLengthRange",
+        "pipelineVariants.ts::computeWidthBounds"
+      ]
+    },
+    {
+      "query": "shorten a piece of text to a maximum length and append an ellipsis",
+      "expected": [
+        "fieldNormalizers.ts::truncateInput",
+        "legacyValidators.ts::shortenText",
+        "schemaChecks.ts::clipFieldText"
+      ]
+    },
+    {
+      "query": "sum the character lengths of every string in a list",
+      "expected": [
+        "ruleIdiomsA.ts::totalFieldLength",
+        "ruleIdiomsB.ts::combinedLabelWidth"
+      ]
+    },
+    {
+      "query": "classify a numeric score into excellent, good, fair, or poor tiers",
+      "expected": [
+        "ruleIdiomsA.ts::levelLabel",
+        "ruleIdiomsB.ts::gradeTier"
+      ]
+    },
+    {
+      "query": "read a value from a nested optional object property and fall back to a default when missing",
+      "expected": [
+        "ruleIdiomsA.ts::readNestedLabel",
+        "ruleIdiomsB.ts::resolveDisplayName"
+      ]
+    },
+    {
+      "query": "count how many boolean flags in a key-value map are turned on",
+      "expected": [
+        "ruleIdiomsA.ts::countTruthyProps",
+        "ruleIdiomsB.ts::countEnabledFlags"
+      ]
+    }
+  ]
+}

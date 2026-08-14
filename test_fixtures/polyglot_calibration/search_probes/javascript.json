@@ -1,0 +1,74 @@
+{
+  "description": "Labeled natural-language and symbol-style search probes over the JavaScript polyglot calibration corpus for search-threshold calibration.",
+  "probes": [
+    {
+      "query": "secondsUntilReset",
+      "expected": [
+        "rateLimiter.js::secondsUntilReset",
+        "requestQueue.js::secondsUntilReset"
+      ]
+    },
+    {
+      "query": "buildBearerHeader",
+      "expected": [
+        "authHeaders.js::buildBearerHeader",
+        "responseParsing.js::buildBearerHeader"
+      ]
+    },
+    {
+      "query": "joinUrlSegments",
+      "expected": [
+        "urlBuilder.js::joinUrlSegments",
+        "authHeaders.js::joinUrlSegments"
+      ]
+    },
+    {
+      "query": "trimTrailingSlash",
+      "expected": [
+        "urlBuilder.js::trimTrailingSlash",
+        "responseParsing.js::stripTrailingSlash"
+      ]
+    },
+    {
+      "query": "count down the seconds remaining until a rate limit window resets",
+      "expected": [
+        "rateLimiter.js::secondsUntilReset",
+        "requestQueue.js::secondsUntilReset"
+      ]
+    },
+    {
+      "query": "build an HTTP authorization header carrying a bearer credential",
+      "expected": [
+        "authHeaders.js::buildBearerHeader",
+        "responseParsing.js::buildBearerHeader"
+      ]
+    },
+    {
+      "query": "combine a base address and a path into one normalized address with a single separator",
+      "expected": [
+        "urlBuilder.js::joinUrlSegments",
+        "authHeaders.js::joinUrlSegments"
+      ]
+    },
+    {
+      "query": "check whether a cached credential has passed its expiration time",
+      "expected": [
+        "authHeaders.js::isTokenExpired",
+        "responseParsing.js::isSessionStale"
+      ]
+    },
+    {
+      "query": "add up the total cost across a series of retry attempts",
+      "expected": [
+        "rateLimiter.js::sumRetryCosts",
+        "requestQueue.js::totalAttemptCost"
+      ]
+    },
+    {
+      "query": "redact all but the last few characters of a secret credential for display",
+      "expected": [
+        "authHeaders.js::maskApiKey"
+      ]
+    }
+  ]
+}

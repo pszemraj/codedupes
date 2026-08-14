@@ -1,0 +1,50 @@
+{
+  "description": "Search probes for the C polyglot calibration corpus. Four symbol-shaped (identifier-fragment) queries and six behavioral natural-language queries that reuse no distinctive identifiers from the target code.",
+  "probes": [
+    {
+      "query": "ring_buffer capacity",
+      "expected": ["ring_buffer.c::slots_available", "ring_buffer.c::buffer_is_full"]
+    },
+    {
+      "query": "checksum8 byte sum",
+      "expected": ["packet_codec.c::checksum8", "telemetry.c::checksum8"]
+    },
+    {
+      "query": "wrap_index modulo",
+      "expected": ["ring_buffer.c::wrap_index", "packet_codec.c::wrap_index"]
+    },
+    {
+      "query": "clip_to_bounds floor ceiling",
+      "expected": ["threshold_logic.c::clip_to_bounds", "event_log.c::clip_to_bounds"]
+    },
+    {
+      "query": "find the largest value's position in an array of measurements",
+      "expected": ["signal_stats.c::find_peak_index", "ring_buffer.c::locate_max_slot"]
+    },
+    {
+      "query": "the mean of just the positive numbers in a list of measurements",
+      "expected": ["threshold_logic.c::positive_average", "filter_bank.c::mean_of_positive"]
+    },
+    {
+      "query": "restrict a value so it never falls below a low bound or exceeds a high bound",
+      "expected": [
+        "sensor_filter.c::clamp_i32",
+        "calibration.c::clamp_i32",
+        "threshold_logic.c::clip_to_bounds",
+        "event_log.c::clip_to_bounds"
+      ]
+    },
+    {
+      "query": "flag when any entry in a list goes past a magnitude limit",
+      "expected": ["crc_utils.c::any_out_of_bounds", "window_stats.c::detect_overrange"]
+    },
+    {
+      "query": "count how many bits are set in a bitmask",
+      "expected": ["window_stats.c::count_set_bits", "crc_utils.c::popcount_flags"]
+    },
+    {
+      "query": "combine three boolean checks into one overall pass or fail result",
+      "expected": ["crc_utils.c::packet_is_valid", "event_log.c::frame_is_sane"]
+    }
+  ]
+}

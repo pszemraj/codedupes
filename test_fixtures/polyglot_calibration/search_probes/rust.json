@@ -1,0 +1,75 @@
+{
+  "description": "Labeled natural-language and symbol-shaped search probes over the Rust polyglot calibration corpus (job queue / worker scheduling domain).",
+  "probes": [
+    {
+      "query": "slot_for_key",
+      "expected": [
+        "dedup_index.rs::slot_for_key",
+        "rate_window.rs::slot_for_key"
+      ]
+    },
+    {
+      "query": "clamp_priority",
+      "expected": [
+        "queue_core.rs::clamp_priority",
+        "queue_metrics.rs::clamp_priority"
+      ]
+    },
+    {
+      "query": "attempt_bucket",
+      "expected": [
+        "retry_policy.rs::attempt_bucket",
+        "queue_metrics.rs::attempt_bucket"
+      ]
+    },
+    {
+      "query": "is_saturated",
+      "expected": [
+        "rate_window.rs::is_saturated",
+        "worker_lease.rs::is_saturated"
+      ]
+    },
+    {
+      "query": "sum the values for entries that are still outstanding, skipping over any that have already wrapped up",
+      "expected": [
+        "batch_partition.rs::pending_priority_total",
+        "worker_pool.rs::open_job_weight_total"
+      ]
+    },
+    {
+      "query": "turn a numeric ranking into one of a few descriptive severity words",
+      "expected": [
+        "scheduler_heartbeat.rs::priority_band",
+        "task_deadline.rs::urgency_tier"
+      ]
+    },
+    {
+      "query": "compute the unused space before a resource hits its limit, safely handling the case where it's already full",
+      "expected": [
+        "worker_pool.rs::slots_left",
+        "throughput_meter.rs::headroom_left"
+      ]
+    },
+    {
+      "query": "check whether two entries next to each other in a sequence both exceed some cutoff value",
+      "expected": [
+        "throughput_meter.rs::has_consecutive_spikes",
+        "batch_partition.rs::has_adjacent_overloads"
+      ]
+    },
+    {
+      "query": "decide whether a new item may start given a numeric importance value and how full the pipeline currently is",
+      "expected": [
+        "batch_partition.rs::can_admit_task",
+        "worker_pool.rs::can_accept_job"
+      ]
+    },
+    {
+      "query": "find the gap between the minimum and maximum entries in a batch of numbers",
+      "expected": [
+        "throughput_meter.rs::load_spread",
+        "worker_pool.rs::usage_spread"
+      ]
+    }
+  ]
+}

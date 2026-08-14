@@ -1,0 +1,112 @@
+{
+  "description": "Control corpus for the Python polyglot calibration set (ledger / transaction reconciliation domain). Applies the same exact/reformat/doc_variant/renamed/near_* taxonomy as the non-Python calibration corpora, with fully alpha-renamed near clones, so Python's embedding-similarity behavior can be compared against the other languages without the identifier-fragment confound present in the crab_visibility tuning corpus.",
+  "positive_groups": [
+    ["imports_a.py::clamp_batch_size", "imports_b.py::clamp_batch_size"],
+    ["windows_a.py::format_window_label", "windows_b.py::format_window_label"],
+    ["mismatches_a.py::severity_label", "mismatches_b.py::severity_label"],
+    ["rounding_a.py::is_valid_currency_code", "rounding_b.py::is_valid_currency_code"],
+
+    ["imports_a.py::build_import_key", "imports_b.py::build_import_key"],
+    ["windows_a.py::merge_adjacent_windows", "windows_b.py::merge_adjacent_windows"],
+    ["mismatches_a.py::build_mismatch_summary_line", "mismatches_b.py::build_mismatch_summary_line"],
+
+    ["windows_a.py::window_duration_days", "windows_b.py::window_duration_days"],
+    ["mismatches_a.py::mismatch_ratio", "mismatches_b.py::mismatch_ratio"],
+    ["rounding_a.py::round_half_up_cents", "rounding_b.py::round_half_up_cents"],
+
+    ["imports_a.py::is_row_complete", "imports_b.py::has_all_fields"],
+    ["windows_a.py::clip_window_to_bounds", "windows_b.py::confine_index_to_span"],
+    ["mismatches_a.py::flag_large_mismatches", "mismatches_b.py::filter_material_discrepancies"],
+    ["rounding_a.py::apply_percentage_fee", "rounding_b.py::compute_charge_amount"],
+
+    ["imports_a.py::count_valid_rows", "imports_b.py::tally_clean_entries"],
+    ["windows_a.py::running_balance_after", "windows_b.py::compute_final_amount"],
+    ["mismatches_a.py::mismatch_count_over_threshold", "mismatches_b.py::discrepancies_above_limit"],
+    ["rounding_a.py::net_of_fee", "rounding_b.py::value_after_charge"],
+    ["ledger_book.py::record_entry", "statement_book.py::add_transaction"],
+    ["ledger_book.py::latest_entry_timestamp", "statement_book.py::newest_mark"],
+    ["reconciliation_misc.py::duplicate_reference_count", "reconciliation_misc.py::recurring_tag_total"],
+    ["reconciliation_misc.py::is_batch_balanced", "reconciliation_misc.py::group_is_reconciled"],
+
+    ["imports_a.py::total_batch_amount", "imports_b.py::sum_entry_amount"],
+    ["windows_a.py::label_window_indices", "windows_b.py::tag_slot_positions"],
+    ["mismatches_a.py::lookup_account_balance", "mismatches_b.py::fetch_ledger_amount"],
+    ["rounding_a.py::format_ledger_line", "rounding_b.py::render_statement_row"],
+    ["rounding_a.py::largest_transaction_amount", "rounding_b.py::max_entry_value"],
+    ["ledger_book.py::credit_entries", "statement_book.py::filter_positive_amounts"],
+    ["ledger_book.py::has_reference", "statement_book.py::includes_tag"],
+    ["reconciliation_misc.py::count_batches_over_limit", "reconciliation_misc.py::tally_big_groups"],
+
+    ["imports_a.py::first_invalid_row", "imports_b.py::find_bad_entry"],
+    ["windows_a.py::window_stats", "windows_b.py::period_totals"],
+    ["mismatches_a.py::classify_mismatch", "mismatches_b.py::categorize_discrepancy"],
+    ["rounding_a.py::flagged_amounts_over_cap", "rounding_b.py::values_beyond_ceiling"]
+  ],
+  "categories": {
+    "exact": [
+      ["imports_a.py::clamp_batch_size", "imports_b.py::clamp_batch_size"],
+      ["windows_a.py::format_window_label", "windows_b.py::format_window_label"],
+      ["mismatches_a.py::severity_label", "mismatches_b.py::severity_label"],
+      ["rounding_a.py::is_valid_currency_code", "rounding_b.py::is_valid_currency_code"]
+    ],
+    "reformat": [
+      ["imports_a.py::build_import_key", "imports_b.py::build_import_key"],
+      ["windows_a.py::merge_adjacent_windows", "windows_b.py::merge_adjacent_windows"],
+      ["mismatches_a.py::build_mismatch_summary_line", "mismatches_b.py::build_mismatch_summary_line"]
+    ],
+    "doc_variant": [
+      ["windows_a.py::window_duration_days", "windows_b.py::window_duration_days"],
+      ["mismatches_a.py::mismatch_ratio", "mismatches_b.py::mismatch_ratio"],
+      ["rounding_a.py::round_half_up_cents", "rounding_b.py::round_half_up_cents"]
+    ],
+    "renamed": [
+      ["imports_a.py::is_row_complete", "imports_b.py::has_all_fields"],
+      ["windows_a.py::clip_window_to_bounds", "windows_b.py::confine_index_to_span"],
+      ["mismatches_a.py::flag_large_mismatches", "mismatches_b.py::filter_material_discrepancies"],
+      ["rounding_a.py::apply_percentage_fee", "rounding_b.py::compute_charge_amount"]
+    ],
+    "near_rename": [
+      ["imports_a.py::count_valid_rows", "imports_b.py::tally_clean_entries"],
+      ["windows_a.py::running_balance_after", "windows_b.py::compute_final_amount"],
+      ["mismatches_a.py::mismatch_count_over_threshold", "mismatches_b.py::discrepancies_above_limit"],
+      ["rounding_a.py::net_of_fee", "rounding_b.py::value_after_charge"],
+      ["ledger_book.py::record_entry", "statement_book.py::add_transaction"],
+      ["ledger_book.py::latest_entry_timestamp", "statement_book.py::newest_mark"],
+      ["reconciliation_misc.py::duplicate_reference_count", "reconciliation_misc.py::recurring_tag_total"],
+      ["reconciliation_misc.py::is_batch_balanced", "reconciliation_misc.py::group_is_reconciled"]
+    ],
+    "near_translation": [
+      ["imports_a.py::total_batch_amount", "imports_b.py::sum_entry_amount"],
+      ["windows_a.py::label_window_indices", "windows_b.py::tag_slot_positions"],
+      ["mismatches_a.py::lookup_account_balance", "mismatches_b.py::fetch_ledger_amount"],
+      ["rounding_a.py::format_ledger_line", "rounding_b.py::render_statement_row"],
+      ["rounding_a.py::largest_transaction_amount", "rounding_b.py::max_entry_value"],
+      ["ledger_book.py::credit_entries", "statement_book.py::filter_positive_amounts"],
+      ["ledger_book.py::has_reference", "statement_book.py::includes_tag"],
+      ["reconciliation_misc.py::count_batches_over_limit", "reconciliation_misc.py::tally_big_groups"]
+    ],
+    "near_restructure": [
+      ["imports_a.py::first_invalid_row", "imports_b.py::find_bad_entry"],
+      ["windows_a.py::window_stats", "windows_b.py::period_totals"],
+      ["mismatches_a.py::classify_mismatch", "mismatches_b.py::categorize_discrepancy"],
+      ["rounding_a.py::flagged_amounts_over_cap", "rounding_b.py::values_beyond_ceiling"]
+    ]
+  },
+  "negative_controls": [
+    ["imports_a.py::clamp_batch_size", "imports_a.py::total_batch_amount"],
+    ["windows_a.py::format_window_label", "windows_a.py::window_duration_days"],
+    ["mismatches_a.py::mismatch_ratio", "mismatches_a.py::flag_large_mismatches"],
+    ["rounding_a.py::round_half_up_cents", "rounding_a.py::net_of_fee"],
+    ["reconciliation_misc.py::is_batch_balanced", "reconciliation_misc.py::count_batches_over_limit"],
+    ["imports_b.py::has_all_fields", "windows_b.py::confine_index_to_span"],
+    ["mismatches_b.py::fetch_ledger_amount", "rounding_b.py::value_after_charge"],
+    ["ledger_book.py::record_entry", "statement_book.py::includes_tag"],
+    ["ledger_book.py::credit_entries", "mismatches_a.py::classify_mismatch"],
+    ["windows_a.py::window_stats", "rounding_a.py::largest_transaction_amount"],
+    ["imports_a.py::count_valid_rows", "imports_b.py::find_bad_entry"],
+    ["mismatches_a.py::lookup_account_balance", "mismatches_b.py::categorize_discrepancy"],
+    ["rounding_a.py::apply_percentage_fee", "windows_b.py::compute_final_amount"],
+    ["ledger_book.py::latest_entry_timestamp", "reconciliation_misc.py::duplicate_reference_count"],
+    ["windows_b.py::tag_slot_positions", "mismatches_b.py::severity_label"]
+  ]
+}

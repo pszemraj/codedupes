@@ -1,55 +1,118 @@
 {
-  "description": "Expected duplicate groups for the TypeScript polyglot calibration corpus.",
+  "description": "Expected duplicate groups for the TypeScript polyglot calibration corpus (form validation / schema checking domain).",
   "positive_groups": [
-    [
-      "fieldNormalizers.ts::collapseWhitespace",
-      "legacyValidators.ts::collapseWhitespace",
-      "FieldControls.tsx::collapseWhitespace"
-    ],
-    [
-      "schemaChecks.ts::normalizeFieldKey",
-      "legacyValidators.ts::normalizeFieldKey",
-      "formState.ts::canonicalizeKey"
-    ],
-    [
-      "errorAggregation.ts::describe",
-      "legacyValidators.ts::describe",
-      "formState.ts::summarize"
-    ],
-    [
-      "fieldNormalizers.ts::truncateInput",
-      "legacyValidators.ts::shortenText",
-      "schemaChecks.ts::clipFieldText"
-    ],
-    [
-      "schemaChecks.ts::checkRequired",
-      "legacyValidators.ts::checkRequired"
-    ],
-    [
-      "schemaChecks.ts::validateRange",
-      "legacyValidators.ts::checkBounds"
-    ],
-    [
-      "FieldControls.tsx::EmailFieldRow",
-      "FieldControls.tsx::PhoneFieldRow"
-    ],
-    [
-      "formState.ts::summarizeState",
-      "legacyValidators.ts::reviewState"
-    ]
+    ["fieldNormalizers.ts::collapseWhitespace", "legacyValidators.ts::collapseWhitespace"],
+    ["schemaChecks.ts::normalizeFieldKey", "legacyValidators.ts::normalizeFieldKey"],
+    ["errorAggregation.ts::describe", "legacyValidators.ts::describe"],
+    ["inputGuards.ts::isBlank", "rowValidators.ts::isBlank"],
+
+    ["fieldNormalizers.ts::collapseWhitespace", "FieldControls.tsx::collapseWhitespace"],
+    ["FieldControls.tsx::collapseWhitespace", "legacyValidators.ts::collapseWhitespace"],
+    ["schemaChecks.ts::checkRequired", "legacyValidators.ts::checkRequired"],
+    ["inputGuards.ts::joinNonEmpty", "rowValidators.ts::joinNonEmpty"],
+
+    ["inputGuards.ts::describeLevel", "rowValidators.ts::describeLevel"],
+    ["inputGuards.ts::mergeFieldNames", "rowValidators.ts::mergeFieldNames"],
+    ["inputGuards.ts::formatPercent", "rowValidators.ts::formatPercent"],
+
+    ["schemaChecks.ts::normalizeFieldKey", "formState.ts::canonicalizeKey"],
+    ["legacyValidators.ts::normalizeFieldKey", "formState.ts::canonicalizeKey"],
+    ["fieldNormalizers.ts::truncateInput", "legacyValidators.ts::shortenText"],
+    ["inputGuards.ts::hasField", "rowValidators.ts::hasProperty"],
+    ["inputGuards.ts::countTouchedEntries", "rowValidators.ts::countActiveRows"],
+
+    ["errorAggregation.ts::describe", "formState.ts::summarize"],
+    ["schemaChecks.ts::clipFieldText", "fieldNormalizers.ts::truncateInput"],
+    ["schemaChecks.ts::validateRange", "legacyValidators.ts::checkBounds"],
+    ["FieldControls.tsx::EmailFieldRow", "FieldControls.tsx::PhoneFieldRow"],
+    ["formState.ts::summarizeState", "legacyValidators.ts::reviewState"],
+    ["inputGuards.ts::isOverLimit", "rowValidators.ts::exceedsThreshold"],
+    ["inputGuards.ts::startsWithLetter", "rowValidators.ts::beginsWithVowel"],
+    ["inputGuards.ts::firstInvalidIndex", "rowValidators.ts::lastInvalidIndex"],
+
+    ["ruleIdiomsA.ts::totalFieldLength", "ruleIdiomsB.ts::combinedLabelWidth"],
+    ["ruleIdiomsA.ts::allFieldsFilled", "ruleIdiomsB.ts::everyEntryPresent"],
+    ["ruleIdiomsA.ts::anyValueTooLarge", "ruleIdiomsB.ts::someAmountExceeds"],
+    ["ruleIdiomsA.ts::levelLabel", "ruleIdiomsB.ts::gradeTier"],
+    ["ruleIdiomsA.ts::countTruthyProps", "ruleIdiomsB.ts::countEnabledFlags"],
+    ["ruleIdiomsA.ts::readNestedLabel", "ruleIdiomsB.ts::resolveDisplayName"],
+    ["ruleIdiomsA.ts::prefixAllNames", "ruleIdiomsB.ts::tagEachLabel"],
+    ["ruleIdiomsA.ts::isRowComplete", "ruleIdiomsB.ts::isEntryFilled"],
+
+    ["pipelineVariants.ts::summarizeRow", "pipelineVariants.ts::renderRowSummary"],
+    ["pipelineVariants.ts::fieldLengthRange", "pipelineVariants.ts::computeWidthBounds"],
+    ["pipelineVariants.ts::tallyFieldOccurrences", "pipelineVariants.ts::buildFieldFrequency"],
+    ["pipelineVariants.ts::highestScore", "pipelineVariants.ts::topMark"]
   ],
-  "negative_controls": [
-    [
-      "fieldNormalizers.ts::stripNonDigits",
-      "legacyValidators.ts::collapseWhitespace"
+  "categories": {
+    "exact": [
+      ["fieldNormalizers.ts::collapseWhitespace", "legacyValidators.ts::collapseWhitespace"],
+      ["schemaChecks.ts::normalizeFieldKey", "legacyValidators.ts::normalizeFieldKey"],
+      ["errorAggregation.ts::describe", "legacyValidators.ts::describe"],
+      ["inputGuards.ts::isBlank", "rowValidators.ts::isBlank"]
     ],
-    [
-      "schemaChecks.ts::matchesPattern",
-      "legacyValidators.ts::checkBounds"
+    "reformat": [
+      ["fieldNormalizers.ts::collapseWhitespace", "FieldControls.tsx::collapseWhitespace"],
+      ["FieldControls.tsx::collapseWhitespace", "legacyValidators.ts::collapseWhitespace"],
+      ["schemaChecks.ts::checkRequired", "legacyValidators.ts::checkRequired"],
+      ["inputGuards.ts::joinNonEmpty", "rowValidators.ts::joinNonEmpty"]
     ],
-    [
-      "errorAggregation.ts::pushIssue",
-      "formState.ts::summarizeState"
+    "doc_variant": [
+      ["inputGuards.ts::describeLevel", "rowValidators.ts::describeLevel"],
+      ["inputGuards.ts::mergeFieldNames", "rowValidators.ts::mergeFieldNames"],
+      ["inputGuards.ts::formatPercent", "rowValidators.ts::formatPercent"]
+    ],
+    "renamed": [
+      ["schemaChecks.ts::normalizeFieldKey", "formState.ts::canonicalizeKey"],
+      ["legacyValidators.ts::normalizeFieldKey", "formState.ts::canonicalizeKey"],
+      ["fieldNormalizers.ts::truncateInput", "legacyValidators.ts::shortenText"],
+      ["inputGuards.ts::hasField", "rowValidators.ts::hasProperty"],
+      ["inputGuards.ts::countTouchedEntries", "rowValidators.ts::countActiveRows"]
+    ],
+    "near_rename": [
+      ["errorAggregation.ts::describe", "formState.ts::summarize"],
+      ["schemaChecks.ts::clipFieldText", "fieldNormalizers.ts::truncateInput"],
+      ["schemaChecks.ts::validateRange", "legacyValidators.ts::checkBounds"],
+      ["FieldControls.tsx::EmailFieldRow", "FieldControls.tsx::PhoneFieldRow"],
+      ["formState.ts::summarizeState", "legacyValidators.ts::reviewState"],
+      ["inputGuards.ts::isOverLimit", "rowValidators.ts::exceedsThreshold"],
+      ["inputGuards.ts::startsWithLetter", "rowValidators.ts::beginsWithVowel"],
+      ["inputGuards.ts::firstInvalidIndex", "rowValidators.ts::lastInvalidIndex"]
+    ],
+    "near_translation": [
+      ["ruleIdiomsA.ts::totalFieldLength", "ruleIdiomsB.ts::combinedLabelWidth"],
+      ["ruleIdiomsA.ts::allFieldsFilled", "ruleIdiomsB.ts::everyEntryPresent"],
+      ["ruleIdiomsA.ts::anyValueTooLarge", "ruleIdiomsB.ts::someAmountExceeds"],
+      ["ruleIdiomsA.ts::levelLabel", "ruleIdiomsB.ts::gradeTier"],
+      ["ruleIdiomsA.ts::countTruthyProps", "ruleIdiomsB.ts::countEnabledFlags"],
+      ["ruleIdiomsA.ts::readNestedLabel", "ruleIdiomsB.ts::resolveDisplayName"],
+      ["ruleIdiomsA.ts::prefixAllNames", "ruleIdiomsB.ts::tagEachLabel"],
+      ["ruleIdiomsA.ts::isRowComplete", "ruleIdiomsB.ts::isEntryFilled"]
+    ],
+    "near_restructure": [
+      ["pipelineVariants.ts::summarizeRow", "pipelineVariants.ts::renderRowSummary"],
+      ["pipelineVariants.ts::fieldLengthRange", "pipelineVariants.ts::computeWidthBounds"],
+      ["pipelineVariants.ts::tallyFieldOccurrences", "pipelineVariants.ts::buildFieldFrequency"],
+      ["pipelineVariants.ts::highestScore", "pipelineVariants.ts::topMark"]
     ]
+  },
+  "negative_controls": [
+    ["fieldNormalizers.ts::stripNonDigits", "legacyValidators.ts::collapseWhitespace"],
+    ["schemaChecks.ts::matchesPattern", "legacyValidators.ts::checkBounds"],
+    ["errorAggregation.ts::pushIssue", "formState.ts::summarizeState"],
+
+    ["fieldNormalizers.ts::padFieldCode", "schemaChecks.ts::normalizeFieldKey"],
+    ["schemaChecks.ts::clipFieldText", "inputGuards.ts::mergeFieldNames"],
+    ["inputGuards.ts::hasField", "pipelineVariants.ts::tallyFieldOccurrences"],
+    ["schemaChecks.ts::checkRequired", "rowValidators.ts::hasProperty"],
+    ["schemaChecks.ts::validateRange", "pipelineVariants.ts::fieldLengthRange"],
+
+    ["inputGuards.ts::isOverLimit", "ruleIdiomsA.ts::anyValueTooLarge"],
+    ["pipelineVariants.ts::highestScore", "ruleIdiomsB.ts::someAmountExceeds"],
+    ["rowValidators.ts::countActiveRows", "ruleIdiomsA.ts::countTruthyProps"],
+    ["schemaChecks.ts::matchesPattern", "ruleIdiomsA.ts::readNestedLabel"],
+    ["legacyValidators.ts::shortenText", "inputGuards.ts::joinNonEmpty"],
+    ["ruleIdiomsB.ts::gradeTier", "pipelineVariants.ts::topMark"],
+    ["pipelineVariants.ts::tallyFieldOccurrences", "ruleIdiomsB.ts::countEnabledFlags"]
   ]
 }
