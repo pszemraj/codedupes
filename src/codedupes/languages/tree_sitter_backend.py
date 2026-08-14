@@ -677,6 +677,52 @@ class RustBackend(TreeSitterBackend):
         return False
 
     @staticmethod
+    def _preceding_attributes(node: Any) -> list[Any]:
+        """Return the attribute_item siblings stacked directly above one item.
+
+        tree-sitter-rust parses ``#[...]`` as a preceding named sibling of the
+        item it annotates, not as a child of that item.
+        """
+        parent = getattr(node, "parent", None)
+        if parent is None:
+            return []
+        siblings = _named_children(parent)
+        index = next(
+            (position for position, sibling in enumerate(siblings) if _same_node(sibling, node)),
+            None,
+        )
+        if index is None:
+            return []
+        attributes: list[Any] = []
+        for sibling in reversed(siblings[:index]):
+            if getattr(sibling, "type", "") != "attribute_item":
+                break
+            attributes.append(sibling)
+        return attributes
+
+    @classmethod
+    def _is_test_scoped(cls, node: Any, source: bytes) -> bool:
+        """Return whether a function lives under ``#[test]`` or ``#[cfg(test)]``.
+
+        Inline Rust test modules share source files with production code, so
+        file-glob test exclusion cannot catch them. Matching is narrow: bare
+        ``test``, ``cfg(test)``, and ``cfg(all(test, ...))``. ``cfg(not(test))``
+        and ``cfg(any(test, ...))`` gate real production configurations and are
+        not excluded.
+        """
+        current = node
+        while current is not None:
+            for attribute in cls._preceding_attributes(current):
+                text = re.sub(r"\s+", "", _node_text(source, attribute))
+                inner = text.removeprefix("#[").removesuffix("]")
+                if inner in {"test", "cfg(test)"} or inner.startswith(
+                    ("cfg(all(test,", "cfg(all(test)")
+                ):
+                    return True
+            current = getattr(current, "parent", None)
+        return False
+
+    @staticmethod
     def _context(node: Any, source: bytes) -> tuple[list[str], bool]:
         contexts: list[str] = []
         is_method = False
@@ -734,6 +780,8 @@ class RustBackend(TreeSitterBackend):
             )
             name = _node_text(source, name_node).strip()
             if not name or body is None:
+                continue
+            if self._is_test_scoped(node, source):
                 continue
             contexts, is_method = self._context(node, source)
             public = self._visibility(node, source)

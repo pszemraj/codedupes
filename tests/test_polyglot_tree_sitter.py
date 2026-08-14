@@ -152,6 +152,49 @@ def test_rust_extracts_free_impl_trait_and_nested_functions(tmp_path: Path) -> N
     assert all(not name.endswith("required") for name in names)
 
 
+def test_rust_skips_cfg_test_modules_and_test_functions(tmp_path: Path) -> None:
+    units = _extract(
+        tmp_path,
+        "sample.rs",
+        """
+        pub fn real(value: i32) -> i32 { value + 1 }
+
+        #[cfg(test)]
+        mod tests {
+            use super::*;
+
+            #[test]
+            fn checks_real() { assert_eq!(real(1), 2); }
+
+            fn helper() -> i32 { 1 }
+        }
+
+        #[test]
+        fn free_standing_check() { assert!(true); }
+
+        #[cfg(all(test, feature = "slow"))]
+        mod slow_tests {
+            fn slow_helper() -> i32 { 2 }
+        }
+
+        #[cfg(not(test))]
+        fn production_only(value: i32) -> i32 { value }
+
+        struct Marker;
+        impl Marker {
+            #[inline]
+            pub fn tagged(&self) -> i32 { 3 }
+        }
+        """,
+    )
+
+    assert {unit.qualified_name for unit in units} == {
+        "sample.real",
+        "sample.production_only",
+        "sample.Marker.tagged",
+    }
+
+
 def test_javascript_extracts_modern_stable_unit_forms(tmp_path: Path) -> None:
     units = _extract(
         tmp_path,
