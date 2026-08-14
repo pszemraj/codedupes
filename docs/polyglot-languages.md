@@ -169,7 +169,7 @@ Treat every grammar update as a behavioral change:
 2. Construct its parser and run every extraction fixture (`pytest -m grammar`), including the golden structural-hash values.
 3. Review changes in unit names, ranges, native kinds, statement counts, and fingerprints.
 4. Run parser-independent normalization tests.
-5. Run the per-language sweep over `test_fixtures/polyglot_calibration/` (see its README for the expected recall/precision floor). These corpora sanity-check the Python-calibrated thresholds; no per-language default thresholds have been derived from them.
+5. Run the per-language validator, sweep, and distribution report over `test_fixtures/polyglot_calibration/` and diff against the recorded tables in its README. The corpora measure each language's similarity scale under both built-in models; recorded thresholds are reference measurements, and no per-language default is wired into the engine.
 6. Update the pin only after every difference is understood.
 
 A semver-compatible grammar update can still rename a node or field. Broad version ranges would let an ordinary dependency refresh silently change duplicate reports.
