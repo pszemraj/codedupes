@@ -3673,7 +3673,10 @@ def run_semantic_analysis_with_identity(
     :param units: Code units to embed and compare.
     :param model_name: Model alias or identifier, defaults to ``DEFAULT_MODEL``.
     :param instruction_prefix: Optional instruction override for embedding inputs.
-    :param threshold: Minimum cosine similarity; ``None`` uses the model profile default.
+    :param threshold: Minimum cosine similarity applied flat to every pair;
+        ``None`` falls back to the model profile's strictest calibrated gate,
+        not per-language gating. Use :class:`codedupes.analyzer.CodeAnalyzer`
+        for calibrated per-language duplicate gates.
     :param exclude_pairs: Ordered pair keys to omit from the semantic results.
     :param batch_size: Initial encode batch size, defaults to ``DEFAULT_BATCH_SIZE``.
     :param revision: Optional model revision; ``None`` uses the profile default.
@@ -3751,7 +3754,10 @@ def run_semantic_analysis(
     :param units: Code units to embed and compare.
     :param model_name: Model alias or identifier, defaults to ``DEFAULT_MODEL``.
     :param instruction_prefix: Optional instruction override for embedding inputs.
-    :param threshold: Minimum cosine similarity; ``None`` uses the model profile default.
+    :param threshold: Minimum cosine similarity applied flat to every pair;
+        ``None`` falls back to the model profile's strictest calibrated gate,
+        not per-language gating. Use :class:`codedupes.analyzer.CodeAnalyzer`
+        for calibrated per-language duplicate gates.
     :param exclude_pairs: Ordered pair keys to omit from the semantic results.
     :param batch_size: Initial encode batch size, defaults to ``DEFAULT_BATCH_SIZE``.
     :param revision: Optional model revision; ``None`` uses the profile default.

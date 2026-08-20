@@ -13,6 +13,7 @@ from codedupes.analyzer import AnalyzerConfig, CodeAnalyzer, analyze_directory
 from codedupes.models import AnalysisResult, CodeUnit, CodeUnitType, DuplicatePair
 from codedupes.pairs import ordered_pair_key
 from codedupes.semantic import SemanticBackendError
+from codedupes.semantic_profiles import SemanticModelProfile
 from tests.conftest import build_two_function_source, create_project, make_code_unit
 
 _SEMANTIC_ANALYSIS_KWARG_NAMES = {
@@ -648,6 +649,23 @@ def test_tiny_near_duplicates_use_high_jaccard_floor(
     assert len(result.traditional_duplicates) == expected_count
 
 
+def _profile_with_gates(gates: dict[str, float], fallback: float = 0.99) -> SemanticModelProfile:
+    """Build a minimal profile carrying the given per-language duplicate gates.
+
+    :param gates: Language-to-gate map for the fake profile.
+    :param fallback: Gate for languages absent from ``gates``.
+    :return: Frozen profile suitable for monkeypatching ``resolve_model_profile``.
+    """
+    return SemanticModelProfile(
+        key="test-profile",
+        canonical_name="test/profile",
+        aliases=(),
+        family="generic",
+        default_semantic_threshold=fallback,
+        language_semantic_thresholds=gates,
+    )
+
+
 def test_analyzer_resolves_per_language_semantic_gate(tmp_path: Path, monkeypatch) -> None:
     source = "def add_one(x):\n    return x + 1\n"
     project = create_project(tmp_path, source)
@@ -655,8 +673,8 @@ def test_analyzer_resolves_per_language_semantic_gate(tmp_path: Path, monkeypatc
 
     monkeypatch.setattr(
         analyzer_module,
-        "get_semantic_threshold_for_language",
-        lambda _model, language: 0.77 if language == "python" else 0.99,
+        "resolve_model_profile",
+        lambda _model: _profile_with_gates({"python": 0.77}),
     )
     monkeypatch.setattr(
         analyzer_module,
@@ -720,8 +738,8 @@ def test_semantic_pairs_are_gated_per_language(tmp_path: Path, monkeypatch) -> N
 
     monkeypatch.setattr(
         analyzer_module,
-        "get_semantic_threshold_for_language",
-        lambda _model, language: {"python": 0.90, "javascript": 0.60}.get(language, 0.99),
+        "resolve_model_profile",
+        lambda _model: _profile_with_gates({"python": 0.90, "javascript": 0.60}),
     )
     monkeypatch.setattr(
         analyzer_module,
@@ -765,8 +783,8 @@ def test_cross_language_pairs_require_opt_in_and_use_looser_gate(
 
     monkeypatch.setattr(
         analyzer_module,
-        "get_semantic_threshold_for_language",
-        lambda _model, language: {"python": 0.90, "javascript": 0.60}.get(language, 0.99),
+        "resolve_model_profile",
+        lambda _model: _profile_with_gates({"python": 0.90, "javascript": 0.60}),
     )
     monkeypatch.setattr(
         analyzer_module,
@@ -811,8 +829,8 @@ def test_explicit_semantic_threshold_applies_flat_across_languages(
 
     monkeypatch.setattr(
         analyzer_module,
-        "get_semantic_threshold_for_language",
-        lambda _model, _language: pytest.fail("explicit threshold must bypass profile gates"),
+        "resolve_model_profile",
+        lambda _model: pytest.fail("explicit threshold must bypass profile gates"),
     )
     monkeypatch.setattr(
         analyzer_module,

@@ -43,7 +43,7 @@ from codedupes.semantic import (
 from codedupes.semantic import (
     run_semantic_analysis_with_identity as run_semantic_analysis,
 )
-from codedupes.semantic_profiles import get_semantic_threshold_for_language
+from codedupes.semantic_profiles import resolve_model_profile
 from codedupes.traditional import (
     build_reference_graph,
     extract_identifiers,
@@ -580,14 +580,11 @@ class CodeAnalyzer:
         if explicit is not None:
             return dict.fromkeys(languages, explicit), explicit
 
+        profile = resolve_model_profile(self.config.model_name)
         gates = {
-            language: get_semantic_threshold_for_language(self.config.model_name, language)
-            for language in languages
+            language: profile.semantic_threshold_for_language(language) for language in languages
         }
-        floor = min(
-            gates.values(),
-            default=get_semantic_threshold_for_language(self.config.model_name, None),
-        )
+        floor = min(gates.values(), default=profile.semantic_threshold_for_language(None))
         if gates:
             gate_text = ", ".join(f"{language}={gate:.2f}" for language, gate in gates.items())
             logger.info(
@@ -775,25 +772,21 @@ class CodeAnalyzer:
             # to its own language's gate (the embedding scan ran at the loosest gate).
             # Cross-language pairs are dropped unless cross_language opts in; those
             # claims are uncalibrated, so an opted-in mixed pair uses the looser of
-            # its two language gates (recall-first).
-            if self.config.cross_language:
-                semantic_duplicates = [
-                    duplicate
-                    for duplicate in semantic_duplicates
-                    if duplicate.similarity
-                    >= min(
-                        semantic_gates.get(duplicate.unit_a.language, semantic_scan_floor),
-                        semantic_gates.get(duplicate.unit_b.language, semantic_scan_floor),
-                    )
-                ]
-            else:
-                semantic_duplicates = [
-                    duplicate
-                    for duplicate in semantic_duplicates
-                    if duplicate.unit_a.language == duplicate.unit_b.language
-                    and duplicate.similarity
-                    >= semantic_gates.get(duplicate.unit_a.language, semantic_scan_floor)
-                ]
+            # its two language gates (recall-first). For a same-language pair the
+            # min() reduces to that language's single gate.
+            semantic_duplicates = [
+                duplicate
+                for duplicate in semantic_duplicates
+                if (
+                    self.config.cross_language
+                    or duplicate.unit_a.language == duplicate.unit_b.language
+                )
+                and duplicate.similarity
+                >= min(
+                    semantic_gates.get(duplicate.unit_a.language, semantic_scan_floor),
+                    semantic_gates.get(duplicate.unit_b.language, semantic_scan_floor),
+                )
+            ]
 
             if self.config.suppress_test_semantic_matches:
                 semantic_duplicates = [
