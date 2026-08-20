@@ -501,6 +501,12 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    if args.duplicate_start > args.duplicate_stop:
+        parser.error(
+            f"--duplicate-start {args.duplicate_start} must not exceed "
+            f"--duplicate-stop {args.duplicate_stop}; the sweep grid would be empty."
+        )
+
     labels = json.loads(args.labels_path.read_text())
     probes: list[dict[str, Any]] = []
     if not args.skip_search:

@@ -138,8 +138,11 @@ def main() -> int:
     parser.add_argument(
         "--semantic-threshold",
         type=float,
-        default=0.70,
-        help="Low semantic threshold used to collect raw semantic candidates for the sweep.",
+        default=None,
+        help=(
+            "Semantic threshold used to collect raw semantic candidates for the sweep "
+            "(default: the lowest --semantic-grid value, so every grid row is reachable)."
+        ),
     )
     parser.add_argument(
         "--traditional-threshold",
@@ -197,6 +200,17 @@ def main() -> int:
 
     args = parser.parse_args()
 
+    grid_floor = min(args.semantic_grid)
+    collection_threshold = (
+        args.semantic_threshold if args.semantic_threshold is not None else grid_floor
+    )
+    if collection_threshold > grid_floor:
+        parser.error(
+            f"--semantic-threshold {collection_threshold} is above the lowest --semantic-grid "
+            f"value {grid_floor}; grid rows below the collection threshold would silently "
+            "repeat the collection threshold's results."
+        )
+
     labels = json.loads(args.labels_path.read_text())
     config = AnalyzerConfig(
         run_traditional=True,
@@ -206,7 +220,7 @@ def main() -> int:
         languages=tuple(args.language) if args.language else None,
         min_semantic_statements=args.min_statements,
         jaccard_threshold=args.traditional_threshold,
-        semantic_threshold=args.semantic_threshold,
+        semantic_threshold=collection_threshold,
         model_name=args.model,
         model_revision=args.model_revision,
         trust_remote_code=args.trust_remote_code,

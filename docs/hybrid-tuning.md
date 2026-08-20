@@ -42,6 +42,8 @@ Defaults used by the harness:
 - weak identifier jaccard minimum: `0.10,0.15,0.20,0.25,0.30`
 - statement ratio minimum: `0.20,0.25,0.35,0.45,0.55`
 
+Raw semantic candidates are collected at the lowest `--semantic-grid` value; an explicit `--semantic-threshold` above that floor is rejected because grid rows below the collection threshold could never see their pairs.
+
 Override grids as needed:
 
 ```bash

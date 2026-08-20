@@ -222,29 +222,31 @@ def _validate_probes(
 
 
 def _validate_files(corpus_path: Path, units: list[CodeUnit], failures: list[str]) -> None:
-    """Validate corpus file naming and per-file unit-name uniqueness.
+    """Validate corpus file naming and per-basename unit-name uniqueness.
 
     :param Path corpus_path: Corpus root directory.
     :param list[CodeUnit] units: Extracted corpus units.
     :param list[str] failures: Mutable failure sink.
     """
     source_files = sorted(path for path in corpus_path.rglob("*") if path.is_file())
-    files_with_units = {unit.file_path.name for unit in units}
+    files_with_units = {unit.file_path.resolve() for unit in units}
     for path in source_files:
         relative = path.relative_to(corpus_path).as_posix()
         for pattern in DEFAULT_EXCLUDE_PATTERNS:
             if fnmatch(relative, pattern) or fnmatch(relative, pattern.removeprefix("**/")):
                 failures.append(f"file matches default exclude pattern {pattern!r}: {relative}")
-        if path.suffix != ".json" and path.name not in files_with_units:
+        if path.suffix != ".json" and path.resolve() not in files_with_units:
             failures.append(f"corpus file produced zero units: {relative}")
 
+    # Label specs resolve by bare filename, so a unit name must be unique per
+    # basename across the whole corpus, not merely within one file.
     per_file: dict[tuple[str, str], int] = {}
     for unit in units:
         key = (unit.file_path.name, unit.name)
         per_file[key] = per_file.get(key, 0) + 1
     for (filename, name), count in sorted(per_file.items()):
         if count > 1:
-            failures.append(f"unit name not unique within file: {filename}::{name} x{count}")
+            failures.append(f"unit name not unique for basename: {filename}::{name} x{count}")
 
 
 def main() -> int:
