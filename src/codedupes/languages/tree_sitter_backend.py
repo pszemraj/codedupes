@@ -374,6 +374,18 @@ def _qualified(prefix: str, *parts: str) -> str:
     return ".".join(clean)
 
 
+def _push_context_segment(segments: list[str], segment: str) -> None:
+    """Add one outer context segment unless the inner path already spells it out.
+
+    :param segments: Innermost-first context segments collected so far, updated in place.
+    :param segment: Candidate outer segment, itself possibly dotted.
+    :return: ``None``.
+    """
+    if segments and (segments[-1] == segment or segments[-1].startswith(f"{segment}.")):
+        return
+    segments.append(segment)
+
+
 def _clean_name(text: str) -> str:
     """Strip every whitespace run from a source fragment.
 
@@ -1400,23 +1412,48 @@ class ECMAScriptBackend(TreeSitterBackend):
             return bound_name
         return f"{context}.{bound_name}"
 
-    def _object_context(self, node: Any, source: bytes) -> str | None:
-        """Resolve the binding of the object literal enclosing a node.
+    def _object_owner(self, node: Any, source: bytes) -> str | None:
+        """Resolve the binding path of the object literal directly containing a member.
 
-        :param node: Node nested inside an object literal.
+        Only a *direct* container counts. Reaching for the nearest enclosing
+        object literal instead would short-circuit past intervening class and
+        function scopes, dropping their segments and collapsing sibling classes
+        of one registry literal onto a single qualified name.
+
+        :param node: Member node whose immediate parent may be an object literal.
         :param source: Full file source bytes.
-        :return: Contextual binding of the object literal, or ``None``.
+        :return: Dotted binding path of the object literal, or ``None``.
         """
-        object_node = _nearest_ancestor(node, {"object"})
-        if object_node is None:
+        parent = getattr(node, "parent", None)
+        if getattr(parent, "type", "") != "object":
             return None
-        binding = self._binding_for_value(object_node, source)
-        if binding is None:
-            return None
-        return self._contextual_binding(object_node, binding[0], source)
+        binding = self._binding_for_value(parent, source)
+        return binding[0] if binding else None
+
+    def _member_container(self, node: Any, source: bytes) -> str:
+        """Resolve the dotted container path of one method definition.
+
+        :param node: Method definition node.
+        :param source: Full file source bytes.
+        :return: Dotted container path, empty when no container is nameable.
+        """
+        owner = self._object_owner(node, source)
+        if owner and owner.startswith(("exports.", "module.exports")):
+            return owner
+        segments: list[str] = [owner] if owner else []
+        for name in reversed(self._lexical_context(node, source)):
+            _push_context_segment(segments, name)
+        segments.reverse()
+        return ".".join(segments)
 
     def _lexical_context(self, node: Any, source: bytes) -> list[str]:
-        """Collect the class, function, method, and module names enclosing a node.
+        """Collect the class, function, method, module, and object-literal names enclosing a node.
+
+        Object literals take part in this one walk rather than competing with
+        it: a shorthand method contributes its own name plus the binding path of
+        the literal holding it, so intervening class and function scopes still
+        add their segments in order. The walk is iterative because generated
+        sources nest deeply enough to blow the Python recursion limit.
 
         :param node: Node whose lexical scope chain is walked.
         :param source: Full file source bytes.
@@ -1426,25 +1463,35 @@ class ECMAScriptBackend(TreeSitterBackend):
         current = getattr(node, "parent", None)
         while current is not None:
             node_type = getattr(current, "type", "")
+            binding_path: str | None = None
             if node_type in self.class_declarations | self.class_expressions:
                 name = self._name_field(current, source)
-                if not name:
-                    binding = self._binding_for_value(current, source)
-                    name = binding[0].rsplit(".", 1)[-1] if binding else None
                 if name:
-                    contexts.append(name)
+                    _push_context_segment(contexts, name)
+                else:
+                    binding = self._binding_for_value(current, source)
+                    binding_path = binding[0] if binding else None
             elif node_type in self.function_declarations:
                 name = self._name_field(current, source)
                 if name:
-                    contexts.append(name)
+                    _push_context_segment(contexts, name)
             elif node_type in self.function_expressions:
                 binding = self._binding_for_value(current, source)
-                if binding:
-                    contexts.append(binding[0].rsplit(".", 1)[-1])
-            elif node_type in self.method_types or node_type in {"internal_module", "module"}:
+                binding_path = binding[0] if binding else None
+            elif node_type in self.method_types:
                 name = self._name_field(current, source)
                 if name:
-                    contexts.append(name)
+                    _push_context_segment(contexts, name)
+                    binding_path = self._object_owner(current, source)
+            elif node_type in {"internal_module", "module"}:
+                name = self._name_field(current, source)
+                if name:
+                    _push_context_segment(contexts, name)
+            if binding_path:
+                _push_context_segment(contexts, binding_path)
+                if binding_path.startswith(("exports.", "module.exports")):
+                    # A CommonJS export target is already rooted at the module.
+                    break
             current = getattr(current, "parent", None)
         contexts.reverse()
         return contexts
@@ -1684,9 +1731,7 @@ class ECMAScriptBackend(TreeSitterBackend):
         name = self._name_field(node, source)
         if body is None or not name:
             return None
-        lexical_context = self._lexical_context(node, source)
-        object_context = self._object_context(node, source)
-        container = object_context or ".".join(lexical_context)
+        container = self._member_container(node, source)
         if not container:
             return None
         qualified_name = _qualified(prefix, container, name)

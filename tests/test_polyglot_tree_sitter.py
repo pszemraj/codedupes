@@ -559,6 +559,78 @@ def test_javascript_extracts_modern_stable_unit_forms(tmp_path: Path) -> None:
     assert names["sample.default"] == CodeUnitType.FUNCTION
 
 
+def test_javascript_object_literal_class_values_keep_their_class_segment(
+    tmp_path: Path,
+) -> None:
+    """Registry literals of anonymous classes routinely repeat one method name."""
+    units = _extract(
+        tmp_path,
+        "sample.js",
+        """
+        const registry = {
+            Alpha: class { run(value) { return value; } },
+            Beta: class { run(value) { return value + 1; } },
+        };
+        """,
+    )
+    names = [unit.qualified_name for unit in units]
+
+    assert sorted(names) == [
+        "sample.registry.Alpha",
+        "sample.registry.Alpha.run",
+        "sample.registry.Beta",
+        "sample.registry.Beta.run",
+    ]
+    assert len(set(names)) == len(names)
+    assert {unit.name for unit in units if unit.unit_type == CodeUnitType.METHOD} == {"run"}
+
+
+def test_javascript_object_literal_and_lexical_scopes_nest_in_order(tmp_path: Path) -> None:
+    """Object-literal and lexical containers must resolve under one rule."""
+    units = _extract(
+        tmp_path,
+        "sample.js",
+        """
+        const api = {
+            build() {
+                class Inner { run(value) { return value; } }
+                return Inner;
+            },
+        };
+        """,
+    )
+
+    assert {unit.qualified_name: unit.unit_type for unit in units} == {
+        "sample.api.build": CodeUnitType.METHOD,
+        "sample.api.build.Inner": CodeUnitType.CLASS,
+        "sample.api.build.Inner.run": CodeUnitType.METHOD,
+    }
+
+
+def test_javascript_export_clause_marks_nested_object_literal_methods(tmp_path: Path) -> None:
+    """Deferred export lists name the base binding, not the dotted container path."""
+    units = _extract(
+        tmp_path,
+        "sample.js",
+        """
+        const registry = {
+            Alpha: class { run(value) { return value; } },
+        };
+        export const api = { list() { return 1; } };
+        const hidden = { Gamma: class { run(value) { return value; } } };
+
+        export { registry };
+        """,
+    )
+    exported = {unit.qualified_name: unit.is_exported for unit in units}
+
+    assert exported["sample.registry.Alpha"] is True
+    assert exported["sample.registry.Alpha.run"] is True
+    assert exported["sample.api.list"] is True
+    assert exported["sample.hidden.Gamma"] is False
+    assert exported["sample.hidden.Gamma.run"] is False
+
+
 def test_javascript_unicode_identifiers_are_extracted(tmp_path: Path) -> None:
     """Unicode identifiers are legal ES2015+, so ASCII-only naming would drop units."""
     units = _extract(
