@@ -299,9 +299,11 @@ def _run_duplicate_sweep(
     excluded_pairs = len(positive_pairs) - len(scoreable_pairs)
     if excluded_pairs:
         print(
-            f"Excluding {excluded_pairs} labeled pairs outside the semantic candidate pool "
-            "(class-level or below-min-statement units); the semantic tier can never "
-            "predict them."
+            f"{excluded_pairs} labeled pairs sit outside the semantic candidate pool "
+            "(class-level or below-min-statement units). They stay in the metric "
+            "denominator and are threshold-invariant: the production candidate policy "
+            "keeps them unembedded, so no threshold in this grid reaches them and they "
+            "count as false negatives unless the traditional tier already matched them."
         )
     thresholds = _threshold_grid(duplicate_start, duplicate_stop)
     rows: list[SweepRow] = []
