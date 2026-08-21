@@ -1092,6 +1092,17 @@ class RustBackend(TreeSitterBackend):
                         not in {"declaration_list", "type_parameters", "where_clause"}
                     ]
                     target = candidates[-1] if candidates else None
+                # ``impl Display for W`` and ``impl Debug for W`` both define
+                # ``fmt``, so the trait has to qualify the method or the two
+                # units collide under one name. Inherent impls carry no trait
+                # field and keep the plain ``W.method`` shape. Appending the
+                # trait before the target puts it after the target once
+                # ``contexts`` is reversed into outermost-first order.
+                trait_node = _child_by_field(current, "trait")
+                if trait_node is not None and not _same_node(trait_node, target):
+                    trait_text = _clean_name(_node_text(source, trait_node))
+                    if trait_text:
+                        contexts.append(trait_text)
                 target_text = _clean_name(_node_text(source, target))
                 if target_text:
                     contexts.append(target_text)

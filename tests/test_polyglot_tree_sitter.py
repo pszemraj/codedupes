@@ -402,8 +402,78 @@ def test_rust_trait_impl_methods_survive_the_public_filter(tmp_path: Path) -> No
     )
 
     assert {unit.qualified_name for unit in units} == {
-        "sample.Widget.fmt",
+        "sample.Widget.std::fmt::Display.fmt",
         "sample.Widget.inherent_public",
+    }
+
+
+def test_rust_trait_impls_of_one_method_name_get_distinct_qualified_names(
+    tmp_path: Path,
+) -> None:
+    """Two traits routinely require the same method name on one type."""
+    units = _extract(
+        tmp_path,
+        "sample.rs",
+        """
+        pub struct Widget;
+
+        impl Display for Widget {
+            fn fmt(&self, formatter: &mut Formatter) -> Result {
+                formatter.write_str("shown")
+            }
+        }
+
+        impl Debug for Widget {
+            fn fmt(&self, formatter: &mut Formatter) -> Result {
+                formatter.write_str("debug")
+            }
+        }
+
+        impl Widget {
+            pub fn render(&self) -> i32 { 1 }
+        }
+        """,
+    )
+    names = [unit.qualified_name for unit in units]
+
+    assert sorted(names) == [
+        "sample.Widget.Debug.fmt",
+        "sample.Widget.Display.fmt",
+        "sample.Widget.render",
+    ]
+    assert len(set(names)) == len(names)
+    assert {unit.name for unit in units} == {"fmt", "render"}
+
+
+def test_rust_generic_and_nested_module_trait_impls_keep_clean_segments(
+    tmp_path: Path,
+) -> None:
+    """Generic trait arguments and module nesting both belong in the impl path."""
+    units = _extract(
+        tmp_path,
+        "sample.rs",
+        """
+        pub struct Widget;
+
+        impl From<u32> for Widget {
+            fn from(value: u32) -> Self { Widget }
+        }
+
+        mod inner {
+            pub struct Gadget;
+
+            impl Display for Gadget {
+                fn fmt(&self, formatter: &mut Formatter) -> Result {
+                    formatter.write_str("gadget")
+                }
+            }
+        }
+        """,
+    )
+
+    assert {unit.qualified_name for unit in units} == {
+        "sample.Widget.From<u32>.from",
+        "sample.inner.Gadget.Display.fmt",
     }
 
 
