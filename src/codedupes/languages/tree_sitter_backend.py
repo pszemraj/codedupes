@@ -812,26 +812,29 @@ class CBackend(TreeSitterBackend):
     def _declarator_name(declarator: Any | None, source: bytes) -> str | None:
         """Find the identifier that a possibly nested C declarator declares.
 
+        The search is an explicit preorder walk: generated sources parenthesize
+        declarators deeply enough to blow the Python recursion limit. The
+        ``declarator`` field is visited first so ``int (*fp)(int)`` reports the
+        pointer name rather than a parameter name.
+
         :param declarator: Declarator node, or ``None``.
         :param source: Full file source bytes.
         :return: Declared name, or ``None`` when no identifier is reachable.
         """
         if declarator is None:
             return None
-        node_type = getattr(declarator, "type", "")
-        if node_type in {"identifier", "field_identifier"}:
-            return _node_text(source, declarator)
-
-        nested = _child_by_field(declarator, "declarator")
-        if nested is not None:
-            found = CBackend._declarator_name(nested, source)
-            if found:
-                return found
-
-        for child in _named_children(declarator):
-            found = CBackend._declarator_name(child, source)
-            if found:
-                return found
+        stack = [declarator]
+        while stack:
+            current = stack.pop()
+            if getattr(current, "type", "") in {"identifier", "field_identifier"}:
+                return _node_text(source, current)
+            nested = _child_by_field(current, "declarator")
+            children = [
+                child for child in _named_children(current) if not _same_node(child, nested)
+            ]
+            if nested is not None:
+                children.insert(0, nested)
+            stack.extend(reversed(children))
         return None
 
     @staticmethod
@@ -1277,14 +1280,51 @@ class ECMAScriptBackend(TreeSitterBackend):
     def _binding_for_value(self, node: Any, source: bytes) -> tuple[str, Any] | None:
         """Resolve the stable name that a value expression is bound to.
 
+        The walk out through enclosing object literals is iterative: generated
+        sources nest objects deeply enough to blow the Python recursion limit.
+
         :param node: Value node, typically a function or class expression.
         :param source: Full file source bytes.
         :return: Bound name with the node carrying the binding, or ``None``.
         """
-        current = self._unwrap_value(node)
-        parent = getattr(current, "parent", None)
-        if parent is None:
-            return None
+        keys: list[str] = []
+        binding_node: Any = None
+        value = node
+        while True:
+            current = self._unwrap_value(value)
+            parent = getattr(current, "parent", None)
+            if parent is None:
+                return None
+
+            if getattr(parent, "type", "") == "pair" and _same_node(
+                _child_by_field(parent, "value"), current
+            ):
+                key = _child_by_field(parent, "key")
+                key_name = _stable_path(_node_text(source, key).strip().strip("'\""))
+                object_node = getattr(parent, "parent", None)
+                if not key_name or object_node is None:
+                    return None
+                keys.append(key_name)
+                if binding_node is None:
+                    binding_node = parent
+                value = object_node
+                continue
+
+            base = self._direct_binding(current, parent, source)
+            if base is None:
+                return None
+            if not keys:
+                return base
+            return (".".join([base[0], *reversed(keys)]), binding_node)
+
+    def _direct_binding(self, current: Any, parent: Any, source: bytes) -> tuple[str, Any] | None:
+        """Resolve the binding a value takes directly from its immediate parent.
+
+        :param current: Value node, already unwrapped of transparent wrappers.
+        :param parent: Immediate parent of ``current``.
+        :param source: Full file source bytes.
+        :return: Bound name with the node carrying the binding, or ``None``.
+        """
         parent_type = getattr(parent, "type", "")
 
         if parent_type == "variable_declarator" and _same_node(
@@ -1300,16 +1340,6 @@ class ECMAScriptBackend(TreeSitterBackend):
                 left = _child_by_field(parent, "left")
                 stable = _stable_path(_node_text(source, left))
                 return (stable, parent) if stable else None
-
-        if parent_type == "pair" and _same_node(_child_by_field(parent, "value"), current):
-            key = _child_by_field(parent, "key")
-            key_text = _node_text(source, key).strip().strip("'\"")
-            key_name = _stable_path(key_text)
-            object_node = getattr(parent, "parent", None)
-            object_binding = self._binding_for_value(object_node, source) if object_node else None
-            if key_name and object_binding:
-                return (f"{object_binding[0]}.{key_name}", parent)
-            return None
 
         if parent_type in self.field_types and _same_node(
             _child_by_field(parent, "value"), current

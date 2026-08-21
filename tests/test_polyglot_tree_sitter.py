@@ -122,6 +122,30 @@ def test_deeply_nested_source_does_not_hit_the_recursion_limit(tmp_path: Path) -
     assert units[0].structural_hash
 
 
+def test_deeply_nested_c_declarator_does_not_hit_the_recursion_limit(tmp_path: Path) -> None:
+    depth = 2000
+    source = f"int {'(' * depth}deep{')' * depth}(int value) {{ return value; }}"
+
+    units = _extract(tmp_path, "sample.c", source)
+
+    assert [unit.name for unit in units] == ["deep"]
+
+
+def test_deeply_nested_object_binding_does_not_hit_the_recursion_limit(tmp_path: Path) -> None:
+    depth = 2000
+    source = (
+        "const root = "
+        + "{ nested: " * depth
+        + "{ leaf: function () { return 1; } }"
+        + " }" * depth
+        + ";"
+    )
+
+    units = _extract(tmp_path, "sample.js", source)
+
+    assert any(unit.qualified_name.endswith(".leaf") for unit in units)
+
+
 def test_c_extracts_definitions_and_ignores_prototypes(tmp_path: Path) -> None:
     units = _extract(
         tmp_path,
