@@ -195,7 +195,6 @@ def test_all_duplicates_returns_raw_for_single_method_modes(tmp_path: Path) -> N
         hybrid_duplicates=[],
         potentially_unused=[],
         analysis_mode="semantic",
-        filtered_raw_duplicates=0,
     )
 
     assert semantic_result.all_duplicates == [semantic_duplicate]
@@ -1521,7 +1520,7 @@ def test_hybrid_synthesis_exact_only_included(tmp_path: Path) -> None:
     unit_b = make_code_unit(tmp_path, name="b", source="def b(y):\n    return y + 1\n", lineno=5)
     traditional = [DuplicatePair(unit_a=unit_a, unit_b=unit_b, similarity=1.0, method="ast_hash")]
 
-    hybrid, filtered = analyzer_module._synthesize_hybrid_duplicates(
+    hybrid, _ = analyzer_module._synthesize_hybrid_duplicates(
         traditional,
         [],
         jaccard_threshold=0.85,
@@ -1530,7 +1529,6 @@ def test_hybrid_synthesis_exact_only_included(tmp_path: Path) -> None:
     assert len(hybrid) == 1
     assert hybrid[0].tier == "exact"
     assert hybrid[0].confidence == 1.0
-    assert filtered == 0
 
 
 def test_hybrid_synthesis_jaccard_only_included(tmp_path: Path) -> None:
@@ -1579,7 +1577,7 @@ def test_hybrid_synthesis_semantic_only_corroboration_sets_tier(tmp_path: Path) 
     gated_semantic = [
         DuplicatePair(unit_a=unit_a, unit_b=unit_b, similarity=0.75, method="semantic")
     ]
-    hybrid, filtered = analyzer_module._synthesize_hybrid_duplicates(
+    hybrid, _ = analyzer_module._synthesize_hybrid_duplicates(
         [],
         gated_semantic,
         jaccard_threshold=0.85,
@@ -1587,7 +1585,6 @@ def test_hybrid_synthesis_semantic_only_corroboration_sets_tier(tmp_path: Path) 
     assert len(hybrid) == 1
     assert hybrid[0].tier == "semantic_high_confidence"
     assert hybrid[0].confidence == pytest.approx(0.45 + (0.55 * 0.75))
-    assert filtered == 0
 
     weak_sources_a = make_code_unit(
         tmp_path,
@@ -1606,7 +1603,7 @@ def test_hybrid_synthesis_semantic_only_corroboration_sets_tier(tmp_path: Path) 
             unit_a=weak_sources_a, unit_b=weak_sources_b, similarity=0.95, method="semantic"
         )
     ]
-    hybrid_weak, filtered_weak = analyzer_module._synthesize_hybrid_duplicates(
+    hybrid_weak, _ = analyzer_module._synthesize_hybrid_duplicates(
         [],
         weak_semantic,
         jaccard_threshold=0.85,
@@ -1616,7 +1613,6 @@ def test_hybrid_synthesis_semantic_only_corroboration_sets_tier(tmp_path: Path) 
     assert hybrid_weak[0].confidence == pytest.approx(0.40 + (0.45 * 0.95))
     assert hybrid_weak[0].weak_identifier_jaccard == 0.0
     assert hybrid_weak[0].statement_count_ratio == pytest.approx(0.25)
-    assert filtered_weak == 0
 
 
 def test_semantic_review_never_outranks_a_corroborated_pair(tmp_path: Path) -> None:
@@ -1678,7 +1674,7 @@ def test_hybrid_synthesis_publishes_alpha_renamed_semantic_pair(tmp_path: Path) 
     )
     semantic = [DuplicatePair(unit_a=unit_a, unit_b=unit_b, similarity=0.91, method="semantic")]
 
-    hybrid, filtered = analyzer_module._synthesize_hybrid_duplicates(
+    hybrid, _ = analyzer_module._synthesize_hybrid_duplicates(
         [],
         semantic,
         jaccard_threshold=0.85,
@@ -1688,7 +1684,6 @@ def test_hybrid_synthesis_publishes_alpha_renamed_semantic_pair(tmp_path: Path) 
     assert hybrid[0].tier == "semantic_review"
     assert hybrid[0].weak_identifier_jaccard == 0.0
     assert hybrid[0].statement_count_ratio == 1.0
-    assert filtered == 0
 
 
 def test_mixed_mode_semantic_failure_still_builds_hybrid_from_traditional(

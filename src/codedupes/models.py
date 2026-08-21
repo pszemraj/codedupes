@@ -190,7 +190,6 @@ class AnalysisResult:
     hybrid_duplicates: list[HybridDuplicate]
     potentially_unused: list[CodeUnit]
     analysis_mode: AnalysisMode
-    filtered_raw_duplicates: int = 0
     semantic_fallback: bool = False
     semantic_fallback_reason: str | None = None
     extraction_diagnostics: list[ExtractionDiagnostic] = field(default_factory=list)

@@ -450,7 +450,6 @@ def print_summary(
         summary.add_row("", "")
         summary.add_row("Raw traditional duplicates", str(len(result.traditional_duplicates)))
         summary.add_row("Raw semantic duplicates", str(len(result.semantic_duplicates)))
-        summary.add_row("Filtered raw duplicates", str(result.filtered_raw_duplicates))
     elif mode == "traditional":
         summary.add_row("Traditional duplicates", str(len(result.traditional_duplicates)))
         summary.add_row("Potentially unused", str(len(result.potentially_unused)))
@@ -575,7 +574,6 @@ def print_check_json_combined(result: AnalysisResult, *, show_all: bool) -> None
             "potentially_unused": len(result.potentially_unused),
             "raw_traditional_duplicates": len(result.traditional_duplicates),
             "raw_semantic_duplicates": len(result.semantic_duplicates),
-            "filtered_raw_duplicates": result.filtered_raw_duplicates,
             "semantic_fallback": result.semantic_fallback,
             "semantic_fallback_reason": result.semantic_fallback_reason,
             "extraction_diagnostics": len(result.extraction_diagnostics),
@@ -1398,10 +1396,6 @@ def check_command(
                 )
 
                 if show_all:
-                    console.print(
-                        f"[dim]Filtered out {result.filtered_raw_duplicates} raw duplicate pairs "
-                        "from default hybrid output.[/dim]"
-                    )
                     print_duplicates(
                         result.traditional_duplicates,
                         "Traditional Duplicates (Raw Structural/Token/Jaccard)",

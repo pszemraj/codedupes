@@ -243,7 +243,10 @@ def _synthesize_hybrid_duplicates(
         semantic-only candidate to high confidence.
     :param statement_ratio_min: Statement-count ratio needed to promote a
         semantic-only candidate to high confidence.
-    :return: Tuple of sorted hybrid duplicates and number filtered pairs.
+    :return: Hybrid duplicates sorted by descending confidence, and the count of
+        candidate pairs that reached no tier (structurally zero since every
+        semantic-only pair falls back to ``semantic_review``; the calibration
+        sweeps still unpack it).
     """
     pair_evidence: dict[tuple[str, str], dict[str, object]] = {}
 
@@ -745,7 +748,6 @@ class CodeAnalyzer:
                 hybrid_duplicates=[],
                 potentially_unused=[],
                 analysis_mode="none",
-                filtered_raw_duplicates=0,
                 extraction_diagnostics=list(self._extraction_diagnostics),
             )
 
@@ -897,10 +899,9 @@ class CodeAnalyzer:
 
         combined_mode = self.config.run_traditional and self.config.run_semantic
         hybrid_duplicates: list[HybridDuplicate] = []
-        filtered_raw_duplicates = 0
 
         if combined_mode:
-            hybrid_duplicates, filtered_raw_duplicates = _synthesize_hybrid_duplicates(
+            hybrid_duplicates, _ = _synthesize_hybrid_duplicates(
                 traditional_duplicates,
                 semantic_duplicates,
                 jaccard_threshold=self.config.jaccard_threshold,
@@ -922,7 +923,6 @@ class CodeAnalyzer:
             hybrid_duplicates=hybrid_duplicates,
             potentially_unused=unused,
             analysis_mode=analysis_mode,
-            filtered_raw_duplicates=filtered_raw_duplicates,
             semantic_fallback=semantic_fallback,
             semantic_fallback_reason=semantic_fallback_reason,
             extraction_diagnostics=list(self._extraction_diagnostics),

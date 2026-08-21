@@ -51,7 +51,6 @@ def _build_result(tmp_path: Path) -> AnalysisResult:
         hybrid_duplicates=[hybrid],
         potentially_unused=[unit],
         analysis_mode="combined",
-        filtered_raw_duplicates=0,
     )
 
 
@@ -898,6 +897,26 @@ def test_cli_show_all_prints_raw_sections(monkeypatch, tmp_path):
     assert "Semantic Duplicates (Raw" in result.output
 
 
+def test_cli_never_reports_a_filtered_raw_duplicate_count(monkeypatch, tmp_path):
+    # Every candidate pair now reaches a tier, so the old always-zero counter
+    # and its surfaces are gone.
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+    patch_cli_analyzer(
+        monkeypatch,
+        cli,
+        analyze_result=lambda: _build_result_with_semantic_duplicate(tmp_path),
+    )
+    runner = CliRunner()
+
+    table_result = runner.invoke(cli.cli, ["check", str(path), "--show-all"])
+    assert "Filtered raw duplicates" not in table_result.output
+    assert "raw duplicate pairs" not in table_result.output
+
+    json_result = runner.invoke(cli.cli, ["check", str(path), "--json"])
+    assert "filtered_raw_duplicates" not in json.loads(json_result.output)["summary"]
+
+
 def test_cli_traditional_panel_label_is_language_neutral(monkeypatch, tmp_path):
     path = tmp_path / "sample.py"
     path.write_text("def entry():\n    return 1\n")
@@ -941,7 +960,6 @@ def test_cli_full_table_disables_truncation(monkeypatch, tmp_path):
         hybrid_duplicates=[hybrid for _ in range(25)],
         potentially_unused=[],
         analysis_mode="combined",
-        filtered_raw_duplicates=0,
     )
     patch_cli_analyzer(monkeypatch, cli, analyze_result=result_obj)
 
@@ -1062,7 +1080,6 @@ def test_cli_combined_exit_code_ignores_raw_filtered_findings(monkeypatch, tmp_p
             hybrid_duplicates=[],
             potentially_unused=[],
             analysis_mode="traditional",
-            filtered_raw_duplicates=1,
         ),
     )
 
@@ -1086,7 +1103,6 @@ def test_cli_semantic_only_uses_raw_findings_for_exit(monkeypatch, tmp_path):
             hybrid_duplicates=[],
             potentially_unused=[],
             analysis_mode="semantic",
-            filtered_raw_duplicates=0,
         ),
     )
 
