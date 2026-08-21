@@ -253,6 +253,8 @@ def test_cli_model_semantic_flags_pass_through(monkeypatch, tmp_path):
         [
             "check",
             str(path),
+            "--semantic-threshold",
+            "0.9",
             "--instruction-prefix",
             "Represent this code: ",
             "--model-revision",
@@ -282,6 +284,44 @@ def test_cli_model_semantic_flags_pass_through(monkeypatch, tmp_path):
     assert captured[0].filter_tiny_traditional is False
     assert captured[0].tiny_unit_statement_cutoff == 4
     assert captured[0].tiny_near_jaccard_min == 0.95
+
+
+def test_cli_check_rejects_uncalibrated_context_as_usage_error(monkeypatch, tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+
+    patch_cli_analyzer(monkeypatch, cli, analyze_result=lambda: _build_result(tmp_path))
+    runner = CliRunner()
+    result = runner.invoke(
+        cli.cli,
+        ["check", str(path), "--instruction-prefix", "Represent this code: "],
+    )
+
+    assert result.exit_code == 2
+    assert "provide semantic_threshold explicitly" in result.output
+
+
+def test_cli_search_builds_search_mode_config(monkeypatch, tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+
+    captured = []
+    patch_cli_analyzer(
+        monkeypatch,
+        cli,
+        analyze_result=lambda: _build_result(tmp_path),
+        search_results=[],
+        captured_configs=captured,
+    )
+    runner = CliRunner()
+    result = runner.invoke(
+        cli.cli,
+        ["search", str(path), "find entry", "--instruction-prefix", "custom: "],
+    )
+
+    assert result.exit_code == 0
+    assert captured[0].mode == "search"
+    assert captured[0].instruction_prefix == "custom: "
 
 
 def test_cli_allow_semantic_fallback_pass_through(monkeypatch, tmp_path):

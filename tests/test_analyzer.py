@@ -1270,16 +1270,10 @@ def test_search_threshold_defaults_to_none_and_honors_explicit_config(
         {"trust_remote_code": True},
     ],
 )
-def test_uncalibrated_duplicate_context_requires_explicit_threshold(
-    tmp_path: Path, monkeypatch, config_overrides: dict[str, str]
+def test_uncalibrated_duplicate_context_rejected_at_construction(
+    config_overrides: dict[str, str],
 ) -> None:
-    project = create_project(tmp_path, "def entry(x):\n    y = x + 1\n    return y\n")
-    monkeypatch.setattr(
-        analyzer_module,
-        "run_semantic_analysis",
-        _make_semantic_runner(),
-    )
-    analyzer = CodeAnalyzer(
+    with pytest.raises(ValueError, match="provide semantic_threshold explicitly"):
         AnalyzerConfig(
             run_traditional=False,
             run_semantic=True,
@@ -1288,10 +1282,48 @@ def test_uncalibrated_duplicate_context_requires_explicit_threshold(
             model_name="embeddinggemma-300m",
             **config_overrides,
         )
-    )
 
-    with pytest.raises(ValueError, match="provide semantic_threshold explicitly"):
+
+@pytest.mark.parametrize(
+    "config_overrides",
+    [
+        {"semantic_task": "classification"},
+        {"instruction_prefix": "CUSTOM: "},
+        {"model_revision": "f" * 40},
+        {"trust_remote_code": True},
+    ],
+)
+def test_search_mode_defers_uncalibrated_context_to_query_time(
+    config_overrides: dict[str, str],
+) -> None:
+    config = AnalyzerConfig(
+        mode="search",
+        run_traditional=False,
+        run_semantic=True,
+        run_unused=False,
+        min_semantic_statements=0,
+        model_name="embeddinggemma-300m",
+        **config_overrides,
+    )
+    assert config.mode == "search"
+
+
+def test_analyze_rejects_search_mode_config(tmp_path: Path) -> None:
+    project = create_project(tmp_path, "def entry(x):\n    return x + 1\n")
+    analyzer = CodeAnalyzer(AnalyzerConfig(mode="search", run_traditional=False, run_unused=False))
+
+    with pytest.raises(ValueError, match="mode='check'"):
         analyzer.analyze(project)
+
+
+def test_invalid_mode_rejected() -> None:
+    with pytest.raises(ValueError, match="mode must be"):
+        AnalyzerConfig(mode="banana")
+
+
+def test_search_mode_requires_semantic() -> None:
+    with pytest.raises(ValueError, match="requires run_semantic=True"):
+        AnalyzerConfig(mode="search", run_semantic=False)
 
 
 def test_index_embeds_corpus_without_mining_duplicates(tmp_path: Path, monkeypatch) -> None:

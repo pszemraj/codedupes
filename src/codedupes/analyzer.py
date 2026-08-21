@@ -389,7 +389,11 @@ class AnalyzerConfig:
     embedding_cache: bool = True
     strict_revision_cache: bool = False
 
-    # What to run
+    # What to run. mode="check" validates the calibrated duplicate-gate
+    # contract at construction; mode="search" defers to the query-time search
+    # contract instead, because search calibration is independent of the
+    # duplicate gates. search()/index() accept both; analyze() requires "check".
+    mode: str = "check"
     run_traditional: bool = True
     run_semantic: bool = True
     run_unused: bool = True
@@ -397,6 +401,11 @@ class AnalyzerConfig:
     suppress_test_semantic_matches: bool = False
 
     def __post_init__(self) -> None:
+        if self.mode not in {"check", "search"}:
+            raise ValueError(f"mode must be 'check' or 'search', got {self.mode!r}")
+        if self.mode == "search" and not self.run_semantic:
+            raise ValueError("mode='search' requires run_semantic=True")
+
         self.languages = normalize_languages(self.languages)
 
         if not 0.0 <= self.jaccard_threshold <= 1.0:
@@ -488,6 +497,44 @@ class AnalyzerConfig:
             raise ValueError(
                 "allow_semantic_fallback requires run_semantic=True and run_traditional=True"
             )
+
+        if self.mode == "check" and self.run_semantic and self.semantic_threshold is None:
+            reasons = self._uncalibrated_gate_reasons(
+                self.semantic_task or DEFAULT_CHECK_SEMANTIC_TASK
+            )
+            if reasons:
+                context = ", ".join(reasons)
+                raise ValueError(
+                    f"The default duplicate thresholds are not calibrated for {context}; "
+                    "provide semantic_threshold explicitly."
+                )
+
+    def _uncalibrated_gate_reasons(self, semantic_task: str) -> list[str]:
+        """Collect config choices the calibrated duplicate gates do not cover.
+
+        :param semantic_task: Resolved task used to embed duplicate candidates.
+        :return: Human-readable reasons, empty when the calibrated gates apply.
+        """
+        profile = resolve_model_profile(self.model_name)
+        reasons: list[str] = []
+        if self.instruction_prefix is not None:
+            reasons.append("a custom instruction prefix")
+        if profile.family == "embeddinggemma" and semantic_task != DEFAULT_CHECK_SEMANTIC_TASK:
+            reasons.append(f"semantic task {semantic_task!r}")
+        if (
+            profile.default_revision is not None
+            and self.model_revision is not None
+            and self.model_revision != profile.default_revision
+        ):
+            reasons.append(f"model revision {self.model_revision!r}")
+        # Remote-code execution splits the embedding cache key because it can
+        # change the vectors, so it must invalidate the calibrated gates too.
+        if (
+            self.trust_remote_code is not None
+            and self.trust_remote_code != profile.default_trust_remote_code
+        ):
+            reasons.append(f"trust_remote_code={self.trust_remote_code}")
+        return reasons
 
 
 class CodeAnalyzer:
@@ -638,24 +685,9 @@ class CodeAnalyzer:
             return dict.fromkeys(languages, explicit), explicit
 
         profile = resolve_model_profile(self.config.model_name)
-        uncalibrated_reasons: list[str] = []
-        if self.config.instruction_prefix is not None:
-            uncalibrated_reasons.append("a custom instruction prefix")
-        if profile.family == "embeddinggemma" and semantic_task != DEFAULT_CHECK_SEMANTIC_TASK:
-            uncalibrated_reasons.append(f"semantic task {semantic_task!r}")
-        if (
-            profile.default_revision is not None
-            and self.config.model_revision is not None
-            and self.config.model_revision != profile.default_revision
-        ):
-            uncalibrated_reasons.append(f"model revision {self.config.model_revision!r}")
-        # Remote-code execution splits the embedding cache key because it can
-        # change the vectors, so it must invalidate the calibrated gates too.
-        if (
-            self.config.trust_remote_code is not None
-            and self.config.trust_remote_code != profile.default_trust_remote_code
-        ):
-            uncalibrated_reasons.append(f"trust_remote_code={self.config.trust_remote_code}")
+        # Backstop for configs mutated after construction; __post_init__
+        # enforces this for every check-mode config it accepts.
+        uncalibrated_reasons = self.config._uncalibrated_gate_reasons(semantic_task)
         if uncalibrated_reasons:
             context = ", ".join(uncalibrated_reasons)
             raise ValueError(
@@ -715,9 +747,15 @@ class CodeAnalyzer:
 
         Raises:
             FileNotFoundError: If path does not exist
+            ValueError: If the config was built with mode="search"
             SemanticBackendError: If an explicitly requested device is unavailable,
                 including when extraction finds no code units
         """
+        if self.config.mode != "check":
+            raise ValueError(
+                "analyze() requires a mode='check' config; mode='search' configs "
+                "skip duplicate-gate validation and only support index()/search()."
+            )
         path = Path(path).resolve()
 
         if not path.exists():

@@ -1551,6 +1551,7 @@ def search_command(
 
     try:
         config = AnalyzerConfig(
+            mode="search",
             exclude_patterns=list(exclude) or None,
             include_private=not no_private,
             languages=languages or None,
