@@ -659,6 +659,27 @@ def test_typescript_accessibility_and_naming_rules_gate_private_extraction(
     assert public_only == {"Widget", "shown"}
 
 
+def test_private_container_members_are_dropped_with_their_container(tmp_path: Path) -> None:
+    """The Python extractor skips descendants of a filtered class; so must this one."""
+    units = _extract(
+        tmp_path,
+        "sample.ts",
+        """
+        class _Internal {
+            run(value: number): number { return value + 1; }
+            nested = (value: number): number => value + 2;
+        }
+
+        export class Public {
+            run(value: number): number { return value + 3; }
+        }
+        """,
+        include_private=False,
+    )
+
+    assert {unit.qualified_name for unit in units} == {"sample.Public", "sample.Public.run"}
+
+
 def test_tsx_and_unicode_use_exact_byte_slices(tmp_path: Path) -> None:
     units = _extract(
         tmp_path,

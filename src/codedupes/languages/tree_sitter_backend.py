@@ -150,6 +150,23 @@ class UnitSpec:
     is_exported: bool
 
 
+def _spec_span(spec: UnitSpec) -> tuple[int, int]:
+    """Return the byte range covering both a spec's unit node and its source node.
+
+    :param spec: Unit spec.
+    :return: Start and end byte offsets of the whole spec.
+    """
+    starts = (
+        int(getattr(spec.node, "start_byte", 0)),
+        int(getattr(spec.source_node, "start_byte", 0)),
+    )
+    ends = (
+        int(getattr(spec.node, "end_byte", 0)),
+        int(getattr(spec.source_node, "end_byte", 0)),
+    )
+    return min(starts), max(ends)
+
+
 def _children(node: Any) -> tuple[Any, ...]:
     """Return a node's children, tolerating parsers that expose none.
 
@@ -674,6 +691,15 @@ class TreeSitterBackend:
             )
             deduped[key] = spec
 
+        # A filtered-out private class takes its members with it, matching the
+        # Python extractor: emitting them would leak the container's internals
+        # under a name whose owner was never reported.
+        private_container_spans = [
+            _spec_span(spec)
+            for spec in deduped.values()
+            if spec.unit_type == CodeUnitType.CLASS and not self._include_spec(spec)
+        ]
+
         units: list[CodeUnit] = []
         for spec in sorted(
             deduped.values(),
@@ -684,6 +710,11 @@ class TreeSitterBackend:
             ),
         ):
             if not self._include_spec(spec):
+                continue
+            spec_start, spec_end = _spec_span(spec)
+            if any(
+                start <= spec_start and spec_end <= end for start, end in private_container_spans
+            ):
                 continue
             if _contains_error(spec.node):
                 diagnostics.append(
