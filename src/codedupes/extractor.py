@@ -531,7 +531,7 @@ class CodeExtractor:
 
         selection = language_for_path(
             file_path,
-            include_stubs=self.include_stubs or file_path.suffix.lower() == ".pyi",
+            include_stubs=self.include_stubs,
             selected_languages=self.languages,
             allow_c_header=self._allow_c_headers(),
         )
@@ -569,6 +569,10 @@ class CodeExtractor:
                 "to parse .h files as C."
             )
             code = "c-header-policy"
+        elif suffix == ".pyi" and not self.include_stubs:
+            language = "python"
+            message = "Skipped stub file; pass --include-stubs to analyze .pyi files."
+            code = "stub-policy"
         else:
             unfiltered = language_for_path(
                 file_path,

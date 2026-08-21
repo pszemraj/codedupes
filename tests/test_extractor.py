@@ -201,6 +201,20 @@ def test_get_module_name_handles_stub_suffix(tmp_path: Path) -> None:
     assert units[0].qualified_name == "typed_mod.entry"
 
 
+def test_extract_from_file_honors_include_stubs_false(tmp_path: Path) -> None:
+    package = tmp_path / "package"
+    package.mkdir()
+    (package / "__init__.py").write_text("")
+    stub = package / "typed_mod.pyi"
+    stub.write_text("def entry() -> int: ...\n")
+
+    extractor = CodeExtractor(package, include_private=True)
+    units = list(extractor.extract_from_file(stub))
+
+    assert units == []
+    assert [diagnostic.code for diagnostic in extractor.diagnostics] == ["stub-policy"]
+
+
 def test_extract_all_skips_common_artifact_directories(tmp_path: Path) -> None:
     root = tmp_path / "repo"
     root.mkdir()

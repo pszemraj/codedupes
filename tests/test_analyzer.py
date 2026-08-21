@@ -2286,3 +2286,23 @@ def test_analyzer_default_embedding_cache_enabled_and_scoped_to_analyzed_root(
 
     assert captured["use_cache"] is True
     assert captured["cache_scope"] == project
+
+
+def test_analyze_explicit_stub_target_ignores_include_stubs_default(tmp_path: Path) -> None:
+    stub = tmp_path / "typed_mod.pyi"
+    stub.write_text("def entry() -> int: ...\n")
+
+    config = AnalyzerConfig(run_semantic=False, run_unused=False)
+    result = CodeAnalyzer(config).analyze(stub)
+
+    assert [unit.qualified_name for unit in result.units] == ["typed_mod.entry"]
+
+
+def test_analyze_directory_still_gates_stubs_on_include_stubs(tmp_path: Path) -> None:
+    (tmp_path / "typed_mod.pyi").write_text("def entry() -> int: ...\n")
+    (tmp_path / "real_mod.py").write_text("def keep():\n    return 1\n")
+
+    config = AnalyzerConfig(run_semantic=False, run_unused=False)
+    result = CodeAnalyzer(config).analyze(tmp_path)
+
+    assert [unit.qualified_name for unit in result.units] == ["real_mod.keep"]

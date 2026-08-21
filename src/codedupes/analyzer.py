@@ -579,7 +579,9 @@ class CodeAnalyzer:
                 path.parent,
                 exclude_patterns=self.config.exclude_patterns,
                 include_private=self.config.include_private,
-                include_stubs=self.config.include_stubs,
+                # include_stubs gates directory walks; a .pyi named explicitly
+                # as the analysis target is analyzed as given.
+                include_stubs=self.config.include_stubs or path.suffix.lower() == ".pyi",
                 languages=self.config.languages,
             )
             units = list(extractor.extract_from_file(path))
