@@ -1549,6 +1549,56 @@ def test_overflow_report_handles_a_fully_skipped_corpus(monkeypatch, tmp_path: P
     assert len(report) == len(units)
 
 
+class _RecordingModel:
+    """Model stub returning one fixed vector per call and recording its inputs."""
+
+    def __init__(self) -> None:
+        self.encoded: list[list[str]] = []
+
+    def encode(self, texts, **_kwargs):
+        self.encoded.append(list(texts))
+        return np.tile(np.array([[1.0, 0.0]], dtype=np.float32), (len(texts), 1))
+
+
+@pytest.mark.parametrize(
+    ("revision", "expect_bypass"),
+    [("main", True), ("b" * 40, False)],
+)
+def test_unreportable_mutable_provenance_bypasses_the_query_cache(
+    monkeypatch, tmp_path: Path, revision: str, expect_bypass: bool
+) -> None:
+    # A corpus that had to bypass its shard (mutable branch, no reportable
+    # commit) has no provenance to compare a cached query row against, so the
+    # query cache must be bypassed with it.
+    units = extract_arithmetic_units(tmp_path)
+    model = _RecordingModel()
+    monkeypatch.setattr(semantic, "get_model", lambda *args, **kwargs: model)
+    monkeypatch.setattr(semantic, "_get_loaded_model_commit_hash", lambda _model: None)
+
+    embeddings, identity = semantic.compute_embeddings_with_identity(
+        units,
+        model_name="test-model",
+        revision=revision,
+        cache_scope=tmp_path,
+    )
+    assert identity.cache_bypassed is expect_bypass
+
+    for _ in range(2):
+        find_similar_to_query(
+            "find addition",
+            units,
+            embeddings,
+            model_name="test-model",
+            revision=revision,
+            cache_scope=tmp_path,
+            corpus_identity=identity,
+            threshold=0.0,
+        )
+
+    query_encodes = [call for call in model.encoded if call == ["find addition"]]
+    assert len(query_encodes) == (2 if expect_bypass else 1)
+
+
 def test_compute_embeddings_cpu_fallback_retries_once_and_bails_on_persistent_oom(
     monkeypatch, tmp_path
 ) -> None:

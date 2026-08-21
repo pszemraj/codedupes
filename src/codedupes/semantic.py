@@ -162,12 +162,18 @@ class EmbeddingSpaceIdentity:
     a different checkpoint. It is excluded from equality because the identity
     comparison answers "same coordinate-system policy", which a branch label
     keys by label, not by commit.
+
+    ``cache_bypassed`` records that this corpus could not use its persistent
+    shard at all (a mutable label whose loaded commit is unreportable). Its
+    vectors carry no provenance, so nothing can vouch for a cached query row
+    either; it is likewise excluded from equality.
     """
 
     model_name: str
     resolved_revision: str | None
     runtime_variant: str
     source_commit: str | None = field(default=None, compare=False)
+    cache_bypassed: bool = field(default=False, compare=False)
 
 
 def _resolve_encode_plan(
@@ -1194,6 +1200,7 @@ def _build_embedding_space_identity(
     trust_remote_code: bool,
     resolved_device: str | None = None,
     source_commit: str | None = None,
+    cache_bypassed: bool = False,
 ) -> EmbeddingSpaceIdentity:
     """Build one corpus identity from already resolved embedding inputs.
 
@@ -1206,6 +1213,8 @@ def _build_embedding_space_identity(
     :param resolved_device: Already resolved execution target, when available.
     :param source_commit: Checkpoint commit a mutable-label corpus's vectors
         derive from, when known.
+    :param cache_bypassed: Whether the corpus skipped its persistent shard
+        entirely for unreportable mutable provenance.
     :return: Complete embedding-space identity.
     """
     return EmbeddingSpaceIdentity(
@@ -1220,6 +1229,7 @@ def _build_embedding_space_identity(
             resolved_device=resolved_device,
         ),
         source_commit=source_commit,
+        cache_bypassed=cache_bypassed,
     )
 
 
@@ -2746,6 +2756,9 @@ def _compute_embeddings_unlocked(
         else _resolve_revision_for_cache(model_name, revision, strict=strict_revision_cache)
     )
     prepared_texts = [unit.source.strip() for unit in units]
+    # Set when this call must ignore its persistent shard entirely; recorded on
+    # the returned identity so query embeddings skip their cache as well.
+    corpus_cache_bypassed = False
 
     def _effective_identity(
         effective_device: str,
@@ -2771,6 +2784,7 @@ def _compute_embeddings_unlocked(
             trust_remote_code=resolved_trust_remote_code,
             resolved_device=concrete_device,
             source_commit=source_commit,
+            cache_bypassed=corpus_cache_bypassed,
         )
 
     def _restart_faithfully_on_cpu(reason: str) -> tuple[np.ndarray, EmbeddingSpaceIdentity]:
@@ -3003,9 +3017,13 @@ def _compute_embeddings_unlocked(
         else:
             logger.warning(
                 f"Loaded model for mutable branch {cache_revision!r} did not report "
-                "a source commit; bypassing all persistent embeddings for this call "
-                "so one matrix cannot mix checkpoints"
+                "a source commit; bypassing all persistent embeddings for this corpus "
+                "and for queries against it, so one comparison cannot mix checkpoints"
             )
+            # Recorded on the identity: without provenance, a query row written
+            # under an earlier checkpoint of this branch cannot be shown to
+            # share the coordinate system of the matrix assembled here.
+            corpus_cache_bypassed = True
             cache = None
             cache_revision = None
             cache_keys = None
@@ -3556,6 +3574,11 @@ def _find_similar_to_query_unlocked(
     encode_plan = _resolve_encode_plan(profile, "query", resolved_task, instruction_prefix)
     query_text = query
 
+    # A corpus that bypassed its own shard for unreportable mutable provenance
+    # left no commit to compare a cached query row against, so this call skips
+    # the query cache too (reads and writes) rather than serve a row that may
+    # come from another checkpoint of the same branch.
+    corpus_cache_bypassed = corpus_identity is not None and corpus_identity.cache_bypassed
     cache, cache_revision, cache_variant, cache_namespace = _prepare_cache_context(
         "query",
         profile,
@@ -3565,7 +3588,7 @@ def _find_similar_to_query_unlocked(
         encode_plan,
         mps_fallback=mps_fallback,
         trust_remote_code=resolved_trust_remote_code,
-        use_cache=use_cache,
+        use_cache=use_cache and not corpus_cache_bypassed,
         cache_scope=cache_scope,
         strict_revision_cache=strict_revision_cache,
     )
