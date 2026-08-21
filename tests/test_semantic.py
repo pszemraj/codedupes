@@ -17,6 +17,7 @@ from codedupes.embedding_cache import EmbeddingCache
 from codedupes.models import CodeUnit, CodeUnitType
 from codedupes.semantic import (
     SemanticBackendError,
+    SemanticInputTooLongError,
     compute_embeddings,
     find_semantic_duplicates,
     find_similar_to_query,
@@ -812,8 +813,8 @@ def test_dtype_variant_matches_pre_capability_gate_baseline_without_opt_in(
     # Without the experimental CODEDUPES_CPU_BF16 opt-in, cpu/mps/darwin-auto
     # must key byte-identically to the pre-capability-gate policy (empty
     # variant) on every machine, gate-passing or not:
-    # EMBEDDING_PIPELINE_SCHEMA is not bumped, so old and new code must agree
-    # here or warm caches would silently miss.
+    # The CPU opt-in itself does not split the faithful float32 baseline, so
+    # old and new code must agree here or warm caches would silently miss.
     monkeypatch.delenv("CODEDUPES_CPU_BF16", raising=False)
     monkeypatch.setattr(semantic.sys, "platform", "darwin")
     profile = semantic.resolve_model_profile("gte-modernbert-base")
@@ -1275,6 +1276,71 @@ def test_compute_embeddings_retries_with_reduced_batch_before_cpu(monkeypatch, t
 
     assert embeddings.shape == (2, 2)
     assert seen_batch_sizes[:3] == [8, 4, 2]
+
+
+def test_compute_embeddings_rejects_code_beyond_model_context(monkeypatch, tmp_path: Path) -> None:
+    units = extract_arithmetic_units(tmp_path)
+    units[0].qualified_name = "module.long_tail"
+    units[0].source = "one two three four five six seven eight changed_tail"
+    encode_calls: list[list[str]] = []
+
+    class Tokenizer:
+        def encode(self, text, **kwargs):
+            return text.split()
+
+    class ShortContextModel:
+        max_seq_length = 8
+        tokenizer = Tokenizer()
+
+        def encode(self, texts, **kwargs):
+            encode_calls.append(list(texts))
+            return np.ones((len(texts), 2), dtype=np.float32)
+
+    monkeypatch.setattr(semantic, "get_model", lambda *args, **kwargs: ShortContextModel())
+
+    with pytest.raises(
+        SemanticInputTooLongError,
+        match=r"module\.long_tail.*9 tokens.*8-token context window",
+    ):
+        compute_embeddings([units[0]], use_cache=False)
+
+    assert encode_calls == []
+
+
+def test_find_similar_to_query_rejects_query_beyond_model_context(
+    monkeypatch, tmp_path: Path
+) -> None:
+    units = extract_arithmetic_units(tmp_path)
+    embeddings = np.array([[1.0, 0.0], [0.0, 1.0]], dtype=np.float32)
+    encode_calls: list[list[str]] = []
+
+    class Tokenizer:
+        def encode(self, text, **kwargs):
+            return text.split()
+
+    class ShortContextModel:
+        max_seq_length = 4
+        tokenizer = Tokenizer()
+
+        def encode(self, texts, **kwargs):
+            encode_calls.append(list(texts))
+            return np.ones((len(texts), 2), dtype=np.float32)
+
+    monkeypatch.setattr(semantic, "get_model", lambda *args, **kwargs: ShortContextModel())
+
+    with pytest.raises(
+        SemanticInputTooLongError,
+        match=r"search query.*6 tokens.*4-token context window",
+    ):
+        find_similar_to_query(
+            "find code that validates every record",
+            units,
+            embeddings,
+            threshold=0.0,
+            use_cache=False,
+        )
+
+    assert encode_calls == []
 
 
 def test_compute_embeddings_cpu_fallback_retries_once_and_bails_on_persistent_oom(

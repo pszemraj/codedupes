@@ -26,7 +26,7 @@ Default semantic candidate selection:
 - class units are excluded by default from semantic embedding
 - minimum statement count: `3` (via `min_semantic_statements`)
 - statements are counted recursively through control-flow bodies, so a large function implemented inside one outer block is not measured as a single statement; nested function/class definitions count as one declaration each. Python counts via the AST (`try`, `with`, loops, conditionals, `match`, with indented definitions dedented before counting); Tree-sitter languages apply each grammar's equivalent statement and nested-scope node rules, including Rust's semicolon-free tail expression as one statement
-- each semantic input is one complete logical definition - signature, docstring, and body, starting at the definition line (`def`/`class` in Python; decorators are not included); functions are not split into arbitrary text chunks
+- each semantic input is one complete logical definition - signature, docstring, and body, starting at the definition line (`def`/`class` in Python; decorators are not included); functions are not split into arbitrary text chunks, and a definition that exceeds the selected model's context window stops semantic analysis with an explicit error rather than being embedded from a partial prefix
 
 Combined-mode alignment rule:
 

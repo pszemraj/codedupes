@@ -33,6 +33,7 @@ from codedupes.pairs import ordered_pair_key
 from codedupes.semantic import (
     EmbeddingSpaceIdentity,
     SemanticBackendError,
+    SemanticInputTooLongError,
     get_code_unit_statement_count,
     get_semantic_runtime_versions,
     validate_explicit_device_request,
@@ -741,6 +742,9 @@ class CodeAnalyzer:
                     semantic_duplicates,
                     self._embedding_space_identity,
                 ) = run_semantic_analysis(semantic_candidates, **semantic_kwargs)
+            except SemanticInputTooLongError:
+                self._embedding_space_identity = None
+                raise
             except (ModuleNotFoundError, SemanticBackendError, RuntimeError) as exc:
                 self._embedding_space_identity = None
                 # If semantic is the only duplicate-detection method requested,

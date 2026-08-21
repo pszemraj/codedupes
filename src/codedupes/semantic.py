@@ -225,6 +225,10 @@ class SemanticBackendError(RuntimeError):
     """Raised when semantic model loading or inference backend is incompatible."""
 
 
+class SemanticInputTooLongError(SemanticBackendError):
+    """Raised when a semantic input exceeds the selected model's context window."""
+
+
 class InvalidEmbeddingError(RuntimeError):
     """Raised when an embedding matrix violates the similarity-math invariants.
 
@@ -958,7 +962,7 @@ def _select_cache_miss_indices(
 # Bump whenever codedupes' own embedding pipeline changes in a vector-affecting
 # way (prompt handling, routing, normalization, truncation policy, load dtype),
 # so cached vectors from an older pipeline can never mix into a new matrix.
-EMBEDDING_PIPELINE_SCHEMA = 3
+EMBEDDING_PIPELINE_SCHEMA = 4
 
 
 def _embedding_runtime_fingerprint() -> str:
@@ -2227,13 +2231,19 @@ def _move_model_to_cpu(model: object) -> None:
         _set_model_execution_device("cpu")
 
 
-def _truncate_code_if_needed(text: str, unit_name: str, model: Any) -> str:
-    """Truncate code input to the model max token length with best-effort safety.
+def _require_text_within_model_context(text: str, input_name: str, model: Any) -> str:
+    """Reject text that cannot fit completely in the model context window.
 
-    :param text: Source text to truncate.
-    :param unit_name: Unit name for logging context.
+    Partial definitions can erase a function's return value or side effects while
+    still producing an ordinary high-similarity vector. Semantic claims therefore
+    fail closed until a separately calibrated long-input aggregation policy exists.
+
+    :param text: Complete source or query text.
+    :param input_name: Human-readable input name for the error.
     :param model: Model object with tokenizer metadata.
-    :return: Possibly truncated source text.
+    :return: The original text when it fits or no context metadata is exposed.
+    :raises SemanticInputTooLongError: If the complete tokenized text exceeds
+        the model context window.
     """
     max_tokens = getattr(model, "max_seq_length", None)
     tokenizer = getattr(model, "tokenizer", None)
@@ -2242,10 +2252,12 @@ def _truncate_code_if_needed(text: str, unit_name: str, model: Any) -> str:
         return text
 
     try:
-        token_ids = tokenizer.encode(text, add_special_tokens=False)
+        token_ids = tokenizer.encode(text, add_special_tokens=True)
     except Exception:
         logger.debug(
-            f"Tokenization failed while preparing '{unit_name}'; using full text", exc_info=True
+            f"Tokenization failed while checking context for '{input_name}'; "
+            "passing the complete text to the backend",
+            exc_info=True,
         )
         return text
 
@@ -2253,24 +2265,11 @@ def _truncate_code_if_needed(text: str, unit_name: str, model: Any) -> str:
     if token_count <= max_tokens:
         return text
 
-    logger.warning(
-        f"Code unit '{unit_name}' is long ({token_count} tokens), truncating to {max_tokens} "
-        "tokens for semantic embedding"
+    raise SemanticInputTooLongError(
+        f"Semantic input '{input_name}' is {token_count} tokens, exceeding the selected "
+        f"model's {max_tokens}-token context window. No semantic result was produced; "
+        "use a model with a larger context window or exclude this input."
     )
-    try:
-        truncated_ids = tokenizer.encode(
-            text,
-            add_special_tokens=False,
-            truncation=True,
-            max_length=max_tokens,
-        )
-        return tokenizer.decode(truncated_ids, skip_special_tokens=True)
-    except Exception:
-        logger.debug(
-            f"Token decode failed while truncating '{unit_name}'; using char fallback",
-            exc_info=True,
-        )
-        return text[: max_tokens * 4]
 
 
 def _embedding_cache_namespace(mode: str, variant: str) -> str:
@@ -2585,10 +2584,10 @@ def _compute_embeddings_unlocked(
     Embeddings are converted to NumPy immediately, keeping pairwise similarity
     computation on CPU and avoiding long-lived Metal tensors beyond model weights.
 
-    Cache keys are derived from the pre-truncation prepared text so they can be
+    Cache keys are derived from the complete prepared text so they can be
     computed without loading the model; when every unit hits the on-disk cache,
     the model is never loaded at all. On a cache miss, only the miss texts are
-    truncated and encoded through the existing OOM-retry ladder.
+    context-checked and encoded through the existing OOM-retry ladder.
 
     :param units: Code units to embed, preserved in input order.
     :param model_name: Model alias or identifier, defaults to ``DEFAULT_MODEL``.
@@ -2891,22 +2890,26 @@ def _compute_embeddings_unlocked(
                 )
                 hits = {}
 
-    def _truncated_miss_texts(indices: list[int]) -> list[str]:
-        """Truncate prepared texts for the given miss-row indices.
+    def _validated_miss_texts(indices: list[int]) -> list[str]:
+        """Validate prepared texts for the given miss-row indices.
 
         Shared by the primary encode call and the dimension-mismatch retry so
-        both truncate identically against the currently loaded ``model``.
+        both enforce the same context policy against the loaded ``model``.
 
         :param indices: Row indices requiring encoding.
-        :return: Possibly truncated texts, row-aligned with ``indices``.
+        :return: Complete texts, row-aligned with ``indices``.
         """
         return [
-            _truncate_code_if_needed(prepared_texts[i], units[i].qualified_name, model)
+            _require_text_within_model_context(
+                prepared_texts[i],
+                units[i].qualified_name,
+                model,
+            )
             for i in indices
         ]
 
     miss_indices = _select_cache_miss_indices(cache_keys, hits, len(units))
-    miss_texts = _truncated_miss_texts(miss_indices)
+    miss_texts = _validated_miss_texts(miss_indices)
     cache_covered_rows = (
         sum(1 for key in cache_keys if key in hits) if cache_keys is not None else 0
     )
@@ -2960,7 +2963,7 @@ def _compute_embeddings_unlocked(
             # execution_device captured before that call, and this closure
             # variable is what _encode_miss_texts passes as initial_device.
             execution_device = _get_effective_model_device(model, resolved_device)
-            miss_vectors = _encode_miss_texts(_truncated_miss_texts(miss_indices))
+            miss_vectors = _encode_miss_texts(_validated_miss_texts(miss_indices))
             coherence_break_reason = _coherence_break_reason(model)
             if coherence_break_reason is not None:
                 return _restart_faithfully_on_cpu(coherence_break_reason)
@@ -3528,6 +3531,7 @@ def _find_similar_to_query_unlocked(
 
         if query_embedding is None:
             encode_fn = _select_encode_fn(model, encode_plan.route)
+            query_text = _require_text_within_model_context(query_text, "search query", model)
 
             query_embeddings = _encode_with_retries(
                 model,

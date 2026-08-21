@@ -3,7 +3,7 @@
 Cached vectors live under ``<cache_root>/repos/<repo-shard>/<model>@<revision>/`` as
 an immutable generation-named float32 matrix and an ``index.json`` key-to-row map
 that atomically selects the active generation. The primary key hashes the model,
-resolved revision, and prepared (pre-truncation) embedding text, so unchanged code
+resolved revision, and complete prepared embedding text, so unchanged code
 units keep hitting the cache across runs and partial edits only miss for units that
 actually changed. Every public operation is wrapped so on-disk corruption or
 filesystem errors never raise into the caller; an untrusted shard is treated as
@@ -315,7 +315,7 @@ def compute_cache_key(
 
     :param canonical_model: Canonical model identifier.
     :param revision: Resolved model revision/commit hash.
-    :param text: Prepared (pre-truncation) embedding input text.
+    :param text: Complete prepared embedding input text.
     :param mode: Embedding input mode, ``"code"`` or ``"query"``.
     :param variant: Extra vector-affecting fingerprint, empty when not applicable.
     :return: Stable 32-character hex digest used as the shard row key.

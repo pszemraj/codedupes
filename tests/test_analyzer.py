@@ -1788,6 +1788,29 @@ def test_semantic_failures_fall_back_when_traditional_enabled(
     assert "Retry with `codedupes check" in caplog.text
 
 
+def test_context_overflow_never_degrades_to_traditional_fallback(
+    tmp_path: Path, monkeypatch
+) -> None:
+    project = create_project(tmp_path, "def only_func():\n    return 1\n")
+    error = semantic_module.SemanticInputTooLongError("semantic input exceeds context")
+    monkeypatch.setattr(
+        analyzer_module,
+        "run_semantic_analysis",
+        _make_semantic_runner(error=error),
+    )
+    analyzer = CodeAnalyzer(
+        AnalyzerConfig(
+            run_traditional=True,
+            run_semantic=True,
+            allow_semantic_fallback=True,
+            run_unused=False,
+        )
+    )
+
+    with pytest.raises(semantic_module.SemanticInputTooLongError, match="exceeds context"):
+        analyzer.analyze(project)
+
+
 @pytest.mark.parametrize(
     "semantic_error",
     [
