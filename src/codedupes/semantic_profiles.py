@@ -62,15 +62,20 @@ class SemanticModelProfile:
 # fallback is the strictest calibrated gate and applies only to languages
 # without their own calibration entry.
 #
-# A shipped gate may sit up to ONE grid step looser than the sweep's F1-selected
-# threshold, even where the calibration corpus shows a flat recall segment there
-# (gte rust 0.74 vs 0.76, gte javascript 0.70 vs 0.72, embeddinggemma typescript
-# 0.78 vs 0.80). That margin is a deliberate off-corpus generalization hedge: the
-# corpora are small, so "no recall gain here" is weak evidence that the next
-# repository's near-duplicates sit above the selected threshold, and a missed
-# duplicate costs more than an extra review row. One step is the whole allowance;
-# two steps (the ts gate's earlier 0.76) doubled on-corpus false positives for no
-# measured recall, so it was tightened back to 0.78.
+# Concretely: a shipped gate is allowed to sit below the sweep's F1-selected
+# threshold under two conditions, both bounded by the tested invariant that the
+# gate's recall is >= the selection's and its F1 stays within 80% of it
+# (tests/test_calibration_reports.py). First, where the sweep shows real recall
+# below the F1 pick, the gate follows the recall however many grid steps down
+# that is (gte c 0.82 vs 0.90, embeddinggemma javascript 0.72 vs 0.82 and rust
+# 0.78 vs 0.82 — each buys measured on-corpus recall). Second, where recall is
+# flat, the gate still sits one step loose as an off-corpus generalization
+# hedge: the corpora are small, so "no recall gain here" is weak evidence that
+# the next repository's near-duplicates sit above the selected threshold, and a
+# missed duplicate costs more than an extra review row. Flat-recall loosening
+# beyond one step is not taken — the embeddinggemma typescript gate's earlier
+# 0.76 (two steps) doubled on-corpus false positives for no measured recall,
+# so it was tightened back to 0.78.
 _BUILTIN_MODEL_PROFILES: tuple[SemanticModelProfile, ...] = (
     SemanticModelProfile(
         key="gte-modernbert-base",
