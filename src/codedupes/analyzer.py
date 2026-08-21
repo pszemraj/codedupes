@@ -297,6 +297,17 @@ def _synthesize_hybrid_duplicates(
         weak_identifier_jaccard: float | None = None
         statement_ratio: float | None = None
 
+        # Confidence is a corroboration scale, not a raw similarity: at equal
+        # evidence strength a tier with more independent corroboration must
+        # always outrank one with less, or the weakest tier crowds the
+        # best-evidenced pairs off the top of the table. Per tier:
+        #   exact                    = 1.0
+        #   traditional_near         = 0.55 + 0.45 * jaccard
+        #   hybrid_confirmed         = 0.50 * semantic + 0.50 * jaccard
+        #   semantic_high_confidence = 0.45 + 0.55 * semantic
+        #   semantic_review          = 0.40 + 0.45 * semantic
+        # The last two keep semantic_review strictly below its corroborated
+        # sibling at every similarity (the gap is 0.05 + 0.10 * semantic).
         if has_exact:
             tier = "exact"
             confidence = 1.0
@@ -321,7 +332,7 @@ def _synthesize_hybrid_duplicates(
                 confidence = 0.45 + (0.55 * semantic_sim)
             else:
                 tier = "semantic_review"
-                confidence = semantic_sim
+                confidence = 0.40 + (0.45 * semantic_sim)
 
         if tier is None or confidence is None:
             continue

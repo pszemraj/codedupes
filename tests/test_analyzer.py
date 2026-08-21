@@ -1612,10 +1612,44 @@ def test_hybrid_synthesis_semantic_only_corroboration_sets_tier(tmp_path: Path) 
     )
     assert len(hybrid_weak) == 1
     assert hybrid_weak[0].tier == "semantic_review"
-    assert hybrid_weak[0].confidence == pytest.approx(0.95)
+    assert hybrid_weak[0].confidence == pytest.approx(0.40 + (0.45 * 0.95))
     assert hybrid_weak[0].weak_identifier_jaccard == 0.0
     assert hybrid_weak[0].statement_count_ratio == pytest.approx(0.25)
     assert filtered_weak == 0
+
+
+def test_semantic_review_never_outranks_a_corroborated_pair(tmp_path: Path) -> None:
+    # Same cosine, different corroboration: the least-evidenced tier must sort
+    # below every tier that carries extra evidence.
+    review_a = make_code_unit(
+        tmp_path,
+        name="review_a",
+        source="def review_a(a):\n    x = a + 1\n    y = x + 1\n    z = y + 1\n    return z\n",
+        lineno=1,
+    )
+    review_b = make_code_unit(
+        tmp_path, name="review_b", source="def review_b(v):\n    return v\n", lineno=12
+    )
+    confirmed_a = make_code_unit(
+        tmp_path, name="confirmed_a", source="def confirmed_a(x):\n    return x + 1\n", lineno=20
+    )
+    confirmed_b = make_code_unit(
+        tmp_path, name="confirmed_b", source="def confirmed_b(y):\n    return y + 1\n", lineno=26
+    )
+
+    hybrid, _ = analyzer_module._synthesize_hybrid_duplicates(
+        [DuplicatePair(unit_a=confirmed_a, unit_b=confirmed_b, similarity=0.86, method="jaccard")],
+        [
+            DuplicatePair(unit_a=review_a, unit_b=review_b, similarity=0.97, method="semantic"),
+            DuplicatePair(
+                unit_a=confirmed_a, unit_b=confirmed_b, similarity=0.97, method="semantic"
+            ),
+        ],
+        jaccard_threshold=0.85,
+    )
+
+    assert [duplicate.tier for duplicate in hybrid] == ["hybrid_confirmed", "semantic_review"]
+    assert hybrid[0].confidence > hybrid[1].confidence
 
 
 def test_hybrid_synthesis_publishes_alpha_renamed_semantic_pair(tmp_path: Path) -> None:
