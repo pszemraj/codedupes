@@ -88,15 +88,26 @@ analyzer = CodeAnalyzer(
 )
 
 analyzer.index("./src")
-hits = analyzer.search("load csv data", top_k=10)
+hits = analyzer.search("load csv data", top_k=10, threshold=0.55)
 
 for unit, score in hits:
     print(f"{score:.3f}", unit.qualified_name)
 ```
 
-An unset `AnalyzerConfig.semantic_task` resolves by operation: `index()` uses `code-retrieval`, while `analyze()` uses `semantic-similarity`. An explicit task overrides either default, but a custom instruction prefix, alternate EmbeddingGemma task, or alternate built-in revision requires an explicit threshold because the profile default was not calibrated in that embedding space. See [task defaults](model-profiles.md#semantic-task-defaults-and-choices).
+`search(query, top_k=10, threshold=None)` resolves its floor as `threshold`, else `config.semantic_threshold`, else the model profile's search default. Prefer the per-call `threshold`: it applies to that query only, while `config.semantic_threshold` also replaces every calibrated per-language duplicate gate with one flat value.
+
+An unset `AnalyzerConfig.semantic_task` resolves by operation: `index()` uses `code-retrieval`, while `analyze()` uses `semantic-similarity`. An explicit task overrides either default, but a custom instruction prefix, alternate EmbeddingGemma task, alternate built-in revision, or non-default `trust_remote_code` requires an explicit threshold because the profile default was not calibrated in that embedding space. See [task defaults](model-profiles.md#semantic-task-defaults-and-choices).
 
 `index()` extracts the corpus and computes (or loads from cache) its embeddings without the all-pairs duplicate scan, traditional analysis, or unused-code analysis that `analyze()` runs, so building a search corpus stays linear in corpus size. Prefer `index()` before search. A search after `analyze()` reuses the analysis task and therefore requires an explicit search threshold when that task changes the model's prompt or route, as it does for EmbeddingGemma.
+
+Corpus units whose tokenized input exceeds the model's context window are skipped by both `index()` and `analyze()` rather than raising: they leave the embedding matrix and the searchable corpus, and each one is reported through `analyzer.semantic_diagnostics` (and `AnalysisResult.semantic_diagnostics` for `analyze()`) with code `semantic-context-overflow`. A `search()` query too long for the model still raises, because a truncated query has no result to omit.
+
+```python
+analyzer.index("./src")
+
+for diagnostic in analyzer.semantic_diagnostics:
+    print(diagnostic.code, diagnostic.file_path, diagnostic.message)
+```
 
 Each `index()` or `analyze()` call replaces the analyzer's corpus-specific state before extraction. `search()` therefore targets only the most recent run and requires it to have semantic embeddings. A later empty or nonsemantic analysis cannot reuse an older corpus accidentally. The analyzer also binds the matrix to its canonical model, resolved revision (a pinned commit, the requested revision label, or a local-directory content fingerprint), and vector-affecting runtime configuration. If any of those changes before a query—for example, local weights are replaced in place—`search()` requires a fresh `index()`/`analyze()` instead of comparing vectors from different coordinate systems. With `AnalyzerConfig(strict_revision_cache=True)`, an unpinned hub revision must instead resolve to a concrete commit; that commit is also the model-load key, so a moved branch cannot reuse the process's model instance from its previous commit. A search identity whose symbolic revision cannot be mapped offline fails closed; the default label keying always resolves. See [Embedding cache](caching.md#what-invalidates-what).
 
@@ -141,13 +152,12 @@ quiet_dependency_loggers()  # or quiet_dependency_loggers(logging.ERROR)
 ## Key Result Types
 
 - `AnalysisResult.units`: extracted functions, methods, and classes
-- `AnalysisResult.hybrid_duplicates`: synthesized default duplicate candidates;
-  gated semantic-only matches use `semantic_high_confidence` when lexical and
-  statement-count evidence corroborate them, otherwise `semantic_review`
+- `AnalysisResult.hybrid_duplicates`: synthesized default duplicate candidates; gated semantic-only matches use `semantic_high_confidence` when lexical and statement-count evidence corroborate them, otherwise `semantic_review`
 - `AnalysisResult.traditional_duplicates`: raw traditional duplicates (diagnostics)
 - `AnalysisResult.semantic_duplicates`: raw semantic duplicates (diagnostics)
 - `AnalysisResult.potentially_unused`: Python-only heuristic unused candidates
 - `AnalysisResult.extraction_diagnostics`: recoverable parser diagnostics and skipped-unit reasons
+- `AnalysisResult.semantic_diagnostics`: units the semantic stage skipped, mirroring `CodeAnalyzer.semantic_diagnostics` for that run
 - `AnalysisResult.unused_excluded_units`: non-Python units intentionally excluded from unused analysis
 - `AnalysisResult.unused_supported_languages`: languages the unused heuristic evaluates (currently always `("python",)`)
 - `AnalysisResult.all_duplicates`: hybrid duplicates in combined mode; raw duplicates in single-method mode
