@@ -2,7 +2,7 @@
 
 Labeled per-language duplicate-detection corpora for C, Rust, JavaScript, TypeScript, and Python (~100 labeled decisions per language), used to measure how the built-in model profiles' similarity scales behave outside the Python production corpus. The Python corpus here is a control: its near clones are fully alpha-renamed, unlike `test_fixtures/hybrid_tuning/crab_visibility`, whose near pairs share identifier fragments.
 
-These measurements are the source of the shipped per-language semantic duplicate gates in `codedupes.semantic_profiles` (gte: py 0.80 / c 0.82 / rs 0.74 / js 0.70 / ts 0.68; gemma: py 0.74 / c 0.78 / rs 0.78 / js 0.72 / ts 0.76), selected recall-first: the loosest sweep threshold whose F1 stays near that language's best while final combined-output precision remains workable. If a re-run moves the tables below, revisit the gates deliberately.
+These measurements are the source of the shipped per-language semantic duplicate gates in `codedupes.semantic_profiles` (gte: py 0.80 / c 0.82 / rs 0.74 / js 0.70 / ts 0.68; gemma: py 0.74 / c 0.78 / rs 0.78 / js 0.72 / ts 0.78), selected recall-first: the loosest sweep threshold whose F1 stays near that language's best while final combined-output precision remains workable. If a re-run moves the tables below, revisit the gates deliberately.
 
 ## Layout
 
@@ -82,7 +82,7 @@ Distribution highlights (`reports/similarity_distributions.json`):
 - C is the hardest language for both models: deceptive negative controls reach 0.86 (gte) / 0.91 (gemma), overlapping the near-clone band, which caps best final-output F1 at 0.58/0.62.
 - embeddinggemma-300m separates clones from negatives better than gte-modernbert-base on four languages and ties it on TypeScript here, with best-F1 duplicate thresholds clustered at 0.74–0.82.
 
-The recorded `reports/similarity_distributions.json` predates the `calibration` manifest field: it was written before `scripts/report_calibration_distributions.py` recorded the pinned revision, pipeline schema, effective embedding space, candidate policy, and corpus/label digests, so it carries stats only. The next regeneration adds that block, matching the threshold reports.
+All reports, including `reports/similarity_distributions.json`, embed the calibration identity manifest (pinned revision, pipeline schema, effective embedding space, candidate policy, corpus/label digests). The 2026-08-21 regeneration under embedding pipeline schema 5 reproduced every metric row byte-identically: only the recorded schema and runtime fingerprint moved, confirming the reject-don't-truncate context policy touches no vector in these corpora.
 
 Interpretation: candidate policy, model threshold, and hybrid publication are one product decision graph and must be evaluated together. The shipped per-language gates listed at the top were reviewed against these production-policy grids recall-first — at or below each best-F1 row when that buys recall without untenable final-output precision — and are enforced by `codedupes.semantic_profiles` tests. The search rows remain a single-domain synthetic guardrail; the lower shipped search defaults come from the held-out multi-domain probes described in the model-profile docs. Keep this README, the reports, and the profile gates in sync.
 
