@@ -92,6 +92,25 @@ def test_extract_all_deduplicates_symlinked_paths(tmp_path: Path) -> None:
     assert len(units) == 1
 
 
+def test_extract_all_survives_symlink_to_file_outside_root(tmp_path: Path) -> None:
+    outside = tmp_path / "ext"
+    outside.mkdir()
+    target = outside / "shared.py"
+    target.write_text("def alpha(x):\n    y = x + 1\n    z = y * 2\n    return z\n")
+
+    root = tmp_path / "proj"
+    root.mkdir()
+    (root / "normal.py").write_text("def beta(x):\n    y = x - 1\n    z = y * 3\n    return z\n")
+    (root / "linked.py").symlink_to(target)
+
+    extractor = CodeExtractor(root, include_private=False)
+    units = extractor.extract_all()
+
+    # The symlink is the file's in-tree identity: extraction must not abort,
+    # and the module name comes from the link, not the resolved target.
+    assert sorted(unit.qualified_name for unit in units) == ["linked.alpha", "normal.beta"]
+
+
 def test_get_module_name_handles_stub_suffix(tmp_path: Path) -> None:
     package = tmp_path / "package"
     package.mkdir()

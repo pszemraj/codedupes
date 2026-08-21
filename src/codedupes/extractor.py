@@ -573,7 +573,13 @@ class CodeExtractor:
         :param file_path: File to extract code units from.
         :return: Iterator over the code units found in the file.
         """
-        file_path = file_path.resolve()
+        # Normalize relative caller paths, but keep the in-tree name for files
+        # that are symlinks to targets outside the root: exclusion and module
+        # naming are computed relative to the root, and the symlink is the
+        # file's identity within the analyzed tree.
+        resolved = file_path.resolve()
+        if resolved.is_relative_to(self.root):
+            file_path = resolved
         if self._should_exclude(file_path):
             logger.debug(f"Skipping excluded file {file_path}")
             return
