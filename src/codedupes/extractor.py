@@ -57,6 +57,7 @@ DEFAULT_EXCLUDE_DIR_NAMES = {
 DEFAULT_EXCLUDE_PATTERNS = [
     "**/test_*",
     "**/*_test.*",
+    "**/*_tests.*",
     "**/*.test.*",
     "**/*.spec.*",
     "**/tests/**",

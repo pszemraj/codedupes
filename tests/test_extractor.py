@@ -155,6 +155,16 @@ def test_extract_all_skips_common_artifact_directories(tmp_path: Path) -> None:
     assert all("ignore_me" not in name for name in qualified_names)
 
 
+def test_extract_all_skips_suffix_test_files_by_default(tmp_path: Path) -> None:
+    source = "def entry():\n    return 1\n"
+    (tmp_path / "inject_test.py").write_text(source)
+    (tmp_path / "inject_tests.py").write_text(source)
+    (tmp_path / "keeper.py").write_text(source)
+
+    units = CodeExtractor(tmp_path, include_private=True).extract_all()
+    assert [unit.file_path.name for unit in units] == ["keeper.py"]
+
+
 def test_extract_from_file_respects_exclude_patterns(tmp_path: Path) -> None:
     source = "def entry():\n    return 1\n"
     file_path = tmp_path / "sample.py"

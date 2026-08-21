@@ -57,6 +57,7 @@ When no nonempty `exclude_patterns` list is supplied, these file globs apply:
 
 - `**/test_*`
 - `**/*_test.*`
+- `**/*_tests.*`
 - `**/*.test.*`
 - `**/*.spec.*`
 - `**/tests/**`
