@@ -17,6 +17,7 @@ from codedupes.embedding_cache import EmbeddingCache
 from codedupes.models import CodeUnit, CodeUnitType
 from codedupes.semantic import (
     SemanticBackendError,
+    SemanticContextOverflow,
     SemanticInputTooLongError,
     compute_embeddings,
     find_semantic_duplicates,
@@ -1476,6 +1477,76 @@ def test_query_context_guard_counts_the_prompt_the_backend_prepends(
         )
 
     assert model.encode_calls == []
+
+
+def test_overflow_report_skips_every_row_sharing_an_over_context_text(
+    monkeypatch, tmp_path: Path
+) -> None:
+    # Duplicate sources share one cache key, so only one representative row is
+    # context-checked; every row carrying that text must still be dropped.
+    long_source = "one two three four five six seven eight nine"
+    units = [
+        CodeUnit(
+            name="long_a",
+            qualified_name="mod.long_a",
+            unit_type=CodeUnitType.FUNCTION,
+            file_path=tmp_path / "a.py",
+            lineno=1,
+            end_lineno=2,
+            source=long_source,
+        ),
+        CodeUnit(
+            name="long_b",
+            qualified_name="mod.long_b",
+            unit_type=CodeUnitType.FUNCTION,
+            file_path=tmp_path / "b.py",
+            lineno=1,
+            end_lineno=2,
+            source=long_source,
+        ),
+        CodeUnit(
+            name="short",
+            qualified_name="mod.short",
+            unit_type=CodeUnitType.FUNCTION,
+            file_path=tmp_path / "c.py",
+            lineno=1,
+            end_lineno=2,
+            source="one two",
+        ),
+    ]
+    model = _ShortContextModel()
+    monkeypatch.setattr(semantic, "get_model", lambda *args, **kwargs: model)
+
+    report: list[SemanticContextOverflow] = []
+    embeddings, _identity = semantic.compute_embeddings_with_identity(
+        units,
+        cache_scope=tmp_path,
+        overflow_report=report,
+    )
+
+    assert model.encode_calls == [["one two"]]
+    assert embeddings.shape == (1, 2)
+    assert [skip.unit.name for skip in report] == ["long_a", "long_b"]
+    assert {skip.token_count for skip in report} == {9}
+
+
+def test_overflow_report_handles_a_fully_skipped_corpus(monkeypatch, tmp_path: Path) -> None:
+    units = extract_arithmetic_units(tmp_path)
+    for index, unit in enumerate(units):
+        unit.source = f"one two three four five six seven eight nine {index}"
+    model = _ShortContextModel()
+    monkeypatch.setattr(semantic, "get_model", lambda *args, **kwargs: model)
+
+    report: list[SemanticContextOverflow] = []
+    embeddings, _identity = semantic.compute_embeddings_with_identity(
+        units,
+        cache_scope=tmp_path,
+        overflow_report=report,
+    )
+
+    assert model.encode_calls == []
+    assert embeddings.shape == (0, 0)
+    assert len(report) == len(units)
 
 
 def test_compute_embeddings_cpu_fallback_retries_once_and_bails_on_persistent_oom(

@@ -23,7 +23,12 @@ DiagnosticSeverity = Literal["info", "warning", "error"]
 
 @dataclass(frozen=True)
 class ExtractionDiagnostic:
-    """A recoverable or fatal issue observed while extracting one source file."""
+    """A recoverable or fatal issue observed while processing one source file.
+
+    Extraction reports parse problems here; later stages reuse the same shape for
+    per-unit problems they can survive, such as a definition skipped because it
+    exceeds the embedding model's context window.
+    """
 
     file_path: Path
     language: str
@@ -189,6 +194,7 @@ class AnalysisResult:
     semantic_fallback: bool = False
     semantic_fallback_reason: str | None = None
     extraction_diagnostics: list[ExtractionDiagnostic] = field(default_factory=list)
+    semantic_diagnostics: list[ExtractionDiagnostic] = field(default_factory=list)
     unused_supported_languages: tuple[str, ...] = ("python",)
     unused_excluded_units: int = 0
 

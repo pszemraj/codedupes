@@ -33,7 +33,8 @@ from codedupes.pairs import ordered_pair_key
 from codedupes.semantic import (
     EmbeddingSpaceIdentity,
     SemanticBackendError,
-    SemanticInputTooLongError,
+    SemanticContextOverflow,
+    describe_context_overflow,
     get_code_unit_statement_count,
     get_semantic_runtime_versions,
     validate_explicit_device_request,
@@ -508,6 +509,15 @@ class CodeAnalyzer:
         self._embedding_space_identity: EmbeddingSpaceIdentity | None = None
         self._cache_scope: Path | None = None
         self._extraction_diagnostics: list[ExtractionDiagnostic] = []
+        self._semantic_diagnostics: list[ExtractionDiagnostic] = []
+
+    @property
+    def semantic_diagnostics(self) -> list[ExtractionDiagnostic]:
+        """Return diagnostics raised by the semantic stage of the last run.
+
+        :return: Diagnostics for units excluded from semantic comparison.
+        """
+        return list(self._semantic_diagnostics)
 
     def _reset_analysis_state(self, cache_scope: Path) -> None:
         """Clear corpus-specific state before one analysis run.
@@ -522,6 +532,38 @@ class CodeAnalyzer:
         self._embedding_space_identity = None
         self._cache_scope = cache_scope
         self._extraction_diagnostics = []
+        self._semantic_diagnostics = []
+
+    def _drop_over_context_units(
+        self,
+        overflow: list[SemanticContextOverflow],
+        semantic_candidates: list[CodeUnit],
+    ) -> list[CodeUnit]:
+        """Record skipped over-context units and drop them from the semantic corpus.
+
+        The embedding matrix already excludes these rows, so the candidate list
+        must lose them too or every later row lookup is off by one.
+
+        :param overflow: Units the semantic layer could not embed completely.
+        :param semantic_candidates: Candidate units passed to the semantic layer.
+        :return: Candidates that survived the context policy.
+        """
+        self._semantic_diagnostics.extend(
+            ExtractionDiagnostic(
+                file_path=skipped.unit.file_path,
+                language=skipped.unit.language,
+                message=describe_context_overflow(skipped),
+                severity="warning",
+                code="semantic-context-overflow",
+                lineno=skipped.unit.lineno,
+                end_lineno=skipped.unit.end_lineno,
+            )
+            for skipped in overflow
+        )
+        skipped_ids = {id(skipped.unit) for skipped in overflow}
+        remaining = [unit for unit in semantic_candidates if id(unit) not in skipped_ids]
+        self._semantic_units = remaining
+        return remaining
 
     def _extract_corpus_units(self, path: Path) -> list[CodeUnit]:
         """Extract code units from a resolved directory or single-file path.
@@ -745,11 +787,13 @@ class CodeAnalyzer:
                 # evidence and enable hybrid_confirmed scoring.
                 exclude = find_exact_pair_keys(semantic_candidates)
 
+            semantic_overflow: list[SemanticContextOverflow] = []
             try:
                 semantic_kwargs: dict[str, object] = {
                     "model_name": self.config.model_name,
                     "instruction_prefix": self.config.instruction_prefix,
                     "threshold": semantic_scan_floor,
+                    "overflow_report": semantic_overflow,
                     "exclude_pairs": exclude,
                     "batch_size": self.config.batch_size,
                     "revision": self.config.model_revision,
@@ -768,9 +812,6 @@ class CodeAnalyzer:
                     semantic_duplicates,
                     self._embedding_space_identity,
                 ) = run_semantic_analysis(semantic_candidates, **semantic_kwargs)
-            except SemanticInputTooLongError:
-                self._embedding_space_identity = None
-                raise
             except (ModuleNotFoundError, SemanticBackendError, RuntimeError) as exc:
                 self._embedding_space_identity = None
                 # If semantic is the only duplicate-detection method requested,
@@ -803,6 +844,12 @@ class CodeAnalyzer:
                     f"Retry with `codedupes check {path} --traditional-only`."
                 )
                 logger.warning(semantic_fallback_reason)
+            else:
+                if semantic_overflow:
+                    semantic_candidates = self._drop_over_context_units(
+                        semantic_overflow,
+                        semantic_candidates,
+                    )
 
             # Duplicate gates are calibrated within a language, so each pair is held
             # to its own language's gate (the embedding scan ran at the loosest gate).
@@ -881,6 +928,7 @@ class CodeAnalyzer:
             semantic_fallback=semantic_fallback,
             semantic_fallback_reason=semantic_fallback_reason,
             extraction_diagnostics=list(self._extraction_diagnostics),
+            semantic_diagnostics=list(self._semantic_diagnostics),
             unused_excluded_units=unused_excluded_units,
         )
 
@@ -891,6 +939,10 @@ class CodeAnalyzer:
         loads from cache) their embeddings so :meth:`search` can run. Unlike
         :meth:`analyze`, no all-pairs duplicate scan, traditional analysis, or
         unused-code analysis happens, so indexing stays linear in corpus size.
+
+        Units too long for the model context window are skipped (reported through
+        :attr:`semantic_diagnostics`) rather than ending the run, exactly as on
+        the duplicate-check path; only an over-long query fails hard.
 
         :param path: Path to a supported source file or directory.
         :return: Number of code units embedded for search.
@@ -910,10 +962,12 @@ class CodeAnalyzer:
         )
         semantic_candidates = self._select_semantic_candidates(units)
         self._semantic_units = semantic_candidates
+        overflow: list[SemanticContextOverflow] = []
 
         try:
             self._embeddings, self._embedding_space_identity = compute_embeddings(
                 semantic_candidates,
+                overflow_report=overflow,
                 model_name=self.config.model_name,
                 instruction_prefix=self.config.instruction_prefix,
                 batch_size=self.config.batch_size,
@@ -930,6 +984,8 @@ class CodeAnalyzer:
         except Exception:
             self._embedding_space_identity = None
             raise
+        if overflow:
+            semantic_candidates = self._drop_over_context_units(overflow, semantic_candidates)
         return len(semantic_candidates)
 
     def search(self, query: str, top_k: int = 10) -> list[tuple[CodeUnit, float]]:

@@ -229,6 +229,21 @@ class SemanticInputTooLongError(SemanticBackendError):
     """Raised when a semantic input exceeds the selected model's context window."""
 
 
+@dataclass(frozen=True)
+class SemanticContextOverflow:
+    """One corpus unit skipped because it cannot fit the model context window.
+
+    Duplicate detection is recall-first: an over-context definition is dropped
+    from the semantic corpus (never truncated, never embedded) and reported,
+    instead of ending the whole run. Query inputs keep failing hard, because a
+    silently ignored query would answer a question the user did not ask.
+    """
+
+    unit: CodeUnit
+    token_count: int
+    max_tokens: int
+
+
 class InvalidEmbeddingError(RuntimeError):
     """Raised when an embedding matrix violates the similarity-math invariants.
 
@@ -2332,6 +2347,20 @@ def _require_text_within_model_context(
     )
 
 
+def describe_context_overflow(overflow: SemanticContextOverflow) -> str:
+    """Describe one skipped over-context unit for logs and user-facing diagnostics.
+
+    :param overflow: Skipped unit and its measured token counts.
+    :return: Single-sentence explanation naming the unit and both token counts.
+    """
+    return (
+        f"{overflow.unit.qualified_name} is {overflow.token_count} tokens including the encode "
+        f"prompt, exceeding the selected model's {overflow.max_tokens}-token context window; "
+        "it is excluded from semantic comparison. Use a model with a larger context window, or "
+        "split the definition, to include it."
+    )
+
+
 def _embedding_cache_namespace(mode: str, variant: str) -> str:
     """Build a namespace grouping equivalent embedding inputs.
 
@@ -2638,6 +2667,7 @@ def _compute_embeddings_unlocked(
     use_cache: bool = True,
     cache_scope: Path | None = None,
     strict_revision_cache: bool = False,
+    overflow_report: list[SemanticContextOverflow] | None = None,
 ) -> tuple[np.ndarray, EmbeddingSpaceIdentity]:
     """Compute normalized NumPy embeddings for all code units.
 
@@ -2668,10 +2698,15 @@ def _compute_embeddings_unlocked(
     :param strict_revision_cache: Whether an unpinned hub revision resolves to a
         concrete commit hash (disabling caching when unmappable) instead of the
         requested revision label, defaults to ``False``.
+    :param overflow_report: When provided, over-context units are skipped instead
+        of raising: their rows are dropped from the returned matrix (so it is no
+        longer row-aligned with ``units``) and appended here in input order.
     :return: Normalized embedding matrix and its effective vector-space identity.
     :raises ValueError: If ``batch_size`` is not positive.
     :raises SemanticBackendError: If an explicitly requested device is unavailable,
         even when the corpus is empty or every embedding is already cached.
+    :raises SemanticInputTooLongError: If a unit exceeds the model context window
+        and no ``overflow_report`` collector was provided.
     """
     if batch_size <= 0:
         raise ValueError("batch_size must be > 0")
@@ -2762,6 +2797,7 @@ def _compute_embeddings_unlocked(
             use_cache=use_cache,
             cache_scope=cache_scope,
             strict_revision_cache=strict_revision_cache,
+            overflow_report=overflow_report,
         )
 
     def _coherence_break_reason(current_model: object) -> str | None:
@@ -2975,36 +3011,93 @@ def _compute_embeddings_unlocked(
             cache_keys = None
             hits = {}
 
-    def _validated_miss_texts(indices: list[int]) -> list[str]:
+    # Over-context measurements keyed by prepared text, because duplicate
+    # sources share one cache key: only one representative row is checked, and
+    # every row carrying that text must be dropped with it.
+    overflow_by_text: dict[str, tuple[int, int]] = {}
+
+    def _validated_miss_texts(indices: list[int]) -> tuple[list[int], list[str]]:
         """Validate prepared texts for the given miss-row indices.
 
         Shared by the primary encode call and the dimension-mismatch retry so
         both enforce the same context policy against the loaded ``model``.
 
         :param indices: Row indices requiring encoding.
-        :return: Complete texts, row-aligned with ``indices``.
+        :return: Encodable row indices and their complete texts, row-aligned.
         """
-        return [
-            _require_text_within_model_context(
-                prepared_texts[i],
+        encodable: list[int] = []
+        texts: list[str] = []
+        for i in indices:
+            text = prepared_texts[i]
+            overflow = _model_context_overflow(
+                text,
                 units[i].qualified_name,
                 model,
                 encode_plan.prompt,
             )
-            for i in indices
-        ]
+            if overflow is None:
+                encodable.append(i)
+                texts.append(text)
+                continue
+            if overflow_report is None:
+                # No collector: the caller wants the hard failure (search queries).
+                _require_text_within_model_context(
+                    text, units[i].qualified_name, model, encode_plan.prompt
+                )
+            overflow_by_text[text] = overflow
+        return encodable, texts
 
-    miss_indices = _select_cache_miss_indices(cache_keys, hits, len(units))
-    miss_texts = _validated_miss_texts(miss_indices)
+    def _rows_within_context() -> list[int]:
+        """Select the rows that survive the context policy, in input order.
+
+        :return: Row indices whose prepared text fits the model context window.
+        """
+        if not overflow_by_text:
+            return list(range(len(units)))
+        return [index for index, text in enumerate(prepared_texts) if text not in overflow_by_text]
+
+    def _publish_overflow_report(kept_rows: list[int]) -> None:
+        """Report every dropped row to the caller's collector, in input order.
+
+        :param kept_rows: Row indices that survived the context policy.
+        :return: ``None``.
+        """
+        if overflow_report is None or not overflow_by_text:
+            return
+        kept = set(kept_rows)
+        for index, unit in enumerate(units):
+            if index in kept:
+                continue
+            token_count, max_tokens = overflow_by_text[prepared_texts[index]]
+            skipped = SemanticContextOverflow(unit, token_count, max_tokens)
+            overflow_report.append(skipped)
+            logger.warning(f"Skipping {describe_context_overflow(skipped)}")
+
+    miss_indices, miss_texts = _validated_miss_texts(
+        _select_cache_miss_indices(cache_keys, hits, len(units))
+    )
+    kept_rows = _rows_within_context()
     cache_covered_rows = (
         sum(1 for key in cache_keys if key in hits) if cache_keys is not None else 0
     )
-    reused_duplicate_rows = len(units) - cache_covered_rows - len(miss_indices)
+    reused_duplicate_rows = len(kept_rows) - cache_covered_rows - len(miss_indices)
 
     logger.info(
         f"Computing embeddings for {len(miss_texts)} unique inputs on {execution_device} "
         f"({cache_covered_rows} cache-covered rows, {reused_duplicate_rows} duplicate rows reused)"
     )
+
+    if not miss_texts:
+        # Every row still needing an encode was dropped for context overflow;
+        # whatever remains is already covered by cache hits.
+        _publish_overflow_report(kept_rows)
+        identity = _effective_identity(
+            device, identity_revision, resolved_device, source_commit=corpus_source_commit
+        )
+        if not kept_rows or cache_keys is None:
+            return np.zeros((0, 0), dtype=np.float32), identity
+        return _assemble_cached_matrix([cache_keys[i] for i in kept_rows], hits), identity
+
     encode_fn = _select_encode_fn(model, encode_plan.route)
 
     def _encode_miss_texts(texts: list[str]) -> np.ndarray:
@@ -3043,27 +3136,33 @@ def _compute_embeddings_unlocked(
                 f"not match the loaded model ({dim}); re-embedding all units."
             )
             hits = {}
-            miss_indices = _select_cache_miss_indices(cache_keys, hits, len(units))
             # Re-read the live device: a mid-encode accelerator fallback during
             # the first encode call is not reflected by replaying the stale
             # execution_device captured before that call, and this closure
             # variable is what _encode_miss_texts passes as initial_device.
             execution_device = _get_effective_model_device(model, resolved_device)
-            miss_vectors = _encode_miss_texts(_validated_miss_texts(miss_indices))
+            miss_indices, retry_texts = _validated_miss_texts(
+                _select_cache_miss_indices(cache_keys, hits, len(units))
+            )
+            kept_rows = _rows_within_context()
+            miss_vectors = _encode_miss_texts(retry_texts)
             coherence_break_reason = _coherence_break_reason(model)
             if coherence_break_reason is not None:
                 return _restart_faithfully_on_cpu(coherence_break_reason)
+
+    _publish_overflow_report(kept_rows)
     if cache_keys is None:
-        matrix = np.empty((len(units), dim), dtype=np.float32)
-        for local_idx, global_idx in enumerate(miss_indices):
-            matrix[global_idx] = miss_vectors[local_idx]
+        rows_by_index = {global_idx: local_idx for local_idx, global_idx in enumerate(miss_indices)}
+        matrix = np.empty((len(kept_rows), dim), dtype=np.float32)
+        for out_row, global_idx in enumerate(kept_rows):
+            matrix[out_row] = miss_vectors[rows_by_index[global_idx]]
     else:
         vectors_by_key = dict(hits)
         vectors_by_key.update(
             (cache_keys[global_idx], miss_vectors[local_idx])
             for local_idx, global_idx in enumerate(miss_indices)
         )
-        matrix = _assemble_cached_matrix(cache_keys, vectors_by_key)
+        matrix = _assemble_cached_matrix([cache_keys[i] for i in kept_rows], vectors_by_key)
 
     if (
         cache is not None
@@ -3107,6 +3206,7 @@ def compute_embeddings_with_identity(
     use_cache: bool = True,
     cache_scope: Path | None = None,
     strict_revision_cache: bool = False,
+    overflow_report: list[SemanticContextOverflow] | None = None,
 ) -> tuple[np.ndarray, EmbeddingSpaceIdentity]:
     """Compute embeddings and identity under the shared model lock.
 
@@ -3129,6 +3229,9 @@ def compute_embeddings_with_identity(
     :param strict_revision_cache: Whether an unpinned hub revision resolves to a
         concrete commit hash (disabling caching when unmappable) instead of the
         requested revision label, defaults to ``False``.
+    :param overflow_report: When provided, over-context units are skipped instead
+        of raising: their rows are dropped from the returned matrix (so it is no
+        longer row-aligned with ``units``) and appended here in input order.
     :return: Normalized embedding matrix and its effective vector-space identity.
     """
     # Import-sensitive runtime variables (MPS operator fallback above all) must
@@ -3150,6 +3253,7 @@ def compute_embeddings_with_identity(
             mps_fallback=mps_fallback,
             mps_memory_fraction=mps_memory_fraction,
             strict_revision_cache=strict_revision_cache,
+            overflow_report=overflow_report,
         )
 
 
@@ -3795,6 +3899,7 @@ def run_semantic_analysis_with_identity(
     cache_scope: Path | None = None,
     strict_revision_cache: bool = False,
     cross_language: bool = False,
+    overflow_report: list[SemanticContextOverflow] | None = None,
 ) -> tuple[np.ndarray, list[DuplicatePair], EmbeddingSpaceIdentity]:
     """Run semantic duplicate detection and return the corpus identity.
 
@@ -3824,11 +3929,16 @@ def run_semantic_analysis_with_identity(
         requested revision label, defaults to ``False``.
     :param cross_language: Also generate duplicate pairs across languages
         (uncalibrated), defaults to ``False``.
-    :return: ``(embeddings, duplicates, identity)``.
+    :param overflow_report: When provided, over-context units are skipped instead
+        of raising: they are excluded from ``embeddings`` and pair mining, and
+        appended here in input order.
+    :return: ``(embeddings, duplicates, identity)``; ``embeddings`` covers only
+        the units that survived the context policy.
     """
     resolved_threshold = (
         threshold if threshold is not None else get_default_semantic_threshold(model_name)
     )
+    reported_before = len(overflow_report) if overflow_report is not None else 0
 
     embeddings, identity = compute_embeddings_with_identity(
         units,
@@ -3844,7 +3954,12 @@ def run_semantic_analysis_with_identity(
         use_cache=use_cache,
         cache_scope=cache_scope,
         strict_revision_cache=strict_revision_cache,
+        overflow_report=overflow_report,
     )
+    if overflow_report is not None and len(overflow_report) > reported_before:
+        # Keep pair mining row-aligned with the matrix the context policy left.
+        skipped = {id(skip.unit) for skip in overflow_report[reported_before:]}
+        units = [unit for unit in units if id(unit) not in skipped]
     if not units:
         return embeddings, [], identity
 

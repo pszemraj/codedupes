@@ -386,6 +386,29 @@ def truncate_source(source: str, max_lines: int = 5) -> str:
     return "\n".join(lines[:max_lines]) + f"\n... ({len(lines) - max_lines} more lines)"
 
 
+def _print_diagnostics(title: str, diagnostics: list[ExtractionDiagnostic]) -> None:
+    """Print one diagnostic section, capped at the first ten entries.
+
+    :param title: Section heading.
+    :param diagnostics: Diagnostics to render; nothing prints when empty.
+    :return: ``None``.
+    """
+    if not diagnostics:
+        return
+    console.print(f"[bold yellow]{title}[/bold yellow]")
+    for diagnostic in diagnostics[:10]:
+        location = str(diagnostic.file_path)
+        if diagnostic.lineno is not None:
+            location += f":{diagnostic.lineno}"
+        console.print(
+            f"  [yellow]{diagnostic.severity}[/yellow] "
+            f"[{diagnostic.language}] {location}: {diagnostic.message}"
+        )
+    remaining = len(diagnostics) - 10
+    if remaining > 0:
+        console.print(f"  [dim]... and {remaining} more diagnostics[/dim]")
+
+
 def print_summary(
     result: AnalysisResult,
     *,
@@ -437,6 +460,8 @@ def print_summary(
 
     if result.extraction_diagnostics:
         summary.add_row("Extraction diagnostics", str(len(result.extraction_diagnostics)))
+    if result.semantic_diagnostics:
+        summary.add_row("Semantic diagnostics", str(len(result.semantic_diagnostics)))
     if result.unused_excluded_units:
         summary.add_row(
             "Unused-analysis exclusions",
@@ -444,19 +469,8 @@ def print_summary(
         )
 
     console.print(summary)
-    if result.extraction_diagnostics:
-        console.print("[bold yellow]Extraction diagnostics[/bold yellow]")
-        for diagnostic in result.extraction_diagnostics[:10]:
-            location = str(diagnostic.file_path)
-            if diagnostic.lineno is not None:
-                location += f":{diagnostic.lineno}"
-            console.print(
-                f"  [yellow]{diagnostic.severity}[/yellow] "
-                f"[{diagnostic.language}] {location}: {diagnostic.message}"
-            )
-        remaining = len(result.extraction_diagnostics) - 10
-        if remaining > 0:
-            console.print(f"  [dim]... and {remaining} more diagnostics[/dim]")
+    _print_diagnostics("Extraction diagnostics", result.extraction_diagnostics)
+    _print_diagnostics("Semantic diagnostics", result.semantic_diagnostics)
     console.print()
 
 
@@ -565,11 +579,15 @@ def print_check_json_combined(result: AnalysisResult, *, show_all: bool) -> None
             "semantic_fallback": result.semantic_fallback,
             "semantic_fallback_reason": result.semantic_fallback_reason,
             "extraction_diagnostics": len(result.extraction_diagnostics),
+            "semantic_diagnostics": len(result.semantic_diagnostics),
             "unused_supported_languages": list(result.unused_supported_languages),
             "unused_excluded_units": result.unused_excluded_units,
         },
         "extraction_diagnostics": [
             _diagnostic_to_dict(diagnostic) for diagnostic in result.extraction_diagnostics
+        ],
+        "semantic_diagnostics": [
+            _diagnostic_to_dict(diagnostic) for diagnostic in result.semantic_diagnostics
         ],
         "hybrid_duplicates": [
             _hybrid_dup_to_dict(duplicate) for duplicate in result.hybrid_duplicates
@@ -600,11 +618,15 @@ def print_check_json_raw(result: AnalysisResult) -> None:
             "semantic_fallback": result.semantic_fallback,
             "semantic_fallback_reason": result.semantic_fallback_reason,
             "extraction_diagnostics": len(result.extraction_diagnostics),
+            "semantic_diagnostics": len(result.semantic_diagnostics),
             "unused_supported_languages": list(result.unused_supported_languages),
             "unused_excluded_units": result.unused_excluded_units,
         },
         "extraction_diagnostics": [
             _diagnostic_to_dict(diagnostic) for diagnostic in result.extraction_diagnostics
+        ],
+        "semantic_diagnostics": [
+            _diagnostic_to_dict(diagnostic) for diagnostic in result.semantic_diagnostics
         ],
         "traditional_duplicates": [
             _dup_to_dict(duplicate) for duplicate in result.traditional_duplicates

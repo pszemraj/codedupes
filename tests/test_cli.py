@@ -17,6 +17,7 @@ from codedupes.models import (
     AnalysisResult,
     CodeUnit,
     DuplicatePair,
+    ExtractionDiagnostic,
     HybridDuplicate,
 )
 from codedupes.semantic import SemanticBackendError
@@ -98,6 +99,41 @@ def test_cli_json_output_hybrid_default(monkeypatch, tmp_path):
     search_output = json.loads(result.output)
     assert search_output["query"] == "entry"
     assert search_output["results"][0]["name"] == "entry"
+
+
+def test_cli_reports_semantic_context_diagnostics(monkeypatch, tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+    unit = _build_unit(tmp_path)
+    result_obj = AnalysisResult(
+        units=[unit],
+        traditional_duplicates=[],
+        semantic_duplicates=[],
+        hybrid_duplicates=[],
+        potentially_unused=[],
+        analysis_mode="combined",
+        semantic_diagnostics=[
+            ExtractionDiagnostic(
+                file_path=unit.file_path,
+                language="python",
+                code="semantic-context-overflow",
+                message="sample.entry is 4096 tokens including the encode prompt",
+                lineno=1,
+                end_lineno=2,
+            )
+        ],
+    )
+    patch_cli_analyzer(monkeypatch, cli, analyze_result=result_obj)
+    runner = CliRunner()
+
+    table_result = runner.invoke(cli.cli, ["check", str(path)])
+    assert "Semantic diagnostics" in table_result.output
+    assert "4096 tokens" in table_result.output
+
+    json_result = runner.invoke(cli.cli, ["check", str(path), "--json"])
+    payload = json.loads(json_result.output)
+    assert payload["summary"]["semantic_diagnostics"] == 1
+    assert payload["semantic_diagnostics"][0]["code"] == "semantic-context-overflow"
 
 
 def test_cli_search_indexes_without_running_full_analysis(monkeypatch, tmp_path):

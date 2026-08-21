@@ -26,6 +26,7 @@ _SEMANTIC_ANALYSIS_KWARG_NAMES = {
     "model_name",
     "mps_fallback",
     "mps_memory_fraction",
+    "overflow_report",
     "revision",
     "semantic_task",
     "strict_revision_cache",
@@ -1845,27 +1846,170 @@ def test_semantic_failures_fall_back_when_traditional_enabled(
     assert "Retry with `codedupes check" in caplog.text
 
 
-def test_context_overflow_never_degrades_to_traditional_fallback(
-    tmp_path: Path, monkeypatch
-) -> None:
-    project = create_project(tmp_path, "def only_func():\n    return 1\n")
-    error = semantic_module.SemanticInputTooLongError("semantic input exceeds context")
-    monkeypatch.setattr(
-        analyzer_module,
-        "run_semantic_analysis",
-        _make_semantic_runner(error=error),
-    )
+class _WhitespaceTokenizer:
+    """Tokenizer stub whose token count is the whitespace-separated word count."""
+
+    def encode(self, text, **_kwargs):
+        return text.split()
+
+
+class _ContextLimitedModel:
+    """Model stub that rejects nothing but exposes a tiny context window."""
+
+    max_seq_length = 20
+    tokenizer = _WhitespaceTokenizer()
+
+    def __init__(self) -> None:
+        self.encoded: list[str] = []
+
+    def encode(self, texts, **_kwargs):
+        self.encoded.extend(texts)
+        return np.array(
+            [[0.0, 1.0] if "second_axis" in text else [1.0, 0.0] for text in texts],
+            dtype=np.float32,
+        )
+
+
+_OVERFLOW_PROJECT_SOURCE = dedent(
+    """
+    def short_one(x):
+        y = x + 1
+        return y
+
+    def short_two(x):
+        total = x * 3
+        print(total)
+        return total
+
+    def long_tail(x):
+        words = "aa bb cc dd ee ff gg hh ii jj kk ll mm nn oo pp qq rr ss tt"
+        return words
+    """
+).strip()
+
+
+def test_over_context_units_are_skipped_with_a_diagnostic(tmp_path: Path, monkeypatch) -> None:
+    project = create_project(tmp_path, _OVERFLOW_PROJECT_SOURCE)
+    model = _ContextLimitedModel()
+    monkeypatch.setattr(semantic_module, "get_model", lambda *args, **kwargs: model)
+
     analyzer = CodeAnalyzer(
         AnalyzerConfig(
             run_traditional=True,
             run_semantic=True,
-            allow_semantic_fallback=True,
             run_unused=False,
+            min_semantic_statements=0,
+            embedding_cache=False,
         )
     )
+    result = analyzer.analyze(project)
 
-    with pytest.raises(semantic_module.SemanticInputTooLongError, match="exceeds context"):
-        analyzer.analyze(project)
+    assert [unit.name for unit in result.units] == ["short_one", "short_two", "long_tail"]
+    assert [
+        (duplicate.unit_a.name, duplicate.unit_b.name) for duplicate in result.semantic_duplicates
+    ] == [("short_one", "short_two")]
+    assert [diagnostic.code for diagnostic in result.semantic_diagnostics] == [
+        "semantic-context-overflow"
+    ]
+    diagnostic = result.semantic_diagnostics[0]
+    assert "long_tail" in diagnostic.message
+    assert diagnostic.severity == "warning"
+    assert diagnostic.language == "python"
+    assert not any("long_tail" in text for text in model.encoded)
+
+
+def test_skipped_over_context_units_never_enter_the_embedding_cache(
+    tmp_path: Path, monkeypatch
+) -> None:
+    project = create_project(tmp_path, _OVERFLOW_PROJECT_SOURCE)
+    model = _ContextLimitedModel()
+    monkeypatch.setattr(semantic_module, "get_model", lambda *args, **kwargs: model)
+
+    def run() -> AnalysisResult:
+        analyzer = CodeAnalyzer(
+            AnalyzerConfig(
+                run_traditional=False,
+                run_semantic=True,
+                run_unused=False,
+                min_semantic_statements=0,
+                embedding_cache=True,
+            )
+        )
+        return analyzer.analyze(project)
+
+    first = run()
+    second = run()
+
+    # A warm second run must not resurrect the skipped unit from the cache.
+    for result in (first, second):
+        assert [diagnostic.code for diagnostic in result.semantic_diagnostics] == [
+            "semantic-context-overflow"
+        ]
+        assert [
+            (duplicate.unit_a.name, duplicate.unit_b.name)
+            for duplicate in result.semantic_duplicates
+        ] == [("short_one", "short_two")]
+
+
+def test_index_drops_over_context_units_and_keeps_search_rows_aligned(
+    tmp_path: Path, monkeypatch
+) -> None:
+    source = dedent(
+        """
+        def long_tail(x):
+            words = "aa bb cc dd ee ff gg hh ii jj kk ll mm nn oo pp qq rr ss tt"
+            return words
+
+        def wanted(x):
+            y = x + 1
+            return y
+
+        def second_axis(x):
+            z = x + 2
+            return z
+        """
+    ).strip()
+    project = create_project(tmp_path, source)
+    model = _ContextLimitedModel()
+    monkeypatch.setattr(semantic_module, "get_model", lambda *args, **kwargs: model)
+
+    analyzer = CodeAnalyzer(
+        AnalyzerConfig(
+            run_traditional=False,
+            run_semantic=True,
+            run_unused=False,
+            min_semantic_statements=0,
+            embedding_cache=False,
+        )
+    )
+    indexed = analyzer.index(project)
+    results = analyzer.search("anything", top_k=1)
+
+    assert indexed == 2
+    assert [diagnostic.code for diagnostic in analyzer.semantic_diagnostics] == [
+        "semantic-context-overflow"
+    ]
+    assert [unit.name for unit, _score in results] == ["wanted"]
+
+
+def test_over_context_search_query_still_fails_hard(tmp_path: Path, monkeypatch) -> None:
+    project = create_project(tmp_path, "def wanted(x):\n    y = x + 1\n    return y\n")
+    model = _ContextLimitedModel()
+    monkeypatch.setattr(semantic_module, "get_model", lambda *args, **kwargs: model)
+
+    analyzer = CodeAnalyzer(
+        AnalyzerConfig(
+            run_traditional=False,
+            run_semantic=True,
+            run_unused=False,
+            min_semantic_statements=0,
+            embedding_cache=False,
+        )
+    )
+    analyzer.index(project)
+
+    with pytest.raises(semantic_module.SemanticInputTooLongError, match="search query"):
+        analyzer.search(" ".join(["word"] * 40))
 
 
 @pytest.mark.parametrize(
