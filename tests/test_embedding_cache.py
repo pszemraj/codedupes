@@ -135,6 +135,42 @@ def test_strict_symbolic_revision_revalidates_before_cache_hit(tmp_path, monkeyp
     np.testing.assert_array_equal(first, second)
 
 
+def test_strict_query_load_uses_resolved_commit(tmp_path, monkeypatch):
+    units = _five_units(tmp_path)
+    model = CountingModel()
+    commit = "a" * 40
+    loaded_revisions: list[str | None] = []
+
+    def fake_get_model(*_args, **kwargs):
+        loaded_revisions.append(kwargs.get("revision"))
+        return model
+
+    monkeypatch.setattr(semantic, "get_model", fake_get_model)
+    monkeypatch.setattr(semantic, "_resolve_hf_cached_revision", lambda *_args: commit)
+    monkeypatch.setattr(semantic, "_get_loaded_model_commit_hash", lambda _model: commit)
+
+    embeddings, identity = compute_embeddings_with_identity(
+        units,
+        model_name="drift-model",
+        revision="main",
+        cache_scope=tmp_path,
+        strict_revision_cache=True,
+    )
+    find_similar_to_query(
+        "find addition",
+        units,
+        embeddings,
+        model_name="drift-model",
+        revision="main",
+        threshold=0.0,
+        cache_scope=tmp_path,
+        strict_revision_cache=True,
+        corpus_identity=identity,
+    )
+
+    assert loaded_revisions == [commit, commit]
+
+
 def test_embeddinggemma_cache_variant_scopes_only_nondefault_dtype(monkeypatch):
     profile = semantic.resolve_model_profile("embeddinggemma-300m")
     monkeypatch.setattr(

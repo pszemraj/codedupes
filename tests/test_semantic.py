@@ -2471,9 +2471,17 @@ def test_strict_revision_cache_reencodes_after_simulated_branch_move(
     """
     units = extract_arithmetic_units(tmp_path)
     model = _WarmCacheModel()
-    monkeypatch.setattr(semantic, "get_model", lambda *_a, **_k: model)
-    monkeypatch.setattr(semantic, "_resolve_hf_cached_revision", lambda *_a, **_k: "commit-a")
-    monkeypatch.setattr(semantic, "_get_loaded_model_commit_hash", lambda _model: "commit-a")
+    commit_a = "a" * 40
+    commit_b = "b" * 40
+    loaded_revisions: list[str | None] = []
+
+    def fake_get_model(*_args, **kwargs):
+        loaded_revisions.append(kwargs.get("revision"))
+        return model
+
+    monkeypatch.setattr(semantic, "get_model", fake_get_model)
+    monkeypatch.setattr(semantic, "_resolve_hf_cached_revision", lambda *_a, **_k: commit_a)
+    monkeypatch.setattr(semantic, "_get_loaded_model_commit_hash", lambda _model: commit_a)
 
     compute_embeddings(
         units,
@@ -2495,8 +2503,8 @@ def test_strict_revision_cache_reencodes_after_simulated_branch_move(
     assert model.encode_calls == 1
 
     # Simulate an upstream branch move to a new commit.
-    monkeypatch.setattr(semantic, "_resolve_hf_cached_revision", lambda *_a, **_k: "commit-b")
-    monkeypatch.setattr(semantic, "_get_loaded_model_commit_hash", lambda _model: "commit-b")
+    monkeypatch.setattr(semantic, "_resolve_hf_cached_revision", lambda *_a, **_k: commit_b)
+    monkeypatch.setattr(semantic, "_get_loaded_model_commit_hash", lambda _model: commit_b)
 
     compute_embeddings(
         units,
@@ -2507,6 +2515,7 @@ def test_strict_revision_cache_reencodes_after_simulated_branch_move(
     )
 
     assert model.encode_calls == 2
+    assert loaded_revisions == [commit_a, commit_b]
 
 
 def test_strict_revision_cache_disables_caching_for_unmappable_symbolic_ref(

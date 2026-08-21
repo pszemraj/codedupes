@@ -759,6 +759,32 @@ def _resolve_load_revision(model_name: str, explicit_revision: str | None) -> st
     return _resolve_model_revision(model_name, explicit_revision)
 
 
+def _resolve_load_revision_for_cache_policy(
+    model_name: str,
+    explicit_revision: str | None,
+    cache_revision: str | None,
+    *,
+    strict: bool,
+) -> str | None:
+    """Resolve the model-load revision under the active cache policy.
+
+    Strict mode has already paid to resolve a mutable hub label to an
+    immutable commit before cache lookup. Loading by that same commit is
+    required: loading by the original branch label could reuse a process-wide
+    model instance from the branch's previous commit while cache keys address
+    the new one.
+
+    :param model_name: Requested model identifier.
+    :param explicit_revision: Optional explicit revision override.
+    :param cache_revision: Revision selected for cache identity.
+    :param strict: Whether strict revision-cache policy is active.
+    :return: Concrete strict commit when available, otherwise the normal load revision.
+    """
+    if strict and cache_revision is not None and _is_hf_commit_hash(cache_revision):
+        return cache_revision
+    return _resolve_load_revision(model_name, explicit_revision)
+
+
 def _resolve_revision_for_cache(
     model_name: str,
     explicit_revision: str | None,
@@ -2801,7 +2827,12 @@ def _compute_embeddings_unlocked(
             source_commit=hit_source_commit,
         )
 
-    resolved_revision = _resolve_load_revision(model_name, revision)
+    resolved_revision = _resolve_load_revision_for_cache_policy(
+        model_name,
+        revision,
+        cache_revision,
+        strict=strict_revision_cache,
+    )
     resolved_device = _prepare_semantic_device(
         device,
         mps_fallback=mps_fallback,
@@ -3435,7 +3466,12 @@ def _find_similar_to_query_unlocked(
         restore_mps_memory_fraction_if_managed()
 
     if query_embedding is None:
-        resolved_revision = _resolve_load_revision(model_name, revision)
+        resolved_revision = _resolve_load_revision_for_cache_policy(
+            model_name,
+            revision,
+            cache_revision,
+            strict=strict_revision_cache,
+        )
         resolved_device = _prepare_semantic_device(
             embedding_device,
             mps_fallback=mps_fallback,
