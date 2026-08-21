@@ -249,6 +249,11 @@ def test_rust_skips_cfg_test_modules_and_test_functions(tmp_path: Path) -> None:
             fn slow_helper() -> i32 { 2 }
         }
 
+        #[cfg(all(feature = "slow", test))]
+        mod reordered_tests {
+            fn reordered_helper() -> i32 { 3 }
+        }
+
         #[cfg(not(test))]
         fn production_only(value: i32) -> i32 { value }
 
@@ -265,6 +270,25 @@ def test_rust_skips_cfg_test_modules_and_test_functions(tmp_path: Path) -> None:
         "sample.production_only",
         "sample.Marker.tagged",
     }
+
+
+def test_rust_trait_methods_inherit_trait_visibility(tmp_path: Path) -> None:
+    units = _extract(
+        tmp_path,
+        "sample.rs",
+        """
+        trait Hidden {
+            fn hidden(&self) -> i32 { 1 }
+        }
+
+        pub trait Shown {
+            fn shown(&self) -> i32 { 2 }
+        }
+        """,
+        include_private=False,
+    )
+
+    assert {unit.qualified_name for unit in units} == {"sample.Shown.shown"}
 
 
 def test_rust_token_hash_ignores_in_body_comments(tmp_path: Path) -> None:

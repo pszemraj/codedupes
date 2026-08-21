@@ -921,6 +921,43 @@ class RustBackend(TreeSitterBackend):
             attributes.append(sibling)
         return attributes
 
+    @staticmethod
+    def _is_test_attribute(attribute: Any, source: bytes) -> bool:
+        """Return whether an attribute restricts its item to test builds.
+
+        :param attribute: Rust ``attribute_item`` node.
+        :param source: Full file source bytes.
+        :return: ``True`` for ``test``, ``cfg(test)``, or ``cfg(all(..., test, ...))``.
+        """
+        attribute_node = _first_descendant(attribute, {"attribute"})
+        named = _named_children(attribute_node) if attribute_node is not None else ()
+        if not named:
+            return False
+
+        name = _node_text(source, named[0]).strip()
+        if name == "test":
+            return True
+        if name != "cfg":
+            return False
+
+        arguments = _child_by_field(attribute_node, "arguments")
+        predicates = _named_children(arguments) if arguments is not None else ()
+        if len(predicates) == 1:
+            return _node_text(source, predicates[0]).strip() == "test"
+        if not predicates or _node_text(source, predicates[0]).strip() != "all":
+            return False
+
+        all_arguments = next(
+            (node for node in predicates[1:] if getattr(node, "type", "") == "token_tree"),
+            None,
+        )
+        if all_arguments is None:
+            return False
+        return any(
+            getattr(node, "type", "") == "identifier" and _node_text(source, node).strip() == "test"
+            for node in _named_children(all_arguments)
+        )
+
     @classmethod
     def _is_test_scoped(cls, node: Any, source: bytes) -> bool:
         """Return whether a function lives under ``#[test]`` or ``#[cfg(test)]``.
@@ -938,11 +975,7 @@ class RustBackend(TreeSitterBackend):
         current = node
         while current is not None:
             for attribute in cls._preceding_attributes(current):
-                text = re.sub(r"\s+", "", _node_text(source, attribute))
-                inner = text.removeprefix("#[").removesuffix("]")
-                if inner in {"test", "cfg(test)"} or inner.startswith(
-                    ("cfg(all(test,", "cfg(all(test)")
-                ):
+                if cls._is_test_attribute(attribute, source):
                     return True
             current = getattr(current, "parent", None)
         return False
@@ -1024,9 +1057,11 @@ class RustBackend(TreeSitterBackend):
             contexts, is_method = self._context(node, source)
             public = self._visibility(node, source)
             # Trait methods are part of the trait API even when they do not carry
-            # an explicit `pub` modifier.
-            if is_method and _nearest_ancestor(node, {"trait_item", "trait_declaration"}):
-                public = True
+            # an explicit `pub` modifier, but they cannot be more visible than
+            # the trait that exposes them.
+            trait = _nearest_ancestor(node, {"trait_item", "trait_declaration"})
+            if trait is not None:
+                public = self._visibility(trait, source)
             specs.append(
                 UnitSpec(
                     node=node,
