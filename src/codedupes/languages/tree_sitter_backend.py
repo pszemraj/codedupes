@@ -53,7 +53,9 @@ _PRESERVED_IDENTIFIER_TYPES = {
     "type_identifier",
     "namespace_identifier",
 }
-_STRING_MARKERS = ("string", "char_literal", "template_string", "raw_string")
+# ``jsx_text`` is display copy, not structure: two otherwise identical React
+# components must not fingerprint differently because their labels differ.
+_STRING_MARKERS = ("string", "char_literal", "template_string", "raw_string", "jsx_text")
 _NUMBER_MARKERS = ("number", "integer", "float", "decimal", "hex", "octal", "binary")
 
 

@@ -704,6 +704,24 @@ def test_private_container_members_are_dropped_with_their_container(tmp_path: Pa
     assert {unit.qualified_name for unit in units} == {"sample.Public", "sample.Public.run"}
 
 
+def test_jsx_display_copy_is_normalized_in_structural_fingerprints(tmp_path: Path) -> None:
+    """JSX text is display copy, exactly like the string literals already normalized."""
+    [first] = _extract(tmp_path, "first.tsx", "export const Card = () => <h1>Hello</h1>;\n")
+    [second] = _extract(
+        tmp_path,
+        "second.tsx",
+        "export const Card = () => <h1>Goodbye, friend</h1>;\n",
+    )
+    [structural] = _extract(
+        tmp_path,
+        "third.tsx",
+        "export const Card = () => <h1>Hello<br /></h1>;\n",
+    )
+
+    assert first.structural_hash == second.structural_hash
+    assert first.structural_hash != structural.structural_hash
+
+
 def test_tsx_and_unicode_use_exact_byte_slices(tmp_path: Path) -> None:
     units = _extract(
         tmp_path,
