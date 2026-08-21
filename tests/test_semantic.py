@@ -1408,6 +1408,76 @@ def test_find_similar_to_query_rejects_query_beyond_model_context(
     assert encode_calls == []
 
 
+class _WhitespaceTokenizer:
+    """Tokenizer stub whose token count is the whitespace-separated word count."""
+
+    def encode(self, text, **_kwargs):
+        return text.split()
+
+
+class _ShortContextModel:
+    """Model stub with a tiny context window that records every encode call."""
+
+    max_seq_length = 8
+    tokenizer = _WhitespaceTokenizer()
+
+    def __init__(self) -> None:
+        self.encode_calls: list[list[str]] = []
+
+    def encode(self, texts, **_kwargs):
+        self.encode_calls.append(list(texts))
+        return np.ones((len(texts), 2), dtype=np.float32)
+
+
+def test_context_guard_counts_the_prompt_the_backend_prepends(monkeypatch, tmp_path: Path) -> None:
+    # SentenceTransformers prepends the encode prompt before tokenizing with
+    # truncation, so a text that fits alone can still be silently truncated.
+    units = extract_arithmetic_units(tmp_path)
+    units[0].qualified_name = "module.exact_fit"
+    units[0].source = "one two three four five six seven eight"
+    model = _ShortContextModel()
+    monkeypatch.setattr(semantic, "get_model", lambda *args, **kwargs: model)
+
+    compute_embeddings([units[0]], use_cache=False)
+    assert model.encode_calls == [["one two three four five six seven eight"]]
+
+    with pytest.raises(
+        SemanticInputTooLongError,
+        match=r"module\.exact_fit.*10 tokens.*8-token context window",
+    ):
+        compute_embeddings([units[0]], instruction_prefix="task: code ", use_cache=False)
+
+    assert len(model.encode_calls) == 1
+
+
+def test_query_context_guard_counts_the_prompt_the_backend_prepends(
+    monkeypatch, tmp_path: Path
+) -> None:
+    units = extract_arithmetic_units(tmp_path)
+    embeddings = np.array([[1.0, 0.0], [0.0, 1.0]], dtype=np.float32)
+    model = _ShortContextModel()
+    monkeypatch.setattr(semantic, "get_model", lambda *args, **kwargs: model)
+    corpus_identity = semantic.resolve_embedding_space_identity(
+        instruction_prefix="task: search ",
+    )
+
+    with pytest.raises(
+        SemanticInputTooLongError,
+        match=r"search query.*10 tokens.*8-token context window",
+    ):
+        find_similar_to_query(
+            "find the code that validates every incoming record",
+            units,
+            embeddings,
+            instruction_prefix="task: search ",
+            threshold=0.0,
+            use_cache=False,
+            corpus_identity=corpus_identity,
+        )
+
+    assert model.encode_calls == []
+
+
 def test_compute_embeddings_cpu_fallback_retries_once_and_bails_on_persistent_oom(
     monkeypatch, tmp_path
 ) -> None:

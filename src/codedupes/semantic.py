@@ -2257,7 +2257,55 @@ def _move_model_to_cpu(model: object) -> None:
         _set_model_execution_device("cpu")
 
 
-def _require_text_within_model_context(text: str, input_name: str, model: Any) -> str:
+def _model_context_overflow(
+    text: str,
+    input_name: str,
+    model: Any,
+    prompt: str | None = None,
+) -> tuple[int, int] | None:
+    """Measure whether one prompted input overflows the model context window.
+
+    SentenceTransformers prepends the encode prompt to the text and only then
+    tokenizes with truncation at ``max_seq_length`` (see ``Transformer.preprocess``
+    and ``prepend_prompt_to_texts``), so the guard must measure exactly what the
+    backend tokenizes: ``prompt + text``. Measuring the bare text lets a prompt's
+    worth of trailing tokens be silently dropped.
+
+    :param text: Complete source or query text.
+    :param input_name: Human-readable input name used in debug logging.
+    :param model: Model object with tokenizer metadata.
+    :param prompt: Prompt the backend prepends before tokenizing, when any.
+    :return: ``(token_count, max_tokens)`` on overflow, else ``None`` (also when
+        the model exposes no usable context metadata).
+    """
+    max_tokens = getattr(model, "max_seq_length", None)
+    tokenizer = getattr(model, "tokenizer", None)
+
+    if not max_tokens or not tokenizer:
+        return None
+
+    try:
+        token_ids = tokenizer.encode(f"{prompt or ''}{text}", add_special_tokens=True)
+    except Exception:
+        logger.debug(
+            f"Tokenization failed while checking context for '{input_name}'; "
+            "passing the complete text to the backend",
+            exc_info=True,
+        )
+        return None
+
+    token_count = len(token_ids)
+    if token_count <= max_tokens:
+        return None
+    return token_count, int(max_tokens)
+
+
+def _require_text_within_model_context(
+    text: str,
+    input_name: str,
+    model: Any,
+    prompt: str | None = None,
+) -> str:
     """Reject text that cannot fit completely in the model context window.
 
     Partial definitions can erase a function's return value or side effects while
@@ -2267,34 +2315,20 @@ def _require_text_within_model_context(text: str, input_name: str, model: Any) -
     :param text: Complete source or query text.
     :param input_name: Human-readable input name for the error.
     :param model: Model object with tokenizer metadata.
+    :param prompt: Prompt the backend prepends before tokenizing, when any.
     :return: The original text when it fits or no context metadata is exposed.
-    :raises SemanticInputTooLongError: If the complete tokenized text exceeds
-        the model context window.
+    :raises SemanticInputTooLongError: If the complete tokenized text, including
+        the prepended prompt, exceeds the model context window.
     """
-    max_tokens = getattr(model, "max_seq_length", None)
-    tokenizer = getattr(model, "tokenizer", None)
-
-    if not max_tokens or not tokenizer:
+    overflow = _model_context_overflow(text, input_name, model, prompt)
+    if overflow is None:
         return text
 
-    try:
-        token_ids = tokenizer.encode(text, add_special_tokens=True)
-    except Exception:
-        logger.debug(
-            f"Tokenization failed while checking context for '{input_name}'; "
-            "passing the complete text to the backend",
-            exc_info=True,
-        )
-        return text
-
-    token_count = len(token_ids)
-    if token_count <= max_tokens:
-        return text
-
+    token_count, max_tokens = overflow
     raise SemanticInputTooLongError(
-        f"Semantic input '{input_name}' is {token_count} tokens, exceeding the selected "
-        f"model's {max_tokens}-token context window. No semantic result was produced; "
-        "use a model with a larger context window or exclude this input."
+        f"Semantic input '{input_name}' is {token_count} tokens including the encode prompt, "
+        f"exceeding the selected model's {max_tokens}-token context window. No semantic result "
+        "was produced; use a model with a larger context window or exclude this input."
     )
 
 
@@ -2955,6 +2989,7 @@ def _compute_embeddings_unlocked(
                 prepared_texts[i],
                 units[i].qualified_name,
                 model,
+                encode_plan.prompt,
             )
             for i in indices
         ]
@@ -3615,7 +3650,9 @@ def _find_similar_to_query_unlocked(
 
         if query_embedding is None:
             encode_fn = _select_encode_fn(model, encode_plan.route)
-            query_text = _require_text_within_model_context(query_text, "search query", model)
+            query_text = _require_text_within_model_context(
+                query_text, "search query", model, encode_plan.prompt
+            )
 
             query_embeddings = _encode_with_retries(
                 model,
