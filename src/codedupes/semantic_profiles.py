@@ -61,6 +61,16 @@ class SemanticModelProfile:
 # final combined-output precision remains workable (recall-first selection); the profile
 # fallback is the strictest calibrated gate and applies only to languages
 # without their own calibration entry.
+#
+# A shipped gate may sit up to ONE grid step looser than the sweep's F1-selected
+# threshold, even where the calibration corpus shows a flat recall segment there
+# (gte rust 0.74 vs 0.76, gte javascript 0.70 vs 0.72, embeddinggemma typescript
+# 0.78 vs 0.80). That margin is a deliberate off-corpus generalization hedge: the
+# corpora are small, so "no recall gain here" is weak evidence that the next
+# repository's near-duplicates sit above the selected threshold, and a missed
+# duplicate costs more than an extra review row. One step is the whole allowance;
+# two steps (the ts gate's earlier 0.76) doubled on-corpus false positives for no
+# measured recall, so it was tightened back to 0.78.
 _BUILTIN_MODEL_PROFILES: tuple[SemanticModelProfile, ...] = (
     SemanticModelProfile(
         key="gte-modernbert-base",
@@ -97,7 +107,7 @@ _BUILTIN_MODEL_PROFILES: tuple[SemanticModelProfile, ...] = (
             "c": 0.78,
             "rust": 0.78,
             "javascript": 0.72,
-            "typescript": 0.76,
+            "typescript": 0.78,
         },
     ),
 )
