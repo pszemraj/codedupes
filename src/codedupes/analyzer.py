@@ -774,6 +774,7 @@ class CodeAnalyzer:
             # claims are uncalibrated, so an opted-in mixed pair uses the looser of
             # its two language gates (recall-first). For a same-language pair the
             # min() reduces to that language's single gate.
+            scan_pair_count = len(semantic_duplicates)
             semantic_duplicates = [
                 duplicate
                 for duplicate in semantic_duplicates
@@ -787,6 +788,11 @@ class CodeAnalyzer:
                     semantic_gates.get(duplicate.unit_b.language, semantic_scan_floor),
                 )
             ]
+            if scan_pair_count:
+                logger.info(
+                    f"Semantic duplicate gates kept {len(semantic_duplicates)} of "
+                    f"{scan_pair_count} scan pairs"
+                )
 
             if self.config.suppress_test_semantic_matches:
                 semantic_duplicates = [
