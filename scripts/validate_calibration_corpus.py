@@ -20,7 +20,7 @@ from typing import Any
 
 from codedupes.analyzer import DEFAULT_SEMANTIC_UNIT_TYPES, AnalyzerConfig, CodeAnalyzer
 from codedupes.extractor import DEFAULT_EXCLUDE_PATTERNS
-from codedupes.models import CodeUnit
+from codedupes.models import CodeUnit, ExtractionDiagnostic
 
 try:
     from .sweep_common import resolve_label_unit
@@ -39,6 +39,7 @@ CATEGORY_NAMES = (
     "near_restructure",
 )
 NEAR_CATEGORIES = ("near_rename", "near_translation", "near_restructure")
+PARSE_FAILURE_DIAGNOSTIC_CODES = frozenset({"parse-error", "partial-parse", "unit-parse-error"})
 
 
 def _group_key(group: list[str]) -> tuple[str, ...]:
@@ -249,6 +250,21 @@ def _validate_files(corpus_path: Path, units: list[CodeUnit], failures: list[str
             failures.append(f"unit name not unique for basename: {filename}::{name} x{count}")
 
 
+def _rejected_extraction_diagnostics(
+    diagnostics: list[ExtractionDiagnostic],
+) -> list[ExtractionDiagnostic]:
+    """Return extraction diagnostics that invalidate a calibration corpus.
+
+    :param list[ExtractionDiagnostic] diagnostics: Diagnostics emitted during extraction.
+    :return list[ExtractionDiagnostic]: Errors and every parser-recovery diagnostic.
+    """
+    return [
+        diagnostic
+        for diagnostic in diagnostics
+        if diagnostic.severity == "error" or diagnostic.code in PARSE_FAILURE_DIAGNOSTIC_CODES
+    ]
+
+
 def main() -> int:
     """Entry point.
 
@@ -276,11 +292,7 @@ def main() -> int:
     result = CodeAnalyzer(config).analyze(args.corpus_path)
     failures: list[str] = []
 
-    bad_diagnostics = [
-        diagnostic
-        for diagnostic in result.extraction_diagnostics
-        if diagnostic.severity == "error" or diagnostic.code == "unit-parse-error"
-    ]
+    bad_diagnostics = _rejected_extraction_diagnostics(result.extraction_diagnostics)
     for diagnostic in bad_diagnostics:
         failures.append(
             f"diagnostic {diagnostic.code} in {diagnostic.file_path}: {diagnostic.message}"
