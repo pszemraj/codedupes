@@ -9,6 +9,7 @@ from importlib import metadata
 from pathlib import Path
 from typing import Final
 
+from codedupes.constants import DEFAULT_EXCLUDE_DIR_NAMES
 from codedupes.languages.base import LanguageBackend
 
 SUPPORTED_LANGUAGES: Final[tuple[str, ...]] = (
@@ -38,21 +39,9 @@ CPP_SUFFIXES: Final[frozenset[str]] = frozenset(
     {".cc", ".cpp", ".cxx", ".c++", ".hh", ".hpp", ".hxx", ".h++"}
 )
 TREE_SITTER_PACKAGE: Final[tuple[str, str]] = ("tree-sitter", "0.25.2")
-_HEADER_SCAN_IGNORED_DIRS: Final[frozenset[str]] = frozenset(
-    {
-        ".git",
-        ".hg",
-        ".svn",
-        ".tox",
-        ".venv",
-        "__pycache__",
-        "build",
-        "dist",
-        "node_modules",
-        "target",
-        "vendor",
-    }
-)
+# Derived, never duplicated: a divergent second list let one vendored C++ file
+# under an excluded directory flip `.h` handling for the whole tree.
+_HEADER_SCAN_IGNORED_DIRS: Final[frozenset[str]] = DEFAULT_EXCLUDE_DIR_NAMES | frozenset({"vendor"})
 
 
 @dataclass(frozen=True)

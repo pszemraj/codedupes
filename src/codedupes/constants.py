@@ -14,6 +14,42 @@ SemanticTask = Literal[
     "clustering",
 ]
 
+# Single source of truth: extraction skips these directories, and the C/C++ header
+# probe prunes them so vendored sources cannot change a whole-tree decision.
+DEFAULT_EXCLUDE_DIR_NAMES = frozenset(
+    {
+        "__pycache__",
+        ".git",
+        ".hg",
+        ".svn",
+        ".venv",
+        "venv",
+        ".tox",
+        ".nox",
+        ".mypy_cache",
+        ".pytest_cache",
+        ".ruff_cache",
+        ".hypothesis",
+        ".eggs",
+        "build",
+        "dist",
+        "target",
+        "node_modules",
+        ".pnpm-store",
+        ".yarn",
+        ".next",
+        ".nuxt",
+        ".svelte-kit",
+        ".gradle",
+        ".idea",
+        ".vscode",
+        ".terraform",
+        ".serverless",
+        ".aws-sam",
+        ".dart_tool",
+    }
+)
+
 DEFAULT_MODEL = "gte-modernbert-base"
 DEFAULT_TRADITIONAL_THRESHOLD = 0.85
 DEFAULT_BATCH_SIZE = 8

@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from codedupes.constants import DEFAULT_EXCLUDE_DIR_NAMES
 from codedupes.languages import registry
 from codedupes.languages.registry import (
     GRAMMAR_PACKAGES,
@@ -123,6 +124,21 @@ def test_c_header_detection_ignores_dependency_trees(tmp_path: Path) -> None:
     dependency = tmp_path / "node_modules" / "native"
     dependency.mkdir(parents=True)
     (dependency / "addon.cpp").write_text("int addon() { return 2; }\n")
+
+    assert repository_allows_c_headers(tmp_path, None)
+
+
+def test_header_scan_ignores_every_default_excluded_directory() -> None:
+    """A divergent second list lets one vendored file flip ``.h`` handling repo-wide."""
+    assert DEFAULT_EXCLUDE_DIR_NAMES <= registry._HEADER_SCAN_IGNORED_DIRS
+
+
+@pytest.mark.parametrize("directory", ["venv", ".nox", ".eggs", ".mypy_cache", ".next", ".gradle"])
+def test_c_header_detection_prunes_excluded_directories(tmp_path: Path, directory: str) -> None:
+    (tmp_path / "module.c").write_text("int run(void) { return 1; }\n")
+    vendored = tmp_path / directory / "native"
+    vendored.mkdir(parents=True)
+    (vendored / "addon.cpp").write_text("int addon() { return 2; }\n")
 
     assert repository_allows_c_headers(tmp_path, None)
 

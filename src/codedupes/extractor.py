@@ -12,6 +12,7 @@ import os
 from collections.abc import Iterator
 from pathlib import Path
 
+from codedupes.constants import DEFAULT_EXCLUDE_DIR_NAMES
 from codedupes.languages.registry import (
     get_backend,
     language_for_path,
@@ -21,38 +22,6 @@ from codedupes.languages.registry import (
 from codedupes.models import CodeUnit, CodeUnitType, ExtractionDiagnostic
 
 logger = logging.getLogger(__name__)
-
-DEFAULT_EXCLUDE_DIR_NAMES = {
-    "__pycache__",
-    ".git",
-    ".hg",
-    ".svn",
-    ".venv",
-    "venv",
-    ".tox",
-    ".nox",
-    ".mypy_cache",
-    ".pytest_cache",
-    ".ruff_cache",
-    ".hypothesis",
-    ".eggs",
-    "build",
-    "dist",
-    "target",
-    "node_modules",
-    ".pnpm-store",
-    ".yarn",
-    ".next",
-    ".nuxt",
-    ".svelte-kit",
-    ".gradle",
-    ".idea",
-    ".vscode",
-    ".terraform",
-    ".serverless",
-    ".aws-sam",
-    ".dart_tool",
-}
 
 DEFAULT_EXCLUDE_PATTERNS = [
     "**/test_*",
