@@ -1264,6 +1264,7 @@ def test_search_threshold_defaults_to_none_and_honors_explicit_config(
         {"semantic_task": "classification"},
         {"instruction_prefix": "CUSTOM: "},
         {"model_revision": "f" * 40},
+        {"trust_remote_code": True},
     ],
 )
 def test_uncalibrated_duplicate_context_requires_explicit_threshold(

@@ -657,6 +657,13 @@ class CodeAnalyzer:
             and self.config.model_revision != profile.default_revision
         ):
             uncalibrated_reasons.append(f"model revision {self.config.model_revision!r}")
+        # Remote-code execution splits the embedding cache key because it can
+        # change the vectors, so it must invalidate the calibrated gates too.
+        if (
+            self.config.trust_remote_code is not None
+            and self.config.trust_remote_code != profile.default_trust_remote_code
+        ):
+            uncalibrated_reasons.append(f"trust_remote_code={self.config.trust_remote_code}")
         if uncalibrated_reasons:
             context = ", ".join(uncalibrated_reasons)
             raise ValueError(

@@ -408,6 +408,7 @@ def test_prompt_sensitive_search_requires_corpus_identity(tmp_path: Path) -> Non
         {"semantic_task": "classification"},
         {"instruction_prefix": "CUSTOM: "},
         {"revision": "f" * 40},
+        {"trust_remote_code": True},
     ],
 )
 def test_uncalibrated_search_context_requires_explicit_threshold(
@@ -419,6 +420,7 @@ def test_uncalibrated_search_context_requires_explicit_threshold(
         model_name="embeddinggemma-300m",
         instruction_prefix=kwargs.get("instruction_prefix"),
         revision=kwargs.get("revision"),
+        trust_remote_code=kwargs.get("trust_remote_code"),
         semantic_task=kwargs.get("semantic_task", semantic.DEFAULT_SEARCH_SEMANTIC_TASK),
     )
 
