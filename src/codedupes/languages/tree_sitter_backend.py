@@ -835,20 +835,10 @@ class RustBackend(TreeSitterBackend):
     """Extract Rust free functions and body-bearing impl/trait methods."""
 
     language = "rust"
-    statement_types = frozenset(
-        {
-            "let_declaration",
-            "expression_statement",
-            "return_expression",
-            "if_expression",
-            "match_expression",
-            "loop_expression",
-            "while_expression",
-            "for_expression",
-            "break_expression",
-            "continue_expression",
-        }
-    )
+    # Rust's grammar wraps semicolon-terminated expressions and control-flow
+    # statements in ``expression_statement``. Counting their inner expression
+    # kinds as well would double-count the same statement.
+    statement_types = frozenset({"let_declaration", "expression_statement"})
     nested_scope_types = frozenset({"function_item", "closure_expression"})
     builtins = frozenset(
         {
@@ -864,6 +854,32 @@ class RustBackend(TreeSitterBackend):
             "false",
         }
     )
+
+    def _statement_count(self, body: Any, unit_type: CodeUnitType) -> int:
+        """Count Rust statements, including one semicolon-free tail expression.
+
+        :param body: Rust function body node.
+        :param unit_type: Kind of unit the body belongs to.
+        :return: Recursive statement count with the tail expression counted once.
+        """
+        count = super()._statement_count(body, unit_type)
+        if body is None or getattr(body, "type", "") != "block":
+            return count
+
+        children = _named_children(body)
+        if not children:
+            return count
+
+        tail = children[-1]
+        tail_type = str(getattr(tail, "type", ""))
+        is_block_item = tail_type.endswith(("_item", "_declaration", "_definition"))
+        if (
+            tail_type not in self.statement_types
+            and tail_type not in self.nested_scope_types
+            and not is_block_item
+        ):
+            count += 1
+        return count
 
     @staticmethod
     def _visibility(node: Any, source: bytes) -> bool:

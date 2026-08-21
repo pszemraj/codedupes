@@ -197,6 +197,33 @@ def test_rust_extracts_free_impl_trait_and_nested_functions(tmp_path: Path) -> N
     assert all(not name.endswith("required") for name in names)
 
 
+def test_rust_statement_counts_include_tail_expressions_once(tmp_path: Path) -> None:
+    units = _extract(
+        tmp_path,
+        "sample.rs",
+        """
+        fn tail_only() -> i32 { 1 }
+
+        fn threshold_boundary() {
+            first();
+            second();
+            third()
+        }
+
+        fn control_flow(ready: bool) {
+            if ready { run(); }
+        }
+        """,
+    )
+    counts = {unit.name: unit.statement_count for unit in units}
+
+    assert counts == {
+        "tail_only": 1,
+        "threshold_boundary": 3,
+        "control_flow": 2,
+    }
+
+
 def test_rust_skips_cfg_test_modules_and_test_functions(tmp_path: Path) -> None:
     units = _extract(
         tmp_path,
