@@ -7,12 +7,6 @@ from textwrap import dedent
 
 import pytest
 
-pytest.importorskip("tree_sitter")
-pytest.importorskip("tree_sitter_c")
-pytest.importorskip("tree_sitter_rust")
-pytest.importorskip("tree_sitter_javascript")
-pytest.importorskip("tree_sitter_typescript")
-
 from codedupes.extractor import CodeExtractor
 from codedupes.languages.registry import get_grammar_statuses
 from codedupes.models import CodeUnit, CodeUnitType

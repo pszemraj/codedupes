@@ -7,9 +7,6 @@ from pathlib import Path
 
 import pytest
 
-pytest.importorskip("tree_sitter")
-pytest.importorskip("tree_sitter_rust")
-
 from codedupes.analyzer import AnalyzerConfig, CodeAnalyzer
 from scripts.validate_calibration_corpus import _rejected_extraction_diagnostics, main
 
