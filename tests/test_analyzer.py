@@ -716,6 +716,7 @@ def _create_two_language_project(tmp_path: Path) -> Path:
     return project
 
 
+@pytest.mark.grammar
 def test_semantic_pairs_are_gated_per_language(tmp_path: Path, monkeypatch) -> None:
     project = _create_two_language_project(tmp_path)
     captured: dict[str, object] = {}
@@ -775,6 +776,7 @@ def _two_language_vectors() -> dict[str, list[float]]:
     }
 
 
+@pytest.mark.grammar
 def test_per_language_gates_survive_the_whole_semantic_pipeline(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -806,6 +808,7 @@ def test_per_language_gates_survive_the_whole_semantic_pipeline(
     ] == [("betaOne", "betaTwo")]
 
 
+@pytest.mark.grammar
 def test_cross_language_pairs_require_opt_in_and_use_looser_gate(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -848,6 +851,7 @@ def test_cross_language_pairs_require_opt_in_and_use_looser_gate(
     }
 
 
+@pytest.mark.grammar
 def test_explicit_semantic_threshold_applies_flat_across_languages(
     tmp_path: Path, monkeypatch
 ) -> None:
