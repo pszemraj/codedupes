@@ -80,7 +80,7 @@ Distribution highlights (`reports/similarity_distributions.json`):
 - C is the hardest language for both models: deceptive negative controls reach 0.86 (gte) / 0.91 (gemma), overlapping the near-clone band, which caps best F1 at 0.46/0.58.
 - embeddinggemma-300m separates clones from negatives better than gte-modernbert-base on every language here, with best-F1 duplicate thresholds clustered at 0.74–0.80.
 
-Interpretation: the pre-calibration flat gates (gte 0.96, gemma 0.86) only reached the deterministic-shaped categories in every language, including the Python control — semantic-tier recall at those gates was roughly 0.2–0.6. The shipped per-language gates listed at the top were selected from these grids recall-first (one to two steps looser than the best-F1 row where that buys recall without absurd precision loss) and are enforced by `codedupes.semantic_profiles` tests; keep this README, the reports, and the profile gates in sync.
+Interpretation: the pre-calibration flat gates (gte 0.96, gemma 0.86) only reached the deterministic-shaped categories in every language, including the Python control — semantic-tier recall at those gates was roughly 0.2–0.6. The shipped per-language gates listed at the top were selected from these grids recall-first — at or below each best-F1 row, up to four 0.02 steps looser where the F1 curve is flat (C under gte, JavaScript under gemma), whenever that buys recall without absurd precision loss — and are enforced by `codedupes.semantic_profiles` tests; keep this README, the reports, and the profile gates in sync.
 
 ## Re-running
 

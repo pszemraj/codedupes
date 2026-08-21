@@ -147,6 +147,7 @@ quiet_dependency_loggers()  # or quiet_dependency_loggers(logging.ERROR)
 - `AnalysisResult.potentially_unused`: Python-only heuristic unused candidates
 - `AnalysisResult.extraction_diagnostics`: recoverable parser diagnostics and skipped-unit reasons
 - `AnalysisResult.unused_excluded_units`: non-Python units intentionally excluded from unused analysis
+- `AnalysisResult.unused_supported_languages`: languages the unused heuristic evaluates (currently always `("python",)`)
 - `AnalysisResult.all_duplicates`: hybrid duplicates in combined mode; raw duplicates in single-method mode
 - `AnalysisResult.analysis_mode`: `"combined"`, `"traditional"`, `"semantic"`, or `"none"`
 - `CodeUnit.uid`: in-run definition identity, `<path>::<language>::<qualified name>::<start byte>` for every language; the byte position keeps overloads and redefinitions distinct

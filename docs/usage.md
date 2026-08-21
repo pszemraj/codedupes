@@ -130,6 +130,12 @@ codedupes search . "validate session token" --language js --language ts
 
 Explicit `--language c` opts `.h` files into C parsing. Without an explicit filter, headers are accepted only when C source is present and no C++ source/header extension is detected. TypeScript declaration files are always skipped. See [Polyglot language support](polyglot-languages.md).
 
+Duplicate output is same-language by default. Opt into uncalibrated cross-language semantic pairs, each held to the looser of its two language gates:
+
+```bash
+codedupes check . --cross-language
+```
+
 Exclude private names:
 
 ```bash

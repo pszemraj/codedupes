@@ -30,7 +30,7 @@ tree-sitter-typescript==0.23.2
 
 They are exact-pinned because grammar node kinds and field layouts are part of codedupes' behavior. Each upstream package ships a precompiled parser and exposes a Python capsule consumed by `tree_sitter.Language`. There is no runtime grammar download, compiler invocation, or fallback to line chunking.
 
-This intentionally adopts Semble's strongest operational idea—versioned, locally available parsers—without depending on Semble itself. codedupes supports a small, deliberately tested language set and owns its extraction semantics. Pulling in a generic bundle containing many unused grammars would add packaging and compatibility surface without improving these four backends.
+The operational idea is versioned, locally available parsers. codedupes supports a small, deliberately tested language set and owns its extraction semantics. Pulling in a generic bundle containing many unused grammars would add packaging and compatibility surface without improving these four backends.
 
 ## Supported files
 

@@ -25,8 +25,8 @@ Default semantic candidate selection:
 - unit types: `function`, `method`
 - class units are excluded by default from semantic embedding
 - minimum statement count: `3` (via `min_semantic_statements`)
-- statements are counted recursively through control-flow bodies (`try`, `with`, loops, conditionals, `match`), so a large function implemented inside one outer block is not measured as a single statement; nested function/class definitions count as one declaration each, and indented definitions are dedented before counting
-- each semantic input is one complete logical definition - signature, docstring, and body, starting at the `def`/`class` line (decorators are not included); functions are not split into arbitrary text chunks
+- statements are counted recursively through control-flow bodies, so a large function implemented inside one outer block is not measured as a single statement; nested function/class definitions count as one declaration each. Python counts via the AST (`try`, `with`, loops, conditionals, `match`, with indented definitions dedented before counting); Tree-sitter languages apply each grammar's equivalent statement and nested-scope node rules
+- each semantic input is one complete logical definition - signature, docstring, and body, starting at the definition line (`def`/`class` in Python; decorators are not included); functions are not split into arbitrary text chunks
 
 Combined-mode alignment rule:
 
@@ -66,7 +66,7 @@ A nonempty `AnalyzerConfig.exclude_patterns` list or one or more CLI `--exclude`
 
 ## Potentially Unused Defaults
 
-Unused detection runs by default and builds a conservative reference graph from direct calls in analyzed code, module-level import and assignment aliases, `if __name__ == "__main__"` blocks, and `[project.scripts]` or `[project.gui-scripts]` entries in `pyproject.toml`.
+Unused detection evaluates Python units only; non-Python units are excluded and surfaced as a count (`unused_excluded_units`). It runs by default and builds a conservative reference graph from direct calls in analyzed code, module-level import and assignment aliases, `if __name__ == "__main__"` blocks, and `[project.scripts]` or `[project.gui-scripts]` entries in `pyproject.toml`.
 
 The following units are not reported:
 

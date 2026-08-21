@@ -64,6 +64,8 @@ Run the duplicate and search threshold sweeps for built-in model profiles:
 CUDA_VISIBLE_DEVICES='' python scripts/sweep_semantic_thresholds.py --top-n 10
 ```
 
+By default this sweeps the legacy Python-only `crab_visibility` corpus; its duplicate-threshold report is a guardrail, not the source of the shipped per-language duplicate gates. Those are calibrated from [`../test_fixtures/polyglot_calibration/`](../test_fixtures/polyglot_calibration/README.md), whose README records the per-language re-run command (`--corpus-path`, `--labels-path`, `--language`, and `--duplicate-start`/`--duplicate-stop` to widen the grid below the default floor).
+
 Default report paths:
 
 - [`../test_fixtures/hybrid_tuning/semantic_threshold_report.json`](../test_fixtures/hybrid_tuning/semantic_threshold_report.json) - duplicate thresholds

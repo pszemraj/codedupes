@@ -24,6 +24,8 @@
 
 ## Breaking baseline change
 
+- Default semantic duplicate gating changed: the flat per-model thresholds (`0.96` gte / `0.86` gemma) are gone, replaced by the calibrated per-language gates described above. Runs relying on the old flat defaults now get looser, per-language gating unless they pass an explicit `--semantic-threshold`. The hybrid semantic-only `0.92` floor and the `--hybrid-semantic-threshold` sweep flag were removed with it.
+- `CodeUnit.uid` uses the universal `<path>::<language>::<qualified>::<start_byte>` format for every language; the private `_ast_hash` alias and the always-`True` `has_body` field (including its JSON key) were removed.
 - Minimum PyTorch version is now `2.13.0`; the supported range is `>=2.13.0,<3`. Dev and rc builds of an in-range release (for example `2.13.0.dev20250101`) are accepted.
 - The supported Transformers range is now `>=5.1,<6`; validated against Transformers 5.14.1 with sentence-transformers 5.6.1.
 - `packaging` is now an explicit runtime dependency because semantic compatibility checks import it directly.
