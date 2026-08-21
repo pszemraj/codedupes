@@ -803,6 +803,23 @@ class CBackend(TreeSitterBackend):
                 return found
         return None
 
+    @staticmethod
+    def _has_static_storage_class(node: Any, source: bytes) -> bool:
+        """Report whether a C definition declares internal linkage.
+
+        Scanning the raw declaration text instead would misread C99
+        ``int dst[static 4]`` parameters and interleaved comments.
+
+        :param node: Function definition node to inspect.
+        :param source: Full file source bytes.
+        :return: ``True`` when the definition carries a ``static`` specifier.
+        """
+        return any(
+            getattr(child, "type", "") == "storage_class_specifier"
+            and _node_text(source, child).strip() == "static"
+            for child in _children(node)
+        )
+
     def collect_specs(self, root_node: Any, source: bytes, file_path: Path) -> list[UnitSpec]:
         """Collect C function definitions, skipping prototypes and declarations.
 
@@ -824,10 +841,7 @@ class CBackend(TreeSitterBackend):
             )
             if not name or body is None:
                 continue
-            prefix_text = source[int(node.start_byte) : int(body.start_byte)].decode(
-                "utf-8", errors="replace"
-            )
-            is_public = re.search(r"\bstatic\b", prefix_text) is None
+            is_public = not self._has_static_storage_class(node, source)
             specs.append(
                 UnitSpec(
                     node=node,

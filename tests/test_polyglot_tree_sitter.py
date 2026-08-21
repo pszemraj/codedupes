@@ -145,6 +145,27 @@ def test_c_extracts_definitions_and_ignores_prototypes(tmp_path: Path) -> None:
     assert next(unit for unit in units if unit.name == "private_helper").is_public is False
 
 
+def test_c_static_detection_ignores_array_parameters_and_comments(tmp_path: Path) -> None:
+    """C99 ``[static n]`` parameters and prose both contain the word ``static``."""
+    units = _extract(
+        tmp_path,
+        "sample.c",
+        """
+        int copy_row(int destination[static 4]) { return destination[0]; }
+
+        int /* keeps a static cache */ cached(void) { return 1; }
+
+        static int hidden(void) { return 2; }
+        """,
+    )
+
+    assert {unit.name: unit.is_public for unit in units} == {
+        "copy_row": True,
+        "cached": True,
+        "hidden": False,
+    }
+
+
 def test_c_structural_hash_normalizes_names_and_keeps_operator_semantics(tmp_path: Path) -> None:
     units = _extract(
         tmp_path,
