@@ -56,6 +56,8 @@ codedupes check ./include --language c --traditional-only
 
 This is stricter than a retrieval tool's extension map. Duplicate fingerprints must not be generated from a plausibly wrong grammar.
 
+Skipped headers are reported rather than silently dropped: a directory scan emits one summary `c-header-policy` extraction diagnostic naming how many `.h` files it passed over and suggesting `--language c`. An explicitly named `.h` file gets its own diagnostic.
+
 ## What becomes a code unit
 
 ### Python
@@ -64,7 +66,7 @@ The existing behavior remains the compatibility baseline: functions, async funct
 
 ### C
 
-Only `function_definition` nodes are emitted. Prototypes, typedefs, variable declarations, function-pointer declarations, and macros are not functions. `static` functions are marked non-public; other definitions are marked public.
+Only `function_definition` nodes are emitted. Prototypes, typedefs, variable declarations, function-pointer declarations, and macros are not functions. Internal linkage is read from the definition's storage-class specifier, so `static` functions are marked non-public while `int dst[static 4]` parameters and interleaved comments do not confuse the check; other definitions are marked public.
 
 The declarator walker handles nested pointer, parenthesized, attributed, and function declarators rather than assuming the function name is a direct child.
 
@@ -74,7 +76,9 @@ Body-bearing `function_item` nodes are emitted. Free and nested functions are `F
 
 Inline test code is excluded by default: functions under a `#[cfg(test)]` (including `#[cfg(all(..., test, ...))]` regardless of predicate order) module or attribute, and free `#[test]` functions, are skipped. File-glob test exclusion cannot catch these because Rust inline test modules share source files with production code. `#[cfg(not(test))]` and `#[cfg(any(test, ...))]` gate real production configurations and stay extracted.
 
-Lexical qualification includes modules, enclosing functions, implementation targets, and traits where available. Structs, enums, traits, and `impl` blocks are not flattened into fake classes. Their methods remain independently analyzable. When private units are excluded, a default trait method inherits the enclosing trait's visibility.
+Lexical qualification includes modules, enclosing functions, implementation targets, and traits where available. Structs, enums, traits, and `impl` blocks are not flattened into fake classes. Their methods remain independently analyzable.
+
+Visibility follows the trait, not the `pub` keyword, wherever a trait is involved: a default trait method inherits the enclosing trait's visibility, and every method inside an `impl Trait for Type` block is public regardless of a leading `pub`, because trait-impl items cannot legally carry `pub` yet are reachable through the trait.
 
 ### JavaScript and JSX
 
@@ -94,11 +98,17 @@ Anonymous callbacks passed directly into calls are intentionally skipped. Their 
 
 Export marking stops at function-body boundaries: a unit nested inside an exported function is local scope, not a module export. A class body is not a boundary, so members of an exported class stay exported.
 
+Export clauses mark units declared elsewhere in the same file: `export { name }`, `export { name as alias }`, and `export default name` mark that local unit exported even though it has no export ancestor of its own. A re-export clause naming another module (`export { name } from "./other"`) refers to that module's units and never marks a local unit exported.
+
 ### TypeScript and TSX
 
 TypeScript reuses the ECMAScript extraction rules while adding TypeScript-specific exclusions and wrappers. Implementations with bodies are emitted. Overload signatures, abstract method signatures, interface members, ambient declarations, and other bodyless declarations are skipped. For an overloaded function, the implementation is one unit; the preceding signatures are not.
 
 TypeScript and TSX are distinct parser dialects even though both report the canonical language `typescript`.
+
+### Visibility filtering
+
+`--no-private` (`include_private=False`) filters on each backend's computed visibility rather than a name-prefix subset of it: C internal linkage, Rust `pub` including the trait rules above, TypeScript `private`/`protected` accessibility modifiers, and `_`/`#`-prefixed member names. A filtered-out private class takes its members with it, matching the Python extractor - emitting a method whose owner was never reported would leak the container's internals under an unreachable name.
 
 ## Source ranges and parse recovery
 
@@ -118,9 +128,11 @@ Each backend computes features while its original syntax tree is in memory:
 - A statement count for semantic eligibility and hybrid scoring
 - Direct call names for future language-specific reference analyzers
 
-The structural stream includes significant anonymous operator tokens. `a + b` and `a - b` therefore cannot collapse merely because both expressions have the same named syntax nodes. Local identifiers are normalized by encounter order, while field/property/type names are preserved where they carry API or behavioral meaning. String values are normalized for structural matching; numeric values are preserved. Token matching remains stricter and retains literal text.
+The structural stream includes significant anonymous operator tokens. `a + b` and `a - b` therefore cannot collapse merely because both expressions have the same named syntax nodes. Local identifiers are normalized by encounter order, while field/property/type names are preserved where they carry API or behavioral meaning. String values are normalized for structural matching; numeric values are preserved. JSX text is display copy, not structure, so it normalizes with the other string forms and two otherwise identical React components do not fingerprint apart on their labels. Token matching remains stricter and retains literal text.
 
-Traditional exact and Jaccard comparisons are blocked by canonical language and public unit type before pair generation. Overlapping units in the same file, such as a parent function and its nested function, are not reported as duplicates of each other.
+Identifier matching is Unicode-aware. ECMAScript identifiers are Unicode from ES2015 on and Rust accepts non-ASCII identifiers, so a non-ASCII name yields a unit and identifier-set entries instead of being dropped by an ASCII-only pattern.
+
+Traditional exact and Jaccard comparisons are blocked by canonical language and blocking kind before pair generation. Functions and methods share one `callable` kind, so a function copied into a class body stays comparable with its module-level original, matching how semantic pairing treats them; classes block separately. Exact matching stays same-language: a C and a Rust function cannot become exact duplicates because their canonical token streams align. Overlapping units in the same file, such as a parent function and its nested function, are not reported as duplicates of each other.
 
 Semantic duplicate checking is also same-language by default, and each language is gated by its own calibrated duplicate threshold from the model profile (see [Analysis defaults](analysis-defaults.md#semantic-duplicate-gate-defaults)). `--cross-language` opts into cross-language semantic pairs; those claims are uncalibrated, so a mixed pair is held to the looser of its two language gates. Semantic `search` remains cross-language because retrieval is exactly where that shared embedding space is useful.
 
