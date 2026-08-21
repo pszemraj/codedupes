@@ -1123,6 +1123,31 @@ def test_search_after_analyze_uses_analysis_task_when_unset(tmp_path: Path, monk
     assert captured["query_semantic_task"] == analyzer_module.DEFAULT_CHECK_SEMANTIC_TASK
 
 
+def test_embeddinggemma_search_after_analyze_requires_explicit_threshold(
+    tmp_path: Path, monkeypatch
+) -> None:
+    project = create_project(tmp_path, "def entry(x):\n    return x + 1\n")
+    monkeypatch.setattr(
+        analyzer_module,
+        "run_semantic_analysis",
+        _make_semantic_runner(),
+    )
+    analyzer = CodeAnalyzer(
+        AnalyzerConfig(
+            run_traditional=False,
+            run_semantic=True,
+            run_unused=False,
+            min_semantic_statements=0,
+            model_name="embeddinggemma-300m",
+            embedding_cache=False,
+        )
+    )
+    analyzer.analyze(project)
+
+    with pytest.raises(ValueError, match="provide threshold explicitly"):
+        analyzer.search("entry")
+
+
 def test_search_threshold_defaults_to_none_and_honors_explicit_config(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -1157,6 +1182,38 @@ def test_search_threshold_defaults_to_none_and_honors_explicit_config(
     explicit.analyze(project)
     explicit.search("entry")
     assert captured["query_threshold"] == 0.7
+
+
+@pytest.mark.parametrize(
+    "config_overrides",
+    [
+        {"semantic_task": "classification"},
+        {"instruction_prefix": "CUSTOM: "},
+        {"model_revision": "f" * 40},
+    ],
+)
+def test_uncalibrated_duplicate_context_requires_explicit_threshold(
+    tmp_path: Path, monkeypatch, config_overrides: dict[str, str]
+) -> None:
+    project = create_project(tmp_path, "def entry(x):\n    y = x + 1\n    return y\n")
+    monkeypatch.setattr(
+        analyzer_module,
+        "run_semantic_analysis",
+        _make_semantic_runner(),
+    )
+    analyzer = CodeAnalyzer(
+        AnalyzerConfig(
+            run_traditional=False,
+            run_semantic=True,
+            run_unused=False,
+            min_semantic_statements=0,
+            model_name="embeddinggemma-300m",
+            **config_overrides,
+        )
+    )
+
+    with pytest.raises(ValueError, match="provide semantic_threshold explicitly"):
+        analyzer.analyze(project)
 
 
 def test_index_embeds_corpus_without_mining_duplicates(tmp_path: Path, monkeypatch) -> None:

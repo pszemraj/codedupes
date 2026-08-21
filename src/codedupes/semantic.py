@@ -3254,8 +3254,8 @@ def _find_similar_to_query_unlocked(
     :param revision: Optional model revision; ``None`` uses the profile default.
     :param trust_remote_code: Optional remote-code trust setting; ``None`` uses the
         profile default.
-    :param threshold: Minimum cosine similarity; ``None`` uses the model profile
-        search default.
+    :param threshold: Minimum cosine similarity. ``None`` uses the model profile
+        search default only for its calibrated task, prompt, and revision.
     :param semantic_task: Optional task override; ``None`` uses
         ``DEFAULT_SEARCH_SEMANTIC_TASK``.
     :param device: ``auto``, ``cpu``, ``cuda``, or ``mps``, defaults to
@@ -3265,16 +3265,18 @@ def _find_similar_to_query_unlocked(
     :param use_cache: Whether to consult/update the persistent embedding cache.
     :param cache_scope: Analyzed corpus root path used to address the cache shard;
         ``None`` disables caching for this call regardless of ``use_cache``.
-    :param corpus_identity: Optional identity captured with ``embeddings``; when
-        provided, model/revision/runtime drift requires rebuilding the corpus,
-        and its recorded source commit rejects mutable-label query vectors -
-        cached or freshly encoded - from any other checkpoint.
+    :param corpus_identity: Identity captured with ``embeddings``. Required for
+        prompt- or route-sensitive models; model/revision/runtime drift requires
+        rebuilding the corpus, and its recorded source commit rejects mutable-label
+        query vectors - cached or freshly encoded - from any other checkpoint.
     :param strict_revision_cache: Whether an unpinned hub revision resolves to a
         concrete commit hash (disabling caching when unmappable) instead of the
         requested revision label, defaults to ``False``. Must match the mode
         used to build ``corpus_identity``.
     :return: Up to ``top_k`` ``(unit, similarity)`` pairs at or above the threshold,
         sorted by descending similarity.
+    :raises ValueError: If an uncalibrated task/prompt/revision uses the default
+        threshold, or a prompt-sensitive corpus omits its identity.
     :raises SemanticBackendError: If an explicitly requested device is unavailable,
         even when the query embedding is already cached.
     """
@@ -3286,13 +3288,17 @@ def _find_similar_to_query_unlocked(
         return []
 
     profile = resolve_model_profile(model_name)
-    resolved_threshold = (
-        threshold if threshold is not None else get_default_search_threshold(model_name)
-    )
     resolved_task = normalize_semantic_task(
         semantic_task,
         default_task=DEFAULT_SEARCH_SEMANTIC_TASK,
     )
+    if corpus_identity is None and (
+        profile.family == "embeddinggemma" or instruction_prefix is not None
+    ):
+        raise ValueError(
+            "corpus_identity is required for prompt- or route-sensitive search embeddings. "
+            "Build the corpus with compute_embeddings_with_identity() or CodeAnalyzer.index()."
+        )
     resolved_trust_remote_code = _resolve_trust_remote_code(model_name, trust_remote_code)
     embedding_device = device
     if corpus_identity is not None:
@@ -3308,6 +3314,28 @@ def _find_similar_to_query_unlocked(
             persist_local_model_manifest=use_cache and cache_scope is not None,
             strict_revision_cache=strict_revision_cache,
         )
+
+    if threshold is None:
+        uncalibrated_reasons: list[str] = []
+        if instruction_prefix is not None:
+            uncalibrated_reasons.append("a custom instruction prefix")
+        if profile.family == "embeddinggemma" and resolved_task != DEFAULT_SEARCH_SEMANTIC_TASK:
+            uncalibrated_reasons.append(f"semantic task {resolved_task!r}")
+        if (
+            profile.default_revision is not None
+            and revision is not None
+            and revision != profile.default_revision
+        ):
+            uncalibrated_reasons.append(f"model revision {revision!r}")
+        if uncalibrated_reasons:
+            context = ", ".join(uncalibrated_reasons)
+            raise ValueError(
+                f"The default search threshold is not calibrated for {context}; "
+                "provide threshold explicitly."
+            )
+        resolved_threshold = get_default_search_threshold(model_name)
+    else:
+        resolved_threshold = threshold
 
     encode_plan = _resolve_encode_plan(profile, "query", resolved_task, instruction_prefix)
     query_text = query
@@ -3609,8 +3637,8 @@ def find_similar_to_query(
     :param revision: Optional model revision; ``None`` uses the profile default.
     :param trust_remote_code: Optional remote-code trust setting; ``None`` uses the
         profile default.
-    :param threshold: Minimum cosine similarity; ``None`` uses the model profile
-        search default.
+    :param threshold: Minimum cosine similarity. ``None`` uses the model profile
+        search default only for its calibrated task, prompt, and revision.
     :param semantic_task: Optional task override; ``None`` uses
         ``DEFAULT_SEARCH_SEMANTIC_TASK``.
     :param device: ``auto``, ``cpu``, ``cuda``, or ``mps``, defaults to
@@ -3620,14 +3648,17 @@ def find_similar_to_query(
     :param use_cache: Whether to consult/update the persistent embedding cache.
     :param cache_scope: Analyzed corpus root path used to address the cache shard;
         ``None`` disables caching for this call regardless of ``use_cache``.
-    :param corpus_identity: Optional identity captured with ``embeddings``; when
-        provided, model/revision/runtime drift requires rebuilding the corpus.
+    :param corpus_identity: Identity captured with ``embeddings``. Required for
+        prompt- or route-sensitive models; model/revision/runtime drift requires
+        rebuilding the corpus.
     :param strict_revision_cache: Whether an unpinned hub revision resolves to a
         concrete commit hash (disabling caching when unmappable) instead of the
         requested revision label, defaults to ``False``. Must match the mode
         used to build ``corpus_identity``.
     :return: Up to ``top_k`` ``(unit, similarity)`` pairs at or above the threshold,
         sorted by descending similarity.
+    :raises ValueError: If an uncalibrated task/prompt/revision uses the default
+        threshold, or a prompt-sensitive corpus omits its identity.
     """
     # Same contract as compute_embeddings_with_identity: configure
     # import-sensitive runtime variables before anything can import torch.

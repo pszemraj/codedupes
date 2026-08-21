@@ -223,6 +223,10 @@ def test_query_search_uses_custom_instruction_prefix(tmp_path: Path, monkeypatch
             return np.array([[1.0, 0.0]], dtype=np.float32)
 
     monkeypatch.setattr(semantic, "get_model", lambda *args, **kwargs: QueryModel())
+    identity = semantic.resolve_embedding_space_identity(
+        instruction_prefix="CUSTOM_QUERY_PREFIX: ",
+        semantic_task=semantic.DEFAULT_SEARCH_SEMANTIC_TASK,
+    )
 
     results = find_similar_to_query(
         query="find addition",
@@ -230,6 +234,8 @@ def test_query_search_uses_custom_instruction_prefix(tmp_path: Path, monkeypatch
         embeddings=embeddings,
         instruction_prefix="CUSTOM_QUERY_PREFIX: ",
         top_k=1,
+        threshold=0.0,
+        corpus_identity=identity,
     )
 
     assert len(results) == 1
@@ -331,6 +337,10 @@ def test_embeddinggemma_query_route_single_task_prompt(tmp_path: Path, monkeypat
     embeddings = np.array([[1.0, 0.0], [0.0, 1.0]], dtype=np.float32)
     model = PromptAwareGemmaModel()
     monkeypatch.setattr(semantic, "get_model", lambda *args, **kwargs: model)
+    identity = semantic.resolve_embedding_space_identity(
+        model_name="embeddinggemma-300m",
+        semantic_task=semantic.DEFAULT_SEARCH_SEMANTIC_TASK,
+    )
 
     results = find_similar_to_query(
         query="find addition",
@@ -338,6 +348,7 @@ def test_embeddinggemma_query_route_single_task_prompt(tmp_path: Path, monkeypat
         embeddings=embeddings,
         model_name="embeddinggemma-300m",
         top_k=2,
+        corpus_identity=identity,
     )
 
     assert len(results) == 1
@@ -353,6 +364,11 @@ def test_embeddinggemma_custom_instruction_replaces_saved_prompt(
     embeddings = np.array([[1.0, 0.0], [0.0, 1.0]], dtype=np.float32)
     model = PromptAwareGemmaModel()
     monkeypatch.setattr(semantic, "get_model", lambda *args, **kwargs: model)
+    identity = semantic.resolve_embedding_space_identity(
+        model_name="embeddinggemma-300m",
+        instruction_prefix="CUSTOM: ",
+        semantic_task=semantic.DEFAULT_SEARCH_SEMANTIC_TASK,
+    )
 
     find_similar_to_query(
         query="find addition",
@@ -361,11 +377,60 @@ def test_embeddinggemma_custom_instruction_replaces_saved_prompt(
         model_name="embeddinggemma-300m",
         instruction_prefix="CUSTOM: ",
         top_k=2,
+        threshold=0.0,
+        corpus_identity=identity,
     )
 
     ((method, effective),) = model.calls
     assert method == "encode_query"
     assert effective == ["CUSTOM: find addition"]
+
+
+def test_prompt_sensitive_search_requires_corpus_identity(tmp_path: Path) -> None:
+    units = extract_arithmetic_units(tmp_path)
+    embeddings = np.array([[1.0, 0.0], [0.0, 1.0]], dtype=np.float32)
+
+    with pytest.raises(ValueError, match="corpus_identity is required"):
+        find_similar_to_query(
+            "find addition",
+            units,
+            embeddings,
+            model_name="embeddinggemma-300m",
+            threshold=0.0,
+            use_cache=False,
+        )
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"semantic_task": "classification"},
+        {"instruction_prefix": "CUSTOM: "},
+        {"revision": "f" * 40},
+    ],
+)
+def test_uncalibrated_search_context_requires_explicit_threshold(
+    tmp_path: Path, kwargs: dict[str, str]
+) -> None:
+    units = extract_arithmetic_units(tmp_path)
+    embeddings = np.array([[1.0, 0.0], [0.0, 1.0]], dtype=np.float32)
+    identity = semantic.resolve_embedding_space_identity(
+        model_name="embeddinggemma-300m",
+        instruction_prefix=kwargs.get("instruction_prefix"),
+        revision=kwargs.get("revision"),
+        semantic_task=kwargs.get("semantic_task", semantic.DEFAULT_SEARCH_SEMANTIC_TASK),
+    )
+
+    with pytest.raises(ValueError, match="provide threshold explicitly"):
+        find_similar_to_query(
+            "find addition",
+            units,
+            embeddings,
+            model_name="embeddinggemma-300m",
+            use_cache=False,
+            corpus_identity=identity,
+            **kwargs,
+        )
 
 
 def test_find_similar_to_query_applies_threshold_filter(tmp_path: Path, monkeypatch) -> None:
@@ -1593,6 +1658,7 @@ def test_find_similar_to_query_warm_cache_raises_for_explicit_unavailable_device
         model_name="gte-modernbert-base",
         revision=_FULL_REVISION,
         device="cpu",
+        threshold=0.0,
         cache_scope=tmp_path,
     )
 
@@ -1626,6 +1692,7 @@ def test_warm_cache_returns_with_unset_fraction_restore_managed_mps_cap(
         model_name="gte-modernbert-base",
         revision=_FULL_REVISION,
         device="cpu",
+        threshold=0.0,
         cache_scope=tmp_path,
     )
 
@@ -1658,6 +1725,7 @@ def test_warm_cache_returns_with_unset_fraction_restore_managed_mps_cap(
         model_name="gte-modernbert-base",
         revision=_FULL_REVISION,
         device="cpu",
+        threshold=0.0,
         cache_scope=tmp_path,
     )
     assert restore_calls == [True]
@@ -1699,6 +1767,7 @@ def test_query_embedding_cache_put_is_fifo_capped(tmp_path: Path, monkeypatch) -
         model_name="gte-modernbert-base",
         revision=_FULL_REVISION,
         device="cpu",
+        threshold=0.0,
         cache_scope=tmp_path,
     )
 

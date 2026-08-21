@@ -60,7 +60,7 @@ CLI task defaults:
 - `codedupes check`: `semantic-similarity`
 - `codedupes search`: `code-retrieval`
 
-The Python API resolves the same defaults by operation: an unset `AnalyzerConfig.semantic_task` uses `semantic-similarity` for `CodeAnalyzer.analyze()` and `code-retrieval` for `CodeAnalyzer.index()`. A later `search()` uses the task that produced its current corpus embeddings; an explicit task overrides either default.
+The Python API resolves the same defaults by operation: an unset `AnalyzerConfig.semantic_task` uses `semantic-similarity` for `CodeAnalyzer.analyze()` and `code-retrieval` for `CodeAnalyzer.index()`. A later `search()` uses the task that produced its current corpus embeddings. Built-in default thresholds apply only to the pinned revision and default task/prompt plan they were calibrated on; a custom instruction prefix, alternate EmbeddingGemma task, or alternate built-in revision requires an explicit threshold.
 
 Allowed task names:
 
@@ -83,5 +83,7 @@ Prompts are backend configuration, not text decoration: codedupes passes raw cod
 - `--instruction-prefix` replaces the model prompt for that input mode while preserving the encode route; it is never stacked inside the saved prompt.
 
 The encode route and effective prompt participate in embedding-cache identity, so changing task, prompt, or route can never reuse vectors produced under a different plan.
+
+Prompt-sensitive direct searches also require the `EmbeddingSpaceIdentity` returned by `compute_embeddings_with_identity()`. This prevents a bare matrix produced through one EmbeddingGemma route from being compared with a query produced through another.
 
 For examples, see the [usage guide](usage.md) and [Python API](python-api.md).

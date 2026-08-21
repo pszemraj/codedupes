@@ -569,7 +569,9 @@ class CodeAnalyzer:
         ]
 
     def _resolve_semantic_gates(
-        self, semantic_candidates: list[CodeUnit]
+        self,
+        semantic_candidates: list[CodeUnit],
+        semantic_task: str,
     ) -> tuple[dict[str, float], float]:
         """Resolve per-language duplicate gates and the embedding-scan floor.
 
@@ -580,7 +582,10 @@ class CodeAnalyzer:
         candidate pairs.
 
         :param semantic_candidates: Units eligible for semantic comparison.
+        :param semantic_task: Resolved task used to embed the candidates.
         :return: Tuple of the per-language gate map and the scan floor.
+        :raises ValueError: If the configured embedding context has no calibrated
+            default threshold.
         """
         explicit = self.config.semantic_threshold
         languages = sorted({unit.language for unit in semantic_candidates})
@@ -588,6 +593,24 @@ class CodeAnalyzer:
             return dict.fromkeys(languages, explicit), explicit
 
         profile = resolve_model_profile(self.config.model_name)
+        uncalibrated_reasons: list[str] = []
+        if self.config.instruction_prefix is not None:
+            uncalibrated_reasons.append("a custom instruction prefix")
+        if profile.family == "embeddinggemma" and semantic_task != DEFAULT_CHECK_SEMANTIC_TASK:
+            uncalibrated_reasons.append(f"semantic task {semantic_task!r}")
+        if (
+            profile.default_revision is not None
+            and self.config.model_revision is not None
+            and self.config.model_revision != profile.default_revision
+        ):
+            uncalibrated_reasons.append(f"model revision {self.config.model_revision!r}")
+        if uncalibrated_reasons:
+            context = ", ".join(uncalibrated_reasons)
+            raise ValueError(
+                f"The default duplicate thresholds are not calibrated for {context}; "
+                "provide semantic_threshold explicitly."
+            )
+
         gates = {
             language: profile.semantic_threshold_for_language(language) for language in languages
         }
@@ -678,7 +701,10 @@ class CodeAnalyzer:
         if self.config.run_semantic:
             semantic_candidates = self._select_semantic_candidates(units)
             self._semantic_units = semantic_candidates
-            semantic_gates, semantic_scan_floor = self._resolve_semantic_gates(semantic_candidates)
+            semantic_gates, semantic_scan_floor = self._resolve_semantic_gates(
+                semantic_candidates,
+                semantic_task,
+            )
 
         if self.config.run_traditional:
             traditional_duplicate_units = units
