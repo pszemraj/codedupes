@@ -14,6 +14,7 @@ from pathlib import Path
 
 from codedupes.constants import DEFAULT_EXCLUDE_DIR_NAMES
 from codedupes.languages.registry import (
+    DECLARATION_FILE_SUFFIXES,
     get_backend,
     language_for_path,
     normalize_languages,
@@ -560,6 +561,7 @@ class CodeExtractor:
             allow_c_header=self._allow_c_headers(),
         )
         if selection is None:
+            self._diagnose_unsupported_file(file_path)
             return
 
         if selection.language != "python":
@@ -574,6 +576,49 @@ class CodeExtractor:
             return
 
         yield from self._extract_python_from_file(file_path)
+
+    def _diagnose_unsupported_file(self, file_path: Path) -> None:
+        """Record why an explicitly requested file resolves to no language.
+
+        :param file_path: File that no extraction backend accepts.
+        """
+        suffix = file_path.suffix.lower()
+        if file_path.name.lower().endswith(DECLARATION_FILE_SUFFIXES):
+            language = "typescript"
+            message = "TypeScript declaration files contain no implementation bodies."
+            code = "declaration-file"
+        elif suffix == ".h" and not self._allow_c_headers():
+            language = "c"
+            message = (
+                "Skipped by the conservative C-header policy; pass --language c "
+                "to parse .h files as C."
+            )
+            code = "c-header-policy"
+        else:
+            unfiltered = language_for_path(
+                file_path,
+                include_stubs=True,
+                selected_languages=None,
+                allow_c_header=True,
+            )
+            if unfiltered is not None:
+                language = unfiltered.language
+                message = f"Excluded by the --language filter ({unfiltered.language})."
+                code = "language-filter"
+            else:
+                language = "unknown"
+                message = "Unsupported file type; no extraction backend accepts it."
+                code = "unsupported-file"
+        logger.warning(f"{file_path}: {message}")
+        self.diagnostics.append(
+            ExtractionDiagnostic(
+                file_path=file_path,
+                language=language,
+                message=message,
+                severity="warning",
+                code=code,
+            )
+        )
 
     def _extract_python_from_file(self, file_path: Path) -> Iterator[CodeUnit]:
         """Yield Python units using the original CPython AST implementation.
@@ -775,6 +820,7 @@ class CodeExtractor:
         units: list[CodeUnit] = []
         seen: set[Path] = set()
         allow_c_header = self._allow_c_headers()
+        skipped_headers: list[Path] = []
 
         for dirpath, dirnames, filenames in os.walk(self.root, followlinks=False):
             dirnames[:] = [name for name in dirnames if not self._is_excluded_dir_name(name)]
@@ -789,6 +835,13 @@ class CodeExtractor:
                     allow_c_header=allow_c_header,
                 )
                 if selection is None:
+                    if (
+                        source_file.suffix.lower() == ".h"
+                        and not allow_c_header
+                        and self.languages is None
+                        and not self._should_exclude(source_file)
+                    ):
+                        skipped_headers.append(source_file)
                     continue
 
                 try:
@@ -803,5 +856,21 @@ class CodeExtractor:
                     continue
 
                 units.extend(self.extract_from_file(source_file))
+
+        if skipped_headers:
+            message = (
+                f"{len(skipped_headers)} .h file(s) skipped by the conservative "
+                "C-header policy; pass --language c to parse them as C."
+            )
+            logger.warning(message)
+            self.diagnostics.append(
+                ExtractionDiagnostic(
+                    file_path=skipped_headers[0],
+                    language="c",
+                    message=message,
+                    severity="warning",
+                    code="c-header-policy",
+                )
+            )
 
         return units

@@ -111,6 +111,82 @@ def test_extract_all_survives_symlink_to_file_outside_root(tmp_path: Path) -> No
     assert sorted(unit.qualified_name for unit in units) == ["linked.alpha", "normal.beta"]
 
 
+def test_header_only_tree_reports_c_header_policy_diagnostic(tmp_path: Path) -> None:
+    root = tmp_path / "lib"
+    root.mkdir()
+    (root / "clamp.h").write_text(
+        "static inline int clamp_value(int v, int lo, int hi) {\n"
+        "    if (v < lo) return lo;\n"
+        "    if (v > hi) return hi;\n"
+        "    return v;\n"
+        "}\n"
+    )
+
+    extractor = CodeExtractor(root, include_private=True)
+    units = extractor.extract_all()
+
+    assert units == []
+    codes = [diagnostic.code for diagnostic in extractor.diagnostics]
+    assert codes == ["c-header-policy"]
+    assert "--language c" in extractor.diagnostics[0].message
+
+
+def test_cpp_presence_reports_skipped_headers(tmp_path: Path) -> None:
+    root = tmp_path / "mixed"
+    (root / "third_party").mkdir(parents=True)
+    (root / "main.c").write_text("int main(void) {\n    return 0;\n}\n")
+    (root / "util.h").write_text("static int helper(int v) {\n    return v + 1;\n}\n")
+    (root / "third_party" / "x.cpp").write_text("int cpp_fn() {\n    return 2;\n}\n")
+
+    extractor = CodeExtractor(root, include_private=True)
+    units = extractor.extract_all()
+
+    assert [unit.qualified_name for unit in units] == ["main.main"]
+    codes = [diagnostic.code for diagnostic in extractor.diagnostics]
+    assert "c-header-policy" in codes
+
+
+def test_explicit_unsupported_file_reports_diagnostic(tmp_path: Path) -> None:
+    root = tmp_path / "proj"
+    root.mkdir()
+    script = root / "mytool"
+    script.write_text("#!/usr/bin/env python\ndef alpha():\n    return 1\n")
+
+    extractor = CodeExtractor(root, include_private=True)
+    units = list(extractor.extract_from_file(script))
+
+    assert units == []
+    assert [diagnostic.code for diagnostic in extractor.diagnostics] == ["unsupported-file"]
+
+
+def test_explicit_language_filtered_file_reports_diagnostic(tmp_path: Path) -> None:
+    root = tmp_path / "proj"
+    root.mkdir()
+    module = root / "mod.py"
+    module.write_text("def alpha():\n    return 1\n")
+
+    extractor = CodeExtractor(root, include_private=True, languages=("rust",))
+    units = list(extractor.extract_from_file(module))
+
+    assert units == []
+    diagnostic = extractor.diagnostics[0]
+    assert diagnostic.code == "language-filter"
+    assert diagnostic.language == "python"
+
+
+def test_explicit_declaration_file_reports_diagnostic(tmp_path: Path) -> None:
+    root = tmp_path / "proj"
+    root.mkdir()
+    decl = root / "types.d.ts"
+    decl.write_text("export declare function alpha(v: number): number;\n")
+
+    extractor = CodeExtractor(root, include_private=True)
+    units = list(extractor.extract_from_file(decl))
+
+    assert units == []
+    assert [diagnostic.code for diagnostic in extractor.diagnostics] == ["declaration-file"]
+
+
 def test_get_module_name_handles_stub_suffix(tmp_path: Path) -> None:
     package = tmp_path / "package"
     package.mkdir()
