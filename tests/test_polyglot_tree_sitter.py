@@ -587,6 +587,45 @@ def test_typescript_excludes_signatures_and_ambient_declarations(tmp_path: Path)
     assert all(not name.endswith("required") for name in names)
 
 
+def test_javascript_class_member_count_includes_static_initializer_blocks(
+    tmp_path: Path,
+) -> None:
+    """The tree-sitter-javascript node is ``class_static_block``, not ``static_block``."""
+    units = _extract(
+        tmp_path,
+        "sample.js",
+        """
+        class Worker {
+            static { Worker.ready = true; }
+            run(value) { return value + 1; }
+        }
+        """,
+    )
+    worker = next(unit for unit in units if unit.unit_type == CodeUnitType.CLASS)
+
+    assert worker.statement_count == 2
+
+
+def test_typescript_nested_abstract_class_counts_as_one_nested_scope(tmp_path: Path) -> None:
+    """A nested abstract class must not leak its members into the outer count."""
+    units = _extract(
+        tmp_path,
+        "sample.ts",
+        """
+        function factory(): unknown {
+            abstract class Base {
+                run(): number { return 1; }
+                other(): number { return 2; }
+            }
+            return Base;
+        }
+        """,
+    )
+    counts = {unit.qualified_name: unit.statement_count for unit in units}
+
+    assert counts["sample.factory"] == 2
+
+
 def test_typescript_accessibility_and_naming_rules_gate_private_extraction(
     tmp_path: Path,
 ) -> None:

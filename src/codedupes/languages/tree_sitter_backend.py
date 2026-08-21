@@ -1186,7 +1186,7 @@ class ECMAScriptBackend(TreeSitterBackend):
         }
     )
     class_member_types = frozenset(
-        {"method_definition", "field_definition", "public_field_definition", "static_block"}
+        {"method_definition", "field_definition", "public_field_definition", "class_static_block"}
     )
     builtins = frozenset(
         {
@@ -1665,6 +1665,9 @@ class TypeScriptBackend(ECMAScriptBackend):
 
     language = "typescript"
     class_declarations = ECMAScriptBackend.class_declarations | frozenset(
+        {"abstract_class_declaration"}
+    )
+    nested_scope_types = ECMAScriptBackend.nested_scope_types | frozenset(
         {"abstract_class_declaration"}
     )
 
