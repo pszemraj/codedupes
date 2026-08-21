@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from functools import cache
 from pathlib import Path
 from typing import Literal
+
+logger = logging.getLogger(__name__)
 
 SemanticModelFamily = Literal["gte-modernbert", "embeddinggemma", "generic"]
 CalibratedModelFamily = Literal["gte-modernbert", "embeddinggemma"]
@@ -274,6 +278,27 @@ def resolve_local_model_path(model_name: str) -> Path | None:
     return None
 
 
+@cache
+def _warn_uncalibrated_family_copy(model_name: str, family: CalibratedModelFamily) -> None:
+    """Warn once that a family-matched model forgoes its family's calibrated gates.
+
+    :param model_name: Canonical model name or local directory path.
+    :param family: Built-in family the model was matched to.
+    :return: ``None``.
+    """
+    builtin = next(
+        (profile for profile in _BUILTIN_MODEL_PROFILES if profile.family == family), None
+    )
+    gates = builtin.language_semantic_thresholds if builtin is not None else {}
+    gate_text = ", ".join(f"{language}={gate}" for language, gate in gates.items())
+    logger.warning(
+        f"{model_name} looks like the {family} family but is not the calibrated built-in "
+        f"checkpoint, so its per-language duplicate gates ({gate_text}) do not apply. Using the "
+        f"uncalibrated generic gate {DEFAULT_FALLBACK_SEMANTIC_THRESHOLD} for every language; "
+        "pass an explicit threshold if you calibrated this checkpoint yourself."
+    )
+
+
 def _build_dynamic_profile(
     model_name: str,
     family: CalibratedModelFamily,
@@ -291,6 +316,7 @@ def _build_dynamic_profile(
     :param family: Built-in family whose loading/prompt behavior applies.
     :return: Dynamic family-appropriate profile with generic thresholds.
     """
+    _warn_uncalibrated_family_copy(model_name, family)
     return SemanticModelProfile(
         key=model_name,
         canonical_name=model_name,

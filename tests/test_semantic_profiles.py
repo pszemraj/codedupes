@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import pytest
@@ -258,3 +259,20 @@ def test_dynamic_gte_modernbert_profile_keeps_family_but_not_calibration(tmp_pat
     assert profile.language_semantic_thresholds == {}
     assert profile.default_semantic_threshold == DEFAULT_FALLBACK_SEMANTIC_THRESHOLD
     assert profile.default_search_threshold == DEFAULT_FALLBACK_SEARCH_THRESHOLD
+
+
+def test_uncalibrated_family_copy_warns_about_the_gates_it_forgoes(tmp_path: Path, caplog) -> None:
+    local_dir = tmp_path / "gte-modernbert-base-copy"
+    local_dir.mkdir()
+    (local_dir / "README.md").write_text("# gte-modernbert-base\n", encoding="utf-8")
+
+    with caplog.at_level(logging.WARNING, logger="codedupes.semantic_profiles"):
+        resolve_model_profile(str(local_dir))
+        resolve_model_profile(str(local_dir))
+
+    warnings = [record for record in caplog.records if record.levelname == "WARNING"]
+    # Warned once per model, naming both the forgone gates and the fallback.
+    assert len(warnings) == 1
+    message = warnings[0].getMessage()
+    assert "javascript=0.7" in message
+    assert str(DEFAULT_FALLBACK_SEMANTIC_THRESHOLD) in message
