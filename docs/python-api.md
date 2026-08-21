@@ -79,6 +79,7 @@ from codedupes import AnalyzerConfig, CodeAnalyzer
 
 analyzer = CodeAnalyzer(
     AnalyzerConfig(
+        mode="search",
         run_traditional=False,
         run_semantic=True,
         run_unused=False,
@@ -97,6 +98,8 @@ for unit, score in hits:
 `search(query, top_k=10, threshold=None)` resolves its floor as `threshold`, else `config.semantic_threshold`, else the model profile's search default. Prefer the per-call `threshold`: it applies to that query only, while `config.semantic_threshold` also replaces every calibrated per-language duplicate gate with one flat value.
 
 An unset `AnalyzerConfig.semantic_task` resolves by operation: `index()` uses `code-retrieval`, while `analyze()` uses `semantic-similarity`. An explicit task overrides either default, but a custom instruction prefix, alternate EmbeddingGemma task, alternate built-in revision, or non-default `trust_remote_code` requires an explicit threshold because the profile default was not calibrated in that embedding space. See [task defaults](model-profiles.md#semantic-task-defaults-and-choices).
+
+`AnalyzerConfig.mode` declares which contract enforces that requirement. The default `mode="check"` rejects an uncalibrated context without `semantic_threshold` at construction, before any extraction or model load. A config that drives `index()`/`search()` must pass `mode="search"` instead: search thresholds are calibrated independently of the duplicate gates, so validation defers to query time (`search()` raises if the resolved context has no calibrated search default and no explicit threshold). `analyze()` rejects `mode="search"` configs.
 
 `index()` extracts the corpus and computes (or loads from cache) its embeddings without the all-pairs duplicate scan, traditional analysis, or unused-code analysis that `analyze()` runs, so building a search corpus stays linear in corpus size. Prefer `index()` before search. A search after `analyze()` reuses the analysis task and therefore requires an explicit search threshold when that task changes the model's prompt or route, as it does for EmbeddingGemma.
 
