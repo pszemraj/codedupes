@@ -18,10 +18,14 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
+import codedupes.analyzer as analyzer_module
 from codedupes import __version__
 from codedupes.analyzer import DEFAULT_SEMANTIC_UNIT_TYPES, AnalyzerConfig, CodeAnalyzer
-from codedupes.constants import DEFAULT_CHECK_SEMANTIC_TASK, DEFAULT_SEARCH_SEMANTIC_TASK
-from codedupes.models import DuplicatePair
+from codedupes.constants import (
+    DEFAULT_CHECK_SEMANTIC_TASK,
+    DEFAULT_SEARCH_SEMANTIC_TASK,
+    DEFAULT_TRADITIONAL_THRESHOLD,
+)
 from codedupes.pairs import ordered_pair_key
 from codedupes.semantic import (
     EMBEDDING_PIPELINE_SCHEMA,
@@ -225,15 +229,6 @@ def _evaluate_thresholds(
     return rows
 
 
-def _duplicate_scored_pairs(
-    duplicates: list[DuplicatePair],
-) -> list[tuple[tuple[str, str], float]]:
-    return [
-        (ordered_pair_key(duplicate.unit_a, duplicate.unit_b), duplicate.similarity)
-        for duplicate in duplicates
-    ]
-
-
 def _analyzer_config(
     *,
     model_name: str,
@@ -244,9 +239,10 @@ def _analyzer_config(
     batch_size: int,
     device: str,
     languages: tuple[str, ...] | None = None,
+    run_traditional: bool = False,
 ) -> AnalyzerConfig:
     return AnalyzerConfig(
-        run_traditional=False,
+        run_traditional=run_traditional,
         run_semantic=True,
         run_unused=False,
         include_private=True,
@@ -286,6 +282,7 @@ def _run_duplicate_sweep(
             batch_size=batch_size,
             device=device,
             languages=languages,
+            run_traditional=True,
         )
     )
     result = analyzer.analyze(corpus_path)
@@ -306,30 +303,74 @@ def _run_duplicate_sweep(
             "(class-level or below-min-statement units); the semantic tier can never "
             "predict them."
         )
-    rows = _evaluate_thresholds(
-        _duplicate_scored_pairs(result.semantic_duplicates),
-        scoreable_pairs,
-        thresholds=_threshold_grid(duplicate_start, duplicate_stop),
-    )
+    thresholds = _threshold_grid(duplicate_start, duplicate_stop)
+    rows: list[SweepRow] = []
+    predicted_by_threshold: dict[float, set[tuple[str, str]]] = {}
+    for threshold in thresholds:
+        gated_semantic = [
+            duplicate
+            for duplicate in result.semantic_duplicates
+            if duplicate.similarity >= threshold
+        ]
+        hybrid, _ = analyzer_module._synthesize_hybrid_duplicates(
+            result.traditional_duplicates,
+            gated_semantic,
+            jaccard_threshold=DEFAULT_TRADITIONAL_THRESHOLD,
+        )
+        predicted_pairs = {ordered_pair_key(item.unit_a, item.unit_b) for item in hybrid}
+        predicted_by_threshold[threshold] = predicted_pairs
+        tp, fp, fn, precision, recall, f1 = metrics(predicted_pairs, positive_pairs)
+        rows.append(
+            SweepRow(
+                threshold=threshold,
+                predicted=len(predicted_pairs),
+                tp=tp,
+                fp=fp,
+                fn=fn,
+                precision=precision,
+                recall=recall,
+                f1=f1,
+            )
+        )
+    rank_sweep_rows(rows, extra_key=lambda row: (-row.threshold,))
     selected = rows[0]
+
+    manifest = _calibration_manifest(
+        profile=profile,
+        resolved_revision=revision,
+        mode="duplicate",
+        semantic_task=DEFAULT_CHECK_SEMANTIC_TASK,
+        requested_device=device,
+        identity=identity,
+        dimension=dimension,
+        min_statements=min_statements,
+        batch_size=batch_size,
+        corpus_path=corpus_path,
+        labels_path=labels_path,
+    )
+    manifest["output_policy"] = "hybrid_duplicates"
+    manifest["candidate_coverage"] = {
+        "labeled_positive_pairs": len(positive_pairs),
+        "scoreable_positive_pairs": len(scoreable_pairs),
+        "excluded_positive_pairs": excluded_pairs,
+        "recall_ceiling": (len(scoreable_pairs) / len(positive_pairs) if positive_pairs else 0.0),
+    }
+    selected_pairs = predicted_by_threshold[selected.threshold]
+    manifest["selected_category_recall"] = {}
+    for category, groups in labels.get("categories", {}).items():
+        category_pairs = build_positive_pairs(result.units, {"positive_groups": groups})
+        detected = len(selected_pairs & category_pairs)
+        manifest["selected_category_recall"][category] = {
+            "labeled": len(category_pairs),
+            "detected": detected,
+            "recall": detected / len(category_pairs) if category_pairs else 0.0,
+        }
 
     return ModelSweep(
         model_key=model_name,
         canonical_name=profile.canonical_name,
         selected_threshold=selected.threshold,
-        manifest=_calibration_manifest(
-            profile=profile,
-            resolved_revision=revision,
-            mode="duplicate",
-            semantic_task=DEFAULT_CHECK_SEMANTIC_TASK,
-            requested_device=device,
-            identity=identity,
-            dimension=dimension,
-            min_statements=min_statements,
-            batch_size=batch_size,
-            corpus_path=corpus_path,
-            labels_path=labels_path,
-        ),
+        manifest=manifest,
         rows=rows,
     )
 
@@ -365,6 +406,7 @@ def _run_search_sweep(
     identity = analyzer._embedding_space_identity
     assert identity is not None
     assert analyzer._semantic_units is not None
+    assert analyzer._units is not None
 
     scored_pairs: list[tuple[tuple[str, str], float]] = []
     positive_pairs: set[tuple[str, str]] = set()
@@ -372,7 +414,7 @@ def _run_search_sweep(
         query = probe["query"]
         query_key = f"probe-{probe_index}"
         expected_units = {
-            resolve_label_unit(analyzer._semantic_units, spec).uid for spec in probe["expected"]
+            resolve_label_unit(analyzer._units, spec).uid for spec in probe["expected"]
         }
         positive_pairs.update((query_key, uid) for uid in expected_units)
         for unit, score in analyzer.search(query, top_k=indexed):
@@ -399,6 +441,14 @@ def _run_search_sweep(
         labels_path=probes_path,
     )
     manifest["probe_count"] = len(probes)
+    embedded_uids = {unit.uid for unit in analyzer._semantic_units}
+    scoreable_targets = {pair for pair in positive_pairs if pair[1] in embedded_uids}
+    manifest["candidate_coverage"] = {
+        "labeled_positive_targets": len(positive_pairs),
+        "scoreable_positive_targets": len(scoreable_targets),
+        "excluded_positive_targets": len(positive_pairs) - len(scoreable_targets),
+        "recall_ceiling": (len(scoreable_targets) / len(positive_pairs) if positive_pairs else 0.0),
+    }
 
     return ModelSweep(
         model_key=model_name,

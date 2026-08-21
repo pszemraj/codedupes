@@ -8,6 +8,7 @@ from itertools import combinations
 from pathlib import Path
 from typing import Any
 
+from codedupes.constants import DEFAULT_MIN_SEMANTIC_STATEMENTS
 from codedupes.models import CodeUnit
 from codedupes.pairs import ordered_pair_key
 
@@ -41,8 +42,11 @@ def add_common_sweep_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--min-statements",
         type=int,
-        default=0,
-        help="Minimum statement count for semantic candidate extraction.",
+        default=DEFAULT_MIN_SEMANTIC_STATEMENTS,
+        help=(
+            "Minimum statement count for semantic candidate extraction "
+            f"(default: production value {DEFAULT_MIN_SEMANTIC_STATEMENTS})."
+        ),
     )
     parser.add_argument(
         "--batch-size",

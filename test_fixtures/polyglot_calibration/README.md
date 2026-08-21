@@ -2,7 +2,7 @@
 
 Labeled per-language duplicate-detection corpora for C, Rust, JavaScript, TypeScript, and Python (~100 labeled decisions per language), used to measure how the built-in model profiles' similarity scales behave outside the Python production corpus. The Python corpus here is a control: its near clones are fully alpha-renamed, unlike `test_fixtures/hybrid_tuning/crab_visibility`, whose near pairs share identifier fragments.
 
-These measurements are the source of the shipped per-language semantic duplicate gates in `codedupes.semantic_profiles` (gte: py 0.80 / c 0.82 / rs 0.74 / js 0.70 / ts 0.68; gemma: py 0.74 / c 0.78 / rs 0.78 / js 0.72 / ts 0.76), selected recall-first: the loosest sweep threshold whose F1 stays near that language's best while raw-pair precision remains workable. If a re-run moves the tables below, revisit the gates deliberately.
+These measurements are the source of the shipped per-language semantic duplicate gates in `codedupes.semantic_profiles` (gte: py 0.80 / c 0.82 / rs 0.74 / js 0.70 / ts 0.68; gemma: py 0.74 / c 0.78 / rs 0.78 / js 0.72 / ts 0.76), selected recall-first: the loosest sweep threshold whose F1 stays near that language's best while final combined-output precision remains workable. If a re-run moves the tables below, revisit the gates deliberately.
 
 ## Layout
 
@@ -48,39 +48,39 @@ conda run -n inf python scripts/validate_calibration_corpus.py --corpus-path tes
 
 Whole-tree status at shipped defaults (2026-08-14): 368 units across five languages, zero parse diagnostics, all 73 labeled deterministic pairs detected by the traditional tier, zero unlabeled deterministic pairs, zero cross-language pairs.
 
-## Calibration results (2026-08-14, pinned profiles, cpu/fp32, `--min-statements 0`)
+## Calibration results (2026-08-21, pinned profiles, cpu/fp32, production `--min-statements 3`)
 
-Sweeps ran per language over a 0.40–0.96 duplicate grid (`--duplicate-start 0.40`; the default 0.70 floor would hide most non-Python near clones) with both models; search sweeps used the per-language probes. Class-level labeled pairs (2 in JavaScript) are excluded from duplicate-sweep scoring since classes never enter the semantic candidate pool. Reports: `reports/<lang>_semantic_threshold_report.json`, `reports/<lang>_search_threshold_report.json`, `reports/similarity_distributions.json`.
+Sweeps ran per language over a 0.40–0.96 duplicate grid (`--duplicate-start 0.40`; the default 0.70 floor would hide most non-Python near clones) with both models; search sweeps used the per-language probes. The duplicate metric is the product's final `hybrid_duplicates` output, including traditional matches and both semantic confidence tiers. Every labeled pair remains in the denominator: a pair outside the production semantic candidate pool is a false negative unless the traditional tier finds it. The manifest records candidate-policy coverage separately so preprocessing loss cannot be mistaken for model-threshold loss. Reports: `reports/<lang>_semantic_threshold_report.json`, `reports/<lang>_search_threshold_report.json`, `reports/similarity_distributions.json`.
 
-Duplicate threshold, best F1 row per language (recall at the pre-calibration flat gates, 0.96 gte / 0.86 gemma, shown for contrast):
+Duplicate threshold, best final-output F1 row per language. Candidate coverage is the number of labeled pairs whose two units reach semantic embedding under the production policy; traditional detection can still recover an excluded deterministic pair.
 
-| language | gte-modernbert-base best (thr / F1 / P / R) | recall @ flat 0.96 | embeddinggemma-300m best (thr / F1 / P / R) | recall @ flat 0.86 |
-| --- | --- | --- | --- | --- |
-| c | 0.90 / 0.46 / 1.00 / 0.29 | 0.21 | 0.80 / 0.58 / 0.52 / 0.65 | 0.38 |
-| rust | 0.76 / 0.68 / 0.80 / 0.59 | 0.21 | 0.80 / 0.88 / 0.93 / 0.82 | 0.41 |
-| javascript | 0.72 / 0.81 / 0.84 / 0.79 | 0.24 | 0.78 / 0.81 / 0.79 / 0.82 | 0.52 |
-| typescript | 0.72 / 0.78 / 0.84 / 0.72 | 0.25 | 0.80 / 0.80 / 0.82 / 0.78 | 0.58 |
-| python (control) | 0.80 / 0.58 / 0.46 / 0.76 | 0.21 | 0.74 / 0.80 / 0.73 / 0.88 | 0.35 |
+| language | semantic candidate coverage | gte-modernbert-base best (thr / F1 / P / R) | embeddinggemma-300m best (thr / F1 / P / R) |
+| --- | --- | --- | --- |
+| c | 33 / 34 | 0.90 / 0.58 / 1.00 / 0.41 | 0.80 / 0.62 / 0.55 / 0.71 |
+| rust | 28 / 34 | 0.76 / 0.69 / 0.83 / 0.59 | 0.82 / 0.81 / 1.00 / 0.68 |
+| javascript | 26 / 35 | 0.72 / 0.69 / 0.81 / 0.60 | 0.82 / 0.74 / 0.95 / 0.60 |
+| typescript | 29 / 36 | 0.70 / 0.79 / 0.84 / 0.75 | 0.80 / 0.79 / 0.84 / 0.75 |
+| python (control) | 29 / 34 | 0.82 / 0.59 / 0.63 / 0.56 | 0.74 / 0.76 / 0.78 / 0.74 |
 
 Search threshold, best F1 row per language (shipped defaults: gte 0.50, gemma 0.40, deliberately recall-first):
 
 | language | gte-modernbert-base (thr / F1) | embeddinggemma-300m (thr / F1) |
 | --- | --- | --- |
-| c | 0.68 / 0.70 | 0.50 / 0.78 |
-| rust | 0.66 / 0.87 | 0.52 / 0.98 |
-| javascript | 0.68 / 0.88 | 0.48 / 0.92 |
-| typescript | 0.62 / 0.91 | 0.50 / 0.91 |
-| python (control) | 0.70 / 0.79 | 0.54 / 0.88 |
+| c | 0.68 / 0.70 | 0.52 / 0.77 |
+| rust | 0.66 / 0.80 | 0.52 / 0.86 |
+| javascript | 0.70 / 0.83 | 0.50 / 0.89 |
+| typescript | 0.64 / 0.90 | 0.52 / 0.91 |
+| python (control) | 0.70 / 0.76 | 0.54 / 0.85 |
 
 Distribution highlights (`reports/similarity_distributions.json`):
 
 - Deterministic categories transfer across all five languages and both models: exact pairs at cosine 1.0, reformat 0.91–0.999, doc_variant 0.93–0.98.
 - Semantic-tier (`near_*`) cosine medians under gte sit at ~0.70–0.76 for C/Rust/JS/TS and ~0.81 for alpha-renamed Python; under gemma, ~0.76–0.87 across all five.
 - The crab_visibility finding that Python near clones score ~0.97 was mostly a corpus artifact (shared identifier fragments): fully alpha-renamed Python near clones top out at 0.85 (gte). A modest genuine language effect remains (Python medians run ~0.05–0.09 above the other languages under gte).
-- C is the hardest language for both models: deceptive negative controls reach 0.86 (gte) / 0.91 (gemma), overlapping the near-clone band, which caps best F1 at 0.46/0.58.
-- embeddinggemma-300m separates clones from negatives better than gte-modernbert-base on every language here, with best-F1 duplicate thresholds clustered at 0.74–0.80.
+- C is the hardest language for both models: deceptive negative controls reach 0.86 (gte) / 0.91 (gemma), overlapping the near-clone band, which caps best final-output F1 at 0.58/0.62.
+- embeddinggemma-300m separates clones from negatives better than gte-modernbert-base on four languages and ties it on TypeScript here, with best-F1 duplicate thresholds clustered at 0.74–0.82.
 
-Interpretation: the pre-calibration flat gates (gte 0.96, gemma 0.86) only reached the deterministic-shaped categories in every language, including the Python control — semantic-tier recall at those gates was roughly 0.2–0.6. The shipped per-language gates listed at the top were selected from these grids recall-first — at or below each best-F1 row, up to four 0.02 steps looser where the F1 curve is flat (C under gte, JavaScript under gemma), whenever that buys recall without absurd precision loss — and are enforced by `codedupes.semantic_profiles` tests; keep this README, the reports, and the profile gates in sync.
+Interpretation: candidate policy, model threshold, and hybrid publication are one product decision graph and must be evaluated together. The shipped per-language gates listed at the top were reviewed against these production-policy grids recall-first — at or below each best-F1 row when that buys recall without untenable final-output precision — and are enforced by `codedupes.semantic_profiles` tests. The search rows remain a single-domain synthetic guardrail; the lower shipped search defaults come from the held-out multi-domain probes described in the model-profile docs. Keep this README, the reports, and the profile gates in sync.
 
 ## Re-running
 

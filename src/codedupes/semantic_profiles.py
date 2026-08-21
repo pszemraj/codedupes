@@ -54,7 +54,7 @@ class SemanticModelProfile:
 # were swept on, so every builtin profile pins the immutable commit recorded in
 # test_fixtures/polyglot_calibration/reports/. Each per-language duplicate gate
 # is the loosest sweep threshold whose F1 stays near that language's best while
-# raw-pair precision remains workable (recall-first selection); the profile
+# final combined-output precision remains workable (recall-first selection); the profile
 # fallback is the strictest calibrated gate and applies only to languages
 # without their own calibration entry.
 _BUILTIN_MODEL_PROFILES: tuple[SemanticModelProfile, ...] = (

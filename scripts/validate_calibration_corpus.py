@@ -19,13 +19,15 @@ from pathlib import Path
 from typing import Any
 
 from codedupes.analyzer import DEFAULT_SEMANTIC_UNIT_TYPES, AnalyzerConfig, CodeAnalyzer
+from codedupes.constants import DEFAULT_MIN_SEMANTIC_STATEMENTS
 from codedupes.extractor import DEFAULT_EXCLUDE_PATTERNS
 from codedupes.models import CodeUnit, ExtractionDiagnostic
+from codedupes.semantic import get_code_unit_statement_count
 
 try:
-    from .sweep_common import resolve_label_unit
+    from .sweep_common import build_positive_pairs, resolve_label_unit
 except ImportError:
-    from sweep_common import resolve_label_unit
+    from sweep_common import build_positive_pairs, resolve_label_unit
 
 # Category names and the hash relations that define them. ``near_*`` categories
 # must differ in BOTH hashes so the pair can only be caught semantically.
@@ -192,16 +194,22 @@ def _validate_probes(
     units: list[CodeUnit],
     probes: list[dict[str, Any]],
     failures: list[str],
-) -> None:
+    *,
+    min_statements: int,
+) -> tuple[int, int]:
     """Validate search probes resolve to semantic-eligible units.
 
     :param list[CodeUnit] units: Extracted corpus units.
     :param list[dict[str, Any]] probes: Loaded probe list.
     :param list[str] failures: Mutable failure sink.
+    :param int min_statements: Production candidate statement-count floor.
+    :return tuple[int, int]: Total and production-scoreable expected targets.
     """
     if not probes:
         failures.append("search probes JSON has an empty 'probes' list")
     eligible = {unit_type.strip().lower() for unit_type in DEFAULT_SEMANTIC_UNIT_TYPES}
+    total_targets = 0
+    scoreable_targets = 0
     for index, probe in enumerate(probes):
         if not probe.get("query", "").strip():
             failures.append(f"probe {index} has an empty query")
@@ -209,6 +217,7 @@ def _validate_probes(
         if not expected:
             failures.append(f"probe {index} has no expected units")
         for spec in expected:
+            total_targets += 1
             try:
                 unit = resolve_label_unit(units, spec)
             except ValueError as exc:
@@ -220,6 +229,9 @@ def _validate_probes(
                     f"probe {index} expects {spec!r} of type {unit_type!r}; "
                     f"semantic candidates only cover {sorted(eligible)}"
                 )
+            elif get_code_unit_statement_count(unit) >= min_statements:
+                scoreable_targets += 1
+    return total_targets, scoreable_targets
 
 
 def _validate_files(corpus_path: Path, units: list[CodeUnit], failures: list[str]) -> None:
@@ -275,6 +287,15 @@ def main() -> int:
     parser.add_argument("--labels-path", type=Path, required=True)
     parser.add_argument("--search-probes-path", type=Path, default=None)
     parser.add_argument(
+        "--min-statements",
+        type=int,
+        default=DEFAULT_MIN_SEMANTIC_STATEMENTS,
+        help=(
+            "Minimum recursive statement count used for candidate-coverage reporting "
+            f"(default: production value {DEFAULT_MIN_SEMANTIC_STATEMENTS})."
+        ),
+    )
+    parser.add_argument(
         "--language",
         action="append",
         default=None,
@@ -302,15 +323,40 @@ def main() -> int:
     counts = _validate_labels(result.units, labels, failures)
     _validate_files(args.corpus_path, result.units, failures)
 
+    eligible_types = {unit_type.strip().lower() for unit_type in DEFAULT_SEMANTIC_UNIT_TYPES}
+    candidate_uids = {
+        unit.uid
+        for unit in result.units
+        if unit.unit_type.name.lower() in eligible_types
+        and get_code_unit_statement_count(unit) >= args.min_statements
+    }
+    positive_pairs = build_positive_pairs(result.units, labels)
+    scoreable_pairs = {
+        pair for pair in positive_pairs if pair[0] in candidate_uids and pair[1] in candidate_uids
+    }
+
+    probe_coverage: tuple[int, int] | None = None
     if args.search_probes_path is not None:
         probes = json.loads(args.search_probes_path.read_text())["probes"]
-        _validate_probes(result.units, probes, failures)
+        probe_coverage = _validate_probes(
+            result.units,
+            probes,
+            failures,
+            min_statements=args.min_statements,
+        )
 
     print(f"Corpus: {args.corpus_path} ({len(result.units)} units)")
     for category in CATEGORY_NAMES:
         if category in counts:
             print(f"  {category}: {counts[category]} labeled pairs")
     print(f"  negative_controls: {len(labels.get('negative_controls', []))} pairs")
+    print(
+        f"  production candidate coverage (min statements {args.min_statements}): "
+        f"{len(scoreable_pairs)}/{len(positive_pairs)} labeled pairs"
+    )
+    if probe_coverage is not None:
+        total_targets, scoreable_targets = probe_coverage
+        print(f"  production search-target coverage: {scoreable_targets}/{total_targets}")
 
     if failures:
         print(f"\nFAIL ({len(failures)} problems):")

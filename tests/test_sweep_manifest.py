@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -9,9 +10,11 @@ from types import SimpleNamespace
 import numpy as np
 
 from codedupes.analyzer import CodeAnalyzer
+from codedupes.constants import DEFAULT_MIN_SEMANTIC_STATEMENTS
 from codedupes.models import CodeUnit, CodeUnitType
 from codedupes.semantic import EmbeddingSpaceIdentity
 from codedupes.semantic_profiles import resolve_model_profile
+from scripts.sweep_common import add_common_sweep_arguments
 from scripts.sweep_semantic_thresholds import _run_duplicate_sweep
 
 PINNED_COMMIT = "a" * 40
@@ -59,7 +62,12 @@ def test_manifest_records_effective_embedding_space_not_the_request(
     def fake_analyze(self: CodeAnalyzer, path: Path) -> SimpleNamespace:
         self._embeddings = np.zeros((2, 4), dtype=np.float32)
         self._embedding_space_identity = effective_identity
-        return SimpleNamespace(units=units, semantic_duplicates=[])
+        self._semantic_units = units
+        return SimpleNamespace(
+            units=units,
+            traditional_duplicates=[],
+            semantic_duplicates=[],
+        )
 
     monkeypatch.setattr(CodeAnalyzer, "analyze", fake_analyze)
     monkeypatch.setenv("PYTORCH_MPS_FAST_MATH", "1")
@@ -86,3 +94,17 @@ def test_manifest_records_effective_embedding_space_not_the_request(
     }
     assert "device" not in manifest
     assert "dtype_variant" not in manifest
+    assert manifest["output_policy"] == "hybrid_duplicates"
+    assert manifest["candidate_coverage"] == {
+        "labeled_positive_pairs": 1,
+        "scoreable_positive_pairs": 1,
+        "excluded_positive_pairs": 0,
+        "recall_ceiling": 1.0,
+    }
+
+
+def test_common_sweep_defaults_match_production_candidate_policy() -> None:
+    parser = argparse.ArgumentParser()
+    add_common_sweep_arguments(parser)
+
+    assert parser.parse_args([]).min_statements == DEFAULT_MIN_SEMANTIC_STATEMENTS

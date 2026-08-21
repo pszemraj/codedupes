@@ -17,6 +17,7 @@ from typing import Any
 import numpy as np
 
 from codedupes.analyzer import AnalyzerConfig, CodeAnalyzer
+from codedupes.constants import DEFAULT_MIN_SEMANTIC_STATEMENTS
 
 try:
     from .sweep_common import resolve_label_unit
@@ -84,6 +85,7 @@ def _analyze_language(
     corpus_root: Path,
     device: str,
     batch_size: int,
+    min_statements: int,
 ) -> dict[str, Any]:
     """Build the distribution report for one (language, model) pair.
 
@@ -92,6 +94,7 @@ def _analyze_language(
     :param Path corpus_root: Calibration fixture root directory.
     :param str device: Embedding device.
     :param int batch_size: Embedding batch size.
+    :param int min_statements: Minimum recursive statement count for candidates.
     :return dict[str, Any]: Distribution summary per category.
     """
     config = AnalyzerConfig(
@@ -101,7 +104,7 @@ def _analyze_language(
         include_private=True,
         languages=(language,),
         model_name=model_name,
-        min_semantic_statements=0,
+        min_semantic_statements=min_statements,
         batch_size=batch_size,
         device=device,
     )
@@ -115,7 +118,11 @@ def _analyze_language(
     labels = json.loads((corpus_root / "labels" / f"{language}.json").read_text())
     categories: dict[str, list[list[str]]] = labels["categories"]
 
-    report: dict[str, Any] = {"units": len(result.units), "embedded": len(semantic_units)}
+    report: dict[str, Any] = {
+        "units": len(result.units),
+        "embedded": len(semantic_units),
+        "min_recursive_statements": min_statements,
+    }
     labeled_rows: set[tuple[int, int]] = set()
     for category in CATEGORY_NAMES:
         groups = categories.get(category, [])
@@ -170,6 +177,15 @@ def main() -> int:
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--batch-size", type=int, default=4)
     parser.add_argument(
+        "--min-statements",
+        type=int,
+        default=DEFAULT_MIN_SEMANTIC_STATEMENTS,
+        help=(
+            "Minimum recursive statement count for semantic candidates "
+            f"(default: production value {DEFAULT_MIN_SEMANTIC_STATEMENTS})."
+        ),
+    )
+    parser.add_argument(
         "--json-out",
         type=Path,
         default=Path("test_fixtures/polyglot_calibration/reports/similarity_distributions.json"),
@@ -186,6 +202,7 @@ def main() -> int:
                 corpus_root=args.corpus_root,
                 device=args.device,
                 batch_size=args.batch_size,
+                min_statements=args.min_statements,
             )
             payload[model_name][language] = report
             print(f"\n== {model_name} / {language} ==")
