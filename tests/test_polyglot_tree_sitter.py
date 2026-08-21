@@ -291,6 +291,34 @@ def test_rust_trait_methods_inherit_trait_visibility(tmp_path: Path) -> None:
     assert {unit.qualified_name for unit in units} == {"sample.Shown.shown"}
 
 
+def test_rust_trait_impl_methods_survive_the_public_filter(tmp_path: Path) -> None:
+    """``impl Trait for Type`` methods cannot carry ``pub``, yet they are the trait's API."""
+    units = _extract(
+        tmp_path,
+        "sample.rs",
+        """
+        pub struct Widget;
+
+        impl std::fmt::Display for Widget {
+            fn fmt(&self, formatter: &mut Formatter) -> Result {
+                formatter.write_str("widget")
+            }
+        }
+
+        impl Widget {
+            fn inherent_private(&self) -> i32 { 1 }
+            pub fn inherent_public(&self) -> i32 { 2 }
+        }
+        """,
+        include_private=False,
+    )
+
+    assert {unit.qualified_name for unit in units} == {
+        "sample.Widget.fmt",
+        "sample.Widget.inherent_public",
+    }
+
+
 def test_rust_token_hash_ignores_in_body_comments(tmp_path: Path) -> None:
     """tree-sitter-rust comments carry delimiter children; pruning must catch them."""
     [plain] = _extract(

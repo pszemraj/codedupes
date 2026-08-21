@@ -895,6 +895,24 @@ class RustBackend(TreeSitterBackend):
         return False
 
     @staticmethod
+    def _trait_impl_ancestor(node: Any) -> Any | None:
+        """Find the ``impl Trait for Type`` block that directly contains one item.
+
+        :param node: Item whose ancestor chain is walked.
+        :return: Nearest trait-implementation ``impl_item``, or ``None``.
+        """
+        current = getattr(node, "parent", None)
+        while current is not None:
+            node_type = getattr(current, "type", "")
+            if node_type == "function_item":
+                # A helper nested inside a method is local scope, not trait API.
+                return None
+            if node_type == "impl_item":
+                return current if _child_by_field(current, "trait") is not None else None
+            current = getattr(current, "parent", None)
+        return None
+
+    @staticmethod
     def _preceding_attributes(node: Any) -> list[Any]:
         """Return the attribute_item siblings stacked directly above one item.
 
@@ -1062,6 +1080,10 @@ class RustBackend(TreeSitterBackend):
             trait = _nearest_ancestor(node, {"trait_item", "trait_declaration"})
             if trait is not None:
                 public = self._visibility(trait, source)
+            elif self._trait_impl_ancestor(node) is not None:
+                # Methods of `impl Trait for Type` cannot legally carry `pub`;
+                # they are reachable through the trait, so they are public.
+                public = True
             specs.append(
                 UnitSpec(
                     node=node,
