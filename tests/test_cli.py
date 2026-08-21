@@ -135,6 +135,44 @@ def test_cli_reports_semantic_context_diagnostics(monkeypatch, tmp_path):
     assert payload["semantic_diagnostics"][0]["code"] == "semantic-context-overflow"
 
 
+def test_cli_search_json_surfaces_semantic_diagnostics(monkeypatch, tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+    unit = _build_unit(tmp_path)
+    result_obj = AnalysisResult(
+        units=[unit],
+        traditional_duplicates=[],
+        semantic_duplicates=[],
+        hybrid_duplicates=[],
+        potentially_unused=[],
+        analysis_mode="semantic",
+    )
+    patch_cli_analyzer(
+        monkeypatch,
+        cli,
+        analyze_result=result_obj,
+        search_results=[(unit, 0.91)],
+        semantic_diagnostics=[
+            ExtractionDiagnostic(
+                file_path=unit.file_path,
+                language="python",
+                code="semantic-context-overflow",
+                message="sample.entry is 4096 tokens including the encode prompt",
+                lineno=1,
+                end_lineno=2,
+            )
+        ],
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(cli.cli, ["search", str(path), "entry", "--json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["results"][0]["name"] == "entry"
+    assert payload["semantic_diagnostics"][0]["code"] == "semantic-context-overflow"
+
+
 def test_cli_search_indexes_without_running_full_analysis(monkeypatch, tmp_path):
     path = tmp_path / "sample.py"
     path.write_text("def entry():\n    return 1\n")
@@ -142,6 +180,7 @@ def test_cli_search_indexes_without_running_full_analysis(monkeypatch, tmp_path)
     class IndexOnlyAnalyzer:
         def __init__(self, config):
             del config
+            self.semantic_diagnostics = []
 
         def analyze(self, _path):
             raise AssertionError("search must build its corpus via index(), not analyze()")

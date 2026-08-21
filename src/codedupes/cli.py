@@ -637,16 +637,24 @@ def print_check_json_raw(result: AnalysisResult) -> None:
     print(json.dumps(output, indent=2, sort_keys=True))
 
 
-def print_search_json(query: str, results: list[tuple[CodeUnit, float]]) -> None:
+def print_search_json(
+    query: str,
+    results: list[tuple[CodeUnit, float]],
+    semantic_diagnostics: list[ExtractionDiagnostic],
+) -> None:
     """Output search results as JSON.
 
     :param query: Original search query.
     :param results: Matching units and cosine scores.
+    :param semantic_diagnostics: Corpus units skipped by the semantic stage.
     :return: ``None``.
     """
     payload = {
         "query": query,
         "results": [{"score": float(score), **_unit_to_dict(unit)} for unit, score in results],
+        "semantic_diagnostics": [
+            _diagnostic_to_dict(diagnostic) for diagnostic in semantic_diagnostics
+        ],
     }
     print(json.dumps(payload, indent=2, sort_keys=True))
 
@@ -1581,7 +1589,7 @@ def search_command(
         )
 
         if as_json:
-            print_search_json(query, results)
+            print_search_json(query, results, analyzer.semantic_diagnostics)
         else:
             console.print(f"[bold cyan]Query:[/bold cyan] {query!r}")
             print_search_results(results)

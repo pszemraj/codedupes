@@ -9,7 +9,7 @@ import pytest
 
 from codedupes import devices
 from codedupes.extractor import CodeExtractor
-from codedupes.models import AnalysisResult, CodeUnit, CodeUnitType
+from codedupes.models import AnalysisResult, CodeUnit, CodeUnitType, ExtractionDiagnostic
 
 
 @pytest.fixture(autouse=True)
@@ -134,11 +134,13 @@ def patch_cli_analyzer(
         list[tuple[CodeUnit, float]] | Callable[[str, int], list[tuple[CodeUnit, float]]] | None
     ) = None,
     captured_configs: list[Any] | None = None,
+    semantic_diagnostics: list[ExtractionDiagnostic] | None = None,
 ) -> None:
     """Patch CLI analyzer construction with a configurable test double."""
 
     class DummyAnalyzer:
         def __init__(self, config: Any) -> None:
+            self.semantic_diagnostics = list(semantic_diagnostics or [])
             if captured_configs is not None:
                 captured_configs.append(config)
 
