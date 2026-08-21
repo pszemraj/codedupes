@@ -224,6 +224,32 @@ def test_rust_statement_counts_include_tail_expressions_once(tmp_path: Path) -> 
     }
 
 
+def test_rust_trailing_comment_is_not_a_tail_expression(tmp_path: Path) -> None:
+    """A trailing comment must not inflate the count past the semantic gate."""
+    units = _extract(
+        tmp_path,
+        "sample.rs",
+        """
+        fn commented() {
+            first();
+            second();
+            // trailing note
+        }
+
+        fn block_commented() {
+            first();
+            second();
+            /* trailing note */
+        }
+        """,
+    )
+
+    assert {unit.name: unit.statement_count for unit in units} == {
+        "commented": 2,
+        "block_commented": 2,
+    }
+
+
 def test_rust_skips_cfg_test_modules_and_test_functions(tmp_path: Path) -> None:
     units = _extract(
         tmp_path,
@@ -289,6 +315,29 @@ def test_rust_trait_methods_inherit_trait_visibility(tmp_path: Path) -> None:
     )
 
     assert {unit.qualified_name for unit in units} == {"sample.Shown.shown"}
+
+
+def test_rust_test_attribute_survives_an_intervening_comment(tmp_path: Path) -> None:
+    """Attributes and their item are often separated by a documentation comment."""
+    units = _extract(
+        tmp_path,
+        "sample.rs",
+        """
+        pub fn real(value: i32) -> i32 { value + 1 }
+
+        #[cfg(test)]
+        // Unit tests for the module above.
+        mod tests {
+            fn helper() -> i32 { 1 }
+        }
+
+        #[test]
+        /* Checks the happy path. */
+        fn free_standing_check() { assert!(true); }
+        """,
+    )
+
+    assert {unit.qualified_name for unit in units} == {"sample.real"}
 
 
 def test_rust_trait_impl_methods_survive_the_public_filter(tmp_path: Path) -> None:

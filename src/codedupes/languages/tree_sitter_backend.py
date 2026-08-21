@@ -168,6 +168,16 @@ def _named_children(node: Any) -> tuple[Any, ...]:
     return tuple(getattr(node, "named_children", ()) or ())
 
 
+def _is_comment(node: Any) -> bool:
+    """Report whether a node is a comment in any of the supported grammars.
+
+    :param node: Tree-sitter node.
+    :return: ``True`` when the node's syntax kind names a comment.
+    """
+    node_type = str(getattr(node, "type", ""))
+    return node_type in _COMMENT_TYPES or "comment" in node_type
+
+
 def _child_by_field(node: Any, field: str) -> Any | None:
     """Look up a child node by its grammar field name.
 
@@ -869,7 +879,9 @@ class RustBackend(TreeSitterBackend):
         if body is None or getattr(body, "type", "") != "block":
             return count
 
-        children = _named_children(body)
+        # Comments are named children in tree-sitter-rust, so a trailing comment
+        # would otherwise be mistaken for the block's tail expression.
+        children = [child for child in _named_children(body) if not _is_comment(child)]
         if not children:
             return count
 
@@ -937,6 +949,9 @@ class RustBackend(TreeSitterBackend):
             return []
         attributes: list[Any] = []
         for sibling in reversed(siblings[:index]):
+            # Comments routinely sit between an attribute and the item it annotates.
+            if _is_comment(sibling):
+                continue
             if getattr(sibling, "type", "") != "attribute_item":
                 break
             attributes.append(sibling)
