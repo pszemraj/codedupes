@@ -772,6 +772,44 @@ def test_loose_branch_move_never_mixes_two_checkpoints(tmp_path, monkeypatch):
     assert len(model.encode_calls) == 2
 
 
+def test_unreportable_mutable_revision_never_mixes_cached_and_fresh_rows(tmp_path, monkeypatch):
+    """A label-keyed run with unknown loaded provenance must bypass its whole shard."""
+
+    class EpochModel(CountingModel):
+        def __init__(self) -> None:
+            super().__init__(dim=2)
+            self.epoch = 0
+
+        def encode(self, texts, **kwargs):
+            self.encode_calls.append(list(texts))
+            vector = np.array([1.0, 0.0] if self.epoch == 0 else [0.0, 1.0])
+            return np.repeat(vector[None, :], len(texts), axis=0)
+
+    units = _five_units(tmp_path)[:3]
+    model = EpochModel()
+    _patch_get_model(monkeypatch, model)
+    monkeypatch.setattr(semantic, "_get_loaded_model_commit_hash", lambda _model: None)
+
+    first = compute_embeddings(
+        units, model_name="drift-model", revision="main", cache_scope=tmp_path
+    )
+    np.testing.assert_array_equal(first, np.tile([1.0, 0.0], (3, 1)))
+
+    model.epoch = 1
+    changed = copy.copy(units[1])
+    changed.source = "def beta(x):\n    return x + 777\n"
+    second = compute_embeddings(
+        [units[0], changed, units[2]],
+        model_name="drift-model",
+        revision="main",
+        cache_scope=tmp_path,
+    )
+
+    np.testing.assert_array_equal(second, np.tile([0.0, 1.0], (3, 1)))
+    assert [len(call) for call in model.encode_calls] == [3, 3]
+    assert EmbeddingCache().stats()["entries"] == 0
+
+
 def test_loose_branch_move_purges_shard_and_aborts_search(tmp_path, monkeypatch):
     units = _five_units(tmp_path)
     model = CountingModel()

@@ -2439,7 +2439,7 @@ def test_loose_default_cache_survives_simulated_branch_move(tmp_path: Path, monk
     units = extract_arithmetic_units(tmp_path)
     model = _WarmCacheModel()
     monkeypatch.setattr(semantic, "get_model", lambda *_a, **_k: model)
-    monkeypatch.setattr(semantic, "_get_loaded_model_commit_hash", lambda _model: None)
+    monkeypatch.setattr(semantic, "_get_loaded_model_commit_hash", lambda _model: "a" * 40)
 
     def _fail_if_called(*_args, **_kwargs):
         raise AssertionError("loose mode must never consult the offline hub-cache lookup")

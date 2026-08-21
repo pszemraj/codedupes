@@ -2771,6 +2771,17 @@ def _compute_embeddings_unlocked(
         )
         hits = lookup.vectors
         hit_source_commit = lookup.source_commit
+        if (
+            hits
+            and _revision_is_mutable_label(model_name, cache_revision)
+            and hit_source_commit is None
+        ):
+            logger.warning(
+                f"Ignoring {len(hits)} cached vectors for branch {cache_revision!r} "
+                "because their source commit is unknown; mutable-revision rows "
+                "without provenance cannot be reused safely"
+            )
+            hits = {}
 
     # Duplicate code units share one cache key, so compare against the covered
     # keys rather than the unique-hit count: len(hits) undercounts coverage.
@@ -2861,10 +2872,9 @@ def _compute_embeddings_unlocked(
         # hit discarded. A coherent current shard is not enough on its own: a
         # concurrent run can purge and republish the shard under the loaded
         # commit after this run copied its hits, so the hits' own snapshot
-        # provenance is compared as well. An unknown loaded commit stays
-        # fail-open by design: loose mode keeps serving warm even when a
-        # backend cannot report its checkpoint, and the provenance-less rows
-        # it writes are purged by the first commit-reporting load.
+        # provenance is compared as well. If the loaded commit is unknown,
+        # neither old hits nor fresh writes can be tied to one checkpoint, so
+        # this call bypasses the entire shard and recomputes every row.
         loaded_commit = _get_loaded_model_commit_hash(model)
         if loaded_commit is not None:
             corpus_source_commit = loaded_commit
@@ -2889,6 +2899,16 @@ def _compute_embeddings_unlocked(
                     f"{len(hits)} pre-load hits so one matrix never mixes two checkpoints"
                 )
                 hits = {}
+        else:
+            logger.warning(
+                f"Loaded model for mutable branch {cache_revision!r} did not report "
+                "a source commit; bypassing all persistent embeddings for this call "
+                "so one matrix cannot mix checkpoints"
+            )
+            cache = None
+            cache_revision = None
+            cache_keys = None
+            hits = {}
 
     def _validated_miss_texts(indices: list[int]) -> list[str]:
         """Validate prepared texts for the given miss-row indices.
