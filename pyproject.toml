@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "codedupes"
 dynamic = ["version"]
-description = "Detect duplicate and unused Python, C, Rust, JavaScript, and TypeScript code"
+description = "Duplicate-code detection for Python, C, Rust, JavaScript, and TypeScript, plus unused-code detection for Python"
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.11"
