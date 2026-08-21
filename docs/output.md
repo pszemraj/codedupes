@@ -21,14 +21,15 @@
     "potentially_unused": 0,
     "raw_traditional_duplicates": 0,
     "raw_semantic_duplicates": 0,
-    "filtered_raw_duplicates": 0,
     "semantic_fallback": false,
     "semantic_fallback_reason": null,
     "extraction_diagnostics": 0,
+    "semantic_diagnostics": 0,
     "unused_supported_languages": ["python"],
     "unused_excluded_units": 0
   },
   "extraction_diagnostics": [],
+  "semantic_diagnostics": [],
   "hybrid_duplicates": [],
   "potentially_unused": []
 }
@@ -55,10 +56,12 @@ With `--show-all`, additional raw sections are included:
     "semantic_fallback": false,
     "semantic_fallback_reason": null,
     "extraction_diagnostics": 0,
+    "semantic_diagnostics": 0,
     "unused_supported_languages": ["python"],
     "unused_excluded_units": 0
   },
   "extraction_diagnostics": [],
+  "semantic_diagnostics": [],
   "traditional_duplicates": [],
   "semantic_duplicates": [],
   "potentially_unused": []
@@ -74,12 +77,11 @@ Each duplicate entry includes:
 
 `hybrid_duplicates` entries include:
 
-- `tier` (`exact`, `traditional_near`, `hybrid_confirmed`,
-  `semantic_high_confidence`, or `semantic_review`)
+- `tier` (`exact`, `traditional_near`, `hybrid_confirmed`, `semantic_high_confidence`, or `semantic_review`)
 - `confidence`
 - evidence fields (`has_exact`, `semantic_similarity`, `jaccard_similarity`, etc.)
 
-`semantic_review` means the pair cleared its calibrated semantic duplicate gate but lacks the lexical or statement-count corroboration used for the high-confidence tier. It remains visible because alpha-renaming and structural translation often remove exactly that lexical overlap.
+`semantic_review` means the pair cleared its calibrated semantic duplicate gate but lacks the lexical or statement-count corroboration used for the high-confidence tier. It remains visible because alpha-renaming and structural translation often remove exactly that lexical overlap, and its confidence is scaled to rank below every corroborated tier (see [Analysis defaults](analysis-defaults.md#confidence-scale)).
 
 Raw duplicate entries include:
 
@@ -94,7 +96,23 @@ Each unit object includes:
 - Extraction metadata: `statement_count`
 - Visibility: `is_public` and `is_exported`
 
-`extraction_diagnostics` contains file/language, severity, code, message, and optional line range. The terminal summary shows the first ten diagnostics. A `partial-parse` diagnostic means Tree-sitter recovered from invalid or incomplete source; units whose own subtree contains an error are omitted with `unit-parse-error`.
+## Diagnostics
+
+`extraction_diagnostics` and `semantic_diagnostics` are separate top-level arrays with a matching count in `summary`. Both use the same entry shape: `file`, `language`, `severity`, `code`, `message`, `line`, and `end_line` (the last two are `null` for file-level diagnostics). The terminal summary prints a count row per non-empty list and shows the first ten entries of each.
+
+`extraction_diagnostics` covers parsing and file selection:
+
+- `parse-error`: a file the parser could not read at all
+- `partial-parse`: Tree-sitter recovered from invalid or incomplete source; units whose own subtree contains an error are omitted with `unit-parse-error`
+- `unit-parse-error`: one extracted unit skipped because its own syntax subtree contains an error
+- `c-header-policy`: one summary diagnostic per run when `.h` files are skipped by the conservative C-header policy during a directory scan, naming the count and suggesting `--language c`
+- `declaration-file`: an explicitly named `.d.ts`/`.d.mts`/`.d.cts` file, which has no implementation bodies
+- `language-filter`: an explicitly named file excluded by `--language`
+- `unsupported-file`: an explicitly named file no extraction backend accepts
+
+The last three are raised only for files named on the command line. A directory scan silently passes over unsupported and filtered files; only the C-header summary is reported.
+
+`semantic_diagnostics` covers corpus units the semantic stage dropped. The only current code is `semantic-context-overflow`: the unit's tokenized input, encode prompt included, exceeds the model's context window, so it is skipped instead of embedded from a partial prefix. The run continues without it. An over-long `search` query still fails hard.
 
 ## `search --json` Structure
 
@@ -123,9 +141,16 @@ Each unit object includes:
       "is_public": true,
       "is_exported": false
     }
-  ]
+  ],
+  "semantic_diagnostics": []
 }
 ```
+
+## Terminal duplicate panels
+
+- combined mode: `Hybrid Duplicates`, plus `Traditional Duplicates (Raw Structural/Token/Jaccard)` and `Semantic Duplicates (Raw Embedding)` under `--show-all`
+- `--traditional-only`: `Traditional Duplicates (Structural/Token/Jaccard)`
+- `--semantic-only`: `Semantic Duplicates (Embedding)`
 
 ## Exit Codes
 
