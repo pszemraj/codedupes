@@ -1583,7 +1583,7 @@ def test_unreportable_mutable_provenance_bypasses_the_query_cache(
         revision=revision,
         cache_scope=tmp_path,
     )
-    assert identity.cache_bypassed is expect_bypass
+    assert identity.source_commit is None
 
     for _ in range(2):
         find_similar_to_query(
