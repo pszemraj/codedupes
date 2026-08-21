@@ -4,7 +4,7 @@ These defaults apply to `codedupes check` and `AnalyzerConfig`. See the [CLI ref
 
 ## Semantic Duplicate Gate Defaults
 
-Semantic duplicate detection is gated per language: each built-in model profile carries a calibrated cosine gate for every supported language, measured against `test_fixtures/polyglot_calibration/` with recall-leaning selection (the loosest threshold whose F1 stays near that language's best).
+Semantic duplicate detection is gated per language: each built-in model profile carries a calibrated cosine gate for every supported language, measured against `test_fixtures/polyglot_calibration/`.
 
 | language | `gte-modernbert-base` | `embeddinggemma-300m` |
 |---|---|---|
@@ -12,11 +12,15 @@ Semantic duplicate detection is gated per language: each built-in model profile 
 | c | `0.82` | `0.78` |
 | rust | `0.74` | `0.78` |
 | javascript | `0.70` | `0.72` |
-| typescript | `0.68` | `0.76` |
+| typescript | `0.68` | `0.78` |
 
-The profile fallback (`0.82` gte, `0.78` gemma) is the strictest calibrated gate and applies only to languages without their own entry. An explicit `--semantic-threshold`/`--threshold` (or `AnalyzerConfig.semantic_threshold`) replaces every per-language gate with one flat value. The pairwise embedding scan runs at the loosest gate among the languages present, then each pair is held to its own language's gate.
+Gate selection is recall-first. A shipped gate may sit below the sweep's F1-selected threshold wherever the sweep shows recall gains below it, however many grid steps down that is (gte `c` `0.82` against a selected `0.90`; embeddinggemma `javascript` `0.72` against `0.82` and `rust` `0.78` against `0.82`). Where recall is flat, a gate sits at most one grid step looser as an off-corpus generalization hedge, never further. Every shipped gate keeps recall at or above the selection's and F1 within 80% of it; `tests/test_calibration_reports.py` enforces both against the recorded sweep reports.
 
-Semantic duplicate pairs are same-language by default. `--cross-language` (or `AnalyzerConfig(cross_language=True)`) also reports cross-language pairs; those claims are uncalibrated, and an opted-in mixed pair is held to the looser of its two language gates.
+The profile fallback (`0.82` gte, `0.78` gemma) is the strictest calibrated gate and applies only to languages without their own entry. An explicit `--semantic-threshold`/`--threshold` (or `AnalyzerConfig.semantic_threshold`) replaces every per-language gate with one flat value. The pairwise embedding scan partitions candidates by language and scans each group at that language's own gate, so a loosely gated language never drags another language's scan down; the scalar floor handed to the scan covers only languages that arrive without a calibrated entry.
+
+Semantic duplicate pairs are same-language by default. `--cross-language` (or `AnalyzerConfig(cross_language=True)`) also reports cross-language pairs; those claims are uncalibrated, so an opted-in mixed pair is held to `min(gate_a, gate_b)`, the looser of its two language gates.
+
+Default duplicate gates are calibrated for the profile's pinned revision, default task, default prompt, and default remote-code setting. A custom instruction prefix, an alternate EmbeddingGemma task, an alternate built-in revision, or a `trust_remote_code` value differing from the profile default is uncalibrated context: the run refuses the default gates and requires an explicit threshold.
 
 ## Semantic Candidate Defaults
 
@@ -26,7 +30,8 @@ Default semantic candidate selection:
 - class units are excluded by default from semantic embedding
 - minimum statement count: `3` (via `min_semantic_statements`)
 - statements are counted recursively through control-flow bodies, so a large function implemented inside one outer block is not measured as a single statement; nested function/class definitions count as one declaration each. Python counts via the AST (`try`, `with`, loops, conditionals, `match`, with indented definitions dedented before counting); Tree-sitter languages apply each grammar's equivalent statement and nested-scope node rules, including Rust's semicolon-free tail expression as one statement
-- each semantic input is one complete logical definition - signature, docstring, and body, starting at the definition line (`def`/`class` in Python; decorators are not included); functions are not split into arbitrary text chunks, and a definition that exceeds the selected model's context window stops semantic analysis with an explicit error rather than being embedded from a partial prefix
+- each semantic input is one complete logical definition - signature, docstring, and body, starting at the definition line (`def`/`class` in Python; decorators are not included); functions are not split into arbitrary text chunks
+- a definition whose tokenized input (the encode prompt included) exceeds the selected model's context window is never embedded from a partial prefix: it is skipped with a warning and a `semantic-context-overflow` diagnostic, and the run continues without it. `--allow-semantic-fallback` is unrelated to this path. An over-long `search` query still fails hard, because a truncated query has no result to omit
 
 Combined-mode alignment rule:
 
@@ -112,3 +117,17 @@ AnalyzerConfig(
 - statement ratio minimum: `0.35`
 
 A semantic-only pair has already passed its language's duplicate gate, so it remains visible in default output. Identifier overlap and a comparable statement count promote it to `semantic_high_confidence`; otherwise it is labeled `semantic_review`. These corroborators affect ranking and review priority, not admission. Tune them with the [hybrid gate workflow](hybrid-tuning.md).
+
+## Confidence Scale
+
+Confidence is a corroboration scale, not a raw similarity, so a tier with more independent evidence always outranks one with less at equal evidence strength:
+
+| tier | confidence |
+|---|---|
+| `exact` | `1.0` |
+| `traditional_near` | `0.55 + 0.45 * jaccard` |
+| `hybrid_confirmed` | `0.5 * semantic + 0.5 * jaccard` |
+| `semantic_high_confidence` | `0.45 + 0.55 * semantic` |
+| `semantic_review` | `0.40 + 0.45 * semantic` |
+
+The last two formulas keep `semantic_review` strictly below `semantic_high_confidence` at every similarity (the gap is `0.05 + 0.10 * semantic`), so uncorroborated pairs can never crowd corroborated ones off the top of the table. Ties break on semantic similarity, then Jaccard, then unit uid.
