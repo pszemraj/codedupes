@@ -1008,7 +1008,9 @@ def _select_cache_miss_indices(
 # Bump whenever codedupes' own embedding pipeline changes in a vector-affecting
 # way (prompt handling, routing, normalization, truncation policy, load dtype),
 # so cached vectors from an older pipeline can never mix into a new matrix.
-EMBEDDING_PIPELINE_SCHEMA = 4
+# 5: over-context inputs are rejected/skipped instead of silently truncated;
+# schema-4 shards may hold truncated vectors for texts near the context limit.
+EMBEDDING_PIPELINE_SCHEMA = 5
 
 
 def _embedding_runtime_fingerprint() -> str:
