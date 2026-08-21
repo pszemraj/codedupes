@@ -21,8 +21,11 @@ from codedupes.languages.registry import GRAMMAR_PACKAGES
 from codedupes.models import CodeUnit, CodeUnitType, ExtractionDiagnostic
 
 FINGERPRINT_SCHEMA_VERSION = 1
-_IDENTIFIER_RE = re.compile(r"^[A-Za-z_$][A-Za-z0-9_$]*$")
-_STABLE_PATH_RE = re.compile(r"^[A-Za-z_$#][A-Za-z0-9_$#]*(?:\.[A-Za-z_$#][A-Za-z0-9_$#]*)*$")
+# ECMAScript identifiers are Unicode from ES2015 on, and Rust accepts non-ASCII
+# identifiers too, so an ASCII-only pattern would silently drop those units.
+# ``[^\W\d]`` is Python's Unicode-aware "letter or underscore".
+_IDENTIFIER_RE = re.compile(r"^(?:[^\W\d]|\$)(?:\w|\$)*$")
+_STABLE_PATH_RE = re.compile(r"^(?:[^\W\d]|[$#])(?:\w|[$#])*(?:\.(?:[^\W\d]|[$#])(?:\w|[$#])*)*$")
 
 _COMMENT_TYPES = {
     "comment",

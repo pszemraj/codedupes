@@ -401,6 +401,31 @@ def test_javascript_extracts_modern_stable_unit_forms(tmp_path: Path) -> None:
     assert names["sample.default"] == CodeUnitType.FUNCTION
 
 
+def test_javascript_unicode_identifiers_are_extracted(tmp_path: Path) -> None:
+    """Unicode identifiers are legal ES2015+, so ASCII-only naming would drop units."""
+    units = _extract(
+        tmp_path,
+        "sample.js",
+        """
+        export function café(value) { return value + 1; }
+        const naïve = (value) => café(value) + 2;
+
+        class Größe {
+            länge(value) { return value + 3; }
+        }
+        """,
+    )
+    names = {unit.qualified_name for unit in units}
+
+    assert names == {
+        "sample.café",
+        "sample.naïve",
+        "sample.Größe",
+        "sample.Größe.länge",
+    }
+    assert "café" in next(unit for unit in units if unit.name == "naïve").identifiers
+
+
 def test_javascript_export_marking_stops_at_function_boundaries(tmp_path: Path) -> None:
     units = _extract(
         tmp_path,
