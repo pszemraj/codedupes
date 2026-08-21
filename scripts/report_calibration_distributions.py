@@ -5,6 +5,12 @@ cosine similarity per labeled category (exact through near_restructure),
 for negative controls, and for the background of all other same-language unit
 pairs. The distributions show where each model separates clones from
 non-clones per language, independent of any threshold grid.
+
+Each summary carries the same calibration manifest the threshold sweep records
+(pinned commit, pipeline schema, effective embedding-space identity, candidate
+policy, corpus and label digests), because these distributions are cited as
+evidence for the shipped per-language gates. Like the sweep, a distribution run
+refuses models that cannot be pinned to an immutable 40-character commit.
 """
 
 from __future__ import annotations
@@ -17,13 +23,16 @@ from typing import Any
 import numpy as np
 
 from codedupes.analyzer import AnalyzerConfig, CodeAnalyzer
-from codedupes.constants import DEFAULT_MIN_SEMANTIC_STATEMENTS
+from codedupes.constants import DEFAULT_CHECK_SEMANTIC_TASK, DEFAULT_MIN_SEMANTIC_STATEMENTS
+from codedupes.semantic_profiles import resolve_model_profile
 
 try:
     from .sweep_common import resolve_label_unit
+    from .sweep_semantic_thresholds import _calibration_manifest, _require_immutable_revision
     from .validate_calibration_corpus import CATEGORY_NAMES
 except ImportError:
     from sweep_common import resolve_label_unit
+    from sweep_semantic_thresholds import _calibration_manifest, _require_immutable_revision
     from validate_calibration_corpus import CATEGORY_NAMES
 
 DEFAULT_LANGUAGES = ("c", "rust", "javascript", "typescript", "python")
@@ -95,8 +104,12 @@ def _analyze_language(
     :param str device: Embedding device.
     :param int batch_size: Embedding batch size.
     :param int min_statements: Minimum recursive statement count for candidates.
-    :return dict[str, Any]: Distribution summary per category.
+    :return dict[str, Any]: Distribution summary per category, with its calibration manifest.
     """
+    profile = resolve_model_profile(model_name)
+    revision = _require_immutable_revision(model_name, None)
+    corpus_path = corpus_root / language
+    labels_path = corpus_root / "labels" / f"{language}.json"
     config = AnalyzerConfig(
         run_traditional=False,
         run_semantic=True,
@@ -104,21 +117,38 @@ def _analyze_language(
         include_private=True,
         languages=(language,),
         model_name=model_name,
+        model_revision=revision,
+        semantic_task=DEFAULT_CHECK_SEMANTIC_TASK,
         min_semantic_statements=min_statements,
         batch_size=batch_size,
         device=device,
     )
     analyzer = CodeAnalyzer(config)
-    result = analyzer.analyze(corpus_root / language)
+    result = analyzer.analyze(corpus_path)
     embeddings = analyzer._embeddings
     semantic_units = analyzer._semantic_units
     assert embeddings is not None and semantic_units is not None
+    identity = analyzer._embedding_space_identity
+    assert identity is not None
     uid_to_row = {unit.uid: row for row, unit in enumerate(semantic_units)}
 
-    labels = json.loads((corpus_root / "labels" / f"{language}.json").read_text())
+    labels = json.loads(labels_path.read_text())
     categories: dict[str, list[list[str]]] = labels["categories"]
 
     report: dict[str, Any] = {
+        "calibration": _calibration_manifest(
+            profile=profile,
+            resolved_revision=revision,
+            mode="distribution",
+            semantic_task=DEFAULT_CHECK_SEMANTIC_TASK,
+            requested_device=device,
+            identity=identity,
+            dimension=int(embeddings.shape[1]) if embeddings.size else 0,
+            min_statements=min_statements,
+            batch_size=batch_size,
+            corpus_path=corpus_path,
+            labels_path=labels_path,
+        ),
         "units": len(result.units),
         "embedded": len(semantic_units),
         "min_recursive_statements": min_statements,
@@ -205,9 +235,13 @@ def main() -> int:
                 min_statements=args.min_statements,
             )
             payload[model_name][language] = report
+            calibration = report["calibration"]
             print(f"\n== {model_name} / {language} ==")
+            print(f"  revision: {calibration['resolved_revision']}")
+            print(f"  embedding_space: {calibration['embedding_space']}")
             for key, value in report.items():
-                print(f"  {key}: {value}")
+                if key != "calibration":
+                    print(f"  {key}: {value}")
 
     args.json_out.parent.mkdir(parents=True, exist_ok=True)
     args.json_out.write_text(json.dumps(payload, indent=2))

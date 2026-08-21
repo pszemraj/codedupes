@@ -23,7 +23,7 @@ These measurements are the source of the shipped per-language semantic duplicate
 | renamed | differs | equal | differs | deterministic |
 | near_rename / near_translation / near_restructure | differs | differs | differs | semantic only |
 
-Per language: 4 exact, 3 reformat, 3 doc_variant, 4 renamed, 8 near_rename, 8 near_translation, 4 near_restructure (TypeScript carries 5 reformat/5 renamed and JavaScript 5 renamed after labeling transitive pairs of multi-copy clone clusters).
+Per language: 4 exact, 3 reformat, 3 doc_variant, 4 renamed, 8 near_rename, 8 near_translation, 4 near_restructure (TypeScript carries 4 reformat/5 renamed and JavaScript 5 renamed after labeling transitive pairs of multi-copy clone clusters).
 
 `doc_variant` doubles as a per-language regression test of comment pruning: tree-sitter languages prune comments from both fingerprints (pairs must land fully deterministic), while Python docstrings are stripped from the structural hash but kept as string tokens. Only Python docstrings are inside the embedded unit span; leading doc comments in the other languages are preceding siblings outside it, so their `doc_variant` B-sides also carry in-body comments to make the delta embedder-visible.
 
@@ -47,6 +47,8 @@ conda run -n inf python scripts/validate_calibration_corpus.py --corpus-path tes
 ```
 
 Whole-tree status at shipped defaults (2026-08-14): 368 units across five languages, zero parse diagnostics, all 73 labeled deterministic pairs detected by the traditional tier, zero unlabeled deterministic pairs, zero cross-language pairs.
+
+The validator now enforces the zero-unlabeled-deterministic-pairs property per language rather than leaving it as a one-off observation: every exact/near pair the traditional tier reports must appear in `positive_groups` (14/14/15/16/14 pairs for c/rust/javascript/typescript/python).
 
 ## Calibration results (2026-08-21, pinned profiles, cpu/fp32, production `--min-statements 3`)
 
@@ -79,6 +81,8 @@ Distribution highlights (`reports/similarity_distributions.json`):
 - The crab_visibility finding that Python near clones score ~0.97 was mostly a corpus artifact (shared identifier fragments): fully alpha-renamed Python near clones top out at 0.85 (gte). A modest genuine language effect remains (Python medians run ~0.05–0.09 above the other languages under gte).
 - C is the hardest language for both models: deceptive negative controls reach 0.86 (gte) / 0.91 (gemma), overlapping the near-clone band, which caps best final-output F1 at 0.58/0.62.
 - embeddinggemma-300m separates clones from negatives better than gte-modernbert-base on four languages and ties it on TypeScript here, with best-F1 duplicate thresholds clustered at 0.74–0.82.
+
+The recorded `reports/similarity_distributions.json` predates the `calibration` manifest field: it was written before `scripts/report_calibration_distributions.py` recorded the pinned revision, pipeline schema, effective embedding space, candidate policy, and corpus/label digests, so it carries stats only. The next regeneration adds that block, matching the threshold reports.
 
 Interpretation: candidate policy, model threshold, and hybrid publication are one product decision graph and must be evaluated together. The shipped per-language gates listed at the top were reviewed against these production-policy grids recall-first — at or below each best-F1 row when that buys recall without untenable final-output precision — and are enforced by `codedupes.semantic_profiles` tests. The search rows remain a single-domain synthetic guardrail; the lower shipped search defaults come from the held-out multi-domain probes described in the model-profile docs. Keep this README, the reports, and the profile gates in sync.
 

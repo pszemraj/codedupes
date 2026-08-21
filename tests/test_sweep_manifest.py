@@ -10,14 +10,15 @@ from types import SimpleNamespace
 import numpy as np
 
 from codedupes.analyzer import CodeAnalyzer
-from codedupes.constants import DEFAULT_MIN_SEMANTIC_STATEMENTS
+from codedupes.constants import DEFAULT_CHECK_SEMANTIC_TASK, DEFAULT_MIN_SEMANTIC_STATEMENTS
 from codedupes.models import CodeUnit, CodeUnitType
 from codedupes.semantic import EmbeddingSpaceIdentity
 from codedupes.semantic_profiles import resolve_model_profile
+from scripts.report_calibration_distributions import _analyze_language
 from scripts.sweep_common import add_common_sweep_arguments
 from scripts.sweep_hybrid_gates import GateConfig
 from scripts.sweep_hybrid_gates import _run_sweep as _run_hybrid_gate_sweep
-from scripts.sweep_semantic_thresholds import _run_duplicate_sweep
+from scripts.sweep_semantic_thresholds import _calibration_manifest, _run_duplicate_sweep
 
 PINNED_COMMIT = "a" * 40
 
@@ -110,6 +111,82 @@ def test_common_sweep_defaults_match_production_candidate_policy() -> None:
     add_common_sweep_arguments(parser)
 
     assert parser.parse_args([]).min_statements == DEFAULT_MIN_SEMANTIC_STATEMENTS
+
+
+def test_distribution_report_carries_the_sweep_calibration_manifest(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Distribution stats are cited as gate evidence, so they need the same identity block.
+
+    Without it the recorded JSON is a bare ``{model: {language: stats}}`` map: no
+    resolved revision, pipeline schema, embedding space, or corpus digest to tie
+    the numbers to a reproducible run.
+    """
+    corpus_root = tmp_path / "corpus_root"
+    language_path = corpus_root / "python"
+    language_path.mkdir(parents=True)
+    source_path = language_path / "alpha.py"
+    source_path.write_text("def first():\n    return 1\n\n\ndef second():\n    return 2\n")
+    labels_path = corpus_root / "labels" / "python.json"
+    labels_path.parent.mkdir(parents=True)
+    labels_path.write_text(
+        json.dumps(
+            {
+                "positive_groups": [["alpha.py::first", "alpha.py::second"]],
+                "categories": {"exact": [["alpha.py::first", "alpha.py::second"]]},
+            }
+        )
+    )
+
+    profile = resolve_model_profile("gte-modernbert-base")
+    units = [_unit("first", source_path, 1), _unit("second", source_path, 5)]
+    identity = EmbeddingSpaceIdentity(
+        model_name=profile.canonical_name,
+        resolved_revision=profile.default_revision or PINNED_COMMIT,
+        runtime_variant="cpu-faithful",
+    )
+
+    def fake_analyze(self: CodeAnalyzer, path: Path) -> SimpleNamespace:
+        self._embeddings = np.eye(2, 4, dtype=np.float32)
+        self._embedding_space_identity = identity
+        self._semantic_units = units
+        return SimpleNamespace(units=units, traditional_duplicates=[], semantic_duplicates=[])
+
+    monkeypatch.setattr(CodeAnalyzer, "analyze", fake_analyze)
+
+    report = _analyze_language(
+        language="python",
+        model_name="gte-modernbert-base",
+        corpus_root=corpus_root,
+        device="cpu",
+        batch_size=4,
+        min_statements=0,
+    )
+
+    manifest = report["calibration"]
+    assert manifest["model"] == profile.canonical_name
+    assert manifest["resolved_revision"] == profile.default_revision
+    assert manifest["embedding_space"]["runtime_variant"] == "cpu-faithful"
+    assert manifest["requested_device"] == "cpu"
+    assert manifest["mode"] == "distribution"
+    assert manifest["candidate_policy"]["min_recursive_statements"] == 0
+    assert manifest["corpus_path"] == str(language_path)
+    assert manifest["labels_path"] == str(labels_path)
+    # The digests must cover this corpus, not the sweep's default fixture tree.
+    expected = _calibration_manifest(
+        profile=profile,
+        resolved_revision=profile.default_revision or PINNED_COMMIT,
+        mode="distribution",
+        semantic_task=DEFAULT_CHECK_SEMANTIC_TASK,
+        requested_device="cpu",
+        identity=identity,
+        dimension=4,
+        min_statements=0,
+        batch_size=4,
+        corpus_path=language_path,
+        labels_path=labels_path,
+    )
+    assert manifest == expected
 
 
 def test_hybrid_gate_ties_resolve_to_the_loosest_gate_not_grid_order() -> None:
