@@ -23,6 +23,7 @@ _SEMANTIC_ANALYSIS_KWARG_NAMES = {
     "device",
     "exclude_pairs",
     "instruction_prefix",
+    "language_thresholds",
     "model_name",
     "mps_fallback",
     "mps_memory_fraction",
@@ -720,23 +721,6 @@ def test_semantic_pairs_are_gated_per_language(tmp_path: Path, monkeypatch) -> N
     project = _create_two_language_project(tmp_path)
     captured: dict[str, object] = {}
 
-    def paired_duplicates(units: list[CodeUnit]) -> list[DuplicatePair]:
-        by_name = {unit.name: unit for unit in units}
-        return [
-            DuplicatePair(
-                unit_a=by_name["alpha_one"],
-                unit_b=by_name["alpha_two"],
-                similarity=0.75,
-                method="semantic",
-            ),
-            DuplicatePair(
-                unit_a=by_name["betaOne"],
-                unit_b=by_name["betaTwo"],
-                similarity=0.75,
-                method="semantic",
-            ),
-        ]
-
     monkeypatch.setattr(
         analyzer_module,
         "resolve_model_profile",
@@ -745,7 +729,7 @@ def test_semantic_pairs_are_gated_per_language(tmp_path: Path, monkeypatch) -> N
     monkeypatch.setattr(
         analyzer_module,
         "run_semantic_analysis",
-        _make_semantic_runner(capture=captured, duplicate_factory=paired_duplicates),
+        _make_semantic_runner(capture=captured),
     )
 
     analyzer = CodeAnalyzer(
@@ -756,11 +740,68 @@ def test_semantic_pairs_are_gated_per_language(tmp_path: Path, monkeypatch) -> N
             min_semantic_statements=0,
         )
     )
-    result = analyzer.analyze(project)
+    analyzer.analyze(project)
 
-    # The embedding scan runs at the loosest gate; each pair is then held to
-    # its own language's gate: 0.75 clears javascript's 0.60 but not python's 0.90.
+    # Every language group is scanned at its own gate; the scalar floor only
+    # covers languages without a calibrated entry.
+    assert captured["language_thresholds"] == {"python": 0.90, "javascript": 0.60}
     assert captured["threshold"] == 0.60
+
+
+class _FixedVectorModel:
+    """Model stub returning a fixed vector per marker found in the input text."""
+
+    def __init__(self, vectors: dict[str, list[float]]) -> None:
+        self.vectors = vectors
+
+    def encode(self, texts, **_kwargs):
+        rows = []
+        for text in texts:
+            marker = next(name for name in self.vectors if name in text)
+            rows.append(self.vectors[marker])
+        return np.array(rows, dtype=np.float32)
+
+
+def _two_language_vectors() -> dict[str, list[float]]:
+    """Build vectors whose same-language pairs sit at cosine 0.75.
+
+    :return: Marker-to-vector map for the two-language fixture project.
+    """
+    off = float(np.sqrt(1.0 - 0.75**2))
+    return {
+        "alpha_one": [1.0, 0.0, 0.0, 0.0],
+        "alpha_two": [0.75, off, 0.0, 0.0],
+        "betaOne": [0.0, 0.0, 1.0, 0.0],
+        "betaTwo": [0.0, 0.0, 0.75, off],
+    }
+
+
+def test_per_language_gates_survive_the_whole_semantic_pipeline(
+    tmp_path: Path, monkeypatch
+) -> None:
+    project = _create_two_language_project(tmp_path)
+    monkeypatch.setattr(
+        analyzer_module,
+        "resolve_model_profile",
+        lambda _model: _profile_with_gates({"python": 0.90, "javascript": 0.60}),
+    )
+    monkeypatch.setattr(
+        semantic_module,
+        "get_model",
+        lambda *args, **kwargs: _FixedVectorModel(_two_language_vectors()),
+    )
+
+    result = CodeAnalyzer(
+        AnalyzerConfig(
+            run_traditional=False,
+            run_semantic=True,
+            run_unused=False,
+            min_semantic_statements=0,
+            embedding_cache=False,
+        )
+    ).analyze(project)
+
+    # 0.75 clears javascript's 0.60 gate but not python's 0.90.
     assert [
         (duplicate.unit_a.name, duplicate.unit_b.name) for duplicate in result.semantic_duplicates
     ] == [("betaOne", "betaTwo")]
@@ -770,17 +811,10 @@ def test_cross_language_pairs_require_opt_in_and_use_looser_gate(
     tmp_path: Path, monkeypatch
 ) -> None:
     project = _create_two_language_project(tmp_path)
-
-    def mixed_duplicates(units: list[CodeUnit]) -> list[DuplicatePair]:
-        by_name = {unit.name: unit for unit in units}
-        return [
-            DuplicatePair(
-                unit_a=by_name["alpha_one"],
-                unit_b=by_name["betaOne"],
-                similarity=0.70,
-                method="semantic",
-            )
-        ]
+    vectors = _two_language_vectors()
+    # A mixed pair at 0.70: below python's gate, above javascript's.
+    vectors["alpha_one"] = [1.0, 0.0, 0.0, 0.0]
+    vectors["betaOne"] = [0.70, 0.0, float(np.sqrt(1.0 - 0.70**2)), 0.0]
 
     monkeypatch.setattr(
         analyzer_module,
@@ -788,9 +822,9 @@ def test_cross_language_pairs_require_opt_in_and_use_looser_gate(
         lambda _model: _profile_with_gates({"python": 0.90, "javascript": 0.60}),
     )
     monkeypatch.setattr(
-        analyzer_module,
-        "run_semantic_analysis",
-        _make_semantic_runner(duplicate_factory=mixed_duplicates),
+        semantic_module,
+        "get_model",
+        lambda *args, **kwargs: _FixedVectorModel(vectors),
     )
 
     base_config = {
@@ -798,17 +832,21 @@ def test_cross_language_pairs_require_opt_in_and_use_looser_gate(
         "run_semantic": True,
         "run_unused": False,
         "min_semantic_statements": 0,
+        "embedding_cache": False,
     }
     default_result = CodeAnalyzer(AnalyzerConfig(**base_config)).analyze(project)
-    assert default_result.semantic_duplicates == []
+    assert all(
+        duplicate.unit_a.language == duplicate.unit_b.language
+        for duplicate in default_result.semantic_duplicates
+    )
 
     # Opted in, the mixed pair is held to the looser of its two language gates:
     # 0.70 clears min(0.90, 0.60) but would fail the python gate alone.
     opted_result = CodeAnalyzer(AnalyzerConfig(cross_language=True, **base_config)).analyze(project)
-    assert [
-        (duplicate.unit_a.name, duplicate.unit_b.name)
+    assert frozenset({"alpha_one", "betaOne"}) in {
+        frozenset({duplicate.unit_a.name, duplicate.unit_b.name})
         for duplicate in opted_result.semantic_duplicates
-    ] == [("alpha_one", "betaOne")]
+    }
 
 
 def test_explicit_semantic_threshold_applies_flat_across_languages(

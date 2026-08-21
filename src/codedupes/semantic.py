@@ -12,7 +12,7 @@ import os
 import sys
 import textwrap
 import threading
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field
 from importlib import metadata as importlib_metadata
 from pathlib import Path
@@ -3319,6 +3319,7 @@ def find_semantic_duplicates(
     threshold: float,
     exclude_exact: set[tuple[str, str]] | None = None,
     cross_language: bool = False,
+    language_thresholds: Mapping[str, float] | None = None,
 ) -> list[DuplicatePair]:
     """Find semantic duplicate candidates, same-language by default.
 
@@ -3327,14 +3328,25 @@ def find_semantic_duplicates(
     unless ``cross_language`` opts in. Partitioning before the matrix multiply
     also avoids paying for cross-language pairs that the product never reports.
 
+    Each language group is scanned at its own calibrated gate, so one loosely
+    gated language cannot force every other language's scan down to the loosest
+    floor and build pairs that are discarded moments later. Cross-language pairs
+    are uncalibrated, so an opted-in mixed pair uses the looser of its two
+    language gates (recall-first); for a same-language pair that reduces to that
+    language's single gate.
+
     :param units: Candidate units in the same order as ``embeddings``.
     :param embeddings: Embedding matrix.
-    :param threshold: Minimum cosine similarity.
+    :param threshold: Minimum cosine similarity for languages without a
+        calibrated gate in ``language_thresholds``.
     :param exclude_exact: Pairs to exclude from semantic output.
     :param cross_language: Also generate pairs across languages (uncalibrated).
+    :param language_thresholds: Per-language duplicate gates; ``None`` applies
+        ``threshold`` flat to every language.
     :return: Similar pairs sorted by confidence.
     """
     exclude_exact = exclude_exact or set()
+    gates: Mapping[str, float] = language_thresholds or {}
     groups: dict[str, list[int]] = {}
     if cross_language:
         groups["*"] = list(range(len(units)))
@@ -3367,9 +3379,12 @@ def find_semantic_duplicates(
         )
 
     chunk_size = 500
-    for indices in groups.values():
-        group_embeddings = embeddings[indices]
+    for language, indices in groups.items():
+        group_threshold = gates.get(language, threshold)
         group_size = len(indices)
+        # A group covering every unit is already in matrix order, so fancy
+        # indexing would only copy the whole matrix for nothing.
+        group_embeddings = embeddings if group_size == len(units) else embeddings[indices]
         for group_i in range(0, group_size, chunk_size):
             end_i = min(group_i + chunk_size, group_size)
             chunk_embeddings = group_embeddings[group_i:end_i]
@@ -3385,10 +3400,15 @@ def find_semantic_duplicates(
 
                     # Threshold first so the common below-threshold pair skips
                     # further Python work. NaN/+inf still hit the finite guard.
-                    if sim < threshold or not np.isfinite(sim):
+                    if sim < group_threshold or not np.isfinite(sim):
                         continue
 
                     unit_b = units[indices[group_j]]
+                    if cross_language and sim < min(
+                        gates.get(unit_a.language, threshold),
+                        gates.get(unit_b.language, threshold),
+                    ):
+                        continue
                     if not _types_compatible(unit_a, unit_b):
                         continue
                     if unit_a.overlaps(unit_b):
@@ -3406,7 +3426,12 @@ def find_semantic_duplicates(
                     )
 
     duplicates.sort(key=lambda duplicate: duplicate.similarity, reverse=True)
-    logger.info(f"Found {len(duplicates)} semantic duplicates above threshold {threshold}")
+    gate_text = (
+        ", ".join(f"{language}={gate:.2f}" for language, gate in sorted(gates.items()))
+        if gates
+        else f"{threshold}"
+    )
+    logger.info(f"Found {len(duplicates)} semantic duplicates above gates {gate_text}")
     return duplicates
 
 
@@ -3900,6 +3925,7 @@ def run_semantic_analysis_with_identity(
     cache_scope: Path | None = None,
     strict_revision_cache: bool = False,
     cross_language: bool = False,
+    language_thresholds: Mapping[str, float] | None = None,
     overflow_report: list[SemanticContextOverflow] | None = None,
 ) -> tuple[np.ndarray, list[DuplicatePair], EmbeddingSpaceIdentity]:
     """Run semantic duplicate detection and return the corpus identity.
@@ -3907,9 +3933,9 @@ def run_semantic_analysis_with_identity(
     :param units: Code units to embed and compare.
     :param model_name: Model alias or identifier, defaults to ``DEFAULT_MODEL``.
     :param instruction_prefix: Optional instruction override for embedding inputs.
-    :param threshold: Minimum cosine similarity applied flat to every pair;
-        ``None`` falls back to the model profile's strictest calibrated gate,
-        not per-language gating. Use :class:`codedupes.analyzer.CodeAnalyzer`
+    :param threshold: Minimum cosine similarity for languages without an entry
+        in ``language_thresholds``; ``None`` falls back to the model profile's
+        strictest calibrated gate. Use :class:`codedupes.analyzer.CodeAnalyzer`
         for calibrated per-language duplicate gates.
     :param exclude_pairs: Ordered pair keys to omit from the semantic results.
     :param batch_size: Initial encode batch size, defaults to ``DEFAULT_BATCH_SIZE``.
@@ -3930,6 +3956,8 @@ def run_semantic_analysis_with_identity(
         requested revision label, defaults to ``False``.
     :param cross_language: Also generate duplicate pairs across languages
         (uncalibrated), defaults to ``False``.
+    :param language_thresholds: Per-language duplicate gates applied inside the
+        pairwise scan; ``None`` applies ``threshold`` flat to every language.
     :param overflow_report: When provided, over-context units are skipped instead
         of raising: they are excluded from ``embeddings`` and pair mining, and
         appended here in input order.
@@ -3970,6 +3998,7 @@ def run_semantic_analysis_with_identity(
         threshold=resolved_threshold,
         exclude_exact=exclude_pairs,
         cross_language=cross_language,
+        language_thresholds=language_thresholds,
     )
 
     return embeddings, duplicates, identity
@@ -3992,15 +4021,16 @@ def run_semantic_analysis(
     cache_scope: Path | None = None,
     strict_revision_cache: bool = False,
     cross_language: bool = False,
+    language_thresholds: Mapping[str, float] | None = None,
 ) -> tuple[np.ndarray, list[DuplicatePair]]:
     """Run full semantic duplicate detection.
 
     :param units: Code units to embed and compare.
     :param model_name: Model alias or identifier, defaults to ``DEFAULT_MODEL``.
     :param instruction_prefix: Optional instruction override for embedding inputs.
-    :param threshold: Minimum cosine similarity applied flat to every pair;
-        ``None`` falls back to the model profile's strictest calibrated gate,
-        not per-language gating. Use :class:`codedupes.analyzer.CodeAnalyzer`
+    :param threshold: Minimum cosine similarity for languages without an entry
+        in ``language_thresholds``; ``None`` falls back to the model profile's
+        strictest calibrated gate. Use :class:`codedupes.analyzer.CodeAnalyzer`
         for calibrated per-language duplicate gates.
     :param exclude_pairs: Ordered pair keys to omit from the semantic results.
     :param batch_size: Initial encode batch size, defaults to ``DEFAULT_BATCH_SIZE``.
@@ -4021,6 +4051,8 @@ def run_semantic_analysis(
         requested revision label, defaults to ``False``.
     :param cross_language: Also generate duplicate pairs across languages
         (uncalibrated), defaults to ``False``.
+    :param language_thresholds: Per-language duplicate gates applied inside the
+        pairwise scan; ``None`` applies ``threshold`` flat to every language.
     :return: ``(embeddings, duplicates)``; both are empty when ``units`` is empty.
     """
     embeddings, duplicates, _identity = run_semantic_analysis_with_identity(
@@ -4040,5 +4072,6 @@ def run_semantic_analysis(
         cache_scope=cache_scope,
         strict_revision_cache=strict_revision_cache,
         cross_language=cross_language,
+        language_thresholds=language_thresholds,
     )
     return embeddings, duplicates

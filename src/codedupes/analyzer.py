@@ -229,10 +229,10 @@ def _synthesize_hybrid_duplicates(
 ) -> tuple[list[HybridDuplicate], int]:
     """Build ranked hybrid duplicates from traditional and semantic outputs.
 
-    ``semantic_duplicates`` must already be gated (the analyzer applies the
-    per-language calibrated gates, or an explicit flat override, before
-    synthesis), so a recorded semantic similarity is itself the evidence that
-    the pair cleared its duplicate gate. Identifier overlap and statement-count
+    ``semantic_duplicates`` must already be gated (the pairwise scan applies the
+    per-language calibrated gates, or an explicit flat override), so a recorded
+    semantic similarity is itself the evidence that the pair cleared its
+    duplicate gate. Identifier overlap and statement-count
     similarity promote semantic-only pairs to ``semantic_high_confidence``;
     pairs without that corroboration remain visible as ``semantic_review``.
 
@@ -615,17 +615,17 @@ class CodeAnalyzer:
         semantic_candidates: list[CodeUnit],
         semantic_task: str,
     ) -> tuple[dict[str, float], float]:
-        """Resolve per-language duplicate gates and the embedding-scan floor.
+        """Resolve per-language duplicate gates and the scan fallback floor.
 
         An explicit ``config.semantic_threshold`` applies as one flat gate to
         every language. Otherwise each candidate language gets its calibrated
-        gate from the model profile, and the pairwise embedding scan runs at
-        the loosest (minimum) gate so no language's filter step is starved of
-        candidate pairs.
+        gate from the model profile, and the pairwise scan holds every group to
+        its own gate. The returned floor is the loosest gate, used only for a
+        language that reaches the scan without a calibrated entry.
 
         :param semantic_candidates: Units eligible for semantic comparison.
         :param semantic_task: Resolved task used to embed the candidates.
-        :return: Tuple of the per-language gate map and the scan floor.
+        :return: Tuple of the per-language gate map and the fallback floor.
         :raises ValueError: If the configured embedding context has no calibrated
             default threshold.
         """
@@ -660,7 +660,8 @@ class CodeAnalyzer:
         if gates:
             gate_text = ", ".join(f"{language}={gate:.2f}" for language, gate in gates.items())
             logger.info(
-                f"Per-language semantic duplicate gates: {gate_text} (scan floor {floor:.2f})"
+                f"Per-language semantic duplicate gates: {gate_text} "
+                f"(fallback {floor:.2f} for uncalibrated languages)"
             )
         return gates, floor
 
@@ -793,6 +794,7 @@ class CodeAnalyzer:
                     "model_name": self.config.model_name,
                     "instruction_prefix": self.config.instruction_prefix,
                     "threshold": semantic_scan_floor,
+                    "language_thresholds": semantic_gates,
                     "overflow_report": semantic_overflow,
                     "exclude_pairs": exclude,
                     "batch_size": self.config.batch_size,
@@ -851,31 +853,9 @@ class CodeAnalyzer:
                         semantic_candidates,
                     )
 
-            # Duplicate gates are calibrated within a language, so each pair is held
-            # to its own language's gate (the embedding scan ran at the loosest gate).
-            # Cross-language pairs are dropped unless cross_language opts in; those
-            # claims are uncalibrated, so an opted-in mixed pair uses the looser of
-            # its two language gates (recall-first). For a same-language pair the
-            # min() reduces to that language's single gate.
-            scan_pair_count = len(semantic_duplicates)
-            semantic_duplicates = [
-                duplicate
-                for duplicate in semantic_duplicates
-                if (
-                    self.config.cross_language
-                    or duplicate.unit_a.language == duplicate.unit_b.language
-                )
-                and duplicate.similarity
-                >= min(
-                    semantic_gates.get(duplicate.unit_a.language, semantic_scan_floor),
-                    semantic_gates.get(duplicate.unit_b.language, semantic_scan_floor),
-                )
-            ]
-            if scan_pair_count:
-                logger.info(
-                    f"Semantic duplicate gates kept {len(semantic_duplicates)} of "
-                    f"{scan_pair_count} scan pairs"
-                )
+            # Language partitioning and the per-language gates are applied inside
+            # the pairwise scan (see find_semantic_duplicates), so every pair that
+            # arrives here already cleared its own language's gate.
 
             if self.config.suppress_test_semantic_matches:
                 semantic_duplicates = [
