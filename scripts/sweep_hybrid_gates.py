@@ -92,7 +92,7 @@ def _run_sweep(
             if duplicate.similarity >= config.semantic_min
         ]
         hybrid: list[HybridDuplicate]
-        hybrid, _ = analyzer_module._synthesize_hybrid_duplicates(
+        hybrid = analyzer_module._synthesize_hybrid_duplicates(
             traditional_duplicates,
             gated_semantic,
             jaccard_threshold=traditional_threshold,

@@ -226,7 +226,7 @@ def _synthesize_hybrid_duplicates(
     jaccard_threshold: float,
     weak_identifier_jaccard_min: float = HYBRID_WEAK_JACCARD_MIN,
     statement_ratio_min: float = HYBRID_STATEMENT_RATIO_MIN,
-) -> tuple[list[HybridDuplicate], int]:
+) -> list[HybridDuplicate]:
     """Build ranked hybrid duplicates from traditional and semantic outputs.
 
     ``semantic_duplicates`` must already be gated (the pairwise scan applies the
@@ -243,10 +243,9 @@ def _synthesize_hybrid_duplicates(
         semantic-only candidate to high confidence.
     :param statement_ratio_min: Statement-count ratio needed to promote a
         semantic-only candidate to high confidence.
-    :return: Hybrid duplicates sorted by descending confidence, and the count of
-        candidate pairs that reached no tier (structurally zero since every
-        semantic-only pair falls back to ``semantic_review``; the calibration
-        sweeps still unpack it).
+    :return: Hybrid duplicates sorted by descending confidence. Every candidate
+        pair reaches a tier: semantic-only pairs without corroboration fall back
+        to ``semantic_review`` rather than being dropped.
     """
     pair_evidence: dict[tuple[str, str], dict[str, object]] = {}
 
@@ -364,8 +363,7 @@ def _synthesize_hybrid_duplicates(
         )
     )
 
-    filtered_raw_count = max(0, len(pair_evidence) - len(hybrid_duplicates))
-    return hybrid_duplicates, filtered_raw_count
+    return hybrid_duplicates
 
 
 @dataclass
@@ -901,7 +899,7 @@ class CodeAnalyzer:
         hybrid_duplicates: list[HybridDuplicate] = []
 
         if combined_mode:
-            hybrid_duplicates, _ = _synthesize_hybrid_duplicates(
+            hybrid_duplicates = _synthesize_hybrid_duplicates(
                 traditional_duplicates,
                 semantic_duplicates,
                 jaccard_threshold=self.config.jaccard_threshold,

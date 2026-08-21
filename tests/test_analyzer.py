@@ -1520,7 +1520,7 @@ def test_hybrid_synthesis_exact_only_included(tmp_path: Path) -> None:
     unit_b = make_code_unit(tmp_path, name="b", source="def b(y):\n    return y + 1\n", lineno=5)
     traditional = [DuplicatePair(unit_a=unit_a, unit_b=unit_b, similarity=1.0, method="ast_hash")]
 
-    hybrid, _ = analyzer_module._synthesize_hybrid_duplicates(
+    hybrid = analyzer_module._synthesize_hybrid_duplicates(
         traditional,
         [],
         jaccard_threshold=0.85,
@@ -1536,7 +1536,7 @@ def test_hybrid_synthesis_jaccard_only_included(tmp_path: Path) -> None:
     unit_b = make_code_unit(tmp_path, name="b", source="def b(y):\n    return y + 2\n", lineno=5)
     traditional = [DuplicatePair(unit_a=unit_a, unit_b=unit_b, similarity=0.9, method="jaccard")]
 
-    hybrid, _ = analyzer_module._synthesize_hybrid_duplicates(
+    hybrid = analyzer_module._synthesize_hybrid_duplicates(
         traditional,
         [],
         jaccard_threshold=0.85,
@@ -1553,7 +1553,7 @@ def test_hybrid_synthesis_hybrid_confirmed(tmp_path: Path) -> None:
     traditional = [DuplicatePair(unit_a=unit_a, unit_b=unit_b, similarity=0.88, method="jaccard")]
     semantic = [DuplicatePair(unit_a=unit_a, unit_b=unit_b, similarity=0.93, method="semantic")]
 
-    hybrid, _ = analyzer_module._synthesize_hybrid_duplicates(
+    hybrid = analyzer_module._synthesize_hybrid_duplicates(
         traditional,
         semantic,
         jaccard_threshold=0.85,
@@ -1577,7 +1577,7 @@ def test_hybrid_synthesis_semantic_only_corroboration_sets_tier(tmp_path: Path) 
     gated_semantic = [
         DuplicatePair(unit_a=unit_a, unit_b=unit_b, similarity=0.75, method="semantic")
     ]
-    hybrid, _ = analyzer_module._synthesize_hybrid_duplicates(
+    hybrid = analyzer_module._synthesize_hybrid_duplicates(
         [],
         gated_semantic,
         jaccard_threshold=0.85,
@@ -1603,7 +1603,7 @@ def test_hybrid_synthesis_semantic_only_corroboration_sets_tier(tmp_path: Path) 
             unit_a=weak_sources_a, unit_b=weak_sources_b, similarity=0.95, method="semantic"
         )
     ]
-    hybrid_weak, _ = analyzer_module._synthesize_hybrid_duplicates(
+    hybrid_weak = analyzer_module._synthesize_hybrid_duplicates(
         [],
         weak_semantic,
         jaccard_threshold=0.85,
@@ -1634,7 +1634,7 @@ def test_semantic_review_never_outranks_a_corroborated_pair(tmp_path: Path) -> N
         tmp_path, name="confirmed_b", source="def confirmed_b(y):\n    return y + 1\n", lineno=26
     )
 
-    hybrid, _ = analyzer_module._synthesize_hybrid_duplicates(
+    hybrid = analyzer_module._synthesize_hybrid_duplicates(
         [DuplicatePair(unit_a=confirmed_a, unit_b=confirmed_b, similarity=0.86, method="jaccard")],
         [
             DuplicatePair(unit_a=review_a, unit_b=review_b, similarity=0.97, method="semantic"),
@@ -1674,7 +1674,7 @@ def test_hybrid_synthesis_publishes_alpha_renamed_semantic_pair(tmp_path: Path) 
     )
     semantic = [DuplicatePair(unit_a=unit_a, unit_b=unit_b, similarity=0.91, method="semantic")]
 
-    hybrid, _ = analyzer_module._synthesize_hybrid_duplicates(
+    hybrid = analyzer_module._synthesize_hybrid_duplicates(
         [],
         semantic,
         jaccard_threshold=0.85,

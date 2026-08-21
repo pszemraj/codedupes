@@ -314,7 +314,7 @@ def _run_duplicate_sweep(
             for duplicate in result.semantic_duplicates
             if duplicate.similarity >= threshold
         ]
-        hybrid, _ = analyzer_module._synthesize_hybrid_duplicates(
+        hybrid = analyzer_module._synthesize_hybrid_duplicates(
             result.traditional_duplicates,
             gated_semantic,
             jaccard_threshold=DEFAULT_TRADITIONAL_THRESHOLD,
