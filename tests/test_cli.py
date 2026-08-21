@@ -898,6 +898,31 @@ def test_cli_show_all_prints_raw_sections(monkeypatch, tmp_path):
     assert "Semantic Duplicates (Raw" in result.output
 
 
+def test_cli_traditional_panel_label_is_language_neutral(monkeypatch, tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+    unit = _build_unit(tmp_path)
+    patch_cli_analyzer(
+        monkeypatch,
+        cli,
+        analyze_result=AnalysisResult(
+            units=[unit],
+            traditional_duplicates=[
+                DuplicatePair(unit_a=unit, unit_b=unit, similarity=1.0, method="token_hash")
+            ],
+            semantic_duplicates=[],
+            hybrid_duplicates=[],
+            potentially_unused=[],
+            analysis_mode="traditional",
+        ),
+    )
+
+    result = CliRunner().invoke(cli.cli, ["check", str(path), "--traditional-only"])
+    # Only Python parses to an AST here; the other backends fingerprint tokens.
+    assert "Traditional Duplicates (Structural/Token/Jaccard)" in result.output
+    assert "AST" not in result.output
+
+
 def test_cli_full_table_disables_truncation(monkeypatch, tmp_path):
     path = tmp_path / "sample.py"
     path.write_text("def entry():\n    return 1\n")

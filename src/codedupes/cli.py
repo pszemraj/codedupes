@@ -1427,7 +1427,7 @@ def check_command(
                 print_summary(result, mode="traditional")
                 print_duplicates(
                     result.traditional_duplicates,
-                    "Traditional Duplicates (AST/Token/Jaccard)",
+                    "Traditional Duplicates (Structural/Token/Jaccard)",
                     show_source=show_source,
                     max_items=table_max_items,
                 )
