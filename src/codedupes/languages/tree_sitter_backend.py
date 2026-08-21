@@ -1394,15 +1394,55 @@ class ECMAScriptBackend(TreeSitterBackend):
         return True
 
     @staticmethod
-    def _is_exported(node: Any, source: bytes, name: str) -> bool:
+    def _file_export_names(root_node: Any, source: bytes) -> frozenset[str]:
+        """Collect the local names a file exports by reference rather than inline.
+
+        ``export { alpha, beta as b }`` and ``export default alpha`` name units
+        declared elsewhere in the file, so those units have no export ancestor of
+        their own. Re-exports (``export { x } from "./other"``) name another
+        module's units and are ignored.
+
+        :param root_node: Root node of the parsed syntax tree.
+        :param source: Full file source bytes.
+        :return: Local names the file exports by reference.
+        """
+        names: set[str] = set()
+        for node in _walk(root_node):
+            if getattr(node, "type", "") != "export_statement":
+                continue
+            if _child_by_field(node, "source") is not None:
+                continue
+            for child in _children(node):
+                if getattr(child, "type", "") != "export_clause":
+                    continue
+                for specifier in _named_children(child):
+                    local = _stable_path(_node_text(source, _child_by_field(specifier, "name")))
+                    if local:
+                        names.add(local)
+            value = _child_by_field(node, "value")
+            if value is not None and getattr(value, "type", "") == "identifier":
+                local = _stable_path(_node_text(source, value))
+                if local:
+                    names.add(local)
+        return frozenset(names)
+
+    @staticmethod
+    def _is_exported(
+        node: Any,
+        source: bytes,
+        name: str,
+        exported_names: frozenset[str] = frozenset(),
+    ) -> bool:
         """Report whether a unit is reachable as a module export.
 
         :param node: Unit node whose ancestors are walked.
         :param source: Full file source bytes.
         :param name: Unit name relative to the module prefix.
+        :param exported_names: Top-level names the file exports by reference.
         :return: ``True`` when the unit is exported or assigned onto ``exports``.
         """
         current = node
+        crossed_function_body = False
         while current is not None:
             node_type = getattr(current, "type", "")
             if node_type == "export_statement":
@@ -1412,8 +1452,11 @@ class ECMAScriptBackend(TreeSitterBackend):
                 # exported function are local scope, not module exports. A
                 # class_body is deliberately not a boundary so members of an
                 # exported class stay exported.
+                crossed_function_body = True
                 break
             current = getattr(current, "parent", None)
+        if not crossed_function_body and name.split(".")[0] in exported_names:
+            return True
         return name.startswith(("exports.", "module.exports"))
 
     def _function_spec(
@@ -1421,12 +1464,14 @@ class ECMAScriptBackend(TreeSitterBackend):
         node: Any,
         source: bytes,
         prefix: str,
+        exported_names: frozenset[str] = frozenset(),
     ) -> UnitSpec | None:
         """Build a unit spec for one function declaration or function expression.
 
         :param node: Function node.
         :param source: Full file source bytes.
         :param prefix: Module prefix for qualified names.
+        :param exported_names: Top-level names the file exports by reference.
         :return: Unit spec, or ``None`` when the function has no body or stable name.
         """
         node_type = getattr(node, "type", "")
@@ -1472,7 +1517,12 @@ class ECMAScriptBackend(TreeSitterBackend):
             else:
                 return None
 
-        exported = self._is_exported(source_node, source, qualified_name.removeprefix(prefix + "."))
+        exported = self._is_exported(
+            source_node,
+            source,
+            qualified_name.removeprefix(prefix + "."),
+            exported_names,
+        )
         return UnitSpec(
             node=node,
             source_node=source_node,
@@ -1485,12 +1535,19 @@ class ECMAScriptBackend(TreeSitterBackend):
             is_exported=exported,
         )
 
-    def _class_spec(self, node: Any, source: bytes, prefix: str) -> UnitSpec | None:
+    def _class_spec(
+        self,
+        node: Any,
+        source: bytes,
+        prefix: str,
+        exported_names: frozenset[str] = frozenset(),
+    ) -> UnitSpec | None:
         """Build a unit spec for one class declaration or class expression.
 
         :param node: Class node.
         :param source: Full file source bytes.
         :param prefix: Module prefix for qualified names.
+        :param exported_names: Top-level names the file exports by reference.
         :return: Unit spec, or ``None`` when the class has no body or stable name.
         """
         node_type = getattr(node, "type", "")
@@ -1514,7 +1571,12 @@ class ECMAScriptBackend(TreeSitterBackend):
             qualified_name = _qualified(prefix, contextual_name)
         else:
             qualified_name = _qualified(prefix, *self._lexical_context(node, source), name)
-        exported = self._is_exported(source_node, source, qualified_name.removeprefix(prefix + "."))
+        exported = self._is_exported(
+            source_node,
+            source,
+            qualified_name.removeprefix(prefix + "."),
+            exported_names,
+        )
         return UnitSpec(
             node=node,
             source_node=source_node,
@@ -1527,12 +1589,19 @@ class ECMAScriptBackend(TreeSitterBackend):
             is_exported=exported,
         )
 
-    def _method_spec(self, node: Any, source: bytes, prefix: str) -> UnitSpec | None:
+    def _method_spec(
+        self,
+        node: Any,
+        source: bytes,
+        prefix: str,
+        exported_names: frozenset[str] = frozenset(),
+    ) -> UnitSpec | None:
         """Build a unit spec for one class or object-literal method definition.
 
         :param node: Method definition node.
         :param source: Full file source bytes.
         :param prefix: Module prefix for qualified names.
+        :param exported_names: Top-level names the file exports by reference.
         :return: Unit spec, or ``None`` when the method has no body, name, or container.
         """
         if _has_ancestor(node, {"ambient_declaration"}):
@@ -1547,7 +1616,7 @@ class ECMAScriptBackend(TreeSitterBackend):
         if not container:
             return None
         qualified_name = _qualified(prefix, container, name)
-        exported = self._is_exported(node, source, container)
+        exported = self._is_exported(node, source, container, exported_names)
         return UnitSpec(
             node=node,
             source_node=node,
@@ -1569,16 +1638,17 @@ class ECMAScriptBackend(TreeSitterBackend):
         :return: Unit specs for every nameable, body-bearing unit in the file.
         """
         prefix = _module_prefix(self.root, file_path, self.language)
+        exported_names = self._file_export_names(root_node, source)
         specs: list[UnitSpec] = []
         for node in _walk(root_node):
             node_type = getattr(node, "type", "")
             spec: UnitSpec | None = None
             if node_type in self.function_declarations | self.function_expressions:
-                spec = self._function_spec(node, source, prefix)
+                spec = self._function_spec(node, source, prefix, exported_names)
             elif node_type in self.class_declarations | self.class_expressions:
-                spec = self._class_spec(node, source, prefix)
+                spec = self._class_spec(node, source, prefix, exported_names)
             elif node_type in self.method_types:
-                spec = self._method_spec(node, source, prefix)
+                spec = self._method_spec(node, source, prefix, exported_names)
             if spec is not None:
                 specs.append(spec)
         return specs

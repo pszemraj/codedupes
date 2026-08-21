@@ -526,6 +526,32 @@ def test_javascript_export_marking_stops_at_function_boundaries(tmp_path: Path) 
     assert exported["sample.exports.legacy"] is True
 
 
+def test_javascript_export_clauses_mark_referenced_top_level_units(tmp_path: Path) -> None:
+    """Deferred export lists are the idiomatic barrel-file shape and must count."""
+    units = _extract(
+        tmp_path,
+        "sample.js",
+        """
+        function alpha(value) { return value + 1; }
+        const beta = (value) => value + 2;
+        class Gamma { run(value) { return value + 3; } }
+        function delta(value) { return value + 4; }
+        function omega(value) { return value + 5; }
+
+        export { alpha, beta as renamed, Gamma };
+        export default delta;
+        """,
+    )
+    exported = {unit.qualified_name: unit.is_exported for unit in units}
+
+    assert exported["sample.alpha"] is True
+    assert exported["sample.beta"] is True
+    assert exported["sample.Gamma"] is True
+    assert exported["sample.Gamma.run"] is True
+    assert exported["sample.delta"] is True
+    assert exported["sample.omega"] is False
+
+
 def test_typescript_excludes_signatures_and_ambient_declarations(tmp_path: Path) -> None:
     units = _extract(
         tmp_path,
