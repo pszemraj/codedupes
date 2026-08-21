@@ -1434,7 +1434,7 @@ def test_hybrid_synthesis_hybrid_confirmed(tmp_path: Path) -> None:
     assert hybrid[0].confidence == pytest.approx((0.5 * 0.93) + (0.5 * 0.88))
 
 
-def test_hybrid_synthesis_semantic_only_guards_enforced(tmp_path: Path) -> None:
+def test_hybrid_synthesis_semantic_only_corroboration_sets_tier(tmp_path: Path) -> None:
     unit_a = make_code_unit(
         tmp_path, name="a", source="def alpha(v):\n    z = v + 1\n    return z\n", lineno=1
     )
@@ -1442,8 +1442,8 @@ def test_hybrid_synthesis_semantic_only_guards_enforced(tmp_path: Path) -> None:
         tmp_path, name="b", source="def beta(v):\n    q = v + 2\n    return q\n", lineno=6
     )
 
-    # Semantic pairs arrive pre-gated, so any similarity the upstream gate
-    # accepted is admitted once identifier and statement-ratio guards pass.
+    # Semantic pairs arrive pre-gated. Corroborating lexical/size evidence
+    # promotes them to the high-confidence tier.
     gated_semantic = [
         DuplicatePair(unit_a=unit_a, unit_b=unit_b, similarity=0.75, method="semantic")
     ]
@@ -1479,8 +1479,50 @@ def test_hybrid_synthesis_semantic_only_guards_enforced(tmp_path: Path) -> None:
         weak_semantic,
         jaccard_threshold=0.85,
     )
-    assert hybrid_weak == []
-    assert filtered_weak == 1
+    assert len(hybrid_weak) == 1
+    assert hybrid_weak[0].tier == "semantic_review"
+    assert hybrid_weak[0].confidence == pytest.approx(0.95)
+    assert hybrid_weak[0].weak_identifier_jaccard == 0.0
+    assert hybrid_weak[0].statement_count_ratio == pytest.approx(0.25)
+    assert filtered_weak == 0
+
+
+def test_hybrid_synthesis_publishes_alpha_renamed_semantic_pair(tmp_path: Path) -> None:
+    unit_a = make_code_unit(
+        tmp_path,
+        name="collect_total",
+        source=(
+            "def collect_total(records):\n"
+            "    accepted = [record for record in records if record.enabled]\n"
+            "    amount = sum(record.value for record in accepted)\n"
+            "    return amount\n"
+        ),
+        lineno=1,
+    )
+    unit_b = make_code_unit(
+        tmp_path,
+        name="measure_sum",
+        source=(
+            "def measure_sum(entries):\n"
+            "    chosen = [entry for entry in entries if entry.ready]\n"
+            "    result = sum(entry.weight for entry in chosen)\n"
+            "    return result\n"
+        ),
+        lineno=8,
+    )
+    semantic = [DuplicatePair(unit_a=unit_a, unit_b=unit_b, similarity=0.91, method="semantic")]
+
+    hybrid, filtered = analyzer_module._synthesize_hybrid_duplicates(
+        [],
+        semantic,
+        jaccard_threshold=0.85,
+    )
+
+    assert len(hybrid) == 1
+    assert hybrid[0].tier == "semantic_review"
+    assert hybrid[0].weak_identifier_jaccard == 0.0
+    assert hybrid[0].statement_count_ratio == 1.0
+    assert filtered == 0
 
 
 def test_mixed_mode_semantic_failure_still_builds_hybrid_from_traditional(

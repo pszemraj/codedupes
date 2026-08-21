@@ -144,6 +144,7 @@ HybridTier = Literal[
     "traditional_near",
     "hybrid_confirmed",
     "semantic_high_confidence",
+    "semantic_review",
 ]
 
 AnalysisMode = Literal["combined", "traditional", "semantic", "none"]

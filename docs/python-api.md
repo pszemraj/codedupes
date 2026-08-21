@@ -141,7 +141,9 @@ quiet_dependency_loggers()  # or quiet_dependency_loggers(logging.ERROR)
 ## Key Result Types
 
 - `AnalysisResult.units`: extracted functions, methods, and classes
-- `AnalysisResult.hybrid_duplicates`: synthesized default duplicate candidates
+- `AnalysisResult.hybrid_duplicates`: synthesized default duplicate candidates;
+  gated semantic-only matches use `semantic_high_confidence` when lexical and
+  statement-count evidence corroborate them, otherwise `semantic_review`
 - `AnalysisResult.traditional_duplicates`: raw traditional duplicates (diagnostics)
 - `AnalysisResult.semantic_duplicates`: raw semantic duplicates (diagnostics)
 - `AnalysisResult.potentially_unused`: Python-only heuristic unused candidates

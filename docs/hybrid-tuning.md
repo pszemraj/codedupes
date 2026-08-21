@@ -1,6 +1,6 @@
-# Hybrid Gate Tuning
+# Hybrid Confidence Tuning
 
-Tune hybrid semantic-only gates for high precision while preserving recall on known good pairs.
+Tune how gated semantic-only matches are divided between high-confidence and review tiers.
 
 ## Guardrail corpus and labels
 
@@ -16,7 +16,7 @@ Use it as a guardrail dataset, not a benchmark.
 ## Recommended process
 
 1. Run the sweep harness on the tracked synthetic corpus.
-2. Select top candidate rows by `f1`, then prefer higher precision if tied.
+2. Rank rows by the high-confidence subset's `f1`, then inspect the separately reported review and total-published counts. Corroboration thresholds must not suppress already-gated semantic matches.
 3. Re-validate selected thresholds on at least one real repository before changing defaults.
 4. Keep labels/corpus changes explicit in review.
 
@@ -53,7 +53,7 @@ python scripts/sweep_hybrid_gates.py \
   --statement-ratio-grid 0.25,0.35,0.45
 ```
 
-The harness uses the same analyzer synthesis logic and model/revision defaults as the CLI, so sweep results transfer directly to production gate values.
+The harness uses the same analyzer synthesis logic and model/revision defaults as the CLI. Identifier and statement-ratio grid values change tier assignment only: every pair that already passed the selected semantic gate remains in final output.
 Each `--semantic-grid` value emulates the per-language duplicate gate the analyzer applies to semantic pairs before hybrid synthesis (there is no separate synthesis-time semantic minimum); the production per-language gate values are listed in [Analysis defaults](analysis-defaults.md).
 
 ## Semantic threshold sweep (model profiles)

@@ -105,10 +105,10 @@ AnalyzerConfig(
 )
 ```
 
-## Hybrid Synthesis Gate Defaults
+## Hybrid Synthesis Confidence Defaults
 
 - semantic evidence: the per-language duplicate gate above (applied before synthesis; there is no separate semantic-only minimum)
 - weak identifier jaccard minimum: `0.20`
 - statement ratio minimum: `0.35`
 
-A gated semantic-only pair must additionally pass the identifier-overlap and statement-ratio guards to reach the `semantic_high_confidence` tier. Tune the guards with the [hybrid gate workflow](hybrid-tuning.md).
+A semantic-only pair has already passed its language's duplicate gate, so it remains visible in default output. Identifier overlap and a comparable statement count promote it to `semantic_high_confidence`; otherwise it is labeled `semantic_review`. These corroborators affect ranking and review priority, not admission. Tune them with the [hybrid gate workflow](hybrid-tuning.md).

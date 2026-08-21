@@ -74,9 +74,12 @@ Each duplicate entry includes:
 
 `hybrid_duplicates` entries include:
 
-- `tier`
+- `tier` (`exact`, `traditional_near`, `hybrid_confirmed`,
+  `semantic_high_confidence`, or `semantic_review`)
 - `confidence`
 - evidence fields (`has_exact`, `semantic_similarity`, `jaccard_similarity`, etc.)
+
+`semantic_review` means the pair cleared its calibrated semantic duplicate gate but lacks the lexical or statement-count corroboration used for the high-confidence tier. It remains visible because alpha-renaming and structural translation often remove exactly that lexical overlap.
 
 Raw duplicate entries include:
 

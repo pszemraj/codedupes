@@ -230,14 +230,17 @@ def _synthesize_hybrid_duplicates(
     ``semantic_duplicates`` must already be gated (the analyzer applies the
     per-language calibrated gates, or an explicit flat override, before
     synthesis), so a recorded semantic similarity is itself the evidence that
-    the pair cleared its duplicate gate. Semantic-only pairs additionally need
-    identifier-overlap and statement-ratio corroboration.
+    the pair cleared its duplicate gate. Identifier overlap and statement-count
+    similarity promote semantic-only pairs to ``semantic_high_confidence``;
+    pairs without that corroboration remain visible as ``semantic_review``.
 
     :param traditional_duplicates: Traditional duplicate pairs (exact + Jaccard).
     :param semantic_duplicates: Gated semantic duplicate pairs.
     :param jaccard_threshold: Minimum Jaccard similarity used for hybrid tiering.
-    :param weak_identifier_jaccard_min: Minimum identifier overlap for semantic-only candidates.
-    :param statement_ratio_min: Minimum statement-count ratio for semantic-only candidates.
+    :param weak_identifier_jaccard_min: Identifier overlap needed to promote a
+        semantic-only candidate to high confidence.
+    :param statement_ratio_min: Statement-count ratio needed to promote a
+        semantic-only candidate to high confidence.
     :return: Tuple of sorted hybrid duplicates and number filtered pairs.
     """
     pair_evidence: dict[tuple[str, str], dict[str, object]] = {}
@@ -314,6 +317,9 @@ def _synthesize_hybrid_duplicates(
             ):
                 tier = "semantic_high_confidence"
                 confidence = 0.45 + (0.55 * semantic_sim)
+            else:
+                tier = "semantic_review"
+                confidence = semantic_sim
 
         if tier is None or confidence is None:
             continue

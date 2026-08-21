@@ -1,4 +1,4 @@
-"""Sweep hybrid semantic-only gate thresholds against a labeled synthetic corpus."""
+"""Sweep hybrid semantic-only confidence thresholds on a labeled corpus."""
 
 from __future__ import annotations
 
@@ -35,7 +35,7 @@ except ImportError:
 
 @dataclass(frozen=True)
 class GateConfig:
-    """Threshold configuration for semantic-only hybrid gating.
+    """Threshold configuration for semantic-only hybrid confidence tiering.
 
     ``semantic_min`` emulates the per-language duplicate gate the analyzer
     applies to semantic pairs before hybrid synthesis; the other two values are
@@ -49,10 +49,12 @@ class GateConfig:
 
 @dataclass(frozen=True)
 class SweepRow:
-    """One evaluated gate row."""
+    """One evaluated confidence-tier row."""
 
     config: GateConfig
-    predicted: int
+    published: int
+    review: int
+    high_confidence: int
     tp: int
     fp: int
     fn: int
@@ -97,12 +99,20 @@ def _run_sweep(
             weak_identifier_jaccard_min=config.weak_identifier_jaccard_min,
             statement_ratio_min=config.statement_ratio_min,
         )
-        predicted_pairs = {ordered_pair_key(item.unit_a, item.unit_b) for item in hybrid}
-        tp, fp, fn, precision, recall, f1 = metrics(predicted_pairs, positive_pairs)
+        published_pairs = {ordered_pair_key(item.unit_a, item.unit_b) for item in hybrid}
+        review_pairs = {
+            ordered_pair_key(item.unit_a, item.unit_b)
+            for item in hybrid
+            if item.tier == "semantic_review"
+        }
+        high_confidence_pairs = published_pairs - review_pairs
+        tp, fp, fn, precision, recall, f1 = metrics(high_confidence_pairs, positive_pairs)
         rows.append(
             SweepRow(
                 config=config,
-                predicted=len(predicted_pairs),
+                published=len(published_pairs),
+                review=len(review_pairs),
+                high_confidence=len(high_confidence_pairs),
                 tp=tp,
                 fp=fp,
                 fn=fn,
@@ -122,7 +132,8 @@ def _print_rows(rows: list[SweepRow], *, top_n: int) -> None:
         print(
             f"{idx:02d}. f1={row.f1:.3f} precision={row.precision:.3f} "
             f"recall={row.recall:.3f} tp={row.tp} fp={row.fp} fn={row.fn} "
-            f"pred={row.predicted} "
+            f"high_conf={row.high_confidence} review={row.review} "
+            f"published={row.published} "
             f"semantic_min={row.config.semantic_min:.3f} "
             f"weak_id_jaccard_min={row.config.weak_identifier_jaccard_min:.3f} "
             f"statement_ratio_min={row.config.statement_ratio_min:.3f}"
@@ -132,7 +143,9 @@ def _print_rows(rows: list[SweepRow], *, top_n: int) -> None:
 def main() -> int:
     """Entry point."""
     parser = argparse.ArgumentParser(
-        description="Sweep hybrid semantic-only gate thresholds on a labeled synthetic corpus."
+        description=(
+            "Sweep hybrid semantic-only confidence thresholds on a labeled synthetic corpus."
+        )
     )
     add_common_sweep_arguments(parser)
     parser.add_argument(
@@ -247,7 +260,7 @@ def main() -> int:
         grid=grid,
     )
 
-    print("Hybrid gate sweep (synthetic corpus guardrail)")
+    print("Hybrid confidence sweep (synthetic corpus guardrail)")
     print(f"Corpus: {args.corpus_path}")
     print(f"Labels: {args.labels_path}")
     print(f"Units extracted: {len(result.units)}")
@@ -257,7 +270,7 @@ def main() -> int:
         f"semantic={len(result.semantic_duplicates)}"
     )
     print(
-        "Current guard defaults: "
+        "Current confidence defaults: "
         f"weak_id_jaccard_min={baseline['weak_min']:.3f} "
         f"statement_ratio_min={baseline['ratio_min']:.3f} "
         "(semantic_min rows emulate the analyzer's per-language duplicate gate)"
