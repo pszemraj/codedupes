@@ -3521,7 +3521,8 @@ def _find_similar_to_query_unlocked(
             context = ", ".join(uncalibrated_reasons)
             raise ValueError(
                 f"The default search threshold is not calibrated for {context}; "
-                "provide threshold explicitly."
+                "pass an explicit threshold (CodeAnalyzer.search(threshold=...), "
+                "find_similar_to_query(threshold=...), or --semantic-threshold)."
             )
         resolved_threshold = get_default_search_threshold(model_name)
     else:

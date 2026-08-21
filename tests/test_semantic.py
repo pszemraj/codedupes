@@ -422,7 +422,7 @@ def test_uncalibrated_search_context_requires_explicit_threshold(
         semantic_task=kwargs.get("semantic_task", semantic.DEFAULT_SEARCH_SEMANTIC_TASK),
     )
 
-    with pytest.raises(ValueError, match="provide threshold explicitly"):
+    with pytest.raises(ValueError, match=r"find_similar_to_query\(threshold=\.\.\.\)"):
         find_similar_to_query(
             "find addition",
             units,

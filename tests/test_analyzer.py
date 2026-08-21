@@ -1145,8 +1145,43 @@ def test_embeddinggemma_search_after_analyze_requires_explicit_threshold(
     )
     analyzer.analyze(project)
 
-    with pytest.raises(ValueError, match="provide threshold explicitly"):
+    with pytest.raises(ValueError, match=r"search\(threshold=\.\.\.\)"):
         analyzer.search("entry")
+
+
+def test_search_threshold_argument_overrides_the_config_for_one_call(
+    tmp_path: Path, monkeypatch
+) -> None:
+    project = create_project(tmp_path, "def entry(x):\n    return x + 1\n")
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(
+        analyzer_module,
+        "run_semantic_analysis",
+        _make_semantic_runner(),
+    )
+    monkeypatch.setattr(
+        semantic_module,
+        "find_similar_to_query",
+        _capture_query_runner(captured),
+    )
+
+    # The per-call threshold must not disturb the calibrated per-language
+    # duplicate gates, which config.semantic_threshold would flatten.
+    analyzer = CodeAnalyzer(
+        AnalyzerConfig(
+            run_traditional=False,
+            run_semantic=True,
+            run_unused=False,
+            min_semantic_statements=0,
+            model_name="embeddinggemma-300m",
+            embedding_cache=False,
+        )
+    )
+    analyzer.analyze(project)
+    analyzer.search("entry", threshold=0.31)
+
+    assert analyzer.config.semantic_threshold is None
+    assert captured["query_threshold"] == 0.31
 
 
 def test_search_threshold_defaults_to_none_and_honors_explicit_config(

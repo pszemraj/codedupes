@@ -988,19 +988,30 @@ class CodeAnalyzer:
             semantic_candidates = self._drop_over_context_units(overflow, semantic_candidates)
         return len(semantic_candidates)
 
-    def search(self, query: str, top_k: int = 10) -> list[tuple[CodeUnit, float]]:
+    def search(
+        self,
+        query: str,
+        top_k: int = 10,
+        threshold: float | None = None,
+    ) -> list[tuple[CodeUnit, float]]:
         """
         Search for code units matching a natural language query.
 
         Must run index() (or analyze() with semantic analysis enabled) first to
-        compute embeddings. Any non-``None`` ``config.semantic_threshold``
-        applies to search as well, so leave it ``None`` (do not pre-resolve a
-        duplicate-detection default into it) to get the model profile search
-        default, which is far looser because query-to-code similarity runs well
-        below code-to-code similarity.
+        compute embeddings. The search floor is ``threshold`` when given, else
+        ``config.semantic_threshold``, else the model profile's search default
+        (far looser than a duplicate gate, because query-to-code similarity runs
+        well below code-to-code similarity). Prefer ``threshold`` over setting
+        ``config.semantic_threshold``: the latter also replaces every calibrated
+        per-language duplicate gate with one flat value.
+
+        Searching after :meth:`analyze` reuses the duplicate-detection task, for
+        which no search default is calibrated on prompt-sensitive models, so
+        those combinations require ``threshold``.
 
         :param query: Search query string.
         :param top_k: Maximum results to return.
+        :param threshold: Minimum cosine similarity for this call only.
         :return: List of code units and cosine scores.
         """
         if self._units is None or self._embeddings is None:
@@ -1025,7 +1036,7 @@ class CodeAnalyzer:
             top_k=top_k,
             revision=self.config.model_revision,
             trust_remote_code=self.config.trust_remote_code,
-            threshold=self.config.semantic_threshold,
+            threshold=threshold if threshold is not None else self.config.semantic_threshold,
             semantic_task=self._resolved_search_semantic_task,
             device=self.config.device,
             mps_fallback=self.config.mps_fallback,
