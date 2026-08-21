@@ -16,6 +16,25 @@ from codedupes.pairs import ordered_pair_key
 
 logger = logging.getLogger(__name__)
 
+# dir(builtins) rather than dir(__builtins__): the latter is a plain dict
+# inside imported modules, so it would filter dict methods instead of
+# builtin names.
+_IGNORED_IDENTIFIERS = frozenset(keyword.kwlist) | frozenset(dir(builtins))
+
+
+def _block_kind(unit_type: CodeUnitType) -> str:
+    """Map a unit type to its comparison-blocking kind.
+
+    Functions and methods share a kind so that code moved between module level
+    and a class body stays comparable, matching semantic pairing.
+
+    :param unit_type: Unit type to classify.
+    :return: Blocking-kind label.
+    """
+    if unit_type in (CodeUnitType.FUNCTION, CodeUnitType.METHOD):
+        return "callable"
+    return unit_type.name.lower()
+
 
 def _find_exact_duplicates(
     units: list[CodeUnit], hash_attr: str, method: str
@@ -27,15 +46,16 @@ def _find_exact_duplicates(
     :param method: Duplicate classification label.
     :return: Exact duplicate pairs for the selected hash field.
     """
-    by_hash: dict[tuple[str, CodeUnitType, str], list[CodeUnit]] = defaultdict(list)
+    by_hash: dict[tuple[str, str, str], list[CodeUnit]] = defaultdict(list)
 
     for unit in units:
         value = getattr(unit, hash_attr, None)
         if value:
             # Exact structural/token equality is intentionally same-language and
-            # same-unit-kind. A C function and Rust function cannot become an
-            # "exact duplicate" merely because their canonical token streams align.
-            by_hash[(unit.language, unit.unit_type, value)].append(unit)
+            # same-blocking-kind. A C function and Rust function cannot become an
+            # "exact duplicate" merely because their canonical token streams
+            # align, but a function copied into a class as a method can.
+            by_hash[(unit.language, _block_kind(unit.unit_type), value)].append(unit)
 
     duplicates = []
     for group in by_hash.values():
@@ -53,8 +73,8 @@ def find_exact_pair_keys(units: list[CodeUnit]) -> set[tuple[str, str]]:
     """Return ordered uid pair keys for every exact-duplicate pair.
 
     Uses the same predicate as :func:`run_traditional_analysis` exact detection:
-    two same-language, same-kind units are exact duplicates when they share
-    a structural or token fingerprint.
+    two same-language units of the same blocking kind are exact duplicates when
+    they share a structural or token fingerprint.
 
     :param units: Candidate units to compare.
     :return: Ordered uid pair keys covering all exact-duplicate pairs.
@@ -106,15 +126,11 @@ def _normalize_identifiers(identifiers: set[str]) -> set[str]:
     :param identifiers: Raw identifier names.
     :return: Normalized filtered identifiers.
     """
-    # dir(builtins) rather than dir(__builtins__): the latter is a plain dict
-    # inside imported modules, so it would filter dict methods instead of
-    # builtin names.
-    ignored = set(keyword.kwlist) | set(dir(builtins))
     normalized = set()
     for ident in identifiers:
         if not ident:
             continue
-        if ident in ignored:
+        if ident in _IGNORED_IDENTIFIERS:
             continue
         if ident.isdigit():
             continue
@@ -141,11 +157,11 @@ def find_near_duplicates_jaccard(
         for unit in units
     }
 
-    # Candidate blocking removes meaningless mixed-language/type comparisons
-    # before the quadratic pair loop.
-    groups: dict[tuple[str, CodeUnitType], list[CodeUnit]] = defaultdict(list)
+    # Candidate blocking removes meaningless mixed-language/kind comparisons
+    # before the quadratic pair loop; functions and methods share a block.
+    groups: dict[tuple[str, str], list[CodeUnit]] = defaultdict(list)
     for unit in units:
-        groups[(unit.language, unit.unit_type)].append(unit)
+        groups[(unit.language, _block_kind(unit.unit_type))].append(unit)
 
     duplicates = []
     for group in groups.values():

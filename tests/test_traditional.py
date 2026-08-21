@@ -33,6 +33,64 @@ def test_exact_duplicates_via_ast_hash(tmp_path: Path) -> None:
     assert methods == {"ast_hash"}
 
 
+def test_exact_duplicates_across_function_and_method(tmp_path: Path) -> None:
+    source = dedent(
+        """
+        def render_summary(rows, limit, header):
+            lines = [header]
+            for row in rows[:limit]:
+                lines.append(str(row))
+            return "\\n".join(lines)
+
+        class Report:
+            @staticmethod
+            def render_summary(rows, limit, header):
+                lines = [header]
+                for row in rows[:limit]:
+                    lines.append(str(row))
+                return "\\n".join(lines)
+        """
+    ).strip()
+    units = extract_units(tmp_path, source, include_private=True)
+
+    exact, _near, _ = run_traditional_analysis(units, jaccard_threshold=0.85)
+
+    # A function copied verbatim into a class body must stay visible to exact
+    # detection: functions and methods share a blocking kind, matching semantic
+    # pairing.
+    pairs = {
+        tuple(sorted((pair.unit_a.qualified_name, pair.unit_b.qualified_name))) for pair in exact
+    }
+    assert ("sample.Report.render_summary", "sample.render_summary") in pairs
+
+
+def test_near_duplicates_across_function_and_method(tmp_path: Path) -> None:
+    source = dedent(
+        """
+        def collect_totals(entries, bucket, scale):
+            totals = {}
+            for entry in entries:
+                totals[entry.bucket] = totals.get(entry.bucket, 0) + entry.value * scale
+            return totals
+
+        class Aggregator:
+            def collect_totals(self, entries, bucket, scale):
+                totals = {}
+                for entry in entries:
+                    totals[entry.bucket] = totals.get(entry.bucket, 0) + entry.value * scale
+                return totals
+        """
+    ).strip()
+    units = extract_units(tmp_path, source, include_private=True)
+
+    _exact, near, _ = run_traditional_analysis(units, jaccard_threshold=0.8)
+
+    pairs = {
+        tuple(sorted((pair.unit_a.qualified_name, pair.unit_b.qualified_name))) for pair in near
+    }
+    assert ("sample.Aggregator.collect_totals", "sample.collect_totals") in pairs
+
+
 def test_near_duplicates_threshold_boundary(tmp_path: Path) -> None:
     source = dedent(
         """
