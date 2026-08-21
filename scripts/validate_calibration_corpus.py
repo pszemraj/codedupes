@@ -21,7 +21,8 @@ from typing import Any
 from codedupes.analyzer import DEFAULT_SEMANTIC_UNIT_TYPES, AnalyzerConfig, CodeAnalyzer
 from codedupes.constants import DEFAULT_MIN_SEMANTIC_STATEMENTS
 from codedupes.extractor import DEFAULT_EXCLUDE_PATTERNS
-from codedupes.models import CodeUnit, ExtractionDiagnostic
+from codedupes.models import CodeUnit, DuplicatePair, ExtractionDiagnostic
+from codedupes.pairs import ordered_pair_key
 from codedupes.semantic import get_code_unit_statement_count
 
 try:
@@ -190,6 +191,30 @@ def _validate_labels(
     return counts
 
 
+def _validate_deterministic_coverage(
+    traditional_duplicates: list[DuplicatePair],
+    positive_pairs: set[tuple[str, str]],
+    failures: list[str],
+) -> None:
+    """Require every deterministic duplicate the traditional tier finds to be labeled.
+
+    The clone categories are meant to partition the corpus's deterministic
+    relations, so an exact/near pair that no label claims is an unmeasured
+    decision: it silently becomes a false positive in every sweep.
+
+    :param list[DuplicatePair] traditional_duplicates: Exact and near pairs found deterministically.
+    :param set[tuple[str, str]] positive_pairs: Ordered uid keys of all labeled positive pairs.
+    :param list[str] failures: Mutable failure sink.
+    :return None: ``None``.
+    """
+    for duplicate in traditional_duplicates:
+        if ordered_pair_key(duplicate.unit_a, duplicate.unit_b) not in positive_pairs:
+            failures.append(
+                f"unlabeled deterministic pair ({duplicate.method}): "
+                f"{_pair_text(duplicate.unit_a, duplicate.unit_b)}"
+            )
+
+
 def _validate_probes(
     units: list[CodeUnit],
     probes: list[dict[str, Any]],
@@ -330,10 +355,22 @@ def main() -> int:
         if unit.unit_type.name.lower() in eligible_types
         and get_code_unit_statement_count(unit) >= args.min_statements
     }
-    positive_pairs = build_positive_pairs(result.units, labels)
-    scoreable_pairs = {
-        pair for pair in positive_pairs if pair[0] in candidate_uids and pair[1] in candidate_uids
-    }
+    # ``_validate_labels`` already recorded any unresolvable spec; rebuilding the
+    # pair set must not abort the run, or one renamed corpus symbol replaces the
+    # whole failure report with a traceback.
+    coverage: tuple[int, int] | None = None
+    try:
+        positive_pairs = build_positive_pairs(result.units, labels)
+    except ValueError as exc:
+        failures.append(f"cannot build positive pairs: {exc}")
+    else:
+        scoreable_pairs = {
+            pair
+            for pair in positive_pairs
+            if pair[0] in candidate_uids and pair[1] in candidate_uids
+        }
+        coverage = (len(scoreable_pairs), len(positive_pairs))
+        _validate_deterministic_coverage(result.traditional_duplicates, positive_pairs, failures)
 
     probe_coverage: tuple[int, int] | None = None
     if args.search_probes_path is not None:
@@ -349,11 +386,16 @@ def main() -> int:
     for category in CATEGORY_NAMES:
         if category in counts:
             print(f"  {category}: {counts[category]} labeled pairs")
-    print(f"  negative_controls: {len(labels.get('negative_controls', []))} pairs")
-    print(
-        f"  production candidate coverage (min statements {args.min_statements}): "
-        f"{len(scoreable_pairs)}/{len(positive_pairs)} labeled pairs"
-    )
+    negative_groups = labels.get("negative_controls", [])
+    negative_pairs = sum(len(group) * (len(group) - 1) // 2 for group in negative_groups)
+    print(f"  negative_controls: {len(negative_groups)} groups ({negative_pairs} pairs)")
+    print(f"  deterministic pairs found: {len(result.traditional_duplicates)}")
+    if coverage is not None:
+        scoreable_count, positive_count = coverage
+        print(
+            f"  production candidate coverage (min statements {args.min_statements}): "
+            f"{scoreable_count}/{positive_count} labeled pairs"
+        )
     if probe_coverage is not None:
         total_targets, scoreable_targets = probe_coverage
         print(f"  production search-target coverage: {scoreable_targets}/{total_targets}")
