@@ -1,4 +1,4 @@
-"""Calibration-manifest regression coverage for the semantic threshold sweep."""
+"""Regression coverage for sweep-script manifests and row ranking."""
 
 from __future__ import annotations
 
@@ -15,6 +15,8 @@ from codedupes.models import CodeUnit, CodeUnitType
 from codedupes.semantic import EmbeddingSpaceIdentity
 from codedupes.semantic_profiles import resolve_model_profile
 from scripts.sweep_common import add_common_sweep_arguments
+from scripts.sweep_hybrid_gates import GateConfig
+from scripts.sweep_hybrid_gates import _run_sweep as _run_hybrid_gate_sweep
 from scripts.sweep_semantic_thresholds import _run_duplicate_sweep
 
 PINNED_COMMIT = "a" * 40
@@ -108,3 +110,35 @@ def test_common_sweep_defaults_match_production_candidate_policy() -> None:
     add_common_sweep_arguments(parser)
 
     assert parser.parse_args([]).min_statements == DEFAULT_MIN_SEMANTIC_STATEMENTS
+
+
+def test_hybrid_gate_ties_resolve_to_the_loosest_gate_not_grid_order() -> None:
+    """Equal-metric hybrid rows must rank recall-first, like the semantic sweep.
+
+    Without an explicit tiebreak the winner is whichever configuration
+    ``itertools.product`` happened to emit first, so a grid reordering silently
+    changes the recommended gate.
+    """
+    # Deliberately ordered strictest-first so grid order and the policy disagree.
+    grid = [
+        GateConfig(0.92, 0.30, 0.55),
+        GateConfig(0.92, 0.10, 0.20),
+        GateConfig(0.68, 0.30, 0.55),
+        GateConfig(0.68, 0.10, 0.20),
+    ]
+
+    rows, _ = _run_hybrid_gate_sweep(
+        traditional_duplicates=[],
+        semantic_duplicates=[],
+        positive_pairs=set(),
+        traditional_threshold=0.8,
+        grid=grid,
+    )
+
+    assert {(row.f1, row.precision, row.recall, row.fp) for row in rows} == {(0.0, 0.0, 0.0, 0)}
+    assert [row.config for row in rows] == [
+        GateConfig(0.68, 0.10, 0.20),
+        GateConfig(0.68, 0.30, 0.55),
+        GateConfig(0.92, 0.10, 0.20),
+        GateConfig(0.92, 0.30, 0.55),
+    ]

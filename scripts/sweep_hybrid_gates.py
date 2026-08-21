@@ -122,7 +122,16 @@ def _run_sweep(
             )
         )
 
-    rank_sweep_rows(rows)
+    # Ties prefer the looser gate on every axis, matching the semantic sweep's
+    # recall-first policy; without it equal-metric rows resolve by grid order.
+    rank_sweep_rows(
+        rows,
+        extra_key=lambda row: (
+            -row.config.semantic_min,
+            -row.config.weak_identifier_jaccard_min,
+            -row.config.statement_ratio_min,
+        ),
+    )
     return rows, baseline
 
 
