@@ -3,13 +3,11 @@
 from __future__ import annotations
 
 import ast
-import builtins
 import copy
 import hashlib
-import keyword
 import logging
 import os
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from pathlib import Path
 
 from codedupes.constants import DEFAULT_EXCLUDE_DIR_NAMES
@@ -21,6 +19,7 @@ from codedupes.languages.registry import (
     repository_allows_c_headers,
 )
 from codedupes.models import CodeUnit, CodeUnitType, ExtractionDiagnostic
+from codedupes.traditional import collect_identifiers
 
 logger = logging.getLogger(__name__)
 
@@ -360,48 +359,24 @@ class _PythonStatementCounter(ast.NodeVisitor):
         self.count += 1
 
 
-def _count_python_statements(
-    node: ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef,
-) -> int:
-    """Count the executable statements in one definition, ignoring its docstring.
+def count_executable_statements(body: Sequence[ast.stmt]) -> int:
+    """Count the executable statements in one definition body, ignoring a docstring.
 
-    :param node: Definition node whose body is counted.
+    :param body: Statement list of a definition or module body.
     :return: Statement count, with nested scopes counted once each.
     """
-    body = list(node.body)
+    statements = list(body)
     if (
-        body
-        and isinstance(body[0], ast.Expr)
-        and isinstance(body[0].value, ast.Constant)
-        and isinstance(body[0].value.value, str)
+        statements
+        and isinstance(statements[0], ast.Expr)
+        and isinstance(statements[0].value, ast.Constant)
+        and isinstance(statements[0].value.value, str)
     ):
-        body = body[1:]
+        statements = statements[1:]
     counter = _PythonStatementCounter()
-    for statement in body:
+    for statement in statements:
         counter.visit(statement)
     return counter.count
-
-
-def _python_identifiers(node: ast.AST) -> frozenset[str]:
-    """Collect identifier names bound or referenced under one AST subtree.
-
-    :param node: AST subtree to scan.
-    :return: Identifier names excluding Python keywords and builtins.
-    """
-    ignored = set(keyword.kwlist) | set(dir(builtins))
-    identifiers: set[str] = set()
-    for child in ast.walk(node):
-        if isinstance(child, ast.Name):
-            identifiers.add(child.id)
-        elif isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            identifiers.add(child.name)
-        elif isinstance(child, ast.arg):
-            identifiers.add(child.arg)
-    return frozenset(
-        identifier
-        for identifier in identifiers
-        if identifier and identifier not in ignored and not identifier.isdigit()
-    )
 
 
 class _PythonSourceMap:
@@ -751,8 +726,8 @@ class CodeExtractor:
             end_byte=end_byte,
             start_column=start_column,
             end_column=end_column,
-            statement_count=_count_python_statements(node),
-            identifiers=_python_identifiers(node),
+            statement_count=count_executable_statements(node.body),
+            identifiers=frozenset(collect_identifiers(node)),
             calls=call_visitor.calls,
             is_public=not name.startswith("_"),
             is_dunder=name.startswith("__") and name.endswith("__"),
@@ -803,8 +778,8 @@ class CodeExtractor:
             end_byte=end_byte,
             start_column=start_column,
             end_column=end_column,
-            statement_count=_count_python_statements(node),
-            identifiers=_python_identifiers(node),
+            statement_count=count_executable_statements(node.body),
+            identifiers=frozenset(collect_identifiers(node)),
             is_public=not class_name.startswith("_"),
             is_dunder=False,
             is_exported=class_name in exported,

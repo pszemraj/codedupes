@@ -55,6 +55,7 @@ from codedupes.embedding_cache import (
     log_warning_once,
     resolve_cache_dir,
 )
+from codedupes.extractor import count_executable_statements
 from codedupes.logging_utils import quiet_unconfigured_dependency_loggers
 from codedupes.models import CodeUnit, DuplicatePair
 from codedupes.pairs import ordered_pair_key
@@ -1717,50 +1718,6 @@ def _cache_write_allowed(
     )
 
 
-class _ExecutableStatementCounter(ast.NodeVisitor):
-    """Count executable statements recursively, stopping at nested scopes."""
-
-    def __init__(self) -> None:
-        """Initialize the running statement count."""
-        self.count = 0
-
-    def generic_visit(self, node: ast.AST) -> None:
-        """Count ``node`` when it is a statement, then recurse into its children.
-
-        :param node: AST node being visited.
-        :return: ``None``.
-        """
-        if isinstance(node, ast.stmt):
-            self.count += 1
-        super().generic_visit(node)
-
-    # Nested scopes count as one declaration; their implementation belongs to a
-    # separate CodeUnit and must not inflate the enclosing unit's count.
-    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
-        """Count a nested function as one declaration without descending into it.
-
-        :param node: Nested function definition node.
-        :return: ``None``.
-        """
-        self.count += 1
-
-    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
-        """Count a nested async function as one declaration without descending into it.
-
-        :param node: Nested async function definition node.
-        :return: ``None``.
-        """
-        self.count += 1
-
-    def visit_ClassDef(self, node: ast.ClassDef) -> None:
-        """Count a nested class as one declaration without descending into it.
-
-        :param node: Nested class definition node.
-        :return: ``None``.
-        """
-        self.count += 1
-
-
 def get_code_unit_statement_count(unit: CodeUnit) -> int:
     """Get effective statement count for a unit, excluding docstring.
 
@@ -1794,24 +1751,11 @@ def get_code_unit_statement_count(unit: CodeUnit) -> int:
         return 0
 
     top_node = tree.body[0]
-    body = []
     if isinstance(top_node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
         body = top_node.body
     else:
         body = tree.body
-
-    if (
-        body
-        and isinstance(body[0], ast.Expr)
-        and isinstance(body[0].value, ast.Constant)
-        and isinstance(body[0].value.value, str)
-    ):
-        body = body[1:]
-
-    counter = _ExecutableStatementCounter()
-    for statement in body:
-        counter.visit(statement)
-    return counter.count
+    return count_executable_statements(body)
 
 
 def _resolve_model_dtype(family: str, device: str) -> Any:

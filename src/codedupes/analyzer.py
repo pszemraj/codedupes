@@ -48,11 +48,11 @@ from codedupes.semantic import (
 from codedupes.semantic_profiles import resolve_model_profile
 from codedupes.traditional import (
     build_reference_graph,
-    extract_identifiers,
     find_exact_pair_keys,
     find_potentially_unused,
     jaccard_similarity,
     run_traditional_analysis,
+    unit_identifier_set,
 )
 
 logger = logging.getLogger(__name__)
@@ -105,17 +105,6 @@ def _is_test_function_unit(unit: CodeUnit) -> bool:
     return unit.unit_type in {CodeUnitType.FUNCTION, CodeUnitType.METHOD} and unit.name.startswith(
         "test_"
     )
-
-
-def _unit_identifier_set(unit: CodeUnit) -> set[str]:
-    """Return backend identifiers without reparsing non-Python source as Python.
-
-    :param unit: Code unit whose identifiers are needed.
-    :return: Identifier names for the unit.
-    """
-    if unit.identifiers or unit.language != "python":
-        return set(unit.identifiers)
-    return extract_identifiers(unit.source)
 
 
 def _statement_count_ratio(unit_a: CodeUnit, unit_b: CodeUnit) -> float:
@@ -321,8 +310,8 @@ def _synthesize_hybrid_duplicates(
                 tier = "traditional_near"
                 confidence = 0.55 + (0.45 * jaccard_sim)
         elif semantic_sim is not None:
-            ids_a = identifier_cache.setdefault(unit_a.uid, _unit_identifier_set(unit_a))
-            ids_b = identifier_cache.setdefault(unit_b.uid, _unit_identifier_set(unit_b))
+            ids_a = identifier_cache.setdefault(unit_a.uid, unit_identifier_set(unit_a))
+            ids_b = identifier_cache.setdefault(unit_b.uid, unit_identifier_set(unit_b))
             weak_identifier_jaccard = jaccard_similarity(ids_a, ids_b)
             statement_ratio = _statement_count_ratio(unit_a, unit_b)
 

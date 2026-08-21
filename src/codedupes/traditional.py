@@ -99,25 +99,45 @@ def jaccard_similarity(set_a: set[str], set_b: set[str]) -> float:
     return intersection / union if union > 0 else 0.0
 
 
+def collect_identifiers(node: ast.AST) -> set[str]:
+    """Collect normalized identifier names bound or referenced under one AST subtree.
+
+    :param node: AST subtree to scan.
+    :return: Identifier names excluding Python keywords, builtins, and digits.
+    """
+    identifiers = set()
+    for child in ast.walk(node):
+        if isinstance(child, ast.Name):
+            identifiers.add(child.id)
+        elif isinstance(child, (ast.FunctionDef, ast.ClassDef, ast.AsyncFunctionDef)):
+            identifiers.add(child.name)
+        elif isinstance(child, ast.arg):
+            identifiers.add(child.arg)
+    return _normalize_identifiers(identifiers)
+
+
 def extract_identifiers(source: str) -> set[str]:
     """Extract all identifiers from source code.
 
     :param source: Source text.
     :return: Identifier names found in the AST.
     """
-    identifiers = set()
     try:
         tree = ast.parse(source)
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Name):
-                identifiers.add(node.id)
-            elif isinstance(node, (ast.FunctionDef, ast.ClassDef, ast.AsyncFunctionDef)):
-                identifiers.add(node.name)
-            elif isinstance(node, ast.arg):
-                identifiers.add(node.arg)
     except SyntaxError:
-        pass
-    return _normalize_identifiers(identifiers)
+        return set()
+    return collect_identifiers(tree)
+
+
+def unit_identifier_set(unit: CodeUnit) -> set[str]:
+    """Return backend identifiers without reparsing non-Python source as Python.
+
+    :param unit: Code unit whose identifiers are needed.
+    :return: Identifier names for the unit.
+    """
+    if unit.identifiers or unit.language != "python":
+        return set(unit.identifiers)
+    return extract_identifiers(unit.source)
 
 
 def _normalize_identifiers(identifiers: set[str]) -> set[str]:
@@ -148,14 +168,7 @@ def find_near_duplicates_jaccard(
     :param threshold: Jaccard cutoff.
     :return: Near-duplicate pairs above threshold.
     """
-    identifier_sets = {
-        unit.uid: (
-            set(unit.identifiers)
-            if unit.identifiers or unit.language != "python"
-            else extract_identifiers(unit.source)
-        )
-        for unit in units
-    }
+    identifier_sets = {unit.uid: unit_identifier_set(unit) for unit in units}
 
     # Candidate blocking removes meaningless mixed-language/kind comparisons
     # before the quadratic pair loop; functions and methods share a block.
