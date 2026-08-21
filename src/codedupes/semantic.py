@@ -2343,8 +2343,18 @@ def _require_text_within_model_context(
     if overflow is None:
         return text
 
-    token_count, max_tokens = overflow
-    raise SemanticInputTooLongError(
+    raise SemanticInputTooLongError(_context_overflow_message(input_name, *overflow))
+
+
+def _context_overflow_message(input_name: str, token_count: int, max_tokens: int) -> str:
+    """Describe one input that cannot fit the model context window.
+
+    :param input_name: Human-readable input name.
+    :param token_count: Tokens the backend would produce, prompt included.
+    :param max_tokens: Model context window in tokens.
+    :return: Message for the raised error.
+    """
+    return (
         f"Semantic input '{input_name}' is {token_count} tokens including the encode prompt, "
         f"exceeding the selected model's {max_tokens}-token context window. No semantic result "
         "was produced; use a model with a larger context window or exclude this input."
@@ -3047,9 +3057,9 @@ def _compute_embeddings_unlocked(
                 texts.append(text)
                 continue
             if overflow_report is None:
-                # No collector: the caller wants the hard failure (search queries).
-                _require_text_within_model_context(
-                    text, units[i].qualified_name, model, encode_plan.prompt
+                # No collector: the caller wants the hard failure.
+                raise SemanticInputTooLongError(
+                    _context_overflow_message(units[i].qualified_name, *overflow)
                 )
             overflow_by_text[text] = overflow
         return encodable, texts
