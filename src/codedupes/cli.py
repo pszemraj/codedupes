@@ -29,6 +29,7 @@ from codedupes.analyzer import (
 from codedupes.constants import (
     DEFAULT_BATCH_SIZE,
     DEFAULT_CHECK_SEMANTIC_TASK,
+    DEFAULT_EXCLUDE_DIR_NAMES,
     DEFAULT_MIN_SEMANTIC_STATEMENTS,
     DEFAULT_MODEL,
     DEFAULT_SEARCH_SEMANTIC_TASK,
@@ -46,7 +47,7 @@ from codedupes.devices import (
     get_device_diagnostics,
 )
 from codedupes.embedding_cache import EmbeddingCache
-from codedupes.extractor import DEFAULT_EXCLUDE_DIR_NAMES, DEFAULT_EXCLUDE_PATTERNS
+from codedupes.extractor import DEFAULT_EXCLUDE_PATTERNS
 from codedupes.languages import (
     SUPPORTED_LANGUAGES,
     GrammarUnavailableError,

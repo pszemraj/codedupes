@@ -10,10 +10,7 @@ import os
 from collections.abc import Iterator, Sequence
 from pathlib import Path
 
-from codedupes.constants import (
-    DEFAULT_EXCLUDE_DIR_NAMES,  # noqa: F401 - re-exported; the CLI imports it from here
-    is_default_excluded_dir,
-)
+from codedupes.constants import is_default_excluded_dir
 from codedupes.languages.registry import (
     DECLARATION_FILE_SUFFIXES,
     get_backend,
