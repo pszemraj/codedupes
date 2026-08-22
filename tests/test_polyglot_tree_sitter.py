@@ -485,6 +485,57 @@ def test_rust_trait_impl_methods_survive_the_public_filter(tmp_path: Path) -> No
     }
 
 
+def test_rust_local_trait_visibility_gates_its_impl_methods(tmp_path: Path) -> None:
+    """``impl LocalTrait for Type`` methods are only as visible as the trait.
+
+    Path-qualified traits stay public: cross-file resolution is out of scope,
+    so unresolved traits err on the recall-first side.
+    """
+    units = _extract(
+        tmp_path,
+        "sample.rs",
+        """
+        pub struct Widget;
+
+        trait Sealed {
+            fn seal(&self) -> i32;
+        }
+
+        trait Convert<T> {
+            fn convert(&self) -> T;
+        }
+
+        pub trait Open {
+            fn open(&self) -> i32;
+        }
+
+        impl Sealed for Widget {
+            fn seal(&self) -> i32 { 1 }
+        }
+
+        impl Convert<u32> for Widget {
+            fn convert(&self) -> u32 { 3 }
+        }
+
+        impl Open for Widget {
+            fn open(&self) -> i32 { 2 }
+        }
+
+        impl std::fmt::Display for Widget {
+            fn fmt(&self, formatter: &mut Formatter) -> Result {
+                formatter.write_str("widget")
+            }
+        }
+        """,
+        include_private=False,
+    )
+
+    assert {unit.qualified_name for unit in units} == {
+        "sample.Widget.Open.open",
+        "sample.Widget.std::fmt::Display.fmt",
+    }
+
+
 def test_rust_trait_impls_of_one_method_name_get_distinct_qualified_names(
     tmp_path: Path,
 ) -> None:

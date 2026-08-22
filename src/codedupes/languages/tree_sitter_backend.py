@@ -1032,6 +1032,49 @@ class RustBackend(TreeSitterBackend):
             current = getattr(current, "parent", None)
         return None
 
+    def _local_trait_visibility(self, root_node: Any, source: bytes) -> dict[str, bool]:
+        """Map trait names declared in this file to their ``pub`` visibility.
+
+        Same-named traits in different modules of one file collapse
+        recall-first: any public declaration marks the name public.
+
+        :param root_node: Root node of the parsed syntax tree.
+        :param source: Full file source bytes.
+        :return: Trait name to visibility for every ``trait_item`` in the file.
+        """
+        visibility: dict[str, bool] = {}
+        for candidate in _walk(root_node):
+            if getattr(candidate, "type", "") != "trait_item":
+                continue
+            name_node = _child_by_field(candidate, "name")
+            name = _node_text(source, name_node).strip() if name_node is not None else ""
+            if not name:
+                continue
+            visibility[name] = visibility.get(name, False) or self._visibility(candidate, source)
+        return visibility
+
+    @staticmethod
+    def _impl_trait_public(impl: Any, source: bytes, local_traits: dict[str, bool]) -> bool:
+        """Decide the visibility of methods in one ``impl Trait for Type`` block.
+
+        Impl methods cannot legally carry ``pub``: they are reachable through
+        the trait, so they default to public. When the trait is a bare name
+        declared in this same file, the trait's own visibility gates them
+        instead. Path-qualified and unresolved traits stay public: cross-file
+        resolution is out of scope, so unknown traits err recall-first.
+
+        :param impl: Trait-implementation ``impl_item`` node.
+        :param source: Full file source bytes.
+        :param local_traits: Same-file trait visibility from :meth:`_local_trait_visibility`.
+        :return: ``True`` when the impl's methods are treated as public.
+        """
+        base = _child_by_field(impl, "trait")
+        if getattr(base, "type", "") == "generic_type":
+            base = _first_node(_child_by_field(base, "type"), base)
+        if getattr(base, "type", "") != "type_identifier":
+            return True
+        return local_traits.get(_node_text(source, base).strip(), True)
+
     @staticmethod
     def _preceding_attributes(node: Any) -> list[Any]:
         """Return the attribute_item siblings stacked directly above one item.
@@ -1193,6 +1236,7 @@ class RustBackend(TreeSitterBackend):
         """
         prefix = _module_prefix(self.root, file_path, self.language)
         specs: list[UnitSpec] = []
+        local_trait_visibility = self._local_trait_visibility(root_node, source)
         for node in _walk(root_node):
             if getattr(node, "type", "") != "function_item":
                 continue
@@ -1214,10 +1258,10 @@ class RustBackend(TreeSitterBackend):
             trait = _nearest_ancestor(node, {"trait_item", "trait_declaration"})
             if trait is not None:
                 public = self._visibility(trait, source)
-            elif self._trait_impl_ancestor(node) is not None:
-                # Methods of `impl Trait for Type` cannot legally carry `pub`;
-                # they are reachable through the trait, so they are public.
-                public = True
+            else:
+                impl = self._trait_impl_ancestor(node)
+                if impl is not None:
+                    public = self._impl_trait_public(impl, source, local_trait_visibility)
             specs.append(
                 UnitSpec(
                     node=node,
