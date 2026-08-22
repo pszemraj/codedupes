@@ -20,7 +20,11 @@ from codedupes.languages.base import BackendResult
 from codedupes.languages.registry import GRAMMAR_PACKAGES
 from codedupes.models import CodeUnit, CodeUnitType, ExtractionDiagnostic
 
-FINGERPRINT_SCHEMA_VERSION = 1
+# 1: initial canonical stream.
+# 2: declaration names (methods, classes) normalize like local identifiers so
+#    renamed copies stay in the deterministic tier; object-literal keys and
+#    member-access names remain preserved as data/API shape.
+FINGERPRINT_SCHEMA_VERSION = 2
 # ECMAScript identifiers are Unicode from ES2015 on, and Rust accepts non-ASCII
 # identifiers too, so an ASCII-only pattern would silently drop those units.
 # ``[^\W\d]`` is Python's Unicode-aware "letter or underscore".
@@ -52,6 +56,18 @@ _PRESERVED_IDENTIFIER_TYPES = {
     "private_property_identifier",
     "type_identifier",
     "namespace_identifier",
+}
+# A declaration's own name is a definition name, not API shape, so it must
+# normalize the way Python def/class names do even when its leaf type is
+# otherwise preserved (TS class names are ``type_identifier``, method names
+# are ``property_identifier``). Class names normalize anywhere; the member
+# types normalize only inside a ``class_body`` or as the hashed unit root,
+# so object-literal members keep key-shape sensitivity like Python dict keys.
+_CLASS_DECLARATION_TYPES = {"class_declaration", "abstract_class_declaration", "class"}
+_CLASS_MEMBER_CALLABLE_TYPES = {
+    "method_definition",
+    "method_signature",
+    "abstract_method_signature",
 }
 # ``jsx_text`` is display copy, not structure: two otherwise identical React
 # components must not fingerprint differently because their labels differ.
@@ -432,6 +448,19 @@ def _structural_hash(node: Any, source: bytes, language: str, unit_type: CodeUni
         f"unit={unit_type.name.lower()}",
     ]
 
+    # Byte spans of declaration-name leaves that normalize despite carrying a
+    # preserved identifier type. Spans, not object identity: py-tree-sitter can
+    # hand out distinct wrappers for the same underlying node.
+    declaration_name_spans: set[tuple[int, int]] = set()
+
+    def _mark_declaration_name(owner: Any) -> None:
+        name_node = _child_by_field(owner, "name")
+        if name_node is None or _children(name_node):
+            return
+        declaration_name_spans.add(
+            (int(getattr(name_node, "start_byte", -1)), int(getattr(name_node, "end_byte", -1)))
+        )
+
     # Iterative preorder walk with a close-paren sentinel: minified or
     # generated sources nest deeply enough to blow the Python recursion limit.
     close_marker = object()
@@ -456,11 +485,25 @@ def _structural_hash(node: Any, source: bytes, language: str, unit_type: CodeUni
             pieces.append(f"<{node_type}:STR>")
             continue
 
+        if node_type in _CLASS_DECLARATION_TYPES or (
+            node_type in _CLASS_MEMBER_CALLABLE_TYPES
+            and (
+                current is node
+                or getattr(getattr(current, "parent", None), "type", "") == "class_body"
+            )
+        ):
+            _mark_declaration_name(current)
+
         if not children:
             if node_type in _IDENTIFIER_TYPES:
-                if node_type in _PRESERVED_IDENTIFIER_TYPES or (
+                span = (
+                    int(getattr(current, "start_byte", -1)),
+                    int(getattr(current, "end_byte", -1)),
+                )
+                preserved = node_type in _PRESERVED_IDENTIFIER_TYPES or (
                     text.startswith("__") and text.endswith("__")
-                ):
+                )
+                if preserved and span not in declaration_name_spans:
                     value = text
                 else:
                     value = normalized_names.setdefault(text, f"_v{len(normalized_names)}")

@@ -83,13 +83,13 @@ def test_every_dialect_reproduces_unit_source_from_byte_ranges(
 @pytest.mark.parametrize(
     ("filename", "source", "expected_hash"),
     [
-        ("sample.c", "int add(int a, int b) { return a + b; }", "d4c1889345f6cbb2"),
-        ("sample.rs", "pub fn add(a: i32, b: i32) -> i32 { a + b }", "ebe1b5fca595a210"),
-        ("sample.js", "function add(a, b) { return a + b; }", "cb3daad8bab7b59a"),
+        ("sample.c", "int add(int a, int b) { return a + b; }", "055dad2cb951cd16"),
+        ("sample.rs", "pub fn add(a: i32, b: i32) -> i32 { a + b }", "f0e9ce5598395030"),
+        ("sample.js", "function add(a, b) { return a + b; }", "06dc5b63c208ce88"),
         (
             "sample.ts",
             "function add(a: number, b: number): number { return a + b; }",
-            "da777fa591d4b571",
+            "80a8dc13209a88a4",
         ),
     ],
 )
@@ -104,6 +104,84 @@ def test_structural_hash_golden_values_pin_the_fingerprint_schema(
     units = _extract(tmp_path, filename, source)
 
     assert [unit.structural_hash for unit in units] == [expected_hash]
+
+
+def test_renamed_declarations_hash_structurally_equal(tmp_path: Path) -> None:
+    """A declaration's own name normalizes like Python def/class names do."""
+    units = _extract(
+        tmp_path,
+        "store.ts",
+        """
+        class Store {
+          load(key: string): string {
+            const raw = this.backend.get(key);
+            return JSON.parse(raw);
+          }
+          fetch(key: string): string {
+            const raw = this.backend.get(key);
+            return JSON.parse(raw);
+          }
+        }
+        class Alpha {
+          run(x: number): number { return x + 1; }
+        }
+        class Beta {
+          run(x: number): number { return x + 1; }
+        }
+        class Gamma {
+          go(x: number): number { return x * 2; }
+        }
+        class Delta {
+          walk(x: number): number { return x * 2; }
+        }
+        """,
+    )
+    by_name = {unit.qualified_name: unit for unit in units}
+
+    assert (
+        by_name["store.Store.load"].structural_hash == by_name["store.Store.fetch"].structural_hash
+    )
+    assert by_name["store.Store.load"].token_hash != by_name["store.Store.fetch"].token_hash
+    assert by_name["store.Alpha"].structural_hash == by_name["store.Beta"].structural_hash
+    assert by_name["store.Gamma"].structural_hash == by_name["store.Delta"].structural_hash
+
+
+def test_object_literal_method_units_normalize_their_own_name(tmp_path: Path) -> None:
+    units = _extract(
+        tmp_path,
+        "registry.js",
+        """
+        const handlers = {
+          alpha() { const value = this.compute(); return value; },
+          beta() { const value = this.compute(); return value; },
+        };
+        """,
+    )
+    by_name = {unit.name: unit for unit in units if unit.unit_type == CodeUnitType.METHOD}
+
+    assert by_name["alpha"].structural_hash == by_name["beta"].structural_hash
+    assert by_name["alpha"].token_hash != by_name["beta"].token_hash
+
+
+def test_object_literal_member_names_stay_structural_shape_inside_units(tmp_path: Path) -> None:
+    """Object keys are data shape, like Python dict keys: renaming one changes
+    the containing unit's structure even when the member is a method."""
+    units = _extract(
+        tmp_path,
+        "shape.js",
+        """
+        function first() { return { alpha: 1, beta: 2 }; }
+        function second() { return { alpha: 1, gamma: 2 }; }
+        function third() { return { alpha: 1, beta: 2 }; }
+        function make() { return { run() { return 1; } }; }
+        function build() { return { exec() { return 1; } }; }
+        """,
+    )
+    by_name = {unit.name: unit for unit in units if unit.unit_type == CodeUnitType.FUNCTION}
+
+    assert by_name["first"].structural_hash != by_name["second"].structural_hash
+    assert by_name["first"].structural_hash == by_name["third"].structural_hash
+    assert by_name["make"].structural_hash != by_name["build"].structural_hash
 
 
 def test_deeply_nested_source_does_not_hit_the_recursion_limit(tmp_path: Path) -> None:
