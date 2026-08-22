@@ -9,7 +9,7 @@ from importlib import metadata
 from pathlib import Path
 from typing import Final
 
-from codedupes.constants import DEFAULT_EXCLUDE_DIR_NAMES
+from codedupes.constants import is_default_excluded_dir
 from codedupes.languages.base import LanguageBackend
 
 SUPPORTED_LANGUAGES: Final[tuple[str, ...]] = (
@@ -39,9 +39,6 @@ CPP_SUFFIXES: Final[frozenset[str]] = frozenset(
     {".cc", ".cpp", ".cxx", ".c++", ".hh", ".hpp", ".hxx", ".h++"}
 )
 TREE_SITTER_PACKAGE: Final[tuple[str, str]] = ("tree-sitter", "0.25.2")
-# Derived, never duplicated: a divergent second list let one vendored C++ file
-# under an excluded directory flip `.h` handling for the whole tree.
-_HEADER_SCAN_IGNORED_DIRS: Final[frozenset[str]] = DEFAULT_EXCLUDE_DIR_NAMES | frozenset({"vendor"})
 
 
 @dataclass(frozen=True)
@@ -168,8 +165,10 @@ def repository_allows_c_headers(root: Path, selected_languages: tuple[str, ...] 
     """Return whether ambiguous ``.h`` files can safely be treated as C.
 
     Explicit ``--language c`` selection wins.  Automatic detection accepts headers only
-    when the scanned tree contains C source and no C++ source, pruning dependency and
-    build directories so vendored code cannot accidentally change the decision.
+    when the scanned tree contains C source and no C++ source.  The scan mirrors the
+    default extraction walk exactly, pruning the same directories, so the decision is
+    made over precisely the files extraction will parse.  User-supplied ``--exclude``
+    globs are consulted by neither the scan nor this alignment.
 
     :param root: Scan root for the analysis.
     :param selected_languages: Canonical language filter, or ``None`` for auto-detection.
@@ -180,8 +179,11 @@ def repository_allows_c_headers(root: Path, selected_languages: tuple[str, ...] 
 
     scan_root = root if root.is_dir() else root.parent
     saw_c_source = False
+    # One predicate, shared with the extraction walk. A divergent second list let a
+    # vendored C++ tree flip `.h` handling for files extraction never visits, and let
+    # `*.egg-info` C++ flip it for files extraction always skips.
     for directory, dirnames, filenames in os.walk(scan_root):
-        dirnames[:] = [name for name in dirnames if name not in _HEADER_SCAN_IGNORED_DIRS]
+        dirnames[:] = [name for name in dirnames if not is_default_excluded_dir(name)]
         for filename in filenames:
             suffix = Path(filename).suffix.lower()
             if suffix in CPP_SUFFIXES:

@@ -50,6 +50,20 @@ DEFAULT_EXCLUDE_DIR_NAMES = frozenset(
     }
 )
 
+
+def is_default_excluded_dir(name: str) -> bool:
+    """Return whether a directory name is pruned by default extraction.
+
+    The C/C++ header probe must prune exactly the directories the default
+    extraction walk prunes.  Any divergence lets vendored C++ flip ``.h``
+    handling for files the walk never visits, or hides C++ that it does visit.
+
+    :param name: Directory name, not a path.
+    :return: ``True`` when the directory is skipped by default.
+    """
+    return name in DEFAULT_EXCLUDE_DIR_NAMES or name.endswith(".egg-info")
+
+
 DEFAULT_MODEL = "gte-modernbert-base"
 DEFAULT_TRADITIONAL_THRESHOLD = 0.85
 DEFAULT_BATCH_SIZE = 8

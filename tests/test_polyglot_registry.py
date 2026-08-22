@@ -7,7 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from codedupes.constants import DEFAULT_EXCLUDE_DIR_NAMES
+from codedupes.constants import DEFAULT_EXCLUDE_DIR_NAMES, is_default_excluded_dir
+from codedupes.extractor import CodeExtractor
 from codedupes.languages import registry
 from codedupes.languages.registry import (
     GRAMMAR_PACKAGES,
@@ -128,9 +129,34 @@ def test_c_header_detection_ignores_dependency_trees(tmp_path: Path) -> None:
     assert repository_allows_c_headers(tmp_path, None)
 
 
-def test_header_scan_ignores_every_default_excluded_directory() -> None:
+def test_c_header_detection_walks_vendor_because_extraction_does(tmp_path: Path) -> None:
+    """``vendor`` is not a default exclusion, so its C++ must disable ``.h`` parsing."""
+    (tmp_path / "module.c").write_text("int run(void) { return 1; }\n")
+    vendored = tmp_path / "vendor" / "lib"
+    vendored.mkdir(parents=True)
+    (vendored / "addon.cpp").write_text("int addon() { return 2; }\n")
+
+    assert not repository_allows_c_headers(tmp_path, None)
+
+
+def test_c_header_detection_skips_egg_info_because_extraction_does(tmp_path: Path) -> None:
+    """Extraction never reads ``*.egg-info``, so its C++ must not disable ``.h`` parsing."""
+    (tmp_path / "module.c").write_text("int run(void) { return 1; }\n")
+    packaged = tmp_path / "something.egg-info" / "native"
+    packaged.mkdir(parents=True)
+    (packaged / "addon.cpp").write_text("int addon() { return 2; }\n")
+
+    assert repository_allows_c_headers(tmp_path, None)
+
+
+def test_header_scan_and_extraction_prune_identical_directories() -> None:
     """A divergent second list lets one vendored file flip ``.h`` handling repo-wide."""
-    assert DEFAULT_EXCLUDE_DIR_NAMES <= registry._HEADER_SCAN_IGNORED_DIRS
+    for name in (*DEFAULT_EXCLUDE_DIR_NAMES, "foo.egg-info"):
+        assert is_default_excluded_dir(name)
+        assert CodeExtractor._is_excluded_dir_name(name)
+
+    assert not is_default_excluded_dir("vendor")
+    assert not CodeExtractor._is_excluded_dir_name("vendor")
 
 
 @pytest.mark.parametrize("directory", ["venv", ".nox", ".eggs", ".mypy_cache", ".next", ".gradle"])
