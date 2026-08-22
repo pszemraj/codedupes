@@ -454,6 +454,10 @@ def _structural_hash(node: Any, source: bytes, language: str, unit_type: CodeUni
     declaration_name_spans: set[tuple[int, int]] = set()
 
     def _mark_declaration_name(owner: Any) -> None:
+        """Record the span of a declaration's leaf name so it normalizes.
+
+        :param owner: Declaration node whose ``name`` field child is marked.
+        """
         name_node = _child_by_field(owner, "name")
         if name_node is None or _children(name_node):
             return
