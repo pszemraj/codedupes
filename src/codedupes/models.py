@@ -124,24 +124,35 @@ class CodeUnit:
         return self.lineno <= other.end_lineno and other.lineno <= self.end_lineno
 
 
-@dataclass
-class DuplicatePair:
+class _PairIdentity:
+    """Hash and compare a duplicate record by its unordered unit pair.
+
+    Score payloads are deliberately excluded from identity so re-scored
+    records of the same pair dedupe in sets and dict keys.
+    """
+
+    unit_a: CodeUnit
+    unit_b: CodeUnit
+
+    def __hash__(self) -> int:
+        return hash(unordered_pair_key(self.unit_a, self.unit_b))
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, type(self)):
+            return False
+        return unordered_pair_key(self.unit_a, self.unit_b) == unordered_pair_key(
+            other.unit_a, other.unit_b
+        )
+
+
+@dataclass(eq=False)
+class DuplicatePair(_PairIdentity):
     """A pair of code units identified as duplicates."""
 
     unit_a: CodeUnit
     unit_b: CodeUnit
     similarity: float
     method: str
-
-    def __hash__(self) -> int:
-        return hash(unordered_pair_key(self.unit_a, self.unit_b))
-
-    def __eq__(self, other: object) -> bool:
-        if not isinstance(other, DuplicatePair):
-            return False
-        return unordered_pair_key(self.unit_a, self.unit_b) == unordered_pair_key(
-            other.unit_a, other.unit_b
-        )
 
 
 HybridTier = Literal[
@@ -155,8 +166,8 @@ HybridTier = Literal[
 AnalysisMode = Literal["combined", "traditional", "semantic", "none"]
 
 
-@dataclass
-class HybridDuplicate:
+@dataclass(eq=False)
+class HybridDuplicate(_PairIdentity):
     """A synthesized duplicate candidate combining traditional + semantic evidence."""
 
     unit_a: CodeUnit
@@ -168,16 +179,6 @@ class HybridDuplicate:
     semantic_similarity: float | None = None
     weak_identifier_jaccard: float | None = None
     statement_count_ratio: float | None = None
-
-    def __hash__(self) -> int:
-        return hash(unordered_pair_key(self.unit_a, self.unit_b))
-
-    def __eq__(self, other: object) -> bool:
-        if not isinstance(other, HybridDuplicate):
-            return False
-        return unordered_pair_key(self.unit_a, self.unit_b) == unordered_pair_key(
-            other.unit_a, other.unit_b
-        )
 
 
 @dataclass

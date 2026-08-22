@@ -73,28 +73,16 @@ class NormalizedASTHasher(ast.NodeTransformer):
         node.arg = self._get_normalized_name(node.arg)
         return self.generic_visit(node)
 
-    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.AST:
-        """Normalize function definition metadata and body for hash comparisons.
+    def _normalize_definition(
+        self, node: ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef
+    ) -> ast.AST:
+        """Normalize a definition's name, strip its docstring, and recurse.
 
-        :param node: FunctionDef node to normalize.
-        :return: Updated function definition node after generic visit.
-        """
-        node.name = self._get_normalized_name(node.name)
-        # Remove docstring
-        if (
-            node.body
-            and isinstance(node.body[0], ast.Expr)
-            and isinstance(node.body[0].value, ast.Constant)
-            and isinstance(node.body[0].value.value, str)
-        ):
-            node.body = node.body[1:]
-        return self.generic_visit(node)
+        The node type itself stays in the dumped tree, so sync and async
+        functions still hash differently.
 
-    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> ast.AST:
-        """Normalize async function definition metadata and body.
-
-        :param node: AsyncFunctionDef node to normalize.
-        :return: Updated function definition node after generic visit.
+        :param node: Definition node to normalize.
+        :return: Updated definition node after generic visit.
         """
         node.name = self._get_normalized_name(node.name)
         if (
@@ -106,21 +94,9 @@ class NormalizedASTHasher(ast.NodeTransformer):
             node.body = node.body[1:]
         return self.generic_visit(node)
 
-    def visit_ClassDef(self, node: ast.ClassDef) -> ast.AST:
-        """Normalize class definition metadata and body.
-
-        :param node: ClassDef node to normalize.
-        :return: Updated class node after generic visit.
-        """
-        node.name = self._get_normalized_name(node.name)
-        if (
-            node.body
-            and isinstance(node.body[0], ast.Expr)
-            and isinstance(node.body[0].value, ast.Constant)
-            and isinstance(node.body[0].value.value, str)
-        ):
-            node.body = node.body[1:]
-        return self.generic_visit(node)
+    visit_FunctionDef = _normalize_definition
+    visit_AsyncFunctionDef = _normalize_definition
+    visit_ClassDef = _normalize_definition
 
     def visit_Constant(self, node: ast.Constant) -> ast.AST:
         """Normalize string constants for structural comparison.
@@ -195,7 +171,7 @@ class _CodeUnitCollector(ast.NodeVisitor):
         is_method = bool(self.class_stack) and not self.function_stack
         scope_prefix = self.class_stack + self.function_stack
 
-        if self.extractor._should_emit_function(node.name):
+        if self.extractor._should_emit_symbol(node.name):
             self.units.extend(
                 self.extractor._emit_function(
                     node,
@@ -219,7 +195,7 @@ class _CodeUnitCollector(ast.NodeVisitor):
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
         """Collect class units and descend into exported/visible class bodies."""
         scope_prefix = self.class_stack
-        should_enter = self.extractor._should_emit_class(node.name)
+        should_enter = self.extractor._should_emit_symbol(node.name)
 
         if should_enter:
             self.units.extend(
@@ -631,15 +607,13 @@ class CodeExtractor:
         visitor.visit(tree)
         yield from visitor.units
 
-    def _should_emit_function(self, name: str) -> bool:
-        """Respect private-function filtering.
+    def _should_emit_symbol(self, name: str) -> bool:
+        """Respect private-symbol filtering for functions and classes.
 
-        :param name: Function name.
-        :return: Whether to emit this function.
+        :param name: Symbol name.
+        :return: Whether to emit a unit for this symbol.
         """
-        if self._is_private_name(name):
-            return self.include_private
-        return True
+        return self.include_private or not self._is_private_name(name)
 
     @staticmethod
     def _is_private_name(name: str) -> bool:
@@ -649,16 +623,6 @@ class CodeExtractor:
         :return: ``True`` for names starting with single underscore.
         """
         return name.startswith("_") and not name.startswith("__")
-
-    def _should_emit_class(self, name: str) -> bool:
-        """Respect private-class filtering.
-
-        :param name: Class name.
-        :return: Whether to emit this class.
-        """
-        if self.include_private:
-            return True
-        return not self._is_private_name(name)
 
     def _qualified_name(
         self,
