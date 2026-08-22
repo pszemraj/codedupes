@@ -48,7 +48,7 @@ TypeScript declaration files ending in `.d.ts`, `.d.mts`, or `.d.cts` are skippe
 
 ### C headers
 
-A `.h` file is ambiguous because both C and C++ use that extension. Automatic detection treats headers as C only when the scanned tree contains at least one `.c` file and no detected C++ source/header extension. Explicitly selecting C also accepts headers:
+A `.h` file is ambiguous because both C and C++ use that extension. Automatic detection treats headers as C only when the scanned tree contains at least one `.c` file and no detected C++ source/header extension. The detection scan prunes exactly the directories default extraction skips: C++ inside an excluded directory such as `node_modules` cannot flip the decision, while C++ in a directory the walk analyzes (including `vendor/`) disables header parsing rather than letting C++ headers be parsed with the C grammar. Explicitly selecting C also accepts headers:
 
 ```bash
 codedupes check ./include --language c --traditional-only

@@ -56,7 +56,7 @@ AnalyzerConfig(
 
 ## Extraction Scope Defaults
 
-Directory-name exclusions always apply. They cover common artifact, vendor, and cache directories such as `node_modules`, `target`, `.venv`, `.pytest_cache`, `dist`, and `build`; directories ending in `.egg-info` are also skipped.
+Directory-name exclusions always apply. They cover common artifact, dependency, and cache directories such as `node_modules`, `target`, `.venv`, `.pytest_cache`, `dist`, and `build`; directories ending in `.egg-info` are also skipped. A literal `vendor/` directory is not excluded by default: what the walk analyzes, the C-header policy scan also sees.
 
 When no nonempty `exclude_patterns` list is supplied, these file globs apply:
 
