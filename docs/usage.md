@@ -90,11 +90,11 @@ See [Accelerators](accelerators.md) for device resolution, memory limits, and OO
 
 ## Override Semantic Instruction Prefix
 
-By default, model-profile task prompts are applied automatically when needed. Override with a fixed prefix for experiments or custom retrieval behavior:
+By default, model-profile task prompts are applied automatically when needed. Override with a fixed prefix for experiments or custom retrieval behavior. A custom prefix changes the embedding space, so `check` requires an explicit `--semantic-threshold` with it (the calibrated per-language gates don't apply); `search` accepts the prefix as-is and applies the same requirement at query time:
 
 ```bash
-codedupes check ./src --instruction-prefix "Represent this code for duplicate detection: "
-codedupes search ./src "parse json payload" --instruction-prefix "Represent this query for code lookup: "
+codedupes check ./src --instruction-prefix "Represent this code for duplicate detection: " --semantic-threshold 0.85
+codedupes search ./src "parse json payload" --instruction-prefix "Represent this query for code lookup: " --semantic-threshold 0.5
 ```
 
 ## Threshold Tuning
