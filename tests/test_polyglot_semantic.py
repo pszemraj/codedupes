@@ -87,7 +87,9 @@ def test_cross_language_pairs_use_the_looser_of_both_language_gates() -> None:
     duplicates = find_semantic_duplicates(
         units,
         embeddings,
-        threshold=0.60,
+        # The fallback is intentionally stricter than either calibrated gate:
+        # it must not prefilter the mixed group before endpoint gates apply.
+        threshold=0.95,
         cross_language=True,
         language_thresholds={"python": 0.90, "javascript": 0.60},
     )

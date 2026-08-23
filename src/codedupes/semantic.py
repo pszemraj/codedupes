@@ -3343,7 +3343,17 @@ def find_semantic_duplicates(
 
     chunk_size = 500
     for language, indices in groups.items():
-        group_threshold = gates.get(language, threshold)
+        if cross_language:
+            # The mixed group has no single language gate. Its coarse threshold
+            # must be no stricter than any endpoint-level gate applied below, or
+            # a high fallback can discard valid mixed pairs before their looser
+            # per-language gate is considered.
+            group_threshold = min(
+                (gates.get(units[index].language, threshold) for index in indices),
+                default=threshold,
+            )
+        else:
+            group_threshold = gates.get(language, threshold)
         group_size = len(indices)
         # A group covering every unit is already in matrix order, so fancy
         # indexing would only copy the whole matrix for nothing.
