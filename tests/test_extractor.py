@@ -111,6 +111,24 @@ def test_extract_all_survives_symlink_to_file_outside_root(tmp_path: Path) -> No
     assert sorted(unit.qualified_name for unit in units) == ["linked.alpha", "normal.beta"]
 
 
+def test_non_header_extraction_does_not_resolve_c_header_policy(
+    tmp_path: Path, monkeypatch
+) -> None:
+    root = tmp_path / "package"
+    root.mkdir()
+    module = root / "module.py"
+    module.write_text("def sample():\n    return 1\n")
+    extractor = CodeExtractor(root, include_private=False)
+
+    def fail_on_header_probe() -> bool:
+        raise AssertionError("non-header extraction must not resolve the C-header policy")
+
+    monkeypatch.setattr(extractor, "_allow_c_headers", fail_on_header_probe)
+
+    assert [unit.name for unit in extractor.extract_from_file(module)] == ["sample"]
+    assert [unit.name for unit in extractor.extract_all()] == ["sample"]
+
+
 def test_header_only_tree_reports_c_header_policy_diagnostic(tmp_path: Path) -> None:
     root = tmp_path / "lib"
     root.mkdir()

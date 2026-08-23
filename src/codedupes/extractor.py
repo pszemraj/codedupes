@@ -505,11 +505,12 @@ class CodeExtractor:
             logger.debug(f"Skipping excluded file {file_path}")
             return
 
+        allow_c_header = file_path.suffix == ".h" and self._allow_c_headers()
         selection = language_for_path(
             file_path,
             include_stubs=self.include_stubs,
             selected_languages=self.languages,
-            allow_c_header=self._allow_c_headers(),
+            allow_c_header=allow_c_header,
         )
         if selection is None:
             self._diagnose_unsupported_file(file_path)
@@ -762,7 +763,7 @@ class CodeExtractor:
         """
         units: list[CodeUnit] = []
         seen: set[Path] = set()
-        allow_c_header = self._allow_c_headers()
+        allow_c_header: bool | None = None
         skipped_headers: list[Path] = []
 
         for dirpath, dirnames, filenames in os.walk(self.root, followlinks=False):
@@ -771,16 +772,20 @@ class CodeExtractor:
 
             for filename in filenames:
                 source_file = current_dir / filename
+                is_c_header = source_file.suffix == ".h"
+                if is_c_header and allow_c_header is None:
+                    allow_c_header = self._allow_c_headers()
+                header_allowed = bool(allow_c_header) if is_c_header else False
                 selection = language_for_path(
                     source_file,
                     include_stubs=self.include_stubs,
                     selected_languages=self.languages,
-                    allow_c_header=allow_c_header,
+                    allow_c_header=header_allowed,
                 )
                 if selection is None:
                     if (
-                        source_file.suffix == ".h"
-                        and not allow_c_header
+                        is_c_header
+                        and not header_allowed
                         and self.languages is None
                         and not self._should_exclude(source_file)
                     ):
