@@ -111,12 +111,35 @@ def test_language_filter_is_applied_after_extension_detection() -> None:
     )
 
 
+@pytest.mark.parametrize("filename", ["sample.C", "sample.H"])
+def test_case_sensitive_cpp_suffixes_are_never_selected_as_c(filename: str) -> None:
+    assert (
+        language_for_path(
+            Path(filename),
+            include_stubs=False,
+            selected_languages=("c",),
+            allow_c_header=True,
+        )
+        is None
+    )
+
+
 def test_c_header_auto_detection_requires_c_without_cpp(tmp_path: Path) -> None:
     (tmp_path / "module.c").write_text("int run(void) { return 1; }\n")
     (tmp_path / "module.h").write_text("int run(void);\n")
     assert repository_allows_c_headers(tmp_path, None)
 
     (tmp_path / "other.cpp").write_text("int other() { return 2; }\n")
+    assert not repository_allows_c_headers(tmp_path, None)
+
+
+@pytest.mark.parametrize("cpp_filename", ["other.C", "other.H"])
+def test_case_sensitive_cpp_suffixes_disable_c_header_detection(
+    tmp_path: Path, cpp_filename: str
+) -> None:
+    (tmp_path / "module.c").write_text("int run(void) { return 1; }\n")
+    (tmp_path / cpp_filename).write_text("int other() { return 2; }\n")
+
     assert not repository_allows_c_headers(tmp_path, None)
 
 

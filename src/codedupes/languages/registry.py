@@ -36,7 +36,7 @@ _LANGUAGE_ALIASES: Final[dict[str, str]] = {
 
 DECLARATION_FILE_SUFFIXES: Final[tuple[str, ...]] = (".d.ts", ".d.mts", ".d.cts")
 CPP_SUFFIXES: Final[frozenset[str]] = frozenset(
-    {".cc", ".cpp", ".cxx", ".c++", ".hh", ".hpp", ".hxx", ".h++"}
+    {".C", ".H", ".cc", ".cpp", ".cxx", ".c++", ".hh", ".hpp", ".hxx", ".h++"}
 )
 TREE_SITTER_PACKAGE: Final[tuple[str, str]] = ("tree-sitter", "0.25.2")
 
@@ -95,6 +95,18 @@ _EXTENSION_SELECTIONS: Final[dict[str, LanguageSelection]] = {
 }
 
 
+def _is_cpp_suffix(suffix: str) -> bool:
+    """Return whether a raw suffix conventionally identifies C++ source.
+
+    ``.C`` and ``.H`` are case-sensitive C++ spellings, while the remaining
+    supported C++ signals are matched case-insensitively.
+
+    :param suffix: Raw suffix from :attr:`pathlib.Path.suffix`.
+    :return: ``True`` when the suffix should prevent C parsing.
+    """
+    return suffix in CPP_SUFFIXES or suffix.lower() in CPP_SUFFIXES
+
+
 def normalize_languages(languages: tuple[str, ...] | list[str] | None) -> tuple[str, ...] | None:
     """Canonicalize a requested language filter while preserving order.
 
@@ -147,14 +159,19 @@ def language_for_path(
     if name.endswith(DECLARATION_FILE_SUFFIXES):
         return None
 
-    if path.suffix.lower() == ".h":
+    suffix = path.suffix
+    if _is_cpp_suffix(suffix):
+        return None
+
+    normalized_suffix = suffix.lower()
+    if normalized_suffix == ".h":
         selection = LanguageSelection("c", "c") if allow_c_header else None
     else:
-        selection = _EXTENSION_SELECTIONS.get(path.suffix.lower())
+        selection = _EXTENSION_SELECTIONS.get(normalized_suffix)
 
     if selection is None:
         return None
-    if selection.language == "python" and path.suffix.lower() == ".pyi" and not include_stubs:
+    if selection.language == "python" and normalized_suffix == ".pyi" and not include_stubs:
         return None
     if selected_languages is not None and selection.language not in selected_languages:
         return None
@@ -185,10 +202,10 @@ def repository_allows_c_headers(root: Path, selected_languages: tuple[str, ...] 
     for directory, dirnames, filenames in os.walk(scan_root):
         dirnames[:] = [name for name in dirnames if not is_default_excluded_dir(name)]
         for filename in filenames:
-            suffix = Path(filename).suffix.lower()
-            if suffix in CPP_SUFFIXES:
+            suffix = Path(filename).suffix
+            if _is_cpp_suffix(suffix):
                 return False
-            if suffix == ".c":
+            if suffix.lower() == ".c":
                 saw_c_source = True
     return saw_c_source
 

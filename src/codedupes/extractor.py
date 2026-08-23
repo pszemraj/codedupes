@@ -538,7 +538,7 @@ class CodeExtractor:
             language = "typescript"
             message = "TypeScript declaration files contain no implementation bodies."
             code = "declaration-file"
-        elif suffix == ".h" and not self._allow_c_headers():
+        elif file_path.suffix == ".h" and not self._allow_c_headers():
             language = "c"
             message = (
                 "Skipped by the conservative C-header policy; pass --language c "
@@ -779,7 +779,7 @@ class CodeExtractor:
                 )
                 if selection is None:
                     if (
-                        source_file.suffix.lower() == ".h"
+                        source_file.suffix == ".h"
                         and not allow_c_header
                         and self.languages is None
                         and not self._should_exclude(source_file)
