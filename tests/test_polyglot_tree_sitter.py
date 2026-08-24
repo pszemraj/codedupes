@@ -688,6 +688,26 @@ def test_javascript_extracts_modern_stable_unit_forms(tmp_path: Path) -> None:
     assert names["sample.default"] == CodeUnitType.FUNCTION
 
 
+def test_named_class_expressions_use_their_external_bindings(tmp_path: Path) -> None:
+    units = _extract(
+        tmp_path,
+        "sample.js",
+        """
+        const Public = class Internal { run() { return 1; } };
+        const Other = class Internal { run() { return 2; } };
+        export { Public };
+        """,
+    )
+    exported = {unit.qualified_name: unit.is_exported for unit in units}
+
+    assert exported == {
+        "sample.Public": True,
+        "sample.Public.run": True,
+        "sample.Other": False,
+        "sample.Other.run": False,
+    }
+
+
 def test_javascript_object_literal_class_values_keep_their_class_segment(
     tmp_path: Path,
 ) -> None:
@@ -967,6 +987,26 @@ def test_private_container_members_are_dropped_with_their_container(tmp_path: Pa
     )
 
     assert {unit.qualified_name for unit in units} == {"sample.Public", "sample.Public.run"}
+
+
+def test_private_named_class_expression_drops_with_its_field_binding(tmp_path: Path) -> None:
+    units = _extract(
+        tmp_path,
+        "sample.ts",
+        """
+        class Holder {
+            private hidden = class Visible { run(): number { return 1; } };
+            shown = class Internal { run(): number { return 2; } };
+        }
+        """,
+        include_private=False,
+    )
+
+    assert {unit.qualified_name for unit in units} == {
+        "sample.Holder",
+        "sample.Holder.shown",
+        "sample.Holder.shown.run",
+    }
 
 
 def test_jsx_display_copy_is_normalized_in_structural_fingerprints(tmp_path: Path) -> None:

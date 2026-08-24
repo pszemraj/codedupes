@@ -96,6 +96,8 @@ The backend covers common modern executable forms:
 
 Anonymous callbacks passed directly into calls are intentionally skipped. Their names and identities are unstable, and treating every callback as a top-level duplicate unit creates noise. An anonymous default export receives the deterministic name `default`.
 
+A bound class expression uses its external binding as the unit identity even when the class also declares an internal name: `const Worker = class Implementation {}` is reported as `Worker`. The internal name is used only for an unbound named expression. This keeps deferred export clauses and field accessibility attached to the name through which surrounding code actually reaches the class.
+
 Export marking stops at function-body boundaries: a unit nested inside an exported function is local scope, not a module export. A class body is not a boundary, so members of an exported class stay exported.
 
 Export clauses mark units declared elsewhere in the same file: `export { name }`, `export { name as alias }`, and `export default name` mark that local unit exported even though it has no export ancestor of its own. A re-export clause naming another module (`export { name } from "./other"`) refers to that module's units and never marks a local unit exported.

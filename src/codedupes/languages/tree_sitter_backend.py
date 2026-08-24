@@ -1482,11 +1482,29 @@ class ECMAScriptBackend(TreeSitterBackend):
         class_node = _nearest_ancestor(node, set(self.class_declarations | self.class_expressions))
         if class_node is None:
             return None
-        name = self._name_field(class_node, source)
-        if name:
-            return name
-        binding = self._binding_for_value(class_node, source)
-        return binding[0] if binding else None
+        identity = self._class_identity(class_node, source)
+        return identity[0] if identity else None
+
+    def _class_identity(self, node: Any, source: bytes) -> tuple[str, Any] | None:
+        """Resolve a class's externally stable name and the node carrying it.
+
+        A named class expression has two names: its internal lexical name and
+        the binding through which surrounding code reaches it. The binding is
+        the stable unit identity when one exists; the internal name remains the
+        fallback for an unbound expression. Class declarations keep their
+        declared name, except anonymous default exports, whose export binding is
+        their only stable identity.
+
+        :param node: Class declaration or expression node.
+        :param source: Full file source bytes.
+        :return: Stable name and binding node, or ``None`` when neither exists.
+        """
+        declared_name = self._name_field(node, source)
+        if getattr(node, "type", "") in self.class_expressions or not declared_name:
+            binding = self._binding_for_value(node, source)
+            if binding is not None:
+                return binding
+        return (declared_name, node) if declared_name else None
 
     def _contextual_binding(self, node: Any, bound_name: str, source: bytes) -> str:
         """Qualify a stable binding with its enclosing lexical scopes.
@@ -1556,12 +1574,13 @@ class ECMAScriptBackend(TreeSitterBackend):
             node_type = getattr(current, "type", "")
             binding_path: str | None = None
             if node_type in self.class_declarations | self.class_expressions:
-                name = self._name_field(current, source)
-                if name:
-                    _push_context_segment(contexts, name)
-                else:
-                    binding = self._binding_for_value(current, source)
-                    binding_path = binding[0] if binding else None
+                identity = self._class_identity(current, source)
+                if identity is not None:
+                    name, source_node = identity
+                    if _same_node(source_node, current):
+                        _push_context_segment(contexts, name)
+                    else:
+                        binding_path = name
             elif node_type in self.function_declarations:
                 name = self._name_field(current, source)
                 if name:
@@ -1771,13 +1790,12 @@ class ECMAScriptBackend(TreeSitterBackend):
         )
         if body is None:
             return None
-        source_node = node
-        name = self._name_field(node, source)
-        if not name:
-            binding = self._binding_for_value(node, source)
-            if not binding:
-                return None
-            bound_name, source_node = binding
+        identity = self._class_identity(node, source)
+        if identity is None:
+            return None
+        name, source_node = identity
+        if not _same_node(source_node, node):
+            bound_name = name
             contextual_name = self._contextual_binding(node, bound_name, source)
             name = bound_name.rsplit(".", 1)[-1]
             qualified_name = _qualified(prefix, contextual_name)
