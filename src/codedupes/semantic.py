@@ -3309,7 +3309,13 @@ def find_semantic_duplicates(
     :return: Similar pairs sorted by confidence.
     """
     exclude_exact = exclude_exact or set()
-    gates: Mapping[str, float] = language_thresholds or {}
+    if not np.isfinite(threshold) or not 0.0 <= threshold <= 1.0:
+        raise ValueError("threshold must be finite and in [0.0, 1.0]")
+
+    gates = dict(language_thresholds or {})
+    for language, gate in gates.items():
+        if not np.isfinite(gate) or not 0.0 <= gate <= 1.0:
+            raise ValueError(f"language_thresholds[{language!r}] must be finite and in [0.0, 1.0]")
     groups: dict[str, list[int]] = {}
     if cross_language:
         groups["*"] = list(range(len(units)))

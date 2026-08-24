@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from codedupes.models import CodeUnit, CodeUnitType
 from codedupes.semantic import find_semantic_duplicates
@@ -74,6 +75,30 @@ def test_per_language_gates_are_applied_inside_the_scan() -> None:
     )
 
     assert [(pair.unit_a.name, pair.unit_b.name) for pair in duplicates] == [("betaOne", "betaTwo")]
+
+
+@pytest.mark.parametrize(
+    ("threshold", "language_thresholds"),
+    [
+        (float("nan"), None),
+        (0.80, {"python": float("nan")}),
+        (0.80, {"python": 1.01}),
+    ],
+)
+def test_semantic_scan_rejects_invalid_thresholds(
+    threshold: float,
+    language_thresholds: dict[str, float] | None,
+) -> None:
+    units = [_unit("alpha.py", "alpha_one", "python"), _unit("beta.py", "alpha_two", "python")]
+    embeddings = _pairwise_matrix(0.75, len(units))
+
+    with pytest.raises(ValueError, match="must be finite and in"):
+        find_semantic_duplicates(
+            units,
+            embeddings,
+            threshold=threshold,
+            language_thresholds=language_thresholds,
+        )
 
 
 def test_cross_language_pairs_use_the_looser_of_both_language_gates() -> None:

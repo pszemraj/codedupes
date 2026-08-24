@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from functools import cache
 from pathlib import Path
+from types import MappingProxyType
 from typing import Literal
 
 logger = logging.getLogger(__name__)
@@ -32,6 +34,26 @@ class SemanticModelProfile:
     default_semantic_threshold: float = DEFAULT_FALLBACK_SEMANTIC_THRESHOLD
     default_search_threshold: float = DEFAULT_FALLBACK_SEARCH_THRESHOLD
     language_semantic_thresholds: Mapping[str, float] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        """Validate and freeze the profile's calibrated thresholds."""
+        thresholds = {
+            "default_semantic_threshold": self.default_semantic_threshold,
+            "default_search_threshold": self.default_search_threshold,
+            **{
+                f"language_semantic_thresholds[{language!r}]": threshold
+                for language, threshold in self.language_semantic_thresholds.items()
+            },
+        }
+        for name, threshold in thresholds.items():
+            if not math.isfinite(threshold) or not 0.0 <= threshold <= 1.0:
+                raise ValueError(f"{name} must be finite and in [0.0, 1.0]")
+
+        object.__setattr__(
+            self,
+            "language_semantic_thresholds",
+            MappingProxyType(dict(self.language_semantic_thresholds)),
+        )
 
     def all_aliases(self) -> tuple[str, ...]:
         """Return all user-facing names that map to this profile.

@@ -9,6 +9,7 @@ from codedupes.languages import SUPPORTED_LANGUAGES
 from codedupes.semantic_profiles import (
     DEFAULT_FALLBACK_SEARCH_THRESHOLD,
     DEFAULT_FALLBACK_SEMANTIC_THRESHOLD,
+    SemanticModelProfile,
     _true_case_path,
     get_default_search_threshold,
     get_default_semantic_threshold,
@@ -80,6 +81,44 @@ def test_builtin_language_gates_cover_all_supported_languages() -> None:
         # The fallback is the strictest calibrated gate: an uncalibrated future
         # language must not start looser than any measured one.
         assert profile.default_semantic_threshold == max(gates.values())
+
+
+def test_profile_copies_and_freezes_language_gates() -> None:
+    source_gates = {"python": 0.80}
+    profile = SemanticModelProfile(
+        key="test",
+        canonical_name="test/model",
+        aliases=(),
+        family="generic",
+        language_semantic_thresholds=source_gates,
+    )
+
+    source_gates["python"] = 0.01
+
+    assert profile.language_semantic_thresholds["python"] == 0.80
+    with pytest.raises(TypeError):
+        profile.language_semantic_thresholds["python"] = 0.01  # type: ignore[index]
+
+
+@pytest.mark.parametrize(
+    ("field_name", "field_value"),
+    [
+        ("default_semantic_threshold", float("nan")),
+        ("default_search_threshold", float("inf")),
+        ("language_semantic_thresholds", {"python": -0.01}),
+    ],
+)
+def test_profile_rejects_invalid_thresholds(field_name: str, field_value: object) -> None:
+    kwargs = {field_name: field_value}
+
+    with pytest.raises(ValueError, match="must be finite and in"):
+        SemanticModelProfile(
+            key="test",
+            canonical_name="test/model",
+            aliases=(),
+            family="generic",
+            **kwargs,
+        )
 
 
 def test_language_gate_lookup_builtin_fallback_and_generic() -> None:
