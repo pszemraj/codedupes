@@ -154,6 +154,12 @@ def _validate_labels(
         if category not in CATEGORY_NAMES:
             failures.append(f"unknown category name {category!r}")
             continue
+        # An empty list is a labeling mistake, not a vacuously covered category:
+        # left in place it crashes the sweep's per-category recall loop only
+        # after the full corpus embed.
+        if not groups:
+            failures.append(f"category {category!r} lists no positive groups")
+            continue
         for group in groups:
             key = _group_key(group)
             if key in seen_keys:

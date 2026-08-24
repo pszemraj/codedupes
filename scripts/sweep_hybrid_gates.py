@@ -23,6 +23,7 @@ try:
         build_positive_pairs,
         metrics,
         rank_sweep_rows,
+        validate_labels_shape,
     )
 except ImportError:
     from sweep_common import (
@@ -30,6 +31,7 @@ except ImportError:
         build_positive_pairs,
         metrics,
         rank_sweep_rows,
+        validate_labels_shape,
     )
 
 
@@ -199,6 +201,11 @@ def main() -> int:
         default=None,
         help=("Model revision / commit hash. If omitted, uses the model-profile default."),
     )
+    parser.add_argument(
+        "--device",
+        default="cpu",
+        help="Embedding device for the sweep. Defaults to cpu for reproducible float32.",
+    )
     trust_group = parser.add_mutually_exclusive_group()
     trust_group.add_argument(
         "--trust-remote-code",
@@ -234,6 +241,10 @@ def main() -> int:
         )
 
     labels = json.loads(args.labels_path.read_text())
+    try:
+        validate_labels_shape(labels)
+    except ValueError as exc:
+        parser.error(str(exc))
     config = AnalyzerConfig(
         run_traditional=True,
         run_semantic=True,
@@ -247,6 +258,7 @@ def main() -> int:
         model_revision=args.model_revision,
         trust_remote_code=args.trust_remote_code,
         batch_size=args.batch_size,
+        device=args.device,
     )
     analyzer = CodeAnalyzer(config)
     result = analyzer.analyze(args.corpus_path)

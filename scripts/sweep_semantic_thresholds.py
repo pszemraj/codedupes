@@ -47,6 +47,7 @@ try:
         metrics,
         rank_sweep_rows,
         resolve_label_unit,
+        validate_labels_shape,
     )
 except ImportError:
     from sweep_common import (
@@ -55,6 +56,7 @@ except ImportError:
         metrics,
         rank_sweep_rows,
         resolve_label_unit,
+        validate_labels_shape,
     )
 
 DUPLICATE_THRESHOLD_START = 0.70
@@ -91,11 +93,22 @@ class ModelSweep:
 
 
 def _threshold_grid(start: float, stop: float) -> list[float]:
+    """Uniform ``THRESHOLD_STEP`` grid whose values are the exact gates evaluated.
+
+    Values are ``start + k * THRESHOLD_STEP`` with only float noise rounded away,
+    never coarsened to two decimals: the first row must equal the analyzer's
+    collection floor, or an off-grid ``--duplicate-start`` (e.g. 0.705) labels
+    its rows with thresholds looser than any pair that was ever collected - and
+    the loosest-tie ranking then selects exactly that mislabeled row.
+    """
     values: list[float] = []
-    current = start
-    while current <= stop + 1e-9:
-        values.append(round(current, 2))
-        current += THRESHOLD_STEP
+    steps = 0
+    while True:
+        current = round(start + steps * THRESHOLD_STEP, 9)
+        if current > stop + 1e-9:
+            break
+        values.append(current)
+        steps += 1
     return values
 
 
@@ -299,10 +312,12 @@ def _run_duplicate_sweep(
     excluded_pairs = len(positive_pairs) - len(scoreable_pairs)
     if excluded_pairs:
         print(
-            f"{excluded_pairs} labeled pairs sit outside the semantic candidate pool "
-            "(class-level or below-min-statement units). They stay in the metric "
-            "denominator and are threshold-invariant: the production candidate policy "
-            "keeps them unembedded, so no threshold in this grid reaches them and they "
+            f"{excluded_pairs} labeled pairs sit outside the embedded candidate pool. "
+            "They stay in the metric denominator and are threshold-invariant. "
+            "Candidate-policy exclusions (class-level or below-min-statement units) "
+            "are unconditional false negatives: combined-mode traditional analysis "
+            "shares the candidate pool, so neither tier reaches them. Over-context "
+            "exclusions are dropped only after traditional analysis runs, so those "
             "count as false negatives unless the traditional tier already matched them."
         )
     thresholds = _threshold_grid(duplicate_start, duplicate_stop)
@@ -464,11 +479,14 @@ def _run_search_sweep(
 def _print_sweep(model_sweep: ModelSweep, top_n: int) -> None:
     print(f"\nModel: {model_sweep.model_key} ({model_sweep.manifest['mode']})")
     print(f"Revision: {model_sweep.manifest['resolved_revision']}")
-    print(f"Selected threshold: {model_sweep.selected_threshold:.2f}")
+    # ``:g``, not ``:.2f``: an off-grid --duplicate-start yields 3-decimal gates,
+    # and truncating them in the printout would recreate the mislabeling the
+    # grid itself no longer performs.
+    print(f"Selected threshold: {model_sweep.selected_threshold:g}")
     print("Top rows:")
     for idx, row in enumerate(model_sweep.rows[:top_n], start=1):
         print(
-            f"  {idx:02d}. threshold={row.threshold:.2f} f1={row.f1:.3f} "
+            f"  {idx:02d}. threshold={row.threshold:g} f1={row.f1:.3f} "
             f"precision={row.precision:.3f} recall={row.recall:.3f} "
             f"tp={row.tp} fp={row.fp} fn={row.fn} pred={row.predicted}"
         )
@@ -560,6 +578,12 @@ def main() -> int:
         )
 
     labels = json.loads(args.labels_path.read_text())
+    # Shape problems must abort here, in milliseconds: the per-category recall
+    # loop otherwise discovers an empty category only after the full corpus embed.
+    try:
+        validate_labels_shape(labels)
+    except ValueError as exc:
+        parser.error(str(exc))
     probes: list[dict[str, Any]] = []
     if not args.skip_search:
         probes = json.loads(args.search_probes_path.read_text())["probes"]

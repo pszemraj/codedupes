@@ -121,6 +121,48 @@ def resolve_label_unit(units: list[CodeUnit], spec: str) -> CodeUnit:
     return matches[0]
 
 
+def validate_labels_shape(labels: dict[str, Any]) -> None:
+    """Fail fast on structurally malformed labels JSON, before any model work.
+
+    Shape checks only - specs are not resolved against extracted units - so sweep
+    entry points can reject a bad labels file in milliseconds instead of aborting
+    after the corpus embed, where an empty category list surfaced as
+    ``build_positive_pairs``'s misleading top-level ``positive_groups`` error.
+
+    :param dict[str, Any] labels: Loaded labels JSON dictionary.
+    :raises ValueError: If ``positive_groups`` or any ``categories`` entry is malformed.
+    :return None: ``None``.
+    """
+    groups = labels.get("positive_groups")
+    if not isinstance(groups, list) or not groups:
+        msg = "labels.json must define a non-empty 'positive_groups' list."
+        raise ValueError(msg)
+    for group in groups:
+        if not isinstance(group, list) or len(group) < 2:
+            msg = f"Invalid positive group {group!r}; expected a list with at least two specs."
+            raise ValueError(msg)
+
+    categories = labels.get("categories")
+    if categories is None:
+        return
+    if not isinstance(categories, dict):
+        msg = "labels.json 'categories' must map category names to lists of positive groups."
+        # Kept a ValueError so callers catch one shape-error type, matching
+        # every other malformed-labels raise in this module.
+        raise ValueError(msg)  # noqa: TRY004
+    for category, category_groups in categories.items():
+        if not isinstance(category_groups, list) or not category_groups:
+            msg = f"labels.json category {category!r} must list at least one positive group."
+            raise ValueError(msg)
+        for group in category_groups:
+            if not isinstance(group, list) or len(group) < 2:
+                msg = (
+                    f"Invalid group {group!r} in category {category!r}; "
+                    "expected a list with at least two specs."
+                )
+                raise ValueError(msg)
+
+
 def build_positive_pairs(units: list[CodeUnit], labels: dict[str, Any]) -> set[tuple[str, str]]:
     """Build expected-positive duplicate pairs from label groups.
 

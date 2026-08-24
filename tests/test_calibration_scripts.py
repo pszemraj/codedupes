@@ -152,6 +152,32 @@ def test_validator_counts_negative_controls_as_groups(
     assert "negative_controls: 1 groups (3 pairs)" in capsys.readouterr().out
 
 
+def test_validator_flags_a_category_with_no_groups(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """An empty category list is a labeling mistake, not a vacuously covered category."""
+    corpus_path = tmp_path / "corpus"
+    _write_corpus(corpus_path)
+    labels_path = tmp_path / "labels.json"
+    labels_path.write_text(
+        json.dumps(
+            {
+                "positive_groups": [["alpha.py::accumulate", "beta.py::accumulate"]],
+                "categories": {
+                    "exact": [["alpha.py::accumulate", "beta.py::accumulate"]],
+                    "near_rename": [],
+                },
+            }
+        )
+    )
+
+    exit_code = _run_validator(monkeypatch, corpus_path, labels_path)
+
+    output = capsys.readouterr().out
+    assert exit_code == 1
+    assert "category 'near_rename' lists no positive groups" in output
+
+
 def test_validator_rejects_partial_parse_with_usable_units(tmp_path: Path) -> None:
     source_path = tmp_path / "sample.rs"
     source_path.write_text(

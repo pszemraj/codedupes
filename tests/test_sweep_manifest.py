@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import argparse
 import json
+from itertools import pairwise
 from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 
 from codedupes.analyzer import CodeAnalyzer
 from codedupes.constants import DEFAULT_CHECK_SEMANTIC_TASK, DEFAULT_MIN_SEMANTIC_STATEMENTS
@@ -15,10 +17,16 @@ from codedupes.models import CodeUnit, CodeUnitType
 from codedupes.semantic import EmbeddingSpaceIdentity
 from codedupes.semantic_profiles import resolve_model_profile
 from scripts.report_calibration_distributions import _analyze_language
-from scripts.sweep_common import add_common_sweep_arguments
+from scripts.sweep_common import add_common_sweep_arguments, validate_labels_shape
 from scripts.sweep_hybrid_gates import GateConfig
 from scripts.sweep_hybrid_gates import _run_sweep as _run_hybrid_gate_sweep
-from scripts.sweep_semantic_thresholds import _calibration_manifest, _run_duplicate_sweep
+from scripts.sweep_semantic_thresholds import (
+    THRESHOLD_STEP,
+    _calibration_manifest,
+    _run_duplicate_sweep,
+    _threshold_grid,
+)
+from scripts.sweep_semantic_thresholds import main as _semantic_sweep_main
 
 PINNED_COMMIT = "a" * 40
 
@@ -219,3 +227,78 @@ def test_hybrid_gate_ties_resolve_to_the_loosest_gate_not_grid_order() -> None:
         GateConfig(0.92, 0.10, 0.20),
         GateConfig(0.92, 0.30, 0.55),
     ]
+
+
+def test_threshold_grid_rows_are_the_exact_gates_evaluated() -> None:
+    """An off-grid ``--duplicate-start`` must not label rows below the collection floor.
+
+    ``round(current, 2)`` labeled a 0.705-floor sweep's first row ``0.70`` while
+    no pair below 0.705 was ever collected, and the loosest-tie ranking then
+    preferred exactly that mislabeled row into ``selected_threshold``.
+    """
+    grid = _threshold_grid(0.705, 0.75)
+
+    assert grid == [0.705, 0.725, 0.745]
+
+
+def test_threshold_grid_default_bounds_are_unchanged() -> None:
+    """The shipped 2-decimal grids must survive the exact-gate rewrite verbatim."""
+    duplicate_grid = _threshold_grid(0.70, 0.96)
+    search_grid = _threshold_grid(0.20, 0.70)
+
+    assert duplicate_grid[0] == 0.70
+    assert duplicate_grid[-1] == 0.96
+    assert len(duplicate_grid) == 14
+    assert len(search_grid) == 26
+    assert all(
+        round(after - before, 9) == THRESHOLD_STEP for before, after in pairwise(duplicate_grid)
+    )
+
+
+def test_labels_shape_validation_rejects_an_empty_category() -> None:
+    """An empty category list must fail by name, not as a bogus positive_groups error."""
+    labels = {
+        "positive_groups": [["alpha.py::first", "alpha.py::second"]],
+        "categories": {
+            "exact": [["alpha.py::first", "alpha.py::second"]],
+            "near_translation": [],
+        },
+    }
+
+    with pytest.raises(ValueError, match="near_translation"):
+        validate_labels_shape(labels)
+
+
+def test_semantic_sweep_rejects_malformed_labels_before_any_analysis(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    """A bad labels file must abort at argument time, not after the corpus embed."""
+    labels_path = tmp_path / "labels.json"
+    labels_path.write_text(
+        json.dumps(
+            {
+                "positive_groups": [["alpha.py::first", "alpha.py::second"]],
+                "categories": {"exact": []},
+            }
+        )
+    )
+
+    def fail_analyze(self: CodeAnalyzer, path: Path) -> SimpleNamespace:
+        raise AssertionError("analyze() must not run for malformed labels")
+
+    monkeypatch.setattr(CodeAnalyzer, "analyze", fail_analyze)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "sweep_semantic_thresholds.py",
+            "--labels-path",
+            str(labels_path),
+            "--skip-search",
+        ],
+    )
+
+    with pytest.raises(SystemExit) as excinfo:
+        _semantic_sweep_main()
+
+    assert excinfo.value.code == 2
+    assert "'exact'" in capsys.readouterr().err

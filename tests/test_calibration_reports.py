@@ -27,7 +27,8 @@ REPORTS_PATH = Path(__file__).resolve().parents[1] / "test_fixtures" / "polyglot
 LANGUAGES = ("c", "rust", "javascript", "typescript", "python")
 MODEL_KEYS = tuple(profile.key for profile in list_supported_models())
 
-# Grid thresholds are rounded to two decimals when swept, so compare on that grid.
+# Shipped grids step in 0.02 from two-decimal floors; rounding both sides to
+# that precision strips float noise before comparing gate and report values.
 GRID_DECIMALS = 2
 FLOAT_TOLERANCE = 1e-9
 
