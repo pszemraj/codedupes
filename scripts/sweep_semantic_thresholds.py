@@ -309,6 +309,11 @@ def _run_duplicate_sweep(
     scoreable_pairs = {
         pair for pair in positive_pairs if pair[0] in embedded_uids and pair[1] in embedded_uids
     }
+    traditional_pairs = {
+        ordered_pair_key(duplicate.unit_a, duplicate.unit_b)
+        for duplicate in result.traditional_duplicates
+    }
+    reachable_pairs = scoreable_pairs | (positive_pairs & traditional_pairs)
     excluded_pairs = len(positive_pairs) - len(scoreable_pairs)
     if excluded_pairs:
         print(
@@ -370,7 +375,7 @@ def _run_duplicate_sweep(
         "labeled_positive_pairs": len(positive_pairs),
         "scoreable_positive_pairs": len(scoreable_pairs),
         "excluded_positive_pairs": excluded_pairs,
-        "recall_ceiling": (len(scoreable_pairs) / len(positive_pairs) if positive_pairs else 0.0),
+        "recall_ceiling": (len(reachable_pairs) / len(positive_pairs) if positive_pairs else 0.0),
     }
     selected_pairs = predicted_by_threshold[selected.threshold]
     manifest["selected_category_recall"] = {}

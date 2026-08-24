@@ -13,7 +13,7 @@ import pytest
 
 from codedupes.analyzer import CodeAnalyzer
 from codedupes.constants import DEFAULT_CHECK_SEMANTIC_TASK, DEFAULT_MIN_SEMANTIC_STATEMENTS
-from codedupes.models import CodeUnit, CodeUnitType
+from codedupes.models import CodeUnit, CodeUnitType, DuplicatePair
 from codedupes.semantic import EmbeddingSpaceIdentity
 from codedupes.semantic_profiles import resolve_model_profile
 from scripts.report_calibration_distributions import _analyze_language
@@ -112,6 +112,63 @@ def test_manifest_records_effective_embedding_space_not_the_request(
         "excluded_positive_pairs": 0,
         "recall_ceiling": 1.0,
     }
+
+
+def test_manifest_recall_ceiling_includes_traditional_overflow_recovery(
+    tmp_path: Path, monkeypatch
+) -> None:
+    corpus_path = tmp_path / "corpus"
+    corpus_path.mkdir()
+    first_path = corpus_path / "alpha.py"
+    second_path = corpus_path / "beta.py"
+    first_path.write_text("def first():\n    return 1\n")
+    second_path.write_text("def second():\n    return 1\n")
+    labels = {"positive_groups": [["alpha.py::first", "beta.py::second"]]}
+    labels_path = tmp_path / "labels.json"
+    labels_path.write_text(json.dumps(labels))
+
+    profile = resolve_model_profile("gte-modernbert-base")
+    identity = EmbeddingSpaceIdentity(
+        model_name=profile.canonical_name,
+        resolved_revision=PINNED_COMMIT,
+        runtime_variant="cpu-faithful",
+    )
+    first = _unit("first", first_path, 1)
+    second = _unit("second", second_path, 1)
+    traditional = DuplicatePair(first, second, 1.0, "ast_hash")
+
+    def fake_analyze(self: CodeAnalyzer, path: Path) -> SimpleNamespace:
+        self._embeddings = np.zeros((0, 0), dtype=np.float32)
+        self._embedding_space_identity = identity
+        # Both units passed the initial candidate policy but were dropped from
+        # the semantic matrix after traditional analysis, as context overflows are.
+        self._semantic_units = []
+        return SimpleNamespace(
+            units=[first, second],
+            traditional_duplicates=[traditional],
+            semantic_duplicates=[],
+        )
+
+    monkeypatch.setattr(CodeAnalyzer, "analyze", fake_analyze)
+
+    sweep = _run_duplicate_sweep(
+        model_name="gte-modernbert-base",
+        revision=PINNED_COMMIT,
+        corpus_path=corpus_path,
+        labels_path=labels_path,
+        labels=labels,
+        min_statements=0,
+        batch_size=4,
+        device="cpu",
+    )
+
+    assert sweep.manifest["candidate_coverage"] == {
+        "labeled_positive_pairs": 1,
+        "scoreable_positive_pairs": 0,
+        "excluded_positive_pairs": 1,
+        "recall_ceiling": 1.0,
+    }
+    assert {row.recall for row in sweep.rows} == {1.0}
 
 
 def test_common_sweep_defaults_match_production_candidate_policy() -> None:
