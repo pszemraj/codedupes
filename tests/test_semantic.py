@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import inspect
 import logging
+import math
 import os
 import stat
 from pathlib import Path
@@ -13,8 +14,9 @@ import torch
 
 from codedupes import devices, semantic
 from codedupes.constants import CPU_FALLBACK_MAX_BATCH_SIZE
-from codedupes.embedding_cache import EmbeddingCache
+from codedupes.embedding_cache import EmbeddingCache, compute_cache_key
 from codedupes.models import CodeUnit, CodeUnitType
+from codedupes.pairs import ordered_pair_key
 from codedupes.semantic import (
     SemanticBackendError,
     SemanticContextOverflow,
@@ -2731,3 +2733,246 @@ def test_strict_revision_cache_disables_caching_for_unmappable_symbolic_ref(
         )
 
     assert model.encode_calls == 2
+
+
+def _scan_fixture() -> tuple[list[CodeUnit], np.ndarray]:
+    """Build a deterministic two-language corpus for the pairwise-scan fuzz.
+
+    Every component is +/-0.25 across 16 dimensions, so rows are exactly
+    unit-norm and every dot product is an exact multiple of 1/16. Blocking a
+    matrix multiply therefore cannot perturb a single similarity, which lets the
+    reference below compare bit-exactly, and the resulting ties make the scan's
+    emission order observable through the stable final sort.
+
+    :return: Units and their row-aligned embedding matrix.
+    """
+    count, dimensions = 1040, 16
+    rng = np.random.default_rng(20260825)
+    embeddings = (
+        rng.integers(0, 2, size=(count, dimensions)).astype(np.float32) * 2.0 - 1.0
+    ) * 0.25
+
+    # Non-finite rows. Row 0 is all-positive so its product with the +inf row is
+    # +inf rather than NaN, exercising the finite guard behind the gate mask.
+    embeddings[0] = 0.25
+    embeddings[1] = np.inf
+    embeddings[4] = np.nan
+
+    # Perfect-similarity rows for the three post-gate filters: an overlapping
+    # same-file pair, a surviving cross-file twin, and a class/function pair.
+    embeddings[9] = embeddings[8]
+    embeddings[13] = embeddings[12]
+    embeddings[17] = embeddings[16]
+
+    units: list[CodeUnit] = []
+    for index in range(count):
+        language = "python" if index % 4 < 2 else "rust"
+        if (index + 1) % 17 == 0:
+            unit_type = CodeUnitType.CLASS
+        elif index % 5 == 0:
+            unit_type = CodeUnitType.METHOD
+        else:
+            unit_type = CodeUnitType.FUNCTION
+        units.append(
+            CodeUnit(
+                name=f"unit_{index}",
+                qualified_name=f"mod_{index}.unit_{index}",
+                unit_type=unit_type,
+                file_path=Path(f"mod_{index}.{'py' if language == 'python' else 'rs'}"),
+                lineno=1,
+                end_lineno=4,
+                source=f"def unit_{index}(): ...",
+                language=language,
+                start_byte=0,
+                end_byte=40,
+            )
+        )
+
+    units[9].file_path = units[8].file_path
+    units[9].start_byte = 20
+    units[9].end_byte = 60
+    return units, embeddings
+
+
+def _reference_semantic_duplicates(
+    units: list[CodeUnit],
+    embeddings: np.ndarray,
+    threshold: float,
+    *,
+    exclude_exact: set[tuple[str, str]] | None = None,
+    cross_language: bool = False,
+    language_thresholds: dict[str, float] | None = None,
+) -> list[tuple[tuple[str, str], float]]:
+    """Restate the documented duplicate-scan semantics as a naive O(N^2) loop.
+
+    :param units: Candidate units row-aligned with ``embeddings``.
+    :param embeddings: Embedding matrix.
+    :param threshold: Fallback gate for languages without a calibrated gate.
+    :param exclude_exact: Pairs the scan must not report.
+    :param cross_language: Whether to scan one mixed group instead of per-language groups.
+    :param language_thresholds: Per-language duplicate gates.
+    :return: ``(ordered pair key, similarity)`` in the order the scan must report.
+    """
+    excluded = exclude_exact or set()
+    gates = dict(language_thresholds or {})
+    similarity_matrix = embeddings @ embeddings.T
+
+    if cross_language:
+        groups = {"*": list(range(len(units)))}
+    else:
+        groups = {}
+        for index, unit in enumerate(units):
+            groups.setdefault(unit.language, []).append(index)
+
+    reported: list[tuple[tuple[str, str], float]] = []
+    for language, indices in groups.items():
+        if cross_language:
+            group_gate = min(gates.get(units[index].language, threshold) for index in indices)
+        else:
+            group_gate = gates.get(language, threshold)
+        for position, index_a in enumerate(indices):
+            unit_a = units[index_a]
+            row = similarity_matrix[index_a].tolist()
+            for index_b in indices[position + 1 :]:
+                similarity = row[index_b]
+                if not math.isfinite(similarity) or similarity < group_gate:
+                    continue
+                unit_b = units[index_b]
+                if cross_language and similarity < min(
+                    gates.get(unit_a.language, threshold),
+                    gates.get(unit_b.language, threshold),
+                ):
+                    continue
+                kinds = {unit_a.unit_type, unit_b.unit_type}
+                if len(kinds) > 1 and kinds != {CodeUnitType.FUNCTION, CodeUnitType.METHOD}:
+                    continue
+                # Every fixture unit has a real byte range, so overlap is the
+                # same-file byte-interval test.
+                if (
+                    unit_a.file_path == unit_b.file_path
+                    and unit_a.start_byte < unit_b.end_byte
+                    and unit_b.start_byte < unit_a.end_byte
+                ):
+                    continue
+                key = ordered_pair_key(unit_a, unit_b)
+                if key in excluded:
+                    continue
+                reported.append((key, similarity))
+    reported.sort(key=lambda entry: entry[1], reverse=True)
+    return reported
+
+
+def _pair_view(duplicates) -> list[tuple[tuple[str, str], float]]:
+    """Reduce reported duplicates to comparable ``(pair key, similarity)`` entries.
+
+    :param duplicates: Duplicate pairs as reported by the scan.
+    :return: Pair keys with similarities, in report order.
+    """
+    return [(ordered_pair_key(pair.unit_a, pair.unit_b), pair.similarity) for pair in duplicates]
+
+
+def test_vectorized_pair_scan_matches_naive_reference() -> None:
+    # The scan multiplies chunks against the group tail and thresholds in numpy;
+    # a wrong column-to-index offset or a mis-ordered candidate walk only shows
+    # up past the 500-row chunk boundary, which this 520-per-language corpus
+    # crosses in every mode.
+    units, embeddings = _scan_fixture()
+    gates = {"python": 0.875, "rust": 0.75}
+
+    same_language = find_semantic_duplicates(
+        units, embeddings, threshold=0.75, language_thresholds=gates
+    )
+    expected = _reference_semantic_duplicates(units, embeddings, 0.75, language_thresholds=gates)
+    assert _pair_view(same_language) == expected
+    assert len(expected) > 100
+
+    reported_keys = {key for key, _ in _pair_view(same_language)}
+    assert ordered_pair_key(units[12], units[13]) in reported_keys
+    assert ordered_pair_key(units[8], units[9]) not in reported_keys
+    assert ordered_pair_key(units[16], units[17]) not in reported_keys
+    assert ordered_pair_key(units[0], units[1]) not in reported_keys
+    assert all(units[4].uid not in key for key in reported_keys)
+
+    cross = find_semantic_duplicates(
+        units, embeddings, threshold=0.9, cross_language=True, language_thresholds=gates
+    )
+    cross_expected = _reference_semantic_duplicates(
+        units, embeddings, 0.9, cross_language=True, language_thresholds=gates
+    )
+    assert _pair_view(cross) == cross_expected
+    assert any(pair.unit_a.language != pair.unit_b.language for pair in cross)
+
+    excluded = {key for key, _ in expected[::37]}
+    filtered = find_semantic_duplicates(
+        units, embeddings, threshold=0.75, exclude_exact=excluded, language_thresholds=gates
+    )
+    filtered_expected = _reference_semantic_duplicates(
+        units, embeddings, 0.75, exclude_exact=excluded, language_thresholds=gates
+    )
+    assert _pair_view(filtered) == filtered_expected
+    assert len(filtered) == len(expected) - len(excluded)
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        ("def f():\r\n    return 1\r\n", "def f():\n    return 1"),
+        ("def f():\r    return 1\r", "def f():\n    return 1"),
+        ("\r\n  keep  \r\n", "keep"),
+        ("already\nnormalized", "already\nnormalized"),
+    ],
+)
+def test_prepare_embedding_text_normalizes_line_endings(source: str, expected: str) -> None:
+    assert semantic._prepare_embedding_text(source) == expected
+
+
+def test_crlf_and_lf_units_share_one_embedding_cache_key(tmp_path: Path) -> None:
+    lf_source = "fn f() -> i64 {\n    1\n}\n"
+    lf_unit = CodeUnit(
+        name="f",
+        qualified_name="sample::f",
+        unit_type=CodeUnitType.FUNCTION,
+        file_path=tmp_path / "lf.rs",
+        lineno=1,
+        end_lineno=3,
+        source=lf_source,
+        language="rust",
+    )
+    crlf_unit = CodeUnit(
+        name="f",
+        qualified_name="sample::f",
+        unit_type=CodeUnitType.FUNCTION,
+        file_path=tmp_path / "crlf.rs",
+        lineno=1,
+        end_lineno=3,
+        source=lf_source.replace("\n", "\r\n"),
+        language="rust",
+    )
+
+    lf_text = semantic._prepare_embedding_text(lf_unit.source)
+    crlf_text = semantic._prepare_embedding_text(crlf_unit.source)
+    assert lf_text == crlf_text
+
+    lf_key = compute_cache_key("model", "revision", lf_text)
+    assert lf_key == compute_cache_key("model", "revision", crlf_text)
+    # Without normalization the two checkouts would key - and embed - apart.
+    assert lf_key != compute_cache_key("model", "revision", crlf_unit.source.strip())
+
+
+def test_compute_embeddings_normalizes_crlf_before_encoding(tmp_path: Path, monkeypatch) -> None:
+    unit = CodeUnit(
+        name="f",
+        qualified_name="sample::f",
+        unit_type=CodeUnitType.FUNCTION,
+        file_path=tmp_path / "sample.rs",
+        lineno=1,
+        end_lineno=3,
+        source="fn f() -> i64 {\r\n    1\r\n}\r\n",
+        language="rust",
+    )
+    model = _RecordingModel()
+    monkeypatch.setattr(semantic, "get_model", lambda *_a, **_k: model)
+
+    compute_embeddings([unit], device="cpu")
+
+    assert model.encoded == [["fn f() -> i64 {\n    1\n}"]]

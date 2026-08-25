@@ -1013,6 +1013,24 @@ def _select_cache_miss_indices(
 EMBEDDING_PIPELINE_SCHEMA = 5
 
 
+# No schema bump: cache keys are content-addressed on the prepared text itself,
+# and this leaves the text -> vector mapping untouched for every text that still
+# maps to its old key. LF-corpus entries stay valid; a CRLF-containing unit
+# simply re-keys onto the LF text and re-embeds once.
+def _prepare_embedding_text(source: str) -> str:
+    """Normalize one unit's source into its embedding input text.
+
+    Line endings are normalized so one logical text has one cache key and one
+    vector no matter how the file was checked out. Tree-sitter backends keep the
+    bytes from disk, so without this a CRLF checkout embeds - and caches - the
+    same code separately from its LF twin and can score the pair below gate.
+
+    :param source: Raw unit source text.
+    :return: Prepared embedding input with LF line endings and no outer blanks.
+    """
+    return source.replace("\r\n", "\n").replace("\r", "\n").strip()
+
+
 def _embedding_runtime_fingerprint() -> str:
     """Digest the embedding runtime that determines vector values.
 
@@ -2705,7 +2723,7 @@ def _compute_embeddings_unlocked(
         if identity_local_model_path is not None
         else _resolve_revision_for_cache(model_name, revision, strict=strict_revision_cache)
     )
-    prepared_texts = [unit.source.strip() for unit in units]
+    prepared_texts = [_prepare_embedding_text(unit.source) for unit in units]
 
     def _effective_identity(
         effective_device: str,
@@ -3367,42 +3385,51 @@ def find_semantic_duplicates(
         for group_i in range(0, group_size, chunk_size):
             end_i = min(group_i + chunk_size, group_size)
             chunk_embeddings = group_embeddings[group_i:end_i]
-            similarities = chunk_embeddings @ group_embeddings.T
+            # Only the strict upper triangle is ever read, so multiply against
+            # the tail: column c of this product is group index group_i + c.
+            similarities = chunk_embeddings @ group_embeddings[group_i:].T
 
-            for local_idx in range(end_i - group_i):
-                group_idx = group_i + local_idx
-                global_idx = indices[group_idx]
-                unit_a = units[global_idx]
+            # Threshold in numpy so the overwhelmingly common below-gate pair
+            # never reaches Python. NaN compares False here and +inf survives
+            # to the finite guard below, matching the scalar comparison.
+            candidate_rows, candidate_columns = np.nonzero(similarities >= group_threshold)
+            candidate_scores = similarities[candidate_rows, candidate_columns]
+            # Row-major nonzero order is (row asc, column asc), so pairs are
+            # still emitted in (i asc, j asc) order. .tolist() converts once in
+            # C; per-candidate numpy scalar indexing dominated the old scan.
+            for local_idx, column, sim in zip(
+                candidate_rows.tolist(),
+                candidate_columns.tolist(),
+                candidate_scores.tolist(),
+                strict=True,
+            ):
+                if column <= local_idx:
+                    continue
+                if not np.isfinite(sim):
+                    continue
 
-                for group_j in range(group_idx + 1, group_size):
-                    sim = float(similarities[local_idx, group_j])
+                unit_a = units[indices[group_i + local_idx]]
+                unit_b = units[indices[group_i + column]]
+                if cross_language and sim < min(
+                    gates.get(unit_a.language, threshold),
+                    gates.get(unit_b.language, threshold),
+                ):
+                    continue
+                if not _types_compatible(unit_a, unit_b):
+                    continue
+                if unit_a.overlaps(unit_b):
+                    continue
+                if ordered_pair_key(unit_a, unit_b) in exclude_exact:
+                    continue
 
-                    # Threshold first so the common below-threshold pair skips
-                    # further Python work. NaN/+inf still hit the finite guard.
-                    if sim < group_threshold or not np.isfinite(sim):
-                        continue
-
-                    unit_b = units[indices[group_j]]
-                    if cross_language and sim < min(
-                        gates.get(unit_a.language, threshold),
-                        gates.get(unit_b.language, threshold),
-                    ):
-                        continue
-                    if not _types_compatible(unit_a, unit_b):
-                        continue
-                    if unit_a.overlaps(unit_b):
-                        continue
-                    if ordered_pair_key(unit_a, unit_b) in exclude_exact:
-                        continue
-
-                    duplicates.append(
-                        DuplicatePair(
-                            unit_a=unit_a,
-                            unit_b=unit_b,
-                            similarity=sim,
-                            method="semantic",
-                        )
+                duplicates.append(
+                    DuplicatePair(
+                        unit_a=unit_a,
+                        unit_b=unit_b,
+                        similarity=sim,
+                        method="semantic",
                     )
+                )
 
     duplicates.sort(key=lambda duplicate: duplicate.similarity, reverse=True)
     gate_text = (
@@ -3537,7 +3564,7 @@ def _find_similar_to_query_unlocked(
         resolved_threshold = threshold
 
     encode_plan = _resolve_encode_plan(profile, "query", resolved_task, instruction_prefix)
-    query_text = query
+    query_text = _prepare_embedding_text(query)
 
     cache, cache_revision, cache_variant, cache_namespace = _prepare_cache_context(
         "query",
