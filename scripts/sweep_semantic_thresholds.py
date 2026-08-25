@@ -392,10 +392,16 @@ def _run_duplicate_sweep(
     )
     manifest["output_policy"] = "hybrid_duplicates"
     manifest["selected_at_grid_edge"] = _grid_edge(selected.threshold, thresholds)
+    # Every count shares one population: reachable = scoreable + traditional
+    # recoveries, unreachable = labeled - reachable, and the ceiling divides
+    # reachable by labeled. The old ``excluded_positive_pairs`` counted only
+    # embedding-pool exclusions, so a traditional recovery made the block read
+    # "1 of 1 excluded, ceiling 1.0".
     manifest["candidate_coverage"] = {
         "labeled_positive_pairs": len(positive_pairs),
         "scoreable_positive_pairs": len(scoreable_pairs),
-        "excluded_positive_pairs": excluded_pairs,
+        "traditional_recovered_pairs": len(reachable_pairs) - len(scoreable_pairs),
+        "unreachable_positive_pairs": len(positive_pairs) - len(reachable_pairs),
         "recall_ceiling": (len(reachable_pairs) / len(positive_pairs) if positive_pairs else 0.0),
     }
     selected_pairs = predicted_by_threshold[selected.threshold]

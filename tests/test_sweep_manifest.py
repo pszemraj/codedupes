@@ -117,7 +117,8 @@ def test_manifest_records_effective_embedding_space_not_the_request(
     assert manifest["candidate_coverage"] == {
         "labeled_positive_pairs": 1,
         "scoreable_positive_pairs": 1,
-        "excluded_positive_pairs": 0,
+        "traditional_recovered_pairs": 0,
+        "unreachable_positive_pairs": 0,
         "recall_ceiling": 1.0,
     }
 
@@ -170,10 +171,13 @@ def test_manifest_recall_ceiling_includes_traditional_overflow_recovery(
         device="cpu",
     )
 
+    # The recovered pair is counted as recovered, not "excluded": the old
+    # field names read "1 of 1 excluded, ceiling 1.0" for exactly this case.
     assert sweep.manifest["candidate_coverage"] == {
         "labeled_positive_pairs": 1,
         "scoreable_positive_pairs": 0,
-        "excluded_positive_pairs": 1,
+        "traditional_recovered_pairs": 1,
+        "unreachable_positive_pairs": 0,
         "recall_ceiling": 1.0,
     }
     assert {row.recall for row in sweep.rows} == {1.0}
