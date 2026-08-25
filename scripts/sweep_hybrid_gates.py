@@ -1,4 +1,14 @@
-"""Sweep hybrid semantic-only confidence thresholds on a labeled corpus."""
+"""Sweep hybrid semantic-only confidence thresholds on a labeled corpus.
+
+Like the semantic threshold sweep, every report records the calibration
+manifest (pinned model commit, pipeline schema, effective embedding-space
+identity, candidate policy, corpus/label digests), and the run refuses models
+that cannot be pinned to an immutable 40-character commit. Metrics here score
+the published output minus the ``semantic_review`` tier (``output_policy``
+``hybrid_high_confidence``): this sweep tunes the corroboration constants that
+decide promotion to high confidence, unlike the semantic sweep, whose
+same-named metric fields score all published hybrid pairs.
+"""
 
 from __future__ import annotations
 
@@ -11,11 +21,13 @@ from pathlib import Path
 import codedupes.analyzer as analyzer_module
 from codedupes.analyzer import AnalyzerConfig, CodeAnalyzer
 from codedupes.constants import (
+    DEFAULT_CHECK_SEMANTIC_TASK,
     DEFAULT_MODEL,
     DEFAULT_TRADITIONAL_THRESHOLD,
 )
 from codedupes.models import HybridDuplicate
 from codedupes.pairs import ordered_pair_key
+from codedupes.semantic_profiles import resolve_model_profile
 
 try:
     from .sweep_common import (
@@ -25,6 +37,7 @@ try:
         rank_sweep_rows,
         validate_labels_shape,
     )
+    from .sweep_semantic_thresholds import _calibration_manifest, _require_immutable_revision
 except ImportError:
     from sweep_common import (
         add_common_sweep_arguments,
@@ -33,6 +46,7 @@ except ImportError:
         rank_sweep_rows,
         validate_labels_shape,
     )
+    from sweep_semantic_thresholds import _calibration_manifest, _require_immutable_revision
 
 
 @dataclass(frozen=True)
@@ -245,6 +259,7 @@ def main() -> int:
         validate_labels_shape(labels)
     except ValueError as exc:
         parser.error(str(exc))
+    revision = _require_immutable_revision(args.model, args.model_revision)
     config = AnalyzerConfig(
         run_traditional=True,
         run_semantic=True,
@@ -255,13 +270,30 @@ def main() -> int:
         jaccard_threshold=args.traditional_threshold,
         semantic_threshold=collection_threshold,
         model_name=args.model,
-        model_revision=args.model_revision,
+        model_revision=revision,
         trust_remote_code=args.trust_remote_code,
         batch_size=args.batch_size,
         device=args.device,
     )
     analyzer = CodeAnalyzer(config)
     result = analyzer.analyze(args.corpus_path)
+    embeddings = analyzer._embeddings
+    dimension = int(embeddings.shape[1]) if embeddings is not None and embeddings.size else 0
+    identity = analyzer._embedding_space_identity
+    assert identity is not None
+    manifest = _calibration_manifest(
+        profile=resolve_model_profile(args.model),
+        resolved_revision=revision,
+        mode="hybrid_gates",
+        semantic_task=DEFAULT_CHECK_SEMANTIC_TASK,
+        requested_device=args.device,
+        identity=identity,
+        dimension=dimension,
+        min_statements=args.min_statements,
+        batch_size=args.batch_size,
+        corpus_path=args.corpus_path,
+        labels_path=args.labels_path,
+    )
 
     positive_pairs = build_positive_pairs(result.units, labels)
     grid = [
@@ -284,6 +316,12 @@ def main() -> int:
     print("Hybrid confidence sweep (synthetic corpus guardrail)")
     print(f"Corpus: {args.corpus_path}")
     print(f"Labels: {args.labels_path}")
+    print(f"Model: {args.model} @ {revision}")
+    print(
+        "Metric population: published pairs minus the semantic_review tier "
+        "(output_policy hybrid_high_confidence); the semantic sweep's "
+        "same-named fields score all published hybrid pairs."
+    )
     print(f"Units extracted: {len(result.units)}")
     print(
         "Raw candidates: "
@@ -300,6 +338,11 @@ def main() -> int:
 
     if args.json_out is not None:
         payload = {
+            # Unlike the semantic sweep's "hybrid_duplicates" reports, tp/fp/fn
+            # and precision/recall/f1 here are computed over the published
+            # output minus the semantic_review tier.
+            "output_policy": "hybrid_high_confidence",
+            "calibration": manifest,
             "corpus_path": str(args.corpus_path),
             "labels_path": str(args.labels_path),
             "units": len(result.units),

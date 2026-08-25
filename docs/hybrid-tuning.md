@@ -34,6 +34,8 @@ python scripts/sweep_hybrid_gates.py \
   --json-out scratch/hybrid_sweep_report.json
 ```
 
+The report embeds the same calibration manifest as the semantic sweep (pinned commit, pipeline schema, effective embedding-space identity, candidate policy, corpus/label digests) and records `output_policy: hybrid_high_confidence`: its `tp`/`fp`/`fn` and `precision`/`recall`/`f1` score the published output minus the `semantic_review` tier, unlike the semantic sweep's same-named fields, which score all published pairs. Like that sweep, the run refuses a model that cannot be pinned to an immutable 40-character commit.
+
 ## Parameter grids
 
 Defaults used by the harness:

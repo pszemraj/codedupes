@@ -24,6 +24,7 @@ from scripts.sweep_common import (
 )
 from scripts.sweep_hybrid_gates import GateConfig
 from scripts.sweep_hybrid_gates import _run_sweep as _run_hybrid_gate_sweep
+from scripts.sweep_hybrid_gates import main as _hybrid_gates_main
 from scripts.sweep_semantic_thresholds import (
     THRESHOLD_STEP,
     _calibration_manifest,
@@ -296,6 +297,94 @@ def test_hybrid_gate_ties_resolve_to_the_loosest_gate_not_grid_order() -> None:
         GateConfig(0.92, 0.10, 0.20),
         GateConfig(0.92, 0.30, 0.55),
     ]
+
+
+def test_hybrid_gate_sweep_records_calibration_provenance(tmp_path: Path, monkeypatch) -> None:
+    """The hybrid report needs the same identity block the semantic sweep records.
+
+    Without it a report carried no model, revision, device, or embedding-space
+    identity at all, and nothing marked that its precision/recall fields score
+    only the high-confidence tiers - the semantic sweep's same-named fields
+    score all published pairs.
+    """
+    corpus_path = tmp_path / "corpus"
+    corpus_path.mkdir()
+    corpus_file = corpus_path / "alpha.py"
+    corpus_file.write_text("def first():\n    return 1\n\n\ndef second():\n    return 2\n")
+    labels_path = tmp_path / "labels.json"
+    labels_path.write_text(
+        json.dumps({"positive_groups": [["alpha.py::first", "alpha.py::second"]]})
+    )
+    json_out = tmp_path / "hybrid_report.json"
+
+    profile = resolve_model_profile("gte-modernbert-base")
+    identity = EmbeddingSpaceIdentity(
+        model_name=profile.canonical_name,
+        resolved_revision=profile.default_revision or PINNED_COMMIT,
+        runtime_variant="cpu-faithful",
+    )
+    units = [_unit("first", corpus_file, 1), _unit("second", corpus_file, 5)]
+
+    def fake_analyze(self: CodeAnalyzer, path: Path) -> SimpleNamespace:
+        self._embeddings = np.zeros((2, 4), dtype=np.float32)
+        self._embedding_space_identity = identity
+        self._semantic_units = units
+        return SimpleNamespace(
+            units=units,
+            traditional_duplicates=[],
+            semantic_duplicates=[],
+        )
+
+    monkeypatch.setattr(CodeAnalyzer, "analyze", fake_analyze)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "sweep_hybrid_gates.py",
+            "--corpus-path",
+            str(corpus_path),
+            "--labels-path",
+            str(labels_path),
+            "--json-out",
+            str(json_out),
+        ],
+    )
+
+    assert _hybrid_gates_main() == 0
+
+    payload = json.loads(json_out.read_text())
+    assert payload["output_policy"] == "hybrid_high_confidence"
+    manifest = payload["calibration"]
+    assert manifest["model"] == profile.canonical_name
+    assert manifest["resolved_revision"] == profile.default_revision
+    assert manifest["mode"] == "hybrid_gates"
+    assert manifest["requested_device"] == "cpu"
+    assert manifest["embedding_space"]["runtime_variant"] == "cpu-faithful"
+
+
+def test_hybrid_gate_sweep_refuses_a_mutable_model_revision(tmp_path: Path, monkeypatch) -> None:
+    """Calibrating corroboration constants against a movable label is not calibration."""
+    labels_path = tmp_path / "labels.json"
+    labels_path.write_text(
+        json.dumps({"positive_groups": [["alpha.py::first", "alpha.py::second"]]})
+    )
+
+    def fail_analyze(self: CodeAnalyzer, path: Path) -> SimpleNamespace:
+        raise AssertionError("analyze() must not run for a mutable revision")
+
+    monkeypatch.setattr(CodeAnalyzer, "analyze", fail_analyze)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "sweep_hybrid_gates.py",
+            "--labels-path",
+            str(labels_path),
+            "--model-revision",
+            "main",
+        ],
+    )
+
+    with pytest.raises(SystemExit, match="immutable 40-character commit"):
+        _hybrid_gates_main()
 
 
 def test_threshold_grid_rows_are_the_exact_gates_evaluated() -> None:
