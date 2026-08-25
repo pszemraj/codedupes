@@ -27,6 +27,7 @@ from scripts.sweep_hybrid_gates import _run_sweep as _run_hybrid_gate_sweep
 from scripts.sweep_semantic_thresholds import (
     THRESHOLD_STEP,
     _calibration_manifest,
+    _grid_edge,
     _run_duplicate_sweep,
     _threshold_grid,
 )
@@ -110,6 +111,9 @@ def test_manifest_records_effective_embedding_space_not_the_request(
     assert "device" not in manifest
     assert "dtype_variant" not in manifest
     assert manifest["output_policy"] == "hybrid_duplicates"
+    # Zero candidates tie every row at f1=0, so the loosest-tie policy selects
+    # the grid floor - a boundary selection the manifest must record.
+    assert manifest["selected_at_grid_edge"] == "start"
     assert manifest["candidate_coverage"] == {
         "labeled_positive_pairs": 1,
         "scoreable_positive_pairs": 1,
@@ -303,17 +307,44 @@ def test_threshold_grid_rows_are_the_exact_gates_evaluated() -> None:
 
 
 def test_threshold_grid_default_bounds_are_unchanged() -> None:
-    """The shipped 2-decimal grids must survive the exact-gate rewrite verbatim."""
+    """The shipped 2-decimal grids must survive the exact-gate rewrite verbatim.
+
+    The search ceiling is 0.90: the old 0.70 ceiling censored two boundary
+    selections with F1 still rising into them.
+    """
     duplicate_grid = _threshold_grid(0.70, 0.96)
-    search_grid = _threshold_grid(0.20, 0.70)
+    search_grid = _threshold_grid(0.20, 0.90)
 
     assert duplicate_grid[0] == 0.70
     assert duplicate_grid[-1] == 0.96
     assert len(duplicate_grid) == 14
-    assert len(search_grid) == 26
+    assert len(search_grid) == 36
     assert all(
         round(after - before, 9) == THRESHOLD_STEP for before, after in pairwise(duplicate_grid)
     )
+
+
+def test_grid_edge_labels_boundary_selections() -> None:
+    """A boundary selection is censored evidence and must be recorded, not hidden."""
+    grid = [0.2, 0.22, 0.24]
+
+    assert _grid_edge(0.2, grid) == "start"
+    assert _grid_edge(0.24, grid) == "stop"
+    assert _grid_edge(0.22, grid) is None
+
+
+def test_semantic_sweep_rejects_an_empty_search_grid(monkeypatch, capsys) -> None:
+    """``--search-start`` above ``--search-stop`` must abort like the duplicate bounds."""
+    monkeypatch.setattr(
+        "sys.argv",
+        ["sweep_semantic_thresholds.py", "--search-start", "0.8", "--search-stop", "0.4"],
+    )
+
+    with pytest.raises(SystemExit) as excinfo:
+        _semantic_sweep_main()
+
+    assert excinfo.value.code == 2
+    assert "--search-start" in capsys.readouterr().err
 
 
 def test_labels_shape_validation_rejects_an_empty_category() -> None:

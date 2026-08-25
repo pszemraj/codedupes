@@ -66,7 +66,11 @@ except ImportError:
 DUPLICATE_THRESHOLD_START = 0.70
 DUPLICATE_THRESHOLD_STOP = 0.96
 SEARCH_THRESHOLD_START = 0.20
-SEARCH_THRESHOLD_STOP = 0.70
+# 0.90 ceiling: under the old 0.70 ceiling the 2026-08 polyglot search sweeps
+# selected boundary rows with F1 still rising (javascript and python under
+# gte), i.e. the optimum was censored. ``selected_at_grid_edge`` flags any
+# recurrence.
+SEARCH_THRESHOLD_STOP = 0.90
 THRESHOLD_STEP = 0.02
 SEARCH_SWEEP_FLOOR = 0.01
 
@@ -114,6 +118,24 @@ def _threshold_grid(start: float, stop: float) -> list[float]:
         values.append(current)
         steps += 1
     return values
+
+
+def _grid_edge(selected: float, grid: list[float]) -> str | None:
+    """Name the grid edge a selected threshold sits on, if any.
+
+    A boundary selection is censored evidence - the true optimum may lie
+    outside the swept range - so reports must record it instead of presenting
+    the edge row as an interior optimum.
+
+    :param float selected: Selected threshold.
+    :param list[float] grid: Swept threshold grid, ascending.
+    :return str | None: ``"start"``, ``"stop"``, or ``None`` when interior.
+    """
+    if selected == grid[0]:
+        return "start"
+    if selected == grid[-1]:
+        return "stop"
+    return None
 
 
 def _sha256_of_tree(root: Path) -> str:
@@ -369,6 +391,7 @@ def _run_duplicate_sweep(
         labels_path=labels_path,
     )
     manifest["output_policy"] = "hybrid_duplicates"
+    manifest["selected_at_grid_edge"] = _grid_edge(selected.threshold, thresholds)
     manifest["candidate_coverage"] = {
         "labeled_positive_pairs": len(positive_pairs),
         "scoreable_positive_pairs": len(scoreable_pairs),
@@ -406,6 +429,8 @@ def _run_search_sweep(
     min_statements: int,
     batch_size: int,
     device: str,
+    search_start: float = SEARCH_THRESHOLD_START,
+    search_stop: float = SEARCH_THRESHOLD_STOP,
 ) -> ModelSweep:
     profile = resolve_model_profile(model_name)
     analyzer = CodeAnalyzer(
@@ -440,11 +465,8 @@ def _run_search_sweep(
         for unit, score in analyzer.search(query, top_k=indexed):
             scored_pairs.append(((query_key, unit.uid), score))
 
-    rows = _evaluate_thresholds(
-        scored_pairs,
-        positive_pairs,
-        thresholds=_threshold_grid(SEARCH_THRESHOLD_START, SEARCH_THRESHOLD_STOP),
-    )
+    thresholds = _threshold_grid(search_start, search_stop)
+    rows = _evaluate_thresholds(scored_pairs, positive_pairs, thresholds=thresholds)
     selected = rows[0]
 
     manifest = _calibration_manifest(
@@ -461,6 +483,7 @@ def _run_search_sweep(
         labels_path=probes_path,
     )
     manifest["probe_count"] = len(probes)
+    manifest["selected_at_grid_edge"] = _grid_edge(selected.threshold, thresholds)
     embedded_uids = {unit.uid for unit in analyzer._semantic_units}
     scoreable_targets = {pair for pair in positive_pairs if pair[1] in embedded_uids}
     manifest["candidate_coverage"] = {
@@ -486,6 +509,13 @@ def _print_sweep(model_sweep: ModelSweep, top_n: int) -> None:
     # and truncating them in the printout would recreate the mislabeling the
     # grid itself no longer performs.
     print(f"Selected threshold: {model_sweep.selected_threshold:g}")
+    edge = model_sweep.manifest.get("selected_at_grid_edge")
+    if edge is not None:
+        print(
+            f"WARNING: selected threshold sits at the grid {edge}; the optimum may lie "
+            "outside the swept range - widen it (--duplicate-start/--duplicate-stop or "
+            "--search-start/--search-stop) to confirm."
+        )
     print("Top rows:")
     for idx, row in enumerate(model_sweep.rows[:top_n], start=1):
         print(
@@ -561,6 +591,19 @@ def main() -> int:
         help="Duplicate-threshold grid ceiling.",
     )
     parser.add_argument(
+        "--search-start",
+        type=float,
+        default=SEARCH_THRESHOLD_START,
+        help="Search-threshold grid floor.",
+    )
+    parser.add_argument(
+        "--search-stop",
+        type=float,
+        default=SEARCH_THRESHOLD_STOP,
+        help="Search-threshold grid ceiling. Widen the range when a sweep "
+        "reports a boundary selection.",
+    )
+    parser.add_argument(
         "--json-out",
         type=Path,
         default=Path("test_fixtures/hybrid_tuning/semantic_threshold_report.json"),
@@ -578,6 +621,11 @@ def main() -> int:
         parser.error(
             f"--duplicate-start {args.duplicate_start} must not exceed "
             f"--duplicate-stop {args.duplicate_stop}; the sweep grid would be empty."
+        )
+    if args.search_start > args.search_stop:
+        parser.error(
+            f"--search-start {args.search_start} must not exceed "
+            f"--search-stop {args.search_stop}; the sweep grid would be empty."
         )
 
     labels = json.loads(args.labels_path.read_text())
@@ -628,6 +676,8 @@ def main() -> int:
                     min_statements=args.min_statements,
                     batch_size=args.batch_size,
                     device=args.device,
+                    search_start=args.search_start,
+                    search_stop=args.search_stop,
                 )
             )
 
@@ -656,7 +706,7 @@ def main() -> int:
             json.dumps(
                 _report_payload(
                     search_results,
-                    _threshold_grid(SEARCH_THRESHOLD_START, SEARCH_THRESHOLD_STOP),
+                    _threshold_grid(args.search_start, args.search_stop),
                 ),
                 indent=2,
             )
