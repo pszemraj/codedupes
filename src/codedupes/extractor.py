@@ -369,8 +369,11 @@ class _PythonSourceMap:
 
         :param source: Entire file source text.
         """
-        self.lines = source.splitlines(keepends=True)
+        # ``bytes.splitlines`` matches CPython's line numbering, which only breaks
+        # on ``\r``/``\n``; ``str.splitlines`` would also break on ``\f`` and friends
+        # and desynchronize the line table from the byte tables.
         self._encoded_lines = source.encode("utf-8").splitlines(keepends=True)
+        self.lines = [line.decode("utf-8") for line in self._encoded_lines]
         self._line_start_bytes = [0]
         for line in self._encoded_lines:
             self._line_start_bytes.append(self._line_start_bytes[-1] + len(line))

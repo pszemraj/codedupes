@@ -329,3 +329,26 @@ def test_python_byte_range_matches_emitted_source_with_unicode(tmp_path: Path) -
     assert encoded[unit.start_byte : unit.end_byte] == unit.source.encode("utf-8")
     assert unit.start_column == 0
     assert unit.end_column == len(b"    return message")
+
+
+def test_python_source_lines_survive_form_feed_separator(tmp_path: Path) -> None:
+    # PEP 8 allows form feeds as section separators, and CPython's line numbers do
+    # not advance on ``\f``/``\v``; the emitted source must follow the same rule.
+    source = (
+        "def before():\n"
+        '    return "\v"\n'
+        "\f\n"
+        "def after(name):\n"
+        '    message = "hi " + name\n'
+        "    return message\n"
+    )
+    file_path = tmp_path / "form_feed_sample.py"
+    file_path.write_text(source, encoding="utf-8")
+
+    units = list(CodeExtractor(tmp_path, include_private=True).extract_from_file(file_path))
+    unit = next(unit for unit in units if unit.name == "after")
+    encoded = source.encode("utf-8")
+
+    assert unit.source == 'def after(name):\n    message = "hi " + name\n    return message\n'
+    assert encoded[unit.start_byte : unit.end_byte] == unit.source.encode("utf-8")
+    assert unit.end_column == len(b"    return message")
