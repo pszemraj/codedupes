@@ -183,9 +183,14 @@ Table locations are `<path>:<line>`, with the path relative to the working direc
 - `2`: CLI usage/validation error (Click)
 - Semantic backend note: `search` requires semantic inference and fails hard if semantic backend loading/inference fails.
 
-`info` and `cache info`:
+`info`:
 
 - `0`: completed successfully
+
+`cache info`:
+
+- `0`: completed successfully
+- `1`: cache state unavailable (construction or stats failure)
 
 `cache clear`:
 
