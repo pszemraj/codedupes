@@ -148,7 +148,9 @@ def patch_cli_analyzer(
             return analyze_result() if callable(analyze_result) else analyze_result
 
         def index(self, _path: Path) -> int:
-            return 0
+            # A populated corpus, so search tests exercise the normal path
+            # instead of the empty-index warning branch.
+            return 1
 
         def search(self, query: str, top_k: int = 10) -> list[tuple[CodeUnit, float]]:
             if callable(search_results):
