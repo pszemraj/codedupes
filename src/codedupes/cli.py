@@ -68,7 +68,9 @@ from codedupes.semantic import get_semantic_runtime_versions
 from codedupes.semantic_profiles import (
     SemanticModelProfile,
     get_default_search_threshold,
+    is_explicit_local_model_path,
     list_supported_models,
+    resolve_local_model_path,
     resolve_model_profile,
 )
 
@@ -1773,6 +1775,16 @@ def cache_clear_command(model: str | None) -> None:
     :param model: Optional model alias or canonical name filter.
     :return: ``None``.
     """
+    if model and is_explicit_local_model_path(model) and resolve_local_model_path(model) is None:
+        # Local-model shards are keyed by the resolved directory path, which
+        # cannot be recovered once the directory is gone, so a scoped clear
+        # would report success while matching nothing.
+        click.echo(
+            f"Local model directory '{model}' does not exist, so its cache identity "
+            "cannot be resolved; run `codedupes cache clear` without --model to drop "
+            "its entries.",
+            err=True,
+        )
     canonical_model = resolve_model_profile(model).canonical_name if model else None
     try:
         cleared = EmbeddingCache().clear(model=canonical_model)

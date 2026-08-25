@@ -1687,6 +1687,16 @@ def test_cli_cache_clear_scoped_to_model(tmp_path):
     assert remaining["models"] == {"other/model": 1}
 
 
+def test_cli_cache_clear_warns_for_missing_local_model_directory(tmp_path):
+    missing = tmp_path / "gone-model"
+
+    result = CliRunner().invoke(cli.cli, ["cache", "clear", "--model", str(missing)])
+
+    assert result.exit_code == 0
+    assert "does not exist" in result.stderr
+    assert "without --model" in result.stderr
+
+
 def test_cli_cache_clear_reports_failure(monkeypatch):
     def fail_clear(_self, model=None):
         raise PermissionError("cache is read-only")
