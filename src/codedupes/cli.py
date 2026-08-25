@@ -146,7 +146,9 @@ def _restore_root_logger_state(prior_state: tuple[int, list[logging.Handler]]) -
 def setup_logging(verbose: bool = False) -> None:
     """Configure logging with rich handler."""
     level = logging.DEBUG if verbose else logging.INFO
-    handler = RichHandler(console=console, show_time=False, show_path=False)
+    # Log output is diagnostics, not report content: it shares the stderr
+    # stream with errors so piped stdout carries only the report.
+    handler = RichHandler(console=error_console, show_time=False, show_path=False)
     handler.addFilter(_CodedupesLogFilter(include_external_info=verbose))
     logging.basicConfig(
         level=level,

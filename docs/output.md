@@ -1,6 +1,6 @@
 # Output and Exit Codes
 
-stdout carries report output only — JSON under `--json`, rich tables otherwise. Errors, parser-unavailable remediation, and warnings go to stderr.
+stdout carries report output only — JSON under `--json`, rich tables otherwise. Errors, parser-unavailable remediation, and all log output (progress lines and warnings) go to stderr.
 
 ## `check --json` schemas
 

@@ -1252,6 +1252,16 @@ def test_cli_check_json_keeps_errors_off_stdout(monkeypatch, tmp_path, error, ex
     assert expected_text in result.stderr
 
 
+def test_cli_check_log_output_goes_to_stderr(tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+
+    result = CliRunner().invoke(cli.cli, ["check", str(path), "--traditional-only"])
+
+    assert "Extracting code units" in result.stderr
+    assert "Extracting code units" not in result.stdout
+
+
 def test_cli_check_verbose_traceback_goes_to_stderr(monkeypatch, tmp_path):
     path = tmp_path / "sample.py"
     path.write_text("def entry():\n    return 1\n")

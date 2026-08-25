@@ -104,7 +104,7 @@ Clear all cached embeddings or only entries for one model. See [Embedding cache]
 - Unused-code analysis evaluates Python units only and reports the number of non-Python units excluded.
 - A definition whose tokenized input (encode prompt included) exceeds the model's context window is skipped with a `semantic-context-overflow` diagnostic and the run continues; an over-long `search` query fails hard
 - In `--json` mode, output is machine-parseable JSON only; warning text is surfaced via `summary.semantic_fallback` and `summary.semantic_fallback_reason` when fallback happens, and units the semantic stage skipped via the `semantic_diagnostics` array (`check` and `search` alike).
-- Errors, parser-unavailable remediation, and warnings always go to stderr, so stdout stays parseable (a failed `--json` run writes nothing to stdout).
+- Errors, parser-unavailable remediation, and all log output (progress lines and warnings) always go to stderr, so stdout carries only the report (a failed `--json` run writes nothing to stdout).
 - `--json` rejects rich-only display controls: `--show-source`, `--full-table`, `--verbose`, and explicit `--output-width`
 - `--semantic-only` and `--traditional-only` bypass hybrid synthesis and show raw method outputs
 - `--semantic-only` and `--traditional-only` are mutually exclusive
