@@ -163,6 +163,30 @@ def validate_labels_shape(labels: dict[str, Any]) -> None:
                 raise ValueError(msg)
 
 
+def corpus_files(root: Path) -> list[Path]:
+    """List corpus source files, excluding caches and hidden files.
+
+    One walk shared by the calibration-manifest digest and the corpus
+    validator: ``__pycache__`` entries, ``.pyc`` artifacts, and hidden files
+    (``.DS_Store`` and friends) are filesystem debris, not corpus contract
+    surface, so neither the digest nor the zero-unit-file check may see them.
+
+    :param Path root: Corpus root directory.
+    :return list[Path]: Sorted regular files under ``root``.
+    """
+    files: list[Path] = []
+    for file_path in sorted(root.rglob("*")):
+        if not file_path.is_file():
+            continue
+        relative = file_path.relative_to(root)
+        if "__pycache__" in relative.parts or relative.suffix == ".pyc":
+            continue
+        if any(part.startswith(".") for part in relative.parts):
+            continue
+        files.append(file_path)
+    return files
+
+
 def validate_probes_shape(payload: dict[str, Any]) -> list[dict[str, Any]]:
     """Fail fast on structurally malformed search-probes JSON, before any model work.
 

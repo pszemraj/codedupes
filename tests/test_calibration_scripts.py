@@ -178,6 +178,43 @@ def test_validator_flags_a_category_with_no_groups(
     assert "category 'near_rename' lists no positive groups" in output
 
 
+def test_validator_ignores_filesystem_debris(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Finder droppings and bytecode caches are not corpus files that must produce units.
+
+    The zero-unit-file walk shares the sweep digest's exclusions: before that,
+    one ``.DS_Store`` from browsing a language directory failed the whole corpus.
+    """
+    corpus_path = tmp_path / "corpus"
+    _write_corpus(corpus_path)
+    (corpus_path / ".DS_Store").write_bytes(b"\x00\x01Bud1")
+    pycache_path = corpus_path / "__pycache__"
+    pycache_path.mkdir()
+    (pycache_path / "alpha.cpython-312.pyc").write_bytes(b"\x00")
+    labels_path = tmp_path / "labels.json"
+    labels_path.write_text(
+        json.dumps(
+            {
+                "positive_groups": [
+                    ["alpha.py::accumulate", "beta.py::accumulate"],
+                    ["gamma.py::summarize", "delta.py::tally"],
+                ],
+                "categories": {
+                    "exact": [["alpha.py::accumulate", "beta.py::accumulate"]],
+                    "near_rename": [["gamma.py::summarize", "delta.py::tally"]],
+                },
+            }
+        )
+    )
+
+    exit_code = _run_validator(monkeypatch, corpus_path, labels_path)
+
+    output = capsys.readouterr().out
+    assert "produced zero units" not in output
+    assert exit_code == 0
+
+
 def test_validator_rejects_partial_parse_with_usable_units(tmp_path: Path) -> None:
     source_path = tmp_path / "sample.rs"
     source_path.write_text(

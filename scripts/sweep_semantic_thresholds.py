@@ -44,6 +44,7 @@ try:
     from .sweep_common import (
         add_common_sweep_arguments,
         build_positive_pairs,
+        corpus_files,
         metrics,
         rank_sweep_rows,
         resolve_label_unit,
@@ -54,6 +55,7 @@ except ImportError:
     from sweep_common import (
         add_common_sweep_arguments,
         build_positive_pairs,
+        corpus_files,
         metrics,
         rank_sweep_rows,
         resolve_label_unit,
@@ -118,19 +120,13 @@ def _sha256_of_tree(root: Path) -> str:
     """Digest a fixture tree by sorted relative path and file contents.
 
     Every regular source file participates so non-Python corpora do not digest
-    identically; caches and hidden files are excluded. For the historical
-    all-Python corpus this matches the previous ``*.py``-only digest.
+    identically; the shared corpus walk excludes caches and hidden files. For
+    the historical all-Python corpus this matches the previous ``*.py``-only
+    digest.
     """
     digest = hashlib.sha256()
-    for file_path in sorted(root.rglob("*")):
-        if not file_path.is_file():
-            continue
-        relative = file_path.relative_to(root).as_posix()
-        if "__pycache__" in relative or relative.endswith(".pyc"):
-            continue
-        if any(part.startswith(".") for part in file_path.relative_to(root).parts):
-            continue
-        digest.update(relative.encode())
+    for file_path in corpus_files(root):
+        digest.update(file_path.relative_to(root).as_posix().encode())
         digest.update(b"\x00")
         digest.update(file_path.read_bytes())
         digest.update(b"\x00")

@@ -26,9 +26,9 @@ from codedupes.pairs import ordered_pair_key
 from codedupes.semantic import get_code_unit_statement_count
 
 try:
-    from .sweep_common import build_positive_pairs, resolve_label_unit
+    from .sweep_common import build_positive_pairs, corpus_files, resolve_label_unit
 except ImportError:
-    from sweep_common import build_positive_pairs, resolve_label_unit
+    from sweep_common import build_positive_pairs, corpus_files, resolve_label_unit
 
 # Category names and the hash relations that define them. ``near_*`` categories
 # must differ in BOTH hashes so the pair can only be caught semantically.
@@ -268,11 +268,14 @@ def _validate_probes(
 def _validate_files(corpus_path: Path, units: list[CodeUnit], failures: list[str]) -> None:
     """Validate corpus file naming and per-basename unit-name uniqueness.
 
+    The walk shares the sweep manifest's debris exclusions, so filesystem
+    noise (``.DS_Store``, ``__pycache__``) never trips the zero-unit check.
+
     :param Path corpus_path: Corpus root directory.
     :param list[CodeUnit] units: Extracted corpus units.
     :param list[str] failures: Mutable failure sink.
     """
-    source_files = sorted(path for path in corpus_path.rglob("*") if path.is_file())
+    source_files = corpus_files(corpus_path)
     files_with_units = {unit.file_path.resolve() for unit in units}
     for path in source_files:
         relative = path.relative_to(corpus_path).as_posix()
