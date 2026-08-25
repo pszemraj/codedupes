@@ -869,7 +869,7 @@ class CodeAnalyzer:
                     raise
                 if not self.config.allow_semantic_fallback:
                     raise RuntimeError(
-                        "Semantic analysis failed in combined mode. Re-run with "
+                        f"Semantic analysis failed in combined mode ({exc}). Re-run with "
                         "`--allow-semantic-fallback` to keep scoped traditional results, "
                         "or use `--traditional-only` for deterministic non-semantic analysis."
                     ) from exc

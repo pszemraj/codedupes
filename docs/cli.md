@@ -104,6 +104,7 @@ Clear all cached embeddings or only entries for one model. See [Embedding cache]
 - Unused-code analysis evaluates Python units only and reports the number of non-Python units excluded.
 - A definition whose tokenized input (encode prompt included) exceeds the model's context window is skipped with a `semantic-context-overflow` diagnostic and the run continues; an over-long `search` query fails hard
 - In `--json` mode, output is machine-parseable JSON only; warning text is surfaced via `summary.semantic_fallback` and `summary.semantic_fallback_reason` when fallback happens, and units the semantic stage skipped via the `semantic_diagnostics` array (`check` and `search` alike).
+- Errors, parser-unavailable remediation, and warnings always go to stderr, so stdout stays parseable (a failed `--json` run writes nothing to stdout).
 - `--json` rejects rich-only display controls: `--show-source`, `--full-table`, `--verbose`, and explicit `--output-width`
 - `--semantic-only` and `--traditional-only` bypass hybrid synthesis and show raw method outputs
 - `--semantic-only` and `--traditional-only` are mutually exclusive
@@ -115,6 +116,7 @@ Clear all cached embeddings or only entries for one model. See [Embedding cache]
 - Explicit traditional-analysis controls are rejected with `--semantic-only`: `--traditional-threshold`, `--no-tiny-filter`, `--tiny-cutoff`, and `--tiny-near-jaccard-min`
 - Unsupported-op fallback and codedupes OOM recovery are separate policies; `--no-mps-fallback` does not disable OOM recovery
 - `search` applies semantic threshold filtering before returning `top-k` matches; without an explicit `--threshold`/`--semantic-threshold` it uses the model profile search default (for example `0.50` for `gte-modernbert-base`), not the stricter duplicate threshold
+- `search` reports how many units it embedded: an index emptied by `--min-statements`, `--semantic-unit-type`, `--language`, `--exclude`, or `--no-private` prints a stderr warning instead of a bare "No matches found", and `--json` always carries the count in `indexed_units`
 - Contradictory mode-specific options are rejected at parse time for the selected workflow
 
 Inspect effective model defaults with:

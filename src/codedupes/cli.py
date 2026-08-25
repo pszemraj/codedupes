@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import platform
 import sys
 from collections import Counter
@@ -22,6 +23,8 @@ from rich.table import Table
 from codedupes import __version__
 from codedupes.analyzer import (
     DEFAULT_SEMANTIC_UNIT_TYPES,
+    DEFAULT_TINY_NEAR_JACCARD_MIN,
+    DEFAULT_TINY_UNIT_STATEMENT_CUTOFF,
     SEMANTIC_UNIT_TYPE_CHOICES,
     AnalyzerConfig,
     CodeAnalyzer,
@@ -79,6 +82,9 @@ DEFAULT_EXCLUDE_HELP_HINT = (
 )
 
 console = Console(width=DEFAULT_OUTPUT_WIDTH)
+# Errors and warnings never share stdout: `--json` promises machine-parseable
+# JSON only on stdout, so diagnostics go to stderr.
+error_console = Console(stderr=True, width=DEFAULT_OUTPUT_WIDTH)
 TResult = TypeVar("TResult")
 
 
@@ -107,9 +113,10 @@ class _CodedupesLogFilter(logging.Filter):
 
 
 def _set_console(output_width: int) -> None:
-    """Set global console used by all rich output helpers."""
-    global console
+    """Set global stdout/stderr consoles used by all rich output helpers."""
+    global console, error_console
     console = Console(width=output_width)
+    error_console = Console(stderr=True, width=output_width)
 
 
 def _suppress_logs_for_json() -> tuple[int, list[logging.Handler]]:
@@ -200,16 +207,16 @@ def _run_cli_action(
     except FileNotFoundError as exc:
         if not catch_file_not_found:
             raise
-        console.print(f"[red]Error:[/red] {exc}")
+        error_console.print(f"[red]Error:[/red] {exc}")
         raise click.exceptions.Exit(1) from exc
     except GrammarUnavailableError as exc:
-        console.print(f"[red]Parser unavailable:[/red] {exc}")
-        console.print("Run `codedupes info` to check Tree-sitter parser package status.")
+        error_console.print(f"[red]Parser unavailable:[/red] {exc}")
+        error_console.print("Run `codedupes info` to check Tree-sitter parser package status.")
         raise click.exceptions.Exit(1) from exc
     except Exception as exc:
-        console.print(f"[red]Error during {error_label}:[/red] {exc}")
+        error_console.print(f"[red]Error during {error_label}:[/red] {exc}")
         if verbose:
-            console.print_exception()
+            error_console.print_exception()
         raise click.exceptions.Exit(1) from exc
 
 
@@ -366,12 +373,20 @@ def _validate_json_output_controls(
 
 
 def format_location(unit: CodeUnit) -> str:
-    """Format file:line location for table rendering.
+    """Format a working-directory-relative file:line location for table rendering.
+
+    Bare file names collide across directories, which renders a cross-directory
+    duplicate pair as two identical cells.
 
     :param unit: Unit to format.
-    :return: ``<filename>:<lineno>`` string.
+    :return: ``<path>:<lineno>`` string, relative to the working directory when possible.
     """
-    return f"{unit.file_path.name}:{unit.lineno}"
+    try:
+        location = os.path.relpath(unit.file_path)
+    except ValueError:
+        # Windows: no relative path exists across drives.
+        location = str(unit.file_path)
+    return f"{location}:{unit.lineno}"
 
 
 def truncate_source(source: str, max_lines: int = 5) -> str:
@@ -642,16 +657,19 @@ def print_search_json(
     query: str,
     results: list[tuple[CodeUnit, float]],
     semantic_diagnostics: list[ExtractionDiagnostic],
+    indexed_units: int,
 ) -> None:
     """Output search results as JSON.
 
     :param query: Original search query.
     :param results: Matching units and cosine scores.
     :param semantic_diagnostics: Corpus units skipped by the semantic stage.
+    :param indexed_units: Number of code units embedded into the search index.
     :return: ``None``.
     """
     payload = {
         "query": query,
+        "indexed_units": indexed_units,
         "results": [{"score": float(score), **_unit_to_dict(unit)} for unit, score in results],
         "semantic_diagnostics": [
             _diagnostic_to_dict(diagnostic) for diagnostic in semantic_diagnostics
@@ -1143,14 +1161,14 @@ def cli(ctx: click.Context) -> None:
 @click.option(
     "--tiny-cutoff",
     type=int,
-    default=3,
+    default=DEFAULT_TINY_UNIT_STATEMENT_CUTOFF,
     show_default=True,
     help="Tiny function/method statement cutoff (exclusive) for traditional filtering",
 )
 @click.option(
     "--tiny-near-jaccard-min",
     type=float,
-    default=0.93,
+    default=DEFAULT_TINY_NEAR_JACCARD_MIN,
     show_default=True,
     help="Minimum Jaccard similarity to keep tiny near-duplicate pairs",
 )
@@ -1579,10 +1597,11 @@ def search_command(
 
     with _configured_cli_output(as_json=as_json, verbose=verbose, output_width=output_width):
         analyzer = CodeAnalyzer(config)
-        _run_cli_action(
+        indexed_units = _run_cli_action(
             lambda: analyzer.index(path),
             error_label="search",
             verbose=verbose,
+            catch_file_not_found=True,
         )
         results = _run_cli_action(
             lambda: analyzer.search(query, top_k=top_k),
@@ -1591,9 +1610,15 @@ def search_command(
         )
 
         if as_json:
-            print_search_json(query, results, analyzer.semantic_diagnostics)
+            print_search_json(query, results, analyzer.semantic_diagnostics, indexed_units)
         else:
             console.print(f"[bold cyan]Query:[/bold cyan] {query!r}")
+            if indexed_units == 0:
+                error_console.print(
+                    "[yellow]Warning:[/yellow] the search index is empty, so no query can match. "
+                    "Check --min-statements, --semantic-unit-type, --language, --exclude, "
+                    "and --no-private against the scanned tree."
+                )
             print_search_results(results)
 
     raise click.exceptions.Exit(0)

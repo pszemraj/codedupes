@@ -1,5 +1,7 @@
 # Output and Exit Codes
 
+stdout carries report output only — JSON under `--json`, rich tables otherwise. Errors, parser-unavailable remediation, and warnings go to stderr.
+
 ## `check --json` schemas
 
 `check` has two JSON schema modes:
@@ -103,6 +105,8 @@ Each unit object includes:
 `extraction_diagnostics` covers parsing and file selection:
 
 - `parse-error`: a file the parser could not read at all
+- `read-error`: a file that could not be read from disk (dangling symlink, missing read permission, removed mid-run); the file is skipped and the run continues
+- `invalid-utf8`: a Tree-sitter-language file that is not valid UTF-8; it is still analyzed, with undecodable bytes replaced by U+FFFD in unit source, hashes, and embedding input
 - `partial-parse`: Tree-sitter recovered from invalid or incomplete source; units whose own subtree contains an error are omitted with `unit-parse-error`
 - `unit-parse-error`: one extracted unit skipped because its own syntax subtree contains an error
 - `c-header-policy`: one summary diagnostic per run when `.h` files are skipped by the conservative C-header policy during a directory scan, naming the count and suggesting `--language c`
@@ -121,6 +125,7 @@ The last three are raised only for files named on the command line. A directory 
 ```json
 {
   "query": "text",
+  "indexed_units": 42,
   "results": [
     {
       "score": 0.95,
@@ -146,7 +151,11 @@ The last three are raised only for files named on the command line. A directory 
 }
 ```
 
+`indexed_units` is how many code units were embedded into the search index. `0` means candidate filtering (`--min-statements`, `--semantic-unit-type`, `--language`, `--exclude`, `--no-private`) emptied the corpus, which is why nothing matched; terminal output says so with a warning on stderr.
+
 ## Terminal duplicate panels
+
+Table locations are `<path>:<line>`, with the path relative to the working directory so same-named files in different directories stay distinguishable.
 
 - combined mode: `Hybrid Duplicates`, plus `Traditional Duplicates (Raw Structural/Token/Jaccard)` and `Semantic Duplicates (Raw Embedding)` under `--show-all`
 - `--traditional-only`: `Traditional Duplicates (Structural/Token/Jaccard)`

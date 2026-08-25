@@ -1032,8 +1032,14 @@ def test_combined_mode_fails_hard_on_runtime_semantic_error_by_default(
         )
     )
 
-    with pytest.raises(RuntimeError, match="allow-semantic-fallback"):
+    # The wrapper must name the root cause; the CLI only prints str(exc).
+    with pytest.raises(
+        RuntimeError,
+        match=r"Semantic analysis failed in combined mode \(CUDA out of memory\)",
+    ) as excinfo:
         analyzer.analyze(project)
+
+    assert "allow-semantic-fallback" in str(excinfo.value)
 
 
 def test_allow_semantic_fallback_requires_combined_mode() -> None:

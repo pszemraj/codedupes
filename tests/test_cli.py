@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -12,6 +13,7 @@ from click.testing import CliRunner
 from codedupes import cli
 from codedupes.devices import DeviceDiagnostics
 from codedupes.embedding_cache import EmbeddingCache
+from codedupes.languages import GrammarUnavailableError
 from codedupes.logging_utils import NOISY_EXTERNAL_LOGGERS
 from codedupes.models import (
     AnalysisResult,
@@ -200,6 +202,88 @@ def test_cli_search_indexes_without_running_full_analysis(monkeypatch, tmp_path)
     assert result.exit_code == 0
     payload = json.loads(result.output)
     assert payload["results"][0]["name"] == "entry"
+
+
+def _patch_search_analyzer(
+    monkeypatch,
+    *,
+    indexed_units: int = 0,
+    results: list | None = None,
+    index_error: Exception | None = None,
+) -> None:
+    """Patch the CLI analyzer with a search double that controls the index size."""
+
+    class StubSearchAnalyzer:
+        def __init__(self, config):
+            del config
+            self.semantic_diagnostics = []
+
+        def index(self, _path):
+            if index_error is not None:
+                raise index_error
+            return indexed_units
+
+        def search(self, query, top_k=10):
+            del query, top_k
+            return list(results or [])
+
+    monkeypatch.setattr(cli, "CodeAnalyzer", StubSearchAnalyzer)
+
+
+def test_cli_search_warns_when_candidate_filters_emptied_the_index(monkeypatch, tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+    _patch_search_analyzer(monkeypatch, indexed_units=0)
+
+    result = CliRunner().invoke(cli.cli, ["search", str(path), "entry", "--min-statements", "3"])
+
+    assert result.exit_code == 0
+    assert "search index is empty" in result.stderr
+    assert "--min-statements" in result.stderr
+    # The zero-hit table still renders, but no longer alone.
+    assert "No matches found" in result.stdout
+
+
+def test_cli_search_does_not_warn_when_the_index_has_units(monkeypatch, tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+    _patch_search_analyzer(monkeypatch, indexed_units=4)
+
+    result = CliRunner().invoke(cli.cli, ["search", str(path), "entry"])
+
+    assert result.exit_code == 0
+    assert "search index is empty" not in result.output
+    assert "No matches found" in result.stdout
+
+
+@pytest.mark.parametrize("indexed_units", [0, 7])
+def test_cli_search_json_reports_indexed_unit_count(monkeypatch, tmp_path, indexed_units):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+    _patch_search_analyzer(monkeypatch, indexed_units=indexed_units)
+
+    result = CliRunner().invoke(cli.cli, ["search", str(path), "entry", "--json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["indexed_units"] == indexed_units
+    assert payload["results"] == []
+    assert result.stderr == ""
+
+
+def test_cli_search_reports_path_deleted_after_validation(monkeypatch, tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+    _patch_search_analyzer(
+        monkeypatch,
+        index_error=FileNotFoundError("Path does not exist"),
+    )
+
+    result = CliRunner().invoke(cli.cli, ["search", str(path), "entry"])
+
+    assert result.exit_code == 1
+    assert not isinstance(result.exception, FileNotFoundError)
+    assert "Error: Path does not exist" in result.stderr
 
 
 def test_cli_json_show_all_includes_raw_sections(monkeypatch, tmp_path):
@@ -425,6 +509,9 @@ def test_cli_threshold_precedence(monkeypatch, tmp_path):
     assert captured[-1].jaccard_threshold == cli.DEFAULT_TRADITIONAL_THRESHOLD
     assert captured[-1].semantic_unit_types == ("function", "method")
     assert captured[-1].filter_tiny_traditional is True
+    # The CLI defaults must be the library defaults, not a second hardcoded copy.
+    assert captured[-1].tiny_unit_statement_cutoff == cli.DEFAULT_TINY_UNIT_STATEMENT_CUTOFF
+    assert captured[-1].tiny_near_jaccard_min == cli.DEFAULT_TINY_NEAR_JACCARD_MIN
     assert captured[-1].tiny_unit_statement_cutoff == 3
     assert captured[-1].tiny_near_jaccard_min == 0.93
 
@@ -960,6 +1047,24 @@ def test_cli_output_width_option(monkeypatch, tmp_path):
     assert cli.console.width == 200
 
 
+def test_cli_table_locations_disambiguate_same_named_files(monkeypatch, tmp_path):
+    unit_a = make_code_unit(
+        tmp_path, name="helper", source="def helper():\n    return 1", lineno=12
+    )
+    unit_b = make_code_unit(
+        tmp_path, name="helper", source="def helper():\n    return 1", lineno=12
+    )
+    (tmp_path / "alpha").mkdir()
+    (tmp_path / "beta").mkdir()
+    unit_a.file_path = tmp_path / "alpha" / "utils.py"
+    unit_b.file_path = tmp_path / "beta" / "utils.py"
+    monkeypatch.chdir(tmp_path)
+
+    assert cli.format_location(unit_a) == os.path.join("alpha", "utils.py") + ":12"
+    assert cli.format_location(unit_b) == os.path.join("beta", "utils.py") + ":12"
+    assert cli.format_location(unit_a) != cli.format_location(unit_b)
+
+
 def test_cli_show_all_prints_raw_sections(monkeypatch, tmp_path):
     path = tmp_path / "sample.py"
     path.write_text("def entry():\n    return 1\n")
@@ -1075,6 +1180,9 @@ def test_cli_check_fails_on_semantic_backend_error_without_fallback(monkeypatch,
     assert result.exit_code == 1
     assert "Error during analysis" in result.output
     assert "--allow-semantic-fallback" in result.output
+    # The wrapper must carry the root cause: --verbose is the only other route
+    # to it and it is rejected with --json.
+    assert "semantic backend mismatch" in result.output
 
 
 def test_cli_check_degrades_on_semantic_backend_error_with_fallback(monkeypatch, tmp_path):
@@ -1116,6 +1224,48 @@ def test_cli_check_degrades_on_semantic_backend_error_in_json(monkeypatch, tmp_p
     assert payload["summary"]["semantic_fallback"] is True
     assert payload["summary"]["semantic_fallback_reason"] is not None
     assert "Semantic analysis unavailable" in payload["summary"]["semantic_fallback_reason"]
+
+
+@pytest.mark.parametrize(
+    ("error", "expected_text"),
+    [
+        (RuntimeError("analysis exploded"), "Error during analysis: analysis exploded"),
+        (GrammarUnavailableError("grammar missing"), "Parser unavailable: grammar missing"),
+        (FileNotFoundError("Path does not exist"), "Error: Path does not exist"),
+    ],
+    ids=["runtime", "grammar", "missing-path"],
+)
+def test_cli_check_json_keeps_errors_off_stdout(monkeypatch, tmp_path, error, expected_text):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+
+    def _raise() -> AnalysisResult:
+        raise error
+
+    patch_cli_analyzer(monkeypatch, cli, analyze_result=_raise)
+
+    result = CliRunner().invoke(cli.cli, ["check", str(path), "--json"])
+
+    assert result.exit_code == 1
+    # --json promises machine-parseable JSON only on stdout.
+    assert result.stdout == ""
+    assert expected_text in result.stderr
+
+
+def test_cli_check_verbose_traceback_goes_to_stderr(monkeypatch, tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+
+    def _raise() -> AnalysisResult:
+        raise RuntimeError("analysis exploded")
+
+    patch_cli_analyzer(monkeypatch, cli, analyze_result=_raise)
+
+    result = CliRunner().invoke(cli.cli, ["check", str(path), "--verbose"])
+
+    assert result.exit_code == 1
+    assert "Traceback" in result.stderr
+    assert "Traceback" not in result.stdout
 
 
 @pytest.mark.parametrize(
