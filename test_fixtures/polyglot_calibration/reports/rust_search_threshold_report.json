@@ -25,7 +25,17 @@
     0.64,
     0.66,
     0.68,
-    0.7
+    0.7,
+    0.72,
+    0.74,
+    0.76,
+    0.78,
+    0.8,
+    0.82,
+    0.84,
+    0.86,
+    0.88,
+    0.9
   ],
   "models": [
     {
@@ -53,7 +63,7 @@
           "transformers": "5.14.1",
           "sentence-transformers": "5.6.1"
         },
-        "codedupes_version": "0.4.0",
+        "codedupes_version": "0.4.1.dev102+gf31fa48e1",
         "mode": "search",
         "semantic_task": "code-retrieval",
         "encode_plan": {
@@ -89,6 +99,7 @@
         "labels_path": "test_fixtures/polyglot_calibration/search_probes/rust.json",
         "labels_sha256": "de2583f6219b9b8bda5ed1d6fd9256bd19a54c3c33456f2874177f1d52f11c52",
         "probe_count": 10,
+        "selected_at_grid_edge": null,
         "candidate_coverage": {
           "labeled_positive_targets": 20,
           "scoreable_positive_targets": 16,
@@ -148,6 +159,16 @@
           "f1": 0.6250000000000001
         },
         {
+          "threshold": 0.72,
+          "predicted": 8,
+          "tp": 8,
+          "fp": 0,
+          "fn": 12,
+          "precision": 1.0,
+          "recall": 0.4,
+          "f1": 0.5714285714285715
+        },
+        {
           "threshold": 0.6,
           "predicted": 38,
           "tp": 16,
@@ -168,6 +189,16 @@
           "f1": 0.4444444444444444
         },
         {
+          "threshold": 0.74,
+          "predicted": 4,
+          "tp": 4,
+          "fp": 0,
+          "fn": 16,
+          "precision": 1.0,
+          "recall": 0.2,
+          "f1": 0.33333333333333337
+        },
+        {
           "threshold": 0.56,
           "predicted": 90,
           "tp": 16,
@@ -186,6 +217,36 @@
           "precision": 0.11940298507462686,
           "recall": 0.8,
           "f1": 0.20779220779220778
+        },
+        {
+          "threshold": 0.76,
+          "predicted": 2,
+          "tp": 2,
+          "fp": 0,
+          "fn": 18,
+          "precision": 1.0,
+          "recall": 0.1,
+          "f1": 0.18181818181818182
+        },
+        {
+          "threshold": 0.78,
+          "predicted": 2,
+          "tp": 2,
+          "fp": 0,
+          "fn": 18,
+          "precision": 1.0,
+          "recall": 0.1,
+          "f1": 0.18181818181818182
+        },
+        {
+          "threshold": 0.8,
+          "predicted": 2,
+          "tp": 2,
+          "fp": 0,
+          "fn": 18,
+          "precision": 1.0,
+          "recall": 0.1,
+          "f1": 0.18181818181818182
         },
         {
           "threshold": 0.52,
@@ -216,6 +277,16 @@
           "precision": 0.05405405405405406,
           "recall": 0.8,
           "f1": 0.10126582278481013
+        },
+        {
+          "threshold": 0.82,
+          "predicted": 1,
+          "tp": 1,
+          "fp": 0,
+          "fn": 19,
+          "precision": 1.0,
+          "recall": 0.05,
+          "f1": 0.09523809523809523
         },
         {
           "threshold": 0.46,
@@ -356,6 +427,46 @@
           "precision": 0.02622950819672131,
           "recall": 0.8,
           "f1": 0.050793650793650794
+        },
+        {
+          "threshold": 0.84,
+          "predicted": 0,
+          "tp": 0,
+          "fp": 0,
+          "fn": 20,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        },
+        {
+          "threshold": 0.86,
+          "predicted": 0,
+          "tp": 0,
+          "fp": 0,
+          "fn": 20,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        },
+        {
+          "threshold": 0.88,
+          "predicted": 0,
+          "tp": 0,
+          "fp": 0,
+          "fn": 20,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        },
+        {
+          "threshold": 0.9,
+          "predicted": 0,
+          "tp": 0,
+          "fp": 0,
+          "fn": 20,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
         }
       ]
     },
@@ -384,7 +495,7 @@
           "transformers": "5.14.1",
           "sentence-transformers": "5.6.1"
         },
-        "codedupes_version": "0.4.0",
+        "codedupes_version": "0.4.1.dev102+gf31fa48e1",
         "mode": "search",
         "semantic_task": "code-retrieval",
         "encode_plan": {
@@ -420,6 +531,7 @@
         "labels_path": "test_fixtures/polyglot_calibration/search_probes/rust.json",
         "labels_sha256": "de2583f6219b9b8bda5ed1d6fd9256bd19a54c3c33456f2874177f1d52f11c52",
         "probe_count": 10,
+        "selected_at_grid_edge": null,
         "candidate_coverage": {
           "labeled_positive_targets": 20,
           "scoreable_positive_targets": 16,
@@ -680,6 +792,106 @@
         },
         {
           "threshold": 0.7,
+          "predicted": 0,
+          "tp": 0,
+          "fp": 0,
+          "fn": 20,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        },
+        {
+          "threshold": 0.72,
+          "predicted": 0,
+          "tp": 0,
+          "fp": 0,
+          "fn": 20,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        },
+        {
+          "threshold": 0.74,
+          "predicted": 0,
+          "tp": 0,
+          "fp": 0,
+          "fn": 20,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        },
+        {
+          "threshold": 0.76,
+          "predicted": 0,
+          "tp": 0,
+          "fp": 0,
+          "fn": 20,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        },
+        {
+          "threshold": 0.78,
+          "predicted": 0,
+          "tp": 0,
+          "fp": 0,
+          "fn": 20,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        },
+        {
+          "threshold": 0.8,
+          "predicted": 0,
+          "tp": 0,
+          "fp": 0,
+          "fn": 20,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        },
+        {
+          "threshold": 0.82,
+          "predicted": 0,
+          "tp": 0,
+          "fp": 0,
+          "fn": 20,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        },
+        {
+          "threshold": 0.84,
+          "predicted": 0,
+          "tp": 0,
+          "fp": 0,
+          "fn": 20,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        },
+        {
+          "threshold": 0.86,
+          "predicted": 0,
+          "tp": 0,
+          "fp": 0,
+          "fn": 20,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        },
+        {
+          "threshold": 0.88,
+          "predicted": 0,
+          "tp": 0,
+          "fp": 0,
+          "fn": 20,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        },
+        {
+          "threshold": 0.9,
           "predicted": 0,
           "tp": 0,
           "fp": 0,

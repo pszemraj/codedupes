@@ -50,9 +50,9 @@ Whole-tree status at shipped defaults (2026-08-14): 368 units across five langua
 
 The validator now enforces the zero-unlabeled-deterministic-pairs property per language rather than leaving it as a one-off observation: every exact/near pair the traditional tier reports must appear in `positive_groups` (14/14/15/16/14 pairs for c/rust/javascript/typescript/python).
 
-## Calibration results (2026-08-21, pinned profiles, cpu/fp32, production `--min-statements 3`)
+## Calibration results (2026-08-25, pinned profiles, cpu/fp32, production `--min-statements 3`)
 
-Sweeps ran per language over a 0.40–0.96 duplicate grid (`--duplicate-start 0.40`; the default 0.70 floor would hide most non-Python near clones) with both models; search sweeps used the per-language probes. The duplicate metric is the product's final `hybrid_duplicates` output, including traditional matches and both semantic confidence tiers. Every labeled pair remains in the denominator: a pair outside the production semantic candidate pool is a false negative unless the traditional tier finds it. The manifest records candidate-policy coverage separately so preprocessing loss cannot be mistaken for model-threshold loss. Reports: `reports/<lang>_semantic_threshold_report.json`, `reports/<lang>_search_threshold_report.json`, `reports/similarity_distributions.json`.
+Sweeps ran per language over a 0.40–0.96 duplicate grid (`--duplicate-start 0.40`; the default 0.70 floor would hide most non-Python near clones) with both models; search sweeps used the per-language probes over the default 0.20–0.90 search grid. The duplicate metric is the product's final `hybrid_duplicates` output, including traditional matches and both semantic confidence tiers. Every labeled pair remains in the denominator: a pair outside the production semantic candidate pool is a false negative unless the traditional tier finds it. The manifest records candidate-policy coverage separately so preprocessing loss cannot be mistaken for model-threshold loss. Reports: `reports/<lang>_semantic_threshold_report.json`, `reports/<lang>_search_threshold_report.json`, `reports/similarity_distributions.json`.
 
 Duplicate threshold, best final-output F1 row per language. Candidate coverage is the number of labeled pairs whose two units reach semantic embedding under the production policy; traditional detection can still recover an excluded deterministic pair.
 
@@ -64,13 +64,13 @@ Duplicate threshold, best final-output F1 row per language. Candidate coverage i
 | typescript | 29 / 36 | 0.70 / 0.79 / 0.84 / 0.75 | 0.80 / 0.79 / 0.84 / 0.75 |
 | python (control) | 29 / 34 | 0.82 / 0.59 / 0.63 / 0.56 | 0.74 / 0.76 / 0.78 / 0.74 |
 
-Search threshold, best F1 row per language (shipped defaults: gte 0.50, gemma 0.40, deliberately recall-first):
+Search threshold, best F1 row per language — every selection is interior to the swept grid, and each manifest records `selected_at_grid_edge` so a boundary selection can never pass as an optimum (shipped defaults: gte 0.50, gemma 0.40, deliberately recall-first):
 
 | language | gte-modernbert-base (thr / F1) | embeddinggemma-300m (thr / F1) |
 | --- | --- | --- |
 | c | 0.68 / 0.70 | 0.52 / 0.77 |
 | rust | 0.66 / 0.80 | 0.52 / 0.86 |
-| javascript | 0.70 / 0.83 | 0.50 / 0.89 |
+| javascript | 0.72 / 0.86 | 0.50 / 0.89 |
 | typescript | 0.64 / 0.90 | 0.52 / 0.91 |
 | python (control) | 0.70 / 0.76 | 0.54 / 0.85 |
 
@@ -82,7 +82,7 @@ Distribution highlights (`reports/similarity_distributions.json`):
 - C is the hardest language for both models: deceptive negative controls reach 0.86 (gte) / 0.91 (gemma), overlapping the near-clone band, which caps best final-output F1 at 0.58/0.62.
 - embeddinggemma-300m separates clones from negatives better than gte-modernbert-base on four languages and ties it on TypeScript here, with best-F1 duplicate thresholds clustered at 0.74–0.82.
 
-All reports, including `reports/similarity_distributions.json`, embed the calibration identity manifest (pinned revision, pipeline schema, effective embedding space, candidate policy, corpus/label digests). The 2026-08-21 regeneration under embedding pipeline schema 5 reproduced every metric row byte-identically: only the recorded schema and runtime fingerprint moved, confirming the reject-don't-truncate context policy touches no vector in these corpora.
+All reports, including `reports/similarity_distributions.json`, embed the calibration identity manifest (pinned revision, pipeline schema, effective embedding space, candidate policy, corpus/label digests). The 2026-08-21 regeneration under embedding pipeline schema 5 reproduced every metric row byte-identically: only the recorded schema and runtime fingerprint moved, confirming the reject-don't-truncate context policy touches no vector in these corpora. The 2026-08-25 regeneration widened the search grid from a 0.70 to a 0.90 ceiling after the old ceiling was found censoring two boundary selections: every duplicate row and all previously swept search rows again reproduced byte-identically, javascript/gte moved off the censored boundary to its true optimum (0.70 → 0.72), python/gte's boundary pick was confirmed interior, and manifests now record `selected_at_grid_edge` plus a coherent candidate-coverage split (`traditional_recovered_pairs`/`unreachable_positive_pairs`).
 
 Interpretation: candidate policy, model threshold, and hybrid publication are one product decision graph and must be evaluated together. The shipped per-language gates listed at the top were reviewed against these production-policy grids recall-first — at or below each best-F1 row when that buys recall without untenable final-output precision — and are enforced by `codedupes.semantic_profiles` tests. The search rows remain a single-domain synthetic guardrail; the lower shipped search defaults come from the held-out multi-domain probes described in the model-profile docs. Keep this README, the reports, and the profile gates in sync.
 

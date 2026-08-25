@@ -25,22 +25,32 @@
     0.64,
     0.66,
     0.68,
-    0.7
+    0.7,
+    0.72,
+    0.74,
+    0.76,
+    0.78,
+    0.8,
+    0.82,
+    0.84,
+    0.86,
+    0.88,
+    0.9
   ],
   "models": [
     {
       "model_key": "gte-modernbert-base",
       "canonical_name": "Alibaba-NLP/gte-modernbert-base",
-      "selected_threshold": 0.7,
+      "selected_threshold": 0.76,
       "selected_metrics": {
-        "threshold": 0.7,
-        "predicted": 41,
-        "tp": 18,
-        "fp": 23,
-        "fn": 3,
-        "precision": 0.43902439024390244,
-        "recall": 0.8571428571428571,
-        "f1": 0.5806451612903225
+        "threshold": 0.76,
+        "predicted": 16,
+        "tp": 16,
+        "fp": 0,
+        "fn": 5,
+        "precision": 1.0,
+        "recall": 0.7619047619047619,
+        "f1": 0.8648648648648648
       },
       "calibration": {
         "model": "Alibaba-NLP/gte-modernbert-base",
@@ -53,7 +63,7 @@
           "transformers": "5.14.1",
           "sentence-transformers": "5.6.1"
         },
-        "codedupes_version": "0.4.0",
+        "codedupes_version": "0.4.1.dev102+gf31fa48e1",
         "mode": "search",
         "semantic_task": "code-retrieval",
         "encode_plan": {
@@ -89,6 +99,7 @@
         "labels_path": "test_fixtures/hybrid_tuning/search_probes.json",
         "labels_sha256": "8c6becb67f1381a25449973715b9093db09a86c06bc2bed21f7013a4f6551f8f",
         "probe_count": 12,
+        "selected_at_grid_edge": null,
         "candidate_coverage": {
           "labeled_positive_targets": 21,
           "scoreable_positive_targets": 18,
@@ -97,6 +108,56 @@
         }
       },
       "rows": [
+        {
+          "threshold": 0.76,
+          "predicted": 16,
+          "tp": 16,
+          "fp": 0,
+          "fn": 5,
+          "precision": 1.0,
+          "recall": 0.7619047619047619,
+          "f1": 0.8648648648648648
+        },
+        {
+          "threshold": 0.78,
+          "predicted": 15,
+          "tp": 15,
+          "fp": 0,
+          "fn": 6,
+          "precision": 1.0,
+          "recall": 0.7142857142857143,
+          "f1": 0.8333333333333333
+        },
+        {
+          "threshold": 0.74,
+          "predicted": 18,
+          "tp": 16,
+          "fp": 2,
+          "fn": 5,
+          "precision": 0.8888888888888888,
+          "recall": 0.7619047619047619,
+          "f1": 0.8205128205128205
+        },
+        {
+          "threshold": 0.8,
+          "predicted": 12,
+          "tp": 12,
+          "fp": 0,
+          "fn": 9,
+          "precision": 1.0,
+          "recall": 0.5714285714285714,
+          "f1": 0.7272727272727273
+        },
+        {
+          "threshold": 0.72,
+          "predicted": 29,
+          "tp": 18,
+          "fp": 11,
+          "fn": 3,
+          "precision": 0.6206896551724138,
+          "recall": 0.8571428571428571,
+          "f1": 0.7200000000000001
+        },
         {
           "threshold": 0.7,
           "predicted": 41,
@@ -116,6 +177,26 @@
           "precision": 0.3157894736842105,
           "recall": 0.8571428571428571,
           "f1": 0.46153846153846156
+        },
+        {
+          "threshold": 0.82,
+          "predicted": 6,
+          "tp": 6,
+          "fp": 0,
+          "fn": 15,
+          "precision": 1.0,
+          "recall": 0.2857142857142857,
+          "f1": 0.4444444444444445
+        },
+        {
+          "threshold": 0.84,
+          "predicted": 5,
+          "tp": 5,
+          "fp": 0,
+          "fn": 16,
+          "precision": 1.0,
+          "recall": 0.23809523809523808,
+          "f1": 0.3846153846153846
         },
         {
           "threshold": 0.66,
@@ -146,6 +227,16 @@
           "precision": 0.14754098360655737,
           "recall": 0.8571428571428571,
           "f1": 0.2517482517482518
+        },
+        {
+          "threshold": 0.86,
+          "predicted": 3,
+          "tp": 3,
+          "fp": 0,
+          "fn": 18,
+          "precision": 1.0,
+          "recall": 0.14285714285714285,
+          "f1": 0.25
         },
         {
           "threshold": 0.6,
@@ -356,6 +447,26 @@
           "precision": 0.05357142857142857,
           "recall": 0.8571428571428571,
           "f1": 0.10084033613445377
+        },
+        {
+          "threshold": 0.88,
+          "predicted": 1,
+          "tp": 1,
+          "fp": 0,
+          "fn": 20,
+          "precision": 1.0,
+          "recall": 0.047619047619047616,
+          "f1": 0.0909090909090909
+        },
+        {
+          "threshold": 0.9,
+          "predicted": 1,
+          "tp": 1,
+          "fp": 0,
+          "fn": 20,
+          "precision": 1.0,
+          "recall": 0.047619047619047616,
+          "f1": 0.0909090909090909
         }
       ]
     },
@@ -384,7 +495,7 @@
           "transformers": "5.14.1",
           "sentence-transformers": "5.6.1"
         },
-        "codedupes_version": "0.4.0",
+        "codedupes_version": "0.4.1.dev102+gf31fa48e1",
         "mode": "search",
         "semantic_task": "code-retrieval",
         "encode_plan": {
@@ -420,6 +531,7 @@
         "labels_path": "test_fixtures/hybrid_tuning/search_probes.json",
         "labels_sha256": "8c6becb67f1381a25449973715b9093db09a86c06bc2bed21f7013a4f6551f8f",
         "probe_count": 12,
+        "selected_at_grid_edge": null,
         "candidate_coverage": {
           "labeled_positive_targets": 21,
           "scoreable_positive_targets": 18,
@@ -680,6 +792,106 @@
         },
         {
           "threshold": 0.7,
+          "predicted": 0,
+          "tp": 0,
+          "fp": 0,
+          "fn": 21,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        },
+        {
+          "threshold": 0.72,
+          "predicted": 0,
+          "tp": 0,
+          "fp": 0,
+          "fn": 21,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        },
+        {
+          "threshold": 0.74,
+          "predicted": 0,
+          "tp": 0,
+          "fp": 0,
+          "fn": 21,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        },
+        {
+          "threshold": 0.76,
+          "predicted": 0,
+          "tp": 0,
+          "fp": 0,
+          "fn": 21,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        },
+        {
+          "threshold": 0.78,
+          "predicted": 0,
+          "tp": 0,
+          "fp": 0,
+          "fn": 21,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        },
+        {
+          "threshold": 0.8,
+          "predicted": 0,
+          "tp": 0,
+          "fp": 0,
+          "fn": 21,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        },
+        {
+          "threshold": 0.82,
+          "predicted": 0,
+          "tp": 0,
+          "fp": 0,
+          "fn": 21,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        },
+        {
+          "threshold": 0.84,
+          "predicted": 0,
+          "tp": 0,
+          "fp": 0,
+          "fn": 21,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        },
+        {
+          "threshold": 0.86,
+          "predicted": 0,
+          "tp": 0,
+          "fp": 0,
+          "fn": 21,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        },
+        {
+          "threshold": 0.88,
+          "predicted": 0,
+          "tp": 0,
+          "fp": 0,
+          "fn": 21,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        },
+        {
+          "threshold": 0.9,
           "predicted": 0,
           "tp": 0,
           "fp": 0,
