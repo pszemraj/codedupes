@@ -6,8 +6,9 @@ import ast
 import builtins
 import keyword
 import logging
+import math
 import tomllib
-from collections import defaultdict
+from collections import Counter, defaultdict
 from itertools import combinations
 from pathlib import Path
 
@@ -158,6 +159,83 @@ def _normalize_identifiers(identifiers: set[str]) -> set[str]:
     return normalized
 
 
+# The prefix bound and the exact score must agree at the cutoff. Without a
+# tolerance a float product landing a hair above an integer would shorten a
+# prefix by one token and drop a pair that verification would have accepted.
+_PREFIX_LENGTH_TOLERANCE = 1e-9
+
+
+def _block_jaccard_pairs(
+    group: list[CodeUnit],
+    identifier_sets: dict[str, set[str]],
+    threshold: float,
+) -> list[tuple[int, int, float]]:
+    """Find every above-threshold Jaccard pair in one block via prefix-filtered candidates.
+
+    Exact, not approximate: ``J(A, B) >= t`` forces ``|A & B| >= ceil(t * |X|)``
+    for either side, and two sets sorted in one common token order that share
+    that many elements must already share a token inside their
+    ``len - ceil(t * len) + 1`` prefixes, so no verifiable pair goes unproposed.
+
+    :param group: Units of one language/kind block, in report order.
+    :param identifier_sets: Identifier sets keyed by unit uid.
+    :param threshold: Jaccard cutoff.
+    :return: ``(index_a, index_b, similarity)`` triples sorted by index pair.
+    """
+    sets = [identifier_sets[unit.uid] for unit in group]
+    populated = [index for index, tokens in enumerate(sets) if tokens]
+
+    if threshold <= 0.0:
+        # At or below zero, disjoint sets clear the cutoff too, and prefix
+        # filtering only ever proposes pairs that share a token.
+        return [
+            (index_a, index_b, jaccard_similarity(sets[index_a], sets[index_b]))
+            for index_a, index_b in combinations(populated, 2)
+            if not group[index_a].overlaps(group[index_b])
+        ]
+
+    # Rarest tokens first, so prefixes are the most selective probes available.
+    # Only the order being common to the whole block matters for exactness.
+    frequencies: Counter[str] = Counter()
+    for index in populated:
+        frequencies.update(sets[index])
+    vocabulary = sorted(frequencies, key=lambda token: (frequencies[token], token))
+    ranks = {token: rank for rank, token in enumerate(vocabulary)}
+
+    postings: dict[str, list[int]] = {}
+    pairs: list[tuple[int, int, float]] = []
+    for index_b in populated:
+        set_b = sets[index_b]
+        size_b = len(set_b)
+        ordered = sorted(set_b, key=ranks.__getitem__)
+        prefix_length = size_b - math.ceil(threshold * size_b - _PREFIX_LENGTH_TOLERANCE) + 1
+        prefix = ordered[: max(prefix_length, 0)]
+
+        candidates: set[int] = set()
+        for token in prefix:
+            candidates.update(postings.get(token, ()))
+
+        for index_a in candidates:
+            set_a = sets[index_a]
+            size_a = len(set_a)
+            # J is bounded by the size ratio; expressing the bound as the same
+            # division the exact score uses keeps float rounding from pruning a
+            # pair that verification would accept.
+            if min(size_a, size_b) / max(size_a, size_b) < threshold:
+                continue
+            if group[index_a].overlaps(group[index_b]):
+                continue
+            similarity = jaccard_similarity(set_a, set_b)
+            if similarity >= threshold:
+                pairs.append((index_a, index_b, similarity))
+
+        for token in prefix:
+            postings.setdefault(token, []).append(index_b)
+
+    pairs.sort(key=lambda pair: pair[:2])
+    return pairs
+
+
 def find_near_duplicates_jaccard(
     units: list[CodeUnit],
     threshold: float = 0.8,
@@ -171,31 +249,22 @@ def find_near_duplicates_jaccard(
     identifier_sets = {unit.uid: unit_identifier_set(unit) for unit in units}
 
     # Candidate blocking removes meaningless mixed-language/kind comparisons
-    # before the quadratic pair loop; functions and methods share a block.
+    # before the similarity join; functions and methods share a block.
     groups: dict[tuple[str, str], list[CodeUnit]] = defaultdict(list)
     for unit in units:
         groups[(unit.language, _block_kind(unit.unit_type))].append(unit)
 
     duplicates = []
     for group in groups.values():
-        for a, b in combinations(group, 2):
-            if a.overlaps(b):
-                continue
-
-            set_a = identifier_sets[a.uid]
-            set_b = identifier_sets[b.uid]
-            if not set_a or not set_b:
-                continue
-
-            size_ratio = min(len(set_a), len(set_b)) / max(len(set_a), len(set_b), 1)
-            if size_ratio < threshold / 2:
-                continue
-
-            sim = jaccard_similarity(set_a, set_b)
-            if sim >= threshold:
-                duplicates.append(
-                    DuplicatePair(unit_a=a, unit_b=b, similarity=sim, method="jaccard")
+        for index_a, index_b, similarity in _block_jaccard_pairs(group, identifier_sets, threshold):
+            duplicates.append(
+                DuplicatePair(
+                    unit_a=group[index_a],
+                    unit_b=group[index_b],
+                    similarity=similarity,
+                    method="jaccard",
                 )
+            )
 
     return duplicates
 
