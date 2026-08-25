@@ -99,6 +99,10 @@ def test_validator_reports_every_failure_when_a_label_spec_cannot_resolve(
     assert "matched 0 units" in output
     # The pre-existing per-category summary still prints alongside the failures.
     assert "exact: 1 labeled pairs" in output
+    # The unresolved group IS in positive_groups; the resolution failure above is
+    # the whole story, and a bogus partition complaint would point authors at the
+    # labels file's categories map instead of the missing corpus symbol.
+    assert "missing from positive_groups" not in output
 
 
 def test_validator_flags_deterministic_pairs_missing_from_the_labels(

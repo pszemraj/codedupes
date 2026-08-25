@@ -137,10 +137,12 @@ def _validate_labels(
         return {}
 
     resolved_groups: dict[tuple[str, ...], list[CodeUnit]] = {}
+    unresolved_keys: set[tuple[str, ...]] = set()
     for group in positive_groups:
         try:
             resolved_groups[_group_key(group)] = [resolve_label_unit(units, spec) for spec in group]
         except ValueError as exc:
+            unresolved_keys.add(_group_key(group))
             failures.append(str(exc))
 
     categories = labels.get("categories")
@@ -167,15 +169,19 @@ def _validate_labels(
             seen_keys.add(key)
             resolved = resolved_groups.get(key)
             if resolved is None:
-                failures.append(
-                    f"category {category!r} group missing from positive_groups: {group}"
-                )
+                # A group that failed spec resolution IS in positive_groups; its
+                # failure is already reported once above, and claiming it is
+                # missing from the partition would point at the wrong file.
+                if key not in unresolved_keys:
+                    failures.append(
+                        f"category {category!r} group missing from positive_groups: {group}"
+                    )
                 continue
             for unit_a, unit_b in combinations(resolved, 2):
                 counts[category] = counts.get(category, 0) + 1
                 failures.extend(_check_category_pair(category, unit_a, unit_b))
 
-    uncategorized = set(resolved_groups) - seen_keys
+    uncategorized = (set(resolved_groups) | unresolved_keys) - seen_keys
     for key in sorted(uncategorized):
         failures.append(f"positive group has no category: {list(key)}")
 
