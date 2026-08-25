@@ -342,6 +342,48 @@ def test_rust_nested_function_inside_impl_is_not_a_method(tmp_path: Path) -> Non
     assert outer_is_method
 
 
+def test_rust_preceding_attributes_falls_back_to_a_sibling_scan() -> None:
+    """Nodes without ``prev_named_sibling`` still resolve their attribute stack,
+    nearest attribute first, with intervening comments skipped."""
+    source = b"#[cfg(test)]\n// note\n#[inline]\nfn helper() {}"
+    outer = _leaf(source, b"#[cfg(test)]", "attribute_item")
+    comment = _leaf(source, b"// note", "line_comment")
+    inner = _leaf(source, b"#[inline]", "attribute_item")
+    function = FakeNode("function_item", source.index(b"fn helper"), len(source))
+    FakeNode(
+        "source_file",
+        0,
+        len(source),
+        children=(outer, comment, inner, function),
+    )
+
+    assert not hasattr(function, "prev_named_sibling")
+    attributes = RustBackend._preceding_attributes(function)
+
+    assert [attribute.start_byte for attribute in attributes] == [
+        inner.start_byte,
+        outer.start_byte,
+    ]
+
+
+def test_rust_preceding_attributes_stop_at_the_first_unrelated_sibling() -> None:
+    source = b"#[derive(Debug)]\nstruct Widget;\n#[inline]\nfn helper() {}"
+    other_item_attribute = _leaf(source, b"#[derive(Debug)]", "attribute_item")
+    unrelated = _leaf(source, b"struct Widget;", "struct_item")
+    own_attribute = _leaf(source, b"#[inline]", "attribute_item")
+    function = FakeNode("function_item", source.index(b"fn helper"), len(source))
+    FakeNode(
+        "source_file",
+        0,
+        len(source),
+        children=(other_item_attribute, unrelated, own_attribute, function),
+    )
+
+    attributes = RustBackend._preceding_attributes(function)
+
+    assert [node.start_byte for node in attributes] == [own_attribute.start_byte]
+
+
 def test_typescript_private_method_is_not_public(tmp_path: Path) -> None:
     source = b"class Worker { private run() {} }"
     class_name = _leaf(source, b"Worker", "type_identifier")

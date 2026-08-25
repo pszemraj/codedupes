@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import ast
+import codecs
+import os
 from pathlib import Path
 from textwrap import dedent
+from typing import Any
 
 from codedupes.extractor import CodeExtractor, compute_ast_hash, compute_token_hash
 from codedupes.models import CodeUnitType
@@ -352,3 +355,95 @@ def test_python_source_lines_survive_form_feed_separator(tmp_path: Path) -> None
     assert unit.source == 'def after(name):\n    message = "hi " + name\n    return message\n'
     assert encoded[unit.start_byte : unit.end_byte] == unit.source.encode("utf-8")
     assert unit.end_column == len(b"    return message")
+
+
+def test_python_crlf_source_stays_byte_exact(tmp_path: Path) -> None:
+    # ``read_text`` would translate the line endings away, so the byte range would
+    # describe LF text that is not what the file stores.
+    file_path = tmp_path / "crlf_sample.py"
+    file_path.write_bytes(
+        b"# leading comment\r\ndef greet(name):\r\n"
+        b'    message = "hi " + name\r\n'
+        b"    return message\r\n"
+    )
+
+    units = list(CodeExtractor(tmp_path, include_private=True).extract_from_file(file_path))
+    raw = file_path.read_bytes()
+
+    assert [unit.name for unit in units] == ["greet"]
+    unit = units[0]
+    assert "\r\n" in unit.source
+    assert raw[unit.start_byte : unit.end_byte].decode("utf-8") == unit.source
+    assert (unit.lineno, unit.end_lineno) == (2, 4)
+
+
+def test_python_bom_file_extracts_with_on_disk_byte_offsets(tmp_path: Path) -> None:
+    file_path = tmp_path / "bom_sample.py"
+    body = 'def greet(name):\n    message = "héllo " + name\n    return message\n'
+    file_path.write_bytes(codecs.BOM_UTF8 + body.encode("utf-8"))
+
+    extractor = CodeExtractor(tmp_path, include_private=True)
+    units = list(extractor.extract_from_file(file_path))
+    raw = file_path.read_bytes()
+
+    assert [unit.name for unit in units] == ["greet"]
+    assert extractor.diagnostics == []
+    unit = units[0]
+    assert unit.start_byte == len(codecs.BOM_UTF8)
+    assert raw[unit.start_byte : unit.end_byte].decode("utf-8") == unit.source
+    assert not unit.source.startswith("﻿")
+
+
+def test_python_file_with_nul_byte_reports_a_diagnostic(tmp_path: Path) -> None:
+    file_path = tmp_path / "nul_sample.py"
+    file_path.write_bytes(b"def greet():\n    return 1\x00\n")
+
+    extractor = CodeExtractor(tmp_path, include_private=True)
+    units = list(extractor.extract_from_file(file_path))
+
+    assert units == []
+    assert [diagnostic.code for diagnostic in extractor.diagnostics] == ["parse-error"]
+
+
+def test_unreadable_files_do_not_abort_extraction(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / "keeper.py").write_text("def alpha():\n    return 1\n")
+    missing = tmp_path / "gone"
+    (root / "dangling.py").symlink_to(missing / "absent.py")
+    (root / "dangling.js").symlink_to(missing / "absent.js")
+
+    extractor = CodeExtractor(root, include_private=True)
+    units = extractor.extract_all()
+
+    assert [unit.qualified_name for unit in units] == ["keeper.alpha"]
+    read_errors = [
+        diagnostic for diagnostic in extractor.diagnostics if diagnostic.code == "read-error"
+    ]
+    assert {diagnostic.language for diagnostic in read_errors} == {"python", "javascript"}
+    assert {diagnostic.file_path.name for diagnostic in read_errors} == {
+        "dangling.py",
+        "dangling.js",
+    }
+
+
+def test_extract_all_order_is_independent_of_walk_order(tmp_path: Path, monkeypatch: Any) -> None:
+    names = ["gamma.py", "alpha.py", "beta.py"]
+    for name in names:
+        (tmp_path / name).write_text(f"def {Path(name).stem}():\n    return 1\n")
+
+    def walk_yielding(order: list[str]) -> Any:
+        def fake_walk(top: str, followlinks: bool = True) -> Any:
+            yield str(tmp_path), [], list(order)
+
+        return fake_walk
+
+    def extracted(order: list[str]) -> list[str]:
+        monkeypatch.setattr(os, "walk", walk_yielding(order))
+        extractor = CodeExtractor(tmp_path, include_private=True)
+        return [unit.qualified_name for unit in extractor.extract_all()]
+
+    forward = extracted(names)
+    reverse = extracted(list(reversed(names)))
+
+    assert forward == reverse == ["alpha.alpha", "beta.beta", "gamma.gamma"]

@@ -254,6 +254,35 @@ def _same_node(left: Any | None, right: Any | None) -> bool:
     )
 
 
+def _preceding_named_siblings(node: Any) -> Iterable[Any]:
+    """Yield the named siblings that precede a node, nearest first.
+
+    py-tree-sitter exposes ``prev_named_sibling``, which is O(1) per step; scanning
+    the parent's named children instead is O(siblings) per lookup and turns
+    attribute collection quadratic in the number of items in a file. Node doubles
+    and parsers without that attribute fall back to the scan, which matches nodes
+    by source identity because bindings may hand out fresh wrappers.
+
+    :param node: Node whose preceding named siblings are walked.
+    :return: Iterator over preceding named siblings, closest to ``node`` first.
+    """
+    if getattr(node, "is_named", True) and hasattr(node, "prev_named_sibling"):
+        current = node.prev_named_sibling
+        while current is not None:
+            yield current
+            current = getattr(current, "prev_named_sibling", None)
+        return
+
+    siblings = _named_children(getattr(node, "parent", None))
+    index = next(
+        (position for position, sibling in enumerate(siblings) if _same_node(sibling, node)),
+        None,
+    )
+    if index is None:
+        return
+    yield from reversed(siblings[:index])
+
+
 def _walk(node: Any) -> Iterable[Any]:
     """Walk a subtree in preorder without recursing.
 
@@ -724,12 +753,46 @@ class TreeSitterBackend:
         :param file_path: File to extract.
         :return: Extracted units together with any diagnostics raised while parsing.
         """
-        source = file_path.read_bytes()
+        try:
+            source = file_path.read_bytes()
+        except OSError as exc:
+            return BackendResult(
+                (),
+                (
+                    ExtractionDiagnostic(
+                        file_path=file_path,
+                        language=self.language,
+                        message=f"Could not read {file_path}: {exc}",
+                        severity="warning",
+                        code="read-error",
+                    ),
+                ),
+            )
+
+        diagnostics: list[ExtractionDiagnostic] = []
+        # Recall-first: the file is still analyzed after lossy decoding, but the
+        # replacement characters reach hashes, identifiers, and embeddings, so the
+        # corruption is reported rather than left silent.
+        try:
+            source.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            diagnostics.append(
+                ExtractionDiagnostic(
+                    file_path=file_path,
+                    language=self.language,
+                    message=(
+                        f"{file_path} is not valid UTF-8 ({exc.reason} at byte {exc.start}); "
+                        "it was decoded with replacement characters."
+                    ),
+                    severity="warning",
+                    code="invalid-utf8",
+                )
+            )
+
         parser = GrammarProvider.parser(self.dialect)
         tree = parser.parse(source)
         root_node = tree.root_node
 
-        diagnostics: list[ExtractionDiagnostic] = []
         if _contains_error(root_node):
             diagnostics.append(
                 self._diagnostic_for_node(
@@ -1089,18 +1152,10 @@ class RustBackend(TreeSitterBackend):
         :param node: Item whose stacked attributes are collected.
         :return: Attribute nodes directly above the item, nearest first.
         """
-        parent = getattr(node, "parent", None)
-        if parent is None:
-            return []
-        siblings = _named_children(parent)
-        index = next(
-            (position for position, sibling in enumerate(siblings) if _same_node(sibling, node)),
-            None,
-        )
-        if index is None:
+        if getattr(node, "parent", None) is None:
             return []
         attributes: list[Any] = []
-        for sibling in reversed(siblings[:index]):
+        for sibling in _preceding_named_siblings(node):
             # Comments routinely sit between an attribute and the item it annotates.
             if _is_comment(sibling):
                 continue

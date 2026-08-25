@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from textwrap import dedent
 
@@ -1045,3 +1046,114 @@ def test_tsx_and_unicode_use_exact_byte_slices(tmp_path: Path) -> None:
     assert card.dialect == "tsx"
     assert source_bytes[card.start_byte : card.end_byte].decode("utf-8") == card.source
     assert "<section>" in card.source
+
+
+def test_non_utf8_source_is_analyzed_but_reported(tmp_path: Path) -> None:
+    """Recall-first decoding keeps the unit, but replacement characters reach the
+    fingerprints and embeddings, so the corruption must not stay silent."""
+    path = tmp_path / "legacy.js"
+    path.write_bytes("function greet() { return 'café'; }\n".encode("latin-1"))
+
+    extractor = CodeExtractor(tmp_path, include_private=True, languages=("javascript",))
+    units = list(extractor.extract_from_file(path))
+
+    assert [unit.qualified_name for unit in units] == ["legacy.greet"]
+    assert [diagnostic.code for diagnostic in extractor.diagnostics] == ["invalid-utf8"]
+    assert "�" in units[0].source
+
+
+def test_rust_attribute_scoping_matches_across_stacked_and_nested_items(tmp_path: Path) -> None:
+    """Pins every attribute shape ``_preceding_attributes`` has to keep straight:
+    stacked attributes, comments between them, and attributes on enclosing scopes."""
+    units = _extract(
+        tmp_path,
+        "mixed.rs",
+        """
+        #[derive(Debug)]
+        pub struct Widget;
+
+        #[test]
+        fn bare_test() { assert!(true); }
+
+        #[cfg(test)]
+        fn cfg_test_fn() { let x = 1; }
+
+        #[cfg(all(test, feature = "x"))]
+        fn cfg_all_test_fn() { let x = 1; }
+
+        #[cfg(not(test))]
+        pub fn not_test_fn() -> i32 { 7 }
+
+        #[cfg(any(test, feature = "x"))]
+        pub fn any_test_fn() -> i32 { 8 }
+
+        // a comment above the attribute stack
+        #[inline]
+        // another comment below it
+        pub fn commented_fn() -> i32 { 9 }
+
+        #[cfg(test)]
+        mod tests {
+            #[test]
+            fn nested_test() { assert!(true); }
+
+            fn helper() -> i32 { 3 }
+        }
+
+        pub mod real {
+            #[inline]
+            pub fn inner(x: i32) -> i32 { x }
+
+            #[cfg(test)]
+            mod inner_tests {
+                fn deep_helper() -> i32 { 1 }
+            }
+        }
+
+        impl Widget {
+            #[cfg(test)]
+            fn test_only_method(&self) -> i32 { 1 }
+
+            #[inline]
+            pub fn real_method(&self) -> i32 { 2 }
+        }
+
+        fn outer_plain() -> i32 {
+            #[cfg(test)]
+            fn nested_in_fn() -> i32 { 4 }
+            5
+        }
+        """,
+    )
+
+    assert {(unit.qualified_name, unit.is_public) for unit in units} == {
+        ("mixed.any_test_fn", True),
+        ("mixed.commented_fn", True),
+        ("mixed.not_test_fn", True),
+        ("mixed.outer_plain", False),
+        ("mixed.real.inner", True),
+        ("mixed.Widget.real_method", True),
+    }
+
+
+def test_rust_attribute_lookup_stays_linear_in_item_count(tmp_path: Path) -> None:
+    """Locating each item among its siblings by scan made extraction quadratic; the
+    bound is deliberately generous so a slow machine still passes."""
+    items = []
+    for index in range(3000):
+        if index % 3 == 0:
+            items.append(f"#[inline]\npub fn item_{index}(x: i32) -> i32 {{ x + {index} }}")
+        elif index % 3 == 1:
+            items.append(f"#[test]\nfn test_{index}() {{ assert_eq!(1, 1); }}")
+        else:
+            items.append(f"fn plain_{index}(x: i32) -> i32 {{\n    let y = x * {index};\n    y\n}}")
+    path = tmp_path / "wide.rs"
+    path.write_text("\n".join(items) + "\n", encoding="utf-8")
+
+    extractor = CodeExtractor(tmp_path, include_private=True, languages=("rust",))
+    started = time.perf_counter()
+    units = list(extractor.extract_from_file(path))
+    elapsed = time.perf_counter() - started
+
+    assert len(units) == 2000
+    assert elapsed < 5.0, f"3000-item Rust file took {elapsed:.1f}s"

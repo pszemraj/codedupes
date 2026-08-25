@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import codecs
 import copy
 import hashlib
 import logging
@@ -364,16 +365,21 @@ class _PythonSourceMap:
     file so per-unit work stays O(unit size) instead of O(file size).
     """
 
-    def __init__(self, source: str) -> None:
+    def __init__(self, source: str, base_offset: int = 0) -> None:
         """Build line tables for one file's source text.
 
-        :param source: Entire file source text.
+        :param source: Decoded file source text, verbatim from disk.
+        :param base_offset: Byte count stripped ahead of ``source`` (a UTF-8 BOM),
+            added to every reported offset so ranges index the on-disk file.
         """
-        # ``bytes.splitlines`` matches CPython's line numbering, which only breaks
-        # on ``\r``/``\n``; ``str.splitlines`` would also break on ``\f`` and friends
-        # and desynchronize the line table from the byte tables.
+        # ``bytes.splitlines`` matches CPython's line numbering, which breaks on
+        # ``\n``, ``\r``, and ``\r\n`` and nothing else; ``str.splitlines`` would
+        # also break on ``\f`` and friends and desynchronize the line table from
+        # the byte tables. Line endings are never normalized: the byte ranges must
+        # describe the file as stored, so CRLF sources keep their ``\r``.
         self._encoded_lines = source.encode("utf-8").splitlines(keepends=True)
         self.lines = [line.decode("utf-8") for line in self._encoded_lines]
+        self._base_offset = base_offset
         self._line_start_bytes = [0]
         for line in self._encoded_lines:
             self._line_start_bytes.append(self._line_start_bytes[-1] + len(line))
@@ -402,7 +408,7 @@ class _PythonSourceMap:
         end_byte = self._line_start_bytes[min(end_line_index + 1, line_count)]
         final_line = self._encoded_lines[end_line_index] if end_line_index < line_count else b""
         end_column = len(final_line.rstrip(b"\r\n"))
-        return start_byte, end_byte, 0, end_column
+        return start_byte + self._base_offset, end_byte + self._base_offset, 0, end_column
 
 
 class CodeExtractor:
@@ -579,16 +585,49 @@ class CodeExtractor:
             )
         )
 
+    def _read_source_bytes(self, file_path: Path, language: str) -> bytes | None:
+        """Read one file's raw bytes, reporting unreadable files as diagnostics.
+
+        :param file_path: File to read.
+        :param language: Canonical language recorded on the diagnostic.
+        :return: File bytes, or ``None`` when the file could not be read.
+        """
+        try:
+            return file_path.read_bytes()
+        except OSError as exc:
+            message = f"Could not read {file_path}: {exc}"
+            logger.warning(message)
+            self.diagnostics.append(
+                ExtractionDiagnostic(
+                    file_path=file_path,
+                    language=language,
+                    message=message,
+                    severity="warning",
+                    code="read-error",
+                )
+            )
+            return None
+
     def _extract_python_from_file(self, file_path: Path) -> Iterator[CodeUnit]:
         """Yield Python units using the original CPython AST implementation.
 
         :param file_path: Python file to parse.
         :return: Iterator over the code units found in the file.
         """
+        raw = self._read_source_bytes(file_path, "python")
+        if raw is None:
+            return
+
+        # A BOM is not part of the program text: ``ast.parse`` rejects U+FEFF, so
+        # strip it and shift every reported offset back over it. Decoding the
+        # remaining bytes by hand (rather than ``read_text``) skips universal-newline
+        # translation, so byte ranges stay exact for CRLF files.
+        base_offset = len(codecs.BOM_UTF8) if raw.startswith(codecs.BOM_UTF8) else 0
         try:
-            source = file_path.read_text(encoding="utf-8")
+            source = raw[base_offset:].decode("utf-8")
             tree = ast.parse(source, filename=str(file_path))
-        except (SyntaxError, UnicodeDecodeError) as exc:
+        except (SyntaxError, UnicodeDecodeError, ValueError) as exc:
+            # ValueError: CPython 3.11 reports embedded NUL bytes that way.
             message = f"Could not parse {file_path}: {exc}"
             logger.warning(message)
             self.diagnostics.append(
@@ -606,7 +645,7 @@ class CodeExtractor:
 
         module_name = self._get_module_name(file_path)
         exported = get_exported_names(tree)
-        source_map = _PythonSourceMap(source)
+        source_map = _PythonSourceMap(source, base_offset)
         visitor = _CodeUnitCollector(self, file_path, source_map, module_name, exported)
         visitor.visit(tree)
         yield from visitor.units
@@ -762,7 +801,7 @@ class CodeExtractor:
     def extract_all(self) -> list[CodeUnit]:
         """Extract all supported code units from the configured directory tree.
 
-        :return: Every code unit extracted from the tree, in walk order.
+        :return: Every code unit extracted from the tree, in sorted walk order.
         """
         units: list[CodeUnit] = []
         seen: set[Path] = set()
@@ -770,10 +809,12 @@ class CodeExtractor:
         skipped_headers: list[Path] = []
 
         for dirpath, dirnames, filenames in os.walk(self.root, followlinks=False):
-            dirnames[:] = [name for name in dirnames if not self._is_excluded_dir_name(name)]
+            # Sorted in place so the walk descends deterministically: raw ``os.walk``
+            # order is filesystem-dependent and would reorder the reported units.
+            dirnames[:] = sorted(name for name in dirnames if not self._is_excluded_dir_name(name))
             current_dir = Path(dirpath)
 
-            for filename in filenames:
+            for filename in sorted(filenames):
                 source_file = current_dir / filename
                 is_c_header = source_file.suffix == ".h"
                 if is_c_header and allow_c_header is None:
