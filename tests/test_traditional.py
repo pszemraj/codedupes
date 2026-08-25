@@ -325,6 +325,28 @@ def test_noqa_and_main_block_mark_as_used(tmp_path: Path) -> None:
     assert "used_by_main" not in names
 
 
+def test_main_block_references_survive_a_bom(tmp_path: Path) -> None:
+    from codedupes.extractor import CodeExtractor
+
+    source = dedent(
+        """
+        def used_by_main():
+            return 7
+
+        if __name__ == "__main__":
+            used_by_main()
+        """
+    ).strip()
+    path = tmp_path / "bom_sample.py"
+    path.write_bytes(b"\xef\xbb\xbf" + source.encode("utf-8"))
+
+    units = list(CodeExtractor(tmp_path, include_private=True).extract_from_file(path))
+    build_reference_graph(units, project_root=tmp_path)
+    unused = find_potentially_unused(units, strict_unused=True)
+
+    assert "used_by_main" not in {unit.name for unit in unused}
+
+
 def test_pyproject_entry_points_mark_as_used(tmp_path: Path) -> None:
     source = dedent(
         """

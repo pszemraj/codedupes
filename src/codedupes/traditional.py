@@ -310,9 +310,12 @@ def _extract_main_block_calls(file_path: Path) -> set[str]:
     :return: Function names called from the module entry block.
     """
     try:
-        source = file_path.read_text(encoding="utf-8")
+        # utf-8-sig matches the BOM-tolerant extractor read: a file that
+        # extraction accepts must not silently lose its __main__ references.
+        # ValueError covers CPython 3.11's embedded-NUL report.
+        source = file_path.read_text(encoding="utf-8-sig")
         tree = ast.parse(source)
-    except (OSError, SyntaxError, UnicodeDecodeError):
+    except (OSError, SyntaxError, UnicodeDecodeError, ValueError):
         return set()
 
     from codedupes.extractor import CallGraphVisitor
@@ -450,9 +453,12 @@ def _extract_aliases(file_path: Path) -> dict[str, str]:
     :return: Alias map for name resolution.
     """
     try:
-        source = file_path.read_text(encoding="utf-8")
+        # utf-8-sig matches the BOM-tolerant extractor read: a file that
+        # extraction accepts must not silently lose its alias map.
+        # ValueError covers CPython 3.11's embedded-NUL report.
+        source = file_path.read_text(encoding="utf-8-sig")
         tree = ast.parse(source)
-    except (OSError, SyntaxError, UnicodeDecodeError):
+    except (OSError, SyntaxError, UnicodeDecodeError, ValueError):
         return {}
 
     aliases: dict[str, str] = {}
