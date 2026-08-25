@@ -163,6 +163,44 @@ def validate_labels_shape(labels: dict[str, Any]) -> None:
                 raise ValueError(msg)
 
 
+def validate_probes_shape(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    """Fail fast on structurally malformed search-probes JSON, before any model work.
+
+    Shape checks only, mirroring :func:`validate_labels_shape`: specs are not
+    resolved against extracted units. Without this gate an empty or mis-keyed
+    probes file still produced a complete search report - zero probes, every row
+    scored 0.0, and the loosest-tie ranking selected the grid floor under a full
+    calibration manifest.
+
+    :param dict[str, Any] payload: Loaded search-probes JSON dictionary.
+    :raises ValueError: If the payload or any probe entry is malformed.
+    :return list[dict[str, Any]]: The validated probe list.
+    """
+    probes = payload.get("probes")
+    if not isinstance(probes, list) or not probes:
+        msg = "search probes JSON must define a non-empty 'probes' list."
+        raise ValueError(msg)
+    for index, probe in enumerate(probes):
+        if not isinstance(probe, dict):
+            msg = f"probe {index} must be an object; got {probe!r}."
+            # Kept a ValueError so callers catch one shape-error type, matching
+            # validate_labels_shape.
+            raise ValueError(msg)  # noqa: TRY004
+        query = probe.get("query")
+        if not isinstance(query, str) or not query.strip():
+            msg = f"probe {index} must define a non-empty string 'query'."
+            raise ValueError(msg)
+        expected = probe.get("expected")
+        if not isinstance(expected, list) or not expected:
+            msg = f"probe {index} must define a non-empty 'expected' spec list."
+            raise ValueError(msg)
+        for spec in expected:
+            if not isinstance(spec, str) or not spec.strip():
+                msg = f"probe {index} has an invalid expected spec: {spec!r}."
+                raise ValueError(msg)
+    return probes
+
+
 def build_positive_pairs(units: list[CodeUnit], labels: dict[str, Any]) -> set[tuple[str, str]]:
     """Build expected-positive duplicate pairs from label groups.
 

@@ -17,7 +17,11 @@ from codedupes.models import CodeUnit, CodeUnitType, DuplicatePair
 from codedupes.semantic import EmbeddingSpaceIdentity
 from codedupes.semantic_profiles import resolve_model_profile
 from scripts.report_calibration_distributions import _analyze_language
-from scripts.sweep_common import add_common_sweep_arguments, validate_labels_shape
+from scripts.sweep_common import (
+    add_common_sweep_arguments,
+    validate_labels_shape,
+    validate_probes_shape,
+)
 from scripts.sweep_hybrid_gates import GateConfig
 from scripts.sweep_hybrid_gates import _run_sweep as _run_hybrid_gate_sweep
 from scripts.sweep_semantic_thresholds import (
@@ -324,6 +328,58 @@ def test_labels_shape_validation_rejects_an_empty_category() -> None:
 
     with pytest.raises(ValueError, match="near_translation"):
         validate_labels_shape(labels)
+
+
+def test_probes_shape_validation_rejects_empty_and_malformed_probes() -> None:
+    """Probes get the same fail-fast shape contract the labels already have."""
+    with pytest.raises(ValueError, match="non-empty 'probes' list"):
+        validate_probes_shape({"probes": []})
+    with pytest.raises(ValueError, match="non-empty 'probes' list"):
+        validate_probes_shape({"queries": [{"query": "q", "expected": ["a.py::f"]}]})
+    with pytest.raises(ValueError, match="probe 0 must define a non-empty string 'query'"):
+        validate_probes_shape({"probes": [{"query": "  ", "expected": ["a.py::f"]}]})
+    with pytest.raises(ValueError, match="probe 1 must define a non-empty 'expected'"):
+        validate_probes_shape(
+            {"probes": [{"query": "q", "expected": ["a.py::f"]}, {"query": "r", "expected": []}]}
+        )
+
+    probes = [{"query": "q", "expected": ["a.py::f", "b.py::g"]}]
+    assert validate_probes_shape({"probes": probes}) == probes
+
+
+def test_semantic_sweep_rejects_malformed_probes_before_any_analysis(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    """A zero-probe file must abort at argument time, not become a search report.
+
+    Before the shape gate, ``{"probes": []}`` swept every threshold over zero
+    scored pairs and wrote a full search report selecting the grid floor.
+    """
+    labels_path = tmp_path / "labels.json"
+    labels_path.write_text(json.dumps({"positive_groups": [["alpha.py::a", "alpha.py::b"]]}))
+    probes_path = tmp_path / "search_probes.json"
+    probes_path.write_text(json.dumps({"probes": []}))
+
+    def fail_analyze(self: CodeAnalyzer, path: Path) -> SimpleNamespace:
+        raise AssertionError("analyze() must not run for malformed probes")
+
+    monkeypatch.setattr(CodeAnalyzer, "analyze", fail_analyze)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "sweep_semantic_thresholds.py",
+            "--labels-path",
+            str(labels_path),
+            "--search-probes-path",
+            str(probes_path),
+        ],
+    )
+
+    with pytest.raises(SystemExit) as excinfo:
+        _semantic_sweep_main()
+
+    assert excinfo.value.code == 2
+    assert "non-empty 'probes' list" in capsys.readouterr().err
 
 
 def test_semantic_sweep_rejects_malformed_labels_before_any_analysis(

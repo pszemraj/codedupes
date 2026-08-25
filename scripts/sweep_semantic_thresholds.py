@@ -48,6 +48,7 @@ try:
         rank_sweep_rows,
         resolve_label_unit,
         validate_labels_shape,
+        validate_probes_shape,
     )
 except ImportError:
     from sweep_common import (
@@ -57,6 +58,7 @@ except ImportError:
         rank_sweep_rows,
         resolve_label_unit,
         validate_labels_shape,
+        validate_probes_shape,
     )
 
 DUPLICATE_THRESHOLD_START = 0.70
@@ -591,7 +593,13 @@ def main() -> int:
         parser.error(str(exc))
     probes: list[dict[str, Any]] = []
     if not args.skip_search:
-        probes = json.loads(args.search_probes_path.read_text())["probes"]
+        # Same fail-fast contract as the labels: a malformed probes file must
+        # abort before the corpus embed, not write a zero-probe search report
+        # whose selected threshold is just the grid floor.
+        try:
+            probes = validate_probes_shape(json.loads(args.search_probes_path.read_text()))
+        except ValueError as exc:
+            parser.error(str(exc))
 
     duplicate_results: list[ModelSweep] = []
     search_results: list[ModelSweep] = []
