@@ -151,11 +151,11 @@ The last three are raised only for files named on the command line. A directory 
 }
 ```
 
-`indexed_units` is how many code units were embedded into the search index. `0` means candidate filtering (`--min-statements`, `--semantic-unit-type`, `--language`, `--exclude`, `--no-private`) emptied the corpus, which is why nothing matched; terminal output says so with a warning on stderr.
+`indexed_units` is how many code units were embedded into the search index. When it is `0`, terminal output warns on stderr and distinguishes among an extraction that produced no code units, semantic eligibility filtering (`--min-statements`/`--semantic-unit-type`), and candidates skipped by the model context-window policy. Semantic diagnostics are printed below the warning when present.
 
 ## Terminal duplicate panels
 
-Table locations are `<path>:<line>`, with the path relative to the working directory so same-named files in different directories stay distinguishable.
+Table locations are `<path>:<line>`. The path uses the shorter of its working-directory-relative and absolute spellings, so same-named files in different directories stay distinguishable without needlessly losing the filename to narrow-table truncation.
 
 - combined mode: `Hybrid Duplicates`, plus `Traditional Duplicates (Raw Structural/Token/Jaccard)` and `Semantic Duplicates (Raw Embedding)` under `--show-all`
 - `--traditional-only`: `Traditional Duplicates (Structural/Token/Jaccard)`

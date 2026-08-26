@@ -91,6 +91,7 @@ analyzer = CodeAnalyzer(
 analyzer.index("./src")
 hits = analyzer.search("load csv data", top_k=10, threshold=0.55)
 
+print("extracted:", analyzer.extracted_unit_count)
 for unit, score in hits:
     print(f"{score:.3f}", unit.qualified_name)
 ```
@@ -101,7 +102,7 @@ An unset `AnalyzerConfig.semantic_task` resolves by operation: `index()` uses `c
 
 `AnalyzerConfig.mode` declares which contract enforces that requirement. The default `mode="check"` rejects an uncalibrated context without `semantic_threshold` at construction, before any extraction or model load. A config that drives `index()`/`search()` must pass `mode="search"` instead: search thresholds are calibrated independently of the duplicate gates, so validation defers to query time (`search()` raises if the resolved context has no calibrated search default and no explicit threshold). `analyze()` rejects `mode="search"` configs.
 
-`index()` extracts the corpus and computes (or loads from cache) its embeddings without the all-pairs duplicate scan, traditional analysis, or unused-code analysis that `analyze()` runs, so building a search corpus stays linear in corpus size. Prefer `index()` before search. A search after `analyze()` reuses the analysis task and therefore requires an explicit search threshold when that task changes the model's prompt or route, as it does for EmbeddingGemma.
+`index()` extracts the corpus and computes (or loads from cache) its embeddings without the all-pairs duplicate scan, traditional analysis, or unused-code analysis that `analyze()` runs, so building a search corpus stays linear in corpus size. Prefer `index()` before search. `analyzer.extracted_unit_count` reports the pre-filter extraction count from the latest `index()` or `analyze()` run, which can be larger than the count returned by `index()` after semantic eligibility and context-window filtering. A search after `analyze()` reuses the analysis task and therefore requires an explicit search threshold when that task changes the model's prompt or route, as it does for EmbeddingGemma.
 
 Corpus units whose tokenized input exceeds the model's context window are skipped by both `index()` and `analyze()` rather than raising: they leave the embedding matrix and the searchable corpus, and each one is reported through `analyzer.semantic_diagnostics` (and `AnalysisResult.semantic_diagnostics` for `analyze()`) with code `semantic-context-overflow`. A `search()` query too long for the model still raises, because a truncated query has no result to omit.
 

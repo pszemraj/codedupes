@@ -567,6 +567,18 @@ class CodeAnalyzer:
         """
         return list(self._semantic_diagnostics)
 
+    @property
+    def extracted_unit_count(self) -> int:
+        """Return the number of code units extracted by the last run.
+
+        This count precedes semantic candidate filtering and context-window
+        exclusions, so callers can distinguish an empty source corpus from an
+        empty semantic index.
+
+        :return: Extracted code-unit count, or zero before the first run.
+        """
+        return len(self._units) if self._units is not None else 0
+
     def _reset_analysis_state(self, cache_scope: Path) -> None:
         """Clear corpus-specific state before one analysis run.
 

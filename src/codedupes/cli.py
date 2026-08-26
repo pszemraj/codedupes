@@ -16,6 +16,7 @@ from typing import Any, Literal, TypeVar, cast
 import click
 from rich.console import Console
 from rich.logging import RichHandler
+from rich.markup import escape
 from rich.panel import Panel
 from rich.syntax import Syntax
 from rich.table import Table
@@ -377,20 +378,25 @@ def _validate_json_output_controls(
 
 
 def format_location(unit: CodeUnit) -> str:
-    """Format a working-directory-relative file:line location for table rendering.
+    """Format a compact, markup-safe file:line location for table rendering.
 
     Bare file names collide across directories, which renders a cross-directory
-    duplicate pair as two identical cells.
+    duplicate pair as two identical cells. Prefer the shorter of the relative
+    and absolute spellings so deeply nested working directories retain the
+    filename within narrow tables.
 
     :param unit: Unit to format.
-    :return: ``<path>:<lineno>`` string, relative to the working directory when possible.
+    :return: Markup-escaped ``<path>:<lineno>`` string.
     """
+    absolute = str(unit.file_path)
     try:
-        location = os.path.relpath(unit.file_path)
+        relative = os.path.relpath(unit.file_path)
     except ValueError:
         # Windows: no relative path exists across drives.
-        location = str(unit.file_path)
-    return f"{location}:{unit.lineno}"
+        location = absolute
+    else:
+        location = min(relative, absolute, key=len)
+    return escape(f"{location}:{unit.lineno}")
 
 
 def truncate_source(source: str, max_lines: int = 5) -> str:
@@ -421,8 +427,9 @@ def _print_diagnostics(title: str, diagnostics: list[ExtractionDiagnostic]) -> N
         if diagnostic.lineno is not None:
             location += f":{diagnostic.lineno}"
         console.print(
-            f"  [yellow]{diagnostic.severity}[/yellow] "
-            f"[{diagnostic.language}] {location}: {diagnostic.message}"
+            f"  [yellow]{escape(diagnostic.severity)}[/yellow] "
+            f"{escape(f'[{diagnostic.language}]')} {escape(location)}: "
+            f"{escape(diagnostic.message)}"
         )
     remaining = len(diagnostics) - 10
     if remaining > 0:
@@ -1618,11 +1625,27 @@ def search_command(
         else:
             console.print(f"[bold cyan]Query:[/bold cyan] {query!r}")
             if indexed_units == 0:
+                if analyzer.extracted_unit_count == 0:
+                    reason = (
+                        "extraction produced no code units; ensure the path contains "
+                        "supported source code and that extraction filters permit it"
+                    )
+                elif analyzer.semantic_diagnostics:
+                    reason = (
+                        "no semantic candidates survived indexing; inspect the semantic "
+                        "diagnostics below"
+                    )
+                else:
+                    reason = (
+                        f"semantic eligibility filtering removed all "
+                        f"{analyzer.extracted_unit_count} extracted unit(s); adjust "
+                        "--min-statements or --semantic-unit-type"
+                    )
                 error_console.print(
-                    "[yellow]Warning:[/yellow] the search index is empty, so no query can match. "
-                    "Check --min-statements, --semantic-unit-type, --language, --exclude, "
-                    "and --no-private against the scanned tree."
+                    "[yellow]Warning:[/yellow] the search index is empty, so no query can "
+                    f"match: {reason}."
                 )
+            _print_diagnostics("Semantic diagnostics", analyzer.semantic_diagnostics)
             print_search_results(results)
 
     raise click.exceptions.Exit(0)
@@ -1747,7 +1770,7 @@ def cache_info_command() -> None:
     try:
         stats = EmbeddingCache().stats()
     except Exception as exc:
-        click.echo(f"Cache unavailable: {exc}")
+        click.echo(f"Cache unavailable: {exc}", err=True)
         raise click.exceptions.Exit(1) from exc
     _echo_cache_summary(stats)
     if stats["models"]:
@@ -1787,16 +1810,24 @@ def cache_clear_command(model: str | None) -> None:
         )
     canonical_model = resolve_model_profile(model).canonical_name if model else None
     try:
-        cleared = EmbeddingCache().clear(model=canonical_model)
+        clear_result = EmbeddingCache().clear(model=canonical_model)
     except Exception as exc:
-        click.echo(f"Cache clear failed: {exc}")
+        click.echo(f"Cache clear failed: {exc}", err=True)
         raise click.exceptions.Exit(1) from exc
+    if clear_result.failed_deletions:
+        click.echo(
+            f"Cache clear incomplete: removed {clear_result.removed_entries} cached "
+            f"embedding(s), but {clear_result.failed_deletions} deletion operation(s) failed.",
+            err=True,
+        )
+        raise click.exceptions.Exit(1)
     if model:
         click.echo(
-            f"Cleared {cleared} cached embedding(s) for model '{model}' ({canonical_model})."
+            f"Cleared {clear_result.removed_entries} cached embedding(s) for model '{model}' "
+            f"({canonical_model})."
         )
     else:
-        click.echo(f"Cleared {cleared} cached embedding(s).")
+        click.echo(f"Cleared {clear_result.removed_entries} cached embedding(s).")
 
 
 def main() -> int:

@@ -12,7 +12,7 @@ from click.testing import CliRunner
 
 from codedupes import cli
 from codedupes.devices import DeviceDiagnostics
-from codedupes.embedding_cache import EmbeddingCache
+from codedupes.embedding_cache import CacheClearResult, EmbeddingCache
 from codedupes.languages import GrammarUnavailableError
 from codedupes.logging_utils import NOISY_EXTERNAL_LOGGERS
 from codedupes.models import (
@@ -208,15 +208,18 @@ def _patch_search_analyzer(
     monkeypatch,
     *,
     indexed_units: int = 0,
+    extracted_unit_count: int = 1,
     results: list | None = None,
     index_error: Exception | None = None,
+    semantic_diagnostics: list[ExtractionDiagnostic] | None = None,
 ) -> None:
     """Patch the CLI analyzer with a search double that controls the index size."""
 
     class StubSearchAnalyzer:
         def __init__(self, config):
             del config
-            self.semantic_diagnostics = []
+            self.extracted_unit_count = extracted_unit_count
+            self.semantic_diagnostics = list(semantic_diagnostics or [])
 
         def index(self, _path):
             if index_error is not None:
@@ -242,6 +245,47 @@ def test_cli_search_warns_when_candidate_filters_emptied_the_index(monkeypatch, 
     assert "--min-statements" in result.stderr
     # The zero-hit table still renders, but no longer alone.
     assert "No matches found" in result.stdout
+
+
+def test_cli_search_empty_extraction_warning_does_not_blame_candidate_filters(
+    monkeypatch, tmp_path
+):
+    path = tmp_path / "empty"
+    path.mkdir()
+    _patch_search_analyzer(monkeypatch, indexed_units=0, extracted_unit_count=0)
+
+    result = CliRunner().invoke(cli.cli, ["search", str(path), "entry"])
+
+    assert result.exit_code == 0
+    assert "extraction produced no code units" in result.stderr
+    assert "--min-statements" not in result.stderr
+    assert "--semantic-unit-type" not in result.stderr
+
+
+def test_cli_search_empty_index_reports_semantic_context_diagnostics(monkeypatch, tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+    diagnostic = ExtractionDiagnostic(
+        file_path=path,
+        language="python",
+        code="semantic-context-overflow",
+        message="sample.entry exceeds the model context window",
+        lineno=1,
+        end_lineno=2,
+    )
+    _patch_search_analyzer(
+        monkeypatch,
+        indexed_units=0,
+        extracted_unit_count=1,
+        semantic_diagnostics=[diagnostic],
+    )
+
+    result = CliRunner().invoke(cli.cli, ["search", str(path), "entry"])
+
+    assert result.exit_code == 0
+    assert "no semantic candidates survived indexing" in result.stderr
+    assert "Semantic diagnostics" in result.stdout
+    assert "exceeds the model context window" in result.stdout
 
 
 def test_cli_search_does_not_warn_when_the_index_has_units(monkeypatch, tmp_path):
@@ -1065,6 +1109,59 @@ def test_cli_table_locations_disambiguate_same_named_files(monkeypatch, tmp_path
     assert cli.format_location(unit_a) != cli.format_location(unit_b)
 
 
+def test_cli_table_locations_preserve_bracketed_path_segments(monkeypatch, tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+    unit = _build_unit(tmp_path)
+    unit.file_path = tmp_path / "corpus" / "pages" / "[id].ts"
+    monkeypatch.chdir(tmp_path)
+    patch_cli_analyzer(
+        monkeypatch,
+        cli,
+        analyze_result=lambda: _build_result(tmp_path),
+        search_results=[(unit, 0.99)],
+    )
+
+    result = CliRunner().invoke(cli.cli, ["search", str(path), "entry"])
+
+    assert result.exit_code == 0
+    assert os.path.join("corpus", "pages", "[id].ts") + ":1" in result.stdout
+
+
+def test_cli_diagnostics_preserve_bracketed_fields(monkeypatch, tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+    result_obj = _build_result(tmp_path)
+    result_obj.extraction_diagnostics = [
+        ExtractionDiagnostic(
+            file_path=tmp_path / "pages" / "[id].ts",
+            language="typescript",
+            code="partial-parse",
+            message="unexpected [token]",
+            lineno=1,
+            end_lineno=1,
+        )
+    ]
+    patch_cli_analyzer(monkeypatch, cli, analyze_result=result_obj)
+
+    result = CliRunner().invoke(cli.cli, ["check", str(path)])
+
+    assert result.exit_code == 1
+    assert "[typescript]" in result.stdout
+    assert "[id].ts" in result.stdout
+    assert "unexpected [token]" in result.stdout
+
+
+def test_cli_table_location_uses_absolute_path_when_relative_path_is_longer(monkeypatch, tmp_path):
+    deep_cwd = tmp_path.joinpath(*(f"level-{index}" for index in range(60)))
+    deep_cwd.mkdir(parents=True)
+    unit = _build_unit(tmp_path)
+    unit.file_path = tmp_path / "corpus" / "algorithm.py"
+    monkeypatch.chdir(deep_cwd)
+
+    assert cli.format_location(unit) == f"{unit.file_path}:1"
+
+
 def test_cli_show_all_prints_raw_sections(monkeypatch, tmp_path):
     path = tmp_path / "sample.py"
     path.write_text("def entry():\n    return 1\n")
@@ -1635,7 +1732,8 @@ def test_cli_cache_info_errors_when_cache_construction_fails(monkeypatch):
     result = CliRunner().invoke(cli.cli, ["cache", "info"])
 
     assert result.exit_code == 1
-    assert "Cache unavailable: no home directory" in result.output
+    assert result.stdout == ""
+    assert "Cache unavailable: no home directory" in result.stderr
 
 
 def test_cli_info_survives_cache_construction_failure(monkeypatch):
@@ -1706,4 +1804,23 @@ def test_cli_cache_clear_reports_failure(monkeypatch):
     result = CliRunner().invoke(cli.cli, ["cache", "clear"])
 
     assert result.exit_code == 1
-    assert "Cache clear failed: cache is read-only" in result.output
+    assert result.stdout == ""
+    assert "Cache clear failed: cache is read-only" in result.stderr
+
+
+def test_cli_cache_clear_reports_best_effort_deletion_failures(monkeypatch):
+    monkeypatch.setattr(
+        cli.EmbeddingCache,
+        "clear",
+        lambda _self, model=None: CacheClearResult(
+            removed_entries=2,
+            failed_deletions=1,
+        ),
+    )
+
+    result = CliRunner().invoke(cli.cli, ["cache", "clear"])
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert "removed 2 cached embedding(s)" in result.stderr
+    assert "1 deletion operation(s) failed" in result.stderr

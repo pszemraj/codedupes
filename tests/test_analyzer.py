@@ -1386,6 +1386,7 @@ def test_index_empty_corpus_yields_empty_search(tmp_path: Path) -> None:
     )
 
     assert analyzer.index(empty) == 0
+    assert analyzer.extracted_unit_count == 0
     assert analyzer.search("anything") == []
 
 
