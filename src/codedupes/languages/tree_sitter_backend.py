@@ -581,6 +581,8 @@ def _token_hash(node: Any, source: bytes) -> str:
             continue
         text = _node_text(source, current)
         if text.strip():
+            # Multiline literals retain physical file newlines in leaf text.
+            text = text.replace("\r\n", "\n").replace("\r", "\n")
             tokens.append(f"{node_type}:{text}")
     return hashlib.sha256("\x1f".join(tokens).encode("utf-8")).hexdigest()[:16]
 

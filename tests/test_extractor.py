@@ -61,6 +61,8 @@ def test_compute_token_hash_ignores_formatting() -> None:
     assert compute_token_hash("def f(x):\n    return x + 1") == compute_token_hash(
         "def f( x ):\n\treturn x+1"
     )
+    lf_source = 'def f():\n    """first\n    second"""\n    return 1\n'
+    assert compute_token_hash(lf_source) == compute_token_hash(lf_source.replace("\n", "\r\n"))
 
 
 def test_parse_error_is_skipped(tmp_path: Path) -> None:

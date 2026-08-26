@@ -241,6 +241,9 @@ def compute_token_hash(source: str) -> str:
     import tokenize
     from io import StringIO
 
+    # ``tokenize`` preserves physical newlines inside multiline string tokens.
+    # Canonicalize them so repository checkout policy cannot change the hash.
+    source = source.replace("\r\n", "\n").replace("\r", "\n")
     tokens: list[tuple[int, str]] = []
     try:
         for tok in tokenize.generate_tokens(StringIO(source).readline):

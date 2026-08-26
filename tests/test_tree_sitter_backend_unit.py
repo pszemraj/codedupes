@@ -148,6 +148,12 @@ def test_token_hash_ignores_comments_but_retains_literal_text() -> None:
     assert _token_hash(tree(source_a), source_a) == _token_hash(tree(source_b), source_b)
     assert _token_hash(tree(source_b), source_b) != _token_hash(tree(source_c), source_c)
 
+    lf_literal = b'"first\nsecond"'
+    crlf_literal = lf_literal.replace(b"\n", b"\r\n")
+    assert _token_hash(FakeNode("string", 0, len(lf_literal)), lf_literal) == _token_hash(
+        FakeNode("string", 0, len(crlf_literal)), crlf_literal
+    )
+
 
 def test_javascript_binding_accepts_fresh_field_wrappers(tmp_path: Path) -> None:
     source = b"const run = () => 1"
