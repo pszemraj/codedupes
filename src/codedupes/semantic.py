@@ -110,6 +110,7 @@ _local_model_fingerprint_scope: dict[str, str | None] | None = None
 
 _TORCH_MIN_RELEASE = (2, 13)
 _TORCH_MAX_EXCLUSIVE_RELEASE = (3,)
+_PAIRWISE_SCAN_BLOCK_SIZE = 500
 
 EMBEDDINGGEMMA_QUERY_PREFIXES: dict[SemanticTask, str] = {
     "semantic-similarity": "task: sentence similarity | query: ",
@@ -3365,7 +3366,6 @@ def find_semantic_duplicates(
             and unit_b.unit_type.name.lower() in function_like
         )
 
-    chunk_size = 500
     for language, indices in groups.items():
         if cross_language:
             # The mixed group has no single language gate. Its coarse threshold
@@ -3382,54 +3382,70 @@ def find_semantic_duplicates(
         # A group covering every unit is already in matrix order, so fancy
         # indexing would only copy the whole matrix for nothing.
         group_embeddings = embeddings if group_size == len(units) else embeddings[indices]
-        for group_i in range(0, group_size, chunk_size):
-            end_i = min(group_i + chunk_size, group_size)
+        for group_i in range(0, group_size, _PAIRWISE_SCAN_BLOCK_SIZE):
+            end_i = min(group_i + _PAIRWISE_SCAN_BLOCK_SIZE, group_size)
             chunk_embeddings = group_embeddings[group_i:end_i]
-            # Only the strict upper triangle is ever read, so multiply against
-            # the tail: column c of this product is group index group_i + c.
-            similarities = chunk_embeddings @ group_embeddings[group_i:].T
+            # Keep the right-hand width stable across row chunks. Narrowing it
+            # to the unscanned tail changes BLAS blocking and can perturb
+            # float32 scores enough to reorder otherwise identical reports.
+            similarities = chunk_embeddings @ group_embeddings.T
 
-            # Threshold in numpy so the overwhelmingly common below-gate pair
-            # never reaches Python. NaN compares False here and +inf survives
-            # to the finite guard below, matching the scalar comparison.
-            candidate_rows, candidate_columns = np.nonzero(similarities >= group_threshold)
-            candidate_scores = similarities[candidate_rows, candidate_columns]
-            # Row-major nonzero order is (row asc, column asc), so pairs are
-            # still emitted in (i asc, j asc) order. .tolist() converts once in
-            # C; per-candidate numpy scalar indexing dominated the old scan.
-            for local_idx, column, sim in zip(
-                candidate_rows.tolist(),
-                candidate_columns.tolist(),
-                candidate_scores.tolist(),
-                strict=True,
-            ):
-                if column <= local_idx:
-                    continue
-                if not np.isfinite(sim):
-                    continue
+            row_count = end_i - group_i
+            # The diagonal and lower triangle can never produce a reportable
+            # pair. Clearing them before candidate extraction avoids allocating
+            # coordinates (and then Python objects) for up to half this block.
+            local_triangle = similarities[:, group_i:end_i]
+            local_triangle[np.tril_indices(row_count)] = -np.inf
 
-                unit_a = units[indices[group_i + local_idx]]
-                unit_b = units[indices[group_i + column]]
-                if cross_language and sim < min(
-                    gates.get(unit_a.language, threshold),
-                    gates.get(unit_b.language, threshold),
+            # Process bounded column blocks so np.nonzero and the three tolist
+            # conversions below stay O(block_size**2), even when every score
+            # clears a deliberately loose gate. Row buckets recover the prior
+            # row-major emission order before the stable score sort.
+            chunk_duplicates: list[list[DuplicatePair]] = [[] for _ in range(row_count)]
+            for column_i in range(group_i, group_size, _PAIRWISE_SCAN_BLOCK_SIZE):
+                column_end = min(column_i + _PAIRWISE_SCAN_BLOCK_SIZE, group_size)
+                similarity_block = similarities[:, column_i:column_end]
+
+                # The numpy comparison is only a coarse, recall-preserving
+                # filter. Under NEP 50 it compares at float32 precision, so the
+                # Python-float threshold is re-asserted below.
+                candidate_rows, candidate_columns = np.nonzero(similarity_block >= group_threshold)
+                candidate_scores = similarity_block[candidate_rows, candidate_columns]
+                for local_idx, block_column, sim in zip(
+                    candidate_rows.tolist(),
+                    candidate_columns.tolist(),
+                    candidate_scores.tolist(),
+                    strict=True,
                 ):
-                    continue
-                if not _types_compatible(unit_a, unit_b):
-                    continue
-                if unit_a.overlaps(unit_b):
-                    continue
-                if ordered_pair_key(unit_a, unit_b) in exclude_exact:
-                    continue
+                    group_j = column_i + block_column
+                    if not np.isfinite(sim) or sim < group_threshold:
+                        continue
 
-                duplicates.append(
-                    DuplicatePair(
-                        unit_a=unit_a,
-                        unit_b=unit_b,
-                        similarity=sim,
-                        method="semantic",
+                    unit_a = units[indices[group_i + local_idx]]
+                    unit_b = units[indices[group_j]]
+                    if cross_language and sim < min(
+                        gates.get(unit_a.language, threshold),
+                        gates.get(unit_b.language, threshold),
+                    ):
+                        continue
+                    if not _types_compatible(unit_a, unit_b):
+                        continue
+                    if unit_a.overlaps(unit_b):
+                        continue
+                    if ordered_pair_key(unit_a, unit_b) in exclude_exact:
+                        continue
+
+                    chunk_duplicates[local_idx].append(
+                        DuplicatePair(
+                            unit_a=unit_a,
+                            unit_b=unit_b,
+                            similarity=sim,
+                            method="semantic",
+                        )
                     )
-                )
+
+            for row_duplicates in chunk_duplicates:
+                duplicates.extend(row_duplicates)
 
     duplicates.sort(key=lambda duplicate: duplicate.similarity, reverse=True)
     gate_text = (

@@ -540,6 +540,20 @@ def test_find_semantic_duplicates_rejects_nan_and_inf_but_keeps_finite_pair(
     assert kept.similarity == pytest.approx(1.0)
 
 
+@pytest.mark.parametrize("threshold", [0.82, 0.78, 0.70, 0.90])
+def test_find_semantic_duplicates_rechecks_threshold_after_numpy_prefilter(
+    tmp_path: Path, threshold: float
+) -> None:
+    units = extract_arithmetic_units(tmp_path)
+    rounded_down = np.float32(threshold)
+    assert float(rounded_down) < threshold
+    embeddings = np.array([[1.0, 0.0], [rounded_down, 0.0]], dtype=np.float32)
+
+    duplicates = find_semantic_duplicates(units, embeddings, threshold=threshold)
+
+    assert duplicates == []
+
+
 def test_compute_embeddings_rejects_nonfinite_model_output(tmp_path: Path, monkeypatch) -> None:
     units = extract_arithmetic_units(tmp_path)
 
@@ -2871,11 +2885,46 @@ def _pair_view(duplicates) -> list[tuple[tuple[str, str], float]]:
     return [(ordered_pair_key(pair.unit_a, pair.unit_b), pair.similarity) for pair in duplicates]
 
 
+def _random_float_scan_fixture() -> tuple[list[CodeUnit], np.ndarray]:
+    """Build a random-float fixture that exposes width-dependent BLAS scores.
+
+    :return: Units and their row-aligned embedding matrix.
+    """
+    count, dimensions = 520, 768
+    rng = np.random.default_rng(20260826)
+    embeddings = rng.normal(size=(count, dimensions)).astype(np.float32)
+    embeddings /= np.linalg.norm(embeddings, axis=1, keepdims=True)
+
+    # Make the final partial row block mutually similar, leaving a small,
+    # deterministic above-gate result set whose scores still use all 768 dims.
+    base = rng.normal(size=dimensions).astype(np.float32)
+    base /= np.linalg.norm(base)
+    embeddings[-20:] = base + rng.normal(scale=0.005, size=(20, dimensions)).astype(np.float32)
+    embeddings[-20:] /= np.linalg.norm(embeddings[-20:], axis=1, keepdims=True)
+
+    units = [
+        CodeUnit(
+            name=f"random_{index}",
+            qualified_name=f"random_{index}",
+            unit_type=CodeUnitType.FUNCTION,
+            file_path=Path(f"random_{index}.py"),
+            lineno=1,
+            end_lineno=2,
+            source=f"def random_{index}(): ...",
+            language="python",
+            start_byte=0,
+            end_byte=20,
+        )
+        for index in range(count)
+    ]
+    return units, embeddings
+
+
 def test_vectorized_pair_scan_matches_naive_reference() -> None:
-    # The scan multiplies chunks against the group tail and thresholds in numpy;
-    # a wrong column-to-index offset or a mis-ordered candidate walk only shows
-    # up past the 500-row chunk boundary, which this 520-per-language corpus
-    # crosses in every mode.
+    # The scan multiplies full-width row chunks and thresholds column blocks in
+    # numpy; a wrong column offset or mis-ordered candidate walk only shows up
+    # past the 500-row chunk boundary, which this 520-per-language corpus crosses
+    # in every mode.
     units, embeddings = _scan_fixture()
     gates = {"python": 0.875, "rust": 0.75}
 
@@ -2911,6 +2960,69 @@ def test_vectorized_pair_scan_matches_naive_reference() -> None:
     )
     assert _pair_view(filtered) == filtered_expected
     assert len(filtered) == len(expected) - len(excluded)
+
+
+def test_vectorized_pair_scan_preserves_full_width_float32_scores_and_order() -> None:
+    units, embeddings = _random_float_scan_fixture()
+    threshold = 0.97
+
+    # This is the product shape used by the original scalar candidate walk.
+    full_width_scores = embeddings[500:] @ embeddings.T
+
+    expected: list[tuple[tuple[str, str], float]] = []
+    for local_idx, group_i in enumerate(range(500, 520)):
+        for group_j in range(group_i + 1, 520):
+            similarity = float(full_width_scores[local_idx, group_j])
+            if similarity >= threshold:
+                expected.append((ordered_pair_key(units[group_i], units[group_j]), similarity))
+    expected.sort(key=lambda entry: entry[1], reverse=True)
+    assert len(expected) == 190
+
+    matmul_shapes: list[tuple[tuple[int, ...], tuple[int, ...]]] = []
+
+    class MatmulTracingArray(np.ndarray):
+        def __matmul__(self, other):
+            matmul_shapes.append((self.shape, other.shape))
+            return np.ndarray.__matmul__(self, other)
+
+    reported = find_semantic_duplicates(
+        units, embeddings.view(MatmulTracingArray), threshold=threshold
+    )
+
+    assert _pair_view(reported) == expected
+    assert matmul_shapes == [((500, 768), (768, 520)), ((20, 768), (768, 520))]
+
+
+def test_vectorized_pair_scan_bounds_candidate_extraction_and_masks_lower_triangle(
+    monkeypatch,
+) -> None:
+    units, _ = _random_float_scan_fixture()
+    shared_path = Path("overlapping.py")
+    for unit in units:
+        unit.file_path = shared_path
+    embeddings = np.ones((len(units), 1), dtype=np.float32)
+
+    nonzero_calls: list[tuple[tuple[int, ...], int]] = []
+    original_nonzero = np.nonzero
+
+    def recording_nonzero(mask):
+        result = original_nonzero(mask)
+        nonzero_calls.append((mask.shape, len(result[0])))
+        return result
+
+    monkeypatch.setattr(semantic.np, "nonzero", recording_nonzero)
+
+    # Every score clears the gate, while overlap filtering keeps the returned
+    # result empty so this test measures intermediate candidate batching only.
+    assert find_semantic_duplicates(units, embeddings, threshold=0.0) == []
+
+    block_size = semantic._PAIRWISE_SCAN_BLOCK_SIZE
+    assert nonzero_calls == [
+        ((500, 500), 500 * 499 // 2),
+        ((500, 20), 500 * 20),
+        ((20, 20), 20 * 19 // 2),
+    ]
+    assert max(rows * columns for (rows, columns), _ in nonzero_calls) <= block_size**2
 
 
 @pytest.mark.parametrize(
