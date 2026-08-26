@@ -280,7 +280,10 @@ def test_cli_search_empty_index_reports_semantic_context_diagnostics(monkeypatch
         semantic_diagnostics=[diagnostic],
     )
 
-    result = CliRunner().invoke(cli.cli, ["search", str(path), "entry"])
+    # A wide console keeps the diagnostic on one line: the default width wraps
+    # it at a point that depends on the pytest tmp-path length, splitting the
+    # asserted message on some machines.
+    result = CliRunner().invoke(cli.cli, ["search", str(path), "entry", "--output-width", "400"])
 
     assert result.exit_code == 0
     assert "no semantic candidates survived indexing" in result.stderr
@@ -1144,7 +1147,10 @@ def test_cli_diagnostics_preserve_bracketed_fields(monkeypatch, tmp_path):
     ]
     patch_cli_analyzer(monkeypatch, cli, analyze_result=result_obj)
 
-    result = CliRunner().invoke(cli.cli, ["check", str(path)])
+    # A wide console keeps the diagnostic on one line: the default width wraps
+    # it at a point that depends on the pytest tmp-path length, splitting the
+    # asserted message on some machines.
+    result = CliRunner().invoke(cli.cli, ["check", str(path), "--output-width", "400"])
 
     assert result.exit_code == 1
     assert "[typescript]" in result.stdout
