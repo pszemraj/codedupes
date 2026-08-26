@@ -156,6 +156,26 @@ class _ShardData:
 
 
 @dataclass(frozen=True)
+class CacheClearResult:
+    """Outcome of a best-effort embedding-cache clear operation.
+
+    :param int removed_entries: Number of cached embedding entries removed.
+    :param int failed_deletions: Number of cache trees or shards that could not be cleared.
+    """
+
+    removed_entries: int
+    failed_deletions: int
+
+
+@dataclass(frozen=True)
+class _CacheTreeDeletion:
+    """Internal outcome that distinguishes an absent tree from a failed deletion."""
+
+    removed: bool
+    failed: bool
+
+
+@dataclass(frozen=True)
 class CacheLookup:
     """Cached vectors plus the provenance of the one shard snapshot they were read from."""
 
@@ -1293,27 +1313,26 @@ def _prune_empty_repo_dirs(repos_dir: Path) -> None:
             continue
 
 
-def _delete_cache_tree(path: Path, *, action: str) -> bool:
+def _delete_cache_tree(path: Path, *, action: str) -> _CacheTreeDeletion:
     """Delete one cache directory without hiding whether removal failed.
 
     :param path: Cache directory to remove recursively.
     :param action: Short label used in the best-effort cache warning.
-    :return: ``True`` when this call removed the directory; ``False`` when it
-        was already absent (a concurrent deleter got there first) or removal
-        failed.
+    :return: Outcome distinguishing successful removal, an already-absent tree,
+        and a failed deletion.
     """
     try:
         shutil.rmtree(path)
     except FileNotFoundError:
-        return False
+        return _CacheTreeDeletion(removed=False, failed=False)
     except OSError as exc:
         warn_once(action, exc)
-        return False
+        return _CacheTreeDeletion(removed=False, failed=True)
     # Drop any cached read snapshot promptly (see _shard_read_cache) instead of
     # waiting for the next _read_shard call's stat mismatch to evict it, so a
     # deleted shard's mmap file handle is released as soon as it is deleted.
     _shard_read_cache.pop(str(path), None)
-    return True
+    return _CacheTreeDeletion(removed=True, failed=False)
 
 
 _EVICT_SCAN_INTERVAL_SECONDS = 300.0
@@ -1418,7 +1437,7 @@ def _maybe_evict(repos_dir: Path, protect: Path | None = None) -> None:
             with _shard_write_lock(shard_dir) as acquired:
                 if not acquired:
                     continue
-                if _delete_cache_tree(shard_dir, action="evict shard"):
+                if _delete_cache_tree(shard_dir, action="evict shard").removed:
                     total -= size
                     _remove_shard_lock_file(shard_dir)
         _prune_empty_repo_dirs(repos_dir)
@@ -1681,7 +1700,7 @@ class EmbeddingCache:
         info["repos"] = [{"repo": name, **totals} for name, totals in sorted(repo_totals.items())]
         return info
 
-    def clear(self, model: str | None = None) -> int:
+    def clear(self, model: str | None = None) -> CacheClearResult:
         """Delete cached embeddings, optionally scoped to one canonical model.
 
         When ``model`` is given, a shard whose ``index.json`` cannot be read or
@@ -1693,9 +1712,10 @@ class EmbeddingCache:
 
         :param model: Canonical model name to scope deletion to, or ``None`` to
             clear every shard across every repo plus local-model digest manifests.
-        :return: Number of cached entries removed, ``0`` on failure.
+        :return: Entry removal count and number of failed deletion operations.
         """
         removed = 0
+        failures = 0
         try:
             for shard_dir in _iter_shard_dirs(self.repos_dir):
                 try:
@@ -1704,29 +1724,35 @@ class EmbeddingCache:
                     # self-releases.
                     with _shard_write_lock(shard_dir, blocking=True) as acquired:
                         if not acquired:
+                            failures += 1
                             continue
                         meta = _read_shard_meta(shard_dir)
                         if model is not None and (meta is None or meta.get("model") != model):
                             continue
-                        if _delete_cache_tree(shard_dir, action="clear shard"):
+                        deletion = _delete_cache_tree(shard_dir, action="clear shard")
+                        failures += int(deletion.failed)
+                        if deletion.removed:
                             removed += len(meta.get("keys", {})) if meta else 0
                             _remove_shard_lock_file(shard_dir)
                 except OSError as exc:
                     # One unreadable or undeletable shard must not abort the sweep;
                     # every other shard still gets cleared and counted.
                     warn_once("clear", exc)
+                    failures += 1
             _prune_empty_repo_dirs(self.repos_dir)
             if model is None:
                 # Manifests are keyed by local model directory, not canonical model
                 # name, so they are only removed on a full clear. Machine capability
                 # records are per-environment, not per-model, and follow the same rule.
-                _delete_cache_tree(
+                deletion = _delete_cache_tree(
                     self.cache_root / LOCAL_MODELS_SUBDIR,
                     action="clear local-model manifests",
                 )
+                failures += int(deletion.failed)
         except Exception as exc:  # noqa: BLE001 - clear must never break analysis
             warn_once("clear", exc)
-        return removed
+            failures += 1
+        return CacheClearResult(removed_entries=removed, failed_deletions=failures)
 
 
 def get_embedding_cache() -> EmbeddingCache | None:
