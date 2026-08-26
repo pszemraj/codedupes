@@ -1,4 +1,4 @@
-"""Data models for extracted code units."""
+"""Data models for extracted code units and analysis results."""
 
 from __future__ import annotations
 
@@ -18,12 +18,39 @@ class CodeUnitType(Enum):
     CLASS = auto()
 
 
+DiagnosticSeverity = Literal["info", "warning", "error"]
+
+
+@dataclass(frozen=True)
+class ExtractionDiagnostic:
+    """A recoverable or fatal issue observed while processing one source file.
+
+    Extraction reports parse problems here; later stages reuse the same shape for
+    per-unit problems they can survive, such as a definition skipped because it
+    exceeds the embedding model's context window.
+    """
+
+    file_path: Path
+    language: str
+    message: str
+    severity: DiagnosticSeverity = "warning"
+    code: str = "parse-warning"
+    lineno: int | None = None
+    end_lineno: int | None = None
+
+
 @dataclass
 class CodeUnit:
-    """Represents an extracted function, method, or class."""
+    """Represents an extracted function, method, or class.
+
+    Python remains the compatibility baseline, while the language-neutral fields
+    make the same model usable by Tree-sitter backends.  Backend-computed
+    features are stored on the unit so downstream duplicate and semantic stages
+    never need to reparse source in a language-specific way.
+    """
 
     name: str
-    qualified_name: str  # module.ClassName.method_name
+    qualified_name: str
     unit_type: CodeUnitType
     file_path: Path
     lineno: int
@@ -31,32 +58,51 @@ class CodeUnit:
     source: str
     docstring: str | None = None
 
-    # Computed on demand
-    _ast_hash: str | None = field(default=None, repr=False)
-    _token_hash: str | None = field(default=None, repr=False)
+    # Language and source-range metadata. Defaults preserve source compatibility
+    # for callers that manually construct Python CodeUnit instances.
+    language: str = "python"
+    dialect: str | None = None
+    native_kind: str | None = None
+    start_byte: int = 0
+    end_byte: int = 0
+    start_column: int = 0
+    end_column: int = 0
+    statement_count: int | None = None
 
-    # For call graph / usage analysis
+    # Backend-computed structural/token fingerprints. Python derives both from
+    # its normalized CPython AST; Tree-sitter backends use the canonical
+    # fingerprint stream.
+    structural_hash: str | None = field(default=None, repr=False)
+    token_hash: str | None = field(default=None, repr=False)
+    identifiers: frozenset[str] = field(default_factory=frozenset, repr=False)
+
+    # For call graph / usage analysis.  Reference resolution is intentionally
+    # Python-only in the first polyglot release.
     calls: set[str] = field(default_factory=set)
-    references: set[str] = field(default_factory=set)  # who calls this
+    references: set[str] = field(default_factory=set)
 
     # API exposure markers
     is_public: bool = False
     is_dunder: bool = False
-    is_exported: bool = False  # in __all__
+    is_exported: bool = False
 
     @property
     def uid(self) -> str:
-        """Build a stable unique identifier for this code unit.
+        """Build an in-run unique identifier for this code unit.
 
-        :return: ``"<path>::<qualified_name>"``.
+        The byte position keeps the uid unique for overloads, conditional
+        redefinitions, and repeated lexical names, all of which are legal in
+        several supported languages (including Python).
+
+        :return: Identifier that is unique to this unit within one analysis run.
         """
-        return f"{self.file_path}::{self.qualified_name}"
+        return f"{self.file_path}::{self.language}::{self.qualified_name}::{self.start_byte}"
 
     @property
     def is_likely_api(self) -> bool:
         """Indicate whether this unit is likely public API surface.
 
-        :return: ``True`` if the unit is likely intentionally exposed.
+        :return: ``True`` when the unit looks externally reachable.
         """
         return (
             self.is_exported
@@ -65,25 +111,48 @@ class CodeUnit:
             or self.name in ("__init__", "__new__", "__call__")
         )
 
+    def overlaps(self, other: CodeUnit) -> bool:
+        """Return whether two units occupy overlapping source ranges.
 
-@dataclass
-class DuplicatePair:
-    """A pair of code units identified as duplicates."""
+        :param other: Unit to compare against.
+        :return: ``True`` when both units share source range in the same file.
+        """
+        if self.file_path != other.file_path:
+            return False
+        if self.end_byte > self.start_byte and other.end_byte > other.start_byte:
+            return self.start_byte < other.end_byte and other.start_byte < self.end_byte
+        return self.lineno <= other.end_lineno and other.lineno <= self.end_lineno
+
+
+class _PairIdentity:
+    """Hash and compare a duplicate record by its unordered unit pair.
+
+    Score payloads are deliberately excluded from identity so re-scored
+    records of the same pair dedupe in sets and dict keys.
+    """
 
     unit_a: CodeUnit
     unit_b: CodeUnit
-    similarity: float
-    method: str  # "ast_hash", "token_hash", "semantic"
 
     def __hash__(self) -> int:
         return hash(unordered_pair_key(self.unit_a, self.unit_b))
 
     def __eq__(self, other: object) -> bool:
-        if not isinstance(other, DuplicatePair):
+        if not isinstance(other, type(self)):
             return False
         return unordered_pair_key(self.unit_a, self.unit_b) == unordered_pair_key(
             other.unit_a, other.unit_b
         )
+
+
+@dataclass(eq=False)
+class DuplicatePair(_PairIdentity):
+    """A pair of code units identified as duplicates."""
+
+    unit_a: CodeUnit
+    unit_b: CodeUnit
+    similarity: float
+    method: str
 
 
 HybridTier = Literal[
@@ -91,13 +160,14 @@ HybridTier = Literal[
     "traditional_near",
     "hybrid_confirmed",
     "semantic_high_confidence",
+    "semantic_review",
 ]
 
 AnalysisMode = Literal["combined", "traditional", "semantic", "none"]
 
 
-@dataclass
-class HybridDuplicate:
+@dataclass(eq=False)
+class HybridDuplicate(_PairIdentity):
     """A synthesized duplicate candidate combining traditional + semantic evidence."""
 
     unit_a: CodeUnit
@@ -110,36 +180,29 @@ class HybridDuplicate:
     weak_identifier_jaccard: float | None = None
     statement_count_ratio: float | None = None
 
-    def __hash__(self) -> int:
-        return hash(unordered_pair_key(self.unit_a, self.unit_b))
-
-    def __eq__(self, other: object) -> bool:
-        if not isinstance(other, HybridDuplicate):
-            return False
-        return unordered_pair_key(self.unit_a, self.unit_b) == unordered_pair_key(
-            other.unit_a, other.unit_b
-        )
-
 
 @dataclass
 class AnalysisResult:
     """Full analysis result."""
 
     units: list[CodeUnit]
-    traditional_duplicates: list[DuplicatePair]  # AST/token/jaccard matches
-    semantic_duplicates: list[DuplicatePair]  # Embedding similarity
-    hybrid_duplicates: list[HybridDuplicate]  # Final combined output candidates
-    potentially_unused: list[CodeUnit]  # No references, not API
-    analysis_mode: AnalysisMode  # How duplicates were synthesized
-    filtered_raw_duplicates: int = 0
+    traditional_duplicates: list[DuplicatePair]
+    semantic_duplicates: list[DuplicatePair]
+    hybrid_duplicates: list[HybridDuplicate]
+    potentially_unused: list[CodeUnit]
+    analysis_mode: AnalysisMode
     semantic_fallback: bool = False
     semantic_fallback_reason: str | None = None
+    extraction_diagnostics: list[ExtractionDiagnostic] = field(default_factory=list)
+    semantic_diagnostics: list[ExtractionDiagnostic] = field(default_factory=list)
+    unused_supported_languages: tuple[str, ...] = ("python",)
+    unused_excluded_units: int = 0
 
     @property
     def exact_duplicates(self) -> list[DuplicatePair]:
         """Backward-compatible alias for traditional duplicates.
 
-        :return: Exact/near duplicates from traditional analysis.
+        :return: Traditional duplicate pairs.
         """
         return self.traditional_duplicates
 
@@ -147,7 +210,7 @@ class AnalysisResult:
     def all_duplicates(self) -> list[HybridDuplicate] | list[DuplicatePair]:
         """Return the available duplicate list for this analysis mode.
 
-        :return: Duplicate list for the selected analysis mode.
+        :return: Hybrid duplicates in combined mode, otherwise traditional plus semantic pairs.
         """
         if self.analysis_mode == "combined":
             return self.hybrid_duplicates

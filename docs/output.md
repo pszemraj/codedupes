@@ -1,5 +1,7 @@
 # Output and Exit Codes
 
+stdout carries report output only — JSON under `--json`, rich tables otherwise. Errors, parser-unavailable remediation, and all log output (progress lines and warnings) go to stderr.
+
 ## `check --json` schemas
 
 `check` has two JSON schema modes:
@@ -16,14 +18,20 @@
   "analysis_mode": "combined",
   "summary": {
     "total_units": 0,
+    "units_by_language": {},
     "hybrid_duplicates": 0,
     "potentially_unused": 0,
     "raw_traditional_duplicates": 0,
     "raw_semantic_duplicates": 0,
-    "filtered_raw_duplicates": 0,
     "semantic_fallback": false,
-    "semantic_fallback_reason": null
+    "semantic_fallback_reason": null,
+    "extraction_diagnostics": 0,
+    "semantic_diagnostics": 0,
+    "unused_supported_languages": ["python"],
+    "unused_excluded_units": 0
   },
+  "extraction_diagnostics": [],
+  "semantic_diagnostics": [],
   "hybrid_duplicates": [],
   "potentially_unused": []
 }
@@ -43,12 +51,19 @@ With `--show-all`, additional raw sections are included:
   "analysis_mode": "semantic",
   "summary": {
     "total_units": 0,
+    "units_by_language": {},
     "traditional_duplicates": 0,
     "semantic_duplicates": 0,
     "potentially_unused": 0,
     "semantic_fallback": false,
-    "semantic_fallback_reason": null
+    "semantic_fallback_reason": null,
+    "extraction_diagnostics": 0,
+    "semantic_diagnostics": 0,
+    "unused_supported_languages": ["python"],
+    "unused_excluded_units": 0
   },
+  "extraction_diagnostics": [],
+  "semantic_diagnostics": [],
   "traditional_duplicates": [],
   "semantic_duplicates": [],
   "potentially_unused": []
@@ -64,9 +79,11 @@ Each duplicate entry includes:
 
 `hybrid_duplicates` entries include:
 
-- `tier`
+- `tier` (`exact`, `traditional_near`, `hybrid_confirmed`, `semantic_high_confidence`, or `semantic_review`)
 - `confidence`
 - evidence fields (`has_exact`, `semantic_similarity`, `jaccard_similarity`, etc.)
+
+`semantic_review` means the pair cleared its calibrated semantic duplicate gate but lacks the lexical or statement-count corroboration used for the high-confidence tier. It remains visible because alpha-renaming and structural translation often remove exactly that lexical overlap, and its confidence is scaled to rank below every corroborated tier (see [Analysis defaults](analysis-defaults.md#confidence-scale)).
 
 Raw duplicate entries include:
 
@@ -75,14 +92,31 @@ Raw duplicate entries include:
 
 Each unit object includes:
 
-- `name`
-- `qualified_name`
-- `type`
-- `file`
-- `line`
-- `end_line`
-- `is_public`
-- `is_exported`
+- Identity: `name`, `qualified_name`, and `type`
+- Language: `language`, `dialect`, and `native_kind`
+- Location: `file`, `line`, `end_line`, `start_byte`, `end_byte`, `start_column`, and `end_column`
+- Extraction metadata: `statement_count`
+- Visibility: `is_public` and `is_exported`
+
+## Diagnostics
+
+`extraction_diagnostics` and `semantic_diagnostics` are separate top-level arrays with a matching count in `summary`. Both use the same entry shape: `file`, `language`, `severity`, `code`, `message`, `line`, and `end_line` (the last two are `null` for file-level diagnostics). The terminal summary prints a count row per non-empty list and shows the first ten entries of each.
+
+`extraction_diagnostics` covers parsing and file selection:
+
+- `parse-error`: a file the parser could not read at all
+- `read-error`: a file that could not be read from disk (dangling symlink, missing read permission, removed mid-run); the file is skipped and the run continues
+- `invalid-utf8`: a Tree-sitter-language file that is not valid UTF-8; it is still analyzed, with undecodable bytes replaced by U+FFFD in unit source, hashes, and embedding input
+- `partial-parse`: Tree-sitter recovered from invalid or incomplete source; units whose own subtree contains an error are omitted with `unit-parse-error`
+- `unit-parse-error`: one extracted unit skipped because its own syntax subtree contains an error
+- `c-header-policy`: one summary diagnostic per run when `.h` files are skipped by the conservative C-header policy during a directory scan, naming the count and suggesting `--language c`
+- `declaration-file`: an explicitly named `.d.ts`/`.d.mts`/`.d.cts` file, which has no implementation bodies
+- `language-filter`: an explicitly named file excluded by `--language`
+- `unsupported-file`: an explicitly named file no extraction backend accepts
+
+The last three are raised only for files named on the command line. A directory scan silently passes over unsupported and filtered files; only the C-header summary is reported.
+
+`semantic_diagnostics` covers corpus units the semantic stage dropped. The only current code is `semantic-context-overflow`: the unit's tokenized input, encode prompt included, exceeds the model's context window, so it is skipped instead of embedded from a partial prefix. The run continues without it. An over-long `search` query still fails hard.
 
 ## `search --json` Structure
 
@@ -91,21 +125,41 @@ Each unit object includes:
 ```json
 {
   "query": "text",
+  "indexed_units": 42,
   "results": [
     {
       "score": 0.95,
       "name": "func",
       "qualified_name": "pkg.mod.func",
       "type": "function",
+      "language": "python",
+      "dialect": "python",
+      "native_kind": "FunctionDef",
       "file": "src/pkg/mod.py",
       "line": 10,
       "end_line": 20,
+      "start_byte": 120,
+      "end_byte": 480,
+      "start_column": 0,
+      "end_column": 17,
+      "statement_count": 4,
       "is_public": true,
       "is_exported": false
     }
-  ]
+  ],
+  "semantic_diagnostics": []
 }
 ```
+
+`indexed_units` is how many code units were embedded into the search index. When it is `0`, terminal output warns on stderr and distinguishes among an extraction that produced no code units, semantic eligibility filtering (`--min-statements`/`--semantic-unit-type`), and candidates skipped by the model context-window policy. Semantic diagnostics are printed below the warning when present.
+
+## Terminal duplicate panels
+
+Table locations are `<path>:<line>`. The path uses the shorter of its working-directory-relative and absolute spellings, so same-named files in different directories stay distinguishable without needlessly losing the filename to narrow-table truncation.
+
+- combined mode: `Hybrid Duplicates`, plus `Traditional Duplicates (Raw Structural/Token/Jaccard)` and `Semantic Duplicates (Raw Embedding)` under `--show-all`
+- `--traditional-only`: `Traditional Duplicates (Structural/Token/Jaccard)`
+- `--semantic-only`: `Semantic Duplicates (Embedding)`
 
 ## Exit Codes
 
@@ -129,9 +183,14 @@ Each unit object includes:
 - `2`: CLI usage/validation error (Click)
 - Semantic backend note: `search` requires semantic inference and fails hard if semantic backend loading/inference fails.
 
-`info` and `cache info`:
+`info`:
 
 - `0`: completed successfully
+
+`cache info`:
+
+- `0`: completed successfully
+- `1`: cache state unavailable (construction or stats failure)
 
 `cache clear`:
 

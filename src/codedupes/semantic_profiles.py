@@ -3,9 +3,16 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+import logging
+import math
+from collections.abc import Mapping
+from dataclasses import dataclass, field
+from functools import cache
 from pathlib import Path
+from types import MappingProxyType
 from typing import Literal
+
+logger = logging.getLogger(__name__)
 
 SemanticModelFamily = Literal["gte-modernbert", "embeddinggemma", "generic"]
 CalibratedModelFamily = Literal["gte-modernbert", "embeddinggemma"]
@@ -26,6 +33,27 @@ class SemanticModelProfile:
     default_trust_remote_code: bool = False
     default_semantic_threshold: float = DEFAULT_FALLBACK_SEMANTIC_THRESHOLD
     default_search_threshold: float = DEFAULT_FALLBACK_SEARCH_THRESHOLD
+    language_semantic_thresholds: Mapping[str, float] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        """Validate and freeze the profile's calibrated thresholds."""
+        thresholds = {
+            "default_semantic_threshold": self.default_semantic_threshold,
+            "default_search_threshold": self.default_search_threshold,
+            **{
+                f"language_semantic_thresholds[{language!r}]": threshold
+                for language, threshold in self.language_semantic_thresholds.items()
+            },
+        }
+        for name, threshold in thresholds.items():
+            if not math.isfinite(threshold) or not 0.0 <= threshold <= 1.0:
+                raise ValueError(f"{name} must be finite and in [0.0, 1.0]")
+
+        object.__setattr__(
+            self,
+            "language_semantic_thresholds",
+            MappingProxyType(dict(self.language_semantic_thresholds)),
+        )
 
     def all_aliases(self) -> tuple[str, ...]:
         """Return all user-facing names that map to this profile.
@@ -34,10 +62,42 @@ class SemanticModelProfile:
         """
         return tuple(dict.fromkeys((self.key, self.canonical_name, *self.aliases)))
 
+    def semantic_threshold_for_language(self, language: str | None) -> float:
+        """Return the duplicate-detection gate for one canonical language.
+
+        :param language: Canonical language name, or ``None`` when unknown.
+        :return: Calibrated per-language gate, or the profile fallback for
+            languages without a calibrated entry.
+        """
+        if language is not None:
+            calibrated = self.language_semantic_thresholds.get(language)
+            if calibrated is not None:
+                return calibrated
+        return self.default_semantic_threshold
+
 
 # Calibrated thresholds are only meaningful against the exact checkpoint they
 # were swept on, so every builtin profile pins the immutable commit recorded in
-# test_fixtures/hybrid_tuning/semantic_threshold_report.json.
+# test_fixtures/polyglot_calibration/reports/. Each per-language duplicate gate
+# is the loosest sweep threshold whose F1 stays near that language's best while
+# final combined-output precision remains workable (recall-first selection); the profile
+# fallback is the strictest calibrated gate and applies only to languages
+# without their own calibration entry.
+#
+# Concretely: a shipped gate is allowed to sit below the sweep's F1-selected
+# threshold under two conditions, both bounded by the tested invariant that the
+# gate's recall is >= the selection's and its F1 stays within 80% of it
+# (tests/test_calibration_reports.py). First, where the sweep shows real recall
+# below the F1 pick, the gate follows the recall however many grid steps down
+# that is (gte c 0.82 vs 0.90, embeddinggemma javascript 0.72 vs 0.82 and rust
+# 0.78 vs 0.82 — each buys measured on-corpus recall). Second, where recall is
+# flat, the gate still sits one step loose as an off-corpus generalization
+# hedge: the corpora are small, so "no recall gain here" is weak evidence that
+# the next repository's near-duplicates sit above the selected threshold, and a
+# missed duplicate costs more than an extra review row. Flat-recall loosening
+# beyond one step is not taken — the embeddinggemma typescript gate's earlier
+# 0.76 (two steps) doubled on-corpus false positives for no measured recall,
+# so it was tightened back to 0.78.
 _BUILTIN_MODEL_PROFILES: tuple[SemanticModelProfile, ...] = (
     SemanticModelProfile(
         key="gte-modernbert-base",
@@ -48,8 +108,15 @@ _BUILTIN_MODEL_PROFILES: tuple[SemanticModelProfile, ...] = (
         ),
         family="gte-modernbert",
         default_revision="e7f32e3c00f91d699e8c43b53106206bcc72bb22",
-        default_semantic_threshold=0.96,
+        default_semantic_threshold=0.82,
         default_search_threshold=0.50,
+        language_semantic_thresholds={
+            "python": 0.80,
+            "c": 0.82,
+            "rust": 0.74,
+            "javascript": 0.70,
+            "typescript": 0.68,
+        },
     ),
     SemanticModelProfile(
         key="embeddinggemma-300m",
@@ -60,8 +127,15 @@ _BUILTIN_MODEL_PROFILES: tuple[SemanticModelProfile, ...] = (
         ),
         family="embeddinggemma",
         default_revision="bfa3c846ac738e62aa61806ef9112d34acb1dc5a",
-        default_semantic_threshold=0.86,
+        default_semantic_threshold=0.78,
         default_search_threshold=0.40,
+        language_semantic_thresholds={
+            "python": 0.74,
+            "c": 0.78,
+            "rust": 0.78,
+            "javascript": 0.72,
+            "typescript": 0.78,
+        },
     ),
 )
 
@@ -241,6 +315,27 @@ def resolve_local_model_path(model_name: str) -> Path | None:
     return None
 
 
+@cache
+def _warn_uncalibrated_family_copy(model_name: str, family: CalibratedModelFamily) -> None:
+    """Warn once that a family-matched model forgoes its family's calibrated gates.
+
+    :param model_name: Canonical model name or local directory path.
+    :param family: Built-in family the model was matched to.
+    :return: ``None``.
+    """
+    builtin = next(
+        (profile for profile in _BUILTIN_MODEL_PROFILES if profile.family == family), None
+    )
+    gates = builtin.language_semantic_thresholds if builtin is not None else {}
+    gate_text = ", ".join(f"{language}={gate}" for language, gate in gates.items())
+    logger.warning(
+        f"{model_name} looks like the {family} family but is not the calibrated built-in "
+        f"checkpoint, so its per-language duplicate gates ({gate_text}) do not apply. Using the "
+        f"uncalibrated generic gate {DEFAULT_FALLBACK_SEMANTIC_THRESHOLD} for every language; "
+        "pass an explicit threshold if you calibrated this checkpoint yourself."
+    )
+
+
 def _build_dynamic_profile(
     model_name: str,
     family: CalibratedModelFamily,
@@ -258,6 +353,7 @@ def _build_dynamic_profile(
     :param family: Built-in family whose loading/prompt behavior applies.
     :return: Dynamic family-appropriate profile with generic thresholds.
     """
+    _warn_uncalibrated_family_copy(model_name, family)
     return SemanticModelProfile(
         key=model_name,
         canonical_name=model_name,
@@ -308,12 +404,26 @@ def resolve_model_profile(model_name: str) -> SemanticModelProfile:
 
 
 def get_default_semantic_threshold(model_name: str) -> float:
-    """Return semantic threshold default for the resolved model profile.
+    """Return the fallback semantic duplicate threshold for a model.
+
+    This is the gate for languages without a calibrated per-language entry;
+    prefer :func:`get_semantic_threshold_for_language` when the language is
+    known.
 
     :param model_name: Alias or model key.
-    :return: Default threshold for the resolved profile.
+    :return: Fallback duplicate threshold for the resolved profile.
     """
     return resolve_model_profile(model_name).default_semantic_threshold
+
+
+def get_semantic_threshold_for_language(model_name: str, language: str | None) -> float:
+    """Return the calibrated duplicate gate for a model/language combination.
+
+    :param model_name: Alias or model key.
+    :param language: Canonical language name, or ``None`` when unknown.
+    :return: Per-language calibrated gate, or the profile fallback.
+    """
+    return resolve_model_profile(model_name).semantic_threshold_for_language(language)
 
 
 def get_default_search_threshold(model_name: str) -> float:

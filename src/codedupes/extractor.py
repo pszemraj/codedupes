@@ -1,55 +1,37 @@
-"""AST-based extraction of code units from Python files."""
+"""Language-aware extraction of functions, methods, and classes."""
 
 from __future__ import annotations
 
 import ast
+import codecs
 import copy
 import hashlib
 import logging
 import os
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from pathlib import Path
 
-from codedupes.models import CodeUnit, CodeUnitType
+from codedupes.constants import is_default_excluded_dir
+from codedupes.languages.registry import (
+    DECLARATION_FILE_SUFFIXES,
+    get_backend,
+    language_for_path,
+    normalize_languages,
+    repository_allows_c_headers,
+)
+from codedupes.models import CodeUnit, CodeUnitType, ExtractionDiagnostic
+from codedupes.traditional import collect_identifiers
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_EXCLUDE_DIR_NAMES = {
-    "__pycache__",
-    ".git",
-    ".hg",
-    ".svn",
-    ".venv",
-    "venv",
-    ".tox",
-    ".nox",
-    ".mypy_cache",
-    ".pytest_cache",
-    ".ruff_cache",
-    ".hypothesis",
-    ".eggs",
-    "build",
-    "dist",
-    "target",
-    "node_modules",
-    ".pnpm-store",
-    ".yarn",
-    ".next",
-    ".nuxt",
-    ".svelte-kit",
-    ".gradle",
-    ".idea",
-    ".vscode",
-    ".terraform",
-    ".serverless",
-    ".aws-sam",
-    ".dart_tool",
-}
-
 DEFAULT_EXCLUDE_PATTERNS = [
     "**/test_*",
-    "**/*_test.py",
+    "**/*_test.*",
+    "**/*_tests.*",
+    "**/*.test.*",
+    "**/*.spec.*",
     "**/tests/**",
+    "**/__tests__/**",
 ]
 
 
@@ -92,28 +74,16 @@ class NormalizedASTHasher(ast.NodeTransformer):
         node.arg = self._get_normalized_name(node.arg)
         return self.generic_visit(node)
 
-    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.AST:
-        """Normalize function definition metadata and body for hash comparisons.
+    def _normalize_definition(
+        self, node: ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef
+    ) -> ast.AST:
+        """Normalize a definition's name, strip its docstring, and recurse.
 
-        :param node: FunctionDef node to normalize.
-        :return: Updated function definition node after generic visit.
-        """
-        node.name = self._get_normalized_name(node.name)
-        # Remove docstring
-        if (
-            node.body
-            and isinstance(node.body[0], ast.Expr)
-            and isinstance(node.body[0].value, ast.Constant)
-            and isinstance(node.body[0].value.value, str)
-        ):
-            node.body = node.body[1:]
-        return self.generic_visit(node)
+        The node type itself stays in the dumped tree, so sync and async
+        functions still hash differently.
 
-    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> ast.AST:
-        """Normalize async function definition metadata and body.
-
-        :param node: AsyncFunctionDef node to normalize.
-        :return: Updated function definition node after generic visit.
+        :param node: Definition node to normalize.
+        :return: Updated definition node after generic visit.
         """
         node.name = self._get_normalized_name(node.name)
         if (
@@ -125,21 +95,9 @@ class NormalizedASTHasher(ast.NodeTransformer):
             node.body = node.body[1:]
         return self.generic_visit(node)
 
-    def visit_ClassDef(self, node: ast.ClassDef) -> ast.AST:
-        """Normalize class definition metadata and body.
-
-        :param node: ClassDef node to normalize.
-        :return: Updated class node after generic visit.
-        """
-        node.name = self._get_normalized_name(node.name)
-        if (
-            node.body
-            and isinstance(node.body[0], ast.Expr)
-            and isinstance(node.body[0].value, ast.Constant)
-            and isinstance(node.body[0].value.value, str)
-        ):
-            node.body = node.body[1:]
-        return self.generic_visit(node)
+    visit_FunctionDef = _normalize_definition
+    visit_AsyncFunctionDef = _normalize_definition
+    visit_ClassDef = _normalize_definition
 
     def visit_Constant(self, node: ast.Constant) -> ast.AST:
         """Normalize string constants for structural comparison.
@@ -184,7 +142,7 @@ class _CodeUnitCollector(ast.NodeVisitor):
         self,
         extractor: CodeExtractor,
         file_path: Path,
-        source: str,
+        source_map: _PythonSourceMap,
         module_name: str,
         exported: set[str],
     ) -> None:
@@ -192,13 +150,13 @@ class _CodeUnitCollector(ast.NodeVisitor):
 
         :param extractor: Owning code extractor.
         :param file_path: Source file path.
-        :param source: Full file source text.
+        :param source_map: Precomputed per-file line/byte tables.
         :param module_name: Deduced module name.
         :param exported: Export names from module-level ``__all__``.
         """
         self.extractor = extractor
         self.file_path = file_path
-        self.source = source
+        self.source_map = source_map
         self.module_name = module_name
         self.exported = exported
         self.units: list[CodeUnit] = []
@@ -214,12 +172,12 @@ class _CodeUnitCollector(ast.NodeVisitor):
         is_method = bool(self.class_stack) and not self.function_stack
         scope_prefix = self.class_stack + self.function_stack
 
-        if self.extractor._should_emit_function(node.name):
+        if self.extractor._should_emit_symbol(node.name):
             self.units.extend(
                 self.extractor._emit_function(
                     node,
                     self.file_path,
-                    self.source,
+                    self.source_map,
                     self.module_name,
                     scope_prefix=scope_prefix,
                     class_member=is_method,
@@ -238,14 +196,14 @@ class _CodeUnitCollector(ast.NodeVisitor):
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
         """Collect class units and descend into exported/visible class bodies."""
         scope_prefix = self.class_stack
-        should_enter = self.extractor._should_emit_class(node.name)
+        should_enter = self.extractor._should_emit_symbol(node.name)
 
         if should_enter:
             self.units.extend(
                 self.extractor._emit_class(
                     node,
                     self.file_path,
-                    self.source,
+                    self.source_map,
                     self.module_name,
                     scope_prefix=scope_prefix,
                     exported=self.exported,
@@ -283,6 +241,9 @@ def compute_token_hash(source: str) -> str:
     import tokenize
     from io import StringIO
 
+    # ``tokenize`` preserves physical newlines inside multiline string tokens.
+    # Canonicalize them so repository checkout policy cannot change the hash.
+    source = source.replace("\r\n", "\n").replace("\r", "\n")
     tokens: list[tuple[int, str]] = []
     try:
         for tok in tokenize.generate_tokens(StringIO(source).readline):
@@ -340,8 +301,121 @@ def get_exported_names(tree: ast.Module) -> set[str]:
     return set()
 
 
+class _PythonStatementCounter(ast.NodeVisitor):
+    """Count executable Python statements without descending into nested scopes."""
+
+    def __init__(self) -> None:
+        """Start the visitor with an empty statement count."""
+        self.count = 0
+
+    def generic_visit(self, node: ast.AST) -> None:
+        """Count ``node`` when it is a statement, then visit its children.
+
+        :param node: AST node being visited.
+        """
+        if isinstance(node, ast.stmt):
+            self.count += 1
+        super().generic_visit(node)
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        """Count a nested function as one statement without entering its body.
+
+        :param node: Nested function definition node.
+        """
+        self.count += 1
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        """Count a nested async function as one statement without entering its body.
+
+        :param node: Nested async function definition node.
+        """
+        self.count += 1
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        """Count a nested class as one statement without entering its body.
+
+        :param node: Nested class definition node.
+        """
+        self.count += 1
+
+
+def count_executable_statements(body: Sequence[ast.stmt]) -> int:
+    """Count the executable statements in one definition body, ignoring a docstring.
+
+    :param body: Statement list of a definition or module body.
+    :return: Statement count, with nested scopes counted once each.
+    """
+    statements = list(body)
+    if (
+        statements
+        and isinstance(statements[0], ast.Expr)
+        and isinstance(statements[0].value, ast.Constant)
+        and isinstance(statements[0].value.value, str)
+    ):
+        statements = statements[1:]
+    counter = _PythonStatementCounter()
+    for statement in statements:
+        counter.visit(statement)
+    return counter.count
+
+
+class _PythonSourceMap:
+    """Per-file line and byte-offset tables shared by every emitted unit.
+
+    Python extraction returns complete source lines, including indentation and
+    the final line ending; the byte range describes those exact bytes rather
+    than the narrower AST column span. Splitting and encoding happen once per
+    file so per-unit work stays O(unit size) instead of O(file size).
+    """
+
+    def __init__(self, source: str, base_offset: int = 0) -> None:
+        """Build line tables for one file's source text.
+
+        :param source: Decoded file source text, verbatim from disk.
+        :param base_offset: Byte count stripped ahead of ``source`` (a UTF-8 BOM),
+            added to every reported offset so ranges index the on-disk file.
+        """
+        # ``bytes.splitlines`` matches CPython's line numbering, which breaks on
+        # ``\n``, ``\r``, and ``\r\n`` and nothing else; ``str.splitlines`` would
+        # also break on ``\f`` and friends and desynchronize the line table from
+        # the byte tables. Line endings are never normalized: the byte ranges must
+        # describe the file as stored, so CRLF sources keep their ``\r``.
+        self._encoded_lines = source.encode("utf-8").splitlines(keepends=True)
+        self.lines = [line.decode("utf-8") for line in self._encoded_lines]
+        self._base_offset = base_offset
+        self._line_start_bytes = [0]
+        for line in self._encoded_lines:
+            self._line_start_bytes.append(self._line_start_bytes[-1] + len(line))
+
+    def snippet(self, node: ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef) -> str:
+        """Return the complete-line source snippet for one definition node.
+
+        :param node: Definition node with line span metadata.
+        :return: Source lines covering the node, endings included.
+        """
+        return "".join(self.lines[node.lineno - 1 : node.end_lineno])
+
+    def byte_range(
+        self,
+        node: ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef,
+    ) -> tuple[int, int, int, int]:
+        """Return ``(start_byte, end_byte, start_column, end_column)`` for a node.
+
+        :param node: Definition node with line span metadata.
+        :return: Byte range of the emitted snippet plus column bounds.
+        """
+        line_count = len(self._encoded_lines)
+        start_line_index = max(0, node.lineno - 1)
+        end_line_index = max(start_line_index, (node.end_lineno or node.lineno) - 1)
+        start_byte = self._line_start_bytes[min(start_line_index, line_count)]
+        end_byte = self._line_start_bytes[min(end_line_index + 1, line_count)]
+        final_line = self._encoded_lines[end_line_index] if end_line_index < line_count else b""
+        end_column = len(final_line.rstrip(b"\r\n"))
+        return start_byte + self._base_offset, end_byte + self._base_offset, 0, end_column
+
+
 class CodeExtractor:
-    """Extract all code units from a directory of Python files."""
+    """Extract supported code units from a source tree or individual file."""
 
     def __init__(
         self,
@@ -349,6 +423,7 @@ class CodeExtractor:
         exclude_patterns: list[str] | None = None,
         include_private: bool = True,
         include_stubs: bool = False,
+        languages: tuple[str, ...] | list[str] | None = None,
     ) -> None:
         """Construct an extractor for a project root.
 
@@ -356,11 +431,16 @@ class CodeExtractor:
         :param exclude_patterns: Optional path glob patterns.
         :param include_private: Include private names when true.
         :param include_stubs: Include ``.pyi`` files.
+        :param languages: Optional canonical/alias language filter. Auto-detects
+            supported source files when omitted.
         """
         self.root = root.resolve()
         self.exclude_patterns = exclude_patterns or DEFAULT_EXCLUDE_PATTERNS.copy()
         self.include_private = include_private
         self.include_stubs = include_stubs
+        self.languages = normalize_languages(languages)
+        self.diagnostics: list[ExtractionDiagnostic] = []
+        self._c_headers_allowed: bool | None = None
 
     @staticmethod
     def _is_excluded_dir_name(name: str) -> bool:
@@ -369,7 +449,7 @@ class CodeExtractor:
         :param name: Directory name.
         :return: Whether the directory is excluded.
         """
-        return name in DEFAULT_EXCLUDE_DIR_NAMES or name.endswith(".egg-info")
+        return is_default_excluded_dir(name)
 
     def _should_exclude(self, path: Path) -> bool:
         """Check if path matches any exclude pattern.
@@ -406,38 +486,185 @@ class CodeExtractor:
             parts[-1] = Path(parts[-1]).stem
         return ".".join(parts) if parts else ""
 
-    def extract_from_file(self, file_path: Path) -> Iterator[CodeUnit]:
-        """Yield all code units from a single file.
+    def _allow_c_headers(self) -> bool:
+        """Resolve the repository-level C-header ambiguity policy once.
 
-        :param file_path: Source file to parse.
-        :return: Iterator over discovered code units.
+        :return: ``True`` when ambiguous ``.h`` files may be parsed as C.
         """
+        if self._c_headers_allowed is None:
+            self._c_headers_allowed = repository_allows_c_headers(self.root, self.languages)
+        return self._c_headers_allowed
+
+    def extract_from_file(self, file_path: Path) -> Iterator[CodeUnit]:
+        """Yield all supported code units from a single file.
+
+        Python keeps the CPython AST backend. C, Rust, JavaScript, and TypeScript
+        are routed to pinned Tree-sitter grammar packages. Missing grammars are a
+        hard configuration error; codedupes never silently falls back to line
+        chunking.
+
+        :param file_path: File to extract code units from.
+        :return: Iterator over the code units found in the file.
+        """
+        # Normalize relative caller paths, but keep the in-tree name for files
+        # that are symlinks to targets outside the root: exclusion and module
+        # naming are computed relative to the root, and the symlink is the
+        # file's identity within the analyzed tree.
+        try:
+            resolved = file_path.resolve()
+        except (OSError, RuntimeError):
+            # pathlib translates ELOOP into RuntimeError on supported Python
+            # versions; leave the original path for the read-error diagnostic.
+            resolved = file_path
+        if resolved.is_relative_to(self.root):
+            file_path = resolved
         if self._should_exclude(file_path):
             logger.debug(f"Skipping excluded file {file_path}")
             return
 
+        allow_c_header = file_path.suffix == ".h" and self._allow_c_headers()
+        selection = language_for_path(
+            file_path,
+            include_stubs=self.include_stubs,
+            selected_languages=self.languages,
+            allow_c_header=allow_c_header,
+        )
+        if selection is None:
+            self._diagnose_unsupported_file(file_path)
+            return
+
+        if selection.language != "python":
+            backend = get_backend(
+                root=self.root,
+                selection=selection,
+                include_private=self.include_private,
+            )
+            result = backend.extract_file(file_path)
+            self.diagnostics.extend(result.diagnostics)
+            yield from result.units
+            return
+
+        yield from self._extract_python_from_file(file_path)
+
+    def _diagnose_unsupported_file(self, file_path: Path) -> None:
+        """Record why an explicitly requested file resolves to no language.
+
+        :param file_path: File that no extraction backend accepts.
+        """
+        suffix = file_path.suffix.lower()
+        if file_path.name.lower().endswith(DECLARATION_FILE_SUFFIXES):
+            language = "typescript"
+            message = "TypeScript declaration files contain no implementation bodies."
+            code = "declaration-file"
+        elif file_path.suffix == ".h" and not self._allow_c_headers():
+            language = "c"
+            message = (
+                "Skipped by the conservative C-header policy; pass --language c "
+                "to parse .h files as C."
+            )
+            code = "c-header-policy"
+        elif suffix == ".pyi" and not self.include_stubs:
+            language = "python"
+            message = "Skipped stub file; pass --include-stubs to analyze .pyi files."
+            code = "stub-policy"
+        else:
+            unfiltered = language_for_path(
+                file_path,
+                include_stubs=True,
+                selected_languages=None,
+                allow_c_header=True,
+            )
+            if unfiltered is not None:
+                language = unfiltered.language
+                message = f"Excluded by the --language filter ({unfiltered.language})."
+                code = "language-filter"
+            else:
+                language = "unknown"
+                message = "Unsupported file type; no extraction backend accepts it."
+                code = "unsupported-file"
+        logger.warning(f"{file_path}: {message}")
+        self.diagnostics.append(
+            ExtractionDiagnostic(
+                file_path=file_path,
+                language=language,
+                message=message,
+                severity="warning",
+                code=code,
+            )
+        )
+
+    def _read_source_bytes(self, file_path: Path, language: str) -> bytes | None:
+        """Read one file's raw bytes, reporting unreadable files as diagnostics.
+
+        :param file_path: File to read.
+        :param language: Canonical language recorded on the diagnostic.
+        :return: File bytes, or ``None`` when the file could not be read.
+        """
         try:
-            source = file_path.read_text(encoding="utf-8")
+            return file_path.read_bytes()
+        except OSError as exc:
+            message = f"Could not read {file_path}: {exc}"
+            logger.warning(message)
+            self.diagnostics.append(
+                ExtractionDiagnostic(
+                    file_path=file_path,
+                    language=language,
+                    message=message,
+                    severity="warning",
+                    code="read-error",
+                )
+            )
+            return None
+
+    def _extract_python_from_file(self, file_path: Path) -> Iterator[CodeUnit]:
+        """Yield Python units using the original CPython AST implementation.
+
+        :param file_path: Python file to parse.
+        :return: Iterator over the code units found in the file.
+        """
+        raw = self._read_source_bytes(file_path, "python")
+        if raw is None:
+            return
+
+        # A BOM is not part of the program text: ``ast.parse`` rejects U+FEFF, so
+        # strip it and shift every reported offset back over it. Decoding the
+        # remaining bytes by hand (rather than ``read_text``) skips universal-newline
+        # translation, so byte ranges stay exact for CRLF files.
+        base_offset = len(codecs.BOM_UTF8) if raw.startswith(codecs.BOM_UTF8) else 0
+        try:
+            source = raw[base_offset:].decode("utf-8")
             tree = ast.parse(source, filename=str(file_path))
-        except (SyntaxError, UnicodeDecodeError) as e:
-            logger.warning(f"Could not parse {file_path}: {e}")
+        except (SyntaxError, UnicodeDecodeError, ValueError) as exc:
+            # ValueError: CPython 3.11 reports embedded NUL bytes that way.
+            message = f"Could not parse {file_path}: {exc}"
+            logger.warning(message)
+            self.diagnostics.append(
+                ExtractionDiagnostic(
+                    file_path=file_path,
+                    language="python",
+                    message=str(exc),
+                    severity="warning",
+                    code="parse-error",
+                    lineno=getattr(exc, "lineno", None),
+                    end_lineno=getattr(exc, "end_lineno", None),
+                )
+            )
             return
 
         module_name = self._get_module_name(file_path)
         exported = get_exported_names(tree)
-        visitor = _CodeUnitCollector(self, file_path, source, module_name, exported)
+        source_map = _PythonSourceMap(source, base_offset)
+        visitor = _CodeUnitCollector(self, file_path, source_map, module_name, exported)
         visitor.visit(tree)
         yield from visitor.units
 
-    def _should_emit_function(self, name: str) -> bool:
-        """Respect private-function filtering.
+    def _should_emit_symbol(self, name: str) -> bool:
+        """Respect private-symbol filtering for functions and classes.
 
-        :param name: Function name.
-        :return: Whether to emit this function.
+        :param name: Symbol name.
+        :return: Whether to emit a unit for this symbol.
         """
-        if self._is_private_name(name):
-            return self.include_private
-        return True
+        return self.include_private or not self._is_private_name(name)
 
     @staticmethod
     def _is_private_name(name: str) -> bool:
@@ -447,16 +674,6 @@ class CodeExtractor:
         :return: ``True`` for names starting with single underscore.
         """
         return name.startswith("_") and not name.startswith("__")
-
-    def _should_emit_class(self, name: str) -> bool:
-        """Respect private-class filtering.
-
-        :param name: Class name.
-        :return: Whether to emit this class.
-        """
-        if self.include_private:
-            return True
-        return not self._is_private_name(name)
 
     def _qualified_name(
         self,
@@ -481,7 +698,7 @@ class CodeExtractor:
         self,
         node: ast.FunctionDef | ast.AsyncFunctionDef,
         file_path: Path,
-        source: str,
+        source_map: _PythonSourceMap,
         module_name: str,
         scope_prefix: list[str],
         class_member: bool,
@@ -491,7 +708,7 @@ class CodeExtractor:
 
         :param node: Function or async function AST node.
         :param file_path: Source file path.
-        :param source: Entire file source text.
+        :param source_map: Precomputed per-file line/byte tables.
         :param module_name: Module name.
         :param scope_prefix: Scope prefix stack.
         :param class_member: Whether node is a method.
@@ -502,9 +719,7 @@ class CodeExtractor:
         qualified = self._qualified_name(module_name, scope_prefix, name)
         unit_type = CodeUnitType.METHOD if class_member else CodeUnitType.FUNCTION
 
-        # Extract source for this node
-        lines = source.splitlines(keepends=True)
-        func_source = "".join(lines[node.lineno - 1 : node.end_lineno])
+        func_source = source_map.snippet(node)
 
         # Build call graph
         call_visitor = CallGraphVisitor()
@@ -512,6 +727,7 @@ class CodeExtractor:
 
         ast_hash = compute_ast_hash(node)
         token_hash = compute_token_hash(func_source)
+        start_byte, end_byte, start_column, end_column = source_map.byte_range(node)
 
         yield CodeUnit(
             name=name,
@@ -522,19 +738,28 @@ class CodeExtractor:
             end_lineno=node.end_lineno or node.lineno,
             source=func_source,
             docstring=extract_docstring(node),
+            language="python",
+            dialect="python",
+            native_kind=type(node).__name__,
+            start_byte=start_byte,
+            end_byte=end_byte,
+            start_column=start_column,
+            end_column=end_column,
+            statement_count=count_executable_statements(node.body),
+            identifiers=frozenset(collect_identifiers(node)),
             calls=call_visitor.calls,
             is_public=not name.startswith("_"),
             is_dunder=name.startswith("__") and name.endswith("__"),
             is_exported=name in exported,
-            _ast_hash=ast_hash,
-            _token_hash=token_hash,
+            structural_hash=ast_hash,
+            token_hash=token_hash,
         )
 
     def _emit_class(
         self,
         node: ast.ClassDef,
         file_path: Path,
-        source: str,
+        source_map: _PythonSourceMap,
         module_name: str,
         scope_prefix: list[str],
         exported: set[str],
@@ -543,7 +768,7 @@ class CodeExtractor:
 
         :param node: Class AST node.
         :param file_path: Source file path.
-        :param source: Entire file source text.
+        :param source_map: Precomputed per-file line/byte tables.
         :param module_name: Module name.
         :param scope_prefix: Scope prefix stack.
         :param exported: Exported names from module __all__.
@@ -551,10 +776,10 @@ class CodeExtractor:
         """
         class_name = node.name
         qualified = self._qualified_name(module_name, scope_prefix, class_name)
-        lines = source.splitlines(keepends=True)
-        class_source = "".join(lines[node.lineno - 1 : node.end_lineno])
+        class_source = source_map.snippet(node)
         ast_hash = compute_ast_hash(node)
         token_hash = compute_token_hash(class_source)
+        start_byte, end_byte, start_column, end_column = source_map.byte_range(node)
 
         yield CodeUnit(
             name=class_name,
@@ -565,44 +790,87 @@ class CodeExtractor:
             end_lineno=node.end_lineno or node.lineno,
             source=class_source,
             docstring=extract_docstring(node),
+            language="python",
+            dialect="python",
+            native_kind=type(node).__name__,
+            start_byte=start_byte,
+            end_byte=end_byte,
+            start_column=start_column,
+            end_column=end_column,
+            statement_count=count_executable_statements(node.body),
+            identifiers=frozenset(collect_identifiers(node)),
             is_public=not class_name.startswith("_"),
             is_dunder=False,
             is_exported=class_name in exported,
-            _ast_hash=ast_hash,
-            _token_hash=token_hash,
+            structural_hash=ast_hash,
+            token_hash=token_hash,
         )
 
     def extract_all(self) -> list[CodeUnit]:
-        """Extract all code units from the configured directory tree.
+        """Extract all supported code units from the configured directory tree.
 
-        :return: List of extracted code units.
+        :return: Every code unit extracted from the tree, in sorted walk order.
         """
         units: list[CodeUnit] = []
-        valid_suffixes = {".py"}
-        if self.include_stubs:
-            valid_suffixes.add(".pyi")
-
         seen: set[Path] = set()
+        allow_c_header: bool | None = None
+        skipped_headers: list[Path] = []
+
         for dirpath, dirnames, filenames in os.walk(self.root, followlinks=False):
-            dirnames[:] = [name for name in dirnames if not self._is_excluded_dir_name(name)]
+            # Sorted in place so the walk descends deterministically: raw ``os.walk``
+            # order is filesystem-dependent and would reorder the reported units.
+            dirnames[:] = sorted(name for name in dirnames if not self._is_excluded_dir_name(name))
             current_dir = Path(dirpath)
 
-            for filename in filenames:
-                if Path(filename).suffix not in valid_suffixes:
+            for filename in sorted(filenames):
+                source_file = current_dir / filename
+                is_c_header = source_file.suffix == ".h"
+                if is_c_header and allow_c_header is None:
+                    allow_c_header = self._allow_c_headers()
+                header_allowed = bool(allow_c_header) if is_c_header else False
+                selection = language_for_path(
+                    source_file,
+                    include_stubs=self.include_stubs,
+                    selected_languages=self.languages,
+                    allow_c_header=header_allowed,
+                )
+                if selection is None:
+                    if (
+                        is_c_header
+                        and not header_allowed
+                        and self.languages is None
+                        and not self._should_exclude(source_file)
+                    ):
+                        skipped_headers.append(source_file)
                     continue
 
-                py_file = current_dir / filename
                 try:
-                    resolved = py_file.resolve()
-                except OSError:
-                    resolved = py_file
+                    resolved = source_file.resolve()
+                except (OSError, RuntimeError):
+                    resolved = source_file
                 if resolved in seen:
                     continue
                 seen.add(resolved)
 
-                if self._should_exclude(py_file):
+                if self._should_exclude(source_file):
                     continue
 
-                units.extend(self.extract_from_file(py_file))
+                units.extend(self.extract_from_file(source_file))
+
+        if skipped_headers:
+            message = (
+                f"{len(skipped_headers)} .h file(s) skipped by the conservative "
+                "C-header policy; pass --language c to parse them as C."
+            )
+            logger.warning(message)
+            self.diagnostics.append(
+                ExtractionDiagnostic(
+                    file_path=skipped_headers[0],
+                    language="c",
+                    message=message,
+                    severity="warning",
+                    code="c-header-policy",
+                )
+            )
 
         return units

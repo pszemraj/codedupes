@@ -1,0 +1,45 @@
+{
+  "description": "Labeled symbol-shaped and natural-language search probes over the Python polyglot calibration corpus (ledger / transaction reconciliation domain).",
+  "probes": [
+    {
+      "query": "clamp_batch_size",
+      "expected": ["imports_a.py::clamp_batch_size", "imports_b.py::clamp_batch_size"]
+    },
+    {
+      "query": "round_half_up_cents",
+      "expected": ["rounding_a.py::round_half_up_cents", "rounding_b.py::round_half_up_cents"]
+    },
+    {
+      "query": "validate_currency_code",
+      "expected": ["rounding_a.py::is_valid_currency_code", "rounding_b.py::is_valid_currency_code"]
+    },
+    {
+      "query": "count_valid_rows",
+      "expected": ["imports_a.py::count_valid_rows"]
+    },
+    {
+      "query": "restrict a day index so it never falls outside a window's start and end",
+      "expected": ["windows_a.py::clip_window_to_bounds", "windows_b.py::confine_index_to_span"]
+    },
+    {
+      "query": "merge two overlapping date ranges into a single combined window",
+      "expected": ["windows_a.py::merge_adjacent_windows", "windows_b.py::merge_adjacent_windows"]
+    },
+    {
+      "query": "look up a stored balance for an account, falling back to zero when the account has no record",
+      "expected": ["mismatches_a.py::lookup_account_balance", "mismatches_b.py::fetch_ledger_amount"]
+    },
+    {
+      "query": "build a one-line human-readable summary for a reconciliation discrepancy",
+      "expected": ["mismatches_a.py::build_mismatch_summary_line", "mismatches_b.py::build_mismatch_summary_line"]
+    },
+    {
+      "query": "search a list of ledger entries for one matching a specific reference string",
+      "expected": ["ledger_book.py::has_reference", "statement_book.py::includes_tag"]
+    },
+    {
+      "query": "figure out whether the credits and debits in a batch balance out within an allowed tolerance",
+      "expected": ["reconciliation_misc.py::is_batch_balanced", "reconciliation_misc.py::group_is_reconciled"]
+    }
+  ]
+}

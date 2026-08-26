@@ -18,10 +18,14 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
+import codedupes.analyzer as analyzer_module
 from codedupes import __version__
 from codedupes.analyzer import DEFAULT_SEMANTIC_UNIT_TYPES, AnalyzerConfig, CodeAnalyzer
-from codedupes.constants import DEFAULT_CHECK_SEMANTIC_TASK, DEFAULT_SEARCH_SEMANTIC_TASK
-from codedupes.models import DuplicatePair
+from codedupes.constants import (
+    DEFAULT_CHECK_SEMANTIC_TASK,
+    DEFAULT_SEARCH_SEMANTIC_TASK,
+    DEFAULT_TRADITIONAL_THRESHOLD,
+)
 from codedupes.pairs import ordered_pair_key
 from codedupes.semantic import (
     EMBEDDING_PIPELINE_SCHEMA,
@@ -40,23 +44,33 @@ try:
     from .sweep_common import (
         add_common_sweep_arguments,
         build_positive_pairs,
+        corpus_files,
         metrics,
         rank_sweep_rows,
         resolve_label_unit,
+        validate_labels_shape,
+        validate_probes_shape,
     )
 except ImportError:
     from sweep_common import (
         add_common_sweep_arguments,
         build_positive_pairs,
+        corpus_files,
         metrics,
         rank_sweep_rows,
         resolve_label_unit,
+        validate_labels_shape,
+        validate_probes_shape,
     )
 
 DUPLICATE_THRESHOLD_START = 0.70
 DUPLICATE_THRESHOLD_STOP = 0.96
 SEARCH_THRESHOLD_START = 0.20
-SEARCH_THRESHOLD_STOP = 0.70
+# 0.90 ceiling: under the old 0.70 ceiling the 2026-08 polyglot search sweeps
+# selected boundary rows with F1 still rising (javascript and python under
+# gte), i.e. the optimum was censored. ``selected_at_grid_edge`` flags any
+# recurrence.
+SEARCH_THRESHOLD_STOP = 0.90
 THRESHOLD_STEP = 0.02
 SEARCH_SWEEP_FLOOR = 0.01
 
@@ -87,18 +101,53 @@ class ModelSweep:
 
 
 def _threshold_grid(start: float, stop: float) -> list[float]:
+    """Uniform ``THRESHOLD_STEP`` grid whose values are the exact gates evaluated.
+
+    Values are ``start + k * THRESHOLD_STEP`` with only float noise rounded away,
+    never coarsened to two decimals: the first row must equal the analyzer's
+    collection floor, or an off-grid ``--duplicate-start`` (e.g. 0.705) labels
+    its rows with thresholds looser than any pair that was ever collected - and
+    the loosest-tie ranking then selects exactly that mislabeled row.
+    """
     values: list[float] = []
-    current = start
-    while current <= stop + 1e-9:
-        values.append(round(current, 2))
-        current += THRESHOLD_STEP
+    steps = 0
+    while True:
+        current = round(start + steps * THRESHOLD_STEP, 9)
+        if current > stop + 1e-9:
+            break
+        values.append(current)
+        steps += 1
     return values
 
 
-def _sha256_of_tree(root: Path, pattern: str = "*.py") -> str:
-    """Digest a fixture tree by sorted relative path and file contents."""
+def _grid_edge(selected: float, grid: list[float]) -> str | None:
+    """Name the grid edge a selected threshold sits on, if any.
+
+    A boundary selection is censored evidence - the true optimum may lie
+    outside the swept range - so reports must record it instead of presenting
+    the edge row as an interior optimum.
+
+    :param float selected: Selected threshold.
+    :param list[float] grid: Swept threshold grid, ascending.
+    :return str | None: ``"start"``, ``"stop"``, or ``None`` when interior.
+    """
+    if selected == grid[0]:
+        return "start"
+    if selected == grid[-1]:
+        return "stop"
+    return None
+
+
+def _sha256_of_tree(root: Path) -> str:
+    """Digest a fixture tree by sorted relative path and file contents.
+
+    Every regular source file participates so non-Python corpora do not digest
+    identically; the shared corpus walk excludes caches and hidden files. For
+    the historical all-Python corpus this matches the previous ``*.py``-only
+    digest.
+    """
     digest = hashlib.sha256()
-    for file_path in sorted(root.rglob(pattern)):
+    for file_path in corpus_files(root):
         digest.update(file_path.relative_to(root).as_posix().encode())
         digest.update(b"\x00")
         digest.update(file_path.read_bytes())
@@ -213,15 +262,6 @@ def _evaluate_thresholds(
     return rows
 
 
-def _duplicate_scored_pairs(
-    duplicates: list[DuplicatePair],
-) -> list[tuple[tuple[str, str], float]]:
-    return [
-        (ordered_pair_key(duplicate.unit_a, duplicate.unit_b), duplicate.similarity)
-        for duplicate in duplicates
-    ]
-
-
 def _analyzer_config(
     *,
     model_name: str,
@@ -231,12 +271,15 @@ def _analyzer_config(
     min_statements: int,
     batch_size: int,
     device: str,
+    languages: tuple[str, ...] | None = None,
+    run_traditional: bool = False,
 ) -> AnalyzerConfig:
     return AnalyzerConfig(
-        run_traditional=False,
+        run_traditional=run_traditional,
         run_semantic=True,
         run_unused=False,
         include_private=True,
+        languages=languages,
         model_name=model_name,
         model_revision=revision,
         semantic_task=semantic_task,
@@ -251,12 +294,15 @@ def _run_duplicate_sweep(
     *,
     model_name: str,
     revision: str,
+    languages: tuple[str, ...] | None = None,
     corpus_path: Path,
     labels_path: Path,
     labels: dict[str, Any],
     min_statements: int,
     batch_size: int,
     device: str,
+    duplicate_start: float = DUPLICATE_THRESHOLD_START,
+    duplicate_stop: float = DUPLICATE_THRESHOLD_STOP,
 ) -> ModelSweep:
     profile = resolve_model_profile(model_name)
     analyzer = CodeAnalyzer(
@@ -264,10 +310,12 @@ def _run_duplicate_sweep(
             model_name=model_name,
             revision=revision,
             semantic_task=DEFAULT_CHECK_SEMANTIC_TASK,
-            semantic_threshold=DUPLICATE_THRESHOLD_START,
+            semantic_threshold=duplicate_start,
             min_statements=min_statements,
             batch_size=batch_size,
             device=device,
+            languages=languages,
+            run_traditional=True,
         )
     )
     result = analyzer.analyze(corpus_path)
@@ -277,30 +325,101 @@ def _run_duplicate_sweep(
     assert identity is not None
 
     positive_pairs = build_positive_pairs(result.units, labels)
-    rows = _evaluate_thresholds(
-        _duplicate_scored_pairs(result.semantic_duplicates),
-        positive_pairs,
-        thresholds=_threshold_grid(DUPLICATE_THRESHOLD_START, DUPLICATE_THRESHOLD_STOP),
-    )
+    embedded_uids = {unit.uid for unit in analyzer._semantic_units or []}
+    scoreable_pairs = {
+        pair for pair in positive_pairs if pair[0] in embedded_uids and pair[1] in embedded_uids
+    }
+    traditional_pairs = {
+        ordered_pair_key(duplicate.unit_a, duplicate.unit_b)
+        for duplicate in result.traditional_duplicates
+    }
+    reachable_pairs = scoreable_pairs | (positive_pairs & traditional_pairs)
+    excluded_pairs = len(positive_pairs) - len(scoreable_pairs)
+    if excluded_pairs:
+        print(
+            f"{excluded_pairs} labeled pairs sit outside the embedded candidate pool. "
+            "They stay in the metric denominator and are threshold-invariant. "
+            "Candidate-policy exclusions (class-level or below-min-statement units) "
+            "are unconditional false negatives: combined-mode traditional analysis "
+            "shares the candidate pool, so neither tier reaches them. Over-context "
+            "exclusions are dropped only after traditional analysis runs, so those "
+            "count as false negatives unless the traditional tier already matched them."
+        )
+    thresholds = _threshold_grid(duplicate_start, duplicate_stop)
+    rows: list[SweepRow] = []
+    predicted_by_threshold: dict[float, set[tuple[str, str]]] = {}
+    for threshold in thresholds:
+        gated_semantic = [
+            duplicate
+            for duplicate in result.semantic_duplicates
+            if duplicate.similarity >= threshold
+        ]
+        hybrid = analyzer_module._synthesize_hybrid_duplicates(
+            result.traditional_duplicates,
+            gated_semantic,
+            jaccard_threshold=DEFAULT_TRADITIONAL_THRESHOLD,
+        )
+        predicted_pairs = {ordered_pair_key(item.unit_a, item.unit_b) for item in hybrid}
+        predicted_by_threshold[threshold] = predicted_pairs
+        tp, fp, fn, precision, recall, f1 = metrics(predicted_pairs, positive_pairs)
+        rows.append(
+            SweepRow(
+                threshold=threshold,
+                predicted=len(predicted_pairs),
+                tp=tp,
+                fp=fp,
+                fn=fn,
+                precision=precision,
+                recall=recall,
+                f1=f1,
+            )
+        )
+    rank_sweep_rows(rows, extra_key=lambda row: (-row.threshold,))
     selected = rows[0]
+
+    manifest = _calibration_manifest(
+        profile=profile,
+        resolved_revision=revision,
+        mode="duplicate",
+        semantic_task=DEFAULT_CHECK_SEMANTIC_TASK,
+        requested_device=device,
+        identity=identity,
+        dimension=dimension,
+        min_statements=min_statements,
+        batch_size=batch_size,
+        corpus_path=corpus_path,
+        labels_path=labels_path,
+    )
+    manifest["output_policy"] = "hybrid_duplicates"
+    manifest["selected_at_grid_edge"] = _grid_edge(selected.threshold, thresholds)
+    # Every count shares one population: reachable = scoreable + traditional
+    # recoveries, unreachable = labeled - reachable, and the ceiling divides
+    # reachable by labeled. The old ``excluded_positive_pairs`` counted only
+    # embedding-pool exclusions, so a traditional recovery made the block read
+    # "1 of 1 excluded, ceiling 1.0".
+    manifest["candidate_coverage"] = {
+        "labeled_positive_pairs": len(positive_pairs),
+        "scoreable_positive_pairs": len(scoreable_pairs),
+        "traditional_recovered_pairs": len(reachable_pairs) - len(scoreable_pairs),
+        "unreachable_positive_pairs": len(positive_pairs) - len(reachable_pairs),
+        "recall_ceiling": (len(reachable_pairs) / len(positive_pairs) if positive_pairs else 0.0),
+    }
+    selected_pairs = predicted_by_threshold[selected.threshold]
+    manifest["selected_category_recall"] = {}
+    for category, groups in labels.get("categories", {}).items():
+        category_pairs = build_positive_pairs(result.units, {"positive_groups": groups})
+        detected = len(selected_pairs & category_pairs)
+        manifest["selected_category_recall"][category] = {
+            "labeled": len(category_pairs),
+            "detected": detected,
+            "recall": detected / len(category_pairs) if category_pairs else 0.0,
+        }
 
     return ModelSweep(
         model_key=model_name,
         canonical_name=profile.canonical_name,
         selected_threshold=selected.threshold,
-        manifest=_calibration_manifest(
-            profile=profile,
-            resolved_revision=revision,
-            mode="duplicate",
-            semantic_task=DEFAULT_CHECK_SEMANTIC_TASK,
-            requested_device=device,
-            identity=identity,
-            dimension=dimension,
-            min_statements=min_statements,
-            batch_size=batch_size,
-            corpus_path=corpus_path,
-            labels_path=labels_path,
-        ),
+        manifest=manifest,
         rows=rows,
     )
 
@@ -309,12 +428,15 @@ def _run_search_sweep(
     *,
     model_name: str,
     revision: str,
+    languages: tuple[str, ...] | None = None,
     corpus_path: Path,
     probes_path: Path,
     probes: list[dict[str, Any]],
     min_statements: int,
     batch_size: int,
     device: str,
+    search_start: float = SEARCH_THRESHOLD_START,
+    search_stop: float = SEARCH_THRESHOLD_STOP,
 ) -> ModelSweep:
     profile = resolve_model_profile(model_name)
     analyzer = CodeAnalyzer(
@@ -326,6 +448,7 @@ def _run_search_sweep(
             min_statements=min_statements,
             batch_size=batch_size,
             device=device,
+            languages=languages,
         )
     )
     indexed = analyzer.index(corpus_path)
@@ -334,6 +457,7 @@ def _run_search_sweep(
     identity = analyzer._embedding_space_identity
     assert identity is not None
     assert analyzer._semantic_units is not None
+    assert analyzer._units is not None
 
     scored_pairs: list[tuple[tuple[str, str], float]] = []
     positive_pairs: set[tuple[str, str]] = set()
@@ -341,17 +465,14 @@ def _run_search_sweep(
         query = probe["query"]
         query_key = f"probe-{probe_index}"
         expected_units = {
-            resolve_label_unit(analyzer._semantic_units, spec).uid for spec in probe["expected"]
+            resolve_label_unit(analyzer._units, spec).uid for spec in probe["expected"]
         }
         positive_pairs.update((query_key, uid) for uid in expected_units)
         for unit, score in analyzer.search(query, top_k=indexed):
             scored_pairs.append(((query_key, unit.uid), score))
 
-    rows = _evaluate_thresholds(
-        scored_pairs,
-        positive_pairs,
-        thresholds=_threshold_grid(SEARCH_THRESHOLD_START, SEARCH_THRESHOLD_STOP),
-    )
+    thresholds = _threshold_grid(search_start, search_stop)
+    rows = _evaluate_thresholds(scored_pairs, positive_pairs, thresholds=thresholds)
     selected = rows[0]
 
     manifest = _calibration_manifest(
@@ -368,6 +489,15 @@ def _run_search_sweep(
         labels_path=probes_path,
     )
     manifest["probe_count"] = len(probes)
+    manifest["selected_at_grid_edge"] = _grid_edge(selected.threshold, thresholds)
+    embedded_uids = {unit.uid for unit in analyzer._semantic_units}
+    scoreable_targets = {pair for pair in positive_pairs if pair[1] in embedded_uids}
+    manifest["candidate_coverage"] = {
+        "labeled_positive_targets": len(positive_pairs),
+        "scoreable_positive_targets": len(scoreable_targets),
+        "excluded_positive_targets": len(positive_pairs) - len(scoreable_targets),
+        "recall_ceiling": (len(scoreable_targets) / len(positive_pairs) if positive_pairs else 0.0),
+    }
 
     return ModelSweep(
         model_key=model_name,
@@ -381,11 +511,21 @@ def _run_search_sweep(
 def _print_sweep(model_sweep: ModelSweep, top_n: int) -> None:
     print(f"\nModel: {model_sweep.model_key} ({model_sweep.manifest['mode']})")
     print(f"Revision: {model_sweep.manifest['resolved_revision']}")
-    print(f"Selected threshold: {model_sweep.selected_threshold:.2f}")
+    # ``:g``, not ``:.2f``: an off-grid --duplicate-start yields 3-decimal gates,
+    # and truncating them in the printout would recreate the mislabeling the
+    # grid itself no longer performs.
+    print(f"Selected threshold: {model_sweep.selected_threshold:g}")
+    edge = model_sweep.manifest.get("selected_at_grid_edge")
+    if edge is not None:
+        print(
+            f"WARNING: selected threshold sits at the grid {edge}; the optimum may lie "
+            "outside the swept range - widen it (--duplicate-start/--duplicate-stop or "
+            "--search-start/--search-stop) to confirm."
+        )
     print("Top rows:")
     for idx, row in enumerate(model_sweep.rows[:top_n], start=1):
         print(
-            f"  {idx:02d}. threshold={row.threshold:.2f} f1={row.f1:.3f} "
+            f"  {idx:02d}. threshold={row.threshold:g} f1={row.f1:.3f} "
             f"precision={row.precision:.3f} recall={row.recall:.3f} "
             f"tp={row.tp} fp={row.fp} fn={row.fn} pred={row.predicted}"
         )
@@ -443,6 +583,33 @@ def main() -> int:
         help="Only sweep duplicate thresholds.",
     )
     parser.add_argument(
+        "--duplicate-start",
+        type=float,
+        default=DUPLICATE_THRESHOLD_START,
+        help="Duplicate-threshold grid floor; also the analyzer floor, so pairs "
+        "below it are never scored. Lower it for corpora whose positive pairs "
+        f"sit below the default {DUPLICATE_THRESHOLD_START:.2f}.",
+    )
+    parser.add_argument(
+        "--duplicate-stop",
+        type=float,
+        default=DUPLICATE_THRESHOLD_STOP,
+        help="Duplicate-threshold grid ceiling.",
+    )
+    parser.add_argument(
+        "--search-start",
+        type=float,
+        default=SEARCH_THRESHOLD_START,
+        help="Search-threshold grid floor.",
+    )
+    parser.add_argument(
+        "--search-stop",
+        type=float,
+        default=SEARCH_THRESHOLD_STOP,
+        help="Search-threshold grid ceiling. Widen the range when a sweep "
+        "reports a boundary selection.",
+    )
+    parser.add_argument(
         "--json-out",
         type=Path,
         default=Path("test_fixtures/hybrid_tuning/semantic_threshold_report.json"),
@@ -456,10 +623,33 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    if args.duplicate_start > args.duplicate_stop:
+        parser.error(
+            f"--duplicate-start {args.duplicate_start} must not exceed "
+            f"--duplicate-stop {args.duplicate_stop}; the sweep grid would be empty."
+        )
+    if args.search_start > args.search_stop:
+        parser.error(
+            f"--search-start {args.search_start} must not exceed "
+            f"--search-stop {args.search_stop}; the sweep grid would be empty."
+        )
+
     labels = json.loads(args.labels_path.read_text())
+    # Shape problems must abort here, in milliseconds: the per-category recall
+    # loop otherwise discovers an empty category only after the full corpus embed.
+    try:
+        validate_labels_shape(labels)
+    except ValueError as exc:
+        parser.error(str(exc))
     probes: list[dict[str, Any]] = []
     if not args.skip_search:
-        probes = json.loads(args.search_probes_path.read_text())["probes"]
+        # Same fail-fast contract as the labels: a malformed probes file must
+        # abort before the corpus embed, not write a zero-probe search report
+        # whose selected threshold is just the grid floor.
+        try:
+            probes = validate_probes_shape(json.loads(args.search_probes_path.read_text()))
+        except ValueError as exc:
+            parser.error(str(exc))
 
     duplicate_results: list[ModelSweep] = []
     search_results: list[ModelSweep] = []
@@ -469,12 +659,15 @@ def main() -> int:
             _run_duplicate_sweep(
                 model_name=model_name,
                 revision=revision,
+                languages=tuple(args.language) if args.language else None,
                 corpus_path=args.corpus_path,
                 labels_path=args.labels_path,
                 labels=labels,
                 min_statements=args.min_statements,
                 batch_size=args.batch_size,
                 device=args.device,
+                duplicate_start=args.duplicate_start,
+                duplicate_stop=args.duplicate_stop,
             )
         )
         if not args.skip_search:
@@ -482,12 +675,15 @@ def main() -> int:
                 _run_search_sweep(
                     model_name=model_name,
                     revision=revision,
+                    languages=tuple(args.language) if args.language else None,
                     corpus_path=args.corpus_path,
                     probes_path=args.search_probes_path,
                     probes=probes,
                     min_statements=args.min_statements,
                     batch_size=args.batch_size,
                     device=args.device,
+                    search_start=args.search_start,
+                    search_stop=args.search_stop,
                 )
             )
 
@@ -503,7 +699,7 @@ def main() -> int:
         json.dumps(
             _report_payload(
                 duplicate_results,
-                _threshold_grid(DUPLICATE_THRESHOLD_START, DUPLICATE_THRESHOLD_STOP),
+                _threshold_grid(args.duplicate_start, args.duplicate_stop),
             ),
             indent=2,
         )
@@ -516,7 +712,7 @@ def main() -> int:
             json.dumps(
                 _report_payload(
                     search_results,
-                    _threshold_grid(SEARCH_THRESHOLD_START, SEARCH_THRESHOLD_STOP),
+                    _threshold_grid(args.search_start, args.search_stop),
                 ),
                 indent=2,
             )

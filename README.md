@@ -1,12 +1,15 @@
 # codedupes
 
-`codedupes` detects duplicate and potentially unused Python code with:
+`codedupes` detects duplicate code across Python, C, Rust, JavaScript, JSX, TypeScript, and TSX. It combines deterministic structural/token matching with semantic code embeddings, while retaining conservative Python-only unused-code analysis.
 
-- Traditional AST/token matching (exact + Jaccard near-duplicate)
-- Semantic matching with model-profile embeddings (default `gte-modernbert-base`)
-- Persistent, content-addressed on-disk embedding cache so unchanged code never re-embeds
+Core capabilities:
+
+- Language-aware extraction of functions, methods, and classes
+- Exact structural and token fingerprints, plus identifier-Jaccard near matching
+- Semantic matching and search with model-profile embeddings (default `gte-modernbert-base`)
+- Persistent, content-addressed embedding cache so unchanged code is not re-embedded
 - Explicit CPU, CUDA, and Apple Silicon MPS execution
-- Heuristic unused-code detection
+- Recoverable parse diagnostics instead of silent line-chunk fallback
 
 ## Install
 
@@ -14,24 +17,32 @@
 pip install "codedupes @ git+https://github.com/pszemraj/codedupes.git"
 ```
 
+The normal installation includes exact-pinned, precompiled Tree-sitter packages for C, Rust, JavaScript/JSX, TypeScript, and TSX. codedupes does not download grammars while analyzing a repository.
+
 See [Installation](https://github.com/pszemraj/codedupes/blob/main/docs/install.md) for Python and runtime requirements.
 
-## Quick Start
+## Quick start
 
 ```bash
 codedupes check ./src
 codedupes search ./src "normalize request payload"
 codedupes info
 
+# Restrict a mixed tree to selected languages
+codedupes check ./src --language rust --language typescript
+
 # Apple Silicon
 codedupes check ./src --device mps
 ```
+
+Language aliases such as `py`, `rs`, `js`, `jsx`, `ts`, and `tsx` are accepted. Omit `--language` to auto-detect every supported source type.
 
 See [Output and exit codes](https://github.com/pszemraj/codedupes/blob/main/docs/output.md) for report modes and CI behavior.
 
 ## Documentation
 
 - [Installation](https://github.com/pszemraj/codedupes/blob/main/docs/install.md)
+- [Polyglot language support](https://github.com/pszemraj/codedupes/blob/main/docs/polyglot-languages.md)
 - [CLI reference](https://github.com/pszemraj/codedupes/blob/main/docs/cli.md)
 - [Usage guide](https://github.com/pszemraj/codedupes/blob/main/docs/usage.md)
 - [Python API](https://github.com/pszemraj/codedupes/blob/main/docs/python-api.md)
@@ -42,8 +53,10 @@ See [Output and exit codes](https://github.com/pszemraj/codedupes/blob/main/docs
 - [Accelerators and Apple Silicon](https://github.com/pszemraj/codedupes/blob/main/docs/accelerators.md)
 - [Hybrid gate tuning](https://github.com/pszemraj/codedupes/blob/main/docs/hybrid-tuning.md)
 
-## Notes and limits
+## Scope and limits
 
-- Call graph and unused detection are heuristic and conservative by default.
-- Semantic analysis may download model weights on first use.
-- Extraction skips common artifact/cache directories by default (`__pycache__`, `.venv`, etc).
+- Duplicate checking is same-language by default, with per-language calibrated semantic gates; `--cross-language` opts into cross-language semantic pairs. Semantic search can retrieve implementations across languages.
+- Unused-code analysis is Python-only. Non-Python units are counted and explicitly excluded rather than evaluated with Python heuristics.
+- C preprocessing, Rust macro expansion, and JavaScript/TypeScript project-wide name resolution are outside the syntax-only extraction layer.
+- `.h` files are treated as C only when C is explicitly selected or the scanned tree contains C sources and no detected C++ sources.
+- TypeScript declaration files (`.d.ts`, `.d.mts`, and `.d.cts`) are skipped because they contain declarations rather than executable implementations.

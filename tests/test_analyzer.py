@@ -13,17 +13,21 @@ from codedupes.analyzer import AnalyzerConfig, CodeAnalyzer, analyze_directory
 from codedupes.models import AnalysisResult, CodeUnit, CodeUnitType, DuplicatePair
 from codedupes.pairs import ordered_pair_key
 from codedupes.semantic import SemanticBackendError
+from codedupes.semantic_profiles import SemanticModelProfile
 from tests.conftest import build_two_function_source, create_project, make_code_unit
 
 _SEMANTIC_ANALYSIS_KWARG_NAMES = {
     "batch_size",
     "cache_scope",
+    "cross_language",
     "device",
     "exclude_pairs",
     "instruction_prefix",
+    "language_thresholds",
     "model_name",
     "mps_fallback",
     "mps_memory_fraction",
+    "overflow_report",
     "revision",
     "semantic_task",
     "strict_revision_cache",
@@ -191,7 +195,6 @@ def test_all_duplicates_returns_raw_for_single_method_modes(tmp_path: Path) -> N
         hybrid_duplicates=[],
         potentially_unused=[],
         analysis_mode="semantic",
-        filtered_raw_duplicates=0,
     )
 
     assert semantic_result.all_duplicates == [semantic_duplicate]
@@ -647,12 +650,33 @@ def test_tiny_near_duplicates_use_high_jaccard_floor(
     assert len(result.traditional_duplicates) == expected_count
 
 
-def test_analyzer_resolves_profile_default_semantic_threshold(tmp_path: Path, monkeypatch) -> None:
+def _profile_with_gates(gates: dict[str, float], fallback: float = 0.99) -> SemanticModelProfile:
+    """Build a minimal profile carrying the given per-language duplicate gates.
+
+    :param gates: Language-to-gate map for the fake profile.
+    :param fallback: Gate for languages absent from ``gates``.
+    :return: Frozen profile suitable for monkeypatching ``resolve_model_profile``.
+    """
+    return SemanticModelProfile(
+        key="test-profile",
+        canonical_name="test/profile",
+        aliases=(),
+        family="generic",
+        default_semantic_threshold=fallback,
+        language_semantic_thresholds=gates,
+    )
+
+
+def test_analyzer_resolves_per_language_semantic_gate(tmp_path: Path, monkeypatch) -> None:
     source = "def add_one(x):\n    return x + 1\n"
     project = create_project(tmp_path, source)
     captured: dict[str, object] = {}
 
-    monkeypatch.setattr(analyzer_module, "get_default_semantic_threshold", lambda _model: 0.77)
+    monkeypatch.setattr(
+        analyzer_module,
+        "resolve_model_profile",
+        lambda _model: _profile_with_gates({"python": 0.77}),
+    )
     monkeypatch.setattr(
         analyzer_module,
         "run_semantic_analysis",
@@ -671,6 +695,204 @@ def test_analyzer_resolves_profile_default_semantic_threshold(tmp_path: Path, mo
     analyzer.analyze(project)
 
     assert captured["threshold"] == 0.77
+
+
+def _create_two_language_project(tmp_path: Path) -> Path:
+    """Write a small mixed Python/JavaScript project for gate tests.
+
+    :param tmp_path: Test-scoped temporary directory.
+    :return: Project root containing one ``.py`` and one ``.js`` module.
+    """
+    project = tmp_path / "polyglot_project"
+    project.mkdir()
+    (project / "alpha.py").write_text(
+        "def alpha_one(x):\n    y = x + 1\n    return y\n\n"
+        "def alpha_two(x):\n    z = x + 2\n    return z\n"
+    )
+    (project / "beta.js").write_text(
+        "function betaOne(x) {\n  const y = x + 1;\n  return y;\n}\n\n"
+        "function betaTwo(x) {\n  const z = x + 2;\n  return z;\n}\n"
+    )
+    return project
+
+
+@pytest.mark.grammar
+def test_semantic_pairs_are_gated_per_language(tmp_path: Path, monkeypatch) -> None:
+    project = _create_two_language_project(tmp_path)
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        analyzer_module,
+        "resolve_model_profile",
+        lambda _model: _profile_with_gates({"python": 0.90, "javascript": 0.60}),
+    )
+    monkeypatch.setattr(
+        analyzer_module,
+        "run_semantic_analysis",
+        _make_semantic_runner(capture=captured),
+    )
+
+    analyzer = CodeAnalyzer(
+        AnalyzerConfig(
+            run_traditional=False,
+            run_semantic=True,
+            run_unused=False,
+            min_semantic_statements=0,
+        )
+    )
+    analyzer.analyze(project)
+
+    # Every language group is scanned at its own gate; the scalar floor only
+    # covers languages without a calibrated entry.
+    assert captured["language_thresholds"] == {"python": 0.90, "javascript": 0.60}
+    assert captured["threshold"] == 0.60
+
+
+class _FixedVectorModel:
+    """Model stub returning a fixed vector per marker found in the input text."""
+
+    def __init__(self, vectors: dict[str, list[float]]) -> None:
+        self.vectors = vectors
+
+    def encode(self, texts, **_kwargs):
+        rows = []
+        for text in texts:
+            marker = next(name for name in self.vectors if name in text)
+            rows.append(self.vectors[marker])
+        return np.array(rows, dtype=np.float32)
+
+
+def _two_language_vectors() -> dict[str, list[float]]:
+    """Build vectors whose same-language pairs sit at cosine 0.75.
+
+    :return: Marker-to-vector map for the two-language fixture project.
+    """
+    off = float(np.sqrt(1.0 - 0.75**2))
+    return {
+        "alpha_one": [1.0, 0.0, 0.0, 0.0],
+        "alpha_two": [0.75, off, 0.0, 0.0],
+        "betaOne": [0.0, 0.0, 1.0, 0.0],
+        "betaTwo": [0.0, 0.0, 0.75, off],
+    }
+
+
+@pytest.mark.grammar
+def test_per_language_gates_survive_the_whole_semantic_pipeline(
+    tmp_path: Path, monkeypatch
+) -> None:
+    project = _create_two_language_project(tmp_path)
+    monkeypatch.setattr(
+        analyzer_module,
+        "resolve_model_profile",
+        lambda _model: _profile_with_gates({"python": 0.90, "javascript": 0.60}),
+    )
+    monkeypatch.setattr(
+        semantic_module,
+        "get_model",
+        lambda *args, **kwargs: _FixedVectorModel(_two_language_vectors()),
+    )
+
+    result = CodeAnalyzer(
+        AnalyzerConfig(
+            run_traditional=False,
+            run_semantic=True,
+            run_unused=False,
+            min_semantic_statements=0,
+            embedding_cache=False,
+        )
+    ).analyze(project)
+
+    # 0.75 clears javascript's 0.60 gate but not python's 0.90.
+    assert [
+        (duplicate.unit_a.name, duplicate.unit_b.name) for duplicate in result.semantic_duplicates
+    ] == [("betaOne", "betaTwo")]
+
+
+@pytest.mark.grammar
+def test_cross_language_pairs_require_opt_in_and_use_looser_gate(
+    tmp_path: Path, monkeypatch
+) -> None:
+    project = _create_two_language_project(tmp_path)
+    vectors = _two_language_vectors()
+    # A mixed pair at 0.70: below python's gate, above javascript's.
+    vectors["alpha_one"] = [1.0, 0.0, 0.0, 0.0]
+    vectors["betaOne"] = [0.70, 0.0, float(np.sqrt(1.0 - 0.70**2)), 0.0]
+
+    monkeypatch.setattr(
+        analyzer_module,
+        "resolve_model_profile",
+        lambda _model: _profile_with_gates({"python": 0.90, "javascript": 0.60}),
+    )
+    monkeypatch.setattr(
+        semantic_module,
+        "get_model",
+        lambda *args, **kwargs: _FixedVectorModel(vectors),
+    )
+
+    base_config = {
+        "run_traditional": False,
+        "run_semantic": True,
+        "run_unused": False,
+        "min_semantic_statements": 0,
+        "embedding_cache": False,
+    }
+    default_result = CodeAnalyzer(AnalyzerConfig(**base_config)).analyze(project)
+    assert all(
+        duplicate.unit_a.language == duplicate.unit_b.language
+        for duplicate in default_result.semantic_duplicates
+    )
+
+    # Opted in, the mixed pair is held to the looser of its two language gates:
+    # 0.70 clears min(0.90, 0.60) but would fail the python gate alone.
+    opted_result = CodeAnalyzer(AnalyzerConfig(cross_language=True, **base_config)).analyze(project)
+    assert frozenset({"alpha_one", "betaOne"}) in {
+        frozenset({duplicate.unit_a.name, duplicate.unit_b.name})
+        for duplicate in opted_result.semantic_duplicates
+    }
+
+
+@pytest.mark.grammar
+def test_explicit_semantic_threshold_applies_flat_across_languages(
+    tmp_path: Path, monkeypatch
+) -> None:
+    project = _create_two_language_project(tmp_path)
+    captured: dict[str, object] = {}
+
+    def paired_duplicates(units: list[CodeUnit]) -> list[DuplicatePair]:
+        by_name = {unit.name: unit for unit in units}
+        return [
+            DuplicatePair(
+                unit_a=by_name["alpha_one"],
+                unit_b=by_name["alpha_two"],
+                similarity=0.75,
+                method="semantic",
+            )
+        ]
+
+    monkeypatch.setattr(
+        analyzer_module,
+        "resolve_model_profile",
+        lambda _model: pytest.fail("explicit threshold must bypass profile gates"),
+    )
+    monkeypatch.setattr(
+        analyzer_module,
+        "run_semantic_analysis",
+        _make_semantic_runner(capture=captured, duplicate_factory=paired_duplicates),
+    )
+
+    analyzer = CodeAnalyzer(
+        AnalyzerConfig(
+            run_traditional=False,
+            run_semantic=True,
+            run_unused=False,
+            min_semantic_statements=0,
+            semantic_threshold=0.70,
+        )
+    )
+    result = analyzer.analyze(project)
+
+    assert captured["threshold"] == 0.70
+    assert len(result.semantic_duplicates) == 1
 
 
 def test_unused_semantic_pairs_are_filtered(tmp_path: Path, monkeypatch) -> None:
@@ -780,8 +1002,8 @@ def test_combined_mode_excludes_tiny_filtered_ast_only_exact_pairs(
     pair = ordered_pair_key(unit_by_name["alpha"], unit_by_name["beta"])
 
     # Same normalized AST, different identifiers: an ast_hash-only exact pair.
-    assert unit_by_name["alpha"]._ast_hash == unit_by_name["beta"]._ast_hash
-    assert unit_by_name["alpha"]._token_hash != unit_by_name["beta"]._token_hash
+    assert unit_by_name["alpha"].structural_hash == unit_by_name["beta"].structural_hash
+    assert unit_by_name["alpha"].token_hash != unit_by_name["beta"].token_hash
     # The tiny filter strips the pair from traditional output...
     assert result.traditional_duplicates == []
     # ...but semantic scoring must still treat it as an already-known exact pair.
@@ -810,8 +1032,14 @@ def test_combined_mode_fails_hard_on_runtime_semantic_error_by_default(
         )
     )
 
-    with pytest.raises(RuntimeError, match="allow-semantic-fallback"):
+    # The wrapper must name the root cause; the CLI only prints str(exc).
+    with pytest.raises(
+        RuntimeError,
+        match=r"Semantic analysis failed in combined mode \(CUDA out of memory\)",
+    ) as excinfo:
         analyzer.analyze(project)
+
+    assert "allow-semantic-fallback" in str(excinfo.value)
 
 
 def test_allow_semantic_fallback_requires_combined_mode() -> None:
@@ -943,6 +1171,66 @@ def test_search_after_analyze_uses_analysis_task_when_unset(tmp_path: Path, monk
     assert captured["query_semantic_task"] == analyzer_module.DEFAULT_CHECK_SEMANTIC_TASK
 
 
+def test_embeddinggemma_search_after_analyze_requires_explicit_threshold(
+    tmp_path: Path, monkeypatch
+) -> None:
+    project = create_project(tmp_path, "def entry(x):\n    return x + 1\n")
+    monkeypatch.setattr(
+        analyzer_module,
+        "run_semantic_analysis",
+        _make_semantic_runner(),
+    )
+    analyzer = CodeAnalyzer(
+        AnalyzerConfig(
+            run_traditional=False,
+            run_semantic=True,
+            run_unused=False,
+            min_semantic_statements=0,
+            model_name="embeddinggemma-300m",
+            embedding_cache=False,
+        )
+    )
+    analyzer.analyze(project)
+
+    with pytest.raises(ValueError, match=r"search\(threshold=\.\.\.\)"):
+        analyzer.search("entry")
+
+
+def test_search_threshold_argument_overrides_the_config_for_one_call(
+    tmp_path: Path, monkeypatch
+) -> None:
+    project = create_project(tmp_path, "def entry(x):\n    return x + 1\n")
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(
+        analyzer_module,
+        "run_semantic_analysis",
+        _make_semantic_runner(),
+    )
+    monkeypatch.setattr(
+        semantic_module,
+        "find_similar_to_query",
+        _capture_query_runner(captured),
+    )
+
+    # The per-call threshold must not disturb the calibrated per-language
+    # duplicate gates, which config.semantic_threshold would flatten.
+    analyzer = CodeAnalyzer(
+        AnalyzerConfig(
+            run_traditional=False,
+            run_semantic=True,
+            run_unused=False,
+            min_semantic_statements=0,
+            model_name="embeddinggemma-300m",
+            embedding_cache=False,
+        )
+    )
+    analyzer.analyze(project)
+    analyzer.search("entry", threshold=0.31)
+
+    assert analyzer.config.semantic_threshold is None
+    assert captured["query_threshold"] == 0.31
+
+
 def test_search_threshold_defaults_to_none_and_honors_explicit_config(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -977,6 +1265,71 @@ def test_search_threshold_defaults_to_none_and_honors_explicit_config(
     explicit.analyze(project)
     explicit.search("entry")
     assert captured["query_threshold"] == 0.7
+
+
+@pytest.mark.parametrize(
+    "config_overrides",
+    [
+        {"semantic_task": "classification"},
+        {"instruction_prefix": "CUSTOM: "},
+        {"model_revision": "f" * 40},
+        {"trust_remote_code": True},
+    ],
+)
+def test_uncalibrated_duplicate_context_rejected_at_construction(
+    config_overrides: dict[str, str],
+) -> None:
+    with pytest.raises(ValueError, match="provide semantic_threshold explicitly"):
+        AnalyzerConfig(
+            run_traditional=False,
+            run_semantic=True,
+            run_unused=False,
+            min_semantic_statements=0,
+            model_name="embeddinggemma-300m",
+            **config_overrides,
+        )
+
+
+@pytest.mark.parametrize(
+    "config_overrides",
+    [
+        {"semantic_task": "classification"},
+        {"instruction_prefix": "CUSTOM: "},
+        {"model_revision": "f" * 40},
+        {"trust_remote_code": True},
+    ],
+)
+def test_search_mode_defers_uncalibrated_context_to_query_time(
+    config_overrides: dict[str, str],
+) -> None:
+    config = AnalyzerConfig(
+        mode="search",
+        run_traditional=False,
+        run_semantic=True,
+        run_unused=False,
+        min_semantic_statements=0,
+        model_name="embeddinggemma-300m",
+        **config_overrides,
+    )
+    assert config.mode == "search"
+
+
+def test_analyze_rejects_search_mode_config(tmp_path: Path) -> None:
+    project = create_project(tmp_path, "def entry(x):\n    return x + 1\n")
+    analyzer = CodeAnalyzer(AnalyzerConfig(mode="search", run_traditional=False, run_unused=False))
+
+    with pytest.raises(ValueError, match="mode='check'"):
+        analyzer.analyze(project)
+
+
+def test_invalid_mode_rejected() -> None:
+    with pytest.raises(ValueError, match="mode must be"):
+        AnalyzerConfig(mode="banana")
+
+
+def test_search_mode_requires_semantic() -> None:
+    with pytest.raises(ValueError, match="requires run_semantic=True"):
+        AnalyzerConfig(mode="search", run_semantic=False)
 
 
 def test_index_embeds_corpus_without_mining_duplicates(tmp_path: Path, monkeypatch) -> None:
@@ -1033,6 +1386,7 @@ def test_index_empty_corpus_yields_empty_search(tmp_path: Path) -> None:
     )
 
     assert analyzer.index(empty) == 0
+    assert analyzer.extracted_unit_count == 0
     assert analyzer.search("anything") == []
 
 
@@ -1209,17 +1563,15 @@ def test_hybrid_synthesis_exact_only_included(tmp_path: Path) -> None:
     unit_b = make_code_unit(tmp_path, name="b", source="def b(y):\n    return y + 1\n", lineno=5)
     traditional = [DuplicatePair(unit_a=unit_a, unit_b=unit_b, similarity=1.0, method="ast_hash")]
 
-    hybrid, filtered = analyzer_module._synthesize_hybrid_duplicates(
+    hybrid = analyzer_module._synthesize_hybrid_duplicates(
         traditional,
         [],
-        semantic_threshold=0.82,
         jaccard_threshold=0.85,
     )
 
     assert len(hybrid) == 1
     assert hybrid[0].tier == "exact"
     assert hybrid[0].confidence == 1.0
-    assert filtered == 0
 
 
 def test_hybrid_synthesis_jaccard_only_included(tmp_path: Path) -> None:
@@ -1227,10 +1579,9 @@ def test_hybrid_synthesis_jaccard_only_included(tmp_path: Path) -> None:
     unit_b = make_code_unit(tmp_path, name="b", source="def b(y):\n    return y + 2\n", lineno=5)
     traditional = [DuplicatePair(unit_a=unit_a, unit_b=unit_b, similarity=0.9, method="jaccard")]
 
-    hybrid, _ = analyzer_module._synthesize_hybrid_duplicates(
+    hybrid = analyzer_module._synthesize_hybrid_duplicates(
         traditional,
         [],
-        semantic_threshold=0.82,
         jaccard_threshold=0.85,
     )
 
@@ -1245,10 +1596,9 @@ def test_hybrid_synthesis_hybrid_confirmed(tmp_path: Path) -> None:
     traditional = [DuplicatePair(unit_a=unit_a, unit_b=unit_b, similarity=0.88, method="jaccard")]
     semantic = [DuplicatePair(unit_a=unit_a, unit_b=unit_b, similarity=0.93, method="semantic")]
 
-    hybrid, _ = analyzer_module._synthesize_hybrid_duplicates(
+    hybrid = analyzer_module._synthesize_hybrid_duplicates(
         traditional,
         semantic,
-        semantic_threshold=0.82,
         jaccard_threshold=0.85,
     )
 
@@ -1257,7 +1607,7 @@ def test_hybrid_synthesis_hybrid_confirmed(tmp_path: Path) -> None:
     assert hybrid[0].confidence == pytest.approx((0.5 * 0.93) + (0.5 * 0.88))
 
 
-def test_hybrid_synthesis_semantic_only_gate_enforced(tmp_path: Path) -> None:
+def test_hybrid_synthesis_semantic_only_corroboration_sets_tier(tmp_path: Path) -> None:
     unit_a = make_code_unit(
         tmp_path, name="a", source="def alpha(v):\n    z = v + 1\n    return z\n", lineno=1
     )
@@ -1265,15 +1615,19 @@ def test_hybrid_synthesis_semantic_only_gate_enforced(tmp_path: Path) -> None:
         tmp_path, name="b", source="def beta(v):\n    q = v + 2\n    return q\n", lineno=6
     )
 
-    low_semantic = [DuplicatePair(unit_a=unit_a, unit_b=unit_b, similarity=0.90, method="semantic")]
-    hybrid_low, filtered_low = analyzer_module._synthesize_hybrid_duplicates(
+    # Semantic pairs arrive pre-gated. Corroborating lexical/size evidence
+    # promotes them to the high-confidence tier.
+    gated_semantic = [
+        DuplicatePair(unit_a=unit_a, unit_b=unit_b, similarity=0.75, method="semantic")
+    ]
+    hybrid = analyzer_module._synthesize_hybrid_duplicates(
         [],
-        low_semantic,
-        semantic_threshold=0.82,
+        gated_semantic,
         jaccard_threshold=0.85,
     )
-    assert hybrid_low == []
-    assert filtered_low == 1
+    assert len(hybrid) == 1
+    assert hybrid[0].tier == "semantic_high_confidence"
+    assert hybrid[0].confidence == pytest.approx(0.45 + (0.55 * 0.75))
 
     weak_sources_a = make_code_unit(
         tmp_path,
@@ -1292,25 +1646,87 @@ def test_hybrid_synthesis_semantic_only_gate_enforced(tmp_path: Path) -> None:
             unit_a=weak_sources_a, unit_b=weak_sources_b, similarity=0.95, method="semantic"
         )
     ]
-    hybrid_weak, _ = analyzer_module._synthesize_hybrid_duplicates(
+    hybrid_weak = analyzer_module._synthesize_hybrid_duplicates(
         [],
         weak_semantic,
-        semantic_threshold=0.82,
         jaccard_threshold=0.85,
     )
-    assert hybrid_weak == []
+    assert len(hybrid_weak) == 1
+    assert hybrid_weak[0].tier == "semantic_review"
+    assert hybrid_weak[0].confidence == pytest.approx(0.40 + (0.45 * 0.95))
+    assert hybrid_weak[0].weak_identifier_jaccard == 0.0
+    assert hybrid_weak[0].statement_count_ratio == pytest.approx(0.25)
 
-    strong_semantic = [
-        DuplicatePair(unit_a=unit_a, unit_b=unit_b, similarity=0.95, method="semantic")
-    ]
-    hybrid_strong, _ = analyzer_module._synthesize_hybrid_duplicates(
-        [],
-        strong_semantic,
-        semantic_threshold=0.82,
+
+def test_semantic_review_never_outranks_a_corroborated_pair(tmp_path: Path) -> None:
+    # Same cosine, different corroboration: the least-evidenced tier must sort
+    # below every tier that carries extra evidence.
+    review_a = make_code_unit(
+        tmp_path,
+        name="review_a",
+        source="def review_a(a):\n    x = a + 1\n    y = x + 1\n    z = y + 1\n    return z\n",
+        lineno=1,
+    )
+    review_b = make_code_unit(
+        tmp_path, name="review_b", source="def review_b(v):\n    return v\n", lineno=12
+    )
+    confirmed_a = make_code_unit(
+        tmp_path, name="confirmed_a", source="def confirmed_a(x):\n    return x + 1\n", lineno=20
+    )
+    confirmed_b = make_code_unit(
+        tmp_path, name="confirmed_b", source="def confirmed_b(y):\n    return y + 1\n", lineno=26
+    )
+
+    hybrid = analyzer_module._synthesize_hybrid_duplicates(
+        [DuplicatePair(unit_a=confirmed_a, unit_b=confirmed_b, similarity=0.86, method="jaccard")],
+        [
+            DuplicatePair(unit_a=review_a, unit_b=review_b, similarity=0.97, method="semantic"),
+            DuplicatePair(
+                unit_a=confirmed_a, unit_b=confirmed_b, similarity=0.97, method="semantic"
+            ),
+        ],
         jaccard_threshold=0.85,
     )
-    assert len(hybrid_strong) == 1
-    assert hybrid_strong[0].tier == "semantic_high_confidence"
+
+    assert [duplicate.tier for duplicate in hybrid] == ["hybrid_confirmed", "semantic_review"]
+    assert hybrid[0].confidence > hybrid[1].confidence
+
+
+def test_hybrid_synthesis_publishes_alpha_renamed_semantic_pair(tmp_path: Path) -> None:
+    unit_a = make_code_unit(
+        tmp_path,
+        name="collect_total",
+        source=(
+            "def collect_total(records):\n"
+            "    accepted = [record for record in records if record.enabled]\n"
+            "    amount = sum(record.value for record in accepted)\n"
+            "    return amount\n"
+        ),
+        lineno=1,
+    )
+    unit_b = make_code_unit(
+        tmp_path,
+        name="measure_sum",
+        source=(
+            "def measure_sum(entries):\n"
+            "    chosen = [entry for entry in entries if entry.ready]\n"
+            "    result = sum(entry.weight for entry in chosen)\n"
+            "    return result\n"
+        ),
+        lineno=8,
+    )
+    semantic = [DuplicatePair(unit_a=unit_a, unit_b=unit_b, similarity=0.91, method="semantic")]
+
+    hybrid = analyzer_module._synthesize_hybrid_duplicates(
+        [],
+        semantic,
+        jaccard_threshold=0.85,
+    )
+
+    assert len(hybrid) == 1
+    assert hybrid[0].tier == "semantic_review"
+    assert hybrid[0].weak_identifier_jaccard == 0.0
+    assert hybrid[0].statement_count_ratio == 1.0
 
 
 def test_mixed_mode_semantic_failure_still_builds_hybrid_from_traditional(
@@ -1576,6 +1992,172 @@ def test_semantic_failures_fall_back_when_traditional_enabled(
     assert "Retry with `codedupes check" in caplog.text
 
 
+class _WhitespaceTokenizer:
+    """Tokenizer stub whose token count is the whitespace-separated word count."""
+
+    def encode(self, text, **_kwargs):
+        return text.split()
+
+
+class _ContextLimitedModel:
+    """Model stub that rejects nothing but exposes a tiny context window."""
+
+    max_seq_length = 20
+    tokenizer = _WhitespaceTokenizer()
+
+    def __init__(self) -> None:
+        self.encoded: list[str] = []
+
+    def encode(self, texts, **_kwargs):
+        self.encoded.extend(texts)
+        return np.array(
+            [[0.0, 1.0] if "second_axis" in text else [1.0, 0.0] for text in texts],
+            dtype=np.float32,
+        )
+
+
+_OVERFLOW_PROJECT_SOURCE = dedent(
+    """
+    def short_one(x):
+        y = x + 1
+        return y
+
+    def short_two(x):
+        total = x * 3
+        print(total)
+        return total
+
+    def long_tail(x):
+        words = "aa bb cc dd ee ff gg hh ii jj kk ll mm nn oo pp qq rr ss tt"
+        return words
+    """
+).strip()
+
+
+def test_over_context_units_are_skipped_with_a_diagnostic(tmp_path: Path, monkeypatch) -> None:
+    project = create_project(tmp_path, _OVERFLOW_PROJECT_SOURCE)
+    model = _ContextLimitedModel()
+    monkeypatch.setattr(semantic_module, "get_model", lambda *args, **kwargs: model)
+
+    analyzer = CodeAnalyzer(
+        AnalyzerConfig(
+            run_traditional=True,
+            run_semantic=True,
+            run_unused=False,
+            min_semantic_statements=0,
+            embedding_cache=False,
+        )
+    )
+    result = analyzer.analyze(project)
+
+    assert [unit.name for unit in result.units] == ["short_one", "short_two", "long_tail"]
+    assert [
+        (duplicate.unit_a.name, duplicate.unit_b.name) for duplicate in result.semantic_duplicates
+    ] == [("short_one", "short_two")]
+    assert [diagnostic.code for diagnostic in result.semantic_diagnostics] == [
+        "semantic-context-overflow"
+    ]
+    diagnostic = result.semantic_diagnostics[0]
+    assert "long_tail" in diagnostic.message
+    assert diagnostic.severity == "warning"
+    assert diagnostic.language == "python"
+    assert not any("long_tail" in text for text in model.encoded)
+
+
+def test_skipped_over_context_units_never_enter_the_embedding_cache(
+    tmp_path: Path, monkeypatch
+) -> None:
+    project = create_project(tmp_path, _OVERFLOW_PROJECT_SOURCE)
+    model = _ContextLimitedModel()
+    monkeypatch.setattr(semantic_module, "get_model", lambda *args, **kwargs: model)
+
+    def run() -> AnalysisResult:
+        analyzer = CodeAnalyzer(
+            AnalyzerConfig(
+                run_traditional=False,
+                run_semantic=True,
+                run_unused=False,
+                min_semantic_statements=0,
+                embedding_cache=True,
+            )
+        )
+        return analyzer.analyze(project)
+
+    first = run()
+    second = run()
+
+    # A warm second run must not resurrect the skipped unit from the cache.
+    for result in (first, second):
+        assert [diagnostic.code for diagnostic in result.semantic_diagnostics] == [
+            "semantic-context-overflow"
+        ]
+        assert [
+            (duplicate.unit_a.name, duplicate.unit_b.name)
+            for duplicate in result.semantic_duplicates
+        ] == [("short_one", "short_two")]
+
+
+def test_index_drops_over_context_units_and_keeps_search_rows_aligned(
+    tmp_path: Path, monkeypatch
+) -> None:
+    source = dedent(
+        """
+        def long_tail(x):
+            words = "aa bb cc dd ee ff gg hh ii jj kk ll mm nn oo pp qq rr ss tt"
+            return words
+
+        def wanted(x):
+            y = x + 1
+            return y
+
+        def second_axis(x):
+            z = x + 2
+            return z
+        """
+    ).strip()
+    project = create_project(tmp_path, source)
+    model = _ContextLimitedModel()
+    monkeypatch.setattr(semantic_module, "get_model", lambda *args, **kwargs: model)
+
+    analyzer = CodeAnalyzer(
+        AnalyzerConfig(
+            run_traditional=False,
+            run_semantic=True,
+            run_unused=False,
+            min_semantic_statements=0,
+            embedding_cache=False,
+        )
+    )
+    indexed = analyzer.index(project)
+    results = analyzer.search("anything", top_k=1)
+
+    assert indexed == 2
+    assert [diagnostic.code for diagnostic in analyzer.semantic_diagnostics] == [
+        "semantic-context-overflow"
+    ]
+    assert [unit.name for unit, _score in results] == ["wanted"]
+
+
+def test_over_context_search_query_still_fails_hard(tmp_path: Path, monkeypatch) -> None:
+    project = create_project(tmp_path, "def wanted(x):\n    y = x + 1\n    return y\n")
+    model = _ContextLimitedModel()
+    monkeypatch.setattr(semantic_module, "get_model", lambda *args, **kwargs: model)
+
+    analyzer = CodeAnalyzer(
+        AnalyzerConfig(
+            run_traditional=False,
+            run_semantic=True,
+            run_unused=False,
+            min_semantic_statements=0,
+            embedding_cache=False,
+        )
+    )
+    analyzer.index(project)
+
+    with pytest.raises(semantic_module.SemanticInputTooLongError, match="search query"):
+        analyzer.search(" ".join(["word"] * 40))
+
+
 @pytest.mark.parametrize(
     "semantic_error",
     [
@@ -1743,3 +2325,23 @@ def test_analyzer_default_embedding_cache_enabled_and_scoped_to_analyzed_root(
 
     assert captured["use_cache"] is True
     assert captured["cache_scope"] == project
+
+
+def test_analyze_explicit_stub_target_ignores_include_stubs_default(tmp_path: Path) -> None:
+    stub = tmp_path / "typed_mod.pyi"
+    stub.write_text("def entry() -> int: ...\n")
+
+    config = AnalyzerConfig(run_semantic=False, run_unused=False)
+    result = CodeAnalyzer(config).analyze(stub)
+
+    assert [unit.qualified_name for unit in result.units] == ["typed_mod.entry"]
+
+
+def test_analyze_directory_still_gates_stubs_on_include_stubs(tmp_path: Path) -> None:
+    (tmp_path / "typed_mod.pyi").write_text("def entry() -> int: ...\n")
+    (tmp_path / "real_mod.py").write_text("def keep():\n    return 1\n")
+
+    config = AnalyzerConfig(run_semantic=False, run_unused=False)
+    result = CodeAnalyzer(config).analyze(tmp_path)
+
+    assert [unit.qualified_name for unit in result.units] == ["real_mod.keep"]

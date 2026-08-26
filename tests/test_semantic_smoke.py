@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from codedupes.constants import DEFAULT_MODEL
-from codedupes.semantic import clear_model_cache, compute_embeddings, get_model
+from codedupes.constants import DEFAULT_MODEL, DEFAULT_SEARCH_SEMANTIC_TASK
+from codedupes.semantic import clear_model_cache, compute_embeddings_with_identity, get_model
 from codedupes.semantic_profiles import SemanticModelProfile, list_supported_models
 
 
@@ -68,7 +68,11 @@ def test_search_smoke_default_threshold_separates_relevant_from_noise(
     assert {unit.name for unit in units} == {probe["expected"] for probe in spec["relevant"]}
 
     clear_model_cache()
-    embeddings = compute_embeddings(units, model_name=profile.key)
+    embeddings, identity = compute_embeddings_with_identity(
+        units,
+        model_name=profile.key,
+        semantic_task=DEFAULT_SEARCH_SEMANTIC_TASK,
+    )
 
     for probe in spec["relevant"]:
         results = find_similar_to_query(
@@ -77,6 +81,7 @@ def test_search_smoke_default_threshold_separates_relevant_from_noise(
             embeddings,
             model_name=profile.key,
             top_k=3,
+            corpus_identity=identity,
         )
         names = [unit.name for unit, _score in results]
         assert probe["expected"] in names, (
@@ -90,6 +95,7 @@ def test_search_smoke_default_threshold_separates_relevant_from_noise(
             embeddings,
             model_name=profile.key,
             top_k=3,
+            corpus_identity=identity,
         )
         hits = [(unit.name, score) for unit, score in results]
         assert not hits, f"{profile.key}: noise query {query!r} cleared the search floor: {hits}"

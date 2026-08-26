@@ -1,0 +1,114 @@
+{
+  "description": "Expected duplicate groups for the Rust polyglot calibration corpus (job queue / worker scheduling domain).",
+  "positive_groups": [
+    ["queue_core.rs::clamp_priority", "queue_metrics.rs::clamp_priority"],
+    ["dedup_index.rs::slot_for_key", "rate_window.rs::slot_for_key"],
+    ["rate_window.rs::is_saturated", "worker_lease.rs::is_saturated"],
+    ["scheduler_heartbeat.rs::tick_budget_pct", "throughput_meter.rs::tick_budget_pct"],
+
+    ["retry_policy.rs::attempt_bucket", "queue_metrics.rs::attempt_bucket"],
+    ["dedup_index.rs::normalize_key_text", "queue_core.rs::normalize_key_text"],
+    ["queue_core.rs::occupancy_pct", "dedup_index.rs::occupancy_pct"],
+
+    ["batch_partition.rs::partition_size", "worker_pool.rs::partition_size"],
+    ["task_deadline.rs::overdue_by_ms", "scheduler_heartbeat.rs::overdue_by_ms"],
+    ["throughput_meter.rs::merge_counts", "batch_partition.rs::merge_counts"],
+
+    ["retry_policy.rs::backoff_delay_ms", "worker_lease.rs::stall_wait_ms"],
+    ["rate_window.rs::window_utilization", "queue_metrics.rs::load_fraction"],
+    ["queue_core.rs::age_ms", "worker_lease.rs::idle_ms"],
+    ["scheduler_heartbeat.rs::beat_interval_ms", "worker_pool.rs::pulse_gap_ms"],
+
+    ["retry_policy.rs::should_retry", "worker_lease.rs::can_reassign"],
+    ["retry_policy.rs::next_attempt_at_ms", "rate_window.rs::next_refill_at_ms"],
+    ["retry_policy.rs::record_failure", "worker_lease.rs::note_timeout"],
+    ["queue_core.rs::backlog_score", "queue_metrics.rs::pressure_score"],
+    ["dedup_index.rs::insert_key", "rate_window.rs::admit_hit"],
+    ["dedup_index.rs::key_fingerprint", "queue_metrics.rs::series_fingerprint"],
+    ["worker_pool.rs::clamp_pool_size", "task_deadline.rs::clamp_runner_size"],
+    ["throughput_meter.rs::track_peak_latency", "scheduler_heartbeat.rs::track_worst_delay"],
+
+    ["batch_partition.rs::pending_priority_total", "worker_pool.rs::open_job_weight_total"],
+    ["scheduler_heartbeat.rs::priority_band", "task_deadline.rs::urgency_tier"],
+    ["worker_pool.rs::slots_left", "throughput_meter.rs::headroom_left"],
+    ["throughput_meter.rs::has_consecutive_spikes", "batch_partition.rs::has_adjacent_overloads"],
+    ["task_deadline.rs::capped_wait_total", "throughput_meter.rs::bounded_delay_total"],
+    ["task_deadline.rs::effective_timeout_ms", "worker_pool.rs::resolved_window_ms"],
+    ["batch_partition.rs::overdue_task_ids", "scheduler_heartbeat.rs::expired_job_handles"],
+    ["worker_pool.rs::overloaded_worker_count", "scheduler_heartbeat.rs::saturated_runner_count"],
+
+    ["batch_partition.rs::can_admit_task", "worker_pool.rs::can_accept_job"],
+    ["throughput_meter.rs::load_spread", "worker_pool.rs::usage_spread"],
+    ["scheduler_heartbeat.rs::worker_health_score", "task_deadline.rs::runner_fitness_score"],
+    ["batch_partition.rs::active_priority_average", "throughput_meter.rs::live_rank_average"]
+  ],
+  "categories": {
+    "exact": [
+      ["queue_core.rs::clamp_priority", "queue_metrics.rs::clamp_priority"],
+      ["dedup_index.rs::slot_for_key", "rate_window.rs::slot_for_key"],
+      ["rate_window.rs::is_saturated", "worker_lease.rs::is_saturated"],
+      ["scheduler_heartbeat.rs::tick_budget_pct", "throughput_meter.rs::tick_budget_pct"]
+    ],
+    "reformat": [
+      ["retry_policy.rs::attempt_bucket", "queue_metrics.rs::attempt_bucket"],
+      ["dedup_index.rs::normalize_key_text", "queue_core.rs::normalize_key_text"],
+      ["queue_core.rs::occupancy_pct", "dedup_index.rs::occupancy_pct"]
+    ],
+    "doc_variant": [
+      ["batch_partition.rs::partition_size", "worker_pool.rs::partition_size"],
+      ["task_deadline.rs::overdue_by_ms", "scheduler_heartbeat.rs::overdue_by_ms"],
+      ["throughput_meter.rs::merge_counts", "batch_partition.rs::merge_counts"]
+    ],
+    "renamed": [
+      ["retry_policy.rs::backoff_delay_ms", "worker_lease.rs::stall_wait_ms"],
+      ["rate_window.rs::window_utilization", "queue_metrics.rs::load_fraction"],
+      ["queue_core.rs::age_ms", "worker_lease.rs::idle_ms"],
+      ["scheduler_heartbeat.rs::beat_interval_ms", "worker_pool.rs::pulse_gap_ms"]
+    ],
+    "near_rename": [
+      ["retry_policy.rs::should_retry", "worker_lease.rs::can_reassign"],
+      ["retry_policy.rs::next_attempt_at_ms", "rate_window.rs::next_refill_at_ms"],
+      ["retry_policy.rs::record_failure", "worker_lease.rs::note_timeout"],
+      ["queue_core.rs::backlog_score", "queue_metrics.rs::pressure_score"],
+      ["dedup_index.rs::insert_key", "rate_window.rs::admit_hit"],
+      ["dedup_index.rs::key_fingerprint", "queue_metrics.rs::series_fingerprint"],
+      ["worker_pool.rs::clamp_pool_size", "task_deadline.rs::clamp_runner_size"],
+      ["throughput_meter.rs::track_peak_latency", "scheduler_heartbeat.rs::track_worst_delay"]
+    ],
+    "near_translation": [
+      ["batch_partition.rs::pending_priority_total", "worker_pool.rs::open_job_weight_total"],
+      ["scheduler_heartbeat.rs::priority_band", "task_deadline.rs::urgency_tier"],
+      ["worker_pool.rs::slots_left", "throughput_meter.rs::headroom_left"],
+      ["throughput_meter.rs::has_consecutive_spikes", "batch_partition.rs::has_adjacent_overloads"],
+      ["task_deadline.rs::capped_wait_total", "throughput_meter.rs::bounded_delay_total"],
+      ["task_deadline.rs::effective_timeout_ms", "worker_pool.rs::resolved_window_ms"],
+      ["batch_partition.rs::overdue_task_ids", "scheduler_heartbeat.rs::expired_job_handles"],
+      ["worker_pool.rs::overloaded_worker_count", "scheduler_heartbeat.rs::saturated_runner_count"]
+    ],
+    "near_restructure": [
+      ["batch_partition.rs::can_admit_task", "worker_pool.rs::can_accept_job"],
+      ["throughput_meter.rs::load_spread", "worker_pool.rs::usage_spread"],
+      ["scheduler_heartbeat.rs::worker_health_score", "task_deadline.rs::runner_fitness_score"],
+      ["batch_partition.rs::active_priority_average", "throughput_meter.rs::live_rank_average"]
+    ]
+  },
+  "negative_controls": [
+    ["dedup_index.rs::key_fingerprint", "rate_window.rs::slot_for_key"],
+    ["queue_core.rs::clamp_priority", "retry_policy.rs::attempt_bucket"],
+    ["rate_window.rs::is_saturated", "queue_core.rs::occupancy_pct"],
+
+    ["worker_pool.rs::lease_priority_weight", "worker_lease.rs::stall_wait_ms"],
+    ["throughput_meter.rs::window_label", "rate_window.rs::window_utilization"],
+    ["scheduler_heartbeat.rs::backlog_alert_level", "queue_core.rs::backlog_score"],
+    ["task_deadline.rs::retry_budget_label", "retry_policy.rs::should_retry"],
+    ["batch_partition.rs::queue_health_flag", "queue_metrics.rs::pressure_score"],
+
+    ["batch_partition.rs::pending_priority_total", "throughput_meter.rs::headroom_left"],
+    ["worker_pool.rs::open_job_weight_total", "task_deadline.rs::capped_wait_total"],
+    ["scheduler_heartbeat.rs::priority_band", "throughput_meter.rs::has_consecutive_spikes"],
+    ["task_deadline.rs::urgency_tier", "batch_partition.rs::has_adjacent_overloads"],
+    ["worker_pool.rs::overloaded_worker_count", "scheduler_heartbeat.rs::expired_job_handles"],
+    ["batch_partition.rs::overdue_task_ids", "worker_pool.rs::resolved_window_ms"],
+    ["throughput_meter.rs::bounded_delay_total", "task_deadline.rs::effective_timeout_ms"]
+  ]
+}

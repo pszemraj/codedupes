@@ -1,0 +1,112 @@
+{
+  "description": "Expected duplicate groups for the C polyglot calibration corpus, embedded telemetry and signal-processing domain. Categorized by clone kind: exact (byte-identical), reformat (token/structural equal, whitespace-only diff), doc_variant (token/structural equal, comments added), renamed (structural equal, token differs), and three near-clone kinds that are neither hash-equal but share observable behavior: near_rename (renamed plus one real behavioral change), near_translation (same behavior, different idiom), near_restructure (same behavior, different decomposition/control-flow shape).",
+  "positive_groups": [
+    ["sensor_filter.c::clamp_i32", "calibration.c::clamp_i32"],
+    ["packet_codec.c::checksum8", "telemetry.c::checksum8"],
+    ["ring_buffer.c::buffer_is_full", "telemetry.c::buffer_is_full"],
+    ["event_log.c::checksum_xor8", "crc_utils.c::checksum_xor8"],
+
+    ["sensor_filter.c::moving_sum", "signal_stats.c::moving_sum"],
+    ["ring_buffer.c::wrap_index", "packet_codec.c::wrap_index"],
+    ["packet_codec.c::bytes_to_u16", "calibration.c::bytes_to_u16"],
+
+    ["threshold_logic.c::clip_to_bounds", "event_log.c::clip_to_bounds"],
+    ["crc_utils.c::weighted_delta", "window_stats.c::weighted_delta"],
+    ["threshold_logic.c::event_flag_from_count", "event_log.c::event_flag_from_count"],
+
+    ["signal_stats.c::compute_mean", "telemetry.c::running_average"],
+    ["calibration.c::scale_reading", "sensor_filter.c::convert_sample"],
+    ["signal_stats.c::find_peak_index", "ring_buffer.c::locate_max_slot"],
+    ["window_stats.c::sample_range", "filter_bank.c::value_span"],
+
+    ["sensor_filter.c::apply_deadband", "calibration.c::suppress_small_delta"],
+    ["sensor_filter.c::smooth_ema", "telemetry.c::exponential_blend"],
+    ["signal_stats.c::sum_positive", "telemetry.c::total_above_zero"],
+    ["ring_buffer.c::slots_available", "packet_codec.c::free_capacity"],
+    ["signal_stats.c::find_trough_index", "ring_buffer.c::locate_min_slot"],
+    ["calibration.c::permille_from_counts", "packet_codec.c::pack_permille"],
+    ["threshold_logic.c::limit_rate", "event_log.c::bound_slew"],
+    ["threshold_logic.c::reduce_tally", "crc_utils.c::decay_counter"],
+
+    ["window_stats.c::total_samples", "filter_bank.c::accumulate_stream"],
+    ["threshold_logic.c::classify_band", "filter_bank.c::band_for_level"],
+    ["window_stats.c::batch_mean", "filter_bank.c::incremental_mean"],
+    ["threshold_logic.c::is_valid_sample", "event_log.c::sample_in_range"],
+    ["window_stats.c::find_index", "filter_bank.c::locate_value"],
+    ["window_stats.c::count_set_bits", "crc_utils.c::popcount_flags"],
+    ["crc_utils.c::gain_for_level", "event_log.c::multiplier_for_tier"],
+    ["crc_utils.c::any_out_of_bounds", "window_stats.c::detect_overrange"],
+
+    ["threshold_logic.c::positive_average", "filter_bank.c::mean_of_positive"],
+    ["threshold_logic.c::alert_level", "event_log.c::severity_code"],
+    ["window_stats.c::median_of_three", "filter_bank.c::middle_value"],
+    ["crc_utils.c::packet_is_valid", "event_log.c::frame_is_sane"]
+  ],
+  "categories": {
+    "exact": [
+      ["sensor_filter.c::clamp_i32", "calibration.c::clamp_i32"],
+      ["packet_codec.c::checksum8", "telemetry.c::checksum8"],
+      ["ring_buffer.c::buffer_is_full", "telemetry.c::buffer_is_full"],
+      ["event_log.c::checksum_xor8", "crc_utils.c::checksum_xor8"]
+    ],
+    "reformat": [
+      ["sensor_filter.c::moving_sum", "signal_stats.c::moving_sum"],
+      ["ring_buffer.c::wrap_index", "packet_codec.c::wrap_index"],
+      ["packet_codec.c::bytes_to_u16", "calibration.c::bytes_to_u16"]
+    ],
+    "doc_variant": [
+      ["threshold_logic.c::clip_to_bounds", "event_log.c::clip_to_bounds"],
+      ["crc_utils.c::weighted_delta", "window_stats.c::weighted_delta"],
+      ["threshold_logic.c::event_flag_from_count", "event_log.c::event_flag_from_count"]
+    ],
+    "renamed": [
+      ["signal_stats.c::compute_mean", "telemetry.c::running_average"],
+      ["calibration.c::scale_reading", "sensor_filter.c::convert_sample"],
+      ["signal_stats.c::find_peak_index", "ring_buffer.c::locate_max_slot"],
+      ["window_stats.c::sample_range", "filter_bank.c::value_span"]
+    ],
+    "near_rename": [
+      ["sensor_filter.c::apply_deadband", "calibration.c::suppress_small_delta"],
+      ["sensor_filter.c::smooth_ema", "telemetry.c::exponential_blend"],
+      ["signal_stats.c::sum_positive", "telemetry.c::total_above_zero"],
+      ["ring_buffer.c::slots_available", "packet_codec.c::free_capacity"],
+      ["signal_stats.c::find_trough_index", "ring_buffer.c::locate_min_slot"],
+      ["calibration.c::permille_from_counts", "packet_codec.c::pack_permille"],
+      ["threshold_logic.c::limit_rate", "event_log.c::bound_slew"],
+      ["threshold_logic.c::reduce_tally", "crc_utils.c::decay_counter"]
+    ],
+    "near_translation": [
+      ["window_stats.c::total_samples", "filter_bank.c::accumulate_stream"],
+      ["threshold_logic.c::classify_band", "filter_bank.c::band_for_level"],
+      ["window_stats.c::batch_mean", "filter_bank.c::incremental_mean"],
+      ["threshold_logic.c::is_valid_sample", "event_log.c::sample_in_range"],
+      ["window_stats.c::find_index", "filter_bank.c::locate_value"],
+      ["window_stats.c::count_set_bits", "crc_utils.c::popcount_flags"],
+      ["crc_utils.c::gain_for_level", "event_log.c::multiplier_for_tier"],
+      ["crc_utils.c::any_out_of_bounds", "window_stats.c::detect_overrange"]
+    ],
+    "near_restructure": [
+      ["threshold_logic.c::positive_average", "filter_bank.c::mean_of_positive"],
+      ["threshold_logic.c::alert_level", "event_log.c::severity_code"],
+      ["window_stats.c::median_of_three", "filter_bank.c::middle_value"],
+      ["crc_utils.c::packet_is_valid", "event_log.c::frame_is_sane"]
+    ]
+  },
+  "negative_controls": [
+    ["signal_stats.c::sum_positive", "packet_codec.c::checksum8"],
+    ["ring_buffer.c::locate_max_slot", "signal_stats.c::find_trough_index"],
+    ["sensor_filter.c::clamp_i32", "ring_buffer.c::wrap_index"],
+    ["calibration.c::permille_from_counts", "telemetry.c::exponential_blend"],
+    ["event_log.c::checksum_xor8", "packet_codec.c::checksum8"],
+    ["window_stats.c::total_samples", "signal_stats.c::compute_mean"],
+    ["threshold_logic.c::event_flag_from_count", "filter_bank.c::band_for_level"],
+    ["threshold_logic.c::is_valid_sample", "crc_utils.c::any_out_of_bounds"],
+    ["crc_utils.c::weighted_delta", "sensor_filter.c::smooth_ema"],
+    ["crc_utils.c::decay_counter", "event_log.c::bound_slew"],
+    ["window_stats.c::sample_range", "filter_bank.c::incremental_mean"],
+    ["window_stats.c::find_index", "ring_buffer.c::locate_max_slot"],
+    ["window_stats.c::count_set_bits", "telemetry.c::checksum8"],
+    ["crc_utils.c::gain_for_level", "threshold_logic.c::classify_band"],
+    ["threshold_logic.c::positive_average", "window_stats.c::batch_mean"]
+  ]
+}

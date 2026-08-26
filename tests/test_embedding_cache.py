@@ -135,6 +135,42 @@ def test_strict_symbolic_revision_revalidates_before_cache_hit(tmp_path, monkeyp
     np.testing.assert_array_equal(first, second)
 
 
+def test_strict_query_load_uses_resolved_commit(tmp_path, monkeypatch):
+    units = _five_units(tmp_path)
+    model = CountingModel()
+    commit = "a" * 40
+    loaded_revisions: list[str | None] = []
+
+    def fake_get_model(*_args, **kwargs):
+        loaded_revisions.append(kwargs.get("revision"))
+        return model
+
+    monkeypatch.setattr(semantic, "get_model", fake_get_model)
+    monkeypatch.setattr(semantic, "_resolve_hf_cached_revision", lambda *_args: commit)
+    monkeypatch.setattr(semantic, "_get_loaded_model_commit_hash", lambda _model: commit)
+
+    embeddings, identity = compute_embeddings_with_identity(
+        units,
+        model_name="drift-model",
+        revision="main",
+        cache_scope=tmp_path,
+        strict_revision_cache=True,
+    )
+    find_similar_to_query(
+        "find addition",
+        units,
+        embeddings,
+        model_name="drift-model",
+        revision="main",
+        threshold=0.0,
+        cache_scope=tmp_path,
+        strict_revision_cache=True,
+        corpus_identity=identity,
+    )
+
+    assert loaded_revisions == [commit, commit]
+
+
 def test_embeddinggemma_cache_variant_scopes_only_nondefault_dtype(monkeypatch):
     profile = semantic.resolve_model_profile("embeddinggemma-300m")
     monkeypatch.setattr(
@@ -772,6 +808,44 @@ def test_loose_branch_move_never_mixes_two_checkpoints(tmp_path, monkeypatch):
     assert len(model.encode_calls) == 2
 
 
+def test_unreportable_mutable_revision_never_mixes_cached_and_fresh_rows(tmp_path, monkeypatch):
+    """A label-keyed run with unknown loaded provenance must bypass its whole shard."""
+
+    class EpochModel(CountingModel):
+        def __init__(self) -> None:
+            super().__init__(dim=2)
+            self.epoch = 0
+
+        def encode(self, texts, **kwargs):
+            self.encode_calls.append(list(texts))
+            vector = np.array([1.0, 0.0] if self.epoch == 0 else [0.0, 1.0])
+            return np.repeat(vector[None, :], len(texts), axis=0)
+
+    units = _five_units(tmp_path)[:3]
+    model = EpochModel()
+    _patch_get_model(monkeypatch, model)
+    monkeypatch.setattr(semantic, "_get_loaded_model_commit_hash", lambda _model: None)
+
+    first = compute_embeddings(
+        units, model_name="drift-model", revision="main", cache_scope=tmp_path
+    )
+    np.testing.assert_array_equal(first, np.tile([1.0, 0.0], (3, 1)))
+
+    model.epoch = 1
+    changed = copy.copy(units[1])
+    changed.source = "def beta(x):\n    return x + 777\n"
+    second = compute_embeddings(
+        [units[0], changed, units[2]],
+        model_name="drift-model",
+        revision="main",
+        cache_scope=tmp_path,
+    )
+
+    np.testing.assert_array_equal(second, np.tile([0.0, 1.0], (3, 1)))
+    assert [len(call) for call in model.encode_calls] == [3, 3]
+    assert EmbeddingCache().stats()["entries"] == 0
+
+
 def test_loose_branch_move_purges_shard_and_aborts_search(tmp_path, monkeypatch):
     units = _five_units(tmp_path)
     model = CountingModel()
@@ -1023,7 +1097,7 @@ def test_reader_treats_whole_shard_deletion_during_vector_load_as_miss(tmp_path,
 
     def deleting_load(*args, **kwargs):
         vectors = original_load(*args, **kwargs)
-        assert embedding_cache._delete_cache_tree(shard_dir, action="test eviction") is True
+        assert embedding_cache._delete_cache_tree(shard_dir, action="test eviction").removed is True
         return vectors
 
     monkeypatch.setattr(embedding_cache.np, "load", deleting_load)
@@ -1143,7 +1217,7 @@ def test_malformed_metadata_is_safe_for_stats_and_clear(tmp_path, field, invalid
     stats = cache.stats()
     assert stats["entries"] == 0
     assert stats["models"] == {}
-    assert cache.clear() == 0
+    assert cache.clear().removed_entries == 0
     assert not shard_dir.exists()
 
 
@@ -1414,8 +1488,9 @@ def test_clear_scopes_to_one_model(tmp_path):
     cache.put_many(scope, "model-a", "rev1", [("k1", np.array([1.0, 2.0], dtype=np.float32))])
     cache.put_many(scope, "model-b", "rev1", [("k2", np.array([3.0, 4.0], dtype=np.float32))])
 
-    cleared = cache.clear(model="model-a")
-    assert cleared == 1
+    result = cache.clear(model="model-a")
+    assert result.removed_entries == 1
+    assert result.failed_deletions == 0
 
     remaining = cache.stats()
     assert remaining["entries"] == 1
@@ -1444,9 +1519,10 @@ def test_clear_does_not_count_failed_shard_deletion(tmp_path, monkeypatch, caplo
     monkeypatch.setattr(embedding_cache.shutil, "rmtree", fail_shard_delete)
 
     with caplog.at_level("WARNING"):
-        cleared = cache.clear()
+        result = cache.clear()
 
-    assert cleared == 0
+    assert result.removed_entries == 0
+    assert result.failed_deletions == 1
     assert shard_dir.exists()
     assert "Embedding cache clear shard failed" in caplog.text
 
@@ -1480,7 +1556,9 @@ def test_clear_counts_entries_added_before_lock_acquisition(tmp_path, monkeypatc
 
     monkeypatch.setattr(embedding_cache, "_shard_write_lock", lock_after_concurrent_write)
 
-    assert cache.clear() == 2
+    result = cache.clear()
+    assert result.removed_entries == 2
+    assert result.failed_deletions == 0
 
 
 def test_strict_unconfirmable_loaded_revision_disables_cache(tmp_path, monkeypatch):
@@ -1937,7 +2015,7 @@ def test_clear_waits_for_held_lock_then_removes_shard(tmp_path):
     releaser = threading.Thread(target=release_after_delay)
     releaser.start()
 
-    result: dict[str, int] = {}
+    result: dict[str, embedding_cache.CacheClearResult] = {}
 
     def run_clear() -> None:
         result["removed"] = cache.clear()
@@ -1949,7 +2027,8 @@ def test_clear_waits_for_held_lock_then_removes_shard(tmp_path):
 
     # Bounds the test: clear() must block-and-wait, not hang forever or skip.
     assert not clearer.is_alive()
-    assert result.get("removed") == 1
+    assert result["removed"].removed_entries == 1
+    assert result["removed"].failed_deletions == 0
     assert not shard_dir.exists()
 
 
@@ -1963,7 +2042,7 @@ def test_shard_deletion_cannot_split_the_advisory_lock_domain(tmp_path):
 
     with embedding_cache._shard_write_lock(shard_dir, blocking=True) as outer_acquired:
         assert outer_acquired is True
-        assert embedding_cache._delete_cache_tree(shard_dir, action="test delete") is True
+        assert embedding_cache._delete_cache_tree(shard_dir, action="test delete").removed is True
         shard_dir.mkdir(parents=True)
 
         # Recreating a shard directory must not create a fresh lock inode that
@@ -2181,11 +2260,12 @@ def test_clear_continues_past_unreadable_shard(tmp_path):
     # proves the sweep continued past a failure rather than never reaching it.
     shard_dirs[1].chmod(0o000)
     try:
-        cleared = cache.clear()
+        result = cache.clear()
     finally:
         shard_dirs[1].chmod(0o700)
 
-    assert cleared == 2
+    assert result.removed_entries == 2
+    assert result.failed_deletions == 1
     assert not shard_dirs[0].exists()
     assert shard_dirs[1].exists()
     assert not shard_dirs[2].exists()
@@ -2238,8 +2318,9 @@ def test_hostile_deeply_nested_index_degrades_for_stats_and_clear(tmp_path):
     stats = cache.stats()
     assert stats["entries"] == 0
 
-    cleared = cache.clear()
-    assert cleared == 0
+    result = cache.clear()
+    assert result.removed_entries == 0
+    assert result.failed_deletions == 0
     assert not shard_dir.exists()
 
 
@@ -2356,7 +2437,9 @@ def test_read_shard_cache_invalidated_immediately_on_delete(tmp_path):
     assert embedding_cache._read_shard(shard_dir) is not None
     assert str(shard_dir) in embedding_cache._shard_read_cache
 
-    assert cache.clear() == 1
+    result = cache.clear()
+    assert result.removed_entries == 1
+    assert result.failed_deletions == 0
     assert str(shard_dir) not in embedding_cache._shard_read_cache
     assert embedding_cache._read_shard(shard_dir) is None
 

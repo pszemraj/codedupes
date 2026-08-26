@@ -1,4 +1,14 @@
-"""Sweep hybrid semantic-only gate thresholds against a labeled synthetic corpus."""
+"""Sweep hybrid semantic-only confidence thresholds on a labeled corpus.
+
+Like the semantic threshold sweep, every report records the calibration
+manifest (pinned model commit, pipeline schema, effective embedding-space
+identity, candidate policy, corpus/label digests), and the run refuses models
+that cannot be pinned to an immutable 40-character commit. Metrics here score
+the published output minus the ``semantic_review`` tier (``output_policy``
+``hybrid_high_confidence``): this sweep tunes the corroboration constants that
+decide promotion to high confidence, unlike the semantic sweep, whose
+same-named metric fields score all published hybrid pairs.
+"""
 
 from __future__ import annotations
 
@@ -11,12 +21,13 @@ from pathlib import Path
 import codedupes.analyzer as analyzer_module
 from codedupes.analyzer import AnalyzerConfig, CodeAnalyzer
 from codedupes.constants import (
+    DEFAULT_CHECK_SEMANTIC_TASK,
     DEFAULT_MODEL,
     DEFAULT_TRADITIONAL_THRESHOLD,
 )
 from codedupes.models import HybridDuplicate
 from codedupes.pairs import ordered_pair_key
-from codedupes.semantic_profiles import get_default_semantic_threshold
+from codedupes.semantic_profiles import resolve_model_profile
 
 try:
     from .sweep_common import (
@@ -24,19 +35,28 @@ try:
         build_positive_pairs,
         metrics,
         rank_sweep_rows,
+        validate_labels_shape,
     )
+    from .sweep_semantic_thresholds import _calibration_manifest, _require_immutable_revision
 except ImportError:
     from sweep_common import (
         add_common_sweep_arguments,
         build_positive_pairs,
         metrics,
         rank_sweep_rows,
+        validate_labels_shape,
     )
+    from sweep_semantic_thresholds import _calibration_manifest, _require_immutable_revision
 
 
 @dataclass(frozen=True)
 class GateConfig:
-    """Threshold configuration for semantic-only hybrid gating."""
+    """Threshold configuration for semantic-only hybrid confidence tiering.
+
+    ``semantic_min`` emulates the per-language duplicate gate the analyzer
+    applies to semantic pairs before hybrid synthesis; the other two values are
+    the synthesis-time corroboration guards.
+    """
 
     semantic_min: float
     weak_identifier_jaccard_min: float
@@ -45,10 +65,12 @@ class GateConfig:
 
 @dataclass(frozen=True)
 class SweepRow:
-    """One evaluated gate row."""
+    """One evaluated confidence-tier row."""
 
     config: GateConfig
-    predicted: int
+    published: int
+    review: int
+    high_confidence: int
     tp: int
     fp: int
     fn: int
@@ -65,55 +87,48 @@ def _parse_csv_floats(value: str) -> list[float]:
     return out
 
 
-def _resolve_hybrid_semantic_threshold(
-    model_name: str,
-    override: float | None,
-) -> float:
-    """Resolve the hybrid-confirmation threshold for the selected model profile.
-
-    :param str model_name: Model alias or identifier being swept.
-    :param float override: Explicit threshold override, or ``None`` for the
-        selected model profile's production default.
-    :return float: Effective semantic threshold used by hybrid synthesis.
-    """
-    if override is not None:
-        return override
-    return get_default_semantic_threshold(model_name)
-
-
 def _run_sweep(
     *,
     traditional_duplicates,
     semantic_duplicates,
     positive_pairs: set[tuple[str, str]],
-    semantic_threshold: float,
     traditional_threshold: float,
     grid: list[GateConfig],
 ) -> tuple[list[SweepRow], dict[str, float]]:
     baseline = {
-        "semantic_min": float(analyzer_module.HYBRID_SEMANTIC_ONLY_MIN),
         "weak_min": float(analyzer_module.HYBRID_WEAK_JACCARD_MIN),
         "ratio_min": float(analyzer_module.HYBRID_STATEMENT_RATIO_MIN),
     }
 
     rows: list[SweepRow] = []
     for config in grid:
+        gated_semantic = [
+            duplicate
+            for duplicate in semantic_duplicates
+            if duplicate.similarity >= config.semantic_min
+        ]
         hybrid: list[HybridDuplicate]
-        hybrid, _ = analyzer_module._synthesize_hybrid_duplicates(
+        hybrid = analyzer_module._synthesize_hybrid_duplicates(
             traditional_duplicates,
-            semantic_duplicates,
-            semantic_threshold=semantic_threshold,
+            gated_semantic,
             jaccard_threshold=traditional_threshold,
-            semantic_only_min=config.semantic_min,
             weak_identifier_jaccard_min=config.weak_identifier_jaccard_min,
             statement_ratio_min=config.statement_ratio_min,
         )
-        predicted_pairs = {ordered_pair_key(item.unit_a, item.unit_b) for item in hybrid}
-        tp, fp, fn, precision, recall, f1 = metrics(predicted_pairs, positive_pairs)
+        published_pairs = {ordered_pair_key(item.unit_a, item.unit_b) for item in hybrid}
+        review_pairs = {
+            ordered_pair_key(item.unit_a, item.unit_b)
+            for item in hybrid
+            if item.tier == "semantic_review"
+        }
+        high_confidence_pairs = published_pairs - review_pairs
+        tp, fp, fn, precision, recall, f1 = metrics(high_confidence_pairs, positive_pairs)
         rows.append(
             SweepRow(
                 config=config,
-                predicted=len(predicted_pairs),
+                published=len(published_pairs),
+                review=len(review_pairs),
+                high_confidence=len(high_confidence_pairs),
                 tp=tp,
                 fp=fp,
                 fn=fn,
@@ -123,7 +138,16 @@ def _run_sweep(
             )
         )
 
-    rank_sweep_rows(rows)
+    # Ties prefer the looser gate on every axis, matching the semantic sweep's
+    # recall-first policy; without it equal-metric rows resolve by grid order.
+    rank_sweep_rows(
+        rows,
+        extra_key=lambda row: (
+            -row.config.semantic_min,
+            -row.config.weak_identifier_jaccard_min,
+            -row.config.statement_ratio_min,
+        ),
+    )
     return rows, baseline
 
 
@@ -133,7 +157,8 @@ def _print_rows(rows: list[SweepRow], *, top_n: int) -> None:
         print(
             f"{idx:02d}. f1={row.f1:.3f} precision={row.precision:.3f} "
             f"recall={row.recall:.3f} tp={row.tp} fp={row.fp} fn={row.fn} "
-            f"pred={row.predicted} "
+            f"high_conf={row.high_confidence} review={row.review} "
+            f"published={row.published} "
             f"semantic_min={row.config.semantic_min:.3f} "
             f"weak_id_jaccard_min={row.config.weak_identifier_jaccard_min:.3f} "
             f"statement_ratio_min={row.config.statement_ratio_min:.3f}"
@@ -143,22 +168,18 @@ def _print_rows(rows: list[SweepRow], *, top_n: int) -> None:
 def main() -> int:
     """Entry point."""
     parser = argparse.ArgumentParser(
-        description="Sweep hybrid semantic-only gate thresholds on a labeled synthetic corpus."
+        description=(
+            "Sweep hybrid semantic-only confidence thresholds on a labeled synthetic corpus."
+        )
     )
     add_common_sweep_arguments(parser)
     parser.add_argument(
         "--semantic-threshold",
         type=float,
-        default=0.70,
-        help="Low semantic threshold used to collect raw semantic candidates for the sweep.",
-    )
-    parser.add_argument(
-        "--hybrid-semantic-threshold",
-        type=float,
         default=None,
         help=(
-            "Semantic threshold passed into hybrid synthesis for mixed-evidence pairs. "
-            "Defaults to the selected model profile's production threshold."
+            "Semantic threshold used to collect raw semantic candidates for the sweep "
+            "(default: the lowest --semantic-grid value, so every grid row is reachable)."
         ),
     )
     parser.add_argument(
@@ -170,8 +191,11 @@ def main() -> int:
     parser.add_argument(
         "--semantic-grid",
         type=_parse_csv_floats,
-        default=[0.85, 0.88, 0.90, 0.92, 0.94],
-        help="Comma-separated semantic-only minimum values to sweep.",
+        default=[0.68, 0.72, 0.76, 0.80, 0.84, 0.88, 0.92],
+        help=(
+            "Comma-separated semantic gate values to sweep; each emulates the "
+            "per-language duplicate gate applied before hybrid synthesis."
+        ),
     )
     parser.add_argument(
         "--weak-jaccard-grid",
@@ -190,6 +214,11 @@ def main() -> int:
         "--model-revision",
         default=None,
         help=("Model revision / commit hash. If omitted, uses the model-profile default."),
+    )
+    parser.add_argument(
+        "--device",
+        default="cpu",
+        help="Embedding device for the sweep. Defaults to cpu for reproducible float32.",
     )
     trust_group = parser.add_mutually_exclusive_group()
     trust_group.add_argument(
@@ -214,22 +243,57 @@ def main() -> int:
 
     args = parser.parse_args()
 
+    grid_floor = min(args.semantic_grid)
+    collection_threshold = (
+        args.semantic_threshold if args.semantic_threshold is not None else grid_floor
+    )
+    if collection_threshold > grid_floor:
+        parser.error(
+            f"--semantic-threshold {collection_threshold} is above the lowest --semantic-grid "
+            f"value {grid_floor}; grid rows below the collection threshold would silently "
+            "repeat the collection threshold's results."
+        )
+
     labels = json.loads(args.labels_path.read_text())
+    try:
+        validate_labels_shape(labels)
+    except ValueError as exc:
+        parser.error(str(exc))
+    revision = _require_immutable_revision(args.model, args.model_revision)
     config = AnalyzerConfig(
         run_traditional=True,
         run_semantic=True,
         run_unused=False,
         include_private=True,
+        languages=tuple(args.language) if args.language else None,
         min_semantic_statements=args.min_statements,
         jaccard_threshold=args.traditional_threshold,
-        semantic_threshold=args.semantic_threshold,
+        semantic_threshold=collection_threshold,
         model_name=args.model,
-        model_revision=args.model_revision,
+        model_revision=revision,
         trust_remote_code=args.trust_remote_code,
         batch_size=args.batch_size,
+        device=args.device,
     )
     analyzer = CodeAnalyzer(config)
     result = analyzer.analyze(args.corpus_path)
+    embeddings = analyzer._embeddings
+    dimension = int(embeddings.shape[1]) if embeddings is not None and embeddings.size else 0
+    identity = analyzer._embedding_space_identity
+    assert identity is not None
+    manifest = _calibration_manifest(
+        profile=resolve_model_profile(args.model),
+        resolved_revision=revision,
+        mode="hybrid_gates",
+        semantic_task=DEFAULT_CHECK_SEMANTIC_TASK,
+        requested_device=args.device,
+        identity=identity,
+        dimension=dimension,
+        min_statements=args.min_statements,
+        batch_size=args.batch_size,
+        corpus_path=args.corpus_path,
+        labels_path=args.labels_path,
+    )
 
     positive_pairs = build_positive_pairs(result.units, labels)
     grid = [
@@ -245,17 +309,19 @@ def main() -> int:
         traditional_duplicates=result.traditional_duplicates,
         semantic_duplicates=result.semantic_duplicates,
         positive_pairs=positive_pairs,
-        semantic_threshold=_resolve_hybrid_semantic_threshold(
-            args.model,
-            args.hybrid_semantic_threshold,
-        ),
         traditional_threshold=args.traditional_threshold,
         grid=grid,
     )
 
-    print("Hybrid gate sweep (synthetic corpus guardrail)")
+    print("Hybrid confidence sweep (synthetic corpus guardrail)")
     print(f"Corpus: {args.corpus_path}")
     print(f"Labels: {args.labels_path}")
+    print(f"Model: {args.model} @ {revision}")
+    print(
+        "Metric population: published pairs minus the semantic_review tier "
+        "(output_policy hybrid_high_confidence); the semantic sweep's "
+        "same-named fields score all published hybrid pairs."
+    )
     print(f"Units extracted: {len(result.units)}")
     print(
         "Raw candidates: "
@@ -263,15 +329,20 @@ def main() -> int:
         f"semantic={len(result.semantic_duplicates)}"
     )
     print(
-        "Current defaults: "
-        f"semantic_min={baseline['semantic_min']:.3f} "
+        "Current confidence defaults: "
         f"weak_id_jaccard_min={baseline['weak_min']:.3f} "
-        f"statement_ratio_min={baseline['ratio_min']:.3f}"
+        f"statement_ratio_min={baseline['ratio_min']:.3f} "
+        "(semantic_min rows emulate the analyzer's per-language duplicate gate)"
     )
     _print_rows(rows, top_n=args.top_n)
 
     if args.json_out is not None:
         payload = {
+            # Unlike the semantic sweep's "hybrid_duplicates" reports, tp/fp/fn
+            # and precision/recall/f1 here are computed over the published
+            # output minus the semantic_review tier.
+            "output_policy": "hybrid_high_confidence",
+            "calibration": manifest,
             "corpus_path": str(args.corpus_path),
             "labels_path": str(args.labels_path),
             "units": len(result.units),

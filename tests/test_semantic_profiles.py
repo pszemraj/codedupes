@@ -1,21 +1,24 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import pytest
 
+from codedupes.languages import SUPPORTED_LANGUAGES
 from codedupes.semantic_profiles import (
     DEFAULT_FALLBACK_SEARCH_THRESHOLD,
     DEFAULT_FALLBACK_SEMANTIC_THRESHOLD,
+    SemanticModelProfile,
     _true_case_path,
     get_default_search_threshold,
     get_default_semantic_threshold,
+    get_semantic_threshold_for_language,
     is_explicit_local_model_path,
     list_supported_models,
     resolve_local_model_path,
     resolve_model_profile,
 )
-from scripts.sweep_hybrid_gates import _resolve_hybrid_semantic_threshold
 
 
 def _filesystem_is_case_insensitive(tmp_path: Path) -> bool:
@@ -63,16 +66,74 @@ def test_model_threshold_lookup_works_for_builtin_and_unknown() -> None:
 
 def test_search_threshold_is_looser_than_duplicate_threshold() -> None:
     for profile in list_supported_models():
-        assert 0 < profile.default_search_threshold < profile.default_semantic_threshold
+        gates = profile.language_semantic_thresholds.values()
+        assert 0 < profile.default_search_threshold < min(gates)
     assert get_default_search_threshold("gte-modernbert-base") == 0.50
     assert get_default_search_threshold("embeddinggemma-300m") == 0.40
     assert get_default_search_threshold("unknown/model-id") == DEFAULT_FALLBACK_SEARCH_THRESHOLD
 
 
-def test_hybrid_sweep_uses_selected_profile_threshold_unless_overridden() -> None:
-    assert _resolve_hybrid_semantic_threshold("gte-modernbert-base", None) == 0.96
-    assert _resolve_hybrid_semantic_threshold("embeddinggemma-300m", None) == 0.86
-    assert _resolve_hybrid_semantic_threshold("gte-modernbert-base", 0.73) == 0.73
+def test_builtin_language_gates_cover_all_supported_languages() -> None:
+    for profile in list_supported_models():
+        gates = profile.language_semantic_thresholds
+        assert set(gates) == set(SUPPORTED_LANGUAGES)
+        assert all(0.0 < gate <= 1.0 for gate in gates.values())
+        # The fallback is the strictest calibrated gate: an uncalibrated future
+        # language must not start looser than any measured one.
+        assert profile.default_semantic_threshold == max(gates.values())
+
+
+def test_profile_copies_and_freezes_language_gates() -> None:
+    source_gates = {"python": 0.80}
+    profile = SemanticModelProfile(
+        key="test",
+        canonical_name="test/model",
+        aliases=(),
+        family="generic",
+        language_semantic_thresholds=source_gates,
+    )
+
+    source_gates["python"] = 0.01
+
+    assert profile.language_semantic_thresholds["python"] == 0.80
+    with pytest.raises(TypeError):
+        profile.language_semantic_thresholds["python"] = 0.01  # type: ignore[index]
+
+
+@pytest.mark.parametrize(
+    ("field_name", "field_value"),
+    [
+        ("default_semantic_threshold", float("nan")),
+        ("default_search_threshold", float("inf")),
+        ("language_semantic_thresholds", {"python": -0.01}),
+    ],
+)
+def test_profile_rejects_invalid_thresholds(field_name: str, field_value: object) -> None:
+    kwargs = {field_name: field_value}
+
+    with pytest.raises(ValueError, match="must be finite and in"):
+        SemanticModelProfile(
+            key="test",
+            canonical_name="test/model",
+            aliases=(),
+            family="generic",
+            **kwargs,
+        )
+
+
+def test_language_gate_lookup_builtin_fallback_and_generic() -> None:
+    assert get_semantic_threshold_for_language("gte-modernbert-base", "typescript") == 0.68
+    assert get_semantic_threshold_for_language("gte-modernbert-base", "python") == 0.80
+    assert get_semantic_threshold_for_language("embeddinggemma-300m", "python") == 0.74
+    assert get_semantic_threshold_for_language("embeddinggemma-300m", "javascript") == 0.72
+    assert get_semantic_threshold_for_language("embeddinggemma-300m", "typescript") == 0.78
+    gte_fallback = resolve_model_profile("gte-modernbert-base").default_semantic_threshold
+    assert get_semantic_threshold_for_language("gte-modernbert-base", "go") == gte_fallback
+    assert get_semantic_threshold_for_language("gte-modernbert-base", None) == gte_fallback
+    assert (
+        get_semantic_threshold_for_language("unknown/model-id", "python")
+        == DEFAULT_FALLBACK_SEMANTIC_THRESHOLD
+    )
 
 
 def test_resolve_local_model_path_only_matches_existing_directories(tmp_path: Path) -> None:
@@ -233,6 +294,25 @@ def test_dynamic_gte_modernbert_profile_keeps_family_but_not_calibration(tmp_pat
     builtin = resolve_model_profile("gte-modernbert-base")
     assert profile.family == "gte-modernbert"
     assert profile.default_revision is None
-    assert profile.default_semantic_threshold != builtin.default_semantic_threshold
+    # Calibrated per-language gates belong to the pinned builtin checkpoint only.
+    assert builtin.language_semantic_thresholds
+    assert profile.language_semantic_thresholds == {}
     assert profile.default_semantic_threshold == DEFAULT_FALLBACK_SEMANTIC_THRESHOLD
     assert profile.default_search_threshold == DEFAULT_FALLBACK_SEARCH_THRESHOLD
+
+
+def test_uncalibrated_family_copy_warns_about_the_gates_it_forgoes(tmp_path: Path, caplog) -> None:
+    local_dir = tmp_path / "gte-modernbert-base-copy"
+    local_dir.mkdir()
+    (local_dir / "README.md").write_text("# gte-modernbert-base\n", encoding="utf-8")
+
+    with caplog.at_level(logging.WARNING, logger="codedupes.semantic_profiles"):
+        resolve_model_profile(str(local_dir))
+        resolve_model_profile(str(local_dir))
+
+    warnings = [record for record in caplog.records if record.levelname == "WARNING"]
+    # Warned once per model, naming both the forgone gates and the fallback.
+    assert len(warnings) == 1
+    message = warnings[0].getMessage()
+    assert "javascript=0.7" in message
+    assert str(DEFAULT_FALLBACK_SEMANTIC_THRESHOLD) in message

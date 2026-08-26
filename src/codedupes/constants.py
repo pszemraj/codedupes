@@ -14,6 +14,56 @@ SemanticTask = Literal[
     "clustering",
 ]
 
+# Single source of truth: extraction skips these directories, and the C/C++ header
+# probe prunes them so vendored sources cannot change a whole-tree decision.
+DEFAULT_EXCLUDE_DIR_NAMES = frozenset(
+    {
+        "__pycache__",
+        ".git",
+        ".hg",
+        ".svn",
+        ".venv",
+        "venv",
+        ".tox",
+        ".nox",
+        ".mypy_cache",
+        ".pytest_cache",
+        ".ruff_cache",
+        ".hypothesis",
+        ".eggs",
+        "build",
+        "dist",
+        "target",
+        "node_modules",
+        ".pnpm-store",
+        ".yarn",
+        ".next",
+        ".nuxt",
+        ".svelte-kit",
+        ".gradle",
+        ".idea",
+        ".vscode",
+        ".terraform",
+        ".serverless",
+        ".aws-sam",
+        ".dart_tool",
+    }
+)
+
+
+def is_default_excluded_dir(name: str) -> bool:
+    """Return whether a directory name is pruned by default extraction.
+
+    The C/C++ header probe must prune exactly the directories the default
+    extraction walk prunes.  Any divergence lets vendored C++ flip ``.h``
+    handling for files the walk never visits, or hides C++ that it does visit.
+
+    :param name: Directory name, not a path.
+    :return: ``True`` when the directory is skipped by default.
+    """
+    return name in DEFAULT_EXCLUDE_DIR_NAMES or name.endswith(".egg-info")
+
+
 DEFAULT_MODEL = "gte-modernbert-base"
 DEFAULT_TRADITIONAL_THRESHOLD = 0.85
 DEFAULT_BATCH_SIZE = 8

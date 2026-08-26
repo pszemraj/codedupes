@@ -6,8 +6,9 @@ import ast
 import builtins
 import keyword
 import logging
+import math
 import tomllib
-from collections import defaultdict
+from collections import Counter, defaultdict
 from itertools import combinations
 from pathlib import Path
 
@@ -15,6 +16,25 @@ from codedupes.models import CodeUnit, CodeUnitType, DuplicatePair
 from codedupes.pairs import ordered_pair_key
 
 logger = logging.getLogger(__name__)
+
+# dir(builtins) rather than dir(__builtins__): the latter is a plain dict
+# inside imported modules, so it would filter dict methods instead of
+# builtin names.
+_IGNORED_IDENTIFIERS = frozenset(keyword.kwlist) | frozenset(dir(builtins))
+
+
+def _block_kind(unit_type: CodeUnitType) -> str:
+    """Map a unit type to its comparison-blocking kind.
+
+    Functions and methods share a kind so that code moved between module level
+    and a class body stays comparable, matching semantic pairing.
+
+    :param unit_type: Unit type to classify.
+    :return: Blocking-kind label.
+    """
+    if unit_type in (CodeUnitType.FUNCTION, CodeUnitType.METHOD):
+        return "callable"
+    return unit_type.name.lower()
 
 
 def _find_exact_duplicates(
@@ -27,18 +47,24 @@ def _find_exact_duplicates(
     :param method: Duplicate classification label.
     :return: Exact duplicate pairs for the selected hash field.
     """
-    by_hash: dict[str, list[CodeUnit]] = defaultdict(list)
+    by_hash: dict[tuple[str, str, str], list[CodeUnit]] = defaultdict(list)
 
     for unit in units:
         value = getattr(unit, hash_attr, None)
         if value:
-            by_hash[value].append(unit)
+            # Exact structural/token equality is intentionally same-language and
+            # same-blocking-kind. A C function and Rust function cannot become an
+            # "exact duplicate" merely because their canonical token streams
+            # align, but a function copied into a class as a method can.
+            by_hash[(unit.language, _block_kind(unit.unit_type), value)].append(unit)
 
     duplicates = []
     for group in by_hash.values():
         if len(group) <= 1:
             continue
         for a, b in combinations(group, 2):
+            if a.overlaps(b):
+                continue
             duplicates.append(DuplicatePair(unit_a=a, unit_b=b, similarity=1.0, method=method))
 
     return duplicates
@@ -48,13 +74,14 @@ def find_exact_pair_keys(units: list[CodeUnit]) -> set[tuple[str, str]]:
     """Return ordered uid pair keys for every exact-duplicate pair.
 
     Uses the same predicate as :func:`run_traditional_analysis` exact detection:
-    two units are exact duplicates when they share ``_ast_hash`` or ``_token_hash``.
+    two same-language units of the same blocking kind are exact duplicates when
+    they share a structural or token fingerprint.
 
     :param units: Candidate units to compare.
     :return: Ordered uid pair keys covering all exact-duplicate pairs.
     """
-    pairs = _find_exact_duplicates(units, "_ast_hash", "ast_hash") + _find_exact_duplicates(
-        units, "_token_hash", "token_hash"
+    pairs = _find_exact_duplicates(units, "structural_hash", "ast_hash") + _find_exact_duplicates(
+        units, "token_hash", "token_hash"
     )
     return {ordered_pair_key(pair.unit_a, pair.unit_b) for pair in pairs}
 
@@ -73,25 +100,45 @@ def jaccard_similarity(set_a: set[str], set_b: set[str]) -> float:
     return intersection / union if union > 0 else 0.0
 
 
+def collect_identifiers(node: ast.AST) -> set[str]:
+    """Collect normalized identifier names bound or referenced under one AST subtree.
+
+    :param node: AST subtree to scan.
+    :return: Identifier names excluding Python keywords, builtins, and digits.
+    """
+    identifiers = set()
+    for child in ast.walk(node):
+        if isinstance(child, ast.Name):
+            identifiers.add(child.id)
+        elif isinstance(child, (ast.FunctionDef, ast.ClassDef, ast.AsyncFunctionDef)):
+            identifiers.add(child.name)
+        elif isinstance(child, ast.arg):
+            identifiers.add(child.arg)
+    return _normalize_identifiers(identifiers)
+
+
 def extract_identifiers(source: str) -> set[str]:
     """Extract all identifiers from source code.
 
     :param source: Source text.
     :return: Identifier names found in the AST.
     """
-    identifiers = set()
     try:
         tree = ast.parse(source)
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Name):
-                identifiers.add(node.id)
-            elif isinstance(node, (ast.FunctionDef, ast.ClassDef, ast.AsyncFunctionDef)):
-                identifiers.add(node.name)
-            elif isinstance(node, ast.arg):
-                identifiers.add(node.arg)
     except SyntaxError:
-        pass
-    return _normalize_identifiers(identifiers)
+        return set()
+    return collect_identifiers(tree)
+
+
+def unit_identifier_set(unit: CodeUnit) -> set[str]:
+    """Return backend identifiers without reparsing non-Python source as Python.
+
+    :param unit: Code unit whose identifiers are needed.
+    :return: Identifier names for the unit.
+    """
+    if unit.identifiers or unit.language != "python":
+        return set(unit.identifiers)
+    return extract_identifiers(unit.source)
 
 
 def _normalize_identifiers(identifiers: set[str]) -> set[str]:
@@ -100,20 +147,93 @@ def _normalize_identifiers(identifiers: set[str]) -> set[str]:
     :param identifiers: Raw identifier names.
     :return: Normalized filtered identifiers.
     """
-    # dir(builtins) rather than dir(__builtins__): the latter is a plain dict
-    # inside imported modules, so it would filter dict methods instead of
-    # builtin names.
-    ignored = set(keyword.kwlist) | set(dir(builtins))
     normalized = set()
     for ident in identifiers:
         if not ident:
             continue
-        if ident in ignored:
+        if ident in _IGNORED_IDENTIFIERS:
             continue
         if ident.isdigit():
             continue
         normalized.add(ident)
     return normalized
+
+
+# The prefix bound and the exact score must agree at the cutoff. Without a
+# tolerance a float product landing a hair above an integer would shorten a
+# prefix by one token and drop a pair that verification would have accepted.
+_PREFIX_LENGTH_TOLERANCE = 1e-9
+
+
+def _block_jaccard_pairs(
+    group: list[CodeUnit],
+    identifier_sets: dict[str, set[str]],
+    threshold: float,
+) -> list[tuple[int, int, float]]:
+    """Find every above-threshold Jaccard pair in one block via prefix-filtered candidates.
+
+    Exact, not approximate: ``J(A, B) >= t`` forces ``|A & B| >= ceil(t * |X|)``
+    for either side, and two sets sorted in one common token order that share
+    that many elements must already share a token inside their
+    ``len - ceil(t * len) + 1`` prefixes, so no verifiable pair goes unproposed.
+
+    :param group: Units of one language/kind block, in report order.
+    :param identifier_sets: Identifier sets keyed by unit uid.
+    :param threshold: Jaccard cutoff.
+    :return: ``(index_a, index_b, similarity)`` triples sorted by index pair.
+    """
+    sets = [identifier_sets[unit.uid] for unit in group]
+    populated = [index for index, tokens in enumerate(sets) if tokens]
+
+    if threshold <= 0.0:
+        # At or below zero, disjoint sets clear the cutoff too, and prefix
+        # filtering only ever proposes pairs that share a token.
+        return [
+            (index_a, index_b, jaccard_similarity(sets[index_a], sets[index_b]))
+            for index_a, index_b in combinations(populated, 2)
+            if not group[index_a].overlaps(group[index_b])
+        ]
+
+    # Rarest tokens first, so prefixes are the most selective probes available.
+    # Only the order being common to the whole block matters for exactness.
+    frequencies: Counter[str] = Counter()
+    for index in populated:
+        frequencies.update(sets[index])
+    vocabulary = sorted(frequencies, key=lambda token: (frequencies[token], token))
+    ranks = {token: rank for rank, token in enumerate(vocabulary)}
+
+    postings: dict[str, list[int]] = {}
+    pairs: list[tuple[int, int, float]] = []
+    for index_b in populated:
+        set_b = sets[index_b]
+        size_b = len(set_b)
+        ordered = sorted(set_b, key=ranks.__getitem__)
+        prefix_length = size_b - math.ceil(threshold * size_b - _PREFIX_LENGTH_TOLERANCE) + 1
+        prefix = ordered[: max(prefix_length, 0)]
+
+        candidates: set[int] = set()
+        for token in prefix:
+            candidates.update(postings.get(token, ()))
+
+        for index_a in candidates:
+            set_a = sets[index_a]
+            size_a = len(set_a)
+            # J is bounded by the size ratio; expressing the bound as the same
+            # division the exact score uses keeps float rounding from pruning a
+            # pair that verification would accept.
+            if min(size_a, size_b) / max(size_a, size_b) < threshold:
+                continue
+            if group[index_a].overlaps(group[index_b]):
+                continue
+            similarity = jaccard_similarity(set_a, set_b)
+            if similarity >= threshold:
+                pairs.append((index_a, index_b, similarity))
+
+        for token in prefix:
+            postings.setdefault(token, []).append(index_b)
+
+    pairs.sort(key=lambda pair: pair[:2])
+    return pairs
 
 
 def find_near_duplicates_jaccard(
@@ -126,31 +246,25 @@ def find_near_duplicates_jaccard(
     :param threshold: Jaccard cutoff.
     :return: Near-duplicate pairs above threshold.
     """
-    identifier_sets = {unit.uid: extract_identifiers(unit.source) for unit in units}
+    identifier_sets = {unit.uid: unit_identifier_set(unit) for unit in units}
+
+    # Candidate blocking removes meaningless mixed-language/kind comparisons
+    # before the similarity join; functions and methods share a block.
+    groups: dict[tuple[str, str], list[CodeUnit]] = defaultdict(list)
+    for unit in units:
+        groups[(unit.language, _block_kind(unit.unit_type))].append(unit)
 
     duplicates = []
-    for i, a in enumerate(units):
-        for b in units[i + 1 :]:
-            # Skip if same file and overlapping lines (parent/child)
-            if a.file_path == b.file_path and not (
-                a.end_lineno < b.lineno or b.end_lineno < a.lineno
-            ):
-                continue
-
-            set_a = identifier_sets[a.uid]
-            set_b = identifier_sets[b.uid]
-            if not set_a or not set_b:
-                continue
-
-            size_ratio = min(len(set_a), len(set_b)) / max(len(set_a), len(set_b), 1)
-            if size_ratio < threshold / 2:
-                continue
-
-            sim = jaccard_similarity(set_a, set_b)
-            if sim >= threshold:
-                duplicates.append(
-                    DuplicatePair(unit_a=a, unit_b=b, similarity=sim, method="jaccard")
+    for group in groups.values():
+        for index_a, index_b, similarity in _block_jaccard_pairs(group, identifier_sets, threshold):
+            duplicates.append(
+                DuplicatePair(
+                    unit_a=group[index_a],
+                    unit_b=group[index_b],
+                    similarity=similarity,
+                    method="jaccard",
                 )
+            )
 
     return duplicates
 
@@ -196,9 +310,12 @@ def _extract_main_block_calls(file_path: Path) -> set[str]:
     :return: Function names called from the module entry block.
     """
     try:
-        source = file_path.read_text(encoding="utf-8")
+        # utf-8-sig matches the BOM-tolerant extractor read: a file that
+        # extraction accepts must not silently lose its __main__ references.
+        # ValueError covers CPython 3.11's embedded-NUL report.
+        source = file_path.read_text(encoding="utf-8-sig")
         tree = ast.parse(source)
-    except (OSError, SyntaxError, UnicodeDecodeError):
+    except (OSError, SyntaxError, UnicodeDecodeError, ValueError):
         return set()
 
     from codedupes.extractor import CallGraphVisitor
@@ -284,6 +401,10 @@ def build_reference_graph(units: list[CodeUnit], project_root: Path | None = Non
     :param project_root: Optional root for entry point resolution.
     :return: ``None``.
     """
+    units = [unit for unit in units if unit.language == "python"]
+    if not units:
+        return
+
     by_name: dict[str, list[CodeUnit]] = defaultdict(list)
     for unit in units:
         by_name[unit.name].append(unit)
@@ -332,9 +453,12 @@ def _extract_aliases(file_path: Path) -> dict[str, str]:
     :return: Alias map for name resolution.
     """
     try:
-        source = file_path.read_text(encoding="utf-8")
+        # utf-8-sig matches the BOM-tolerant extractor read: a file that
+        # extraction accepts must not silently lose its alias map.
+        # ValueError covers CPython 3.11's embedded-NUL report.
+        source = file_path.read_text(encoding="utf-8-sig")
         tree = ast.parse(source)
-    except (OSError, SyntaxError, UnicodeDecodeError):
+    except (OSError, SyntaxError, UnicodeDecodeError, ValueError):
         return {}
 
     aliases: dict[str, str] = {}
@@ -374,6 +498,8 @@ def find_potentially_unused(units: list[CodeUnit], strict_unused: bool = False) 
     """
     unused = []
     for unit in units:
+        if unit.language != "python":
+            continue
         if not strict_unused and unit.unit_type == CodeUnitType.FUNCTION and unit.is_public:
             continue
 
@@ -421,8 +547,8 @@ def run_traditional_analysis(
     if compute_unused:
         build_reference_graph(units, project_root=project_root)
 
-    ast_dupes = _find_exact_duplicates(units, "_ast_hash", "ast_hash")
-    token_dupes = _find_exact_duplicates(units, "_token_hash", "token_hash")
+    ast_dupes = _find_exact_duplicates(units, "structural_hash", "ast_hash")
+    token_dupes = _find_exact_duplicates(units, "token_hash", "token_hash")
     exact = _dedupe_duplicate_pairs(ast_dupes + token_dupes)
     logger.info(f"Found {len(exact)} exact duplicates")
 

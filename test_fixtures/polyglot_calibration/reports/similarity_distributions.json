@@ -1,0 +1,1234 @@
+{
+  "gte-modernbert-base": {
+    "c": {
+      "calibration": {
+        "model": "Alibaba-NLP/gte-modernbert-base",
+        "resolved_revision": "e7f32e3c00f91d699e8c43b53106206bcc72bb22",
+        "embedding_pipeline_schema": 5,
+        "embedding_runtime_identity": "e7aed934f076717fc73f",
+        "runtime_versions": {
+          "python": "3.12.13",
+          "torch": "2.13.0",
+          "transformers": "5.14.1",
+          "sentence-transformers": "5.6.1"
+        },
+        "codedupes_version": "0.4.0",
+        "mode": "distribution",
+        "semantic_task": "semantic-similarity",
+        "encode_plan": {
+          "code": {
+            "route": "symmetric",
+            "prompt": null
+          }
+        },
+        "requested_device": "cpu",
+        "embedding_space": {
+          "model_name": "Alibaba-NLP/gte-modernbert-base",
+          "resolved_revision": "e7f32e3c00f91d699e8c43b53106206bcc72bb22",
+          "runtime_variant": "route=symmetric\u0000prompt_set=0\u0000prompt=\u0000\u0000\u0000e7aed934f076717fc73f\u0000trc=0",
+          "source_commit": null
+        },
+        "dimension": 768,
+        "normalized": true,
+        "candidate_policy": {
+          "unit_types": [
+            "function",
+            "method"
+          ],
+          "min_recursive_statements": 3,
+          "include_private": true
+        },
+        "batch_size": 4,
+        "corpus_path": "test_fixtures/polyglot_calibration/c",
+        "corpus_sha256": "b31bc9c64517c16dc450f923a064b29e90c866c29d7928fe64c85543d4e66ead",
+        "labels_path": "test_fixtures/polyglot_calibration/labels/c.json",
+        "labels_sha256": "0469fa5c401db0842350fc0e1d477dde8a8f63cf940931e13740de1b5b5b4acb"
+      },
+      "units": 68,
+      "embedded": 67,
+      "min_recursive_statements": 3,
+      "exact": {
+        "count": 4,
+        "min": 1.0,
+        "p25": 1.0,
+        "median": 1.0,
+        "p75": 1.0,
+        "max": 1.0
+      },
+      "reformat": {
+        "count": 3,
+        "min": 0.9103,
+        "p25": 0.9332,
+        "median": 0.9561,
+        "p75": 0.9669,
+        "max": 0.9777
+      },
+      "doc_variant": {
+        "count": 3,
+        "min": 0.9569,
+        "p25": 0.9615,
+        "median": 0.9661,
+        "p75": 0.9679,
+        "max": 0.9697
+      },
+      "renamed": {
+        "count": 4,
+        "min": 0.6884,
+        "p25": 0.6984,
+        "median": 0.7189,
+        "p75": 0.7496,
+        "max": 0.7901
+      },
+      "near_rename": {
+        "count": 8,
+        "min": 0.6882,
+        "p25": 0.6983,
+        "median": 0.7215,
+        "p75": 0.7454,
+        "max": 0.7614
+      },
+      "near_translation": {
+        "count": 8,
+        "min": 0.639,
+        "p25": 0.6701,
+        "median": 0.7058,
+        "p75": 0.742,
+        "max": 0.828
+      },
+      "near_restructure": {
+        "count": 3,
+        "min": 0.6793,
+        "p25": 0.7167,
+        "median": 0.7542,
+        "p75": 0.7785,
+        "max": 0.8027,
+        "unembedded_pairs": 1
+      },
+      "negative_controls": {
+        "count": 15,
+        "min": 0.5566,
+        "p25": 0.5777,
+        "median": 0.6666,
+        "p75": 0.6981,
+        "max": 0.8597
+      },
+      "background": {
+        "count": 2178,
+        "min": 0.3418,
+        "p25": 0.4894,
+        "median": 0.5435,
+        "p75": 0.5988,
+        "max": 0.8844
+      }
+    },
+    "rust": {
+      "calibration": {
+        "model": "Alibaba-NLP/gte-modernbert-base",
+        "resolved_revision": "e7f32e3c00f91d699e8c43b53106206bcc72bb22",
+        "embedding_pipeline_schema": 5,
+        "embedding_runtime_identity": "e7aed934f076717fc73f",
+        "runtime_versions": {
+          "python": "3.12.13",
+          "torch": "2.13.0",
+          "transformers": "5.14.1",
+          "sentence-transformers": "5.6.1"
+        },
+        "codedupes_version": "0.4.0",
+        "mode": "distribution",
+        "semantic_task": "semantic-similarity",
+        "encode_plan": {
+          "code": {
+            "route": "symmetric",
+            "prompt": null
+          }
+        },
+        "requested_device": "cpu",
+        "embedding_space": {
+          "model_name": "Alibaba-NLP/gte-modernbert-base",
+          "resolved_revision": "e7f32e3c00f91d699e8c43b53106206bcc72bb22",
+          "runtime_variant": "route=symmetric\u0000prompt_set=0\u0000prompt=\u0000\u0000\u0000e7aed934f076717fc73f\u0000trc=0",
+          "source_commit": null
+        },
+        "dimension": 768,
+        "normalized": true,
+        "candidate_policy": {
+          "unit_types": [
+            "function",
+            "method"
+          ],
+          "min_recursive_statements": 3,
+          "include_private": true
+        },
+        "batch_size": 4,
+        "corpus_path": "test_fixtures/polyglot_calibration/rust",
+        "corpus_sha256": "aeb277a81fa2d73d9bf021202ecde0790a7b560afd708a5cfe66d477cdd36cb4",
+        "labels_path": "test_fixtures/polyglot_calibration/labels/rust.json",
+        "labels_sha256": "a3e7472d2e3603d095e0cc4e47b86dff9c0874829beed469e6b305ef2f33b70e"
+      },
+      "units": 74,
+      "embedded": 61,
+      "min_recursive_statements": 3,
+      "exact": {
+        "count": 4,
+        "min": 1.0,
+        "p25": 1.0,
+        "median": 1.0,
+        "p75": 1.0,
+        "max": 1.0
+      },
+      "reformat": {
+        "count": 3,
+        "min": 0.998,
+        "p25": 0.9983,
+        "median": 0.9986,
+        "p75": 0.9987,
+        "max": 0.9988
+      },
+      "doc_variant": {
+        "count": 3,
+        "min": 0.9525,
+        "p25": 0.9531,
+        "median": 0.9536,
+        "p75": 0.9556,
+        "max": 0.9576
+      },
+      "renamed": {
+        "count": 4,
+        "min": 0.6972,
+        "p25": 0.7491,
+        "median": 0.7772,
+        "p75": 0.7885,
+        "max": 0.7896
+      },
+      "near_rename": {
+        "count": 8,
+        "min": 0.6468,
+        "p25": 0.7234,
+        "median": 0.746,
+        "p75": 0.7651,
+        "max": 0.7992
+      },
+      "near_translation": {
+        "count": 2,
+        "min": 0.7002,
+        "p25": 0.703,
+        "median": 0.7058,
+        "p75": 0.7086,
+        "max": 0.7114,
+        "unembedded_pairs": 6
+      },
+      "near_restructure": {
+        "count": 4,
+        "min": 0.7252,
+        "p25": 0.7351,
+        "median": 0.7497,
+        "p75": 0.7706,
+        "max": 0.7995
+      },
+      "negative_controls": {
+        "count": 6,
+        "min": 0.5136,
+        "p25": 0.557,
+        "median": 0.5896,
+        "p75": 0.6123,
+        "max": 0.6697,
+        "unembedded_pairs": 9
+      },
+      "background": {
+        "count": 1802,
+        "min": 0.26,
+        "p25": 0.4527,
+        "median": 0.5124,
+        "p75": 0.5663,
+        "max": 0.7972
+      }
+    },
+    "javascript": {
+      "calibration": {
+        "model": "Alibaba-NLP/gte-modernbert-base",
+        "resolved_revision": "e7f32e3c00f91d699e8c43b53106206bcc72bb22",
+        "embedding_pipeline_schema": 5,
+        "embedding_runtime_identity": "e7aed934f076717fc73f",
+        "runtime_versions": {
+          "python": "3.12.13",
+          "torch": "2.13.0",
+          "transformers": "5.14.1",
+          "sentence-transformers": "5.6.1"
+        },
+        "codedupes_version": "0.4.0",
+        "mode": "distribution",
+        "semantic_task": "semantic-similarity",
+        "encode_plan": {
+          "code": {
+            "route": "symmetric",
+            "prompt": null
+          }
+        },
+        "requested_device": "cpu",
+        "embedding_space": {
+          "model_name": "Alibaba-NLP/gte-modernbert-base",
+          "resolved_revision": "e7f32e3c00f91d699e8c43b53106206bcc72bb22",
+          "runtime_variant": "route=symmetric\u0000prompt_set=0\u0000prompt=\u0000\u0000\u0000e7aed934f076717fc73f\u0000trc=0",
+          "source_commit": null
+        },
+        "dimension": 768,
+        "normalized": true,
+        "candidate_policy": {
+          "unit_types": [
+            "function",
+            "method"
+          ],
+          "min_recursive_statements": 3,
+          "include_private": true
+        },
+        "batch_size": 4,
+        "corpus_path": "test_fixtures/polyglot_calibration/javascript",
+        "corpus_sha256": "826a20709d88205179b83766e3bb7a7f060ea0aa7ff9849b30de7cfb319f0397",
+        "labels_path": "test_fixtures/polyglot_calibration/labels/javascript.json",
+        "labels_sha256": "e71d07a961e1cf89bb8cc91542bdf7c061864a17f699de1bdba70d29a0e7ea20"
+      },
+      "units": 79,
+      "embedded": 61,
+      "min_recursive_statements": 3,
+      "exact": {
+        "count": 4,
+        "min": 1.0,
+        "p25": 1.0,
+        "median": 1.0,
+        "p75": 1.0,
+        "max": 1.0
+      },
+      "reformat": {
+        "count": 3,
+        "min": 0.9464,
+        "p25": 0.955,
+        "median": 0.9636,
+        "p75": 0.9814,
+        "max": 0.9991
+      },
+      "doc_variant": {
+        "count": 3,
+        "min": 0.9573,
+        "p25": 0.9621,
+        "median": 0.9669,
+        "p75": 0.9685,
+        "max": 0.97
+      },
+      "renamed": {
+        "count": 4,
+        "min": 0.8195,
+        "p25": 0.888,
+        "median": 0.9257,
+        "p75": 0.944,
+        "max": 0.9545,
+        "unembedded_pairs": 1
+      },
+      "near_rename": {
+        "count": 6,
+        "min": 0.5691,
+        "p25": 0.6888,
+        "median": 0.7099,
+        "p75": 0.8055,
+        "max": 0.8478,
+        "unembedded_pairs": 2
+      },
+      "near_translation": {
+        "count": 3,
+        "min": 0.7289,
+        "p25": 0.7326,
+        "median": 0.7363,
+        "p75": 0.7682,
+        "max": 0.8001,
+        "unembedded_pairs": 5
+      },
+      "near_restructure": {
+        "count": 3,
+        "min": 0.6593,
+        "p25": 0.6746,
+        "median": 0.69,
+        "p75": 0.7333,
+        "max": 0.7766,
+        "unembedded_pairs": 1
+      },
+      "negative_controls": {
+        "count": 5,
+        "min": 0.4118,
+        "p25": 0.4178,
+        "median": 0.4429,
+        "p75": 0.4852,
+        "max": 0.5033,
+        "unembedded_pairs": 10
+      },
+      "background": {
+        "count": 1804,
+        "min": 0.2127,
+        "p25": 0.375,
+        "median": 0.4252,
+        "p75": 0.5011,
+        "max": 0.8254
+      }
+    },
+    "typescript": {
+      "calibration": {
+        "model": "Alibaba-NLP/gte-modernbert-base",
+        "resolved_revision": "e7f32e3c00f91d699e8c43b53106206bcc72bb22",
+        "embedding_pipeline_schema": 5,
+        "embedding_runtime_identity": "e7aed934f076717fc73f",
+        "runtime_versions": {
+          "python": "3.12.13",
+          "torch": "2.13.0",
+          "transformers": "5.14.1",
+          "sentence-transformers": "5.6.1"
+        },
+        "codedupes_version": "0.4.0",
+        "mode": "distribution",
+        "semantic_task": "semantic-similarity",
+        "encode_plan": {
+          "code": {
+            "route": "symmetric",
+            "prompt": null
+          }
+        },
+        "requested_device": "cpu",
+        "embedding_space": {
+          "model_name": "Alibaba-NLP/gte-modernbert-base",
+          "resolved_revision": "e7f32e3c00f91d699e8c43b53106206bcc72bb22",
+          "runtime_variant": "route=symmetric\u0000prompt_set=0\u0000prompt=\u0000\u0000\u0000e7aed934f076717fc73f\u0000trc=0",
+          "source_commit": null
+        },
+        "dimension": 768,
+        "normalized": true,
+        "candidate_policy": {
+          "unit_types": [
+            "function",
+            "method"
+          ],
+          "min_recursive_statements": 3,
+          "include_private": true
+        },
+        "batch_size": 4,
+        "corpus_path": "test_fixtures/polyglot_calibration/typescript",
+        "corpus_sha256": "1486d4e76d387a9fd82dd9954931bb26bb4bd31db82c91725bbe22ea190bf688",
+        "labels_path": "test_fixtures/polyglot_calibration/labels/typescript.json",
+        "labels_sha256": "54f9c2a1eef9ddcf369c32e2eadb080db0b113f280df4116e2f05a49bfe07c27"
+      },
+      "units": 73,
+      "embedded": 61,
+      "min_recursive_statements": 3,
+      "exact": {
+        "count": 4,
+        "min": 1.0,
+        "p25": 1.0,
+        "median": 1.0,
+        "p75": 1.0,
+        "max": 1.0
+      },
+      "reformat": {
+        "count": 4,
+        "min": 0.9653,
+        "p25": 0.9653,
+        "median": 0.9819,
+        "p75": 0.9986,
+        "max": 0.9989
+      },
+      "doc_variant": {
+        "count": 3,
+        "min": 0.9272,
+        "p25": 0.9383,
+        "median": 0.9493,
+        "p75": 0.9563,
+        "max": 0.9632
+      },
+      "renamed": {
+        "count": 5,
+        "min": 0.6486,
+        "p25": 0.7797,
+        "median": 0.7797,
+        "p75": 0.7869,
+        "max": 0.8758
+      },
+      "near_rename": {
+        "count": 7,
+        "min": 0.7185,
+        "p25": 0.7267,
+        "median": 0.7809,
+        "p75": 0.801,
+        "max": 0.8466,
+        "unembedded_pairs": 1
+      },
+      "near_translation": {
+        "count": 2,
+        "min": 0.7108,
+        "p25": 0.7235,
+        "median": 0.7362,
+        "p75": 0.7489,
+        "max": 0.7616,
+        "unembedded_pairs": 6
+      },
+      "near_restructure": {
+        "count": 4,
+        "min": 0.6694,
+        "p25": 0.688,
+        "median": 0.7319,
+        "p75": 0.8012,
+        "max": 0.8962
+      },
+      "negative_controls": {
+        "count": 14,
+        "min": 0.4198,
+        "p25": 0.5239,
+        "median": 0.57,
+        "p75": 0.6401,
+        "max": 0.7783,
+        "unembedded_pairs": 1
+      },
+      "background": {
+        "count": 1801,
+        "min": 0.2413,
+        "p25": 0.3913,
+        "median": 0.4425,
+        "p75": 0.5028,
+        "max": 0.7991
+      }
+    },
+    "python": {
+      "calibration": {
+        "model": "Alibaba-NLP/gte-modernbert-base",
+        "resolved_revision": "e7f32e3c00f91d699e8c43b53106206bcc72bb22",
+        "embedding_pipeline_schema": 5,
+        "embedding_runtime_identity": "e7aed934f076717fc73f",
+        "runtime_versions": {
+          "python": "3.12.13",
+          "torch": "2.13.0",
+          "transformers": "5.14.1",
+          "sentence-transformers": "5.6.1"
+        },
+        "codedupes_version": "0.4.0",
+        "mode": "distribution",
+        "semantic_task": "semantic-similarity",
+        "encode_plan": {
+          "code": {
+            "route": "symmetric",
+            "prompt": null
+          }
+        },
+        "requested_device": "cpu",
+        "embedding_space": {
+          "model_name": "Alibaba-NLP/gte-modernbert-base",
+          "resolved_revision": "e7f32e3c00f91d699e8c43b53106206bcc72bb22",
+          "runtime_variant": "route=symmetric\u0000prompt_set=0\u0000prompt=\u0000\u0000\u0000e7aed934f076717fc73f\u0000trc=0",
+          "source_commit": null
+        },
+        "dimension": 768,
+        "normalized": true,
+        "candidate_policy": {
+          "unit_types": [
+            "function",
+            "method"
+          ],
+          "min_recursive_statements": 3,
+          "include_private": true
+        },
+        "batch_size": 4,
+        "corpus_path": "test_fixtures/polyglot_calibration/python",
+        "corpus_sha256": "43deed0fdcf0eed447a58883eeba7afe9ff26de24b4d5d8df74c682177cad66f",
+        "labels_path": "test_fixtures/polyglot_calibration/labels/python.json",
+        "labels_sha256": "e43bac816cde43d174b0342898d49cde143b94448c571c3fdab0afaa9cb53121"
+      },
+      "units": 74,
+      "embedded": 65,
+      "min_recursive_statements": 3,
+      "exact": {
+        "count": 4,
+        "min": 1.0,
+        "p25": 1.0,
+        "median": 1.0,
+        "p75": 1.0,
+        "max": 1.0
+      },
+      "reformat": {
+        "count": 3,
+        "min": 0.9961,
+        "p25": 0.9963,
+        "median": 0.9965,
+        "p75": 0.9969,
+        "max": 0.9974
+      },
+      "doc_variant": {
+        "count": 3,
+        "min": 0.9297,
+        "p25": 0.9321,
+        "median": 0.9345,
+        "p75": 0.9418,
+        "max": 0.9491
+      },
+      "renamed": {
+        "count": 4,
+        "min": 0.7062,
+        "p25": 0.8065,
+        "median": 0.8413,
+        "p75": 0.8442,
+        "max": 0.8486
+      },
+      "near_rename": {
+        "count": 8,
+        "min": 0.7596,
+        "p25": 0.7827,
+        "median": 0.8164,
+        "p75": 0.838,
+        "max": 0.8487
+      },
+      "near_translation": {
+        "count": 4,
+        "min": 0.7436,
+        "p25": 0.7637,
+        "median": 0.7785,
+        "p75": 0.7941,
+        "max": 0.8169,
+        "unembedded_pairs": 4
+      },
+      "near_restructure": {
+        "count": 3,
+        "min": 0.7165,
+        "p25": 0.7654,
+        "median": 0.8143,
+        "p75": 0.8361,
+        "max": 0.858,
+        "unembedded_pairs": 1
+      },
+      "negative_controls": {
+        "count": 13,
+        "min": 0.5187,
+        "p25": 0.6145,
+        "median": 0.6882,
+        "p75": 0.7542,
+        "max": 0.7767,
+        "unembedded_pairs": 2
+      },
+      "background": {
+        "count": 2051,
+        "min": 0.3819,
+        "p25": 0.5536,
+        "median": 0.6025,
+        "p75": 0.6587,
+        "max": 0.875
+      }
+    }
+  },
+  "embeddinggemma-300m": {
+    "c": {
+      "calibration": {
+        "model": "unsloth/embeddinggemma-300m",
+        "resolved_revision": "bfa3c846ac738e62aa61806ef9112d34acb1dc5a",
+        "embedding_pipeline_schema": 5,
+        "embedding_runtime_identity": "e7aed934f076717fc73f",
+        "runtime_versions": {
+          "python": "3.12.13",
+          "torch": "2.13.0",
+          "transformers": "5.14.1",
+          "sentence-transformers": "5.6.1"
+        },
+        "codedupes_version": "0.4.0",
+        "mode": "distribution",
+        "semantic_task": "semantic-similarity",
+        "encode_plan": {
+          "code": {
+            "route": "symmetric",
+            "prompt": "task: sentence similarity | query: "
+          }
+        },
+        "requested_device": "cpu",
+        "embedding_space": {
+          "model_name": "unsloth/embeddinggemma-300m",
+          "resolved_revision": "bfa3c846ac738e62aa61806ef9112d34acb1dc5a",
+          "runtime_variant": "route=symmetric\u0000prompt_set=1\u0000prompt=task: sentence similarity | query: \u0000\u0000\u0000e7aed934f076717fc73f\u0000trc=0",
+          "source_commit": null
+        },
+        "dimension": 768,
+        "normalized": true,
+        "candidate_policy": {
+          "unit_types": [
+            "function",
+            "method"
+          ],
+          "min_recursive_statements": 3,
+          "include_private": true
+        },
+        "batch_size": 4,
+        "corpus_path": "test_fixtures/polyglot_calibration/c",
+        "corpus_sha256": "b31bc9c64517c16dc450f923a064b29e90c866c29d7928fe64c85543d4e66ead",
+        "labels_path": "test_fixtures/polyglot_calibration/labels/c.json",
+        "labels_sha256": "0469fa5c401db0842350fc0e1d477dde8a8f63cf940931e13740de1b5b5b4acb"
+      },
+      "units": 68,
+      "embedded": 67,
+      "min_recursive_statements": 3,
+      "exact": {
+        "count": 4,
+        "min": 1.0,
+        "p25": 1.0,
+        "median": 1.0,
+        "p75": 1.0,
+        "max": 1.0
+      },
+      "reformat": {
+        "count": 3,
+        "min": 0.9396,
+        "p25": 0.9399,
+        "median": 0.9402,
+        "p75": 0.9528,
+        "max": 0.9654
+      },
+      "doc_variant": {
+        "count": 3,
+        "min": 0.9625,
+        "p25": 0.9657,
+        "median": 0.9688,
+        "p75": 0.9738,
+        "max": 0.9787
+      },
+      "renamed": {
+        "count": 4,
+        "min": 0.7559,
+        "p25": 0.7873,
+        "median": 0.8137,
+        "p75": 0.8348,
+        "max": 0.8506
+      },
+      "near_rename": {
+        "count": 8,
+        "min": 0.7013,
+        "p25": 0.7759,
+        "median": 0.819,
+        "p75": 0.8428,
+        "max": 0.8585
+      },
+      "near_translation": {
+        "count": 8,
+        "min": 0.7086,
+        "p25": 0.7486,
+        "median": 0.7632,
+        "p75": 0.8289,
+        "max": 0.8724
+      },
+      "near_restructure": {
+        "count": 3,
+        "min": 0.7987,
+        "p25": 0.8169,
+        "median": 0.8351,
+        "p75": 0.8597,
+        "max": 0.8844,
+        "unembedded_pairs": 1
+      },
+      "negative_controls": {
+        "count": 15,
+        "min": 0.6022,
+        "p25": 0.6407,
+        "median": 0.6629,
+        "p75": 0.7429,
+        "max": 0.909
+      },
+      "background": {
+        "count": 2178,
+        "min": 0.4058,
+        "p25": 0.5255,
+        "median": 0.5624,
+        "p75": 0.6043,
+        "max": 0.909
+      }
+    },
+    "rust": {
+      "calibration": {
+        "model": "unsloth/embeddinggemma-300m",
+        "resolved_revision": "bfa3c846ac738e62aa61806ef9112d34acb1dc5a",
+        "embedding_pipeline_schema": 5,
+        "embedding_runtime_identity": "e7aed934f076717fc73f",
+        "runtime_versions": {
+          "python": "3.12.13",
+          "torch": "2.13.0",
+          "transformers": "5.14.1",
+          "sentence-transformers": "5.6.1"
+        },
+        "codedupes_version": "0.4.0",
+        "mode": "distribution",
+        "semantic_task": "semantic-similarity",
+        "encode_plan": {
+          "code": {
+            "route": "symmetric",
+            "prompt": "task: sentence similarity | query: "
+          }
+        },
+        "requested_device": "cpu",
+        "embedding_space": {
+          "model_name": "unsloth/embeddinggemma-300m",
+          "resolved_revision": "bfa3c846ac738e62aa61806ef9112d34acb1dc5a",
+          "runtime_variant": "route=symmetric\u0000prompt_set=1\u0000prompt=task: sentence similarity | query: \u0000\u0000\u0000e7aed934f076717fc73f\u0000trc=0",
+          "source_commit": null
+        },
+        "dimension": 768,
+        "normalized": true,
+        "candidate_policy": {
+          "unit_types": [
+            "function",
+            "method"
+          ],
+          "min_recursive_statements": 3,
+          "include_private": true
+        },
+        "batch_size": 4,
+        "corpus_path": "test_fixtures/polyglot_calibration/rust",
+        "corpus_sha256": "aeb277a81fa2d73d9bf021202ecde0790a7b560afd708a5cfe66d477cdd36cb4",
+        "labels_path": "test_fixtures/polyglot_calibration/labels/rust.json",
+        "labels_sha256": "a3e7472d2e3603d095e0cc4e47b86dff9c0874829beed469e6b305ef2f33b70e"
+      },
+      "units": 74,
+      "embedded": 61,
+      "min_recursive_statements": 3,
+      "exact": {
+        "count": 4,
+        "min": 1.0,
+        "p25": 1.0,
+        "median": 1.0,
+        "p75": 1.0,
+        "max": 1.0
+      },
+      "reformat": {
+        "count": 3,
+        "min": 0.9979,
+        "p25": 0.9985,
+        "median": 0.999,
+        "p75": 0.9991,
+        "max": 0.9992
+      },
+      "doc_variant": {
+        "count": 3,
+        "min": 0.951,
+        "p25": 0.9571,
+        "median": 0.9632,
+        "p75": 0.9662,
+        "max": 0.9692
+      },
+      "renamed": {
+        "count": 4,
+        "min": 0.8236,
+        "p25": 0.8453,
+        "median": 0.8541,
+        "p75": 0.8595,
+        "max": 0.871
+      },
+      "near_rename": {
+        "count": 8,
+        "min": 0.7787,
+        "p25": 0.8291,
+        "median": 0.8432,
+        "p75": 0.8495,
+        "max": 0.8811
+      },
+      "near_translation": {
+        "count": 2,
+        "min": 0.7854,
+        "p25": 0.7889,
+        "median": 0.7924,
+        "p75": 0.7959,
+        "max": 0.7994,
+        "unembedded_pairs": 6
+      },
+      "near_restructure": {
+        "count": 4,
+        "min": 0.8088,
+        "p25": 0.8206,
+        "median": 0.8318,
+        "p75": 0.8535,
+        "max": 0.8972
+      },
+      "negative_controls": {
+        "count": 6,
+        "min": 0.6011,
+        "p25": 0.6333,
+        "median": 0.7238,
+        "p75": 0.7449,
+        "max": 0.7858,
+        "unembedded_pairs": 9
+      },
+      "background": {
+        "count": 1802,
+        "min": 0.3409,
+        "p25": 0.5543,
+        "median": 0.5964,
+        "p75": 0.6394,
+        "max": 0.8009
+      }
+    },
+    "javascript": {
+      "calibration": {
+        "model": "unsloth/embeddinggemma-300m",
+        "resolved_revision": "bfa3c846ac738e62aa61806ef9112d34acb1dc5a",
+        "embedding_pipeline_schema": 5,
+        "embedding_runtime_identity": "e7aed934f076717fc73f",
+        "runtime_versions": {
+          "python": "3.12.13",
+          "torch": "2.13.0",
+          "transformers": "5.14.1",
+          "sentence-transformers": "5.6.1"
+        },
+        "codedupes_version": "0.4.0",
+        "mode": "distribution",
+        "semantic_task": "semantic-similarity",
+        "encode_plan": {
+          "code": {
+            "route": "symmetric",
+            "prompt": "task: sentence similarity | query: "
+          }
+        },
+        "requested_device": "cpu",
+        "embedding_space": {
+          "model_name": "unsloth/embeddinggemma-300m",
+          "resolved_revision": "bfa3c846ac738e62aa61806ef9112d34acb1dc5a",
+          "runtime_variant": "route=symmetric\u0000prompt_set=1\u0000prompt=task: sentence similarity | query: \u0000\u0000\u0000e7aed934f076717fc73f\u0000trc=0",
+          "source_commit": null
+        },
+        "dimension": 768,
+        "normalized": true,
+        "candidate_policy": {
+          "unit_types": [
+            "function",
+            "method"
+          ],
+          "min_recursive_statements": 3,
+          "include_private": true
+        },
+        "batch_size": 4,
+        "corpus_path": "test_fixtures/polyglot_calibration/javascript",
+        "corpus_sha256": "826a20709d88205179b83766e3bb7a7f060ea0aa7ff9849b30de7cfb319f0397",
+        "labels_path": "test_fixtures/polyglot_calibration/labels/javascript.json",
+        "labels_sha256": "e71d07a961e1cf89bb8cc91542bdf7c061864a17f699de1bdba70d29a0e7ea20"
+      },
+      "units": 79,
+      "embedded": 61,
+      "min_recursive_statements": 3,
+      "exact": {
+        "count": 4,
+        "min": 1.0,
+        "p25": 1.0,
+        "median": 1.0,
+        "p75": 1.0,
+        "max": 1.0
+      },
+      "reformat": {
+        "count": 3,
+        "min": 0.9434,
+        "p25": 0.9556,
+        "median": 0.9679,
+        "p75": 0.9834,
+        "max": 0.9989
+      },
+      "doc_variant": {
+        "count": 3,
+        "min": 0.931,
+        "p25": 0.9379,
+        "median": 0.9448,
+        "p75": 0.9546,
+        "max": 0.9644
+      },
+      "renamed": {
+        "count": 4,
+        "min": 0.884,
+        "p25": 0.9064,
+        "median": 0.9205,
+        "p75": 0.9279,
+        "max": 0.93,
+        "unembedded_pairs": 1
+      },
+      "near_rename": {
+        "count": 6,
+        "min": 0.7314,
+        "p25": 0.7864,
+        "median": 0.8403,
+        "p75": 0.8461,
+        "max": 0.9281,
+        "unembedded_pairs": 2
+      },
+      "near_translation": {
+        "count": 3,
+        "min": 0.7892,
+        "p25": 0.8129,
+        "median": 0.8366,
+        "p75": 0.8522,
+        "max": 0.8678,
+        "unembedded_pairs": 5
+      },
+      "near_restructure": {
+        "count": 3,
+        "min": 0.744,
+        "p25": 0.7737,
+        "median": 0.8034,
+        "p75": 0.8558,
+        "max": 0.9081,
+        "unembedded_pairs": 1
+      },
+      "negative_controls": {
+        "count": 5,
+        "min": 0.4762,
+        "p25": 0.5095,
+        "median": 0.5752,
+        "p75": 0.5909,
+        "max": 0.6149,
+        "unembedded_pairs": 10
+      },
+      "background": {
+        "count": 1804,
+        "min": 0.3646,
+        "p25": 0.4663,
+        "median": 0.5067,
+        "p75": 0.569,
+        "max": 0.8238
+      }
+    },
+    "typescript": {
+      "calibration": {
+        "model": "unsloth/embeddinggemma-300m",
+        "resolved_revision": "bfa3c846ac738e62aa61806ef9112d34acb1dc5a",
+        "embedding_pipeline_schema": 5,
+        "embedding_runtime_identity": "e7aed934f076717fc73f",
+        "runtime_versions": {
+          "python": "3.12.13",
+          "torch": "2.13.0",
+          "transformers": "5.14.1",
+          "sentence-transformers": "5.6.1"
+        },
+        "codedupes_version": "0.4.0",
+        "mode": "distribution",
+        "semantic_task": "semantic-similarity",
+        "encode_plan": {
+          "code": {
+            "route": "symmetric",
+            "prompt": "task: sentence similarity | query: "
+          }
+        },
+        "requested_device": "cpu",
+        "embedding_space": {
+          "model_name": "unsloth/embeddinggemma-300m",
+          "resolved_revision": "bfa3c846ac738e62aa61806ef9112d34acb1dc5a",
+          "runtime_variant": "route=symmetric\u0000prompt_set=1\u0000prompt=task: sentence similarity | query: \u0000\u0000\u0000e7aed934f076717fc73f\u0000trc=0",
+          "source_commit": null
+        },
+        "dimension": 768,
+        "normalized": true,
+        "candidate_policy": {
+          "unit_types": [
+            "function",
+            "method"
+          ],
+          "min_recursive_statements": 3,
+          "include_private": true
+        },
+        "batch_size": 4,
+        "corpus_path": "test_fixtures/polyglot_calibration/typescript",
+        "corpus_sha256": "1486d4e76d387a9fd82dd9954931bb26bb4bd31db82c91725bbe22ea190bf688",
+        "labels_path": "test_fixtures/polyglot_calibration/labels/typescript.json",
+        "labels_sha256": "54f9c2a1eef9ddcf369c32e2eadb080db0b113f280df4116e2f05a49bfe07c27"
+      },
+      "units": 73,
+      "embedded": 61,
+      "min_recursive_statements": 3,
+      "exact": {
+        "count": 4,
+        "min": 1.0,
+        "p25": 1.0,
+        "median": 1.0,
+        "p75": 1.0,
+        "max": 1.0
+      },
+      "reformat": {
+        "count": 4,
+        "min": 0.9734,
+        "p25": 0.9734,
+        "median": 0.9862,
+        "p75": 0.999,
+        "max": 0.9992
+      },
+      "doc_variant": {
+        "count": 3,
+        "min": 0.9591,
+        "p25": 0.9596,
+        "median": 0.9602,
+        "p75": 0.9699,
+        "max": 0.9795
+      },
+      "renamed": {
+        "count": 5,
+        "min": 0.8339,
+        "p25": 0.8339,
+        "median": 0.8559,
+        "p75": 0.8802,
+        "max": 0.9328
+      },
+      "near_rename": {
+        "count": 7,
+        "min": 0.7972,
+        "p25": 0.8493,
+        "median": 0.8729,
+        "p75": 0.8917,
+        "max": 0.9048,
+        "unembedded_pairs": 1
+      },
+      "near_translation": {
+        "count": 2,
+        "min": 0.8606,
+        "p25": 0.8706,
+        "median": 0.8805,
+        "p75": 0.8904,
+        "max": 0.9004,
+        "unembedded_pairs": 6
+      },
+      "near_restructure": {
+        "count": 4,
+        "min": 0.7432,
+        "p25": 0.7864,
+        "median": 0.8108,
+        "p75": 0.8561,
+        "max": 0.9617
+      },
+      "negative_controls": {
+        "count": 14,
+        "min": 0.5155,
+        "p25": 0.5891,
+        "median": 0.6407,
+        "p75": 0.7187,
+        "max": 0.8331,
+        "unembedded_pairs": 1
+      },
+      "background": {
+        "count": 1801,
+        "min": 0.3944,
+        "p25": 0.5033,
+        "median": 0.5462,
+        "p75": 0.5963,
+        "max": 0.8801
+      }
+    },
+    "python": {
+      "calibration": {
+        "model": "unsloth/embeddinggemma-300m",
+        "resolved_revision": "bfa3c846ac738e62aa61806ef9112d34acb1dc5a",
+        "embedding_pipeline_schema": 5,
+        "embedding_runtime_identity": "e7aed934f076717fc73f",
+        "runtime_versions": {
+          "python": "3.12.13",
+          "torch": "2.13.0",
+          "transformers": "5.14.1",
+          "sentence-transformers": "5.6.1"
+        },
+        "codedupes_version": "0.4.0",
+        "mode": "distribution",
+        "semantic_task": "semantic-similarity",
+        "encode_plan": {
+          "code": {
+            "route": "symmetric",
+            "prompt": "task: sentence similarity | query: "
+          }
+        },
+        "requested_device": "cpu",
+        "embedding_space": {
+          "model_name": "unsloth/embeddinggemma-300m",
+          "resolved_revision": "bfa3c846ac738e62aa61806ef9112d34acb1dc5a",
+          "runtime_variant": "route=symmetric\u0000prompt_set=1\u0000prompt=task: sentence similarity | query: \u0000\u0000\u0000e7aed934f076717fc73f\u0000trc=0",
+          "source_commit": null
+        },
+        "dimension": 768,
+        "normalized": true,
+        "candidate_policy": {
+          "unit_types": [
+            "function",
+            "method"
+          ],
+          "min_recursive_statements": 3,
+          "include_private": true
+        },
+        "batch_size": 4,
+        "corpus_path": "test_fixtures/polyglot_calibration/python",
+        "corpus_sha256": "43deed0fdcf0eed447a58883eeba7afe9ff26de24b4d5d8df74c682177cad66f",
+        "labels_path": "test_fixtures/polyglot_calibration/labels/python.json",
+        "labels_sha256": "e43bac816cde43d174b0342898d49cde143b94448c571c3fdab0afaa9cb53121"
+      },
+      "units": 74,
+      "embedded": 65,
+      "min_recursive_statements": 3,
+      "exact": {
+        "count": 4,
+        "min": 1.0,
+        "p25": 1.0,
+        "median": 1.0,
+        "p75": 1.0,
+        "max": 1.0
+      },
+      "reformat": {
+        "count": 3,
+        "min": 0.9968,
+        "p25": 0.9974,
+        "median": 0.9979,
+        "p75": 0.9984,
+        "max": 0.9989
+      },
+      "doc_variant": {
+        "count": 3,
+        "min": 0.9341,
+        "p25": 0.9361,
+        "median": 0.9382,
+        "p75": 0.9508,
+        "max": 0.9633
+      },
+      "renamed": {
+        "count": 4,
+        "min": 0.7445,
+        "p25": 0.7892,
+        "median": 0.8058,
+        "p75": 0.8271,
+        "max": 0.8857
+      },
+      "near_rename": {
+        "count": 8,
+        "min": 0.6459,
+        "p25": 0.7007,
+        "median": 0.7618,
+        "p75": 0.7982,
+        "max": 0.8269
+      },
+      "near_translation": {
+        "count": 4,
+        "min": 0.7175,
+        "p25": 0.7354,
+        "median": 0.7415,
+        "p75": 0.7422,
+        "max": 0.7439,
+        "unembedded_pairs": 4
+      },
+      "near_restructure": {
+        "count": 3,
+        "min": 0.7433,
+        "p25": 0.8015,
+        "median": 0.8596,
+        "p75": 0.8601,
+        "max": 0.8605,
+        "unembedded_pairs": 1
+      },
+      "negative_controls": {
+        "count": 13,
+        "min": 0.3693,
+        "p25": 0.4664,
+        "median": 0.4998,
+        "p75": 0.5595,
+        "max": 0.6737,
+        "unembedded_pairs": 2
+      },
+      "background": {
+        "count": 2051,
+        "min": 0.2449,
+        "p25": 0.3958,
+        "median": 0.4431,
+        "p75": 0.504,
+        "max": 0.8296
+      }
+    }
+  }
+}

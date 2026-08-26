@@ -12,7 +12,7 @@ import os
 import sys
 import textwrap
 import threading
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field
 from importlib import metadata as importlib_metadata
 from pathlib import Path
@@ -55,6 +55,7 @@ from codedupes.embedding_cache import (
     log_warning_once,
     resolve_cache_dir,
 )
+from codedupes.extractor import count_executable_statements
 from codedupes.logging_utils import quiet_unconfigured_dependency_loggers
 from codedupes.models import CodeUnit, DuplicatePair
 from codedupes.pairs import ordered_pair_key
@@ -109,6 +110,7 @@ _local_model_fingerprint_scope: dict[str, str | None] | None = None
 
 _TORCH_MIN_RELEASE = (2, 13)
 _TORCH_MAX_EXCLUSIVE_RELEASE = (3,)
+_PAIRWISE_SCAN_BLOCK_SIZE = 500
 
 EMBEDDINGGEMMA_QUERY_PREFIXES: dict[SemanticTask, str] = {
     "semantic-similarity": "task: sentence similarity | query: ",
@@ -162,6 +164,10 @@ class EmbeddingSpaceIdentity:
     a different checkpoint. It is excluded from equality because the identity
     comparison answers "same coordinate-system policy", which a branch label
     keys by label, not by commit.
+
+    A mutable-label corpus with no ``source_commit`` therefore carries no
+    provenance at all: queries against it bypass the query cache, because no
+    stored vector can be shown to share its checkpoint.
     """
 
     model_name: str
@@ -223,6 +229,25 @@ def _select_encode_fn(model: Any, route: EncodeRoute) -> Callable[..., np.ndarra
 
 class SemanticBackendError(RuntimeError):
     """Raised when semantic model loading or inference backend is incompatible."""
+
+
+class SemanticInputTooLongError(SemanticBackendError):
+    """Raised when a semantic input exceeds the selected model's context window."""
+
+
+@dataclass(frozen=True)
+class SemanticContextOverflow:
+    """One corpus unit skipped because it cannot fit the model context window.
+
+    Duplicate detection is recall-first: an over-context definition is dropped
+    from the semantic corpus (never truncated, never embedded) and reported,
+    instead of ending the whole run. Query inputs keep failing hard, because a
+    silently ignored query would answer a question the user did not ask.
+    """
+
+    unit: CodeUnit
+    token_count: int
+    max_tokens: int
 
 
 class InvalidEmbeddingError(RuntimeError):
@@ -755,6 +780,32 @@ def _resolve_load_revision(model_name: str, explicit_revision: str | None) -> st
     return _resolve_model_revision(model_name, explicit_revision)
 
 
+def _resolve_load_revision_for_cache_policy(
+    model_name: str,
+    explicit_revision: str | None,
+    cache_revision: str | None,
+    *,
+    strict: bool,
+) -> str | None:
+    """Resolve the model-load revision under the active cache policy.
+
+    Strict mode has already paid to resolve a mutable hub label to an
+    immutable commit before cache lookup. Loading by that same commit is
+    required: loading by the original branch label could reuse a process-wide
+    model instance from the branch's previous commit while cache keys address
+    the new one.
+
+    :param model_name: Requested model identifier.
+    :param explicit_revision: Optional explicit revision override.
+    :param cache_revision: Revision selected for cache identity.
+    :param strict: Whether strict revision-cache policy is active.
+    :return: Concrete strict commit when available, otherwise the normal load revision.
+    """
+    if strict and cache_revision is not None and _is_hf_commit_hash(cache_revision):
+        return cache_revision
+    return _resolve_load_revision(model_name, explicit_revision)
+
+
 def _resolve_revision_for_cache(
     model_name: str,
     explicit_revision: str | None,
@@ -958,7 +1009,27 @@ def _select_cache_miss_indices(
 # Bump whenever codedupes' own embedding pipeline changes in a vector-affecting
 # way (prompt handling, routing, normalization, truncation policy, load dtype),
 # so cached vectors from an older pipeline can never mix into a new matrix.
-EMBEDDING_PIPELINE_SCHEMA = 3
+# 5: over-context inputs are rejected/skipped instead of silently truncated;
+# schema-4 shards may hold truncated vectors for texts near the context limit.
+EMBEDDING_PIPELINE_SCHEMA = 5
+
+
+# No schema bump: cache keys are content-addressed on the prepared text itself,
+# and this leaves the text -> vector mapping untouched for every text that still
+# maps to its old key. LF-corpus entries stay valid; a CRLF-containing unit
+# simply re-keys onto the LF text and re-embeds once.
+def _prepare_embedding_text(source: str) -> str:
+    """Normalize one unit's source into its embedding input text.
+
+    Line endings are normalized so one logical text has one cache key and one
+    vector no matter how the file was checked out. Tree-sitter backends keep the
+    bytes from disk, so without this a CRLF checkout embeds - and caches - the
+    same code separately from its LF twin and can score the pair below gate.
+
+    :param source: Raw unit source text.
+    :return: Prepared embedding input with LF line endings and no outer blanks.
+    """
+    return source.replace("\r\n", "\n").replace("\r", "\n").strip()
 
 
 def _embedding_runtime_fingerprint() -> str:
@@ -1668,50 +1739,6 @@ def _cache_write_allowed(
     )
 
 
-class _ExecutableStatementCounter(ast.NodeVisitor):
-    """Count executable statements recursively, stopping at nested scopes."""
-
-    def __init__(self) -> None:
-        """Initialize the running statement count."""
-        self.count = 0
-
-    def generic_visit(self, node: ast.AST) -> None:
-        """Count ``node`` when it is a statement, then recurse into its children.
-
-        :param node: AST node being visited.
-        :return: ``None``.
-        """
-        if isinstance(node, ast.stmt):
-            self.count += 1
-        super().generic_visit(node)
-
-    # Nested scopes count as one declaration; their implementation belongs to a
-    # separate CodeUnit and must not inflate the enclosing unit's count.
-    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
-        """Count a nested function as one declaration without descending into it.
-
-        :param node: Nested function definition node.
-        :return: ``None``.
-        """
-        self.count += 1
-
-    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
-        """Count a nested async function as one declaration without descending into it.
-
-        :param node: Nested async function definition node.
-        :return: ``None``.
-        """
-        self.count += 1
-
-    def visit_ClassDef(self, node: ast.ClassDef) -> None:
-        """Count a nested class as one declaration without descending into it.
-
-        :param node: Nested class definition node.
-        :return: ``None``.
-        """
-        self.count += 1
-
-
 def get_code_unit_statement_count(unit: CodeUnit) -> int:
     """Get effective statement count for a unit, excluding docstring.
 
@@ -1724,6 +1751,9 @@ def get_code_unit_statement_count(unit: CodeUnit) -> int:
     :param unit: Unit to measure.
     :return: Number of executable statements.
     """
+    if unit.statement_count is not None:
+        return unit.statement_count
+
     if not unit.source:
         return 0
 
@@ -1742,24 +1772,11 @@ def get_code_unit_statement_count(unit: CodeUnit) -> int:
         return 0
 
     top_node = tree.body[0]
-    body = []
     if isinstance(top_node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
         body = top_node.body
     else:
         body = tree.body
-
-    if (
-        body
-        and isinstance(body[0], ast.Expr)
-        and isinstance(body[0].value, ast.Constant)
-        and isinstance(body[0].value.value, str)
-    ):
-        body = body[1:]
-
-    counter = _ExecutableStatementCounter()
-    for statement in body:
-        counter.visit(statement)
-    return counter.count
+    return count_executable_statements(body)
 
 
 def _resolve_model_dtype(family: str, device: str) -> Any:
@@ -2224,50 +2241,103 @@ def _move_model_to_cpu(model: object) -> None:
         _set_model_execution_device("cpu")
 
 
-def _truncate_code_if_needed(text: str, unit_name: str, model: Any) -> str:
-    """Truncate code input to the model max token length with best-effort safety.
+def _model_context_overflow(
+    text: str,
+    input_name: str,
+    model: Any,
+    prompt: str | None = None,
+) -> tuple[int, int] | None:
+    """Measure whether one prompted input overflows the model context window.
 
-    :param text: Source text to truncate.
-    :param unit_name: Unit name for logging context.
+    SentenceTransformers prepends the encode prompt to the text and only then
+    tokenizes with truncation at ``max_seq_length`` (see ``Transformer.preprocess``
+    and ``prepend_prompt_to_texts``), so the guard must measure exactly what the
+    backend tokenizes: ``prompt + text``. Measuring the bare text lets a prompt's
+    worth of trailing tokens be silently dropped.
+
+    :param text: Complete source or query text.
+    :param input_name: Human-readable input name used in debug logging.
     :param model: Model object with tokenizer metadata.
-    :return: Possibly truncated source text.
+    :param prompt: Prompt the backend prepends before tokenizing, when any.
+    :return: ``(token_count, max_tokens)`` on overflow, else ``None`` (also when
+        the model exposes no usable context metadata).
     """
     max_tokens = getattr(model, "max_seq_length", None)
     tokenizer = getattr(model, "tokenizer", None)
 
     if not max_tokens or not tokenizer:
-        return text
+        return None
 
     try:
-        token_ids = tokenizer.encode(text, add_special_tokens=False)
+        token_ids = tokenizer.encode(f"{prompt or ''}{text}", add_special_tokens=True)
     except Exception:
         logger.debug(
-            f"Tokenization failed while preparing '{unit_name}'; using full text", exc_info=True
+            f"Tokenization failed while checking context for '{input_name}'; "
+            "passing the complete text to the backend",
+            exc_info=True,
         )
-        return text
+        return None
 
     token_count = len(token_ids)
     if token_count <= max_tokens:
+        return None
+    return token_count, int(max_tokens)
+
+
+def _require_text_within_model_context(
+    text: str,
+    input_name: str,
+    model: Any,
+    prompt: str | None = None,
+) -> str:
+    """Reject text that cannot fit completely in the model context window.
+
+    Partial definitions can erase a function's return value or side effects while
+    still producing an ordinary high-similarity vector. Semantic claims therefore
+    fail closed until a separately calibrated long-input aggregation policy exists.
+
+    :param text: Complete source or query text.
+    :param input_name: Human-readable input name for the error.
+    :param model: Model object with tokenizer metadata.
+    :param prompt: Prompt the backend prepends before tokenizing, when any.
+    :return: The original text when it fits or no context metadata is exposed.
+    :raises SemanticInputTooLongError: If the complete tokenized text, including
+        the prepended prompt, exceeds the model context window.
+    """
+    overflow = _model_context_overflow(text, input_name, model, prompt)
+    if overflow is None:
         return text
 
-    logger.warning(
-        f"Code unit '{unit_name}' is long ({token_count} tokens), truncating to {max_tokens} "
-        "tokens for semantic embedding"
+    raise SemanticInputTooLongError(_context_overflow_message(input_name, *overflow))
+
+
+def _context_overflow_message(input_name: str, token_count: int, max_tokens: int) -> str:
+    """Describe one input that cannot fit the model context window.
+
+    :param input_name: Human-readable input name.
+    :param token_count: Tokens the backend would produce, prompt included.
+    :param max_tokens: Model context window in tokens.
+    :return: Message for the raised error.
+    """
+    return (
+        f"Semantic input '{input_name}' is {token_count} tokens including the encode prompt, "
+        f"exceeding the selected model's {max_tokens}-token context window. No semantic result "
+        "was produced; use a model with a larger context window or exclude this input."
     )
-    try:
-        truncated_ids = tokenizer.encode(
-            text,
-            add_special_tokens=False,
-            truncation=True,
-            max_length=max_tokens,
-        )
-        return tokenizer.decode(truncated_ids, skip_special_tokens=True)
-    except Exception:
-        logger.debug(
-            f"Token decode failed while truncating '{unit_name}'; using char fallback",
-            exc_info=True,
-        )
-        return text[: max_tokens * 4]
+
+
+def describe_context_overflow(overflow: SemanticContextOverflow) -> str:
+    """Describe one skipped over-context unit for logs and user-facing diagnostics.
+
+    :param overflow: Skipped unit and its measured token counts.
+    :return: Single-sentence explanation naming the unit and both token counts.
+    """
+    return (
+        f"{overflow.unit.qualified_name} is {overflow.token_count} tokens including the encode "
+        f"prompt, exceeding the selected model's {overflow.max_tokens}-token context window; "
+        "it is excluded from semantic comparison. Use a model with a larger context window, or "
+        "split the definition, to include it."
+    )
 
 
 def _embedding_cache_namespace(mode: str, variant: str) -> str:
@@ -2576,16 +2646,17 @@ def _compute_embeddings_unlocked(
     use_cache: bool = True,
     cache_scope: Path | None = None,
     strict_revision_cache: bool = False,
+    overflow_report: list[SemanticContextOverflow] | None = None,
 ) -> tuple[np.ndarray, EmbeddingSpaceIdentity]:
     """Compute normalized NumPy embeddings for all code units.
 
     Embeddings are converted to NumPy immediately, keeping pairwise similarity
     computation on CPU and avoiding long-lived Metal tensors beyond model weights.
 
-    Cache keys are derived from the pre-truncation prepared text so they can be
+    Cache keys are derived from the complete prepared text so they can be
     computed without loading the model; when every unit hits the on-disk cache,
     the model is never loaded at all. On a cache miss, only the miss texts are
-    truncated and encoded through the existing OOM-retry ladder.
+    context-checked and encoded through the existing OOM-retry ladder.
 
     :param units: Code units to embed, preserved in input order.
     :param model_name: Model alias or identifier, defaults to ``DEFAULT_MODEL``.
@@ -2606,10 +2677,15 @@ def _compute_embeddings_unlocked(
     :param strict_revision_cache: Whether an unpinned hub revision resolves to a
         concrete commit hash (disabling caching when unmappable) instead of the
         requested revision label, defaults to ``False``.
+    :param overflow_report: When provided, over-context units are skipped instead
+        of raising: their rows are dropped from the returned matrix (so it is no
+        longer row-aligned with ``units``) and appended here in input order.
     :return: Normalized embedding matrix and its effective vector-space identity.
     :raises ValueError: If ``batch_size`` is not positive.
     :raises SemanticBackendError: If an explicitly requested device is unavailable,
         even when the corpus is empty or every embedding is already cached.
+    :raises SemanticInputTooLongError: If a unit exceeds the model context window
+        and no ``overflow_report`` collector was provided.
     """
     if batch_size <= 0:
         raise ValueError("batch_size must be > 0")
@@ -2648,7 +2724,7 @@ def _compute_embeddings_unlocked(
         if identity_local_model_path is not None
         else _resolve_revision_for_cache(model_name, revision, strict=strict_revision_cache)
     )
-    prepared_texts = [unit.source.strip() for unit in units]
+    prepared_texts = [_prepare_embedding_text(unit.source) for unit in units]
 
     def _effective_identity(
         effective_device: str,
@@ -2700,6 +2776,7 @@ def _compute_embeddings_unlocked(
             use_cache=use_cache,
             cache_scope=cache_scope,
             strict_revision_cache=strict_revision_cache,
+            overflow_report=overflow_report,
         )
 
     def _coherence_break_reason(current_model: object) -> str | None:
@@ -2769,6 +2846,17 @@ def _compute_embeddings_unlocked(
         )
         hits = lookup.vectors
         hit_source_commit = lookup.source_commit
+        if (
+            hits
+            and _revision_is_mutable_label(model_name, cache_revision)
+            and hit_source_commit is None
+        ):
+            logger.warning(
+                f"Ignoring {len(hits)} cached vectors for branch {cache_revision!r} "
+                "because their source commit is unknown; mutable-revision rows "
+                "without provenance cannot be reused safely"
+            )
+            hits = {}
 
     # Duplicate code units share one cache key, so compare against the covered
     # keys rather than the unique-hit count: len(hits) undercounts coverage.
@@ -2788,7 +2876,12 @@ def _compute_embeddings_unlocked(
             source_commit=hit_source_commit,
         )
 
-    resolved_revision = _resolve_load_revision(model_name, revision)
+    resolved_revision = _resolve_load_revision_for_cache_policy(
+        model_name,
+        revision,
+        cache_revision,
+        strict=strict_revision_cache,
+    )
     resolved_device = _prepare_semantic_device(
         device,
         mps_fallback=mps_fallback,
@@ -2859,10 +2952,9 @@ def _compute_embeddings_unlocked(
         # hit discarded. A coherent current shard is not enough on its own: a
         # concurrent run can purge and republish the shard under the loaded
         # commit after this run copied its hits, so the hits' own snapshot
-        # provenance is compared as well. An unknown loaded commit stays
-        # fail-open by design: loose mode keeps serving warm even when a
-        # backend cannot report its checkpoint, and the provenance-less rows
-        # it writes are purged by the first commit-reporting load.
+        # provenance is compared as well. If the loaded commit is unknown,
+        # neither old hits nor fresh writes can be tied to one checkpoint, so
+        # this call bypasses the entire shard and recomputes every row.
         loaded_commit = _get_loaded_model_commit_hash(model)
         if loaded_commit is not None:
             corpus_source_commit = loaded_commit
@@ -2887,32 +2979,107 @@ def _compute_embeddings_unlocked(
                     f"{len(hits)} pre-load hits so one matrix never mixes two checkpoints"
                 )
                 hits = {}
+        else:
+            logger.warning(
+                f"Loaded model for mutable branch {cache_revision!r} did not report "
+                "a source commit; bypassing all persistent embeddings for this corpus "
+                "and for queries against it, so one comparison cannot mix checkpoints"
+            )
+            # The identity keeps source_commit=None, which is what makes a
+            # query against this matrix bypass its own cache as well: no query
+            # row can be shown to come from the checkpoint used here.
+            cache = None
+            cache_revision = None
+            cache_keys = None
+            hits = {}
 
-    def _truncated_miss_texts(indices: list[int]) -> list[str]:
-        """Truncate prepared texts for the given miss-row indices.
+    # Over-context measurements keyed by prepared text, because duplicate
+    # sources share one cache key: only one representative row is checked, and
+    # every row carrying that text must be dropped with it.
+    overflow_by_text: dict[str, tuple[int, int]] = {}
+
+    def _validated_miss_texts(indices: list[int]) -> tuple[list[int], list[str]]:
+        """Validate prepared texts for the given miss-row indices.
 
         Shared by the primary encode call and the dimension-mismatch retry so
-        both truncate identically against the currently loaded ``model``.
+        both enforce the same context policy against the loaded ``model``.
 
         :param indices: Row indices requiring encoding.
-        :return: Possibly truncated texts, row-aligned with ``indices``.
+        :return: Encodable row indices and their complete texts, row-aligned.
         """
-        return [
-            _truncate_code_if_needed(prepared_texts[i], units[i].qualified_name, model)
-            for i in indices
-        ]
+        encodable: list[int] = []
+        texts: list[str] = []
+        for i in indices:
+            text = prepared_texts[i]
+            overflow = _model_context_overflow(
+                text,
+                units[i].qualified_name,
+                model,
+                encode_plan.prompt,
+            )
+            if overflow is None:
+                encodable.append(i)
+                texts.append(text)
+                continue
+            if overflow_report is None:
+                # No collector: the caller wants the hard failure.
+                raise SemanticInputTooLongError(
+                    _context_overflow_message(units[i].qualified_name, *overflow)
+                )
+            overflow_by_text[text] = overflow
+        return encodable, texts
 
-    miss_indices = _select_cache_miss_indices(cache_keys, hits, len(units))
-    miss_texts = _truncated_miss_texts(miss_indices)
+    def _rows_within_context() -> list[int]:
+        """Select the rows that survive the context policy, in input order.
+
+        :return: Row indices whose prepared text fits the model context window.
+        """
+        if not overflow_by_text:
+            return list(range(len(units)))
+        return [index for index, text in enumerate(prepared_texts) if text not in overflow_by_text]
+
+    def _publish_overflow_report(kept_rows: list[int]) -> None:
+        """Report every dropped row to the caller's collector, in input order.
+
+        :param kept_rows: Row indices that survived the context policy.
+        :return: ``None``.
+        """
+        if overflow_report is None or not overflow_by_text:
+            return
+        kept = set(kept_rows)
+        for index, unit in enumerate(units):
+            if index in kept:
+                continue
+            token_count, max_tokens = overflow_by_text[prepared_texts[index]]
+            skipped = SemanticContextOverflow(unit, token_count, max_tokens)
+            overflow_report.append(skipped)
+            logger.warning(f"Skipping {describe_context_overflow(skipped)}")
+
+    miss_indices, miss_texts = _validated_miss_texts(
+        _select_cache_miss_indices(cache_keys, hits, len(units))
+    )
+    kept_rows = _rows_within_context()
     cache_covered_rows = (
         sum(1 for key in cache_keys if key in hits) if cache_keys is not None else 0
     )
-    reused_duplicate_rows = len(units) - cache_covered_rows - len(miss_indices)
+    reused_duplicate_rows = len(kept_rows) - cache_covered_rows - len(miss_indices)
 
     logger.info(
         f"Computing embeddings for {len(miss_texts)} unique inputs on {execution_device} "
         f"({cache_covered_rows} cache-covered rows, {reused_duplicate_rows} duplicate rows reused)"
     )
+
+    if not miss_texts:
+        # Every row still needing an encode was dropped for context overflow;
+        # whatever remains is already covered by cache hits.
+        _publish_overflow_report(kept_rows)
+        identity = _effective_identity(
+            device, identity_revision, resolved_device, source_commit=corpus_source_commit
+        )
+        if not kept_rows or cache_keys is None:
+            return np.zeros((0, 0), dtype=np.float32), identity
+        return _assemble_cached_matrix([cache_keys[i] for i in kept_rows], hits), identity
+
     encode_fn = _select_encode_fn(model, encode_plan.route)
 
     def _encode_miss_texts(texts: list[str]) -> np.ndarray:
@@ -2951,27 +3118,33 @@ def _compute_embeddings_unlocked(
                 f"not match the loaded model ({dim}); re-embedding all units."
             )
             hits = {}
-            miss_indices = _select_cache_miss_indices(cache_keys, hits, len(units))
             # Re-read the live device: a mid-encode accelerator fallback during
             # the first encode call is not reflected by replaying the stale
             # execution_device captured before that call, and this closure
             # variable is what _encode_miss_texts passes as initial_device.
             execution_device = _get_effective_model_device(model, resolved_device)
-            miss_vectors = _encode_miss_texts(_truncated_miss_texts(miss_indices))
+            miss_indices, retry_texts = _validated_miss_texts(
+                _select_cache_miss_indices(cache_keys, hits, len(units))
+            )
+            kept_rows = _rows_within_context()
+            miss_vectors = _encode_miss_texts(retry_texts)
             coherence_break_reason = _coherence_break_reason(model)
             if coherence_break_reason is not None:
                 return _restart_faithfully_on_cpu(coherence_break_reason)
+
+    _publish_overflow_report(kept_rows)
     if cache_keys is None:
-        matrix = np.empty((len(units), dim), dtype=np.float32)
-        for local_idx, global_idx in enumerate(miss_indices):
-            matrix[global_idx] = miss_vectors[local_idx]
+        rows_by_index = {global_idx: local_idx for local_idx, global_idx in enumerate(miss_indices)}
+        matrix = np.empty((len(kept_rows), dim), dtype=np.float32)
+        for out_row, global_idx in enumerate(kept_rows):
+            matrix[out_row] = miss_vectors[rows_by_index[global_idx]]
     else:
         vectors_by_key = dict(hits)
         vectors_by_key.update(
             (cache_keys[global_idx], miss_vectors[local_idx])
             for local_idx, global_idx in enumerate(miss_indices)
         )
-        matrix = _assemble_cached_matrix(cache_keys, vectors_by_key)
+        matrix = _assemble_cached_matrix([cache_keys[i] for i in kept_rows], vectors_by_key)
 
     if (
         cache is not None
@@ -3015,6 +3188,7 @@ def compute_embeddings_with_identity(
     use_cache: bool = True,
     cache_scope: Path | None = None,
     strict_revision_cache: bool = False,
+    overflow_report: list[SemanticContextOverflow] | None = None,
 ) -> tuple[np.ndarray, EmbeddingSpaceIdentity]:
     """Compute embeddings and identity under the shared model lock.
 
@@ -3037,6 +3211,9 @@ def compute_embeddings_with_identity(
     :param strict_revision_cache: Whether an unpinned hub revision resolves to a
         concrete commit hash (disabling caching when unmappable) instead of the
         requested revision label, defaults to ``False``.
+    :param overflow_report: When provided, over-context units are skipped instead
+        of raising: their rows are dropped from the returned matrix (so it is no
+        longer row-aligned with ``units``) and appended here in input order.
     :return: Normalized embedding matrix and its effective vector-space identity.
     """
     # Import-sensitive runtime variables (MPS operator fallback above all) must
@@ -3058,6 +3235,7 @@ def compute_embeddings_with_identity(
             mps_fallback=mps_fallback,
             mps_memory_fraction=mps_memory_fraction,
             strict_revision_cache=strict_revision_cache,
+            overflow_report=overflow_report,
         )
 
 
@@ -3122,28 +3300,63 @@ def find_semantic_duplicates(
     embeddings: np.ndarray,
     threshold: float,
     exclude_exact: set[tuple[str, str]] | None = None,
+    cross_language: bool = False,
+    language_thresholds: Mapping[str, float] | None = None,
 ) -> list[DuplicatePair]:
-    """Find semantically similar code units via embedding cosine similarity.
+    """Find semantic duplicate candidates, same-language by default.
+
+    Query search intentionally spans languages, but duplicate claims are
+    calibrated within one language, so pair generation partitions by language
+    unless ``cross_language`` opts in. Partitioning before the matrix multiply
+    also avoids paying for cross-language pairs that the product never reports.
+
+    Each language group is scanned at its own calibrated gate, so one loosely
+    gated language cannot force every other language's scan down to the loosest
+    floor and build pairs that are discarded moments later. Cross-language pairs
+    are uncalibrated, so an opted-in mixed pair uses the looser of its two
+    language gates (recall-first); for a same-language pair that reduces to that
+    language's single gate.
 
     :param units: Candidate units in the same order as ``embeddings``.
     :param embeddings: Embedding matrix.
-    :param threshold: Minimum cosine similarity.
+    :param threshold: Minimum cosine similarity for languages without a
+        calibrated gate in ``language_thresholds``.
     :param exclude_exact: Pairs to exclude from semantic output.
+    :param cross_language: Also generate pairs across languages (uncalibrated).
+    :param language_thresholds: Per-language duplicate gates; ``None`` applies
+        ``threshold`` flat to every language.
     :return: Similar pairs sorted by confidence.
     """
     exclude_exact = exclude_exact or set()
-    n = len(units)
+    if not np.isfinite(threshold) or not 0.0 <= threshold <= 1.0:
+        raise ValueError("threshold must be finite and in [0.0, 1.0]")
 
-    logger.info(f"Computing pairwise similarities for {n} units")
+    gates = dict(language_thresholds or {})
+    for language, gate in gates.items():
+        if not np.isfinite(gate) or not 0.0 <= gate <= 1.0:
+            raise ValueError(f"language_thresholds[{language!r}] must be finite and in [0.0, 1.0]")
+    groups: dict[str, list[int]] = {}
+    if cross_language:
+        groups["*"] = list(range(len(units)))
+    else:
+        for index, unit in enumerate(units):
+            groups.setdefault(unit.language, []).append(index)
 
-    duplicates = []
+    pair_count = sum(len(indices) * (len(indices) - 1) // 2 for indices in groups.values())
+    scope = "cross-language" if cross_language else "same-language"
+    logger.info(
+        f"Computing {scope} pairwise similarities for "
+        f"{len(units)} units ({pair_count} candidate pairs)"
+    )
+
+    duplicates: list[DuplicatePair] = []
 
     def _types_compatible(unit_a: CodeUnit, unit_b: CodeUnit) -> bool:
         """Check whether unit kinds are compatible for semantic comparison.
 
-        :param unit_a: First unit.
-        :param unit_b: Second unit.
-        :return: ``True`` when types are comparable.
+        :param unit_a: First code unit.
+        :param unit_b: Second code unit.
+        :return: ``True`` when the kinds match or both units are function-like.
         """
         if unit_a.unit_type == unit_b.unit_type:
             return True
@@ -3153,53 +3366,94 @@ def find_semantic_duplicates(
             and unit_b.unit_type.name.lower() in function_like
         )
 
-    chunk_size = 500
-    for i in range(0, n, chunk_size):
-        end_i = min(i + chunk_size, n)
-        chunk_embeddings = embeddings[i:end_i]
+    for language, indices in groups.items():
+        if cross_language:
+            # The mixed group has no single language gate. Its coarse threshold
+            # must be no stricter than any endpoint-level gate applied below, or
+            # a high fallback can discard valid mixed pairs before their looser
+            # per-language gate is considered.
+            group_threshold = min(
+                (gates.get(units[index].language, threshold) for index in indices),
+                default=threshold,
+            )
+        else:
+            group_threshold = gates.get(language, threshold)
+        group_size = len(indices)
+        # A group covering every unit is already in matrix order, so fancy
+        # indexing would only copy the whole matrix for nothing.
+        group_embeddings = embeddings if group_size == len(units) else embeddings[indices]
+        for group_i in range(0, group_size, _PAIRWISE_SCAN_BLOCK_SIZE):
+            end_i = min(group_i + _PAIRWISE_SCAN_BLOCK_SIZE, group_size)
+            chunk_embeddings = group_embeddings[group_i:end_i]
+            # Keep the right-hand width stable across row chunks. Narrowing it
+            # to the unscanned tail changes BLAS blocking and can perturb
+            # float32 scores enough to reorder otherwise identical reports.
+            similarities = chunk_embeddings @ group_embeddings.T
 
-        similarities = chunk_embeddings @ embeddings.T
+            row_count = end_i - group_i
+            # The diagonal and lower triangle can never produce a reportable
+            # pair. Clearing them before candidate extraction avoids allocating
+            # coordinates (and then Python objects) for up to half this block.
+            local_triangle = similarities[:, group_i:end_i]
+            local_triangle[np.tril_indices(row_count)] = -np.inf
 
-        for local_idx in range(end_i - i):
-            global_idx = i + local_idx
-            unit_a = units[global_idx]
+            # Process bounded column blocks so np.nonzero and the three tolist
+            # conversions below stay O(block_size**2), even when every score
+            # clears a deliberately loose gate. Row buckets recover the prior
+            # row-major emission order before the stable score sort.
+            chunk_duplicates: list[list[DuplicatePair]] = [[] for _ in range(row_count)]
+            for column_i in range(group_i, group_size, _PAIRWISE_SCAN_BLOCK_SIZE):
+                column_end = min(column_i + _PAIRWISE_SCAN_BLOCK_SIZE, group_size)
+                similarity_block = similarities[:, column_i:column_end]
 
-            for j in range(global_idx + 1, n):
-                sim = float(similarities[local_idx, j])
-
-                # Threshold first so the common below-threshold pair skips the
-                # numpy scalar call; NaN fails ``<`` and +inf exceeds it, so
-                # both still land on the isfinite guard instead of slipping
-                # through as reported duplicates.
-                if sim < threshold or not np.isfinite(sim):
-                    continue
-
-                unit_b = units[j]
-
-                if not _types_compatible(unit_a, unit_b):
-                    continue
-
-                if unit_a.file_path == unit_b.file_path and not (
-                    unit_a.end_lineno < unit_b.lineno or unit_b.end_lineno < unit_a.lineno
+                # The numpy comparison is only a coarse, recall-preserving
+                # filter. Under NEP 50 it compares at float32 precision, so the
+                # Python-float threshold is re-asserted below.
+                candidate_rows, candidate_columns = np.nonzero(similarity_block >= group_threshold)
+                candidate_scores = similarity_block[candidate_rows, candidate_columns]
+                for local_idx, block_column, sim in zip(
+                    candidate_rows.tolist(),
+                    candidate_columns.tolist(),
+                    candidate_scores.tolist(),
+                    strict=True,
                 ):
-                    continue
+                    group_j = column_i + block_column
+                    if not np.isfinite(sim) or sim < group_threshold:
+                        continue
 
-                pair_key = ordered_pair_key(unit_a, unit_b)
-                if pair_key in exclude_exact:
-                    continue
+                    unit_a = units[indices[group_i + local_idx]]
+                    unit_b = units[indices[group_j]]
+                    if cross_language and sim < min(
+                        gates.get(unit_a.language, threshold),
+                        gates.get(unit_b.language, threshold),
+                    ):
+                        continue
+                    if not _types_compatible(unit_a, unit_b):
+                        continue
+                    if unit_a.overlaps(unit_b):
+                        continue
+                    if ordered_pair_key(unit_a, unit_b) in exclude_exact:
+                        continue
 
-                duplicates.append(
-                    DuplicatePair(
-                        unit_a=unit_a,
-                        unit_b=unit_b,
-                        similarity=float(sim),
-                        method="semantic",
+                    chunk_duplicates[local_idx].append(
+                        DuplicatePair(
+                            unit_a=unit_a,
+                            unit_b=unit_b,
+                            similarity=sim,
+                            method="semantic",
+                        )
                     )
-                )
 
-    duplicates.sort(key=lambda x: x.similarity, reverse=True)
+            for row_duplicates in chunk_duplicates:
+                duplicates.extend(row_duplicates)
 
-    logger.info(f"Found {len(duplicates)} semantic duplicates above threshold {threshold}")
+    duplicates.sort(key=lambda duplicate: duplicate.similarity, reverse=True)
+    gate_text = (
+        ", ".join(f"{language}={gate:.2f}" for language, gate in sorted(gates.items()))
+        if gates
+        else f"{threshold}"
+    )
+    logger.info(f"Found {len(duplicates)} semantic duplicates above gates {gate_text}")
     return duplicates
 
 
@@ -3237,8 +3491,8 @@ def _find_similar_to_query_unlocked(
     :param revision: Optional model revision; ``None`` uses the profile default.
     :param trust_remote_code: Optional remote-code trust setting; ``None`` uses the
         profile default.
-    :param threshold: Minimum cosine similarity; ``None`` uses the model profile
-        search default.
+    :param threshold: Minimum cosine similarity. ``None`` uses the model profile
+        search default only for its calibrated task, prompt, and revision.
     :param semantic_task: Optional task override; ``None`` uses
         ``DEFAULT_SEARCH_SEMANTIC_TASK``.
     :param device: ``auto``, ``cpu``, ``cuda``, or ``mps``, defaults to
@@ -3248,16 +3502,18 @@ def _find_similar_to_query_unlocked(
     :param use_cache: Whether to consult/update the persistent embedding cache.
     :param cache_scope: Analyzed corpus root path used to address the cache shard;
         ``None`` disables caching for this call regardless of ``use_cache``.
-    :param corpus_identity: Optional identity captured with ``embeddings``; when
-        provided, model/revision/runtime drift requires rebuilding the corpus,
-        and its recorded source commit rejects mutable-label query vectors -
-        cached or freshly encoded - from any other checkpoint.
+    :param corpus_identity: Identity captured with ``embeddings``. Required for
+        prompt- or route-sensitive models; model/revision/runtime drift requires
+        rebuilding the corpus, and its recorded source commit rejects mutable-label
+        query vectors - cached or freshly encoded - from any other checkpoint.
     :param strict_revision_cache: Whether an unpinned hub revision resolves to a
         concrete commit hash (disabling caching when unmappable) instead of the
         requested revision label, defaults to ``False``. Must match the mode
         used to build ``corpus_identity``.
     :return: Up to ``top_k`` ``(unit, similarity)`` pairs at or above the threshold,
         sorted by descending similarity.
+    :raises ValueError: If an uncalibrated task/prompt/revision uses the default
+        threshold, or a prompt-sensitive corpus omits its identity.
     :raises SemanticBackendError: If an explicitly requested device is unavailable,
         even when the query embedding is already cached.
     """
@@ -3269,13 +3525,17 @@ def _find_similar_to_query_unlocked(
         return []
 
     profile = resolve_model_profile(model_name)
-    resolved_threshold = (
-        threshold if threshold is not None else get_default_search_threshold(model_name)
-    )
     resolved_task = normalize_semantic_task(
         semantic_task,
         default_task=DEFAULT_SEARCH_SEMANTIC_TASK,
     )
+    if corpus_identity is None and (
+        profile.family == "embeddinggemma" or instruction_prefix is not None
+    ):
+        raise ValueError(
+            "corpus_identity is required for prompt- or route-sensitive search embeddings. "
+            "Build the corpus with compute_embeddings_with_identity() or CodeAnalyzer.index()."
+        )
     resolved_trust_remote_code = _resolve_trust_remote_code(model_name, trust_remote_code)
     embedding_device = device
     if corpus_identity is not None:
@@ -3292,8 +3552,35 @@ def _find_similar_to_query_unlocked(
             strict_revision_cache=strict_revision_cache,
         )
 
+    if threshold is None:
+        uncalibrated_reasons: list[str] = []
+        if instruction_prefix is not None:
+            uncalibrated_reasons.append("a custom instruction prefix")
+        if profile.family == "embeddinggemma" and resolved_task != DEFAULT_SEARCH_SEMANTIC_TASK:
+            uncalibrated_reasons.append(f"semantic task {resolved_task!r}")
+        if (
+            profile.default_revision is not None
+            and revision is not None
+            and revision != profile.default_revision
+        ):
+            uncalibrated_reasons.append(f"model revision {revision!r}")
+        # Remote-code execution splits the embedding cache key because it can
+        # change the vectors, so it must invalidate the calibrated default too.
+        if resolved_trust_remote_code != profile.default_trust_remote_code:
+            uncalibrated_reasons.append(f"trust_remote_code={resolved_trust_remote_code}")
+        if uncalibrated_reasons:
+            context = ", ".join(uncalibrated_reasons)
+            raise ValueError(
+                f"The default search threshold is not calibrated for {context}; "
+                "pass an explicit threshold (CodeAnalyzer.search(threshold=...), "
+                "find_similar_to_query(threshold=...), or --semantic-threshold)."
+            )
+        resolved_threshold = get_default_search_threshold(model_name)
+    else:
+        resolved_threshold = threshold
+
     encode_plan = _resolve_encode_plan(profile, "query", resolved_task, instruction_prefix)
-    query_text = query
+    query_text = _prepare_embedding_text(query)
 
     cache, cache_revision, cache_variant, cache_namespace = _prepare_cache_context(
         "query",
@@ -3308,6 +3595,22 @@ def _find_similar_to_query_unlocked(
         cache_scope=cache_scope,
         strict_revision_cache=strict_revision_cache,
     )
+    if (
+        cache is not None
+        and corpus_identity is not None
+        and corpus_identity.source_commit is None
+        and _revision_is_mutable_label(model_name, cache_revision)
+    ):
+        # The corpus bypassed its own shard (a mutable branch whose loaded
+        # commit was unreportable), so there is no commit to compare a cached
+        # query row against. Bypass query-cache reads and writes with it rather
+        # than serve a row written under another checkpoint of the same branch.
+        logger.debug(
+            f"Bypassing the query cache for branch {cache_revision!r}: the corpus matrix "
+            "carries no source commit, so no cached query vector can be tied to it"
+        )
+        cache = None
+        cache_revision = None
     cache_key = (
         compute_cache_key(
             profile.canonical_name, cache_revision, query_text, mode="query", variant=cache_variant
@@ -3370,7 +3673,12 @@ def _find_similar_to_query_unlocked(
         restore_mps_memory_fraction_if_managed()
 
     if query_embedding is None:
-        resolved_revision = _resolve_load_revision(model_name, revision)
+        resolved_revision = _resolve_load_revision_for_cache_policy(
+            model_name,
+            revision,
+            cache_revision,
+            strict=strict_revision_cache,
+        )
         resolved_device = _prepare_semantic_device(
             embedding_device,
             mps_fallback=mps_fallback,
@@ -3514,6 +3822,9 @@ def _find_similar_to_query_unlocked(
 
         if query_embedding is None:
             encode_fn = _select_encode_fn(model, encode_plan.route)
+            query_text = _require_text_within_model_context(
+                query_text, "search query", model, encode_plan.prompt
+            )
 
             query_embeddings = _encode_with_retries(
                 model,
@@ -3591,8 +3902,8 @@ def find_similar_to_query(
     :param revision: Optional model revision; ``None`` uses the profile default.
     :param trust_remote_code: Optional remote-code trust setting; ``None`` uses the
         profile default.
-    :param threshold: Minimum cosine similarity; ``None`` uses the model profile
-        search default.
+    :param threshold: Minimum cosine similarity. ``None`` uses the model profile
+        search default only for its calibrated task, prompt, and revision.
     :param semantic_task: Optional task override; ``None`` uses
         ``DEFAULT_SEARCH_SEMANTIC_TASK``.
     :param device: ``auto``, ``cpu``, ``cuda``, or ``mps``, defaults to
@@ -3602,14 +3913,17 @@ def find_similar_to_query(
     :param use_cache: Whether to consult/update the persistent embedding cache.
     :param cache_scope: Analyzed corpus root path used to address the cache shard;
         ``None`` disables caching for this call regardless of ``use_cache``.
-    :param corpus_identity: Optional identity captured with ``embeddings``; when
-        provided, model/revision/runtime drift requires rebuilding the corpus.
+    :param corpus_identity: Identity captured with ``embeddings``. Required for
+        prompt- or route-sensitive models; model/revision/runtime drift requires
+        rebuilding the corpus.
     :param strict_revision_cache: Whether an unpinned hub revision resolves to a
         concrete commit hash (disabling caching when unmappable) instead of the
         requested revision label, defaults to ``False``. Must match the mode
         used to build ``corpus_identity``.
     :return: Up to ``top_k`` ``(unit, similarity)`` pairs at or above the threshold,
         sorted by descending similarity.
+    :raises ValueError: If an uncalibrated task/prompt/revision uses the default
+        threshold, or a prompt-sensitive corpus omits its identity.
     """
     # Same contract as compute_embeddings_with_identity: configure
     # import-sensitive runtime variables before anything can import torch.
@@ -3652,13 +3966,19 @@ def run_semantic_analysis_with_identity(
     use_cache: bool = True,
     cache_scope: Path | None = None,
     strict_revision_cache: bool = False,
+    cross_language: bool = False,
+    language_thresholds: Mapping[str, float] | None = None,
+    overflow_report: list[SemanticContextOverflow] | None = None,
 ) -> tuple[np.ndarray, list[DuplicatePair], EmbeddingSpaceIdentity]:
     """Run semantic duplicate detection and return the corpus identity.
 
     :param units: Code units to embed and compare.
     :param model_name: Model alias or identifier, defaults to ``DEFAULT_MODEL``.
     :param instruction_prefix: Optional instruction override for embedding inputs.
-    :param threshold: Minimum cosine similarity; ``None`` uses the model profile default.
+    :param threshold: Minimum cosine similarity for languages without an entry
+        in ``language_thresholds``; ``None`` falls back to the model profile's
+        strictest calibrated gate. Use :class:`codedupes.analyzer.CodeAnalyzer`
+        for calibrated per-language duplicate gates.
     :param exclude_pairs: Ordered pair keys to omit from the semantic results.
     :param batch_size: Initial encode batch size, defaults to ``DEFAULT_BATCH_SIZE``.
     :param revision: Optional model revision; ``None`` uses the profile default.
@@ -3676,11 +3996,20 @@ def run_semantic_analysis_with_identity(
     :param strict_revision_cache: Whether an unpinned hub revision resolves to a
         concrete commit hash (disabling caching when unmappable) instead of the
         requested revision label, defaults to ``False``.
-    :return: ``(embeddings, duplicates, identity)``.
+    :param cross_language: Also generate duplicate pairs across languages
+        (uncalibrated), defaults to ``False``.
+    :param language_thresholds: Per-language duplicate gates applied inside the
+        pairwise scan; ``None`` applies ``threshold`` flat to every language.
+    :param overflow_report: When provided, over-context units are skipped instead
+        of raising: they are excluded from ``embeddings`` and pair mining, and
+        appended here in input order.
+    :return: ``(embeddings, duplicates, identity)``; ``embeddings`` covers only
+        the units that survived the context policy.
     """
     resolved_threshold = (
         threshold if threshold is not None else get_default_semantic_threshold(model_name)
     )
+    reported_before = len(overflow_report) if overflow_report is not None else 0
 
     embeddings, identity = compute_embeddings_with_identity(
         units,
@@ -3696,7 +4025,12 @@ def run_semantic_analysis_with_identity(
         use_cache=use_cache,
         cache_scope=cache_scope,
         strict_revision_cache=strict_revision_cache,
+        overflow_report=overflow_report,
     )
+    if overflow_report is not None and len(overflow_report) > reported_before:
+        # Keep pair mining row-aligned with the matrix the context policy left.
+        skipped = {id(skip.unit) for skip in overflow_report[reported_before:]}
+        units = [unit for unit in units if id(unit) not in skipped]
     if not units:
         return embeddings, [], identity
 
@@ -3705,6 +4039,8 @@ def run_semantic_analysis_with_identity(
         embeddings,
         threshold=resolved_threshold,
         exclude_exact=exclude_pairs,
+        cross_language=cross_language,
+        language_thresholds=language_thresholds,
     )
 
     return embeddings, duplicates, identity
@@ -3726,13 +4062,18 @@ def run_semantic_analysis(
     use_cache: bool = True,
     cache_scope: Path | None = None,
     strict_revision_cache: bool = False,
+    cross_language: bool = False,
+    language_thresholds: Mapping[str, float] | None = None,
 ) -> tuple[np.ndarray, list[DuplicatePair]]:
     """Run full semantic duplicate detection.
 
     :param units: Code units to embed and compare.
     :param model_name: Model alias or identifier, defaults to ``DEFAULT_MODEL``.
     :param instruction_prefix: Optional instruction override for embedding inputs.
-    :param threshold: Minimum cosine similarity; ``None`` uses the model profile default.
+    :param threshold: Minimum cosine similarity for languages without an entry
+        in ``language_thresholds``; ``None`` falls back to the model profile's
+        strictest calibrated gate. Use :class:`codedupes.analyzer.CodeAnalyzer`
+        for calibrated per-language duplicate gates.
     :param exclude_pairs: Ordered pair keys to omit from the semantic results.
     :param batch_size: Initial encode batch size, defaults to ``DEFAULT_BATCH_SIZE``.
     :param revision: Optional model revision; ``None`` uses the profile default.
@@ -3750,6 +4091,10 @@ def run_semantic_analysis(
     :param strict_revision_cache: Whether an unpinned hub revision resolves to a
         concrete commit hash (disabling caching when unmappable) instead of the
         requested revision label, defaults to ``False``.
+    :param cross_language: Also generate duplicate pairs across languages
+        (uncalibrated), defaults to ``False``.
+    :param language_thresholds: Per-language duplicate gates applied inside the
+        pairwise scan; ``None`` applies ``threshold`` flat to every language.
     :return: ``(embeddings, duplicates)``; both are empty when ``units`` is empty.
     """
     embeddings, duplicates, _identity = run_semantic_analysis_with_identity(
@@ -3768,5 +4113,7 @@ def run_semantic_analysis(
         use_cache=use_cache,
         cache_scope=cache_scope,
         strict_revision_cache=strict_revision_cache,
+        cross_language=cross_language,
+        language_thresholds=language_thresholds,
     )
     return embeddings, duplicates

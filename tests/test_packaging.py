@@ -8,6 +8,8 @@ from pathlib import Path
 from packaging.requirements import Requirement
 from packaging.version import Version
 
+from codedupes.languages.registry import REQUIRED_PARSER_PACKAGES
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -60,3 +62,14 @@ def test_readme_documentation_links_work_outside_the_repository() -> None:
 
     assert "](docs/" not in readme
     assert "https://github.com/pszemraj/codedupes/blob/main/docs/" in readme
+
+
+def test_polyglot_tree_sitter_runtime_is_exactly_pinned() -> None:
+    """pyproject pins must match the registry, the runtime source of truth."""
+    project = _pyproject()["project"]
+    dependencies = project["dependencies"]  # type: ignore[index]
+    requirements = {Requirement(item).name: Requirement(item) for item in dependencies}
+
+    for package, version in REQUIRED_PARSER_PACKAGES.items():
+        requirement = requirements[package]
+        assert str(requirement.specifier) == f"=={version}"

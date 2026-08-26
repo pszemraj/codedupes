@@ -1,6 +1,6 @@
 # CLI Reference
 
-See [Output and exit codes](output.md) for JSON and process status, [Analysis defaults](analysis-defaults.md) for heuristics, [Model profiles](model-profiles.md) for semantic defaults, [Accelerators](accelerators.md) for device behavior, and [Embedding cache](caching.md) for persistent cache behavior.
+See [Output and exit codes](output.md) for JSON and process status, [Polyglot language support](polyglot-languages.md) for extraction semantics, [Analysis defaults](analysis-defaults.md) for heuristics, [Model profiles](model-profiles.md) for semantic defaults, [Accelerators](accelerators.md) for device behavior, and [Embedding cache](caching.md) for persistent cache behavior.
 
 ## `codedupes check <path>`
 
@@ -23,6 +23,7 @@ Options, in addition to the [shared options](#options-shared-by-check-and-search
 
 - `-t, --threshold <float>`: Shared threshold override for semantic and traditional checks (in single-method modes, it applies to the active method only)
 - `--traditional-threshold <float>`: Override traditional (Jaccard) threshold only
+- `--cross-language`: Also report semantic duplicate pairs across languages (uncalibrated; a mixed pair is held to the looser of its two language gates)
 - `--semantic-task <name>`: Semantic task mode for duplicate detection embeddings (default `semantic-similarity`)
 - `--semantic-only`: Run semantic analysis only
 - `--traditional-only`: Run traditional analysis only
@@ -57,7 +58,8 @@ Options, in addition to the [shared options](#options-shared-by-check-and-search
 
 ## Options shared by `check` and `search`
 
-- `--semantic-threshold <float>`: Override the semantic threshold only
+- `--language <name>`: Restrict extraction to a language; repeat for multiple languages. Canonical values are `python`, `c`, `rust`, `javascript`, and `typescript`; aliases `py`, `rs`, `js`, `jsx`, `ts`, and `tsx` are accepted. Omit the option to auto-detect all supported languages. Explicit `--language c` also opts ambiguous `.h` files into C parsing.
+- `--semantic-threshold <float>`: Flat semantic gate for every language; without it, `check` uses the model profile's calibrated [per-language gates](analysis-defaults.md#semantic-duplicate-gate-defaults) and `search` uses the profile search default
 - `--semantic-unit-type <name>`: Semantic candidate unit type (`function`, `method`, `class`); repeat option to include multiple types (default `function, method`). In default combined `check` mode this also narrows traditional duplicate scope.
 - `--min-statements <int>`: Minimum statement count for semantic candidate code units (default `3`). In default combined `check` mode this also narrows traditional duplicate scope.
 - `--model <name>`: Embedding model alias, Hugging Face ID, or explicit path (absolute, `./`/`../`, or `~`) to a complete local `save_pretrained`/`hf download` directory (default `gte-modernbert-base`)
@@ -79,7 +81,7 @@ Options, in addition to the [shared options](#options-shared-by-check-and-search
 
 ## `codedupes info`
 
-Print version and runtime versions, the effective default model and pinned revision, the built-in alias table, per-task semantic thresholds, analysis defaults (minimum statements, exclude globs, output width), resolved device capabilities, MPS memory statistics when available, whether MLX is already loaded in the process, CPU identity with its capability-gated bfloat16 verdict and the effective CPU bfloat16 inference policy (native ISA, mkldnn availability, and the experimental `CODEDUPES_CPU_BF16=1` opt-in, see [Accelerators](accelerators.md#precision-and-metal-environment-variables)), and an embedding-cache summary (path, entry count, size on disk).
+Print version and runtime versions, supported languages and exact Tree-sitter package readiness, the effective default model and pinned revision, the built-in alias table with each profile's per-language semantic duplicate gates and search threshold, analysis defaults (minimum statements, exclude globs, output width), resolved device capabilities, MPS memory statistics when available, whether MLX is already loaded in the process, CPU identity with its capability-gated bfloat16 verdict and the effective CPU bfloat16 inference policy (native ISA, mkldnn availability, and the experimental `CODEDUPES_CPU_BF16=1` opt-in, see [Accelerators](accelerators.md#precision-and-metal-environment-variables)), and an embedding-cache summary (path, entry count, size on disk).
 
 ## `codedupes cache info`
 
@@ -97,7 +99,12 @@ Clear all cached embeddings or only entries for one model. See [Embedding cache]
 - `--output-width` must be at least `80`
 - `--show-all` and `--allow-semantic-fallback` are only valid in default combined `check` mode (not with `--semantic-only` or `--traditional-only`)
 - Default combined `check` fails if semantic backend fails; opt in to degraded combined fallback with `--allow-semantic-fallback`
-- In `--json` mode, output is machine-parseable JSON only; warning text is surfaced via `summary.semantic_fallback` and `summary.semantic_fallback_reason` when fallback happens.
+- Missing/incompatible Tree-sitter grammars fail explicitly. Syntax recovery inside one source file is reported through extraction diagnostics, and affected units are skipped.
+- Duplicate comparison is same-language by default; `--cross-language` opts semantic duplicate pairs into cross-language reporting. Semantic search always retrieves across every selected language.
+- Unused-code analysis evaluates Python units only and reports the number of non-Python units excluded.
+- A definition whose tokenized input (encode prompt included) exceeds the model's context window is skipped with a `semantic-context-overflow` diagnostic and the run continues; an over-long `search` query fails hard
+- In `--json` mode, output is machine-parseable JSON only; warning text is surfaced via `summary.semantic_fallback` and `summary.semantic_fallback_reason` when fallback happens, and units the semantic stage skipped via the `semantic_diagnostics` array (`check` and `search` alike).
+- Errors, parser-unavailable remediation, and all log output (progress lines and warnings) always go to stderr, so stdout carries only the report (a failed `--json` run writes nothing to stdout).
 - `--json` rejects rich-only display controls: `--show-source`, `--full-table`, `--verbose`, and explicit `--output-width`
 - `--semantic-only` and `--traditional-only` bypass hybrid synthesis and show raw method outputs
 - `--semantic-only` and `--traditional-only` are mutually exclusive
@@ -109,6 +116,7 @@ Clear all cached embeddings or only entries for one model. See [Embedding cache]
 - Explicit traditional-analysis controls are rejected with `--semantic-only`: `--traditional-threshold`, `--no-tiny-filter`, `--tiny-cutoff`, and `--tiny-near-jaccard-min`
 - Unsupported-op fallback and codedupes OOM recovery are separate policies; `--no-mps-fallback` does not disable OOM recovery
 - `search` applies semantic threshold filtering before returning `top-k` matches; without an explicit `--threshold`/`--semantic-threshold` it uses the model profile search default (for example `0.50` for `gte-modernbert-base`), not the stricter duplicate threshold
+- `search` reports how many units it embedded: an empty index prints a stderr warning that distinguishes no extracted units, semantic eligibility filtering, and model context-window exclusions; terminal mode prints semantic diagnostics when present, and `--json` always carries the count in `indexed_units`
 - Contradictory mode-specific options are rejected at parse time for the selected workflow
 
 Inspect effective model defaults with:

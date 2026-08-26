@@ -90,11 +90,11 @@ See [Accelerators](accelerators.md) for device resolution, memory limits, and OO
 
 ## Override Semantic Instruction Prefix
 
-By default, model-profile task prompts are applied automatically when needed. Override with a fixed prefix for experiments or custom retrieval behavior:
+By default, model-profile task prompts are applied automatically when needed. Override with a fixed prefix for experiments or custom retrieval behavior. A custom prefix changes the embedding space, so `check` requires an explicit `--semantic-threshold` with it (the calibrated per-language gates don't apply); `search` accepts the prefix as-is and applies the same requirement at query time:
 
 ```bash
-codedupes check ./src --instruction-prefix "Represent this code for duplicate detection: "
-codedupes search ./src "parse json payload" --instruction-prefix "Represent this query for code lookup: "
+codedupes check ./src --instruction-prefix "Represent this code for duplicate detection: " --semantic-threshold 0.85
+codedupes search ./src "parse json payload" --instruction-prefix "Represent this query for code lookup: " --semantic-threshold 0.5
 ```
 
 ## Threshold Tuning
@@ -120,6 +120,21 @@ codedupes search ./src "parse json payload" --semantic-threshold 0.6 --top-k 20
 See [Model profiles](model-profiles.md) for model-specific check and search thresholds.
 
 ## Scope Control
+
+Auto-detection includes Python, C, Rust, JavaScript/JSX, and TypeScript/TSX. Restrict a mixed repository with a repeatable language filter:
+
+```bash
+codedupes check . --language python --language rust
+codedupes search . "validate session token" --language js --language ts
+```
+
+Explicit `--language c` opts `.h` files into C parsing. Without an explicit filter, headers are accepted only when C source is present and no C++ source/header extension is detected. TypeScript declaration files are always skipped. See [Polyglot language support](polyglot-languages.md).
+
+Duplicate output is same-language by default. Opt into uncalibrated cross-language semantic pairs, each held to the looser of its two language gates:
+
+```bash
+codedupes check . --cross-language
+```
 
 Exclude private names:
 
@@ -165,7 +180,7 @@ codedupes check ./src --strict-unused
 codedupes check ./src --no-unused
 ```
 
-See [Analysis defaults](analysis-defaults.md#potentially-unused-defaults) for the reference graph, suppressions, strict-mode behavior, and limitations.
+Unused-code analysis is Python-only; mixed-language runs report how many non-Python units were excluded. See [Analysis defaults](analysis-defaults.md#potentially-unused-defaults) for the Python reference graph, suppressions, strict-mode behavior, and limitations.
 
 ## Reduce Semantic Noise In Test Suites
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import inspect
 import logging
+import math
 import os
 import stat
 from pathlib import Path
@@ -13,10 +14,13 @@ import torch
 
 from codedupes import devices, semantic
 from codedupes.constants import CPU_FALLBACK_MAX_BATCH_SIZE
-from codedupes.embedding_cache import EmbeddingCache
+from codedupes.embedding_cache import EmbeddingCache, compute_cache_key
 from codedupes.models import CodeUnit, CodeUnitType
+from codedupes.pairs import ordered_pair_key
 from codedupes.semantic import (
     SemanticBackendError,
+    SemanticContextOverflow,
+    SemanticInputTooLongError,
     compute_embeddings,
     find_semantic_duplicates,
     find_similar_to_query,
@@ -84,6 +88,9 @@ def test_code_unit_statement_count_ignores_docstring(tmp_path: Path) -> None:
     """
     unit = extract_arithmetic_units(tmp_path)[0]
     unit.source = source
+    # The precomputed extraction-time count no longer matches the swapped
+    # source; force the Python AST fallback these tests exercise.
+    unit.statement_count = None
     assert get_code_unit_statement_count(unit) == 2
 
 
@@ -162,6 +169,9 @@ def test_statement_count_recurses_into_control_flow(
 ) -> None:
     unit = extract_arithmetic_units(tmp_path)[0]
     unit.source = source
+    # The precomputed extraction-time count no longer matches the swapped
+    # source; force the Python AST fallback these tests exercise.
+    unit.statement_count = None
     assert get_code_unit_statement_count(unit) == expected
 
 
@@ -181,6 +191,9 @@ def test_statement_count_stops_at_nested_scopes(tmp_path: Path) -> None:
     """
     unit = extract_arithmetic_units(tmp_path)[0]
     unit.source = source
+    # The precomputed extraction-time count no longer matches the swapped
+    # source; force the Python AST fallback these tests exercise.
+    unit.statement_count = None
     # inner (1) + Helper (1) + return (1); nested bodies belong to their own units.
     assert get_code_unit_statement_count(unit) == 3
 
@@ -213,6 +226,10 @@ def test_query_search_uses_custom_instruction_prefix(tmp_path: Path, monkeypatch
             return np.array([[1.0, 0.0]], dtype=np.float32)
 
     monkeypatch.setattr(semantic, "get_model", lambda *args, **kwargs: QueryModel())
+    identity = semantic.resolve_embedding_space_identity(
+        instruction_prefix="CUSTOM_QUERY_PREFIX: ",
+        semantic_task=semantic.DEFAULT_SEARCH_SEMANTIC_TASK,
+    )
 
     results = find_similar_to_query(
         query="find addition",
@@ -220,6 +237,8 @@ def test_query_search_uses_custom_instruction_prefix(tmp_path: Path, monkeypatch
         embeddings=embeddings,
         instruction_prefix="CUSTOM_QUERY_PREFIX: ",
         top_k=1,
+        threshold=0.0,
+        corpus_identity=identity,
     )
 
     assert len(results) == 1
@@ -321,6 +340,10 @@ def test_embeddinggemma_query_route_single_task_prompt(tmp_path: Path, monkeypat
     embeddings = np.array([[1.0, 0.0], [0.0, 1.0]], dtype=np.float32)
     model = PromptAwareGemmaModel()
     monkeypatch.setattr(semantic, "get_model", lambda *args, **kwargs: model)
+    identity = semantic.resolve_embedding_space_identity(
+        model_name="embeddinggemma-300m",
+        semantic_task=semantic.DEFAULT_SEARCH_SEMANTIC_TASK,
+    )
 
     results = find_similar_to_query(
         query="find addition",
@@ -328,6 +351,7 @@ def test_embeddinggemma_query_route_single_task_prompt(tmp_path: Path, monkeypat
         embeddings=embeddings,
         model_name="embeddinggemma-300m",
         top_k=2,
+        corpus_identity=identity,
     )
 
     assert len(results) == 1
@@ -343,6 +367,11 @@ def test_embeddinggemma_custom_instruction_replaces_saved_prompt(
     embeddings = np.array([[1.0, 0.0], [0.0, 1.0]], dtype=np.float32)
     model = PromptAwareGemmaModel()
     monkeypatch.setattr(semantic, "get_model", lambda *args, **kwargs: model)
+    identity = semantic.resolve_embedding_space_identity(
+        model_name="embeddinggemma-300m",
+        instruction_prefix="CUSTOM: ",
+        semantic_task=semantic.DEFAULT_SEARCH_SEMANTIC_TASK,
+    )
 
     find_similar_to_query(
         query="find addition",
@@ -351,11 +380,62 @@ def test_embeddinggemma_custom_instruction_replaces_saved_prompt(
         model_name="embeddinggemma-300m",
         instruction_prefix="CUSTOM: ",
         top_k=2,
+        threshold=0.0,
+        corpus_identity=identity,
     )
 
     ((method, effective),) = model.calls
     assert method == "encode_query"
     assert effective == ["CUSTOM: find addition"]
+
+
+def test_prompt_sensitive_search_requires_corpus_identity(tmp_path: Path) -> None:
+    units = extract_arithmetic_units(tmp_path)
+    embeddings = np.array([[1.0, 0.0], [0.0, 1.0]], dtype=np.float32)
+
+    with pytest.raises(ValueError, match="corpus_identity is required"):
+        find_similar_to_query(
+            "find addition",
+            units,
+            embeddings,
+            model_name="embeddinggemma-300m",
+            threshold=0.0,
+            use_cache=False,
+        )
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"semantic_task": "classification"},
+        {"instruction_prefix": "CUSTOM: "},
+        {"revision": "f" * 40},
+        {"trust_remote_code": True},
+    ],
+)
+def test_uncalibrated_search_context_requires_explicit_threshold(
+    tmp_path: Path, kwargs: dict[str, str]
+) -> None:
+    units = extract_arithmetic_units(tmp_path)
+    embeddings = np.array([[1.0, 0.0], [0.0, 1.0]], dtype=np.float32)
+    identity = semantic.resolve_embedding_space_identity(
+        model_name="embeddinggemma-300m",
+        instruction_prefix=kwargs.get("instruction_prefix"),
+        revision=kwargs.get("revision"),
+        trust_remote_code=kwargs.get("trust_remote_code"),
+        semantic_task=kwargs.get("semantic_task", semantic.DEFAULT_SEARCH_SEMANTIC_TASK),
+    )
+
+    with pytest.raises(ValueError, match=r"find_similar_to_query\(threshold=\.\.\.\)"):
+        find_similar_to_query(
+            "find addition",
+            units,
+            embeddings,
+            model_name="embeddinggemma-300m",
+            use_cache=False,
+            corpus_identity=identity,
+            **kwargs,
+        )
 
 
 def test_find_similar_to_query_applies_threshold_filter(tmp_path: Path, monkeypatch) -> None:
@@ -383,8 +463,8 @@ def test_find_similar_to_query_default_threshold_is_search_default(
     tmp_path: Path, monkeypatch
 ) -> None:
     units = extract_arithmetic_units(tmp_path)
-    # First row scores 0.6: above the search default (0.50) but far below the
-    # duplicate-detection default (0.96); second row scores 0.3 and is dropped.
+    # First row scores 0.6: above the search default (0.50) but below every
+    # duplicate-detection gate; second row scores 0.3 and is dropped.
     embeddings = np.array([[0.6, 0.8], [0.3, 0.9539392]], dtype=np.float32)
 
     class QueryModel:
@@ -458,6 +538,20 @@ def test_find_semantic_duplicates_rejects_nan_and_inf_but_keeps_finite_pair(
     kept = duplicates[0]
     assert {kept.unit_a.name, kept.unit_b.name} == {"second", "third"}
     assert kept.similarity == pytest.approx(1.0)
+
+
+@pytest.mark.parametrize("threshold", [0.82, 0.78, 0.70, 0.90])
+def test_find_semantic_duplicates_rechecks_threshold_after_numpy_prefilter(
+    tmp_path: Path, threshold: float
+) -> None:
+    units = extract_arithmetic_units(tmp_path)
+    rounded_down = np.float32(threshold)
+    assert float(rounded_down) < threshold
+    embeddings = np.array([[1.0, 0.0], [rounded_down, 0.0]], dtype=np.float32)
+
+    duplicates = find_semantic_duplicates(units, embeddings, threshold=threshold)
+
+    assert duplicates == []
 
 
 def test_compute_embeddings_rejects_nonfinite_model_output(tmp_path: Path, monkeypatch) -> None:
@@ -609,6 +703,60 @@ def test_find_semantic_duplicates_skips_incompatible_unit_types(tmp_path: Path) 
     assert duplicates == []
 
 
+def test_find_semantic_duplicates_cross_language_requires_opt_in(tmp_path: Path) -> None:
+    python_path = tmp_path / "sample.py"
+    python_path.write_text("def f():\n    return 1\n")
+    rust_path = tmp_path / "sample.rs"
+    rust_path.write_text("fn f() -> i64 { 1 }\n")
+
+    python_unit = CodeUnit(
+        name="f",
+        qualified_name="sample.f",
+        unit_type=CodeUnitType.FUNCTION,
+        file_path=python_path,
+        lineno=1,
+        end_lineno=2,
+        source="def f():\n    return 1",
+        is_public=True,
+        is_exported=False,
+        language="python",
+    )
+    rust_unit = CodeUnit(
+        name="f",
+        qualified_name="sample::f",
+        unit_type=CodeUnitType.FUNCTION,
+        file_path=rust_path,
+        lineno=1,
+        end_lineno=1,
+        source="fn f() -> i64 { 1 }",
+        is_public=True,
+        is_exported=False,
+        language="rust",
+    )
+    embeddings = np.array(
+        [
+            [1.0, 0.0],
+            [1.0, 0.0],
+        ],
+        dtype=np.float32,
+    )
+
+    same_language_only = find_semantic_duplicates(
+        units=[python_unit, rust_unit],
+        embeddings=embeddings,
+        threshold=0.9,
+    )
+    assert same_language_only == []
+
+    cross = find_semantic_duplicates(
+        units=[python_unit, rust_unit],
+        embeddings=embeddings,
+        threshold=0.9,
+        cross_language=True,
+    )
+    assert [(pair.unit_a.language, pair.unit_b.language) for pair in cross] == [("python", "rust")]
+
+
 def _recording_sentence_transformer(calls: list[dict]) -> type:
     """Build a SentenceTransformer double that records constructor invocations.
 
@@ -749,8 +897,8 @@ def test_dtype_variant_matches_pre_capability_gate_baseline_without_opt_in(
     # Without the experimental CODEDUPES_CPU_BF16 opt-in, cpu/mps/darwin-auto
     # must key byte-identically to the pre-capability-gate policy (empty
     # variant) on every machine, gate-passing or not:
-    # EMBEDDING_PIPELINE_SCHEMA is not bumped, so old and new code must agree
-    # here or warm caches would silently miss.
+    # The CPU opt-in itself does not split the faithful float32 baseline, so
+    # old and new code must agree here or warm caches would silently miss.
     monkeypatch.delenv("CODEDUPES_CPU_BF16", raising=False)
     monkeypatch.setattr(semantic.sys, "platform", "darwin")
     profile = semantic.resolve_model_profile("gte-modernbert-base")
@@ -1214,6 +1362,261 @@ def test_compute_embeddings_retries_with_reduced_batch_before_cpu(monkeypatch, t
     assert seen_batch_sizes[:3] == [8, 4, 2]
 
 
+def test_compute_embeddings_rejects_code_beyond_model_context(monkeypatch, tmp_path: Path) -> None:
+    units = extract_arithmetic_units(tmp_path)
+    units[0].qualified_name = "module.long_tail"
+    units[0].source = "one two three four five six seven eight changed_tail"
+    encode_calls: list[list[str]] = []
+
+    class Tokenizer:
+        def encode(self, text, **kwargs):
+            return text.split()
+
+    class ShortContextModel:
+        max_seq_length = 8
+        tokenizer = Tokenizer()
+
+        def encode(self, texts, **kwargs):
+            encode_calls.append(list(texts))
+            return np.ones((len(texts), 2), dtype=np.float32)
+
+    monkeypatch.setattr(semantic, "get_model", lambda *args, **kwargs: ShortContextModel())
+
+    with pytest.raises(
+        SemanticInputTooLongError,
+        match=r"module\.long_tail.*9 tokens.*8-token context window",
+    ):
+        compute_embeddings([units[0]], use_cache=False)
+
+    assert encode_calls == []
+
+
+def test_find_similar_to_query_rejects_query_beyond_model_context(
+    monkeypatch, tmp_path: Path
+) -> None:
+    units = extract_arithmetic_units(tmp_path)
+    embeddings = np.array([[1.0, 0.0], [0.0, 1.0]], dtype=np.float32)
+    encode_calls: list[list[str]] = []
+
+    class Tokenizer:
+        def encode(self, text, **kwargs):
+            return text.split()
+
+    class ShortContextModel:
+        max_seq_length = 4
+        tokenizer = Tokenizer()
+
+        def encode(self, texts, **kwargs):
+            encode_calls.append(list(texts))
+            return np.ones((len(texts), 2), dtype=np.float32)
+
+    monkeypatch.setattr(semantic, "get_model", lambda *args, **kwargs: ShortContextModel())
+
+    with pytest.raises(
+        SemanticInputTooLongError,
+        match=r"search query.*6 tokens.*4-token context window",
+    ):
+        find_similar_to_query(
+            "find code that validates every record",
+            units,
+            embeddings,
+            threshold=0.0,
+            use_cache=False,
+        )
+
+    assert encode_calls == []
+
+
+class _WhitespaceTokenizer:
+    """Tokenizer stub whose token count is the whitespace-separated word count."""
+
+    def encode(self, text, **_kwargs):
+        return text.split()
+
+
+class _ShortContextModel:
+    """Model stub with a tiny context window that records every encode call."""
+
+    max_seq_length = 8
+    tokenizer = _WhitespaceTokenizer()
+
+    def __init__(self) -> None:
+        self.encode_calls: list[list[str]] = []
+
+    def encode(self, texts, **_kwargs):
+        self.encode_calls.append(list(texts))
+        return np.ones((len(texts), 2), dtype=np.float32)
+
+
+def test_context_guard_counts_the_prompt_the_backend_prepends(monkeypatch, tmp_path: Path) -> None:
+    # SentenceTransformers prepends the encode prompt before tokenizing with
+    # truncation, so a text that fits alone can still be silently truncated.
+    units = extract_arithmetic_units(tmp_path)
+    units[0].qualified_name = "module.exact_fit"
+    units[0].source = "one two three four five six seven eight"
+    model = _ShortContextModel()
+    monkeypatch.setattr(semantic, "get_model", lambda *args, **kwargs: model)
+
+    compute_embeddings([units[0]], use_cache=False)
+    assert model.encode_calls == [["one two three four five six seven eight"]]
+
+    with pytest.raises(
+        SemanticInputTooLongError,
+        match=r"module\.exact_fit.*10 tokens.*8-token context window",
+    ):
+        compute_embeddings([units[0]], instruction_prefix="task: code ", use_cache=False)
+
+    assert len(model.encode_calls) == 1
+
+
+def test_query_context_guard_counts_the_prompt_the_backend_prepends(
+    monkeypatch, tmp_path: Path
+) -> None:
+    units = extract_arithmetic_units(tmp_path)
+    embeddings = np.array([[1.0, 0.0], [0.0, 1.0]], dtype=np.float32)
+    model = _ShortContextModel()
+    monkeypatch.setattr(semantic, "get_model", lambda *args, **kwargs: model)
+    corpus_identity = semantic.resolve_embedding_space_identity(
+        instruction_prefix="task: search ",
+    )
+
+    with pytest.raises(
+        SemanticInputTooLongError,
+        match=r"search query.*10 tokens.*8-token context window",
+    ):
+        find_similar_to_query(
+            "find the code that validates every incoming record",
+            units,
+            embeddings,
+            instruction_prefix="task: search ",
+            threshold=0.0,
+            use_cache=False,
+            corpus_identity=corpus_identity,
+        )
+
+    assert model.encode_calls == []
+
+
+def test_overflow_report_skips_every_row_sharing_an_over_context_text(
+    monkeypatch, tmp_path: Path
+) -> None:
+    # Duplicate sources share one cache key, so only one representative row is
+    # context-checked; every row carrying that text must still be dropped.
+    long_source = "one two three four five six seven eight nine"
+    units = [
+        CodeUnit(
+            name="long_a",
+            qualified_name="mod.long_a",
+            unit_type=CodeUnitType.FUNCTION,
+            file_path=tmp_path / "a.py",
+            lineno=1,
+            end_lineno=2,
+            source=long_source,
+        ),
+        CodeUnit(
+            name="long_b",
+            qualified_name="mod.long_b",
+            unit_type=CodeUnitType.FUNCTION,
+            file_path=tmp_path / "b.py",
+            lineno=1,
+            end_lineno=2,
+            source=long_source,
+        ),
+        CodeUnit(
+            name="short",
+            qualified_name="mod.short",
+            unit_type=CodeUnitType.FUNCTION,
+            file_path=tmp_path / "c.py",
+            lineno=1,
+            end_lineno=2,
+            source="one two",
+        ),
+    ]
+    model = _ShortContextModel()
+    monkeypatch.setattr(semantic, "get_model", lambda *args, **kwargs: model)
+
+    report: list[SemanticContextOverflow] = []
+    embeddings, _identity = semantic.compute_embeddings_with_identity(
+        units,
+        cache_scope=tmp_path,
+        overflow_report=report,
+    )
+
+    assert model.encode_calls == [["one two"]]
+    assert embeddings.shape == (1, 2)
+    assert [skip.unit.name for skip in report] == ["long_a", "long_b"]
+    assert {skip.token_count for skip in report} == {9}
+
+
+def test_overflow_report_handles_a_fully_skipped_corpus(monkeypatch, tmp_path: Path) -> None:
+    units = extract_arithmetic_units(tmp_path)
+    for index, unit in enumerate(units):
+        unit.source = f"one two three four five six seven eight nine {index}"
+    model = _ShortContextModel()
+    monkeypatch.setattr(semantic, "get_model", lambda *args, **kwargs: model)
+
+    report: list[SemanticContextOverflow] = []
+    embeddings, _identity = semantic.compute_embeddings_with_identity(
+        units,
+        cache_scope=tmp_path,
+        overflow_report=report,
+    )
+
+    assert model.encode_calls == []
+    assert embeddings.shape == (0, 0)
+    assert len(report) == len(units)
+
+
+class _RecordingModel:
+    """Model stub returning one fixed vector per call and recording its inputs."""
+
+    def __init__(self) -> None:
+        self.encoded: list[list[str]] = []
+
+    def encode(self, texts, **_kwargs):
+        self.encoded.append(list(texts))
+        return np.tile(np.array([[1.0, 0.0]], dtype=np.float32), (len(texts), 1))
+
+
+@pytest.mark.parametrize(
+    ("revision", "expect_bypass"),
+    [("main", True), ("b" * 40, False)],
+)
+def test_unreportable_mutable_provenance_bypasses_the_query_cache(
+    monkeypatch, tmp_path: Path, revision: str, expect_bypass: bool
+) -> None:
+    # A corpus that had to bypass its shard (mutable branch, no reportable
+    # commit) has no provenance to compare a cached query row against, so the
+    # query cache must be bypassed with it.
+    units = extract_arithmetic_units(tmp_path)
+    model = _RecordingModel()
+    monkeypatch.setattr(semantic, "get_model", lambda *args, **kwargs: model)
+    monkeypatch.setattr(semantic, "_get_loaded_model_commit_hash", lambda _model: None)
+
+    embeddings, identity = semantic.compute_embeddings_with_identity(
+        units,
+        model_name="test-model",
+        revision=revision,
+        cache_scope=tmp_path,
+    )
+    assert identity.source_commit is None
+
+    for _ in range(2):
+        find_similar_to_query(
+            "find addition",
+            units,
+            embeddings,
+            model_name="test-model",
+            revision=revision,
+            cache_scope=tmp_path,
+            corpus_identity=identity,
+            threshold=0.0,
+        )
+
+    query_encodes = [call for call in model.encoded if call == ["find addition"]]
+    assert len(query_encodes) == (2 if expect_bypass else 1)
+
+
 def test_compute_embeddings_cpu_fallback_retries_once_and_bails_on_persistent_oom(
     monkeypatch, tmp_path
 ) -> None:
@@ -1464,6 +1867,7 @@ def test_find_similar_to_query_warm_cache_raises_for_explicit_unavailable_device
         model_name="gte-modernbert-base",
         revision=_FULL_REVISION,
         device="cpu",
+        threshold=0.0,
         cache_scope=tmp_path,
     )
 
@@ -1497,6 +1901,7 @@ def test_warm_cache_returns_with_unset_fraction_restore_managed_mps_cap(
         model_name="gte-modernbert-base",
         revision=_FULL_REVISION,
         device="cpu",
+        threshold=0.0,
         cache_scope=tmp_path,
     )
 
@@ -1529,6 +1934,7 @@ def test_warm_cache_returns_with_unset_fraction_restore_managed_mps_cap(
         model_name="gte-modernbert-base",
         revision=_FULL_REVISION,
         device="cpu",
+        threshold=0.0,
         cache_scope=tmp_path,
     )
     assert restore_calls == [True]
@@ -1570,6 +1976,7 @@ def test_query_embedding_cache_put_is_fifo_capped(tmp_path: Path, monkeypatch) -
         model_name="gte-modernbert-base",
         revision=_FULL_REVISION,
         device="cpu",
+        threshold=0.0,
         cache_scope=tmp_path,
     )
 
@@ -2241,7 +2648,7 @@ def test_loose_default_cache_survives_simulated_branch_move(tmp_path: Path, monk
     units = extract_arithmetic_units(tmp_path)
     model = _WarmCacheModel()
     monkeypatch.setattr(semantic, "get_model", lambda *_a, **_k: model)
-    monkeypatch.setattr(semantic, "_get_loaded_model_commit_hash", lambda _model: None)
+    monkeypatch.setattr(semantic, "_get_loaded_model_commit_hash", lambda _model: "a" * 40)
 
     def _fail_if_called(*_args, **_kwargs):
         raise AssertionError("loose mode must never consult the offline hub-cache lookup")
@@ -2273,9 +2680,17 @@ def test_strict_revision_cache_reencodes_after_simulated_branch_move(
     """
     units = extract_arithmetic_units(tmp_path)
     model = _WarmCacheModel()
-    monkeypatch.setattr(semantic, "get_model", lambda *_a, **_k: model)
-    monkeypatch.setattr(semantic, "_resolve_hf_cached_revision", lambda *_a, **_k: "commit-a")
-    monkeypatch.setattr(semantic, "_get_loaded_model_commit_hash", lambda _model: "commit-a")
+    commit_a = "a" * 40
+    commit_b = "b" * 40
+    loaded_revisions: list[str | None] = []
+
+    def fake_get_model(*_args, **kwargs):
+        loaded_revisions.append(kwargs.get("revision"))
+        return model
+
+    monkeypatch.setattr(semantic, "get_model", fake_get_model)
+    monkeypatch.setattr(semantic, "_resolve_hf_cached_revision", lambda *_a, **_k: commit_a)
+    monkeypatch.setattr(semantic, "_get_loaded_model_commit_hash", lambda _model: commit_a)
 
     compute_embeddings(
         units,
@@ -2297,8 +2712,8 @@ def test_strict_revision_cache_reencodes_after_simulated_branch_move(
     assert model.encode_calls == 1
 
     # Simulate an upstream branch move to a new commit.
-    monkeypatch.setattr(semantic, "_resolve_hf_cached_revision", lambda *_a, **_k: "commit-b")
-    monkeypatch.setattr(semantic, "_get_loaded_model_commit_hash", lambda _model: "commit-b")
+    monkeypatch.setattr(semantic, "_resolve_hf_cached_revision", lambda *_a, **_k: commit_b)
+    monkeypatch.setattr(semantic, "_get_loaded_model_commit_hash", lambda _model: commit_b)
 
     compute_embeddings(
         units,
@@ -2309,6 +2724,7 @@ def test_strict_revision_cache_reencodes_after_simulated_branch_move(
     )
 
     assert model.encode_calls == 2
+    assert loaded_revisions == [commit_a, commit_b]
 
 
 def test_strict_revision_cache_disables_caching_for_unmappable_symbolic_ref(
@@ -2331,3 +2747,344 @@ def test_strict_revision_cache_disables_caching_for_unmappable_symbolic_ref(
         )
 
     assert model.encode_calls == 2
+
+
+def _scan_fixture() -> tuple[list[CodeUnit], np.ndarray]:
+    """Build a deterministic two-language corpus for the pairwise-scan fuzz.
+
+    Every component is +/-0.25 across 16 dimensions, so rows are exactly
+    unit-norm and every dot product is an exact multiple of 1/16. Blocking a
+    matrix multiply therefore cannot perturb a single similarity, which lets the
+    reference below compare bit-exactly, and the resulting ties make the scan's
+    emission order observable through the stable final sort.
+
+    :return: Units and their row-aligned embedding matrix.
+    """
+    count, dimensions = 1040, 16
+    rng = np.random.default_rng(20260825)
+    embeddings = (
+        rng.integers(0, 2, size=(count, dimensions)).astype(np.float32) * 2.0 - 1.0
+    ) * 0.25
+
+    # Non-finite rows. Row 0 is all-positive so its product with the +inf row is
+    # +inf rather than NaN, exercising the finite guard behind the gate mask.
+    embeddings[0] = 0.25
+    embeddings[1] = np.inf
+    embeddings[4] = np.nan
+
+    # Perfect-similarity rows for the three post-gate filters: an overlapping
+    # same-file pair, a surviving cross-file twin, and a class/function pair.
+    embeddings[9] = embeddings[8]
+    embeddings[13] = embeddings[12]
+    embeddings[17] = embeddings[16]
+
+    units: list[CodeUnit] = []
+    for index in range(count):
+        language = "python" if index % 4 < 2 else "rust"
+        if (index + 1) % 17 == 0:
+            unit_type = CodeUnitType.CLASS
+        elif index % 5 == 0:
+            unit_type = CodeUnitType.METHOD
+        else:
+            unit_type = CodeUnitType.FUNCTION
+        units.append(
+            CodeUnit(
+                name=f"unit_{index}",
+                qualified_name=f"mod_{index}.unit_{index}",
+                unit_type=unit_type,
+                file_path=Path(f"mod_{index}.{'py' if language == 'python' else 'rs'}"),
+                lineno=1,
+                end_lineno=4,
+                source=f"def unit_{index}(): ...",
+                language=language,
+                start_byte=0,
+                end_byte=40,
+            )
+        )
+
+    units[9].file_path = units[8].file_path
+    units[9].start_byte = 20
+    units[9].end_byte = 60
+    return units, embeddings
+
+
+def _reference_semantic_duplicates(
+    units: list[CodeUnit],
+    embeddings: np.ndarray,
+    threshold: float,
+    *,
+    exclude_exact: set[tuple[str, str]] | None = None,
+    cross_language: bool = False,
+    language_thresholds: dict[str, float] | None = None,
+) -> list[tuple[tuple[str, str], float]]:
+    """Restate the documented duplicate-scan semantics as a naive O(N^2) loop.
+
+    :param units: Candidate units row-aligned with ``embeddings``.
+    :param embeddings: Embedding matrix.
+    :param threshold: Fallback gate for languages without a calibrated gate.
+    :param exclude_exact: Pairs the scan must not report.
+    :param cross_language: Whether to scan one mixed group instead of per-language groups.
+    :param language_thresholds: Per-language duplicate gates.
+    :return: ``(ordered pair key, similarity)`` in the order the scan must report.
+    """
+    excluded = exclude_exact or set()
+    gates = dict(language_thresholds or {})
+    similarity_matrix = embeddings @ embeddings.T
+
+    if cross_language:
+        groups = {"*": list(range(len(units)))}
+    else:
+        groups = {}
+        for index, unit in enumerate(units):
+            groups.setdefault(unit.language, []).append(index)
+
+    reported: list[tuple[tuple[str, str], float]] = []
+    for language, indices in groups.items():
+        if cross_language:
+            group_gate = min(gates.get(units[index].language, threshold) for index in indices)
+        else:
+            group_gate = gates.get(language, threshold)
+        for position, index_a in enumerate(indices):
+            unit_a = units[index_a]
+            row = similarity_matrix[index_a].tolist()
+            for index_b in indices[position + 1 :]:
+                similarity = row[index_b]
+                if not math.isfinite(similarity) or similarity < group_gate:
+                    continue
+                unit_b = units[index_b]
+                if cross_language and similarity < min(
+                    gates.get(unit_a.language, threshold),
+                    gates.get(unit_b.language, threshold),
+                ):
+                    continue
+                kinds = {unit_a.unit_type, unit_b.unit_type}
+                if len(kinds) > 1 and kinds != {CodeUnitType.FUNCTION, CodeUnitType.METHOD}:
+                    continue
+                # Every fixture unit has a real byte range, so overlap is the
+                # same-file byte-interval test.
+                if (
+                    unit_a.file_path == unit_b.file_path
+                    and unit_a.start_byte < unit_b.end_byte
+                    and unit_b.start_byte < unit_a.end_byte
+                ):
+                    continue
+                key = ordered_pair_key(unit_a, unit_b)
+                if key in excluded:
+                    continue
+                reported.append((key, similarity))
+    reported.sort(key=lambda entry: entry[1], reverse=True)
+    return reported
+
+
+def _pair_view(duplicates) -> list[tuple[tuple[str, str], float]]:
+    """Reduce reported duplicates to comparable ``(pair key, similarity)`` entries.
+
+    :param duplicates: Duplicate pairs as reported by the scan.
+    :return: Pair keys with similarities, in report order.
+    """
+    return [(ordered_pair_key(pair.unit_a, pair.unit_b), pair.similarity) for pair in duplicates]
+
+
+def _random_float_scan_fixture() -> tuple[list[CodeUnit], np.ndarray]:
+    """Build a random-float fixture that exposes width-dependent BLAS scores.
+
+    :return: Units and their row-aligned embedding matrix.
+    """
+    count, dimensions = 520, 768
+    rng = np.random.default_rng(20260826)
+    embeddings = rng.normal(size=(count, dimensions)).astype(np.float32)
+    embeddings /= np.linalg.norm(embeddings, axis=1, keepdims=True)
+
+    # Make the final partial row block mutually similar, leaving a small,
+    # deterministic above-gate result set whose scores still use all 768 dims.
+    base = rng.normal(size=dimensions).astype(np.float32)
+    base /= np.linalg.norm(base)
+    embeddings[-20:] = base + rng.normal(scale=0.005, size=(20, dimensions)).astype(np.float32)
+    embeddings[-20:] /= np.linalg.norm(embeddings[-20:], axis=1, keepdims=True)
+
+    units = [
+        CodeUnit(
+            name=f"random_{index}",
+            qualified_name=f"random_{index}",
+            unit_type=CodeUnitType.FUNCTION,
+            file_path=Path(f"random_{index}.py"),
+            lineno=1,
+            end_lineno=2,
+            source=f"def random_{index}(): ...",
+            language="python",
+            start_byte=0,
+            end_byte=20,
+        )
+        for index in range(count)
+    ]
+    return units, embeddings
+
+
+def test_vectorized_pair_scan_matches_naive_reference() -> None:
+    # The scan multiplies full-width row chunks and thresholds column blocks in
+    # numpy; a wrong column offset or mis-ordered candidate walk only shows up
+    # past the 500-row chunk boundary, which this 520-per-language corpus crosses
+    # in every mode.
+    units, embeddings = _scan_fixture()
+    gates = {"python": 0.875, "rust": 0.75}
+
+    same_language = find_semantic_duplicates(
+        units, embeddings, threshold=0.75, language_thresholds=gates
+    )
+    expected = _reference_semantic_duplicates(units, embeddings, 0.75, language_thresholds=gates)
+    assert _pair_view(same_language) == expected
+    assert len(expected) > 100
+
+    reported_keys = {key for key, _ in _pair_view(same_language)}
+    assert ordered_pair_key(units[12], units[13]) in reported_keys
+    assert ordered_pair_key(units[8], units[9]) not in reported_keys
+    assert ordered_pair_key(units[16], units[17]) not in reported_keys
+    assert ordered_pair_key(units[0], units[1]) not in reported_keys
+    assert all(units[4].uid not in key for key in reported_keys)
+
+    cross = find_semantic_duplicates(
+        units, embeddings, threshold=0.9, cross_language=True, language_thresholds=gates
+    )
+    cross_expected = _reference_semantic_duplicates(
+        units, embeddings, 0.9, cross_language=True, language_thresholds=gates
+    )
+    assert _pair_view(cross) == cross_expected
+    assert any(pair.unit_a.language != pair.unit_b.language for pair in cross)
+
+    excluded = {key for key, _ in expected[::37]}
+    filtered = find_semantic_duplicates(
+        units, embeddings, threshold=0.75, exclude_exact=excluded, language_thresholds=gates
+    )
+    filtered_expected = _reference_semantic_duplicates(
+        units, embeddings, 0.75, exclude_exact=excluded, language_thresholds=gates
+    )
+    assert _pair_view(filtered) == filtered_expected
+    assert len(filtered) == len(expected) - len(excluded)
+
+
+def test_vectorized_pair_scan_preserves_full_width_float32_scores_and_order() -> None:
+    units, embeddings = _random_float_scan_fixture()
+    threshold = 0.97
+
+    # This is the product shape used by the original scalar candidate walk.
+    full_width_scores = embeddings[500:] @ embeddings.T
+
+    expected: list[tuple[tuple[str, str], float]] = []
+    for local_idx, group_i in enumerate(range(500, 520)):
+        for group_j in range(group_i + 1, 520):
+            similarity = float(full_width_scores[local_idx, group_j])
+            if similarity >= threshold:
+                expected.append((ordered_pair_key(units[group_i], units[group_j]), similarity))
+    expected.sort(key=lambda entry: entry[1], reverse=True)
+    assert len(expected) == 190
+
+    matmul_shapes: list[tuple[tuple[int, ...], tuple[int, ...]]] = []
+
+    class MatmulTracingArray(np.ndarray):
+        def __matmul__(self, other):
+            matmul_shapes.append((self.shape, other.shape))
+            return np.ndarray.__matmul__(self, other)
+
+    reported = find_semantic_duplicates(
+        units, embeddings.view(MatmulTracingArray), threshold=threshold
+    )
+
+    assert _pair_view(reported) == expected
+    assert matmul_shapes == [((500, 768), (768, 520)), ((20, 768), (768, 520))]
+
+
+def test_vectorized_pair_scan_bounds_candidate_extraction_and_masks_lower_triangle(
+    monkeypatch,
+) -> None:
+    units, _ = _random_float_scan_fixture()
+    shared_path = Path("overlapping.py")
+    for unit in units:
+        unit.file_path = shared_path
+    embeddings = np.ones((len(units), 1), dtype=np.float32)
+
+    nonzero_calls: list[tuple[tuple[int, ...], int]] = []
+    original_nonzero = np.nonzero
+
+    def recording_nonzero(mask):
+        result = original_nonzero(mask)
+        nonzero_calls.append((mask.shape, len(result[0])))
+        return result
+
+    monkeypatch.setattr(semantic.np, "nonzero", recording_nonzero)
+
+    # Every score clears the gate, while overlap filtering keeps the returned
+    # result empty so this test measures intermediate candidate batching only.
+    assert find_semantic_duplicates(units, embeddings, threshold=0.0) == []
+
+    block_size = semantic._PAIRWISE_SCAN_BLOCK_SIZE
+    assert nonzero_calls == [
+        ((500, 500), 500 * 499 // 2),
+        ((500, 20), 500 * 20),
+        ((20, 20), 20 * 19 // 2),
+    ]
+    assert max(rows * columns for (rows, columns), _ in nonzero_calls) <= block_size**2
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        ("def f():\r\n    return 1\r\n", "def f():\n    return 1"),
+        ("def f():\r    return 1\r", "def f():\n    return 1"),
+        ("\r\n  keep  \r\n", "keep"),
+        ("already\nnormalized", "already\nnormalized"),
+    ],
+)
+def test_prepare_embedding_text_normalizes_line_endings(source: str, expected: str) -> None:
+    assert semantic._prepare_embedding_text(source) == expected
+
+
+def test_crlf_and_lf_units_share_one_embedding_cache_key(tmp_path: Path) -> None:
+    lf_source = "fn f() -> i64 {\n    1\n}\n"
+    lf_unit = CodeUnit(
+        name="f",
+        qualified_name="sample::f",
+        unit_type=CodeUnitType.FUNCTION,
+        file_path=tmp_path / "lf.rs",
+        lineno=1,
+        end_lineno=3,
+        source=lf_source,
+        language="rust",
+    )
+    crlf_unit = CodeUnit(
+        name="f",
+        qualified_name="sample::f",
+        unit_type=CodeUnitType.FUNCTION,
+        file_path=tmp_path / "crlf.rs",
+        lineno=1,
+        end_lineno=3,
+        source=lf_source.replace("\n", "\r\n"),
+        language="rust",
+    )
+
+    lf_text = semantic._prepare_embedding_text(lf_unit.source)
+    crlf_text = semantic._prepare_embedding_text(crlf_unit.source)
+    assert lf_text == crlf_text
+
+    lf_key = compute_cache_key("model", "revision", lf_text)
+    assert lf_key == compute_cache_key("model", "revision", crlf_text)
+    # Without normalization the two checkouts would key - and embed - apart.
+    assert lf_key != compute_cache_key("model", "revision", crlf_unit.source.strip())
+
+
+def test_compute_embeddings_normalizes_crlf_before_encoding(tmp_path: Path, monkeypatch) -> None:
+    unit = CodeUnit(
+        name="f",
+        qualified_name="sample::f",
+        unit_type=CodeUnitType.FUNCTION,
+        file_path=tmp_path / "sample.rs",
+        lineno=1,
+        end_lineno=3,
+        source="fn f() -> i64 {\r\n    1\r\n}\r\n",
+        language="rust",
+    )
+    model = _RecordingModel()
+    monkeypatch.setattr(semantic, "get_model", lambda *_a, **_k: model)
+
+    compute_embeddings([unit], device="cpu")
+
+    assert model.encoded == [["fn f() -> i64 {\n    1\n}"]]

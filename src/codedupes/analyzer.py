@@ -20,11 +20,21 @@ from codedupes.constants import (
 )
 from codedupes.devices import normalize_semantic_device, validate_mps_memory_fraction
 from codedupes.extractor import CodeExtractor
-from codedupes.models import AnalysisResult, CodeUnit, CodeUnitType, DuplicatePair, HybridDuplicate
+from codedupes.languages.registry import normalize_languages
+from codedupes.models import (
+    AnalysisResult,
+    CodeUnit,
+    CodeUnitType,
+    DuplicatePair,
+    ExtractionDiagnostic,
+    HybridDuplicate,
+)
 from codedupes.pairs import ordered_pair_key
 from codedupes.semantic import (
     EmbeddingSpaceIdentity,
     SemanticBackendError,
+    SemanticContextOverflow,
+    describe_context_overflow,
     get_code_unit_statement_count,
     get_semantic_runtime_versions,
     validate_explicit_device_request,
@@ -35,19 +45,18 @@ from codedupes.semantic import (
 from codedupes.semantic import (
     run_semantic_analysis_with_identity as run_semantic_analysis,
 )
-from codedupes.semantic_profiles import get_default_semantic_threshold
+from codedupes.semantic_profiles import resolve_model_profile
 from codedupes.traditional import (
     build_reference_graph,
-    extract_identifiers,
     find_exact_pair_keys,
     find_potentially_unused,
     jaccard_similarity,
     run_traditional_analysis,
+    unit_identifier_set,
 )
 
 logger = logging.getLogger(__name__)
 
-HYBRID_SEMANTIC_ONLY_MIN = 0.92
 HYBRID_WEAK_JACCARD_MIN = 0.20
 HYBRID_STATEMENT_RATIO_MIN = 0.35
 DEFAULT_SEMANTIC_UNIT_TYPES = ("function", "method")
@@ -203,22 +212,29 @@ def _synthesize_hybrid_duplicates(
     traditional_duplicates: list[DuplicatePair],
     semantic_duplicates: list[DuplicatePair],
     *,
-    semantic_threshold: float,
     jaccard_threshold: float,
-    semantic_only_min: float = HYBRID_SEMANTIC_ONLY_MIN,
     weak_identifier_jaccard_min: float = HYBRID_WEAK_JACCARD_MIN,
     statement_ratio_min: float = HYBRID_STATEMENT_RATIO_MIN,
-) -> tuple[list[HybridDuplicate], int]:
+) -> list[HybridDuplicate]:
     """Build ranked hybrid duplicates from traditional and semantic outputs.
 
+    ``semantic_duplicates`` must already be gated (the pairwise scan applies the
+    per-language calibrated gates, or an explicit flat override), so a recorded
+    semantic similarity is itself the evidence that the pair cleared its
+    duplicate gate. Identifier overlap and statement-count
+    similarity promote semantic-only pairs to ``semantic_high_confidence``;
+    pairs without that corroboration remain visible as ``semantic_review``.
+
     :param traditional_duplicates: Traditional duplicate pairs (exact + Jaccard).
-    :param semantic_duplicates: Semantic duplicate pairs.
-    :param semantic_threshold: Minimum semantic similarity used for hybrid tiering.
+    :param semantic_duplicates: Gated semantic duplicate pairs.
     :param jaccard_threshold: Minimum Jaccard similarity used for hybrid tiering.
-    :param semantic_only_min: Minimum semantic score for semantic-only candidates.
-    :param weak_identifier_jaccard_min: Minimum identifier overlap for semantic-only candidates.
-    :param statement_ratio_min: Minimum statement-count ratio for semantic-only candidates.
-    :return: Tuple of sorted hybrid duplicates and number filtered pairs.
+    :param weak_identifier_jaccard_min: Identifier overlap needed to promote a
+        semantic-only candidate to high confidence.
+    :param statement_ratio_min: Statement-count ratio needed to promote a
+        semantic-only candidate to high confidence.
+    :return: Hybrid duplicates sorted by descending confidence. Every candidate
+        pair reaches a tier: semantic-only pairs without corroboration fall back
+        to ``semantic_review`` rather than being dropped.
     """
     pair_evidence: dict[tuple[str, str], dict[str, object]] = {}
 
@@ -272,29 +288,42 @@ def _synthesize_hybrid_duplicates(
         weak_identifier_jaccard: float | None = None
         statement_ratio: float | None = None
 
+        # Confidence is a corroboration scale, not a raw similarity: at equal
+        # evidence strength a tier with more independent corroboration must
+        # always outrank one with less, or the weakest tier crowds the
+        # best-evidenced pairs off the top of the table. Per tier:
+        #   exact                    = 1.0
+        #   traditional_near         = 0.55 + 0.45 * jaccard
+        #   hybrid_confirmed         = 0.50 * semantic + 0.50 * jaccard
+        #   semantic_high_confidence = 0.45 + 0.55 * semantic
+        #   semantic_review          = 0.40 + 0.45 * semantic
+        # The last two keep semantic_review strictly below its corroborated
+        # sibling at every similarity (the gap is 0.05 + 0.10 * semantic).
         if has_exact:
             tier = "exact"
             confidence = 1.0
         elif jaccard_sim is not None and jaccard_sim >= jaccard_threshold:
-            if semantic_sim is not None and semantic_sim >= semantic_threshold:
+            if semantic_sim is not None:
                 tier = "hybrid_confirmed"
                 confidence = (0.5 * semantic_sim) + (0.5 * jaccard_sim)
             else:
                 tier = "traditional_near"
                 confidence = 0.55 + (0.45 * jaccard_sim)
         elif semantic_sim is not None:
-            ids_a = identifier_cache.setdefault(unit_a.uid, extract_identifiers(unit_a.source))
-            ids_b = identifier_cache.setdefault(unit_b.uid, extract_identifiers(unit_b.source))
+            ids_a = identifier_cache.setdefault(unit_a.uid, unit_identifier_set(unit_a))
+            ids_b = identifier_cache.setdefault(unit_b.uid, unit_identifier_set(unit_b))
             weak_identifier_jaccard = jaccard_similarity(ids_a, ids_b)
             statement_ratio = _statement_count_ratio(unit_a, unit_b)
 
             if (
-                semantic_sim >= semantic_only_min
-                and weak_identifier_jaccard >= weak_identifier_jaccard_min
+                weak_identifier_jaccard >= weak_identifier_jaccard_min
                 and statement_ratio >= statement_ratio_min
             ):
                 tier = "semantic_high_confidence"
                 confidence = 0.45 + (0.55 * semantic_sim)
+            else:
+                tier = "semantic_review"
+                confidence = 0.40 + (0.45 * semantic_sim)
 
         if tier is None or confidence is None:
             continue
@@ -323,8 +352,7 @@ def _synthesize_hybrid_duplicates(
         )
     )
 
-    filtered_raw_count = max(0, len(pair_evidence) - len(hybrid_duplicates))
-    return hybrid_duplicates, filtered_raw_count
+    return hybrid_duplicates
 
 
 @dataclass
@@ -334,12 +362,14 @@ class AnalyzerConfig:
     # Extraction
     exclude_patterns: list[str] | None = None
     include_private: bool = True
+    languages: tuple[str, ...] | None = None
 
     # Traditional detection
     jaccard_threshold: float = DEFAULT_TRADITIONAL_THRESHOLD
 
     # Semantic detection
     semantic_threshold: float | None = None
+    cross_language: bool = False
     model_name: str = DEFAULT_MODEL
     semantic_task: str | None = None
     instruction_prefix: str | None = None
@@ -359,7 +389,11 @@ class AnalyzerConfig:
     embedding_cache: bool = True
     strict_revision_cache: bool = False
 
-    # What to run
+    # What to run. mode="check" validates the calibrated duplicate-gate
+    # contract at construction; mode="search" defers to the query-time search
+    # contract instead, because search calibration is independent of the
+    # duplicate gates. search()/index() accept both; analyze() requires "check".
+    mode: str = "check"
     run_traditional: bool = True
     run_semantic: bool = True
     run_unused: bool = True
@@ -367,6 +401,13 @@ class AnalyzerConfig:
     suppress_test_semantic_matches: bool = False
 
     def __post_init__(self) -> None:
+        if self.mode not in {"check", "search"}:
+            raise ValueError(f"mode must be 'check' or 'search', got {self.mode!r}")
+        if self.mode == "search" and not self.run_semantic:
+            raise ValueError("mode='search' requires run_semantic=True")
+
+        self.languages = normalize_languages(self.languages)
+
         if not 0.0 <= self.jaccard_threshold <= 1.0:
             raise ValueError("jaccard_threshold must be in [0.0, 1.0]")
 
@@ -421,6 +462,7 @@ class AnalyzerConfig:
             "run_semantic",
             (
                 ("semantic_threshold", self.semantic_threshold is not None),
+                ("cross_language", self.cross_language),
                 ("semantic_task", self.semantic_task is not None),
                 ("instruction_prefix", self.instruction_prefix is not None),
                 ("model_revision", self.model_revision is not None),
@@ -456,12 +498,50 @@ class AnalyzerConfig:
                 "allow_semantic_fallback requires run_semantic=True and run_traditional=True"
             )
 
+        if self.mode == "check" and self.run_semantic and self.semantic_threshold is None:
+            reasons = self._uncalibrated_gate_reasons(
+                self.semantic_task or DEFAULT_CHECK_SEMANTIC_TASK
+            )
+            if reasons:
+                context = ", ".join(reasons)
+                raise ValueError(
+                    f"The default duplicate thresholds are not calibrated for {context}; "
+                    "provide semantic_threshold explicitly."
+                )
+
+    def _uncalibrated_gate_reasons(self, semantic_task: str) -> list[str]:
+        """Collect config choices the calibrated duplicate gates do not cover.
+
+        :param semantic_task: Resolved task used to embed duplicate candidates.
+        :return: Human-readable reasons, empty when the calibrated gates apply.
+        """
+        profile = resolve_model_profile(self.model_name)
+        reasons: list[str] = []
+        if self.instruction_prefix is not None:
+            reasons.append("a custom instruction prefix")
+        if profile.family == "embeddinggemma" and semantic_task != DEFAULT_CHECK_SEMANTIC_TASK:
+            reasons.append(f"semantic task {semantic_task!r}")
+        if (
+            profile.default_revision is not None
+            and self.model_revision is not None
+            and self.model_revision != profile.default_revision
+        ):
+            reasons.append(f"model revision {self.model_revision!r}")
+        # Remote-code execution splits the embedding cache key because it can
+        # change the vectors, so it must invalidate the calibrated gates too.
+        if (
+            self.trust_remote_code is not None
+            and self.trust_remote_code != profile.default_trust_remote_code
+        ):
+            reasons.append(f"trust_remote_code={self.trust_remote_code}")
+        return reasons
+
 
 class CodeAnalyzer:
     """
     Main analyzer for detecting duplicate and unused code.
 
-    Combines traditional AST-based methods with semantic embedding similarity.
+    Combines structural/token methods with semantic embedding similarity.
     """
 
     def __init__(self, config: AnalyzerConfig | None = None) -> None:
@@ -476,6 +556,28 @@ class CodeAnalyzer:
         self._resolved_search_semantic_task: str | None = None
         self._embedding_space_identity: EmbeddingSpaceIdentity | None = None
         self._cache_scope: Path | None = None
+        self._extraction_diagnostics: list[ExtractionDiagnostic] = []
+        self._semantic_diagnostics: list[ExtractionDiagnostic] = []
+
+    @property
+    def semantic_diagnostics(self) -> list[ExtractionDiagnostic]:
+        """Return diagnostics raised by the semantic stage of the last run.
+
+        :return: Diagnostics for units excluded from semantic comparison.
+        """
+        return list(self._semantic_diagnostics)
+
+    @property
+    def extracted_unit_count(self) -> int:
+        """Return the number of code units extracted by the last run.
+
+        This count precedes semantic candidate filtering and context-window
+        exclusions, so callers can distinguish an empty source corpus from an
+        empty semantic index.
+
+        :return: Extracted code-unit count, or zero before the first run.
+        """
+        return len(self._units) if self._units is not None else 0
 
     def _reset_analysis_state(self, cache_scope: Path) -> None:
         """Clear corpus-specific state before one analysis run.
@@ -489,11 +591,44 @@ class CodeAnalyzer:
         self._resolved_search_semantic_task = None
         self._embedding_space_identity = None
         self._cache_scope = cache_scope
+        self._extraction_diagnostics = []
+        self._semantic_diagnostics = []
+
+    def _drop_over_context_units(
+        self,
+        overflow: list[SemanticContextOverflow],
+        semantic_candidates: list[CodeUnit],
+    ) -> list[CodeUnit]:
+        """Record skipped over-context units and drop them from the semantic corpus.
+
+        The embedding matrix already excludes these rows, so the candidate list
+        must lose them too or every later row lookup is off by one.
+
+        :param overflow: Units the semantic layer could not embed completely.
+        :param semantic_candidates: Candidate units passed to the semantic layer.
+        :return: Candidates that survived the context policy.
+        """
+        self._semantic_diagnostics.extend(
+            ExtractionDiagnostic(
+                file_path=skipped.unit.file_path,
+                language=skipped.unit.language,
+                message=describe_context_overflow(skipped),
+                severity="warning",
+                code="semantic-context-overflow",
+                lineno=skipped.unit.lineno,
+                end_lineno=skipped.unit.end_lineno,
+            )
+            for skipped in overflow
+        )
+        skipped_ids = {id(skipped.unit) for skipped in overflow}
+        remaining = [unit for unit in semantic_candidates if id(unit) not in skipped_ids]
+        self._semantic_units = remaining
+        return remaining
 
     def _extract_corpus_units(self, path: Path) -> list[CodeUnit]:
         """Extract code units from a resolved directory or single-file path.
 
-        :param path: Resolved existing path to a directory or Python file.
+        :param path: Resolved existing path to a directory or supported source file.
         :return: Extracted code units.
         """
         logger.info(f"Extracting code units from {path}")
@@ -503,6 +638,10 @@ class CodeAnalyzer:
                 path.parent,
                 exclude_patterns=self.config.exclude_patterns,
                 include_private=self.config.include_private,
+                # include_stubs gates directory walks; a .pyi named explicitly
+                # as the analysis target is analyzed as given.
+                include_stubs=self.config.include_stubs or path.suffix.lower() == ".pyi",
+                languages=self.config.languages,
             )
             units = list(extractor.extract_from_file(path))
         else:
@@ -511,9 +650,11 @@ class CodeAnalyzer:
                 exclude_patterns=self.config.exclude_patterns,
                 include_private=self.config.include_private,
                 include_stubs=self.config.include_stubs,
+                languages=self.config.languages,
             )
             units = extractor.extract_all()
 
+        self._extraction_diagnostics = list(extractor.diagnostics)
         logger.info(f"Extracted {len(units)} code units")
         return units
 
@@ -530,6 +671,53 @@ class CodeAnalyzer:
             if unit.unit_type in semantic_type_filter
             and get_code_unit_statement_count(unit) >= self.config.min_semantic_statements
         ]
+
+    def _resolve_semantic_gates(
+        self,
+        semantic_candidates: list[CodeUnit],
+        semantic_task: str,
+    ) -> tuple[dict[str, float], float]:
+        """Resolve per-language duplicate gates and the scan fallback floor.
+
+        An explicit ``config.semantic_threshold`` applies as one flat gate to
+        every language. Otherwise each candidate language gets its calibrated
+        gate from the model profile, and the pairwise scan holds every group to
+        its own gate. The returned floor is the loosest gate, used only for a
+        language that reaches the scan without a calibrated entry.
+
+        :param semantic_candidates: Units eligible for semantic comparison.
+        :param semantic_task: Resolved task used to embed the candidates.
+        :return: Tuple of the per-language gate map and the fallback floor.
+        :raises ValueError: If the configured embedding context has no calibrated
+            default threshold.
+        """
+        explicit = self.config.semantic_threshold
+        languages = sorted({unit.language for unit in semantic_candidates})
+        if explicit is not None:
+            return dict.fromkeys(languages, explicit), explicit
+
+        profile = resolve_model_profile(self.config.model_name)
+        # Backstop for configs mutated after construction; __post_init__
+        # enforces this for every check-mode config it accepts.
+        uncalibrated_reasons = self.config._uncalibrated_gate_reasons(semantic_task)
+        if uncalibrated_reasons:
+            context = ", ".join(uncalibrated_reasons)
+            raise ValueError(
+                f"The default duplicate thresholds are not calibrated for {context}; "
+                "provide semantic_threshold explicitly."
+            )
+
+        gates = {
+            language: profile.semantic_threshold_for_language(language) for language in languages
+        }
+        floor = min(gates.values(), default=profile.semantic_threshold_for_language(None))
+        if gates:
+            gate_text = ", ".join(f"{language}={gate:.2f}" for language, gate in gates.items())
+            logger.info(
+                f"Per-language semantic duplicate gates: {gate_text} "
+                f"(fallback {floor:.2f} for uncalibrated languages)"
+            )
+        return gates, floor
 
     def _validate_semantic_device_for_empty_corpus(self) -> None:
         """Enforce the explicit-device contract on the empty-extraction shortcut.
@@ -564,16 +752,22 @@ class CodeAnalyzer:
         Run full analysis on a directory or file.
 
         Args:
-            path: Path to directory or single Python file
+            path: Path to a supported source file or directory
 
         Returns:
             AnalysisResult with all findings
 
         Raises:
             FileNotFoundError: If path does not exist
+            ValueError: If the config was built with mode="search"
             SemanticBackendError: If an explicitly requested device is unavailable,
                 including when extraction finds no code units
         """
+        if self.config.mode != "check":
+            raise ValueError(
+                "analyze() requires a mode='check' config; mode='search' configs "
+                "skip duplicate-gate validation and only support index()/search()."
+            )
         path = Path(path).resolve()
 
         if not path.exists():
@@ -593,25 +787,26 @@ class CodeAnalyzer:
                 hybrid_duplicates=[],
                 potentially_unused=[],
                 analysis_mode="none",
-                filtered_raw_duplicates=0,
+                extraction_diagnostics=list(self._extraction_diagnostics),
             )
 
         traditional_duplicates: list[DuplicatePair] = []
         unused: list[CodeUnit] = []
         semantic_fallback = False
         semantic_fallback_reason: str | None = None
-        semantic_threshold = (
-            self.config.semantic_threshold
-            if self.config.semantic_threshold is not None
-            else get_default_semantic_threshold(self.config.model_name)
-        )
         semantic_task = self.config.semantic_task or DEFAULT_CHECK_SEMANTIC_TASK
         self._resolved_search_semantic_task = semantic_task
 
         semantic_candidates: list[CodeUnit] = []
+        semantic_gates: dict[str, float] = {}
+        semantic_scan_floor = 0.0
         if self.config.run_semantic:
             semantic_candidates = self._select_semantic_candidates(units)
             self._semantic_units = semantic_candidates
+            semantic_gates, semantic_scan_floor = self._resolve_semantic_gates(
+                semantic_candidates,
+                semantic_task,
+            )
 
         if self.config.run_traditional:
             traditional_duplicate_units = units
@@ -633,9 +828,11 @@ class CodeAnalyzer:
                 )
             traditional_duplicates = exact_dupes + near_dupes
 
+        unused_excluded_units = 0
         if self.config.run_unused:
             build_reference_graph(units, project_root=path)
             unused = find_potentially_unused(units, strict_unused=self.config.strict_unused)
+            unused_excluded_units = sum(unit.language != "python" for unit in units)
 
         semantic_duplicates: list[DuplicatePair] = []
 
@@ -650,11 +847,14 @@ class CodeAnalyzer:
                 # evidence and enable hybrid_confirmed scoring.
                 exclude = find_exact_pair_keys(semantic_candidates)
 
+            semantic_overflow: list[SemanticContextOverflow] = []
             try:
                 semantic_kwargs: dict[str, object] = {
                     "model_name": self.config.model_name,
                     "instruction_prefix": self.config.instruction_prefix,
-                    "threshold": semantic_threshold,
+                    "threshold": semantic_scan_floor,
+                    "language_thresholds": semantic_gates,
+                    "overflow_report": semantic_overflow,
                     "exclude_pairs": exclude,
                     "batch_size": self.config.batch_size,
                     "revision": self.config.model_revision,
@@ -666,6 +866,7 @@ class CodeAnalyzer:
                     "use_cache": self.config.embedding_cache,
                     "cache_scope": self._cache_scope,
                     "strict_revision_cache": self.config.strict_revision_cache,
+                    "cross_language": self.config.cross_language,
                 }
                 (
                     self._embeddings,
@@ -680,7 +881,7 @@ class CodeAnalyzer:
                     raise
                 if not self.config.allow_semantic_fallback:
                     raise RuntimeError(
-                        "Semantic analysis failed in combined mode. Re-run with "
+                        f"Semantic analysis failed in combined mode ({exc}). Re-run with "
                         "`--allow-semantic-fallback` to keep scoped traditional results, "
                         "or use `--traditional-only` for deterministic non-semantic analysis."
                     ) from exc
@@ -704,6 +905,16 @@ class CodeAnalyzer:
                     f"Retry with `codedupes check {path} --traditional-only`."
                 )
                 logger.warning(semantic_fallback_reason)
+            else:
+                if semantic_overflow:
+                    semantic_candidates = self._drop_over_context_units(
+                        semantic_overflow,
+                        semantic_candidates,
+                    )
+
+            # Language partitioning and the per-language gates are applied inside
+            # the pairwise scan (see find_semantic_duplicates), so every pair that
+            # arrives here already cleared its own language's gate.
 
             if self.config.suppress_test_semantic_matches:
                 semantic_duplicates = [
@@ -727,13 +938,11 @@ class CodeAnalyzer:
 
         combined_mode = self.config.run_traditional and self.config.run_semantic
         hybrid_duplicates: list[HybridDuplicate] = []
-        filtered_raw_duplicates = 0
 
         if combined_mode:
-            hybrid_duplicates, filtered_raw_duplicates = _synthesize_hybrid_duplicates(
+            hybrid_duplicates = _synthesize_hybrid_duplicates(
                 traditional_duplicates,
                 semantic_duplicates,
-                semantic_threshold=semantic_threshold,
                 jaccard_threshold=self.config.jaccard_threshold,
             )
 
@@ -753,9 +962,11 @@ class CodeAnalyzer:
             hybrid_duplicates=hybrid_duplicates,
             potentially_unused=unused,
             analysis_mode=analysis_mode,
-            filtered_raw_duplicates=filtered_raw_duplicates,
             semantic_fallback=semantic_fallback,
             semantic_fallback_reason=semantic_fallback_reason,
+            extraction_diagnostics=list(self._extraction_diagnostics),
+            semantic_diagnostics=list(self._semantic_diagnostics),
+            unused_excluded_units=unused_excluded_units,
         )
 
     def index(self, path: Path | str) -> int:
@@ -766,7 +977,11 @@ class CodeAnalyzer:
         :meth:`analyze`, no all-pairs duplicate scan, traditional analysis, or
         unused-code analysis happens, so indexing stays linear in corpus size.
 
-        :param path: Path to directory or single Python file.
+        Units too long for the model context window are skipped (reported through
+        :attr:`semantic_diagnostics`) rather than ending the run, exactly as on
+        the duplicate-check path; only an over-long query fails hard.
+
+        :param path: Path to a supported source file or directory.
         :return: Number of code units embedded for search.
         :raises FileNotFoundError: If ``path`` does not exist.
         """
@@ -784,10 +999,12 @@ class CodeAnalyzer:
         )
         semantic_candidates = self._select_semantic_candidates(units)
         self._semantic_units = semantic_candidates
+        overflow: list[SemanticContextOverflow] = []
 
         try:
             self._embeddings, self._embedding_space_identity = compute_embeddings(
                 semantic_candidates,
+                overflow_report=overflow,
                 model_name=self.config.model_name,
                 instruction_prefix=self.config.instruction_prefix,
                 batch_size=self.config.batch_size,
@@ -804,21 +1021,34 @@ class CodeAnalyzer:
         except Exception:
             self._embedding_space_identity = None
             raise
+        if overflow:
+            semantic_candidates = self._drop_over_context_units(overflow, semantic_candidates)
         return len(semantic_candidates)
 
-    def search(self, query: str, top_k: int = 10) -> list[tuple[CodeUnit, float]]:
+    def search(
+        self,
+        query: str,
+        top_k: int = 10,
+        threshold: float | None = None,
+    ) -> list[tuple[CodeUnit, float]]:
         """
         Search for code units matching a natural language query.
 
         Must run index() (or analyze() with semantic analysis enabled) first to
-        compute embeddings. Any non-``None`` ``config.semantic_threshold``
-        applies to search as well, so leave it ``None`` (do not pre-resolve a
-        duplicate-detection default into it) to get the model profile search
-        default, which is far looser because query-to-code similarity runs well
-        below code-to-code similarity.
+        compute embeddings. The search floor is ``threshold`` when given, else
+        ``config.semantic_threshold``, else the model profile's search default
+        (far looser than a duplicate gate, because query-to-code similarity runs
+        well below code-to-code similarity). Prefer ``threshold`` over setting
+        ``config.semantic_threshold``: the latter also replaces every calibrated
+        per-language duplicate gate with one flat value.
+
+        Searching after :meth:`analyze` reuses the duplicate-detection task, for
+        which no search default is calibrated on prompt-sensitive models, so
+        those combinations require ``threshold``.
 
         :param query: Search query string.
         :param top_k: Maximum results to return.
+        :param threshold: Minimum cosine similarity for this call only.
         :return: List of code units and cosine scores.
         """
         if self._units is None or self._embeddings is None:
@@ -843,7 +1073,7 @@ class CodeAnalyzer:
             top_k=top_k,
             revision=self.config.model_revision,
             trust_remote_code=self.config.trust_remote_code,
-            threshold=self.config.semantic_threshold,
+            threshold=threshold if threshold is not None else self.config.semantic_threshold,
             semantic_task=self._resolved_search_semantic_task,
             device=self.config.device,
             mps_fallback=self.config.mps_fallback,
@@ -858,8 +1088,10 @@ class CodeAnalyzer:
 def analyze_directory(
     path: Path | str,
     semantic_threshold: float | None = None,
+    cross_language: bool = False,
     traditional_threshold: float = DEFAULT_TRADITIONAL_THRESHOLD,
     exclude_patterns: list[str] | None = None,
+    languages: tuple[str, ...] | None = None,
     model_name: str = DEFAULT_MODEL,
     semantic_task: str | None = None,
     instruction_prefix: str | None = None,
@@ -883,9 +1115,13 @@ def analyze_directory(
 
     Args:
         path: Directory to analyze
-        semantic_threshold: Cosine similarity threshold for semantic duplicates
+        semantic_threshold: Flat cosine gate applied to every language; ``None``
+            uses the model profile's calibrated per-language gates
+        cross_language: Report semantic duplicate pairs across languages
+            (uncalibrated; a mixed pair uses the looser of its two gates)
         traditional_threshold: Jaccard threshold for traditional near-duplicates
         exclude_patterns: Glob patterns for files to exclude
+        languages: Optional language filter; omitted means auto-detect supported files.
         model_name: HuggingFace model for embeddings
         semantic_task: Semantic task mode for prompt/inference behavior
         instruction_prefix: Custom instruction prefix prepended to semantic inputs
@@ -913,8 +1149,10 @@ def analyze_directory(
     """
     config = AnalyzerConfig(
         semantic_threshold=semantic_threshold,
+        cross_language=cross_language,
         jaccard_threshold=traditional_threshold,
         exclude_patterns=exclude_patterns,
+        languages=languages,
         model_name=model_name,
         semantic_task=semantic_task,
         instruction_prefix=instruction_prefix,
