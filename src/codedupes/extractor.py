@@ -507,7 +507,12 @@ class CodeExtractor:
         # that are symlinks to targets outside the root: exclusion and module
         # naming are computed relative to the root, and the symlink is the
         # file's identity within the analyzed tree.
-        resolved = file_path.resolve()
+        try:
+            resolved = file_path.resolve()
+        except (OSError, RuntimeError):
+            # pathlib translates ELOOP into RuntimeError on supported Python
+            # versions; leave the original path for the read-error diagnostic.
+            resolved = file_path
         if resolved.is_relative_to(self.root):
             file_path = resolved
         if self._should_exclude(file_path):
@@ -838,7 +843,7 @@ class CodeExtractor:
 
                 try:
                     resolved = source_file.resolve()
-                except OSError:
+                except (OSError, RuntimeError):
                     resolved = source_file
                 if resolved in seen:
                     continue

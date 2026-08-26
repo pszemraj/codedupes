@@ -412,6 +412,7 @@ def test_unreadable_files_do_not_abort_extraction(tmp_path: Path) -> None:
     missing = tmp_path / "gone"
     (root / "dangling.py").symlink_to(missing / "absent.py")
     (root / "dangling.js").symlink_to(missing / "absent.js")
+    (root / "loop.py").symlink_to("loop.py")
 
     extractor = CodeExtractor(root, include_private=True)
     units = extractor.extract_all()
@@ -424,6 +425,7 @@ def test_unreadable_files_do_not_abort_extraction(tmp_path: Path) -> None:
     assert {diagnostic.file_path.name for diagnostic in read_errors} == {
         "dangling.py",
         "dangling.js",
+        "loop.py",
     }
 
 
