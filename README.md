@@ -17,6 +17,8 @@ Core capabilities:
 pip install "codedupes @ git+https://github.com/pszemraj/codedupes.git"
 ```
 
+Python 3.11 or newer is required.
+
 The normal installation includes exact-pinned, precompiled Tree-sitter packages for C, Rust, JavaScript/JSX, TypeScript, and TSX. codedupes does not download grammars while analyzing a repository.
 
 See [Installation](https://github.com/pszemraj/codedupes/blob/main/docs/install.md) for Python and runtime requirements.

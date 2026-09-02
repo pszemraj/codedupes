@@ -6,7 +6,7 @@
 pip install "codedupes @ git+https://github.com/pszemraj/codedupes.git"
 ```
 
-Requires Python 3.11+ and PyTorch `>=2.13.0,<3`.
+Requires Python 3.11 or newer and PyTorch `>=2.13.0,<3`.
 
 ## Local development (editable install)
 

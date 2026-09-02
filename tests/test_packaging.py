@@ -19,6 +19,14 @@ def _pyproject() -> dict[str, object]:
         return tomllib.load(handle)
 
 
+def test_python_311_is_the_runtime_and_lint_floor() -> None:
+    """Keep package metadata and static analysis on the documented Python floor."""
+    metadata = _pyproject()
+
+    assert metadata["project"]["requires-python"] == ">=3.11"  # type: ignore[index]
+    assert metadata["tool"]["ruff"]["target-version"] == "py311"  # type: ignore[index]
+
+
 def test_torch_213_is_the_semantic_runtime_floor() -> None:
     """Keep the release contract aligned with the MPS implementation."""
     project = _pyproject()["project"]
