@@ -558,6 +558,7 @@ def run_traditional_analysis(
     logger.info(f"Found {len(near)} near duplicates (Jaccard)")
 
     unused = find_potentially_unused(units, strict_unused=strict_unused) if compute_unused else []
-    logger.info(f"Found {len(unused)} potentially unused code units")
+    if compute_unused:
+        logger.info(f"Found {len(unused)} potentially unused code units")
 
     return exact, _dedupe_duplicate_pairs(near), unused

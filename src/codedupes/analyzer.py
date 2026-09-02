@@ -1004,6 +1004,7 @@ class CodeAnalyzer:
                 build_reference_graph(units, project_root=path)
                 unused = find_potentially_unused(units, strict_unused=self.config.strict_unused)
                 unused_excluded_units = sum(unit.language != "python" for unit in units)
+                logger.info(f"Found {len(unused)} potentially unused code units")
 
             # Language partitioning and the per-language gates are applied inside
             # the pairwise scan (see find_semantic_duplicates), so every pair that
@@ -1033,6 +1034,7 @@ class CodeAnalyzer:
             build_reference_graph(units, project_root=path)
             unused = find_potentially_unused(units, strict_unused=self.config.strict_unused)
             unused_excluded_units = sum(unit.language != "python" for unit in units)
+            logger.info(f"Found {len(unused)} potentially unused code units")
 
         combined_mode = self.config.run_traditional and self.config.run_semantic
         hybrid_duplicates: list[HybridDuplicate] = []
