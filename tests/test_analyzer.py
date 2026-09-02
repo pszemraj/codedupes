@@ -29,6 +29,7 @@ _SEMANTIC_ANALYSIS_KWARG_NAMES = {
     "mps_memory_fraction",
     "overflow_report",
     "progress",
+    "stats",
     "revision",
     "semantic_task",
     "strict_revision_cache",

@@ -83,6 +83,75 @@ def _should_show_progress(mode: ProgressMode, input_count: int) -> bool:
     return input_count > PROGRESS_BAR_MIN_INPUTS and sys.stderr.isatty()
 
 
+@dataclass
+class EmbeddingRunStats:
+    """Describe the work performed by one corpus embedding call."""
+
+    requested_rows: int = 0
+    unique_inputs: int = 0
+    cache_hit_rows: int = 0
+    duplicate_rows_reused: int = 0
+    encoded_inputs: int = 0
+    model_loaded: bool = False
+    cache_enabled: bool = False
+    cache_revision: str | None = None
+    execution_device: str | None = None
+    moved_units_reused: int = 0
+    deleted_units: int = 0
+    orphan_rows_retained: int = 0
+    orphan_rows_collected: int = 0
+    manifest_generation: int | None = None
+
+
+def _reset_embedding_run_stats(stats: EmbeddingRunStats | None) -> None:
+    """Reset a caller-owned embedding telemetry collector in place."""
+    if stats is None:
+        return
+    stats.requested_rows = 0
+    stats.unique_inputs = 0
+    stats.cache_hit_rows = 0
+    stats.duplicate_rows_reused = 0
+    stats.encoded_inputs = 0
+    stats.model_loaded = False
+    stats.cache_enabled = False
+    stats.cache_revision = None
+    stats.execution_device = None
+    stats.moved_units_reused = 0
+    stats.deleted_units = 0
+    stats.orphan_rows_retained = 0
+    stats.orphan_rows_collected = 0
+    stats.manifest_generation = None
+
+
+def _record_embedding_run_stats(
+    stats: EmbeddingRunStats | None,
+    *,
+    prepared_texts: list[str],
+    kept_rows: list[int],
+    cache_enabled: bool,
+    cache_revision: str | None,
+    cache_keys: list[str] | None,
+    hits: Mapping[str, np.ndarray],
+    encoded_inputs: int,
+    model_loaded: bool,
+    execution_device: str | None,
+) -> None:
+    """Fill a caller-owned collector from one final embedding path."""
+    if stats is None:
+        return
+    stats.requested_rows = len(kept_rows)
+    stats.unique_inputs = len({prepared_texts[index] for index in kept_rows})
+    stats.cache_hit_rows = (
+        sum(1 for index in kept_rows if cache_keys[index] in hits) if cache_keys is not None else 0
+    )
+    stats.encoded_inputs = encoded_inputs
+    stats.duplicate_rows_reused = stats.requested_rows - stats.cache_hit_rows - stats.encoded_inputs
+    stats.model_loaded = model_loaded
+    stats.cache_enabled = cache_enabled
+    stats.cache_revision = cache_revision
+    stats.execution_device = execution_device
+
+
 # Lazy-loaded model
 _model = None
 _model_name: str | None = None
@@ -2661,6 +2730,7 @@ def _compute_embeddings_unlocked(
     strict_revision_cache: bool = False,
     overflow_report: list[SemanticContextOverflow] | None = None,
     progress: ProgressMode = "auto",
+    stats: EmbeddingRunStats | None = None,
 ) -> tuple[np.ndarray, EmbeddingSpaceIdentity]:
     """Compute normalized NumPy embeddings for all code units.
 
@@ -2695,6 +2765,7 @@ def _compute_embeddings_unlocked(
         of raising: their rows are dropped from the returned matrix (so it is no
         longer row-aligned with ``units``) and appended here in input order.
     :param progress: Progress-bar policy for corpus embedding inference.
+    :param stats: Optional telemetry collector filled in place.
     :return: Normalized embedding matrix and its effective vector-space identity.
     :raises ValueError: If ``batch_size`` is not positive.
     :raises SemanticBackendError: If an explicitly requested device is unavailable,
@@ -2702,6 +2773,7 @@ def _compute_embeddings_unlocked(
     :raises SemanticInputTooLongError: If a unit exceeds the model context window
         and no ``overflow_report`` collector was provided.
     """
+    _reset_embedding_run_stats(stats)
     if batch_size <= 0:
         raise ValueError("batch_size must be > 0")
 
@@ -2793,6 +2865,7 @@ def _compute_embeddings_unlocked(
             strict_revision_cache=strict_revision_cache,
             overflow_report=overflow_report,
             progress=progress,
+            stats=stats,
         )
 
     def _coherence_break_reason(current_model: object) -> str | None:
@@ -2886,6 +2959,18 @@ def _compute_embeddings_unlocked(
             restore_mps_memory_fraction_if_managed()
         # The hits all came from one shard snapshot, so its recorded commit is
         # the provenance of every matrix row this warm return assembles.
+        _record_embedding_run_stats(
+            stats,
+            prepared_texts=prepared_texts,
+            kept_rows=list(range(len(units))),
+            cache_enabled=True,
+            cache_revision=cache_revision,
+            cache_keys=cache_keys,
+            hits=hits,
+            encoded_inputs=0,
+            model_loaded=False,
+            execution_device=None,
+        )
         return _assemble_cached_matrix(cache_keys, hits), _effective_identity(
             device,
             cache_revision,
@@ -2948,6 +3033,18 @@ def _compute_embeddings_unlocked(
             hits = lookup.vectors
             hit_source_commit = lookup.source_commit
             if all(key in hits for key in cache_keys):
+                _record_embedding_run_stats(
+                    stats,
+                    prepared_texts=prepared_texts,
+                    kept_rows=list(range(len(units))),
+                    cache_enabled=True,
+                    cache_revision=cache_revision,
+                    cache_keys=cache_keys,
+                    hits=hits,
+                    encoded_inputs=0,
+                    model_loaded=True,
+                    execution_device=execution_device,
+                )
                 return _assemble_cached_matrix(cache_keys, hits), _effective_identity(
                     device,
                     confirmed_revision,
@@ -3092,6 +3189,18 @@ def _compute_embeddings_unlocked(
         identity = _effective_identity(
             device, identity_revision, resolved_device, source_commit=corpus_source_commit
         )
+        _record_embedding_run_stats(
+            stats,
+            prepared_texts=prepared_texts,
+            kept_rows=kept_rows,
+            cache_enabled=cache is not None,
+            cache_revision=cache_revision,
+            cache_keys=cache_keys,
+            hits=hits,
+            encoded_inputs=0,
+            model_loaded=True,
+            execution_device=_get_effective_model_device(model, resolved_device),
+        )
         if not kept_rows or cache_keys is None:
             return np.zeros((0, 0), dtype=np.float32), identity
         return _assemble_cached_matrix([cache_keys[i] for i in kept_rows], hits), identity
@@ -3185,6 +3294,19 @@ def _compute_embeddings_unlocked(
             expected_source_commit=corpus_source_commit,
         )
 
+    _record_embedding_run_stats(
+        stats,
+        prepared_texts=prepared_texts,
+        kept_rows=kept_rows,
+        cache_enabled=cache is not None,
+        cache_revision=cache_revision,
+        cache_keys=cache_keys,
+        hits=hits,
+        encoded_inputs=len(miss_indices),
+        model_loaded=True,
+        execution_device=_get_effective_model_device(model, resolved_device),
+    )
+
     return matrix, _effective_identity(
         device, identity_revision, resolved_device, source_commit=corpus_source_commit
     )
@@ -3206,6 +3328,7 @@ def compute_embeddings_with_identity(
     strict_revision_cache: bool = False,
     overflow_report: list[SemanticContextOverflow] | None = None,
     progress: ProgressMode = "auto",
+    stats: EmbeddingRunStats | None = None,
 ) -> tuple[np.ndarray, EmbeddingSpaceIdentity]:
     """Compute embeddings and identity under the shared model lock.
 
@@ -3232,6 +3355,7 @@ def compute_embeddings_with_identity(
         of raising: their rows are dropped from the returned matrix (so it is no
         longer row-aligned with ``units``) and appended here in input order.
     :param progress: Progress-bar policy for corpus embedding inference.
+    :param stats: Optional telemetry collector filled in place.
     :return: Normalized embedding matrix and its effective vector-space identity.
     """
     # Import-sensitive runtime variables (MPS operator fallback above all) must
@@ -3255,6 +3379,7 @@ def compute_embeddings_with_identity(
             strict_revision_cache=strict_revision_cache,
             overflow_report=overflow_report,
             progress=progress,
+            stats=stats,
         )
 
 
@@ -3273,6 +3398,7 @@ def compute_embeddings(
     cache_scope: Path | None = None,
     strict_revision_cache: bool = False,
     progress: ProgressMode = "auto",
+    stats: EmbeddingRunStats | None = None,
 ) -> np.ndarray:
     """Compute embeddings while serializing shared-model lifecycle and inference.
 
@@ -3296,6 +3422,7 @@ def compute_embeddings(
         concrete commit hash (disabling caching when unmappable) instead of the
         requested revision label, defaults to ``False``.
     :param progress: Progress-bar policy for corpus embedding inference.
+    :param stats: Optional telemetry collector filled in place.
     :return: Normalized embedding matrix row-aligned with ``units``.
     """
     embeddings, _identity = compute_embeddings_with_identity(
@@ -3313,6 +3440,7 @@ def compute_embeddings(
         cache_scope=cache_scope,
         strict_revision_cache=strict_revision_cache,
         progress=progress,
+        stats=stats,
     )
     return embeddings
 
@@ -3992,6 +4120,7 @@ def run_semantic_analysis_with_identity(
     language_thresholds: Mapping[str, float] | None = None,
     overflow_report: list[SemanticContextOverflow] | None = None,
     progress: ProgressMode = "auto",
+    stats: EmbeddingRunStats | None = None,
 ) -> tuple[np.ndarray, list[DuplicatePair], EmbeddingSpaceIdentity]:
     """Run semantic duplicate detection and return the corpus identity.
 
@@ -4027,6 +4156,7 @@ def run_semantic_analysis_with_identity(
         of raising: they are excluded from ``embeddings`` and pair mining, and
         appended here in input order.
     :param progress: Progress-bar policy for corpus embedding inference.
+    :param stats: Optional telemetry collector filled in place.
     :return: ``(embeddings, duplicates, identity)``; ``embeddings`` covers only
         the units that survived the context policy.
     """
@@ -4051,6 +4181,7 @@ def run_semantic_analysis_with_identity(
         strict_revision_cache=strict_revision_cache,
         overflow_report=overflow_report,
         progress=progress,
+        stats=stats,
     )
     if overflow_report is not None and len(overflow_report) > reported_before:
         # Keep pair mining row-aligned with the matrix the context policy left.
@@ -4090,6 +4221,7 @@ def run_semantic_analysis(
     cross_language: bool = False,
     language_thresholds: Mapping[str, float] | None = None,
     progress: ProgressMode = "auto",
+    stats: EmbeddingRunStats | None = None,
 ) -> tuple[np.ndarray, list[DuplicatePair]]:
     """Run full semantic duplicate detection.
 
@@ -4122,6 +4254,7 @@ def run_semantic_analysis(
     :param language_thresholds: Per-language duplicate gates applied inside the
         pairwise scan; ``None`` applies ``threshold`` flat to every language.
     :param progress: Progress-bar policy for corpus embedding inference.
+    :param stats: Optional telemetry collector filled in place.
     :return: ``(embeddings, duplicates)``; both are empty when ``units`` is empty.
     """
     embeddings, duplicates, _identity = run_semantic_analysis_with_identity(
@@ -4143,5 +4276,6 @@ def run_semantic_analysis(
         cross_language=cross_language,
         language_thresholds=language_thresholds,
         progress=progress,
+        stats=stats,
     )
     return embeddings, duplicates

@@ -5,9 +5,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from codedupes.pairs import unordered_pair_key
+
+if TYPE_CHECKING:
+    from codedupes.semantic import EmbeddingRunStats
 
 
 class CodeUnitType(Enum):
@@ -197,6 +200,7 @@ class AnalysisResult:
     semantic_diagnostics: list[ExtractionDiagnostic] = field(default_factory=list)
     unused_supported_languages: tuple[str, ...] = ("python",)
     unused_excluded_units: int = 0
+    embedding_stats: EmbeddingRunStats | None = None
 
     @property
     def exact_duplicates(self) -> list[DuplicatePair]:

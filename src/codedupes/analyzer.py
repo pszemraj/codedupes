@@ -31,6 +31,7 @@ from codedupes.models import (
 )
 from codedupes.pairs import ordered_pair_key
 from codedupes.semantic import (
+    EmbeddingRunStats,
     EmbeddingSpaceIdentity,
     ProgressMode,
     SemanticBackendError,
@@ -557,6 +558,7 @@ class CodeAnalyzer:
         self._semantic_units: list[CodeUnit] | None = None
         self._resolved_search_semantic_task: str | None = None
         self._embedding_space_identity: EmbeddingSpaceIdentity | None = None
+        self._embedding_stats: EmbeddingRunStats | None = None
         self._cache_scope: Path | None = None
         self._extraction_diagnostics: list[ExtractionDiagnostic] = []
         self._semantic_diagnostics: list[ExtractionDiagnostic] = []
@@ -581,6 +583,11 @@ class CodeAnalyzer:
         """
         return len(self._units) if self._units is not None else 0
 
+    @property
+    def embedding_stats(self) -> EmbeddingRunStats | None:
+        """Return telemetry from the most recent successful semantic corpus run."""
+        return self._embedding_stats
+
     def _reset_analysis_state(self, cache_scope: Path) -> None:
         """Clear corpus-specific state before one analysis run.
 
@@ -592,6 +599,7 @@ class CodeAnalyzer:
         self._semantic_units = None
         self._resolved_search_semantic_task = None
         self._embedding_space_identity = None
+        self._embedding_stats = None
         self._cache_scope = cache_scope
         self._extraction_diagnostics = []
         self._semantic_diagnostics = []
@@ -837,8 +845,10 @@ class CodeAnalyzer:
             unused_excluded_units = sum(unit.language != "python" for unit in units)
 
         semantic_duplicates: list[DuplicatePair] = []
+        embedding_stats: EmbeddingRunStats | None = None
 
         if self.config.run_semantic:
+            embedding_stats = EmbeddingRunStats()
             exclude: set[tuple[str, str]] = set()
 
             if self.config.run_traditional:
@@ -870,6 +880,7 @@ class CodeAnalyzer:
                     "strict_revision_cache": self.config.strict_revision_cache,
                     "cross_language": self.config.cross_language,
                     "progress": self.config.progress,
+                    "stats": embedding_stats,
                 }
                 (
                     self._embeddings,
@@ -878,6 +889,7 @@ class CodeAnalyzer:
                 ) = run_semantic_analysis(semantic_candidates, **semantic_kwargs)
             except (ModuleNotFoundError, SemanticBackendError, RuntimeError) as exc:
                 self._embedding_space_identity = None
+                embedding_stats = None
                 # If semantic is the only duplicate-detection method requested,
                 # fail hard instead of silently degrading to unused-only output.
                 if not self.config.run_traditional:
@@ -909,6 +921,7 @@ class CodeAnalyzer:
                 )
                 logger.warning(semantic_fallback_reason)
             else:
+                self._embedding_stats = embedding_stats
                 if semantic_overflow:
                     semantic_candidates = self._drop_over_context_units(
                         semantic_overflow,
@@ -970,6 +983,7 @@ class CodeAnalyzer:
             extraction_diagnostics=list(self._extraction_diagnostics),
             semantic_diagnostics=list(self._semantic_diagnostics),
             unused_excluded_units=unused_excluded_units,
+            embedding_stats=embedding_stats,
         )
 
     def index(self, path: Path | str) -> int:
@@ -1003,6 +1017,7 @@ class CodeAnalyzer:
         semantic_candidates = self._select_semantic_candidates(units)
         self._semantic_units = semantic_candidates
         overflow: list[SemanticContextOverflow] = []
+        self._embedding_stats = EmbeddingRunStats()
 
         try:
             self._embeddings, self._embedding_space_identity = compute_embeddings(
@@ -1021,9 +1036,11 @@ class CodeAnalyzer:
                 cache_scope=self._cache_scope,
                 strict_revision_cache=self.config.strict_revision_cache,
                 progress=self.config.progress,
+                stats=self._embedding_stats,
             )
         except Exception:
             self._embedding_space_identity = None
+            self._embedding_stats = None
             raise
         if overflow:
             semantic_candidates = self._drop_over_context_units(overflow, semantic_candidates)

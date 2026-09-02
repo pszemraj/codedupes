@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections import Counter
+from dataclasses import asdict
 from typing import Any
 
 from codedupes.models import (
@@ -13,6 +14,12 @@ from codedupes.models import (
     ExtractionDiagnostic,
     HybridDuplicate,
 )
+from codedupes.semantic import EmbeddingRunStats
+
+
+def _embedding_stats_to_dict(stats: EmbeddingRunStats | None) -> dict[str, Any] | None:
+    """Convert optional embedding telemetry to a JSON-safe mapping."""
+    return asdict(stats) if stats is not None else None
 
 
 def _language_counts(units: list[CodeUnit]) -> dict[str, int]:
@@ -97,6 +104,7 @@ def print_check_json_combined(result: AnalysisResult, *, show_all: bool) -> None
             "semantic_diagnostics": len(result.semantic_diagnostics),
             "unused_supported_languages": list(result.unused_supported_languages),
             "unused_excluded_units": result.unused_excluded_units,
+            "embeddings": _embedding_stats_to_dict(result.embedding_stats),
         },
         "extraction_diagnostics": [
             _diagnostic_to_dict(diagnostic) for diagnostic in result.extraction_diagnostics
@@ -136,6 +144,7 @@ def print_check_json_raw(result: AnalysisResult) -> None:
             "semantic_diagnostics": len(result.semantic_diagnostics),
             "unused_supported_languages": list(result.unused_supported_languages),
             "unused_excluded_units": result.unused_excluded_units,
+            "embeddings": _embedding_stats_to_dict(result.embedding_stats),
         },
         "extraction_diagnostics": [
             _diagnostic_to_dict(diagnostic) for diagnostic in result.extraction_diagnostics
@@ -159,11 +168,16 @@ def print_search_json(
     results: list[tuple[CodeUnit, float]],
     semantic_diagnostics: list[ExtractionDiagnostic],
     indexed_units: int,
+    embedding_stats: EmbeddingRunStats | None,
 ) -> None:
     """Output search results as JSON."""
     payload = {
         "query": query,
         "indexed_units": indexed_units,
+        "summary": {
+            "indexed_units": indexed_units,
+            "embeddings": _embedding_stats_to_dict(embedding_stats),
+        },
         "results": [{"score": float(score), **_unit_to_dict(unit)} for unit, score in results],
         "semantic_diagnostics": [
             _diagnostic_to_dict(diagnostic) for diagnostic in semantic_diagnostics

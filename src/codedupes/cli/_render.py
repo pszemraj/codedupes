@@ -18,10 +18,31 @@ from codedupes.models import (
     ExtractionDiagnostic,
     HybridDuplicate,
 )
+from codedupes.semantic import EmbeddingRunStats
 
 from . import _output
 
 DEFAULT_TABLE_ROWS = 20
+
+
+def _format_embedding_stats(stats: EmbeddingRunStats) -> str:
+    """Format one embedding run as a compact terminal summary."""
+    parts = [
+        f"{stats.cache_hit_rows:,} rows from cache",
+        f"{stats.encoded_inputs:,} inputs encoded",
+        f"{stats.duplicate_rows_reused:,} duplicate rows reused",
+    ]
+    if stats.moved_units_reused:
+        parts.append(f"{stats.moved_units_reused:,} moved units remapped")
+    if stats.orphan_rows_retained:
+        parts.append(f"{stats.orphan_rows_retained:,} orphan rows retained")
+    if stats.orphan_rows_collected:
+        parts.append(f"{stats.orphan_rows_collected:,} orphan rows collected")
+    context: list[str] = []
+    if stats.manifest_generation is not None:
+        context.append(f"gen {stats.manifest_generation}")
+    context.append(stats.execution_device if stats.model_loaded else "model not loaded")
+    return f"{', '.join(parts)} ({', '.join(context)})"
 
 
 def format_location(unit: CodeUnit) -> str:
@@ -140,6 +161,8 @@ def print_summary(
             "Unused-analysis exclusions",
             f"{result.unused_excluded_units} non-Python units",
         )
+    if result.embedding_stats is not None:
+        summary.add_row("Embeddings", _format_embedding_stats(result.embedding_stats))
 
     _output.console.print(summary)
     _print_diagnostics("Extraction diagnostics", result.extraction_diagnostics)

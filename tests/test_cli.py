@@ -22,7 +22,7 @@ from codedupes.models import (
     ExtractionDiagnostic,
     HybridDuplicate,
 )
-from codedupes.semantic import SemanticBackendError
+from codedupes.semantic import EmbeddingRunStats, SemanticBackendError
 from tests.conftest import make_code_unit, patch_cli_analyzer
 
 
@@ -53,6 +53,14 @@ def _build_result(tmp_path: Path) -> AnalysisResult:
         hybrid_duplicates=[hybrid],
         potentially_unused=[unit],
         analysis_mode="combined",
+        embedding_stats=EmbeddingRunStats(
+            requested_rows=1,
+            unique_inputs=1,
+            cache_hit_rows=1,
+            model_loaded=False,
+            cache_enabled=True,
+            cache_revision="1" * 40,
+        ),
     )
 
 
@@ -90,6 +98,8 @@ def test_cli_json_output_hybrid_default(monkeypatch, tmp_path):
     assert "summary" in output
     assert output["summary"]["hybrid_duplicates"] == 1
     assert output["summary"]["potentially_unused"] == 1
+    assert output["summary"]["embeddings"]["cache_hit_rows"] == 1
+    assert output["summary"]["embeddings"]["model_loaded"] is False
     assert "hybrid_duplicates" in output
     assert "traditional_duplicates" not in output
     assert "semantic_duplicates" not in output
@@ -115,9 +125,11 @@ def test_cli_table_output_uses_auto_progress(monkeypatch, tmp_path):
         captured_configs=captured,
     )
 
-    CliRunner().invoke(cli.cli, ["check", str(path)])
+    result = CliRunner().invoke(cli.cli, ["check", str(path)])
 
     assert captured[0].progress == "auto"
+    assert "Embeddings" in result.output
+    assert "model not loaded" in result.output
 
 
 def test_cli_json_disables_huggingface_progress(monkeypatch, tmp_path):
@@ -213,6 +225,7 @@ def test_cli_search_indexes_without_running_full_analysis(monkeypatch, tmp_path)
         def __init__(self, config):
             del config
             self.semantic_diagnostics = []
+            self.embedding_stats = None
 
         def analyze(self, _path):
             raise AssertionError("search must build its corpus via index(), not analyze()")
@@ -250,6 +263,7 @@ def _patch_search_analyzer(
             del config
             self.extracted_unit_count = extracted_unit_count
             self.semantic_diagnostics = list(semantic_diagnostics or [])
+            self.embedding_stats = None
 
         def index(self, _path):
             if index_error is not None:

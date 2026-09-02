@@ -89,7 +89,13 @@ def search_command(ctx: click.Context, path: Path, query: str, **params: Any) ->
         )
 
         if opts.as_json:
-            print_search_json(query, results, analyzer.semantic_diagnostics, indexed_units)
+            print_search_json(
+                query,
+                results,
+                analyzer.semantic_diagnostics,
+                indexed_units,
+                analyzer.embedding_stats,
+            )
         else:
             _output.console.print(f"[bold cyan]Query:[/bold cyan] {query!r}")
             if indexed_units == 0:

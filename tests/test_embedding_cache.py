@@ -19,6 +19,7 @@ from codedupes import embedding_cache, semantic
 from codedupes.embedding_cache import EmbeddingCache
 from codedupes.models import CodeUnit
 from codedupes.semantic import (
+    EmbeddingRunStats,
     compute_embeddings,
     compute_embeddings_with_identity,
     find_similar_to_query,
@@ -424,12 +425,32 @@ def test_partial_update_only_reencodes_changed_unit(tmp_path, monkeypatch):
     updated_units = list(units)
     updated_units[2] = changed
 
+    stats = EmbeddingRunStats()
     compute_embeddings(
-        updated_units, model_name="test-model", revision=REVISION_1, cache_scope=tmp_path
+        updated_units,
+        model_name="test-model",
+        revision=REVISION_1,
+        cache_scope=tmp_path,
+        stats=stats,
     )
     assert get_model_counts["count"] == 2
     assert len(model.encode_calls) == 2
     assert len(model.encode_calls[-1]) == 1
+    assert stats.encoded_inputs == 1
+    assert stats.cache_hit_rows == 4
+    assert stats.model_loaded is True
+
+    warm_stats = EmbeddingRunStats()
+    compute_embeddings(
+        updated_units,
+        model_name="test-model",
+        revision=REVISION_1,
+        cache_scope=tmp_path,
+        stats=warm_stats,
+    )
+    assert warm_stats.cache_hit_rows == 5
+    assert warm_stats.encoded_inputs == 0
+    assert warm_stats.model_loaded is False
 
 
 def test_cache_key_sensitive_to_model_revision_prefix_and_task(tmp_path, monkeypatch):
@@ -473,11 +494,18 @@ def test_shuffled_partial_hit_matches_fully_uncached_compute(tmp_path, monkeypat
     mutated.source = "def other(x):\n    return x + 12345\n"
     shuffled[1] = mutated
 
+    stats = EmbeddingRunStats()
     cached_result = compute_embeddings(
-        shuffled, model_name="test-model", revision=REVISION_1, cache_scope=tmp_path
+        shuffled,
+        model_name="test-model",
+        revision=REVISION_1,
+        cache_scope=tmp_path,
+        stats=stats,
     )
     assert len(model.encode_calls) == 2
     assert len(model.encode_calls[-1]) == 1
+    assert stats.encoded_inputs == 1
+    assert stats.cache_hit_rows == 4
 
     uncached_result = compute_embeddings(
         shuffled, model_name="test-model", revision=REVISION_1, cache_scope=None
