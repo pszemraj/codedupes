@@ -258,6 +258,27 @@ class EmbeddingSpaceIdentity:
     source_commit: str | None = field(default=None, compare=False)
 
 
+def embedding_cache_keys_for_units(
+    units: list[CodeUnit],
+    identity: EmbeddingSpaceIdentity,
+    *,
+    revision: str | None = None,
+) -> dict[str, str]:
+    """Derive manifest unit-to-cache-key mappings for an embedded corpus."""
+    active_revision = revision or identity.resolved_revision
+    if active_revision is None:
+        return {}
+    return {
+        unit.uid: compute_cache_key(
+            identity.model_name,
+            active_revision,
+            _prepare_embedding_text(unit.source),
+            variant=identity.runtime_variant,
+        )
+        for unit in units
+    }
+
+
 def _resolve_encode_plan(
     profile: SemanticModelProfile,
     mode: Literal["code", "query"],

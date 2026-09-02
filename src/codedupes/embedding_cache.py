@@ -35,6 +35,9 @@ CACHE_SUBDIR = "repos"
 LOCAL_MODELS_SUBDIR = "local-models"
 LOCKS_SUBDIR = "locks"
 INDEX_FILENAME = "index.json"
+MANIFEST_FILENAME = "manifest.json"
+MANIFEST_SCHEMA = 1
+ORPHAN_GC_GENERATIONS = 3
 DEFAULT_CACHE_MAX_MB = 2048
 _SCHEMA_VERSION = 3
 _PRUNE_TARGET_RATIO = 0.8
@@ -48,6 +51,60 @@ _CACHE_FILE_MODE = 0o600
 
 _warned_cache_error = False
 _warned_invalid_cache_max_mb = False
+
+
+@dataclass
+class CorpusManifest:
+    """Describe the current embedded corpus and aged unreferenced cache keys."""
+
+    schema: int
+    generation: int
+    complete_scan: bool
+    selection: str
+    units: dict[str, str]
+    orphans: dict[str, int]
+
+
+@dataclass(frozen=True)
+class ManifestDiff:
+    """Classify unit-identity changes between two corpus manifests."""
+
+    moved: list[str]
+    deleted: list[str]
+    orphaned: set[str]
+
+
+@dataclass(frozen=True)
+class ManifestPublishResult:
+    """Report one successful manifest publication and optional orphan collection."""
+
+    diff: ManifestDiff
+    generation: int
+    orphan_rows_retained: int
+    orphan_rows_collected: int
+
+
+def diff_manifest(
+    previous: CorpusManifest | None,
+    current: dict[str, str],
+) -> ManifestDiff:
+    """Classify moves, deletions, and newly unreferenced keys."""
+    old = previous.units if previous is not None else {}
+    old_keys = set(old.values())
+    new_keys = set(current.values())
+    departed_uids_by_key: dict[str, set[str]] = {}
+    for uid, key in old.items():
+        if uid not in current:
+            departed_uids_by_key.setdefault(key, set()).add(uid)
+    return ManifestDiff(
+        moved=[
+            uid
+            for uid, key in current.items()
+            if uid not in old and key in old_keys and departed_uids_by_key.get(key)
+        ],
+        deleted=[uid for uid in old if uid not in current and old[uid] not in new_keys],
+        orphaned=old_keys - new_keys,
+    )
 
 
 @dataclass
@@ -901,6 +958,61 @@ def atomic_write_json(path: Path, obj: Any) -> None:
                 tmp_path.unlink()
 
 
+def _read_corpus_manifest(shard_dir: Path) -> CorpusManifest | None:
+    """Read one valid corpus manifest, returning ``None`` when unavailable."""
+    path = shard_dir / MANIFEST_FILENAME
+    if not _path_exists(path):
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, RecursionError):
+        return None
+    if not isinstance(payload, dict) or payload.get("schema") != MANIFEST_SCHEMA:
+        return None
+    generation = payload.get("generation")
+    complete_scan = payload.get("complete_scan")
+    selection = payload.get("selection")
+    units = payload.get("units")
+    orphans = payload.get("orphans")
+    if (
+        not isinstance(generation, int)
+        or generation < 0
+        or not isinstance(complete_scan, bool)
+        or not isinstance(selection, str)
+        or not isinstance(units, dict)
+        or not all(isinstance(uid, str) and isinstance(key, str) for uid, key in units.items())
+        or not isinstance(orphans, dict)
+        or not all(
+            isinstance(key, str) and isinstance(age, int) and age >= 0
+            for key, age in orphans.items()
+        )
+    ):
+        return None
+    return CorpusManifest(
+        schema=MANIFEST_SCHEMA,
+        generation=generation,
+        complete_scan=complete_scan,
+        selection=selection,
+        units=dict(units),
+        orphans=dict(orphans),
+    )
+
+
+def _write_corpus_manifest(shard_dir: Path, manifest: CorpusManifest) -> None:
+    """Atomically publish one corpus manifest under the shard lock."""
+    atomic_write_json(
+        shard_dir / MANIFEST_FILENAME,
+        {
+            "schema": manifest.schema,
+            "generation": manifest.generation,
+            "complete_scan": manifest.complete_scan,
+            "selection": manifest.selection,
+            "units": manifest.units,
+            "orphans": manifest.orphans,
+        },
+    )
+
+
 def _publish_index(shard_dir: Path, payload: dict[str, Any]) -> None:
     """Atomically replace a shard's ``index.json``, cleaning its tmp file on failure.
 
@@ -1594,6 +1706,151 @@ class EmbeddingCache:
         if _should_scan_for_eviction(self.repos_dir, written_bytes, max_bytes):
             _maybe_evict(self.repos_dir, protect=shard_dir)
 
+    def load_manifest(
+        self,
+        cache_scope: Path,
+        canonical_model: str,
+        revision: str | None,
+    ) -> CorpusManifest | None:
+        """Load the corpus manifest for one cache shard."""
+        return _read_corpus_manifest(self.shard_dir(cache_scope, canonical_model, revision))
+
+    def collect_orphans(
+        self,
+        cache_scope: Path,
+        canonical_model: str,
+        revision: str | None,
+        drop_keys: set[str],
+    ) -> int:
+        """Compact one shard by removing the requested orphaned code keys."""
+        if not drop_keys:
+            return 0
+        shard_dir = self.shard_dir(cache_scope, canonical_model, revision)
+        try:
+            with _shard_write_lock(shard_dir, blocking=True) as acquired:
+                if not acquired:
+                    return 0
+                _reclaim_stale_shard_files(shard_dir)
+                existing = _read_shard(shard_dir)
+                if existing is None:
+                    return 0
+                actual_drop = set(existing.keys) & drop_keys
+                if not actual_drop:
+                    return 0
+                working = _ShardData(
+                    vectors=existing.vectors,
+                    keys=dict(existing.keys),
+                    namespaces=dict(existing.namespaces),
+                    digests=dict(existing.digests),
+                    last_used_at=existing.last_used_at,
+                    generation=existing.generation,
+                    source_commit=existing.source_commit,
+                )
+                retained_keys = sorted(
+                    (key for key in working.keys if key not in actual_drop),
+                    key=working.keys.__getitem__,
+                )
+                working.retain(retained_keys)
+                _atomic_write_shard(
+                    shard_dir,
+                    canonical_model,
+                    revision,
+                    working.vectors,
+                    working.keys,
+                    working.namespaces,
+                    working.digests,
+                    int(working.vectors.shape[1]),
+                    working.source_commit,
+                )
+                return len(actual_drop)
+        except Exception as exc:  # noqa: BLE001 - cache maintenance must never break analysis
+            warn_once("collect orphan rows", exc)
+            return 0
+
+    def publish_corpus_manifest(
+        self,
+        cache_scope: Path,
+        canonical_model: str,
+        revision: str | None,
+        *,
+        selection: str,
+        units: dict[str, str],
+        complete_scan: bool,
+    ) -> ManifestPublishResult | None:
+        """Publish a completed corpus run and age or collect unreferenced rows."""
+        shard_dir = self.shard_dir(cache_scope, canonical_model, revision)
+        try:
+            _ensure_shard_directory(shard_dir)
+            with _shard_write_lock(shard_dir, blocking=True) as acquired:
+                if not acquired:
+                    return None
+                previous = _read_corpus_manifest(shard_dir)
+                comparable = previous is not None and previous.selection == selection
+                if comparable:
+                    diff = diff_manifest(previous, units)
+                    generation = previous.generation + int(complete_scan)
+                    orphans = dict(previous.orphans)
+                    for key in set(units.values()):
+                        orphans.pop(key, None)
+                    if complete_scan:
+                        for key in diff.orphaned:
+                            orphans.setdefault(key, generation)
+                    else:
+                        diff = ManifestDiff(moved=diff.moved, deleted=[], orphaned=set())
+                else:
+                    diff = ManifestDiff(moved=[], deleted=[], orphaned=set())
+                    generation = 1 if complete_scan else 0
+                    orphans = {}
+
+                collectable = (
+                    {
+                        key
+                        for key, first_generation in orphans.items()
+                        if generation - first_generation >= ORPHAN_GC_GENERATIONS
+                    }
+                    if complete_scan
+                    else set()
+                )
+                manifest = CorpusManifest(
+                    schema=MANIFEST_SCHEMA,
+                    generation=generation,
+                    complete_scan=complete_scan,
+                    selection=selection,
+                    units=dict(units),
+                    orphans=orphans,
+                )
+                _write_corpus_manifest(shard_dir, manifest)
+
+            collected = self.collect_orphans(
+                cache_scope,
+                canonical_model,
+                revision,
+                collectable,
+            )
+            if collected:
+                with _shard_write_lock(shard_dir, blocking=True) as acquired:
+                    if acquired:
+                        current = _read_corpus_manifest(shard_dir)
+                        if (
+                            current is not None
+                            and current.generation == generation
+                            and current.selection == selection
+                            and current.units == units
+                        ):
+                            for key in collectable:
+                                current.orphans.pop(key, None)
+                            _write_corpus_manifest(shard_dir, current)
+                            manifest = current
+            return ManifestPublishResult(
+                diff=diff,
+                generation=generation,
+                orphan_rows_retained=len(manifest.orphans),
+                orphan_rows_collected=collected,
+            )
+        except Exception as exc:  # noqa: BLE001 - cache metadata must never break analysis
+            warn_once("publish corpus manifest", exc)
+            return None
+
     def confirm_source_commit(
         self,
         cache_scope: Path,
@@ -1685,11 +1942,25 @@ class EmbeddingCache:
                     model_name = meta["model"]
                     info["models"][model_name] = info["models"].get(model_name, 0) + count
                 totals = repo_totals.setdefault(
-                    shard_dir.parent.name, {"shards": 0, "entries": 0, "size_bytes": 0}
+                    shard_dir.parent.name,
+                    {
+                        "shards": 0,
+                        "entries": 0,
+                        "size_bytes": 0,
+                        "orphan_rows": 0,
+                        "last_complete_generation": 0,
+                    },
                 )
                 totals["shards"] += 1
                 totals["entries"] += count
                 totals["size_bytes"] += size
+                manifest = _read_corpus_manifest(shard_dir)
+                if manifest is not None:
+                    totals["orphan_rows"] += len(manifest.orphans)
+                    totals["last_complete_generation"] = max(
+                        totals["last_complete_generation"],
+                        manifest.generation,
+                    )
             local_models_dir = self.cache_root / LOCAL_MODELS_SUBDIR
             if local_models_dir.is_dir():
                 info["size_bytes"] += sum(

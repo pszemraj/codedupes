@@ -7,6 +7,9 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+import pytest
+
+from codedupes import analyzer as analyzer_module
 from codedupes.analyzer import AnalyzerConfig, CodeAnalyzer
 from codedupes.embedding_cache import INDEX_FILENAME, EmbeddingCache
 from codedupes.models import AnalysisResult, CodeUnit
@@ -23,18 +26,27 @@ def _write_repo(tmp_path: Path, files: Mapping[str, str]) -> Path:
     return repo
 
 
-def _analyze(repo: Path, *, embedding_cache: bool = True) -> AnalysisResult:
+def _analyze(
+    repo: Path,
+    *,
+    embedding_cache: bool = True,
+    **overrides: Any,
+) -> AnalysisResult:
     """Analyze one test repository with deterministic semantic settings."""
+    config_values: dict[str, Any] = {
+        "model_name": "test-model",
+        "model_revision": REVISION_1,
+        "semantic_threshold": 0.0,
+        "run_traditional": False,
+        "run_semantic": True,
+        "run_unused": True,
+        "min_semantic_statements": 0,
+        "embedding_cache": embedding_cache,
+        "progress": "never",
+    }
+    config_values.update(overrides)
     config = AnalyzerConfig(
-        model_name="test-model",
-        model_revision=REVISION_1,
-        semantic_threshold=0.0,
-        run_traditional=False,
-        run_semantic=True,
-        run_unused=True,
-        min_semantic_statements=0,
-        embedding_cache=embedding_cache,
-        progress="never",
+        **config_values,
     )
     return CodeAnalyzer(config).analyze(repo)
 
@@ -96,6 +108,7 @@ def test_cold_scan_encodes_every_unique_body(tmp_path, monkeypatch) -> None:
     assert result.embedding_stats.encoded_inputs == 3
     assert result.embedding_stats.unique_inputs == 3
     assert result.embedding_stats.model_loaded is True
+    assert result.embedding_stats.manifest_generation == 1
     _assert_matches_uncached(repo, result)
 
 
@@ -142,6 +155,8 @@ def test_rename_file_reuses_embeddings_and_reports_only_new_path(tmp_path, monke
     assert result.embedding_stats is not None
     assert result.embedding_stats.encoded_inputs == 0
     assert result.embedding_stats.model_loaded is False
+    assert result.embedding_stats.moved_units_reused == 1
+    assert result.embedding_stats.deleted_units == 0
     reported = {unit.file_path for unit in result.units}
     assert new_path.resolve() in reported
     assert (repo / "src/old/helpers.py").resolve() not in reported
@@ -166,6 +181,7 @@ def test_move_file_across_directories_reuses_embeddings(tmp_path, monkeypatch) -
 
     assert result.embedding_stats is not None
     assert result.embedding_stats.encoded_inputs == 0
+    assert result.embedding_stats.moved_units_reused == 1
     assert destination.resolve() in {unit.file_path for unit in result.units}
     _assert_matches_uncached(repo, result)
 
@@ -187,6 +203,11 @@ def test_delete_file_removes_its_units_and_findings_without_encoding(tmp_path, m
 
     assert result.embedding_stats is not None
     assert result.embedding_stats.encoded_inputs == 0
+    assert result.embedding_stats.deleted_units == 1
+    assert result.embedding_stats.orphan_rows_retained == 1
+    repo_stats = EmbeddingCache().stats()["repos"][0]
+    assert repo_stats["orphan_rows"] == 1
+    assert repo_stats["last_complete_generation"] == 2
     assert all(unit.file_path != deleted for unit in result.units)
     assert all(
         duplicate.unit_a.file_path != deleted and duplicate.unit_b.file_path != deleted
@@ -194,6 +215,19 @@ def test_delete_file_removes_its_units_and_findings_without_encoding(tmp_path, m
     )
     assert all(unit.file_path != deleted for unit in result.potentially_unused)
     _assert_matches_uncached(repo, result)
+
+    for _ in range(2):
+        retained = _analyze(repo)
+        assert retained.embedding_stats is not None
+        assert retained.embedding_stats.orphan_rows_retained == 1
+        assert retained.embedding_stats.orphan_rows_collected == 0
+    collected = _analyze(repo)
+    assert collected.embedding_stats is not None
+    assert collected.embedding_stats.orphan_rows_collected == 1
+    assert collected.embedding_stats.orphan_rows_retained == 0
+    collected_stats = EmbeddingCache().stats()
+    assert collected_stats["entries"] == 1
+    assert collected_stats["repos"][0]["orphan_rows"] == 0
 
 
 def test_move_and_edit_reencodes_changed_function_but_hits_sibling(tmp_path, monkeypatch) -> None:
@@ -280,4 +314,64 @@ def test_narrow_rerun_does_not_change_full_scan_shard_rows(tmp_path, monkeypatch
     assert result.embedding_stats is not None
     assert result.embedding_stats.encoded_inputs == 1
     assert len(json.loads(full_shard_index.read_text(encoding="utf-8"))["keys"]) == entries_before
+    narrow_manifest = cache.load_manifest(repo / "src", "test-model", REVISION_1)
+    assert narrow_manifest is not None
+    assert narrow_manifest.complete_scan is False
+    assert narrow_manifest.orphans == {}
     _assert_matches_uncached(repo / "src/a.py", result)
+
+
+def test_selection_change_does_not_classify_excluded_units_as_deleted(
+    tmp_path, monkeypatch
+) -> None:
+    repo = _write_repo(
+        tmp_path,
+        {
+            "src/small.py": "def small(value):\n    return value + 1",
+            "src/larger.py": (
+                "def larger(value):\n    adjusted = value + 1\n    return adjusted * 2"
+            ),
+        },
+    )
+    _patch_get_model(monkeypatch, CountingModel())
+    _analyze(repo)
+
+    result = _analyze(repo, min_semantic_statements=2)
+
+    assert result.embedding_stats is not None
+    assert result.embedding_stats.deleted_units == 0
+    assert result.embedding_stats.orphan_rows_retained == 0
+
+
+def test_failed_analysis_keeps_previous_manifest_authoritative(tmp_path, monkeypatch) -> None:
+    repo = _write_repo(
+        tmp_path,
+        {"src/value.py": "def value(number):\n    return number + 1"},
+    )
+    _patch_get_model(monkeypatch, CountingModel())
+    initial = _analyze(repo)
+    assert initial.embedding_stats is not None
+    cache = EmbeddingCache()
+    previous = cache.load_manifest(repo, "test-model", REVISION_1)
+    assert previous is not None
+    (repo / "src/value.py").write_text(
+        "def value(number):\n    return number + 99\n",
+        encoding="utf-8",
+    )
+
+    def fail_unused(*_args, **_kwargs):
+        raise RuntimeError("unused failed")
+
+    with monkeypatch.context() as crash_patch:
+        crash_patch.setattr(analyzer_module, "find_potentially_unused", fail_unused)
+        with pytest.raises(RuntimeError, match="unused failed"):
+            _analyze(repo)
+
+    after_failure = cache.load_manifest(repo, "test-model", REVISION_1)
+    assert after_failure == previous
+
+    recovered = _analyze(repo)
+    assert recovered.embedding_stats is not None
+    assert recovered.embedding_stats.encoded_inputs == 0
+    assert recovered.embedding_stats.orphan_rows_retained == 1
+    assert recovered.embedding_stats.manifest_generation == previous.generation + 1

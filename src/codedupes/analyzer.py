@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
@@ -19,6 +21,7 @@ from codedupes.constants import (
     normalize_semantic_task,
 )
 from codedupes.devices import normalize_semantic_device, validate_mps_memory_fraction
+from codedupes.embedding_cache import get_embedding_cache
 from codedupes.extractor import CodeExtractor
 from codedupes.languages.registry import normalize_languages
 from codedupes.models import (
@@ -37,6 +40,7 @@ from codedupes.semantic import (
     SemanticBackendError,
     SemanticContextOverflow,
     describe_context_overflow,
+    embedding_cache_keys_for_units,
     get_code_unit_statement_count,
     get_semantic_runtime_versions,
     validate_explicit_device_request,
@@ -635,6 +639,59 @@ class CodeAnalyzer:
         self._semantic_units = remaining
         return remaining
 
+    def _publish_corpus_manifest(
+        self,
+        path: Path,
+        semantic_units: list[CodeUnit],
+        semantic_task: str,
+    ) -> None:
+        """Publish cache corpus metadata after a successful analyzer run."""
+        stats = self._embedding_stats
+        identity = self._embedding_space_identity
+        if (
+            stats is None
+            or not stats.cache_enabled
+            or stats.cache_revision is None
+            or identity is None
+            or self._cache_scope is None
+        ):
+            return
+        cache = get_embedding_cache()
+        if cache is None:
+            return
+        selection_payload = {
+            "min_semantic_statements": self.config.min_semantic_statements,
+            "semantic_unit_types": self.config.semantic_unit_types,
+            "include_stubs": self.config.include_stubs,
+            "exclude_patterns": self.config.exclude_patterns,
+            "semantic_task": semantic_task,
+            "instruction_prefix": self.config.instruction_prefix,
+        }
+        selection = hashlib.blake2b(
+            json.dumps(selection_payload, sort_keys=True).encode(),
+            digest_size=16,
+        ).hexdigest()
+        unit_keys = embedding_cache_keys_for_units(
+            semantic_units,
+            identity,
+            revision=stats.cache_revision,
+        )
+        published = cache.publish_corpus_manifest(
+            self._cache_scope,
+            identity.model_name,
+            stats.cache_revision,
+            selection=selection,
+            units=unit_keys,
+            complete_scan=path.is_dir() and self.config.exclude_patterns is None,
+        )
+        if published is None:
+            return
+        stats.moved_units_reused = len(published.diff.moved)
+        stats.deleted_units = len(published.diff.deleted)
+        stats.orphan_rows_retained = published.orphan_rows_retained
+        stats.orphan_rows_collected = published.orphan_rows_collected
+        stats.manifest_generation = published.generation
+
     def _extract_corpus_units(self, path: Path) -> list[CodeUnit]:
         """Extract code units from a resolved directory or single-file path.
 
@@ -839,10 +896,6 @@ class CodeAnalyzer:
             traditional_duplicates = exact_dupes + near_dupes
 
         unused_excluded_units = 0
-        if self.config.run_unused:
-            build_reference_graph(units, project_root=path)
-            unused = find_potentially_unused(units, strict_unused=self.config.strict_unused)
-            unused_excluded_units = sum(unit.language != "python" for unit in units)
 
         semantic_duplicates: list[DuplicatePair] = []
         embedding_stats: EmbeddingRunStats | None = None
@@ -928,6 +981,11 @@ class CodeAnalyzer:
                         semantic_candidates,
                     )
 
+            if self.config.run_unused:
+                build_reference_graph(units, project_root=path)
+                unused = find_potentially_unused(units, strict_unused=self.config.strict_unused)
+                unused_excluded_units = sum(unit.language != "python" for unit in units)
+
             # Language partitioning and the per-language gates are applied inside
             # the pairwise scan (see find_semantic_duplicates), so every pair that
             # arrives here already cleared its own language's gate.
@@ -952,6 +1010,11 @@ class CodeAnalyzer:
                     )
                 ]
 
+        if self.config.run_unused and not self.config.run_semantic:
+            build_reference_graph(units, project_root=path)
+            unused = find_potentially_unused(units, strict_unused=self.config.strict_unused)
+            unused_excluded_units = sum(unit.language != "python" for unit in units)
+
         combined_mode = self.config.run_traditional and self.config.run_semantic
         hybrid_duplicates: list[HybridDuplicate] = []
 
@@ -970,6 +1033,9 @@ class CodeAnalyzer:
             analysis_mode = "semantic"
         else:
             analysis_mode = "none"
+
+        if embedding_stats is not None:
+            self._publish_corpus_manifest(path, semantic_candidates, semantic_task)
 
         return AnalysisResult(
             units=units,
@@ -1044,6 +1110,11 @@ class CodeAnalyzer:
             raise
         if overflow:
             semantic_candidates = self._drop_over_context_units(overflow, semantic_candidates)
+        self._publish_corpus_manifest(
+            path,
+            semantic_candidates,
+            self._resolved_search_semantic_task or DEFAULT_SEARCH_SEMANTIC_TASK,
+        )
         return len(semantic_candidates)
 
     def search(

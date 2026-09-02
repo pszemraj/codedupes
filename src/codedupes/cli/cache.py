@@ -45,7 +45,8 @@ def cache_info_command() -> None:
         for repo in stats["repos"]:
             click.echo(
                 f"  - {repo['repo']}: {repo['shards']} shard(s), {repo['entries']} entries, "
-                f"{repo['size_bytes']} bytes"
+                f"{repo['size_bytes']} bytes, {repo['orphan_rows']} orphan rows, "
+                f"last complete generation {repo['last_complete_generation']}"
             )
 
 

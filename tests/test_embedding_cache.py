@@ -16,7 +16,7 @@ import numpy as np
 import pytest
 
 from codedupes import embedding_cache, semantic
-from codedupes.embedding_cache import EmbeddingCache
+from codedupes.embedding_cache import CorpusManifest, EmbeddingCache, diff_manifest
 from codedupes.models import CodeUnit
 from codedupes.semantic import (
     EmbeddingRunStats,
@@ -66,6 +66,119 @@ class CountingModel:
         self.encode_calls.append(list(texts))
         self.prompts_seen.append(kwargs.get("prompt"))
         return np.stack([_vector_for_text(text, self.dim) for text in texts], axis=0)
+
+
+def _corpus_manifest(
+    units: dict[str, str],
+    *,
+    orphans: dict[str, int] | None = None,
+) -> CorpusManifest:
+    """Build a minimal complete manifest for transition-diff tests."""
+    return CorpusManifest(
+        schema=1,
+        generation=1,
+        complete_scan=True,
+        selection="selection",
+        units=units,
+        orphans=dict(orphans or {}),
+    )
+
+
+@pytest.mark.parametrize(
+    ("previous", "current", "moved", "deleted", "orphaned"),
+    [
+        ({"old": "key"}, {"new": "key"}, ["new"], [], set()),
+        ({"old": "key"}, {}, [], ["old"], {"key"}),
+        ({"old": "old-key"}, {"new": "new-key"}, [], ["old"], {"old-key"}),
+        ({"first": "key"}, {"first": "key", "second": "key"}, [], [], set()),
+    ],
+    ids=["move", "delete", "edit", "identical-body-added"],
+)
+def test_diff_manifest_classifies_corpus_transitions(
+    previous,
+    current,
+    moved,
+    deleted,
+    orphaned,
+) -> None:
+    diff = diff_manifest(_corpus_manifest(previous), current)
+
+    assert diff.moved == moved
+    assert diff.deleted == deleted
+    assert diff.orphaned == orphaned
+
+
+def test_manifest_revert_clears_orphan_age(tmp_path) -> None:
+    cache = EmbeddingCache()
+    scope = tmp_path / "repo"
+    scope.mkdir()
+    key = "content-key"
+    cache.put_many(scope, "model", "revision", [(key, np.ones(2, dtype=np.float32))])
+    cache.publish_corpus_manifest(
+        scope,
+        "model",
+        "revision",
+        selection="selection",
+        units={"unit": key},
+        complete_scan=True,
+    )
+    orphaned = cache.publish_corpus_manifest(
+        scope,
+        "model",
+        "revision",
+        selection="selection",
+        units={},
+        complete_scan=True,
+    )
+    restored = cache.publish_corpus_manifest(
+        scope,
+        "model",
+        "revision",
+        selection="selection",
+        units={"unit": key},
+        complete_scan=True,
+    )
+
+    assert orphaned is not None
+    assert orphaned.orphan_rows_retained == 1
+    assert restored is not None
+    assert restored.orphan_rows_retained == 0
+    assert restored.orphan_rows_collected == 0
+
+
+def test_manifest_gc_never_collects_query_rows(tmp_path) -> None:
+    cache = EmbeddingCache()
+    scope = tmp_path / "repo"
+    scope.mkdir()
+    code_key = "code-key"
+    query_key = "query-key"
+    vector = np.ones(2, dtype=np.float32)
+    cache.put_many(scope, "model", "revision", [(code_key, vector)], namespace="code")
+    cache.put_many(scope, "model", "revision", [(query_key, vector)], namespace="query")
+    cache.publish_corpus_manifest(
+        scope,
+        "model",
+        "revision",
+        selection="selection",
+        units={"unit": code_key},
+        complete_scan=True,
+    )
+
+    published = None
+    for _ in range(4):
+        published = cache.publish_corpus_manifest(
+            scope,
+            "model",
+            "revision",
+            selection="selection",
+            units={},
+            complete_scan=True,
+        )
+
+    assert published is not None
+    assert published.orphan_rows_collected == 1
+    assert cache.get_many(scope, "model", "revision", [code_key]) == {}
+    assert query_key in cache.get_many(scope, "model", "revision", [query_key])
 
 
 def _five_units(tmp_path: Path) -> list[CodeUnit]:
