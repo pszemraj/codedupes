@@ -51,6 +51,25 @@ def _analyze(
     return CodeAnalyzer(config).analyze(repo)
 
 
+def _index(repo: Path, *, search_document: str) -> CodeAnalyzer:
+    """Build one deterministic semantic search index and return its analyzer."""
+    analyzer = CodeAnalyzer(
+        AnalyzerConfig(
+            mode="search",
+            model_name="test-model",
+            model_revision=REVISION_1,
+            run_traditional=False,
+            run_semantic=True,
+            run_unused=False,
+            min_semantic_statements=0,
+            progress="never",
+            search_document=search_document,
+        )
+    )
+    analyzer.index(repo)
+    return analyzer
+
+
 def _unit_identity(unit: CodeUnit) -> tuple[str, str, int, int]:
     """Return stable finding fields used for cached/uncached comparison."""
     return (str(unit.file_path), unit.qualified_name, unit.lineno, unit.end_lineno)
@@ -375,3 +394,61 @@ def test_failed_analysis_keeps_previous_manifest_authoritative(tmp_path, monkeyp
     assert recovered.embedding_stats.encoded_inputs == 0
     assert recovered.embedding_stats.orphan_rows_retained == 1
     assert recovered.embedding_stats.manifest_generation == previous.generation + 1
+
+
+def test_contextual_search_embeds_envelope_while_analysis_embeds_source(
+    tmp_path, monkeypatch
+) -> None:
+    repo = _write_repo(
+        tmp_path,
+        {"billing/refunds.py": "def validate(value):\n    return value > 0"},
+    )
+    model = CountingModel()
+    _patch_get_model(monkeypatch, model)
+
+    contextual = _index(repo, search_document="contextual")
+    contextual_text = model.encode_calls[-1][0]
+    assert contextual.embedding_stats is not None
+    assert contextual_text.startswith("language: python\n")
+    assert "path: billing/refunds.py\n" in contextual_text
+    assert "symbol: billing.refunds.validate\n" in contextual_text
+    assert "code:\ndef validate(value):" in contextual_text
+
+    config = AnalyzerConfig(
+        model_name="test-model",
+        model_revision=REVISION_1,
+        semantic_threshold=0.0,
+        run_traditional=False,
+        run_semantic=True,
+        run_unused=False,
+        min_semantic_statements=0,
+        embedding_cache=False,
+        progress="never",
+        search_document="contextual",
+    )
+    CodeAnalyzer(config).analyze(repo)
+    assert model.encode_calls[-1] == ["def validate(value):\n    return value > 0"]
+
+
+def test_contextual_rename_reembeds_search_but_source_check_stays_warm(
+    tmp_path, monkeypatch
+) -> None:
+    repo = _write_repo(
+        tmp_path,
+        {"src/old.py": "def normalize(value):\n    return value.strip().lower()"},
+    )
+    _patch_get_model(monkeypatch, CountingModel())
+    _analyze(repo)
+    _index(repo, search_document="contextual")
+    destination = repo / "src/text/normalize.py"
+    destination.parent.mkdir(parents=True)
+    (repo / "src/old.py").rename(destination)
+
+    contextual = _index(repo, search_document="contextual")
+    source_check = _analyze(repo)
+
+    assert contextual.embedding_stats is not None
+    assert contextual.embedding_stats.encoded_inputs == 1
+    assert source_check.embedding_stats is not None
+    assert source_check.embedding_stats.encoded_inputs == 0
+    assert source_check.embedding_stats.model_loaded is False

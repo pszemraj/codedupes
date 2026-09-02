@@ -320,6 +320,7 @@ class SearchOptions:
     top_k: int
     threshold: float | None
     semantic_threshold: float | None
+    search_document: Literal["source", "contextual"]
 
     @classmethod
     def from_params(cls, ctx: click.Context, params: dict[str, Any]) -> SearchOptions:
@@ -350,6 +351,7 @@ class SearchOptions:
             run_traditional=False,
             run_unused=False,
             include_stubs=self.include_stubs,
+            search_document=self.search_document,
             **self.semantic.analysis_kwargs(),
         )
 

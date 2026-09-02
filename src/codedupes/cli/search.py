@@ -59,6 +59,15 @@ from ._render import _print_diagnostics, print_search_results
     show_envvar=True,
     help="Semantic task mode for query/document embeddings",
 )
+@click.option(
+    "--search-document",
+    type=click.Choice(["source", "contextual"]),
+    default="source",
+    show_default=True,
+    panel=Panel.SEMANTIC,
+    show_envvar=True,
+    help="Text representation embedded for each search-index unit",
+)
 @semantic_options("search")
 @option_panels
 @click.pass_context

@@ -803,6 +803,28 @@ def test_cli_search_defaults_to_code_retrieval_task(monkeypatch, tmp_path):
     assert result.exit_code == 0
     assert captured[0].semantic_task == "code-retrieval"
     assert captured[0].semantic_unit_types == ("function", "method")
+    assert captured[0].search_document == "source"
+
+
+def test_cli_contextual_search_document_passes_through(monkeypatch, tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+    captured = []
+    patch_cli_analyzer(
+        monkeypatch,
+        cli,
+        analyze_result=lambda: _build_result(tmp_path),
+        search_results=[(_build_unit(tmp_path), 0.99)],
+        captured_configs=captured,
+    )
+
+    result = CliRunner().invoke(
+        cli.cli,
+        ["search", str(path), "entry", "--search-document", "contextual"],
+    )
+
+    assert result.exit_code == 0
+    assert captured[0].search_document == "contextual"
 
 
 def test_cli_search_semantic_unit_type_pass_through(monkeypatch, tmp_path):

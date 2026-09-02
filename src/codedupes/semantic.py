@@ -12,7 +12,7 @@ import os
 import sys
 import textwrap
 import threading
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from importlib import metadata as importlib_metadata
 from pathlib import Path
@@ -71,6 +71,7 @@ from codedupes.semantic_profiles import (
 logger = logging.getLogger(__name__)
 
 ProgressMode = Literal["auto", "always", "never"]
+SearchDocumentMode = Literal["source", "contextual"]
 PROGRESS_BAR_MIN_INPUTS = 100
 
 
@@ -263,20 +264,44 @@ def embedding_cache_keys_for_units(
     identity: EmbeddingSpaceIdentity,
     *,
     revision: str | None = None,
+    document_texts: Sequence[str] | None = None,
+    search_document: SearchDocumentMode = "source",
 ) -> dict[str, str]:
     """Derive manifest unit-to-cache-key mappings for an embedded corpus."""
     active_revision = revision or identity.resolved_revision
     if active_revision is None:
         return {}
+    texts = (
+        list(document_texts)
+        if document_texts is not None
+        else [_prepare_embedding_text(unit.source) for unit in units]
+    )
+    variant = identity.runtime_variant
+    if search_document == "contextual":
+        variant = f"{variant}\x00search_document={search_document}"
     return {
         unit.uid: compute_cache_key(
             identity.model_name,
             active_revision,
-            _prepare_embedding_text(unit.source),
-            variant=identity.runtime_variant,
+            text,
+            variant=variant,
         )
-        for unit in units
+        for unit, text in zip(units, texts, strict=True)
     }
+
+
+def _prepare_search_document(unit: CodeUnit, root: Path) -> str:
+    """Build a contextual semantic-search document for one code unit."""
+    try:
+        relative = unit.file_path.resolve().relative_to(root.resolve())
+    except ValueError:
+        relative = unit.file_path
+    return (
+        f"language: {unit.language}\n"
+        f"path: {relative.as_posix()}\n"
+        f"symbol: {unit.qualified_name}\n"
+        f"code:\n{_prepare_embedding_text(unit.source)}"
+    )
 
 
 def _resolve_encode_plan(
@@ -2467,6 +2492,7 @@ def _prepare_cache_context(
     use_cache: bool,
     cache_scope: Path | None,
     strict_revision_cache: bool = False,
+    variant_suffix: str = "",
 ) -> tuple[EmbeddingCache | None, str | None, str, str]:
     """Resolve the shared embedding-cache addressing context for one encode call.
 
@@ -2483,6 +2509,7 @@ def _prepare_cache_context(
     :param strict_revision_cache: Whether an unpinned hub revision resolves to a
         concrete commit hash (disabling caching when unmappable) instead of the
         requested revision label, defaults to ``False``.
+    :param variant_suffix: Optional caller-defined vector-space discriminator.
     :return: ``(cache, cache_revision, cache_variant, cache_namespace)``.
     """
     cache = get_embedding_cache() if (use_cache and cache_scope is not None) else None
@@ -2502,6 +2529,8 @@ def _prepare_cache_context(
         if cache is not None
         else ""
     )
+    if cache_variant and variant_suffix:
+        cache_variant = f"{cache_variant}\x00{variant_suffix}"
     return cache, cache_revision, cache_variant, _embedding_cache_namespace(mode, cache_variant)
 
 
@@ -2752,6 +2781,8 @@ def _compute_embeddings_unlocked(
     overflow_report: list[SemanticContextOverflow] | None = None,
     progress: ProgressMode = "auto",
     stats: EmbeddingRunStats | None = None,
+    document_texts: Sequence[str] | None = None,
+    search_document: SearchDocumentMode = "source",
 ) -> tuple[np.ndarray, EmbeddingSpaceIdentity]:
     """Compute normalized NumPy embeddings for all code units.
 
@@ -2787,6 +2818,8 @@ def _compute_embeddings_unlocked(
         longer row-aligned with ``units``) and appended here in input order.
     :param progress: Progress-bar policy for corpus embedding inference.
     :param stats: Optional telemetry collector filled in place.
+    :param document_texts: Optional prepared document text for each input unit.
+    :param search_document: Search document mode represented by ``document_texts``.
     :return: Normalized embedding matrix and its effective vector-space identity.
     :raises ValueError: If ``batch_size`` is not positive.
     :raises SemanticBackendError: If an explicitly requested device is unavailable,
@@ -2832,7 +2865,11 @@ def _compute_embeddings_unlocked(
         if identity_local_model_path is not None
         else _resolve_revision_for_cache(model_name, revision, strict=strict_revision_cache)
     )
-    prepared_texts = [_prepare_embedding_text(unit.source) for unit in units]
+    prepared_texts = (
+        list(document_texts)
+        if document_texts is not None
+        else [_prepare_embedding_text(unit.source) for unit in units]
+    )
 
     def _effective_identity(
         effective_device: str,
@@ -2887,6 +2924,8 @@ def _compute_embeddings_unlocked(
             overflow_report=overflow_report,
             progress=progress,
             stats=stats,
+            document_texts=document_texts,
+            search_document=search_document,
         )
 
     def _coherence_break_reason(current_model: object) -> str | None:
@@ -2925,6 +2964,9 @@ def _compute_embeddings_unlocked(
         use_cache=use_cache,
         cache_scope=cache_scope,
         strict_revision_cache=strict_revision_cache,
+        variant_suffix=(
+            f"search_document={search_document}" if search_document == "contextual" else ""
+        ),
     )
 
     def _cache_keys_for_revision(active_revision: str) -> list[str]:
@@ -3350,6 +3392,8 @@ def compute_embeddings_with_identity(
     overflow_report: list[SemanticContextOverflow] | None = None,
     progress: ProgressMode = "auto",
     stats: EmbeddingRunStats | None = None,
+    document_texts: Sequence[str] | None = None,
+    search_document: SearchDocumentMode = "source",
 ) -> tuple[np.ndarray, EmbeddingSpaceIdentity]:
     """Compute embeddings and identity under the shared model lock.
 
@@ -3377,6 +3421,8 @@ def compute_embeddings_with_identity(
         longer row-aligned with ``units``) and appended here in input order.
     :param progress: Progress-bar policy for corpus embedding inference.
     :param stats: Optional telemetry collector filled in place.
+    :param document_texts: Optional prepared document text for each input unit.
+    :param search_document: Search document mode represented by ``document_texts``.
     :return: Normalized embedding matrix and its effective vector-space identity.
     """
     # Import-sensitive runtime variables (MPS operator fallback above all) must
@@ -3401,6 +3447,8 @@ def compute_embeddings_with_identity(
             overflow_report=overflow_report,
             progress=progress,
             stats=stats,
+            document_texts=document_texts,
+            search_document=search_document,
         )
 
 
@@ -3420,6 +3468,8 @@ def compute_embeddings(
     strict_revision_cache: bool = False,
     progress: ProgressMode = "auto",
     stats: EmbeddingRunStats | None = None,
+    document_texts: Sequence[str] | None = None,
+    search_document: SearchDocumentMode = "source",
 ) -> np.ndarray:
     """Compute embeddings while serializing shared-model lifecycle and inference.
 
@@ -3444,6 +3494,8 @@ def compute_embeddings(
         requested revision label, defaults to ``False``.
     :param progress: Progress-bar policy for corpus embedding inference.
     :param stats: Optional telemetry collector filled in place.
+    :param document_texts: Optional prepared document text for each input unit.
+    :param search_document: Search document mode represented by ``document_texts``.
     :return: Normalized embedding matrix row-aligned with ``units``.
     """
     embeddings, _identity = compute_embeddings_with_identity(
@@ -3462,6 +3514,8 @@ def compute_embeddings(
         strict_revision_cache=strict_revision_cache,
         progress=progress,
         stats=stats,
+        document_texts=document_texts,
+        search_document=search_document,
     )
     return embeddings
 

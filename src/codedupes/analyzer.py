@@ -37,8 +37,10 @@ from codedupes.semantic import (
     EmbeddingRunStats,
     EmbeddingSpaceIdentity,
     ProgressMode,
+    SearchDocumentMode,
     SemanticBackendError,
     SemanticContextOverflow,
+    _prepare_search_document,
     describe_context_overflow,
     embedding_cache_keys_for_units,
     get_code_unit_statement_count,
@@ -395,6 +397,7 @@ class AnalyzerConfig:
     embedding_cache: bool = True
     strict_revision_cache: bool = False
     progress: ProgressMode = "auto"
+    search_document: SearchDocumentMode = "source"
 
     # What to run. mode="check" validates the calibrated duplicate-gate
     # contract at construction; mode="search" defers to the query-time search
@@ -412,6 +415,8 @@ class AnalyzerConfig:
             raise ValueError(f"mode must be 'check' or 'search', got {self.mode!r}")
         if self.mode == "search" and not self.run_semantic:
             raise ValueError("mode='search' requires run_semantic=True")
+        if self.search_document not in {"source", "contextual"}:
+            raise ValueError("search_document must be 'source' or 'contextual'")
 
         self.languages = normalize_languages(self.languages)
 
@@ -644,6 +649,9 @@ class CodeAnalyzer:
         path: Path,
         semantic_units: list[CodeUnit],
         semantic_task: str,
+        *,
+        search_document: SearchDocumentMode = "source",
+        document_texts: list[str] | None = None,
     ) -> None:
         """Publish cache corpus metadata after a successful analyzer run."""
         stats = self._embedding_stats
@@ -666,6 +674,7 @@ class CodeAnalyzer:
             "exclude_patterns": self.config.exclude_patterns,
             "semantic_task": semantic_task,
             "instruction_prefix": self.config.instruction_prefix,
+            "search_document": search_document,
         }
         selection = hashlib.blake2b(
             json.dumps(selection_payload, sort_keys=True).encode(),
@@ -675,6 +684,8 @@ class CodeAnalyzer:
             semantic_units,
             identity,
             revision=stats.cache_revision,
+            document_texts=document_texts,
+            search_document=search_document,
         )
         published = cache.publish_corpus_manifest(
             self._cache_scope,
@@ -1084,6 +1095,11 @@ class CodeAnalyzer:
         self._semantic_units = semantic_candidates
         overflow: list[SemanticContextOverflow] = []
         self._embedding_stats = EmbeddingRunStats()
+        document_texts = (
+            [_prepare_search_document(unit, self._cache_scope) for unit in semantic_candidates]
+            if self.config.search_document == "contextual" and self._cache_scope is not None
+            else None
+        )
 
         try:
             self._embeddings, self._embedding_space_identity = compute_embeddings(
@@ -1103,6 +1119,8 @@ class CodeAnalyzer:
                 strict_revision_cache=self.config.strict_revision_cache,
                 progress=self.config.progress,
                 stats=self._embedding_stats,
+                document_texts=document_texts,
+                search_document=self.config.search_document,
             )
         except Exception:
             self._embedding_space_identity = None
@@ -1110,10 +1128,17 @@ class CodeAnalyzer:
             raise
         if overflow:
             semantic_candidates = self._drop_over_context_units(overflow, semantic_candidates)
+            if self.config.search_document == "contextual" and self._cache_scope is not None:
+                document_texts = [
+                    _prepare_search_document(unit, self._cache_scope)
+                    for unit in semantic_candidates
+                ]
         self._publish_corpus_manifest(
             path,
             semantic_candidates,
             self._resolved_search_semantic_task or DEFAULT_SEARCH_SEMANTIC_TASK,
+            search_document=self.config.search_document,
+            document_texts=document_texts,
         )
         return len(semantic_candidates)
 
