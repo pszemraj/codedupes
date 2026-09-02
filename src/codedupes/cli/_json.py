@@ -62,40 +62,55 @@ def _unit_to_dict(unit: CodeUnit) -> dict[str, Any]:
     }
 
 
-def _dup_to_dict(dup: DuplicatePair) -> dict[str, Any]:
-    """Convert a duplicate pair to a JSON-serializable mapping."""
-    return {
-        "unit_a": _unit_to_dict(dup.unit_a),
-        "unit_b": _unit_to_dict(dup.unit_b),
-        "similarity": dup.similarity,
-        "method": dup.method,
-    }
-
-
-def _hybrid_dup_to_dict(dup: HybridDuplicate) -> dict[str, Any]:
-    """Convert a hybrid duplicate pair for JSON output."""
-    return {
-        "unit_a": _unit_to_dict(dup.unit_a),
-        "unit_b": _unit_to_dict(dup.unit_b),
-        "tier": dup.tier,
-        "confidence": dup.confidence,
-        "has_exact": dup.has_exact,
-        "semantic_similarity": dup.semantic_similarity,
-        "jaccard_similarity": dup.jaccard_similarity,
-        "weak_identifier_jaccard": dup.weak_identifier_jaccard,
-        "statement_count_ratio": dup.statement_count_ratio,
-    }
-
-
-def print_check_json_combined(
+def check_result_to_json(
     result: AnalysisResult,
     *,
     show_all: bool,
     fail_on: str,
     exit_code: int,
-) -> None:
-    """Output combined-mode check results as JSON."""
+) -> dict[str, Any]:
+    """Serialize one check result using the normalized schema-v2 graph shape."""
+    units: dict[str, dict[str, Any]] = {}
+
+    def ref(unit: CodeUnit) -> str:
+        """Register a unit once and return its stable node identifier."""
+        units.setdefault(unit.uid, _unit_to_dict(unit))
+        return unit.uid
+
+    def hybrid_edge(duplicate: HybridDuplicate) -> dict[str, Any]:
+        """Serialize one hybrid duplicate as an edge between unit identifiers."""
+        return {
+            "unit_a": ref(duplicate.unit_a),
+            "unit_b": ref(duplicate.unit_b),
+            "tier": duplicate.tier,
+            "confidence": duplicate.confidence,
+            "has_exact": duplicate.has_exact,
+            "semantic_similarity": duplicate.semantic_similarity,
+            "jaccard_similarity": duplicate.jaccard_similarity,
+            "weak_identifier_jaccard": duplicate.weak_identifier_jaccard,
+            "statement_count_ratio": duplicate.statement_count_ratio,
+        }
+
+    def raw_edge(duplicate: DuplicatePair) -> dict[str, Any]:
+        """Serialize one raw duplicate as an edge between unit identifiers."""
+        return {
+            "unit_a": ref(duplicate.unit_a),
+            "unit_b": ref(duplicate.unit_b),
+            "similarity": duplicate.similarity,
+            "method": duplicate.method,
+        }
+
+    combined_mode = result.analysis_mode == "combined"
+    if combined_mode:
+        duplicates = [hybrid_edge(duplicate) for duplicate in result.hybrid_duplicates]
+    else:
+        duplicates = [
+            raw_edge(duplicate)
+            for duplicate in result.traditional_duplicates + result.semantic_duplicates
+        ]
+
     output: dict[str, Any] = {
+        "schema_version": 2,
         "analysis_mode": result.analysis_mode,
         "summary": {
             "total_units": len(result.units),
@@ -114,63 +129,94 @@ def print_check_json_combined(
             "fail_on": fail_on,
             "exit_code": exit_code,
         },
+        "duplicates": duplicates,
+        "potentially_unused": [ref(unit) for unit in result.potentially_unused],
         "extraction_diagnostics": [
             _diagnostic_to_dict(diagnostic) for diagnostic in result.extraction_diagnostics
         ],
         "semantic_diagnostics": [
             _diagnostic_to_dict(diagnostic) for diagnostic in result.semantic_diagnostics
         ],
-        "hybrid_duplicates": [
-            _hybrid_dup_to_dict(duplicate) for duplicate in result.hybrid_duplicates
-        ],
-        "potentially_unused": [_unit_to_dict(unit) for unit in result.potentially_unused],
     }
-    if show_all:
+    if combined_mode and show_all:
         output["traditional_duplicates"] = [
-            _dup_to_dict(duplicate) for duplicate in result.traditional_duplicates
+            raw_edge(duplicate) for duplicate in result.traditional_duplicates
         ]
         output["semantic_duplicates"] = [
-            _dup_to_dict(duplicate) for duplicate in result.semantic_duplicates
+            raw_edge(duplicate) for duplicate in result.semantic_duplicates
         ]
+    output["units"] = units
+    return output
 
-    print(json.dumps(output, indent=2, sort_keys=True))
+
+def print_check_json_combined(
+    result: AnalysisResult,
+    *,
+    show_all: bool,
+    fail_on: str,
+    exit_code: int,
+) -> None:
+    """Output combined-mode check results as schema-v2 JSON."""
+    print(
+        json.dumps(
+            check_result_to_json(
+                result,
+                show_all=show_all,
+                fail_on=fail_on,
+                exit_code=exit_code,
+            ),
+            indent=2,
+            sort_keys=True,
+        )
+    )
 
 
 def print_check_json_raw(result: AnalysisResult, *, fail_on: str, exit_code: int) -> None:
-    """Output raw single-method check results as JSON."""
-    output = {
-        "analysis_mode": result.analysis_mode,
+    """Output raw single-method check results as schema-v2 JSON."""
+    print(
+        json.dumps(
+            check_result_to_json(
+                result,
+                show_all=False,
+                fail_on=fail_on,
+                exit_code=exit_code,
+            ),
+            indent=2,
+            sort_keys=True,
+        )
+    )
+
+
+def search_result_to_json(
+    query: str,
+    results: list[tuple[CodeUnit, float]],
+    semantic_diagnostics: list[ExtractionDiagnostic],
+    indexed_units: int,
+    embedding_stats: EmbeddingRunStats | None,
+) -> dict[str, Any]:
+    """Serialize semantic search results using schema-v2 unit references."""
+    units: dict[str, dict[str, Any]] = {}
+
+    def ref(unit: CodeUnit) -> str:
+        """Register a search result unit once and return its identifier."""
+        units.setdefault(unit.uid, _unit_to_dict(unit))
+        return unit.uid
+
+    serialized_results = [{"unit": ref(unit), "score": float(score)} for unit, score in results]
+    return {
+        "schema_version": 2,
+        "query": query,
         "summary": {
-            "total_units": len(result.units),
-            "units_by_language": _language_counts(result.units),
-            "traditional_duplicates": len(result.traditional_duplicates),
-            "semantic_duplicates": len(result.semantic_duplicates),
-            "potentially_unused": len(result.potentially_unused),
-            "semantic_fallback": result.semantic_fallback,
-            "semantic_fallback_reason": result.semantic_fallback_reason,
-            "extraction_diagnostics": len(result.extraction_diagnostics),
-            "semantic_diagnostics": len(result.semantic_diagnostics),
-            "unused_supported_languages": list(result.unused_supported_languages),
-            "unused_excluded_units": result.unused_excluded_units,
-            "embeddings": _embedding_stats_to_dict(result.embedding_stats),
-            "fail_on": fail_on,
-            "exit_code": exit_code,
+            "indexed_units": indexed_units,
+            "results": len(results),
+            "embeddings": _embedding_stats_to_dict(embedding_stats),
         },
-        "extraction_diagnostics": [
-            _diagnostic_to_dict(diagnostic) for diagnostic in result.extraction_diagnostics
-        ],
+        "results": serialized_results,
+        "units": units,
         "semantic_diagnostics": [
-            _diagnostic_to_dict(diagnostic) for diagnostic in result.semantic_diagnostics
+            _diagnostic_to_dict(diagnostic) for diagnostic in semantic_diagnostics
         ],
-        "traditional_duplicates": [
-            _dup_to_dict(duplicate) for duplicate in result.traditional_duplicates
-        ],
-        "semantic_duplicates": [
-            _dup_to_dict(duplicate) for duplicate in result.semantic_duplicates
-        ],
-        "potentially_unused": [_unit_to_dict(unit) for unit in result.potentially_unused],
     }
-    print(json.dumps(output, indent=2, sort_keys=True))
 
 
 def print_search_json(
@@ -180,17 +226,17 @@ def print_search_json(
     indexed_units: int,
     embedding_stats: EmbeddingRunStats | None,
 ) -> None:
-    """Output search results as JSON."""
-    payload = {
-        "query": query,
-        "indexed_units": indexed_units,
-        "summary": {
-            "indexed_units": indexed_units,
-            "embeddings": _embedding_stats_to_dict(embedding_stats),
-        },
-        "results": [{"score": float(score), **_unit_to_dict(unit)} for unit, score in results],
-        "semantic_diagnostics": [
-            _diagnostic_to_dict(diagnostic) for diagnostic in semantic_diagnostics
-        ],
-    }
-    print(json.dumps(payload, indent=2, sort_keys=True))
+    """Output search results as schema-v2 JSON."""
+    print(
+        json.dumps(
+            search_result_to_json(
+                query,
+                results,
+                semantic_diagnostics,
+                indexed_units,
+                embedding_stats,
+            ),
+            indent=2,
+            sort_keys=True,
+        )
+    )

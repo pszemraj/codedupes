@@ -102,7 +102,13 @@ def test_cli_json_output_hybrid_default(monkeypatch, tmp_path):
     assert output["summary"]["embeddings"]["model_loaded"] is False
     assert output["summary"]["fail_on"] == "actionable"
     assert output["summary"]["exit_code"] == 1
-    assert "hybrid_duplicates" in output
+    assert output["schema_version"] == 2
+    assert "duplicates" in output
+    assert output["duplicates"][0]["unit_a"] in output["units"]
+    assert output["duplicates"][0]["unit_b"] in output["units"]
+    assert output["potentially_unused"][0] in output["units"]
+    assert len(output["units"]) <= 2 * len(output["duplicates"]) + len(output["potentially_unused"])
+    assert "hybrid_duplicates" not in output
     assert "traditional_duplicates" not in output
     assert "semantic_duplicates" not in output
     assert captured[0].include_private is True
@@ -112,7 +118,8 @@ def test_cli_json_output_hybrid_default(monkeypatch, tmp_path):
     assert result.exit_code == 0
     search_output = json.loads(result.output)
     assert search_output["query"] == "entry"
-    assert search_output["results"][0]["name"] == "entry"
+    result_uid = search_output["results"][0]["unit"]
+    assert search_output["units"][result_uid]["name"] == "entry"
     assert captured[1].progress == "never"
 
 
@@ -215,7 +222,8 @@ def test_cli_search_json_surfaces_semantic_diagnostics(monkeypatch, tmp_path):
 
     assert result.exit_code == 0
     payload = json.loads(result.output)
-    assert payload["results"][0]["name"] == "entry"
+    result_uid = payload["results"][0]["unit"]
+    assert payload["units"][result_uid]["name"] == "entry"
     assert payload["semantic_diagnostics"][0]["code"] == "semantic-context-overflow"
 
 
@@ -246,7 +254,8 @@ def test_cli_search_indexes_without_running_full_analysis(monkeypatch, tmp_path)
 
     assert result.exit_code == 0
     payload = json.loads(result.output)
-    assert payload["results"][0]["name"] == "entry"
+    result_uid = payload["results"][0]["unit"]
+    assert payload["units"][result_uid]["name"] == "entry"
 
 
 def _patch_search_analyzer(
@@ -359,7 +368,8 @@ def test_cli_search_json_reports_indexed_unit_count(monkeypatch, tmp_path, index
 
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
-    assert payload["indexed_units"] == indexed_units
+    assert payload["schema_version"] == 2
+    assert payload["summary"]["indexed_units"] == indexed_units
     assert payload["results"] == []
     assert result.stderr == ""
 
@@ -394,6 +404,63 @@ def test_cli_json_show_all_includes_raw_sections(monkeypatch, tmp_path):
     payload = json.loads(result.output)
     assert "traditional_duplicates" in payload
     assert "semantic_duplicates" in payload
+    for collection in ("duplicates", "traditional_duplicates", "semantic_duplicates"):
+        for edge in payload[collection]:
+            assert edge["unit_a"] in payload["units"]
+            assert edge["unit_b"] in payload["units"]
+
+
+def test_cli_json_v2_raw_mode_uses_edge_list(monkeypatch, tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+    unit = _build_unit(tmp_path)
+    duplicate = DuplicatePair(unit_a=unit, unit_b=unit, similarity=0.95, method="semantic")
+    patch_cli_analyzer(
+        monkeypatch,
+        cli,
+        analyze_result=AnalysisResult(
+            units=[unit],
+            traditional_duplicates=[],
+            semantic_duplicates=[duplicate],
+            hybrid_duplicates=[],
+            potentially_unused=[],
+            analysis_mode="semantic",
+        ),
+    )
+
+    result = CliRunner().invoke(
+        cli.cli,
+        ["check", str(path), "--semantic-only", "--json"],
+    )
+
+    assert result.exit_code == 1
+    payload = json.loads(result.output)
+    assert payload["schema_version"] == 2
+    assert payload["duplicates"] == [
+        {
+            "method": "semantic",
+            "similarity": 0.95,
+            "unit_a": unit.uid,
+            "unit_b": unit.uid,
+        }
+    ]
+    assert payload["units"][unit.uid]["name"] == "entry"
+    assert "traditional_duplicates" not in payload
+    assert "semantic_duplicates" not in payload
+
+
+def test_cli_json_v2_emits_each_unit_once(monkeypatch, tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+    result_obj = _build_result(tmp_path)
+    result_obj.hybrid_duplicates *= 4
+    patch_cli_analyzer(monkeypatch, cli, analyze_result=result_obj)
+
+    result = CliRunner().invoke(cli.cli, ["check", str(path), "--json"])
+
+    payload = json.loads(result.output)
+    assert len(payload["duplicates"]) == 4
+    assert len(payload["units"]) == 1
 
 
 def test_cli_no_private_option_check(monkeypatch, tmp_path):
