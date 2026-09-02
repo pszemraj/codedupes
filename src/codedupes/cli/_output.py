@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import io
 import logging
+import sys
 from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, redirect_stderr
 from typing import TypeVar
 
 import rich_click as click
@@ -115,7 +117,16 @@ def _configured_cli_output(
         setup_logging(verbose)
 
     try:
-        yield
+        if as_json:
+            captured_stderr = io.StringIO()
+            try:
+                with redirect_stderr(captured_stderr):
+                    yield
+            except BaseException:
+                sys.stderr.write(captured_stderr.getvalue())
+                raise
+        else:
+            yield
     finally:
         if logging_state is not None:
             _restore_root_logger_state(logging_state)

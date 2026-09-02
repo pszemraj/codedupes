@@ -153,6 +153,27 @@ def test_cli_json_disables_huggingface_progress(monkeypatch, tmp_path):
     assert calls == [None]
 
 
+def test_cli_json_discards_direct_backend_stderr_on_success(monkeypatch, tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+
+    class NoisyAnalyzer:
+        def __init__(self, _config):
+            pass
+
+        def analyze(self, _path):
+            print("backend progress", file=sys.stderr)
+            return _build_result(tmp_path)
+
+    monkeypatch.setattr(cli, "CodeAnalyzer", NoisyAnalyzer)
+
+    result = CliRunner().invoke(cli.cli, ["check", str(path), "--json"])
+
+    assert result.exit_code == 1
+    assert result.stderr == ""
+    assert json.loads(result.output)["schema_version"] == 2
+
+
 def test_cli_reports_semantic_context_diagnostics(monkeypatch, tmp_path):
     path = tmp_path / "sample.py"
     path.write_text("def entry():\n    return 1\n")
