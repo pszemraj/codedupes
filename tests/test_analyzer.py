@@ -570,10 +570,16 @@ def test_traditional_findings_are_mode_invariant(tmp_path: Path, monkeypatch) ->
     project = create_project(tmp_path, source, module="scope.py")
     monkeypatch.setattr(analyzer_module, "run_semantic_analysis", _make_semantic_runner())
 
-    traditional = CodeAnalyzer(AnalyzerConfig(run_semantic=False, run_unused=False)).analyze(
-        project
-    )
-    combined = CodeAnalyzer(AnalyzerConfig(run_unused=False)).analyze(project)
+    traditional = CodeAnalyzer(
+        AnalyzerConfig(
+            run_semantic=False,
+            run_unused=False,
+            filter_tiny_traditional=False,
+        )
+    ).analyze(project)
+    combined = CodeAnalyzer(
+        AnalyzerConfig(run_unused=False, filter_tiny_traditional=False)
+    ).analyze(project)
 
     def pair_keys(result: AnalysisResult) -> set[tuple[str, str, str]]:
         return {
@@ -629,15 +635,36 @@ def test_tiny_exact_duplicate_filter(
     assert has_exact_duplicate is expected_exact_duplicate
 
 
-@pytest.mark.parametrize(
-    ("similarity", "expected_count"),
-    [
-        (0.90, 0),
-        (0.95, 1),
-    ],
-)
-def test_tiny_near_duplicates_use_high_jaccard_floor(
-    tmp_path: Path, monkeypatch, similarity: float, expected_count: int
+@pytest.mark.parametrize("filter_tiny_traditional", [True, False])
+def test_tiny_class_duplicates_follow_tiny_filter(
+    tmp_path: Path, filter_tiny_traditional: bool
+) -> None:
+    """Marker classes should follow the same tiny-unit policy as callables."""
+    source = dedent(
+        """
+        class FirstError(RuntimeError):
+            \"\"\"First domain error.\"\"\"
+
+        class SecondError(RuntimeError):
+            \"\"\"Second domain error.\"\"\"
+        """
+    ).strip()
+    project = create_project(tmp_path, source, module="tiny_classes.py")
+
+    result = CodeAnalyzer(
+        AnalyzerConfig(
+            run_semantic=False,
+            run_unused=False,
+            filter_tiny_traditional=filter_tiny_traditional,
+        )
+    ).analyze(project)
+
+    assert len(result.traditional_duplicates) == int(not filter_tiny_traditional)
+
+
+@pytest.mark.parametrize("filter_tiny_traditional", [True, False])
+def test_tiny_near_duplicates_follow_tiny_filter(
+    tmp_path: Path, monkeypatch, filter_tiny_traditional: bool
 ) -> None:
     source = dedent(
         """
@@ -657,11 +684,7 @@ def test_tiny_near_duplicates_use_high_jaccard_floor(
     ):
         return (
             [],
-            [
-                DuplicatePair(
-                    unit_a=units[0], unit_b=units[1], similarity=similarity, method="jaccard"
-                )
-            ],
+            [DuplicatePair(unit_a=units[0], unit_b=units[1], similarity=1.0, method="jaccard")],
             [],
         )
 
@@ -672,12 +695,12 @@ def test_tiny_near_duplicates_use_high_jaccard_floor(
             run_traditional=True,
             run_semantic=False,
             run_unused=False,
-            tiny_near_jaccard_min=0.93,
+            filter_tiny_traditional=filter_tiny_traditional,
         )
     )
     result = analyzer.analyze(project)
 
-    assert len(result.traditional_duplicates) == expected_count
+    assert len(result.traditional_duplicates) == int(not filter_tiny_traditional)
 
 
 def _profile_with_gates(gates: dict[str, float], fallback: float = 0.99) -> SemanticModelProfile:
@@ -1919,9 +1942,6 @@ def test_invalid_threshold_raises() -> None:
 
     with pytest.raises(ValueError, match="tiny_unit_statement_cutoff"):
         AnalyzerConfig(tiny_unit_statement_cutoff=-1)
-
-    with pytest.raises(ValueError, match="tiny_near_jaccard_min"):
-        AnalyzerConfig(tiny_near_jaccard_min=1.1)
 
 
 def test_invalid_mode_dependency_raises() -> None:

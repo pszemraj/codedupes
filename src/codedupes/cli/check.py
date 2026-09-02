@@ -125,7 +125,7 @@ def run_should_fail(
     panel=Panel.SEMANTIC,
     show_envvar=True,
     help=(
-        "Allow combined mode to continue with scoped traditional results when semantic "
+        "Allow combined mode to continue with full-scope traditional results when semantic "
         "backend loading/inference fails"
     ),
 )
@@ -155,7 +155,7 @@ def run_should_fail(
     is_flag=True,
     panel=Panel.DETECTION,
     show_envvar=True,
-    help="Disable tiny function/method filtering for traditional duplicates",
+    help="Disable tiny code-unit filtering for traditional duplicates",
 )
 @click.option(
     "--tiny-cutoff",
@@ -164,16 +164,7 @@ def run_should_fail(
     show_default=True,
     panel=Panel.DETECTION,
     show_envvar=True,
-    help="Tiny function/method statement cutoff (exclusive) for traditional filtering",
-)
-@click.option(
-    "--tiny-near-jaccard-min",
-    type=float,
-    default=cli_module.DEFAULT_TINY_NEAR_JACCARD_MIN,
-    show_default=True,
-    panel=Panel.DETECTION,
-    show_envvar=True,
-    help="Minimum Jaccard similarity to keep tiny near-duplicate pairs",
+    help="Tiny code-unit statement cutoff (exclusive) for traditional filtering",
 )
 @click.option(
     "--show-all",

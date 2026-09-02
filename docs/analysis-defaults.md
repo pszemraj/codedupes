@@ -89,15 +89,14 @@ Call matching is name-based rather than scope-resolved: a call to any same-named
 Default tiny-filter behavior for traditional duplicates:
 
 - enabled: `True`
-- tiny definition: function/method statement count `< 3`
-- tiny exact duplicates: dropped
-- tiny near duplicates: kept only when Jaccard similarity `>= 0.93`
+- tiny definition: code-unit statement count `< 3`
+- traditional pairs where both units are tiny: dropped
 
 Override via CLI:
 
 ```bash
 codedupes check ./src --no-tiny-filter
-codedupes check ./src --tiny-cutoff 4 --tiny-near-jaccard-min 0.95
+codedupes check ./src --tiny-cutoff 4
 ```
 
 Override via Python API:
@@ -106,7 +105,6 @@ Override via Python API:
 AnalyzerConfig(
     filter_tiny_traditional=False,
     tiny_unit_statement_cutoff=4,
-    tiny_near_jaccard_min=0.95,
 )
 ```
 

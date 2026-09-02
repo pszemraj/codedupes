@@ -227,7 +227,6 @@ class CheckOptions:
     suppress_test_semantic: bool
     no_tiny_filter: bool
     tiny_cutoff: int
-    tiny_near_jaccard_min: float
     show_all: bool
     show_source: bool
     full_table: bool
@@ -283,7 +282,6 @@ class CheckOptions:
                     "traditional_threshold",
                     "no_tiny_filter",
                     "tiny_cutoff",
-                    "tiny_near_jaccard_min",
                 )
                 if _is_cli_explicit(ctx, name)
             ]
@@ -337,7 +335,6 @@ class CheckOptions:
             run_unused=not self.no_unused,
             filter_tiny_traditional=not self.no_tiny_filter,
             tiny_unit_statement_cutoff=self.tiny_cutoff,
-            tiny_near_jaccard_min=self.tiny_near_jaccard_min,
             strict_unused=self.strict_unused,
             suppress_test_semantic_matches=self.suppress_test_semantic,
             include_stubs=self.include_stubs,

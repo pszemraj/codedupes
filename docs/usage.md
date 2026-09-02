@@ -167,7 +167,7 @@ See [Analysis defaults](analysis-defaults.md) for extraction and candidate scope
 
 ```bash
 codedupes check ./src --no-tiny-filter
-codedupes check ./src --tiny-cutoff 4 --tiny-near-jaccard-min 0.95
+codedupes check ./src --tiny-cutoff 4
 ```
 
 See [Analysis defaults](analysis-defaults.md) for tiny-pair filtering behavior.

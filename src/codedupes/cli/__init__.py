@@ -9,7 +9,6 @@ import rich_click as click
 
 from codedupes import __version__
 from codedupes.analyzer import (
-    DEFAULT_TINY_NEAR_JACCARD_MIN,
     DEFAULT_TINY_UNIT_STATEMENT_CUTOFF,
     AnalyzerConfig,
     CodeAnalyzer,
@@ -92,7 +91,6 @@ __all__ = [
     "DEFAULT_MODEL",
     "DEFAULT_OUTPUT_WIDTH",
     "DEFAULT_SEMANTIC_DEVICE",
-    "DEFAULT_TINY_NEAR_JACCARD_MIN",
     "DEFAULT_TINY_UNIT_STATEMENT_CUTOFF",
     "DEFAULT_TRADITIONAL_THRESHOLD",
     "AnalyzerConfig",

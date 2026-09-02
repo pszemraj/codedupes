@@ -533,8 +533,6 @@ def test_cli_model_semantic_flags_pass_through(monkeypatch, tmp_path):
             "--no-tiny-filter",
             "--tiny-cutoff",
             "4",
-            "--tiny-near-jaccard-min",
-            "0.95",
             "--show-all",
         ],
     )
@@ -548,7 +546,6 @@ def test_cli_model_semantic_flags_pass_through(monkeypatch, tmp_path):
     assert captured[0].semantic_unit_types == ("class",)
     assert captured[0].filter_tiny_traditional is False
     assert captured[0].tiny_unit_statement_cutoff == 4
-    assert captured[0].tiny_near_jaccard_min == 0.95
 
 
 def test_cli_check_rejects_uncalibrated_context_as_usage_error(monkeypatch, tmp_path):
@@ -692,9 +689,7 @@ def test_cli_threshold_precedence(monkeypatch, tmp_path):
     assert captured[-1].filter_tiny_traditional is True
     # The CLI defaults must be the library defaults, not a second hardcoded copy.
     assert captured[-1].tiny_unit_statement_cutoff == cli.DEFAULT_TINY_UNIT_STATEMENT_CUTOFF
-    assert captured[-1].tiny_near_jaccard_min == cli.DEFAULT_TINY_NEAR_JACCARD_MIN
     assert captured[-1].tiny_unit_statement_cutoff == 3
-    assert captured[-1].tiny_near_jaccard_min == 0.93
 
     result_shared = runner.invoke(cli.cli, ["check", str(path), "--threshold", "0.67"])
     assert result_shared.exit_code == 1
@@ -1126,7 +1121,6 @@ def test_cli_rejects_all_semantic_mode_flags_with_traditional_only(
         (["--traditional-threshold", "0.8"], "--traditional-threshold"),
         (["--no-tiny-filter"], "--no-tiny-filter"),
         (["--tiny-cutoff", "4"], "--tiny-cutoff"),
-        (["--tiny-near-jaccard-min", "0.95"], "--tiny-near-jaccard-min"),
     ],
 )
 def test_cli_rejects_all_traditional_mode_flags_with_semantic_only(

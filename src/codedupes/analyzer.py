@@ -76,7 +76,6 @@ SEMANTIC_UNIT_TYPE_TO_ENUM: dict[str, CodeUnitType] = {
 # Derived so the CLI choice list can never drift from the accepted unit types.
 SEMANTIC_UNIT_TYPE_CHOICES: tuple[str, ...] = tuple(SEMANTIC_UNIT_TYPE_TO_ENUM)
 DEFAULT_TINY_UNIT_STATEMENT_CUTOFF = 3
-DEFAULT_TINY_NEAR_JACCARD_MIN = 0.93
 
 
 def _reject_mode_gated_fields(
@@ -142,21 +141,18 @@ def _resolve_semantic_unit_type_filter(
     return {SEMANTIC_UNIT_TYPE_TO_ENUM[unit_type_name] for unit_type_name in semantic_unit_types}
 
 
-def _is_tiny_function_like(
+def _is_tiny_unit(
     unit: CodeUnit,
     statement_cutoff: int,
     statement_cache: dict[str, int],
 ) -> bool:
-    """Return whether a unit is a tiny function/method by statement count.
+    """Return whether a unit is tiny by statement count.
 
     :param unit: Unit under inspection.
     :param statement_cutoff: Tiny cutoff (exclusive).
     :param statement_cache: Memoized statement counts by unit uid.
-    :return: ``True`` when unit is function/method and count is below cutoff.
+    :return: ``True`` when the unit's statement count is below the cutoff.
     """
-    if unit.unit_type not in {CodeUnitType.FUNCTION, CodeUnitType.METHOD}:
-        return False
-
     count = statement_cache.get(unit.uid)
     if count is None:
         count = get_code_unit_statement_count(unit)
@@ -169,16 +165,16 @@ def _both_units_are_tiny(
     statement_cutoff: int,
     statement_cache: dict[str, int],
 ) -> bool:
-    """Return whether both endpoints are tiny function-like units.
+    """Return whether both endpoints are tiny code units.
 
     :param duplicate: Duplicate pair to inspect.
     :param statement_cutoff: Tiny cutoff (exclusive).
     :param statement_cache: Memoized statement counts by unit uid.
-    :return: Whether both endpoints are tiny function-like units.
+    :return: Whether both endpoints are tiny code units.
     """
-    return _is_tiny_function_like(
-        duplicate.unit_a, statement_cutoff, statement_cache
-    ) and _is_tiny_function_like(duplicate.unit_b, statement_cutoff, statement_cache)
+    return _is_tiny_unit(duplicate.unit_a, statement_cutoff, statement_cache) and _is_tiny_unit(
+        duplicate.unit_b, statement_cutoff, statement_cache
+    )
 
 
 def _filter_tiny_traditional_duplicates(
@@ -186,14 +182,12 @@ def _filter_tiny_traditional_duplicates(
     near_duplicates: list[DuplicatePair],
     *,
     statement_cutoff: int,
-    tiny_near_jaccard_min: float,
 ) -> tuple[list[DuplicatePair], list[DuplicatePair]]:
     """Filter tiny wrapper noise from traditional duplicates.
 
     :param exact_duplicates: Exact traditional duplicate pairs.
     :param near_duplicates: Near traditional duplicate pairs.
     :param statement_cutoff: Tiny cutoff (exclusive).
-    :param tiny_near_jaccard_min: Keep floor for tiny near duplicate Jaccard similarity.
     :return: Filtered exact and near duplicate lists.
     """
     statement_cache: dict[str, int] = {}
@@ -206,10 +200,7 @@ def _filter_tiny_traditional_duplicates(
         filtered_exact.append(duplicate)
 
     for duplicate in near_duplicates:
-        if (
-            _both_units_are_tiny(duplicate, statement_cutoff, statement_cache)
-            and duplicate.similarity < tiny_near_jaccard_min
-        ):
+        if _both_units_are_tiny(duplicate, statement_cutoff, statement_cache):
             continue
         filtered_near.append(duplicate)
 
@@ -393,7 +384,6 @@ class AnalyzerConfig:
     allow_semantic_fallback: bool = False
     filter_tiny_traditional: bool = True
     tiny_unit_statement_cutoff: int = DEFAULT_TINY_UNIT_STATEMENT_CUTOFF
-    tiny_near_jaccard_min: float = DEFAULT_TINY_NEAR_JACCARD_MIN
     embedding_cache: bool = True
     strict_revision_cache: bool = False
     progress: ProgressMode = "auto"
@@ -457,9 +447,6 @@ class AnalyzerConfig:
         if self.tiny_unit_statement_cutoff < 0:
             raise ValueError("tiny_unit_statement_cutoff must be >= 0")
 
-        if not 0.0 <= self.tiny_near_jaccard_min <= 1.0:
-            raise ValueError("tiny_near_jaccard_min must be in [0.0, 1.0]")
-
         if self.semantic_task is not None:
             self.semantic_task = normalize_semantic_task(
                 self.semantic_task,
@@ -497,10 +484,6 @@ class AnalyzerConfig:
                 (
                     "tiny_unit_statement_cutoff",
                     self.tiny_unit_statement_cutoff != DEFAULT_TINY_UNIT_STATEMENT_CUTOFF,
-                ),
-                (
-                    "tiny_near_jaccard_min",
-                    self.tiny_near_jaccard_min != DEFAULT_TINY_NEAR_JACCARD_MIN,
                 ),
             ),
         )
@@ -905,7 +888,6 @@ class CodeAnalyzer:
                     exact_dupes,
                     near_dupes,
                     statement_cutoff=self.config.tiny_unit_statement_cutoff,
-                    tiny_near_jaccard_min=self.config.tiny_near_jaccard_min,
                 )
             traditional_duplicates = exact_dupes + near_dupes
 
@@ -964,7 +946,7 @@ class CodeAnalyzer:
                 if not self.config.allow_semantic_fallback:
                     raise RuntimeError(
                         f"Semantic analysis failed in combined mode ({exc}). Re-run with "
-                        "`--allow-semantic-fallback` to keep scoped traditional results, "
+                        "`--allow-semantic-fallback` to keep full-scope traditional results, "
                         "or use `--traditional-only` for deterministic non-semantic analysis."
                     ) from exc
                 semantic_fallback = True
@@ -1226,7 +1208,6 @@ def analyze_directory(
     semantic_unit_types: tuple[str, ...] = DEFAULT_SEMANTIC_UNIT_TYPES,
     filter_tiny_traditional: bool = True,
     tiny_unit_statement_cutoff: int = DEFAULT_TINY_UNIT_STATEMENT_CUTOFF,
-    tiny_near_jaccard_min: float = DEFAULT_TINY_NEAR_JACCARD_MIN,
     include_stubs: bool = False,
     allow_semantic_fallback: bool = False,
     run_unused: bool = True,
@@ -1258,10 +1239,9 @@ def analyze_directory(
         min_semantic_statements: Minimum statement count required for semantic analysis.
         semantic_unit_types: Unit types eligible for semantic embeddings.
         filter_tiny_traditional: Filter tiny traditional duplicates when true.
-        tiny_unit_statement_cutoff: Tiny function/method cutoff (exclusive).
-        tiny_near_jaccard_min: Keep floor for tiny near-duplicate Jaccard pairs.
+        tiny_unit_statement_cutoff: Tiny code-unit cutoff (exclusive).
         include_stubs: Whether to analyze ``.pyi`` files.
-        allow_semantic_fallback: Allow combined mode to keep scoped traditional results
+        allow_semantic_fallback: Allow combined mode to keep full-scope traditional results
             when semantic backend loading/inference fails.
         strict_unused: Whether to ignore public API exclusions when reporting unused code.
         run_unused: Run potentially-unused detection even when traditional analysis is off
@@ -1287,7 +1267,6 @@ def analyze_directory(
         semantic_unit_types=semantic_unit_types,
         filter_tiny_traditional=filter_tiny_traditional,
         tiny_unit_statement_cutoff=tiny_unit_statement_cutoff,
-        tiny_near_jaccard_min=tiny_near_jaccard_min,
         include_stubs=include_stubs,
         allow_semantic_fallback=allow_semantic_fallback,
         run_unused=run_unused,

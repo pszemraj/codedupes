@@ -166,7 +166,7 @@ Command status conventions:
 - `1`: selected findings failed `check`, or a command encountered a runtime failure.
 - `2`: Click usage or validation error.
 
-Default combined semantic failures are fatal. `--allow-semantic-fallback` continues with scoped traditional results and records `summary.semantic_fallback` plus `summary.semantic_fallback_reason`; under the default actionable policy, heuristic unused findings alone do not turn that successful degraded run into exit `1`.
+Default combined semantic failures are fatal. `--allow-semantic-fallback` continues with full-scope traditional results and records `summary.semantic_fallback` plus `summary.semantic_fallback_reason`; under the default actionable policy, heuristic unused findings alone do not turn that successful degraded run into exit `1`.
 
 ## Terminal duplicate panels
 

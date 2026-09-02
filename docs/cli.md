@@ -28,13 +28,12 @@ Options, in addition to the [shared options](#options-shared-by-check-and-search
 - `--semantic-task <name>`: Semantic task mode for duplicate detection embeddings (default `semantic-similarity`)
 - `--semantic-only`: Run semantic analysis only
 - `--traditional-only`: Run traditional analysis only
-- `--allow-semantic-fallback`: In default combined mode only, continue with scoped traditional results if semantic backend loading/inference fails
+- `--allow-semantic-fallback`: In default combined mode only, continue with full-scope traditional results if semantic backend loading/inference fails
 - `--no-unused`: Disable unused-code detection
 - `--strict-unused`: Include public non-method functions (module-level and nested) in unused checks
 - `--suppress-test-semantic`: Suppress semantic duplicate matches involving `test_*` functions
-- `--no-tiny-filter`: Disable tiny function/method filtering for traditional duplicates
-- `--tiny-cutoff <int>`: Tiny function/method statement cutoff (exclusive) for traditional filtering (default `3`)
-- `--tiny-near-jaccard-min <float>`: Minimum Jaccard similarity to keep tiny near-duplicate pairs (default `0.93`)
+- `--no-tiny-filter`: Disable tiny code-unit filtering for traditional duplicates
+- `--tiny-cutoff <int>`: Tiny code-unit statement cutoff (exclusive) for traditional filtering (default `3`)
 - `--show-all`: Also print raw traditional + raw semantic duplicate lists in combined mode
 - `--full-table`: Disable table row truncation and print all rows in terminal output
 - `--show-source`: Show truncated duplicate snippets
@@ -137,7 +136,7 @@ Clear all cached embeddings or only entries for one model. See [Embedding cache]
 - `--mps-fallback` and `--no-mps-fallback` are mutually exclusive
 - `--mps-memory-fraction` must be finite and in `(0, 2]`; it requires `--device mps` or `--device auto`
 - Explicit semantic-analysis controls are rejected with `--traditional-only`, including model/task, candidate-scope, device/runtime options, and `--strict-revision-cache`. `--no-cache` is accepted as a harmless no-op.
-- Explicit traditional-analysis controls are rejected with `--semantic-only`: `--traditional-threshold`, `--no-tiny-filter`, `--tiny-cutoff`, and `--tiny-near-jaccard-min`
+- Explicit traditional-analysis controls are rejected with `--semantic-only`: `--traditional-threshold`, `--no-tiny-filter`, and `--tiny-cutoff`
 - Unsupported-op fallback and codedupes OOM recovery are separate policies; `--no-mps-fallback` does not disable OOM recovery
 - `search` applies semantic threshold filtering before returning `top-k` matches; without an explicit `--threshold`/`--semantic-threshold` it uses the model profile search default (for example `0.50` for `gte-modernbert-base`), not the stricter duplicate threshold
 - `search` reports how many units it embedded: an empty index prints a stderr warning that distinguishes no extracted units, semantic eligibility filtering, and model context-window exclusions; terminal mode prints semantic diagnostics when present, and `--json` carries the count in `summary.indexed_units`
