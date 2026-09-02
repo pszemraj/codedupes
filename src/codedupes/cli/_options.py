@@ -196,6 +196,7 @@ class CheckOptions:
     show_all: bool
     show_source: bool
     full_table: bool
+    fail_on: Literal["actionable", "all", "none"]
 
     @classmethod
     def from_params(cls, ctx: click.Context, params: dict[str, Any]) -> CheckOptions:

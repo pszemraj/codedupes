@@ -3,17 +3,47 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import rich_click as click
 
 import codedupes.cli as cli_module
 from codedupes.constants import DEFAULT_CHECK_SEMANTIC_TASK, SEMANTIC_TASK_CHOICES
+from codedupes.models import AnalysisResult, HybridTier
 
 from ._json import print_check_json_combined, print_check_json_raw
 from ._options import CheckOptions, Panel, option_panels, semantic_options
 from ._output import _configured_cli_output, _run_cli_action
 from ._render import print_duplicates, print_hybrid_duplicates, print_summary, print_unused
+
+FailOnPolicy = Literal["actionable", "all", "none"]
+ACTIONABLE_TIERS: frozenset[HybridTier] = frozenset(
+    {"exact", "traditional_near", "hybrid_confirmed", "semantic_high_confidence"}
+)
+
+
+def run_should_fail(
+    result: AnalysisResult,
+    *,
+    policy: FailOnPolicy,
+    combined_mode: bool,
+    strict_unused: bool,
+) -> bool:
+    """Return whether reported findings should make ``check`` exit one."""
+    if policy == "none":
+        return False
+    if combined_mode:
+        duplicates = result.hybrid_duplicates
+        if policy == "actionable":
+            duplicates = [
+                duplicate for duplicate in duplicates if duplicate.tier in ACTIONABLE_TIERS
+            ]
+    else:
+        duplicates = result.traditional_duplicates + result.semantic_duplicates
+    unused = result.potentially_unused
+    if policy == "actionable" and not strict_unused:
+        unused = []
+    return bool(duplicates or unused)
 
 
 @cli_module.cli.command("check", help="Run duplicate + unused analysis")
@@ -155,6 +185,15 @@ from ._render import print_duplicates, print_hybrid_duplicates, print_summary, p
     show_envvar=True,
     help="Show all rows in terminal tables",
 )
+@click.option(
+    "--fail-on",
+    type=click.Choice(["actionable", "all", "none"]),
+    default="actionable",
+    show_default=True,
+    panel=Panel.OUTPUT,
+    show_envvar=True,
+    help="Which findings make the exit code 1",
+)
 @semantic_options("check")
 @option_panels
 @click.pass_context
@@ -177,12 +216,25 @@ def check_command(ctx: click.Context, path: Path, **params: Any) -> None:
             verbose=opts.verbose,
             catch_file_not_found=True,
         )
+        exit_code = int(
+            run_should_fail(
+                result,
+                policy=opts.fail_on,
+                combined_mode=opts.combined_mode,
+                strict_unused=opts.strict_unused,
+            )
+        )
 
         if opts.as_json:
             if opts.combined_mode:
-                print_check_json_combined(result, show_all=opts.show_all)
+                print_check_json_combined(
+                    result,
+                    show_all=opts.show_all,
+                    fail_on=opts.fail_on,
+                    exit_code=exit_code,
+                )
             else:
-                print_check_json_raw(result)
+                print_check_json_raw(result, fail_on=opts.fail_on, exit_code=exit_code)
         elif opts.combined_mode:
             print_summary(result, mode="combined")
             print_hybrid_duplicates(
@@ -227,10 +279,4 @@ def check_command(ctx: click.Context, path: Path, **params: Any) -> None:
             )
             print_unused(result.potentially_unused, max_items=opts.table_max_items)
 
-    if opts.combined_mode:
-        has_issues = bool(result.hybrid_duplicates or result.potentially_unused)
-    else:
-        has_issues = bool(
-            result.traditional_duplicates or result.semantic_duplicates or result.potentially_unused
-        )
-    raise click.exceptions.Exit(1 if has_issues else 0)
+    raise click.exceptions.Exit(exit_code)

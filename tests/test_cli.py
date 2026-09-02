@@ -100,6 +100,8 @@ def test_cli_json_output_hybrid_default(monkeypatch, tmp_path):
     assert output["summary"]["potentially_unused"] == 1
     assert output["summary"]["embeddings"]["cache_hit_rows"] == 1
     assert output["summary"]["embeddings"]["model_loaded"] is False
+    assert output["summary"]["fail_on"] == "actionable"
+    assert output["summary"]["exit_code"] == 1
     assert "hybrid_duplicates" in output
     assert "traditional_duplicates" not in output
     assert "semantic_duplicates" not in output
@@ -1345,7 +1347,7 @@ def test_cli_check_degrades_on_semantic_backend_error_with_fallback(monkeypatch,
         cli.cli,
         ["check", str(path), "--min-statements", "0", "--allow-semantic-fallback"],
     )
-    assert result.exit_code == 1
+    assert result.exit_code == 0
     assert "Semantic analysis unavailable" in result.output
 
 
@@ -1362,12 +1364,13 @@ def test_cli_check_degrades_on_semantic_backend_error_in_json(monkeypatch, tmp_p
         cli.cli,
         ["check", str(path), "--min-statements", "0", "--allow-semantic-fallback", "--json"],
     )
-    assert result.exit_code == 1
+    assert result.exit_code == 0
 
     assert result.output.lstrip().startswith("{"), (
         f"Expected pure JSON output, got: {result.output!r}"
     )
     payload = json.loads(result.output)
+    assert payload["summary"]["exit_code"] == 0
     assert payload["summary"]["semantic_fallback"] is True
     assert payload["summary"]["semantic_fallback_reason"] is not None
     assert "Semantic analysis unavailable" in payload["summary"]["semantic_fallback_reason"]
@@ -1472,6 +1475,107 @@ def test_cli_combined_exit_code_ignores_raw_filtered_findings(monkeypatch, tmp_p
     runner = CliRunner()
     result = runner.invoke(cli.cli, ["check", str(path)])
     assert result.exit_code == 0
+
+
+@pytest.mark.parametrize(
+    (
+        "policy",
+        "combined_mode",
+        "strict_unused",
+        "tier",
+        "raw_duplicate",
+        "include_unused",
+        "expected",
+    ),
+    [
+        ("actionable", True, False, "semantic_review", False, True, False),
+        ("all", True, False, "semantic_review", False, True, True),
+        ("none", True, True, "hybrid_confirmed", False, True, False),
+        ("actionable", True, True, None, False, True, True),
+        ("actionable", True, False, "hybrid_confirmed", False, False, True),
+        ("actionable", False, False, None, True, False, True),
+    ],
+)
+def test_run_should_fail_policy(
+    tmp_path,
+    policy,
+    combined_mode,
+    strict_unused,
+    tier,
+    raw_duplicate,
+    include_unused,
+    expected,
+):
+    unit = _build_unit(tmp_path)
+    hybrid = (
+        [
+            HybridDuplicate(
+                unit_a=unit,
+                unit_b=unit,
+                tier=tier,
+                confidence=0.9,
+            )
+        ]
+        if tier is not None
+        else []
+    )
+    raw = (
+        [DuplicatePair(unit_a=unit, unit_b=unit, similarity=0.9, method="semantic")]
+        if raw_duplicate
+        else []
+    )
+    result = AnalysisResult(
+        units=[unit],
+        traditional_duplicates=raw,
+        semantic_duplicates=[],
+        hybrid_duplicates=hybrid,
+        potentially_unused=[unit] if include_unused else [],
+        analysis_mode="combined" if combined_mode else "traditional",
+    )
+
+    assert (
+        cli.run_should_fail(
+            result,
+            policy=policy,
+            combined_mode=combined_mode,
+            strict_unused=strict_unused,
+        )
+        is expected
+    )
+
+
+def test_cli_fail_on_all_and_none(monkeypatch, tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+    unit = _build_unit(tmp_path)
+    result_obj = AnalysisResult(
+        units=[unit],
+        traditional_duplicates=[],
+        semantic_duplicates=[],
+        hybrid_duplicates=[
+            HybridDuplicate(
+                unit_a=unit,
+                unit_b=unit,
+                tier="semantic_review",
+                confidence=0.8,
+            )
+        ],
+        potentially_unused=[unit],
+        analysis_mode="combined",
+    )
+    patch_cli_analyzer(monkeypatch, cli, analyze_result=result_obj)
+    runner = CliRunner()
+
+    default_result = runner.invoke(cli.cli, ["check", str(path)])
+    all_result = runner.invoke(cli.cli, ["check", str(path), "--fail-on", "all", "--json"])
+    none_result = runner.invoke(cli.cli, ["check", str(path), "--fail-on", "none"])
+
+    assert default_result.exit_code == 0
+    assert all_result.exit_code == 1
+    assert none_result.exit_code == 0
+    summary = json.loads(all_result.output)["summary"]
+    assert summary["fail_on"] == "all"
+    assert summary["exit_code"] == 1
 
 
 def test_cli_semantic_only_uses_raw_findings_for_exit(monkeypatch, tmp_path):

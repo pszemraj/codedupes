@@ -58,7 +58,7 @@ def cli(ctx: click.Context) -> None:
 # remain re-exported here because callers and tests historically import them from
 # ``codedupes.cli``.
 from .cache import cache_clear_command, cache_group, cache_info_command
-from .check import check_command
+from .check import check_command, run_should_fail
 from .info import info_command
 from .search import search_command
 
@@ -111,6 +111,7 @@ __all__ = [
     "main",
     "options_in_panels",
     "resolve_model_profile",
+    "run_should_fail",
     "search_command",
     "setup_logging",
 ]

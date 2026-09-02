@@ -87,7 +87,13 @@ def _hybrid_dup_to_dict(dup: HybridDuplicate) -> dict[str, Any]:
     }
 
 
-def print_check_json_combined(result: AnalysisResult, *, show_all: bool) -> None:
+def print_check_json_combined(
+    result: AnalysisResult,
+    *,
+    show_all: bool,
+    fail_on: str,
+    exit_code: int,
+) -> None:
     """Output combined-mode check results as JSON."""
     output: dict[str, Any] = {
         "analysis_mode": result.analysis_mode,
@@ -105,6 +111,8 @@ def print_check_json_combined(result: AnalysisResult, *, show_all: bool) -> None
             "unused_supported_languages": list(result.unused_supported_languages),
             "unused_excluded_units": result.unused_excluded_units,
             "embeddings": _embedding_stats_to_dict(result.embedding_stats),
+            "fail_on": fail_on,
+            "exit_code": exit_code,
         },
         "extraction_diagnostics": [
             _diagnostic_to_dict(diagnostic) for diagnostic in result.extraction_diagnostics
@@ -128,7 +136,7 @@ def print_check_json_combined(result: AnalysisResult, *, show_all: bool) -> None
     print(json.dumps(output, indent=2, sort_keys=True))
 
 
-def print_check_json_raw(result: AnalysisResult) -> None:
+def print_check_json_raw(result: AnalysisResult, *, fail_on: str, exit_code: int) -> None:
     """Output raw single-method check results as JSON."""
     output = {
         "analysis_mode": result.analysis_mode,
@@ -145,6 +153,8 @@ def print_check_json_raw(result: AnalysisResult) -> None:
             "unused_supported_languages": list(result.unused_supported_languages),
             "unused_excluded_units": result.unused_excluded_units,
             "embeddings": _embedding_stats_to_dict(result.embedding_stats),
+            "fail_on": fail_on,
+            "exit_code": exit_code,
         },
         "extraction_diagnostics": [
             _diagnostic_to_dict(diagnostic) for diagnostic in result.extraction_diagnostics
