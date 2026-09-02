@@ -29,7 +29,14 @@ def run_should_fail(
     combined_mode: bool,
     strict_unused: bool,
 ) -> bool:
-    """Return whether reported findings should make ``check`` exit one."""
+    """Return whether reported findings should make ``check`` exit one.
+
+    :param result: Completed analysis result.
+    :param policy: Selected finding policy.
+    :param combined_mode: Whether hybrid output is active.
+    :param strict_unused: Whether unused findings are strict rather than heuristic.
+    :return: Whether findings require exit code one.
+    """
     if policy == "none":
         return False
     if combined_mode:
@@ -46,7 +53,11 @@ def run_should_fail(
     return bool(duplicates or unused)
 
 
-@cli_module.cli.command("check", help="Run duplicate + unused analysis")
+@cli_module.cli.command(
+    "check",
+    help="Run duplicate + unused analysis",
+    context_settings={"auto_envvar_prefix": "CODEDUPES"},
+)
 @click.argument("path", type=click.Path(path_type=Path, exists=True), panel=Panel.SCOPE)
 @click.option(
     "-t",
@@ -198,7 +209,13 @@ def run_should_fail(
 @option_panels
 @click.pass_context
 def check_command(ctx: click.Context, path: Path, **params: Any) -> None:
-    """Run duplicate and unused-code analysis."""
+    """Run duplicate and unused-code analysis.
+
+    :param ctx: Active Click context.
+    :param path: File or directory to analyze.
+    :param params: Parsed command options.
+    :return: ``None``.
+    """
     opts = CheckOptions.from_params(ctx, params)
     try:
         config = opts.to_analysis_config()

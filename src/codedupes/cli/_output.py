@@ -33,7 +33,11 @@ class _CodedupesLogFilter(logging.Filter):
         self.include_external_info = include_external_info
 
     def filter(self, record: logging.LogRecord) -> bool:
-        """Return whether a log record should be emitted."""
+        """Return whether a log record should be emitted.
+
+        :param record: Candidate log record.
+        :return: Whether the configured CLI should emit it.
+        """
         if record.name.startswith("codedupes"):
             return True
         if self.include_external_info:
@@ -90,7 +94,13 @@ def _configured_cli_output(
     verbose: bool,
     output_width: int,
 ) -> Iterator[None]:
-    """Configure logging/console for a CLI command and restore it on exit."""
+    """Configure logging/console for a CLI command and restore it on exit.
+
+    :param as_json: Whether machine-readable JSON output is active.
+    :param verbose: Whether debug logging is active.
+    :param output_width: Rich console width.
+    :return: Context manager that restores the prior output configuration on exit.
+    """
     _set_console(output_width)
     logging_state: tuple[int, list[logging.Handler]] | None = None
     if as_json:
@@ -118,7 +128,15 @@ def _run_cli_action(
     verbose: bool,
     catch_file_not_found: bool = False,
 ) -> TResult:
-    """Run a command action and normalize runtime exception handling."""
+    """Run a command action and normalize runtime exception handling.
+
+    :param action: Callback to execute.
+    :param error_label: Human-readable operation name for error messages.
+    :param verbose: Whether to print a traceback.
+    :param catch_file_not_found: Whether to convert missing files to CLI exits.
+    :return: Callback result.
+    :raises click.exceptions.Exit: If a handled runtime error occurs.
+    """
     try:
         return action()
     except FileNotFoundError as exc:
@@ -138,21 +156,40 @@ def _run_cli_action(
 
 
 def _validate_positive_int(_ctx: click.Context, _param: click.Parameter, value: int) -> int:
-    """Validate a positive integer option that never reaches ``AnalyzerConfig``."""
+    """Validate a positive integer option that never reaches ``AnalyzerConfig``.
+
+    :param _ctx: Click context, unused.
+    :param _param: Click parameter, unused.
+    :param value: Parsed integer.
+    :return: Validated integer.
+    :raises click.BadParameter: If the value is not positive.
+    """
     if value <= 0:
         raise click.BadParameter("must be > 0")
     return value
 
 
 def _validate_output_width(_ctx: click.Context, _param: click.Parameter, value: int) -> int:
-    """Validate output width for Rich table rendering."""
+    """Validate output width for Rich table rendering.
+
+    :param _ctx: Click context, unused.
+    :param _param: Click parameter, unused.
+    :param value: Parsed output width.
+    :return: Validated output width.
+    :raises click.BadParameter: If the width is below the minimum.
+    """
     if value < MIN_OUTPUT_WIDTH:
         raise click.BadParameter(f"must be >= {MIN_OUTPUT_WIDTH}")
     return value
 
 
 def _is_cli_explicit(ctx: click.Context, option_name: str) -> bool:
-    """Return whether a CLI option was explicitly provided on the command line."""
+    """Return whether a CLI option was explicitly provided on the command line.
+
+    :param ctx: Active Click context.
+    :param option_name: Internal parameter name.
+    :return: Whether the value came from command-line input.
+    """
     return ctx.get_parameter_source(option_name) == click.core.ParameterSource.COMMANDLINE
 
 
@@ -164,7 +201,16 @@ def _validate_json_output_controls(
     show_source: bool = False,
     full_table: bool = False,
 ) -> None:
-    """Reject flags that are incompatible with JSON-only output mode."""
+    """Reject flags that are incompatible with JSON-only output mode.
+
+    :param as_json: Whether JSON output is active.
+    :param verbose: Whether verbose logging was requested.
+    :param output_width_explicit: Whether output width was explicitly set.
+    :param show_source: Whether source panels were requested.
+    :param full_table: Whether unbounded terminal tables were requested.
+    :return: ``None``.
+    :raises click.UsageError: If a terminal-only option accompanies JSON.
+    """
     if not as_json:
         return
 

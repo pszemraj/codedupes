@@ -37,7 +37,11 @@ from .cache import _echo_cache_summary
 
 
 def _format_language_gates(profile: SemanticModelProfile) -> str:
-    """Format one model profile's per-language semantic duplicate gates."""
+    """Format one model profile's per-language semantic duplicate gates.
+
+    :param profile: Semantic model profile.
+    :return: Compact language-to-threshold text.
+    """
     gates = ", ".join(
         f"{language}={gate}" for language, gate in profile.language_semantic_thresholds.items()
     )

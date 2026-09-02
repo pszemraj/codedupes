@@ -85,6 +85,7 @@ analyzer = CodeAnalyzer(
         run_unused=False,
         model_name="gte-modernbert-base",
         device="auto",
+        search_document="contextual",
     )
 )
 
@@ -104,6 +105,8 @@ An unset `AnalyzerConfig.semantic_task` resolves by operation: `index()` uses `c
 
 `index()` extracts the corpus and computes (or loads from cache) its embeddings without the all-pairs duplicate scan, traditional analysis, or unused-code analysis that `analyze()` runs, so building a search corpus stays linear in corpus size. Prefer `index()` before search. `analyzer.extracted_unit_count` reports the pre-filter extraction count from the latest `index()` or `analyze()` run, which can be larger than the count returned by `index()` after semantic eligibility and context-window filtering. A search after `analyze()` reuses the analysis task and therefore requires an explicit search threshold when that task changes the model's prompt or route, as it does for EmbeddingGemma.
 
+`AnalyzerConfig.search_document` is `"source"` by default, preserving the calibrated source-only score distribution. `"contextual"` prepends language, root-relative path, and qualified symbol to each search document before the code. That mode improves path/symbol-sensitive retrieval experiments but has its own cache identity; renaming a file re-embeds the contextual search document. `analyze()` always embeds bare source for duplicate detection regardless of this search-only setting.
+
 Corpus units whose tokenized input exceeds the model's context window are skipped by both `index()` and `analyze()` rather than raising: they leave the embedding matrix and the searchable corpus, and each one is reported through `analyzer.semantic_diagnostics` (and `AnalysisResult.semantic_diagnostics` for `analyze()`) with code `semantic-context-overflow`. A `search()` query too long for the model still raises, because a truncated query has no result to omit.
 
 ```python
@@ -114,6 +117,27 @@ for diagnostic in analyzer.semantic_diagnostics:
 ```
 
 Each `index()` or `analyze()` call replaces the analyzer's corpus-specific state before extraction. `search()` therefore targets only the most recent run and requires it to have semantic embeddings. A later empty or nonsemantic analysis cannot reuse an older corpus accidentally. The analyzer also binds the matrix to its canonical model, resolved revision (a pinned commit, the requested revision label, or a local-directory content fingerprint), and vector-affecting runtime configuration. If any of those changes before a query—for example, local weights are replaced in place—`search()` requires a fresh `index()`/`analyze()` instead of comparing vectors from different coordinate systems. With `AnalyzerConfig(strict_revision_cache=True)`, an unpinned hub revision must instead resolve to a concrete commit; that commit is also the model-load key, so a moved branch cannot reuse the process's model instance from its previous commit. A search identity whose symbolic revision cannot be mapped offline fails closed; the default label keying always resolves. See [Embedding cache](caching.md#what-invalidates-what).
+
+## Progress and embedding telemetry
+
+`AnalyzerConfig.progress` accepts `"auto"` (default), `"always"`, or `"never"`. Auto mode renders sentence-transformers progress only for more than 100 uncached inputs when stderr is a TTY. The same keyword is available on `compute_embeddings`, `compute_embeddings_with_identity`, `run_semantic_analysis`, and `run_semantic_analysis_with_identity`.
+
+The low-level functions accept an `EmbeddingRunStats` collector through `stats=` and fill it in place. `AnalysisResult.embedding_stats` contains that collector after successful semantic analysis; `CodeAnalyzer.embedding_stats` exposes it after `index()`. Both are `None` when semantic work did not run, failed, or fell back.
+
+```python
+from codedupes.semantic import EmbeddingRunStats, compute_embeddings
+
+stats = EmbeddingRunStats()
+embeddings = compute_embeddings(
+    units,
+    cache_scope=repo_root,
+    progress="never",
+    stats=stats,
+)
+print(stats.cache_hit_rows, stats.encoded_inputs, stats.model_loaded)
+```
+
+The collector separates requested rows, unique inputs, persistent-cache hits, duplicate rows reused within the call, and inputs actually encoded. It also reports the cache revision/device and corpus-manifest move, delete, orphan, and generation activity. `model_loaded=False` is the direct indication that a warm run needed no model.
 
 ## Apple Silicon configuration
 
@@ -166,6 +190,7 @@ quiet_dependency_loggers()  # or quiet_dependency_loggers(logging.ERROR)
 - `AnalysisResult.unused_supported_languages`: languages the unused heuristic evaluates (currently always `("python",)`)
 - `AnalysisResult.all_duplicates`: hybrid duplicates in combined mode; raw duplicates in single-method mode
 - `AnalysisResult.analysis_mode`: `"combined"`, `"traditional"`, `"semantic"`, or `"none"`
+- `AnalysisResult.embedding_stats`: `EmbeddingRunStats` for a successful semantic corpus call, otherwise `None`
 - `CodeUnit.uid`: in-run definition identity, `<path>::<language>::<qualified name>::<start byte>` for every language; the byte position keeps overloads and redefinitions distinct
 - `CodeUnit.language`, `dialect`, and `native_kind`: canonical language plus parser-specific syntax kind
 - `CodeUnit.start_byte`/`end_byte`: exact byte range used to slice the emitted source

@@ -26,7 +26,11 @@ DEFAULT_TABLE_ROWS = 20
 
 
 def _format_embedding_stats(stats: EmbeddingRunStats) -> str:
-    """Format one embedding run as a compact terminal summary."""
+    """Format one embedding run as a compact terminal summary.
+
+    :param stats: Embedding telemetry to format.
+    :return: One-line terminal summary.
+    """
     parts = [
         f"{stats.cache_hit_rows:,} rows from cache",
         f"{stats.encoded_inputs:,} inputs encoded",

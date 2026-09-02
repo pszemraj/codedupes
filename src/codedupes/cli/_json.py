@@ -18,17 +18,29 @@ from codedupes.semantic import EmbeddingRunStats
 
 
 def _embedding_stats_to_dict(stats: EmbeddingRunStats | None) -> dict[str, Any] | None:
-    """Convert optional embedding telemetry to a JSON-safe mapping."""
+    """Convert optional embedding telemetry to a JSON-safe mapping.
+
+    :param stats: Optional embedding run telemetry.
+    :return: Serialized telemetry, or ``None`` when semantic work did not run.
+    """
     return asdict(stats) if stats is not None else None
 
 
 def _language_counts(units: list[CodeUnit]) -> dict[str, int]:
-    """Count extracted units by canonical language."""
+    """Count extracted units by canonical language.
+
+    :param units: Extracted code units.
+    :return: Counts keyed by canonical language.
+    """
     return dict(sorted(Counter(unit.language for unit in units).items()))
 
 
 def _diagnostic_to_dict(diagnostic: ExtractionDiagnostic) -> dict[str, Any]:
-    """Convert an extraction diagnostic to a JSON-safe mapping."""
+    """Convert an extraction diagnostic to a JSON-safe mapping.
+
+    :param diagnostic: Diagnostic to serialize.
+    :return: Serialized diagnostic fields.
+    """
     return {
         "file": str(diagnostic.file_path),
         "language": diagnostic.language,
@@ -41,7 +53,11 @@ def _diagnostic_to_dict(diagnostic: ExtractionDiagnostic) -> dict[str, Any]:
 
 
 def _unit_to_dict(unit: CodeUnit) -> dict[str, Any]:
-    """Convert a code unit to a JSON-serializable summary."""
+    """Convert a code unit to a JSON-serializable summary.
+
+    :param unit: Code unit to serialize.
+    :return: Serialized unit fields.
+    """
     return {
         "name": unit.name,
         "qualified_name": unit.qualified_name,
@@ -69,16 +85,31 @@ def check_result_to_json(
     fail_on: str,
     exit_code: int,
 ) -> dict[str, Any]:
-    """Serialize one check result using the normalized schema-v2 graph shape."""
+    """Serialize one check result using the normalized schema-v2 graph shape.
+
+    :param result: Analysis result to serialize.
+    :param show_all: Include raw edge lists in combined mode.
+    :param fail_on: Finding policy selected for this run.
+    :param exit_code: Exit code computed from the selected policy.
+    :return: Schema-v2 check payload.
+    """
     units: dict[str, dict[str, Any]] = {}
 
     def ref(unit: CodeUnit) -> str:
-        """Register a unit once and return its stable node identifier."""
+        """Register a unit once and return its stable node identifier.
+
+        :param unit: Unit referenced by a finding.
+        :return: Stable unit identifier.
+        """
         units.setdefault(unit.uid, _unit_to_dict(unit))
         return unit.uid
 
     def hybrid_edge(duplicate: HybridDuplicate) -> dict[str, Any]:
-        """Serialize one hybrid duplicate as an edge between unit identifiers."""
+        """Serialize one hybrid duplicate as an edge between unit identifiers.
+
+        :param duplicate: Hybrid duplicate to serialize.
+        :return: Serialized hybrid edge.
+        """
         return {
             "unit_a": ref(duplicate.unit_a),
             "unit_b": ref(duplicate.unit_b),
@@ -92,7 +123,11 @@ def check_result_to_json(
         }
 
     def raw_edge(duplicate: DuplicatePair) -> dict[str, Any]:
-        """Serialize one raw duplicate as an edge between unit identifiers."""
+        """Serialize one raw duplicate as an edge between unit identifiers.
+
+        :param duplicate: Raw duplicate to serialize.
+        :return: Serialized raw edge.
+        """
         return {
             "unit_a": ref(duplicate.unit_a),
             "unit_b": ref(duplicate.unit_b),
@@ -156,7 +191,14 @@ def print_check_json_combined(
     fail_on: str,
     exit_code: int,
 ) -> None:
-    """Output combined-mode check results as schema-v2 JSON."""
+    """Output combined-mode check results as schema-v2 JSON.
+
+    :param result: Analysis result to serialize.
+    :param show_all: Include raw duplicate edges.
+    :param fail_on: Finding policy selected for this run.
+    :param exit_code: Exit code computed from the selected policy.
+    :return: ``None``.
+    """
     print(
         json.dumps(
             check_result_to_json(
@@ -172,7 +214,13 @@ def print_check_json_combined(
 
 
 def print_check_json_raw(result: AnalysisResult, *, fail_on: str, exit_code: int) -> None:
-    """Output raw single-method check results as schema-v2 JSON."""
+    """Output raw single-method check results as schema-v2 JSON.
+
+    :param result: Analysis result to serialize.
+    :param fail_on: Finding policy selected for this run.
+    :param exit_code: Exit code computed from the selected policy.
+    :return: ``None``.
+    """
     print(
         json.dumps(
             check_result_to_json(
@@ -194,11 +242,23 @@ def search_result_to_json(
     indexed_units: int,
     embedding_stats: EmbeddingRunStats | None,
 ) -> dict[str, Any]:
-    """Serialize semantic search results using schema-v2 unit references."""
+    """Serialize semantic search results using schema-v2 unit references.
+
+    :param query: Original search query.
+    :param results: Ranked unit and score pairs.
+    :param semantic_diagnostics: Units skipped by semantic indexing.
+    :param indexed_units: Number of indexed corpus units.
+    :param embedding_stats: Optional indexing telemetry.
+    :return: Schema-v2 search payload.
+    """
     units: dict[str, dict[str, Any]] = {}
 
     def ref(unit: CodeUnit) -> str:
-        """Register a search result unit once and return its identifier."""
+        """Register a search result unit once and return its identifier.
+
+        :param unit: Search-result unit to register.
+        :return: Stable unit identifier.
+        """
         units.setdefault(unit.uid, _unit_to_dict(unit))
         return unit.uid
 
@@ -226,7 +286,15 @@ def print_search_json(
     indexed_units: int,
     embedding_stats: EmbeddingRunStats | None,
 ) -> None:
-    """Output search results as schema-v2 JSON."""
+    """Output search results as schema-v2 JSON.
+
+    :param query: Original search query.
+    :param results: Ranked unit and score pairs.
+    :param semantic_diagnostics: Units skipped by semantic indexing.
+    :param indexed_units: Number of indexed corpus units.
+    :param embedding_stats: Optional indexing telemetry.
+    :return: ``None``.
+    """
     print(
         json.dumps(
             search_result_to_json(

@@ -21,7 +21,11 @@ from ._output import _configured_cli_output, _run_cli_action, _validate_positive
 from ._render import _print_diagnostics, print_search_results
 
 
-@cli_module.cli.command("search", help="Search for semantically similar code")
+@cli_module.cli.command(
+    "search",
+    help="Search for semantically similar code",
+    context_settings={"auto_envvar_prefix": "CODEDUPES"},
+)
 @click.argument("path", type=click.Path(path_type=Path, exists=True), panel=Panel.SCOPE)
 @click.argument("query", panel=Panel.SCOPE)
 @click.option(
@@ -72,7 +76,14 @@ from ._render import _print_diagnostics, print_search_results
 @option_panels
 @click.pass_context
 def search_command(ctx: click.Context, path: Path, query: str, **params: Any) -> None:
-    """Run semantic search over extracted code units."""
+    """Run semantic search over extracted code units.
+
+    :param ctx: Active Click context.
+    :param path: File or directory to index.
+    :param query: Natural-language search query.
+    :param params: Parsed command options.
+    :return: ``None``.
+    """
     opts = SearchOptions.from_params(ctx, params)
     try:
         config = opts.to_analysis_config()

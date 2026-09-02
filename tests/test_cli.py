@@ -827,6 +827,37 @@ def test_cli_contextual_search_document_passes_through(monkeypatch, tmp_path):
     assert captured[0].search_document == "contextual"
 
 
+@pytest.mark.parametrize("command_tail", [[], ["entry"]], ids=["check", "search"])
+def test_cli_shared_options_use_unqualified_environment_variables(
+    monkeypatch, tmp_path, command_tail
+) -> None:
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+    captured = []
+    patch_cli_analyzer(
+        monkeypatch,
+        cli,
+        analyze_result=lambda: _build_result(tmp_path),
+        search_results=[(_build_unit(tmp_path), 0.99)],
+        captured_configs=captured,
+    )
+    command = "search" if command_tail else "check"
+    runner = CliRunner(
+        env={
+            "CODEDUPES_DEVICE": "cpu",
+            "CODEDUPES_MODEL": "test-model",
+            "CODEDUPES_NO_CACHE": "1",
+        }
+    )
+
+    result = runner.invoke(cli.cli, [command, str(path), *command_tail])
+
+    assert result.exit_code in {0, 1}
+    assert captured[0].device == "cpu"
+    assert captured[0].model_name == "test-model"
+    assert captured[0].embedding_cache is False
+
+
 def test_cli_search_semantic_unit_type_pass_through(monkeypatch, tmp_path):
     path = tmp_path / "sample.py"
     path.write_text("def entry():\n    return 1\n")

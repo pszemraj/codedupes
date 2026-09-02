@@ -76,7 +76,12 @@ PROGRESS_BAR_MIN_INPUTS = 100
 
 
 def _should_show_progress(mode: ProgressMode, input_count: int) -> bool:
-    """Return whether embedding inference should render a progress bar."""
+    """Return whether embedding inference should render a progress bar.
+
+    :param mode: Requested progress policy.
+    :param input_count: Number of unique inputs requiring encoding.
+    :return: Whether the backend progress bar should be enabled.
+    """
     if mode == "never":
         return False
     if mode == "always":
@@ -137,7 +142,20 @@ def _record_embedding_run_stats(
     model_loaded: bool,
     execution_device: str | None,
 ) -> None:
-    """Fill a caller-owned collector from one final embedding path."""
+    """Fill a caller-owned collector from one final embedding path.
+
+    :param stats: Optional caller-owned telemetry collector.
+    :param prepared_texts: Row-aligned prepared corpus texts.
+    :param kept_rows: Input row indices retained after context filtering.
+    :param cache_enabled: Whether a usable persistent cache remained active.
+    :param cache_revision: Revision addressing the active cache shard.
+    :param cache_keys: Row-aligned cache keys, if caching remained active.
+    :param hits: Persistent vectors available to the final matrix path.
+    :param encoded_inputs: Unique inputs encoded on the final path.
+    :param model_loaded: Whether the final path loaded a model.
+    :param execution_device: Device used by the final path.
+    :return: ``None``.
+    """
     if stats is None:
         return
     stats.requested_rows = len(kept_rows)
@@ -267,7 +285,15 @@ def embedding_cache_keys_for_units(
     document_texts: Sequence[str] | None = None,
     search_document: SearchDocumentMode = "source",
 ) -> dict[str, str]:
-    """Derive manifest unit-to-cache-key mappings for an embedded corpus."""
+    """Derive manifest unit-to-cache-key mappings for an embedded corpus.
+
+    :param units: Embedded code units.
+    :param identity: Effective embedding-space identity.
+    :param revision: Cache shard revision, defaulting to the identity revision.
+    :param document_texts: Optional prepared texts aligned with ``units``.
+    :param search_document: Search representation used for the texts.
+    :return: Unit identifiers mapped to content-addressed cache keys.
+    """
     active_revision = revision or identity.resolved_revision
     if active_revision is None:
         return {}
@@ -291,7 +317,12 @@ def embedding_cache_keys_for_units(
 
 
 def _prepare_search_document(unit: CodeUnit, root: Path) -> str:
-    """Build a contextual semantic-search document for one code unit."""
+    """Build a contextual semantic-search document for one code unit.
+
+    :param unit: Code unit to represent.
+    :param root: Corpus root used to make paths relative.
+    :return: Language/path/symbol/code envelope.
+    """
     try:
         relative = unit.file_path.resolve().relative_to(root.resolve())
     except ValueError:

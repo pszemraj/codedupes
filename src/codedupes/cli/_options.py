@@ -52,7 +52,12 @@ SEMANTIC_ONLY_PANELS = frozenset({Panel.SEMANTIC, Panel.DEVICE})
 
 
 def options_in_panels(command: click.Command, panels: frozenset[Panel]) -> list[str]:
-    """Return parameter names assigned to any requested help panel."""
+    """Return parameter names assigned to any requested help panel.
+
+    :param command: Click command whose parameters are inspected.
+    :param panels: Panel names to include.
+    :return: Matching internal parameter names.
+    """
     return [
         parameter.name
         for parameter in command.params
@@ -61,7 +66,11 @@ def options_in_panels(command: click.Command, panels: frozenset[Panel]) -> list[
 
 
 def option_panels(func: F) -> F:
-    """Declare the common option-panel order on a command."""
+    """Declare the common option-panel order on a command.
+
+    :param func: Click callback receiving panel declarations.
+    :return: Decorated callback.
+    """
     for panel in reversed(tuple(Panel)):
         func = click.option_panel(panel.value)(func)
     return func
@@ -72,7 +81,13 @@ def _resolve_check_thresholds(
     semantic_threshold: float | None,
     traditional_threshold: float | None,
 ) -> tuple[float | None, float]:
-    """Resolve semantic and traditional thresholds using CLI precedence."""
+    """Resolve semantic and traditional thresholds using CLI precedence.
+
+    :param threshold: Shared threshold override.
+    :param semantic_threshold: Semantic-only override.
+    :param traditional_threshold: Traditional-only override.
+    :return: Resolved semantic and traditional thresholds.
+    """
     return (
         semantic_threshold if semantic_threshold is not None else threshold,
         (
@@ -89,19 +104,35 @@ def _resolve_search_threshold(
     threshold: float | None,
     semantic_threshold: float | None,
 ) -> float | None:
-    """Resolve the explicit semantic threshold override for search mode."""
+    """Resolve the explicit semantic threshold override for search mode.
+
+    :param threshold: Shared search threshold override.
+    :param semantic_threshold: Semantic-specific override.
+    :return: Effective explicit override, or ``None``.
+    """
     return semantic_threshold if semantic_threshold is not None else threshold
 
 
 def _resolve_native_pair(values: tuple[bool, ...], flag: str) -> bool | None:
-    """Resolve repeated values from one native Click boolean flag pair."""
+    """Resolve repeated values from one native Click boolean flag pair.
+
+    :param values: Parsed positive/negative flag values in command-line order.
+    :param flag: Positive flag spelling without leading dashes.
+    :return: Explicit boolean value, or ``None`` when unset.
+    :raises click.UsageError: If both spellings were supplied.
+    """
     if True in values and False in values:
         raise click.UsageError(f"Cannot combine --{flag} and --no-{flag}.")
     return values[-1] if values else None
 
 
 def _display_option(name: str, params: dict[str, Any]) -> str:
-    """Return the spelling used for a possibly negated boolean option."""
+    """Return the spelling used for a possibly negated boolean option.
+
+    :param name: Internal parameter name.
+    :param params: Parsed Click parameters.
+    :return: User-facing option spelling.
+    """
     if name in {"trust_remote_code", "mps_fallback"} and params[name] == (False,):
         return f"--no-{name.replace('_', '-')}"
     return f"--{name.replace('_', '-')}"
@@ -128,7 +159,11 @@ class SemanticOptions:
 
     @classmethod
     def from_params(cls, params: dict[str, Any]) -> SemanticOptions:
-        """Build shared semantic options from Click parameters."""
+        """Build shared semantic options from Click parameters.
+
+        :param params: Parsed Click parameters.
+        :return: Shared semantic option bundle.
+        """
         return cls(
             model=params["model"],
             semantic_task=params["semantic_task"],
@@ -200,7 +235,12 @@ class CheckOptions:
 
     @classmethod
     def from_params(cls, ctx: click.Context, params: dict[str, Any]) -> CheckOptions:
-        """Validate and build one ``check`` option bundle."""
+        """Validate and build one ``check`` option bundle.
+
+        :param ctx: Active Click context.
+        :param params: Parsed command parameters.
+        :return: Validated check option bundle.
+        """
         if params["no_unused"] and params["strict_unused"]:
             raise click.UsageError(
                 "Cannot combine --no-unused and --strict-unused because unused reporting is disabled."
@@ -324,7 +364,12 @@ class SearchOptions:
 
     @classmethod
     def from_params(cls, ctx: click.Context, params: dict[str, Any]) -> SearchOptions:
-        """Validate and build one ``search`` option bundle."""
+        """Validate and build one ``search`` option bundle.
+
+        :param ctx: Active Click context.
+        :param params: Parsed command parameters.
+        :return: Validated search option bundle.
+        """
         _validate_json_output_controls(
             as_json=params["as_json"],
             verbose=params["verbose"],
@@ -357,7 +402,11 @@ class SearchOptions:
 
 
 def semantic_options(command: Literal["check", "search"]) -> Callable[[F], F]:
-    """Attach shared scope, semantic, device, cache, and output options."""
+    """Attach shared scope, semantic, device, cache, and output options.
+
+    :param command: Command whose help text receives the shared options.
+    :return: Decorator applying the shared Click options.
+    """
     scope_suffix = (
         " (also narrows traditional duplicate scope in combined mode)" if command == "check" else ""
     )
@@ -535,6 +584,11 @@ def semantic_options(command: Literal["check", "search"]) -> Callable[[F], F]:
     ]
 
     def decorator(func: F) -> F:
+        """Apply the shared option decorators in declaration order.
+
+        :param func: Click callback to decorate.
+        :return: Decorated callback.
+        """
         for option in reversed(options):
             func = option(func)
         return func

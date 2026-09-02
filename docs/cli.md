@@ -16,6 +16,7 @@ codedupes check ./src --json --threshold 0.82
 codedupes check ./src --semantic-only
 codedupes check ./src --traditional-only --no-unused
 codedupes check ./src --show-all
+codedupes check ./src --fail-on all
 codedupes check ./src --device mps --mps-memory-fraction 0.9
 ```
 
@@ -37,6 +38,7 @@ Options, in addition to the [shared options](#options-shared-by-check-and-search
 - `--show-all`: Also print raw traditional + raw semantic duplicate lists in combined mode
 - `--full-table`: Disable table row truncation and print all rows in terminal output
 - `--show-source`: Show truncated duplicate snippets
+- `--fail-on <actionable|all|none>`: Select which reported findings produce exit code `1` (default `actionable`; see [exit codes](output.md#exit-codes))
 
 ## `codedupes search <path> "<query>"`
 
@@ -48,6 +50,7 @@ Examples:
 codedupes search ./src "sum values in a list" --top-k 5
 codedupes search ./src "normalize request payload" --json
 codedupes search ./src "normalize request payload" --device mps
+codedupes search ./src "refund validation" --search-document contextual
 ```
 
 Options, in addition to the [shared options](#options-shared-by-check-and-search):
@@ -55,29 +58,50 @@ Options, in addition to the [shared options](#options-shared-by-check-and-search
 - `--top-k <int>`: Number of results (default `10`)
 - `--threshold <float>`: Shared semantic threshold override
 - `--semantic-task <name>`: Semantic task mode for query/document embeddings (default `code-retrieval`)
+- `--search-document <source|contextual>`: Embed source only (default) or an envelope containing language, relative path, qualified symbol, and source. Contextual mode has a separate cache identity; renaming a file therefore re-embeds its search document.
 
 ## Options shared by `check` and `search`
 
+rich-click groups command help into the following panels. Use `codedupes <command> -h` or `--help` for the rendered reference.
+
+### Scope
+
 - `--language <name>`: Restrict extraction to a language; repeat for multiple languages. Canonical values are `python`, `c`, `rust`, `javascript`, and `typescript`; aliases `py`, `rs`, `js`, `jsx`, `ts`, and `tsx` are accepted. Omit the option to auto-detect all supported languages. Explicit `--language c` also opts ambiguous `.h` files into C parsing.
+- `--no-private`: Exclude private (`_name`) functions/classes
+- `--exclude <glob>`: Replace the default test-file globs with one or more file path globs (repeat for multiple patterns). Built-in artifact-directory exclusions still apply.
+- `--include-stubs`: Include `.pyi` files when scanning a directory (single-file `.pyi` targets are analyzed as given)
+
+### Semantic model
+
 - `--semantic-threshold <float>`: Flat semantic gate for every language; without it, `check` uses the model profile's calibrated [per-language gates](analysis-defaults.md#semantic-duplicate-gate-defaults) and `search` uses the profile search default
 - `--semantic-unit-type <name>`: Semantic candidate unit type (`function`, `method`, `class`); repeat option to include multiple types (default `function, method`). In default combined `check` mode this also narrows traditional duplicate scope.
 - `--min-statements <int>`: Minimum statement count for semantic candidate code units (default `3`). In default combined `check` mode this also narrows traditional duplicate scope.
 - `--model <name>`: Embedding model alias, Hugging Face ID, or explicit path (absolute, `./`/`../`, or `~`) to a complete local `save_pretrained`/`hf download` directory (default `gte-modernbert-base`)
 - `--model-revision <rev>`: Model revision/commit hash (defaults to the profile's pinned calibration commit for built-in models, unpinned otherwise)
 - `--trust-remote-code` / `--no-trust-remote-code`: Allow or disallow model remote code execution
+- `--instruction-prefix <text>`: Replace the model prompt for code/query embeddings (encode route is preserved)
+- `--strict-revision-cache`: Key an unpinned hub model's cache revision to a resolved commit hash instead of the requested revision label, disabling caching when a branch/tag cannot be mapped offline
+
+### Device
+
 - `--device <name>`: Semantic inference device: `auto`, `cpu`, `cuda`, or `mps` (default `auto`; priority CUDA, then MPS, then CPU)
 - `--mps-fallback` / `--no-mps-fallback`: Enable or disable PyTorch CPU fallback for unsupported MPS operators
 - `--mps-memory-fraction <float>`: Optional PyTorch MPS allocator fraction in `(0, 2]`; `0` is rejected as unsafe
-- `--instruction-prefix <text>`: Replace the model prompt for code/query embeddings (encode route is preserved)
 - `--batch-size <int>`: Embedding batch size (default `8`)
-- `--no-private`: Exclude private (`_name`) functions/classes
-- `--exclude <glob>`: Replace the default test-file globs with one or more file path globs (repeat for multiple patterns). Built-in artifact-directory exclusions still apply.
-- `--include-stubs`: Include `.pyi` files when scanning a directory (single-file `.pyi` targets are analyzed as given)
+
+### Cache
+
 - `--no-cache`: Disable the persistent on-disk embedding cache for this run
-- `--strict-revision-cache`: Key an unpinned hub model's cache revision to a resolved commit hash instead of the requested revision label, disabling caching when a branch/tag can't be mapped offline (default: key by the requested label; a branch move is detected whenever a run loads the model, purging that shard so two checkpoints never mix, while fully warm runs keep serving the pre-move vectors coherently; see [Embedding cache](caching.md#what-invalidates-what))
+
+### Output
+
 - `--output-width <int>`: Rich render width for non-JSON output (default `160`, min `80`)
 - `--json`: Emit JSON instead of rich tables
 - `-v, --verbose`: Verbose logs
+
+## Environment variables
+
+Every displayed option can be supplied with the `CODEDUPES_` prefix and its upper-case parameter name. Shared examples are `CODEDUPES_DEVICE=cpu`, `CODEDUPES_MODEL=...`, and `CODEDUPES_NO_CACHE=1`; command-line values take precedence. Command-specific examples include `CODEDUPES_FAIL_ON=all` for `check` and `CODEDUPES_SEARCH_DOCUMENT=contextual` for `search`. Cache-library controls such as `CODEDUPES_CACHE_DIR` and `CODEDUPES_CACHE_MAX_MB` are documented separately in [Embedding cache](caching.md#controls).
 
 ## `codedupes info`
 
@@ -85,7 +109,7 @@ Print version and runtime versions, supported languages and exact Tree-sitter pa
 
 ## `codedupes cache info`
 
-Print the embedding-cache summary plus per-model entry counts and a per-repo breakdown.
+Print the embedding-cache summary plus per-model entry counts and a per-repo breakdown including orphan rows and the last complete manifest generation.
 
 ## `codedupes cache clear [--model <name>]`
 
@@ -104,7 +128,7 @@ Clear all cached embeddings or only entries for one model. See [Embedding cache]
 - Unused-code analysis evaluates Python units only and reports the number of non-Python units excluded.
 - A definition whose tokenized input (encode prompt included) exceeds the model's context window is skipped with a `semantic-context-overflow` diagnostic and the run continues; an over-long `search` query fails hard
 - In `--json` mode, output is machine-parseable JSON only; warning text is surfaced via `summary.semantic_fallback` and `summary.semantic_fallback_reason` when fallback happens, and units the semantic stage skipped via the `semantic_diagnostics` array (`check` and `search` alike).
-- Errors, parser-unavailable remediation, and all log output (progress lines and warnings) always go to stderr, so stdout carries only the report (a failed `--json` run writes nothing to stdout).
+- Errors, parser-unavailable remediation, and logs use stderr. JSON mode forces embedding progress off and disables Hugging Face progress, so JSON stays parseable even when stdout and stderr are merged.
 - `--json` rejects rich-only display controls: `--show-source`, `--full-table`, `--verbose`, and explicit `--output-width`
 - `--semantic-only` and `--traditional-only` bypass hybrid synthesis and show raw method outputs
 - `--semantic-only` and `--traditional-only` are mutually exclusive
@@ -116,7 +140,7 @@ Clear all cached embeddings or only entries for one model. See [Embedding cache]
 - Explicit traditional-analysis controls are rejected with `--semantic-only`: `--traditional-threshold`, `--no-tiny-filter`, `--tiny-cutoff`, and `--tiny-near-jaccard-min`
 - Unsupported-op fallback and codedupes OOM recovery are separate policies; `--no-mps-fallback` does not disable OOM recovery
 - `search` applies semantic threshold filtering before returning `top-k` matches; without an explicit `--threshold`/`--semantic-threshold` it uses the model profile search default (for example `0.50` for `gte-modernbert-base`), not the stricter duplicate threshold
-- `search` reports how many units it embedded: an empty index prints a stderr warning that distinguishes no extracted units, semantic eligibility filtering, and model context-window exclusions; terminal mode prints semantic diagnostics when present, and `--json` always carries the count in `indexed_units`
+- `search` reports how many units it embedded: an empty index prints a stderr warning that distinguishes no extracted units, semantic eligibility filtering, and model context-window exclusions; terminal mode prints semantic diagnostics when present, and `--json` carries the count in `summary.indexed_units`
 - Contradictory mode-specific options are rejected at parse time for the selected workflow
 
 Inspect effective model defaults with:

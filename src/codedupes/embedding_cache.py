@@ -88,7 +88,12 @@ def diff_manifest(
     previous: CorpusManifest | None,
     current: dict[str, str],
 ) -> ManifestDiff:
-    """Classify moves, deletions, and newly unreferenced keys."""
+    """Classify moves, deletions, and newly unreferenced keys.
+
+    :param previous: Previous comparable corpus manifest, if one exists.
+    :param current: Current unit-to-cache-key mapping.
+    :return: Classified manifest transition.
+    """
     old = previous.units if previous is not None else {}
     old_keys = set(old.values())
     new_keys = set(current.values())
@@ -959,7 +964,11 @@ def atomic_write_json(path: Path, obj: Any) -> None:
 
 
 def _read_corpus_manifest(shard_dir: Path) -> CorpusManifest | None:
-    """Read one valid corpus manifest, returning ``None`` when unavailable."""
+    """Read one valid corpus manifest, returning ``None`` when unavailable.
+
+    :param shard_dir: Cache shard containing the manifest.
+    :return: Parsed manifest, or ``None`` when absent or invalid.
+    """
     path = shard_dir / MANIFEST_FILENAME
     if not _path_exists(path):
         return None
@@ -999,7 +1008,12 @@ def _read_corpus_manifest(shard_dir: Path) -> CorpusManifest | None:
 
 
 def _write_corpus_manifest(shard_dir: Path, manifest: CorpusManifest) -> None:
-    """Atomically publish one corpus manifest under the shard lock."""
+    """Atomically publish one corpus manifest under the shard lock.
+
+    :param shard_dir: Cache shard receiving the manifest.
+    :param manifest: Complete manifest to publish.
+    :return: ``None``.
+    """
     atomic_write_json(
         shard_dir / MANIFEST_FILENAME,
         {
@@ -1712,7 +1726,13 @@ class EmbeddingCache:
         canonical_model: str,
         revision: str | None,
     ) -> CorpusManifest | None:
-        """Load the corpus manifest for one cache shard."""
+        """Load the corpus manifest for one cache shard.
+
+        :param cache_scope: Analyzed corpus root.
+        :param canonical_model: Canonical model identifier.
+        :param revision: Cache revision addressing the shard.
+        :return: Parsed manifest, or ``None`` when unavailable.
+        """
         return _read_corpus_manifest(self.shard_dir(cache_scope, canonical_model, revision))
 
     def collect_orphans(
@@ -1722,7 +1742,14 @@ class EmbeddingCache:
         revision: str | None,
         drop_keys: set[str],
     ) -> int:
-        """Compact one shard by removing the requested orphaned code keys."""
+        """Compact one shard by removing the requested orphaned code keys.
+
+        :param cache_scope: Analyzed corpus root.
+        :param canonical_model: Canonical model identifier.
+        :param revision: Cache revision addressing the shard.
+        :param drop_keys: Manifest-owned code keys eligible for collection.
+        :return: Number of rows removed.
+        """
         if not drop_keys:
             return 0
         shard_dir = self.shard_dir(cache_scope, canonical_model, revision)
@@ -1777,7 +1804,16 @@ class EmbeddingCache:
         units: dict[str, str],
         complete_scan: bool,
     ) -> ManifestPublishResult | None:
-        """Publish a completed corpus run and age or collect unreferenced rows."""
+        """Publish a completed corpus run and age or collect unreferenced rows.
+
+        :param cache_scope: Analyzed corpus root.
+        :param canonical_model: Canonical model identifier.
+        :param revision: Cache revision addressing the shard.
+        :param selection: Digest of semantic candidate-selection settings.
+        :param units: Current unit-to-cache-key mapping.
+        :param complete_scan: Whether missing units represent the complete selection.
+        :return: Publication and GC telemetry, or ``None`` on cache failure.
+        """
         shard_dir = self.shard_dir(cache_scope, canonical_model, revision)
         try:
             _ensure_shard_directory(shard_dir)

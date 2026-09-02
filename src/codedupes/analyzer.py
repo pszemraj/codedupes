@@ -653,7 +653,15 @@ class CodeAnalyzer:
         search_document: SearchDocumentMode = "source",
         document_texts: list[str] | None = None,
     ) -> None:
-        """Publish cache corpus metadata after a successful analyzer run."""
+        """Publish cache corpus metadata after a successful analyzer run.
+
+        :param path: Resolved analysis target.
+        :param semantic_units: Units retained by semantic context filtering.
+        :param semantic_task: Effective embedding task.
+        :param search_document: Search document representation used by the run.
+        :param document_texts: Optional contextual texts aligned with ``semantic_units``.
+        :return: ``None``.
+        """
         stats = self._embedding_stats
         identity = self._embedding_space_identity
         if (
