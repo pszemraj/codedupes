@@ -1634,6 +1634,7 @@ def test_cli_combined_exit_code_ignores_raw_filtered_findings(monkeypatch, tmp_p
         ("none", True, True, "hybrid_confirmed", False, True, False),
         ("actionable", True, True, None, False, True, True),
         ("actionable", True, False, "hybrid_confirmed", False, False, True),
+        ("actionable", True, False, "semantic_high_confidence", False, False, False),
         ("actionable", False, False, None, True, False, True),
     ],
 )
@@ -1714,6 +1715,10 @@ def test_cli_fail_on_all_and_none(monkeypatch, tmp_path):
     assert default_result.exit_code == 0
     assert all_result.exit_code == 1
     assert none_result.exit_code == 0
+    assert "Failure policy" in default_result.output
+    assert "actionable" in default_result.output
+    assert "Finding status" in default_result.output
+    assert "pass (exit 0)" in default_result.output
     summary = json.loads(all_result.output)["summary"]
     assert summary["fail_on"] == "all"
     assert summary["exit_code"] == 1

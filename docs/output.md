@@ -154,11 +154,11 @@ Terminal `check` output carries the same information on one `Embeddings` summary
 
 `check --fail-on` controls findings only; runtime and usage failures retain their normal status:
 
-- `--fail-on actionable` (default): combined mode exits `1` for `exact`, `traditional_near`, `hybrid_confirmed`, or `semantic_high_confidence`; `semantic_review` is advisory. Non-strict unused guesses are advisory, while `--strict-unused` makes them actionable. Raw single-method duplicates already passed explicit method thresholds and remain actionable.
+- `--fail-on actionable` (default): combined mode exits `1` for `exact`, `traditional_near`, or `hybrid_confirmed`. Pure-semantic `semantic_high_confidence` and `semantic_review` pairs remain visible but advisory because neither has deterministic structural/token corroboration. Non-strict unused guesses are also advisory, while `--strict-unused` makes them actionable. Raw single-method duplicates already passed the explicitly selected method thresholds and remain actionable.
 - `--fail-on all`: any reported duplicate or unused finding exits `1`.
 - `--fail-on none`: findings never change the successful exit code.
 
-The selected policy and computed result are always present as `summary.fail_on` and `summary.exit_code`.
+The selected policy and computed result are always present as `summary.fail_on` and `summary.exit_code`. Terminal summaries show the same values as `Failure policy` and `Finding status` rows.
 
 Command status conventions:
 

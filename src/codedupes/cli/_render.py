@@ -112,11 +112,15 @@ def print_summary(
     result: AnalysisResult,
     *,
     mode: Literal["combined", "traditional", "semantic"],
+    fail_on: str,
+    exit_code: int,
 ) -> None:
     """Print analysis summary.
 
     :param result: Complete analysis result.
     :param mode: Output mode used for this result.
+    :param fail_on: Finding policy selected for this run.
+    :param exit_code: Exit code computed from the selected policy.
     :return: ``None``.
     """
     _output.console.print()
@@ -167,6 +171,8 @@ def print_summary(
         )
     if result.embedding_stats is not None:
         summary.add_row("Embeddings", _format_embedding_stats(result.embedding_stats))
+    summary.add_row("Failure policy", fail_on)
+    summary.add_row("Finding status", f"{'fail' if exit_code else 'pass'} (exit {exit_code})")
 
     _output.console.print(summary)
     _print_diagnostics("Extraction diagnostics", result.extraction_diagnostics)

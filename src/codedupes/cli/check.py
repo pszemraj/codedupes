@@ -18,7 +18,7 @@ from ._render import print_duplicates, print_hybrid_duplicates, print_summary, p
 
 FailOnPolicy = Literal["actionable", "all", "none"]
 ACTIONABLE_TIERS: frozenset[HybridTier] = frozenset(
-    {"exact", "traditional_near", "hybrid_confirmed", "semantic_high_confidence"}
+    {"exact", "traditional_near", "hybrid_confirmed"}
 )
 
 
@@ -253,7 +253,12 @@ def check_command(ctx: click.Context, path: Path, **params: Any) -> None:
             else:
                 print_check_json_raw(result, fail_on=opts.fail_on, exit_code=exit_code)
         elif opts.combined_mode:
-            print_summary(result, mode="combined")
+            print_summary(
+                result,
+                mode="combined",
+                fail_on=opts.fail_on,
+                exit_code=exit_code,
+            )
             print_hybrid_duplicates(
                 result.hybrid_duplicates,
                 show_source=opts.show_source,
@@ -278,7 +283,12 @@ def check_command(ctx: click.Context, path: Path, **params: Any) -> None:
                     max_items=opts.table_max_items,
                 )
         elif opts.semantic_only:
-            print_summary(result, mode="semantic")
+            print_summary(
+                result,
+                mode="semantic",
+                fail_on=opts.fail_on,
+                exit_code=exit_code,
+            )
             print_duplicates(
                 result.semantic_duplicates,
                 "Semantic Duplicates (Embedding)",
@@ -287,7 +297,12 @@ def check_command(ctx: click.Context, path: Path, **params: Any) -> None:
             )
             print_unused(result.potentially_unused, max_items=opts.table_max_items)
         else:
-            print_summary(result, mode="traditional")
+            print_summary(
+                result,
+                mode="traditional",
+                fail_on=opts.fail_on,
+                exit_code=exit_code,
+            )
             print_duplicates(
                 result.traditional_duplicates,
                 "Traditional Duplicates (Structural/Token/Jaccard)",
