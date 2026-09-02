@@ -205,7 +205,7 @@ def run_should_fail(
     show_envvar=True,
     help="Which findings make the exit code 1",
 )
-@semantic_options("check")
+@semantic_options()
 @option_panels
 @click.pass_context
 def check_command(ctx: click.Context, path: Path, **params: Any) -> None:

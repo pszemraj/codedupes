@@ -895,13 +895,8 @@ class CodeAnalyzer:
             )
 
         if self.config.run_traditional:
-            traditional_duplicate_units = units
-            if self.config.run_semantic:
-                # In combined mode, keep traditional duplicate scope aligned with semantic scope.
-                traditional_duplicate_units = semantic_candidates
-
             exact_dupes, near_dupes, _ = run_traditional_analysis(
-                traditional_duplicate_units,
+                units,
                 jaccard_threshold=self.config.jaccard_threshold,
                 compute_unused=False,
             )
@@ -981,7 +976,7 @@ class CodeAnalyzer:
                 )
                 semantic_fallback_reason = (
                     f"Semantic analysis unavailable ({exc}). Proceeding with non-semantic "
-                    "analysis on the existing combined-mode traditional scope "
+                    "analysis on the full traditional scope "
                     f"(allow_semantic_fallback=True). model={self.config.model_name} "
                     f"revision={self.config.model_revision} "
                     f"trust_remote_code={self.config.trust_remote_code} "

@@ -401,15 +401,11 @@ class SearchOptions:
         )
 
 
-def semantic_options(command: Literal["check", "search"]) -> Callable[[F], F]:
+def semantic_options() -> Callable[[F], F]:
     """Attach shared scope, semantic, device, cache, and output options.
 
-    :param command: Command whose help text receives the shared options.
     :return: Decorator applying the shared Click options.
     """
-    scope_suffix = (
-        " (also narrows traditional duplicate scope in combined mode)" if command == "check" else ""
-    )
     options = [
         click.option(
             "--language",
@@ -455,7 +451,7 @@ def semantic_options(command: Literal["check", "search"]) -> Callable[[F], F]:
             show_default=True,
             panel=Panel.SEMANTIC,
             show_envvar=True,
-            help=f"Skip semantic comparison for code units with fewer body statements{scope_suffix}",
+            help="Skip semantic comparison for code units with fewer body statements",
         ),
         click.option(
             "--semantic-unit-type",
@@ -465,10 +461,7 @@ def semantic_options(command: Literal["check", "search"]) -> Callable[[F], F]:
             show_default=True,
             panel=Panel.SEMANTIC,
             show_envvar=True,
-            help=(
-                "Unit type(s) eligible for semantic embedding "
-                f"(repeat option to add more){scope_suffix}"
-            ),
+            help="Unit type(s) eligible for semantic embedding (repeat option to add more)",
         ),
         click.option(
             "--model",

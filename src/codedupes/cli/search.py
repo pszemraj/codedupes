@@ -72,7 +72,7 @@ from ._render import _print_diagnostics, print_search_results
     show_envvar=True,
     help="Text representation embedded for each search-index unit",
 )
-@semantic_options("search")
+@semantic_options()
 @option_panels
 @click.pass_context
 def search_command(ctx: click.Context, path: Path, query: str, **params: Any) -> None:

@@ -74,8 +74,8 @@ rich-click groups command help into the following panels. Use `codedupes <comman
 ### Semantic model
 
 - `--semantic-threshold <float>`: Flat semantic gate for every language; without it, `check` uses the model profile's calibrated [per-language gates](analysis-defaults.md#semantic-duplicate-gate-defaults) and `search` uses the profile search default
-- `--semantic-unit-type <name>`: Semantic candidate unit type (`function`, `method`, `class`); repeat option to include multiple types (default `function, method`). In default combined `check` mode this also narrows traditional duplicate scope.
-- `--min-statements <int>`: Minimum statement count for semantic candidate code units (default `3`). In default combined `check` mode this also narrows traditional duplicate scope.
+- `--semantic-unit-type <name>`: Semantic candidate unit type (`function`, `method`, `class`); repeat option to include multiple types (default `function, method`). Traditional duplicate matching always retains full extraction scope.
+- `--min-statements <int>`: Minimum statement count for semantic candidate code units (default `3`). This does not narrow traditional duplicate matching.
 - `--model <name>`: Embedding model alias, Hugging Face ID, or explicit path (absolute, `./`/`../`, or `~`) to a complete local `save_pretrained`/`hf download` directory (default `gte-modernbert-base`)
 - `--model-revision <rev>`: Model revision/commit hash (defaults to the profile's pinned calibration commit for built-in models, unpinned otherwise)
 - `--trust-remote-code` / `--no-trust-remote-code`: Allow or disallow model remote code execution

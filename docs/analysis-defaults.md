@@ -33,10 +33,10 @@ Default semantic candidate selection:
 - each semantic input is one complete logical definition - signature, docstring, and body, starting at the definition line (`def`/`class` in Python; decorators are not included); functions are not split into arbitrary text chunks
 - a definition whose tokenized input (the encode prompt included) exceeds the selected model's context window is never embedded from a partial prefix: it is skipped with a warning and a `semantic-context-overflow` diagnostic, and the run continues without it. `--allow-semantic-fallback` is unrelated to this path. An over-long `search` query still fails hard, because a truncated query has no result to omit
 
-Combined-mode alignment rule:
+Traditional/semantic scope rule:
 
-- when both traditional and semantic analysis are enabled, traditional duplicate matching is scoped to the same semantic candidate pool
-- traditional-only mode keeps full extraction scope (functions, methods, classes)
+- traditional duplicate matching always uses the full extraction scope (functions, methods, and classes), in both combined and traditional-only modes
+- semantic candidate controls such as `min_semantic_statements` and `semantic_unit_types` affect embeddings only; they cannot hide deterministic findings
 
 Override via CLI:
 

@@ -509,20 +509,13 @@ def test_semantic_unit_scope(
 
 
 @pytest.mark.parametrize(
-    ("run_semantic", "expected_types"),
-    [
-        (True, set()),
-        (
-            False,
-            {CodeUnitType.CLASS, CodeUnitType.METHOD, CodeUnitType.FUNCTION},
-        ),
-    ],
+    "run_semantic",
+    [True, False],
 )
-def test_traditional_scope_depends_on_semantic_mode(
+def test_traditional_scope_is_independent_of_semantic_mode(
     tmp_path: Path,
     monkeypatch,
     run_semantic: bool,
-    expected_types: set[CodeUnitType],
 ) -> None:
     source = dedent(
         """
@@ -554,7 +547,42 @@ def test_traditional_scope_depends_on_semantic_mode(
     )
     analyzer.analyze(project)
 
-    assert {unit.unit_type for unit in captured_traditional_units} == expected_types
+    assert {unit.unit_type for unit in captured_traditional_units} == {
+        CodeUnitType.CLASS,
+        CodeUnitType.METHOD,
+        CodeUnitType.FUNCTION,
+    }
+
+
+def test_traditional_findings_are_mode_invariant(tmp_path: Path, monkeypatch) -> None:
+    """Combined mode must retain full-scope deterministic findings."""
+    source = dedent(
+        """
+        class Alpha:
+            def render(self, value):
+                return value.strip()
+
+        class Beta:
+            def render(self, value):
+                return value.strip()
+        """
+    ).strip()
+    project = create_project(tmp_path, source, module="scope.py")
+    monkeypatch.setattr(analyzer_module, "run_semantic_analysis", _make_semantic_runner())
+
+    traditional = CodeAnalyzer(AnalyzerConfig(run_semantic=False, run_unused=False)).analyze(
+        project
+    )
+    combined = CodeAnalyzer(AnalyzerConfig(run_unused=False)).analyze(project)
+
+    def pair_keys(result: AnalysisResult) -> set[tuple[str, str, str]]:
+        return {
+            (*ordered_pair_key(duplicate.unit_a, duplicate.unit_b), duplicate.method)
+            for duplicate in result.traditional_duplicates
+        }
+
+    assert pair_keys(traditional)
+    assert pair_keys(combined) == pair_keys(traditional)
 
 
 @pytest.mark.parametrize(
@@ -1058,7 +1086,9 @@ def test_allow_semantic_fallback_requires_combined_mode() -> None:
         )
 
 
-def test_combined_mode_fallback_keeps_scoped_traditional_units(tmp_path: Path, monkeypatch) -> None:
+def test_combined_mode_fallback_keeps_full_scope_traditional_units(
+    tmp_path: Path, monkeypatch
+) -> None:
     source = dedent(
         """
         class Box:
@@ -1108,7 +1138,7 @@ def test_combined_mode_fallback_keeps_scoped_traditional_units(tmp_path: Path, m
     analyzer.analyze(project)
 
     assert len(traditional_calls) == 1
-    assert set(traditional_calls[0][0]) == {"method", "longer"}
+    assert set(traditional_calls[0][0]) == {"Box", "method", "short", "longer"}
 
 
 def test_combined_mode_fallback_marks_semantic_degradation(tmp_path: Path, monkeypatch) -> None:
