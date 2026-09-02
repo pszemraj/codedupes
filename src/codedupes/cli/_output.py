@@ -95,6 +95,12 @@ def _configured_cli_output(
     logging_state: tuple[int, list[logging.Handler]] | None = None
     if as_json:
         logging_state = _suppress_logs_for_json()
+        try:
+            from huggingface_hub.utils import disable_progress_bars
+
+            disable_progress_bars()
+        except ImportError:
+            pass
     else:
         setup_logging(verbose)
 

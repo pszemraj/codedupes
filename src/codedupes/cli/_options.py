@@ -21,6 +21,7 @@ from codedupes.constants import (
     DEFAULT_TRADITIONAL_THRESHOLD,
     SEMANTIC_DEVICE_CHOICES,
 )
+from codedupes.semantic import ProgressMode
 
 from ._output import (
     DEFAULT_OUTPUT_WIDTH,
@@ -123,6 +124,7 @@ class SemanticOptions:
     semantic_unit_type: tuple[str, ...]
     no_cache: bool
     strict_revision_cache: bool
+    progress: ProgressMode
 
     @classmethod
     def from_params(cls, params: dict[str, Any]) -> SemanticOptions:
@@ -143,6 +145,7 @@ class SemanticOptions:
             semantic_unit_type=params["semantic_unit_type"],
             no_cache=params["no_cache"],
             strict_revision_cache=params["strict_revision_cache"],
+            progress="never" if params["as_json"] else "auto",
         )
 
     def analysis_kwargs(self) -> dict[str, Any]:
@@ -161,6 +164,7 @@ class SemanticOptions:
             "semantic_unit_types": self.semantic_unit_type,
             "embedding_cache": not self.no_cache,
             "strict_revision_cache": self.strict_revision_cache,
+            "progress": self.progress,
         }
 
 

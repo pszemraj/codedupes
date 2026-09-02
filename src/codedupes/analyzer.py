@@ -32,6 +32,7 @@ from codedupes.models import (
 from codedupes.pairs import ordered_pair_key
 from codedupes.semantic import (
     EmbeddingSpaceIdentity,
+    ProgressMode,
     SemanticBackendError,
     SemanticContextOverflow,
     describe_context_overflow,
@@ -388,6 +389,7 @@ class AnalyzerConfig:
     tiny_near_jaccard_min: float = DEFAULT_TINY_NEAR_JACCARD_MIN
     embedding_cache: bool = True
     strict_revision_cache: bool = False
+    progress: ProgressMode = "auto"
 
     # What to run. mode="check" validates the calibrated duplicate-gate
     # contract at construction; mode="search" defers to the query-time search
@@ -867,6 +869,7 @@ class CodeAnalyzer:
                     "cache_scope": self._cache_scope,
                     "strict_revision_cache": self.config.strict_revision_cache,
                     "cross_language": self.config.cross_language,
+                    "progress": self.config.progress,
                 }
                 (
                     self._embeddings,
@@ -1017,6 +1020,7 @@ class CodeAnalyzer:
                 use_cache=self.config.embedding_cache,
                 cache_scope=self._cache_scope,
                 strict_revision_cache=self.config.strict_revision_cache,
+                progress=self.config.progress,
             )
         except Exception:
             self._embedding_space_identity = None

@@ -1302,6 +1302,41 @@ def test_encode_texts_does_not_hide_unrelated_type_error() -> None:
     assert calls == 1
 
 
+@pytest.mark.parametrize(
+    ("mode", "input_count", "isatty", "expected"),
+    [
+        ("never", 1000, True, False),
+        ("always", 1, False, True),
+        ("auto", 100, True, False),
+        ("auto", 101, True, True),
+        ("auto", 101, False, False),
+    ],
+)
+def test_embedding_progress_policy(monkeypatch, mode, input_count, isatty, expected) -> None:
+    monkeypatch.setattr(semantic.sys.stderr, "isatty", lambda: isatty)
+
+    assert semantic._should_show_progress(mode, input_count) is expected
+
+
+@pytest.mark.parametrize(("progress", "expected"), [("always", True), ("never", False)])
+def test_compute_embeddings_forwards_progress_policy(
+    monkeypatch, tmp_path, progress, expected
+) -> None:
+    units = extract_arithmetic_units(tmp_path)
+    captured: list[bool] = []
+
+    class RecordingModel:
+        def encode(self, texts, **kwargs):
+            captured.append(kwargs["show_progress_bar"])
+            return np.ones((len(texts), 2), dtype=np.float32)
+
+    monkeypatch.setattr(semantic, "get_model", lambda *args, **kwargs: RecordingModel())
+
+    compute_embeddings(units, use_cache=False, progress=progress)
+
+    assert captured == [expected]
+
+
 def test_get_model_wraps_known_backend_error(monkeypatch) -> None:
     def fake_ctor(*args, **kwargs):
         raise RuntimeError("EmbeddingGemma tokenizer backend is incompatible")

@@ -28,6 +28,7 @@ _SEMANTIC_ANALYSIS_KWARG_NAMES = {
     "mps_fallback",
     "mps_memory_fraction",
     "overflow_report",
+    "progress",
     "revision",
     "semantic_task",
     "strict_revision_cache",
@@ -738,6 +739,7 @@ def test_semantic_pairs_are_gated_per_language(tmp_path: Path, monkeypatch) -> N
             run_semantic=True,
             run_unused=False,
             min_semantic_statements=0,
+            progress="never",
         )
     )
     analyzer.analyze(project)
@@ -745,6 +747,7 @@ def test_semantic_pairs_are_gated_per_language(tmp_path: Path, monkeypatch) -> N
     # Every language group is scanned at its own gate; the scalar floor only
     # covers languages without a calibrated entry.
     assert captured["language_thresholds"] == {"python": 0.90, "javascript": 0.60}
+    assert captured["progress"] == "never"
     assert captured["threshold"] == 0.60
 
 
@@ -1372,6 +1375,7 @@ def test_index_embeds_corpus_without_mining_duplicates(tmp_path: Path, monkeypat
 
     assert indexed == 1
     assert [unit.name for unit in embedded_units] == ["entry"]
+    assert captured["progress"] == "auto"
     assert results == []
     assert captured["semantic_task"] == analyzer_module.DEFAULT_SEARCH_SEMANTIC_TASK
     assert captured["query_semantic_task"] == analyzer_module.DEFAULT_SEARCH_SEMANTIC_TASK

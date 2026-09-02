@@ -70,6 +70,19 @@ from codedupes.semantic_profiles import (
 
 logger = logging.getLogger(__name__)
 
+ProgressMode = Literal["auto", "always", "never"]
+PROGRESS_BAR_MIN_INPUTS = 100
+
+
+def _should_show_progress(mode: ProgressMode, input_count: int) -> bool:
+    """Return whether embedding inference should render a progress bar."""
+    if mode == "never":
+        return False
+    if mode == "always":
+        return True
+    return input_count > PROGRESS_BAR_MIN_INPUTS and sys.stderr.isatty()
+
+
 # Lazy-loaded model
 _model = None
 _model_name: str | None = None
@@ -2647,6 +2660,7 @@ def _compute_embeddings_unlocked(
     cache_scope: Path | None = None,
     strict_revision_cache: bool = False,
     overflow_report: list[SemanticContextOverflow] | None = None,
+    progress: ProgressMode = "auto",
 ) -> tuple[np.ndarray, EmbeddingSpaceIdentity]:
     """Compute normalized NumPy embeddings for all code units.
 
@@ -2680,6 +2694,7 @@ def _compute_embeddings_unlocked(
     :param overflow_report: When provided, over-context units are skipped instead
         of raising: their rows are dropped from the returned matrix (so it is no
         longer row-aligned with ``units``) and appended here in input order.
+    :param progress: Progress-bar policy for corpus embedding inference.
     :return: Normalized embedding matrix and its effective vector-space identity.
     :raises ValueError: If ``batch_size`` is not positive.
     :raises SemanticBackendError: If an explicitly requested device is unavailable,
@@ -2777,6 +2792,7 @@ def _compute_embeddings_unlocked(
             cache_scope=cache_scope,
             strict_revision_cache=strict_revision_cache,
             overflow_report=overflow_report,
+            progress=progress,
         )
 
     def _coherence_break_reason(current_model: object) -> str | None:
@@ -3093,7 +3109,7 @@ def _compute_embeddings_unlocked(
             encode_fn,
             texts,
             batch_size=batch_size,
-            show_progress_bar=len(texts) > 100,
+            show_progress_bar=_should_show_progress(progress, len(texts)),
             initial_device=execution_device,
             model_name=model_name,
             revision=resolved_revision,
@@ -3189,6 +3205,7 @@ def compute_embeddings_with_identity(
     cache_scope: Path | None = None,
     strict_revision_cache: bool = False,
     overflow_report: list[SemanticContextOverflow] | None = None,
+    progress: ProgressMode = "auto",
 ) -> tuple[np.ndarray, EmbeddingSpaceIdentity]:
     """Compute embeddings and identity under the shared model lock.
 
@@ -3214,6 +3231,7 @@ def compute_embeddings_with_identity(
     :param overflow_report: When provided, over-context units are skipped instead
         of raising: their rows are dropped from the returned matrix (so it is no
         longer row-aligned with ``units``) and appended here in input order.
+    :param progress: Progress-bar policy for corpus embedding inference.
     :return: Normalized embedding matrix and its effective vector-space identity.
     """
     # Import-sensitive runtime variables (MPS operator fallback above all) must
@@ -3236,6 +3254,7 @@ def compute_embeddings_with_identity(
             mps_memory_fraction=mps_memory_fraction,
             strict_revision_cache=strict_revision_cache,
             overflow_report=overflow_report,
+            progress=progress,
         )
 
 
@@ -3253,6 +3272,7 @@ def compute_embeddings(
     use_cache: bool = True,
     cache_scope: Path | None = None,
     strict_revision_cache: bool = False,
+    progress: ProgressMode = "auto",
 ) -> np.ndarray:
     """Compute embeddings while serializing shared-model lifecycle and inference.
 
@@ -3275,6 +3295,7 @@ def compute_embeddings(
     :param strict_revision_cache: Whether an unpinned hub revision resolves to a
         concrete commit hash (disabling caching when unmappable) instead of the
         requested revision label, defaults to ``False``.
+    :param progress: Progress-bar policy for corpus embedding inference.
     :return: Normalized embedding matrix row-aligned with ``units``.
     """
     embeddings, _identity = compute_embeddings_with_identity(
@@ -3291,6 +3312,7 @@ def compute_embeddings(
         use_cache=use_cache,
         cache_scope=cache_scope,
         strict_revision_cache=strict_revision_cache,
+        progress=progress,
     )
     return embeddings
 
@@ -3969,6 +3991,7 @@ def run_semantic_analysis_with_identity(
     cross_language: bool = False,
     language_thresholds: Mapping[str, float] | None = None,
     overflow_report: list[SemanticContextOverflow] | None = None,
+    progress: ProgressMode = "auto",
 ) -> tuple[np.ndarray, list[DuplicatePair], EmbeddingSpaceIdentity]:
     """Run semantic duplicate detection and return the corpus identity.
 
@@ -4003,6 +4026,7 @@ def run_semantic_analysis_with_identity(
     :param overflow_report: When provided, over-context units are skipped instead
         of raising: they are excluded from ``embeddings`` and pair mining, and
         appended here in input order.
+    :param progress: Progress-bar policy for corpus embedding inference.
     :return: ``(embeddings, duplicates, identity)``; ``embeddings`` covers only
         the units that survived the context policy.
     """
@@ -4026,6 +4050,7 @@ def run_semantic_analysis_with_identity(
         cache_scope=cache_scope,
         strict_revision_cache=strict_revision_cache,
         overflow_report=overflow_report,
+        progress=progress,
     )
     if overflow_report is not None and len(overflow_report) > reported_before:
         # Keep pair mining row-aligned with the matrix the context policy left.
@@ -4064,6 +4089,7 @@ def run_semantic_analysis(
     strict_revision_cache: bool = False,
     cross_language: bool = False,
     language_thresholds: Mapping[str, float] | None = None,
+    progress: ProgressMode = "auto",
 ) -> tuple[np.ndarray, list[DuplicatePair]]:
     """Run full semantic duplicate detection.
 
@@ -4095,6 +4121,7 @@ def run_semantic_analysis(
         (uncalibrated), defaults to ``False``.
     :param language_thresholds: Per-language duplicate gates applied inside the
         pairwise scan; ``None`` applies ``threshold`` flat to every language.
+    :param progress: Progress-bar policy for corpus embedding inference.
     :return: ``(embeddings, duplicates)``; both are empty when ``units`` is empty.
     """
     embeddings, duplicates, _identity = run_semantic_analysis_with_identity(
@@ -4115,5 +4142,6 @@ def run_semantic_analysis(
         strict_revision_cache=strict_revision_cache,
         cross_language=cross_language,
         language_thresholds=language_thresholds,
+        progress=progress,
     )
     return embeddings, duplicates

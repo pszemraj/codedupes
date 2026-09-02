@@ -94,12 +94,42 @@ def test_cli_json_output_hybrid_default(monkeypatch, tmp_path):
     assert "traditional_duplicates" not in output
     assert "semantic_duplicates" not in output
     assert captured[0].include_private is True
+    assert captured[0].progress == "never"
 
     result = runner.invoke(cli.cli, ["search", str(path), "entry", "--json", "--top-k", "1"])
     assert result.exit_code == 0
     search_output = json.loads(result.output)
     assert search_output["query"] == "entry"
     assert search_output["results"][0]["name"] == "entry"
+    assert captured[1].progress == "never"
+
+
+def test_cli_table_output_uses_auto_progress(monkeypatch, tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+    captured = []
+    patch_cli_analyzer(
+        monkeypatch,
+        cli,
+        analyze_result=lambda: _build_result(tmp_path),
+        captured_configs=captured,
+    )
+
+    CliRunner().invoke(cli.cli, ["check", str(path)])
+
+    assert captured[0].progress == "auto"
+
+
+def test_cli_json_disables_huggingface_progress(monkeypatch, tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+    patch_cli_analyzer(monkeypatch, cli, analyze_result=lambda: _build_result(tmp_path))
+    calls: list[None] = []
+    monkeypatch.setattr("huggingface_hub.utils.disable_progress_bars", lambda: calls.append(None))
+
+    CliRunner().invoke(cli.cli, ["check", str(path), "--json"])
+
+    assert calls == [None]
 
 
 def test_cli_reports_semantic_context_diagnostics(monkeypatch, tmp_path):
