@@ -773,10 +773,10 @@ def test_cli_no_subcommand_token_exits_usage_error(token):
 
 
 def test_cli_no_args_prints_help_and_exits_usage_error():
-    runner = CliRunner()
+    runner = CliRunner(env={"COLUMNS": "200"})
     result = runner.invoke(cli.cli, [])
     assert result.exit_code == 2
-    assert "Commands:" in result.output
+    assert "Commands" in result.output
     assert "check" in result.output
     assert "search" in result.output
 
@@ -1047,11 +1047,11 @@ def test_cli_surfaces_analyzer_config_validation_error(monkeypatch, tmp_path, co
 
 
 def test_cli_help_and_version():
-    runner = CliRunner()
+    runner = CliRunner(env={"COLUMNS": "200"})
 
     help_result = runner.invoke(cli.cli, ["--help"])
     assert help_result.exit_code == 0
-    assert "Commands:" in help_result.output
+    assert "Commands" in help_result.output
     assert "check" in help_result.output
     assert "search" in help_result.output
 
@@ -1072,7 +1072,7 @@ def test_cli_search_help_is_search_specific() -> None:
 
 @pytest.mark.parametrize("command", ["check", "search"])
 def test_cli_help_advertises_local_model_directories(command: str) -> None:
-    result = CliRunner().invoke(cli.cli, [command, "--help"])
+    result = CliRunner(env={"COLUMNS": "200"}).invoke(cli.cli, [command, "--help"])
 
     assert result.exit_code == 0
     assert "complete local model directory" in result.output
