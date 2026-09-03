@@ -1933,12 +1933,9 @@ class EmbeddingCache:
                     units=current_units,
                     orphans=orphans,
                 )
-                selections = {
-                    name: entry
-                    for name, entry in selections.items()
-                    if generation - entry.last_seen_generation < ORPHAN_GC_GENERATIONS
-                    or entry.orphans
-                }
+                # Stale selections stop pinning vectors in _manifest_referenced_keys,
+                # but their unit maps remain the deletion baseline if that selection
+                # runs again after a long gap.
                 manifest = CorpusManifest(
                     schema=MANIFEST_SCHEMA,
                     generation=generation,
@@ -1975,13 +1972,6 @@ class EmbeddingCache:
                             for entry in current.selections.values():
                                 for key in collectable:
                                     entry.orphans.pop(key, None)
-                            current.selections = {
-                                name: entry
-                                for name, entry in current.selections.items()
-                                if current.generation - entry.last_seen_generation
-                                < ORPHAN_GC_GENERATIONS
-                                or entry.orphans
-                            }
                             _write_corpus_manifest(shard_dir, current)
                             manifest = current
             return ManifestPublishResult(

@@ -435,6 +435,39 @@ def test_stale_scope_selection_stops_pinning_deleted_rows(tmp_path, monkeypatch)
     assert stats["repos"][0]["orphan_rows"] == 0
 
 
+def test_expired_selection_retains_deletion_baseline(tmp_path, monkeypatch) -> None:
+    repo = _write_repo(
+        tmp_path,
+        {
+            "src/a.py": "def alpha(value):\n    return value + 1",
+            "src/b.py": "def beta(value):\n    return value + 2",
+        },
+    )
+    _patch_get_model(monkeypatch, CountingModel())
+    _analyze(repo)
+    for _ in range(3):
+        _index(repo, search_document="source")
+    (repo / "src/b.py").unlink()
+
+    deleted = _analyze(repo)
+
+    assert deleted.embedding_stats is not None
+    assert deleted.embedding_stats.deleted_units == 1
+    assert deleted.embedding_stats.orphan_rows_retained == 1
+    assert deleted.embedding_stats.orphan_rows_collected == 0
+
+    _analyze(repo)
+    _analyze(repo)
+    collected = _analyze(repo)
+
+    assert collected.embedding_stats is not None
+    assert collected.embedding_stats.orphan_rows_retained == 0
+    assert collected.embedding_stats.orphan_rows_collected == 1
+    stats = EmbeddingCache().stats()
+    assert stats["entries"] == 1
+    assert stats["repos"][0]["orphan_rows"] == 0
+
+
 def test_orphan_aging_survives_search_selection_between_checks(tmp_path, monkeypatch) -> None:
     repo = _write_repo(
         tmp_path,
