@@ -721,6 +721,7 @@ class CodeAnalyzer:
                 selection=selection,
                 units=unit_keys,
                 complete_scan=path.is_dir() and self.config.exclude_patterns is None,
+                observed_uid_prefixes=(f"{path}::",) if path.is_file() else (),
             )
         if published is None:
             return

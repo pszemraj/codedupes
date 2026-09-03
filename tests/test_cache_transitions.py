@@ -324,6 +324,27 @@ def test_last_ineligible_candidate_publishes_empty_manifest(tmp_path, monkeypatc
     assert filtered.embedding_stats.orphan_rows_retained == 1
 
 
+def test_single_file_scan_orphans_candidate_that_became_ineligible(tmp_path, monkeypatch) -> None:
+    repo = _write_repo(
+        tmp_path,
+        {"only.py": "def only(value):\n    adjusted = value + 1\n    return adjusted"},
+    )
+    _patch_get_model(monkeypatch, CountingModel())
+    _analyze(repo, min_semantic_statements=2)
+    (repo / "only.py").write_text(
+        "def only(value):\n    return value + 1\n",
+        encoding="utf-8",
+    )
+
+    filtered = _analyze(repo / "only.py", min_semantic_statements=2)
+
+    assert len(filtered.units) == 1
+    assert filtered.embedding_stats is not None
+    assert filtered.embedding_stats.requested_rows == 0
+    assert filtered.embedding_stats.deleted_units == 1
+    assert filtered.embedding_stats.orphan_rows_retained == 1
+
+
 def test_move_and_edit_reencodes_changed_function_but_hits_sibling(tmp_path, monkeypatch) -> None:
     repo = _write_repo(
         tmp_path,
@@ -468,6 +489,36 @@ def test_scope_filter_does_not_age_or_collect_other_selection_rows(
     assert default_again.embedding_stats.requested_rows == initial_count
     assert default_again.embedding_stats.encoded_inputs == 0
     assert default_again.embedding_stats.model_loaded is False
+
+
+def test_incomplete_scans_do_not_refresh_unseen_sibling_pins(tmp_path, monkeypatch) -> None:
+    repo = _write_repo(
+        tmp_path,
+        {
+            "a.py": "def alpha(value):\n    return value + 1",
+            "b.py": "def beta(value):\n    return value + 2",
+        },
+    )
+    _patch_get_model(monkeypatch, CountingModel())
+    _analyze(repo)
+    _analyze(repo, languages=("python",))
+    (repo / "b.py").unlink()
+    deleted = _analyze(repo, languages=("python",))
+    assert deleted.embedding_stats is not None
+    assert deleted.embedding_stats.orphan_rows_retained == 1
+
+    collected = None
+    for _ in range(3):
+        narrow = _analyze(repo / "a.py")
+        assert narrow.embedding_stats is not None
+        assert narrow.embedding_stats.orphan_rows_collected == 0
+        collected = _analyze(repo, languages=("python",))
+
+    assert collected is not None
+    assert collected.embedding_stats is not None
+    assert collected.embedding_stats.orphan_rows_retained == 0
+    assert collected.embedding_stats.orphan_rows_collected == 1
+    assert EmbeddingCache().stats()["entries"] == 1
 
 
 def test_stale_scope_selection_stops_pinning_deleted_rows(tmp_path, monkeypatch) -> None:

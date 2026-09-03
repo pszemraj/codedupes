@@ -370,6 +370,45 @@ def test_manifest_limits_inactive_selection_baselines(tmp_path) -> None:
     assert f"selection-{selection_count - 1:02d}" in manifest.selections
 
 
+def test_manifest_selection_limit_uses_incomplete_publish_recency(tmp_path) -> None:
+    cache = EmbeddingCache()
+    scope = tmp_path / "repo"
+    scope.mkdir()
+    for index in range(embedding_cache.MANIFEST_SELECTION_LIMIT):
+        cache.publish_corpus_manifest(
+            scope,
+            "model",
+            "revision",
+            selection=f"z-old-{index:02d}",
+            units={"unit": f"old-key-{index}"},
+            complete_scan=False,
+        )
+
+    cache.publish_corpus_manifest(
+        scope,
+        "model",
+        "revision",
+        selection="a-recent",
+        units={"unit": "recent-key"},
+        complete_scan=False,
+    )
+    cache.publish_corpus_manifest(
+        scope,
+        "model",
+        "revision",
+        selection="b-newest",
+        units={"unit": "newest-key"},
+        complete_scan=False,
+    )
+
+    manifest = cache.load_manifest(scope, "model", "revision")
+    assert manifest is not None
+    assert len(manifest.selections) == embedding_cache.MANIFEST_SELECTION_LIMIT
+    assert "a-recent" in manifest.selections
+    assert "b-newest" in manifest.selections
+    assert "z-old-00" not in manifest.selections
+
+
 def _five_units(tmp_path: Path) -> list[CodeUnit]:
     return extract_units(tmp_path, FIVE_FUNCTION_SOURCE, filename="mod.py")
 

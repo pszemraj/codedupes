@@ -1114,11 +1114,7 @@ def _limit_manifest_selections(
     required = {current_selection}
     required.update(name for name, entry in selections.items() if entry.orphans)
     available = max(0, MANIFEST_SELECTION_LIMIT - len(required))
-    newest = sorted(
-        (item for item in selections.items() if item[0] not in required),
-        key=lambda item: (item[1].last_seen_generation, item[0]),
-        reverse=True,
-    )[:available]
+    newest = [item for item in reversed(selections.items()) if item[0] not in required][:available]
     retained = required | {name for name, _entry in newest}
     return {name: entry for name, entry in selections.items() if name in retained}
 
@@ -1918,6 +1914,7 @@ class EmbeddingCache:
         selection: str,
         units: dict[str, str],
         complete_scan: bool,
+        observed_uid_prefixes: tuple[str, ...] = (),
     ) -> ManifestPublishResult | None:
         """Publish a completed corpus run and age or collect unreferenced rows.
 
@@ -1927,6 +1924,8 @@ class EmbeddingCache:
         :param selection: Digest of semantic candidate-selection settings.
         :param units: Current unit-to-cache-key mapping.
         :param complete_scan: Whether missing units represent the complete selection.
+        :param observed_uid_prefixes: UID prefixes whose units were fully observed
+            by an incomplete scan, allowing that slice of the baseline to be replaced.
         :return: Publication and GC telemetry, or ``None`` on cache failure.
         """
         shard_dir = self.shard_dir(cache_scope, canonical_model, revision)
@@ -1964,13 +1963,20 @@ class EmbeddingCache:
                     for key in current_keys:
                         entry.orphans.pop(key, None)
 
-                previous = selections.get(selection)
+                # Reinsertion below moves this entry to the end, which records
+                # publication recency for deterministic selection-cap eviction.
+                previous = selections.pop(selection, None)
                 if previous is not None:
                     orphans = dict(previous.orphans)
                     if complete_scan:
                         current_units = dict(units)
                     else:
-                        current_units = dict(previous.units)
+                        current_units = {
+                            uid: key
+                            for uid, key in previous.units.items()
+                            if not observed_uid_prefixes
+                            or not uid.startswith(observed_uid_prefixes)
+                        }
                         current_units.update(units)
                     diff = diff_manifest(previous, current_units)
                     for key in diff.orphaned:
@@ -1981,8 +1987,14 @@ class EmbeddingCache:
                     orphans = {}
                     current_units = dict(units)
 
+                if complete_scan or previous is None:
+                    last_seen_generation = generation
+                else:
+                    # A partial run cannot refresh pins for the unseen units
+                    # carried forward in current_units.
+                    last_seen_generation = previous.last_seen_generation
                 selections[selection] = CorpusSelectionManifest(
-                    last_seen_generation=generation,
+                    last_seen_generation=last_seen_generation,
                     complete_scan=complete_scan,
                     units=current_units,
                     orphans=orphans,
