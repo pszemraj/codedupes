@@ -1015,12 +1015,6 @@ class CodeAnalyzer:
                         semantic_candidates,
                     )
 
-            if self.config.run_unused:
-                build_reference_graph(units, project_root=path)
-                unused = find_potentially_unused(units, strict_unused=self.config.strict_unused)
-                unused_excluded_units = sum(unit.language != "python" for unit in units)
-                logger.info(f"Found {len(unused)} potentially unused code units")
-
             # Language partitioning and the per-language gates are applied inside
             # the pairwise scan (see find_semantic_duplicates), so every pair that
             # arrives here already cleared its own language's gate.
@@ -1035,7 +1029,13 @@ class CodeAnalyzer:
                     )
                 ]
 
-            if self.config.run_unused:
+        if self.config.run_unused:
+            build_reference_graph(units, project_root=path)
+            unused = find_potentially_unused(units, strict_unused=self.config.strict_unused)
+            unused_excluded_units = sum(unit.language != "python" for unit in units)
+            logger.info(f"Found {len(unused)} potentially unused code units")
+
+            if self.config.run_semantic:
                 unused_uids = {unit.uid for unit in unused}
                 semantic_duplicates = [
                     duplicate
@@ -1044,12 +1044,6 @@ class CodeAnalyzer:
                         duplicate.unit_a.uid in unused_uids and duplicate.unit_b.uid in unused_uids
                     )
                 ]
-
-        if self.config.run_unused and not self.config.run_semantic:
-            build_reference_graph(units, project_root=path)
-            unused = find_potentially_unused(units, strict_unused=self.config.strict_unused)
-            unused_excluded_units = sum(unit.language != "python" for unit in units)
-            logger.info(f"Found {len(unused)} potentially unused code units")
 
         combined_mode = self.config.run_traditional and self.config.run_semantic
         hybrid_duplicates: list[HybridDuplicate] = []

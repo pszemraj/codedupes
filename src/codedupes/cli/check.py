@@ -11,7 +11,7 @@ import codedupes.cli as cli_module
 from codedupes.constants import DEFAULT_CHECK_SEMANTIC_TASK, SEMANTIC_TASK_CHOICES
 from codedupes.models import AnalysisResult, HybridTier
 
-from ._json import print_check_json_combined, print_check_json_raw
+from ._json import print_check_json
 from ._options import CheckOptions, Panel, option_panels, semantic_options
 from ._output import _configured_cli_output, _run_cli_action
 from ._render import print_duplicates, print_hybrid_duplicates, print_summary, print_unused
@@ -234,15 +234,12 @@ def check_command(ctx: click.Context, path: Path, **params: Any) -> None:
         )
 
         if opts.as_json:
-            if opts.combined_mode:
-                print_check_json_combined(
-                    result,
-                    show_all=opts.show_all,
-                    fail_on=opts.fail_on,
-                    exit_code=exit_code,
-                )
-            else:
-                print_check_json_raw(result, fail_on=opts.fail_on, exit_code=exit_code)
+            print_check_json(
+                result,
+                show_all=opts.show_all,
+                fail_on=opts.fail_on,
+                exit_code=exit_code,
+            )
         elif opts.combined_mode:
             print_summary(
                 result,

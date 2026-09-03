@@ -184,17 +184,17 @@ def check_result_to_json(
     return output
 
 
-def print_check_json_combined(
+def print_check_json(
     result: AnalysisResult,
     *,
     show_all: bool,
     fail_on: str,
     exit_code: int,
 ) -> None:
-    """Output combined-mode check results as schema-v2 JSON.
+    """Output check results as schema-v2 JSON.
 
     :param result: Analysis result to serialize.
-    :param show_all: Include raw duplicate edges.
+    :param show_all: Include raw duplicate edges in combined mode.
     :param fail_on: Finding policy selected for this run.
     :param exit_code: Exit code computed from the selected policy.
     :return: ``None``.
@@ -204,28 +204,6 @@ def print_check_json_combined(
             check_result_to_json(
                 result,
                 show_all=show_all,
-                fail_on=fail_on,
-                exit_code=exit_code,
-            ),
-            indent=2,
-            sort_keys=True,
-        )
-    )
-
-
-def print_check_json_raw(result: AnalysisResult, *, fail_on: str, exit_code: int) -> None:
-    """Output raw single-method check results as schema-v2 JSON.
-
-    :param result: Analysis result to serialize.
-    :param fail_on: Finding policy selected for this run.
-    :param exit_code: Exit code computed from the selected policy.
-    :return: ``None``.
-    """
-    print(
-        json.dumps(
-            check_result_to_json(
-                result,
-                show_all=False,
                 fail_on=fail_on,
                 exit_code=exit_code,
             ),
