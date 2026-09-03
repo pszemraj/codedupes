@@ -43,7 +43,7 @@ Known labeling nuance: the TypeScript pair `summarizeState`/`reviewState` is lab
 ## Validation
 
 ```bash
-conda run -n misc python scripts/validate_calibration_corpus.py --corpus-path test_fixtures/polyglot_calibration/<lang> --labels-path test_fixtures/polyglot_calibration/labels/<lang>.json --search-probes-path test_fixtures/polyglot_calibration/search_probes/<lang>.json --language <lang>
+python scripts/validate_calibration_corpus.py --corpus-path test_fixtures/polyglot_calibration/<lang> --labels-path test_fixtures/polyglot_calibration/labels/<lang>.json --search-probes-path test_fixtures/polyglot_calibration/search_probes/<lang>.json --language <lang>
 ```
 
 Whole-tree status at shipped defaults (2026-08-14): 368 units across five languages, zero parse diagnostics, all 73 labeled deterministic pairs detected by the traditional tier, zero unlabeled deterministic pairs, zero cross-language pairs.
@@ -89,8 +89,8 @@ Interpretation: candidate policy, model threshold, and hybrid publication are on
 ## Re-running
 
 ```bash
-conda run -n misc python scripts/sweep_semantic_thresholds.py --corpus-path test_fixtures/polyglot_calibration/<lang> --labels-path test_fixtures/polyglot_calibration/labels/<lang>.json --search-probes-path test_fixtures/polyglot_calibration/search_probes/<lang>.json --language <lang> --duplicate-start 0.40 --json-out test_fixtures/polyglot_calibration/reports/<lang>_semantic_threshold_report.json --search-json-out test_fixtures/polyglot_calibration/reports/<lang>_search_threshold_report.json
-conda run -n misc python scripts/report_calibration_distributions.py
+python scripts/sweep_semantic_thresholds.py --corpus-path test_fixtures/polyglot_calibration/<lang> --labels-path test_fixtures/polyglot_calibration/labels/<lang>.json --search-probes-path test_fixtures/polyglot_calibration/search_probes/<lang>.json --language <lang> --duplicate-start 0.40 --json-out test_fixtures/polyglot_calibration/reports/<lang>_semantic_threshold_report.json --search-json-out test_fixtures/polyglot_calibration/reports/<lang>_search_threshold_report.json
+python scripts/report_calibration_distributions.py
 ```
 
 Keep corpus and label changes explicit in review; if a grammar pin bump changes any recorded number above, understand why before accepting it.
