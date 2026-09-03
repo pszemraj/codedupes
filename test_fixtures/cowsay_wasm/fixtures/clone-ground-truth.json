@@ -1,0 +1,130 @@
+{
+  "schema": "cowsay-dupe-fixture/v1",
+  "project_version": "0.1.0",
+  "line_number_base": 1,
+  "notes": "Markers are authoritative; line spans describe this checked-in revision.",
+  "clone_groups": [
+    {
+      "id": "exact-border-builder",
+      "kind": "exact",
+      "taxonomy": "type_1",
+      "must_detect": true,
+      "description": "Byte-identical top-and-bottom border builder used by both bubble modes.",
+      "instances": [
+        {
+          "file": "src/bubble/speech.rs",
+          "start_line": 3,
+          "end_line": 18,
+          "start_marker": "// fixture:exact-border:start",
+          "end_marker": "// fixture:exact-border:end",
+          "symbol": "make_borders"
+        },
+        {
+          "file": "src/bubble/thought.rs",
+          "start_line": 3,
+          "end_line": 18,
+          "start_marker": "// fixture:exact-border:start",
+          "end_marker": "// fixture:exact-border:end",
+          "symbol": "make_borders"
+        }
+      ],
+      "oracle": {
+        "source_relation": "byte_identical"
+      }
+    },
+    {
+      "id": "bubble-renderers",
+      "kind": "edit_distance",
+      "taxonomy": "type_3",
+      "must_detect": true,
+      "description": "Closely related speech/thought renderers with changed delimiters and loop control.",
+      "instances": [
+        {
+          "file": "src/bubble/speech.rs",
+          "start_line": 20,
+          "end_line": 47,
+          "start_marker": "// fixture:edit-bubble:start",
+          "end_marker": "// fixture:edit-bubble:end",
+          "symbol": "render_bubble"
+        },
+        {
+          "file": "src/bubble/thought.rs",
+          "start_line": 20,
+          "end_line": 41,
+          "start_marker": "// fixture:edit-bubble:start",
+          "end_marker": "// fixture:edit-bubble:end",
+          "symbol": "render_bubble"
+        }
+      ],
+      "oracle": {
+        "normalization": "remove_all_whitespace",
+        "metric": "character_levenshtein_similarity",
+        "expected_range": [
+          0.45,
+          0.98
+        ]
+      }
+    },
+    {
+      "id": "word-wrappers",
+      "kind": "semantic",
+      "taxonomy": "type_4",
+      "must_detect": true,
+      "description": "Stateful scanner and iterator/fold implementations with equivalent rendered output.",
+      "instances": [
+        {
+          "file": "src/wrapping/scanner.rs",
+          "start_line": 3,
+          "end_line": 49,
+          "start_marker": "// fixture:semantic-wrap:start",
+          "end_marker": "// fixture:semantic-wrap:end",
+          "symbol": "wrap"
+        },
+        {
+          "file": "src/wrapping/fold.rs",
+          "start_line": 3,
+          "end_line": 54,
+          "start_marker": "// fixture:semantic-wrap:start",
+          "end_marker": "// fixture:semantic-wrap:end",
+          "symbol": "wrap"
+        }
+      ],
+      "oracle": {
+        "source_relation": "not_identical",
+        "behavior_test": "tests/behavior.rs::both_semantic_wrappers_render_identically"
+      }
+    }
+  ],
+  "negative_controls": [
+    {
+      "id": "same-name-render-hard-negative",
+      "kind": "not_a_clone",
+      "description": "Functions share the generic name render but operate at different abstraction levels.",
+      "instances": [
+        {
+          "file": "src/cow.rs",
+          "symbol": "render"
+        },
+        {
+          "file": "src/bubble/mod.rs",
+          "symbol": "render"
+        }
+      ]
+    },
+    {
+      "id": "dispatch-hard-negative",
+      "kind": "not_a_clone",
+      "description": "Two short dispatch functions have superficial match/branch shape but unrelated semantics.",
+      "instances": [
+        {
+          "file": "src/bubble/mod.rs",
+          "symbol": "render"
+        },
+        {
+          "file": "src/wrapping/mod.rs",
+          "symbol": "wrap"
+        }
+      ]
+    }
+  ]
+}

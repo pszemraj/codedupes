@@ -2489,3 +2489,27 @@ def test_analyze_directory_still_gates_stubs_on_include_stubs(tmp_path: Path) ->
     result = CodeAnalyzer(config).analyze(tmp_path)
 
     assert [unit.qualified_name for unit in result.units] == ["real_mod.keep"]
+
+
+@pytest.mark.grammar
+def test_cowsay_fixture_reports_planted_rust_exact_clone() -> None:
+    fixture = Path(__file__).resolve().parents[1] / "test_fixtures" / "cowsay_wasm" / "src"
+
+    result = CodeAnalyzer(
+        AnalyzerConfig(run_semantic=False, run_unused=False),
+    ).analyze(fixture)
+
+    assert result.extraction_diagnostics == []
+    assert len(result.units) == 19
+    assert {unit.language for unit in result.units} == {"rust"}
+    duplicate_names = {
+        frozenset((duplicate.unit_a.qualified_name, duplicate.unit_b.qualified_name))
+        for duplicate in result.traditional_duplicates
+    }
+    assert (
+        frozenset(
+            ("bubble.speech.make_borders", "bubble.thought.make_borders"),
+        )
+        in duplicate_names
+    )
+    assert frozenset(("cow.render", "bubble.render")) not in duplicate_names

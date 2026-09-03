@@ -1,0 +1,250 @@
+:root {
+  color-scheme: dark;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: #11130f;
+  color: #eff3e7;
+  font-synthesis: none;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  min-height: 100vh;
+  margin: 0;
+  background:
+    radial-gradient(circle at 15% 0%, rgba(181, 220, 108, 0.13), transparent 32rem),
+    #11130f;
+}
+
+main {
+  width: min(1060px, calc(100% - 32px));
+  margin: 0 auto;
+  padding: 64px 0 32px;
+}
+
+header {
+  max-width: 760px;
+  margin-bottom: 32px;
+}
+
+.eyebrow {
+  margin: 0 0 12px;
+  color: #b5dc6c;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.78rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+h1 {
+  margin: 0;
+  font-size: clamp(2.4rem, 7vw, 5.6rem);
+  line-height: 0.94;
+  letter-spacing: -0.055em;
+}
+
+.lede {
+  max-width: 650px;
+  margin: 24px 0 0;
+  color: #b9c0b0;
+  font-size: 1.05rem;
+  line-height: 1.65;
+}
+
+.workbench {
+  display: grid;
+  grid-template-columns: minmax(260px, 0.8fr) minmax(0, 1.2fr);
+  overflow: hidden;
+  border: 1px solid #353a31;
+  border-radius: 18px;
+  background: rgba(22, 25, 20, 0.92);
+  box-shadow: 0 28px 90px rgba(0, 0, 0, 0.38);
+}
+
+form {
+  display: grid;
+  align-content: start;
+  gap: 20px;
+  padding: 28px;
+  border-right: 1px solid #353a31;
+}
+
+label {
+  display: grid;
+  gap: 8px;
+  color: #d7ddcf;
+  font-size: 0.88rem;
+  font-weight: 650;
+}
+
+textarea,
+select,
+input[type="range"] {
+  width: 100%;
+}
+
+textarea,
+select {
+  border: 1px solid #454c40;
+  border-radius: 10px;
+  background: #0d0f0c;
+  color: #f4f7ef;
+  font: inherit;
+}
+
+textarea {
+  min-height: 130px;
+  resize: vertical;
+  padding: 13px 14px;
+  line-height: 1.5;
+}
+
+select {
+  padding: 10px 12px;
+}
+
+textarea:focus,
+select:focus,
+input:focus-visible {
+  outline: 2px solid #b5dc6c;
+  outline-offset: 2px;
+}
+
+.control-row {
+  display: grid;
+  gap: 8px;
+}
+
+output {
+  color: #b5dc6c;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.control-grid {
+  display: grid;
+  gap: 18px;
+}
+
+.check {
+  grid-template-columns: auto 1fr;
+  align-items: center;
+}
+
+.check input {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: #b5dc6c;
+}
+
+.terminal {
+  min-width: 0;
+  background: #090b08;
+}
+
+.terminal-bar {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 18px;
+  border-bottom: 1px solid #2d322a;
+  color: #8e9787;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.76rem;
+}
+
+pre {
+  min-height: 410px;
+  margin: 0;
+  overflow: auto;
+  padding: 30px;
+  color: #d9efad;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  font-size: clamp(0.72rem, 1.55vw, 0.98rem);
+  line-height: 1.35;
+  tab-size: 4;
+}
+
+footer {
+  margin-top: 18px;
+  color: #7f8878;
+  font-size: 0.8rem;
+}
+
+code {
+  color: #b5dc6c;
+}
+
+@media (max-width: 780px) {
+  main {
+    padding-top: 40px;
+  }
+
+  .workbench {
+    grid-template-columns: 1fr;
+  }
+
+  form {
+    border-right: 0;
+    border-bottom: 1px solid #353a31;
+  }
+
+  pre {
+    min-height: 330px;
+  }
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    color-scheme: light;
+    background: #f2f4eb;
+    color: #1d2119;
+  }
+
+  body {
+    background:
+      radial-gradient(circle at 15% 0%, rgba(104, 139, 39, 0.14), transparent 32rem),
+      #f2f4eb;
+  }
+
+  .eyebrow,
+  output,
+  code {
+    color: #587819;
+  }
+
+  .lede {
+    color: #5f6758;
+  }
+
+  .workbench {
+    border-color: #cbd1c3;
+    background: rgba(250, 251, 246, 0.94);
+    box-shadow: 0 28px 90px rgba(50, 58, 42, 0.14);
+  }
+
+  form {
+    border-color: #cbd1c3;
+  }
+
+  label {
+    color: #353c30;
+  }
+
+  textarea,
+  select {
+    border-color: #b8c0af;
+    background: #ffffff;
+    color: #1d2119;
+  }
+
+  .terminal {
+    background: #1a1e17;
+  }
+
+  footer {
+    color: #6e7568;
+  }
+}
