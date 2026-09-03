@@ -177,20 +177,53 @@ def _both_units_are_tiny(
     )
 
 
+def _tiny_filter_statement_counts(units: list[CodeUnit]) -> dict[str, int]:
+    """Measure classes by their extracted members while preserving base counts.
+
+    Class extractors intentionally store a member count because nested bodies
+    belong to their own code units. For tiny-duplicate filtering, expand each
+    member's declaration from one statement to that member's effective size so
+    a class containing a few substantial methods is not mistaken for a marker.
+
+    :param units: Full extracted analysis scope.
+    :return: Effective statement counts keyed by unit uid.
+    """
+    counts = {unit.uid: get_code_unit_statement_count(unit) for unit in units}
+    children: dict[tuple[Path, str], list[CodeUnit]] = {}
+    for unit in units:
+        parent, separator, _name = unit.qualified_name.rpartition(".")
+        if separator:
+            children.setdefault((unit.file_path, parent), []).append(unit)
+
+    classes = sorted(
+        (unit for unit in units if unit.unit_type == CodeUnitType.CLASS),
+        key=lambda unit: unit.qualified_name.count("."),
+        reverse=True,
+    )
+    for unit in classes:
+        counts[unit.uid] += sum(
+            max(0, counts[member.uid] - 1)
+            for member in children.get((unit.file_path, unit.qualified_name), [])
+        )
+    return counts
+
+
 def _filter_tiny_traditional_duplicates(
     exact_duplicates: list[DuplicatePair],
     near_duplicates: list[DuplicatePair],
     *,
+    units: list[CodeUnit],
     statement_cutoff: int,
 ) -> tuple[list[DuplicatePair], list[DuplicatePair]]:
     """Filter tiny wrapper noise from traditional duplicates.
 
     :param exact_duplicates: Exact traditional duplicate pairs.
     :param near_duplicates: Near traditional duplicate pairs.
+    :param units: Full extracted scope used to measure class members.
     :param statement_cutoff: Tiny cutoff (exclusive).
     :return: Filtered exact and near duplicate lists.
     """
-    statement_cache: dict[str, int] = {}
+    statement_cache = _tiny_filter_statement_counts(units)
     filtered_exact: list[DuplicatePair] = []
     filtered_near: list[DuplicatePair] = []
 
@@ -889,6 +922,7 @@ class CodeAnalyzer:
                 exact_dupes, near_dupes = _filter_tiny_traditional_duplicates(
                     exact_dupes,
                     near_dupes,
+                    units=units,
                     statement_cutoff=self.config.tiny_unit_statement_cutoff,
                 )
             traditional_duplicates = exact_dupes + near_dupes

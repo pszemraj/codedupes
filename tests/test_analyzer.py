@@ -662,6 +662,95 @@ def test_tiny_class_duplicates_follow_tiny_filter(
     assert len(result.traditional_duplicates) == int(not filter_tiny_traditional)
 
 
+def test_large_class_duplicates_are_not_filtered_by_member_count(tmp_path: Path) -> None:
+    source = dedent(
+        """
+        class FirstProcessor:
+            def prepare(self, value):
+                adjusted = value + 1
+                doubled = adjusted * 2
+                return doubled
+
+            def finish(self, value):
+                adjusted = value - 1
+                doubled = adjusted * 2
+                return doubled
+
+        class SecondProcessor:
+            def prepare(self, value):
+                adjusted = value + 1
+                doubled = adjusted * 2
+                return doubled
+
+            def finish(self, value):
+                adjusted = value - 1
+                doubled = adjusted * 2
+                return doubled
+        """
+    ).strip()
+    project = create_project(tmp_path, source, module="large_classes.py")
+
+    result = CodeAnalyzer(
+        AnalyzerConfig(
+            run_semantic=False,
+            run_unused=False,
+            filter_tiny_traditional=True,
+        )
+    ).analyze(project)
+
+    classes = [unit for unit in result.units if unit.unit_type == CodeUnitType.CLASS]
+    assert {unit.statement_count for unit in classes} == {2}
+    assert any(
+        duplicate.unit_a.unit_type == CodeUnitType.CLASS
+        and duplicate.unit_b.unit_type == CodeUnitType.CLASS
+        for duplicate in result.traditional_duplicates
+    )
+
+
+def test_large_tree_sitter_class_duplicates_are_not_filtered(tmp_path: Path) -> None:
+    source = dedent(
+        """
+        class FirstProcessor {
+          prepare(value) {
+            const adjusted = value + 1;
+            const doubled = adjusted * 2;
+            return doubled;
+          }
+          finish(value) {
+            const adjusted = value - 1;
+            const doubled = adjusted * 2;
+            return doubled;
+          }
+        }
+        class SecondProcessor {
+          prepare(value) {
+            const adjusted = value + 1;
+            const doubled = adjusted * 2;
+            return doubled;
+          }
+          finish(value) {
+            const adjusted = value - 1;
+            const doubled = adjusted * 2;
+            return doubled;
+          }
+        }
+        """
+    ).strip()
+    project = create_project(tmp_path, source, module="large_classes.js")
+
+    result = CodeAnalyzer(
+        AnalyzerConfig(run_semantic=False, run_unused=False, filter_tiny_traditional=True)
+    ).analyze(project)
+
+    classes = [unit for unit in result.units if unit.unit_type == CodeUnitType.CLASS]
+    assert {unit.statement_count for unit in classes} == {2}
+    assert any(
+        duplicate.unit_a.unit_type == CodeUnitType.CLASS
+        and duplicate.unit_b.unit_type == CodeUnitType.CLASS
+        for duplicate in result.traditional_duplicates
+    )
+
+
 @pytest.mark.parametrize("filter_tiny_traditional", [True, False])
 def test_tiny_near_duplicates_follow_tiny_filter(
     tmp_path: Path, monkeypatch, filter_tiny_traditional: bool
