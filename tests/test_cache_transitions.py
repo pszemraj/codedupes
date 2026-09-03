@@ -335,31 +335,129 @@ def test_narrow_rerun_does_not_change_full_scan_shard_rows(tmp_path, monkeypatch
     assert len(json.loads(full_shard_index.read_text(encoding="utf-8"))["keys"]) == entries_before
     narrow_manifest = cache.load_manifest(repo / "src", "test-model", REVISION_1)
     assert narrow_manifest is not None
-    assert narrow_manifest.complete_scan is False
-    assert narrow_manifest.orphans == {}
+    narrow_selection = next(iter(narrow_manifest.selections.values()))
+    assert narrow_selection.complete_scan is False
+    assert narrow_selection.orphans == {}
     _assert_matches_uncached(repo / "src/a.py", result)
 
 
-def test_selection_change_does_not_classify_excluded_units_as_deleted(
-    tmp_path, monkeypatch
+@pytest.mark.parametrize(
+    ("files", "overrides"),
+    [
+        (
+            {
+                "src/public.py": "def public(value):\n    return value + 1",
+                "src/private.py": "def _private(value):\n    return value + 2",
+            },
+            {"include_private": False},
+        ),
+        (
+            {
+                "src/python_unit.py": "def python_unit(value):\n    return value + 1",
+                "src/javascript_unit.js": (
+                    "function javascriptUnit(value) {\n  return value + 2;\n}"
+                ),
+            },
+            {"languages": ("python",)},
+        ),
+        (
+            {
+                "src/small.py": "def small(value):\n    return value + 1",
+                "src/larger.py": (
+                    "def larger(value):\n    adjusted = value + 1\n    return adjusted * 2"
+                ),
+            },
+            {"min_semantic_statements": 2},
+        ),
+    ],
+    ids=["private-filter", "language-filter", "minimum-statements-filter"],
+)
+def test_scope_filter_does_not_age_or_collect_other_selection_rows(
+    tmp_path, monkeypatch, files, overrides
 ) -> None:
+    repo = _write_repo(tmp_path, files)
+    _patch_get_model(monkeypatch, CountingModel())
+    initial = _analyze(repo)
+    assert initial.embedding_stats is not None
+    initial_count = initial.embedding_stats.requested_rows
+
+    for _ in range(4):
+        filtered = _analyze(repo, **overrides)
+        assert filtered.embedding_stats is not None
+        assert filtered.embedding_stats.deleted_units == 0
+        assert filtered.embedding_stats.orphan_rows_retained == 0
+        assert filtered.embedding_stats.orphan_rows_collected == 0
+
+    default_again = _analyze(repo)
+    assert default_again.embedding_stats is not None
+    assert default_again.embedding_stats.requested_rows == initial_count
+    assert default_again.embedding_stats.encoded_inputs == 0
+    assert default_again.embedding_stats.model_loaded is False
+
+
+def test_orphan_aging_survives_search_selection_between_checks(tmp_path, monkeypatch) -> None:
     repo = _write_repo(
         tmp_path,
         {
-            "src/small.py": "def small(value):\n    return value + 1",
-            "src/larger.py": (
-                "def larger(value):\n    adjusted = value + 1\n    return adjusted * 2"
-            ),
+            "src/a.py": "def alpha(value):\n    return value + 1",
+            "src/b.py": "def beta(value):\n    return value + 2",
         },
     )
     _patch_get_model(monkeypatch, CountingModel())
     _analyze(repo)
+    (repo / "src/b.py").unlink()
+    orphaned = _analyze(repo)
+    assert orphaned.embedding_stats is not None
+    assert orphaned.embedding_stats.manifest_generation == 2
+    assert orphaned.embedding_stats.orphan_rows_retained == 1
 
-    result = _analyze(repo, min_semantic_statements=2)
+    _index(repo, search_document="source")
+    resumed = _analyze(repo)
 
-    assert result.embedding_stats is not None
-    assert result.embedding_stats.deleted_units == 0
-    assert result.embedding_stats.orphan_rows_retained == 0
+    assert resumed.embedding_stats is not None
+    assert resumed.embedding_stats.manifest_generation == 3
+    assert resumed.embedding_stats.orphan_rows_retained == 1
+    manifest = EmbeddingCache().load_manifest(repo, "test-model", REVISION_1)
+    assert manifest is not None
+    assert len(manifest.selections) == 2
+
+    retained = _analyze(repo)
+    collected = _analyze(repo)
+    assert retained.embedding_stats is not None
+    assert retained.embedding_stats.orphan_rows_collected == 0
+    assert collected.embedding_stats is not None
+    assert collected.embedding_stats.manifest_generation == 5
+    assert collected.embedding_stats.orphan_rows_collected == 1
+
+
+def test_single_file_scan_preserves_shared_complete_baseline(tmp_path, monkeypatch) -> None:
+    repo = _write_repo(
+        tmp_path,
+        {
+            "a.py": "def alpha(value):\n    return value + 1",
+            "b.py": "def beta(value):\n    return value + 2",
+        },
+    )
+    _patch_get_model(monkeypatch, CountingModel())
+    _analyze(repo)
+    cache = EmbeddingCache()
+
+    narrow = _analyze(repo / "a.py")
+
+    assert narrow.embedding_stats is not None
+    assert narrow.embedding_stats.encoded_inputs == 0
+    manifest = cache.load_manifest(repo, "test-model", REVISION_1)
+    assert manifest is not None
+    selection = next(iter(manifest.selections.values()))
+    assert selection.complete_scan is False
+    assert len(selection.units) == 2
+
+    (repo / "b.py").unlink()
+    rescanned = _analyze(repo)
+
+    assert rescanned.embedding_stats is not None
+    assert rescanned.embedding_stats.deleted_units == 1
+    assert rescanned.embedding_stats.orphan_rows_retained == 1
 
 
 def test_failed_analysis_keeps_previous_manifest_authoritative(tmp_path, monkeypatch) -> None:
@@ -373,6 +471,7 @@ def test_failed_analysis_keeps_previous_manifest_authoritative(tmp_path, monkeyp
     cache = EmbeddingCache()
     previous = cache.load_manifest(repo, "test-model", REVISION_1)
     assert previous is not None
+    previous_generation = next(iter(previous.selections.values())).generation
     (repo / "src/value.py").write_text(
         "def value(number):\n    return number + 99\n",
         encoding="utf-8",
@@ -393,7 +492,7 @@ def test_failed_analysis_keeps_previous_manifest_authoritative(tmp_path, monkeyp
     assert recovered.embedding_stats is not None
     assert recovered.embedding_stats.encoded_inputs == 0
     assert recovered.embedding_stats.orphan_rows_retained == 1
-    assert recovered.embedding_stats.manifest_generation == previous.generation + 1
+    assert recovered.embedding_stats.manifest_generation == previous_generation + 1
 
 
 def test_contextual_search_embeds_envelope_while_analysis_embeds_source(

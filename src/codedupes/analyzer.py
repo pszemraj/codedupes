@@ -659,6 +659,8 @@ class CodeAnalyzer:
         if cache is None:
             return
         selection_payload = {
+            "include_private": self.config.include_private,
+            "languages": self.config.languages,
             "min_semantic_statements": self.config.min_semantic_statements,
             "semantic_unit_types": self.config.semantic_unit_types,
             "include_stubs": self.config.include_stubs,

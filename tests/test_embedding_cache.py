@@ -16,7 +16,7 @@ import numpy as np
 import pytest
 
 from codedupes import embedding_cache, semantic
-from codedupes.embedding_cache import CorpusManifest, EmbeddingCache, diff_manifest
+from codedupes.embedding_cache import CorpusSelectionManifest, EmbeddingCache, diff_manifest
 from codedupes.models import CodeUnit
 from codedupes.semantic import (
     EmbeddingRunStats,
@@ -72,13 +72,11 @@ def _corpus_manifest(
     units: dict[str, str],
     *,
     orphans: dict[str, int] | None = None,
-) -> CorpusManifest:
+) -> CorpusSelectionManifest:
     """Build a minimal complete manifest for transition-diff tests."""
-    return CorpusManifest(
-        schema=1,
+    return CorpusSelectionManifest(
         generation=1,
         complete_scan=True,
-        selection="selection",
         units=units,
         orphans=dict(orphans or {}),
     )
@@ -179,6 +177,60 @@ def test_manifest_gc_never_collects_query_rows(tmp_path) -> None:
     assert published.orphan_rows_collected == 1
     assert cache.get_many(scope, "model", "revision", [code_key]) == {}
     assert query_key in cache.get_many(scope, "model", "revision", [query_key])
+
+
+def test_manifest_gc_waits_for_every_selection_to_release_key(tmp_path) -> None:
+    cache = EmbeddingCache()
+    scope = tmp_path / "repo"
+    scope.mkdir()
+    key = "shared-key"
+    cache.put_many(scope, "model", "revision", [(key, np.ones(2, dtype=np.float32))])
+    for selection in ("first", "second"):
+        cache.publish_corpus_manifest(
+            scope,
+            "model",
+            "revision",
+            selection=selection,
+            units={"unit": key},
+            complete_scan=True,
+        )
+
+    for _ in range(4):
+        published = cache.publish_corpus_manifest(
+            scope,
+            "model",
+            "revision",
+            selection="first",
+            units={},
+            complete_scan=True,
+        )
+        assert published is not None
+        assert published.orphan_rows_collected == 0
+    assert key in cache.get_many(scope, "model", "revision", [key])
+
+    for _ in range(3):
+        published = cache.publish_corpus_manifest(
+            scope,
+            "model",
+            "revision",
+            selection="second",
+            units={},
+            complete_scan=True,
+        )
+        assert published is not None
+        assert published.orphan_rows_collected == 0
+    published = cache.publish_corpus_manifest(
+        scope,
+        "model",
+        "revision",
+        selection="second",
+        units={},
+        complete_scan=True,
+    )
+
+    assert published is not None
+    assert published.orphan_rows_collected == 1
+    assert cache.get_many(scope, "model", "revision", [key]) == {}
 
 
 def _five_units(tmp_path: Path) -> list[CodeUnit]:
