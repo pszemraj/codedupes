@@ -24,7 +24,7 @@ import time
 import uuid
 from collections.abc import Iterator, MutableMapping, Sequence
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -37,7 +37,7 @@ LOCAL_MODELS_SUBDIR = "local-models"
 LOCKS_SUBDIR = "locks"
 INDEX_FILENAME = "index.json"
 MANIFEST_FILENAME = "manifest.json"
-MANIFEST_SCHEMA = 3
+MANIFEST_SCHEMA = 4
 ORPHAN_GC_GENERATIONS = 3
 MANIFEST_SELECTION_LIMIT = 16
 DEFAULT_CACHE_MAX_MB = 2048
@@ -67,6 +67,7 @@ class CorpusSelectionManifest:
     complete_scan: bool
     units: dict[str, str]
     orphans: dict[str, int]
+    unit_paths: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -1024,6 +1025,7 @@ def _read_corpus_manifest(shard_dir: Path) -> CorpusManifest | None:
         complete_scan = entry.get("complete_scan")
         units = entry.get("units")
         orphans = entry.get("orphans")
+        unit_paths = entry.get("unit_paths")
         if (
             not isinstance(last_seen_generation, int)
             or not 0 <= last_seen_generation <= manifest_generation
@@ -1035,6 +1037,11 @@ def _read_corpus_manifest(shard_dir: Path) -> CorpusManifest | None:
                 isinstance(key, str) and isinstance(age, int) and age >= 0
                 for key, age in orphans.items()
             )
+            or not isinstance(unit_paths, dict)
+            or not all(
+                isinstance(uid, str) and isinstance(path, str) and uid in units
+                for uid, path in unit_paths.items()
+            )
         ):
             return None
         parsed[selection] = CorpusSelectionManifest(
@@ -1042,6 +1049,7 @@ def _read_corpus_manifest(shard_dir: Path) -> CorpusManifest | None:
             complete_scan=complete_scan,
             units=dict(units),
             orphans=dict(orphans),
+            unit_paths=dict(unit_paths),
         )
     return CorpusManifest(
         schema=MANIFEST_SCHEMA,
@@ -1068,6 +1076,7 @@ def _write_corpus_manifest(shard_dir: Path, manifest: CorpusManifest) -> None:
                     "complete_scan": entry.complete_scan,
                     "units": entry.units,
                     "orphans": entry.orphans,
+                    "unit_paths": entry.unit_paths,
                 }
                 for selection, entry in manifest.selections.items()
             },
@@ -1914,7 +1923,8 @@ class EmbeddingCache:
         selection: str,
         units: dict[str, str],
         complete_scan: bool,
-        observed_uid_prefixes: tuple[str, ...] = (),
+        unit_paths: dict[str, str] | None = None,
+        observed_files: tuple[str, ...] = (),
     ) -> ManifestPublishResult | None:
         """Publish a completed corpus run and age or collect unreferenced rows.
 
@@ -1924,8 +1934,9 @@ class EmbeddingCache:
         :param selection: Digest of semantic candidate-selection settings.
         :param units: Current unit-to-cache-key mapping.
         :param complete_scan: Whether missing units represent the complete selection.
-        :param observed_uid_prefixes: UID prefixes whose units were fully observed
-            by an incomplete scan, allowing that slice of the baseline to be replaced.
+        :param unit_paths: Unit UID-to-file-path mapping for ``units``.
+        :param observed_files: Exact file paths fully observed by an incomplete
+            scan, allowing those slices of the baseline to be replaced.
         :return: Publication and GC telemetry, or ``None`` on cache failure.
         """
         shard_dir = self.shard_dir(cache_scope, canonical_model, revision)
@@ -1955,6 +1966,7 @@ class EmbeddingCache:
                             for key, age in entry.orphans.items()
                             if cached_keys is None or key in cached_keys
                         },
+                        unit_paths=dict(entry.unit_paths),
                     )
                     for name, entry in manifest.selections.items()
                 }
@@ -1970,14 +1982,21 @@ class EmbeddingCache:
                     orphans = dict(previous.orphans)
                     if complete_scan:
                         current_units = dict(units)
+                        current_unit_paths = dict(unit_paths or {})
                     else:
+                        observed_file_set = set(observed_files)
                         current_units = {
                             uid: key
                             for uid, key in previous.units.items()
-                            if not observed_uid_prefixes
-                            or not uid.startswith(observed_uid_prefixes)
+                            if previous.unit_paths.get(uid) not in observed_file_set
                         }
                         current_units.update(units)
+                        current_unit_paths = {
+                            uid: path
+                            for uid, path in previous.unit_paths.items()
+                            if uid in current_units
+                        }
+                        current_unit_paths.update(unit_paths or {})
                     diff = diff_manifest(previous, current_units)
                     for key in diff.orphaned:
                         if cached_keys is None or key in cached_keys:
@@ -1986,6 +2005,7 @@ class EmbeddingCache:
                     diff = ManifestDiff(moved=[], deleted=[], orphaned=set())
                     orphans = {}
                     current_units = dict(units)
+                    current_unit_paths = dict(unit_paths or {})
 
                 if complete_scan or previous is None:
                     last_seen_generation = generation
@@ -1998,6 +2018,7 @@ class EmbeddingCache:
                     complete_scan=complete_scan,
                     units=current_units,
                     orphans=orphans,
+                    unit_paths=current_unit_paths,
                 )
                 selections = _limit_manifest_selections(
                     selections,

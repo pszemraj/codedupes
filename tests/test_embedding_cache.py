@@ -409,6 +409,55 @@ def test_manifest_selection_limit_uses_incomplete_publish_recency(tmp_path) -> N
     assert "z-old-00" not in manifest.selections
 
 
+def test_incomplete_manifest_matches_observed_files_by_exact_path(tmp_path) -> None:
+    cache = EmbeddingCache()
+    scope = tmp_path / "repo"
+    scope.mkdir()
+    first_path = "/repo/a.py"
+    sibling_path = "/repo/a.py::sibling.py"
+    first_uid = f"{first_path}::python::a.alpha::0"
+    sibling_uid = f"{sibling_path}::python::sibling.beta::0"
+    cache.put_many(
+        scope,
+        "model",
+        "revision",
+        [
+            ("first-key", np.ones(2, dtype=np.float32)),
+            ("sibling-key", np.zeros(2, dtype=np.float32)),
+        ],
+    )
+    cache.publish_corpus_manifest(
+        scope,
+        "model",
+        "revision",
+        selection="selection",
+        units={first_uid: "first-key", sibling_uid: "sibling-key"},
+        unit_paths={first_uid: first_path, sibling_uid: sibling_path},
+        complete_scan=True,
+    )
+
+    narrow = cache.publish_corpus_manifest(
+        scope,
+        "model",
+        "revision",
+        selection="selection",
+        units={first_uid: "first-key"},
+        unit_paths={first_uid: first_path},
+        observed_files=(first_path,),
+        complete_scan=False,
+    )
+
+    assert narrow is not None
+    assert narrow.diff.deleted == []
+    assert narrow.orphan_rows_retained == 0
+    manifest = cache.load_manifest(scope, "model", "revision")
+    assert manifest is not None
+    assert manifest.selections["selection"].units == {
+        first_uid: "first-key",
+        sibling_uid: "sibling-key",
+    }
+
+
 def _five_units(tmp_path: Path) -> list[CodeUnit]:
     return extract_units(tmp_path, FIVE_FUNCTION_SOURCE, filename="mod.py")
 
