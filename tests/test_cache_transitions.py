@@ -155,6 +155,40 @@ def test_edit_one_body_reencodes_only_that_body(tmp_path, monkeypatch) -> None:
     _assert_matches_uncached(repo, result)
 
 
+def test_single_file_edit_preserves_old_key_for_orphan_collection(tmp_path, monkeypatch) -> None:
+    repo = _write_repo(
+        tmp_path,
+        {
+            "a.py": "def alpha(value):\n    return value + 1",
+            "b.py": "def beta(value):\n    return value + 2",
+        },
+    )
+    _patch_get_model(monkeypatch, CountingModel())
+    _analyze(repo)
+    (repo / "a.py").write_text(
+        "def alpha(value):\n    return value + 99\n",
+        encoding="utf-8",
+    )
+
+    narrow = _analyze(repo / "a.py")
+
+    assert narrow.embedding_stats is not None
+    assert narrow.embedding_stats.encoded_inputs == 1
+    assert narrow.embedding_stats.deleted_units == 0
+    assert narrow.embedding_stats.orphan_rows_retained == 1
+
+    complete = _analyze(repo)
+    assert complete.embedding_stats is not None
+    assert complete.embedding_stats.encoded_inputs == 0
+    assert complete.embedding_stats.orphan_rows_retained == 1
+
+    _analyze(repo)
+    collected = _analyze(repo)
+    assert collected.embedding_stats is not None
+    assert collected.embedding_stats.orphan_rows_collected == 1
+    assert EmbeddingCache().stats()["entries"] == 2
+
+
 def test_rename_file_reuses_embeddings_and_reports_only_new_path(tmp_path, monkeypatch) -> None:
     repo = _write_repo(
         tmp_path,
@@ -247,6 +281,47 @@ def test_delete_file_removes_its_units_and_findings_without_encoding(tmp_path, m
     collected_stats = EmbeddingCache().stats()
     assert collected_stats["entries"] == 1
     assert collected_stats["repos"][0]["orphan_rows"] == 0
+
+
+def test_delete_last_unit_publishes_empty_manifest(tmp_path, monkeypatch) -> None:
+    repo = _write_repo(
+        tmp_path,
+        {"only.py": "def only(value):\n    return value + 1"},
+    )
+    _patch_get_model(monkeypatch, CountingModel())
+    _analyze(repo)
+    (repo / "only.py").unlink()
+
+    empty = _analyze(repo)
+
+    assert empty.units == []
+    assert empty.embedding_stats is not None
+    assert empty.embedding_stats.encoded_inputs == 0
+    assert empty.embedding_stats.model_loaded is False
+    assert empty.embedding_stats.deleted_units == 1
+    assert empty.embedding_stats.orphan_rows_retained == 1
+
+
+def test_last_ineligible_candidate_publishes_empty_manifest(tmp_path, monkeypatch) -> None:
+    repo = _write_repo(
+        tmp_path,
+        {"only.py": "def only(value):\n    adjusted = value + 1\n    return adjusted"},
+    )
+    _patch_get_model(monkeypatch, CountingModel())
+    _analyze(repo, min_semantic_statements=2)
+    (repo / "only.py").write_text(
+        "def only(value):\n    return value + 1\n",
+        encoding="utf-8",
+    )
+
+    filtered = _analyze(repo, min_semantic_statements=2)
+
+    assert len(filtered.units) == 1
+    assert filtered.embedding_stats is not None
+    assert filtered.embedding_stats.encoded_inputs == 0
+    assert filtered.embedding_stats.model_loaded is False
+    assert filtered.embedding_stats.deleted_units == 1
+    assert filtered.embedding_stats.orphan_rows_retained == 1
 
 
 def test_move_and_edit_reencodes_changed_function_but_hits_sibling(tmp_path, monkeypatch) -> None:

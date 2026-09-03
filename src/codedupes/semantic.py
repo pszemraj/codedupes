@@ -2865,23 +2865,9 @@ def _compute_embeddings_unlocked(
     if batch_size <= 0:
         raise ValueError("batch_size must be > 0")
 
-    # Before the empty-corpus return: an explicit unavailable --device must be
-    # an error even when there is nothing to embed, matching the contract
-    # enforced for warm and nonempty corpora (see find_similar_code).
+    # An explicit unavailable --device must be an error even when there is
+    # nothing to embed, matching the contract enforced for populated corpora.
     validate_explicit_device_request(device, mps_fallback=mps_fallback)
-
-    if not units:
-        return np.zeros((0, 0), dtype=np.float32), resolve_embedding_space_identity(
-            model_name=model_name,
-            instruction_prefix=instruction_prefix,
-            revision=revision,
-            trust_remote_code=trust_remote_code,
-            semantic_task=semantic_task,
-            device=device,
-            mps_fallback=mps_fallback,
-            persist_local_model_manifest=use_cache and cache_scope is not None,
-            strict_revision_cache=strict_revision_cache,
-        )
 
     profile = resolve_model_profile(model_name)
     resolved_task = normalize_semantic_task(
@@ -3002,6 +2988,23 @@ def _compute_embeddings_unlocked(
             f"search_document={search_document}" if search_document == "contextual" else ""
         ),
     )
+    if not units:
+        _record_embedding_run_stats(
+            stats,
+            prepared_texts=[],
+            kept_rows=[],
+            cache_enabled=cache is not None,
+            cache_revision=cache_revision,
+            cache_keys=[] if cache is not None else None,
+            hits={},
+            encoded_inputs=0,
+            model_loaded=False,
+            execution_device=None,
+        )
+        return np.zeros((0, 0), dtype=np.float32), _effective_identity(
+            device,
+            identity_revision,
+        )
 
     def _cache_keys_for_revision(active_revision: str) -> list[str]:
         """Derive row-aligned cache keys for the prepared texts under one revision.

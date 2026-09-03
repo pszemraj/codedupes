@@ -237,6 +237,90 @@ def test_manifest_gc_expires_unrefreshed_selection_pin(tmp_path) -> None:
     assert published.orphan_rows_collected == 1
     assert cache.get_many(scope, "model", "revision", [key]) == {}
 
+    rediscovered = cache.publish_corpus_manifest(
+        scope,
+        "model",
+        "revision",
+        selection="second",
+        units={},
+        complete_scan=True,
+    )
+    assert rediscovered is not None
+    assert len(rediscovered.diff.deleted) == 1
+    assert rediscovered.orphan_rows_retained == 0
+    assert rediscovered.orphan_rows_collected == 0
+
+
+def test_manifest_gc_revalidates_references_before_collection(tmp_path, monkeypatch) -> None:
+    cache = EmbeddingCache()
+    concurrent_cache = EmbeddingCache(cache.cache_root)
+    scope = tmp_path / "repo"
+    scope.mkdir()
+    key = "reintroduced-key"
+    cache.put_many(scope, "model", "revision", [(key, np.ones(2, dtype=np.float32))])
+    cache.publish_corpus_manifest(
+        scope,
+        "model",
+        "revision",
+        selection="selection",
+        units={"unit": key},
+        complete_scan=True,
+    )
+    cache.publish_corpus_manifest(
+        scope,
+        "model",
+        "revision",
+        selection="selection",
+        units={},
+        complete_scan=True,
+    )
+    cache.publish_corpus_manifest(
+        scope,
+        "model",
+        "revision",
+        selection="selection",
+        units={},
+        complete_scan=True,
+    )
+    cache.publish_corpus_manifest(
+        scope,
+        "model",
+        "revision",
+        selection="selection",
+        units={},
+        complete_scan=True,
+    )
+    collect_orphans = cache.collect_orphans
+
+    def reintroduce_before_collection(*args, **kwargs):
+        concurrent_cache.publish_corpus_manifest(
+            scope,
+            "model",
+            "revision",
+            selection="selection",
+            units={"unit": key},
+            complete_scan=True,
+        )
+        return collect_orphans(*args, **kwargs)
+
+    monkeypatch.setattr(cache, "collect_orphans", reintroduce_before_collection)
+
+    raced = cache.publish_corpus_manifest(
+        scope,
+        "model",
+        "revision",
+        selection="selection",
+        units={},
+        complete_scan=True,
+    )
+
+    assert raced is not None
+    assert raced.orphan_rows_collected == 0
+    manifest = cache.load_manifest(scope, "model", "revision")
+    assert manifest is not None
+    assert manifest.selections["selection"].units == {"unit": key}
+    assert key in cache.get_many(scope, "model", "revision", [key])
+
 
 def test_cache_stats_accepts_manifest_without_selections(tmp_path) -> None:
     cache = EmbeddingCache()
@@ -261,6 +345,29 @@ def test_cache_stats_accepts_manifest_without_selections(tmp_path) -> None:
     stats = cache.stats()
 
     assert stats["repos"][0]["last_complete_generation"] == 7
+
+
+def test_manifest_limits_inactive_selection_baselines(tmp_path) -> None:
+    cache = EmbeddingCache()
+    scope = tmp_path / "repo"
+    scope.mkdir()
+    selection_count = embedding_cache.MANIFEST_SELECTION_LIMIT + 3
+
+    for index in range(selection_count):
+        cache.publish_corpus_manifest(
+            scope,
+            "model",
+            "revision",
+            selection=f"selection-{index:02d}",
+            units={"unit": f"key-{index}"},
+            complete_scan=True,
+        )
+
+    manifest = cache.load_manifest(scope, "model", "revision")
+    assert manifest is not None
+    assert len(manifest.selections) == embedding_cache.MANIFEST_SELECTION_LIMIT
+    assert "selection-00" not in manifest.selections
+    assert f"selection-{selection_count - 1:02d}" in manifest.selections
 
 
 def _five_units(tmp_path: Path) -> list[CodeUnit]:

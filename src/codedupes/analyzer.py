@@ -45,7 +45,6 @@ from codedupes.semantic import (
     embedding_cache_keys_for_units,
     get_code_unit_statement_count,
     get_semantic_runtime_versions,
-    validate_explicit_device_request,
 )
 from codedupes.semantic import (
     compute_embeddings_with_identity as compute_embeddings,
@@ -825,34 +824,6 @@ class CodeAnalyzer:
             )
         return gates, floor
 
-    def _validate_semantic_device_for_empty_corpus(self) -> None:
-        """Enforce the explicit-device contract on the empty-extraction shortcut.
-
-        An empty extraction returns before the semantic layer runs, so the
-        validation :func:`codedupes.semantic.compute_embeddings_with_identity`
-        performs never fires and ``--device mps`` on a non-MPS host would look
-        like a success. Combined mode with an explicit semantic-fallback opt-in
-        degrades here exactly as it does for a populated corpus; every other
-        configuration gets the documented error.
-
-        :return: ``None``.
-        :raises SemanticBackendError: If an explicitly requested device is unavailable.
-        """
-        if not self.config.run_semantic:
-            return
-
-        try:
-            validate_explicit_device_request(
-                self.config.device, mps_fallback=self.config.mps_fallback
-            )
-        except SemanticBackendError as exc:
-            if not (self.config.run_traditional and self.config.allow_semantic_fallback):
-                raise
-            logger.warning(
-                f"Semantic device unavailable ({exc}); extraction found no code units, "
-                "so there is nothing to embed (allow_semantic_fallback=True)."
-            )
-
     def analyze(self, path: Path | str) -> AnalysisResult:
         """
         Run full analysis on a directory or file.
@@ -866,8 +837,9 @@ class CodeAnalyzer:
         Raises:
             FileNotFoundError: If path does not exist
             ValueError: If the config was built with mode="search"
-            SemanticBackendError: If an explicitly requested device is unavailable,
-                including when extraction finds no code units
+            SemanticBackendError: If semantic-only analysis cannot use the requested device
+            RuntimeError: If combined analysis cannot use the semantic backend and fallback
+                is disabled
         """
         if self.config.mode != "check":
             raise ValueError(
@@ -883,18 +855,6 @@ class CodeAnalyzer:
 
         units = self._extract_corpus_units(path)
         self._units = units
-
-        if not units:
-            self._validate_semantic_device_for_empty_corpus()
-            return AnalysisResult(
-                units=[],
-                traditional_duplicates=[],
-                semantic_duplicates=[],
-                hybrid_duplicates=[],
-                potentially_unused=[],
-                analysis_mode="none",
-                extraction_diagnostics=list(self._extraction_diagnostics),
-            )
 
         traditional_duplicates: list[DuplicatePair] = []
         unused: list[CodeUnit] = []
@@ -1055,7 +1015,9 @@ class CodeAnalyzer:
                 jaccard_threshold=self.config.jaccard_threshold,
             )
 
-        if combined_mode:
+        if not units:
+            analysis_mode = "none"
+        elif combined_mode:
             analysis_mode = "combined"
         elif self.config.run_traditional:
             analysis_mode = "traditional"

@@ -39,6 +39,7 @@ INDEX_FILENAME = "index.json"
 MANIFEST_FILENAME = "manifest.json"
 MANIFEST_SCHEMA = 3
 ORPHAN_GC_GENERATIONS = 3
+MANIFEST_SELECTION_LIMIT = 16
 DEFAULT_CACHE_MAX_MB = 2048
 _SCHEMA_VERSION = 3
 _PRUNE_TARGET_RATIO = 0.8
@@ -1097,6 +1098,31 @@ def _manifest_orphan_keys(manifest: CorpusManifest) -> set[str]:
     return {key for selection in manifest.selections.values() for key in selection.orphans}
 
 
+def _limit_manifest_selections(
+    selections: dict[str, CorpusSelectionManifest],
+    *,
+    current_selection: str,
+) -> dict[str, CorpusSelectionManifest]:
+    """Keep pending orphan state plus the most recently used selection baselines.
+
+    :param selections: Candidate selection entries for one shard manifest.
+    :param current_selection: Selection published by the current run.
+    :return: Selection entries retained in the bounded manifest.
+    """
+    if len(selections) <= MANIFEST_SELECTION_LIMIT:
+        return selections
+    required = {current_selection}
+    required.update(name for name, entry in selections.items() if entry.orphans)
+    available = max(0, MANIFEST_SELECTION_LIMIT - len(required))
+    newest = sorted(
+        (item for item in selections.items() if item[0] not in required),
+        key=lambda item: (item[1].last_seen_generation, item[0]),
+        reverse=True,
+    )[:available]
+    retained = required | {name for name, _entry in newest}
+    return {name: entry for name, entry in selections.items() if name in retained}
+
+
 def _publish_index(shard_dir: Path, payload: dict[str, Any]) -> None:
     """Atomically replace a shard's ``index.json``, cleaning its tmp file on failure.
 
@@ -1811,6 +1837,9 @@ class EmbeddingCache:
         canonical_model: str,
         revision: str | None,
         drop_keys: set[str],
+        *,
+        expected_manifest: CorpusManifest | None = None,
+        expected_shard_generation: str | None = None,
     ) -> int:
         """Compact one shard by removing the requested orphaned code keys.
 
@@ -1818,6 +1847,10 @@ class EmbeddingCache:
         :param canonical_model: Canonical model identifier.
         :param revision: Cache revision addressing the shard.
         :param drop_keys: Manifest-owned code keys eligible for collection.
+        :param expected_manifest: Manifest snapshot that made the keys eligible;
+            a newer publication cancels collection.
+        :param expected_shard_generation: Vector-index generation observed with
+            ``expected_manifest``; a newer vector write cancels collection.
         :return: Number of rows removed.
         """
         if not drop_keys:
@@ -1827,6 +1860,18 @@ class EmbeddingCache:
             with _shard_write_lock(shard_dir, blocking=True) as acquired:
                 if not acquired:
                     return 0
+                if (
+                    expected_manifest is not None
+                    and _read_corpus_manifest(shard_dir) != expected_manifest
+                ):
+                    return 0
+                if expected_shard_generation is not None:
+                    current_meta = _read_shard_meta(shard_dir)
+                    if (
+                        current_meta is None
+                        or current_meta["generation"] != expected_shard_generation
+                    ):
+                        return 0
                 _reclaim_stale_shard_files(shard_dir)
                 existing = _read_shard(shard_dir)
                 if existing is None:
@@ -1895,13 +1940,22 @@ class EmbeddingCache:
                     generation=0,
                     selections={},
                 )
+                shard_meta = _read_shard_meta(shard_dir)
+                cached_keys = set(shard_meta["keys"]) if shard_meta is not None else None
+                expected_shard_generation = (
+                    shard_meta["generation"] if shard_meta is not None else None
+                )
                 generation = manifest.generation + int(complete_scan)
                 selections = {
                     name: CorpusSelectionManifest(
                         last_seen_generation=entry.last_seen_generation,
                         complete_scan=entry.complete_scan,
                         units=dict(entry.units),
-                        orphans=dict(entry.orphans),
+                        orphans={
+                            key: age
+                            for key, age in entry.orphans.items()
+                            if cached_keys is None or key in cached_keys
+                        },
                     )
                     for name, entry in manifest.selections.items()
                 }
@@ -1915,13 +1969,13 @@ class EmbeddingCache:
                     orphans = dict(previous.orphans)
                     if complete_scan:
                         current_units = dict(units)
-                        diff = diff_manifest(previous, current_units)
-                        for key in diff.orphaned:
-                            orphans.setdefault(key, generation)
                     else:
                         current_units = dict(previous.units)
                         current_units.update(units)
-                        diff = ManifestDiff(moved=[], deleted=[], orphaned=set())
+                    diff = diff_manifest(previous, current_units)
+                    for key in diff.orphaned:
+                        if cached_keys is None or key in cached_keys:
+                            orphans.setdefault(key, generation)
                 else:
                     diff = ManifestDiff(moved=[], deleted=[], orphaned=set())
                     orphans = {}
@@ -1933,9 +1987,10 @@ class EmbeddingCache:
                     units=current_units,
                     orphans=orphans,
                 )
-                # Stale selections stop pinning vectors in _manifest_referenced_keys,
-                # but their unit maps remain the deletion baseline if that selection
-                # runs again after a long gap.
+                selections = _limit_manifest_selections(
+                    selections,
+                    current_selection=selection,
+                )
                 manifest = CorpusManifest(
                     schema=MANIFEST_SCHEMA,
                     generation=generation,
@@ -1963,6 +2018,8 @@ class EmbeddingCache:
                 canonical_model,
                 revision,
                 collectable,
+                expected_manifest=manifest,
+                expected_shard_generation=expected_shard_generation,
             )
             if collected:
                 with _shard_write_lock(shard_dir, blocking=True) as acquired:
@@ -1972,6 +2029,10 @@ class EmbeddingCache:
                             for entry in current.selections.values():
                                 for key in collectable:
                                     entry.orphans.pop(key, None)
+                            current.selections = _limit_manifest_selections(
+                                current.selections,
+                                current_selection=selection,
+                            )
                             _write_corpus_manifest(shard_dir, current)
                             manifest = current
             return ManifestPublishResult(
