@@ -21,7 +21,7 @@ from codedupes.constants import (
     normalize_semantic_task,
 )
 from codedupes.devices import normalize_semantic_device, validate_mps_memory_fraction
-from codedupes.embedding_cache import get_embedding_cache
+from codedupes.embedding_cache import capture_cache_warnings, get_embedding_cache
 from codedupes.extractor import CodeExtractor
 from codedupes.languages.registry import normalize_languages
 from codedupes.models import (
@@ -688,7 +688,8 @@ class CodeAnalyzer:
             or self._cache_scope is None
         ):
             return
-        cache = get_embedding_cache()
+        with capture_cache_warnings(stats.cache_warnings):
+            cache = get_embedding_cache()
         if cache is None:
             return
         selection_payload = {
@@ -713,14 +714,15 @@ class CodeAnalyzer:
             document_texts=document_texts,
             search_document=search_document,
         )
-        published = cache.publish_corpus_manifest(
-            self._cache_scope,
-            identity.model_name,
-            stats.cache_revision,
-            selection=selection,
-            units=unit_keys,
-            complete_scan=path.is_dir() and self.config.exclude_patterns is None,
-        )
+        with capture_cache_warnings(stats.cache_warnings):
+            published = cache.publish_corpus_manifest(
+                self._cache_scope,
+                identity.model_name,
+                stats.cache_revision,
+                selection=selection,
+                units=unit_keys,
+                complete_scan=path.is_dir() and self.config.exclude_patterns is None,
+            )
         if published is None:
             return
         stats.moved_units_reused = len(published.diff.moved)
@@ -1204,25 +1206,29 @@ class CodeAnalyzer:
         if self._resolved_search_semantic_task is None:
             raise RuntimeError("Semantic configuration was not resolved; run analyze() first.")
 
-        return find_similar_to_query(
-            query,
-            self._semantic_units,
-            self._embeddings,
-            model_name=self.config.model_name,
-            instruction_prefix=self.config.instruction_prefix,
-            top_k=top_k,
-            revision=self.config.model_revision,
-            trust_remote_code=self.config.trust_remote_code,
-            threshold=threshold if threshold is not None else self.config.semantic_threshold,
-            semantic_task=self._resolved_search_semantic_task,
-            device=self.config.device,
-            mps_fallback=self.config.mps_fallback,
-            mps_memory_fraction=self.config.mps_memory_fraction,
-            use_cache=self.config.embedding_cache,
-            cache_scope=self._cache_scope,
-            corpus_identity=self._embedding_space_identity,
-            strict_revision_cache=self.config.strict_revision_cache,
+        warning_collector = (
+            self._embedding_stats.cache_warnings if self._embedding_stats is not None else None
         )
+        with capture_cache_warnings(warning_collector):
+            return find_similar_to_query(
+                query,
+                self._semantic_units,
+                self._embeddings,
+                model_name=self.config.model_name,
+                instruction_prefix=self.config.instruction_prefix,
+                top_k=top_k,
+                revision=self.config.model_revision,
+                trust_remote_code=self.config.trust_remote_code,
+                threshold=threshold if threshold is not None else self.config.semantic_threshold,
+                semantic_task=self._resolved_search_semantic_task,
+                device=self.config.device,
+                mps_fallback=self.config.mps_fallback,
+                mps_memory_fraction=self.config.mps_memory_fraction,
+                use_cache=self.config.embedding_cache,
+                cache_scope=self._cache_scope,
+                corpus_identity=self._embedding_space_identity,
+                strict_revision_cache=self.config.strict_revision_cache,
+            )
 
 
 def analyze_directory(

@@ -1,6 +1,6 @@
 # Output and Exit Codes
 
-stdout carries report output only: JSON under `--json`, Rich tables otherwise. Errors, parser-unavailable remediation, logs, sentence-transformers progress, and Hugging Face download progress use stderr. JSON mode disables progress entirely, so merged streams remain parseable:
+stdout carries report output only: JSON under `--json`, Rich tables otherwise. Errors and parser-unavailable remediation use stderr; Rich mode also sends logs, cache warnings, sentence-transformers progress, and Hugging Face download progress there. JSON mode disables progress and records non-fatal cache failures in `summary.embeddings.cache_warnings` instead of emitting them, so merged streams remain parseable:
 
 ```text
 codedupes check ./src --json --no-cache 2>&1 | python -c "import json,sys; json.load(sys.stdin)"
@@ -37,6 +37,7 @@ codedupes check ./src --json --no-cache 2>&1 | python -c "import json,sys; json.
       "encoded_inputs": 1,
       "model_loaded": true,
       "cache_enabled": true,
+      "cache_warnings": [],
       "cache_revision": "0123456789abcdef",
       "execution_device": "cuda:0",
       "moved_units_reused": 0,
@@ -142,7 +143,7 @@ In `--semantic-only` or `--traditional-only` mode, `duplicates` directly contain
 
 ## Embedding telemetry
 
-`summary.embeddings` is `null` when semantic analysis did not run or fell back. Otherwise it describes the most recent corpus embedding call. `model_loaded: false` with nonzero `cache_hit_rows` is the clearest warm-run signal. Move/delete/orphan fields are zero until a comparable corpus manifest exists.
+`summary.embeddings` is `null` when semantic analysis did not run or fell back. Otherwise it describes the most recent corpus embedding call. `model_loaded: false` with nonzero `cache_hit_rows` is the clearest warm-run signal. `cache_warnings` contains non-fatal cache read, write, manifest, or query-cache failures observed during that run; an empty list means none were observed. Move/delete/orphan fields are zero until a comparable corpus manifest exists.
 
 Terminal `check` output carries the same information on one `Embeddings` summary row.
 

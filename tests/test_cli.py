@@ -10,6 +10,7 @@ import numpy as np
 import pytest
 from click.testing import CliRunner
 
+import codedupes.embedding_cache as embedding_cache_module
 from codedupes import cli
 from codedupes.devices import DeviceDiagnostics
 from codedupes.embedding_cache import CacheClearResult, EmbeddingCache
@@ -24,6 +25,7 @@ from codedupes.models import (
 )
 from codedupes.semantic import EmbeddingRunStats, SemanticBackendError
 from tests.conftest import make_code_unit, patch_cli_analyzer
+from tests.test_embedding_cache import REVISION_1, CountingModel, _patch_get_model
 
 
 def _build_unit(tmp_path: Path) -> CodeUnit:
@@ -100,6 +102,7 @@ def test_cli_json_output_hybrid_default(monkeypatch, tmp_path):
     assert output["summary"]["potentially_unused"] == 1
     assert output["summary"]["embeddings"]["cache_hit_rows"] == 1
     assert output["summary"]["embeddings"]["model_loaded"] is False
+    assert output["summary"]["embeddings"]["cache_warnings"] == []
     assert output["summary"]["fail_on"] == "actionable"
     assert output["summary"]["exit_code"] == 1
     assert output["schema_version"] == 2
@@ -121,6 +124,44 @@ def test_cli_json_output_hybrid_default(monkeypatch, tmp_path):
     result_uid = search_output["results"][0]["unit"]
     assert search_output["units"][result_uid]["name"] == "entry"
     assert captured[1].progress == "never"
+
+
+def test_cli_json_surfaces_cache_write_failure(monkeypatch, tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry(value):\n    return value + 1\n")
+    _patch_get_model(monkeypatch, CountingModel())
+    monkeypatch.setattr(embedding_cache_module, "_warned_cache_error", False)
+
+    def fail_cache_write(*_args, **_kwargs):
+        raise PermissionError("cache directory is read-only")
+
+    monkeypatch.setattr(embedding_cache_module, "_atomic_write_shard", fail_cache_write)
+
+    result = CliRunner().invoke(
+        cli.cli,
+        [
+            "check",
+            str(path),
+            "--semantic-only",
+            "--no-unused",
+            "--min-statements",
+            "0",
+            "--model",
+            "test-model",
+            "--model-revision",
+            REVISION_1,
+            "--device",
+            "cpu",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert result.stderr == ""
+    warnings = json.loads(result.output)["summary"]["embeddings"]["cache_warnings"]
+    assert len(warnings) == 1
+    assert "Embedding cache write shard failed" in warnings[0]
+    assert "PermissionError: cache directory is read-only" in warnings[0]
 
 
 def test_cli_table_output_uses_auto_progress(monkeypatch, tmp_path):

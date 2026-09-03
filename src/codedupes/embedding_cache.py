@@ -23,6 +23,7 @@ import shutil
 import time
 import uuid
 from collections.abc import Iterator, MutableMapping, Sequence
+from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -51,6 +52,10 @@ _CACHE_FILE_MODE = 0o600
 
 _warned_cache_error = False
 _warned_invalid_cache_max_mb = False
+_cache_warning_collector: ContextVar[list[str] | None] = ContextVar(
+    "codedupes_cache_warning_collector",
+    default=None,
+)
 
 
 @dataclass
@@ -316,11 +321,28 @@ def warn_once(action: str, exc: Exception) -> None:
     :param exc: Captured exception.
     :return: ``None``.
     """
-    _log_warning_once(
-        "_warned_cache_error",
+    message = (
         f"Embedding cache {action} failed ({type(exc).__name__}: {exc}); "
-        "continuing without cache benefits for this run.",
+        "continuing without cache benefits for this run."
     )
+    collector = _cache_warning_collector.get()
+    if collector is not None and message not in collector:
+        collector.append(message)
+    _log_warning_once("_warned_cache_error", message)
+
+
+@contextlib.contextmanager
+def capture_cache_warnings(collector: list[str] | None) -> Iterator[None]:
+    """Route cache failure messages into one caller-owned run collector.
+
+    :param collector: Mutable warning list, or ``None`` to collect nothing.
+    :return: Context manager restoring the previous collector on exit.
+    """
+    token = _cache_warning_collector.set(collector)
+    try:
+        yield
+    finally:
+        _cache_warning_collector.reset(token)
 
 
 def is_cache_disabled() -> bool:
@@ -1042,12 +1064,20 @@ def _write_corpus_manifest(shard_dir: Path, manifest: CorpusManifest) -> None:
 
 
 def _manifest_referenced_keys(manifest: CorpusManifest) -> set[str]:
-    """Return cache keys referenced by any selection in ``manifest``."""
+    """Return cache keys referenced by any selection in ``manifest``.
+
+    :param manifest: Multi-selection corpus manifest.
+    :return: Cache keys with at least one current unit reference.
+    """
     return {key for selection in manifest.selections.values() for key in selection.units.values()}
 
 
 def _manifest_orphan_keys(manifest: CorpusManifest) -> set[str]:
-    """Return orphan keys that no selection currently references."""
+    """Return orphan keys that no selection currently references.
+
+    :param manifest: Multi-selection corpus manifest.
+    :return: Cache keys aged as orphans and absent from every selection.
+    """
     orphan_keys = {key for selection in manifest.selections.values() for key in selection.orphans}
     return orphan_keys - _manifest_referenced_keys(manifest)
 

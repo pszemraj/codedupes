@@ -48,6 +48,7 @@ from codedupes.embedding_cache import (
     LOCAL_MODELS_SUBDIR,
     EmbeddingCache,
     atomic_write_json,
+    capture_cache_warnings,
     compute_cache_key,
     ensure_cache_subdirectory,
     get_embedding_cache,
@@ -100,6 +101,7 @@ class EmbeddingRunStats:
     encoded_inputs: int = 0
     model_loaded: bool = False
     cache_enabled: bool = False
+    cache_warnings: list[str] = field(default_factory=list)
     cache_revision: str | None = None
     execution_device: str | None = None
     moved_units_reused: int = 0
@@ -120,6 +122,7 @@ def _reset_embedding_run_stats(stats: EmbeddingRunStats | None) -> None:
     stats.encoded_inputs = 0
     stats.model_loaded = False
     stats.cache_enabled = False
+    stats.cache_warnings.clear()
     stats.cache_revision = None
     stats.execution_device = None
     stats.moved_units_reused = 0
@@ -3460,7 +3463,12 @@ def compute_embeddings_with_identity(
     # be set before any path below can import torch - cache-variant derivation
     # may probe CPU capabilities, which is already too late.
     _configure_semantic_runtime_env(device, mps_fallback=mps_fallback)
-    with _model_lock, _local_model_fingerprint_walk_scope():
+    warning_collector = stats.cache_warnings if stats is not None else None
+    with (
+        _model_lock,
+        _local_model_fingerprint_walk_scope(),
+        capture_cache_warnings(warning_collector),
+    ):
         return _compute_embeddings_unlocked(
             units,
             model_name=model_name,
