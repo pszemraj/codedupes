@@ -143,7 +143,7 @@ In `--semantic-only` or `--traditional-only` mode, `duplicates` directly contain
 
 ## Embedding telemetry
 
-`summary.embeddings` is `null` when semantic analysis did not run or fell back. Otherwise it describes the most recent corpus embedding call. `model_loaded: false` with nonzero `cache_hit_rows` is the clearest warm-run signal. `cache_warnings` contains non-fatal cache read, write, manifest, or query-cache failures observed during that run; an empty list means none were observed. Move/delete/orphan fields are zero until a comparable corpus manifest exists.
+`summary.embeddings` is `null` when semantic analysis did not run or fell back. Otherwise it describes the most recent corpus embedding call. `model_loaded: false` with nonzero `cache_hit_rows` is the clearest warm-run signal. `cache_warnings` contains non-fatal cache read, write, manifest, or query-cache failures observed during that run; an empty list means none were observed. Move/delete/orphan fields are zero until a comparable corpus manifest exists. `orphan_rows_retained` includes tracked orphan rows temporarily protected by another recently refreshed selection, while `orphan_rows_collected` counts rows removed in this run.
 
 Terminal `check` output carries the same information on one `Embeddings` summary row.
 

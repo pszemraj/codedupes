@@ -37,7 +37,7 @@ LOCAL_MODELS_SUBDIR = "local-models"
 LOCKS_SUBDIR = "locks"
 INDEX_FILENAME = "index.json"
 MANIFEST_FILENAME = "manifest.json"
-MANIFEST_SCHEMA = 2
+MANIFEST_SCHEMA = 3
 ORPHAN_GC_GENERATIONS = 3
 DEFAULT_CACHE_MAX_MB = 2048
 _SCHEMA_VERSION = 3
@@ -62,7 +62,7 @@ _cache_warning_collector: ContextVar[list[str] | None] = ContextVar(
 class CorpusSelectionManifest:
     """Describe one selection's embedded corpus and aged unreferenced keys."""
 
-    generation: int
+    last_seen_generation: int
     complete_scan: bool
     units: dict[str, str]
     orphans: dict[str, int]
@@ -73,6 +73,7 @@ class CorpusManifest:
     """Describe independently comparable corpus selections in one cache shard."""
 
     schema: int
+    generation: int
     selections: dict[str, CorpusSelectionManifest]
 
 
@@ -1006,20 +1007,25 @@ def _read_corpus_manifest(shard_dir: Path) -> CorpusManifest | None:
         return None
     if not isinstance(payload, dict) or payload.get("schema") != MANIFEST_SCHEMA:
         return None
+    manifest_generation = payload.get("generation")
     selections = payload.get("selections")
-    if not isinstance(selections, dict):
+    if (
+        not isinstance(manifest_generation, int)
+        or manifest_generation < 0
+        or not isinstance(selections, dict)
+    ):
         return None
     parsed: dict[str, CorpusSelectionManifest] = {}
     for selection, entry in selections.items():
         if not isinstance(selection, str) or not isinstance(entry, dict):
             return None
-        generation = entry.get("generation")
+        last_seen_generation = entry.get("last_seen_generation")
         complete_scan = entry.get("complete_scan")
         units = entry.get("units")
         orphans = entry.get("orphans")
         if (
-            not isinstance(generation, int)
-            or generation < 0
+            not isinstance(last_seen_generation, int)
+            or not 0 <= last_seen_generation <= manifest_generation
             or not isinstance(complete_scan, bool)
             or not isinstance(units, dict)
             or not all(isinstance(uid, str) and isinstance(key, str) for uid, key in units.items())
@@ -1031,12 +1037,16 @@ def _read_corpus_manifest(shard_dir: Path) -> CorpusManifest | None:
         ):
             return None
         parsed[selection] = CorpusSelectionManifest(
-            generation=generation,
+            last_seen_generation=last_seen_generation,
             complete_scan=complete_scan,
             units=dict(units),
             orphans=dict(orphans),
         )
-    return CorpusManifest(schema=MANIFEST_SCHEMA, selections=parsed)
+    return CorpusManifest(
+        schema=MANIFEST_SCHEMA,
+        generation=manifest_generation,
+        selections=parsed,
+    )
 
 
 def _write_corpus_manifest(shard_dir: Path, manifest: CorpusManifest) -> None:
@@ -1050,9 +1060,10 @@ def _write_corpus_manifest(shard_dir: Path, manifest: CorpusManifest) -> None:
         shard_dir / MANIFEST_FILENAME,
         {
             "schema": manifest.schema,
+            "generation": manifest.generation,
             "selections": {
                 selection: {
-                    "generation": entry.generation,
+                    "last_seen_generation": entry.last_seen_generation,
                     "complete_scan": entry.complete_scan,
                     "units": entry.units,
                     "orphans": entry.orphans,
@@ -1064,22 +1075,26 @@ def _write_corpus_manifest(shard_dir: Path, manifest: CorpusManifest) -> None:
 
 
 def _manifest_referenced_keys(manifest: CorpusManifest) -> set[str]:
-    """Return cache keys referenced by any selection in ``manifest``.
+    """Return cache keys referenced by a recently refreshed selection.
 
     :param manifest: Multi-selection corpus manifest.
-    :return: Cache keys with at least one current unit reference.
+    :return: Cache keys pinned by at least one active selection.
     """
-    return {key for selection in manifest.selections.values() for key in selection.units.values()}
+    return {
+        key
+        for selection in manifest.selections.values()
+        if manifest.generation - selection.last_seen_generation < ORPHAN_GC_GENERATIONS
+        for key in selection.units.values()
+    }
 
 
 def _manifest_orphan_keys(manifest: CorpusManifest) -> set[str]:
-    """Return orphan keys that no selection currently references.
+    """Return tracked orphan keys, including keys pinned by another selection.
 
     :param manifest: Multi-selection corpus manifest.
-    :return: Cache keys aged as orphans and absent from every selection.
+    :return: Cache keys classified as deleted by at least one selection.
     """
-    orphan_keys = {key for selection in manifest.selections.values() for key in selection.orphans}
-    return orphan_keys - _manifest_referenced_keys(manifest)
+    return {key for selection in manifest.selections.values() for key in selection.orphans}
 
 
 def _publish_index(shard_dir: Path, payload: dict[str, Any]) -> None:
@@ -1877,14 +1892,27 @@ class EmbeddingCache:
                     return None
                 manifest = _read_corpus_manifest(shard_dir) or CorpusManifest(
                     schema=MANIFEST_SCHEMA,
+                    generation=0,
                     selections={},
                 )
-                previous = manifest.selections.get(selection)
+                generation = manifest.generation + int(complete_scan)
+                selections = {
+                    name: CorpusSelectionManifest(
+                        last_seen_generation=entry.last_seen_generation,
+                        complete_scan=entry.complete_scan,
+                        units=dict(entry.units),
+                        orphans=dict(entry.orphans),
+                    )
+                    for name, entry in manifest.selections.items()
+                }
+                current_keys = set(units.values())
+                for entry in selections.values():
+                    for key in current_keys:
+                        entry.orphans.pop(key, None)
+
+                previous = selections.get(selection)
                 if previous is not None:
-                    generation = previous.generation + int(complete_scan)
                     orphans = dict(previous.orphans)
-                    for key in set(units.values()):
-                        orphans.pop(key, None)
                     if complete_scan:
                         current_units = dict(units)
                         diff = diff_manifest(previous, current_units)
@@ -1896,30 +1924,40 @@ class EmbeddingCache:
                         diff = ManifestDiff(moved=[], deleted=[], orphaned=set())
                 else:
                     diff = ManifestDiff(moved=[], deleted=[], orphaned=set())
-                    generation = 1 if complete_scan else 0
                     orphans = {}
                     current_units = dict(units)
 
-                selections = dict(manifest.selections)
                 selections[selection] = CorpusSelectionManifest(
-                    generation=generation,
+                    last_seen_generation=generation,
                     complete_scan=complete_scan,
                     units=current_units,
                     orphans=orphans,
                 )
+                selections = {
+                    name: entry
+                    for name, entry in selections.items()
+                    if generation - entry.last_seen_generation < ORPHAN_GC_GENERATIONS
+                    or entry.orphans
+                }
                 manifest = CorpusManifest(
                     schema=MANIFEST_SCHEMA,
+                    generation=generation,
                     selections=selections,
                 )
                 collectable: set[str] = set()
                 if complete_scan:
+                    referenced_keys = _manifest_referenced_keys(manifest)
                     for key in _manifest_orphan_keys(manifest):
                         ages = [
-                            entry.generation - entry.orphans[key]
+                            generation - entry.orphans[key]
                             for entry in manifest.selections.values()
                             if key in entry.orphans
                         ]
-                        if ages and all(age >= ORPHAN_GC_GENERATIONS for age in ages):
+                        if (
+                            key not in referenced_keys
+                            and ages
+                            and all(age >= ORPHAN_GC_GENERATIONS for age in ages)
+                        ):
                             collectable.add(key)
                 _write_corpus_manifest(shard_dir, manifest)
 
@@ -1937,6 +1975,13 @@ class EmbeddingCache:
                             for entry in current.selections.values():
                                 for key in collectable:
                                     entry.orphans.pop(key, None)
+                            current.selections = {
+                                name: entry
+                                for name, entry in current.selections.items()
+                                if current.generation - entry.last_seen_generation
+                                < ORPHAN_GC_GENERATIONS
+                                or entry.orphans
+                            }
                             _write_corpus_manifest(shard_dir, current)
                             manifest = current
             return ManifestPublishResult(
@@ -2057,7 +2102,7 @@ class EmbeddingCache:
                     totals["orphan_rows"] += len(_manifest_orphan_keys(manifest))
                     totals["last_complete_generation"] = max(
                         totals["last_complete_generation"],
-                        *(entry.generation for entry in manifest.selections.values()),
+                        manifest.generation,
                     )
             local_models_dir = self.cache_root / LOCAL_MODELS_SUBDIR
             if local_models_dir.is_dir():

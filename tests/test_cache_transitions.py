@@ -395,6 +395,46 @@ def test_scope_filter_does_not_age_or_collect_other_selection_rows(
     assert default_again.embedding_stats.model_loaded is False
 
 
+def test_stale_scope_selection_stops_pinning_deleted_rows(tmp_path, monkeypatch) -> None:
+    repo = _write_repo(
+        tmp_path,
+        {
+            "src/a.py": "def alpha(value):\n    return value + 1",
+            "src/b.py": "def beta(value):\n    return value + 2",
+            "src/private.py": "def _private(value):\n    return value + 3",
+        },
+    )
+    _patch_get_model(monkeypatch, CountingModel())
+    _analyze(repo)
+    _analyze(repo, include_private=False)
+    (repo / "src/b.py").unlink()
+
+    deleted = _analyze(repo)
+
+    assert deleted.embedding_stats is not None
+    assert deleted.embedding_stats.deleted_units == 1
+    assert deleted.embedding_stats.orphan_rows_retained == 1
+    assert deleted.embedding_stats.orphan_rows_collected == 0
+    assert EmbeddingCache().stats()["repos"][0]["orphan_rows"] == 1
+
+    retained = _analyze(repo)
+    expired_pin = _analyze(repo)
+    collected = _analyze(repo)
+
+    assert retained.embedding_stats is not None
+    assert retained.embedding_stats.orphan_rows_retained == 1
+    assert retained.embedding_stats.orphan_rows_collected == 0
+    assert expired_pin.embedding_stats is not None
+    assert expired_pin.embedding_stats.orphan_rows_retained == 1
+    assert expired_pin.embedding_stats.orphan_rows_collected == 0
+    assert collected.embedding_stats is not None
+    assert collected.embedding_stats.orphan_rows_retained == 0
+    assert collected.embedding_stats.orphan_rows_collected == 1
+    stats = EmbeddingCache().stats()
+    assert stats["entries"] == 2
+    assert stats["repos"][0]["orphan_rows"] == 0
+
+
 def test_orphan_aging_survives_search_selection_between_checks(tmp_path, monkeypatch) -> None:
     repo = _write_repo(
         tmp_path,
@@ -415,16 +455,13 @@ def test_orphan_aging_survives_search_selection_between_checks(tmp_path, monkeyp
     resumed = _analyze(repo)
 
     assert resumed.embedding_stats is not None
-    assert resumed.embedding_stats.manifest_generation == 3
+    assert resumed.embedding_stats.manifest_generation == 4
     assert resumed.embedding_stats.orphan_rows_retained == 1
     manifest = EmbeddingCache().load_manifest(repo, "test-model", REVISION_1)
     assert manifest is not None
     assert len(manifest.selections) == 2
 
-    retained = _analyze(repo)
     collected = _analyze(repo)
-    assert retained.embedding_stats is not None
-    assert retained.embedding_stats.orphan_rows_collected == 0
     assert collected.embedding_stats is not None
     assert collected.embedding_stats.manifest_generation == 5
     assert collected.embedding_stats.orphan_rows_collected == 1
@@ -471,7 +508,7 @@ def test_failed_analysis_keeps_previous_manifest_authoritative(tmp_path, monkeyp
     cache = EmbeddingCache()
     previous = cache.load_manifest(repo, "test-model", REVISION_1)
     assert previous is not None
-    previous_generation = next(iter(previous.selections.values())).generation
+    previous_generation = previous.generation
     (repo / "src/value.py").write_text(
         "def value(number):\n    return number + 99\n",
         encoding="utf-8",

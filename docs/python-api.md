@@ -137,7 +137,7 @@ embeddings = compute_embeddings(
 print(stats.cache_hit_rows, stats.encoded_inputs, stats.model_loaded)
 ```
 
-The collector separates requested rows, unique inputs, persistent-cache hits, duplicate rows reused within the call, and inputs actually encoded. It also reports the cache revision/device and corpus-manifest move, delete, orphan, and generation activity. `model_loaded=False` is the direct indication that a warm run needed no model.
+The collector separates requested rows, unique inputs, persistent-cache hits, duplicate rows reused within the call, and inputs actually encoded. It also reports the cache revision/device and corpus-manifest move, delete, orphan, and shard-wide complete-generation activity. Retained-orphan counts include rows temporarily pinned by another recently refreshed selection. `model_loaded=False` is the direct indication that a warm run needed no model.
 
 ## Apple Silicon configuration
 

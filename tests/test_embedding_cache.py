@@ -75,7 +75,7 @@ def _corpus_manifest(
 ) -> CorpusSelectionManifest:
     """Build a minimal complete manifest for transition-diff tests."""
     return CorpusSelectionManifest(
-        generation=1,
+        last_seen_generation=1,
         complete_scan=True,
         units=units,
         orphans=dict(orphans or {}),
@@ -179,7 +179,7 @@ def test_manifest_gc_never_collects_query_rows(tmp_path) -> None:
     assert query_key in cache.get_many(scope, "model", "revision", [query_key])
 
 
-def test_manifest_gc_waits_for_every_selection_to_release_key(tmp_path) -> None:
+def test_manifest_gc_expires_unrefreshed_selection_pin(tmp_path) -> None:
     cache = EmbeddingCache()
     scope = tmp_path / "repo"
     scope.mkdir()
@@ -195,8 +195,20 @@ def test_manifest_gc_waits_for_every_selection_to_release_key(tmp_path) -> None:
             complete_scan=True,
         )
 
-    for _ in range(4):
-        published = cache.publish_corpus_manifest(
+    orphaned = cache.publish_corpus_manifest(
+        scope,
+        "model",
+        "revision",
+        selection="first",
+        units={},
+        complete_scan=True,
+    )
+    assert orphaned is not None
+    assert orphaned.orphan_rows_retained == 1
+    assert orphaned.orphan_rows_collected == 0
+
+    for expected_generation in (4, 5):
+        retained = cache.publish_corpus_manifest(
             scope,
             "model",
             "revision",
@@ -204,33 +216,51 @@ def test_manifest_gc_waits_for_every_selection_to_release_key(tmp_path) -> None:
             units={},
             complete_scan=True,
         )
-        assert published is not None
-        assert published.orphan_rows_collected == 0
+        assert retained is not None
+        assert retained.generation == expected_generation
+        assert retained.orphan_rows_retained == 1
+        assert retained.orphan_rows_collected == 0
     assert key in cache.get_many(scope, "model", "revision", [key])
 
-    for _ in range(3):
-        published = cache.publish_corpus_manifest(
-            scope,
-            "model",
-            "revision",
-            selection="second",
-            units={},
-            complete_scan=True,
-        )
-        assert published is not None
-        assert published.orphan_rows_collected == 0
     published = cache.publish_corpus_manifest(
         scope,
         "model",
         "revision",
-        selection="second",
+        selection="first",
         units={},
         complete_scan=True,
     )
 
     assert published is not None
+    assert published.generation == 6
+    assert published.orphan_rows_retained == 0
     assert published.orphan_rows_collected == 1
     assert cache.get_many(scope, "model", "revision", [key]) == {}
+
+
+def test_cache_stats_accepts_manifest_without_selections(tmp_path) -> None:
+    cache = EmbeddingCache()
+    scope = tmp_path / "repo"
+    scope.mkdir()
+    cache.put_many(
+        scope,
+        "model",
+        "revision",
+        [("key", np.ones(2, dtype=np.float32))],
+    )
+    shard_dir = cache.shard_dir(scope, "model", "revision")
+    embedding_cache.atomic_write_json(
+        shard_dir / embedding_cache.MANIFEST_FILENAME,
+        {
+            "schema": embedding_cache.MANIFEST_SCHEMA,
+            "generation": 7,
+            "selections": {},
+        },
+    )
+
+    stats = cache.stats()
+
+    assert stats["repos"][0]["last_complete_generation"] == 7
 
 
 def _five_units(tmp_path: Path) -> list[CodeUnit]:
