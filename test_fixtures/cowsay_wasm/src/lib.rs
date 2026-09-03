@@ -50,12 +50,7 @@ pub fn render(message: &str, options: CowOptions) -> String {
 /// `use_fold_wrapper` switches between the two semantically equivalent
 /// wrapping implementations planted in this fixture.
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
-pub fn cowsay(
-    message: &str,
-    width: u32,
-    thinking: bool,
-    use_fold_wrapper: bool,
-) -> String {
+pub fn cowsay(message: &str, width: u32, thinking: bool, use_fold_wrapper: bool) -> String {
     let wrap_algorithm = if use_fold_wrapper {
         WrapAlgorithm::Fold
     } else {

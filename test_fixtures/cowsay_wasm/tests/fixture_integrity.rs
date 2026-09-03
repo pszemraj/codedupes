@@ -114,7 +114,11 @@ fn levenshtein_similarity(left: &str, right: &str) -> f64 {
             let insertion = current[right_index] + 1;
             let deletion = previous[right_index + 1] + 1;
             let substitution = previous[right_index]
-                + if left_character == right_character { 0 } else { 1 };
+                + if left_character == right_character {
+                    0
+                } else {
+                    1
+                };
             current[right_index + 1] = insertion.min(deletion).min(substitution);
         }
         std::mem::swap(&mut previous, &mut current);

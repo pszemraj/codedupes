@@ -21,6 +21,6 @@ pub(crate) fn pad_line(line: &str, width: usize) -> String {
     let padding = width.saturating_sub(display_width(line));
     let mut padded = String::with_capacity(line.len() + padding);
     padded.push_str(line);
-    padded.extend(std::iter::repeat(' ').take(padding));
+    padded.extend(std::iter::repeat_n(' ', padding));
     padded
 }

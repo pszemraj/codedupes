@@ -83,7 +83,7 @@
         {
           "file": "src/wrapping/fold.rs",
           "start_line": 3,
-          "end_line": 54,
+          "end_line": 51,
           "start_marker": "// fixture:semantic-wrap:start",
           "end_marker": "// fixture:semantic-wrap:end",
           "symbol": "wrap"

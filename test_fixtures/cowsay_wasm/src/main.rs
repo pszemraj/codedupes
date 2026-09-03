@@ -62,7 +62,7 @@ fn run() -> Result<String, String> {
             .read_to_string(&mut input)
             .map_err(|error| format!("failed to read stdin: {error}"))?;
         input
-            .trim_end_matches(|character| character == '\n' || character == '\r')
+            .trim_end_matches(['\n', '\r'])
             .to_owned()
     } else {
         words.join(" ")

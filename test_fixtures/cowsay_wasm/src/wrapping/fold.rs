@@ -20,10 +20,7 @@ pub(crate) fn wrap(message: &str, width: usize) -> Vec<String> {
                 (Vec::new(), String::new(), 0usize),
                 |(mut complete, mut active, active_width), piece| {
                     let piece_width = display_width(&piece);
-                    match (
-                        active.is_empty(),
-                        active_width + 1 + piece_width <= width,
-                    ) {
+                    match (active.is_empty(), active_width + 1 + piece_width <= width) {
                         (true, _) => (complete, piece, piece_width),
                         (false, true) => {
                             active.push(' ');
