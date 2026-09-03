@@ -105,11 +105,18 @@ def _configured_cli_output(
     """
     _set_console(output_width)
     logging_state: tuple[int, list[logging.Handler]] | None = None
+    restore_hub_progress: Callable[[], None] | None = None
     if as_json:
         logging_state = _suppress_logs_for_json()
         try:
-            from huggingface_hub.utils import disable_progress_bars
+            from huggingface_hub.utils import (
+                are_progress_bars_disabled,
+                disable_progress_bars,
+                enable_progress_bars,
+            )
 
+            if not are_progress_bars_disabled():
+                restore_hub_progress = enable_progress_bars
             disable_progress_bars()
         except ImportError:
             pass
@@ -128,6 +135,8 @@ def _configured_cli_output(
         else:
             yield
     finally:
+        if restore_hub_progress is not None:
+            restore_hub_progress()
         if logging_state is not None:
             _restore_root_logger_state(logging_state)
 

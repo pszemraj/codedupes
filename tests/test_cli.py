@@ -182,16 +182,33 @@ def test_cli_table_output_uses_auto_progress(monkeypatch, tmp_path):
     assert "model not loaded" in result.output
 
 
-def test_cli_json_disables_huggingface_progress(monkeypatch, tmp_path):
+@pytest.mark.parametrize("initially_disabled", [False, True])
+def test_cli_json_restores_huggingface_progress_state(monkeypatch, tmp_path, initially_disabled):
     path = tmp_path / "sample.py"
     path.write_text("def entry():\n    return 1\n")
     patch_cli_analyzer(monkeypatch, cli, analyze_result=lambda: _build_result(tmp_path))
-    calls: list[None] = []
-    monkeypatch.setattr("huggingface_hub.utils.disable_progress_bars", lambda: calls.append(None))
+    state = {"disabled": initially_disabled}
+    calls: list[str] = []
+
+    def disable_progress_bars():
+        calls.append("disable")
+        state["disabled"] = True
+
+    def enable_progress_bars():
+        calls.append("enable")
+        state["disabled"] = False
+
+    monkeypatch.setattr(
+        "huggingface_hub.utils.are_progress_bars_disabled",
+        lambda: state["disabled"],
+    )
+    monkeypatch.setattr("huggingface_hub.utils.disable_progress_bars", disable_progress_bars)
+    monkeypatch.setattr("huggingface_hub.utils.enable_progress_bars", enable_progress_bars)
 
     CliRunner().invoke(cli.cli, ["check", str(path), "--json"])
 
-    assert calls == [None]
+    assert calls == (["disable"] if initially_disabled else ["disable", "enable"])
+    assert state["disabled"] is initially_disabled
 
 
 def test_cli_json_discards_direct_backend_stderr_on_success(monkeypatch, tmp_path):
