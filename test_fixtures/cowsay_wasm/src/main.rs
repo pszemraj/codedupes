@@ -61,9 +61,7 @@ fn run() -> Result<String, String> {
         io::stdin()
             .read_to_string(&mut input)
             .map_err(|error| format!("failed to read stdin: {error}"))?;
-        input
-            .trim_end_matches(['\n', '\r'])
-            .to_owned()
+        input.trim_end_matches(['\n', '\r']).to_owned()
     } else {
         words.join(" ")
     };

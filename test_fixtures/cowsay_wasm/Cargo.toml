@@ -6,6 +6,10 @@ description = "A real Rust/WebAssembly cowsay project with intentional code-clon
 license = "MIT"
 publish = false
 
+[package.metadata.wasm-pack.profile.release]
+# Keep release builds portable across wasm-pack's bundled Binaryen versions.
+wasm-opt = false
+
 [lib]
 crate-type = ["cdylib", "rlib"]
 
