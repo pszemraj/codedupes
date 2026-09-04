@@ -89,7 +89,7 @@ Call matching is name-based rather than scope-resolved: a call to any same-named
 Default tiny-filter behavior for traditional duplicates:
 
 - enabled: `True`
-- tiny definition: effective code-unit statement count `< 3`; classes expand each extracted member from its declaration count to the member's statement count, so a class with a few substantial methods is not treated as a marker
+- tiny definition: effective code-unit statement count `< 3`; classes expand each extracted member from its declaration count to the member's statement count, so a class with a few substantial methods is not treated as a marker. When private-unit filtering is active, class duplicates remain visible because their emitted member inventory may be incomplete
 - traditional pairs where both units are tiny: dropped
 
 Override via CLI:

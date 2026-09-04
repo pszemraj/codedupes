@@ -163,14 +163,22 @@ def _both_units_are_tiny(
     duplicate: DuplicatePair,
     statement_cutoff: int,
     statement_cache: dict[str, int],
+    *,
+    private_members_included: bool,
 ) -> bool:
     """Return whether both endpoints are tiny code units.
 
     :param duplicate: Duplicate pair to inspect.
     :param statement_cutoff: Tiny cutoff (exclusive).
     :param statement_cache: Memoized statement counts by unit uid.
+    :param private_members_included: Whether private class members were extracted.
     :return: Whether both endpoints are tiny code units.
     """
+    if not private_members_included and (
+        duplicate.unit_a.unit_type == CodeUnitType.CLASS
+        or duplicate.unit_b.unit_type == CodeUnitType.CLASS
+    ):
+        return False
     return _is_tiny_unit(duplicate.unit_a, statement_cutoff, statement_cache) and _is_tiny_unit(
         duplicate.unit_b, statement_cutoff, statement_cache
     )
@@ -213,6 +221,7 @@ def _filter_tiny_traditional_duplicates(
     *,
     units: list[CodeUnit],
     statement_cutoff: int,
+    private_members_included: bool,
 ) -> tuple[list[DuplicatePair], list[DuplicatePair]]:
     """Filter tiny wrapper noise from traditional duplicates.
 
@@ -220,6 +229,7 @@ def _filter_tiny_traditional_duplicates(
     :param near_duplicates: Near traditional duplicate pairs.
     :param units: Full extracted scope used to measure class members.
     :param statement_cutoff: Tiny cutoff (exclusive).
+    :param private_members_included: Whether private class members were extracted.
     :return: Filtered exact and near duplicate lists.
     """
     statement_cache = _tiny_filter_statement_counts(units)
@@ -227,12 +237,22 @@ def _filter_tiny_traditional_duplicates(
     filtered_near: list[DuplicatePair] = []
 
     for duplicate in exact_duplicates:
-        if _both_units_are_tiny(duplicate, statement_cutoff, statement_cache):
+        if _both_units_are_tiny(
+            duplicate,
+            statement_cutoff,
+            statement_cache,
+            private_members_included=private_members_included,
+        ):
             continue
         filtered_exact.append(duplicate)
 
     for duplicate in near_duplicates:
-        if _both_units_are_tiny(duplicate, statement_cutoff, statement_cache):
+        if _both_units_are_tiny(
+            duplicate,
+            statement_cutoff,
+            statement_cache,
+            private_members_included=private_members_included,
+        ):
             continue
         filtered_near.append(duplicate)
 
@@ -888,6 +908,7 @@ class CodeAnalyzer:
                     near_dupes,
                     units=units,
                     statement_cutoff=self.config.tiny_unit_statement_cutoff,
+                    private_members_included=self.config.include_private,
                 )
             traditional_duplicates = exact_dupes + near_dupes
 

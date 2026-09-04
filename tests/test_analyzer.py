@@ -707,6 +707,42 @@ def test_large_class_duplicates_are_not_filtered_by_member_count(tmp_path: Path)
     )
 
 
+def test_large_class_duplicates_survive_private_member_filter(tmp_path: Path) -> None:
+    """An incomplete visible-member list must not make substantial classes tiny."""
+    source = dedent(
+        """
+        class FirstProcessor:
+            def _prepare(self, value):
+                adjusted = value + 1
+                doubled = adjusted * 2
+                return doubled
+
+        class SecondProcessor:
+            def _prepare(self, value):
+                adjusted = value + 1
+                doubled = adjusted * 2
+                return doubled
+        """
+    ).strip()
+    project = create_project(tmp_path, source, module="private_class_members.py")
+
+    result = CodeAnalyzer(
+        AnalyzerConfig(
+            run_semantic=False,
+            run_unused=False,
+            include_private=False,
+            filter_tiny_traditional=True,
+        )
+    ).analyze(project)
+
+    assert {unit.name for unit in result.units} == {"FirstProcessor", "SecondProcessor"}
+    assert any(
+        duplicate.unit_a.unit_type == CodeUnitType.CLASS
+        and duplicate.unit_b.unit_type == CodeUnitType.CLASS
+        for duplicate in result.traditional_duplicates
+    )
+
+
 def test_large_tree_sitter_class_duplicates_are_not_filtered(tmp_path: Path) -> None:
     source = dedent(
         """
