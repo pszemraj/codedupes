@@ -411,52 +411,109 @@ def test_prompt_sensitive_search_requires_corpus_identity(tmp_path: Path) -> Non
         {"instruction_prefix": "CUSTOM: "},
         {"revision": "f" * 40},
         {"trust_remote_code": True},
+        {"search_document": "contextual"},
     ],
 )
+@pytest.mark.parametrize("use_cache", [False, True])
 def test_uncalibrated_search_context_requires_explicit_threshold(
-    tmp_path: Path, kwargs: dict[str, str]
+    tmp_path: Path, monkeypatch, kwargs: dict[str, object], use_cache: bool
 ) -> None:
     units = extract_arithmetic_units(tmp_path)
-    embeddings = np.array([[1.0, 0.0], [0.0, 1.0]], dtype=np.float32)
-    identity = semantic.resolve_embedding_space_identity(
-        model_name="embeddinggemma-300m",
-        instruction_prefix=kwargs.get("instruction_prefix"),
-        revision=kwargs.get("revision"),
-        trust_remote_code=kwargs.get("trust_remote_code"),
-        semantic_task=kwargs.get("semantic_task", semantic.DEFAULT_SEARCH_SEMANTIC_TASK),
-    )
-
-    with pytest.raises(ValueError, match=r"find_similar_to_query\(threshold=\.\.\.\)"):
-        find_similar_to_query(
-            "find addition",
+    model = _RecordingModel()
+    monkeypatch.setattr(semantic, "get_model", lambda *args, **kwargs: model)
+    query_options = dict(kwargs)
+    search_document = query_options.pop("search_document", "source")
+    options = {
+        "model_name": "embeddinggemma-300m",
+        "device": "cpu",
+        "use_cache": use_cache,
+        "cache_scope": tmp_path,
+        "semantic_task": semantic.DEFAULT_SEARCH_SEMANTIC_TASK,
+        **query_options,
+    }
+    # Exercise identities returned by both cold encoding and warm cache reads.
+    for iteration in range(2):
+        corpus_calls_before = len(model.encoded)
+        embeddings, identity = semantic.compute_embeddings_with_identity(
             units,
-            embeddings,
-            model_name="embeddinggemma-300m",
-            use_cache=False,
-            corpus_identity=identity,
-            **kwargs,
+            document_texts=[f"path: arithmetic.py\n{unit.source}" for unit in units]
+            if search_document == "contextual"
+            else None,
+            search_document=search_document,
+            **options,
         )
+        assert identity.search_document == search_document
+        assert len(model.encoded) - corpus_calls_before == (0 if use_cache and iteration else 1)
+        calls_before = len(model.encoded)
+        with pytest.raises(ValueError, match=r"find_similar_to_query\(threshold=\.\.\.\)"):
+            find_similar_to_query(
+                "find addition", units, embeddings, corpus_identity=identity, **options
+            )
+        assert len(model.encoded) == calls_before
+        assert len(
+            find_similar_to_query(
+                "find addition",
+                units,
+                embeddings,
+                threshold=0.0,
+                corpus_identity=identity,
+                **options,
+            )
+        ) == len(units)
 
 
-def test_find_similar_to_query_applies_threshold_filter(tmp_path: Path, monkeypatch) -> None:
+@pytest.mark.parametrize(
+    "threshold",
+    [
+        -1.0,
+        0.0,
+        0.9,
+        float("nan"),
+        float("inf"),
+        -float("inf"),
+        pytest.param(0.45, id="decimal-floor"),
+        pytest.param(float(np.float32(0.45)), id="exact-score"),
+        pytest.param(math.nextafter(float(np.float32(0.45)), -math.inf), id="below-score"),
+        pytest.param(math.nextafter(float(np.float32(0.45)), math.inf), id="above-score"),
+    ],
+)
+@pytest.mark.parametrize("use_cache", [False, True])
+def test_find_similar_to_query_applies_threshold_filter(
+    tmp_path: Path, monkeypatch, threshold: float, use_cache: bool
+) -> None:
     units = extract_arithmetic_units(tmp_path)
-    embeddings = np.array([[1.0, 0.0], [0.6, 0.8]], dtype=np.float32)
+    embeddings = np.array([[1.0, 0.0], [0.45, math.sqrt(1 - 0.45**2)]], dtype=np.float32)
 
-    class QueryModel:
-        def encode(self, texts, **kwargs):
-            return np.array([[1.0, 0.0]], dtype=np.float32)
+    model = _RecordingModel()
+    monkeypatch.setattr(semantic, "get_model", lambda *args, **kwargs: model)
+    options = {
+        "query": "find addition",
+        "units": units,
+        "embeddings": embeddings,
+        "top_k": 5,
+        "device": "cpu",
+        "use_cache": use_cache,
+        "cache_scope": tmp_path,
+    }
 
-    monkeypatch.setattr(semantic, "get_model", lambda *args, **kwargs: QueryModel())
-
-    results = find_similar_to_query(
-        query="find addition",
-        units=units,
-        embeddings=embeddings,
-        top_k=5,
-        threshold=0.9,
-    )
-
-    assert len(results) == 1
+    # Invalid input must fail before encoding and before consuming a cached query.
+    for attempt in range(2):
+        calls_before = len(model.encoded)
+        if not math.isfinite(threshold):
+            with pytest.raises(ValueError, match="threshold must be finite"):
+                find_similar_to_query(threshold=threshold, **options)
+            assert len(model.encoded) == calls_before
+        else:
+            results = find_similar_to_query(threshold=threshold, **options)
+            assert results == [
+                (unit, float(row[0]))
+                for unit, row in zip(units, embeddings)
+                if float(row[0]) >= threshold
+            ]
+        if use_cache and attempt == 1:
+            assert len(model.encoded) == calls_before
+        if attempt == 0:
+            assert len(find_similar_to_query(threshold=-1.0, **options)) == len(units)
 
 
 def test_find_similar_to_query_default_threshold_is_search_default(
@@ -1300,6 +1357,41 @@ def test_encode_texts_does_not_hide_unrelated_type_error() -> None:
         )
 
     assert calls == 1
+
+
+@pytest.mark.parametrize(
+    ("mode", "input_count", "isatty", "expected"),
+    [
+        ("never", 1000, True, False),
+        ("always", 1, False, True),
+        ("auto", 100, True, False),
+        ("auto", 101, True, True),
+        ("auto", 101, False, False),
+    ],
+)
+def test_embedding_progress_policy(monkeypatch, mode, input_count, isatty, expected) -> None:
+    monkeypatch.setattr(semantic.sys.stderr, "isatty", lambda: isatty)
+
+    assert semantic._should_show_progress(mode, input_count) is expected
+
+
+@pytest.mark.parametrize(("progress", "expected"), [("always", True), ("never", False)])
+def test_compute_embeddings_forwards_progress_policy(
+    monkeypatch, tmp_path, progress, expected
+) -> None:
+    units = extract_arithmetic_units(tmp_path)
+    captured: list[bool] = []
+
+    class RecordingModel:
+        def encode(self, texts, **kwargs):
+            captured.append(kwargs["show_progress_bar"])
+            return np.ones((len(texts), 2), dtype=np.float32)
+
+    monkeypatch.setattr(semantic, "get_model", lambda *args, **kwargs: RecordingModel())
+
+    compute_embeddings(units, use_cache=False, progress=progress)
+
+    assert captured == [expected]
 
 
 def test_get_model_wraps_known_backend_error(monkeypatch) -> None:

@@ -1,198 +1,194 @@
-# Output and Exit Codes
+# Output and exit codes
 
-stdout carries report output only — JSON under `--json`, rich tables otherwise. Errors, parser-unavailable remediation, and all log output (progress lines and warnings) go to stderr.
+stdout carries report output only: JSON under `--json`, Rich tables otherwise. Errors and parser-unavailable remediation use stderr; Rich mode also sends logs, cache warnings, sentence-transformers progress, and Hugging Face download progress there. JSON mode disables progress and records non-fatal cache failures in `summary.embeddings.cache_warnings` instead of emitting them. It captures Python and native backend stderr in a temporary file from configuration through reporting and discards it when a report completes, so merged streams remain parseable even when findings produce exit code `1`:
 
-## `check --json` schemas
+```text
+codedupes check ./src --json --no-cache 2>&1 | python -c "import json,sys; json.load(sys.stdin)"
+```
 
-`check` has two JSON schema modes:
+Runtime failures restore stderr and replay captured diagnostics; they do not produce a completed JSON report.
 
-1. Combined mode (default): hybrid-first output
-2. Single-method mode (`--semantic-only` or `--traditional-only`): raw output
+## JSON schema v2
 
-## Combined mode (default)
+`check --json` and `search --json` emit schema version `2`. Units are nodes in a top-level `units` object keyed by `CodeUnit.uid`; findings refer to those keys instead of repeating a complete unit object for every pair endpoint.
 
-`codedupes check <path> --json` emits:
+### Check
 
 ```json
 {
+  "schema_version": 2,
   "analysis_mode": "combined",
   "summary": {
-    "total_units": 0,
-    "units_by_language": {},
-    "hybrid_duplicates": 0,
-    "potentially_unused": 0,
-    "raw_traditional_duplicates": 0,
-    "raw_semantic_duplicates": 0,
+    "total_units": 42,
+    "units_by_language": {"python": 42},
+    "hybrid_duplicates": 1,
+    "potentially_unused": 1,
+    "raw_traditional_duplicates": 1,
+    "raw_semantic_duplicates": 1,
     "semantic_fallback": false,
     "semantic_fallback_reason": null,
     "extraction_diagnostics": 0,
     "semantic_diagnostics": 0,
     "unused_supported_languages": ["python"],
-    "unused_excluded_units": 0
+    "unused_excluded_units": 0,
+    "embeddings": {
+      "requested_rows": 40,
+      "unique_inputs": 39,
+      "cache_hit_rows": 38,
+      "duplicate_rows_reused": 1,
+      "encoded_inputs": 1,
+      "model_loaded": true,
+      "cache_enabled": true,
+      "cache_warnings": [],
+      "cache_revision": "0123456789abcdef",
+      "execution_device": "cuda:0",
+      "moved_units_reused": 0,
+      "deleted_units": 0,
+      "orphan_rows_retained": 2,
+      "orphan_rows_collected": 0,
+      "manifest_generation": 17
+    },
+    "fail_on": "actionable",
+    "exit_code": 1
   },
-  "extraction_diagnostics": [],
-  "semantic_diagnostics": [],
-  "hybrid_duplicates": [],
-  "potentially_unused": []
-}
-```
-
-With `--show-all`, additional raw sections are included:
-
-- `traditional_duplicates`
-- `semantic_duplicates`
-
-## Single-method mode (`--semantic-only` or `--traditional-only`)
-
-`codedupes check <path> --json --semantic-only` and `codedupes check <path> --json --traditional-only` emit raw duplicate sections:
-
-```json
-{
-  "analysis_mode": "semantic",
-  "summary": {
-    "total_units": 0,
-    "units_by_language": {},
-    "traditional_duplicates": 0,
-    "semantic_duplicates": 0,
-    "potentially_unused": 0,
-    "semantic_fallback": false,
-    "semantic_fallback_reason": null,
-    "extraction_diagnostics": 0,
-    "semantic_diagnostics": 0,
-    "unused_supported_languages": ["python"],
-    "unused_excluded_units": 0
-  },
-  "extraction_diagnostics": [],
-  "semantic_diagnostics": [],
-  "traditional_duplicates": [],
-  "semantic_duplicates": [],
-  "potentially_unused": []
-}
-```
-
-`hybrid_duplicates` is only part of default combined mode. `analysis_mode` is always present (`combined`, `traditional`, `semantic`, or `none`).
-
-Each duplicate entry includes:
-
-- `unit_a`
-- `unit_b`
-
-`hybrid_duplicates` entries include:
-
-- `tier` (`exact`, `traditional_near`, `hybrid_confirmed`, `semantic_high_confidence`, or `semantic_review`)
-- `confidence`
-- evidence fields (`has_exact`, `semantic_similarity`, `jaccard_similarity`, etc.)
-
-`semantic_review` means the pair cleared its calibrated semantic duplicate gate but lacks the lexical or statement-count corroboration used for the high-confidence tier. It remains visible because alpha-renaming and structural translation often remove exactly that lexical overlap, and its confidence is scaled to rank below every corroborated tier (see [Analysis defaults](analysis-defaults.md#confidence-scale)).
-
-Raw duplicate entries include:
-
-- `similarity`
-- `method`
-
-Each unit object includes:
-
-- Identity: `name`, `qualified_name`, and `type`
-- Language: `language`, `dialect`, and `native_kind`
-- Location: `file`, `line`, `end_line`, `start_byte`, `end_byte`, `start_column`, and `end_column`
-- Extraction metadata: `statement_count`
-- Visibility: `is_public` and `is_exported`
-
-## Diagnostics
-
-`extraction_diagnostics` and `semantic_diagnostics` are separate top-level arrays with a matching count in `summary`. Both use the same entry shape: `file`, `language`, `severity`, `code`, `message`, `line`, and `end_line` (the last two are `null` for file-level diagnostics). The terminal summary prints a count row per non-empty list and shows the first ten entries of each.
-
-`extraction_diagnostics` covers parsing and file selection:
-
-- `parse-error`: a file the parser could not read at all
-- `read-error`: a file that could not be read from disk (dangling symlink, missing read permission, removed mid-run); the file is skipped and the run continues
-- `invalid-utf8`: a Tree-sitter-language file that is not valid UTF-8; it is still analyzed, with undecodable bytes replaced by U+FFFD in unit source, hashes, and embedding input
-- `partial-parse`: Tree-sitter recovered from invalid or incomplete source; units whose own subtree contains an error are omitted with `unit-parse-error`
-- `unit-parse-error`: one extracted unit skipped because its own syntax subtree contains an error
-- `c-header-policy`: one summary diagnostic per run when `.h` files are skipped by the conservative C-header policy during a directory scan, naming the count and suggesting `--language c`
-- `declaration-file`: an explicitly named `.d.ts`/`.d.mts`/`.d.cts` file, which has no implementation bodies
-- `language-filter`: an explicitly named file excluded by `--language`
-- `unsupported-file`: an explicitly named file no extraction backend accepts
-
-The last three are raised only for files named on the command line. A directory scan silently passes over unsupported and filtered files; only the C-header summary is reported.
-
-`semantic_diagnostics` covers corpus units the semantic stage dropped. The only current code is `semantic-context-overflow`: the unit's tokenized input, encode prompt included, exceeds the model's context window, so it is skipped instead of embedded from a partial prefix. The run continues without it. An over-long `search` query still fails hard.
-
-## `search --json` Structure
-
-`codedupes search <path> "<query>" --json` emits:
-
-```json
-{
-  "query": "text",
-  "indexed_units": 42,
-  "results": [
+  "duplicates": [
     {
-      "score": 0.95,
-      "name": "func",
-      "qualified_name": "pkg.mod.func",
+      "unit_a": "/repo/src/a.py::python::a.normalize::0",
+      "unit_b": "/repo/src/b.py::python::b.normalize::0",
+      "tier": "hybrid_confirmed",
+      "confidence": 0.94,
+      "has_exact": false,
+      "semantic_similarity": 0.96,
+      "jaccard_similarity": 0.92,
+      "weak_identifier_jaccard": 0.7,
+      "statement_count_ratio": 1.0
+    }
+  ],
+  "potentially_unused": [
+    "/repo/src/unused.py::python::unused.helper::0"
+  ],
+  "extraction_diagnostics": [],
+  "semantic_diagnostics": [],
+  "units": {
+    "/repo/src/a.py::python::a.normalize::0": {
+      "name": "normalize",
+      "qualified_name": "a.normalize",
       "type": "function",
       "language": "python",
       "dialect": "python",
       "native_kind": "FunctionDef",
-      "file": "src/pkg/mod.py",
-      "line": 10,
-      "end_line": 20,
-      "start_byte": 120,
-      "end_byte": 480,
+      "file": "/repo/src/a.py",
+      "line": 1,
+      "end_line": 2,
+      "start_byte": 0,
+      "end_byte": 42,
       "start_column": 0,
-      "end_column": 17,
-      "statement_count": 4,
+      "end_column": 24,
+      "statement_count": 1,
       "is_public": true,
       "is_exported": false
     }
-  ],
+  }
+}
+```
+
+The shortened example omits the other two referenced entries from `units`; real output includes every UID referenced by `duplicates` or `potentially_unused` exactly once. Units with no finding are not emitted; `summary.total_units` is the full extracted corpus count.
+
+In default combined mode, `duplicates` contains hybrid edges. With `--show-all`, `traditional_duplicates` and `semantic_duplicates` are added as raw edge lists with `unit_a`, `unit_b`, `similarity`, and `method`.
+
+In `--semantic-only` or `--traditional-only` mode, `duplicates` directly contains the active raw edge list and the `--show-all` arrays are omitted. `analysis_mode` is always one of `combined`, `traditional`, `semantic`, or `none`.
+
+See [hybrid confidence tiers](analysis-defaults.md#hybrid-synthesis-confidence-defaults) to interpret `tier` and `confidence`.
+
+### Search
+
+Search hits use `{"unit": "<uid>", "score": 0.95}`; their unit records have the same fields as check results. An empty index with `--no-cache` produces:
+
+```json
+{
+  "schema_version": 2,
+  "query": "refund validation",
+  "summary": {
+    "indexed_units": 0,
+    "results": 0,
+    "embeddings": {
+      "requested_rows": 0,
+      "unique_inputs": 0,
+      "cache_hit_rows": 0,
+      "duplicate_rows_reused": 0,
+      "encoded_inputs": 0,
+      "model_loaded": false,
+      "cache_enabled": false,
+      "cache_warnings": [],
+      "cache_revision": null,
+      "execution_device": null,
+      "moved_units_reused": 0,
+      "deleted_units": 0,
+      "orphan_rows_retained": 0,
+      "orphan_rows_collected": 0,
+      "manifest_generation": null
+    }
+  },
+  "results": [],
+  "units": {},
   "semantic_diagnostics": []
 }
 ```
 
-`indexed_units` is how many code units were embedded into the search index. When it is `0`, terminal output warns on stderr and distinguishes among an extraction that produced no code units, semantic eligibility filtering (`--min-statements`/`--semantic-unit-type`), and candidates skipped by the model context-window policy. Semantic diagnostics are printed below the warning when present.
+`summary.indexed_units` is the semantic corpus size after eligibility and context-window filtering. An empty terminal index warns on stderr and distinguishes empty extraction, eligibility filtering, and context-window exclusions.
+
+## Embedding telemetry
+
+`summary.embeddings` describes the final retained corpus from the most recent embedding call; it is `null` when semantic work did not run or fell back. Query encoding does not increment these counters, though query-cache warnings are appended. A warm corpus can therefore report `model_loaded: false` while a new query still loads the model.
+
+| Field | Meaning |
+| --- | --- |
+| `requested_rows` | Corpus rows retained after context-window filtering. |
+| `unique_inputs` | Distinct prepared texts among those rows. |
+| `cache_hit_rows` | Retained rows supplied by persistent cache, including repeated references to one key. |
+| `duplicate_rows_reused` | Additional uncached rows sharing an input encoded within this call. |
+| `encoded_inputs` | Retained input rows encoded on the final execution path; discarded retry work is not accumulated. Cache-key reuse deduplicates repeated inputs when caching is active; without it, repeated inputs are encoded separately. |
+| `model_loaded` | Whether the corpus call needed the model, including a previously loaded process-local instance. |
+| `cache_enabled` | Whether persistent reuse was enabled for the call; writes can still fail. |
+| `cache_warnings` | Non-fatal cache read/write, manifest, and query-cache failures observed during the run. |
+| `cache_revision` | Revision label, commit, or local fingerprint used for cache identity, otherwise `null`. |
+| `execution_device` | Effective inference device, or `null` when no model execution was needed. |
+| `moved_units_reused` | New UIDs matched to departed UIDs with the same content after retaining same-file symbols whose byte offsets changed. |
+| `deleted_units` | Departed UIDs left after matching retained symbols and moves, independent of vector sharing. |
+| `orphan_rows_retained` | Tracked orphan rows still stored, including rows protected by another active selection. |
+| `orphan_rows_collected` | Orphan rows removed during this run. |
+| `manifest_generation` | Shard-wide complete-scan counter, or `null` without successful manifest publication. |
+
+Move and deletion counts need a comparable [corpus baseline](caching.md#corpus-lifecycle). Terminal `check` and `search` output include an `Embeddings` summary showing cache hits, encoded inputs, duplicate-row reuse, model execution, and manifest generation. Nonzero move, deletion, and orphan counts are included too.
+
+## Diagnostics
+
+`check` emits `extraction_diagnostics` and `semantic_diagnostics` arrays with matching counts in `summary`. `search` emits only the semantic diagnostic array, without a summary count; its JSON does not include extraction diagnostics. Entries use `file`, `language`, `severity`, `code`, `message`, `line`, and `end_line`. Terminal checks print counts and up to ten entries per diagnostic category; terminal searches print semantic diagnostics.
+
+## Exit codes
+
+`check --fail-on` controls findings only; runtime and usage failures retain their normal status:
+
+- `--fail-on actionable` (default): combined mode exits `1` for `exact`, `traditional_near`, or `hybrid_confirmed`. Pure-semantic `semantic_high_confidence` and `semantic_review` pairs remain visible but advisory because neither has deterministic structural/token corroboration. Non-strict unused guesses are also advisory, while `--strict-unused` makes them actionable. Raw single-method duplicates already passed the explicitly selected method thresholds and remain actionable.
+- `--fail-on all`: any reported duplicate or unused finding exits `1`.
+- `--fail-on none`: findings never change the successful exit code.
+
+The selected policy and computed result are always present as `summary.fail_on` and `summary.exit_code`. Terminal summaries show the same values as `Failure policy` and `Finding status` rows.
+
+Command status conventions:
+
+- `0`: command completed and the selected finding policy did not fail the run.
+- `1`: selected findings failed `check`, or a command encountered a runtime failure.
+- `2`: Click usage or validation error.
+
+Default combined semantic failures are fatal. `--allow-semantic-fallback` continues with full-scope traditional results and records `summary.semantic_fallback` plus `summary.semantic_fallback_reason`; under the default actionable policy, heuristic unused findings alone do not turn that successful degraded run into exit `1`.
 
 ## Terminal duplicate panels
 
-Table locations are `<path>:<line>`. The path uses the shorter of its working-directory-relative and absolute spellings, so same-named files in different directories stay distinguishable without needlessly losing the filename to narrow-table truncation.
+Tables show up to 20 rows by default; `--full-table` removes that limit.
 
-- combined mode: `Hybrid Duplicates`, plus `Traditional Duplicates (Raw Structural/Token/Jaccard)` and `Semantic Duplicates (Raw Embedding)` under `--show-all`
-- `--traditional-only`: `Traditional Duplicates (Structural/Token/Jaccard)`
-- `--semantic-only`: `Semantic Duplicates (Embedding)`
+Locations use the shorter of working-directory-relative and absolute `<path>:<line>` spellings.
 
-## Exit Codes
-
-`check`:
-
-- `0`: completed, no findings
-- `1`: completed with findings or failed due to runtime error
-- `2`: CLI usage/validation error (Click)
-- Semantic backend note:
-  - default combined `check`: semantic failures fail hard
-  - `--allow-semantic-fallback`: combined mode can continue with scoped traditional results, and degraded runs are surfaced in JSON as `summary.semantic_fallback` plus `summary.semantic_fallback_reason`
-  - semantic-required mode (`--semantic-only`): fails hard
-- Finding note:
-  - combined mode: exit `1` is based on `hybrid_duplicates` + `potentially_unused`
-  - single-method mode: exit `1` is based on raw duplicate findings + `potentially_unused`
-
-`search`:
-
-- `0`: completed successfully
-- `1`: failed due to runtime error
-- `2`: CLI usage/validation error (Click)
-- Semantic backend note: `search` requires semantic inference and fails hard if semantic backend loading/inference fails.
-
-`info`:
-
-- `0`: completed successfully
-
-`cache info`:
-
-- `0`: completed successfully
-- `1`: cache state unavailable (construction or stats failure)
-
-`cache clear`:
-
-- `0`: cleared successfully
-- `1`: failed to clear cache state
+- Combined: `Hybrid Duplicates`, plus raw traditional and semantic panels under `--show-all`.
+- `--traditional-only`: `Traditional Duplicates (Structural/Token/Jaccard)`.
+- `--semantic-only`: `Semantic Duplicates (Embedding)`.

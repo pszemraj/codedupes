@@ -1,4 +1,4 @@
-# Hybrid Confidence Tuning
+# Hybrid confidence tuning
 
 Tune how gated semantic-only matches are divided between high-confidence and review tiers.
 
@@ -9,9 +9,7 @@ Tune how gated semantic-only matches are divided between high-confidence and rev
 - Sweep harness: [`../scripts/sweep_hybrid_gates.py`](../scripts/sweep_hybrid_gates.py)
 - Semantic threshold harness: [`../scripts/sweep_semantic_thresholds.py`](../scripts/sweep_semantic_thresholds.py)
 
-This corpus is synthetic and tracked for reproducibility.
-
-Use it as a guardrail dataset, not a benchmark.
+Use this synthetic corpus to check for regressions; validate changes on a real repository too.
 
 ## Recommended process
 
@@ -23,18 +21,14 @@ Use it as a guardrail dataset, not a benchmark.
 ## Run the sweep
 
 ```bash
-python scripts/sweep_hybrid_gates.py --top-n 15
-```
-
-Write a machine-readable report:
-
-```bash
 python scripts/sweep_hybrid_gates.py \
-  --top-n 25 \
+  --top-n 15 \
   --json-out scratch/hybrid_sweep_report.json
 ```
 
-The report embeds the same calibration manifest as the semantic sweep (pinned commit, pipeline schema, effective embedding-space identity, candidate policy, corpus/label digests) and records `output_policy: hybrid_high_confidence`: its `tp`/`fp`/`fn` and `precision`/`recall`/`f1` score the published output minus the `semantic_review` tier, unlike the semantic sweep's same-named fields, which score all published pairs. Like that sweep, the run refuses a model that cannot be pinned to an immutable 40-character commit.
+Omit `--json-out` to print results without writing a report.
+
+The report embeds the [semantic sweep's calibration manifest](#semantic-threshold-sweep-model-profiles) and records `output_policy: hybrid_high_confidence`: its `tp`/`fp`/`fn` and `precision`/`recall`/`f1` score the published output minus the `semantic_review` tier, unlike the semantic sweep's same-named fields, which score all published pairs. Both sweeps require a model pinned to an immutable 40-character commit.
 
 ## Parameter grids
 
@@ -55,8 +49,7 @@ python scripts/sweep_hybrid_gates.py \
   --statement-ratio-grid 0.25,0.35,0.45
 ```
 
-The harness uses the same analyzer synthesis logic and model/revision defaults as the CLI. Identifier and statement-ratio grid values change tier assignment only: every pair that already passed the selected semantic gate remains in final output.
-Each `--semantic-grid` value emulates the per-language duplicate gate the analyzer applies to semantic pairs before hybrid synthesis (there is no separate synthesis-time semantic minimum); the production per-language gate values are listed in [Analysis defaults](analysis-defaults.md).
+The harness uses the analyzer's [hybrid synthesis logic](analysis-defaults.md#hybrid-synthesis-confidence-defaults) and [model defaults](model-profiles.md#built-in-profiles). Each `--semantic-grid` value emulates the [duplicate gate](analysis-defaults.md#semantic-duplicate-gate-defaults) applied before synthesis.
 
 ## Semantic threshold sweep (model profiles)
 
@@ -73,10 +66,10 @@ Default report paths:
 - [`../test_fixtures/hybrid_tuning/semantic_threshold_report.json`](../test_fixtures/hybrid_tuning/semantic_threshold_report.json) - duplicate thresholds
 - [`../test_fixtures/hybrid_tuning/search_threshold_report.json`](../test_fixtures/hybrid_tuning/search_threshold_report.json) - search thresholds, evaluated against [`../test_fixtures/hybrid_tuning/search_probes.json`](../test_fixtures/hybrid_tuning/search_probes.json)
 
-Each report records the full calibration identity per model: the pinned immutable commit, embedding pipeline schema and runtime fingerprint, encode plan (route and prompt per input mode), the requested device plus the effective embedding-space identity the analyzer actually produced (its runtime variant covers dtype and Metal math policy, and reflects an accelerator request that fell back and restarted on CPU - thresholds are never labeled with a device or dtype that did not produce them), embedding dimension, candidate policy, candidate coverage, and SHA-256 digests of the corpus and labels/probes. Duplicate rows score the final combined output, not the raw semantic list. Labels excluded by the candidate policy are unconditional false negatives - combined-mode traditional analysis shares the semantic candidate pool, so neither tier reaches them; only labels dropped later for exceeding the model context remain recoverable by the traditional tier. The manifest's final-output recall ceiling therefore combines embedded positive pairs with any labeled over-context pairs the traditional tier already recovered. The sweep defaults to the production statement floor and refuses to run for a model that cannot be pinned to a 40-character commit - pass `--model-revision` or pin the profile's `default_revision`. Both grids are overrideable (`--duplicate-start`/`--duplicate-stop`, `--search-start`/`--search-stop`; search default 0.20-0.90), and every manifest records `selected_at_grid_edge`: a boundary selection is censored evidence to re-run with a wider grid, never an interior optimum.
+Each report records the full calibration identity per model: the pinned immutable commit, embedding pipeline schema and runtime fingerprint, encode plan (route and prompt per input mode), the requested device plus the effective embedding-space identity the analyzer actually produced (its runtime variant covers dtype and Metal math policy, and reflects an accelerator request that fell back and restarted on CPU - thresholds are never labeled with a device or dtype that did not produce them), embedding dimension, candidate policy, candidate coverage, and SHA-256 digests of the corpus and labels/probes. Duplicate rows score the final combined output, not the raw semantic list. Labels outside the semantic candidate policy can still be recovered by full-scope traditional analysis; the manifest records those recoveries separately and counts only labels reached by neither tier as unreachable. The sweep defaults to the production statement floor and refuses to run for a model that cannot be pinned to a 40-character commit - pass `--model-revision` or pin the profile's `default_revision`. Both grids are overrideable (`--duplicate-start`/`--duplicate-stop`, `--search-start`/`--search-stop`; search default 0.20-0.90), and every manifest records `selected_at_grid_edge`: a boundary selection is censored evidence to re-run with a wider grid, never an interior optimum.
 
 Selection policy is deterministic:
 
 - sort by `f1` (desc), `precision` (desc), `recall` (desc), `fp` (asc), then prefer the looser threshold on remaining ties
 
-Transferring a swept value into a profile default is a reviewed decision, not automatic: re-validate on at least one real repository, and prefer recall when stepping off the F1-best row. A shipped gate may sit however many grid steps below the F1 pick the sweep shows recall gains for; where recall is flat it may sit at most one step looser, as an off-corpus generalization hedge. `tests/test_calibration_reports.py` re-derives each shipped gate from its recorded grid and fails a transfer that is not a swept grid point, tightens past the selection, loses recall against it, or drops below 80% of its F1. Production gate values are listed in [Analysis defaults](analysis-defaults.md). Model-specific semantic thresholds are listed in [Model profiles](model-profiles.md).
+Transferring a swept value into a profile default is a reviewed decision, not automatic: re-validate on at least one real repository and follow the [duplicate gate selection policy](analysis-defaults.md#semantic-duplicate-gate-defaults). `tests/test_calibration_reports.py` re-derives each shipped gate from its recorded grid and checks that policy. [Model profiles](model-profiles.md#built-in-profiles) lists search defaults and their calibration evidence.

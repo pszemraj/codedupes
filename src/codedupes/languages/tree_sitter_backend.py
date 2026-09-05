@@ -685,7 +685,7 @@ class TreeSitterBackend:
         return self.include_private or spec.is_public
 
     def _statement_count(self, body: Any, unit_type: CodeUnitType) -> int:
-        """Count the statements or class members inside one unit body.
+        """Count statements or class members, expanding static initializer bodies.
 
         :param body: Body node of the unit, or ``None``.
         :param unit_type: Kind of unit the body belongs to.
@@ -694,8 +694,14 @@ class TreeSitterBackend:
         if body is None:
             return 0
         if unit_type == CodeUnitType.CLASS:
+            # Static initializers have no separate code unit; measure their
+            # bodies here using the same traversal as callable bodies.
             return sum(
-                1 for child in _named_children(body) if child.type in self.class_member_types
+                max(1, self._statement_count(child, CodeUnitType.FUNCTION))
+                if child.type == "class_static_block"
+                else 1
+                for child in _named_children(body)
+                if child.type in self.class_member_types
             )
 
         count = 0

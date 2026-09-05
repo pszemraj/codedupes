@@ -108,6 +108,7 @@ def test_manifest_records_effective_embedding_space_not_the_request(
         "runtime_variant": "cpu-faithful-after-fallback",
         # Provenance metadata: None for the pinned commits sweeps require.
         "source_commit": None,
+        "search_document": "source",
     }
     assert "device" not in manifest
     assert "dtype_variant" not in manifest

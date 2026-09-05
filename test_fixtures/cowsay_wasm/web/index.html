@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark light">
+  <title>Cowsay Dupe Fixture</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <main>
+    <header>
+      <p class="eyebrow">Rust · WebAssembly · planted code clones</p>
+      <h1>Cowsay, twice where it matters.</h1>
+      <p class="lede">
+        The output below is rendered by Rust in WebAssembly. Switch wrappers to
+        traverse the semantic clone without changing behavior.
+      </p>
+    </header>
+
+    <section class="workbench" aria-label="Cowsay controls and output">
+      <form id="controls">
+        <label for="message">Message</label>
+        <textarea id="message" rows="5">The borrow checker says moo.</textarea>
+
+        <div class="control-row">
+          <label for="width">Wrap width <output id="width-value">32</output></label>
+          <input id="width" type="range" min="4" max="72" value="32">
+        </div>
+
+        <div class="control-grid">
+          <label class="check">
+            <input id="thinking" type="checkbox">
+            <span>Think instead of say</span>
+          </label>
+
+          <label for="wrapper">
+            Wrapping implementation
+            <select id="wrapper">
+              <option value="scanner">Scanner</option>
+              <option value="fold">Iterator fold</option>
+            </select>
+          </label>
+        </div>
+      </form>
+
+      <section class="terminal" aria-live="polite">
+        <div class="terminal-bar">
+          <span id="status">Loading WebAssembly…</span>
+          <span id="version"></span>
+        </div>
+        <pre id="output"></pre>
+      </section>
+    </section>
+
+    <footer>
+      Exact, edit-distance, and semantic clone labels are recorded in
+      <code>fixtures/clone-ground-truth.json</code>.
+    </footer>
+  </main>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

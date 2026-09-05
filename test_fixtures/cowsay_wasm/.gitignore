@@ -1,0 +1,6 @@
+/target
+/web/pkg
+/Cargo.lock
+__pycache__/
+*.py[cod]
+.DS_Store

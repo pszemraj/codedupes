@@ -340,10 +340,8 @@ def _run_duplicate_sweep(
             f"{excluded_pairs} labeled pairs sit outside the embedded candidate pool. "
             "They stay in the metric denominator and are threshold-invariant. "
             "Candidate-policy exclusions (class-level or below-min-statement units) "
-            "are unconditional false negatives: combined-mode traditional analysis "
-            "shares the candidate pool, so neither tier reaches them. Over-context "
-            "exclusions are dropped only after traditional analysis runs, so those "
-            "count as false negatives unless the traditional tier already matched them."
+            "can still be recovered by full-scope traditional analysis. Any exclusion "
+            "counts as a false negative unless the traditional tier matched it."
         )
     thresholds = _threshold_grid(duplicate_start, duplicate_stop)
     rows: list[SweepRow] = []

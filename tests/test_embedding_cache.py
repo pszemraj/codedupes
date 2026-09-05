@@ -11,14 +11,17 @@ import sys
 import threading
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
 
 from codedupes import embedding_cache, semantic
-from codedupes.embedding_cache import EmbeddingCache
+from codedupes.analyzer import AnalyzerConfig, CodeAnalyzer
+from codedupes.embedding_cache import CorpusSelectionManifest, EmbeddingCache, diff_manifest
 from codedupes.models import CodeUnit
 from codedupes.semantic import (
+    EmbeddingRunStats,
     compute_embeddings,
     compute_embeddings_with_identity,
     find_similar_to_query,
@@ -67,6 +70,425 @@ class CountingModel:
         return np.stack([_vector_for_text(text, self.dim) for text in texts], axis=0)
 
 
+def _corpus_manifest(
+    units: dict[str, str],
+    *,
+    orphans: dict[str, int] | None = None,
+) -> CorpusSelectionManifest:
+    """Build a minimal complete manifest for transition-diff tests."""
+    return CorpusSelectionManifest(
+        last_seen_generation=1,
+        complete_scan=True,
+        units=units,
+        orphans=dict(orphans or {}),
+    )
+
+
+@pytest.mark.parametrize(
+    ("previous", "current", "moved", "deleted", "orphaned"),
+    [
+        ({"old": "key"}, {"new": "key"}, ["new"], [], set()),
+        ({"old": "key"}, {}, [], ["old"], {"key"}),
+        ({"old": "old-key"}, {"new": "new-key"}, [], ["old"], {"old-key"}),
+        ({"first": "key"}, {"first": "key", "second": "key"}, [], [], set()),
+        ({"first": "key", "second": "key"}, {"first": "key"}, [], ["second"], set()),
+        ({"first": "key", "second": "key"}, {}, [], ["first", "second"], {"key"}),
+        ({"first": "key", "second": "key"}, {"new": "key"}, ["new"], ["first"], set()),
+        ({"old": "key"}, {"first": "key", "second": "key"}, ["first"], [], set()),
+        (
+            {"a.py::python::f::0": "old", "a.py::python::f::40": "shared"},
+            {"a.py::python::f::20": "new"},
+            [],
+            ["a.py::python::f::0"],
+            {"old", "shared"},
+        ),
+        (
+            {"a.py::python::f::0": "key"},
+            {"b.py::python::f::0": "key", "a.py::python::f::20": "key"},
+            [],
+            [],
+            set(),
+        ),
+    ],
+    ids=[
+        "move",
+        "delete",
+        "edit",
+        "identical-body-added",
+        "identical-body-deleted",
+        "all-identical-bodies-deleted",
+        "identical-body-moved-and-deleted",
+        "identical-body-moved-and-added",
+        "repeated-name-shift-edit-and-delete",
+        "same-file-match-before-copy",
+    ],
+)
+def test_diff_manifest_classifies_corpus_transitions(
+    previous,
+    current,
+    moved,
+    deleted,
+    orphaned,
+) -> None:
+    diff = diff_manifest(_corpus_manifest(previous), current)
+
+    assert diff.moved == moved
+    assert diff.deleted == deleted
+    assert diff.orphaned == orphaned
+
+
+def test_manifest_revert_clears_orphan_age(tmp_path) -> None:
+    cache = EmbeddingCache()
+    scope = tmp_path / "repo"
+    scope.mkdir()
+    key = "content-key"
+    cache.put_many(scope, "model", "revision", [(key, np.ones(2, dtype=np.float32))])
+    cache.publish_corpus_manifest(
+        scope,
+        "model",
+        "revision",
+        selection="selection",
+        units={"unit": key},
+        complete_scan=True,
+    )
+    orphaned = cache.publish_corpus_manifest(
+        scope,
+        "model",
+        "revision",
+        selection="selection",
+        units={},
+        complete_scan=True,
+    )
+    restored = cache.publish_corpus_manifest(
+        scope,
+        "model",
+        "revision",
+        selection="selection",
+        units={"unit": key},
+        complete_scan=True,
+    )
+
+    assert orphaned is not None
+    assert orphaned.orphan_rows_retained == 1
+    assert restored is not None
+    assert restored.orphan_rows_retained == 0
+    assert restored.orphan_rows_collected == 0
+
+
+def test_manifest_gc_never_collects_query_rows(tmp_path) -> None:
+    cache = EmbeddingCache()
+    scope = tmp_path / "repo"
+    scope.mkdir()
+    code_key = "code-key"
+    query_key = "query-key"
+    vector = np.ones(2, dtype=np.float32)
+    cache.put_many(scope, "model", "revision", [(code_key, vector)], namespace="code")
+    cache.put_many(scope, "model", "revision", [(query_key, vector)], namespace="query")
+    cache.publish_corpus_manifest(
+        scope,
+        "model",
+        "revision",
+        selection="selection",
+        units={"unit": code_key},
+        complete_scan=True,
+    )
+
+    published = None
+    for _ in range(4):
+        published = cache.publish_corpus_manifest(
+            scope,
+            "model",
+            "revision",
+            selection="selection",
+            units={},
+            complete_scan=True,
+        )
+
+    assert published is not None
+    assert published.orphan_rows_collected == 1
+    assert cache.get_many(scope, "model", "revision", [code_key]) == {}
+    assert query_key in cache.get_many(scope, "model", "revision", [query_key])
+
+
+def test_manifest_gc_expires_unrefreshed_selection_pin(tmp_path) -> None:
+    cache = EmbeddingCache()
+    scope = tmp_path / "repo"
+    scope.mkdir()
+    key = "shared-key"
+    cache.put_many(scope, "model", "revision", [(key, np.ones(2, dtype=np.float32))])
+    for selection in ("first", "second"):
+        cache.publish_corpus_manifest(
+            scope,
+            "model",
+            "revision",
+            selection=selection,
+            units={"unit": key},
+            complete_scan=True,
+        )
+
+    orphaned = cache.publish_corpus_manifest(
+        scope,
+        "model",
+        "revision",
+        selection="first",
+        units={},
+        complete_scan=True,
+    )
+    assert orphaned is not None
+    assert orphaned.orphan_rows_retained == 1
+    assert orphaned.orphan_rows_collected == 0
+
+    for expected_generation in (4, 5):
+        retained = cache.publish_corpus_manifest(
+            scope,
+            "model",
+            "revision",
+            selection="first",
+            units={},
+            complete_scan=True,
+        )
+        assert retained is not None
+        assert retained.generation == expected_generation
+        assert retained.orphan_rows_retained == 1
+        assert retained.orphan_rows_collected == 0
+    assert key in cache.get_many(scope, "model", "revision", [key])
+
+    published = cache.publish_corpus_manifest(
+        scope,
+        "model",
+        "revision",
+        selection="first",
+        units={},
+        complete_scan=True,
+    )
+
+    assert published is not None
+    assert published.generation == 6
+    assert published.orphan_rows_retained == 0
+    assert published.orphan_rows_collected == 1
+    assert cache.get_many(scope, "model", "revision", [key]) == {}
+
+    rediscovered = cache.publish_corpus_manifest(
+        scope,
+        "model",
+        "revision",
+        selection="second",
+        units={},
+        complete_scan=True,
+    )
+    assert rediscovered is not None
+    assert len(rediscovered.diff.deleted) == 1
+    assert rediscovered.orphan_rows_retained == 0
+    assert rediscovered.orphan_rows_collected == 0
+
+
+def test_manifest_gc_revalidates_references_before_collection(tmp_path, monkeypatch) -> None:
+    cache = EmbeddingCache()
+    concurrent_cache = EmbeddingCache(cache.cache_root)
+    scope = tmp_path / "repo"
+    scope.mkdir()
+    key = "reintroduced-key"
+    cache.put_many(scope, "model", "revision", [(key, np.ones(2, dtype=np.float32))])
+    cache.publish_corpus_manifest(
+        scope,
+        "model",
+        "revision",
+        selection="selection",
+        units={"unit": key},
+        complete_scan=True,
+    )
+    cache.publish_corpus_manifest(
+        scope,
+        "model",
+        "revision",
+        selection="selection",
+        units={},
+        complete_scan=True,
+    )
+    cache.publish_corpus_manifest(
+        scope,
+        "model",
+        "revision",
+        selection="selection",
+        units={},
+        complete_scan=True,
+    )
+    cache.publish_corpus_manifest(
+        scope,
+        "model",
+        "revision",
+        selection="selection",
+        units={},
+        complete_scan=True,
+    )
+    collect_orphans = cache.collect_orphans
+
+    def reintroduce_before_collection(*args, **kwargs):
+        concurrent_cache.publish_corpus_manifest(
+            scope,
+            "model",
+            "revision",
+            selection="selection",
+            units={"unit": key},
+            complete_scan=True,
+        )
+        return collect_orphans(*args, **kwargs)
+
+    monkeypatch.setattr(cache, "collect_orphans", reintroduce_before_collection)
+
+    raced = cache.publish_corpus_manifest(
+        scope,
+        "model",
+        "revision",
+        selection="selection",
+        units={},
+        complete_scan=True,
+    )
+
+    assert raced is not None
+    assert raced.orphan_rows_collected == 0
+    manifest = cache.load_manifest(scope, "model", "revision")
+    assert manifest is not None
+    assert manifest.selections["selection"].units == {"unit": key}
+    assert key in cache.get_many(scope, "model", "revision", [key])
+
+
+def test_cache_stats_accepts_manifest_without_selections(tmp_path) -> None:
+    cache = EmbeddingCache()
+    scope = tmp_path / "repo"
+    scope.mkdir()
+    cache.put_many(
+        scope,
+        "model",
+        "revision",
+        [("key", np.ones(2, dtype=np.float32))],
+    )
+    shard_dir = cache.shard_dir(scope, "model", "revision")
+    embedding_cache.atomic_write_json(
+        shard_dir / embedding_cache.MANIFEST_FILENAME,
+        {
+            "schema": embedding_cache.MANIFEST_SCHEMA,
+            "generation": 7,
+            "selections": {},
+        },
+    )
+
+    stats = cache.stats()
+
+    assert stats["repos"][0]["last_complete_generation"] == 7
+
+
+def test_manifest_limits_inactive_selection_baselines(tmp_path) -> None:
+    cache = EmbeddingCache()
+    scope = tmp_path / "repo"
+    scope.mkdir()
+    selection_count = embedding_cache.MANIFEST_SELECTION_LIMIT + 3
+
+    for index in range(selection_count):
+        cache.publish_corpus_manifest(
+            scope,
+            "model",
+            "revision",
+            selection=f"selection-{index:02d}",
+            units={"unit": f"key-{index}"},
+            complete_scan=True,
+        )
+
+    manifest = cache.load_manifest(scope, "model", "revision")
+    assert manifest is not None
+    assert len(manifest.selections) == embedding_cache.MANIFEST_SELECTION_LIMIT
+    assert "selection-00" not in manifest.selections
+    assert f"selection-{selection_count - 1:02d}" in manifest.selections
+
+
+def test_manifest_selection_limit_uses_incomplete_publish_recency(tmp_path) -> None:
+    cache = EmbeddingCache()
+    scope = tmp_path / "repo"
+    scope.mkdir()
+    for index in range(embedding_cache.MANIFEST_SELECTION_LIMIT):
+        cache.publish_corpus_manifest(
+            scope,
+            "model",
+            "revision",
+            selection=f"z-old-{index:02d}",
+            units={"unit": f"old-key-{index}"},
+            complete_scan=False,
+        )
+
+    cache.publish_corpus_manifest(
+        scope,
+        "model",
+        "revision",
+        selection="a-recent",
+        units={"unit": "recent-key"},
+        complete_scan=False,
+    )
+    cache.publish_corpus_manifest(
+        scope,
+        "model",
+        "revision",
+        selection="b-newest",
+        units={"unit": "newest-key"},
+        complete_scan=False,
+    )
+
+    manifest = cache.load_manifest(scope, "model", "revision")
+    assert manifest is not None
+    assert len(manifest.selections) == embedding_cache.MANIFEST_SELECTION_LIMIT
+    assert "a-recent" in manifest.selections
+    assert "b-newest" in manifest.selections
+    assert "z-old-00" not in manifest.selections
+
+
+def test_incomplete_manifest_matches_observed_files_by_exact_path(tmp_path) -> None:
+    cache = EmbeddingCache()
+    scope = tmp_path / "repo"
+    scope.mkdir()
+    first_path = "/repo/a.py"
+    sibling_path = "/repo/a.py::sibling.py"
+    first_uid = f"{first_path}::python::a.alpha::0"
+    sibling_uid = f"{sibling_path}::python::sibling.beta::0"
+    cache.put_many(
+        scope,
+        "model",
+        "revision",
+        [
+            ("first-key", np.ones(2, dtype=np.float32)),
+            ("sibling-key", np.zeros(2, dtype=np.float32)),
+        ],
+    )
+    cache.publish_corpus_manifest(
+        scope,
+        "model",
+        "revision",
+        selection="selection",
+        units={first_uid: "first-key", sibling_uid: "sibling-key"},
+        unit_paths={first_uid: first_path, sibling_uid: sibling_path},
+        complete_scan=True,
+    )
+
+    narrow = cache.publish_corpus_manifest(
+        scope,
+        "model",
+        "revision",
+        selection="selection",
+        units={first_uid: "first-key"},
+        unit_paths={first_uid: first_path},
+        observed_files=(first_path,),
+        complete_scan=False,
+    )
+
+    assert narrow is not None
+    assert narrow.diff.deleted == []
+    assert narrow.orphan_rows_retained == 0
+    manifest = cache.load_manifest(scope, "model", "revision")
+    assert manifest is not None
+    assert manifest.selections["selection"].units == {
+        first_uid: "first-key",
+        sibling_uid: "sibling-key",
+    }
+
+
 def _five_units(tmp_path: Path) -> list[CodeUnit]:
     return extract_units(tmp_path, FIVE_FUNCTION_SOURCE, filename="mod.py")
 
@@ -106,6 +528,45 @@ def test_full_cache_hit_skips_model_load_and_encode(tmp_path, monkeypatch):
     assert get_model_counts["count"] == 1
     assert len(model.encode_calls) == 1
     np.testing.assert_array_equal(first, second)
+
+
+@pytest.mark.parametrize("embed", [compute_embeddings, compute_embeddings_with_identity])
+@pytest.mark.parametrize("cache_state", ["disabled", "cold", "warm"])
+@pytest.mark.parametrize(
+    ("unit_count", "document_count"),
+    [(2, 1), (1, 2), (0, 1)],
+    ids=["shorter", "longer", "empty-corpus"],
+)
+def test_document_text_count_rejected_before_cache_or_model_work(
+    tmp_path, monkeypatch, embed, cache_state, unit_count, document_count
+) -> None:
+    units = _five_units(tmp_path)[:2]
+    texts = tuple(f"path: mod.py\n{unit.source}" for unit in units)
+    model = CountingModel()
+    _patch_get_model(monkeypatch, model)
+    options = {
+        "model_name": "test-model",
+        "revision": REVISION_1,
+        "device": "cpu",
+        "cache_scope": tmp_path,
+        "use_cache": cache_state != "disabled",
+        "search_document": "contextual",
+    }
+    if cache_state == "warm":
+        first = compute_embeddings(units, document_texts=texts, **options)
+        warm = compute_embeddings(units, document_texts=texts, **options)
+        np.testing.assert_array_equal(first, warm)
+        assert first.shape[0] == len(units)
+        assert len(model.encode_calls) == 1
+
+    def unexpected_work(*_args, **_kwargs):
+        pytest.fail("Mismatched document texts must be rejected before cache/model work")
+
+    monkeypatch.setattr(semantic, "_resolve_revision_for_cache", unexpected_work)
+    monkeypatch.setattr(semantic, "_prepare_cache_context", unexpected_work)
+    monkeypatch.setattr(semantic, "get_model", unexpected_work)
+    with pytest.raises(ValueError, match="document_texts must have the same length as units"):
+        embed(units[:unit_count], document_texts=texts[:document_count], **options)
 
 
 def test_strict_symbolic_revision_revalidates_before_cache_hit(tmp_path, monkeypatch):
@@ -424,12 +885,32 @@ def test_partial_update_only_reencodes_changed_unit(tmp_path, monkeypatch):
     updated_units = list(units)
     updated_units[2] = changed
 
+    stats = EmbeddingRunStats()
     compute_embeddings(
-        updated_units, model_name="test-model", revision=REVISION_1, cache_scope=tmp_path
+        updated_units,
+        model_name="test-model",
+        revision=REVISION_1,
+        cache_scope=tmp_path,
+        stats=stats,
     )
     assert get_model_counts["count"] == 2
     assert len(model.encode_calls) == 2
     assert len(model.encode_calls[-1]) == 1
+    assert stats.encoded_inputs == 1
+    assert stats.cache_hit_rows == 4
+    assert stats.model_loaded is True
+
+    warm_stats = EmbeddingRunStats()
+    compute_embeddings(
+        updated_units,
+        model_name="test-model",
+        revision=REVISION_1,
+        cache_scope=tmp_path,
+        stats=warm_stats,
+    )
+    assert warm_stats.cache_hit_rows == 5
+    assert warm_stats.encoded_inputs == 0
+    assert warm_stats.model_loaded is False
 
 
 def test_cache_key_sensitive_to_model_revision_prefix_and_task(tmp_path, monkeypatch):
@@ -473,11 +954,18 @@ def test_shuffled_partial_hit_matches_fully_uncached_compute(tmp_path, monkeypat
     mutated.source = "def other(x):\n    return x + 12345\n"
     shuffled[1] = mutated
 
+    stats = EmbeddingRunStats()
     cached_result = compute_embeddings(
-        shuffled, model_name="test-model", revision=REVISION_1, cache_scope=tmp_path
+        shuffled,
+        model_name="test-model",
+        revision=REVISION_1,
+        cache_scope=tmp_path,
+        stats=stats,
     )
     assert len(model.encode_calls) == 2
     assert len(model.encode_calls[-1]) == 1
+    assert stats.encoded_inputs == 1
+    assert stats.cache_hit_rows == 4
 
     uncached_result = compute_embeddings(
         shuffled, model_name="test-model", revision=REVISION_1, cache_scope=None
@@ -623,6 +1111,36 @@ def test_put_many_rejects_batch_after_provenance_moved(tmp_path):
     meta = embedding_cache._read_shard_meta(cache.shard_dir(scope, "some/model", "main"))
     assert meta is not None
     assert meta["source_commit"] == "b" * 40
+
+
+@pytest.mark.parametrize("existing_commit", [None, "a" * 40])
+def test_put_many_rejects_unverified_provenance_required_batch(tmp_path, existing_commit):
+    cache = EmbeddingCache(tmp_path)
+    scope = tmp_path / "repo"
+    scope.mkdir()
+    vector = np.array([1.0, 0.0], dtype=np.float32)
+    if existing_commit is not None:
+        cache.put_many(
+            scope,
+            "some/model",
+            "main",
+            [("corpus", vector)],
+            expected_source_commit=existing_commit,
+        )
+    shard_dir = cache.shard_dir(scope, "some/model", "main")
+    before = embedding_cache._read_shard_meta(shard_dir)
+
+    cache.put_many(
+        scope,
+        "some/model",
+        "main",
+        [("query", vector)],
+        namespace="query",
+        require_source_commit=True,
+    )
+
+    assert cache.get_many(scope, "some/model", "main", ["query"]) == {}
+    assert embedding_cache._read_shard_meta(shard_dir) == before
 
 
 def test_get_many_with_provenance_returns_the_snapshot_commit(tmp_path):
@@ -873,6 +1391,145 @@ def test_loose_branch_move_purges_shard_and_aborts_search(tmp_path, monkeypatch)
     # The purge emptied the shard, so reindexing re-embeds everything under b.
     compute_embeddings(units, model_name="drift-model", revision="main", cache_scope=tmp_path)
     assert len(model.encode_calls[-1]) == len(units)
+
+
+@pytest.mark.parametrize("corpus_cache", ["enabled", "disabled", "environment-disabled"])
+@pytest.mark.parametrize("query_cache", [True, False], ids=["cached", "uncached"])
+@pytest.mark.parametrize(
+    "query_commit", ["a" * 40, "b" * 40, None], ids=["match", "mismatch", "missing"]
+)
+def test_index_requires_query_checkpoint_before_encoding(
+    tmp_path, monkeypatch, corpus_cache, query_cache, query_commit
+):
+    class CheckpointModel(CountingModel):
+        def __getitem__(self, index):
+            return SimpleNamespace(
+                auto_model=SimpleNamespace(config=SimpleNamespace(_commit_hash=self.commit))
+            )
+
+        def encode(self, texts, **kwargs):
+            self.encode_calls.append(list(texts))
+            vectors = np.array(
+                [[1.0, 0.0] if "alpha" in text else [0.0, 1.0] for text in texts],
+                dtype=np.float32,
+            )
+            return vectors if self.commit == "a" * 40 else vectors[:, ::-1]
+
+    _five_units(tmp_path)
+    original = CheckpointModel(dim=2)
+    original.commit = "a" * 40
+    loads = _patch_get_model(monkeypatch, original)
+    config = AnalyzerConfig(
+        model_name="drift-model",
+        model_revision="main",
+        device="cpu",
+        min_semantic_statements=0,
+        embedding_cache=corpus_cache != "disabled",
+    )
+    analyzer = CodeAnalyzer(config)
+    with monkeypatch.context() as corpus_patch:
+        if corpus_cache == "environment-disabled":
+            corpus_patch.setenv("CODEDUPES_NO_CACHE", "1")
+        assert CodeAnalyzer(config).index(tmp_path) == 5
+        assert analyzer.index(tmp_path) == 5
+    assert loads["count"] == (1 if corpus_cache == "enabled" else 2)
+    assert analyzer._embedding_space_identity.source_commit == original.commit
+    semantic.clear_model_cache()
+    analyzer.config.embedding_cache = query_cache
+
+    cache = EmbeddingCache()
+    shard_dir = cache.shard_dir(tmp_path, "drift-model", "main")
+    before = embedding_cache._read_shard_meta(shard_dir)
+    write_calls = []
+    put_many = EmbeddingCache.put_many
+
+    def record_write(self, *args, **kwargs):
+        write_calls.append(kwargs)
+        return put_many(self, *args, **kwargs)
+
+    monkeypatch.setattr(EmbeddingCache, "put_many", record_write)
+    query_model = CheckpointModel(dim=2)
+    query_model.commit = query_commit
+    _patch_get_model(monkeypatch, query_model)
+    if query_commit != original.commit:
+        message = "cannot be verified" if query_commit is None else "moved to a different commit"
+        with pytest.raises(RuntimeError, match=message):
+            analyzer.search("find alpha", top_k=1, threshold=0.0)
+        assert query_model.encode_calls == []
+        assert write_calls == []
+        assert embedding_cache._read_shard_meta(shard_dir) == before
+        query_model = original
+
+    recovery_loads = _patch_get_model(monkeypatch, query_model)
+    assert analyzer.search("find alpha", top_k=1, threshold=0.0)[0][0].name == "alpha"
+    assert analyzer.search("find alpha", top_k=1, threshold=0.0)[0][0].name == "alpha"
+    assert recovery_loads["count"] == (1 if query_cache else 2)
+    assert len(write_calls) == int(query_cache)
+    if query_cache:
+        assert write_calls[0]["require_source_commit"] is True
+        assert write_calls[0]["expected_source_commit"] == original.commit
+
+
+@pytest.mark.parametrize("revision", ["main", REVISION_1], ids=["mutable", "pinned"])
+def test_query_provenance_namespace_only_invalidates_mutable_query_rows(
+    tmp_path, monkeypatch, revision
+):
+    units = _five_units(tmp_path)
+    model = CountingModel()
+    loads = _patch_get_model(monkeypatch, model)
+    monkeypatch.setattr(semantic, "_get_loaded_model_commit_hash", lambda _model: "a" * 40)
+    embeddings, identity = compute_embeddings_with_identity(
+        units,
+        model_name="drift-model",
+        revision=revision,
+        device="cpu",
+        cache_scope=tmp_path,
+    )
+    profile = semantic.resolve_model_profile("drift-model")
+    query = "find addition"
+    plan = semantic.resolve_encode_plan("drift-model", mode="query")
+    old_variant = semantic._cache_variant_for(profile, "cpu", plan, mps_fallback=None)
+    old_key = semantic.compute_cache_key(
+        profile.canonical_name,
+        revision,
+        query,
+        mode="query",
+        variant=old_variant,
+    )
+    cache = EmbeddingCache()
+    cache.put_many(
+        tmp_path,
+        profile.canonical_name,
+        revision,
+        [(old_key, -_vector_for_text(query))],
+        namespace=semantic._embedding_cache_namespace("query", old_variant),
+        expected_source_commit="a" * 40 if revision == "main" else None,
+    )
+
+    warm_embeddings, warm_identity = compute_embeddings_with_identity(
+        units,
+        model_name="drift-model",
+        revision=revision,
+        device="cpu",
+        cache_scope=tmp_path,
+    )
+    np.testing.assert_array_equal(warm_embeddings, embeddings)
+    assert warm_identity == identity
+    assert loads["count"] == 1
+    results = find_similar_to_query(
+        query,
+        units,
+        warm_embeddings,
+        model_name="drift-model",
+        revision=revision,
+        device="cpu",
+        cache_scope=tmp_path,
+        corpus_identity=warm_identity,
+        threshold=-1.0,
+    )
+    assert (model.encode_calls[-1] == [query]) == (revision == "main")
+    assert loads["count"] == (2 if revision == "main" else 1)
+    assert all((score > 0.0) == (revision == "main") for _unit, score in results)
 
 
 def test_republished_shard_query_hit_never_reaches_stale_corpus(tmp_path, monkeypatch):

@@ -8,6 +8,18 @@ units keep hitting the cache across runs and partial edits only miss for units t
 actually changed. Every public operation is wrapped so on-disk corruption or
 filesystem errors never raise into the caller; an untrusted shard is treated as
 empty and rebuilt on the next write.
+
+The cache tracks three different things:
+
+* A unit UID identifies one occurrence of code. Two UIDs can share a content key.
+* A content key identifies reusable embedding input. ``index.json`` maps it to
+  a vector row; compaction can change that row number without changing the key.
+* ``manifest.json`` records which units each analysis selection last observed.
+  It counts unit moves/deletions separately from keys that become unreferenced.
+
+There are also two independent generations: vector generations are immutable
+snapshot IDs, while the manifest generation counts complete corpus scans. Only
+the scan counter ages orphaned keys toward collection.
 """
 
 from __future__ import annotations
@@ -23,7 +35,8 @@ import shutil
 import time
 import uuid
 from collections.abc import Iterator, MutableMapping, Sequence
-from dataclasses import dataclass
+from contextvars import ContextVar
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -35,6 +48,10 @@ CACHE_SUBDIR = "repos"
 LOCAL_MODELS_SUBDIR = "local-models"
 LOCKS_SUBDIR = "locks"
 INDEX_FILENAME = "index.json"
+MANIFEST_FILENAME = "manifest.json"
+MANIFEST_SCHEMA = 4
+ORPHAN_GC_GENERATIONS = 3
+MANIFEST_SELECTION_LIMIT = 16
 DEFAULT_CACHE_MAX_MB = 2048
 _SCHEMA_VERSION = 3
 _PRUNE_TARGET_RATIO = 0.8
@@ -48,6 +65,117 @@ _CACHE_FILE_MODE = 0o600
 
 _warned_cache_error = False
 _warned_invalid_cache_max_mb = False
+_cache_warning_collector: ContextVar[list[str] | None] = ContextVar(
+    "codedupes_cache_warning_collector",
+    default=None,
+)
+
+
+@dataclass
+class CorpusSelectionManifest:
+    """Describe one selection's embedded corpus and aged unreferenced keys."""
+
+    last_seen_generation: int  # Last complete scan, or the selection's first observation.
+    complete_scan: bool
+    units: dict[str, str]  # Unit UID -> shared content key.
+    orphans: dict[str, int]  # Content key -> generation when it became unreferenced.
+    unit_paths: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass
+class CorpusManifest:
+    """Describe independently comparable corpus selections in one cache shard."""
+
+    schema: int
+    generation: int
+    selections: dict[str, CorpusSelectionManifest]
+
+
+@dataclass(frozen=True)
+class ManifestDiff:
+    """Classify unit-identity changes between two corpus manifests."""
+
+    moved: list[str]  # New UIDs matched to departed UIDs by content key.
+    deleted: list[str]  # Departed UIDs left after matching moves.
+    orphaned: set[str]  # Previous content keys with no current reference.
+
+
+@dataclass(frozen=True)
+class ManifestPublishResult:
+    """Report one successful manifest publication and optional orphan collection."""
+
+    diff: ManifestDiff
+    generation: int
+    orphan_rows_retained: int
+    orphan_rows_collected: int
+
+
+def diff_manifest(
+    previous: CorpusSelectionManifest | None,
+    current: dict[str, str],
+) -> ManifestDiff:
+    """Classify moves, deletions, and newly unreferenced keys.
+
+    :param previous: Previous comparable selection manifest, if one exists.
+    :param current: Current unit-to-cache-key mapping.
+    :return: Classified manifest transition.
+    """
+    previous_units = previous.units if previous is not None else {}
+
+    # The final UID component is a byte offset, not a persistent identity.
+    # Pair same-file lexical occurrences before inferring content-based moves:
+    # edits above a unit can shift its offset even when its own source changes.
+    departed_by_symbol: dict[str, list[str]] = {}
+    for uid in previous_units:
+        if uid not in current:
+            departed_by_symbol.setdefault(uid.rsplit("::", 1)[0], []).append(uid)
+    retained_previous: set[str] = set()
+    retained_current: set[str] = set()
+    for uid in current:
+        if uid in previous_units:
+            continue
+        matching_symbols = departed_by_symbol.get(uid.rsplit("::", 1)[0])
+        if matching_symbols:
+            retained_previous.add(matching_symbols.pop())
+            retained_current.add(uid)
+
+    # First find missing occurrences, grouped by their embedding content. A
+    # shared key can have several departed UIDs, each needing its own match.
+    departed_uids_by_key: dict[str, list[str]] = {}
+    for uid, key in previous_units.items():
+        if uid in current or uid in retained_previous:
+            continue
+        departed_uids_by_key.setdefault(key, []).append(uid)
+
+    # Infer a move only when a new UID can consume one departed UID with the
+    # same content. An extra copy without a departure is an addition, not a move.
+    moved_uids: list[str] = []
+    moved_from_uids: set[str] = set()
+    for uid, key in current.items():
+        if uid in previous_units or uid in retained_current:
+            continue
+        matching_departures = departed_uids_by_key.get(key)
+        if not matching_departures:
+            continue
+        moved_from_uids.add(matching_departures.pop())
+        moved_uids.append(uid)
+
+    # Unmatched departures are deletions even if another UID still shares their
+    # vector. Keep the previous manifest's order for deterministic reporting.
+    deleted_uids: list[str] = []
+    for uid in previous_units:
+        if uid in current or uid in retained_previous or uid in moved_from_uids:
+            continue
+        deleted_uids.append(uid)
+
+    # Row reclamation depends on content references, independently of UID counts.
+    previous_keys = set(previous_units.values())
+    current_keys = set(current.values())
+    return ManifestDiff(
+        moved=moved_uids,
+        deleted=deleted_uids,
+        orphaned=previous_keys - current_keys,
+    )
 
 
 @dataclass
@@ -102,13 +230,9 @@ class _ShardData:
             return
         dim = self.vectors.shape[1]
         start_row = self.vectors.shape[0]
-        new_rows = np.stack(
-            [
-                np.ascontiguousarray(vector, dtype=np.float32).reshape(dim)
-                for _key, vector in entries
-            ],
-            axis=0,
-        )
+        new_rows = np.empty((len(entries), dim), dtype=np.float32)
+        for offset, (_key, vector) in enumerate(entries):
+            new_rows[offset] = np.asarray(vector, dtype=np.float32).reshape(dim)
         self.vectors = np.concatenate([self.vectors, new_rows], axis=0)
         for offset, (key, _vector) in enumerate(entries):
             self.keys[key] = start_row + offset
@@ -248,11 +372,28 @@ def warn_once(action: str, exc: Exception) -> None:
     :param exc: Captured exception.
     :return: ``None``.
     """
-    _log_warning_once(
-        "_warned_cache_error",
+    message = (
         f"Embedding cache {action} failed ({type(exc).__name__}: {exc}); "
-        "continuing without cache benefits for this run.",
+        "continuing without cache benefits for this run."
     )
+    collector = _cache_warning_collector.get()
+    if collector is not None and message not in collector:
+        collector.append(message)
+    _log_warning_once("_warned_cache_error", message)
+
+
+@contextlib.contextmanager
+def capture_cache_warnings(collector: list[str] | None) -> Iterator[None]:
+    """Route cache failure messages into one caller-owned run collector.
+
+    :param collector: Mutable warning list, or ``None`` to collect nothing.
+    :return: Context manager restoring the previous collector on exit.
+    """
+    token = _cache_warning_collector.set(collector)
+    try:
+        yield
+    finally:
+        _cache_warning_collector.reset(token)
 
 
 def is_cache_disabled() -> bool:
@@ -643,28 +784,27 @@ def _validate_shard_metadata(payload: Any) -> dict[str, Any] | None:
         return None
     if isinstance(dim, bool) or not isinstance(dim, int) or dim < 1:
         return None
-    if not isinstance(keys_map, dict) or not all(
-        isinstance(key, str) and not isinstance(row, bool) and isinstance(row, int) and row >= 0
-        for key, row in keys_map.items()
-    ):
+    if not isinstance(keys_map, dict):
         return None
-    if (
-        not isinstance(namespaces, dict)
-        or set(namespaces) != set(keys_map)
-        or not all(
-            isinstance(key, str) and isinstance(namespace, str)
-            for key, namespace in namespaces.items()
-        )
-    ):
+    for key, row in keys_map.items():
+        if not isinstance(key, str):
+            return None
+        if isinstance(row, bool) or not isinstance(row, int) or row < 0:
+            return None
+
+    # Every indexed row needs a namespace and digest for that same content key.
+    # Row bounds are checked later, once the corresponding matrix is loaded.
+    cache_keys = set(keys_map)
+    if not isinstance(namespaces, dict) or set(namespaces) != cache_keys:
         return None
-    if (
-        not isinstance(digests, dict)
-        or set(digests) != set(keys_map)
-        or not all(
-            isinstance(key, str) and isinstance(digest, str) for key, digest in digests.items()
-        )
-    ):
+    for namespace in namespaces.values():
+        if not isinstance(namespace, str):
+            return None
+    if not isinstance(digests, dict) or set(digests) != cache_keys:
         return None
+    for digest in digests.values():
+        if not isinstance(digest, str):
+            return None
     if not isinstance(generation, str) or _GENERATION_PATTERN.fullmatch(generation) is None:
         return None
 
@@ -747,15 +887,9 @@ def _index_stat_signature(index_path: Path) -> tuple[int, int, int] | None:
     return (stat_result.st_ino, stat_result.st_mtime_ns, stat_result.st_size)
 
 
-# Per-process reuse of the last validated snapshot for each shard directory,
-# keyed by its resolved string path. ``os.replace`` (the only way ``index.json``
-# is ever updated - see ``_publish_index``) always targets a fresh inode, so a
-# matching (inode, mtime_ns, size) signature on the *current* index.json proves
-# no writer has replaced it since the cached snapshot was built; a mismatch
-# always falls through to a full re-read. This trades an unbounded-lifetime,
-# one-entry-per-shard dict for skipping a JSON parse + mmap open on every
-# repeated lookup against an unchanged shard, which matters because callers
-# like put_many-driven query-cache misses call _read_shard once per lookup.
+# Keep one validated snapshot per shard in this process. Writers atomically
+# replace index.json, so its stat signature lets repeated lookups reuse a
+# snapshot without parsing JSON and opening the vector mmap again.
 _shard_read_cache: dict[str, tuple[tuple[int, int, int], _ShardData]] = {}
 
 
@@ -766,11 +900,9 @@ def _read_shard(shard_dir: Path) -> _ShardData | None:
     pointing past the end of its matrix, schema drift, and so on) is treated as an
     empty shard rather than raised, matching the never-fatal cache contract.
 
-    Reuses the last validated snapshot for this shard directory when
-    ``index.json``'s (inode, mtime, size) signature is unchanged since that
-    snapshot was built (see :data:`_shard_read_cache`); any concurrent writer
-    replacing the index is always visible as a signature change before the
-    stale snapshot could be returned.
+    Reuses the last validated snapshot when the index's stat signature is
+    unchanged. A writer can advance the shard after this check; the returned
+    snapshot still pairs its own row map, matrix, and source commit together.
 
     :param shard_dir: Shard directory to load.
     :return: Validated shard data, or ``None`` when the shard is missing, unreadable,
@@ -784,8 +916,10 @@ def _read_shard(shard_dir: Path) -> _ShardData | None:
         return None
 
     cached = _shard_read_cache.get(cache_key)
-    if cached is not None and cached[0] == pre_signature:
-        return cached[1]
+    if cached is not None:
+        cached_signature, cached_shard = cached
+        if cached_signature == pre_signature:
+            return cached_shard
 
     try:
         index = json.loads(index_path.read_text(encoding="utf-8"))
@@ -796,6 +930,8 @@ def _read_shard(shard_dir: Path) -> _ShardData | None:
         # Memory-mapped so sparse lookups (for example a single query key) only
         # fault in the rows they touch; hit rows are copied before being returned.
         vectors = np.load(vectors_path, mmap_mode="r", allow_pickle=False)
+        # A writer may have switched the index while the matrix was opening.
+        # Confirm its generation before trusting any of the row mappings.
         confirmed_index = json.loads(index_path.read_text(encoding="utf-8"))
     except Exception as exc:  # noqa: BLE001 - corrupt on-disk data can fail in many ways
         warn_once("read shard", exc)
@@ -818,9 +954,8 @@ def _read_shard(shard_dir: Path) -> _ShardData | None:
         source_commit=metadata["source_commit"],
     )
 
-    # Only cache when the index's stat signature is identical before and after
-    # this whole read: any writer racing the read is caught by a signature
-    # change, so a stale snapshot is never published into the cache.
+    # This snapshot is internally consistent. Remember it for reuse only when
+    # the index stayed unchanged throughout the read; otherwise re-read next time.
     post_signature = _index_stat_signature(index_path)
     if post_signature == pre_signature:
         _shard_read_cache[cache_key] = (post_signature, shard_data)
@@ -901,6 +1036,212 @@ def atomic_write_json(path: Path, obj: Any) -> None:
                 tmp_path.unlink()
 
 
+def _read_corpus_manifest(shard_dir: Path) -> CorpusManifest | None:
+    """Read one valid corpus manifest, returning ``None`` when unavailable.
+
+    :param shard_dir: Cache shard containing the manifest.
+    :return: Parsed manifest, or ``None`` when absent or invalid.
+    """
+    path = shard_dir / MANIFEST_FILENAME
+    if not _path_exists(path):
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, RecursionError):
+        return None
+    if not isinstance(payload, dict) or payload.get("schema") != MANIFEST_SCHEMA:
+        return None
+    manifest_generation = payload.get("generation")
+    selections = payload.get("selections")
+    if (
+        not isinstance(manifest_generation, int)
+        or manifest_generation < 0
+        or not isinstance(selections, dict)
+    ):
+        return None
+    parsed: dict[str, CorpusSelectionManifest] = {}
+    for selection, entry in selections.items():
+        if not isinstance(selection, str) or not isinstance(entry, dict):
+            return None
+        last_seen_generation = entry.get("last_seen_generation")
+        complete_scan = entry.get("complete_scan")
+        units = entry.get("units")
+        orphans = entry.get("orphans")
+        unit_paths = entry.get("unit_paths")
+        if not isinstance(last_seen_generation, int):
+            return None
+        if not 0 <= last_seen_generation <= manifest_generation:
+            return None
+        if not isinstance(complete_scan, bool):
+            return None
+
+        # Validate each map separately so its meaning and membership rules are
+        # visible. In particular, an orphan stores a scan generation, not an age.
+        if not isinstance(units, dict):
+            return None
+        for uid, key in units.items():
+            if not isinstance(uid, str) or not isinstance(key, str):
+                return None
+        if not isinstance(orphans, dict):
+            return None
+        for key, orphaned_generation in orphans.items():
+            if not isinstance(key, str) or not isinstance(orphaned_generation, int):
+                return None
+            if orphaned_generation < 0:
+                return None
+        if not isinstance(unit_paths, dict):
+            return None
+        for uid, path in unit_paths.items():
+            if not isinstance(uid, str) or not isinstance(path, str):
+                return None
+            if uid not in units:
+                return None
+        parsed[selection] = CorpusSelectionManifest(
+            last_seen_generation=last_seen_generation,
+            complete_scan=complete_scan,
+            units=dict(units),
+            orphans=dict(orphans),
+            unit_paths=dict(unit_paths),
+        )
+    return CorpusManifest(
+        schema=MANIFEST_SCHEMA,
+        generation=manifest_generation,
+        selections=parsed,
+    )
+
+
+def _write_corpus_manifest(shard_dir: Path, manifest: CorpusManifest) -> None:
+    """Atomically publish one corpus manifest under the shard lock.
+
+    :param shard_dir: Cache shard receiving the manifest.
+    :param manifest: Complete manifest to publish.
+    :return: ``None``.
+    """
+    selections = {}
+    for name, entry in manifest.selections.items():
+        selections[name] = {
+            "last_seen_generation": entry.last_seen_generation,
+            "complete_scan": entry.complete_scan,
+            "units": entry.units,
+            "orphans": entry.orphans,
+            "unit_paths": entry.unit_paths,
+        }
+    payload = {
+        "schema": manifest.schema,
+        "generation": manifest.generation,
+        "selections": selections,
+    }
+    atomic_write_json(shard_dir / MANIFEST_FILENAME, payload)
+
+
+def _manifest_referenced_keys(manifest: CorpusManifest) -> set[str]:
+    """Return cache keys referenced by a recently refreshed selection.
+
+    :param manifest: Multi-selection corpus manifest.
+    :return: Cache keys pinned by at least one active selection.
+    """
+    referenced_keys: set[str] = set()
+    for selection in manifest.selections.values():
+        scans_since_refresh = manifest.generation - selection.last_seen_generation
+        if scans_since_refresh >= ORPHAN_GC_GENERATIONS:
+            continue
+        referenced_keys.update(selection.units.values())
+    return referenced_keys
+
+
+def _manifest_orphan_keys(manifest: CorpusManifest) -> set[str]:
+    """Return tracked orphan keys, including keys pinned by another selection.
+
+    :param manifest: Multi-selection corpus manifest.
+    :return: Cache keys classified as deleted by at least one selection.
+    """
+    orphan_keys: set[str] = set()
+    for selection in manifest.selections.values():
+        orphan_keys.update(selection.orphans)
+    return orphan_keys
+
+
+def _manifest_collectable_keys(manifest: CorpusManifest) -> set[str]:
+    """Find unpinned keys whose orphan records have all aged through the grace period.
+
+    :param manifest: Manifest after a complete scan has advanced its generation.
+    :return: Orphaned content keys eligible for row compaction.
+    """
+    # Start with every recorded orphan, then let any active reference or recent
+    # orphan record protect the shared row. The newest orphan record wins.
+    collectable = _manifest_orphan_keys(manifest)
+    collectable.difference_update(_manifest_referenced_keys(manifest))
+    for selection in manifest.selections.values():
+        for key, orphaned_generation in selection.orphans.items():
+            orphan_age = manifest.generation - orphaned_generation
+            if orphan_age < ORPHAN_GC_GENERATIONS:
+                collectable.discard(key)
+    return collectable
+
+
+def _merge_partial_manifest_units(
+    previous: CorpusSelectionManifest,
+    units: dict[str, str],
+    unit_paths: dict[str, str],
+    observed_files: tuple[str, ...],
+) -> tuple[dict[str, str], dict[str, str]]:
+    """Replace observed file slices while retaining units from unseen files.
+
+    :param previous: Selection baseline before the partial scan.
+    :param units: Unit UID-to-content-key observations from this run.
+    :param unit_paths: File paths for the observed units.
+    :param observed_files: Exact file paths fully covered by this scan.
+    :return: Merged unit and path maps for the selection.
+    """
+    observed_file_set = set(observed_files)
+    merged_units = dict(previous.units)
+    for uid in previous.units:
+        if previous.unit_paths.get(uid) in observed_file_set:
+            del merged_units[uid]
+    merged_units.update(units)
+
+    merged_paths = {}
+    for uid, path in previous.unit_paths.items():
+        if uid in merged_units:
+            merged_paths[uid] = path
+    merged_paths.update(unit_paths)
+    return merged_units, merged_paths
+
+
+def _limit_manifest_selections(
+    selections: dict[str, CorpusSelectionManifest],
+    *,
+    current_selection: str,
+) -> dict[str, CorpusSelectionManifest]:
+    """Keep pending orphan state plus the most recently used selection baselines.
+
+    :param selections: Candidate selection entries for one shard manifest.
+    :param current_selection: Selection published by the current run.
+    :return: Selection entries retained in the bounded manifest.
+    """
+    if len(selections) <= MANIFEST_SELECTION_LIMIT:
+        return selections
+
+    # Pending orphan records must survive until collection, even if keeping
+    # them exceeds the baseline cap. Always retain the selection just published.
+    retained_names = {current_selection}
+    for name, entry in selections.items():
+        if entry.orphans:
+            retained_names.add(name)
+
+    # Insertion order records publication recency. Fill any remaining slots
+    # from newest to oldest, then return entries in their original order.
+    for name in reversed(selections):
+        if len(retained_names) >= MANIFEST_SELECTION_LIMIT:
+            break
+        retained_names.add(name)
+    retained = {}
+    for name, entry in selections.items():
+        if name in retained_names:
+            retained[name] = entry
+    return retained
+
+
 def _publish_index(shard_dir: Path, payload: dict[str, Any]) -> None:
     """Atomically replace a shard's ``index.json``, cleaning its tmp file on failure.
 
@@ -976,6 +1317,8 @@ def _atomic_write_shard(
             np.save(handle, np.ascontiguousarray(vectors, dtype=np.float32))
         os.replace(vectors_tmp, vectors_path)
 
+        # Readers discover generations through the index. Publish it only after
+        # the complete matrix is in place, with row maps and provenance together.
         _publish_index(
             shard_dir,
             {
@@ -1043,20 +1386,18 @@ def _rebuild_matrix_retaining(
     :return: Rebuilt ``(vectors, keys_map, namespaces, digests)`` with densely
         renumbered rows.
     """
-    new_vectors = (
-        np.stack(
-            [
-                np.ascontiguousarray(vectors[keys_map[key]], dtype=np.float32)
-                for key in retained_keys
-            ],
-            axis=0,
-        )
-        if retained_keys
-        else np.empty((0, dim), dtype=np.float32)
-    )
-    new_keys_map = {key: row for row, key in enumerate(retained_keys)}
-    new_namespaces = {key: namespaces[key] for key in retained_keys}
-    new_digests = {key: digests[key] for key in retained_keys}
+    new_vectors = np.empty((len(retained_keys), dim), dtype=np.float32)
+    new_keys_map = {}
+    new_namespaces = {}
+    new_digests = {}
+    # Compaction changes row numbers, not content keys or row contents. Copy each
+    # retained vector and its metadata together in the requested row order.
+    for new_row, key in enumerate(retained_keys):
+        old_row = keys_map[key]
+        new_vectors[new_row] = vectors[old_row]
+        new_keys_map[key] = new_row
+        new_namespaces[key] = namespaces[key]
+        new_digests[key] = digests[key]
     return new_vectors, new_keys_map, new_namespaces, new_digests
 
 
@@ -1069,6 +1410,7 @@ def _write_shard_entries(
     namespace: str,
     max_namespace_keys: int | None = None,
     expected_source_commit: str | None = None,
+    require_source_commit: bool = False,
 ) -> None:
     """Append/heal embedding rows and cap overflowing namespace keys.
 
@@ -1086,15 +1428,24 @@ def _write_shard_entries(
         that publishes the generation: a shard whose recorded provenance no
         longer matches rejects the whole batch rather than assembling rows from
         two checkpoints into one generation.
+    :param require_source_commit: Whether the caller requires verified incoming
+        checkpoint provenance; reject an unstamped batch instead of inheriting
+        any existing shard's source commit.
     :return: ``None``.
     """
     if not entries:
         return
-    try:
-        unique_entries = list(dict(entries).items())
-        entry_dim = (
-            int(np.asarray(unique_entries[0][1]).reshape(-1).shape[0]) if unique_entries else None
+    if require_source_commit and expected_source_commit is None:
+        logger.warning(
+            f"Discarding {len(entries)} computed embeddings for {shard_dir.name}: "
+            "the incoming batch has no verified source commit"
         )
+        return
+    try:
+        # One row per content key: the last supplied value wins, while insertion
+        # order keeps the first occurrence's position in this batch.
+        unique_entries = list(dict(entries).items())
+        entry_dim = int(np.asarray(unique_entries[0][1]).size)
 
         _ensure_shard_directory(shard_dir)
         with _shard_write_lock(shard_dir) as acquired:
@@ -1108,27 +1459,17 @@ def _write_shard_entries(
                 and existing.keys
                 and existing.source_commit != expected_source_commit
             ):
-                # Time-of-check/time-of-use guard: between this writer's
-                # pre-inference commit confirmation and now, another process
-                # re-confirmed the shard under a different checkpoint (or the
-                # rows carry no provenance at all). Publishing this batch would
-                # assemble two checkpoints into one generation, so the stale
-                # batch is dropped; the next run re-confirms and recomputes.
+                # Another process may have rebuilt the shard while this batch
+                # was encoding. Its checkpoint must still match before we merge.
                 logger.warning(
                     f"Discarding {len(unique_entries)} computed embeddings for {shard_dir.name}: "
                     "the shard's recorded source commit changed while they were being computed"
                 )
                 return
-            if existing is not None and (
-                entry_dim is None or existing.vectors.shape[1] == entry_dim
-            ):
+            if existing is not None and existing.vectors.shape[1] == entry_dim:
                 dim = int(existing.vectors.shape[1])
-                # existing may be a cached _read_shard snapshot shared with other
-                # callers (see _read_shard's freshness cache): copy the key maps
-                # before mutating so a write can never corrupt a cached read.
-                # existing.vectors itself is only ever replaced wholesale below
-                # (never mutated in place while still possibly aliased), so it is
-                # safe to reuse directly here.
+                # Readers may share this snapshot. Copy its maps now; mutation
+                # methods replace the matrix or copy its read-only mmap first.
                 working = _ShardData(
                     vectors=existing.vectors,
                     keys=dict(existing.keys),
@@ -1144,8 +1485,6 @@ def _write_shard_entries(
                     else existing.source_commit
                 )
             else:
-                if entry_dim is None:
-                    return
                 if existing is not None:
                     logger.warning(
                         "Embedding cache vector dimension changed from "
@@ -1173,13 +1512,15 @@ def _write_shard_entries(
                 row = working.keys.get(key)
                 if row is None:
                     missing_entries.append((key, vector))
-                elif not _is_finite_row(working.vectors[row]) or working.digests.get(
-                    key
-                ) != _row_digest(working.vectors[row]):
-                    # A poisoned or digest-mismatched stored row is a permanent
-                    # miss for get_many (see its matching checks), so a
-                    # recomputed value for the same key must overwrite it here
-                    # or the unit would re-embed on every future run forever.
+                    continue
+
+                # A valid existing row needs no write. A row rejected by reads
+                # must be repaired or the same key will miss on every future run.
+                cached_vector = working.vectors[row]
+                if not _is_finite_row(cached_vector):
+                    overwrite_entries.append((key, vector))
+                    continue
+                if working.digests[key] != _row_digest(cached_vector):
                     overwrite_entries.append((key, vector))
 
             # overwrite_rows/append_rows update vectors/keys/namespaces/digests
@@ -1189,26 +1530,28 @@ def _write_shard_entries(
 
             capped_namespace = False
             if max_namespace_keys is not None:
-                namespace_keys_by_row = sorted(
-                    (
-                        key
-                        for key, key_namespace in working.namespaces.items()
-                        if key_namespace == namespace
-                    ),
-                    key=working.keys.__getitem__,
-                )
+                # Row order preserves insertion order through compaction. This
+                # namespace uses FIFO eviction; other namespaces keep their rows.
+                namespace_keys_by_row = []
+                for key, key_namespace in working.namespaces.items():
+                    if key_namespace == namespace:
+                        namespace_keys_by_row.append(key)
+                namespace_keys_by_row.sort(key=working.keys.__getitem__)
                 if len(namespace_keys_by_row) > max_namespace_keys:
-                    prune_target = (
-                        max(1, int(max_namespace_keys * _NAMESPACE_PRUNE_TARGET_RATIO))
-                        if max_namespace_keys > 0
-                        else 0
-                    )
+                    # Leave headroom so the next new query does not immediately
+                    # force another full-matrix compaction.
+                    prune_target = 0
+                    if max_namespace_keys > 0:
+                        prune_target = max(
+                            1, int(max_namespace_keys * _NAMESPACE_PRUNE_TARGET_RATIO)
+                        )
                     drop_count = len(namespace_keys_by_row) - prune_target
                     drop_keys = set(namespace_keys_by_row[:drop_count])
-                    retained_keys = sorted(
-                        (key for key in working.keys if key not in drop_keys),
-                        key=working.keys.__getitem__,
-                    )
+                    retained_keys = []
+                    for key in working.keys:
+                        if key not in drop_keys:
+                            retained_keys.append(key)
+                    retained_keys.sort(key=working.keys.__getitem__)
                     working.retain(retained_keys)
                     capped_namespace = True
 
@@ -1558,6 +1901,7 @@ class EmbeddingCache:
         namespace: str = "default",
         max_namespace_keys: int | None = None,
         expected_source_commit: str | None = None,
+        require_source_commit: bool = False,
     ) -> None:
         """Insert vectors, cap overflowing namespaces, enforce the global size cap.
 
@@ -1572,6 +1916,8 @@ class EmbeddingCache:
         :param expected_source_commit: Checkpoint commit the entries were computed
             under, required for mutable-label shards; the write is rejected under
             the shard lock when the shard's recorded provenance no longer matches.
+        :param require_source_commit: Whether this write requires a non-null
+            ``expected_source_commit``, as required for mutable-label embeddings.
         :return: ``None``.
         """
         if not entries:
@@ -1585,6 +1931,7 @@ class EmbeddingCache:
             namespace=namespace,
             max_namespace_keys=max_namespace_keys,
             expected_source_commit=expected_source_commit,
+            require_source_commit=require_source_commit,
         )
         # Eviction scans the whole cache tree, so it is throttled rather than
         # run on every call (see _should_scan_for_eviction) - callers that need
@@ -1593,6 +1940,259 @@ class EmbeddingCache:
         written_bytes = sum(int(np.asarray(vector).nbytes) for _key, vector in entries)
         if _should_scan_for_eviction(self.repos_dir, written_bytes, max_bytes):
             _maybe_evict(self.repos_dir, protect=shard_dir)
+
+    def load_manifest(
+        self,
+        cache_scope: Path,
+        canonical_model: str,
+        revision: str | None,
+    ) -> CorpusManifest | None:
+        """Load the corpus manifest for one cache shard.
+
+        :param cache_scope: Analyzed corpus root.
+        :param canonical_model: Canonical model identifier.
+        :param revision: Cache revision addressing the shard.
+        :return: Parsed manifest, or ``None`` when unavailable.
+        """
+        return _read_corpus_manifest(self.shard_dir(cache_scope, canonical_model, revision))
+
+    def collect_orphans(
+        self,
+        cache_scope: Path,
+        canonical_model: str,
+        revision: str | None,
+        drop_keys: set[str],
+        *,
+        expected_manifest: CorpusManifest | None = None,
+        expected_shard_generation: str | None = None,
+    ) -> int:
+        """Compact one shard by removing the requested orphaned code keys.
+
+        :param cache_scope: Analyzed corpus root.
+        :param canonical_model: Canonical model identifier.
+        :param revision: Cache revision addressing the shard.
+        :param drop_keys: Manifest-owned code keys eligible for collection.
+        :param expected_manifest: Manifest snapshot that made the keys eligible;
+            a newer publication cancels collection.
+        :param expected_shard_generation: Vector-index generation observed with
+            ``expected_manifest``; a newer vector write cancels collection.
+        :return: Number of rows removed.
+        """
+        if not drop_keys:
+            return 0
+        shard_dir = self.shard_dir(cache_scope, canonical_model, revision)
+        try:
+            with _shard_write_lock(shard_dir, blocking=True) as acquired:
+                if not acquired:
+                    return 0
+                if (
+                    expected_manifest is not None
+                    and _read_corpus_manifest(shard_dir) != expected_manifest
+                ):
+                    return 0
+                if expected_shard_generation is not None:
+                    current_meta = _read_shard_meta(shard_dir)
+                    if (
+                        current_meta is None
+                        or current_meta["generation"] != expected_shard_generation
+                    ):
+                        return 0
+                _reclaim_stale_shard_files(shard_dir)
+                existing = _read_shard(shard_dir)
+                if existing is None:
+                    return 0
+                actual_drop = set(existing.keys) & drop_keys
+                if not actual_drop:
+                    return 0
+                working = _ShardData(
+                    vectors=existing.vectors,
+                    keys=dict(existing.keys),
+                    namespaces=dict(existing.namespaces),
+                    digests=dict(existing.digests),
+                    last_used_at=existing.last_used_at,
+                    generation=existing.generation,
+                    source_commit=existing.source_commit,
+                )
+                # Preserve row order so GC cannot change FIFO eviction order for
+                # query rows sharing this shard with the corpus vectors.
+                retained_keys = []
+                for key in working.keys:
+                    if key not in actual_drop:
+                        retained_keys.append(key)
+                retained_keys.sort(key=working.keys.__getitem__)
+                working.retain(retained_keys)
+                _atomic_write_shard(
+                    shard_dir,
+                    canonical_model,
+                    revision,
+                    working.vectors,
+                    working.keys,
+                    working.namespaces,
+                    working.digests,
+                    int(working.vectors.shape[1]),
+                    working.source_commit,
+                )
+                return len(actual_drop)
+        except Exception as exc:  # noqa: BLE001 - cache maintenance must never break analysis
+            warn_once("collect orphan rows", exc)
+            return 0
+
+    def publish_corpus_manifest(
+        self,
+        cache_scope: Path,
+        canonical_model: str,
+        revision: str | None,
+        *,
+        selection: str,
+        units: dict[str, str],
+        complete_scan: bool,
+        unit_paths: dict[str, str] | None = None,
+        observed_files: tuple[str, ...] = (),
+    ) -> ManifestPublishResult | None:
+        """Publish a completed corpus run and age or collect unreferenced rows.
+
+        :param cache_scope: Analyzed corpus root.
+        :param canonical_model: Canonical model identifier.
+        :param revision: Cache revision addressing the shard.
+        :param selection: Digest of semantic candidate-selection settings.
+        :param units: Current unit-to-cache-key mapping.
+        :param complete_scan: Whether missing units represent the complete selection.
+        :param unit_paths: Unit UID-to-file-path mapping for ``units``.
+        :param observed_files: Exact file paths fully observed by an incomplete
+            scan, allowing those slices of the baseline to be replaced.
+        :return: Publication and GC telemetry, or ``None`` on cache failure.
+        """
+        shard_dir = self.shard_dir(cache_scope, canonical_model, revision)
+        try:
+            _ensure_shard_directory(shard_dir)
+            with _shard_write_lock(shard_dir, blocking=True) as acquired:
+                if not acquired:
+                    return None
+                manifest = _read_corpus_manifest(shard_dir) or CorpusManifest(
+                    schema=MANIFEST_SCHEMA,
+                    generation=0,
+                    selections={},
+                )
+                shard_meta = _read_shard_meta(shard_dir)
+                cached_keys = set(shard_meta["keys"]) if shard_meta is not None else None
+                expected_shard_generation = (
+                    shard_meta["generation"] if shard_meta is not None else None
+                )
+                # Only complete scans advance the shared orphan-aging clock.
+                generation = manifest.generation
+                if complete_scan:
+                    generation += 1
+
+                # Copy the previous baselines, dropping orphan records for rows
+                # already gone or content observed again in this run. Unknown
+                # shard metadata gives no evidence that a row is gone.
+                current_keys = set(units.values())
+                selections = {}
+                for name, entry in manifest.selections.items():
+                    pending_orphans = {}
+                    for key, orphaned_generation in entry.orphans.items():
+                        if key in current_keys:
+                            continue
+                        if cached_keys is not None and key not in cached_keys:
+                            continue
+                        pending_orphans[key] = orphaned_generation
+                    selections[name] = CorpusSelectionManifest(
+                        last_seen_generation=entry.last_seen_generation,
+                        complete_scan=entry.complete_scan,
+                        units=dict(entry.units),
+                        orphans=pending_orphans,
+                        unit_paths=dict(entry.unit_paths),
+                    )
+
+                # Reinsertion below moves this entry to the end, which records
+                # publication recency for deterministic selection-cap eviction.
+                previous = selections.pop(selection, None)
+
+                # A complete scan replaces its baseline. A partial scan can
+                # replace only observed files; missing siblings remain unknown.
+                current_units = dict(units)
+                current_unit_paths = dict(unit_paths or {})
+                if previous is not None and not complete_scan:
+                    current_units, current_unit_paths = _merge_partial_manifest_units(
+                        previous, current_units, current_unit_paths, observed_files
+                    )
+
+                if previous is None:
+                    # The first observation establishes a baseline, so there is
+                    # no earlier population from which to infer moves/deletions.
+                    diff = ManifestDiff(moved=[], deleted=[], orphaned=set())
+                    orphans = {}
+                else:
+                    diff = diff_manifest(previous, current_units)
+                    orphans = dict(previous.orphans)
+                    for key in diff.orphaned:
+                        if cached_keys is not None and key not in cached_keys:
+                            continue
+                        # Keep the first orphan generation across repeated scans.
+                        orphans.setdefault(key, generation)
+
+                if complete_scan or previous is None:
+                    last_seen_generation = generation
+                else:
+                    # A partial run cannot refresh pins for the unseen units
+                    # carried forward in current_units.
+                    last_seen_generation = previous.last_seen_generation
+                selections[selection] = CorpusSelectionManifest(
+                    last_seen_generation=last_seen_generation,
+                    complete_scan=complete_scan,
+                    units=current_units,
+                    orphans=orphans,
+                    unit_paths=current_unit_paths,
+                )
+                selections = _limit_manifest_selections(
+                    selections,
+                    current_selection=selection,
+                )
+                manifest = CorpusManifest(
+                    schema=MANIFEST_SCHEMA,
+                    generation=generation,
+                    selections=selections,
+                )
+                collectable: set[str] = set()
+                if complete_scan:
+                    collectable = _manifest_collectable_keys(manifest)
+                _write_corpus_manifest(shard_dir, manifest)
+
+            # Collection takes its own lock and rechecks both snapshots. A
+            # concurrent manifest update or vector write cancels this attempt.
+            collected = self.collect_orphans(
+                cache_scope,
+                canonical_model,
+                revision,
+                collectable,
+                expected_manifest=manifest,
+                expected_shard_generation=expected_shard_generation,
+            )
+            if collected:
+                # Remove completed orphan records only if this is still our
+                # manifest. A newer publication must retain its own bookkeeping.
+                with _shard_write_lock(shard_dir, blocking=True) as acquired:
+                    if acquired:
+                        current = _read_corpus_manifest(shard_dir)
+                        if current == manifest:
+                            for entry in current.selections.values():
+                                for key in collectable:
+                                    entry.orphans.pop(key, None)
+                            current.selections = _limit_manifest_selections(
+                                current.selections,
+                                current_selection=selection,
+                            )
+                            _write_corpus_manifest(shard_dir, current)
+                            manifest = current
+            return ManifestPublishResult(
+                diff=diff,
+                generation=generation,
+                orphan_rows_retained=len(_manifest_orphan_keys(manifest)),
+                orphan_rows_collected=collected,
+            )
+        except Exception as exc:  # noqa: BLE001 - cache metadata must never break analysis
+            warn_once("publish corpus manifest", exc)
+            return None
 
     def confirm_source_commit(
         self,
@@ -1685,11 +2285,25 @@ class EmbeddingCache:
                     model_name = meta["model"]
                     info["models"][model_name] = info["models"].get(model_name, 0) + count
                 totals = repo_totals.setdefault(
-                    shard_dir.parent.name, {"shards": 0, "entries": 0, "size_bytes": 0}
+                    shard_dir.parent.name,
+                    {
+                        "shards": 0,
+                        "entries": 0,
+                        "size_bytes": 0,
+                        "orphan_rows": 0,
+                        "last_complete_generation": 0,
+                    },
                 )
                 totals["shards"] += 1
                 totals["entries"] += count
                 totals["size_bytes"] += size
+                manifest = _read_corpus_manifest(shard_dir)
+                if manifest is not None:
+                    totals["orphan_rows"] += len(_manifest_orphan_keys(manifest))
+                    totals["last_complete_generation"] = max(
+                        totals["last_complete_generation"],
+                        manifest.generation,
+                    )
             local_models_dir = self.cache_root / LOCAL_MODELS_SUBDIR
             if local_models_dir.is_dir():
                 info["size_bytes"] += sum(

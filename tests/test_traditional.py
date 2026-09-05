@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import random
 from collections import defaultdict
 from itertools import combinations
@@ -21,6 +22,18 @@ from codedupes.traditional import (
     unit_identifier_set,
 )
 from tests.conftest import extract_units
+
+
+def test_skipped_unused_analysis_does_not_log_a_zero_count(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Do not report an unused result for a phase that did not compute one."""
+    units = extract_units(tmp_path, "def example():\n    return 1", include_private=True)
+
+    with caplog.at_level(logging.INFO, logger="codedupes.traditional"):
+        run_traditional_analysis(units, compute_unused=False)
+
+    assert "potentially unused" not in caplog.text
 
 
 def test_exact_duplicates_via_ast_hash(tmp_path: Path) -> None:

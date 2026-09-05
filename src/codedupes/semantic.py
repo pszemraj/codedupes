@@ -12,7 +12,7 @@ import os
 import sys
 import textwrap
 import threading
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from importlib import metadata as importlib_metadata
 from pathlib import Path
@@ -48,6 +48,7 @@ from codedupes.embedding_cache import (
     LOCAL_MODELS_SUBDIR,
     EmbeddingCache,
     atomic_write_json,
+    capture_cache_warnings,
     compute_cache_key,
     ensure_cache_subdirectory,
     get_embedding_cache,
@@ -69,6 +70,109 @@ from codedupes.semantic_profiles import (
 )
 
 logger = logging.getLogger(__name__)
+
+ProgressMode = Literal["auto", "always", "never"]
+SearchDocumentMode = Literal["source", "contextual"]
+PROGRESS_BAR_MIN_INPUTS = 100
+
+
+def _should_show_progress(mode: ProgressMode, input_count: int) -> bool:
+    """Return whether embedding inference should render a progress bar.
+
+    :param mode: Requested progress policy.
+    :param input_count: Number of input rows requiring encoding.
+    :return: Whether the backend progress bar should be enabled.
+    """
+    if mode == "never":
+        return False
+    if mode == "always":
+        return True
+    return input_count > PROGRESS_BAR_MIN_INPUTS and sys.stderr.isatty()
+
+
+@dataclass
+class EmbeddingRunStats:
+    """Describe the work performed by one corpus embedding call."""
+
+    requested_rows: int = 0
+    unique_inputs: int = 0
+    cache_hit_rows: int = 0
+    duplicate_rows_reused: int = 0
+    encoded_inputs: int = 0
+    model_loaded: bool = False
+    cache_enabled: bool = False
+    cache_warnings: list[str] = field(default_factory=list)
+    cache_revision: str | None = None
+    execution_device: str | None = None
+    moved_units_reused: int = 0
+    deleted_units: int = 0
+    orphan_rows_retained: int = 0
+    orphan_rows_collected: int = 0
+    manifest_generation: int | None = None
+
+
+def _reset_embedding_run_stats(stats: EmbeddingRunStats | None) -> None:
+    """Reset a caller-owned embedding telemetry collector in place."""
+    if stats is None:
+        return
+    stats.requested_rows = 0
+    stats.unique_inputs = 0
+    stats.cache_hit_rows = 0
+    stats.duplicate_rows_reused = 0
+    stats.encoded_inputs = 0
+    stats.model_loaded = False
+    stats.cache_enabled = False
+    stats.cache_warnings.clear()
+    stats.cache_revision = None
+    stats.execution_device = None
+    stats.moved_units_reused = 0
+    stats.deleted_units = 0
+    stats.orphan_rows_retained = 0
+    stats.orphan_rows_collected = 0
+    stats.manifest_generation = None
+
+
+def _record_embedding_run_stats(
+    stats: EmbeddingRunStats | None,
+    *,
+    prepared_texts: list[str],
+    kept_rows: list[int],
+    cache_enabled: bool,
+    cache_revision: str | None,
+    cache_keys: list[str] | None,
+    hits: Mapping[str, np.ndarray],
+    encoded_inputs: int,
+    model_loaded: bool,
+    execution_device: str | None,
+) -> None:
+    """Fill a caller-owned collector from one final embedding path.
+
+    :param stats: Optional caller-owned telemetry collector.
+    :param prepared_texts: Row-aligned prepared corpus texts.
+    :param kept_rows: Input row indices retained after context filtering.
+    :param cache_enabled: Whether a usable persistent cache remained active.
+    :param cache_revision: Revision addressing the active cache shard.
+    :param cache_keys: Row-aligned cache keys, if caching remained active.
+    :param hits: Persistent vectors available to the final matrix path.
+    :param encoded_inputs: Input rows encoded on the final path, after any cache-key reuse.
+    :param model_loaded: Whether the final path loaded a model.
+    :param execution_device: Device used by the final path.
+    :return: ``None``.
+    """
+    if stats is None:
+        return
+    stats.requested_rows = len(kept_rows)
+    stats.unique_inputs = len({prepared_texts[index] for index in kept_rows})
+    stats.cache_hit_rows = (
+        sum(1 for index in kept_rows if cache_keys[index] in hits) if cache_keys is not None else 0
+    )
+    stats.encoded_inputs = encoded_inputs
+    stats.duplicate_rows_reused = stats.requested_rows - stats.cache_hit_rows - stats.encoded_inputs
+    stats.model_loaded = model_loaded
+    stats.cache_enabled = cache_enabled
+    stats.cache_revision = cache_revision
+    stats.execution_device = execution_device
+
 
 # Lazy-loaded model
 _model = None
@@ -168,12 +272,75 @@ class EmbeddingSpaceIdentity:
     A mutable-label corpus with no ``source_commit`` therefore carries no
     provenance at all: queries against it bypass the query cache, because no
     stored vector can be shown to share its checkpoint.
+
+    ``search_document`` records the corpus representation for search-threshold
+    calibration. It does not change the coordinate system or query vectors, so
+    it is also excluded from identity equality.
     """
 
     model_name: str
     resolved_revision: str | None
     runtime_variant: str
     source_commit: str | None = field(default=None, compare=False)
+    search_document: SearchDocumentMode = field(default="source", compare=False)
+
+
+def embedding_cache_keys_for_units(
+    units: list[CodeUnit],
+    identity: EmbeddingSpaceIdentity,
+    *,
+    revision: str | None = None,
+    document_texts: Sequence[str] | None = None,
+    search_document: SearchDocumentMode = "source",
+) -> dict[str, str]:
+    """Derive manifest unit-to-cache-key mappings for an embedded corpus.
+
+    :param units: Embedded code units.
+    :param identity: Effective embedding-space identity.
+    :param revision: Cache shard revision, defaulting to the identity revision.
+    :param document_texts: Optional prepared texts aligned with ``units``.
+    :param search_document: Search representation used for the texts.
+    :return: Unit identifiers mapped to content-addressed cache keys.
+    """
+    active_revision = revision or identity.resolved_revision
+    if active_revision is None:
+        return {}
+    texts = (
+        list(document_texts)
+        if document_texts is not None
+        else [_prepare_embedding_text(unit.source) for unit in units]
+    )
+    variant = identity.runtime_variant
+    if search_document == "contextual":
+        variant = f"{variant}\x00search_document={search_document}"
+    return {
+        unit.uid: compute_cache_key(
+            identity.model_name,
+            active_revision,
+            text,
+            variant=variant,
+        )
+        for unit, text in zip(units, texts, strict=True)
+    }
+
+
+def _prepare_search_document(unit: CodeUnit, root: Path) -> str:
+    """Build a contextual semantic-search document for one code unit.
+
+    :param unit: Code unit to represent.
+    :param root: Corpus root used to make paths relative.
+    :return: Language/path/symbol/code envelope.
+    """
+    try:
+        relative = unit.file_path.resolve().relative_to(root.resolve())
+    except ValueError:
+        relative = unit.file_path
+    return (
+        f"language: {unit.language}\n"
+        f"path: {relative.as_posix()}\n"
+        f"symbol: {unit.qualified_name}\n"
+        f"code:\n{_prepare_embedding_text(unit.source)}"
+    )
 
 
 def _resolve_encode_plan(
@@ -1220,6 +1387,7 @@ def _build_embedding_space_identity(
     trust_remote_code: bool,
     resolved_device: str | None = None,
     source_commit: str | None = None,
+    search_document: SearchDocumentMode = "source",
 ) -> EmbeddingSpaceIdentity:
     """Build one corpus identity from already resolved embedding inputs.
 
@@ -1232,6 +1400,7 @@ def _build_embedding_space_identity(
     :param resolved_device: Already resolved execution target, when available.
     :param source_commit: Checkpoint commit a mutable-label corpus's vectors
         derive from, when known.
+    :param search_document: Corpus representation used for threshold calibration.
     :return: Complete embedding-space identity.
     """
     return EmbeddingSpaceIdentity(
@@ -1246,6 +1415,7 @@ def _build_embedding_space_identity(
             resolved_device=resolved_device,
         ),
         source_commit=source_commit,
+        search_document=search_document,
     )
 
 
@@ -2364,6 +2534,7 @@ def _prepare_cache_context(
     use_cache: bool,
     cache_scope: Path | None,
     strict_revision_cache: bool = False,
+    variant_suffix: str = "",
 ) -> tuple[EmbeddingCache | None, str | None, str, str]:
     """Resolve the shared embedding-cache addressing context for one encode call.
 
@@ -2380,6 +2551,7 @@ def _prepare_cache_context(
     :param strict_revision_cache: Whether an unpinned hub revision resolves to a
         concrete commit hash (disabling caching when unmappable) instead of the
         requested revision label, defaults to ``False``.
+    :param variant_suffix: Optional caller-defined vector-space discriminator.
     :return: ``(cache, cache_revision, cache_variant, cache_namespace)``.
     """
     cache = get_embedding_cache() if (use_cache and cache_scope is not None) else None
@@ -2399,6 +2571,12 @@ def _prepare_cache_context(
         if cache is not None
         else ""
     )
+    if cache_variant and variant_suffix:
+        cache_variant = f"{cache_variant}\x00{variant_suffix}"
+    if mode == "query" and _revision_is_mutable_label(model_name, cache_revision):
+        # Earlier query rows could inherit corpus provenance without verifying
+        # their own checkpoint. Leave code keys intact but never reuse those rows.
+        cache_variant = f"{cache_variant}\x00query_provenance=2"
     return cache, cache_revision, cache_variant, _embedding_cache_namespace(mode, cache_variant)
 
 
@@ -2647,6 +2825,10 @@ def _compute_embeddings_unlocked(
     cache_scope: Path | None = None,
     strict_revision_cache: bool = False,
     overflow_report: list[SemanticContextOverflow] | None = None,
+    progress: ProgressMode = "auto",
+    stats: EmbeddingRunStats | None = None,
+    document_texts: Sequence[str] | None = None,
+    search_document: SearchDocumentMode = "source",
 ) -> tuple[np.ndarray, EmbeddingSpaceIdentity]:
     """Compute normalized NumPy embeddings for all code units.
 
@@ -2680,33 +2862,27 @@ def _compute_embeddings_unlocked(
     :param overflow_report: When provided, over-context units are skipped instead
         of raising: their rows are dropped from the returned matrix (so it is no
         longer row-aligned with ``units``) and appended here in input order.
+    :param progress: Progress-bar policy for corpus embedding inference.
+    :param stats: Optional telemetry collector filled in place.
+    :param document_texts: Optional prepared document text for each input unit.
+    :param search_document: Search document mode represented by ``document_texts``.
     :return: Normalized embedding matrix and its effective vector-space identity.
-    :raises ValueError: If ``batch_size`` is not positive.
+    :raises ValueError: If ``batch_size`` is not positive or ``document_texts``
+        does not have the same length as ``units``.
     :raises SemanticBackendError: If an explicitly requested device is unavailable,
         even when the corpus is empty or every embedding is already cached.
     :raises SemanticInputTooLongError: If a unit exceeds the model context window
         and no ``overflow_report`` collector was provided.
     """
+    _reset_embedding_run_stats(stats)
     if batch_size <= 0:
         raise ValueError("batch_size must be > 0")
+    if document_texts is not None and len(document_texts) != len(units):
+        raise ValueError("document_texts must have the same length as units")
 
-    # Before the empty-corpus return: an explicit unavailable --device must be
-    # an error even when there is nothing to embed, matching the contract
-    # enforced for warm and nonempty corpora (see find_similar_code).
+    # An explicit unavailable --device must be an error even when there is
+    # nothing to embed, matching the contract enforced for populated corpora.
     validate_explicit_device_request(device, mps_fallback=mps_fallback)
-
-    if not units:
-        return np.zeros((0, 0), dtype=np.float32), resolve_embedding_space_identity(
-            model_name=model_name,
-            instruction_prefix=instruction_prefix,
-            revision=revision,
-            trust_remote_code=trust_remote_code,
-            semantic_task=semantic_task,
-            device=device,
-            mps_fallback=mps_fallback,
-            persist_local_model_manifest=use_cache and cache_scope is not None,
-            strict_revision_cache=strict_revision_cache,
-        )
 
     profile = resolve_model_profile(model_name)
     resolved_task = normalize_semantic_task(
@@ -2724,7 +2900,11 @@ def _compute_embeddings_unlocked(
         if identity_local_model_path is not None
         else _resolve_revision_for_cache(model_name, revision, strict=strict_revision_cache)
     )
-    prepared_texts = [_prepare_embedding_text(unit.source) for unit in units]
+    prepared_texts = (
+        list(document_texts)
+        if document_texts is not None
+        else [_prepare_embedding_text(unit.source) for unit in units]
+    )
 
     def _effective_identity(
         effective_device: str,
@@ -2750,6 +2930,7 @@ def _compute_embeddings_unlocked(
             trust_remote_code=resolved_trust_remote_code,
             resolved_device=concrete_device,
             source_commit=source_commit,
+            search_document=search_document,
         )
 
     def _restart_faithfully_on_cpu(reason: str) -> tuple[np.ndarray, EmbeddingSpaceIdentity]:
@@ -2777,6 +2958,10 @@ def _compute_embeddings_unlocked(
             cache_scope=cache_scope,
             strict_revision_cache=strict_revision_cache,
             overflow_report=overflow_report,
+            progress=progress,
+            stats=stats,
+            document_texts=document_texts,
+            search_document=search_document,
         )
 
     def _coherence_break_reason(current_model: object) -> str | None:
@@ -2815,7 +3000,27 @@ def _compute_embeddings_unlocked(
         use_cache=use_cache,
         cache_scope=cache_scope,
         strict_revision_cache=strict_revision_cache,
+        variant_suffix=(
+            f"search_document={search_document}" if search_document == "contextual" else ""
+        ),
     )
+    if not units:
+        _record_embedding_run_stats(
+            stats,
+            prepared_texts=[],
+            kept_rows=[],
+            cache_enabled=cache is not None,
+            cache_revision=cache_revision,
+            cache_keys=[] if cache is not None else None,
+            hits={},
+            encoded_inputs=0,
+            model_loaded=False,
+            execution_device=None,
+        )
+        return np.zeros((0, 0), dtype=np.float32), _effective_identity(
+            device,
+            identity_revision,
+        )
 
     def _cache_keys_for_revision(active_revision: str) -> list[str]:
         """Derive row-aligned cache keys for the prepared texts under one revision.
@@ -2870,6 +3075,18 @@ def _compute_embeddings_unlocked(
             restore_mps_memory_fraction_if_managed()
         # The hits all came from one shard snapshot, so its recorded commit is
         # the provenance of every matrix row this warm return assembles.
+        _record_embedding_run_stats(
+            stats,
+            prepared_texts=prepared_texts,
+            kept_rows=list(range(len(units))),
+            cache_enabled=True,
+            cache_revision=cache_revision,
+            cache_keys=cache_keys,
+            hits=hits,
+            encoded_inputs=0,
+            model_loaded=False,
+            execution_device=None,
+        )
         return _assemble_cached_matrix(cache_keys, hits), _effective_identity(
             device,
             cache_revision,
@@ -2932,6 +3149,18 @@ def _compute_embeddings_unlocked(
             hits = lookup.vectors
             hit_source_commit = lookup.source_commit
             if all(key in hits for key in cache_keys):
+                _record_embedding_run_stats(
+                    stats,
+                    prepared_texts=prepared_texts,
+                    kept_rows=list(range(len(units))),
+                    cache_enabled=True,
+                    cache_revision=cache_revision,
+                    cache_keys=cache_keys,
+                    hits=hits,
+                    encoded_inputs=0,
+                    model_loaded=True,
+                    execution_device=execution_device,
+                )
                 return _assemble_cached_matrix(cache_keys, hits), _effective_identity(
                     device,
                     confirmed_revision,
@@ -2939,7 +3168,13 @@ def _compute_embeddings_unlocked(
                     source_commit=hit_source_commit,
                 )
 
-    corpus_source_commit: str | None = None
+    # Checkpoint provenance belongs to the matrix, even when persistent
+    # storage is disabled or unavailable. Later model reloads still need it.
+    corpus_source_commit = (
+        _get_loaded_model_commit_hash(model)
+        if _revision_is_mutable_label(model_name, identity_revision)
+        else None
+    )
     if (
         cache is not None
         and cache_revision is not None
@@ -2955,9 +3190,8 @@ def _compute_embeddings_unlocked(
         # provenance is compared as well. If the loaded commit is unknown,
         # neither old hits nor fresh writes can be tied to one checkpoint, so
         # this call bypasses the entire shard and recomputes every row.
-        loaded_commit = _get_loaded_model_commit_hash(model)
+        loaded_commit = corpus_source_commit
         if loaded_commit is not None:
-            corpus_source_commit = loaded_commit
             if not cache.confirm_source_commit(
                 cache_scope, profile.canonical_name, cache_revision, loaded_commit
             ):
@@ -3065,7 +3299,7 @@ def _compute_embeddings_unlocked(
     reused_duplicate_rows = len(kept_rows) - cache_covered_rows - len(miss_indices)
 
     logger.info(
-        f"Computing embeddings for {len(miss_texts)} unique inputs on {execution_device} "
+        f"Computing embeddings for {len(miss_texts)} inputs on {execution_device} "
         f"({cache_covered_rows} cache-covered rows, {reused_duplicate_rows} duplicate rows reused)"
     )
 
@@ -3075,6 +3309,18 @@ def _compute_embeddings_unlocked(
         _publish_overflow_report(kept_rows)
         identity = _effective_identity(
             device, identity_revision, resolved_device, source_commit=corpus_source_commit
+        )
+        _record_embedding_run_stats(
+            stats,
+            prepared_texts=prepared_texts,
+            kept_rows=kept_rows,
+            cache_enabled=cache is not None,
+            cache_revision=cache_revision,
+            cache_keys=cache_keys,
+            hits=hits,
+            encoded_inputs=0,
+            model_loaded=True,
+            execution_device=_get_effective_model_device(model, resolved_device),
         )
         if not kept_rows or cache_keys is None:
             return np.zeros((0, 0), dtype=np.float32), identity
@@ -3093,7 +3339,7 @@ def _compute_embeddings_unlocked(
             encode_fn,
             texts,
             batch_size=batch_size,
-            show_progress_bar=len(texts) > 100,
+            show_progress_bar=_should_show_progress(progress, len(texts)),
             initial_device=execution_device,
             model_name=model_name,
             revision=resolved_revision,
@@ -3167,7 +3413,21 @@ def _compute_embeddings_unlocked(
             ],
             namespace=cache_namespace,
             expected_source_commit=corpus_source_commit,
+            require_source_commit=_revision_is_mutable_label(model_name, cache_revision),
         )
+
+    _record_embedding_run_stats(
+        stats,
+        prepared_texts=prepared_texts,
+        kept_rows=kept_rows,
+        cache_enabled=cache is not None,
+        cache_revision=cache_revision,
+        cache_keys=cache_keys,
+        hits=hits,
+        encoded_inputs=len(miss_indices),
+        model_loaded=True,
+        execution_device=_get_effective_model_device(model, resolved_device),
+    )
 
     return matrix, _effective_identity(
         device, identity_revision, resolved_device, source_commit=corpus_source_commit
@@ -3189,6 +3449,10 @@ def compute_embeddings_with_identity(
     cache_scope: Path | None = None,
     strict_revision_cache: bool = False,
     overflow_report: list[SemanticContextOverflow] | None = None,
+    progress: ProgressMode = "auto",
+    stats: EmbeddingRunStats | None = None,
+    document_texts: Sequence[str] | None = None,
+    search_document: SearchDocumentMode = "source",
 ) -> tuple[np.ndarray, EmbeddingSpaceIdentity]:
     """Compute embeddings and identity under the shared model lock.
 
@@ -3214,13 +3478,23 @@ def compute_embeddings_with_identity(
     :param overflow_report: When provided, over-context units are skipped instead
         of raising: their rows are dropped from the returned matrix (so it is no
         longer row-aligned with ``units``) and appended here in input order.
+    :param progress: Progress-bar policy for corpus embedding inference.
+    :param stats: Optional telemetry collector filled in place.
+    :param document_texts: Optional prepared document text for each input unit.
+    :param search_document: Search document mode represented by ``document_texts``.
     :return: Normalized embedding matrix and its effective vector-space identity.
+    :raises ValueError: If ``document_texts`` does not have the same length as ``units``.
     """
     # Import-sensitive runtime variables (MPS operator fallback above all) must
     # be set before any path below can import torch - cache-variant derivation
     # may probe CPU capabilities, which is already too late.
     _configure_semantic_runtime_env(device, mps_fallback=mps_fallback)
-    with _model_lock, _local_model_fingerprint_walk_scope():
+    warning_collector = stats.cache_warnings if stats is not None else None
+    with (
+        _model_lock,
+        _local_model_fingerprint_walk_scope(),
+        capture_cache_warnings(warning_collector),
+    ):
         return _compute_embeddings_unlocked(
             units,
             model_name=model_name,
@@ -3236,6 +3510,10 @@ def compute_embeddings_with_identity(
             mps_memory_fraction=mps_memory_fraction,
             strict_revision_cache=strict_revision_cache,
             overflow_report=overflow_report,
+            progress=progress,
+            stats=stats,
+            document_texts=document_texts,
+            search_document=search_document,
         )
 
 
@@ -3253,6 +3531,10 @@ def compute_embeddings(
     use_cache: bool = True,
     cache_scope: Path | None = None,
     strict_revision_cache: bool = False,
+    progress: ProgressMode = "auto",
+    stats: EmbeddingRunStats | None = None,
+    document_texts: Sequence[str] | None = None,
+    search_document: SearchDocumentMode = "source",
 ) -> np.ndarray:
     """Compute embeddings while serializing shared-model lifecycle and inference.
 
@@ -3275,7 +3557,12 @@ def compute_embeddings(
     :param strict_revision_cache: Whether an unpinned hub revision resolves to a
         concrete commit hash (disabling caching when unmappable) instead of the
         requested revision label, defaults to ``False``.
+    :param progress: Progress-bar policy for corpus embedding inference.
+    :param stats: Optional telemetry collector filled in place.
+    :param document_texts: Optional prepared document text for each input unit.
+    :param search_document: Search document mode represented by ``document_texts``.
     :return: Normalized embedding matrix row-aligned with ``units``.
+    :raises ValueError: If ``document_texts`` does not have the same length as ``units``.
     """
     embeddings, _identity = compute_embeddings_with_identity(
         units,
@@ -3291,6 +3578,10 @@ def compute_embeddings(
         use_cache=use_cache,
         cache_scope=cache_scope,
         strict_revision_cache=strict_revision_cache,
+        progress=progress,
+        stats=stats,
+        document_texts=document_texts,
+        search_document=search_document,
     )
     return embeddings
 
@@ -3491,8 +3782,9 @@ def _find_similar_to_query_unlocked(
     :param revision: Optional model revision; ``None`` uses the profile default.
     :param trust_remote_code: Optional remote-code trust setting; ``None`` uses the
         profile default.
-    :param threshold: Minimum cosine similarity. ``None`` uses the model profile
-        search default only for its calibrated task, prompt, and revision.
+    :param threshold: Finite minimum cosine similarity; negative floors are allowed.
+        ``None`` uses the model profile search default only for its calibrated task,
+        prompt, revision, and source representation.
     :param semantic_task: Optional task override; ``None`` uses
         ``DEFAULT_SEARCH_SEMANTIC_TASK``.
     :param device: ``auto``, ``cpu``, ``cuda``, or ``mps``, defaults to
@@ -3503,23 +3795,41 @@ def _find_similar_to_query_unlocked(
     :param cache_scope: Analyzed corpus root path used to address the cache shard;
         ``None`` disables caching for this call regardless of ``use_cache``.
     :param corpus_identity: Identity captured with ``embeddings``. Required for
-        prompt- or route-sensitive models; model/revision/runtime drift requires
-        rebuilding the corpus, and its recorded source commit rejects mutable-label
-        query vectors - cached or freshly encoded - from any other checkpoint.
+        contextual documents and prompt- or route-sensitive models. Model, revision,
+        or runtime drift requires rebuilding the corpus. Its recorded source commit
+        rejects mutable-label query vectors - cached or freshly encoded - from
+        any other or unknown checkpoint.
     :param strict_revision_cache: Whether an unpinned hub revision resolves to a
         concrete commit hash (disabling caching when unmappable) instead of the
         requested revision label, defaults to ``False``. Must match the mode
         used to build ``corpus_identity``.
     :return: Up to ``top_k`` ``(unit, similarity)`` pairs at or above the threshold,
         sorted by descending similarity.
-    :raises ValueError: If an uncalibrated task/prompt/revision uses the default
-        threshold, or a prompt-sensitive corpus omits its identity.
+    :raises ValueError: If ``threshold`` is non-finite, an uncalibrated corpus uses
+        the default threshold, or a prompt-sensitive corpus omits its identity.
     :raises SemanticBackendError: If an explicitly requested device is unavailable,
         even when the query embedding is already cached.
+    :raises RuntimeError: If the query checkpoint cannot be verified against the
+        indexed corpus, or its embedding execution policy changed.
     """
     validate_explicit_device_request(device, mps_fallback=mps_fallback)
 
-    # After the explicit-device contract above: an empty corpus can match
+    if threshold is not None and not np.isfinite(threshold):
+        raise ValueError("threshold must be finite")
+
+    if (
+        corpus_identity is not None
+        and corpus_identity.search_document == "contextual"
+        and threshold is None
+    ):
+        raise ValueError(
+            "Search over contextual documents requires an explicit threshold; "
+            "the source-only search default is not calibrated for this representation. "
+            "Pass CodeAnalyzer.search(threshold=...), find_similar_to_query(threshold=...), "
+            "or --semantic-threshold."
+        )
+
+    # After the input contracts above: an empty corpus can match
     # nothing, so return before embedding the query (or loading the model).
     if not units:
         return []
@@ -3693,42 +4003,30 @@ def _find_similar_to_query_unlocked(
             mps_memory_fraction=(None if embedding_device == "cpu" else mps_memory_fraction),
             persist_local_model_manifest=use_cache and cache_scope is not None,
         )
-        execution_device = _get_effective_model_device(model, resolved_device)
-
-        confirmed_revision = _confirm_cache_revision_after_load(
-            model,
-            model_name,
-            resolved_revision,
-            strict=strict_revision_cache,
-        )
-
         query_source_commit: str | None = None
-        if (
-            cache is not None
-            and cache_revision is not None
-            and _revision_is_mutable_label(model_name, cache_revision)
-        ):
-            # A query miss loaded the model, so the shard's source-commit
-            # guard can run. Drift here means the corpus matrix was assembled
-            # from old-commit cached vectors on the warm no-load path while
-            # this query would embed under the new commit: the shard is
-            # purged and the comparison must not happen. An unknown loaded
-            # commit stays fail-open by design (see the corpus-side guard).
+        provenance_revision = (
+            corpus_identity.resolved_revision if corpus_identity is not None else cache_revision
+        )
+        if _revision_is_mutable_label(model_name, provenance_revision):
+            # The in-memory corpus's provenance remains authoritative even
+            # when persistent query caching is disabled or its shard was replaced.
             loaded_commit = _get_loaded_model_commit_hash(model)
+            if corpus_source_commit is not None and loaded_commit is None:
+                raise RuntimeError(
+                    "The loaded query model cannot be verified against the indexed "
+                    "corpus checkpoint. Pin the model revision and rebuild the index "
+                    "before searching."
+                )
+            if corpus_source_commit is not None and loaded_commit != corpus_source_commit:
+                raise RuntimeError(
+                    f"Model branch {provenance_revision!r} moved to a different commit since "
+                    f"this corpus was indexed (corpus {corpus_source_commit[:12]}, "
+                    f"loaded {loaded_commit[:12]}). Run index() or analyze() again "
+                    "before search()."
+                )
             if loaded_commit is not None:
                 query_source_commit = loaded_commit
-                if corpus_source_commit is not None and loaded_commit != corpus_source_commit:
-                    # The shard alone cannot prove this: a republished shard
-                    # can already be coherent with the newly loaded commit
-                    # while the in-memory corpus matrix still derives from the
-                    # old one.
-                    raise RuntimeError(
-                        f"Model branch {cache_revision!r} moved to a different commit since "
-                        f"this corpus was indexed (corpus {corpus_source_commit[:12]}, "
-                        f"loaded {loaded_commit[:12]}). Run index() or analyze() again "
-                        "before search()."
-                    )
-                if not cache.confirm_source_commit(
+                if cache is not None and not cache.confirm_source_commit(
                     cache_scope, profile.canonical_name, cache_revision, loaded_commit
                 ):
                     raise RuntimeError(
@@ -3736,6 +4034,14 @@ def _find_similar_to_query_unlocked(
                         "this corpus was indexed; its cached vectors were purged. Run index() "
                         "or analyze() again before search()."
                     )
+
+        execution_device = _get_effective_model_device(model, resolved_device)
+        confirmed_revision = _confirm_cache_revision_after_load(
+            model,
+            model_name,
+            resolved_revision,
+            strict=strict_revision_cache,
+        )
 
         corpus_encode_plan = _resolve_encode_plan(
             profile,
@@ -3862,11 +4168,16 @@ def _find_similar_to_query_unlocked(
                     namespace=cache_namespace,
                     max_namespace_keys=_MAX_CACHED_QUERY_KEYS,
                     expected_source_commit=query_source_commit,
+                    require_source_commit=_revision_is_mutable_label(model_name, cache_revision),
                 )
 
     similarities = embeddings @ query_embedding
     sorted_indices = np.argsort(similarities)[::-1]
-    filtered_indices = [idx for idx in sorted_indices if similarities[idx] >= resolved_threshold]
+    # Compare the returned Python-float scores: NumPy's scalar promotion can
+    # round the threshold down to float32 and admit a score below that floor.
+    filtered_indices = [
+        idx for idx in sorted_indices if float(similarities[idx]) >= resolved_threshold
+    ]
     top_indices = filtered_indices[:top_k]
 
     return [(units[i], float(similarities[i])) for i in top_indices]
@@ -3902,8 +4213,9 @@ def find_similar_to_query(
     :param revision: Optional model revision; ``None`` uses the profile default.
     :param trust_remote_code: Optional remote-code trust setting; ``None`` uses the
         profile default.
-    :param threshold: Minimum cosine similarity. ``None`` uses the model profile
-        search default only for its calibrated task, prompt, and revision.
+    :param threshold: Finite minimum cosine similarity; negative floors are allowed.
+        ``None`` uses the model profile search default only for its calibrated task,
+        prompt, revision, and source representation.
     :param semantic_task: Optional task override; ``None`` uses
         ``DEFAULT_SEARCH_SEMANTIC_TASK``.
     :param device: ``auto``, ``cpu``, ``cuda``, or ``mps``, defaults to
@@ -3914,16 +4226,16 @@ def find_similar_to_query(
     :param cache_scope: Analyzed corpus root path used to address the cache shard;
         ``None`` disables caching for this call regardless of ``use_cache``.
     :param corpus_identity: Identity captured with ``embeddings``. Required for
-        prompt- or route-sensitive models; model/revision/runtime drift requires
-        rebuilding the corpus.
+        contextual documents and prompt- or route-sensitive models. Model, revision,
+        or runtime drift requires rebuilding the corpus.
     :param strict_revision_cache: Whether an unpinned hub revision resolves to a
         concrete commit hash (disabling caching when unmappable) instead of the
         requested revision label, defaults to ``False``. Must match the mode
         used to build ``corpus_identity``.
     :return: Up to ``top_k`` ``(unit, similarity)`` pairs at or above the threshold,
         sorted by descending similarity.
-    :raises ValueError: If an uncalibrated task/prompt/revision uses the default
-        threshold, or a prompt-sensitive corpus omits its identity.
+    :raises ValueError: If ``threshold`` is non-finite, an uncalibrated corpus uses
+        the default threshold, or a prompt-sensitive corpus omits its identity.
     """
     # Same contract as compute_embeddings_with_identity: configure
     # import-sensitive runtime variables before anything can import torch.
@@ -3969,6 +4281,8 @@ def run_semantic_analysis_with_identity(
     cross_language: bool = False,
     language_thresholds: Mapping[str, float] | None = None,
     overflow_report: list[SemanticContextOverflow] | None = None,
+    progress: ProgressMode = "auto",
+    stats: EmbeddingRunStats | None = None,
 ) -> tuple[np.ndarray, list[DuplicatePair], EmbeddingSpaceIdentity]:
     """Run semantic duplicate detection and return the corpus identity.
 
@@ -4003,6 +4317,8 @@ def run_semantic_analysis_with_identity(
     :param overflow_report: When provided, over-context units are skipped instead
         of raising: they are excluded from ``embeddings`` and pair mining, and
         appended here in input order.
+    :param progress: Progress-bar policy for corpus embedding inference.
+    :param stats: Optional telemetry collector filled in place.
     :return: ``(embeddings, duplicates, identity)``; ``embeddings`` covers only
         the units that survived the context policy.
     """
@@ -4026,6 +4342,8 @@ def run_semantic_analysis_with_identity(
         cache_scope=cache_scope,
         strict_revision_cache=strict_revision_cache,
         overflow_report=overflow_report,
+        progress=progress,
+        stats=stats,
     )
     if overflow_report is not None and len(overflow_report) > reported_before:
         # Keep pair mining row-aligned with the matrix the context policy left.
@@ -4064,6 +4382,8 @@ def run_semantic_analysis(
     strict_revision_cache: bool = False,
     cross_language: bool = False,
     language_thresholds: Mapping[str, float] | None = None,
+    progress: ProgressMode = "auto",
+    stats: EmbeddingRunStats | None = None,
 ) -> tuple[np.ndarray, list[DuplicatePair]]:
     """Run full semantic duplicate detection.
 
@@ -4095,6 +4415,8 @@ def run_semantic_analysis(
         (uncalibrated), defaults to ``False``.
     :param language_thresholds: Per-language duplicate gates applied inside the
         pairwise scan; ``None`` applies ``threshold`` flat to every language.
+    :param progress: Progress-bar policy for corpus embedding inference.
+    :param stats: Optional telemetry collector filled in place.
     :return: ``(embeddings, duplicates)``; both are empty when ``units`` is empty.
     """
     embeddings, duplicates, _identity = run_semantic_analysis_with_identity(
@@ -4115,5 +4437,7 @@ def run_semantic_analysis(
         strict_revision_cache=strict_revision_cache,
         cross_language=cross_language,
         language_thresholds=language_thresholds,
+        progress=progress,
+        stats=stats,
     )
     return embeddings, duplicates

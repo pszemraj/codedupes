@@ -28,6 +28,8 @@ _SEMANTIC_ANALYSIS_KWARG_NAMES = {
     "mps_fallback",
     "mps_memory_fraction",
     "overflow_report",
+    "progress",
+    "stats",
     "revision",
     "semantic_task",
     "strict_revision_cache",
@@ -507,20 +509,13 @@ def test_semantic_unit_scope(
 
 
 @pytest.mark.parametrize(
-    ("run_semantic", "expected_types"),
-    [
-        (True, set()),
-        (
-            False,
-            {CodeUnitType.CLASS, CodeUnitType.METHOD, CodeUnitType.FUNCTION},
-        ),
-    ],
+    "run_semantic",
+    [True, False],
 )
-def test_traditional_scope_depends_on_semantic_mode(
+def test_traditional_scope_is_independent_of_semantic_mode(
     tmp_path: Path,
     monkeypatch,
     run_semantic: bool,
-    expected_types: set[CodeUnitType],
 ) -> None:
     source = dedent(
         """
@@ -552,7 +547,48 @@ def test_traditional_scope_depends_on_semantic_mode(
     )
     analyzer.analyze(project)
 
-    assert {unit.unit_type for unit in captured_traditional_units} == expected_types
+    assert {unit.unit_type for unit in captured_traditional_units} == {
+        CodeUnitType.CLASS,
+        CodeUnitType.METHOD,
+        CodeUnitType.FUNCTION,
+    }
+
+
+def test_traditional_findings_are_mode_invariant(tmp_path: Path, monkeypatch) -> None:
+    """Combined mode must retain full-scope deterministic findings."""
+    source = dedent(
+        """
+        class Alpha:
+            def render(self, value):
+                return value.strip()
+
+        class Beta:
+            def render(self, value):
+                return value.strip()
+        """
+    ).strip()
+    project = create_project(tmp_path, source, module="scope.py")
+    monkeypatch.setattr(analyzer_module, "run_semantic_analysis", _make_semantic_runner())
+
+    traditional = CodeAnalyzer(
+        AnalyzerConfig(
+            run_semantic=False,
+            run_unused=False,
+            filter_tiny_traditional=False,
+        )
+    ).analyze(project)
+    combined = CodeAnalyzer(
+        AnalyzerConfig(run_unused=False, filter_tiny_traditional=False)
+    ).analyze(project)
+
+    def pair_keys(result: AnalysisResult) -> set[tuple[str, str, str]]:
+        return {
+            (*ordered_pair_key(duplicate.unit_a, duplicate.unit_b), duplicate.method)
+            for duplicate in result.traditional_duplicates
+        }
+
+    assert pair_keys(traditional)
+    assert pair_keys(combined) == pair_keys(traditional)
 
 
 @pytest.mark.parametrize(
@@ -599,15 +635,190 @@ def test_tiny_exact_duplicate_filter(
     assert has_exact_duplicate is expected_exact_duplicate
 
 
+@pytest.mark.parametrize("filter_tiny_traditional", [True, False])
+def test_tiny_class_duplicates_follow_tiny_filter(
+    tmp_path: Path, filter_tiny_traditional: bool
+) -> None:
+    """Marker classes should follow the same tiny-unit policy as callables."""
+    source = dedent(
+        """
+        class FirstError(RuntimeError):
+            \"\"\"First domain error.\"\"\"
+
+        class SecondError(RuntimeError):
+            \"\"\"Second domain error.\"\"\"
+        """
+    ).strip()
+    project = create_project(tmp_path, source, module="tiny_classes.py")
+
+    result = CodeAnalyzer(
+        AnalyzerConfig(
+            run_semantic=False,
+            run_unused=False,
+            filter_tiny_traditional=filter_tiny_traditional,
+        )
+    ).analyze(project)
+
+    assert len(result.traditional_duplicates) == int(not filter_tiny_traditional)
+
+
+def test_large_class_duplicates_are_not_filtered_by_member_count(tmp_path: Path) -> None:
+    source = dedent(
+        """
+        class FirstProcessor:
+            def prepare(self, value):
+                adjusted = value + 1
+                doubled = adjusted * 2
+                return doubled
+
+            def finish(self, value):
+                adjusted = value - 1
+                doubled = adjusted * 2
+                return doubled
+
+        class SecondProcessor:
+            def prepare(self, value):
+                adjusted = value + 1
+                doubled = adjusted * 2
+                return doubled
+
+            def finish(self, value):
+                adjusted = value - 1
+                doubled = adjusted * 2
+                return doubled
+        """
+    ).strip()
+    project = create_project(tmp_path, source, module="large_classes.py")
+
+    result = CodeAnalyzer(
+        AnalyzerConfig(
+            run_semantic=False,
+            run_unused=False,
+            filter_tiny_traditional=True,
+        )
+    ).analyze(project)
+
+    classes = [unit for unit in result.units if unit.unit_type == CodeUnitType.CLASS]
+    assert {unit.statement_count for unit in classes} == {2}
+    assert any(
+        duplicate.unit_a.unit_type == CodeUnitType.CLASS
+        and duplicate.unit_b.unit_type == CodeUnitType.CLASS
+        for duplicate in result.traditional_duplicates
+    )
+
+
+def test_large_class_duplicates_survive_private_member_filter(tmp_path: Path) -> None:
+    """An incomplete visible-member list must not make substantial classes tiny."""
+    source = dedent(
+        """
+        class FirstProcessor:
+            def _prepare(self, value):
+                adjusted = value + 1
+                doubled = adjusted * 2
+                return doubled
+
+        class SecondProcessor:
+            def _prepare(self, value):
+                adjusted = value + 1
+                doubled = adjusted * 2
+                return doubled
+        """
+    ).strip()
+    project = create_project(tmp_path, source, module="private_class_members.py")
+
+    result = CodeAnalyzer(
+        AnalyzerConfig(
+            run_semantic=False,
+            run_unused=False,
+            include_private=False,
+            filter_tiny_traditional=True,
+        )
+    ).analyze(project)
+
+    assert {unit.name for unit in result.units} == {"FirstProcessor", "SecondProcessor"}
+    assert any(
+        duplicate.unit_a.unit_type == CodeUnitType.CLASS
+        and duplicate.unit_b.unit_type == CodeUnitType.CLASS
+        for duplicate in result.traditional_duplicates
+    )
+
+
+def test_large_tree_sitter_class_duplicates_are_not_filtered(tmp_path: Path) -> None:
+    source = dedent(
+        """
+        class FirstProcessor {
+          prepare(value) {
+            const adjusted = value + 1;
+            const doubled = adjusted * 2;
+            return doubled;
+          }
+          finish(value) {
+            const adjusted = value - 1;
+            const doubled = adjusted * 2;
+            return doubled;
+          }
+        }
+        class SecondProcessor {
+          prepare(value) {
+            const adjusted = value + 1;
+            const doubled = adjusted * 2;
+            return doubled;
+          }
+          finish(value) {
+            const adjusted = value - 1;
+            const doubled = adjusted * 2;
+            return doubled;
+          }
+        }
+        """
+    ).strip()
+    project = create_project(tmp_path, source, module="large_classes.js")
+
+    result = CodeAnalyzer(
+        AnalyzerConfig(run_semantic=False, run_unused=False, filter_tiny_traditional=True)
+    ).analyze(project)
+
+    classes = [unit for unit in result.units if unit.unit_type == CodeUnitType.CLASS]
+    assert {unit.statement_count for unit in classes} == {2}
+    assert any(
+        duplicate.unit_a.unit_type == CodeUnitType.CLASS
+        and duplicate.unit_b.unit_type == CodeUnitType.CLASS
+        for duplicate in result.traditional_duplicates
+    )
+
+
+@pytest.mark.parametrize("suffix", ["js", "jsx", "ts", "tsx"])
 @pytest.mark.parametrize(
-    ("similarity", "expected_count"),
+    ("initializer", "expected_duplicate"),
     [
-        (0.90, 0),
-        (0.95, 1),
+        ("", False),
+        ("this.ready = true;", False),
+        ("if (enabled) { this.first = 1; this.second = 2; }", True),
     ],
 )
-def test_tiny_near_duplicates_use_high_jaccard_floor(
-    tmp_path: Path, monkeypatch, similarity: float, expected_count: int
+def test_class_static_initializers_follow_tiny_filter(
+    tmp_path: Path, suffix: str, initializer: str, expected_duplicate: bool
+) -> None:
+    """Count static-block bodies even though they have no separate code units."""
+    source = (
+        f"class First {{ static {{ {initializer} }} }}\n"
+        f"class Second {{ static {{ {initializer} }} }}\n"
+    )
+    project = create_project(tmp_path, source, module=f"initializers.{suffix}")
+    unfiltered = CodeAnalyzer(
+        AnalyzerConfig(run_semantic=False, run_unused=False, filter_tiny_traditional=False)
+    ).analyze(project)
+    assert len(unfiltered.traditional_duplicates) == 1
+
+    filtered = CodeAnalyzer(AnalyzerConfig(run_semantic=False, run_unused=False)).analyze(project)
+    assert len(filtered.units) == 2
+    assert all(unit.unit_type == CodeUnitType.CLASS for unit in filtered.units)
+    assert len(filtered.exact_duplicates) == int(expected_duplicate)
+
+
+@pytest.mark.parametrize("filter_tiny_traditional", [True, False])
+def test_tiny_near_duplicates_follow_tiny_filter(
+    tmp_path: Path, monkeypatch, filter_tiny_traditional: bool
 ) -> None:
     source = dedent(
         """
@@ -627,11 +838,7 @@ def test_tiny_near_duplicates_use_high_jaccard_floor(
     ):
         return (
             [],
-            [
-                DuplicatePair(
-                    unit_a=units[0], unit_b=units[1], similarity=similarity, method="jaccard"
-                )
-            ],
+            [DuplicatePair(unit_a=units[0], unit_b=units[1], similarity=1.0, method="jaccard")],
             [],
         )
 
@@ -642,12 +849,12 @@ def test_tiny_near_duplicates_use_high_jaccard_floor(
             run_traditional=True,
             run_semantic=False,
             run_unused=False,
-            tiny_near_jaccard_min=0.93,
+            filter_tiny_traditional=filter_tiny_traditional,
         )
     )
     result = analyzer.analyze(project)
 
-    assert len(result.traditional_duplicates) == expected_count
+    assert len(result.traditional_duplicates) == int(not filter_tiny_traditional)
 
 
 def _profile_with_gates(gates: dict[str, float], fallback: float = 0.99) -> SemanticModelProfile:
@@ -738,6 +945,7 @@ def test_semantic_pairs_are_gated_per_language(tmp_path: Path, monkeypatch) -> N
             run_semantic=True,
             run_unused=False,
             min_semantic_statements=0,
+            progress="never",
         )
     )
     analyzer.analyze(project)
@@ -745,6 +953,7 @@ def test_semantic_pairs_are_gated_per_language(tmp_path: Path, monkeypatch) -> N
     # Every language group is scanned at its own gate; the scalar floor only
     # covers languages without a calibrated entry.
     assert captured["language_thresholds"] == {"python": 0.90, "javascript": 0.60}
+    assert captured["progress"] == "never"
     assert captured["threshold"] == 0.60
 
 
@@ -1054,7 +1263,9 @@ def test_allow_semantic_fallback_requires_combined_mode() -> None:
         )
 
 
-def test_combined_mode_fallback_keeps_scoped_traditional_units(tmp_path: Path, monkeypatch) -> None:
+def test_combined_mode_fallback_keeps_full_scope_traditional_units(
+    tmp_path: Path, monkeypatch
+) -> None:
     source = dedent(
         """
         class Box:
@@ -1104,7 +1315,7 @@ def test_combined_mode_fallback_keeps_scoped_traditional_units(tmp_path: Path, m
     analyzer.analyze(project)
 
     assert len(traditional_calls) == 1
-    assert set(traditional_calls[0][0]) == {"method", "longer"}
+    assert set(traditional_calls[0][0]) == {"Box", "method", "short", "longer"}
 
 
 def test_combined_mode_fallback_marks_semantic_degradation(tmp_path: Path, monkeypatch) -> None:
@@ -1231,40 +1442,62 @@ def test_search_threshold_argument_overrides_the_config_for_one_call(
     assert captured["query_threshold"] == 0.31
 
 
+@pytest.mark.parametrize("search_document", ["source", "contextual"])
 def test_search_threshold_defaults_to_none_and_honors_explicit_config(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch, search_document
 ) -> None:
-    source = "def entry(x):\n    return x + 1\n"
-    project = create_project(tmp_path, source)
-    captured: dict[str, object] = {}
+    project = create_project(tmp_path, "def entry(x):\n    return x + 1\n")
+    encoded: list[str] = []
 
-    monkeypatch.setattr(
-        analyzer_module,
-        "run_semantic_analysis",
-        _make_semantic_runner(capture=captured),
-    )
+    class QueryModel:
+        def encode(self, texts, **kwargs):
+            encoded.extend(texts)
+            return np.array(
+                [[0.6, 0.8] if text == "entry" else [1.0, 0.0] for text in texts],
+                dtype=np.float32,
+            )
 
-    monkeypatch.setattr(
-        semantic_module,
-        "find_similar_to_query",
-        _capture_query_runner(captured),
-    )
-
+    monkeypatch.setattr(semantic_module, "get_model", lambda *args, **kwargs: QueryModel())
     base_config = {
         "run_traditional": False,
         "run_semantic": True,
         "run_unused": False,
         "min_semantic_statements": 0,
+        "search_document": search_document,
+        "device": "cpu",
+        "embedding_cache": False,
     }
     analyzer = CodeAnalyzer(AnalyzerConfig(**base_config))
+    analyzer.index(project)
+    calls_before = len(encoded)
+    for invalid_threshold in (float("nan"), float("inf"), -float("inf")):
+        with pytest.raises(ValueError, match="threshold must be finite"):
+            analyzer.search("entry", threshold=invalid_threshold)
+    assert len(encoded) == calls_before
+    if search_document == "contextual":
+        with pytest.raises(ValueError, match="contextual.*explicit threshold"):
+            analyzer.search("entry")
+        assert "entry" not in encoded
+        assert len(analyzer.search("entry", threshold=0.0)) == 1
+        assert analyzer.config.semantic_threshold is None
+
+        # Changing future indexing options does not change the current corpus.
+        analyzer.config.search_document = "source"
+        with pytest.raises(ValueError, match="contextual.*explicit threshold"):
+            analyzer.search("entry")
+        analyzer.config.search_document = "contextual"
+    else:
+        assert len(analyzer.search("entry")) == 1
+
+    # analyze() replaces the corpus with bare source in either document mode.
     analyzer.analyze(project)
-    analyzer.search("entry")
-    assert captured["query_threshold"] is None
+    assert len(analyzer.search("entry")) == 1
 
     explicit = CodeAnalyzer(AnalyzerConfig(semantic_threshold=0.7, **base_config))
-    explicit.analyze(project)
-    explicit.search("entry")
-    assert captured["query_threshold"] == 0.7
+    explicit.index(project)
+    assert explicit.search("entry") == []
+    assert len(explicit.search("entry", threshold=0.0)) == 1
+    assert explicit.config.semantic_threshold == 0.7
 
 
 @pytest.mark.parametrize(
@@ -1372,22 +1605,38 @@ def test_index_embeds_corpus_without_mining_duplicates(tmp_path: Path, monkeypat
 
     assert indexed == 1
     assert [unit.name for unit in embedded_units] == ["entry"]
+    assert captured["progress"] == "auto"
     assert results == []
     assert captured["semantic_task"] == analyzer_module.DEFAULT_SEARCH_SEMANTIC_TASK
     assert captured["query_semantic_task"] == analyzer_module.DEFAULT_SEARCH_SEMANTIC_TASK
     assert captured["cache_scope"] == project.resolve()
 
 
-def test_index_empty_corpus_yields_empty_search(tmp_path: Path) -> None:
+@pytest.mark.parametrize("search_document", ["source", "contextual"])
+def test_index_empty_corpus_yields_empty_search(tmp_path: Path, search_document) -> None:
     empty = tmp_path / "empty"
     empty.mkdir()
     analyzer = CodeAnalyzer(
-        AnalyzerConfig(run_traditional=False, run_semantic=True, run_unused=False)
+        AnalyzerConfig(
+            run_traditional=False,
+            run_semantic=True,
+            run_unused=False,
+            search_document=search_document,
+            device="cpu",
+        )
     )
 
     assert analyzer.index(empty) == 0
     assert analyzer.extracted_unit_count == 0
-    assert analyzer.search("anything") == []
+    for invalid_threshold in (float("nan"), float("inf"), -float("inf")):
+        with pytest.raises(ValueError, match="threshold must be finite"):
+            analyzer.search("anything", threshold=invalid_threshold)
+    if search_document == "contextual":
+        with pytest.raises(ValueError, match="contextual.*explicit threshold"):
+            analyzer.search("anything")
+    else:
+        assert analyzer.search("anything") == []
+    assert analyzer.search("anything", threshold=0.0) == []
 
 
 def test_search_requires_reindex_when_local_model_contents_change(
@@ -1862,11 +2111,16 @@ def test_empty_reanalysis_clears_previous_search_state(tmp_path: Path, monkeypat
     result = analyzer.analyze(empty_project)
 
     assert result.analysis_mode == "none"
-    with pytest.raises(RuntimeError, match="run_semantic=True"):
-        analyzer.search("entry")
+    assert analyzer.search("entry") == []
 
 
-def test_invalid_threshold_raises() -> None:
+def test_configuration_validation() -> None:
+    for progress in ("auto", "always", "never"):
+        assert AnalyzerConfig(progress=progress).progress == progress
+
+    with pytest.raises(ValueError, match="progress must be 'auto', 'always', or 'never'"):
+        AnalyzerConfig(progress="nevre")
+
     with pytest.raises(ValueError, match="jaccard_threshold"):
         AnalyzerConfig(jaccard_threshold=1.5)
 
@@ -1884,9 +2138,6 @@ def test_invalid_threshold_raises() -> None:
 
     with pytest.raises(ValueError, match="tiny_unit_statement_cutoff"):
         AnalyzerConfig(tiny_unit_statement_cutoff=-1)
-
-    with pytest.raises(ValueError, match="tiny_near_jaccard_min"):
-        AnalyzerConfig(tiny_near_jaccard_min=1.1)
 
 
 def test_invalid_mode_dependency_raises() -> None:
@@ -1920,24 +2171,31 @@ def test_empty_directory_analysis(tmp_path: Path) -> None:
 def test_empty_extraction_still_validates_explicit_device(tmp_path: Path, monkeypatch) -> None:
     """An empty corpus must not turn an unavailable explicit device into a success.
 
-    ``analyze()`` returns before the semantic layer runs when extraction finds
-    no units, so the explicit-device contract has to be enforced on that
-    shortcut too; only a combined-mode fallback opt-in may downgrade it.
+    Empty analysis resolves semantic cache identity so it can publish a final
+    manifest, but it must still enforce device policy without loading a model.
     """
 
     def _raise_unavailable(*_args, **_kwargs):
         raise SemanticBackendError("mps is not available in this environment")
 
     def _fail_if_called(*_args, **_kwargs):
-        raise AssertionError("an empty corpus must not reach the semantic backend")
+        raise AssertionError("an empty corpus must not load a model")
 
     monkeypatch.setattr(semantic_module, "_resolve_semantic_device_request", _raise_unavailable)
-    monkeypatch.setattr(analyzer_module, "run_semantic_analysis", _fail_if_called)
+    monkeypatch.setattr(semantic_module, "get_model", _fail_if_called)
     empty_project = tmp_path / "empty"
     empty_project.mkdir()
 
-    with pytest.raises(SemanticBackendError, match="mps is not available"):
+    with pytest.raises(RuntimeError, match="Semantic analysis failed in combined mode"):
         CodeAnalyzer(AnalyzerConfig(device="mps")).analyze(empty_project)
+    with pytest.raises(SemanticBackendError, match="mps is not available"):
+        CodeAnalyzer(
+            AnalyzerConfig(
+                device="mps",
+                run_traditional=False,
+                run_unused=False,
+            )
+        ).analyze(empty_project)
 
     # Opting into combined-mode semantic fallback degrades instead of raising.
     fallback_result = CodeAnalyzer(
@@ -1945,9 +2203,13 @@ def test_empty_extraction_still_validates_explicit_device(tmp_path: Path, monkey
     ).analyze(empty_project)
     assert fallback_result.units == []
 
-    # A device that always has a CPU path stays torch-import-free.
+    # A device that always has a CPU path resolves the empty manifest without
+    # selecting a runtime device or loading the model.
     monkeypatch.setattr(semantic_module, "_resolve_semantic_device_request", _fail_if_called)
-    assert CodeAnalyzer(AnalyzerConfig(device="auto")).analyze(empty_project).units == []
+    cpu_result = CodeAnalyzer(AnalyzerConfig(device="cpu")).analyze(empty_project)
+    assert cpu_result.units == []
+    assert cpu_result.embedding_stats is not None
+    assert cpu_result.embedding_stats.model_loaded is False
 
 
 @pytest.mark.parametrize(
@@ -2085,6 +2347,11 @@ def test_skipped_over_context_units_never_enter_the_embedding_cache(
 
     first = run()
     second = run()
+
+    assert first.embedding_stats is not None
+    assert second.embedding_stats is not None
+    assert first.embedding_stats.manifest_generation == 1
+    assert second.embedding_stats.manifest_generation == 2
 
     # A warm second run must not resurrect the skipped unit from the cache.
     for result in (first, second):
@@ -2345,3 +2612,27 @@ def test_analyze_directory_still_gates_stubs_on_include_stubs(tmp_path: Path) ->
     result = CodeAnalyzer(config).analyze(tmp_path)
 
     assert [unit.qualified_name for unit in result.units] == ["real_mod.keep"]
+
+
+@pytest.mark.grammar
+def test_cowsay_fixture_reports_planted_rust_exact_clone() -> None:
+    fixture = Path(__file__).resolve().parents[1] / "test_fixtures" / "cowsay_wasm" / "src"
+
+    result = CodeAnalyzer(
+        AnalyzerConfig(run_semantic=False, run_unused=False),
+    ).analyze(fixture)
+
+    assert result.extraction_diagnostics == []
+    assert len(result.units) == 19
+    assert {unit.language for unit in result.units} == {"rust"}
+    duplicate_names = {
+        frozenset((duplicate.unit_a.qualified_name, duplicate.unit_b.qualified_name))
+        for duplicate in result.traditional_duplicates
+    }
+    assert (
+        frozenset(
+            ("bubble.speech.make_borders", "bubble.thought.make_borders"),
+        )
+        in duplicate_names
+    )
+    assert frozenset(("cow.render", "bubble.render")) not in duplicate_names

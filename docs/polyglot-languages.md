@@ -1,4 +1,4 @@
-# Polyglot Language Support
+# Polyglot language support
 
 codedupes supports Python, C, Rust, JavaScript, JSX, TypeScript, and TSX without turning its duplicate engine into a collection of language-specific special cases. The language backend owns parsing and feature extraction. The duplicate, embedding, ranking, and reporting stages consume the same `CodeUnit` model regardless of source language.
 
@@ -16,26 +16,16 @@ source discovery
   -> language-aware reporting
 ```
 
-Python keeps the CPython `ast` backend. C, Rust, JavaScript/JSX, TypeScript, and TSX use Tree-sitter. The registry in `src/codedupes/languages/registry.py` is the single authority for extensions, aliases, dialects, grammar package pins, and ambiguous C-header handling. `CodeExtractor` remains the public facade.
+Python keeps the CPython `ast` backend. C, Rust, JavaScript/JSX, TypeScript, and TSX use Tree-sitter. The registry in [registry](../src/codedupes/languages/registry.py) defines extensions, aliases, dialects, grammar package pins, and ambiguous C-header handling. `CodeExtractor` remains the public facade.
 
-The Tree-sitter packages are ordinary mandatory dependencies:
-
-```text
-tree-sitter==0.25.2
-tree-sitter-c==0.24.2
-tree-sitter-rust==0.24.2
-tree-sitter-javascript==0.25.0
-tree-sitter-typescript==0.23.2
-```
-
-They are exact-pinned because grammar node kinds and field layouts are part of codedupes' behavior. Each upstream package ships a precompiled parser and exposes a Python capsule consumed by `tree_sitter.Language`. There is no runtime grammar download, compiler invocation, or fallback to line chunking.
-
-The operational idea is versioned, locally available parsers. codedupes supports a small, deliberately tested language set and owns its extraction semantics. Pulling in a generic bundle containing many unused grammars would add packaging and compatibility surface without improving these four backends.
+The [parser packages](install.md#polyglot-parser-dependencies) are exact-pinned because grammar node kinds and field layouts affect extraction.
 
 ## Supported files
 
+`--language` accepts canonical names `python`, `c`, `rust`, `javascript`, and `typescript`, plus aliases `py`, `rs`, `js`, `jsx`, `ts`, and `tsx`. JSX and TSX aliases select their whole canonical language, not only that dialect.
+
 | Language | Extensions | Dialect behavior |
-|---|---|---|
+| --- | --- | --- |
 | Python | `.py`, optional `.pyi` | CPython AST |
 | C | `.c`, conditionally `.h` | C grammar |
 | Rust | `.rs` | Rust grammar |
@@ -62,7 +52,7 @@ Skipped headers are reported rather than silently dropped: a directory scan emit
 
 ### Python
 
-The existing behavior remains the compatibility baseline: functions, async functions, methods, nested functions, classes, and nested classes. Source snippets remain complete source lines. Byte ranges now describe those exact emitted bytes, including Unicode-safe offsets.
+Python emits functions, async functions, methods, nested functions, classes, and nested classes. Source snippets retain complete source lines, and byte ranges describe those emitted bytes, including Unicode, BOM, and CRLF offsets.
 
 ### C
 
@@ -78,7 +68,7 @@ Inline test code is excluded by default: functions under a `#[cfg(test)]` (inclu
 
 Lexical qualification includes modules, enclosing functions, implementation targets, and traits where available. Structs, enums, traits, and `impl` blocks are not flattened into fake classes. Their methods remain independently analyzable.
 
-Visibility follows the trait, not the `pub` keyword, wherever a trait is involved: a default trait method inherits the enclosing trait's visibility, and every method inside an `impl Trait for Type` block is public regardless of a leading `pub`, because trait-impl items cannot legally carry `pub` yet are reachable through the trait.
+A default trait method inherits the enclosing trait's visibility. Methods in `impl Trait for Type` cannot carry `pub` themselves: when the trait is a bare name declared in the same file, its visibility determines whether those methods are public. Path-qualified and unresolved traits are treated as public because cross-file trait resolution is outside the extractor's scope.
 
 ### JavaScript and JSX
 
@@ -118,7 +108,7 @@ Tree-sitter is byte-addressed. The backend reads files as bytes, parses those by
 
 A missing or incompatible grammar is a configuration error and stops analysis. codedupes never substitutes arbitrary line chunks.
 
-A file containing Tree-sitter recovery nodes is different: unaffected units can still be useful. codedupes emits a file-level `partial-parse` diagnostic, skips any extracted unit whose own syntax subtree contains an error, and emits a `unit-parse-error` diagnostic for that skipped unit. Diagnostics are available in terminal and JSON output.
+A file containing Tree-sitter recovery nodes is different: unaffected units can still be useful. codedupes emits a file-level `partial-parse` diagnostic, skips any extracted unit whose own syntax subtree contains an error, and emits a `unit-parse-error` diagnostic for that skipped unit. See [diagnostic output](output.md#diagnostics) for how commands expose these records. Unreadable files emit `read-error` and are skipped; non-UTF-8 Tree-sitter files emit `invalid-utf8` while continuing with replacement characters.
 
 ## Fingerprints and comparison boundaries
 
@@ -136,44 +126,15 @@ Identifier matching is Unicode-aware. ECMAScript identifiers are Unicode from ES
 
 Traditional exact and Jaccard comparisons are blocked by canonical language and blocking kind before pair generation. Functions and methods share one `callable` kind, so a function copied into a class body stays comparable with its module-level original, matching how semantic pairing treats them; classes block separately. Exact matching stays same-language: a C and a Rust function cannot become exact duplicates because their canonical token streams align. Overlapping units in the same file, such as a parent function and its nested function, are not reported as duplicates of each other.
 
-Semantic duplicate checking is also same-language by default, and each language is gated by its own calibrated duplicate threshold from the model profile (see [Analysis defaults](analysis-defaults.md#semantic-duplicate-gate-defaults)). `--cross-language` opts into cross-language semantic pairs; those claims are uncalibrated, so a mixed pair is held to the looser of its two language gates. Semantic `search` remains cross-language because retrieval is exactly where that shared embedding space is useful.
+Semantic comparison follows the [per-language gates and cross-language policy](analysis-defaults.md#semantic-duplicate-gate-defaults). Semantic search retrieves across the selected languages.
 
 ## Unused-code analysis
 
-Unused-code analysis remains Python-only in this release. The current reference graph understands Python imports, aliases, package entry points, `__all__`, `__main__`, pytest conventions, and Python public-name behavior.
+The [unused-code heuristic](analysis-defaults.md#potentially-unused-defaults) evaluates Python only. Extending it requires translation-unit and preprocessor context for C, Cargo/module/trait resolution for Rust, and project-wide module resolution for JavaScript/TypeScript. Syntax extraction alone cannot establish those references.
 
-Equivalent correctness elsewhere requires build-system and module resolution:
+## Parser readiness
 
-- C needs translation-unit and preprocessor context, ideally from `compile_commands.json`.
-- Rust needs Cargo modules, traits, macros, `cfg`, generated code, and build scripts.
-- JavaScript needs ESM/CommonJS resolution, package exports, re-exports, and dynamic imports.
-- TypeScript additionally needs `tsconfig` path mappings, project references, and declaration semantics.
-
-Running Python heuristics over those languages would create false dead-code claims. codedupes instead reports how many non-Python units were explicitly excluded.
-
-## CLI use
-
-Auto-detect all supported languages:
-
-```bash
-codedupes check .
-codedupes search . "retry with exponential backoff"
-```
-
-Restrict a mixed repository with a repeatable filter:
-
-```bash
-codedupes check . --language rust --language typescript
-codedupes search . "parse authorization header" --language js --language ts
-```
-
-Inspect parser package readiness:
-
-```bash
-codedupes info
-```
-
-`info` reports each parser dialect, its exact required package version, the installed version, and whether it is ready. Readiness is verified by actually constructing a parser and running an empty parse, so a wrong-platform or ABI-broken wheel is reported here instead of failing mid-analysis.
+Run `codedupes info` to inspect each parser dialect's required and installed package versions. Readiness checks construct a parser and run an empty parse, so a wrong-platform or ABI-broken wheel is reported before analysis.
 
 ## Grammar upgrade procedure
 
@@ -183,7 +144,7 @@ Treat every grammar update as a behavioral change:
 2. Construct its parser and run every extraction fixture (`pytest -m grammar`), including the golden structural-hash values.
 3. Review changes in unit names, ranges, native kinds, statement counts, and fingerprints.
 4. Run parser-independent normalization tests.
-5. Run the per-language validator, sweep, and distribution report over `test_fixtures/polyglot_calibration/` and diff against the recorded tables in its README. The corpora measure each language's similarity scale under both built-in models, and the shipped per-language duplicate gates in `codedupes.semantic_profiles` are derived from these measurements — if a pin bump moves a language's recorded numbers, decide explicitly whether its gate must move with them.
+5. Run the [calibration validator](../test_fixtures/polyglot_calibration/README.md#validation), [sweep, and distribution report](../test_fixtures/polyglot_calibration/README.md#re-running). Compare results with the recorded tables and reassess the [duplicate gates](analysis-defaults.md#semantic-duplicate-gate-defaults) if measurements change.
 6. Update the pin only after every difference is understood.
 
 A semver-compatible grammar update can still rename a node or field. Broad version ranges would let an ordinary dependency refresh silently change duplicate reports.

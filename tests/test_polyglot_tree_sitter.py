@@ -897,23 +897,33 @@ def test_typescript_excludes_signatures_and_ambient_declarations(tmp_path: Path)
     assert all(not name.endswith("required") for name in names)
 
 
-def test_javascript_class_member_count_includes_static_initializer_blocks(
-    tmp_path: Path,
+@pytest.mark.parametrize("suffix", ["js", "jsx", "ts", "tsx"])
+@pytest.mark.parametrize(
+    ("initializer", "expected_count"),
+    [
+        ("", 2),
+        ("Worker.ready = true;", 2),
+        ("if (enabled) { Worker.first = 1; Worker.second = 2; }", 4),
+        ("function setup() { first(); second(); third(); }", 2),
+    ],
+)
+def test_class_member_count_includes_static_initializer_bodies(
+    tmp_path: Path, suffix: str, initializer: str, expected_count: int
 ) -> None:
-    """The tree-sitter-javascript node is ``class_static_block``, not ``static_block``."""
+    """Static blocks recurse through control flow but stop at nested definitions."""
     units = _extract(
         tmp_path,
-        "sample.js",
-        """
-        class Worker {
-            static { Worker.ready = true; }
-            run(value) { return value + 1; }
-        }
+        f"sample.{suffix}",
+        f"""
+        class Worker {{
+            static {{ {initializer} }}
+            run(value) {{ return value + 1; }}
+        }}
         """,
     )
     worker = next(unit for unit in units if unit.unit_type == CodeUnitType.CLASS)
 
-    assert worker.statement_count == 2
+    assert worker.statement_count == expected_count
 
 
 def test_typescript_nested_abstract_class_counts_as_one_nested_scope(tmp_path: Path) -> None:
