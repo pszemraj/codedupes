@@ -111,17 +111,23 @@ def diff_manifest(
     old = previous.units if previous is not None else {}
     old_keys = set(old.values())
     new_keys = set(current.values())
-    departed_uids_by_key: dict[str, set[str]] = {}
+    departed_uids_by_key: dict[str, list[str]] = {}
     for uid, key in old.items():
         if uid not in current:
-            departed_uids_by_key.setdefault(key, set()).add(uid)
+            departed_uids_by_key.setdefault(key, []).append(uid)
+
+    # Each inferred move consumes one departure. Other departed units are
+    # deletions even when a surviving copy still references their content key.
+    moved: list[str] = []
+    for uid, key in current.items():
+        departed = departed_uids_by_key.get(key)
+        if uid not in old and departed:
+            departed.pop()
+            moved.append(uid)
+    deleted_uids = {uid for departed in departed_uids_by_key.values() for uid in departed}
     return ManifestDiff(
-        moved=[
-            uid
-            for uid, key in current.items()
-            if uid not in old and key in old_keys and departed_uids_by_key.get(key)
-        ],
-        deleted=[uid for uid in old if uid not in current and old[uid] not in new_keys],
+        moved=moved,
+        deleted=[uid for uid in old if uid in deleted_uids],
         orphaned=old_keys - new_keys,
     )
 

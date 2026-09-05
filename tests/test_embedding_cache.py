@@ -89,8 +89,21 @@ def _corpus_manifest(
         ({"old": "key"}, {}, [], ["old"], {"key"}),
         ({"old": "old-key"}, {"new": "new-key"}, [], ["old"], {"old-key"}),
         ({"first": "key"}, {"first": "key", "second": "key"}, [], [], set()),
+        ({"first": "key", "second": "key"}, {"first": "key"}, [], ["second"], set()),
+        ({"first": "key", "second": "key"}, {}, [], ["first", "second"], {"key"}),
+        ({"first": "key", "second": "key"}, {"new": "key"}, ["new"], ["first"], set()),
+        ({"old": "key"}, {"first": "key", "second": "key"}, ["first"], [], set()),
     ],
-    ids=["move", "delete", "edit", "identical-body-added"],
+    ids=[
+        "move",
+        "delete",
+        "edit",
+        "identical-body-added",
+        "identical-body-deleted",
+        "all-identical-bodies-deleted",
+        "identical-body-moved-and-deleted",
+        "identical-body-moved-and-added",
+    ],
 )
 def test_diff_manifest_classifies_corpus_transitions(
     previous,

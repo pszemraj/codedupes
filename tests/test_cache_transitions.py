@@ -240,12 +240,18 @@ def test_move_file_across_directories_reuses_embeddings(tmp_path, monkeypatch) -
     _assert_matches_uncached(repo, result)
 
 
-def test_delete_file_removes_its_units_and_findings_without_encoding(tmp_path, monkeypatch) -> None:
+@pytest.mark.parametrize("shared_body", [False, True], ids=["unique-body", "shared-body"])
+def test_delete_file_removes_its_units_and_findings_without_encoding(
+    tmp_path, monkeypatch, shared_body
+) -> None:
+    kept_source = "def kept(value):\n    return value + 1"
     repo = _write_repo(
         tmp_path,
         {
-            "src/remove.py": "def removed(value):\n    return value - 1",
-            "src/keep.py": "def kept(value):\n    return value + 1",
+            "src/remove.py": kept_source
+            if shared_body
+            else "def removed(value):\n    return value - 1",
+            "src/keep.py": kept_source,
         },
     )
     _patch_get_model(monkeypatch, CountingModel())
@@ -257,10 +263,12 @@ def test_delete_file_removes_its_units_and_findings_without_encoding(tmp_path, m
 
     assert result.embedding_stats is not None
     assert result.embedding_stats.encoded_inputs == 0
+    assert result.embedding_stats.moved_units_reused == 0
     assert result.embedding_stats.deleted_units == 1
-    assert result.embedding_stats.orphan_rows_retained == 1
+    expected_orphans = int(not shared_body)
+    assert result.embedding_stats.orphan_rows_retained == expected_orphans
     repo_stats = EmbeddingCache().stats()["repos"][0]
-    assert repo_stats["orphan_rows"] == 1
+    assert repo_stats["orphan_rows"] == expected_orphans
     assert repo_stats["last_complete_generation"] == 2
     assert all(unit.file_path != deleted for unit in result.units)
     assert all(
@@ -273,11 +281,11 @@ def test_delete_file_removes_its_units_and_findings_without_encoding(tmp_path, m
     for _ in range(2):
         retained = _analyze(repo)
         assert retained.embedding_stats is not None
-        assert retained.embedding_stats.orphan_rows_retained == 1
+        assert retained.embedding_stats.orphan_rows_retained == expected_orphans
         assert retained.embedding_stats.orphan_rows_collected == 0
     collected = _analyze(repo)
     assert collected.embedding_stats is not None
-    assert collected.embedding_stats.orphan_rows_collected == 1
+    assert collected.embedding_stats.orphan_rows_collected == expected_orphans
     assert collected.embedding_stats.orphan_rows_retained == 0
     collected_stats = EmbeddingCache().stats()
     assert collected_stats["entries"] == 1
