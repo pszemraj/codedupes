@@ -1,6 +1,6 @@
 # Embedding Cache
 
-`codedupes` persists embeddings so unchanged code can reuse vectors across runs. A fully cached corpus and query can run without loading the model.
+`codedupes` persists embeddings so unchanged code can reuse vectors across runs. A fully cached corpus and query can run without loading the model. Over-context units have no vector to cache, so repeated scans that include them can still load the tokenizer/model to check their length, even when every retained row is a hit.
 
 ## Controls
 
@@ -28,7 +28,7 @@ After each nonempty batch write, codedupes inventories shard sizes. When the glo
 
 EmbeddingGemma uses different corpus prompts for `check` and `search`, so they warm independently. GTE uses the same symmetric corpus route for both: a warm check can cover the first search's corpus, but a new query still embeds. See [prompt behavior](model-profiles.md#taskprompt-behavior-by-model-family).
 
-Query vectors share the corpus shard. Each novel query write rewrites that shard's full immutable matrix; loops issuing many new queries against a large corpus therefore pay a full-matrix write per query. Query rows have an independent FIFO cap and are excluded from corpus orphan collection.
+Query vectors share the corpus shard. Each novel query write rewrites that shard's full immutable matrix; loops issuing many new queries against a large corpus therefore pay a full-matrix write per query. Query rows have an independent 512-key FIFO cap and are excluded from corpus orphan collection.
 
 ### Hub revisions
 
@@ -42,7 +42,7 @@ An indexed corpus also retains its source commit. A query from a different check
 
 ### Local directories
 
-Local model identity hashes file contents. Per-file digests are reused from `<cache_root>/local-models/` when size, mtime, ctime, and inode match, keeping unchanged runs to a stat walk. A no-cache run maintains this information only in memory; enabling caching later can persist it.
+Local model identity hashes file contents, including files reached through symlinked subdirectories. Per-file digests are reused from `<cache_root>/local-models/` when size, mtime, ctime, and inode match, keeping unchanged runs to a stat walk. A no-cache run maintains this information only in memory; enabling caching later can persist it.
 
 Model loading checks fingerprints before and after reading weights. A change during loading triggers one reload; a second change fails the run. Earlier hits are discarded if their fingerprint differs from the loaded weights.
 

@@ -96,7 +96,7 @@ In default combined mode, `duplicates` contains hybrid edges. With `--show-all`,
 
 In `--semantic-only` or `--traditional-only` mode, `duplicates` directly contains the active raw edge list and the `--show-all` arrays are omitted. `analysis_mode` is always one of `combined`, `traditional`, `semantic`, or `none`.
 
-`semantic_review` means a pair cleared its semantic duplicate gate but lacks the lexical or statement-count corroboration used for `semantic_high_confidence`. It remains in the report but is advisory under the default failure policy.
+See [hybrid confidence tiers](analysis-defaults.md#hybrid-synthesis-confidence-defaults) to interpret `tier` and `confidence`.
 
 ### Search
 
@@ -143,13 +143,31 @@ In `--semantic-only` or `--traditional-only` mode, `duplicates` directly contain
 
 ## Embedding telemetry
 
-`summary.embeddings` is `null` when semantic analysis did not run or fell back. Otherwise it describes the most recent corpus embedding call. `model_loaded: false` with nonzero `cache_hit_rows` is the clearest warm-run signal. `cache_warnings` contains non-fatal cache read, write, manifest, or query-cache failures observed during that run; an empty list means none were observed. Move/delete/orphan fields are zero until a comparable corpus manifest exists. `orphan_rows_retained` includes tracked orphan rows temporarily protected by another recently refreshed selection, while `orphan_rows_collected` counts rows removed in this run.
+`summary.embeddings` describes the final retained corpus from the most recent embedding call; it is `null` when semantic work did not run or fell back. Query encoding does not increment these counters, though query-cache warnings are appended. A warm corpus can therefore report `model_loaded: false` while a new query still loads the model.
 
-Terminal `check` output carries the same information on one `Embeddings` summary row.
+| Field | Meaning |
+| --- | --- |
+| `requested_rows` | Corpus rows retained after context-window filtering. |
+| `unique_inputs` | Distinct prepared texts among those rows. |
+| `cache_hit_rows` | Retained rows supplied by persistent cache, including repeated references to one key. |
+| `duplicate_rows_reused` | Additional uncached rows sharing an input encoded within this call. |
+| `encoded_inputs` | Distinct retained inputs encoded on the final execution path; discarded retry work is not accumulated. |
+| `model_loaded` | Whether the corpus call needed the model, including a previously loaded process-local instance. |
+| `cache_enabled` | Whether persistent reuse was enabled for the call; writes can still fail. |
+| `cache_warnings` | Non-fatal cache read/write, manifest, and query-cache failures observed during the run. |
+| `cache_revision` | Revision label, commit, or local fingerprint used for cache identity, otherwise `null`. |
+| `execution_device` | Effective inference device, or `null` when no model execution was needed. |
+| `moved_units_reused` | New UIDs matched to departed UIDs with the same content. |
+| `deleted_units` | Departed UIDs left after matching moves, independent of vector sharing. |
+| `orphan_rows_retained` | Tracked orphan rows still stored, including rows protected by another active selection. |
+| `orphan_rows_collected` | Orphan rows removed during this run. |
+| `manifest_generation` | Shard-wide complete-scan counter, or `null` without successful manifest publication. |
+
+Move and deletion counts need a comparable [corpus baseline](caching.md#corpus-lifecycle). Terminal `check` output shows the same statistics on an `Embeddings` summary row.
 
 ## Diagnostics
 
-`extraction_diagnostics` and `semantic_diagnostics` are top-level arrays with matching counts in `summary`. Both entries use `file`, `language`, `severity`, `code`, `message`, `line`, and `end_line`. The terminal summary prints count rows and the first ten entries.
+`check` emits `extraction_diagnostics` and `semantic_diagnostics` arrays with matching counts in `summary`. `search` emits only the semantic diagnostic array, without a summary count; its JSON does not include extraction diagnostics. Entries use `file`, `language`, `severity`, `code`, `message`, `line`, and `end_line`. Terminal checks print counts and up to ten entries per diagnostic category; terminal searches print semantic diagnostics.
 
 ## Exit codes
 
@@ -170,6 +188,8 @@ Command status conventions:
 Default combined semantic failures are fatal. `--allow-semantic-fallback` continues with full-scope traditional results and records `summary.semantic_fallback` plus `summary.semantic_fallback_reason`; under the default actionable policy, heuristic unused findings alone do not turn that successful degraded run into exit `1`.
 
 ## Terminal duplicate panels
+
+Tables show up to 20 rows by default; `--full-table` removes that limit.
 
 Locations use the shorter of working-directory-relative and absolute `<path>:<line>` spellings.
 

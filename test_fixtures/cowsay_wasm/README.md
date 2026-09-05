@@ -12,9 +12,11 @@ A working Rust application that targets both a native CLI and browser WebAssembl
 
 Labels are stored in [`fixtures/clone-ground-truth.json`](fixtures/clone-ground-truth.json). Stable region markers are included in the Rust files, along with one-based line spans for tools that require coordinates. Prefer markers when source changes. The duplicated code is deliberate; do not deduplicate these implementations before evaluating a detector. `cargo test` checks that the exact clone remains exact and that the semantic implementations remain behaviorally equivalent.
 
+Run the following commands from `test_fixtures/cowsay_wasm/` in the codedupes checkout.
+
 ## Native use
 
-Install Rust with `rustup`, then run:
+With Rust installed, run:
 
 ```sh
 cargo test
@@ -27,7 +29,7 @@ The CLI supports `--think`, `--width`, and `--wrapper scanner|fold`.
 
 ## Browser/WebAssembly use
 
-Install `wasm-pack`, then from the repository root:
+With `wasm-pack` installed, run from the same fixture directory:
 
 ```sh
 wasm-pack build --target web --out-dir web/pkg --release

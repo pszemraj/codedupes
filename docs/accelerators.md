@@ -55,6 +55,8 @@ A model-loading MPS OOM has no batch to shrink, so it clears the MPS cache and r
 
 Successful batches do not clear the allocator cache. Embeddings are converted to normalized NumPy arrays immediately, so pairwise similarity runs on CPU and no large embedding tensor remains resident in Metal memory.
 
+Fresh embeddings must have the expected shape and row count. Non-finite or zero accelerator output retries once on CPU using the same capped batch policy; invalid CPU output fails. Valid rows become unit-normalized float32 arrays, making dot products cosine similarities. Cache-row repair is described under [storage and consistency](caching.md#storage-and-consistency).
+
 ## Precision and Metal environment variables
 
 Model loads pin an explicit dtype instead of inheriting the checkpoint's config-declared one, under a capability-gated policy rather than a hardcoded per-device truth.
@@ -65,7 +67,7 @@ CUDA hardware with native bf16 support (Ampere or newer; pre-Ampere emulated bf1
 
 MPS always pins float32: bfloat16 on MPS gains only ~13% runtime while drifting pair similarities ~1e-2 (tuned-threshold scale), not worth cold-splitting the shared CPU/MPS cache key space.
 
-CPU pins float32 by default. Setting `CODEDUPES_CPU_BF16=1` (experimental) enables bfloat16 when this machine also passes a two-part capability gate - a native bf16 ISA (`bf16` on ARM, `amx_bf16`/`avx512_bf16` on x86) *and* a GEMM backend able to exploit it (`torch.backends.mkldnn.is_available()`). `torch.backends.cpu.get_cpu_capability()` is never used for this decision: it reports the wheel's build-tier baseline (for example `"DEFAULT"`), not what the running CPU can execute.
+CPU pins float32 by default. Setting `CODEDUPES_CPU_BF16=1` (experimental) enables bfloat16 when this machine also passes a two-part capability gate - a native bf16 ISA (`bf16` on ARM, `amx_bf16`/`avx512_bf16` on x86) and a GEMM backend able to exploit it (`torch.backends.mkldnn.is_available()`). `torch.backends.cpu.get_cpu_capability()` is never used for this decision: it reports the wheel's build-tier baseline (for example `"DEFAULT"`), not what the running CPU can execute.
 
 The opt-in guard exists because the positive path is unvalidated: the gate proves the CPU can execute bf16 GEMM fast, not that the float32-calibrated duplicate and search thresholds survive bfloat16's numeric shift on the built-in models. Automatic enablement waits for a gate-passing machine (AMX/AVX512-bf16 x86, or ARM bf16 with an mkldnn backend) to validate speed and decision parity end to end. TODO for that promotion work: opted-in CPU bfloat16 currently shares the bfloat16 cache key space with CUDA bfloat16 even though the two backends route ops differently; measure cross-backend row agreement there and split the identities if it matters.
 

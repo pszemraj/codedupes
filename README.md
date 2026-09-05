@@ -35,6 +35,7 @@ See [Output and exit codes](docs/output.md) for report modes and CI behavior.
 - [Embedding cache](docs/caching.md)
 - [Accelerators and Apple Silicon](docs/accelerators.md)
 - [Hybrid gate tuning](docs/hybrid-tuning.md)
+- [Next release changes](docs/release-notes-next.md)
 
 ## Scope and limits
 

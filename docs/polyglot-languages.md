@@ -22,6 +22,8 @@ The [parser packages](install.md#polyglot-parser-dependencies) are exact-pinned 
 
 ## Supported files
 
+`--language` accepts canonical names `python`, `c`, `rust`, `javascript`, and `typescript`, plus aliases `py`, `rs`, `js`, `jsx`, `ts`, and `tsx`. JSX and TSX aliases select their whole canonical language, not only that dialect.
+
 | Language | Extensions | Dialect behavior |
 |---|---|---|
 | Python | `.py`, optional `.pyi` | CPython AST |
@@ -50,7 +52,7 @@ Skipped headers are reported rather than silently dropped: a directory scan emit
 
 ### Python
 
-The existing behavior remains the compatibility baseline: functions, async functions, methods, nested functions, classes, and nested classes. Source snippets remain complete source lines. Byte ranges now describe those exact emitted bytes, including Unicode-safe offsets.
+Python emits functions, async functions, methods, nested functions, classes, and nested classes. Source snippets retain complete source lines, and byte ranges describe those emitted bytes, including Unicode, BOM, and CRLF offsets.
 
 ### C
 
@@ -66,7 +68,7 @@ Inline test code is excluded by default: functions under a `#[cfg(test)]` (inclu
 
 Lexical qualification includes modules, enclosing functions, implementation targets, and traits where available. Structs, enums, traits, and `impl` blocks are not flattened into fake classes. Their methods remain independently analyzable.
 
-Visibility follows the trait, not the `pub` keyword, wherever a trait is involved: a default trait method inherits the enclosing trait's visibility, and every method inside an `impl Trait for Type` block is public regardless of a leading `pub`, because trait-impl items cannot legally carry `pub` yet are reachable through the trait.
+A default trait method inherits the enclosing trait's visibility. Methods in `impl Trait for Type` cannot carry `pub` themselves: when the trait is a bare name declared in the same file, its visibility determines whether those methods are public. Path-qualified and unresolved traits are treated as public because cross-file trait resolution is outside the extractor's scope.
 
 ### JavaScript and JSX
 
@@ -106,7 +108,7 @@ Tree-sitter is byte-addressed. The backend reads files as bytes, parses those by
 
 A missing or incompatible grammar is a configuration error and stops analysis. codedupes never substitutes arbitrary line chunks.
 
-A file containing Tree-sitter recovery nodes is different: unaffected units can still be useful. codedupes emits a file-level `partial-parse` diagnostic, skips any extracted unit whose own syntax subtree contains an error, and emits a `unit-parse-error` diagnostic for that skipped unit. Diagnostics are available in terminal and JSON output.
+A file containing Tree-sitter recovery nodes is different: unaffected units can still be useful. codedupes emits a file-level `partial-parse` diagnostic, skips any extracted unit whose own syntax subtree contains an error, and emits a `unit-parse-error` diagnostic for that skipped unit. See [diagnostic output](output.md#diagnostics) for how commands expose these records. Unreadable files emit `read-error` and are skipped; non-UTF-8 Tree-sitter files emit `invalid-utf8` while continuing with replacement characters.
 
 ## Fingerprints and comparison boundaries
 
