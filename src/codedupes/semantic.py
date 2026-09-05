@@ -3156,7 +3156,13 @@ def _compute_embeddings_unlocked(
                     source_commit=hit_source_commit,
                 )
 
-    corpus_source_commit: str | None = None
+    # Checkpoint provenance belongs to the matrix, even when persistent
+    # storage is disabled or unavailable. Later model reloads still need it.
+    corpus_source_commit = (
+        _get_loaded_model_commit_hash(model)
+        if _revision_is_mutable_label(model_name, identity_revision)
+        else None
+    )
     if (
         cache is not None
         and cache_revision is not None
@@ -3172,9 +3178,8 @@ def _compute_embeddings_unlocked(
         # provenance is compared as well. If the loaded commit is unknown,
         # neither old hits nor fresh writes can be tied to one checkpoint, so
         # this call bypasses the entire shard and recomputes every row.
-        loaded_commit = _get_loaded_model_commit_hash(model)
+        loaded_commit = corpus_source_commit
         if loaded_commit is not None:
-            corpus_source_commit = loaded_commit
             if not cache.confirm_source_commit(
                 cache_scope, profile.canonical_name, cache_revision, loaded_commit
             ):

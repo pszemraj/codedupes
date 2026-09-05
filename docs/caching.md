@@ -38,7 +38,7 @@ A label-keyed shard records the source commit with its vector generation. When a
 
 Fully warm label-keyed runs can keep serving a coherent set of older vectors after a branch moves. Clear that model's cache after a known upstream change to refresh it immediately. `--strict-revision-cache` instead resolves the label through the local Hugging Face cache before reuse and uses that concrete commit for model loading. If the label cannot be resolved offline, persistent reuse is disabled. Built-in pins and local directories are unaffected.
 
-An indexed corpus also retains its source commit. When that commit is known, a query model with a different or unreportable checkpoint raises a reindex error before query encoding, even when query caching is disabled. Cached queries must also match that checkpoint, including when another process has replaced the shard since indexing. Mutable-label query keys use a new provenance namespace to invalidate older, potentially unverified query rows while retaining reusable corpus embeddings. See the [search state contract](python-api.md#semantic-query-search).
+An indexed corpus retains its source commit even when persistent storage is disabled or unavailable. When that commit is known, a query model with a different or unreportable checkpoint raises a reindex error before query encoding, regardless of corpus or query caching. Cached queries must also match that checkpoint, including when another process has replaced the shard since indexing. Mutable-label query keys use a new provenance namespace to invalidate older, potentially unverified query rows while retaining reusable corpus embeddings. See the [search state contract](python-api.md#semantic-query-search).
 
 ### Local directories
 

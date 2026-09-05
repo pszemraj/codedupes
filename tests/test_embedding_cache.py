@@ -11,6 +11,7 @@ import sys
 import threading
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -1337,14 +1338,20 @@ def test_loose_branch_move_purges_shard_and_aborts_search(tmp_path, monkeypatch)
     assert len(model.encode_calls[-1]) == len(units)
 
 
+@pytest.mark.parametrize("corpus_cache", ["enabled", "disabled", "environment-disabled"])
 @pytest.mark.parametrize("query_cache", [True, False], ids=["cached", "uncached"])
 @pytest.mark.parametrize(
     "query_commit", ["a" * 40, "b" * 40, None], ids=["match", "mismatch", "missing"]
 )
-def test_warm_index_requires_query_checkpoint_before_encoding(
-    tmp_path, monkeypatch, query_cache, query_commit
+def test_index_requires_query_checkpoint_before_encoding(
+    tmp_path, monkeypatch, corpus_cache, query_cache, query_commit
 ):
     class CheckpointModel(CountingModel):
+        def __getitem__(self, index):
+            return SimpleNamespace(
+                auto_model=SimpleNamespace(config=SimpleNamespace(_commit_hash=self.commit))
+            )
+
         def encode(self, texts, **kwargs):
             self.encode_calls.append(list(texts))
             vectors = np.array(
@@ -1357,17 +1364,22 @@ def test_warm_index_requires_query_checkpoint_before_encoding(
     original = CheckpointModel(dim=2)
     original.commit = "a" * 40
     loads = _patch_get_model(monkeypatch, original)
-    monkeypatch.setattr(semantic, "_get_loaded_model_commit_hash", lambda model: model.commit)
     config = AnalyzerConfig(
         model_name="drift-model",
         model_revision="main",
         device="cpu",
         min_semantic_statements=0,
+        embedding_cache=corpus_cache != "disabled",
     )
-    assert CodeAnalyzer(config).index(tmp_path) == 5
     analyzer = CodeAnalyzer(config)
-    assert analyzer.index(tmp_path) == 5
-    assert loads["count"] == 1
+    with monkeypatch.context() as corpus_patch:
+        if corpus_cache == "environment-disabled":
+            corpus_patch.setenv("CODEDUPES_NO_CACHE", "1")
+        assert CodeAnalyzer(config).index(tmp_path) == 5
+        assert analyzer.index(tmp_path) == 5
+    assert loads["count"] == (1 if corpus_cache == "enabled" else 2)
+    assert analyzer._embedding_space_identity.source_commit == original.commit
+    semantic.clear_model_cache()
     analyzer.config.embedding_cache = query_cache
 
     cache = EmbeddingCache()
