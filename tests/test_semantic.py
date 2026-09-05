@@ -462,13 +462,27 @@ def test_uncalibrated_search_context_requires_explicit_threshold(
         ) == len(units)
 
 
-@pytest.mark.parametrize("threshold", [-1.0, 0.0, 0.9, float("nan"), float("inf"), -float("inf")])
+@pytest.mark.parametrize(
+    "threshold",
+    [
+        -1.0,
+        0.0,
+        0.9,
+        float("nan"),
+        float("inf"),
+        -float("inf"),
+        pytest.param(0.45, id="decimal-floor"),
+        pytest.param(float(np.float32(0.45)), id="exact-score"),
+        pytest.param(math.nextafter(float(np.float32(0.45)), -math.inf), id="below-score"),
+        pytest.param(math.nextafter(float(np.float32(0.45)), math.inf), id="above-score"),
+    ],
+)
 @pytest.mark.parametrize("use_cache", [False, True])
 def test_find_similar_to_query_applies_threshold_filter(
     tmp_path: Path, monkeypatch, threshold: float, use_cache: bool
 ) -> None:
     units = extract_arithmetic_units(tmp_path)
-    embeddings = np.array([[1.0, 0.0], [0.6, 0.8]], dtype=np.float32)
+    embeddings = np.array([[1.0, 0.0], [0.45, math.sqrt(1 - 0.45**2)]], dtype=np.float32)
 
     model = _RecordingModel()
     monkeypatch.setattr(semantic, "get_model", lambda *args, **kwargs: model)
