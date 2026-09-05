@@ -2,7 +2,7 @@
 
 Labeled per-language duplicate-detection corpora for C, Rust, JavaScript, TypeScript, and Python (~100 labeled decisions per language), used to measure how the built-in model profiles' similarity scales behave outside the Python production corpus. The Python corpus here is a control: its near clones are fully alpha-renamed, unlike `test_fixtures/hybrid_tuning/crab_visibility`, whose near pairs share identifier fragments.
 
-These measurements are the source of the shipped per-language semantic duplicate gates in `codedupes.semantic_profiles` (gte: py 0.80 / c 0.82 / rs 0.74 / js 0.70 / ts 0.68; gemma: py 0.74 / c 0.78 / rs 0.78 / js 0.72 / ts 0.78), selected recall-first: the loosest sweep threshold whose F1 stays near that language's best while final combined-output precision remains workable. If a re-run moves the tables below, revisit the gates deliberately.
+These measurements inform the [per-language duplicate gates](../../docs/analysis-defaults.md#semantic-duplicate-gate-defaults). Revisit those gates if a re-run changes the measured tradeoffs below.
 
 ## Layout
 
@@ -64,7 +64,7 @@ Duplicate threshold, best final-output F1 row per language. Candidate coverage i
 | typescript | 29 / 36 | 0.70 / 0.79 / 0.84 / 0.75 | 0.80 / 0.79 / 0.84 / 0.75 |
 | python (control) | 29 / 34 | 0.82 / 0.59 / 0.63 / 0.56 | 0.74 / 0.76 / 0.78 / 0.74 |
 
-Search threshold, best F1 row per language — every selection is interior to the swept grid, and each manifest records `selected_at_grid_edge` so a boundary selection can never pass as an optimum (shipped defaults: gte 0.50, gemma 0.40, deliberately recall-first):
+Search threshold, best F1 row per language — every selection is interior to the swept grid, and each manifest records `selected_at_grid_edge` so a boundary selection can never pass as an optimum (see [search defaults](../../docs/model-profiles.md#built-in-profiles)):
 
 | language | gte-modernbert-base (thr / F1) | embeddinggemma-300m (thr / F1) |
 | --- | --- | --- |
@@ -84,7 +84,7 @@ Distribution highlights (`reports/similarity_distributions.json`):
 
 All reports, including `reports/similarity_distributions.json`, embed the calibration identity manifest (pinned revision, pipeline schema, effective embedding space, candidate policy, corpus/label digests). The 2026-08-21 regeneration under embedding pipeline schema 5 reproduced every metric row byte-identically: only the recorded schema and runtime fingerprint moved, confirming the reject-don't-truncate context policy touches no vector in these corpora. The 2026-08-25 regeneration widened the search grid from a 0.70 to a 0.90 ceiling after the old ceiling was found censoring two boundary selections: every duplicate row and all previously swept search rows again reproduced byte-identically, javascript/gte moved off the censored boundary to its true optimum (0.70 → 0.72), python/gte's boundary pick was confirmed interior, and manifests now record `selected_at_grid_edge` plus a coherent candidate-coverage split (`traditional_recovered_pairs`/`unreachable_positive_pairs`).
 
-Interpretation: candidate policy, model threshold, and hybrid publication are one product decision graph and must be evaluated together. The shipped per-language gates listed at the top were reviewed against these production-policy grids recall-first — at or below each best-F1 row when that buys recall without untenable final-output precision — and are enforced by `codedupes.semantic_profiles` tests. The search rows remain a single-domain synthetic guardrail; the lower shipped search defaults come from the held-out multi-domain probes described in the model-profile docs. Keep this README, the reports, and the profile gates in sync.
+Candidate policy, model threshold, and hybrid publication must be evaluated together. Apply the [gate selection policy](../../docs/analysis-defaults.md#semantic-duplicate-gate-defaults) to these production-policy grids. Search rows remain a single-domain synthetic guardrail; [model profiles](../../docs/model-profiles.md#built-in-profiles) describes the held-out evidence used for search defaults.
 
 ## Re-running
 

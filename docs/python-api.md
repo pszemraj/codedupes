@@ -70,7 +70,7 @@ for diagnostic in result.extraction_diagnostics:
 print("non-Python units excluded from unused analysis:", result.unused_excluded_units)
 ```
 
-`run_unused=True` remains valid for a mixed tree, but only Python units enter the reference graph. Traditional and semantic duplicate checking are same-language by default, with each language gated by its calibrated profile threshold when `semantic_threshold` is `None`; `AnalyzerConfig(cross_language=True)` (or `analyze_directory(..., cross_language=True)`) also reports uncalibrated cross-language semantic pairs at the looser of the two gates. Semantic query search remains cross-language.
+`run_unused=True` remains valid for a mixed tree; see [unused analysis scope](analysis-defaults.md#potentially-unused-defaults). Pass `AnalyzerConfig(cross_language=True)` or `analyze_directory(..., cross_language=True)` to opt into [cross-language duplicate pairs](analysis-defaults.md#semantic-duplicate-gate-defaults).
 
 ## Semantic Query Search
 
@@ -99,7 +99,7 @@ for unit, score in hits:
 
 `search(query, top_k=10, threshold=None)` resolves its floor as `threshold`, else `config.semantic_threshold`, else the model profile's search default. Prefer the per-call `threshold`: it applies to that query only, while `config.semantic_threshold` also replaces every calibrated per-language duplicate gate with one flat value.
 
-An unset `AnalyzerConfig.semantic_task` resolves by operation: `index()` uses `code-retrieval`, while `analyze()` uses `semantic-similarity`. An explicit task overrides either default, but a custom instruction prefix, alternate EmbeddingGemma task, alternate built-in revision, or non-default `trust_remote_code` requires an explicit threshold because the profile default was not calibrated in that embedding space. See [task defaults](model-profiles.md#semantic-task-defaults-and-choices).
+See [task defaults and calibration requirements](model-profiles.md#semantic-task-defaults-and-choices) before overriding `semantic_task`, the prompt, revision, or remote-code setting.
 
 `AnalyzerConfig.mode` declares which contract enforces that requirement. The default `mode="check"` rejects an uncalibrated context without `semantic_threshold` at construction, before any extraction or model load. A config that drives `index()`/`search()` must pass `mode="search"` instead: search thresholds are calibrated independently of the duplicate gates, so validation defers to query time (`search()` raises if the resolved context has no calibrated search default and no explicit threshold). `analyze()` rejects `mode="search"` configs.
 
@@ -107,7 +107,7 @@ An unset `AnalyzerConfig.semantic_task` resolves by operation: `index()` uses `c
 
 `AnalyzerConfig.search_document` is `"source"` by default, preserving the calibrated source-only score distribution. `"contextual"` prepends language, root-relative path, and qualified symbol to each search document before the code. That mode improves path/symbol-sensitive retrieval experiments but has its own cache identity; renaming a file re-embeds the contextual search document. `analyze()` always embeds bare source for duplicate detection regardless of this search-only setting.
 
-Corpus units whose tokenized input exceeds the model's context window are skipped by both `index()` and `analyze()` rather than raising: they leave the embedding matrix and the searchable corpus, and each one is reported through `analyzer.semantic_diagnostics` (and `AnalysisResult.semantic_diagnostics` for `analyze()`) with code `semantic-context-overflow`. A `search()` query too long for the model still raises, because a truncated query has no result to omit.
+Units skipped by the [context-window policy](analysis-defaults.md#semantic-candidate-defaults) are reported through `analyzer.semantic_diagnostics` and, for `analyze()`, `AnalysisResult.semantic_diagnostics`:
 
 ```python
 analyzer.index("./src")
@@ -116,11 +116,11 @@ for diagnostic in analyzer.semantic_diagnostics:
     print(diagnostic.code, diagnostic.file_path, diagnostic.message)
 ```
 
-Each `index()` or `analyze()` call replaces the analyzer's corpus-specific state before extraction. `search()` therefore targets only the most recent run and requires it to have semantic embeddings. A later empty or nonsemantic analysis cannot reuse an older corpus accidentally. The analyzer also binds the matrix to its canonical model, resolved revision (a pinned commit, the requested revision label, or a local-directory content fingerprint), and vector-affecting runtime configuration. If any of those changes before a query—for example, local weights are replaced in place—`search()` requires a fresh `index()`/`analyze()` instead of comparing vectors from different coordinate systems. With `AnalyzerConfig(strict_revision_cache=True)`, an unpinned hub revision must instead resolve to a concrete commit; that commit is also the model-load key, so a moved branch cannot reuse the process's model instance from its previous commit. A search identity whose symbolic revision cannot be mapped offline fails closed; the default label keying always resolves. See [Embedding cache](caching.md#what-invalidates-what).
+Each `index()` or `analyze()` call replaces the analyzer's corpus-specific state before extraction. `search()` therefore targets only the most recent run and requires it to have semantic embeddings. A later empty or nonsemantic analysis cannot reuse an older corpus accidentally. The analyzer binds the matrix to its model, revision, and vector-affecting runtime configuration. If any of those changes before a query, `search()` requires a fresh `index()`/`analyze()`. Set `AnalyzerConfig(strict_revision_cache=True)` for [strict revision resolution](caching.md#what-invalidates-what).
 
 ## Progress and embedding telemetry
 
-`AnalyzerConfig.progress` accepts `"auto"` (default), `"always"`, or `"never"`. Auto mode renders sentence-transformers progress only for more than 100 uncached inputs when stderr is a TTY. The same keyword is available on `compute_embeddings`, `compute_embeddings_with_identity`, `run_semantic_analysis`, and `run_semantic_analysis_with_identity`.
+`AnalyzerConfig.progress` accepts `"auto"` (default), `"always"`, or `"never"`. Auto mode renders embedding progress only for more than 100 uncached inputs when stderr is a TTY. The same keyword is available on `compute_embeddings`, `compute_embeddings_with_identity`, `run_semantic_analysis`, and `run_semantic_analysis_with_identity`.
 
 The low-level functions accept an `EmbeddingRunStats` collector through `stats=` and fill it in place. `AnalysisResult.embedding_stats` contains that collector after successful semantic analysis; `CodeAnalyzer.embedding_stats` exposes it after `index()`. Both are `None` when semantic work did not run, failed, or fell back. Non-fatal persistent-cache failures observed during corpus or query embedding are appended to `cache_warnings`.
 
@@ -137,7 +137,7 @@ embeddings = compute_embeddings(
 print(stats.cache_hit_rows, stats.encoded_inputs, stats.model_loaded)
 ```
 
-The collector separates requested rows, unique inputs, persistent-cache hits, duplicate rows reused within the call, and inputs actually encoded. It also reports the cache revision/device and corpus-manifest move, delete, orphan, and shard-wide complete-generation activity. Retained-orphan counts include rows temporarily pinned by another recently refreshed selection. `model_loaded=False` is the direct indication that a warm run needed no model.
+See [embedding telemetry](output.md#embedding-telemetry) for the collector's field definitions.
 
 ## Apple Silicon configuration
 
@@ -165,7 +165,7 @@ from codedupes.semantic import clear_model_cache
 clear_model_cache()
 ```
 
-An `mps_memory_fraction` override is also process-global. A later analyzer that uses the default `None` restores PyTorch's environment/default high-watermark ratio before its next MPS load; clearing the model alone does not reset the allocator cap.
+See [MPS allocator policy](accelerators.md#mps-memory-policy-and-oom-recovery) for the process-wide effects of `mps_memory_fraction`.
 
 ## Logging
 

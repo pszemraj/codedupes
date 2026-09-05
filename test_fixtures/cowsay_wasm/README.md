@@ -10,7 +10,7 @@ A working Rust application that targets both a native CLI and browser WebAssembl
 | `bubble-renderers` | edit-distance / Type 3 | The speech and thought renderers retain the same construction skeleton, with changed control flow and delimiters. |
 | `word-wrappers` | semantic / Type 4 | A stateful scanner and an iterator/fold implementation produce the same wrapped lines. The browser and CLI can select either implementation. |
 
-The source of truth is [`fixtures/clone-ground-truth.json`](fixtures/clone-ground-truth.json). Stable region markers are included in the Rust files, along with one-based line spans for tools that require coordinates. `cargo test` checks that the exact clone remains exact and that the semantic implementations remain behaviorally equivalent.
+Labels are stored in [`fixtures/clone-ground-truth.json`](fixtures/clone-ground-truth.json). Stable region markers are included in the Rust files, along with one-based line spans for tools that require coordinates. Prefer markers when source changes. The duplicated code is deliberate; do not deduplicate these implementations before evaluating a detector. `cargo test` checks that the exact clone remains exact and that the semantic implementations remain behaviorally equivalent.
 
 ## Native use
 

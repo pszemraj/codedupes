@@ -34,7 +34,7 @@ python scripts/sweep_hybrid_gates.py \
   --json-out scratch/hybrid_sweep_report.json
 ```
 
-The report embeds the same calibration manifest as the semantic sweep (pinned commit, pipeline schema, effective embedding-space identity, candidate policy, corpus/label digests) and records `output_policy: hybrid_high_confidence`: its `tp`/`fp`/`fn` and `precision`/`recall`/`f1` score the published output minus the `semantic_review` tier, unlike the semantic sweep's same-named fields, which score all published pairs. Like that sweep, the run refuses a model that cannot be pinned to an immutable 40-character commit.
+The report embeds the [semantic sweep's calibration manifest](#semantic-threshold-sweep-model-profiles) and records `output_policy: hybrid_high_confidence`: its `tp`/`fp`/`fn` and `precision`/`recall`/`f1` score the published output minus the `semantic_review` tier, unlike the semantic sweep's same-named fields, which score all published pairs. Both sweeps require a model pinned to an immutable 40-character commit.
 
 ## Parameter grids
 
@@ -55,8 +55,7 @@ python scripts/sweep_hybrid_gates.py \
   --statement-ratio-grid 0.25,0.35,0.45
 ```
 
-The harness uses the same analyzer synthesis logic and model/revision defaults as the CLI. Identifier and statement-ratio grid values change tier assignment only: every pair that already passed the selected semantic gate remains in final output.
-Each `--semantic-grid` value emulates the per-language duplicate gate the analyzer applies to semantic pairs before hybrid synthesis (there is no separate synthesis-time semantic minimum); the production per-language gate values are listed in [Analysis defaults](analysis-defaults.md).
+The harness uses the analyzer's [hybrid synthesis logic](analysis-defaults.md#hybrid-synthesis-confidence-defaults) and the CLI's model/revision defaults. Each `--semantic-grid` value emulates the [per-language duplicate gate](analysis-defaults.md#semantic-duplicate-gate-defaults) applied before synthesis.
 
 ## Semantic threshold sweep (model profiles)
 
@@ -79,4 +78,4 @@ Selection policy is deterministic:
 
 - sort by `f1` (desc), `precision` (desc), `recall` (desc), `fp` (asc), then prefer the looser threshold on remaining ties
 
-Transferring a swept value into a profile default is a reviewed decision, not automatic: re-validate on at least one real repository, and prefer recall when stepping off the F1-best row. A shipped gate may sit however many grid steps below the F1 pick the sweep shows recall gains for; where recall is flat it may sit at most one step looser, as an off-corpus generalization hedge. `tests/test_calibration_reports.py` re-derives each shipped gate from its recorded grid and fails a transfer that is not a swept grid point, tightens past the selection, loses recall against it, or drops below 80% of its F1. Production gate values are listed in [Analysis defaults](analysis-defaults.md). Model-specific semantic thresholds are listed in [Model profiles](model-profiles.md).
+Transferring a swept value into a profile default is a reviewed decision, not automatic: re-validate on at least one real repository and follow the [duplicate gate selection policy](analysis-defaults.md#semantic-duplicate-gate-defaults). `tests/test_calibration_reports.py` re-derives each shipped gate from its recorded grid and checks that policy. [Model profiles](model-profiles.md#built-in-profiles) lists search defaults and their calibration evidence.

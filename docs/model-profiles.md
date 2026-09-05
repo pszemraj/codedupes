@@ -4,16 +4,15 @@ Profiles resolve model aliases, thresholds, revisions, trust settings, and task-
 
 ## Built-in profiles
 
-| profile key | canonical model ID | family | duplicate gates (per language) | search threshold | default revision | default trust mode |
-| --- | --- | --- | --- | --- | --- | --- |
-| `gte-modernbert-base` | `Alibaba-NLP/gte-modernbert-base` | `gte-modernbert` | py `0.80` / c `0.82` / rs `0.74` / js `0.70` / ts `0.68` (fallback `0.82`) | `0.50` | `e7f32e3c00f91d699e8c43b53106206bcc72bb22` | `False` |
-| `embeddinggemma-300m` | `unsloth/embeddinggemma-300m` | `embeddinggemma` | py `0.74` / c `0.78` / rs `0.78` / js `0.72` / ts `0.78` (fallback `0.78`) | `0.40` | `bfa3c846ac738e62aa61806ef9112d34acb1dc5a` | `False` |
+| profile key | canonical model ID | family | search threshold | default revision | default trust mode |
+| --- | --- | --- | --- | --- | --- |
+| `gte-modernbert-base` | `Alibaba-NLP/gte-modernbert-base` | `gte-modernbert` | `0.50` | `e7f32e3c00f91d699e8c43b53106206bcc72bb22` | `False` |
+| `embeddinggemma-300m` | `unsloth/embeddinggemma-300m` | `embeddinggemma` | `0.40` | `bfa3c846ac738e62aa61806ef9112d34acb1dc5a` | `False` |
 
 Notes:
 
-- The duplicate gates control `check` pair reporting per language (see [Analysis defaults](analysis-defaults.md#semantic-duplicate-gate-defaults)); the search threshold is the floor for `search` query matches. Query-to-code similarity runs far below code-to-code duplicate similarity, so search defaults are intentionally much lower.
-- Gate margins are recall-first, not F1-first. A gate sits below the sweep's F1-selected threshold wherever the sweep shows recall gains below it (gte `c` `0.82` against a selected `0.90`; embeddinggemma `javascript` `0.72` against `0.82` and `rust` `0.78` against `0.82`), and otherwise at most one grid step looser as an off-corpus generalization hedge. Every gate keeps recall at or above the selection's and F1 within 80% of it, enforced by `tests/test_calibration_reports.py` against the recorded reports. The full rationale lives with the gate table in `src/codedupes/semantic_profiles.py`.
-- Every builtin default revision is a pinned immutable commit: a calibrated threshold is only a property of the exact checkpoint, prompt plan, pipeline, and candidate policy it was swept on. Per-language duplicate gates are measured against the final combined output at the production three-statement candidate floor in `test_fixtures/polyglot_calibration/` (sweep and distribution reports in its `reports/` directory); excluded labeled candidates stay in the denominator and are reported separately. Search calibration identity is recorded in `test_fixtures/hybrid_tuning/search_threshold_report.json`. Pinning also keeps the warm no-model-load cache path stable after the hub cache is cleared.
+- [Per-language duplicate gates and their selection policy](analysis-defaults.md#semantic-duplicate-gate-defaults) control `check` reporting. The search threshold is the floor for query matches. Query-to-code similarity runs far below code-to-code duplicate similarity, so search defaults are intentionally much lower.
+- Every builtin default revision is a pinned immutable commit. [Calibration sweeps](hybrid-tuning.md#semantic-threshold-sweep-model-profiles) record the checkpoint, prompt plan, pipeline, and candidate policy behind each threshold.
 - The gte-modernbert search default is calibrated recall-safe against real corpora: genuinely relevant hits start near `0.59` while fully off-topic queries ceiling near `0.48` on most corpora. Vocabulary overlap from a shared domain (GPU kernels vs a graphics query) or even a single shared word ("pattern", "parse", "warp") can push off-topic matches to `0.52`-`0.65`; those carry visible scores and rank below real hits, but raise `--semantic-threshold` toward `0.6` if they clutter results. No fixed floor separates them everywhere, and the default deliberately favors recall over precision. The synthetic-corpus search sweep saturates for this model (every unit shares one domain), so its report is a guardrail, not the default's source.
 - The EmbeddingGemma search default is recall-calibrated against the held-out, multi-domain probes in `test_fixtures/search_probes/`. Under the pinned checkpoint and fixed prompt pipeline, relevant top hits bottom out near `0.45` while the off-topic ceiling stays below `0.28`; the `0.40` floor keeps margin on both sides. The single-domain synthetic sweep remains a reproducible guardrail, but its higher F1 optimum is not used as a production search floor.
 - Generic/unknown models fall back to duplicate threshold `0.82` and search threshold `0.35` unless you override `--semantic-threshold` / `semantic_threshold`.
@@ -46,7 +45,7 @@ codedupes search ./src "parse json payload" \
 
 - Download the complete repository rather than selecting only configuration or tokenizer files. Local directories without `config.json` and model weights fail before model loading with a corrective error.
 - Without `--local-dir`, `hf download <repo-id>` prints the cached snapshot directory. That directory can be passed directly to `--model`, including when its basename is a commit hash.
-- `--model-revision` is ignored for local directories (with a warning): on-disk weights have no hub revision. The embedding cache instead keys local models by a content fingerprint of the directory, so replacing or retraining the weights in place invalidates cached vectors automatically.
+- `--model-revision` is ignored for local directories (with a warning): on-disk weights have no hub revision. See [local-model cache invalidation](caching.md#what-invalidates-what) for how weight changes affect cached vectors.
 - For a Hub model ID rather than a directory path, set `HF_HUB_OFFLINE=1` to guarantee no network access.
 
 For live effective values in your environment, run:
@@ -84,8 +83,8 @@ Prompts are backend configuration, not text decoration: codedupes passes raw cod
 - generic models: symmetric `encode` route with no prompt unless explicitly overridden.
 - `--instruction-prefix` replaces the model prompt for that input mode while preserving the encode route; it is never stacked inside the saved prompt.
 
-The encode route and effective prompt participate in embedding-cache identity, so changing task, prompt, or route can never reuse vectors produced under a different plan.
+See [cache identity](caching.md#runtime-identity) for how encode routes and prompts affect reuse.
 
 Prompt-sensitive direct searches also require the `EmbeddingSpaceIdentity` returned by `compute_embeddings_with_identity()`. This prevents a bare matrix produced through one EmbeddingGemma route from being compared with a query produced through another.
 
-For examples, see the [usage guide](usage.md) and [Python API](python-api.md).
+For examples, see the [CLI reference](cli.md) and [Python API](python-api.md).

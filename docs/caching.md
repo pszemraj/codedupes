@@ -1,66 +1,104 @@
 # Embedding Cache
 
-`codedupes` persists embedding vectors under `~/.cache/codedupes` so unchanged code never re-embeds across runs. Edit one function and only that function re-embeds next time; when every code unit (and, for `search`, the query) is already cached, the run never loads the model at all.
+`codedupes` persists embeddings so unchanged code can reuse vectors across runs. A fully cached corpus and query can run without loading the model.
 
 ## Controls
 
-Environment variables:
+| Variable | Behavior |
+| --- | --- |
+| `CODEDUPES_CACHE_DIR` | Explicit cache root; takes precedence over other settings. |
+| `XDG_CACHE_HOME` | Uses `$XDG_CACHE_HOME/codedupes` when no explicit root is set. Otherwise defaults to `~/.cache/codedupes`. |
+| `CODEDUPES_CACHE_MAX_MB` | Global size cap, default `2048` MB. Values must be at least `1` and are floored to whole MB. Invalid values warn once per process and use the default. |
+| `CODEDUPES_NO_CACHE=1` | Disables persistent cache reads and writes for the process. |
 
-- `CODEDUPES_CACHE_DIR`: explicit cache root. Takes precedence over everything else.
-- `XDG_CACHE_HOME`: when `CODEDUPES_CACHE_DIR` is unset, the cache root is `$XDG_CACHE_HOME/codedupes`.
-- Default (both unset): `~/.cache/codedupes`.
-- `CODEDUPES_CACHE_MAX_MB`: size cap in megabytes (default `2048`). Must be at least `1`; unset, unparsable, zero, negative, or fractional sub-1-MB values all warn once per process and fall back to the default - there is no way to disable the cap through this variable (use `CODEDUPES_NO_CACHE` instead). Accepted values are floored to whole megabytes. After each nonempty batched cache write, codedupes inventories file sizes across the on-disk shards, then deletes least-recently-used shards until usage falls to about 80% of the cap when necessary. Reading the shared filesystem is intentional: cooperating processes cannot keep one in-memory byte ledger correct, and the inventory cost scales with shard count rather than code-unit count. The shard just written is never deleted; if it alone exceeds the cap, it stays usable and a warning recommends raising the limit. A shard that cannot be deleted remains included in the measured total and also produces a warning.
-- `CODEDUPES_NO_CACHE=1`: disable the cache for the whole process, every command. Nothing is read or written.
+`--no-cache` bypasses persistent storage for one `check` or `search` run without changing existing files. Use the [cache commands](cli.md#codedupes-cache-info) to inspect usage or clear entries. Built-in aliases match case-insensitively in `cache clear --model`; pass other model names exactly as used for analysis.
 
-The configured cache root itself may intentionally be a symlink, but codedupes refuses pre-existing symlinks in the deterministic `repos`, repo/model shard, `local-models`, and `locks` directories it manages. Whichever way the root is configured, it is fully resolved before use - symlinks dereferenced, relative overrides absolutized - so every spelling of one physical directory shares one cache and one lock domain, and `codedupes cache info` reports the resolved path. Cache roots that codedupes creates and all managed directories are restricted to the current account (`0700`); any pre-existing cache root keeps whatever permissions it already has. Every vector, index, lock, and local-model manifest is published with mode `0600`. Advisory locks coordinate cooperating processes but do not make an attacker-writable parent directory a security boundary.
-
-CLI:
-
-```bash
-codedupes cache info                               # path, entries, size, orphan rows, generations
-codedupes cache clear                              # delete every shard for every repo
-codedupes cache clear --model gte-modernbert-base  # delete one model's shards
-codedupes check ./src --no-cache                   # bypass for one run; on-disk state untouched
-```
-
-`codedupes info` also prints a one-line cache summary. Built-in model aliases match case-insensitively in `cache clear --model`; any other model must be passed as the exact string used when analyzing. `--no-cache` works on both `check` and `search`.
+After each nonempty batch write, codedupes inventories shard sizes. When the global cap is exceeded, it removes least-recently-used shards toward 80% of the cap. The shard just written is protected, even if it alone exceeds the cap; an oversized or undeletable shard produces a warning and remains included in usage. Inventory reads the filesystem so cooperating processes see each other's writes.
 
 ## What invalidates what
 
-- Editing a code unit invalidates only that unit's entry; every other unit still hits.
-- Renaming or moving source-only code keeps the same content key and therefore remains a cache hit. The corpus manifest reports the remapped unit. Contextual search documents include the path, so their vectors intentionally re-key after a move.
-- Different models and different revisions never share entries.
-- By default, an unpinned hub model's revision is keyed by the requested branch/tag *label* (or `main`), not a resolved commit, and each label shard records the commit its vectors were computed from: a run that actually loads the model (any cache miss, or an uncached query) compares the loaded commit against that record and purges the shard on a mismatch, so vectors from two checkpoints never assemble into one matrix. A fully warm run never loads the model and keeps serving the pre-move vectors as one coherent set; run `codedupes cache clear --model <name>` to drop them immediately after a known upstream change, or pass `--strict-revision-cache` to resolve and verify commits up front (see [Design notes](#design-notes)). Built-in profile pins and an explicit full commit hash `--model-revision` are unaffected either way.
-- Models whose profiles route `check` and `search` corpus embedding through different task instructions (EmbeddingGemma) warm each command separately: a warm `check` does not make the first `search` warm, and vice versa. The default `gte-modernbert-base` embeds the corpus through one symmetric route for both commands, so a warm `check` also leaves the corpus warm for `search`; only the query itself still embeds.
-- Repeating an identical search is a full cache hit end to end - query embeddings are cached in the same shard as the corpus they were searched against. The flip side of that shared, immutable shard design: persisting one new query vector rewrites the whole shard matrix on disk, so scripted loops issuing many novel queries against a large corpus pay a full-matrix write per query (repeat queries cost nothing). A query is cached only when its corpus is: if the corpus identity carries a mutable revision label and no resolved source commit, the corpus already bypassed its own shard, so query reads and writes bypass with it rather than serve a row that cannot be tied to the checkpoint behind the matrix.
-- Local model directories (`--model /path/to/model`) are keyed by a content fingerprint of the directory instead of a hub revision, so swapping updated weights into the same path invalidates cached vectors automatically - even when the replacement preserves file sizes and modification times. Metadata-only changes (a touched mtime) do not invalidate anything.
-- If you suspect stale results anyway (for example after hand-editing cache files), run `codedupes cache clear`, or add `--no-cache` for a one-off run that bypasses the cache.
+| Change | Cache effect |
+| --- | --- |
+| Edit a unit's prepared input | Re-embeds that input; unchanged inputs still hit. |
+| Move or rename source-only code | Reuses the content key; the manifest can report a move. |
+| Move a contextual search document | Re-embeds because its path is part of the input. |
+| Change model, revision, prompt, encode route, or vector-affecting runtime settings | Uses a different embedding identity. |
+| Replace local weights in place | Changes the directory content fingerprint. Touching modification times alone does not invalidate vectors. |
+| Repeat a search query | Reuses its query vector when both corpus and query identities match. |
 
-## Design notes
+EmbeddingGemma uses different corpus prompts for `check` and `search`, so they warm independently. GTE uses the same symmetric corpus route for both: a warm check can cover the first search's corpus, but a new query still embeds. See [prompt behavior](model-profiles.md#taskprompt-behavior-by-model-family).
 
-Internals for debugging and the curious; none of this is needed to use the cache.
+Query vectors share the corpus shard. Each novel query write rewrites that shard's full immutable matrix; loops issuing many new queries against a large corpus therefore pay a full-matrix write per query. Query rows have an independent FIFO cap and are excluded from corpus orphan collection.
 
-- Entries are content-addressed: each vector is keyed by a hash of (canonical model name, resolved model revision, embedding mode, complete input text) plus a variant fingerprint covering everything else that determines vector values - the encode plan (route and effective prompt), the inference dtype when it differs from the default, the embedding pipeline schema, the installed sentence-transformers/transformers/tokenizers/torch versions, and the remote-code trust setting. Upgrading any of those is a full-corpus miss, never a partial one, so one matrix can never mix vectors from two coordinate systems. The pipeline schema also invalidates vectors created by older preprocessing rules; prefix-truncated vectors from schema 4 and earlier are never served by the current context policy, which skips an over-context input rather than embedding its head. The execution device itself is deliberately not part of the key: CPU and MPS float32 share one key space (the loader pins an explicit dtype, overriding checkpoint-declared dtypes; bfloat16 vectors - CUDA, or CPU under the experimental `CODEDUPES_CPU_BF16=1` opt-in on gate-passing machines, see [Accelerators](accelerators.md) - stay separate via the dtype variant, and vectors computed with Metal fast math enabled - `PYTORCH_MPS_FAST_MATH` - are keyed apart from the shared faithful-float32 space), so switching devices stays warm, at the cost that CPU and MPS kernels round differently at about the 2e-4 pair-similarity scale and a warm run may serve vectors computed on the other device. A fast-math corpus that leaves MPS discards partial fast-math state and restarts wholly under the faithful CPU identity; a query can never cross those policies before similarity math. Run `codedupes cache clear` first when you need a single-device reference result. Keys derive without loading the model, which is what makes the warm no-model-load path possible.
-- Vectors live in one shard directory per (analyzed repo root, model, revision):
+### Hub revisions
 
-  ```text
-  <cache_root>/repos/<repo-basename>-<pathhash>/<model-slug>@<revision>/
-      vectors-<generation>.npy  # immutable float32 matrix
-      index.json                # active generation, key -> row map, metadata
-      manifest.json             # corpus unit -> key references and orphan ages
-  ```
+Built-in profiles and explicit full-commit `--model-revision` values use immutable revision keys. Unpinned Hub models default to the requested branch/tag label, or `main`, without an offline revision lookup before a warm hit.
 
-  The path hash keeps two repos that share a directory basename (say, two checkouts both named `src`) from ever colliding.
-- Writers publish a complete new vector matrix before atomically switching the index to its generation, and serialize through per-shard advisory file locks under `<cache_root>/locks/`, outside the recursively deleted shard directories, so recreating a deleted shard reuses the same lock rather than a fresh inode. Clearing and LRU eviction delete a shard under its lock and afterwards reclaim the lock file itself - only when that call actually removed the shard - so `locks/` cannot grow forever; in the narrow case of overlapping deleters plus a recreating writer, two writers can briefly hold locks on different inodes, and generation re-confirmation on read keeps that worst case availability-only (a torn write degrades to a miss and recompute, never a wrong vector). A concurrent reader can never pair an old key map with rebuilt rows; deletion during a read becomes a clean cache miss. Cache clearing reads its removal count from the same locked shard snapshot it deletes, so a writer finishing while `clear` waits is included accurately. Cache statistics, global-cap inventory, and cache clearing continue past a shard that vanishes or errors during their sweep; unlike analysis-time cache failures, clear failures are reported to the CLI so it cannot claim complete success while cache state remains. The next locked write attempt always reclaims temporary files left by a killed writer, and reclaims its complete-but-unpublished vector generations once the shard index is readable; a torn or foreign index defers vector reclamation rather than guessing.
-- After a successful `analyze()` or `index()`, `manifest.json` atomically records each embedded `CodeUnit.uid`, its content key, and its exact file path. Complete scans publish even when extraction or semantic candidate filtering leaves zero units, so deleting the final unit can still age its old row. The manifest keeps independent entries for up to 16 recently used candidate selections plus any older selection carrying pending orphan state, along with one shard-wide complete-scan generation. It is published only after the rest of the run succeeds; a failure after vector writes leaves the previous manifest authoritative and the new rows harmlessly unreferenced.
-- Comparable complete scans match new and departed UIDs one-to-one by content key to infer moves. Unmatched departed UIDs count as deleted units even when another unit still shares their vector; a content key becomes an orphan only when no current unit references it. Comparability is gated by a digest of the candidate-selection settings (`min_semantic_statements`, unit types, private/stub/exclude policy, language filters, task, instruction prefix, and search document mode) and the effective embedding runtime variant, so changing filters or alternating between check and search does not reset unrelated generations or misreport excluded units as deleted. Switching between CPU/float32 and CUDA/bfloat16 keeps independent baselines, preserving each variant's cached vectors for unchanged code.
-- Orphan age is counted in shard-wide complete manifest generations, not wall time. A newly orphaned code row is retained for three further complete scans; reintroducing its content during that window clears the age and reuses it. A selection pins referenced keys only while it has been refreshed within the last three complete scans, so a one-off filtered or search selection cannot block another selection's confirmed deletions forever. Expired selections keep their unit maps as deletion baselines, subject to the manifest's selection cap, but stop contributing references; their other vectors are not inferred to be deleted and remain content-addressed cache hits under the whole-shard LRU policy. At generation `g+3`, the existing shard `retain()` compaction drops an aged orphan when no active selection references it. Collection revalidates both the manifest and vector generation under the compaction lock, so a concurrent reintroduction cancels the stale collection attempt. Search-query rows are not manifest members and are never touched by orphan GC; their existing FIFO cap remains independent.
-- A single-file target or directory scan with explicit excludes publishes `complete_scan=false` and never ages or collects missing sibling rows. Directory targets use that directory as their cache scope, while file targets use their parent, so `check ./src` and `check ./src/a.py` share a shard. The narrow run merges observations into the prior selection baseline instead of replacing it. A single-file target replaces that file's baseline slice, so an observed edit or eligibility change records the replaced key as an orphan without treating unseen siblings as deleted. Incomplete scans do not refresh the complete-scan pin age of merged, unseen units; a later complete scan can still detect siblings deleted in the meantime. A different directory target such as `check .` uses a separate shard.
-- Whole-shard LRU eviction against the global byte cap remains the backstop for repos that are never completely scanned. `orphan_rows_retained` and `codedupes cache info` count every row classified as orphaned, including an aged row temporarily pinned by another active selection, so deletion telemetry never disappears behind cross-selection protection. `cache info` also reports the shard's last complete generation alongside entries and bytes.
-- Local model directories are fingerprinted by file contents, not stat metadata. Per-file digests are reused from a manifest under `<cache_root>/local-models/` keyed on the full stat identity (size, mtime, ctime, inode), so unchanged files are never rehashed and warm-path key derivation stays a stat walk. A `--no-cache` run keeps this fingerprint verification in memory without reading or writing the manifest, leaving on-disk cache state untouched; if the same process later enables caching, its current in-memory manifest is then persisted. Every local-model load is bracketed by pre- and post-load fingerprints: a directory swapped mid-load triggers one reload from the current on-disk state (a second mid-load change fails the run with a clear error), and cache keys use the fingerprint verified for the weights actually loaded - hits taken under a stale pre-load fingerprint are discarded and everything re-keys, so one result matrix never mixes vectors from two weight sets.
-- The builtin profiles pin full commit hashes, which keeps the warm no-model-load path even after the hub cache is cleared; an explicit full commit hash passed as `--model-revision` keys the same way. Neither is affected by anything below.
-- By default, an unpinned hub model (no pinned profile, no explicit full commit hash) keys by the requested revision *label* itself - the explicit `--model-revision` value, or `main` when none was given - not a resolved commit. No offline Hugging Face cache lookup happens before a warm hit and a symbolic ref does not by itself disable persistent caching. Mixing, however, is impossible by construction: combining old- and new-commit vectors requires computing fresh rows, which requires loading the model, and at that moment the loaded commit is checked on both sides - against the source commit recorded *inside the shard's atomically switched index* (provenance and vectors publish as one generation and can never desynchronize on disk), and against the provenance the lookup carried out of the shard snapshot it actually read, so a concurrent run that purges and republishes the shard under the loaded commit mid-run still cannot smuggle earlier-snapshot hits into the fresh matrix. Drift purges the whole label shard (code and query vectors alike) and re-embeds; pre-load hits whose snapshot provenance cannot be tied to the loaded commit are discarded and recomputed even when the current shard looks coherent; an uncached query that discovers drift raises for a reindex instead of comparing across the move; and a writer whose shard was re-confirmed under a different commit while it was still encoding has its stale batch rejected under the shard write lock rather than merged. A provenance-less shard is never trusted for a mutable label. If the loaded backend cannot report its commit, that corpus call discards all label-shard hits, recomputes the complete matrix, and skips cache writes; partial old/new matrices are never assembled. What remains is coherent staleness: a fully warm, provenance-stamped run can keep serving the pre-move vectors as one self-consistent set until a miss forces a load or `codedupes cache clear --model <name>` drops them. A long-lived process that indexed before another process rebuilt the shard cannot silently compare across the move: the corpus identity records the source commit its matrix derives from, and `search()` discards a warm query hit read from a different shard snapshot and raises for a reindex before a query vector from a different loaded commit can reach the dot product. Use `--strict-revision-cache` (below) when even coherent staleness matters more than warm-cache stability.
-- `--strict-revision-cache` resolves an unpinned revision through the local Hugging Face cache before any model-free hit and passes that concrete commit to model loading, so a branch move rotates both the embedding shard and the process-wide model instance. The true loaded commit hash is double-checked after any load; a mismatch discards pre-load hits and re-keys under the truth so one result matrix never mixes two model revisions. Persistent reuse is skipped entirely - rather than caching under a mutable symbolic name - when a branch or tag cannot be mapped to a commit offline.
-- A warm hit for `cpu` - or `auto` on macOS - does not import PyTorch (under the experimental `CODEDUPES_CPU_BF16=1` opt-in, the CPU capability gate probes live, importing torch at most once per process; nothing is persisted); `auto` elsewhere resolves the device (importing PyTorch) so CUDA's bfloat16 dtype can be keyed. An explicit `--device mps` or `--device cuda` request validates accelerator availability even on a fully warm cache - an unavailable accelerator errors rather than silently serving cached vectors - which imports PyTorch; resolving a CUDA-specific dtype may also initialize capability checks.
-- The cache is never fatal: missing, unreadable, corrupt, or unwritable cache state degrades to a cache miss (or a skipped write), warns once per process, and analysis proceeds with correct results either way. Unreadable includes permission failures: a cache tree owned by another account reads as absent rather than crashing. Every row's digest is recorded at write time and re-verified on read, so a poisoned (NaN/Inf) row *or* a finite row whose bytes changed on disk reads as a per-key miss and is overwritten in place by the next successful recompute - corruption self-heals instead of forcing a manual `cache clear`. If one pinned shard unexpectedly starts producing a different embedding dimension, its matrices cannot be combined; codedupes warns with the discarded entry count and replaces the incompatible shard.
-- Fresh model output is validated centrally before it is cached, compared, or returned: wrong shape or row count fails immediately; NaN/Inf or zero vectors on an accelerator clear the allocator cache and retry once on CPU from the requested batch size capped at `CPU_FALLBACK_MAX_BATCH_SIZE` (host OOM can be an uncatchable kill, so an accelerator-sized batch never carries over), and fail rather than cache if CPU output is also invalid. All rows are unit-renormalized so dot-product similarity is always cosine similarity.
+A label-keyed shard records the source commit with its vector generation. When a miss loads the model, codedupes compares the loaded commit with both the current shard and the snapshot that supplied earlier hits. Drift invalidates those hits and rebuilds the corpus. Writers reject batches whose commit became stale during encoding. A backend that cannot report its commit recomputes the complete corpus and bypasses both corpus and query caching.
+
+Fully warm label-keyed runs can keep serving a coherent set of older vectors after a branch moves. Clear that model's cache after a known upstream change to refresh it immediately. `--strict-revision-cache` instead resolves the label through the local Hugging Face cache before reuse and uses that concrete commit for model loading. If the label cannot be resolved offline, persistent reuse is disabled. Built-in pins and local directories are unaffected.
+
+An indexed corpus also retains its source commit. A query from a different checkpoint raises a reindex error before similarity comparison, including when another process has replaced the shard since indexing. See the [search state contract](python-api.md#semantic-query-search).
+
+### Local directories
+
+Local model identity hashes file contents. Per-file digests are reused from `<cache_root>/local-models/` when size, mtime, ctime, and inode match, keeping unchanged runs to a stat walk. A no-cache run maintains this information only in memory; enabling caching later can persist it.
+
+Model loading checks fingerprints before and after reading weights. A change during loading triggers one reload; a second change fails the run. Earlier hits are discarded if their fingerprint differs from the loaded weights.
+
+## Corpus lifecycle
+
+The cache tracks three distinct objects:
+
+- A unit UID identifies one occurrence of code.
+- A content key identifies prepared embedding input; several units can share it.
+- A vector row stores that key's embedding. Compaction can change its row number.
+
+After a successful `analyze()` or `index()`, `manifest.json` records the unit-to-key map and exact file paths. Failed runs leave the previous manifest in place, even if they already wrote some vectors. Complete scans publish empty selections too, so deleting the final unit still updates the baseline.
+
+Comparable scans match new UIDs to departed UIDs one-to-one by content key to infer moves. Unmatched departed UIDs count as deleted even if another unit still shares their vector. A key becomes orphaned only when the current selection has no unit referencing it.
+
+Selections are compared only when candidate settings and the effective runtime variant agree. These settings include statement/type filters, private/stub/exclude policy, languages, task, prefix, and search document mode. Switching filters, operations, or float32/bfloat16 variants keeps separate baselines. The manifest retains up to 16 recent selections, plus older selections with pending orphan records.
+
+### Complete and partial scans
+
+Directory targets use that directory as their cache scope; file targets use their parent. Thus `check ./src` and `check ./src/a.py` share a shard, while `check .` uses another.
+
+A file target or directory scan with explicit excludes publishes an incomplete observation. It merges into the prior selection instead of deleting unseen siblings. A single-file scan replaces only that file's baseline slice, so observed edits or eligibility changes can orphan old keys. It neither advances the complete-scan clock nor refreshes the pin age of unseen units.
+
+### Orphan collection
+
+The shard-wide manifest generation counts complete scans, independently of vector snapshot IDs. A key orphaned at generation `g` remains available for three further complete scans. Reintroducing its content clears the orphan record and reuses the row.
+
+At `g+3`, collection can remove the row if no recently refreshed selection references it. A selection pins its keys only within the three-scan window; stale selections retain deletion baselines but cannot pin confirmed deletions forever. Their other vectors are not inferred to be deleted and remain available until whole-shard eviction.
+
+Collection rechecks the manifest and vector generation under the shard lock, so a concurrent reintroduction cancels stale cleanup. Query rows remain untouched. See [embedding telemetry](output.md#embedding-telemetry) for move, deletion, and retained/collected row counts.
+
+## Storage and consistency
+
+Each analyzed root, model, and revision has a shard:
+
+```text
+<cache_root>/repos/<repo-basename>-<pathhash>/<model-slug>@<revision>/
+    vectors-<generation>.npy  # immutable float32 matrix
+    index.json                # active generation, content key -> row, metadata
+    manifest.json             # corpus references and complete-scan ages
+```
+
+The root path hash separates checkouts with the same basename. A writer publishes the full matrix before atomically switching `index.json`; key maps, row digests, and source-commit metadata travel with that snapshot. Readers reconfirm the generation so a concurrent rebuild cannot pair an old map with new rows. Deletion during a read becomes a miss.
+
+Per-shard advisory locks live under `<cache_root>/locks/`, outside shard directories. Clear and eviction lock the shard before deletion, then reclaim its lock file if deletion succeeded. Overlapping deletion and recreation can briefly produce distinct lock inodes; generation checks keep this a miss/recompute case rather than a mismatched vector read. The next locked write removes abandoned temporary files and, when the index is readable, unpublished vector generations.
+
+Cache inspection, eviction, and clearing continue past shards that disappear or become unreadable. Clear reports deletion failures to the CLI instead of claiming success. Analysis-time cache failures warn once per process and degrade to misses or skipped writes. Row digests detect non-finite or changed vector bytes; recomputation repairs those rows. A dimension change replaces an incompatible shard with a warning.
+
+### Runtime identity
+
+Keys cover the canonical model, revision, complete prepared input, encode route/prompt, pipeline schema, dtype variant, library versions, and remote-code trust setting. Old preprocessing schemas cannot reuse current vectors. Deriving keys does not require loading weights.
+
+CPU and MPS float32 share keys; bfloat16 and MPS fast math use separate variants. Device kernels can round differently, so clear the cache when measuring a single-device reference. [Accelerator precision and fallback](accelerators.md#precision-and-metal-environment-variables) explains which policies can share vectors and when a corpus must restart.
+
+A warm CPU run, or `auto` on macOS, can avoid importing PyTorch. The experimental CPU bfloat16 opt-in requires a live capability probe. `auto` elsewhere imports PyTorch for device/dtype resolution; explicit accelerator requests validate availability even when no inference is needed.
+
+### Filesystem permissions
+
+The configured root is resolved to an absolute physical path, so equivalent spellings share locks. It may be a symlink, but managed shard, `repos`, `local-models`, and `locks` directories reject pre-existing symlinks. New cache directories use `0700`; files use `0600`. Existing root permissions are retained. Advisory locks coordinate cooperating processes; they do not secure an attacker-writable parent directory.

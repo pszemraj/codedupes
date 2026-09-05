@@ -20,7 +20,7 @@ The profile fallback (`0.82` gte, `0.78` gemma) is the strictest calibrated gate
 
 Semantic duplicate pairs are same-language by default. `--cross-language` (or `AnalyzerConfig(cross_language=True)`) also reports cross-language pairs; those claims are uncalibrated, so an opted-in mixed pair is held to `min(gate_a, gate_b)`, the looser of its two language gates.
 
-Default duplicate gates are calibrated for the profile's pinned revision, default task, default prompt, and default remote-code setting. A custom instruction prefix, an alternate EmbeddingGemma task, an alternate built-in revision, or a `trust_remote_code` value differing from the profile default is uncalibrated context: the run refuses the default gates and requires an explicit threshold.
+Custom prompts, revisions, and trust settings must meet the [model profile threshold requirements](model-profiles.md#semantic-task-defaults-and-choices).
 
 ## Semantic Candidate Defaults
 
@@ -38,21 +38,7 @@ Traditional/semantic scope rule:
 - traditional duplicate matching always uses the full extraction scope (functions, methods, and classes), in both combined and traditional-only modes
 - semantic candidate controls such as `min_semantic_statements` and `semantic_unit_types` affect embeddings only; they cannot hide deterministic findings
 
-Override via CLI:
-
-```bash
-codedupes check ./src --semantic-unit-type class
-codedupes check ./src --min-statements 0
-```
-
-Override via Python API:
-
-```python
-AnalyzerConfig(
-    semantic_unit_types=("function", "method", "class"),
-    min_semantic_statements=0,
-)
-```
+Use the [CLI candidate options](cli.md#semantic-model) or `AnalyzerConfig.semantic_unit_types` and `min_semantic_statements` to change this selection.
 
 ## Extraction Scope Defaults
 
@@ -92,21 +78,7 @@ Default tiny-filter behavior for traditional duplicates:
 - tiny definition: effective code-unit statement count `< 3`; classes expand each extracted member from its declaration count to the member's statement count, so a class with a few substantial methods is not treated as a marker. JavaScript/TypeScript static initializer bodies are counted during extraction, including statements nested in control flow; an empty block still counts as one member. When private-unit filtering is active, class duplicates remain visible because their emitted member inventory may be incomplete
 - traditional pairs where both units are tiny: dropped
 
-Override via CLI:
-
-```bash
-codedupes check ./src --no-tiny-filter
-codedupes check ./src --tiny-cutoff 4
-```
-
-Override via Python API:
-
-```python
-AnalyzerConfig(
-    filter_tiny_traditional=False,
-    tiny_unit_statement_cutoff=4,
-)
-```
+Use `--no-tiny-filter` / `--tiny-cutoff`, or `AnalyzerConfig.filter_tiny_traditional` / `tiny_unit_statement_cutoff`, to change the filter.
 
 ## Hybrid Synthesis Confidence Defaults
 
