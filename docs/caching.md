@@ -54,7 +54,7 @@ The cache tracks three distinct objects:
 - A content key identifies prepared embedding input; several units can share it.
 - A vector row stores that key's embedding. Compaction can change its row number.
 
-After a successful `analyze()` or `index()`, `manifest.json` records the unit-to-key map and exact file paths. Failed runs leave the previous manifest in place, even if they already wrote some vectors. Complete scans publish empty selections too, so deleting the final unit still updates the baseline.
+After a successful `analyze()` or `index()`, `manifest.json` records the unit-to-key map and exact file paths. Failed runs leave the previous manifest in place, even if they already wrote some vectors. Recoverable read, decoding, parse, or directory traversal failures also skip publication for both directory and single-file targets: findings and valid embeddings remain available, while the prior manifest and complete-scan clock stay unchanged. Intentional selection warnings and semantic context-window exclusions do not block publication. Complete scans publish empty selections too, so deleting the final unit still updates the baseline.
 
 Comparable scans match new UIDs to departed UIDs one-to-one by content key to infer moves. Unmatched departed UIDs count as deleted even if another unit still shares their vector. A key becomes orphaned only when the current selection has no unit referencing it.
 

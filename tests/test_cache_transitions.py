@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -295,7 +296,10 @@ def test_delete_file_removes_its_units_and_findings_without_encoding(
 def test_delete_last_unit_publishes_empty_manifest(tmp_path, monkeypatch) -> None:
     repo = _write_repo(
         tmp_path,
-        {"only.py": "def only(value):\n    return value + 1"},
+        {
+            "only.py": "def only(value):\n    return value + 1",
+            "api.h": "int value(void);",
+        },
     )
     _patch_get_model(monkeypatch, CountingModel())
     _analyze(repo)
@@ -304,11 +308,14 @@ def test_delete_last_unit_publishes_empty_manifest(tmp_path, monkeypatch) -> Non
     empty = _analyze(repo)
 
     assert empty.units == []
+    # Intentional C-header selection is not an extraction coverage failure.
+    assert [diagnostic.code for diagnostic in empty.extraction_diagnostics] == ["c-header-policy"]
     assert empty.embedding_stats is not None
     assert empty.embedding_stats.encoded_inputs == 0
     assert empty.embedding_stats.model_loaded is False
     assert empty.embedding_stats.deleted_units == 1
     assert empty.embedding_stats.orphan_rows_retained == 1
+    assert empty.embedding_stats.manifest_generation == 2
 
 
 def test_last_ineligible_candidate_publishes_empty_manifest(tmp_path, monkeypatch) -> None:
@@ -748,6 +755,149 @@ def test_failed_analysis_keeps_previous_manifest_authoritative(tmp_path, monkeyp
     assert recovered.embedding_stats.encoded_inputs == 0
     assert recovered.embedding_stats.orphan_rows_retained == 1
     assert recovered.embedding_stats.manifest_generation == previous_generation + 1
+
+
+@pytest.mark.parametrize("operation", ["analyze", "index"])
+@pytest.mark.parametrize(
+    ("failure", "single_file"),
+    [
+        ("parse-error", False),
+        ("read-error", False),
+        ("walk-error", False),
+        ("parse-error", True),
+        ("read-error", True),
+    ],
+)
+def test_incomplete_extraction_keeps_previous_manifest_authoritative(
+    tmp_path, monkeypatch, operation, failure, single_file
+) -> None:
+    affected_name = "nested/b.py" if failure == "walk-error" else "b.py"
+    repo = _write_repo(
+        tmp_path,
+        {
+            "a.py": "def alpha(value):\n    return value + 1",
+            affected_name: "def beta(value):\n    return value + 2",
+        },
+    )
+    affected = repo / affected_name
+    original_source = affected.read_bytes()
+    _patch_get_model(monkeypatch, CountingModel())
+
+    def scan(target):
+        analyzer = CodeAnalyzer(
+            AnalyzerConfig(
+                mode="check" if operation == "analyze" else "search",
+                model_name="test-model",
+                model_revision=REVISION_1,
+                semantic_threshold=0.0,
+                run_traditional=False,
+                run_unused=False,
+                min_semantic_statements=0,
+                progress="never",
+            )
+        )
+        getattr(analyzer, operation)(target)
+        return analyzer
+
+    scan(repo)
+    cache = EmbeddingCache()
+    previous = cache.load_manifest(repo, "test-model", REVISION_1)
+    assert previous is not None
+    assert previous.generation == 1
+    if not single_file:
+        # Valid work performed during an incomplete scan must still be reusable.
+        (repo / "a.py").write_text("def alpha(value):\n    return value + 99\n")
+
+    with monkeypatch.context() as failed_scan:
+        if failure == "parse-error":
+            affected.write_bytes(original_source + b"\ndef unfinished(\n")
+        elif failure == "read-error":
+            read_bytes = Path.read_bytes
+
+            def unreadable(path):
+                if path == affected:
+                    raise PermissionError(13, "Permission denied", str(path))
+                return read_bytes(path)
+
+            failed_scan.setattr(Path, "read_bytes", unreadable)
+        else:
+            scandir = os.scandir
+
+            def inaccessible(path):
+                if Path(path) == affected.parent:
+                    raise PermissionError(13, "Permission denied", str(path))
+                return scandir(path)
+
+            failed_scan.setattr(os, "scandir", inaccessible)
+
+        # More scans than the orphan grace period must not advance its clock.
+        for iteration in range(5):
+            incomplete = scan(affected if single_file else repo)
+            diagnostics = incomplete._extraction_diagnostics
+            assert [diagnostic.code for diagnostic in diagnostics] == [failure]
+            assert diagnostics[0].file_path == (
+                affected.parent if failure == "walk-error" else affected
+            )
+            assert {unit.name for unit in incomplete._units} == (
+                set() if single_file else {"alpha"}
+            )
+            stats = incomplete.embedding_stats
+            assert stats is not None
+            assert stats.encoded_inputs == int(not single_file and iteration == 0)
+            assert stats.deleted_units == 0
+            assert stats.orphan_rows_collected == 0
+            assert stats.orphan_rows_retained == 0
+            assert stats.manifest_generation is None
+            assert cache.load_manifest(repo, "test-model", REVISION_1) == previous
+            assert cache.stats()["entries"] == (2 if single_file else 3)
+
+    affected.write_bytes(original_source)
+    recovered = scan(repo)
+    stats = recovered.embedding_stats
+    assert stats is not None
+    assert stats.encoded_inputs == 0
+    assert stats.cache_hit_rows == 2
+    assert stats.model_loaded is False
+    assert stats.deleted_units == 0
+    assert stats.orphan_rows_collected == 0
+    assert stats.manifest_generation == previous.generation + 1
+
+
+@pytest.mark.parametrize(
+    ("invalid_source", "expected_codes"),
+    [
+        (b"function beta(value) { return value + 2; }\n// \xff\n", {"invalid-utf8"}),
+        (b"function beta(value) { return value + 2; }\nfunction broken(\n", {"partial-parse"}),
+        (b"function beta(value) { return value + ; }\n", {"partial-parse", "unit-parse-error"}),
+    ],
+    ids=["invalid-utf8", "partial-parse", "unit-parse-error"],
+)
+def test_tree_sitter_coverage_failures_preserve_manifest(
+    tmp_path, monkeypatch, invalid_source, expected_codes
+) -> None:
+    repo = _write_repo(tmp_path, {"b.js": "function beta(value) { return value + 2; }"})
+    source_file = repo / "b.js"
+    original_source = source_file.read_bytes()
+    _patch_get_model(monkeypatch, CountingModel())
+    _analyze(repo, run_unused=False)
+    cache = EmbeddingCache()
+    previous = cache.load_manifest(repo, "test-model", REVISION_1)
+    assert previous is not None
+
+    source_file.write_bytes(invalid_source)
+    for _ in range(5):
+        incomplete = _analyze(repo, run_unused=False)
+        assert {
+            diagnostic.code for diagnostic in incomplete.extraction_diagnostics
+        } == expected_codes
+        assert cache.load_manifest(repo, "test-model", REVISION_1) == previous
+
+    source_file.write_bytes(original_source)
+    recovered = _analyze(repo, run_unused=False)
+    assert recovered.embedding_stats is not None
+    assert recovered.embedding_stats.encoded_inputs == 0
+    assert recovered.embedding_stats.model_loaded is False
+    assert recovered.embedding_stats.manifest_generation == previous.generation + 1
 
 
 def test_contextual_search_embeds_envelope_while_analysis_embeds_source(

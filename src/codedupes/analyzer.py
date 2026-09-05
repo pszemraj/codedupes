@@ -698,6 +698,21 @@ class CodeAnalyzer:
         :param document_texts: Optional contextual texts aligned with ``semantic_units``.
         :return: ``None``.
         """
+        # Missing units are not authoritative deletions when extraction could
+        # not observe the requested source, including explicit file targets.
+        if any(
+            diagnostic.code
+            in {
+                "read-error",
+                "parse-error",
+                "invalid-utf8",
+                "partial-parse",
+                "unit-parse-error",
+                "walk-error",
+            }
+            for diagnostic in self._extraction_diagnostics
+        ):
+            return
         stats = self._embedding_stats
         identity = self._embedding_space_identity
         if (

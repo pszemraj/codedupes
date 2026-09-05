@@ -806,6 +806,25 @@ class CodeExtractor:
             token_hash=token_hash,
         )
 
+    def _report_walk_error(self, error: OSError) -> None:
+        """Record a directory traversal failure as incomplete extraction.
+
+        :param error: Filesystem error raised while scanning a directory.
+        :return: ``None``.
+        """
+        directory = Path(error.filename) if error.filename is not None else self.root
+        message = f"Could not scan directory {directory}: {error}"
+        logger.warning(message)
+        self.diagnostics.append(
+            ExtractionDiagnostic(
+                file_path=directory,
+                language="unknown",
+                message=message,
+                severity="warning",
+                code="walk-error",
+            )
+        )
+
     def extract_all(self) -> list[CodeUnit]:
         """Extract all supported code units from the configured directory tree.
 
@@ -816,7 +835,9 @@ class CodeExtractor:
         allow_c_header: bool | None = None
         skipped_headers: list[Path] = []
 
-        for dirpath, dirnames, filenames in os.walk(self.root, followlinks=False):
+        for dirpath, dirnames, filenames in os.walk(
+            self.root, followlinks=False, onerror=self._report_walk_error
+        ):
             # Sorted in place so the walk descends deterministically: raw ``os.walk``
             # order is filesystem-dependent and would reorder the reported units.
             dirnames[:] = sorted(name for name in dirnames if not self._is_excluded_dir_name(name))

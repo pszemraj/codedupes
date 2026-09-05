@@ -437,7 +437,7 @@ def test_extract_all_order_is_independent_of_walk_order(tmp_path: Path, monkeypa
         (tmp_path / name).write_text(f"def {Path(name).stem}():\n    return 1\n")
 
     def walk_yielding(order: list[str]) -> Any:
-        def fake_walk(top: str, followlinks: bool = True) -> Any:
+        def fake_walk(top: str, followlinks: bool = True, onerror: Any = None) -> Any:
             yield str(tmp_path), [], list(order)
 
         return fake_walk

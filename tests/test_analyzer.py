@@ -2305,6 +2305,11 @@ def test_skipped_over_context_units_never_enter_the_embedding_cache(
     first = run()
     second = run()
 
+    assert first.embedding_stats is not None
+    assert second.embedding_stats is not None
+    assert first.embedding_stats.manifest_generation == 1
+    assert second.embedding_stats.manifest_generation == 2
+
     # A warm second run must not resurrect the skipped unit from the cache.
     for result in (first, second):
         assert [diagnostic.code for diagnostic in result.semantic_diagnostics] == [
