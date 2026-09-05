@@ -250,8 +250,9 @@ def test_move_file_across_directories_reuses_embeddings(tmp_path, monkeypatch) -
 
 
 @pytest.mark.parametrize("shared_body", [False, True], ids=["unique-body", "shared-body"])
+@pytest.mark.parametrize("excludes", [None, ["*_test.py"]], ids=["default", "excludes"])
 def test_delete_file_removes_its_units_and_findings_without_encoding(
-    tmp_path, monkeypatch, shared_body
+    tmp_path, monkeypatch, shared_body, excludes
 ) -> None:
     kept_source = "def kept(value):\n    return value + 1"
     repo = _write_repo(
@@ -263,12 +264,15 @@ def test_delete_file_removes_its_units_and_findings_without_encoding(
             "src/keep.py": kept_source,
         },
     )
+    if excludes:
+        (repo / "src/ignored_test.py").write_text("def ignored():\n    return 42\n")
     _patch_get_model(monkeypatch, CountingModel())
-    _analyze(repo)
+    initial = _analyze(repo, exclude_patterns=excludes)
+    assert len(initial.units) == 2
     deleted = (repo / "src/remove.py").resolve()
     (repo / "src/remove.py").unlink()
 
-    result = _analyze(repo)
+    result = _analyze(repo, exclude_patterns=excludes)
 
     assert result.embedding_stats is not None
     assert result.embedding_stats.encoded_inputs == 0
@@ -285,14 +289,16 @@ def test_delete_file_removes_its_units_and_findings_without_encoding(
         for duplicate in result.hybrid_duplicates
     )
     assert all(unit.file_path != deleted for unit in result.potentially_unused)
-    _assert_matches_uncached(repo, result)
+    assert _normalized_findings(result) == _normalized_findings(
+        _analyze(repo, embedding_cache=False, exclude_patterns=excludes)
+    )
 
     for _ in range(2):
-        retained = _analyze(repo)
+        retained = _analyze(repo, exclude_patterns=excludes)
         assert retained.embedding_stats is not None
         assert retained.embedding_stats.orphan_rows_retained == expected_orphans
         assert retained.embedding_stats.orphan_rows_collected == 0
-    collected = _analyze(repo)
+    collected = _analyze(repo, exclude_patterns=excludes)
     assert collected.embedding_stats is not None
     assert collected.embedding_stats.orphan_rows_collected == expected_orphans
     assert collected.embedding_stats.orphan_rows_retained == 0
@@ -467,6 +473,13 @@ def test_narrow_rerun_does_not_change_full_scan_shard_rows(tmp_path, monkeypatch
         (
             {
                 "src/public.py": "def public(value):\n    return value + 1",
+                "src/ignored_test.py": "def ignored(value):\n    return value + 2",
+            },
+            {"exclude_patterns": ["*_test.py"]},
+        ),
+        (
+            {
+                "src/public.py": "def public(value):\n    return value + 1",
                 "src/private.py": "def _private(value):\n    return value + 2",
             },
             {"include_private": False},
@@ -490,7 +503,7 @@ def test_narrow_rerun_does_not_change_full_scan_shard_rows(tmp_path, monkeypatch
             {"min_semantic_statements": 2},
         ),
     ],
-    ids=["private-filter", "language-filter", "minimum-statements-filter"],
+    ids=["exclude-filter", "private-filter", "language-filter", "minimum-statements-filter"],
 )
 def test_scope_filter_does_not_age_or_collect_other_selection_rows(
     tmp_path, monkeypatch, files, overrides

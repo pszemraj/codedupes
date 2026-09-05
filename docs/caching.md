@@ -64,7 +64,9 @@ Selections are compared only when candidate settings and the effective runtime v
 
 Directory targets use that directory as their cache scope; file targets use their parent. Thus `check ./src` and `check ./src/a.py` share a shard, while `check .` uses another.
 
-A file target or directory scan with explicit excludes publishes an incomplete observation. It merges into the prior selection instead of deleting unseen siblings. A single-file scan replaces only that file's baseline slice, so observed edits or eligibility changes can orphan old keys. It neither advances the complete-scan clock nor refreshes the pin age of unseen units.
+A successful directory scan is complete for its selection, including explicit excludes. Repeated scans with the same exclude patterns detect deletions and age orphaned rows; changing the patterns establishes a separate baseline.
+
+A file target publishes an incomplete observation. It merges into the prior selection instead of deleting unseen siblings. A single-file scan replaces only that file's baseline slice, so observed edits or eligibility changes can orphan old keys. It neither advances the complete-scan clock nor refreshes the pin age of unseen units.
 
 ### Orphan collection
 

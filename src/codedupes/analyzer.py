@@ -757,7 +757,9 @@ class CodeAnalyzer:
                 stats.cache_revision,
                 selection=selection,
                 units=unit_keys,
-                complete_scan=path.is_dir() and self.config.exclude_patterns is None,
+                # Excludes belong to the selection digest; a successful walk
+                # fully observes that selection even when it omits files.
+                complete_scan=path.is_dir(),
                 unit_paths={unit.uid: str(unit.file_path) for unit in semantic_units},
                 observed_files=(str(path),) if path.is_file() else (),
             )
