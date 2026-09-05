@@ -10,6 +10,7 @@ from typing import Any
 import pytest
 
 from codedupes import analyzer as analyzer_module
+from codedupes import semantic as semantic_module
 from codedupes.analyzer import AnalyzerConfig, CodeAnalyzer
 from codedupes.embedding_cache import INDEX_FILENAME, EmbeddingCache
 from codedupes.models import AnalysisResult, CodeUnit
@@ -489,6 +490,56 @@ def test_scope_filter_does_not_age_or_collect_other_selection_rows(
     assert default_again.embedding_stats.requested_rows == initial_count
     assert default_again.embedding_stats.encoded_inputs == 0
     assert default_again.embedding_stats.model_loaded is False
+
+
+@pytest.mark.parametrize(
+    "search_document",
+    [None, "source", "contextual"],
+    ids=["check", "search-source", "search-contextual"],
+)
+def test_runtime_variant_switch_preserves_warm_corpus(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, search_document: str | None
+) -> None:
+    """Switching precision must not orphan another variant's unchanged vectors."""
+    repo = _write_repo(
+        tmp_path,
+        {
+            "a.py": "def alpha(value):\n    return value + 1",
+            "b.py": "def beta(value):\n    return value + 2",
+        },
+    )
+    model = CountingModel()
+    model_loads = _patch_get_model(monkeypatch, model)
+    dtype_variant = ""
+    monkeypatch.setattr(
+        semantic_module, "_dtype_variant_for", lambda *_args, **_kwargs: dtype_variant
+    )
+
+    def run() -> AnalysisResult | CodeAnalyzer:
+        """Run the same corpus selection under the current runtime variant."""
+        if search_document is None:
+            return _analyze(repo)
+        return _index(repo, search_document=search_document)
+
+    initial = run()
+    assert initial.embedding_stats is not None
+    assert initial.embedding_stats.encoded_inputs == 2
+
+    dtype_variant = "dtype=torch.bfloat16"
+    for _ in range(4):
+        changed = run()
+        assert changed.embedding_stats is not None
+        assert changed.embedding_stats.orphan_rows_retained == 0
+        assert changed.embedding_stats.orphan_rows_collected == 0
+
+    dtype_variant = ""
+    restored = run()
+    assert restored.embedding_stats is not None
+    assert restored.embedding_stats.cache_hit_rows == 2
+    assert restored.embedding_stats.encoded_inputs == 0
+    assert restored.embedding_stats.model_loaded is False
+    assert model_loads["count"] == 2
+    assert len(model.encode_calls) == 2
 
 
 def test_incomplete_scans_do_not_refresh_unseen_sibling_pins(tmp_path, monkeypatch) -> None:

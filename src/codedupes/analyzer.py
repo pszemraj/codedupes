@@ -721,6 +721,7 @@ class CodeAnalyzer:
             "exclude_patterns": self.config.exclude_patterns,
             "semantic_task": semantic_task,
             "instruction_prefix": self.config.instruction_prefix,
+            "runtime_variant": identity.runtime_variant,
             "search_document": search_document,
         }
         selection = hashlib.blake2b(
