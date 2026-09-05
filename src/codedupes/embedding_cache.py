@@ -213,13 +213,9 @@ class _ShardData:
             return
         dim = self.vectors.shape[1]
         start_row = self.vectors.shape[0]
-        new_rows = np.stack(
-            [
-                np.ascontiguousarray(vector, dtype=np.float32).reshape(dim)
-                for _key, vector in entries
-            ],
-            axis=0,
-        )
+        new_rows = np.empty((len(entries), dim), dtype=np.float32)
+        for offset, (_key, vector) in enumerate(entries):
+            new_rows[offset] = np.asarray(vector, dtype=np.float32).reshape(dim)
         self.vectors = np.concatenate([self.vectors, new_rows], axis=0)
         for offset, (key, _vector) in enumerate(entries):
             self.keys[key] = start_row + offset
@@ -771,28 +767,27 @@ def _validate_shard_metadata(payload: Any) -> dict[str, Any] | None:
         return None
     if isinstance(dim, bool) or not isinstance(dim, int) or dim < 1:
         return None
-    if not isinstance(keys_map, dict) or not all(
-        isinstance(key, str) and not isinstance(row, bool) and isinstance(row, int) and row >= 0
-        for key, row in keys_map.items()
-    ):
+    if not isinstance(keys_map, dict):
         return None
-    if (
-        not isinstance(namespaces, dict)
-        or set(namespaces) != set(keys_map)
-        or not all(
-            isinstance(key, str) and isinstance(namespace, str)
-            for key, namespace in namespaces.items()
-        )
-    ):
+    for key, row in keys_map.items():
+        if not isinstance(key, str):
+            return None
+        if isinstance(row, bool) or not isinstance(row, int) or row < 0:
+            return None
+
+    # Every indexed row needs a namespace and digest for that same content key.
+    # Row bounds are checked later, once the corresponding matrix is loaded.
+    cache_keys = set(keys_map)
+    if not isinstance(namespaces, dict) or set(namespaces) != cache_keys:
         return None
-    if (
-        not isinstance(digests, dict)
-        or set(digests) != set(keys_map)
-        or not all(
-            isinstance(key, str) and isinstance(digest, str) for key, digest in digests.items()
-        )
-    ):
+    for namespace in namespaces.values():
+        if not isinstance(namespace, str):
+            return None
+    if not isinstance(digests, dict) or set(digests) != cache_keys:
         return None
+    for digest in digests.values():
+        if not isinstance(digest, str):
+            return None
     if not isinstance(generation, str) or _GENERATION_PATTERN.fullmatch(generation) is None:
         return None
 
@@ -875,15 +870,9 @@ def _index_stat_signature(index_path: Path) -> tuple[int, int, int] | None:
     return (stat_result.st_ino, stat_result.st_mtime_ns, stat_result.st_size)
 
 
-# Per-process reuse of the last validated snapshot for each shard directory,
-# keyed by its resolved string path. ``os.replace`` (the only way ``index.json``
-# is ever updated - see ``_publish_index``) always targets a fresh inode, so a
-# matching (inode, mtime_ns, size) signature on the *current* index.json proves
-# no writer has replaced it since the cached snapshot was built; a mismatch
-# always falls through to a full re-read. This trades an unbounded-lifetime,
-# one-entry-per-shard dict for skipping a JSON parse + mmap open on every
-# repeated lookup against an unchanged shard, which matters because callers
-# like put_many-driven query-cache misses call _read_shard once per lookup.
+# Keep one validated snapshot per shard in this process. Writers atomically
+# replace index.json, so its stat signature lets repeated lookups reuse a
+# snapshot without parsing JSON and opening the vector mmap again.
 _shard_read_cache: dict[str, tuple[tuple[int, int, int], _ShardData]] = {}
 
 
@@ -894,11 +883,9 @@ def _read_shard(shard_dir: Path) -> _ShardData | None:
     pointing past the end of its matrix, schema drift, and so on) is treated as an
     empty shard rather than raised, matching the never-fatal cache contract.
 
-    Reuses the last validated snapshot for this shard directory when
-    ``index.json``'s (inode, mtime, size) signature is unchanged since that
-    snapshot was built (see :data:`_shard_read_cache`); any concurrent writer
-    replacing the index is always visible as a signature change before the
-    stale snapshot could be returned.
+    Reuses the last validated snapshot when the index's stat signature is
+    unchanged. A writer can advance the shard after this check; the returned
+    snapshot still pairs its own row map, matrix, and source commit together.
 
     :param shard_dir: Shard directory to load.
     :return: Validated shard data, or ``None`` when the shard is missing, unreadable,
@@ -912,8 +899,10 @@ def _read_shard(shard_dir: Path) -> _ShardData | None:
         return None
 
     cached = _shard_read_cache.get(cache_key)
-    if cached is not None and cached[0] == pre_signature:
-        return cached[1]
+    if cached is not None:
+        cached_signature, cached_shard = cached
+        if cached_signature == pre_signature:
+            return cached_shard
 
     try:
         index = json.loads(index_path.read_text(encoding="utf-8"))
@@ -924,6 +913,8 @@ def _read_shard(shard_dir: Path) -> _ShardData | None:
         # Memory-mapped so sparse lookups (for example a single query key) only
         # fault in the rows they touch; hit rows are copied before being returned.
         vectors = np.load(vectors_path, mmap_mode="r", allow_pickle=False)
+        # A writer may have switched the index while the matrix was opening.
+        # Confirm its generation before trusting any of the row mappings.
         confirmed_index = json.loads(index_path.read_text(encoding="utf-8"))
     except Exception as exc:  # noqa: BLE001 - corrupt on-disk data can fail in many ways
         warn_once("read shard", exc)
@@ -946,9 +937,8 @@ def _read_shard(shard_dir: Path) -> _ShardData | None:
         source_commit=metadata["source_commit"],
     )
 
-    # Only cache when the index's stat signature is identical before and after
-    # this whole read: any writer racing the read is caught by a signature
-    # change, so a stale snapshot is never published into the cache.
+    # This snapshot is internally consistent. Remember it for reuse only when
+    # the index stayed unchanged throughout the read; otherwise re-read next time.
     post_signature = _index_stat_signature(index_path)
     if post_signature == pre_signature:
         _shard_read_cache[cache_key] = (post_signature, shard_data)
@@ -1310,6 +1300,8 @@ def _atomic_write_shard(
             np.save(handle, np.ascontiguousarray(vectors, dtype=np.float32))
         os.replace(vectors_tmp, vectors_path)
 
+        # Readers discover generations through the index. Publish it only after
+        # the complete matrix is in place, with row maps and provenance together.
         _publish_index(
             shard_dir,
             {
@@ -1377,20 +1369,18 @@ def _rebuild_matrix_retaining(
     :return: Rebuilt ``(vectors, keys_map, namespaces, digests)`` with densely
         renumbered rows.
     """
-    new_vectors = (
-        np.stack(
-            [
-                np.ascontiguousarray(vectors[keys_map[key]], dtype=np.float32)
-                for key in retained_keys
-            ],
-            axis=0,
-        )
-        if retained_keys
-        else np.empty((0, dim), dtype=np.float32)
-    )
-    new_keys_map = {key: row for row, key in enumerate(retained_keys)}
-    new_namespaces = {key: namespaces[key] for key in retained_keys}
-    new_digests = {key: digests[key] for key in retained_keys}
+    new_vectors = np.empty((len(retained_keys), dim), dtype=np.float32)
+    new_keys_map = {}
+    new_namespaces = {}
+    new_digests = {}
+    # Compaction changes row numbers, not content keys or row contents. Copy each
+    # retained vector and its metadata together in the requested row order.
+    for new_row, key in enumerate(retained_keys):
+        old_row = keys_map[key]
+        new_vectors[new_row] = vectors[old_row]
+        new_keys_map[key] = new_row
+        new_namespaces[key] = namespaces[key]
+        new_digests[key] = digests[key]
     return new_vectors, new_keys_map, new_namespaces, new_digests
 
 
@@ -1425,10 +1415,10 @@ def _write_shard_entries(
     if not entries:
         return
     try:
+        # One row per content key: the last supplied value wins, while insertion
+        # order keeps the first occurrence's position in this batch.
         unique_entries = list(dict(entries).items())
-        entry_dim = (
-            int(np.asarray(unique_entries[0][1]).reshape(-1).shape[0]) if unique_entries else None
-        )
+        entry_dim = int(np.asarray(unique_entries[0][1]).size)
 
         _ensure_shard_directory(shard_dir)
         with _shard_write_lock(shard_dir) as acquired:
@@ -1442,27 +1432,17 @@ def _write_shard_entries(
                 and existing.keys
                 and existing.source_commit != expected_source_commit
             ):
-                # Time-of-check/time-of-use guard: between this writer's
-                # pre-inference commit confirmation and now, another process
-                # re-confirmed the shard under a different checkpoint (or the
-                # rows carry no provenance at all). Publishing this batch would
-                # assemble two checkpoints into one generation, so the stale
-                # batch is dropped; the next run re-confirms and recomputes.
+                # Another process may have rebuilt the shard while this batch
+                # was encoding. Its checkpoint must still match before we merge.
                 logger.warning(
                     f"Discarding {len(unique_entries)} computed embeddings for {shard_dir.name}: "
                     "the shard's recorded source commit changed while they were being computed"
                 )
                 return
-            if existing is not None and (
-                entry_dim is None or existing.vectors.shape[1] == entry_dim
-            ):
+            if existing is not None and existing.vectors.shape[1] == entry_dim:
                 dim = int(existing.vectors.shape[1])
-                # existing may be a cached _read_shard snapshot shared with other
-                # callers (see _read_shard's freshness cache): copy the key maps
-                # before mutating so a write can never corrupt a cached read.
-                # existing.vectors itself is only ever replaced wholesale below
-                # (never mutated in place while still possibly aliased), so it is
-                # safe to reuse directly here.
+                # Readers may share this snapshot. Copy its maps now; mutation
+                # methods replace the matrix or copy its read-only mmap first.
                 working = _ShardData(
                     vectors=existing.vectors,
                     keys=dict(existing.keys),
@@ -1478,8 +1458,6 @@ def _write_shard_entries(
                     else existing.source_commit
                 )
             else:
-                if entry_dim is None:
-                    return
                 if existing is not None:
                     logger.warning(
                         "Embedding cache vector dimension changed from "
@@ -1507,13 +1485,15 @@ def _write_shard_entries(
                 row = working.keys.get(key)
                 if row is None:
                     missing_entries.append((key, vector))
-                elif not _is_finite_row(working.vectors[row]) or working.digests.get(
-                    key
-                ) != _row_digest(working.vectors[row]):
-                    # A poisoned or digest-mismatched stored row is a permanent
-                    # miss for get_many (see its matching checks), so a
-                    # recomputed value for the same key must overwrite it here
-                    # or the unit would re-embed on every future run forever.
+                    continue
+
+                # A valid existing row needs no write. A row rejected by reads
+                # must be repaired or the same key will miss on every future run.
+                cached_vector = working.vectors[row]
+                if not _is_finite_row(cached_vector):
+                    overwrite_entries.append((key, vector))
+                    continue
+                if working.digests[key] != _row_digest(cached_vector):
                     overwrite_entries.append((key, vector))
 
             # overwrite_rows/append_rows update vectors/keys/namespaces/digests
@@ -1523,26 +1503,28 @@ def _write_shard_entries(
 
             capped_namespace = False
             if max_namespace_keys is not None:
-                namespace_keys_by_row = sorted(
-                    (
-                        key
-                        for key, key_namespace in working.namespaces.items()
-                        if key_namespace == namespace
-                    ),
-                    key=working.keys.__getitem__,
-                )
+                # Row order preserves insertion order through compaction. This
+                # namespace uses FIFO eviction; other namespaces keep their rows.
+                namespace_keys_by_row = []
+                for key, key_namespace in working.namespaces.items():
+                    if key_namespace == namespace:
+                        namespace_keys_by_row.append(key)
+                namespace_keys_by_row.sort(key=working.keys.__getitem__)
                 if len(namespace_keys_by_row) > max_namespace_keys:
-                    prune_target = (
-                        max(1, int(max_namespace_keys * _NAMESPACE_PRUNE_TARGET_RATIO))
-                        if max_namespace_keys > 0
-                        else 0
-                    )
+                    # Leave headroom so the next new query does not immediately
+                    # force another full-matrix compaction.
+                    prune_target = 0
+                    if max_namespace_keys > 0:
+                        prune_target = max(
+                            1, int(max_namespace_keys * _NAMESPACE_PRUNE_TARGET_RATIO)
+                        )
                     drop_count = len(namespace_keys_by_row) - prune_target
                     drop_keys = set(namespace_keys_by_row[:drop_count])
-                    retained_keys = sorted(
-                        (key for key in working.keys if key not in drop_keys),
-                        key=working.keys.__getitem__,
-                    )
+                    retained_keys = []
+                    for key in working.keys:
+                        if key not in drop_keys:
+                            retained_keys.append(key)
+                    retained_keys.sort(key=working.keys.__getitem__)
                     working.retain(retained_keys)
                     capped_namespace = True
 
@@ -2000,10 +1982,13 @@ class EmbeddingCache:
                     generation=existing.generation,
                     source_commit=existing.source_commit,
                 )
-                retained_keys = sorted(
-                    (key for key in working.keys if key not in actual_drop),
-                    key=working.keys.__getitem__,
-                )
+                # Preserve row order so GC cannot change FIFO eviction order for
+                # query rows sharing this shard with the corpus vectors.
+                retained_keys = []
+                for key in working.keys:
+                    if key not in actual_drop:
+                        retained_keys.append(key)
+                retained_keys.sort(key=working.keys.__getitem__)
                 working.retain(retained_keys)
                 _atomic_write_shard(
                     shard_dir,
