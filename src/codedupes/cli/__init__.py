@@ -70,7 +70,10 @@ def __getattr__(name: str) -> Any:
 
 
 def main() -> int:
-    """Run the CLI and return its process exit code."""
+    """Run the installed ``codedupes`` command and return its process exit code.
+
+    ``pyproject.toml`` registers this callable as the supported console entry point.
+    """
     argv = sys.argv[1:]
     try:
         result = cli.main(args=argv, prog_name="codedupes", standalone_mode=False)
@@ -113,7 +116,3 @@ __all__ = [
     "search_command",
     "setup_logging",
 ]
-
-
-if __name__ == "__main__":
-    sys.exit(main())

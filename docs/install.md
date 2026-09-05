@@ -44,13 +44,9 @@ See [Polyglot language support](polyglot-languages.md) for parser architecture, 
 Use the standard install on macOS 14.0+ and verify that the installed PyTorch wheel was built with MPS support:
 
 ```bash
-python - <<'PY'
-import torch
-
-print("torch", torch.__version__)
-print("mps_built", torch.backends.mps.is_built())
-print("mps_available", torch.backends.mps.is_available())
-PY
+codedupes info
 ```
+
+The output includes the PyTorch version and `MPS built/available` status.
 
 Continue with [accelerator behavior](accelerators.md), [model profiles](model-profiles.md), or the [CLI reference](cli.md).

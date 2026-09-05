@@ -33,7 +33,7 @@ With `wasm-pack` installed, run from the same fixture directory:
 
 ```sh
 wasm-pack build --target web --out-dir web/pkg --release
-python -m http.server 8080
+make serve
 ```
 
 Open `http://localhost:8080/web/`. Serve the project over HTTP rather than opening `web/index.html` directly; the generated JavaScript module needs to fetch its `.wasm` file.

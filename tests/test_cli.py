@@ -321,11 +321,17 @@ def test_cli_json_discards_direct_backend_stderr_on_success(monkeypatch, tmp_pat
 
 def _run_merged_cli(args: list[str], setup: str = "") -> subprocess.CompletedProcess[str]:
     """Run the real CLI in a subprocess with stderr merged into stdout."""
-    script = (
-        "from codedupes import cli\n" + textwrap.dedent(setup) + "\nraise SystemExit(cli.main())"
-    )
+    command = ["codedupes", *args]
+    if setup:
+        # Fault injection needs an interpreter; ordinary runs test the installed command.
+        script = (
+            "from codedupes import cli\n"
+            + textwrap.dedent(setup)
+            + "\nraise SystemExit(cli.main())"
+        )
+        command = [sys.executable, "-c", script, *args]
     return subprocess.run(
-        [sys.executable, "-c", script, *args],
+        command,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
@@ -1222,12 +1228,11 @@ def test_cli_no_subcommand_token_exits_usage_error(token):
 
 
 def test_cli_no_args_prints_help_and_exits_usage_error():
-    runner = CliRunner(env={"COLUMNS": "200"})
-    result = runner.invoke(cli.cli, [])
-    assert result.exit_code == 2
-    assert "Commands" in result.output
-    assert "check" in result.output
-    assert "search" in result.output
+    result = _run_merged_cli([])
+    assert result.returncode == 2
+    assert "Commands" in result.stdout
+    assert "check" in result.stdout
+    assert "search" in result.stdout
 
 
 @pytest.mark.parametrize(
@@ -1495,17 +1500,15 @@ def test_cli_surfaces_analyzer_config_validation_error(monkeypatch, tmp_path, co
 
 
 def test_cli_help_and_version():
-    runner = CliRunner(env={"COLUMNS": "200"})
+    help_result = _run_merged_cli(["--help"])
+    assert help_result.returncode == 0
+    assert "Commands" in help_result.stdout
+    assert "check" in help_result.stdout
+    assert "search" in help_result.stdout
 
-    help_result = runner.invoke(cli.cli, ["--help"])
-    assert help_result.exit_code == 0
-    assert "Commands" in help_result.output
-    assert "check" in help_result.output
-    assert "search" in help_result.output
-
-    version_result = runner.invoke(cli.cli, ["--version"])
-    assert version_result.exit_code == 0
-    assert version_result.output.lower().startswith("codedupes")
+    version_result = _run_merged_cli(["--version"])
+    assert version_result.returncode == 0
+    assert version_result.stdout.lower().startswith("codedupes")
 
 
 def test_cli_search_help_is_search_specific() -> None:

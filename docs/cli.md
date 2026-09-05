@@ -1,5 +1,7 @@
 # CLI reference
 
+The supported command-line entry point is `codedupes`. Examples assume it is installed and available on `PATH`.
+
 See [Output and exit codes](output.md) for JSON and process status, [Polyglot language support](polyglot-languages.md) for extraction semantics, [Analysis defaults](analysis-defaults.md) for heuristics, [Model profiles](model-profiles.md) for semantic defaults, [Accelerators](accelerators.md) for device behavior, and [Embedding cache](caching.md) for persistent cache behavior.
 
 ## `codedupes check <path>`
