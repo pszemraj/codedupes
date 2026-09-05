@@ -989,25 +989,40 @@ def test_cli_search_defaults_to_code_retrieval_task(monkeypatch, tmp_path):
     assert captured[0].search_document == "source"
 
 
-def test_cli_contextual_search_document_passes_through(monkeypatch, tmp_path):
+def test_cli_contextual_search_requires_explicit_threshold(monkeypatch, tmp_path):
     path = tmp_path / "sample.py"
     path.write_text("def entry():\n    return 1\n")
-    captured = []
-    patch_cli_analyzer(
-        monkeypatch,
-        cli,
-        analyze_result=lambda: _build_result(tmp_path),
-        search_results=[(_build_unit(tmp_path), 0.99)],
-        captured_configs=captured,
-    )
+    model = CountingModel()
+    _patch_get_model(monkeypatch, model)
+    args = [
+        "search",
+        str(path),
+        "entry",
+        "--search-document",
+        "contextual",
+        "--min-statements",
+        "0",
+        "--device",
+        "cpu",
+        "--json",
+    ]
+    runner = CliRunner()
+    missing = runner.invoke(cli.cli, args)
 
-    result = CliRunner().invoke(
-        cli.cli,
-        ["search", str(path), "entry", "--search-document", "contextual"],
-    )
+    assert missing.exit_code == 1
+    assert "contextual" in missing.output
+    assert "explicit threshold" in missing.output
+    assert "--semantic-threshold" in missing.output
+    assert len(model.encode_calls) == 1
+    assert model.encode_calls[0][0].startswith("language: python\n")
 
-    assert result.exit_code == 0
-    assert captured[0].search_document == "contextual"
+    for option in ("--semantic-threshold", "--threshold"):
+        result = runner.invoke(cli.cli, [*args, option, "0.0"])
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.output)
+        assert payload["summary"]["results"] == 1
+    assert len(model.encode_calls) == 2
+    assert model.encode_calls[-1] == ["entry"]
 
 
 @pytest.mark.parametrize("command_tail", [[], ["entry"]], ids=["check", "search"])

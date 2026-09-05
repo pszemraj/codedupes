@@ -51,7 +51,7 @@ Examples:
 codedupes search ./src "sum values in a list" --top-k 5
 codedupes search ./src "normalize request payload" --json
 codedupes search ./src "parse json payload" --semantic-threshold 0.6 --top-k 20
-codedupes search ./src "refund validation" --search-document contextual
+codedupes search ./src "refund validation" --search-document contextual --semantic-threshold 0.55
 ```
 
 Options, in addition to the [shared options](#options-shared-by-check-and-search):
@@ -59,7 +59,7 @@ Options, in addition to the [shared options](#options-shared-by-check-and-search
 - `--top-k <int>`: Number of results (default `10`)
 - `--threshold <float>`: Shared semantic threshold override
 - `--semantic-task <name>`: Semantic task mode for query/document embeddings (default `code-retrieval`)
-- `--search-document <source|contextual>`: Choose the [search document representation](python-api.md#semantic-query-search), source only by default
+- `--search-document <source|contextual>`: Choose the [search document representation](python-api.md#semantic-query-search), source only by default. Contextual search requires an explicit `--semantic-threshold` or `--threshold`; tune the value against representative queries
 
 ## Options shared by `check` and `search`
 

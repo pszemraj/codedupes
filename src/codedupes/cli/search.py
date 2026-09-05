@@ -70,7 +70,10 @@ from ._render import _print_diagnostics, print_search_results
     show_default=True,
     panel=Panel.SEMANTIC,
     show_envvar=True,
-    help="Text representation embedded for each search-index unit",
+    help=(
+        "Text representation embedded for each search-index unit; "
+        "contextual requires an explicit threshold"
+    ),
 )
 @semantic_options()
 @option_panels

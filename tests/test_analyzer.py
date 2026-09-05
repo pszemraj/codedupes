@@ -1442,8 +1442,9 @@ def test_search_threshold_argument_overrides_the_config_for_one_call(
     assert captured["query_threshold"] == 0.31
 
 
+@pytest.mark.parametrize("search_document", ["source", "contextual"])
 def test_search_threshold_defaults_to_none_and_honors_explicit_config(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch, search_document
 ) -> None:
     source = "def entry(x):\n    return x + 1\n"
     project = create_project(tmp_path, source)
@@ -1460,20 +1461,48 @@ def test_search_threshold_defaults_to_none_and_honors_explicit_config(
         "find_similar_to_query",
         _capture_query_runner(captured),
     )
+    monkeypatch.setattr(
+        analyzer_module,
+        "compute_embeddings",
+        lambda units, **kwargs: (
+            np.zeros((len(units), 2), dtype=np.float32),
+            _embedding_identity_from_kwargs(kwargs),
+        ),
+    )
 
     base_config = {
         "run_traditional": False,
         "run_semantic": True,
         "run_unused": False,
         "min_semantic_statements": 0,
+        "search_document": search_document,
     }
     analyzer = CodeAnalyzer(AnalyzerConfig(**base_config))
+    analyzer.index(project)
+    if search_document == "contextual":
+        with pytest.raises(ValueError, match="contextual.*explicit threshold"):
+            analyzer.search("entry")
+        assert "query_threshold" not in captured
+        analyzer.search("entry", threshold=0.0)
+        assert captured["query_threshold"] == 0.0
+        assert analyzer.config.semantic_threshold is None
+
+        # Changing future indexing options does not change the current corpus.
+        analyzer.config.search_document = "source"
+        with pytest.raises(ValueError, match="contextual.*explicit threshold"):
+            analyzer.search("entry")
+        analyzer.config.search_document = "contextual"
+    else:
+        analyzer.search("entry")
+        assert captured["query_threshold"] is None
+
+    # analyze() replaces the corpus with bare source in either document mode.
     analyzer.analyze(project)
     analyzer.search("entry")
     assert captured["query_threshold"] is None
 
     explicit = CodeAnalyzer(AnalyzerConfig(semantic_threshold=0.7, **base_config))
-    explicit.analyze(project)
+    explicit.index(project)
     explicit.search("entry")
     assert captured["query_threshold"] == 0.7
 

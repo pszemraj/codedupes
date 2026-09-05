@@ -602,6 +602,7 @@ class CodeAnalyzer:
         self._embeddings: np.ndarray | None = None
         self._semantic_units: list[CodeUnit] | None = None
         self._resolved_search_semantic_task: str | None = None
+        self._resolved_search_document: SearchDocumentMode = "source"
         self._embedding_space_identity: EmbeddingSpaceIdentity | None = None
         self._embedding_stats: EmbeddingRunStats | None = None
         self._cache_scope: Path | None = None
@@ -643,6 +644,7 @@ class CodeAnalyzer:
         self._embeddings = None
         self._semantic_units = None
         self._resolved_search_semantic_task = None
+        self._resolved_search_document = "source"
         self._embedding_space_identity = None
         self._embedding_stats = None
         self._cache_scope = cache_scope
@@ -1112,6 +1114,7 @@ class CodeAnalyzer:
         self._resolved_search_semantic_task = (
             self.config.semantic_task or DEFAULT_SEARCH_SEMANTIC_TASK
         )
+        self._resolved_search_document = self.config.search_document
         semantic_candidates = self._select_semantic_candidates(units)
         self._semantic_units = semantic_candidates
         overflow: list[SemanticContextOverflow] = []
@@ -1184,14 +1187,30 @@ class CodeAnalyzer:
         which no search default is calibrated on prompt-sensitive models, so
         those combinations require ``threshold``.
 
+        Contextual indexes require an explicit per-call or configured threshold
+        because the source-only search default is not calibrated for their input.
+
         :param query: Search query string.
         :param top_k: Maximum results to return.
         :param threshold: Minimum cosine similarity for this call only.
         :return: List of code units and cosine scores.
+        :raises ValueError: If the corpus has no calibrated search default and
+            neither ``threshold`` nor ``config.semantic_threshold`` is supplied.
         """
         if self._units is None or self._embeddings is None:
             raise RuntimeError(
                 "Must run index() or analyze() with run_semantic=True before search()."
+            )
+
+        resolved_threshold = threshold if threshold is not None else self.config.semantic_threshold
+        # Validate the indexed representation: analyze() always embeds source,
+        # and changing a future index's config does not change the current corpus.
+        if self._resolved_search_document == "contextual" and resolved_threshold is None:
+            raise ValueError(
+                "Search over contextual documents requires an explicit threshold; "
+                "the source-only search default is not calibrated for this representation. "
+                "Pass search(threshold=...), set semantic_threshold, or use "
+                "--semantic-threshold on the CLI."
             )
 
         if not self._semantic_units:
@@ -1215,7 +1234,7 @@ class CodeAnalyzer:
                 top_k=top_k,
                 revision=self.config.model_revision,
                 trust_remote_code=self.config.trust_remote_code,
-                threshold=threshold if threshold is not None else self.config.semantic_threshold,
+                threshold=resolved_threshold,
                 semantic_task=self._resolved_search_semantic_task,
                 device=self.config.device,
                 mps_fallback=self.config.mps_fallback,
