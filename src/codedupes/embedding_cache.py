@@ -8,6 +8,18 @@ units keep hitting the cache across runs and partial edits only miss for units t
 actually changed. Every public operation is wrapped so on-disk corruption or
 filesystem errors never raise into the caller; an untrusted shard is treated as
 empty and rebuilt on the next write.
+
+The cache tracks three different things:
+
+* A unit UID identifies one occurrence of code. Two UIDs can share a content key.
+* A content key identifies reusable embedding input. ``index.json`` maps it to
+  a vector row; compaction can change that row number without changing the key.
+* ``manifest.json`` records which units each analysis selection last observed.
+  It counts unit moves/deletions separately from keys that become unreferenced.
+
+There are also two independent generations: vector generations are immutable
+snapshot IDs, while the manifest generation counts complete corpus scans. Only
+the scan counter ages orphaned keys toward collection.
 """
 
 from __future__ import annotations
@@ -63,10 +75,10 @@ _cache_warning_collector: ContextVar[list[str] | None] = ContextVar(
 class CorpusSelectionManifest:
     """Describe one selection's embedded corpus and aged unreferenced keys."""
 
-    last_seen_generation: int
+    last_seen_generation: int  # Last complete scan, or the selection's first observation.
     complete_scan: bool
-    units: dict[str, str]
-    orphans: dict[str, int]
+    units: dict[str, str]  # Unit UID -> shared content key.
+    orphans: dict[str, int]  # Content key -> generation when it became unreferenced.
     unit_paths: dict[str, str] = field(default_factory=dict)
 
 
@@ -83,9 +95,9 @@ class CorpusManifest:
 class ManifestDiff:
     """Classify unit-identity changes between two corpus manifests."""
 
-    moved: list[str]
-    deleted: list[str]
-    orphaned: set[str]
+    moved: list[str]  # New UIDs matched to departed UIDs by content key.
+    deleted: list[str]  # Departed UIDs left after matching moves.
+    orphaned: set[str]  # Previous content keys with no current reference.
 
 
 @dataclass(frozen=True)
@@ -108,27 +120,44 @@ def diff_manifest(
     :param current: Current unit-to-cache-key mapping.
     :return: Classified manifest transition.
     """
-    old = previous.units if previous is not None else {}
-    old_keys = set(old.values())
-    new_keys = set(current.values())
-    departed_uids_by_key: dict[str, list[str]] = {}
-    for uid, key in old.items():
-        if uid not in current:
-            departed_uids_by_key.setdefault(key, []).append(uid)
+    previous_units = previous.units if previous is not None else {}
 
-    # Each inferred move consumes one departure. Other departed units are
-    # deletions even when a surviving copy still references their content key.
-    moved: list[str] = []
+    # First find missing occurrences, grouped by their embedding content. A
+    # shared key can have several departed UIDs, each needing its own match.
+    departed_uids_by_key: dict[str, list[str]] = {}
+    for uid, key in previous_units.items():
+        if uid in current:
+            continue
+        departed_uids_by_key.setdefault(key, []).append(uid)
+
+    # Infer a move only when a new UID can consume one departed UID with the
+    # same content. An extra copy without a departure is an addition, not a move.
+    moved_uids: list[str] = []
+    moved_from_uids: set[str] = set()
     for uid, key in current.items():
-        departed = departed_uids_by_key.get(key)
-        if uid not in old and departed:
-            departed.pop()
-            moved.append(uid)
-    deleted_uids = {uid for departed in departed_uids_by_key.values() for uid in departed}
+        if uid in previous_units:
+            continue
+        matching_departures = departed_uids_by_key.get(key)
+        if not matching_departures:
+            continue
+        moved_from_uids.add(matching_departures.pop())
+        moved_uids.append(uid)
+
+    # Unmatched departures are deletions even if another UID still shares their
+    # vector. Keep the previous manifest's order for deterministic reporting.
+    deleted_uids: list[str] = []
+    for uid in previous_units:
+        if uid in current or uid in moved_from_uids:
+            continue
+        deleted_uids.append(uid)
+
+    # Row reclamation depends on content references, independently of UID counts.
+    previous_keys = set(previous_units.values())
+    current_keys = set(current.values())
     return ManifestDiff(
-        moved=moved,
-        deleted=[uid for uid in old if uid in deleted_uids],
-        orphaned=old_keys - new_keys,
+        moved=moved_uids,
+        deleted=deleted_uids,
+        orphaned=previous_keys - current_keys,
     )
 
 
@@ -1032,24 +1061,34 @@ def _read_corpus_manifest(shard_dir: Path) -> CorpusManifest | None:
         units = entry.get("units")
         orphans = entry.get("orphans")
         unit_paths = entry.get("unit_paths")
-        if (
-            not isinstance(last_seen_generation, int)
-            or not 0 <= last_seen_generation <= manifest_generation
-            or not isinstance(complete_scan, bool)
-            or not isinstance(units, dict)
-            or not all(isinstance(uid, str) and isinstance(key, str) for uid, key in units.items())
-            or not isinstance(orphans, dict)
-            or not all(
-                isinstance(key, str) and isinstance(age, int) and age >= 0
-                for key, age in orphans.items()
-            )
-            or not isinstance(unit_paths, dict)
-            or not all(
-                isinstance(uid, str) and isinstance(path, str) and uid in units
-                for uid, path in unit_paths.items()
-            )
-        ):
+        if not isinstance(last_seen_generation, int):
             return None
+        if not 0 <= last_seen_generation <= manifest_generation:
+            return None
+        if not isinstance(complete_scan, bool):
+            return None
+
+        # Validate each map separately so its meaning and membership rules are
+        # visible. In particular, an orphan stores a scan generation, not an age.
+        if not isinstance(units, dict):
+            return None
+        for uid, key in units.items():
+            if not isinstance(uid, str) or not isinstance(key, str):
+                return None
+        if not isinstance(orphans, dict):
+            return None
+        for key, orphaned_generation in orphans.items():
+            if not isinstance(key, str) or not isinstance(orphaned_generation, int):
+                return None
+            if orphaned_generation < 0:
+                return None
+        if not isinstance(unit_paths, dict):
+            return None
+        for uid, path in unit_paths.items():
+            if not isinstance(uid, str) or not isinstance(path, str):
+                return None
+            if uid not in units:
+                return None
         parsed[selection] = CorpusSelectionManifest(
             last_seen_generation=last_seen_generation,
             complete_scan=complete_scan,
@@ -1071,23 +1110,21 @@ def _write_corpus_manifest(shard_dir: Path, manifest: CorpusManifest) -> None:
     :param manifest: Complete manifest to publish.
     :return: ``None``.
     """
-    atomic_write_json(
-        shard_dir / MANIFEST_FILENAME,
-        {
-            "schema": manifest.schema,
-            "generation": manifest.generation,
-            "selections": {
-                selection: {
-                    "last_seen_generation": entry.last_seen_generation,
-                    "complete_scan": entry.complete_scan,
-                    "units": entry.units,
-                    "orphans": entry.orphans,
-                    "unit_paths": entry.unit_paths,
-                }
-                for selection, entry in manifest.selections.items()
-            },
-        },
-    )
+    selections = {}
+    for name, entry in manifest.selections.items():
+        selections[name] = {
+            "last_seen_generation": entry.last_seen_generation,
+            "complete_scan": entry.complete_scan,
+            "units": entry.units,
+            "orphans": entry.orphans,
+            "unit_paths": entry.unit_paths,
+        }
+    payload = {
+        "schema": manifest.schema,
+        "generation": manifest.generation,
+        "selections": selections,
+    }
+    atomic_write_json(shard_dir / MANIFEST_FILENAME, payload)
 
 
 def _manifest_referenced_keys(manifest: CorpusManifest) -> set[str]:
@@ -1096,12 +1133,13 @@ def _manifest_referenced_keys(manifest: CorpusManifest) -> set[str]:
     :param manifest: Multi-selection corpus manifest.
     :return: Cache keys pinned by at least one active selection.
     """
-    return {
-        key
-        for selection in manifest.selections.values()
-        if manifest.generation - selection.last_seen_generation < ORPHAN_GC_GENERATIONS
-        for key in selection.units.values()
-    }
+    referenced_keys: set[str] = set()
+    for selection in manifest.selections.values():
+        scans_since_refresh = manifest.generation - selection.last_seen_generation
+        if scans_since_refresh >= ORPHAN_GC_GENERATIONS:
+            continue
+        referenced_keys.update(selection.units.values())
+    return referenced_keys
 
 
 def _manifest_orphan_keys(manifest: CorpusManifest) -> set[str]:
@@ -1110,7 +1148,57 @@ def _manifest_orphan_keys(manifest: CorpusManifest) -> set[str]:
     :param manifest: Multi-selection corpus manifest.
     :return: Cache keys classified as deleted by at least one selection.
     """
-    return {key for selection in manifest.selections.values() for key in selection.orphans}
+    orphan_keys: set[str] = set()
+    for selection in manifest.selections.values():
+        orphan_keys.update(selection.orphans)
+    return orphan_keys
+
+
+def _manifest_collectable_keys(manifest: CorpusManifest) -> set[str]:
+    """Find unpinned keys whose orphan records have all aged through the grace period.
+
+    :param manifest: Manifest after a complete scan has advanced its generation.
+    :return: Orphaned content keys eligible for row compaction.
+    """
+    # Start with every recorded orphan, then let any active reference or recent
+    # orphan record protect the shared row. The newest orphan record wins.
+    collectable = _manifest_orphan_keys(manifest)
+    collectable.difference_update(_manifest_referenced_keys(manifest))
+    for selection in manifest.selections.values():
+        for key, orphaned_generation in selection.orphans.items():
+            orphan_age = manifest.generation - orphaned_generation
+            if orphan_age < ORPHAN_GC_GENERATIONS:
+                collectable.discard(key)
+    return collectable
+
+
+def _merge_partial_manifest_units(
+    previous: CorpusSelectionManifest,
+    units: dict[str, str],
+    unit_paths: dict[str, str],
+    observed_files: tuple[str, ...],
+) -> tuple[dict[str, str], dict[str, str]]:
+    """Replace observed file slices while retaining units from unseen files.
+
+    :param previous: Selection baseline before the partial scan.
+    :param units: Unit UID-to-content-key observations from this run.
+    :param unit_paths: File paths for the observed units.
+    :param observed_files: Exact file paths fully covered by this scan.
+    :return: Merged unit and path maps for the selection.
+    """
+    observed_file_set = set(observed_files)
+    merged_units = dict(previous.units)
+    for uid in previous.units:
+        if previous.unit_paths.get(uid) in observed_file_set:
+            del merged_units[uid]
+    merged_units.update(units)
+
+    merged_paths = {}
+    for uid, path in previous.unit_paths.items():
+        if uid in merged_units:
+            merged_paths[uid] = path
+    merged_paths.update(unit_paths)
+    return merged_units, merged_paths
 
 
 def _limit_manifest_selections(
@@ -1126,12 +1214,25 @@ def _limit_manifest_selections(
     """
     if len(selections) <= MANIFEST_SELECTION_LIMIT:
         return selections
-    required = {current_selection}
-    required.update(name for name, entry in selections.items() if entry.orphans)
-    available = max(0, MANIFEST_SELECTION_LIMIT - len(required))
-    newest = [item for item in reversed(selections.items()) if item[0] not in required][:available]
-    retained = required | {name for name, _entry in newest}
-    return {name: entry for name, entry in selections.items() if name in retained}
+
+    # Pending orphan records must survive until collection, even if keeping
+    # them exceeds the baseline cap. Always retain the selection just published.
+    retained_names = {current_selection}
+    for name, entry in selections.items():
+        if entry.orphans:
+            retained_names.add(name)
+
+    # Insertion order records publication recency. Fill any remaining slots
+    # from newest to oldest, then return entries in their original order.
+    for name in reversed(selections):
+        if len(retained_names) >= MANIFEST_SELECTION_LIMIT:
+            break
+        retained_names.add(name)
+    retained = {}
+    for name, entry in selections.items():
+        if name in retained_names:
+            retained[name] = entry
+    return retained
 
 
 def _publish_index(shard_dir: Path, payload: dict[str, Any]) -> None:
@@ -1961,57 +2062,58 @@ class EmbeddingCache:
                 expected_shard_generation = (
                     shard_meta["generation"] if shard_meta is not None else None
                 )
-                generation = manifest.generation + int(complete_scan)
-                selections = {
-                    name: CorpusSelectionManifest(
+                # Only complete scans advance the shared orphan-aging clock.
+                generation = manifest.generation
+                if complete_scan:
+                    generation += 1
+
+                # Copy the previous baselines, dropping orphan records for rows
+                # already gone or content observed again in this run. Unknown
+                # shard metadata gives no evidence that a row is gone.
+                current_keys = set(units.values())
+                selections = {}
+                for name, entry in manifest.selections.items():
+                    pending_orphans = {}
+                    for key, orphaned_generation in entry.orphans.items():
+                        if key in current_keys:
+                            continue
+                        if cached_keys is not None and key not in cached_keys:
+                            continue
+                        pending_orphans[key] = orphaned_generation
+                    selections[name] = CorpusSelectionManifest(
                         last_seen_generation=entry.last_seen_generation,
                         complete_scan=entry.complete_scan,
                         units=dict(entry.units),
-                        orphans={
-                            key: age
-                            for key, age in entry.orphans.items()
-                            if cached_keys is None or key in cached_keys
-                        },
+                        orphans=pending_orphans,
                         unit_paths=dict(entry.unit_paths),
                     )
-                    for name, entry in manifest.selections.items()
-                }
-                current_keys = set(units.values())
-                for entry in selections.values():
-                    for key in current_keys:
-                        entry.orphans.pop(key, None)
 
                 # Reinsertion below moves this entry to the end, which records
                 # publication recency for deterministic selection-cap eviction.
                 previous = selections.pop(selection, None)
-                if previous is not None:
-                    orphans = dict(previous.orphans)
-                    if complete_scan:
-                        current_units = dict(units)
-                        current_unit_paths = dict(unit_paths or {})
-                    else:
-                        observed_file_set = set(observed_files)
-                        current_units = {
-                            uid: key
-                            for uid, key in previous.units.items()
-                            if previous.unit_paths.get(uid) not in observed_file_set
-                        }
-                        current_units.update(units)
-                        current_unit_paths = {
-                            uid: path
-                            for uid, path in previous.unit_paths.items()
-                            if uid in current_units
-                        }
-                        current_unit_paths.update(unit_paths or {})
-                    diff = diff_manifest(previous, current_units)
-                    for key in diff.orphaned:
-                        if cached_keys is None or key in cached_keys:
-                            orphans.setdefault(key, generation)
-                else:
+
+                # A complete scan replaces its baseline. A partial scan can
+                # replace only observed files; missing siblings remain unknown.
+                current_units = dict(units)
+                current_unit_paths = dict(unit_paths or {})
+                if previous is not None and not complete_scan:
+                    current_units, current_unit_paths = _merge_partial_manifest_units(
+                        previous, current_units, current_unit_paths, observed_files
+                    )
+
+                if previous is None:
+                    # The first observation establishes a baseline, so there is
+                    # no earlier population from which to infer moves/deletions.
                     diff = ManifestDiff(moved=[], deleted=[], orphaned=set())
                     orphans = {}
-                    current_units = dict(units)
-                    current_unit_paths = dict(unit_paths or {})
+                else:
+                    diff = diff_manifest(previous, current_units)
+                    orphans = dict(previous.orphans)
+                    for key in diff.orphaned:
+                        if cached_keys is not None and key not in cached_keys:
+                            continue
+                        # Keep the first orphan generation across repeated scans.
+                        orphans.setdefault(key, generation)
 
                 if complete_scan or previous is None:
                     last_seen_generation = generation
@@ -2037,21 +2139,11 @@ class EmbeddingCache:
                 )
                 collectable: set[str] = set()
                 if complete_scan:
-                    referenced_keys = _manifest_referenced_keys(manifest)
-                    for key in _manifest_orphan_keys(manifest):
-                        ages = [
-                            generation - entry.orphans[key]
-                            for entry in manifest.selections.values()
-                            if key in entry.orphans
-                        ]
-                        if (
-                            key not in referenced_keys
-                            and ages
-                            and all(age >= ORPHAN_GC_GENERATIONS for age in ages)
-                        ):
-                            collectable.add(key)
+                    collectable = _manifest_collectable_keys(manifest)
                 _write_corpus_manifest(shard_dir, manifest)
 
+            # Collection takes its own lock and rechecks both snapshots. A
+            # concurrent manifest update or vector write cancels this attempt.
             collected = self.collect_orphans(
                 cache_scope,
                 canonical_model,
@@ -2061,6 +2153,8 @@ class EmbeddingCache:
                 expected_shard_generation=expected_shard_generation,
             )
             if collected:
+                # Remove completed orphan records only if this is still our
+                # manifest. A newer publication must retain its own bookkeeping.
                 with _shard_write_lock(shard_dir, blocking=True) as acquired:
                     if acquired:
                         current = _read_corpus_manifest(shard_dir)
