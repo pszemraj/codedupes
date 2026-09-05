@@ -1469,6 +1469,11 @@ def test_search_threshold_defaults_to_none_and_honors_explicit_config(
     }
     analyzer = CodeAnalyzer(AnalyzerConfig(**base_config))
     analyzer.index(project)
+    calls_before = len(encoded)
+    for invalid_threshold in (float("nan"), float("inf"), -float("inf")):
+        with pytest.raises(ValueError, match="threshold must be finite"):
+            analyzer.search("entry", threshold=invalid_threshold)
+    assert len(encoded) == calls_before
     if search_document == "contextual":
         with pytest.raises(ValueError, match="contextual.*explicit threshold"):
             analyzer.search("entry")
@@ -1623,6 +1628,9 @@ def test_index_empty_corpus_yields_empty_search(tmp_path: Path, search_document)
 
     assert analyzer.index(empty) == 0
     assert analyzer.extracted_unit_count == 0
+    for invalid_threshold in (float("nan"), float("inf"), -float("inf")):
+        with pytest.raises(ValueError, match="threshold must be finite"):
+            analyzer.search("anything", threshold=invalid_threshold)
     if search_document == "contextual":
         with pytest.raises(ValueError, match="contextual.*explicit threshold"):
             analyzer.search("anything")

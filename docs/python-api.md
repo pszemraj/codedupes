@@ -97,7 +97,7 @@ for unit, score in hits:
     print(f"{score:.3f}", unit.qualified_name)
 ```
 
-`search(query, top_k=10, threshold=None)` resolves its floor as `threshold`, else `config.semantic_threshold`, else the model profile's search default. Prefer the per-call `threshold`: it applies to that query only, while `config.semantic_threshold` also replaces every calibrated per-language duplicate gate with one flat value.
+`search(query, top_k=10, threshold=None)` resolves its floor as `threshold`, else `config.semantic_threshold`, else the model profile's search default. Prefer the per-call `threshold`: it applies to that query only, while `config.semantic_threshold` also replaces every calibrated per-language duplicate gate with one flat value. Per-call thresholds must be finite; `NaN` and infinity raise `ValueError`, including for empty corpora and cached queries. Zero and finite negative floors are supported.
 
 See [task defaults and calibration requirements](model-profiles.md#semantic-task-defaults-and-choices) before overriding `semantic_task`, the prompt, revision, or remote-code setting.
 

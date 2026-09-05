@@ -462,25 +462,44 @@ def test_uncalibrated_search_context_requires_explicit_threshold(
         ) == len(units)
 
 
-def test_find_similar_to_query_applies_threshold_filter(tmp_path: Path, monkeypatch) -> None:
+@pytest.mark.parametrize("threshold", [-1.0, 0.0, 0.9, float("nan"), float("inf"), -float("inf")])
+@pytest.mark.parametrize("use_cache", [False, True])
+def test_find_similar_to_query_applies_threshold_filter(
+    tmp_path: Path, monkeypatch, threshold: float, use_cache: bool
+) -> None:
     units = extract_arithmetic_units(tmp_path)
     embeddings = np.array([[1.0, 0.0], [0.6, 0.8]], dtype=np.float32)
 
-    class QueryModel:
-        def encode(self, texts, **kwargs):
-            return np.array([[1.0, 0.0]], dtype=np.float32)
+    model = _RecordingModel()
+    monkeypatch.setattr(semantic, "get_model", lambda *args, **kwargs: model)
+    options = {
+        "query": "find addition",
+        "units": units,
+        "embeddings": embeddings,
+        "top_k": 5,
+        "device": "cpu",
+        "use_cache": use_cache,
+        "cache_scope": tmp_path,
+    }
 
-    monkeypatch.setattr(semantic, "get_model", lambda *args, **kwargs: QueryModel())
-
-    results = find_similar_to_query(
-        query="find addition",
-        units=units,
-        embeddings=embeddings,
-        top_k=5,
-        threshold=0.9,
-    )
-
-    assert len(results) == 1
+    # Invalid input must fail before encoding and before consuming a cached query.
+    for attempt in range(2):
+        calls_before = len(model.encoded)
+        if not math.isfinite(threshold):
+            with pytest.raises(ValueError, match="threshold must be finite"):
+                find_similar_to_query(threshold=threshold, **options)
+            assert len(model.encoded) == calls_before
+        else:
+            results = find_similar_to_query(threshold=threshold, **options)
+            assert results == [
+                (unit, float(row[0]))
+                for unit, row in zip(units, embeddings)
+                if float(row[0]) >= threshold
+            ]
+        if use_cache and attempt == 1:
+            assert len(model.encoded) == calls_before
+        if attempt == 0:
+            assert len(find_similar_to_query(threshold=-1.0, **options)) == len(units)
 
 
 def test_find_similar_to_query_default_threshold_is_search_default(

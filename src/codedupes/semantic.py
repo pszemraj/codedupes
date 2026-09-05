@@ -3777,9 +3777,9 @@ def _find_similar_to_query_unlocked(
     :param revision: Optional model revision; ``None`` uses the profile default.
     :param trust_remote_code: Optional remote-code trust setting; ``None`` uses the
         profile default.
-    :param threshold: Minimum cosine similarity. ``None`` uses the model profile
-        search default only for its calibrated task, prompt, revision, and source
-        representation.
+    :param threshold: Finite minimum cosine similarity; negative floors are allowed.
+        ``None`` uses the model profile search default only for its calibrated task,
+        prompt, revision, and source representation.
     :param semantic_task: Optional task override; ``None`` uses
         ``DEFAULT_SEARCH_SEMANTIC_TASK``.
     :param device: ``auto``, ``cpu``, ``cuda``, or ``mps``, defaults to
@@ -3791,15 +3791,16 @@ def _find_similar_to_query_unlocked(
         ``None`` disables caching for this call regardless of ``use_cache``.
     :param corpus_identity: Identity captured with ``embeddings``. Required for
         contextual documents and prompt- or route-sensitive models. Model, revision,
-        or runtime drift requires rebuilding the corpus, and its recorded source commit rejects mutable-label
-        query vectors - cached or freshly encoded - from any other or unknown checkpoint.
+        or runtime drift requires rebuilding the corpus. Its recorded source commit
+        rejects mutable-label query vectors - cached or freshly encoded - from
+        any other or unknown checkpoint.
     :param strict_revision_cache: Whether an unpinned hub revision resolves to a
         concrete commit hash (disabling caching when unmappable) instead of the
         requested revision label, defaults to ``False``. Must match the mode
         used to build ``corpus_identity``.
     :return: Up to ``top_k`` ``(unit, similarity)`` pairs at or above the threshold,
         sorted by descending similarity.
-    :raises ValueError: If an uncalibrated task/prompt/revision/representation uses
+    :raises ValueError: If ``threshold`` is non-finite, an uncalibrated corpus uses
         the default threshold, or a prompt-sensitive corpus omits its identity.
     :raises SemanticBackendError: If an explicitly requested device is unavailable,
         even when the query embedding is already cached.
@@ -3807,6 +3808,9 @@ def _find_similar_to_query_unlocked(
         indexed corpus, or its embedding execution policy changed.
     """
     validate_explicit_device_request(device, mps_fallback=mps_fallback)
+
+    if threshold is not None and not np.isfinite(threshold):
+        raise ValueError("threshold must be finite")
 
     if (
         corpus_identity is not None
@@ -4200,9 +4204,9 @@ def find_similar_to_query(
     :param revision: Optional model revision; ``None`` uses the profile default.
     :param trust_remote_code: Optional remote-code trust setting; ``None`` uses the
         profile default.
-    :param threshold: Minimum cosine similarity. ``None`` uses the model profile
-        search default only for its calibrated task, prompt, revision, and source
-        representation.
+    :param threshold: Finite minimum cosine similarity; negative floors are allowed.
+        ``None`` uses the model profile search default only for its calibrated task,
+        prompt, revision, and source representation.
     :param semantic_task: Optional task override; ``None`` uses
         ``DEFAULT_SEARCH_SEMANTIC_TASK``.
     :param device: ``auto``, ``cpu``, ``cuda``, or ``mps``, defaults to
@@ -4221,7 +4225,7 @@ def find_similar_to_query(
         used to build ``corpus_identity``.
     :return: Up to ``top_k`` ``(unit, similarity)`` pairs at or above the threshold,
         sorted by descending similarity.
-    :raises ValueError: If an uncalibrated task/prompt/revision/representation uses
+    :raises ValueError: If ``threshold`` is non-finite, an uncalibrated corpus uses
         the default threshold, or a prompt-sensitive corpus omits its identity.
     """
     # Same contract as compute_embeddings_with_identity: configure

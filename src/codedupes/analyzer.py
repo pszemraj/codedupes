@@ -1189,10 +1189,12 @@ class CodeAnalyzer:
 
         :param query: Search query string.
         :param top_k: Maximum results to return.
-        :param threshold: Minimum cosine similarity for this call only.
+        :param threshold: Finite minimum cosine similarity for this call only;
+            negative floors are allowed.
         :return: List of code units and cosine scores.
-        :raises ValueError: If the corpus has no calibrated search default and
-            neither ``threshold`` nor ``config.semantic_threshold`` is supplied.
+        :raises ValueError: If ``threshold`` is non-finite, or the corpus has no
+            calibrated search default and neither ``threshold`` nor
+            ``config.semantic_threshold`` is supplied.
         """
         if self._units is None or self._embeddings is None:
             raise RuntimeError(
