@@ -1,4 +1,4 @@
-# Output and Exit Codes
+# Output and exit codes
 
 stdout carries report output only: JSON under `--json`, Rich tables otherwise. Errors and parser-unavailable remediation use stderr; Rich mode also sends logs, cache warnings, sentence-transformers progress, and Hugging Face download progress there. JSON mode disables progress and records non-fatal cache failures in `summary.embeddings.cache_warnings` instead of emitting them, so merged streams remain parseable:
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import tomllib
 from pathlib import Path
 
@@ -64,12 +65,25 @@ def test_sdist_uses_an_explicit_release_file_allowlist() -> None:
     assert "include" not in sdist
 
 
-def test_readme_documentation_links_work_outside_the_repository() -> None:
-    """Package-index metadata must not contain repository-relative docs links."""
+def test_readme_documentation_links_resolve_in_repository() -> None:
+    """README links must follow the checkout instead of a fixed GitHub branch."""
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
 
-    assert "](docs/" not in readme
-    assert "https://github.com/pszemraj/codedupes/blob/main/docs/" in readme
+    targets = re.findall(r"\]\(([^)]+)\)", readme)
+    assert targets
+    for target in targets:
+        assert not target.startswith(
+            (
+                "https://github.com/pszemraj/codedupes/blob/",
+                "https://github.com/pszemraj/codedupes/tree/",
+            )
+        )
+        if target.startswith(("https://", "http://")):
+            continue
+        path = Path(target.split("#", 1)[0])
+        assert not path.is_absolute(), target
+        resolved = (ROOT / path).resolve()
+        assert resolved.is_relative_to(ROOT) and resolved.is_file(), target
 
 
 def test_polyglot_tree_sitter_runtime_is_exactly_pinned() -> None:

@@ -1,4 +1,4 @@
-# Semantic Model Profiles and Tasks
+# Semantic model profiles and tasks
 
 Profiles resolve model aliases, thresholds, revisions, trust settings, and task-specific embedding behavior. See [Installation](install.md) for dependencies, the [CLI reference](cli.md) for option syntax, and [Accelerators](accelerators.md) for device and precision behavior.
 

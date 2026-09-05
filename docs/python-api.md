@@ -2,7 +2,7 @@
 
 Use `analyze_directory` for a one-shot analysis or `CodeAnalyzer` when configuration and semantic search share one analyzed corpus.
 
-## Quick Start
+## Quick start
 
 ```python
 from codedupes import analyze_directory
@@ -29,7 +29,7 @@ for unit in result.potentially_unused:
     print("Unused:", unit.qualified_name)
 ```
 
-## Configurable Analyzer
+## Configurable analyzer
 
 ```python
 from codedupes import AnalyzerConfig, CodeAnalyzer
@@ -72,7 +72,7 @@ print("non-Python units excluded from unused analysis:", result.unused_excluded_
 
 `run_unused=True` remains valid for a mixed tree; see [unused analysis scope](analysis-defaults.md#potentially-unused-defaults). Pass `AnalyzerConfig(cross_language=True)` or `analyze_directory(..., cross_language=True)` to opt into [cross-language duplicate pairs](analysis-defaults.md#semantic-duplicate-gate-defaults).
 
-## Semantic Query Search
+## Semantic query search
 
 ```python
 from codedupes import AnalyzerConfig, CodeAnalyzer
@@ -173,7 +173,7 @@ See [MPS allocator policy](accelerators.md#mps-memory-policy-and-oom-recovery) f
 
 ## Logging
 
-Model loading quiets known-noisy dependency loggers (httpx request lines, transformers/sentence-transformers chatter) automatically, but only ones still inheriting the root level — any logger you configure explicitly is left alone. To pin them yourself, or to a different level:
+Model loading quiets known-noisy dependency loggers (httpx request lines, transformers/sentence-transformers chatter) automatically, but only ones still inheriting the root level - any logger you configure explicitly is left alone. To pin them yourself, or to a different level:
 
 ```python
 from codedupes import quiet_dependency_loggers
@@ -181,7 +181,7 @@ from codedupes import quiet_dependency_loggers
 quiet_dependency_loggers()  # or quiet_dependency_loggers(logging.ERROR)
 ```
 
-## Key Result Types
+## Key result types
 
 - `AnalysisResult.units`: extracted functions, methods, and classes
 - `AnalysisResult.hybrid_duplicates`: synthesized duplicate candidates with [confidence tiers](analysis-defaults.md#hybrid-synthesis-confidence-defaults)

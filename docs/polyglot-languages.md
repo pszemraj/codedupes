@@ -1,4 +1,4 @@
-# Polyglot Language Support
+# Polyglot language support
 
 codedupes supports Python, C, Rust, JavaScript, JSX, TypeScript, and TSX without turning its duplicate engine into a collection of language-specific special cases. The language backend owns parsing and feature extraction. The duplicate, embedding, ranking, and reporting stages consume the same `CodeUnit` model regardless of source language.
 
@@ -25,7 +25,7 @@ The [parser packages](install.md#polyglot-parser-dependencies) are exact-pinned 
 `--language` accepts canonical names `python`, `c`, `rust`, `javascript`, and `typescript`, plus aliases `py`, `rs`, `js`, `jsx`, `ts`, and `tsx`. JSX and TSX aliases select their whole canonical language, not only that dialect.
 
 | Language | Extensions | Dialect behavior |
-|---|---|---|
+| --- | --- | --- |
 | Python | `.py`, optional `.pyi` | CPython AST |
 | C | `.c`, conditionally `.h` | C grammar |
 | Rust | `.rs` | Rust grammar |
@@ -144,7 +144,7 @@ Treat every grammar update as a behavioral change:
 2. Construct its parser and run every extraction fixture (`pytest -m grammar`), including the golden structural-hash values.
 3. Review changes in unit names, ranges, native kinds, statement counts, and fingerprints.
 4. Run parser-independent normalization tests.
-5. Run the per-language validator, sweep, and distribution report over `test_fixtures/polyglot_calibration/` and diff against the recorded tables in its README. The corpora measure each language's similarity scale under both built-in models, and the shipped per-language duplicate gates in `codedupes.semantic_profiles` are derived from these measurements — if a pin bump moves a language's recorded numbers, decide explicitly whether its gate must move with them.
+5. Run the per-language validator, sweep, and distribution report over `test_fixtures/polyglot_calibration/` and diff against the recorded tables in its README. The corpora measure each language's similarity scale under both built-in models, and the shipped per-language duplicate gates in `codedupes.semantic_profiles` are derived from these measurements - if a pin bump moves a language's recorded numbers, decide explicitly whether its gate must move with them.
 6. Update the pin only after every difference is understood.
 
 A semver-compatible grammar update can still rename a node or field. Broad version ranges would let an ordinary dependency refresh silently change duplicate reports.

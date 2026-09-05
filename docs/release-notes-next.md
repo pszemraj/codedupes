@@ -1,4 +1,4 @@
-# Next Release
+# Next release
 
 ## Migration
 

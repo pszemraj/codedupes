@@ -1,4 +1,4 @@
-# Embedding Cache
+# Embedding cache
 
 `codedupes` persists embeddings so unchanged code can reuse vectors across runs. A fully cached corpus and query can run without loading the model. Over-context units have no vector to cache, so repeated scans that include them can still load the tokenizer/model to check their length, even when every retained row is a hit.
 

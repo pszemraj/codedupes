@@ -1,4 +1,4 @@
-# Hybrid Confidence Tuning
+# Hybrid confidence tuning
 
 Tune how gated semantic-only matches are divided between high-confidence and review tiers.
 
@@ -9,9 +9,7 @@ Tune how gated semantic-only matches are divided between high-confidence and rev
 - Sweep harness: [`../scripts/sweep_hybrid_gates.py`](../scripts/sweep_hybrid_gates.py)
 - Semantic threshold harness: [`../scripts/sweep_semantic_thresholds.py`](../scripts/sweep_semantic_thresholds.py)
 
-This corpus is synthetic and tracked for reproducibility.
-
-Use it as a guardrail dataset, not a benchmark.
+Use this synthetic corpus to check for regressions; validate changes on a real repository too.
 
 ## Recommended process
 

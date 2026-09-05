@@ -1,4 +1,4 @@
-# Installation and Runtime Environment
+# Installation and runtime environment
 
 ## Install (GitHub source)
 

@@ -1,4 +1,4 @@
-# Cowsay Dupe Fixture
+# Cowsay dupe fixture
 
 A working Rust application that targets both a native CLI and browser WebAssembly, with intentional code clones planted as detector ground truth. The application is small enough to inspect, but the clones sit on live paths: none of them are dead sample code.
 
