@@ -1,6 +1,6 @@
 # Polyglot calibration corpora
 
-Labeled per-language duplicate-detection corpora for C, Rust, JavaScript, TypeScript, and Python (~100 labeled decisions per language), used to measure how the built-in model profiles' similarity scales behave outside the Python production corpus. The Python corpus here is a control: its near clones are fully alpha-renamed, unlike `test_fixtures/hybrid_tuning/crab_visibility`, whose near pairs share identifier fragments.
+Labeled duplicate-detection corpora for C, Rust, JavaScript, TypeScript, and Python, each with 34-36 positive pairs and 15 negative pairs. They measure the built-in model profiles' similarity scales outside the Python production corpus. The Python corpus here is a control: its near clones are fully alpha-renamed, unlike [`crab_visibility`](../hybrid_tuning/crab_visibility), whose near pairs share identifier fragments.
 
 These measurements inform the [per-language duplicate gates](../../docs/analysis-defaults.md#semantic-duplicate-gate-defaults). Revisit those gates if a re-run changes the measured tradeoffs below.
 
@@ -29,7 +29,7 @@ Per language: 4 exact, 3 reformat, 3 doc_variant, 4 renamed, 8 near_rename, 8 ne
 
 ## Authoring constraints
 
-- Every unit name is unique within its file (`sweep_common.resolve_label_unit` requires a unique `filename::name` match).
+- Every `filename::name` identifies one unit across the corpus, including files in different directories that share a basename (`sweep_common.resolve_label_unit` requires a unique match).
 - No filename may match the default test-exclusion globs (`test_*`, `*_test.*`, `*.test.*`, `*.spec.*`).
 - The C corpus must stay free of C++ extensions or the `.h` ambiguity policy changes.
 - No Rust `#[cfg(test)]`/`#[test]` code: the extractor skips it.
@@ -42,8 +42,11 @@ Known labeling nuance: the TypeScript pair `summarizeState`/`reviewState` is lab
 
 ## Validation
 
+Run from the codedupes repository root. Set `lang` to `c`, `rust`, `javascript`, `typescript`, or `python`:
+
 ```bash
-python scripts/validate_calibration_corpus.py --corpus-path test_fixtures/polyglot_calibration/<lang> --labels-path test_fixtures/polyglot_calibration/labels/<lang>.json --search-probes-path test_fixtures/polyglot_calibration/search_probes/<lang>.json --language <lang>
+lang=c
+python scripts/validate_calibration_corpus.py --corpus-path test_fixtures/polyglot_calibration/$lang --labels-path test_fixtures/polyglot_calibration/labels/$lang.json --search-probes-path test_fixtures/polyglot_calibration/search_probes/$lang.json --language "$lang"
 ```
 
 Whole-tree status at shipped defaults (2026-08-14): 368 units across five languages, zero parse diagnostics, all 73 labeled deterministic pairs detected by the traditional tier, zero unlabeled deterministic pairs, zero cross-language pairs.
@@ -52,7 +55,7 @@ The validator now enforces the zero-unlabeled-deterministic-pairs property per l
 
 ## Calibration results (2026-08-25, pinned profiles, cpu/fp32, production `--min-statements 3`)
 
-Sweeps ran per language over a 0.40-0.96 duplicate grid (`--duplicate-start 0.40`; the default 0.70 floor would hide most non-Python near clones) with both models; search sweeps used the per-language probes over the default 0.20-0.90 search grid. The duplicate metric is the product's final `hybrid_duplicates` output, including traditional matches and both semantic confidence tiers. Every labeled pair remains in the denominator: a pair outside the production semantic candidate pool is a false negative unless the traditional tier finds it. The manifest records candidate-policy coverage separately so preprocessing loss cannot be mistaken for model-threshold loss. Reports: `reports/<lang>_semantic_threshold_report.json`, `reports/<lang>_search_threshold_report.json`, `reports/similarity_distributions.json`.
+Sweeps ran per language over a 0.40-0.96 duplicate grid (`--duplicate-start 0.40`; the default 0.70 floor would hide most non-Python near clones) with both models; search sweeps used the per-language probes over the default 0.20-0.90 search grid. See [sweep metrics and calibration identity](../../docs/hybrid-tuning.md#semantic-threshold-sweep-model-profiles) for how output and candidate coverage are scored. Reports: `reports/<lang>_semantic_threshold_report.json`, `reports/<lang>_search_threshold_report.json`, `reports/similarity_distributions.json`.
 
 Duplicate threshold, best final-output F1 row per language. Candidate coverage is the number of labeled pairs whose two units reach semantic embedding under the production policy; traditional detection can still recover an excluded deterministic pair.
 
@@ -64,7 +67,7 @@ Duplicate threshold, best final-output F1 row per language. Candidate coverage i
 | typescript | 29 / 36 | 0.70 / 0.79 / 0.84 / 0.75 | 0.80 / 0.79 / 0.84 / 0.75 |
 | python (control) | 29 / 34 | 0.82 / 0.59 / 0.63 / 0.56 | 0.74 / 0.76 / 0.78 / 0.74 |
 
-Search threshold, best F1 row per language - every selection is interior to the swept grid, and each manifest records `selected_at_grid_edge` so a boundary selection can never pass as an optimum (see [search defaults](../../docs/model-profiles.md#built-in-profiles)):
+Search threshold, best F1 row per language (every selection is interior to the swept grid):
 
 | language | gte-modernbert-base (thr / F1) | embeddinggemma-300m (thr / F1) |
 | --- | --- | --- |
@@ -82,14 +85,16 @@ Distribution highlights (`reports/similarity_distributions.json`):
 - C is the hardest language for both models: deceptive negative controls reach 0.86 (gte) / 0.91 (gemma), overlapping the near-clone band, which caps best final-output F1 at 0.58/0.62.
 - embeddinggemma-300m separates clones from negatives better than gte-modernbert-base on four languages and ties it on TypeScript here, with best-F1 duplicate thresholds clustered at 0.74-0.82.
 
-All reports, including `reports/similarity_distributions.json`, embed the calibration identity manifest (pinned revision, pipeline schema, effective embedding space, candidate policy, corpus/label digests). The 2026-08-21 regeneration under embedding pipeline schema 5 reproduced every metric row byte-identically: only the recorded schema and runtime fingerprint moved, confirming the reject-don't-truncate context policy touches no vector in these corpora. The 2026-08-25 regeneration widened the search grid from a 0.70 to a 0.90 ceiling after the old ceiling was found censoring two boundary selections: every duplicate row and all previously swept search rows again reproduced byte-identically, javascript/gte moved off the censored boundary to its true optimum (0.70 to 0.72), python/gte's boundary pick was confirmed interior, and manifests now record `selected_at_grid_edge` plus a coherent candidate-coverage split (`traditional_recovered_pairs`/`unreachable_positive_pairs`).
+The 2026-08-21 regeneration under embedding pipeline schema 5 reproduced every metric row byte-identically: only the recorded schema and runtime fingerprint moved, confirming the context-length rejection policy touches no vector in these corpora. The 2026-08-25 regeneration widened the search grid from a 0.70 to a 0.90 ceiling after the old ceiling censored two boundary selections: every duplicate row and all previously swept search rows again reproduced byte-identically, javascript/gte moved from 0.70 to 0.72, and python/gte's boundary pick was confirmed interior.
 
 Candidate policy, model threshold, and hybrid publication must be evaluated together. Apply the [gate selection policy](../../docs/analysis-defaults.md#semantic-duplicate-gate-defaults) to these production-policy grids. Search rows remain a single-domain synthetic guardrail; [model profiles](../../docs/model-profiles.md#built-in-profiles) describes the held-out evidence used for search defaults.
 
 ## Re-running
 
+Use the same repository root and `lang` value as above:
+
 ```bash
-python scripts/sweep_semantic_thresholds.py --corpus-path test_fixtures/polyglot_calibration/<lang> --labels-path test_fixtures/polyglot_calibration/labels/<lang>.json --search-probes-path test_fixtures/polyglot_calibration/search_probes/<lang>.json --language <lang> --duplicate-start 0.40 --json-out test_fixtures/polyglot_calibration/reports/<lang>_semantic_threshold_report.json --search-json-out test_fixtures/polyglot_calibration/reports/<lang>_search_threshold_report.json
+python scripts/sweep_semantic_thresholds.py --corpus-path test_fixtures/polyglot_calibration/$lang --labels-path test_fixtures/polyglot_calibration/labels/$lang.json --search-probes-path test_fixtures/polyglot_calibration/search_probes/$lang.json --language "$lang" --duplicate-start 0.40 --json-out test_fixtures/polyglot_calibration/reports/${lang}_semantic_threshold_report.json --search-json-out test_fixtures/polyglot_calibration/reports/${lang}_search_threshold_report.json
 python scripts/report_calibration_distributions.py
 ```
 

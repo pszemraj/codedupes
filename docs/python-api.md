@@ -9,11 +9,7 @@ from codedupes import analyze_directory
 
 result = analyze_directory(
     "./src",
-    semantic_threshold=None,  # use the profile's calibrated per-language gates
     traditional_threshold=0.85,
-    model_name="gte-modernbert-base",
-    semantic_task="semantic-similarity",
-    device="auto",
 )
 
 for dup in result.hybrid_duplicates:
@@ -83,8 +79,6 @@ analyzer = CodeAnalyzer(
         run_traditional=False,
         run_semantic=True,
         run_unused=False,
-        model_name="gte-modernbert-base",
-        device="auto",
         search_document="contextual",
     )
 )
@@ -105,7 +99,9 @@ See [task defaults and calibration requirements](model-profiles.md#semantic-task
 
 `index()` extracts the corpus and computes (or loads from cache) its embeddings without the all-pairs duplicate scan, traditional analysis, or unused-code analysis that `analyze()` runs, so building a search corpus stays linear in corpus size. Prefer `index()` before search. `analyzer.extracted_unit_count` reports the pre-filter extraction count from the latest `index()` or `analyze()` run, which can be larger than the count returned by `index()` after semantic eligibility and context-window filtering. A search after `analyze()` reuses the analysis task and therefore requires an explicit search threshold when that task changes the model's prompt or route, as it does for EmbeddingGemma.
 
-`AnalyzerConfig.search_document` is `"source"` by default, preserving the calibrated source-only score distribution. `"contextual"` prepends language, root-relative path, and qualified symbol to each search document before the code. Contextual mode makes paths and symbols available to retrieval but changes the input distribution; the source-only thresholds have not been calibrated for it. Searching a contextual index requires an explicit `search(threshold=...)` or `config.semantic_threshold`; tune that value against representative queries. This requirement follows the indexed representation even if the config is changed afterward. For direct calls, pass the identity returned by `compute_embeddings_with_identity(..., search_document="contextual", document_texts=...)` as `find_similar_to_query(corpus_identity=...)`; it carries the same calibration requirement on cold and warm cache paths. Its [cache behavior](caching.md#what-invalidates-what) follows the complete document input. `analyze()` always embeds bare source for duplicate detection regardless of this search-only setting.
+`AnalyzerConfig.search_document` is `"source"` by default, preserving the calibrated source-only score distribution. `"contextual"` prepends language, root-relative path, and qualified symbol to each search document before the code. Contextual mode makes paths and symbols available to retrieval but changes the input distribution; the source-only thresholds have not been calibrated for it. Searching a contextual index requires an explicit `search(threshold=...)` or `config.semantic_threshold`; tune that value against representative queries. This requirement follows the indexed representation even if the config is changed afterward. Its [cache behavior](caching.md#what-invalidates-what) follows the complete document input. `analyze()` always embeds bare source for duplicate detection regardless of this search-only setting.
+
+For direct embedding/query calls, pass the identity returned by `compute_embeddings_with_identity(...)` as `find_similar_to_query(corpus_identity=...)`. It is required for contextual documents and prompt- or route-sensitive models, and preserves calibration and checkpoint checks on both cold and warm cache paths. Use `search_document="contextual"` with aligned `document_texts` when supplying contextual inputs.
 
 Direct `compute_embeddings()` and `compute_embeddings_with_identity()` calls require one `document_texts` entry per input unit when supplied. Mismatched lengths raise `ValueError` before revision resolution, cache lookup, or model loading, including for an empty corpus.
 
@@ -163,15 +159,13 @@ analyzer = CodeAnalyzer(
 result = analyzer.analyze("./src")
 ```
 
-See [Accelerators](accelerators.md) for unsupported-operator fallback, OOM recovery, and cached model placement. Long-lived processes can explicitly release the model:
+See [Accelerators](accelerators.md) for fallback, OOM recovery, model placement, and the process-wide allocator policy. Long-lived processes can explicitly release the model:
 
 ```python
 from codedupes.semantic import clear_model_cache
 
 clear_model_cache()
 ```
-
-See [MPS allocator policy](accelerators.md#mps-memory-policy-and-oom-recovery) for the process-wide effects of `mps_memory_fraction`.
 
 ## Logging
 
@@ -196,7 +190,7 @@ quiet_dependency_loggers()  # or quiet_dependency_loggers(logging.ERROR)
 - `AnalysisResult.unused_supported_languages`: languages the unused heuristic evaluates (currently always `("python",)`)
 - `AnalysisResult.all_duplicates`: hybrid duplicates in combined mode; raw duplicates in single-method mode
 - `AnalysisResult.analysis_mode`: `"combined"`, `"traditional"`, `"semantic"`, or `"none"`
-- `AnalysisResult.embedding_stats`: `EmbeddingRunStats` for a successful semantic corpus call, otherwise `None`
+- `AnalysisResult.embedding_stats`: [embedding telemetry](#progress-and-embedding-telemetry)
 - `CodeUnit.uid`: in-run definition identity, `<path>::<language>::<qualified name>::<start byte>` for every language; the byte position keeps overloads and redefinitions distinct
 - `CodeUnit.language`, `dialect`, and `native_kind`: canonical language plus parser-specific syntax kind
 - `CodeUnit.start_byte`/`end_byte`: exact byte range used to slice the emitted source

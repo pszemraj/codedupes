@@ -65,10 +65,13 @@ The following units are not reported:
 - referenced units (any analyzed call resolving to the unit's name or a qualified-name suffix counts)
 - names exported through `__all__`, public classes, and dunder methods such as `__init__`
 - `get_*` and `set_*` definitions of any unit type (not only methods - a module-level `get_thing()` is suppressed too, even in strict mode)
+- definitions decorated with `@abstractmethod` or `@abc.abstractmethod`
 - `test_*` definitions and definitions in files whose names contain `_test`
 - units containing `# noqa: codedupes` or `# codedupes: ignore`
 
 Call matching is name-based rather than scope-resolved: a call to any same-named symbol keeps every candidate definition out of the report, trading missed dead code for fewer false "unused" flags. Default mode also skips public non-method functions. Strict mode (`--strict-unused` or `strict_unused=True`) removes only that suppression; the other API and runtime exclusions still apply. Only call expressions count as references: attribute access without a call, decorator usage, callbacks passed as arguments, and type annotations do not, so framework-dispatched methods (for example `ast.NodeVisitor` `visit_*` hooks) surface as candidates. Dynamic registration, reflection, and string-based lookups likewise remain outside the static reference graph, so unused findings require review.
+
+When unused detection runs, semantic duplicate pairs whose two units are both reported as potentially unused are removed before hybrid synthesis. Traditional duplicate findings remain available. `--no-unused` disables this suppression along with unused reporting.
 
 ## Tiny traditional duplicate filtering defaults
 
@@ -86,7 +89,7 @@ Use `--no-tiny-filter` / `--tiny-cutoff`, or `AnalyzerConfig.filter_tiny_traditi
 - weak identifier jaccard minimum: `0.20`
 - statement ratio minimum: `0.35`
 
-A semantic-only pair has already passed its language's duplicate gate, so it remains visible in default output. Identifier overlap and a comparable statement count promote it to `semantic_high_confidence`; otherwise it is labeled `semantic_review`. These corroborators affect ranking and review priority, not admission. Tune them with the [hybrid gate workflow](hybrid-tuning.md).
+A semantic-only pair retained after the [unused-code filter](#potentially-unused-defaults) has already passed its language's duplicate gate, so it remains visible in default output. Identifier overlap and a comparable statement count promote it to `semantic_high_confidence`; otherwise it is labeled `semantic_review`. These corroborators affect ranking and review priority, not admission. Tune them with the [hybrid gate workflow](hybrid-tuning.md).
 
 ## Confidence scale
 

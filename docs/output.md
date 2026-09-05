@@ -102,41 +102,35 @@ See [hybrid confidence tiers](analysis-defaults.md#hybrid-synthesis-confidence-d
 
 ### Search
 
+Search hits use `{"unit": "<uid>", "score": 0.95}`; their unit records have the same fields as check results. An empty index with `--no-cache` produces:
+
 ```json
 {
   "schema_version": 2,
   "query": "refund validation",
   "summary": {
-    "indexed_units": 42,
-    "results": 1,
-    "embeddings": null
-  },
-  "results": [
-    {
-      "unit": "/repo/billing/refunds.py::python::billing.refunds.validate::0",
-      "score": 0.95
-    }
-  ],
-  "units": {
-    "/repo/billing/refunds.py::python::billing.refunds.validate::0": {
-      "name": "validate",
-      "qualified_name": "billing.refunds.validate",
-      "type": "function",
-      "language": "python",
-      "dialect": "python",
-      "native_kind": "FunctionDef",
-      "file": "/repo/billing/refunds.py",
-      "line": 1,
-      "end_line": 2,
-      "start_byte": 0,
-      "end_byte": 42,
-      "start_column": 0,
-      "end_column": 20,
-      "statement_count": 1,
-      "is_public": true,
-      "is_exported": false
+    "indexed_units": 0,
+    "results": 0,
+    "embeddings": {
+      "requested_rows": 0,
+      "unique_inputs": 0,
+      "cache_hit_rows": 0,
+      "duplicate_rows_reused": 0,
+      "encoded_inputs": 0,
+      "model_loaded": false,
+      "cache_enabled": false,
+      "cache_warnings": [],
+      "cache_revision": null,
+      "execution_device": null,
+      "moved_units_reused": 0,
+      "deleted_units": 0,
+      "orphan_rows_retained": 0,
+      "orphan_rows_collected": 0,
+      "manifest_generation": null
     }
   },
+  "results": [],
+  "units": {},
   "semantic_diagnostics": []
 }
 ```
@@ -159,13 +153,13 @@ See [hybrid confidence tiers](analysis-defaults.md#hybrid-synthesis-confidence-d
 | `cache_warnings` | Non-fatal cache read/write, manifest, and query-cache failures observed during the run. |
 | `cache_revision` | Revision label, commit, or local fingerprint used for cache identity, otherwise `null`. |
 | `execution_device` | Effective inference device, or `null` when no model execution was needed. |
-| `moved_units_reused` | New UIDs matched to departed UIDs with the same content. |
-| `deleted_units` | Departed UIDs left after matching moves, independent of vector sharing. |
+| `moved_units_reused` | New UIDs matched to departed UIDs with the same content after retaining same-file symbols whose byte offsets changed. |
+| `deleted_units` | Departed UIDs left after matching retained symbols and moves, independent of vector sharing. |
 | `orphan_rows_retained` | Tracked orphan rows still stored, including rows protected by another active selection. |
 | `orphan_rows_collected` | Orphan rows removed during this run. |
 | `manifest_generation` | Shard-wide complete-scan counter, or `null` without successful manifest publication. |
 
-Move and deletion counts need a comparable [corpus baseline](caching.md#corpus-lifecycle). Terminal `check` and `search` output include an `Embeddings` summary showing cache hits, encoded inputs, duplicate-row reuse, model execution, and manifest generation. Nonzero move, deletion, and orphan counts are included too. As in JSON, this describes corpus indexing; query encoding is excluded.
+Move and deletion counts need a comparable [corpus baseline](caching.md#corpus-lifecycle). Terminal `check` and `search` output include an `Embeddings` summary showing cache hits, encoded inputs, duplicate-row reuse, model execution, and manifest generation. Nonzero move, deletion, and orphan counts are included too.
 
 ## Diagnostics
 

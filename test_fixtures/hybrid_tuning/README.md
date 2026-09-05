@@ -12,6 +12,5 @@ This directory contains the synthetic corpus and labels used by the [hybrid gate
 
 ## Constraints
 
-- Do not tune thresholds from this corpus alone; validate against at least one real repository.
 - Keep corpus deterministic and free from generated artifacts.
-- Regenerate both reports with `scripts/sweep_semantic_thresholds.py` whenever the corpus, labels, probes, pinned model commits, or embedding pipeline change; the recorded manifests are the reproducibility contract for the search-threshold defaults.
+- Regenerate both reports with the [semantic threshold sweep](../../docs/hybrid-tuning.md#semantic-threshold-sweep-model-profiles) whenever the corpus, labels, probes, pinned model commits, or embedding pipeline change.

@@ -21,16 +21,12 @@ Use this synthetic corpus to check for regressions; validate changes on a real r
 ## Run the sweep
 
 ```bash
-python scripts/sweep_hybrid_gates.py --top-n 15
-```
-
-Write a machine-readable report:
-
-```bash
 python scripts/sweep_hybrid_gates.py \
-  --top-n 25 \
+  --top-n 15 \
   --json-out scratch/hybrid_sweep_report.json
 ```
+
+Omit `--json-out` to print results without writing a report.
 
 The report embeds the [semantic sweep's calibration manifest](#semantic-threshold-sweep-model-profiles) and records `output_policy: hybrid_high_confidence`: its `tp`/`fp`/`fn` and `precision`/`recall`/`f1` score the published output minus the `semantic_review` tier, unlike the semantic sweep's same-named fields, which score all published pairs. Both sweeps require a model pinned to an immutable 40-character commit.
 
@@ -53,7 +49,7 @@ python scripts/sweep_hybrid_gates.py \
   --statement-ratio-grid 0.25,0.35,0.45
 ```
 
-The harness uses the analyzer's [hybrid synthesis logic](analysis-defaults.md#hybrid-synthesis-confidence-defaults) and the CLI's model/revision defaults. Each `--semantic-grid` value emulates the [per-language duplicate gate](analysis-defaults.md#semantic-duplicate-gate-defaults) applied before synthesis.
+The harness uses the analyzer's [hybrid synthesis logic](analysis-defaults.md#hybrid-synthesis-confidence-defaults) and [model defaults](model-profiles.md#built-in-profiles). Each `--semantic-grid` value emulates the [duplicate gate](analysis-defaults.md#semantic-duplicate-gate-defaults) applied before synthesis.
 
 ## Semantic threshold sweep (model profiles)
 

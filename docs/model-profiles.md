@@ -9,8 +9,6 @@ Profiles resolve model aliases, thresholds, revisions, trust settings, and task-
 | `gte-modernbert-base` | `Alibaba-NLP/gte-modernbert-base` | `gte-modernbert` | `0.50` | `e7f32e3c00f91d699e8c43b53106206bcc72bb22` | `False` |
 | `embeddinggemma-300m` | `unsloth/embeddinggemma-300m` | `embeddinggemma` | `0.40` | `bfa3c846ac738e62aa61806ef9112d34acb1dc5a` | `False` |
 
-Notes:
-
 - [Per-language duplicate gates and their selection policy](analysis-defaults.md#semantic-duplicate-gate-defaults) control `check` reporting. The search threshold is the floor for query matches. Query-to-code similarity runs far below code-to-code duplicate similarity, so search defaults are intentionally much lower.
 - Every builtin default revision is a pinned immutable commit. [Calibration sweeps](hybrid-tuning.md#semantic-threshold-sweep-model-profiles) record the checkpoint, prompt plan, pipeline, and candidate policy behind each threshold.
 - The gte-modernbert search default is calibrated recall-safe against real corpora: genuinely relevant hits start near `0.59` while fully off-topic queries ceiling near `0.48` on most corpora. Vocabulary overlap from a shared domain (GPU kernels vs a graphics query) or even a single shared word ("pattern", "parse", "warp") can push off-topic matches to `0.52`-`0.65`; those carry visible scores and rank below real hits, but raise `--semantic-threshold` toward `0.6` if they clutter results. No fixed floor separates them everywhere, and the default deliberately favors recall over precision. The synthetic-corpus search sweep saturates for this model (every unit shares one domain), so its report is a guardrail, not the default's source.
@@ -22,13 +20,11 @@ Notes:
 - Built-in alias keys and known aliases resolve to the profile's canonical model ID.
 - Built-in aliases and Hub IDs cannot be shadowed by same-named directories in the current working directory. A local model must use explicit path syntax (an absolute path, `./` or `../`, or `~`); it is then canonicalized to its resolved absolute path - including the on-disk letter case on case-insensitive filesystems such as macOS - so equivalent explicit spellings share one cache identity.
 - Known local model families are inferred from a recognizable directory name, Hugging Face cache ancestor, saved configuration, or model-card title.
-- Family inference selects loading and prompt behavior only. Any non-builtin model - a hub name or local directory containing `embeddinggemma` or `gte-modernbert`, a fine-tune, an arbitrary copy - keeps the family's encode entry points and prompts but uses the uncalibrated generic thresholds: calibrated thresholds belong to the exact pinned builtin checkpoint they were swept on, and a lookalike name proves nothing about a model's score distribution. Pass `--threshold`/`--semantic-threshold` for tuned weights.
-- A family-matched model that is not the pinned checkpoint logs a warning naming the per-language gates it forgoes and the generic `0.82` gate it uses instead, once per model per process, so a local or fine-tuned copy never silently looks calibrated.
-- Other unknown model IDs resolve to the generic profile.
+- Family inference selects loading and prompt behavior only. Non-builtin models, including fine-tunes and local copies, use the [generic thresholds](#built-in-profiles). Calibrated thresholds belong to the pinned builtin checkpoint; a recognizable name does not establish calibration. A family-matched model warns once per model per process about its generic duplicate gate. Pass `--threshold`/`--semantic-threshold` for tuned weights.
 
 ### Local model directories and offline use
 
-Both `check` and `search` accept an explicit path to a directory written by `save_pretrained()` or a complete Hugging Face repository download. Local paths are passed to Sentence Transformers with `local_files_only=True`; prefix a relative path with `./` or `../` so it cannot be confused with a model alias or Hub ID.
+Both `check` and `search` accept a directory written by `save_pretrained()` or a complete Hugging Face repository download, using the [explicit path rules](#alias-resolution-rules). Local paths are passed to Sentence Transformers with `local_files_only=True`.
 
 ```bash
 hf download Alibaba-NLP/gte-modernbert-base \
@@ -63,6 +59,8 @@ CLI task defaults:
 
 The Python API resolves the same defaults by operation: an unset `AnalyzerConfig.semantic_task` uses `semantic-similarity` for `CodeAnalyzer.analyze()` and `code-retrieval` for `CodeAnalyzer.index()`. A later `search()` uses the task that produced its current corpus embeddings. Built-in default thresholds apply only to the pinned revision, default task/prompt plan, and default remote-code setting they were calibrated on; a custom instruction prefix, alternate EmbeddingGemma task, alternate built-in revision, or a `trust_remote_code` value differing from the profile default requires an explicit threshold. Remote code can change the vectors, so it splits the embedding cache key and invalidates the calibrated defaults the same way a prompt change does; this applies to both the duplicate gates and the search default.
 
+[Contextual search documents](python-api.md#semantic-query-search) also require an explicit threshold because the built-in search defaults were calibrated on source-only documents.
+
 Allowed task names:
 
 - `semantic-similarity`
@@ -80,11 +78,9 @@ If you pass an unknown semantic task, the CLI/API raises a validation error.
 Prompts are backend configuration, not text decoration: codedupes passes raw code/query text to Sentence Transformers together with an explicit prompt and encode route, so the model's saved prompts are never applied a second time on top of a manually prefixed input.
 
 - `embeddinggemma`: duplicate detection embeds code through the symmetric `encode` route with the task prompt (for example `task: sentence similarity | query: ` for `semantic-similarity`); retrieval-task code inputs use `encode_document` with the document prompt (`title: none | text: `); queries use `encode_query` with the task's query prompt (for example `task: code retrieval | query: ` for `code-retrieval`).
-- generic models: symmetric `encode` route with no prompt unless explicitly overridden.
+- GTE ModernBERT and generic models: symmetric `encode` route with no prompt unless explicitly overridden.
 - `--instruction-prefix` replaces the model prompt for that input mode while preserving the encode route; it is never stacked inside the saved prompt.
 
 See [cache identity](caching.md#runtime-identity) for how encode routes and prompts affect reuse.
 
-Prompt-sensitive direct searches also require the `EmbeddingSpaceIdentity` returned by `compute_embeddings_with_identity()`. This prevents a bare matrix produced through one EmbeddingGemma route from being compared with a query produced through another.
-
-For examples, see the [CLI reference](cli.md) and [Python API](python-api.md).
+For invocation examples and direct-call embedding identity requirements, see the [CLI reference](cli.md) and [Python search API](python-api.md#semantic-query-search).

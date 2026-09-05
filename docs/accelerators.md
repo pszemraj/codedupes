@@ -18,7 +18,7 @@ codedupes search ./src "normalize request payload" --device mps
 2. MPS when the MPS backend is available
 3. CPU
 
-An explicit unavailable accelerator is an error. `codedupes` does not silently reinterpret `--device mps` as CPU, and the check applies even when a warm embedding cache makes inference unnecessary or extraction finds no semantic units to embed - including a `check` whose empty extraction returns before any embedding work is scheduled, where only combined mode with `--allow-semantic-fallback` downgrades the error to a warning. The only automatic CPU transitions are the documented unsupported-op and out-of-memory recovery paths below.
+An explicit unavailable accelerator is an error, including on warm-cache and empty scans. Combined mode can retain traditional results with `--allow-semantic-fallback`; see [exit codes](output.md#exit-codes). Automatic CPU transitions during inference follow the recovery rules below.
 
 ## Unsupported MPS operators
 
@@ -59,25 +59,19 @@ Fresh embeddings must have the expected shape and row count. Non-finite or zero 
 
 ## Precision and Metal environment variables
 
-Model loads pin an explicit dtype instead of inheriting the checkpoint's config-declared one, under a capability-gated policy rather than a hardcoded per-device truth.
+Model loads pin an explicit dtype instead of inheriting the checkpoint's configuration:
 
-Without the pin, Transformers 5's `dtype="auto"` default runs float16-configured checkpoints (including the default `gte-modernbert-base`) in half precision - about 10x slower on CPU and off the faithful-float32 tolerance.
+| Device | Inference dtype |
+|---|---|
+| CUDA with native bfloat16 support | bfloat16 (emulated support is excluded) |
+| Other CUDA devices and MPS | float32 |
+| CPU | float32, unless the experimental policy below is enabled |
 
-CUDA hardware with native bf16 support (Ampere or newer; pre-Ampere emulated bf16 is excluded) always pins bfloat16 - this rule is unchanged.
+`CODEDUPES_CPU_BF16=1` enables experimental CPU bfloat16 only when the machine has both a native bf16 ISA (`bf16` on ARM, `amx_bf16`/`avx512_bf16` on x86) and an available mkldnn GEMM backend. The capability check runs at most once per process and persists nothing. `codedupes info` reports the hardware checks and effective policy.
 
-MPS always pins float32: bfloat16 on MPS gains only ~13% runtime while drifting pair similarities ~1e-2 (tuned-threshold scale), not worth cold-splitting the shared CPU/MPS cache key space.
+The CPU capability gate does not establish accuracy at the built-in duplicate and search thresholds. Automatic enablement awaits speed and decision-parity validation on supported hardware. TODO before promotion: measure agreement between CPU and CUDA bfloat16 vectors, which currently share a cache namespace, and split their identities if needed.
 
-CPU pins float32 by default. Setting `CODEDUPES_CPU_BF16=1` (experimental) enables bfloat16 when this machine also passes a two-part capability gate - a native bf16 ISA (`bf16` on ARM, `amx_bf16`/`avx512_bf16` on x86) and a GEMM backend able to exploit it (`torch.backends.mkldnn.is_available()`). `torch.backends.cpu.get_cpu_capability()` is never used for this decision: it reports the wheel's build-tier baseline (for example `"DEFAULT"`), not what the running CPU can execute.
-
-The opt-in guard exists because the positive path is unvalidated: the gate proves the CPU can execute bf16 GEMM fast, not that the float32-calibrated duplicate and search thresholds survive bfloat16's numeric shift on the built-in models. Automatic enablement waits for a gate-passing machine (AMX/AVX512-bf16 x86, or ARM bf16 with an mkldnn backend) to validate speed and decision parity end to end. TODO for that promotion work: opted-in CPU bfloat16 currently shares the bfloat16 cache key space with CUDA bfloat16 even though the two backends route ops differently; measure cross-backend row agreement there and split the identities if it matters.
-
-Measured on an Apple M5 (torch 2.13.0, macOS arm64 wheel): `torch.cpu.get_capabilities()` reports a native bf16 ISA (`bf16: true`, `architecture: "arm64"`) but no mkldnn backend, and a 1024x1024x1024 bf16 matmul measured 1015 ms versus 1.207 ms for float32 - 841x slower with an ISA but no backend to exploit it, so this machine's CPU pins float32 with or without the opt-in.
-
-`codedupes info` prints the live verdict: CPU name and architecture, whether the native bf16 ISA is present, whether mkldnn is available, the combined gate, and the effective inference policy (opt-in plus gate).
-
-The gate probes live, at most once per process, and persists nothing: an opted-in run reads `torch.cpu.get_capabilities()` and `torch.backends.mkldnn.is_available()` directly on first use and memoizes the verdict for the rest of the process, so a replaced torch wheel, a changed container CPU mask, or a migrated environment can never serve a stale verdict from disk. A run without the opt-in never imports torch for this decision at all. Only opted-in users pay the per-process probe - proportional for an experimental flag, and simpler than a persisted record whose identity would have to fingerprint the actual wheel and exposed CPU features to be trustworthy.
-
-Every accelerator-to-CPU OOM fallback (see the recovery ladder above) re-checks this same inference policy (opt-in plus gate) before deciding whether to keep or cast away bfloat16, and a load-time OOM retry (CUDA or MPS falling back to a CPU load) re-pins the CPU dtype fresh rather than inheriting the accelerator's dtype.
+Both load-time and inference-time CPU fallback reapply this dtype policy. A bfloat16 accelerator model becomes float32 unless the CPU opt-in and capability gate both pass.
 
 A run keyed under a non-default (bfloat16) dtype variant whose live execution can no longer produce bfloat16 - an accelerator OOM cast the model to float32 mid-run - discards any cache hits recorded under that key and recomputes the whole corpus in one coherent policy, mirroring the fast-math precedent below; a write that would otherwise land in the wrong key space is skipped instead, costing a cache miss next run rather than a poisoned key space.
 

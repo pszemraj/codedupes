@@ -1,6 +1,6 @@
 # Embedding cache
 
-`codedupes` persists embeddings so unchanged code can reuse vectors across runs. A fully cached corpus and query can run without loading the model. Over-context units have no vector to cache, so repeated scans that include them can still load the tokenizer/model to check their length, even when every retained row is a hit.
+`codedupes` freshly extracts the selected files on each run, then reuses embeddings for unchanged inputs and attaches them to the current code units. A fully cached corpus and query can run without loading the model. Over-context units have no vector to cache, so repeated scans that include them can still load the tokenizer/model to check their length, even when every retained row is a hit.
 
 ## Controls
 
@@ -38,7 +38,7 @@ A label-keyed shard records the source commit with its vector generation. When a
 
 Fully warm label-keyed runs can keep serving a coherent set of older vectors after a branch moves. Clear that model's cache after a known upstream change to refresh it immediately. `--strict-revision-cache` instead resolves the label through the local Hugging Face cache before reuse and uses that concrete commit for model loading. If the label cannot be resolved offline, persistent reuse is disabled. Built-in pins and local directories are unaffected.
 
-An indexed corpus retains its source commit even when persistent storage is disabled or unavailable. When that commit is known, a query model with a different or unreportable checkpoint raises a reindex error before query encoding, regardless of corpus or query caching. Cached queries must also match that checkpoint, including when another process has replaced the shard since indexing. Mutable-label query keys use a new provenance namespace to invalidate older, potentially unverified query rows while retaining reusable corpus embeddings. See the [search state contract](python-api.md#semantic-query-search).
+An indexed corpus retains its source commit even without persistent storage. Query vectors must match that checkpoint, whether cached or freshly encoded; a different or unreportable checkpoint requires reindexing. This also applies when another process replaces the shard after indexing. See the [search state contract](python-api.md#semantic-query-search).
 
 ### Local directories
 
@@ -54,7 +54,7 @@ The cache tracks three distinct objects:
 - A content key identifies prepared embedding input; several units can share it.
 - A vector row stores that key's embedding. Compaction can change its row number.
 
-After a successful `analyze()` or `index()`, `manifest.json` records the unit-to-key map and exact file paths. Failed runs leave the previous manifest in place, even if they already wrote some vectors. Recoverable read, decoding, parse, or directory traversal failures also skip publication for both directory and single-file targets: findings and valid embeddings remain available, while the prior manifest and complete-scan clock stay unchanged. Intentional selection warnings and semantic context-window exclusions do not block publication. Complete scans publish empty selections too, so deleting the final unit still updates the baseline.
+With persistent caching enabled, a successful semantic `analyze()` or `index()` publishes the unit-to-key map and exact file paths in `manifest.json`. Failed runs leave the previous manifest in place, even if they already wrote some vectors. Recoverable read, decoding, parse, or directory traversal failures also skip publication for both directory and single-file targets: findings and valid embeddings remain available, while the prior manifest and complete-scan clock stay unchanged. Intentional selection warnings and semantic context-window exclusions do not block publication. Complete scans publish empty selections too, so deleting the final unit still updates the baseline.
 
 Comparable scans first match occurrences by file path, language, and qualified name, ignoring byte-offset shifts caused by edits. Remaining new UIDs match departed UIDs one-to-one by content key to infer moves. Unmatched departed UIDs count as deleted even if another unit still shares their vector. A key becomes orphaned only when the current selection has no unit referencing it, including when a surviving unit's source changes.
 

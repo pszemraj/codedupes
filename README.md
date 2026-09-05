@@ -2,15 +2,6 @@
 
 `codedupes` detects duplicate code across Python, C, Rust, JavaScript, JSX, TypeScript, and TSX. It combines deterministic structural/token matching with semantic code embeddings, while retaining conservative Python-only unused-code analysis.
 
-Core capabilities:
-
-- Language-aware extraction of functions, methods, and classes
-- Exact structural and token fingerprints, plus identifier-Jaccard near matching
-- Semantic matching and search with model-profile embeddings (default `gte-modernbert-base`)
-- Persistent, content-addressed embedding cache so unchanged code is not re-embedded
-- Explicit CPU, CUDA, and Apple Silicon MPS execution
-- Recoverable parse diagnostics instead of silent line-chunk fallback
-
 See [Installation](docs/install.md) for setup and runtime requirements.
 
 ## Quick start
