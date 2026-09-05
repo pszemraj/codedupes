@@ -2565,6 +2565,10 @@ def _prepare_cache_context(
     )
     if cache_variant and variant_suffix:
         cache_variant = f"{cache_variant}\x00{variant_suffix}"
+    if mode == "query" and _revision_is_mutable_label(model_name, cache_revision):
+        # Earlier query rows could inherit corpus provenance without verifying
+        # their own checkpoint. Leave code keys intact but never reuse those rows.
+        cache_variant = f"{cache_variant}\x00query_provenance=2"
     return cache, cache_revision, cache_variant, _embedding_cache_namespace(mode, cache_variant)
 
 
@@ -3392,6 +3396,7 @@ def _compute_embeddings_unlocked(
             ],
             namespace=cache_namespace,
             expected_source_commit=corpus_source_commit,
+            require_source_commit=_revision_is_mutable_label(model_name, cache_revision),
         )
 
     _record_embedding_run_stats(
@@ -3772,7 +3777,7 @@ def _find_similar_to_query_unlocked(
     :param corpus_identity: Identity captured with ``embeddings``. Required for
         prompt- or route-sensitive models; model/revision/runtime drift requires
         rebuilding the corpus, and its recorded source commit rejects mutable-label
-        query vectors - cached or freshly encoded - from any other checkpoint.
+        query vectors - cached or freshly encoded - from any other or unknown checkpoint.
     :param strict_revision_cache: Whether an unpinned hub revision resolves to a
         concrete commit hash (disabling caching when unmappable) instead of the
         requested revision label, defaults to ``False``. Must match the mode
@@ -3783,6 +3788,8 @@ def _find_similar_to_query_unlocked(
         threshold, or a prompt-sensitive corpus omits its identity.
     :raises SemanticBackendError: If an explicitly requested device is unavailable,
         even when the query embedding is already cached.
+    :raises RuntimeError: If the query checkpoint cannot be verified against the
+        indexed corpus, or its embedding execution policy changed.
     """
     validate_explicit_device_request(device, mps_fallback=mps_fallback)
 
@@ -3960,42 +3967,30 @@ def _find_similar_to_query_unlocked(
             mps_memory_fraction=(None if embedding_device == "cpu" else mps_memory_fraction),
             persist_local_model_manifest=use_cache and cache_scope is not None,
         )
-        execution_device = _get_effective_model_device(model, resolved_device)
-
-        confirmed_revision = _confirm_cache_revision_after_load(
-            model,
-            model_name,
-            resolved_revision,
-            strict=strict_revision_cache,
-        )
-
         query_source_commit: str | None = None
-        if (
-            cache is not None
-            and cache_revision is not None
-            and _revision_is_mutable_label(model_name, cache_revision)
-        ):
-            # A query miss loaded the model, so the shard's source-commit
-            # guard can run. Drift here means the corpus matrix was assembled
-            # from old-commit cached vectors on the warm no-load path while
-            # this query would embed under the new commit: the shard is
-            # purged and the comparison must not happen. An unknown loaded
-            # commit stays fail-open by design (see the corpus-side guard).
+        provenance_revision = (
+            corpus_identity.resolved_revision if corpus_identity is not None else cache_revision
+        )
+        if _revision_is_mutable_label(model_name, provenance_revision):
+            # The in-memory corpus's provenance remains authoritative even
+            # when persistent query caching is disabled or its shard was replaced.
             loaded_commit = _get_loaded_model_commit_hash(model)
+            if corpus_source_commit is not None and loaded_commit is None:
+                raise RuntimeError(
+                    "The loaded query model cannot be verified against the indexed "
+                    "corpus checkpoint. Pin the model revision and rebuild the index "
+                    "before searching."
+                )
+            if corpus_source_commit is not None and loaded_commit != corpus_source_commit:
+                raise RuntimeError(
+                    f"Model branch {provenance_revision!r} moved to a different commit since "
+                    f"this corpus was indexed (corpus {corpus_source_commit[:12]}, "
+                    f"loaded {loaded_commit[:12]}). Run index() or analyze() again "
+                    "before search()."
+                )
             if loaded_commit is not None:
                 query_source_commit = loaded_commit
-                if corpus_source_commit is not None and loaded_commit != corpus_source_commit:
-                    # The shard alone cannot prove this: a republished shard
-                    # can already be coherent with the newly loaded commit
-                    # while the in-memory corpus matrix still derives from the
-                    # old one.
-                    raise RuntimeError(
-                        f"Model branch {cache_revision!r} moved to a different commit since "
-                        f"this corpus was indexed (corpus {corpus_source_commit[:12]}, "
-                        f"loaded {loaded_commit[:12]}). Run index() or analyze() again "
-                        "before search()."
-                    )
-                if not cache.confirm_source_commit(
+                if cache is not None and not cache.confirm_source_commit(
                     cache_scope, profile.canonical_name, cache_revision, loaded_commit
                 ):
                     raise RuntimeError(
@@ -4003,6 +3998,14 @@ def _find_similar_to_query_unlocked(
                         "this corpus was indexed; its cached vectors were purged. Run index() "
                         "or analyze() again before search()."
                     )
+
+        execution_device = _get_effective_model_device(model, resolved_device)
+        confirmed_revision = _confirm_cache_revision_after_load(
+            model,
+            model_name,
+            resolved_revision,
+            strict=strict_revision_cache,
+        )
 
         corpus_encode_plan = _resolve_encode_plan(
             profile,
@@ -4129,6 +4132,7 @@ def _find_similar_to_query_unlocked(
                     namespace=cache_namespace,
                     max_namespace_keys=_MAX_CACHED_QUERY_KEYS,
                     expected_source_commit=query_source_commit,
+                    require_source_commit=_revision_is_mutable_label(model_name, cache_revision),
                 )
 
     similarities = embeddings @ query_embedding

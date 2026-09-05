@@ -34,11 +34,11 @@ Query vectors share the corpus shard. Each novel query write rewrites that shard
 
 Built-in profiles and explicit full-commit `--model-revision` values use immutable revision keys. Unpinned Hub models default to the requested branch/tag label, or `main`, without an offline revision lookup before a warm hit.
 
-A label-keyed shard records the source commit with its vector generation. When a miss loads the model, codedupes compares the loaded commit with both the current shard and the snapshot that supplied earlier hits. Drift invalidates those hits and rebuilds the corpus. Writers reject batches whose commit became stale during encoding. A backend that cannot report its commit recomputes the complete corpus and bypasses both corpus and query caching.
+A label-keyed shard records the source commit with its vector generation. When a miss loads the model, codedupes compares the loaded commit with both the current shard and the snapshot that supplied earlier hits. Drift invalidates those hits and rebuilds the corpus. Writers reject batches with missing provenance or whose commit became stale during encoding. A backend that cannot report its commit recomputes the complete corpus and bypasses both corpus and query caching.
 
 Fully warm label-keyed runs can keep serving a coherent set of older vectors after a branch moves. Clear that model's cache after a known upstream change to refresh it immediately. `--strict-revision-cache` instead resolves the label through the local Hugging Face cache before reuse and uses that concrete commit for model loading. If the label cannot be resolved offline, persistent reuse is disabled. Built-in pins and local directories are unaffected.
 
-An indexed corpus also retains its source commit. A query from a different checkpoint raises a reindex error before similarity comparison, including when another process has replaced the shard since indexing. See the [search state contract](python-api.md#semantic-query-search).
+An indexed corpus also retains its source commit. When that commit is known, a query model with a different or unreportable checkpoint raises a reindex error before query encoding, even when query caching is disabled. Cached queries must also match that checkpoint, including when another process has replaced the shard since indexing. Mutable-label query keys use a new provenance namespace to invalidate older, potentially unverified query rows while retaining reusable corpus embeddings. See the [search state contract](python-api.md#semantic-query-search).
 
 ### Local directories
 

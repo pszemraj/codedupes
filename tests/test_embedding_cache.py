@@ -16,6 +16,7 @@ import numpy as np
 import pytest
 
 from codedupes import embedding_cache, semantic
+from codedupes.analyzer import AnalyzerConfig, CodeAnalyzer
 from codedupes.embedding_cache import CorpusSelectionManifest, EmbeddingCache, diff_manifest
 from codedupes.models import CodeUnit
 from codedupes.semantic import (
@@ -1056,6 +1057,36 @@ def test_put_many_rejects_batch_after_provenance_moved(tmp_path):
     assert meta["source_commit"] == "b" * 40
 
 
+@pytest.mark.parametrize("existing_commit", [None, "a" * 40])
+def test_put_many_rejects_unverified_provenance_required_batch(tmp_path, existing_commit):
+    cache = EmbeddingCache(tmp_path)
+    scope = tmp_path / "repo"
+    scope.mkdir()
+    vector = np.array([1.0, 0.0], dtype=np.float32)
+    if existing_commit is not None:
+        cache.put_many(
+            scope,
+            "some/model",
+            "main",
+            [("corpus", vector)],
+            expected_source_commit=existing_commit,
+        )
+    shard_dir = cache.shard_dir(scope, "some/model", "main")
+    before = embedding_cache._read_shard_meta(shard_dir)
+
+    cache.put_many(
+        scope,
+        "some/model",
+        "main",
+        [("query", vector)],
+        namespace="query",
+        require_source_commit=True,
+    )
+
+    assert cache.get_many(scope, "some/model", "main", ["query"]) == {}
+    assert embedding_cache._read_shard_meta(shard_dir) == before
+
+
 def test_get_many_with_provenance_returns_the_snapshot_commit(tmp_path):
     cache = EmbeddingCache(tmp_path)
     scope = tmp_path / "repo"
@@ -1304,6 +1335,134 @@ def test_loose_branch_move_purges_shard_and_aborts_search(tmp_path, monkeypatch)
     # The purge emptied the shard, so reindexing re-embeds everything under b.
     compute_embeddings(units, model_name="drift-model", revision="main", cache_scope=tmp_path)
     assert len(model.encode_calls[-1]) == len(units)
+
+
+@pytest.mark.parametrize("query_cache", [True, False], ids=["cached", "uncached"])
+@pytest.mark.parametrize(
+    "query_commit", ["a" * 40, "b" * 40, None], ids=["match", "mismatch", "missing"]
+)
+def test_warm_index_requires_query_checkpoint_before_encoding(
+    tmp_path, monkeypatch, query_cache, query_commit
+):
+    class CheckpointModel(CountingModel):
+        def encode(self, texts, **kwargs):
+            self.encode_calls.append(list(texts))
+            vectors = np.array(
+                [[1.0, 0.0] if "alpha" in text else [0.0, 1.0] for text in texts],
+                dtype=np.float32,
+            )
+            return vectors if self.commit == "a" * 40 else vectors[:, ::-1]
+
+    _five_units(tmp_path)
+    original = CheckpointModel(dim=2)
+    original.commit = "a" * 40
+    loads = _patch_get_model(monkeypatch, original)
+    monkeypatch.setattr(semantic, "_get_loaded_model_commit_hash", lambda model: model.commit)
+    config = AnalyzerConfig(
+        model_name="drift-model",
+        model_revision="main",
+        device="cpu",
+        min_semantic_statements=0,
+    )
+    assert CodeAnalyzer(config).index(tmp_path) == 5
+    analyzer = CodeAnalyzer(config)
+    assert analyzer.index(tmp_path) == 5
+    assert loads["count"] == 1
+    analyzer.config.embedding_cache = query_cache
+
+    cache = EmbeddingCache()
+    shard_dir = cache.shard_dir(tmp_path, "drift-model", "main")
+    before = embedding_cache._read_shard_meta(shard_dir)
+    write_calls = []
+    put_many = EmbeddingCache.put_many
+
+    def record_write(self, *args, **kwargs):
+        write_calls.append(kwargs)
+        return put_many(self, *args, **kwargs)
+
+    monkeypatch.setattr(EmbeddingCache, "put_many", record_write)
+    query_model = CheckpointModel(dim=2)
+    query_model.commit = query_commit
+    _patch_get_model(monkeypatch, query_model)
+    if query_commit != original.commit:
+        message = "cannot be verified" if query_commit is None else "moved to a different commit"
+        with pytest.raises(RuntimeError, match=message):
+            analyzer.search("find alpha", top_k=1, threshold=0.0)
+        assert query_model.encode_calls == []
+        assert write_calls == []
+        assert embedding_cache._read_shard_meta(shard_dir) == before
+        query_model = original
+
+    recovery_loads = _patch_get_model(monkeypatch, query_model)
+    assert analyzer.search("find alpha", top_k=1, threshold=0.0)[0][0].name == "alpha"
+    assert analyzer.search("find alpha", top_k=1, threshold=0.0)[0][0].name == "alpha"
+    assert recovery_loads["count"] == (1 if query_cache else 2)
+    assert len(write_calls) == int(query_cache)
+    if query_cache:
+        assert write_calls[0]["require_source_commit"] is True
+        assert write_calls[0]["expected_source_commit"] == original.commit
+
+
+@pytest.mark.parametrize("revision", ["main", REVISION_1], ids=["mutable", "pinned"])
+def test_query_provenance_namespace_only_invalidates_mutable_query_rows(
+    tmp_path, monkeypatch, revision
+):
+    units = _five_units(tmp_path)
+    model = CountingModel()
+    loads = _patch_get_model(monkeypatch, model)
+    monkeypatch.setattr(semantic, "_get_loaded_model_commit_hash", lambda _model: "a" * 40)
+    embeddings, identity = compute_embeddings_with_identity(
+        units,
+        model_name="drift-model",
+        revision=revision,
+        device="cpu",
+        cache_scope=tmp_path,
+    )
+    profile = semantic.resolve_model_profile("drift-model")
+    query = "find addition"
+    plan = semantic.resolve_encode_plan("drift-model", mode="query")
+    old_variant = semantic._cache_variant_for(profile, "cpu", plan, mps_fallback=None)
+    old_key = semantic.compute_cache_key(
+        profile.canonical_name,
+        revision,
+        query,
+        mode="query",
+        variant=old_variant,
+    )
+    cache = EmbeddingCache()
+    cache.put_many(
+        tmp_path,
+        profile.canonical_name,
+        revision,
+        [(old_key, -_vector_for_text(query))],
+        namespace=semantic._embedding_cache_namespace("query", old_variant),
+        expected_source_commit="a" * 40 if revision == "main" else None,
+    )
+
+    warm_embeddings, warm_identity = compute_embeddings_with_identity(
+        units,
+        model_name="drift-model",
+        revision=revision,
+        device="cpu",
+        cache_scope=tmp_path,
+    )
+    np.testing.assert_array_equal(warm_embeddings, embeddings)
+    assert warm_identity == identity
+    assert loads["count"] == 1
+    results = find_similar_to_query(
+        query,
+        units,
+        warm_embeddings,
+        model_name="drift-model",
+        revision=revision,
+        device="cpu",
+        cache_scope=tmp_path,
+        corpus_identity=warm_identity,
+        threshold=-1.0,
+    )
+    assert (model.encode_calls[-1] == [query]) == (revision == "main")
+    assert loads["count"] == (2 if revision == "main" else 1)
+    assert all((score > 0.0) == (revision == "main") for _unit, score in results)
 
 
 def test_republished_shard_query_hit_never_reaches_stale_corpus(tmp_path, monkeypatch):

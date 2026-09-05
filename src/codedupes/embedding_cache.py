@@ -1393,6 +1393,7 @@ def _write_shard_entries(
     namespace: str,
     max_namespace_keys: int | None = None,
     expected_source_commit: str | None = None,
+    require_source_commit: bool = False,
 ) -> None:
     """Append/heal embedding rows and cap overflowing namespace keys.
 
@@ -1410,9 +1411,18 @@ def _write_shard_entries(
         that publishes the generation: a shard whose recorded provenance no
         longer matches rejects the whole batch rather than assembling rows from
         two checkpoints into one generation.
+    :param require_source_commit: Whether the caller requires verified incoming
+        checkpoint provenance; reject an unstamped batch instead of inheriting
+        any existing shard's source commit.
     :return: ``None``.
     """
     if not entries:
+        return
+    if require_source_commit and expected_source_commit is None:
+        logger.warning(
+            f"Discarding {len(entries)} computed embeddings for {shard_dir.name}: "
+            "the incoming batch has no verified source commit"
+        )
         return
     try:
         # One row per content key: the last supplied value wins, while insertion
@@ -1874,6 +1884,7 @@ class EmbeddingCache:
         namespace: str = "default",
         max_namespace_keys: int | None = None,
         expected_source_commit: str | None = None,
+        require_source_commit: bool = False,
     ) -> None:
         """Insert vectors, cap overflowing namespaces, enforce the global size cap.
 
@@ -1888,6 +1899,8 @@ class EmbeddingCache:
         :param expected_source_commit: Checkpoint commit the entries were computed
             under, required for mutable-label shards; the write is rejected under
             the shard lock when the shard's recorded provenance no longer matches.
+        :param require_source_commit: Whether this write requires a non-null
+            ``expected_source_commit``, as required for mutable-label embeddings.
         :return: ``None``.
         """
         if not entries:
@@ -1901,6 +1914,7 @@ class EmbeddingCache:
             namespace=namespace,
             max_namespace_keys=max_namespace_keys,
             expected_source_commit=expected_source_commit,
+            require_source_commit=require_source_commit,
         )
         # Eviction scans the whole cache tree, so it is throttled rather than
         # run on every call (see _should_scan_for_eviction) - callers that need
