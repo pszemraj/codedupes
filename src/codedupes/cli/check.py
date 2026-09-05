@@ -208,16 +208,16 @@ def check_command(ctx: click.Context, path: Path, **params: Any) -> None:
     :return: ``None``.
     """
     opts = CheckOptions.from_params(ctx, params)
-    try:
-        config = opts.to_analysis_config()
-    except ValueError as exc:
-        raise click.UsageError(str(exc)) from exc
-
     with _configured_cli_output(
         as_json=opts.as_json,
         verbose=opts.verbose,
         output_width=opts.output_width,
     ):
+        try:
+            config = opts.to_analysis_config()
+        except ValueError as exc:
+            raise click.UsageError(str(exc)) from exc
+
         result = _run_cli_action(
             lambda: cli_module.CodeAnalyzer(config).analyze(path),
             error_label="analysis",

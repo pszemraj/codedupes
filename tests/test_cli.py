@@ -3,7 +3,9 @@ from __future__ import annotations
 import json
 import logging
 import os
+import subprocess
 import sys
+import textwrap
 from pathlib import Path
 
 import numpy as np
@@ -230,6 +232,113 @@ def test_cli_json_discards_direct_backend_stderr_on_success(monkeypatch, tmp_pat
     assert result.exit_code == 1
     assert result.stderr == ""
     assert json.loads(result.output)["schema_version"] == 2
+
+
+def _run_merged_cli(args: list[str], setup: str = "") -> subprocess.CompletedProcess[str]:
+    """Run the real CLI in a subprocess with stderr merged into stdout."""
+    script = (
+        "from codedupes import cli\n" + textwrap.dedent(setup) + "\nraise SystemExit(cli.main())"
+    )
+    return subprocess.run(
+        [sys.executable, "-c", script, *args],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        env={**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src")},
+        check=False,
+    )
+
+
+@pytest.mark.parametrize("command", ["check", "search"])
+def test_cli_json_isolates_custom_family_warning_before_config(tmp_path, command):
+    args = [command, str(tmp_path)]
+    if command == "search":
+        args.append("entry")
+    result = _run_merged_cli([*args, "--model", "review/gte-modernbert-base", "--json"])
+
+    assert result.returncode == 0, result.stdout
+    assert json.loads(result.stdout)["schema_version"] == 2
+
+
+@pytest.mark.parametrize(
+    ("command", "fail_on", "exit_code"),
+    [("check", "none", 0), ("check", "actionable", 1), ("search", None, 0)],
+)
+def test_cli_json_isolates_native_stderr_in_completed_report(tmp_path, command, fail_on, exit_code):
+    args = [command, str(tmp_path), "--json"]
+    if command == "check":
+        (tmp_path / "sample.py").write_text(
+            "def first(value):\n    return value + 1\n\ndef second(value):\n    return value + 1\n"
+        )
+        args.extend(["--traditional-only", "--no-unused", "--no-tiny-filter", "--fail-on", fail_on])
+    else:
+        args.append("entry")
+    result = _run_merged_cli(
+        args,
+        """
+        import os
+        import sys
+
+        class NoisyAnalyzer(cli.CodeAnalyzer):
+            def __init__(self, config):
+                os.write(2, b"native initialization diagnostic\\n")
+                super().__init__(config)
+
+            def analyze(self, path):
+                print("Python analysis diagnostic", file=sys.stderr)
+                os.write(2, b"native analysis diagnostic\\n")
+                return super().analyze(path)
+
+            def index(self, path):
+                print("Python indexing diagnostic", file=sys.stderr)
+                os.write(2, b"native indexing diagnostic\\n")
+                return super().index(path)
+
+            def search(self, *args, **kwargs):
+                os.write(2, b"native query diagnostic\\n")
+                return super().search(*args, **kwargs)
+
+        cli.CodeAnalyzer = NoisyAnalyzer
+        """,
+    )
+
+    assert result.returncode == exit_code, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["schema_version"] == 2
+    if command == "check":
+        assert payload["duplicates"]
+        assert payload["summary"]["exit_code"] == exit_code
+
+
+@pytest.mark.parametrize("command", ["check", "search"])
+def test_cli_json_replays_python_and_native_stderr_on_failure(tmp_path, command):
+    args = [command, str(tmp_path), "--json"]
+    if command == "search":
+        args.append("entry")
+    result = _run_merged_cli(
+        args,
+        """
+        import os
+        import sys
+
+        class FailingAnalyzer(cli.CodeAnalyzer):
+            def analyze(self, path):
+                print("Python backend diagnostic", file=sys.stderr)
+                os.write(2, b"native backend diagnostic\\n")
+                raise RuntimeError("backend exploded")
+
+            index = analyze
+
+        cli.CodeAnalyzer = FailingAnalyzer
+        """,
+    )
+
+    assert result.returncode == 1
+    assert "Python backend diagnostic" in result.stdout
+    assert "native backend diagnostic" in result.stdout
+    error_label = "analysis" if command == "check" else "search"
+    assert f"Error during {error_label}: backend exploded" in result.stdout
+    assert "schema_version" not in result.stdout
 
 
 def test_cli_reports_semantic_context_diagnostics(monkeypatch, tmp_path):

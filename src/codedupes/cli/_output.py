@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
-import io
 import logging
+import os
+import shutil
 import sys
+import tempfile
 from collections.abc import Callable, Iterator
-from contextlib import contextmanager, redirect_stderr
+from contextlib import contextmanager, nullcontext, redirect_stderr
 from typing import TypeVar
 
 import rich_click as click
@@ -90,6 +92,32 @@ def setup_logging(verbose: bool = False) -> None:
 
 
 @contextmanager
+def _capture_json_stderr() -> Iterator[None]:
+    """Spool Python/native stderr and replay it only if the CLI operation fails.
+
+    :return: Context manager restoring Python stderr and file descriptor 2 on exit.
+    """
+    with tempfile.TemporaryFile(
+        mode="w+", encoding="utf-8", errors="replace", buffering=1
+    ) as captured:
+        sys.stderr.flush()
+        stderr_fd = os.dup(2)
+        try:
+            try:
+                os.dup2(captured.fileno(), 2)
+                with redirect_stderr(captured):
+                    yield
+            finally:
+                os.dup2(stderr_fd, 2)
+                os.close(stderr_fd)
+        except BaseException:
+            captured.seek(0)
+            shutil.copyfileobj(captured, sys.stderr)
+            sys.stderr.flush()
+            raise
+
+
+@contextmanager
 def _configured_cli_output(
     *,
     as_json: bool,
@@ -103,42 +131,33 @@ def _configured_cli_output(
     :param output_width: Rich console width.
     :return: Context manager that restores the prior output configuration on exit.
     """
-    _set_console(output_width)
-    logging_state: tuple[int, list[logging.Handler]] | None = None
-    restore_hub_progress: Callable[[], None] | None = None
-    if as_json:
-        logging_state = _suppress_logs_for_json()
+    with _capture_json_stderr() if as_json else nullcontext():
+        _set_console(output_width)
+        logging_state: tuple[int, list[logging.Handler]] | None = None
+        restore_hub_progress: Callable[[], None] | None = None
         try:
-            from huggingface_hub.utils import (
-                are_progress_bars_disabled,
-                disable_progress_bars,
-                enable_progress_bars,
-            )
+            if as_json:
+                logging_state = _suppress_logs_for_json()
+                try:
+                    from huggingface_hub.utils import (
+                        are_progress_bars_disabled,
+                        disable_progress_bars,
+                        enable_progress_bars,
+                    )
 
-            if not are_progress_bars_disabled():
-                restore_hub_progress = enable_progress_bars
-            disable_progress_bars()
-        except ImportError:
-            pass
-    else:
-        setup_logging(verbose)
-
-    try:
-        if as_json:
-            captured_stderr = io.StringIO()
-            try:
-                with redirect_stderr(captured_stderr):
-                    yield
-            except BaseException:
-                sys.stderr.write(captured_stderr.getvalue())
-                raise
-        else:
+                    if not are_progress_bars_disabled():
+                        restore_hub_progress = enable_progress_bars
+                    disable_progress_bars()
+                except ImportError:
+                    pass
+            else:
+                setup_logging(verbose)
             yield
-    finally:
-        if restore_hub_progress is not None:
-            restore_hub_progress()
-        if logging_state is not None:
-            _restore_root_logger_state(logging_state)
+        finally:
+            if restore_hub_progress is not None:
+                restore_hub_progress()
+            if logging_state is not None:
+                _restore_root_logger_state(logging_state)
 
 
 def _run_cli_action(

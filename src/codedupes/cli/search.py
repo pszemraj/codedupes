@@ -85,16 +85,16 @@ def search_command(ctx: click.Context, path: Path, query: str, **params: Any) ->
     :return: ``None``.
     """
     opts = SearchOptions.from_params(ctx, params)
-    try:
-        config = opts.to_analysis_config()
-    except ValueError as exc:
-        raise click.UsageError(str(exc)) from exc
-
     with _configured_cli_output(
         as_json=opts.as_json,
         verbose=opts.verbose,
         output_width=opts.output_width,
     ):
+        try:
+            config = opts.to_analysis_config()
+        except ValueError as exc:
+            raise click.UsageError(str(exc)) from exc
+
         analyzer = cli_module.CodeAnalyzer(config)
         indexed_units = _run_cli_action(
             lambda: analyzer.index(path),
