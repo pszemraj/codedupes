@@ -460,6 +460,8 @@ class AnalyzerConfig:
             raise ValueError("mode='search' requires run_semantic=True")
         if self.search_document not in {"source", "contextual"}:
             raise ValueError("search_document must be 'source' or 'contextual'")
+        if self.progress not in {"auto", "always", "never"}:
+            raise ValueError("progress must be 'auto', 'always', or 'never'")
 
         self.languages = normalize_languages(self.languages)
 

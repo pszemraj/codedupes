@@ -2114,7 +2114,13 @@ def test_empty_reanalysis_clears_previous_search_state(tmp_path: Path, monkeypat
     assert analyzer.search("entry") == []
 
 
-def test_invalid_threshold_raises() -> None:
+def test_configuration_validation() -> None:
+    for progress in ("auto", "always", "never"):
+        assert AnalyzerConfig(progress=progress).progress == progress
+
+    with pytest.raises(ValueError, match="progress must be 'auto', 'always', or 'never'"):
+        AnalyzerConfig(progress="nevre")
+
     with pytest.raises(ValueError, match="jaccard_threshold"):
         AnalyzerConfig(jaccard_threshold=1.5)
 

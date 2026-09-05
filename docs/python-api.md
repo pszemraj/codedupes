@@ -120,7 +120,7 @@ Each `index()` or `analyze()` call replaces the analyzer's corpus-specific state
 
 ## Progress and embedding telemetry
 
-`AnalyzerConfig.progress` accepts `"auto"` (default), `"always"`, or `"never"`. Auto mode renders embedding progress only for more than 100 uncached inputs when stderr is a TTY. The same keyword is available on `compute_embeddings`, `compute_embeddings_with_identity`, `run_semantic_analysis`, and `run_semantic_analysis_with_identity`.
+`AnalyzerConfig.progress` accepts `"auto"` (default), `"always"`, or `"never"`; other values raise `ValueError` at configuration construction. Auto mode renders embedding progress only for more than 100 uncached inputs when stderr is a TTY. The same keyword is available on `compute_embeddings`, `compute_embeddings_with_identity`, `run_semantic_analysis`, and `run_semantic_analysis_with_identity`.
 
 The low-level functions accept an `EmbeddingRunStats` collector through `stats=` and fill it in place. `AnalysisResult.embedding_stats` contains that collector after successful semantic analysis; `CodeAnalyzer.embedding_stats` exposes it after `index()`. Both are `None` when semantic work did not run, failed, or fell back. Non-fatal persistent-cache failures observed during corpus or query embedding are appended to `cache_warnings`.
 
