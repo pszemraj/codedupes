@@ -602,7 +602,6 @@ class CodeAnalyzer:
         self._embeddings: np.ndarray | None = None
         self._semantic_units: list[CodeUnit] | None = None
         self._resolved_search_semantic_task: str | None = None
-        self._resolved_search_document: SearchDocumentMode = "source"
         self._embedding_space_identity: EmbeddingSpaceIdentity | None = None
         self._embedding_stats: EmbeddingRunStats | None = None
         self._cache_scope: Path | None = None
@@ -644,7 +643,6 @@ class CodeAnalyzer:
         self._embeddings = None
         self._semantic_units = None
         self._resolved_search_semantic_task = None
-        self._resolved_search_document = "source"
         self._embedding_space_identity = None
         self._embedding_stats = None
         self._cache_scope = cache_scope
@@ -1114,7 +1112,6 @@ class CodeAnalyzer:
         self._resolved_search_semantic_task = (
             self.config.semantic_task or DEFAULT_SEARCH_SEMANTIC_TASK
         )
-        self._resolved_search_document = self.config.search_document
         semantic_candidates = self._select_semantic_candidates(units)
         self._semantic_units = semantic_candidates
         overflow: list[SemanticContextOverflow] = []
@@ -1203,19 +1200,6 @@ class CodeAnalyzer:
             )
 
         resolved_threshold = threshold if threshold is not None else self.config.semantic_threshold
-        # Validate the indexed representation: analyze() always embeds source,
-        # and changing a future index's config does not change the current corpus.
-        if self._resolved_search_document == "contextual" and resolved_threshold is None:
-            raise ValueError(
-                "Search over contextual documents requires an explicit threshold; "
-                "the source-only search default is not calibrated for this representation. "
-                "Pass search(threshold=...), set semantic_threshold, or use "
-                "--semantic-threshold on the CLI."
-            )
-
-        if not self._semantic_units:
-            return []
-
         from codedupes.semantic import find_similar_to_query
 
         if self._resolved_search_semantic_task is None:
@@ -1227,7 +1211,7 @@ class CodeAnalyzer:
         with capture_cache_warnings(warning_collector):
             return find_similar_to_query(
                 query,
-                self._semantic_units,
+                self._semantic_units or [],
                 self._embeddings,
                 model_name=self.config.model_name,
                 instruction_prefix=self.config.instruction_prefix,

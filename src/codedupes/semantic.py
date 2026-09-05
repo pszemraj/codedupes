@@ -272,12 +272,17 @@ class EmbeddingSpaceIdentity:
     A mutable-label corpus with no ``source_commit`` therefore carries no
     provenance at all: queries against it bypass the query cache, because no
     stored vector can be shown to share its checkpoint.
+
+    ``search_document`` records the corpus representation for search-threshold
+    calibration. It does not change the coordinate system or query vectors, so
+    it is also excluded from identity equality.
     """
 
     model_name: str
     resolved_revision: str | None
     runtime_variant: str
     source_commit: str | None = field(default=None, compare=False)
+    search_document: SearchDocumentMode = field(default="source", compare=False)
 
 
 def embedding_cache_keys_for_units(
@@ -1382,6 +1387,7 @@ def _build_embedding_space_identity(
     trust_remote_code: bool,
     resolved_device: str | None = None,
     source_commit: str | None = None,
+    search_document: SearchDocumentMode = "source",
 ) -> EmbeddingSpaceIdentity:
     """Build one corpus identity from already resolved embedding inputs.
 
@@ -1394,6 +1400,7 @@ def _build_embedding_space_identity(
     :param resolved_device: Already resolved execution target, when available.
     :param source_commit: Checkpoint commit a mutable-label corpus's vectors
         derive from, when known.
+    :param search_document: Corpus representation used for threshold calibration.
     :return: Complete embedding-space identity.
     """
     return EmbeddingSpaceIdentity(
@@ -1408,6 +1415,7 @@ def _build_embedding_space_identity(
             resolved_device=resolved_device,
         ),
         source_commit=source_commit,
+        search_document=search_document,
     )
 
 
@@ -2919,6 +2927,7 @@ def _compute_embeddings_unlocked(
             trust_remote_code=resolved_trust_remote_code,
             resolved_device=concrete_device,
             source_commit=source_commit,
+            search_document=search_document,
         )
 
     def _restart_faithfully_on_cpu(reason: str) -> tuple[np.ndarray, EmbeddingSpaceIdentity]:
@@ -3769,7 +3778,8 @@ def _find_similar_to_query_unlocked(
     :param trust_remote_code: Optional remote-code trust setting; ``None`` uses the
         profile default.
     :param threshold: Minimum cosine similarity. ``None`` uses the model profile
-        search default only for its calibrated task, prompt, and revision.
+        search default only for its calibrated task, prompt, revision, and source
+        representation.
     :param semantic_task: Optional task override; ``None`` uses
         ``DEFAULT_SEARCH_SEMANTIC_TASK``.
     :param device: ``auto``, ``cpu``, ``cuda``, or ``mps``, defaults to
@@ -3780,8 +3790,8 @@ def _find_similar_to_query_unlocked(
     :param cache_scope: Analyzed corpus root path used to address the cache shard;
         ``None`` disables caching for this call regardless of ``use_cache``.
     :param corpus_identity: Identity captured with ``embeddings``. Required for
-        prompt- or route-sensitive models; model/revision/runtime drift requires
-        rebuilding the corpus, and its recorded source commit rejects mutable-label
+        contextual documents and prompt- or route-sensitive models. Model, revision,
+        or runtime drift requires rebuilding the corpus, and its recorded source commit rejects mutable-label
         query vectors - cached or freshly encoded - from any other or unknown checkpoint.
     :param strict_revision_cache: Whether an unpinned hub revision resolves to a
         concrete commit hash (disabling caching when unmappable) instead of the
@@ -3789,8 +3799,8 @@ def _find_similar_to_query_unlocked(
         used to build ``corpus_identity``.
     :return: Up to ``top_k`` ``(unit, similarity)`` pairs at or above the threshold,
         sorted by descending similarity.
-    :raises ValueError: If an uncalibrated task/prompt/revision uses the default
-        threshold, or a prompt-sensitive corpus omits its identity.
+    :raises ValueError: If an uncalibrated task/prompt/revision/representation uses
+        the default threshold, or a prompt-sensitive corpus omits its identity.
     :raises SemanticBackendError: If an explicitly requested device is unavailable,
         even when the query embedding is already cached.
     :raises RuntimeError: If the query checkpoint cannot be verified against the
@@ -3798,7 +3808,19 @@ def _find_similar_to_query_unlocked(
     """
     validate_explicit_device_request(device, mps_fallback=mps_fallback)
 
-    # After the explicit-device contract above: an empty corpus can match
+    if (
+        corpus_identity is not None
+        and corpus_identity.search_document == "contextual"
+        and threshold is None
+    ):
+        raise ValueError(
+            "Search over contextual documents requires an explicit threshold; "
+            "the source-only search default is not calibrated for this representation. "
+            "Pass CodeAnalyzer.search(threshold=...), find_similar_to_query(threshold=...), "
+            "or --semantic-threshold."
+        )
+
+    # After the input contracts above: an empty corpus can match
     # nothing, so return before embedding the query (or loading the model).
     if not units:
         return []
@@ -4179,7 +4201,8 @@ def find_similar_to_query(
     :param trust_remote_code: Optional remote-code trust setting; ``None`` uses the
         profile default.
     :param threshold: Minimum cosine similarity. ``None`` uses the model profile
-        search default only for its calibrated task, prompt, and revision.
+        search default only for its calibrated task, prompt, revision, and source
+        representation.
     :param semantic_task: Optional task override; ``None`` uses
         ``DEFAULT_SEARCH_SEMANTIC_TASK``.
     :param device: ``auto``, ``cpu``, ``cuda``, or ``mps``, defaults to
@@ -4190,16 +4213,16 @@ def find_similar_to_query(
     :param cache_scope: Analyzed corpus root path used to address the cache shard;
         ``None`` disables caching for this call regardless of ``use_cache``.
     :param corpus_identity: Identity captured with ``embeddings``. Required for
-        prompt- or route-sensitive models; model/revision/runtime drift requires
-        rebuilding the corpus.
+        contextual documents and prompt- or route-sensitive models. Model, revision,
+        or runtime drift requires rebuilding the corpus.
     :param strict_revision_cache: Whether an unpinned hub revision resolves to a
         concrete commit hash (disabling caching when unmappable) instead of the
         requested revision label, defaults to ``False``. Must match the mode
         used to build ``corpus_identity``.
     :return: Up to ``top_k`` ``(unit, similarity)`` pairs at or above the threshold,
         sorted by descending similarity.
-    :raises ValueError: If an uncalibrated task/prompt/revision uses the default
-        threshold, or a prompt-sensitive corpus omits its identity.
+    :raises ValueError: If an uncalibrated task/prompt/revision/representation uses
+        the default threshold, or a prompt-sensitive corpus omits its identity.
     """
     # Same contract as compute_embeddings_with_identity: configure
     # import-sensitive runtime variables before anything can import torch.

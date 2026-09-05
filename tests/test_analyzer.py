@@ -1446,45 +1446,34 @@ def test_search_threshold_argument_overrides_the_config_for_one_call(
 def test_search_threshold_defaults_to_none_and_honors_explicit_config(
     tmp_path: Path, monkeypatch, search_document
 ) -> None:
-    source = "def entry(x):\n    return x + 1\n"
-    project = create_project(tmp_path, source)
-    captured: dict[str, object] = {}
+    project = create_project(tmp_path, "def entry(x):\n    return x + 1\n")
+    encoded: list[str] = []
 
-    monkeypatch.setattr(
-        analyzer_module,
-        "run_semantic_analysis",
-        _make_semantic_runner(capture=captured),
-    )
+    class QueryModel:
+        def encode(self, texts, **kwargs):
+            encoded.extend(texts)
+            return np.array(
+                [[0.6, 0.8] if text == "entry" else [1.0, 0.0] for text in texts],
+                dtype=np.float32,
+            )
 
-    monkeypatch.setattr(
-        semantic_module,
-        "find_similar_to_query",
-        _capture_query_runner(captured),
-    )
-    monkeypatch.setattr(
-        analyzer_module,
-        "compute_embeddings",
-        lambda units, **kwargs: (
-            np.zeros((len(units), 2), dtype=np.float32),
-            _embedding_identity_from_kwargs(kwargs),
-        ),
-    )
-
+    monkeypatch.setattr(semantic_module, "get_model", lambda *args, **kwargs: QueryModel())
     base_config = {
         "run_traditional": False,
         "run_semantic": True,
         "run_unused": False,
         "min_semantic_statements": 0,
         "search_document": search_document,
+        "device": "cpu",
+        "embedding_cache": False,
     }
     analyzer = CodeAnalyzer(AnalyzerConfig(**base_config))
     analyzer.index(project)
     if search_document == "contextual":
         with pytest.raises(ValueError, match="contextual.*explicit threshold"):
             analyzer.search("entry")
-        assert "query_threshold" not in captured
-        analyzer.search("entry", threshold=0.0)
-        assert captured["query_threshold"] == 0.0
+        assert "entry" not in encoded
+        assert len(analyzer.search("entry", threshold=0.0)) == 1
         assert analyzer.config.semantic_threshold is None
 
         # Changing future indexing options does not change the current corpus.
@@ -1493,18 +1482,17 @@ def test_search_threshold_defaults_to_none_and_honors_explicit_config(
             analyzer.search("entry")
         analyzer.config.search_document = "contextual"
     else:
-        analyzer.search("entry")
-        assert captured["query_threshold"] is None
+        assert len(analyzer.search("entry")) == 1
 
     # analyze() replaces the corpus with bare source in either document mode.
     analyzer.analyze(project)
-    analyzer.search("entry")
-    assert captured["query_threshold"] is None
+    assert len(analyzer.search("entry")) == 1
 
     explicit = CodeAnalyzer(AnalyzerConfig(semantic_threshold=0.7, **base_config))
     explicit.index(project)
-    explicit.search("entry")
-    assert captured["query_threshold"] == 0.7
+    assert explicit.search("entry") == []
+    assert len(explicit.search("entry", threshold=0.0)) == 1
+    assert explicit.config.semantic_threshold == 0.7
 
 
 @pytest.mark.parametrize(
@@ -1619,16 +1607,28 @@ def test_index_embeds_corpus_without_mining_duplicates(tmp_path: Path, monkeypat
     assert captured["cache_scope"] == project.resolve()
 
 
-def test_index_empty_corpus_yields_empty_search(tmp_path: Path) -> None:
+@pytest.mark.parametrize("search_document", ["source", "contextual"])
+def test_index_empty_corpus_yields_empty_search(tmp_path: Path, search_document) -> None:
     empty = tmp_path / "empty"
     empty.mkdir()
     analyzer = CodeAnalyzer(
-        AnalyzerConfig(run_traditional=False, run_semantic=True, run_unused=False)
+        AnalyzerConfig(
+            run_traditional=False,
+            run_semantic=True,
+            run_unused=False,
+            search_document=search_document,
+            device="cpu",
+        )
     )
 
     assert analyzer.index(empty) == 0
     assert analyzer.extracted_unit_count == 0
-    assert analyzer.search("anything") == []
+    if search_document == "contextual":
+        with pytest.raises(ValueError, match="contextual.*explicit threshold"):
+            analyzer.search("anything")
+    else:
+        assert analyzer.search("anything") == []
+    assert analyzer.search("anything", threshold=0.0) == []
 
 
 def test_search_requires_reindex_when_local_model_contents_change(
