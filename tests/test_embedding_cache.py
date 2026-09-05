@@ -95,6 +95,20 @@ def _corpus_manifest(
         ({"first": "key", "second": "key"}, {}, [], ["first", "second"], {"key"}),
         ({"first": "key", "second": "key"}, {"new": "key"}, ["new"], ["first"], set()),
         ({"old": "key"}, {"first": "key", "second": "key"}, ["first"], [], set()),
+        (
+            {"a.py::python::f::0": "old", "a.py::python::f::40": "shared"},
+            {"a.py::python::f::20": "new"},
+            [],
+            ["a.py::python::f::0"],
+            {"old", "shared"},
+        ),
+        (
+            {"a.py::python::f::0": "key"},
+            {"b.py::python::f::0": "key", "a.py::python::f::20": "key"},
+            [],
+            [],
+            set(),
+        ),
     ],
     ids=[
         "move",
@@ -105,6 +119,8 @@ def _corpus_manifest(
         "all-identical-bodies-deleted",
         "identical-body-moved-and-deleted",
         "identical-body-moved-and-added",
+        "repeated-name-shift-edit-and-delete",
+        "same-file-match-before-copy",
     ],
 )
 def test_diff_manifest_classifies_corpus_transitions(

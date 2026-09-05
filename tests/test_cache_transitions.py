@@ -133,27 +133,35 @@ def test_cold_scan_encodes_every_unique_body(tmp_path, monkeypatch) -> None:
     _assert_matches_uncached(repo, result)
 
 
-def test_edit_one_body_reencodes_only_that_body(tmp_path, monkeypatch) -> None:
+@pytest.mark.parametrize("edit_bodies", [False, True], ids=["docstring", "body-edits"])
+def test_in_file_edits_reencode_only_changed_bodies(tmp_path, monkeypatch, edit_bodies) -> None:
+    source = (
+        "def alpha(value):\n    return value + 1\n\n"
+        "def beta(value):\n    return value + 2\n\n"
+        "def gamma(value):\n    return value + 3\n"
+    )
     repo = _write_repo(
         tmp_path,
-        {
-            "src/math.py": (
-                "def alpha(value):\n    return value + 1\n\ndef beta(value):\n    return value + 2"
-            )
-        },
+        {"src/math.py": source},
     )
     _patch_get_model(monkeypatch, CountingModel())
     _analyze(repo)
-    (repo / "src/math.py").write_text(
-        "def alpha(value):\n    return value + 99\n\ndef beta(value):\n    return value + 2\n",
-        encoding="utf-8",
+    updated = (
+        source.replace("+ 1", "+ 99").replace("+ 2", "+ 100")
+        if edit_bodies
+        else '"""Module documentation shifts every function."""\n\n' + source
     )
+    (repo / "src/math.py").write_text(updated, encoding="utf-8")
 
     result = _analyze(repo)
 
     assert result.embedding_stats is not None
-    assert result.embedding_stats.encoded_inputs == 1
-    assert result.embedding_stats.cache_hit_rows == 1
+    expected_encoded = 2 if edit_bodies else 0
+    assert result.embedding_stats.encoded_inputs == expected_encoded
+    assert result.embedding_stats.cache_hit_rows == 3 - expected_encoded
+    assert result.embedding_stats.moved_units_reused == 0
+    assert result.embedding_stats.deleted_units == 0
+    assert result.embedding_stats.orphan_rows_retained == expected_encoded
     _assert_matches_uncached(repo, result)
 
 

@@ -122,11 +122,28 @@ def diff_manifest(
     """
     previous_units = previous.units if previous is not None else {}
 
+    # The final UID component is a byte offset, not a persistent identity.
+    # Pair same-file lexical occurrences before inferring content-based moves:
+    # edits above a unit can shift its offset even when its own source changes.
+    departed_by_symbol: dict[str, list[str]] = {}
+    for uid in previous_units:
+        if uid not in current:
+            departed_by_symbol.setdefault(uid.rsplit("::", 1)[0], []).append(uid)
+    retained_previous: set[str] = set()
+    retained_current: set[str] = set()
+    for uid in current:
+        if uid in previous_units:
+            continue
+        matching_symbols = departed_by_symbol.get(uid.rsplit("::", 1)[0])
+        if matching_symbols:
+            retained_previous.add(matching_symbols.pop())
+            retained_current.add(uid)
+
     # First find missing occurrences, grouped by their embedding content. A
     # shared key can have several departed UIDs, each needing its own match.
     departed_uids_by_key: dict[str, list[str]] = {}
     for uid, key in previous_units.items():
-        if uid in current:
+        if uid in current or uid in retained_previous:
             continue
         departed_uids_by_key.setdefault(key, []).append(uid)
 
@@ -135,7 +152,7 @@ def diff_manifest(
     moved_uids: list[str] = []
     moved_from_uids: set[str] = set()
     for uid, key in current.items():
-        if uid in previous_units:
+        if uid in previous_units or uid in retained_current:
             continue
         matching_departures = departed_uids_by_key.get(key)
         if not matching_departures:
@@ -147,7 +164,7 @@ def diff_manifest(
     # vector. Keep the previous manifest's order for deterministic reporting.
     deleted_uids: list[str] = []
     for uid in previous_units:
-        if uid in current or uid in moved_from_uids:
+        if uid in current or uid in retained_previous or uid in moved_from_uids:
             continue
         deleted_uids.append(uid)
 
