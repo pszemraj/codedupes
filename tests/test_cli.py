@@ -184,6 +184,91 @@ def test_cli_table_output_uses_auto_progress(monkeypatch, tmp_path):
     assert "model not loaded" in result.output
 
 
+@pytest.mark.parametrize("command", ["check", "search"])
+@pytest.mark.parametrize("as_json", [False, True])
+def test_cli_embedding_telemetry_tracks_filesystem_transitions(
+    monkeypatch, tmp_path, command, as_json
+):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    for name in ("first.py", "second.py"):
+        (repo / name).write_text("def entry(value):\n    return value + 1\n")
+
+    class ProgressModel(CountingModel):
+        def encode(self, texts, **kwargs):
+            if as_json:
+                assert kwargs["show_progress_bar"] is False
+            return super().encode(texts, **kwargs)
+
+    model = ProgressModel()
+    _patch_get_model(monkeypatch, model)
+    args = [command, str(repo)]
+    if command == "check":
+        args += ["--semantic-only", "--no-unused", "--fail-on", "none"]
+    else:
+        args += ["find entry"]
+    args += [
+        "--model",
+        "test-model",
+        "--model-revision",
+        REVISION_1,
+        "--device",
+        "cpu",
+        "--min-statements",
+        "0",
+        "--semantic-threshold",
+        "0",
+    ]
+    args += ["--json"] if as_json else ["--output-width", "240"]
+    runner = CliRunner()
+    cached_payload = None
+
+    for phase, hits, encoded, reused, moved, deleted in (
+        ("cold", 0, 1, 1, 0, 0),
+        ("warm", 2, 0, 0, 0, 0),
+        ("rename", 2, 0, 0, 1, 0),
+        ("uncached", 0, 2, 0, 0, 0),
+        ("delete", 1, 0, 0, 0, 1),
+    ):
+        if phase == "rename":
+            (repo / "moved").mkdir()
+            (repo / "first.py").rename(repo / "moved/renamed.py")
+        elif phase == "delete":
+            (repo / "second.py").unlink()
+        result = runner.invoke(cli.cli, args + (["--no-cache"] if phase == "uncached" else []))
+        assert result.exit_code == 0, result.output
+        if as_json:
+            assert result.stderr == ""
+            payload = json.loads(result.stdout)
+            stats = payload["summary"].pop("embeddings")
+            assert stats["cache_hit_rows"] == hits
+            assert stats["encoded_inputs"] == encoded
+            assert stats["unique_inputs"] == 1
+            assert stats["duplicate_rows_reused"] == reused
+            assert stats["moved_units_reused"] == moved
+            assert stats["deleted_units"] == deleted
+            assert stats["model_loaded"] is bool(encoded)
+            assert stats["cache_enabled"] is (phase != "uncached")
+            assert stats["requested_rows"] == hits + encoded + reused
+            assert all(Path(unit["file"]).is_file() for unit in payload["units"].values())
+            if phase == "rename":
+                assert payload["duplicates" if command == "check" else "results"]
+                cached_payload = payload
+            elif phase == "uncached":
+                assert payload == cached_payload
+        else:
+            assert "Embeddings" in result.stdout
+            assert f"{hits} rows from cache" in result.stdout
+            assert f"{encoded} inputs encoded" in result.stdout
+            assert f"{reused} duplicate rows reused" in result.stdout
+            if moved:
+                assert f"{moved} moved units remapped" in result.stdout
+            if deleted:
+                assert f"{deleted} units deleted" in result.stdout
+            if not encoded:
+                assert "model not loaded" in result.stdout
+
+
 @pytest.mark.parametrize("initially_disabled", [False, True])
 def test_cli_json_restores_huggingface_progress_state(monkeypatch, tmp_path, initially_disabled):
     path = tmp_path / "sample.py"

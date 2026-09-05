@@ -153,7 +153,7 @@ See [hybrid confidence tiers](analysis-defaults.md#hybrid-synthesis-confidence-d
 | `unique_inputs` | Distinct prepared texts among those rows. |
 | `cache_hit_rows` | Retained rows supplied by persistent cache, including repeated references to one key. |
 | `duplicate_rows_reused` | Additional uncached rows sharing an input encoded within this call. |
-| `encoded_inputs` | Distinct retained inputs encoded on the final execution path; discarded retry work is not accumulated. |
+| `encoded_inputs` | Retained input rows encoded on the final execution path; discarded retry work is not accumulated. Cache-key reuse deduplicates repeated inputs when caching is active; without it, repeated inputs are encoded separately. |
 | `model_loaded` | Whether the corpus call needed the model, including a previously loaded process-local instance. |
 | `cache_enabled` | Whether persistent reuse was enabled for the call; writes can still fail. |
 | `cache_warnings` | Non-fatal cache read/write, manifest, and query-cache failures observed during the run. |
@@ -165,7 +165,7 @@ See [hybrid confidence tiers](analysis-defaults.md#hybrid-synthesis-confidence-d
 | `orphan_rows_collected` | Orphan rows removed during this run. |
 | `manifest_generation` | Shard-wide complete-scan counter, or `null` without successful manifest publication. |
 
-Move and deletion counts need a comparable [corpus baseline](caching.md#corpus-lifecycle). Terminal `check` output shows the same statistics on an `Embeddings` summary row.
+Move and deletion counts need a comparable [corpus baseline](caching.md#corpus-lifecycle). Terminal `check` and `search` output include an `Embeddings` summary showing cache hits, encoded inputs, duplicate-row reuse, model execution, and manifest generation. Nonzero move, deletion, and orphan counts are included too. As in JSON, this describes corpus indexing; query encoding is excluded.
 
 ## Diagnostics
 

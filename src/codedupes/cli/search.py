@@ -18,7 +18,7 @@ from . import _output
 from ._json import print_search_json
 from ._options import Panel, SearchOptions, option_panels, semantic_options
 from ._output import _configured_cli_output, _run_cli_action, _validate_positive_int
-from ._render import _print_diagnostics, print_search_results
+from ._render import _format_embedding_stats, _print_diagnostics, print_search_results
 
 
 @cli_module.cli.command(
@@ -121,6 +121,10 @@ def search_command(ctx: click.Context, path: Path, query: str, **params: Any) ->
             )
         else:
             _output.console.print(f"[bold cyan]Query:[/bold cyan] {query!r}")
+            if analyzer.embedding_stats is not None:
+                _output.console.print(
+                    "[bold]Embeddings:[/bold]", _format_embedding_stats(analyzer.embedding_stats)
+                )
             if indexed_units == 0:
                 if analyzer.extracted_unit_count == 0:
                     reason = (

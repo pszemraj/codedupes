@@ -80,7 +80,7 @@ def _should_show_progress(mode: ProgressMode, input_count: int) -> bool:
     """Return whether embedding inference should render a progress bar.
 
     :param mode: Requested progress policy.
-    :param input_count: Number of unique inputs requiring encoding.
+    :param input_count: Number of input rows requiring encoding.
     :return: Whether the backend progress bar should be enabled.
     """
     if mode == "never":
@@ -154,7 +154,7 @@ def _record_embedding_run_stats(
     :param cache_revision: Revision addressing the active cache shard.
     :param cache_keys: Row-aligned cache keys, if caching remained active.
     :param hits: Persistent vectors available to the final matrix path.
-    :param encoded_inputs: Unique inputs encoded on the final path.
+    :param encoded_inputs: Input rows encoded on the final path, after any cache-key reuse.
     :param model_loaded: Whether the final path loaded a model.
     :param execution_device: Device used by the final path.
     :return: ``None``.
@@ -3296,7 +3296,7 @@ def _compute_embeddings_unlocked(
     reused_duplicate_rows = len(kept_rows) - cache_covered_rows - len(miss_indices)
 
     logger.info(
-        f"Computing embeddings for {len(miss_texts)} unique inputs on {execution_device} "
+        f"Computing embeddings for {len(miss_texts)} inputs on {execution_device} "
         f"({cache_covered_rows} cache-covered rows, {reused_duplicate_rows} duplicate rows reused)"
     )
 

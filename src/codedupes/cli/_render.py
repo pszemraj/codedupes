@@ -38,6 +38,8 @@ def _format_embedding_stats(stats: EmbeddingRunStats) -> str:
     ]
     if stats.moved_units_reused:
         parts.append(f"{stats.moved_units_reused:,} moved units remapped")
+    if stats.deleted_units:
+        parts.append(f"{stats.deleted_units:,} units deleted")
     if stats.orphan_rows_retained:
         parts.append(f"{stats.orphan_rows_retained:,} orphan rows retained")
     if stats.orphan_rows_collected:
