@@ -2867,7 +2867,8 @@ def _compute_embeddings_unlocked(
     :param document_texts: Optional prepared document text for each input unit.
     :param search_document: Search document mode represented by ``document_texts``.
     :return: Normalized embedding matrix and its effective vector-space identity.
-    :raises ValueError: If ``batch_size`` is not positive.
+    :raises ValueError: If ``batch_size`` is not positive or ``document_texts``
+        does not have the same length as ``units``.
     :raises SemanticBackendError: If an explicitly requested device is unavailable,
         even when the corpus is empty or every embedding is already cached.
     :raises SemanticInputTooLongError: If a unit exceeds the model context window
@@ -2876,6 +2877,8 @@ def _compute_embeddings_unlocked(
     _reset_embedding_run_stats(stats)
     if batch_size <= 0:
         raise ValueError("batch_size must be > 0")
+    if document_texts is not None and len(document_texts) != len(units):
+        raise ValueError("document_texts must have the same length as units")
 
     # An explicit unavailable --device must be an error even when there is
     # nothing to embed, matching the contract enforced for populated corpora.
@@ -3480,6 +3483,7 @@ def compute_embeddings_with_identity(
     :param document_texts: Optional prepared document text for each input unit.
     :param search_document: Search document mode represented by ``document_texts``.
     :return: Normalized embedding matrix and its effective vector-space identity.
+    :raises ValueError: If ``document_texts`` does not have the same length as ``units``.
     """
     # Import-sensitive runtime variables (MPS operator fallback above all) must
     # be set before any path below can import torch - cache-variant derivation
@@ -3558,6 +3562,7 @@ def compute_embeddings(
     :param document_texts: Optional prepared document text for each input unit.
     :param search_document: Search document mode represented by ``document_texts``.
     :return: Normalized embedding matrix row-aligned with ``units``.
+    :raises ValueError: If ``document_texts`` does not have the same length as ``units``.
     """
     embeddings, _identity = compute_embeddings_with_identity(
         units,

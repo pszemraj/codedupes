@@ -107,6 +107,8 @@ See [task defaults and calibration requirements](model-profiles.md#semantic-task
 
 `AnalyzerConfig.search_document` is `"source"` by default, preserving the calibrated source-only score distribution. `"contextual"` prepends language, root-relative path, and qualified symbol to each search document before the code. Contextual mode makes paths and symbols available to retrieval but changes the input distribution; the source-only thresholds have not been calibrated for it. Searching a contextual index requires an explicit `search(threshold=...)` or `config.semantic_threshold`; tune that value against representative queries. This requirement follows the indexed representation even if the config is changed afterward. For direct calls, pass the identity returned by `compute_embeddings_with_identity(..., search_document="contextual", document_texts=...)` as `find_similar_to_query(corpus_identity=...)`; it carries the same calibration requirement on cold and warm cache paths. Its [cache behavior](caching.md#what-invalidates-what) follows the complete document input. `analyze()` always embeds bare source for duplicate detection regardless of this search-only setting.
 
+Direct `compute_embeddings()` and `compute_embeddings_with_identity()` calls require one `document_texts` entry per input unit when supplied. Mismatched lengths raise `ValueError` before revision resolution, cache lookup, or model loading, including for an empty corpus.
+
 Units skipped by the [context-window policy](analysis-defaults.md#semantic-candidate-defaults) are reported through `analyzer.semantic_diagnostics` and, for `analyze()`, `AnalysisResult.semantic_diagnostics`:
 
 ```python

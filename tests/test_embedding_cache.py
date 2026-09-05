@@ -530,6 +530,45 @@ def test_full_cache_hit_skips_model_load_and_encode(tmp_path, monkeypatch):
     np.testing.assert_array_equal(first, second)
 
 
+@pytest.mark.parametrize("embed", [compute_embeddings, compute_embeddings_with_identity])
+@pytest.mark.parametrize("cache_state", ["disabled", "cold", "warm"])
+@pytest.mark.parametrize(
+    ("unit_count", "document_count"),
+    [(2, 1), (1, 2), (0, 1)],
+    ids=["shorter", "longer", "empty-corpus"],
+)
+def test_document_text_count_rejected_before_cache_or_model_work(
+    tmp_path, monkeypatch, embed, cache_state, unit_count, document_count
+) -> None:
+    units = _five_units(tmp_path)[:2]
+    texts = tuple(f"path: mod.py\n{unit.source}" for unit in units)
+    model = CountingModel()
+    _patch_get_model(monkeypatch, model)
+    options = {
+        "model_name": "test-model",
+        "revision": REVISION_1,
+        "device": "cpu",
+        "cache_scope": tmp_path,
+        "use_cache": cache_state != "disabled",
+        "search_document": "contextual",
+    }
+    if cache_state == "warm":
+        first = compute_embeddings(units, document_texts=texts, **options)
+        warm = compute_embeddings(units, document_texts=texts, **options)
+        np.testing.assert_array_equal(first, warm)
+        assert first.shape[0] == len(units)
+        assert len(model.encode_calls) == 1
+
+    def unexpected_work(*_args, **_kwargs):
+        pytest.fail("Mismatched document texts must be rejected before cache/model work")
+
+    monkeypatch.setattr(semantic, "_resolve_revision_for_cache", unexpected_work)
+    monkeypatch.setattr(semantic, "_prepare_cache_context", unexpected_work)
+    monkeypatch.setattr(semantic, "get_model", unexpected_work)
+    with pytest.raises(ValueError, match="document_texts must have the same length as units"):
+        embed(units[:unit_count], document_texts=texts[:document_count], **options)
+
+
 def test_strict_symbolic_revision_revalidates_before_cache_hit(tmp_path, monkeypatch):
     units = _five_units(tmp_path)
     model = CountingModel()
