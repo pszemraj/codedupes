@@ -187,10 +187,11 @@ def _both_units_are_tiny(
 def _tiny_filter_statement_counts(units: list[CodeUnit]) -> dict[str, int]:
     """Measure classes by their extracted members while preserving base counts.
 
-    Class extractors intentionally store a member count because nested bodies
-    belong to their own code units. For tiny-duplicate filtering, expand each
-    member's declaration from one statement to that member's effective size so
-    a class containing a few substantial methods is not mistaken for a marker.
+    Class extractors count callable members once because their bodies belong
+    to their own code units; static initializer bodies are already counted.
+    For tiny-duplicate filtering, expand each member's declaration from one
+    statement to that member's effective size so a class containing a few
+    substantial methods is not mistaken for a marker.
 
     :param units: Full extracted analysis scope.
     :return: Effective statement counts keyed by unit uid.

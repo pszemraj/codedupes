@@ -787,6 +787,35 @@ def test_large_tree_sitter_class_duplicates_are_not_filtered(tmp_path: Path) -> 
     )
 
 
+@pytest.mark.parametrize("suffix", ["js", "jsx", "ts", "tsx"])
+@pytest.mark.parametrize(
+    ("initializer", "expected_duplicate"),
+    [
+        ("", False),
+        ("this.ready = true;", False),
+        ("if (enabled) { this.first = 1; this.second = 2; }", True),
+    ],
+)
+def test_class_static_initializers_follow_tiny_filter(
+    tmp_path: Path, suffix: str, initializer: str, expected_duplicate: bool
+) -> None:
+    """Count static-block bodies even though they have no separate code units."""
+    source = (
+        f"class First {{ static {{ {initializer} }} }}\n"
+        f"class Second {{ static {{ {initializer} }} }}\n"
+    )
+    project = create_project(tmp_path, source, module=f"initializers.{suffix}")
+    unfiltered = CodeAnalyzer(
+        AnalyzerConfig(run_semantic=False, run_unused=False, filter_tiny_traditional=False)
+    ).analyze(project)
+    assert len(unfiltered.traditional_duplicates) == 1
+
+    filtered = CodeAnalyzer(AnalyzerConfig(run_semantic=False, run_unused=False)).analyze(project)
+    assert len(filtered.units) == 2
+    assert all(unit.unit_type == CodeUnitType.CLASS for unit in filtered.units)
+    assert len(filtered.exact_duplicates) == int(expected_duplicate)
+
+
 @pytest.mark.parametrize("filter_tiny_traditional", [True, False])
 def test_tiny_near_duplicates_follow_tiny_filter(
     tmp_path: Path, monkeypatch, filter_tiny_traditional: bool
