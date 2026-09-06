@@ -63,6 +63,8 @@ Options, in addition to the [shared options](#options-shared-by-check-and-search
 - `--semantic-task <name>`: Semantic task mode for query/document embeddings (default `code-retrieval`)
 - `--search-document <source|contextual>`: Choose the [search document representation](python-api.md#semantic-query-search), source only by default. Contextual search requires an explicit `--semantic-threshold` or `--threshold`; omission is a usage error (exit `2`) before indexing. Tune the value against representative queries
 
+Search also requires an explicit threshold for a custom instruction prefix, a changed built-in model revision or trust setting, or an alternate EmbeddingGemma task. These option errors are rejected before indexing with exit `2`. Python callers may still index first and supply the threshold to `search()` later.
+
 ## Options shared by `check` and `search`
 
 rich-click groups command help into the following panels. Use `codedupes <command> -h` or `--help` for the rendered reference.

@@ -3521,6 +3521,58 @@ def find_semantic_duplicates(
     return duplicates
 
 
+def resolve_search_threshold(
+    model_name: str,
+    threshold: float | None,
+    *,
+    instruction_prefix: str | None = None,
+    revision: str | None = None,
+    trust_remote_code: bool | None = None,
+    semantic_task: str | None = None,
+) -> float:
+    """Resolve a search gate without loading or indexing a model.
+
+    :param model_name: Model identifier used for the search corpus.
+    :param threshold: Explicit finite gate, or ``None`` for the calibrated default.
+    :param instruction_prefix: Optional custom embedding prompt.
+    :param revision: Optional model revision override.
+    :param trust_remote_code: Optional remote-code trust override.
+    :param semantic_task: Task used to embed corpus and query.
+    :return: Explicit gate or the applicable profile default.
+    :raises ValueError: If the search context requires an explicit threshold override.
+    """
+    profile = resolve_model_profile(model_name)
+    semantic_task = normalize_semantic_task(
+        semantic_task, default_task=DEFAULT_SEARCH_SEMANTIC_TASK
+    )
+    trust_remote_code = _resolve_trust_remote_code(model_name, trust_remote_code)
+    if threshold is None:
+        uncalibrated_reasons: list[str] = []
+        if instruction_prefix is not None:
+            uncalibrated_reasons.append("a custom instruction prefix")
+        if profile.family == "embeddinggemma" and semantic_task != DEFAULT_SEARCH_SEMANTIC_TASK:
+            uncalibrated_reasons.append(f"semantic task {semantic_task!r}")
+        if (
+            profile.default_revision is not None
+            and revision is not None
+            and revision != profile.default_revision
+        ):
+            uncalibrated_reasons.append(f"model revision {revision!r}")
+        # Remote-code execution splits the embedding cache key because it can
+        # change the vectors, so it must invalidate the calibrated default too.
+        if trust_remote_code != profile.default_trust_remote_code:
+            uncalibrated_reasons.append(f"trust_remote_code={trust_remote_code}")
+        if uncalibrated_reasons:
+            context = ", ".join(uncalibrated_reasons)
+            raise ValueError(
+                f"The default search threshold is not calibrated for {context}; "
+                "pass an explicit threshold (CodeAnalyzer.search(threshold=...), "
+                "find_similar_to_query(threshold=...), or --semantic-threshold)."
+            )
+        return get_default_search_threshold(model_name)
+    return threshold
+
+
 def _find_similar_to_query_unlocked(
     query: str,
     units: list[CodeUnit],
@@ -3635,32 +3687,14 @@ def _find_similar_to_query_unlocked(
             strict_revision_cache=strict_revision_cache,
         )
 
-    if threshold is None:
-        uncalibrated_reasons: list[str] = []
-        if instruction_prefix is not None:
-            uncalibrated_reasons.append("a custom instruction prefix")
-        if profile.family == "embeddinggemma" and resolved_task != DEFAULT_SEARCH_SEMANTIC_TASK:
-            uncalibrated_reasons.append(f"semantic task {resolved_task!r}")
-        if (
-            profile.default_revision is not None
-            and revision is not None
-            and revision != profile.default_revision
-        ):
-            uncalibrated_reasons.append(f"model revision {revision!r}")
-        # Remote-code execution splits the embedding cache key because it can
-        # change the vectors, so it must invalidate the calibrated default too.
-        if resolved_trust_remote_code != profile.default_trust_remote_code:
-            uncalibrated_reasons.append(f"trust_remote_code={resolved_trust_remote_code}")
-        if uncalibrated_reasons:
-            context = ", ".join(uncalibrated_reasons)
-            raise ValueError(
-                f"The default search threshold is not calibrated for {context}; "
-                "pass an explicit threshold (CodeAnalyzer.search(threshold=...), "
-                "find_similar_to_query(threshold=...), or --semantic-threshold)."
-            )
-        resolved_threshold = get_default_search_threshold(model_name)
-    else:
-        resolved_threshold = threshold
+    resolved_threshold = resolve_search_threshold(
+        model_name,
+        threshold,
+        instruction_prefix=instruction_prefix,
+        revision=revision,
+        trust_remote_code=trust_remote_code,
+        semantic_task=resolved_task,
+    )
 
     encode_plan = _resolve_encode_plan(profile, "query", resolved_task, instruction_prefix)
     query_text = _prepare_embedding_text(query)

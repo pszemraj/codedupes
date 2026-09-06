@@ -22,7 +22,7 @@ from codedupes.constants import (
     SEMANTIC_DEVICE_CHOICES,
 )
 from codedupes.extractor import DEFAULT_EXCLUDE_PATTERNS
-from codedupes.semantic import ProgressMode
+from codedupes.semantic import ProgressMode, resolve_search_threshold
 
 from ._output import (
     DEFAULT_OUTPUT_WIDTH,
@@ -398,7 +398,7 @@ class SearchOptions:
         """Build the analyzer config represented by this option bundle."""
         import codedupes.cli as cli_module
 
-        return cli_module.AnalyzerConfig(
+        config = cli_module.AnalyzerConfig(
             mode="search",
             exclude_patterns=(
                 None
@@ -418,6 +418,16 @@ class SearchOptions:
             search_document=self.search_document,
             **self.semantic.analysis_kwargs(),
         )
+
+        resolve_search_threshold(
+            config.model_name,
+            config.semantic_threshold,
+            instruction_prefix=config.instruction_prefix,
+            revision=config.model_revision,
+            trust_remote_code=config.trust_remote_code,
+            semantic_task=config.semantic_task,
+        )
+        return config
 
 
 def semantic_options() -> Callable[[F], F]:

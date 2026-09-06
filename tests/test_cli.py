@@ -897,7 +897,15 @@ def test_cli_search_builds_search_mode_config(monkeypatch, tmp_path):
     runner = CliRunner()
     result = runner.invoke(
         cli.cli,
-        ["search", str(path), "find entry", "--instruction-prefix", "custom: "],
+        [
+            "search",
+            str(path),
+            "find entry",
+            "--instruction-prefix",
+            "custom: ",
+            "--threshold",
+            "0.0",
+        ],
     )
 
     assert result.exit_code == 0
@@ -1139,6 +1147,42 @@ def test_cli_search_defaults_to_code_retrieval_task(monkeypatch, tmp_path):
     assert captured[0].semantic_task == "code-retrieval"
     assert captured[0].semantic_unit_types == ("function", "method")
     assert captured[0].search_document == "source"
+
+
+@pytest.mark.parametrize(
+    "options, reason",
+    [
+        (["--instruction-prefix", "custom"], "instruction prefix"),
+        (["--model-revision", "other"], "model revision"),
+        (["--trust-remote-code"], "trust_remote_code"),
+        (["--model", "embeddinggemma", "--semantic-task", "classification"], "semantic task"),
+    ],
+)
+def test_cli_search_rejects_uncalibrated_context_before_indexing(
+    monkeypatch, tmp_path: Path, options: list[str], reason: str
+) -> None:
+    """Reject known-invalid options before analyzer construction or corpus work."""
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n", encoding="utf-8")
+    captured = []
+    patch_cli_analyzer(
+        monkeypatch,
+        cli,
+        analyze_result=lambda: _build_result(tmp_path),
+        captured_configs=captured,
+    )
+    args = ["search", str(path), "entry", *options]
+    runner = CliRunner()
+    result = runner.invoke(cli.cli, args)
+    assert result.exit_code == 2, result.output
+    assert reason in " ".join(result.output.replace("│", "").split())
+    assert "explicit threshold" in result.output
+    assert captured == []
+
+    for option in ("--threshold", "--semantic-threshold"):
+        result = runner.invoke(cli.cli, [*args, option, "0.0"])
+        assert result.exit_code == 0, result.output
+    assert len(captured) == 2
 
 
 def test_cli_contextual_search_requires_explicit_threshold(monkeypatch, tmp_path):
