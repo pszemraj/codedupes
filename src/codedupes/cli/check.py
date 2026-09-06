@@ -56,7 +56,6 @@ def run_should_fail(
 @cli_module.cli.command(
     "check",
     help="Run duplicate + unused analysis",
-    context_settings={"auto_envvar_prefix": "CODEDUPES"},
 )
 @click.argument("path", type=click.Path(path_type=Path, exists=True), panel=Panel.SCOPE)
 @click.option(
@@ -66,14 +65,12 @@ def run_should_fail(
     default=None,
     show_default=False,
     panel=Panel.DETECTION,
-    show_envvar=True,
     help="Shared threshold override for semantic and traditional checks",
 )
 @click.option(
     "--semantic-threshold",
     type=float,
     panel=Panel.SEMANTIC,
-    show_envvar=True,
     help=(
         "Flat semantic similarity gate for every language "
         "(default: the model profile's calibrated per-language gates)"
@@ -83,14 +80,12 @@ def run_should_fail(
     "--traditional-threshold",
     type=float,
     panel=Panel.DETECTION,
-    show_envvar=True,
     help="Override traditional (Jaccard) threshold",
 )
 @click.option(
     "--cross-language",
     is_flag=True,
     panel=Panel.SEMANTIC,
-    show_envvar=True,
     help=(
         "Also report semantic duplicate pairs across languages "
         "(uncalibrated; a mixed pair uses the looser of its two language gates)"
@@ -102,28 +97,24 @@ def run_should_fail(
     default=DEFAULT_CHECK_SEMANTIC_TASK,
     show_default=True,
     panel=Panel.SEMANTIC,
-    show_envvar=True,
     help="Semantic task mode for duplicate detection embeddings",
 )
 @click.option(
     "--semantic-only",
     is_flag=True,
     panel=Panel.DETECTION,
-    show_envvar=True,
     help="Only run semantic analysis",
 )
 @click.option(
     "--traditional-only",
     is_flag=True,
     panel=Panel.DETECTION,
-    show_envvar=True,
     help="Only run structural/token analysis",
 )
 @click.option(
     "--allow-semantic-fallback",
     is_flag=True,
     panel=Panel.SEMANTIC,
-    show_envvar=True,
     help=(
         "Allow combined mode to continue with full-scope traditional results when semantic "
         "backend loading/inference fails"
@@ -133,28 +124,24 @@ def run_should_fail(
     "--no-unused",
     is_flag=True,
     panel=Panel.DETECTION,
-    show_envvar=True,
     help="Skip unused code detection",
 )
 @click.option(
     "--strict-unused",
     is_flag=True,
     panel=Panel.DETECTION,
-    show_envvar=True,
     help="Do not skip public functions",
 )
 @click.option(
     "--suppress-test-semantic",
     is_flag=True,
     panel=Panel.SEMANTIC,
-    show_envvar=True,
     help="Suppress semantic duplicate matches involving test_* functions",
 )
 @click.option(
     "--no-tiny-filter",
     is_flag=True,
     panel=Panel.DETECTION,
-    show_envvar=True,
     help="Disable tiny code-unit filtering for traditional duplicates",
 )
 @click.option(
@@ -163,28 +150,24 @@ def run_should_fail(
     default=cli_module.DEFAULT_TINY_UNIT_STATEMENT_CUTOFF,
     show_default=True,
     panel=Panel.DETECTION,
-    show_envvar=True,
     help="Tiny code-unit statement cutoff (exclusive) for traditional filtering",
 )
 @click.option(
     "--show-all",
     is_flag=True,
     panel=Panel.OUTPUT,
-    show_envvar=True,
     help="Show raw traditional/semantic duplicate lists alongside hybrid output",
 )
 @click.option(
     "--show-source",
     is_flag=True,
     panel=Panel.OUTPUT,
-    show_envvar=True,
     help="Show source code snippets",
 )
 @click.option(
     "--full-table",
     is_flag=True,
     panel=Panel.OUTPUT,
-    show_envvar=True,
     help="Show all rows in terminal tables",
 )
 @click.option(
@@ -193,7 +176,6 @@ def run_should_fail(
     default="actionable",
     show_default=True,
     panel=Panel.OUTPUT,
-    show_envvar=True,
     help="Which findings make the exit code 1",
 )
 @semantic_options()

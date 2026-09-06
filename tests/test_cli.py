@@ -1155,8 +1155,9 @@ def test_cli_contextual_search_requires_explicit_threshold(monkeypatch, tmp_path
 
 
 @pytest.mark.parametrize("command_tail", [[], ["entry"]], ids=["check", "search"])
-def test_cli_shared_options_use_unqualified_environment_variables(
-    monkeypatch, tmp_path, command_tail
+@pytest.mark.parametrize("explicit_options", [False, True])
+def test_cli_options_ignore_automatic_environment_variables(
+    monkeypatch, tmp_path, command_tail, explicit_options
 ) -> None:
     path = tmp_path / "sample.py"
     path.write_text("def entry():\n    return 1\n")
@@ -1174,15 +1175,33 @@ def test_cli_shared_options_use_unqualified_environment_variables(
             "CODEDUPES_DEVICE": "cpu",
             "CODEDUPES_MODEL": "test-model",
             "CODEDUPES_NO_CACHE": "1",
+            "CODEDUPES_LANGUAGES": "invalid-language",
+            "CODEDUPES_THRESHOLD": "not-a-number",
+            "CODEDUPES_NO_PRIVATE": "1",
+            "CODEDUPES_EXCLUDE": "*.py",
+            f"CODEDUPES_{command.upper()}_DEVICE": "cpu",
+            f"CODEDUPES_{command.upper()}_MODEL": "test-model",
+            f"CODEDUPES_{command.upper()}_THRESHOLD": "not-a-number",
         }
     )
 
-    result = runner.invoke(cli.cli, [command, str(path), *command_tail])
+    args = [command, str(path), *command_tail]
+    if explicit_options:
+        args.extend(["--device", "cpu", "--model", "explicit-model", "--no-cache"])
+    result = runner.invoke(cli.cli, args)
 
-    assert result.exit_code in {0, 1}
-    assert captured[0].device == "cpu"
-    assert captured[0].model_name == "test-model"
-    assert captured[0].embedding_cache is False
+    assert result.exit_code == (0 if command_tail else 1), result.output
+    assert captured[0].device == ("cpu" if explicit_options else cli.DEFAULT_SEMANTIC_DEVICE)
+    assert captured[0].model_name == ("explicit-model" if explicit_options else cli.DEFAULT_MODEL)
+    # The cache library's explicit process control is independent of CLI parsing.
+    assert captured[0].embedding_cache is (not explicit_options)
+    assert captured[0].languages is None
+    assert captured[0].include_private is True
+    assert captured[0].exclude_patterns is None
+
+    help_result = runner.invoke(cli.cli, [command, "--help"])
+    assert help_result.exit_code == 0
+    assert "CODEDUPES_" not in help_result.output
 
 
 def test_cli_search_semantic_unit_type_pass_through(monkeypatch, tmp_path):
@@ -2357,7 +2376,7 @@ def test_cli_cache_clear_removes_all_entries(tmp_path):
     scope.mkdir()
     cache.put_many(scope, "some/model", "rev1", [("k1", np.array([1.0, 2.0], dtype=np.float32))])
 
-    runner = CliRunner()
+    runner = CliRunner(env={"CODEDUPES_CACHE_CLEAR_MODEL": "unrelated/model"})
     result = runner.invoke(cli.cli, ["cache", "clear"])
 
     assert result.exit_code == 0

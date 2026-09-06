@@ -24,7 +24,6 @@ from ._render import _format_embedding_stats, _print_diagnostics, print_search_r
 @cli_module.cli.command(
     "search",
     help="Search for semantically similar code",
-    context_settings={"auto_envvar_prefix": "CODEDUPES"},
 )
 @click.argument("path", type=click.Path(path_type=Path, exists=True), panel=Panel.SCOPE)
 @click.argument("query", panel=Panel.SCOPE)
@@ -35,7 +34,6 @@ from ._render import _format_embedding_stats, _print_diagnostics, print_search_r
     show_default=True,
     callback=_validate_positive_int,
     panel=Panel.DETECTION,
-    show_envvar=True,
     help="Maximum results",
 )
 @click.option(
@@ -44,14 +42,12 @@ from ._render import _format_embedding_stats, _print_diagnostics, print_search_r
     default=None,
     show_default=False,
     panel=Panel.DETECTION,
-    show_envvar=True,
     help="Shared threshold override for semantic search",
 )
 @click.option(
     "--semantic-threshold",
     type=float,
     panel=Panel.DETECTION,
-    show_envvar=True,
     help="Override semantic threshold",
 )
 @click.option(
@@ -60,7 +56,6 @@ from ._render import _format_embedding_stats, _print_diagnostics, print_search_r
     default=DEFAULT_SEARCH_SEMANTIC_TASK,
     show_default=True,
     panel=Panel.SEMANTIC,
-    show_envvar=True,
     help="Semantic task mode for query/document embeddings",
 )
 @click.option(
@@ -69,7 +64,6 @@ from ._render import _format_embedding_stats, _print_diagnostics, print_search_r
     default="source",
     show_default=True,
     panel=Panel.SEMANTIC,
-    show_envvar=True,
     help=(
         "Text representation embedded for each search-index unit; "
         "contextual requires an explicit threshold"

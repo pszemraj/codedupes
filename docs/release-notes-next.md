@@ -33,7 +33,7 @@
 
 ## CLI and API output
 
-- Split the CLI into command, option, and rendering modules. Added grouped help, `-h`, paired boolean flags, and `CODEDUPES_*` option environment variables. See [CLI options](cli.md).
+- Split the CLI into command, option, and rendering modules. Added grouped help, `-h`, and paired boolean flags. CLI options use command-line flags without automatic environment-variable overrides. See [CLI options](cli.md).
 - Added configurable [finding exit policies](output.md#exit-codes), [embedding telemetry](output.md#embedding-telemetry), and clean JSON output under merged streams.
 - Paths retain enough context to distinguish files in different directories, including literal Rich markup characters. Empty search indexes distinguish extraction, eligibility, and context-window exclusions.
 - Reused analyzers clear prior corpus state. Python callers can control [progress](python-api.md#progress-and-embedding-telemetry) and [dependency logging](python-api.md#logging).

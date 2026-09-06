@@ -117,7 +117,7 @@ See [model profiles](model-profiles.md#semantic-task-defaults-and-choices) for t
 
 ## Environment variables
 
-Help for `check` and `search` displays option environment variables; command-line values take precedence. Names use the `CODEDUPES_` prefix and the internal parameter name, which can differ from the flag: `--json` uses `CODEDUPES_AS_JSON=1`, and `--language` uses `CODEDUPES_LANGUAGES="python rust"`. Other examples are `CODEDUPES_DEVICE=cpu`, `CODEDUPES_NO_CACHE=1`, `CODEDUPES_FAIL_ON=all` for `check`, and `CODEDUPES_SEARCH_DOCUMENT=contextual` for `search`. See [cache controls](caching.md#controls) for cache-library variables.
+CLI options are configured through command-line flags; automatic `CODEDUPES_*` option overrides are disabled. Explicit library-level [cache controls](caching.md#controls) and [accelerator controls](accelerators.md#precision-and-metal-environment-variables) remain supported.
 
 ## `codedupes info`
 

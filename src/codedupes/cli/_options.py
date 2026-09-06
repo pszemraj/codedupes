@@ -433,7 +433,6 @@ def semantic_options() -> Callable[[F], F]:
             type=str,
             metavar="LANGUAGE",
             panel=Panel.SCOPE,
-            show_envvar=True,
             help=(
                 "Limit extraction to a language (repeat for multiple). Aliases such as py, rs, "
                 "js, jsx, ts, and tsx are accepted. Omit to auto-detect all supported languages."
@@ -443,28 +442,24 @@ def semantic_options() -> Callable[[F], F]:
             "--no-private",
             is_flag=True,
             panel=Panel.SCOPE,
-            show_envvar=True,
             help="Exclude private functions/classes",
         ),
         click.option(
             "--exclude",
             multiple=True,
             panel=Panel.SCOPE,
-            show_envvar=True,
             help=DEFAULT_EXCLUDE_HELP_HINT,
         ),
         click.option(
             "--no-default-excludes",
             is_flag=True,
             panel=Panel.SCOPE,
-            show_envvar=True,
             help="Disable default test-file exclusions; artifact-directory exclusions still apply.",
         ),
         click.option(
             "--include-stubs",
             is_flag=True,
             panel=Panel.SCOPE,
-            show_envvar=True,
             help=(
                 "Include .pyi files when scanning a directory "
                 "(single-file targets are analyzed as given)"
@@ -476,7 +471,6 @@ def semantic_options() -> Callable[[F], F]:
             default=DEFAULT_MIN_SEMANTIC_STATEMENTS,
             show_default=True,
             panel=Panel.SEMANTIC,
-            show_envvar=True,
             help="Skip semantic comparison for code units with fewer body statements",
         ),
         click.option(
@@ -486,7 +480,6 @@ def semantic_options() -> Callable[[F], F]:
             default=DEFAULT_SEMANTIC_UNIT_TYPES,
             show_default=True,
             panel=Panel.SEMANTIC,
-            show_envvar=True,
             help="Unit type(s) eligible for semantic embedding (repeat option to add more)",
         ),
         click.option(
@@ -494,14 +487,12 @@ def semantic_options() -> Callable[[F], F]:
             default=DEFAULT_MODEL,
             show_default=True,
             panel=Panel.SEMANTIC,
-            show_envvar=True,
             help="Embedding model alias, Hugging Face model ID, or complete local model directory",
         ),
         click.option(
             "--instruction-prefix",
             default=None,
             panel=Panel.SEMANTIC,
-            show_envvar=True,
             help="Custom instruction prefix prepended to semantic inputs",
         ),
         click.option(
@@ -509,7 +500,6 @@ def semantic_options() -> Callable[[F], F]:
             default=None,
             show_default="auto",
             panel=Panel.SEMANTIC,
-            show_envvar=True,
             help="Model revision/commit. If omitted, uses the model-profile default.",
         ),
         click.option(
@@ -517,14 +507,12 @@ def semantic_options() -> Callable[[F], F]:
             default=None,
             multiple=True,
             panel=Panel.SEMANTIC,
-            show_envvar=True,
             help="Override the model profile's remote-code trust setting",
         ),
         click.option(
             "--strict-revision-cache",
             is_flag=True,
             panel=Panel.SEMANTIC,
-            show_envvar=True,
             help=(
                 "Key an unpinned hub model's cache revision to a resolved commit hash instead of "
                 "the requested revision label"
@@ -536,7 +524,6 @@ def semantic_options() -> Callable[[F], F]:
             default=DEFAULT_SEMANTIC_DEVICE,
             show_default=True,
             panel=Panel.DEVICE,
-            show_envvar=True,
             help="Semantic inference device (auto prefers CUDA, then MPS, then CPU)",
         ),
         click.option(
@@ -544,7 +531,6 @@ def semantic_options() -> Callable[[F], F]:
             default=None,
             multiple=True,
             panel=Panel.DEVICE,
-            show_envvar=True,
             help="Override MPS unsupported-op CPU fallback",
         ),
         click.option(
@@ -552,7 +538,6 @@ def semantic_options() -> Callable[[F], F]:
             type=float,
             default=None,
             panel=Panel.DEVICE,
-            show_envvar=True,
             help=(
                 "Optional PyTorch MPS allocator limit as a fraction of the recommended working "
                 "set, in (0, 2]. Values above 1 increase system memory pressure."
@@ -564,14 +549,12 @@ def semantic_options() -> Callable[[F], F]:
             default=DEFAULT_BATCH_SIZE,
             show_default=True,
             panel=Panel.DEVICE,
-            show_envvar=True,
             help="Batch size for embeddings",
         ),
         click.option(
             "--no-cache",
             is_flag=True,
             panel=Panel.CACHE,
-            show_envvar=True,
             help="Disable the persistent on-disk embedding cache for this run",
         ),
         click.option(
@@ -579,7 +562,6 @@ def semantic_options() -> Callable[[F], F]:
             "as_json",
             is_flag=True,
             panel=Panel.OUTPUT,
-            show_envvar=True,
             help="Output JSON instead of rich tables",
         ),
         click.option(
@@ -587,7 +569,6 @@ def semantic_options() -> Callable[[F], F]:
             "-v",
             is_flag=True,
             panel=Panel.OUTPUT,
-            show_envvar=True,
             help="Verbose logging",
         ),
         click.option(
@@ -597,7 +578,6 @@ def semantic_options() -> Callable[[F], F]:
             show_default=True,
             callback=_validate_output_width,
             panel=Panel.OUTPUT,
-            show_envvar=True,
             help="Width used for rich terminal rendering",
         ),
     ]
