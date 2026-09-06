@@ -432,7 +432,7 @@ def test_cli_json_replays_python_and_native_stderr_on_failure(tmp_path, command)
     assert "schema_version" not in result.stdout
 
 
-def test_cli_reports_semantic_context_diagnostics(monkeypatch, tmp_path):
+def test_cli_reports_semantic_diagnostics(monkeypatch, tmp_path):
     path = tmp_path / "sample.py"
     path.write_text("def entry():\n    return 1\n")
     unit = _build_unit(tmp_path)
@@ -447,8 +447,8 @@ def test_cli_reports_semantic_context_diagnostics(monkeypatch, tmp_path):
             ExtractionDiagnostic(
                 file_path=unit.file_path,
                 language="python",
-                code="semantic-context-overflow",
-                message="sample.entry is 4096 tokens including the encode prompt",
+                code="semantic-warning",
+                message="sample.entry has a semantic warning",
                 lineno=1,
                 end_lineno=2,
             )
@@ -459,12 +459,12 @@ def test_cli_reports_semantic_context_diagnostics(monkeypatch, tmp_path):
 
     table_result = runner.invoke(cli.cli, ["check", str(path)])
     assert "Semantic diagnostics" in table_result.output
-    assert "4096 tokens" in table_result.output
+    assert "semantic warning" in table_result.output
 
     json_result = runner.invoke(cli.cli, ["check", str(path), "--json"])
     payload = json.loads(json_result.output)
     assert payload["summary"]["semantic_diagnostics"] == 1
-    assert payload["semantic_diagnostics"][0]["code"] == "semantic-context-overflow"
+    assert payload["semantic_diagnostics"][0]["code"] == "semantic-warning"
 
 
 def test_cli_search_json_surfaces_semantic_diagnostics(monkeypatch, tmp_path):
@@ -488,8 +488,8 @@ def test_cli_search_json_surfaces_semantic_diagnostics(monkeypatch, tmp_path):
             ExtractionDiagnostic(
                 file_path=unit.file_path,
                 language="python",
-                code="semantic-context-overflow",
-                message="sample.entry is 4096 tokens including the encode prompt",
+                code="semantic-warning",
+                message="sample.entry has a semantic warning",
                 lineno=1,
                 end_lineno=2,
             )
@@ -503,7 +503,7 @@ def test_cli_search_json_surfaces_semantic_diagnostics(monkeypatch, tmp_path):
     payload = json.loads(result.output)
     result_uid = payload["results"][0]["unit"]
     assert payload["units"][result_uid]["name"] == "entry"
-    assert payload["semantic_diagnostics"][0]["code"] == "semantic-context-overflow"
+    assert payload["semantic_diagnostics"][0]["code"] == "semantic-warning"
 
 
 def test_cli_search_indexes_without_running_full_analysis(monkeypatch, tmp_path):
@@ -596,14 +596,16 @@ def test_cli_search_empty_extraction_warning_does_not_blame_candidate_filters(
     assert "--semantic-unit-type" not in result.stderr
 
 
-def test_cli_search_empty_index_reports_semantic_context_diagnostics(monkeypatch, tmp_path):
+def test_cli_search_empty_index_uses_eligibility_reason_with_semantic_diagnostics(
+    monkeypatch, tmp_path
+):
     path = tmp_path / "sample.py"
     path.write_text("def entry():\n    return 1\n")
     diagnostic = ExtractionDiagnostic(
         file_path=path,
         language="python",
-        code="semantic-context-overflow",
-        message="sample.entry exceeds the model context window",
+        code="semantic-warning",
+        message="sample.entry has a semantic warning",
         lineno=1,
         end_lineno=2,
     )
@@ -620,9 +622,9 @@ def test_cli_search_empty_index_reports_semantic_context_diagnostics(monkeypatch
     result = CliRunner().invoke(cli.cli, ["search", str(path), "entry", "--output-width", "400"])
 
     assert result.exit_code == 0
-    assert "no semantic candidates survived indexing" in result.stderr
+    assert "semantic eligibility filtering removed all" in result.stderr
     assert "Semantic diagnostics" in result.stdout
-    assert "exceeds the model context window" in result.stdout
+    assert "semantic warning" in result.stdout
 
 
 def test_cli_search_does_not_warn_when_the_index_has_units(monkeypatch, tmp_path):

@@ -131,11 +131,6 @@ def search_command(ctx: click.Context, path: Path, query: str, **params: Any) ->
                         "extraction produced no code units; ensure the path contains "
                         "supported source code and that extraction filters permit it"
                     )
-                elif analyzer.semantic_diagnostics:
-                    reason = (
-                        "no semantic candidates survived indexing; inspect the semantic "
-                        "diagnostics below"
-                    )
                 else:
                     reason = (
                         f"semantic eligibility filtering removed all "

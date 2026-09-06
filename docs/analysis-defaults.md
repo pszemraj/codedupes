@@ -31,7 +31,7 @@ Default semantic candidate selection:
 - minimum statement count: `3` (via `min_semantic_statements`)
 - statements are counted recursively through control-flow bodies, so a large function implemented inside one outer block is not measured as a single statement; nested function/class definitions count as one declaration each. Python counts via the AST (`try`, `with`, loops, conditionals, `match`, with indented definitions dedented before counting); Tree-sitter languages apply each grammar's equivalent statement and nested-scope node rules, including Rust's semicolon-free tail expression as one statement
 - each semantic input is one complete logical definition - signature, docstring, and body, starting at the definition line (`def`/`class` in Python; decorators are not included); functions are not split into arbitrary text chunks
-- a definition whose tokenized input (the encode prompt included) exceeds the selected model's context window is never embedded from a partial prefix: it is skipped with a warning and a `semantic-context-overflow` diagnostic, and the run continues without it. `--allow-semantic-fallback` is unrelated to this path. An over-long `search` query still fails hard, because a truncated query has no result to omit
+- eligible definitions and search queries are passed to the embedding backend unchanged. The backend applies its normal tokenization and context-window truncation, including any encode prompt.
 
 Traditional/semantic scope rule:
 

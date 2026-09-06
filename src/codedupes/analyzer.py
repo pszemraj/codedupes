@@ -39,9 +39,7 @@ from codedupes.semantic import (
     ProgressMode,
     SearchDocumentMode,
     SemanticBackendError,
-    SemanticContextOverflow,
     _prepare_search_document,
-    describe_context_overflow,
     embedding_cache_keys_for_units,
     get_code_unit_statement_count,
     get_semantic_runtime_versions,
@@ -622,9 +620,8 @@ class CodeAnalyzer:
     def extracted_unit_count(self) -> int:
         """Return the number of code units extracted by the last run.
 
-        This count precedes semantic candidate filtering and context-window
-        exclusions, so callers can distinguish an empty source corpus from an
-        empty semantic index.
+        This count precedes semantic candidate filtering, so callers can
+        distinguish an empty source corpus from an empty semantic index.
 
         :return: Extracted code-unit count, or zero before the first run.
         """
@@ -651,37 +648,6 @@ class CodeAnalyzer:
         self._extraction_diagnostics = []
         self._semantic_diagnostics = []
 
-    def _drop_over_context_units(
-        self,
-        overflow: list[SemanticContextOverflow],
-        semantic_candidates: list[CodeUnit],
-    ) -> list[CodeUnit]:
-        """Record skipped over-context units and drop them from the semantic corpus.
-
-        The embedding matrix already excludes these rows, so the candidate list
-        must lose them too or every later row lookup is off by one.
-
-        :param overflow: Units the semantic layer could not embed completely.
-        :param semantic_candidates: Candidate units passed to the semantic layer.
-        :return: Candidates that survived the context policy.
-        """
-        self._semantic_diagnostics.extend(
-            ExtractionDiagnostic(
-                file_path=skipped.unit.file_path,
-                language=skipped.unit.language,
-                message=describe_context_overflow(skipped),
-                severity="warning",
-                code="semantic-context-overflow",
-                lineno=skipped.unit.lineno,
-                end_lineno=skipped.unit.end_lineno,
-            )
-            for skipped in overflow
-        )
-        skipped_ids = {id(skipped.unit) for skipped in overflow}
-        remaining = [unit for unit in semantic_candidates if id(unit) not in skipped_ids]
-        self._semantic_units = remaining
-        return remaining
-
     def _publish_corpus_manifest(
         self,
         path: Path,
@@ -694,7 +660,7 @@ class CodeAnalyzer:
         """Publish cache corpus metadata after a successful analyzer run.
 
         :param path: Analysis target, preserving an explicit symlink's name.
-        :param semantic_units: Units retained by semantic context filtering.
+        :param semantic_units: Units selected for semantic embedding.
         :param semantic_task: Effective embedding task.
         :param search_document: Search document representation used by the run.
         :param document_texts: Optional contextual texts aligned with ``semantic_units``.
@@ -956,14 +922,12 @@ class CodeAnalyzer:
                 # evidence and enable hybrid_confirmed scoring.
                 exclude = find_exact_pair_keys(semantic_candidates)
 
-            semantic_overflow: list[SemanticContextOverflow] = []
             try:
                 semantic_kwargs: dict[str, object] = {
                     "model_name": self.config.model_name,
                     "instruction_prefix": self.config.instruction_prefix,
                     "threshold": semantic_scan_floor,
                     "language_thresholds": semantic_gates,
-                    "overflow_report": semantic_overflow,
                     "exclude_pairs": exclude,
                     "batch_size": self.config.batch_size,
                     "revision": self.config.model_revision,
@@ -1019,11 +983,6 @@ class CodeAnalyzer:
                 logger.warning(semantic_fallback_reason)
             else:
                 self._embedding_stats = embedding_stats
-                if semantic_overflow:
-                    semantic_candidates = self._drop_over_context_units(
-                        semantic_overflow,
-                        semantic_candidates,
-                    )
 
             # Language partitioning and the per-language gates are applied inside
             # the pairwise scan (see find_semantic_duplicates), so every pair that
@@ -1102,9 +1061,8 @@ class CodeAnalyzer:
         :meth:`analyze`, no all-pairs duplicate scan, traditional analysis, or
         unused-code analysis happens, so indexing stays linear in corpus size.
 
-        Units too long for the model context window are skipped (reported through
-        :attr:`semantic_diagnostics`) rather than ending the run, exactly as on
-        the duplicate-check path; only an over-long query fails hard.
+        Inputs are passed to the embedding backend unchanged. Models apply their
+        own normal context-window truncation to both corpus units and queries.
 
         :param path: Path to a supported source file or directory.
         :return: Number of code units embedded for search.
@@ -1125,7 +1083,6 @@ class CodeAnalyzer:
         )
         semantic_candidates = self._select_semantic_candidates(units)
         self._semantic_units = semantic_candidates
-        overflow: list[SemanticContextOverflow] = []
         self._embedding_stats = EmbeddingRunStats()
         document_texts = (
             [_prepare_search_document(unit, self._cache_scope) for unit in semantic_candidates]
@@ -1136,7 +1093,6 @@ class CodeAnalyzer:
         try:
             self._embeddings, self._embedding_space_identity = compute_embeddings(
                 semantic_candidates,
-                overflow_report=overflow,
                 model_name=self.config.model_name,
                 instruction_prefix=self.config.instruction_prefix,
                 batch_size=self.config.batch_size,
@@ -1158,13 +1114,6 @@ class CodeAnalyzer:
             self._embedding_space_identity = None
             self._embedding_stats = None
             raise
-        if overflow:
-            semantic_candidates = self._drop_over_context_units(overflow, semantic_candidates)
-            if self.config.search_document == "contextual" and self._cache_scope is not None:
-                document_texts = [
-                    _prepare_search_document(unit, self._cache_scope)
-                    for unit in semantic_candidates
-                ]
         self._publish_corpus_manifest(
             path,
             semantic_candidates,

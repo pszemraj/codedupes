@@ -97,22 +97,13 @@ See [task defaults and calibration requirements](model-profiles.md#semantic-task
 
 `AnalyzerConfig.mode` declares which contract enforces that requirement. The default `mode="check"` rejects an uncalibrated context without `semantic_threshold` at construction, before any extraction or model load. `index()` and `search()` accept either mode. For a search-only workflow, use `mode="search"` to defer calibration validation to query time (`search()` raises if the resolved context has no calibrated search default and no explicit threshold). `analyze()` rejects `mode="search"` configs.
 
-`index()` extracts the corpus and computes (or loads from cache) its embeddings without the all-pairs duplicate scan, traditional analysis, or unused-code analysis that `analyze()` runs, so building a search corpus stays linear in corpus size. Prefer `index()` before search. `analyzer.extracted_unit_count` reports the pre-filter extraction count from the latest `index()` or `analyze()` run, which can be larger than the count returned by `index()` after semantic eligibility and context-window filtering. A search after `analyze()` reuses the analysis task and therefore requires an explicit search threshold when that task changes the model's prompt or route, as it does for EmbeddingGemma.
+`index()` extracts the corpus and computes (or loads from cache) its embeddings without the all-pairs duplicate scan, traditional analysis, or unused-code analysis that `analyze()` runs, so building a search corpus stays linear in corpus size. Prefer `index()` before search. `analyzer.extracted_unit_count` reports the pre-filter extraction count from the latest `index()` or `analyze()` run, which can be larger than the count returned by `index()` after semantic eligibility filtering. Eligible corpus units and queries are passed unchanged to the embedding backend, which applies its normal context-window truncation, including any prompt. A search after `analyze()` reuses the analysis task and therefore requires an explicit search threshold when that task changes the model's prompt or route, as it does for EmbeddingGemma.
 
 `AnalyzerConfig.search_document` is `"source"` by default, preserving the calibrated source-only score distribution. `"contextual"` prepends language, root-relative path, and qualified symbol to each search document before the code. Contextual mode makes paths and symbols available to retrieval but changes the input distribution; the source-only thresholds have not been calibrated for it. Searching a contextual index requires an explicit `search(threshold=...)` or `config.semantic_threshold`; tune that value against representative queries. This requirement follows the indexed representation even if the config is changed afterward. Its [cache behavior](caching.md#what-invalidates-what) follows the complete document input. `analyze()` always embeds bare source for duplicate detection regardless of this search-only setting.
 
 For direct embedding/query calls, pass the identity returned by `compute_embeddings_with_identity(...)` as `find_similar_to_query(corpus_identity=...)`. It is required for contextual documents and prompt- or route-sensitive models, and preserves calibration and checkpoint checks on both cold and warm cache paths. Use `search_document="contextual"` with aligned `document_texts` when supplying contextual inputs.
 
 Direct `compute_embeddings()` and `compute_embeddings_with_identity()` calls require one `document_texts` entry per input unit when supplied. Mismatched lengths raise `ValueError` before revision resolution, cache lookup, or model loading, including for an empty corpus.
-
-Units skipped by the [context-window policy](analysis-defaults.md#semantic-candidate-defaults) are reported through `analyzer.semantic_diagnostics` and, for `analyze()`, `AnalysisResult.semantic_diagnostics`:
-
-```python
-analyzer.index("./src")
-
-for diagnostic in analyzer.semantic_diagnostics:
-    print(diagnostic.code, diagnostic.file_path, diagnostic.message)
-```
 
 Each `index()` or `analyze()` call replaces the analyzer's corpus-specific state before extraction. `search()` therefore targets only the most recent run and requires it to have semantic embeddings. A later empty or nonsemantic analysis cannot reuse an older corpus accidentally. The analyzer binds the matrix to its model, revision, and vector-affecting runtime configuration. If any of those changes before a query, `search()` requires a fresh `index()`/`analyze()`. Set `AnalyzerConfig(strict_revision_cache=True)` for [strict revision resolution](caching.md#what-invalidates-what).
 
@@ -139,7 +130,7 @@ embeddings = compute_embeddings(
 print(stats.cache_hit_rows, stats.encoded_inputs, stats.model_loaded)
 ```
 
-See [embedding telemetry](output.md#embedding-telemetry) for field definitions. Low-level `compute_embeddings*` calls require `cache_scope` for persistent reuse and do not publish corpus manifests; use `CodeAnalyzer` for move/deletion tracking. Without `overflow_report`, an over-context input raises. Supplying that collector drops its rows, so callers must remove the reported units before using the returned matrix. `CodeAnalyzer` maintains that alignment automatically.
+See [embedding telemetry](output.md#embedding-telemetry) for field definitions. Low-level `compute_embeddings*` calls require `cache_scope` for persistent reuse and do not publish corpus manifests; use `CodeAnalyzer` for move/deletion tracking.
 
 ## Apple Silicon configuration
 
@@ -185,7 +176,7 @@ quiet_dependency_loggers()  # or quiet_dependency_loggers(logging.ERROR)
 - `AnalysisResult.semantic_duplicates`: raw semantic duplicates (diagnostics)
 - `AnalysisResult.potentially_unused`: Python-only heuristic unused candidates
 - `AnalysisResult.extraction_diagnostics`: recoverable parser diagnostics and skipped-unit reasons
-- `AnalysisResult.semantic_diagnostics`: units the semantic stage skipped, mirroring `CodeAnalyzer.semantic_diagnostics` for that run
+- `AnalysisResult.semantic_diagnostics`: semantic-stage diagnostics, mirroring `CodeAnalyzer.semantic_diagnostics` for that run
 - `AnalysisResult.unused_excluded_units`: non-Python units intentionally excluded from unused analysis
 - `AnalysisResult.unused_supported_languages`: languages the unused heuristic evaluates (currently always `("python",)`)
 - `AnalysisResult.all_duplicates`: hybrid duplicates in combined mode; raw duplicates in single-method mode
