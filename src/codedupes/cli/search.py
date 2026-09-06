@@ -98,7 +98,12 @@ def search_command(ctx: click.Context, path: Path, query: str, **params: Any) ->
         except ValueError as exc:
             raise click.UsageError(str(exc)) from exc
 
-        analyzer = cli_module.CodeAnalyzer(config)
+        analyzer = _run_cli_action(
+            lambda: cli_module.CodeAnalyzer(config),
+            error_label="search",
+            verbose=opts.verbose,
+            catch_file_not_found=True,
+        )
         indexed_units = _run_cli_action(
             lambda: analyzer.index(path),
             error_label="search",
@@ -109,6 +114,7 @@ def search_command(ctx: click.Context, path: Path, query: str, **params: Any) ->
             lambda: analyzer.search(query, top_k=opts.top_k),
             error_label="search",
             verbose=opts.verbose,
+            catch_file_not_found=True,
         )
 
         if opts.as_json:

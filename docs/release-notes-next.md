@@ -2,6 +2,7 @@
 
 ## Migration
 
+- CLI `--exclude` now extends default test exclusions and matches directory descendants. Use `--no-default-excludes` to scan tests; Python `exclude_patterns=[]` now disables test defaults. See [extraction scope](analysis-defaults.md#extraction-scope-defaults).
 - JSON consumers must adopt [schema v2](output.md#json-schema-v2) instead of expecting full unit objects at each pair endpoint.
 - `CodeUnit.uid` now includes language and start byte. The private `_ast_hash` alias, `has_body`, and `AnalysisResult.filtered_raw_duplicates` were removed. See [result types](python-api.md#key-result-types).
 - `--min-lines` / `min_semantic_lines` became `--min-statements` / `min_semantic_statements`. The redundant `--tiny-near-jaccard-min` exception and `--hybrid-semantic-threshold` sweep flag were removed.
@@ -37,6 +38,7 @@
 - Paths retain enough context to distinguish files in different directories, including literal Rich markup characters. Empty search indexes distinguish extraction, eligibility, and context-window exclusions.
 - Reused analyzers clear prior corpus state. Python callers can control [progress](python-api.md#progress-and-embedding-telemetry) and [dependency logging](python-api.md#logging).
 - Cache deletion failures now return a failing status, unavailable explicit accelerators are validated on warm and empty runs, and contradictory command options fail validation.
+- Empty `cache clear --model` scopes are rejected without deleting entries. Contextual search requires a threshold before indexing; search construction and missing model-file failures use the normal stderr error path.
 
 ## Validation
 

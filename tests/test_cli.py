@@ -668,6 +668,45 @@ def test_cli_search_reports_path_deleted_after_validation(monkeypatch, tmp_path)
     assert "Error: Path does not exist" in result.stderr
 
 
+@pytest.mark.parametrize("phase", ["construction", "query"])
+@pytest.mark.parametrize("as_json", [False, True])
+def test_cli_search_reports_runtime_failures(monkeypatch, tmp_path, phase, as_json):
+    def fail(*args, **kwargs):
+        raise FileNotFoundError("model asset disappeared")
+
+    if phase == "construction":
+        monkeypatch.setattr(cli, "CodeAnalyzer", fail)
+    else:
+        patch_cli_analyzer(
+            monkeypatch, cli, analyze_result=_build_result(tmp_path), search_results=fail
+        )
+    args = ["search", str(tmp_path), "entry"] + (["--json"] if as_json else [])
+    result = CliRunner().invoke(cli.cli, args)
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert "model asset disappeared" in result.stderr
+    assert "Traceback" not in result.stderr
+    assert not isinstance(result.exception, FileNotFoundError)
+
+
+@pytest.mark.parametrize("command", ["check", "search"])
+@pytest.mark.parametrize("value", ["nan", "inf", "-inf", "-0.1", "1.1"])
+def test_cli_rejects_invalid_active_threshold_before_analysis(
+    monkeypatch, tmp_path, command, value
+):
+    def unexpected(*args, **kwargs):
+        pytest.fail("Invalid threshold reached analysis")
+
+    monkeypatch.setattr(cli, "CodeAnalyzer", unexpected)
+    args = [command, str(tmp_path)] + (["entry"] if command == "search" else [])
+    result = CliRunner().invoke(cli.cli, [*args, "--threshold", value, "--json"])
+
+    assert result.exit_code == 2
+    assert result.stdout == ""
+    assert "[0.0, 1.0]" in result.stderr
+
+
 def test_cli_json_show_all_includes_raw_sections(monkeypatch, tmp_path):
     path = tmp_path / "sample.py"
     path.write_text("def entry():\n    return 1\n")
@@ -1100,12 +1139,11 @@ def test_cli_contextual_search_requires_explicit_threshold(monkeypatch, tmp_path
     runner = CliRunner()
     missing = runner.invoke(cli.cli, args)
 
-    assert missing.exit_code == 1
+    assert missing.exit_code == 2
     assert "contextual" in missing.output
     assert "explicit threshold" in missing.output
     assert "--semantic-threshold" in missing.output
-    assert len(model.encode_calls) == 1
-    assert model.encode_calls[0][0].startswith("language: python\n")
+    assert model.encode_calls == []
 
     for option in ("--semantic-threshold", "--threshold"):
         result = runner.invoke(cli.cli, [*args, option, "0.0"])
@@ -1518,7 +1556,7 @@ def test_cli_search_help_is_search_specific() -> None:
     assert result.exit_code == 0
     assert "also narrows traditional duplicate scope in combined mode" not in result.output
     assert "Built-in" in result.output
-    assert "always apply." in result.output
+    assert "still apply." in result.output
 
 
 @pytest.mark.parametrize("command", ["check", "search"])
@@ -2338,6 +2376,31 @@ def test_cli_cache_clear_rejects_empty_model_without_deleting(tmp_path, model):
     assert result.stdout == ""
     assert "must not be empty" in result.stderr
     assert cache.stats()["entries"] == 1
+
+
+@pytest.mark.parametrize("command", ["check", "search"])
+@pytest.mark.parametrize("include_tests", [False, True])
+def test_cli_exclusions_extend_defaults(monkeypatch, tmp_path, command, include_tests):
+    from codedupes.extractor import CodeExtractor
+
+    for relative in ["keep.py", "test_entry.py", "pkg/examples/deep.py", "node_modules/mod.py"]:
+        path = tmp_path / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("def entry():\n    return 1\n", encoding="utf-8")
+    captured = []
+    patch_cli_analyzer(
+        monkeypatch, cli, analyze_result=_build_result(tmp_path), captured_configs=captured
+    )
+    args = [command, str(tmp_path)] + (["entry"] if command == "search" else ["--traditional-only"])
+    args += ["--exclude", "examples", "--json"]
+    if include_tests:
+        args.append("--no-default-excludes")
+    result = CliRunner().invoke(cli.cli, args)
+    assert result.exit_code in {0, 1}, result.output
+    units = CodeExtractor(tmp_path, exclude_patterns=captured[0].exclude_patterns).extract_all()
+    assert {unit.file_path.name for unit in units} == (
+        {"keep.py", "test_entry.py"} if include_tests else {"keep.py"}
+    )
 
 
 def test_cli_cache_clear_scoped_to_model(tmp_path):

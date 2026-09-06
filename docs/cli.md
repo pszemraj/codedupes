@@ -61,7 +61,7 @@ Options, in addition to the [shared options](#options-shared-by-check-and-search
 - `--top-k <int>`: Number of results (default `10`)
 - `--threshold <float>`: Shared semantic threshold override
 - `--semantic-task <name>`: Semantic task mode for query/document embeddings (default `code-retrieval`)
-- `--search-document <source|contextual>`: Choose the [search document representation](python-api.md#semantic-query-search), source only by default. Contextual search requires an explicit `--semantic-threshold` or `--threshold`; tune the value against representative queries
+- `--search-document <source|contextual>`: Choose the [search document representation](python-api.md#semantic-query-search), source only by default. Contextual search requires an explicit `--semantic-threshold` or `--threshold`; omission is a usage error (exit `2`) before indexing. Tune the value against representative queries
 
 ## Options shared by `check` and `search`
 
@@ -76,7 +76,8 @@ codedupes search . "validate session token" --language js --language ts
 
 - `--language <name>`: Restrict extraction to a language; repeat for multiple languages, or omit to auto-detect. See [supported files](polyglot-languages.md#supported-files) for names, aliases, and C header selection.
 - `--no-private`: Exclude private units according to [language visibility rules](polyglot-languages.md#visibility-filtering)
-- `--exclude <glob>`: Replace the default file globs (repeat for multiple patterns); see [extraction scope](analysis-defaults.md#extraction-scope-defaults)
+- `--exclude <name|glob>`: Add to the default test exclusions (repeat for multiple patterns). Bare names such as `examples` match at any depth and exclude whole directory subtrees; paths containing `/` are relative to the scan root. Quote globs to prevent shell expansion; see [extraction scope](analysis-defaults.md#extraction-scope-defaults)
+- `--no-default-excludes`: Disable the default test-file patterns, allowing tests to be analyzed. Custom excludes and built-in artifact-directory exclusions still apply
 - `--include-stubs`: Include `.pyi` files when scanning a directory (single-file `.pyi` targets are analyzed as given)
 
 ### Semantic model
@@ -128,7 +129,7 @@ Print the embedding-cache summary plus per-model entry counts and a per-repo bre
 
 ## `codedupes cache clear [--model <name>]`
 
-Clear all cached embeddings or only entries for one model. See [Embedding cache](caching.md).
+Clear all cached embeddings or only entries for one model. An empty or whitespace-only `--model` is a usage error (exit `2`) and deletes nothing; omit the option to clear all models. See [Embedding cache](caching.md).
 
 ## Validation and mode notes
 
