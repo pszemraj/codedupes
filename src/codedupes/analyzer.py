@@ -1012,16 +1012,6 @@ class CodeAnalyzer:
             unused_excluded_units = sum(unit.language != "python" for unit in units)
             logger.info(f"Found {len(unused)} potentially unused code units")
 
-            if self.config.run_semantic:
-                unused_uids = {unit.uid for unit in unused}
-                semantic_duplicates = [
-                    duplicate
-                    for duplicate in semantic_duplicates
-                    if not (
-                        duplicate.unit_a.uid in unused_uids and duplicate.unit_b.uid in unused_uids
-                    )
-                ]
-
         combined_mode = self.config.run_traditional and self.config.run_semantic
         hybrid_duplicates: list[HybridDuplicate] = []
 

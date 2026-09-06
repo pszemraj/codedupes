@@ -1103,16 +1103,26 @@ def test_explicit_semantic_threshold_applies_flat_across_languages(
     assert len(result.semantic_duplicates) == 1
 
 
-def test_unused_semantic_pairs_are_filtered(tmp_path: Path, monkeypatch) -> None:
+@pytest.mark.parametrize("run_unused", [True, False])
+@pytest.mark.parametrize("run_traditional", [True, False])
+def test_unused_analysis_preserves_duplicate_findings(
+    tmp_path: Path, monkeypatch, run_unused: bool, run_traditional: bool
+) -> None:
+    """Keep duplicate evidence for callbacks the unused heuristic cannot resolve."""
     source = dedent(
         """
-        def _a():
-            x = 1
+        def _a(value):
+            x = value + 1
+            x *= 2
             return x + 1
 
-        def _b():
-            y = 2
+        def _b(value):
+            y = value + 2
+            y *= 3
             return y + 2
+
+        list(map(_a, [1, 2]))
+        list(map(_b, [1, 2]))
         """
     ).strip()
     project = create_project(tmp_path, source, module="pairs.py")
@@ -1134,16 +1144,23 @@ def test_unused_semantic_pairs_are_filtered(tmp_path: Path, monkeypatch) -> None
 
     analyzer = CodeAnalyzer(
         AnalyzerConfig(
-            run_traditional=False,
+            run_traditional=run_traditional,
             run_semantic=True,
-            run_unused=True,
-            min_semantic_statements=0,
+            run_unused=run_unused,
+            embedding_cache=False,
             strict_unused=False,
         )
     )
 
     result = analyzer.analyze(project)
-    assert result.semantic_duplicates == []
+    assert len(result.semantic_duplicates) == 1
+    assert result.semantic_duplicates[0].similarity == 0.99
+    assert {unit.name for unit in result.potentially_unused} == (
+        {"_a", "_b"} if run_unused else set()
+    )
+    if run_traditional:
+        assert len(result.hybrid_duplicates) == 1
+        assert result.hybrid_duplicates[0].semantic_similarity == 0.99
 
 
 def test_semantic_only_pre_excludes_exact_hash_pairs(tmp_path: Path, monkeypatch) -> None:
