@@ -25,6 +25,9 @@ codedupes check ./src
 
 # Find code by describing what it does.
 codedupes search ./src "normalize request payload" --top-k 5
+
+# Rank matching files, with a short list of contributing definitions.
+codedupes search ./src "normalize request payload" --result-level file --top-k 5
 ```
 
 The first semantic run downloads the default `gte-modernbert-base` model from Hugging Face and computes embeddings. It can take longer than later runs, which reuse cached embeddings. The scan runs locally; source code is not sent to a hosted embedding API. [Model profiles and offline use](docs/model-profiles.md) explain model selection and downloads.
@@ -49,6 +52,8 @@ codedupes check ./src --json --fail-on none
 ```
 
 See [output and exit codes](docs/output.md) for tiers, JSON fields, diagnostics, and CI policies.
+
+Search returns code units by default. With `--result-level file`, each file appears once, ranked by its best matching unit, with up to three matching definitions and line numbers. `--top-k` then limits files. See [search options](docs/cli.md#codedupes-search-path-query) for scope and threshold controls.
 
 ### Know what gets scanned
 

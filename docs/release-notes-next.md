@@ -35,6 +35,7 @@ This draft changelog is for people upgrading an existing integration. Read the m
 
 ## CLI and API output
 
+- Added `search --result-level file` to rank distinct files by their strongest matching code unit, with brief contributing-unit details in terminal and JSON reports. Unit-level search remains the default.
 - Split the CLI into command, option, and rendering modules. Added grouped help, `-h`, and paired boolean flags. CLI options use command-line flags without automatic environment-variable overrides. See [CLI options](cli.md).
 - Added configurable [finding exit policies](output.md#exit-codes), [embedding telemetry](output.md#embedding-telemetry), and clean JSON output under merged streams.
 - Paths retain enough context to distinguish files in different directories, including literal Rich markup characters. Empty search indexes distinguish extraction and eligibility filtering.

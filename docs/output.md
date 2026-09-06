@@ -135,7 +135,7 @@ See [hybrid confidence tiers](analysis-defaults.md#hybrid-synthesis-confidence-d
 
 ### Search
 
-Search hits use `{"unit": "<uid>", "score": 0.95}`; their unit records have the same fields as check results. An empty index with `--no-cache` produces:
+Default search hits (`--result-level unit`) use `{"unit": "<uid>", "score": 0.95}`; their unit records have the same fields as check results. An empty index with `--no-cache` produces:
 
 ```json
 {
@@ -170,6 +170,24 @@ Search hits use `{"unit": "<uid>", "score": 0.95}`; their unit records have the 
 ```
 
 `summary.indexed_units` is the semantic corpus size after eligibility filtering. An empty terminal index warns on stderr and distinguishes empty extraction from eligibility filtering.
+
+#### File search
+
+`search --result-level file --json` adds top-level `"result_level": "file"` and returns one `results` entry per matching file:
+
+```json
+{
+  "file": "/repo/src/parser.py",
+  "score": 0.91,
+  "matching_units": 2,
+  "matches": [
+    {"unit": "/repo/src/parser.py::python::parser.parse::0", "score": 0.91},
+    {"unit": "/repo/src/parser.py::python::parser.decode::240", "score": 0.86}
+  ]
+}
+```
+
+The file's `score` is its highest unit score. `matching_units` counts all of that file's units above the search threshold; `matches` contains up to three strongest contributors. Their UIDs reference the top-level `units` map, which supplies names, types, and line ranges. Only these displayed contributors appear in `units`. Files are ranked before applying `--top-k`; `summary.results` counts returned files, while `summary.indexed_units` still counts indexed code units. Diagnostics and embedding telemetry keep the same shape. Unit-level output remains the default and does not add `result_level`.
 
 ## Embedding telemetry
 

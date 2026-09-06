@@ -76,6 +76,8 @@ print("non-Python units excluded from unused analysis:", result.unused_excluded_
 
 ## Semantic query search
 
+`CodeAnalyzer.search()` returns code-unit/score pairs. File grouping is available through the [CLI's `--result-level file`](cli.md#codedupes-search-path-query) report option.
+
 For code search, call `index()` once, then call `search()` as many times as needed on that analyzer. The default source-only index has a calibrated profile threshold, so the basic workflow needs no threshold tuning:
 
 ```python

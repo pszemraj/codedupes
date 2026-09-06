@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 from collections import Counter
-from typing import Literal, cast
+from typing import TYPE_CHECKING, Literal, cast
 
 from rich.markup import escape
 from rich.panel import Panel
@@ -21,6 +21,9 @@ from codedupes.models import (
 from codedupes.semantic import EmbeddingRunStats
 
 from . import _output
+
+if TYPE_CHECKING:
+    from .search import FileSearchResult
 
 DEFAULT_TABLE_ROWS = 20
 
@@ -408,5 +411,36 @@ def print_search_results(results: list[tuple[CodeUnit, float]]) -> None:
 
     for idx, (unit, score) in enumerate(results, start=1):
         table.add_row(str(idx), f"{score:.2%}", unit.name, format_location(unit))
+
+    _output.console.print(table)
+
+
+def print_file_search_results(results: list[FileSearchResult]) -> None:
+    """Print ranked files with brief evidence from their matching code units.
+
+    :param results: Ranked files with up to three contributing units each.
+    :return: ``None``.
+    """
+    if not results:
+        _output.console.print("[yellow]No matches found.[/yellow]")
+        return
+
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("Rank", justify="right", no_wrap=True)
+    table.add_column("Score", style="green", width=10, no_wrap=True)
+    table.add_column("File", style="dim")
+    table.add_column("Matching code units")
+
+    for rank, result in enumerate(results, start=1):
+        # Reuse the normal compact path display, omitting the first unit's line.
+        location = format_location(result.matches[0][0]).rsplit(":", 1)[0]
+        evidence = [
+            f"{escape(unit.qualified_name)}:{unit.lineno} ({score:.2%})"
+            for unit, score in result.matches
+        ]
+        remaining = result.matching_units - len(result.matches)
+        if remaining:
+            evidence.append(f"+{remaining} more matching units")
+        table.add_row(str(rank), f"{result.score:.2%}", location, "\n".join(evidence))
 
     _output.console.print(table)

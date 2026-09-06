@@ -364,6 +364,7 @@ class SearchOptions:
     verbose: bool
     output_width: int
     top_k: int
+    result_level: Literal["unit", "file"]
     threshold: float | None
     semantic_threshold: float | None
     search_document: Literal["source", "contextual"]

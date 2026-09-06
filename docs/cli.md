@@ -68,18 +68,22 @@ Examples:
 ```bash
 codedupes search ./src "sum values in a list" --top-k 5
 codedupes search ./src "normalize request payload" --json
+codedupes search ./src "normalize request payload" --result-level file --top-k 5
 codedupes search ./src "parse json payload" --semantic-threshold 0.6 --top-k 20
 codedupes search ./src "refund validation" --search-document contextual --semantic-threshold 0.55
 ```
 
 Options, in addition to the [shared options](#options-shared-by-check-and-search):
 
-- `--top-k <int>`: Number of results (default `10`)
+- `--result-level <unit|file>`: Return individual code units (default `unit`) or group matches into files
+- `--top-k <int>`: Maximum results at the selected level: code units or distinct files (default `10`)
 - `--threshold <float>`: Shared semantic threshold override
 - `--semantic-task <name>`: Semantic task mode for query/document embeddings (default `code-retrieval`)
 - `--search-document <source|contextual>`: Choose the [search document representation](python-api.md#semantic-query-search), source only by default. Contextual search requires an explicit `--semantic-threshold` or `--threshold`; omission is a usage error (exit `2`) before indexing. Tune the value against representative queries
 
 Search also requires an explicit threshold for a custom instruction prefix, a changed built-in model revision or trust setting, or an alternate EmbeddingGemma task. These option errors are rejected before indexing with exit `2`. Python callers may still index first and supply the threshold to `search()` later.
+
+At `--result-level file`, the threshold still applies to individual code units. Matching units are grouped by their full file path, and each file's score is the highest unit score. Grouping happens before `--top-k`, so several strong units in one file do not crowd out other files. The report shows up to three strongest definitions with line numbers and scores, plus a count of further matches. Files with no qualifying units are absent. This uses the same unit embeddings, candidate filters, and cache as ordinary search; it does not embed whole files. `--semantic-unit-type` selects what gets searched, while `--result-level` selects how matches are reported. See [file search JSON](output.md#file-search) for machine-readable output.
 
 ## Options shared by `check` and `search`
 

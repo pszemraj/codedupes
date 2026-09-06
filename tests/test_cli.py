@@ -6,6 +6,7 @@ import os
 import subprocess
 import sys
 import textwrap
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -554,6 +555,128 @@ def test_cli_search_indexes_without_running_full_analysis(monkeypatch, tmp_path)
     payload = json.loads(result.output)
     result_uid = payload["results"][0]["unit"]
     assert payload["units"][result_uid]["name"] == "entry"
+
+
+@pytest.mark.parametrize("result_level", [None, "unit", "file"])
+@pytest.mark.parametrize("as_json", [False, True])
+def test_cli_search_file_ranking_groups_before_top_k(
+    monkeypatch, tmp_path: Path, result_level: str | None, as_json: bool
+) -> None:
+    """Return distinct files without letting one file's unit hits fill top-k."""
+    hits = [
+        (
+            replace(
+                make_code_unit(tmp_path, name=name, source=f"def {name}():\n    return 1"),
+                file_path=tmp_path / directory / "shared.py",
+                lineno=line,
+            ),
+            score,
+        )
+        for directory, name, line, score in [
+            ("first", "alpha", 10, 0.99),
+            ("first", "beta", 20, 0.98),
+            ("first", "gamma", 30, 0.97),
+            ("first", "delta", 40, 0.96),
+            ("second", "epsilon", 50, 0.95),
+            ("third", "zeta", 60, 0.90),
+        ]
+    ]
+    requested_limits = []
+
+    class RankedAnalyzer:
+        def __init__(self, config):
+            self.extraction_diagnostics = []
+            self.semantic_diagnostics = []
+            self.embedding_stats = None
+
+        def index(self, path):
+            return len(hits)
+
+        def search(self, query, top_k=10):
+            requested_limits.append(top_k)
+            return hits[:top_k]
+
+    monkeypatch.setattr(cli, "CodeAnalyzer", RankedAnalyzer)
+    args = ["search", str(tmp_path), "find helpers", "--top-k", "2"]
+    if result_level is not None:
+        args += ["--result-level", result_level]
+    if as_json:
+        args += ["--json"]
+    result = CliRunner().invoke(cli.cli, args)
+
+    assert result.exit_code == 0, result.output
+    assert requested_limits == [6 if result_level == "file" else 2]
+    if as_json:
+        payload = json.loads(result.output)
+        assert payload["summary"]["results"] == 2
+        assert payload["summary"]["indexed_units"] == 6
+        if result_level == "file":
+            assert payload["result_level"] == "file"
+            first, second = payload["results"]
+            assert first["file"] == str(tmp_path / "first" / "shared.py")
+            assert second["file"] == str(tmp_path / "second" / "shared.py")
+            assert first["score"] == 0.99
+            assert second["score"] == 0.95
+            assert first["matching_units"] == 4
+            assert second["matching_units"] == 1
+            assert [payload["units"][hit["unit"]]["name"] for hit in first["matches"]] == [
+                "alpha",
+                "beta",
+                "gamma",
+            ]
+            assert [hit["score"] for hit in first["matches"]] == [0.99, 0.98, 0.97]
+            assert len(payload["units"]) == 4
+        else:
+            assert "result_level" not in payload
+            assert [payload["units"][hit["unit"]]["name"] for hit in payload["results"]] == [
+                "alpha",
+                "beta",
+            ]
+    elif result_level == "file":
+        assert "Matching code units" in result.output
+        assert "sample.alpha:10 (99.00%)" in result.output
+        assert "sample.gamma:30 (97.00%)" in result.output
+        assert "sample.epsilon:50 (95.00%)" in result.output
+        assert "+1 more matching units" in result.output
+        assert "delta" not in result.output
+        assert "zeta" not in result.output
+    else:
+        assert "alpha" in result.output
+        assert "beta" in result.output
+        assert "gamma" not in result.output
+
+
+@pytest.mark.parametrize("indexed_units", [0, 4])
+@pytest.mark.parametrize("as_json", [False, True])
+def test_cli_file_search_without_matches(monkeypatch, tmp_path, indexed_units, as_json):
+    _patch_search_analyzer(monkeypatch, indexed_units=indexed_units)
+    args = ["search", str(tmp_path), "nothing", "--result-level", "file"]
+    if as_json:
+        args.append("--json")
+    result = CliRunner().invoke(cli.cli, args)
+
+    assert result.exit_code == 0, result.output
+    if as_json:
+        payload = json.loads(result.output)
+        assert payload["result_level"] == "file"
+        assert payload["results"] == []
+        assert payload["units"] == {}
+        assert payload["summary"]["results"] == 0
+        assert payload["summary"]["indexed_units"] == indexed_units
+    else:
+        assert "No matches found" in result.output
+
+
+def test_cli_search_rejects_unknown_result_level_before_indexing(monkeypatch, tmp_path):
+    def unexpected_analyzer(config):
+        raise AssertionError("Invalid result levels must fail before indexing")
+
+    monkeypatch.setattr(cli, "CodeAnalyzer", unexpected_analyzer)
+    result = CliRunner().invoke(
+        cli.cli, ["search", str(tmp_path), "entry", "--result-level", "directory"]
+    )
+    assert result.exit_code == 2
+    assert "Invalid value" in result.output
 
 
 def _patch_search_analyzer(

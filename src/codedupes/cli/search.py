@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -13,12 +14,48 @@ from codedupes.constants import (
     DEFAULT_TOP_K,
     SEMANTIC_TASK_CHOICES,
 )
+from codedupes.models import CodeUnit
 
 from . import _output
 from ._json import print_search_json
 from ._options import Panel, SearchOptions, option_panels, semantic_options
 from ._output import _configured_cli_output, _run_cli_action, _validate_positive_int
-from ._render import _format_embedding_stats, _print_diagnostics, print_search_results
+from ._render import (
+    _format_embedding_stats,
+    _print_diagnostics,
+    print_file_search_results,
+    print_search_results,
+)
+
+
+@dataclass
+class FileSearchResult:
+    """One ranked file with its score and up to three contributing code units."""
+
+    file_path: Path
+    score: float
+    matching_units: int
+    matches: list[tuple[CodeUnit, float]]
+
+
+def _group_file_results(
+    results: list[tuple[CodeUnit, float]], top_k: int
+) -> list[FileSearchResult]:
+    """Group matching units into files ranked by their strongest unit score.
+
+    :param results: All unit matches above the search threshold.
+    :param top_k: Maximum number of distinct files to return.
+    :return: Ranked files with at most three contributing units each.
+    """
+    grouped: dict[Path, list[tuple[CodeUnit, float]]] = {}
+    for unit, score in results:
+        grouped.setdefault(unit.file_path, []).append((unit, score))
+
+    files = []
+    for path, matches in grouped.items():
+        matches.sort(key=lambda match: (-match[1], match[0].lineno, match[0].uid))
+        files.append(FileSearchResult(path, matches[0][1], len(matches), matches[:3]))
+    return sorted(files, key=lambda result: (-result.score, str(result.file_path)))[:top_k]
 
 
 @cli_module.cli.command(
@@ -28,13 +65,21 @@ from ._render import _format_embedding_stats, _print_diagnostics, print_search_r
 @click.argument("path", type=click.Path(path_type=Path, exists=True), panel=Panel.SCOPE)
 @click.argument("query", panel=Panel.SCOPE)
 @click.option(
+    "--result-level",
+    type=click.Choice(["unit", "file"]),
+    default="unit",
+    show_default=True,
+    panel=Panel.DETECTION,
+    help="Return matching code units or files ranked by their best matching unit",
+)
+@click.option(
     "--top-k",
     type=int,
     default=DEFAULT_TOP_K,
     show_default=True,
     callback=_validate_positive_int,
     panel=Panel.DETECTION,
-    help="Maximum results",
+    help="Maximum results at the selected result level",
 )
 @click.option(
     "--threshold",
@@ -105,10 +150,15 @@ def search_command(ctx: click.Context, path: Path, query: str, **params: Any) ->
             catch_file_not_found=True,
         )
         results = _run_cli_action(
-            lambda: analyzer.search(query, top_k=opts.top_k),
+            lambda: analyzer.search(
+                query, top_k=indexed_units if opts.result_level == "file" else opts.top_k
+            ),
             error_label="search",
             verbose=opts.verbose,
             catch_file_not_found=True,
+        )
+        file_results = (
+            _group_file_results(results, opts.top_k) if opts.result_level == "file" else None
         )
 
         if opts.as_json:
@@ -119,6 +169,7 @@ def search_command(ctx: click.Context, path: Path, query: str, **params: Any) ->
                 analyzer.semantic_diagnostics,
                 indexed_units,
                 analyzer.embedding_stats,
+                file_results=file_results,
             )
         else:
             _output.console.print(f"[bold cyan]Query:[/bold cyan] {query!r}")
@@ -143,6 +194,9 @@ def search_command(ctx: click.Context, path: Path, query: str, **params: Any) ->
                     f"match: {reason}."
                 )
             _print_diagnostics("Semantic diagnostics", analyzer.semantic_diagnostics)
-            print_search_results(results)
+            if file_results is not None:
+                print_file_search_results(file_results)
+            else:
+                print_search_results(results)
 
     raise click.exceptions.Exit(0)
