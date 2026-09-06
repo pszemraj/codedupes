@@ -455,10 +455,27 @@ class CodeExtractor:
         return is_default_excluded_dir(name)
 
     def _should_exclude(self, path: Path) -> bool:
-        """Check if path matches any exclude pattern.
+        """Check exclusions for a path and its resolved in-tree symlink target.
 
         :param path: Candidate path.
         :return: ``True`` when extraction should skip this file or directory.
+        """
+        if self._matches_exclude(path):
+            return True
+        if not path.is_symlink():
+            return False
+        try:
+            resolved = path.resolve()
+        except (OSError, RuntimeError):
+            # Leave broken/looping links for the normal read-error diagnostic.
+            return False
+        return resolved.is_relative_to(self.root) and self._matches_exclude(resolved)
+
+    def _matches_exclude(self, path: Path) -> bool:
+        """Match a path's in-tree name against the configured exclusions.
+
+        :param path: Candidate path under the extraction root.
+        :return: Whether the name or an ancestor matches an exclusion.
         """
         from fnmatch import fnmatch
 

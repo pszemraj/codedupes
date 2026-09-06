@@ -2403,6 +2403,75 @@ def test_cli_exclusions_extend_defaults(monkeypatch, tmp_path, command, include_
     )
 
 
+@pytest.mark.parametrize("command", ["check", "search"])
+@pytest.mark.parametrize("outside_root", [False, True])
+@pytest.mark.parametrize("symlinked_parent", [False, True])
+def test_cli_explicit_symlink_exclusions(
+    monkeypatch, tmp_path, command, outside_root, symlinked_parent
+):
+    root = tmp_path / "project"
+    root.mkdir()
+    target = (tmp_path if outside_root else root) / "target.py"
+    target.write_text("def entry():\n    return 1\n", encoding="utf-8")
+    alias = root / "test_alias.py"
+    alias.symlink_to(target)
+    if symlinked_parent:
+        parent_alias = tmp_path / "project_link"
+        parent_alias.symlink_to(root, target_is_directory=True)
+        alias = parent_alias / alias.name
+    model = CountingModel()
+    _patch_get_model(monkeypatch, model)
+
+    args = [command, str(alias), "--json"]
+    if command == "check":
+        args += ["--traditional-only", "--no-unused"]
+        count_key = "total_units"
+    else:
+        args += ["entry", "--device", "cpu", "--min-statements", "0", "--threshold", "0"]
+        count_key = "indexed_units"
+
+    for options, expected_count in (
+        ([], 0),
+        (["--no-default-excludes"], 1),
+        (["--no-default-excludes", "--exclude", alias.name], 0),
+    ):
+        result = CliRunner().invoke(cli.cli, [*args, *options])
+        assert result.exit_code == 0, result.output
+        assert json.loads(result.stdout)["summary"][count_key] == expected_count
+        assert result.stderr == ""
+
+
+@pytest.mark.grammar
+@pytest.mark.parametrize("exclude", ["ignored.cpp", "examples"])
+def test_cli_header_detection_ignores_excluded_symlink_targets(tmp_path, exclude):
+    (tmp_path / "main.c").write_text("int main(void) { return 1; }", encoding="utf-8")
+    (tmp_path / "header.h").write_text(
+        "static inline int header(void) { return 2; }", encoding="utf-8"
+    )
+    target = tmp_path / "examples" / "ignored.cpp"
+    target.parent.mkdir()
+    target.write_text("", encoding="utf-8")
+    (tmp_path / "alias.cpp").symlink_to(target)
+
+    result = CliRunner().invoke(
+        cli.cli,
+        [
+            "check",
+            str(tmp_path),
+            "--exclude",
+            exclude,
+            "--traditional-only",
+            "--no-unused",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["summary"]["units_by_language"] == {"c": 2}
+    assert payload["extraction_diagnostics"] == []
+
+
 def test_cli_cache_clear_scoped_to_model(tmp_path):
     cache = EmbeddingCache()
     scope = tmp_path / "proj"

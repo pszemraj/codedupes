@@ -372,6 +372,25 @@ def test_header_detection_requires_included_c_source(tmp_path: Path) -> None:
     assert not CodeExtractor(tmp_path, exclude_patterns=["ignored.c"])._allow_c_headers()
 
 
+@pytest.mark.parametrize("suffix", [".c", ".cpp"])
+@pytest.mark.parametrize("exclude", ["target", "alias"])
+def test_header_detection_respects_symlink_exclusions(
+    tmp_path: Path, suffix: str, exclude: str
+) -> None:
+    if suffix == ".cpp":
+        (tmp_path / "main.c").write_text("", encoding="utf-8")
+    target = tmp_path / f"target{suffix}"
+    target.write_text("", encoding="utf-8")
+    (tmp_path / f"alias{suffix}").symlink_to(target)
+    patterns = [f"{exclude}{suffix}"]
+    if exclude == "alias":
+        # Excluding an alias must not exclude the actual included target.
+        expected = suffix == ".c"
+    else:
+        expected = suffix == ".cpp"
+    assert CodeExtractor(tmp_path, exclude_patterns=patterns)._allow_c_headers() is expected
+
+
 def test_excluded_alias_does_not_hide_included_target(tmp_path: Path) -> None:
     target = tmp_path / "z_target.py"
     target.write_text("def entry():\n    return 1\n", encoding="utf-8")

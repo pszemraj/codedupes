@@ -58,9 +58,9 @@ CLI `--exclude` options extend these patterns. Use `--no-default-excludes` to sc
 
 Bare names and basename globs match at any depth: `--exclude examples` skips both `examples/demo.py` and `pkg/examples/nested/demo.py`, without matching `myexamples`. A matched directory excludes all descendants and is pruned from traversal. A trailing `/` restricts a pattern to directories. Paths containing `/` match relative to the scan root; `./examples/` restricts the match to the root-level directory, while `**/examples/**` matches at any depth, including the root. Shell-style `*`, `?`, and character classes are supported; in path patterns `*` can also span `/`. Quote glob arguments in the shell.
 
-Exclusions apply to direct file extraction too, relative to the file's parent for a single-file CLI target. Excluded symlink names are skipped before deduplication; aliases cannot reintroduce excluded in-tree targets.
+Exclusions apply to direct file extraction too, relative to the file's parent for a single-file CLI target. `check` and `search` preserve an explicitly named file symlink for exclusion matching. Excluded symlink names are skipped before deduplication; aliases cannot reintroduce excluded in-tree targets. Targets outside the scan root retain the symlink's in-tree name for extraction and exclusions.
 
-Automatic C-header detection uses the same exclusions, so excluded C/C++ files do not affect whether included `.h` files are parsed as C.
+Automatic C-header detection uses the same exclusions and symlink identity rules, so excluded C/C++ files do not affect whether included `.h` files are parsed as C. In-tree symlinks use the target's extension; links outside the root use the alias's extension.
 
 ## Potentially unused defaults
 

@@ -693,7 +693,7 @@ class CodeAnalyzer:
     ) -> None:
         """Publish cache corpus metadata after a successful analyzer run.
 
-        :param path: Resolved analysis target.
+        :param path: Analysis target, preserving an explicit symlink's name.
         :param semantic_units: Units retained by semantic context filtering.
         :param semantic_task: Effective embedding task.
         :param search_document: Search document representation used by the run.
@@ -752,6 +752,11 @@ class CodeAnalyzer:
             document_texts=document_texts,
             search_document=search_document,
         )
+        # Use extraction's file identity when replacing a single-file slice,
+        # including when no semantic candidates remain after the rescan.
+        observed_path = path.resolve()
+        if not observed_path.is_relative_to(self._cache_scope):
+            observed_path = path
         with capture_cache_warnings(stats.cache_warnings):
             published = cache.publish_corpus_manifest(
                 self._cache_scope,
@@ -763,7 +768,7 @@ class CodeAnalyzer:
                 # fully observes that selection even when it omits files.
                 complete_scan=path.is_dir(),
                 unit_paths={unit.uid: str(unit.file_path) for unit in semantic_units},
-                observed_files=(str(path),) if path.is_file() else (),
+                observed_files=(str(observed_path),) if path.is_file() else (),
             )
         if published is None:
             return
@@ -774,9 +779,9 @@ class CodeAnalyzer:
         stats.manifest_generation = published.generation
 
     def _extract_corpus_units(self, path: Path) -> list[CodeUnit]:
-        """Extract code units from a resolved directory or single-file path.
+        """Extract code units while preserving an explicit file target's name.
 
-        :param path: Resolved existing path to a directory or supported source file.
+        :param path: Existing directory or file path with a resolved parent.
         :return: Extracted code units.
         """
         logger.info(f"Extracting code units from {path}")
@@ -889,7 +894,8 @@ class CodeAnalyzer:
                 "analyze() requires a mode='check' config; mode='search' configs "
                 "skip duplicate-gate validation and only support index()/search()."
             )
-        path = Path(path).resolve()
+        path = Path(path)
+        path = path.parent.resolve() / path.name if path.is_file() else path.resolve()
 
         if not path.exists():
             raise FileNotFoundError(f"Path does not exist: {path}")
@@ -1104,7 +1110,8 @@ class CodeAnalyzer:
         :return: Number of code units embedded for search.
         :raises FileNotFoundError: If ``path`` does not exist.
         """
-        path = Path(path).resolve()
+        path = Path(path)
+        path = path.parent.resolve() / path.name if path.is_file() else path.resolve()
 
         if not path.exists():
             raise FileNotFoundError(f"Path does not exist: {path}")
