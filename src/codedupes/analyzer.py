@@ -609,6 +609,14 @@ class CodeAnalyzer:
         self._semantic_diagnostics: list[ExtractionDiagnostic] = []
 
     @property
+    def extraction_diagnostics(self) -> list[ExtractionDiagnostic]:
+        """Return extraction diagnostics from the last analysis or index run.
+
+        :return: File selection, read, parse, and traversal diagnostics.
+        """
+        return list(self._extraction_diagnostics)
+
+    @property
     def semantic_diagnostics(self) -> list[ExtractionDiagnostic]:
         """Return diagnostics raised by the semantic stage of the last run.
 

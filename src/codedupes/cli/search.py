@@ -115,6 +115,7 @@ def search_command(ctx: click.Context, path: Path, query: str, **params: Any) ->
             print_search_json(
                 query,
                 results,
+                analyzer.extraction_diagnostics,
                 analyzer.semantic_diagnostics,
                 indexed_units,
                 analyzer.embedding_stats,

@@ -140,6 +140,7 @@ def patch_cli_analyzer(
 
     class DummyAnalyzer:
         def __init__(self, config: Any) -> None:
+            self.extraction_diagnostics = []
             self.semantic_diagnostics = list(semantic_diagnostics or [])
             self.embedding_stats = None
             if captured_configs is not None:

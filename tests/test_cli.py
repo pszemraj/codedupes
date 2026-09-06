@@ -506,6 +506,24 @@ def test_cli_search_json_surfaces_semantic_diagnostics(monkeypatch, tmp_path):
     assert payload["semantic_diagnostics"][0]["code"] == "semantic-warning"
 
 
+def test_cli_search_json_surfaces_extraction_failures(tmp_path: Path) -> None:
+    """Preserve a real parser failure in an otherwise successful search report."""
+    path = tmp_path / "broken.py"
+    path.write_text("def broken(\n", encoding="utf-8")
+
+    result = CliRunner().invoke(
+        cli.cli, ["search", str(path), "entry", "--json", "--no-cache", "--device", "cpu"]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert result.stderr == ""
+    payload = json.loads(result.stdout)
+    assert payload["summary"]["indexed_units"] == 0
+    assert payload["results"] == []
+    assert payload["extraction_diagnostics"][0]["code"] == "parse-error"
+    assert payload["extraction_diagnostics"][0]["file"] == str(path)
+
+
 def test_cli_search_indexes_without_running_full_analysis(monkeypatch, tmp_path):
     path = tmp_path / "sample.py"
     path.write_text("def entry():\n    return 1\n")
@@ -513,6 +531,7 @@ def test_cli_search_indexes_without_running_full_analysis(monkeypatch, tmp_path)
     class IndexOnlyAnalyzer:
         def __init__(self, config):
             del config
+            self.extraction_diagnostics = []
             self.semantic_diagnostics = []
             self.embedding_stats = None
 
@@ -552,6 +571,7 @@ def _patch_search_analyzer(
         def __init__(self, config):
             del config
             self.extracted_unit_count = extracted_unit_count
+            self.extraction_diagnostics = []
             self.semantic_diagnostics = list(semantic_diagnostics or [])
             self.embedding_stats = None
 

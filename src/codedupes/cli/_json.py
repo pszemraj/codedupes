@@ -216,6 +216,7 @@ def print_check_json(
 def search_result_to_json(
     query: str,
     results: list[tuple[CodeUnit, float]],
+    extraction_diagnostics: list[ExtractionDiagnostic],
     semantic_diagnostics: list[ExtractionDiagnostic],
     indexed_units: int,
     embedding_stats: EmbeddingRunStats | None,
@@ -224,6 +225,7 @@ def search_result_to_json(
 
     :param query: Original search query.
     :param results: Ranked unit and score pairs.
+    :param extraction_diagnostics: Diagnostics from corpus extraction.
     :param semantic_diagnostics: Units skipped by semantic indexing.
     :param indexed_units: Number of indexed corpus units.
     :param embedding_stats: Optional indexing telemetry.
@@ -251,6 +253,9 @@ def search_result_to_json(
         },
         "results": serialized_results,
         "units": units,
+        "extraction_diagnostics": [
+            _diagnostic_to_dict(diagnostic) for diagnostic in extraction_diagnostics
+        ],
         "semantic_diagnostics": [
             _diagnostic_to_dict(diagnostic) for diagnostic in semantic_diagnostics
         ],
@@ -260,6 +265,7 @@ def search_result_to_json(
 def print_search_json(
     query: str,
     results: list[tuple[CodeUnit, float]],
+    extraction_diagnostics: list[ExtractionDiagnostic],
     semantic_diagnostics: list[ExtractionDiagnostic],
     indexed_units: int,
     embedding_stats: EmbeddingRunStats | None,
@@ -268,6 +274,7 @@ def print_search_json(
 
     :param query: Original search query.
     :param results: Ranked unit and score pairs.
+    :param extraction_diagnostics: Diagnostics from corpus extraction.
     :param semantic_diagnostics: Units skipped by semantic indexing.
     :param indexed_units: Number of indexed corpus units.
     :param embedding_stats: Optional indexing telemetry.
@@ -278,6 +285,7 @@ def print_search_json(
             search_result_to_json(
                 query,
                 results,
+                extraction_diagnostics,
                 semantic_diagnostics,
                 indexed_units,
                 embedding_stats,
