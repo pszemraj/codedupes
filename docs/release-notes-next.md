@@ -1,13 +1,15 @@
 # Next release
 
+This draft changelog is for people upgrading an existing integration. Read the migration section before updating CI commands or Python callers; new users should start with the [README](../README.md) and [installation guide](install.md).
+
 ## Migration
 
 - CLI `--exclude` now extends default test exclusions and matches directory descendants. Use `--no-default-excludes` to scan tests; Python `exclude_patterns=[]` now disables test defaults. See [extraction scope](analysis-defaults.md#extraction-scope-defaults).
 - JSON consumers must adopt [schema v2](output.md#json-schema-v2) instead of expecting full unit objects at each pair endpoint.
 - `CodeUnit.uid` now includes language and start byte. The private `_ast_hash` alias, `has_body`, and `AnalysisResult.filtered_raw_duplicates` were removed. See [result types](python-api.md#key-result-types).
 - `--min-lines` / `min_semantic_lines` became `--min-statements` / `min_semantic_statements`. The redundant `--tiny-near-jaccard-min` exception and `--hybrid-semantic-threshold` sweep flag were removed.
-- Flat duplicate defaults were replaced by [per-language gates](analysis-defaults.md#semantic-duplicate-gate-defaults). Pass an explicit threshold to retain a flat policy. Semantic-only matches now remain visible as review candidates rather than disappearing below a second synthesis threshold.
-- Search-only Python callers should use the [search configuration](python-api.md#semantic-query-search).
+- Flat duplicate defaults were replaced by [per-language gates](analysis-defaults.md#semantic-duplicate-gate-defaults). Pass `--semantic-threshold` (or `AnalyzerConfig.semantic_threshold`) to retain a flat semantic policy without also changing the traditional threshold. Semantic-only matches now remain visible as review candidates rather than disappearing below a second synthesis threshold.
+- Search-only Python callers should use `AnalyzerConfig(mode="search")`; see the [search configuration](python-api.md#semantic-query-search). `analyze()` rejects that mode, while `index()` and `search()` support it.
 - The default [Hub revision policy](caching.md#hub-revisions) now uses labels; `--strict-revision-cache` retains the previous policy.
 - Runtime dependency minimums changed; use the [installation requirements](install.md). The C2LLM profile and DeepSpeed-only `gpu` extra were removed. Replace `semantic_profiles.resolve_model_name()` with `resolve_model_profile(...).canonical_name`.
 - Source archives without VCS metadata build as `0.0.0+unknown`; tagged Git builds retain VCS-derived versions. Source distributions use an explicit file allowlist.
