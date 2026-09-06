@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import ast
 import codecs
+import fnmatch
 import os
 from pathlib import Path
 from textwrap import dedent
 from typing import Any
+from unittest.mock import Mock
 
 import pytest
 
@@ -139,6 +141,7 @@ def test_non_header_extraction_does_not_resolve_c_header_policy(
 def test_header_only_tree_reports_c_header_policy_diagnostic(tmp_path: Path) -> None:
     root = tmp_path / "lib"
     root.mkdir()
+    (root / "test_ignored.h").write_text("", encoding="utf-8")
     (root / "clamp.h").write_text(
         "static inline int clamp_value(int v, int lo, int hi) {\n"
         "    if (v < lo) return lo;\n"
@@ -154,6 +157,8 @@ def test_header_only_tree_reports_c_header_policy_diagnostic(tmp_path: Path) -> 
     codes = [diagnostic.code for diagnostic in extractor.diagnostics]
     assert codes == ["c-header-policy"]
     assert "--language c" in extractor.diagnostics[0].message
+    assert extractor.diagnostics[0].message.startswith("1 .h file(s)")
+    assert extractor.diagnostics[0].file_path == root / "clamp.h"
 
 
 def test_cpp_presence_reports_skipped_headers(tmp_path: Path) -> None:
@@ -423,6 +428,47 @@ def test_excluded_directories_are_not_walked(tmp_path: Path, monkeypatch, patter
     monkeypatch.setattr(os, "walk", recording_walk)
     CodeExtractor(tmp_path, exclude_patterns=[pattern]).extract_all()
     assert visited == [tmp_path]
+
+
+@pytest.mark.parametrize("depth", [1, 6])
+def test_walk_exclusion_matching_cost(tmp_path: Path, monkeypatch: Any, depth: int) -> None:
+    directory = tmp_path.joinpath(*[f"level{i}" for i in range(depth)])
+    directory.mkdir(parents=True)
+    source = directory / "entry.py"
+    source.touch()
+    for i in range(40):
+        (directory / f"notes{i}.txt").touch()
+    extractor = CodeExtractor(tmp_path)
+    matchers = [
+        (use_path, directory_only, Mock(wraps=matcher), Mock(wraps=zero_depth))
+        for use_path, directory_only, matcher, zero_depth in extractor._exclude_matchers
+    ]
+    extractor._exclude_matchers = matchers
+    translate = Mock(side_effect=AssertionError("Patterns must be compiled before walking"))
+    monkeypatch.setattr(fnmatch, "translate", translate)
+    extract = Mock(return_value=iter(()))
+    monkeypatch.setattr(extractor, "extract_from_file", extract)
+
+    extractor.extract_all()
+
+    extract.assert_called_once_with(source)
+    # Each directory gets at most four matches per pattern, and the source two.
+    # Unsupported files and previously visited ancestors add no matching work.
+    calls = sum(m.match.call_count + z.match.call_count for _, _, m, z in matchers)
+    assert calls <= len(matchers) * (4 * depth + 2)
+    translate.assert_not_called()
+
+
+def test_walk_symlink_checks_excluded_target_ancestors(tmp_path: Path) -> None:
+    target = tmp_path / "examples" / "deep" / "target.py"
+    target.parent.mkdir(parents=True)
+    target.write_text("def entry():\n    return 1\n", encoding="utf-8")
+    alias = tmp_path / "alias.py"
+    alias.symlink_to(target)
+    extractor = CodeExtractor(tmp_path, exclude_patterns=["examples/"])
+
+    assert extractor.extract_all() == []
+    assert list(extractor.extract_from_file(alias)) == []
 
 
 def test_python_byte_range_matches_emitted_source_with_unicode(tmp_path: Path) -> None:

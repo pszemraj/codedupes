@@ -5,9 +5,11 @@ from __future__ import annotations
 import ast
 import codecs
 import copy
+import fnmatch
 import hashlib
 import logging
 import os
+import re
 from collections.abc import Iterator, Sequence
 from pathlib import Path
 
@@ -439,6 +441,22 @@ class CodeExtractor:
         self.exclude_patterns = (
             DEFAULT_EXCLUDE_PATTERNS.copy() if exclude_patterns is None else exclude_patterns
         )
+        self._exclude_matchers: list[
+            tuple[bool, bool, re.Pattern[str], re.Pattern[str] | None]
+        ] = []
+        for pattern in self.exclude_patterns:
+            anchored = pattern.startswith(("./", "/"))
+            directory_only = pattern.endswith("/")
+            pattern = pattern.removeprefix("./").lstrip("/").rstrip("/")
+            matcher = re.compile(fnmatch.translate(os.path.normcase(pattern)))
+            zero_depth = (
+                re.compile(fnmatch.translate(os.path.normcase(pattern[3:])))
+                if pattern.startswith("**/")
+                else None
+            )
+            self._exclude_matchers.append(
+                (anchored or "/" in pattern, directory_only, matcher, zero_depth)
+            )
         self.include_private = include_private
         self.include_stubs = include_stubs
         self.languages = normalize_languages(languages)
@@ -454,13 +472,14 @@ class CodeExtractor:
         """
         return is_default_excluded_dir(name)
 
-    def _should_exclude(self, path: Path) -> bool:
+    def _should_exclude(self, path: Path, *, check_ancestors: bool = True) -> bool:
         """Check exclusions for a path and its resolved in-tree symlink target.
 
         :param path: Candidate path.
+        :param check_ancestors: Check parents unless the walk already pruned them.
         :return: ``True`` when extraction should skip this file or directory.
         """
-        if self._matches_exclude(path):
+        if self._matches_exclude(path, check_ancestors=check_ancestors):
             return True
         if not path.is_symlink():
             return False
@@ -471,37 +490,39 @@ class CodeExtractor:
             return False
         return resolved.is_relative_to(self.root) and self._matches_exclude(resolved)
 
-    def _matches_exclude(self, path: Path) -> bool:
+    def _matches_exclude(self, path: Path, *, check_ancestors: bool = True) -> bool:
         """Match a path's in-tree name against the configured exclusions.
 
         :param path: Candidate path under the extraction root.
+        :param check_ancestors: Include parent directories in the match candidates.
         :return: Whether the name or an ancestor matches an exclusion.
         """
-        from fnmatch import fnmatch
-
         rel = path.relative_to(self.root)
         path_is_directory = path.is_dir()
         directory_parts = rel.parts if path_is_directory else rel.parts[:-1]
+        if not check_ancestors:
+            directory_parts = (rel.name,) if path_is_directory else ()
         if any(self._is_excluded_dir_name(part) for part in directory_parts):
             return True
 
         # Match ancestors too: excluding a directory excludes its whole subtree.
-        candidates = [rel, *[parent for parent in rel.parents if parent != Path(".")]]
-        for pattern in self.exclude_patterns:
-            anchored = pattern.startswith(("./", "/"))
-            directory_only = pattern.endswith("/")
-            pattern = pattern.removeprefix("./").lstrip("/").rstrip("/")
-            for candidate in candidates:
-                is_directory = candidate != rel or path_is_directory
+        candidates = [rel]
+        if check_ancestors:
+            candidates.extend(parent for parent in rel.parents if parent != Path("."))
+        for candidate in candidates:
+            is_directory = candidate != rel or path_is_directory
+            relative_name = os.path.normcase(candidate.as_posix())
+            basename = os.path.normcase(candidate.name)
+            for use_path, directory_only, matcher, zero_depth in self._exclude_matchers:
                 if directory_only and not is_directory:
                     continue
-                value = candidate.as_posix() if anchored or "/" in pattern else candidate.name
-                if fnmatch(value, pattern) or (is_directory and fnmatch(value + "/", pattern)):
+                value = relative_name if use_path else basename
+                if matcher.match(value) or (is_directory and matcher.match(value + os.sep)):
                     return True
                 # ``**/`` also matches zero directory levels.
-                if pattern.startswith("**/") and (
-                    fnmatch(candidate.as_posix(), pattern[3:])
-                    or (is_directory and fnmatch(candidate.as_posix() + "/", pattern[3:]))
+                if zero_depth is not None and (
+                    zero_depth.match(relative_name)
+                    or (is_directory and zero_depth.match(relative_name + os.sep))
                 ):
                     return True
         return False
@@ -881,13 +902,13 @@ class CodeExtractor:
             # order is filesystem-dependent and would reorder the reported units.
             current_dir = Path(dirpath)
             dirnames[:] = sorted(
-                name for name in dirnames if not self._should_exclude(current_dir / name)
+                name
+                for name in dirnames
+                if not self._should_exclude(current_dir / name, check_ancestors=False)
             )
 
             for filename in sorted(filenames):
                 source_file = current_dir / filename
-                if self._should_exclude(source_file):
-                    continue
                 is_c_header = source_file.suffix == ".h"
                 if is_c_header and allow_c_header is None:
                     allow_c_header = self._allow_c_headers()
@@ -898,14 +919,17 @@ class CodeExtractor:
                     selected_languages=self.languages,
                     allow_c_header=header_allowed,
                 )
+                report_skipped_header = (
+                    is_c_header and not header_allowed and self.languages is None
+                )
+                if selection is None and not report_skipped_header:
+                    continue
+
+                # Ancestors were pruned above; symlink targets still need a full check.
+                if self._should_exclude(source_file, check_ancestors=False):
+                    continue
                 if selection is None:
-                    if (
-                        is_c_header
-                        and not header_allowed
-                        and self.languages is None
-                        and not self._should_exclude(source_file)
-                    ):
-                        skipped_headers.append(source_file)
+                    skipped_headers.append(source_file)
                     continue
 
                 try:
