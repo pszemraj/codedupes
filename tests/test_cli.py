@@ -2327,6 +2327,19 @@ def test_cli_cache_clear_removes_all_entries(tmp_path):
     assert cache.stats()["entries"] == 0
 
 
+@pytest.mark.parametrize("model", ["", " ", "\t"])
+def test_cli_cache_clear_rejects_empty_model_without_deleting(tmp_path, model):
+    cache = EmbeddingCache()
+    cache.put_many(tmp_path, "some/model", "rev1", [("k1", np.array([1.0, 2.0]))])
+
+    result = CliRunner().invoke(cli.cli, ["cache", "clear", "--model", model])
+
+    assert result.exit_code == 2
+    assert result.stdout == ""
+    assert "must not be empty" in result.stderr
+    assert cache.stats()["entries"] == 1
+
+
 def test_cli_cache_clear_scoped_to_model(tmp_path):
     cache = EmbeddingCache()
     scope = tmp_path / "proj"
