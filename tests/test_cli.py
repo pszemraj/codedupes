@@ -2378,9 +2378,11 @@ def test_cli_cache_clear_rejects_empty_model_without_deleting(tmp_path, model):
     assert cache.stats()["entries"] == 1
 
 
-@pytest.mark.parametrize("command", ["check", "search"])
+@pytest.mark.parametrize(("command", "expected_exit_code"), [("check", 1), ("search", 0)])
 @pytest.mark.parametrize("include_tests", [False, True])
-def test_cli_exclusions_extend_defaults(monkeypatch, tmp_path, command, include_tests):
+def test_cli_exclusions_extend_defaults(
+    monkeypatch, tmp_path, command, expected_exit_code, include_tests
+):
     from codedupes.extractor import CodeExtractor
 
     for relative in ["keep.py", "test_entry.py", "pkg/examples/deep.py", "node_modules/mod.py"]:
@@ -2396,11 +2398,33 @@ def test_cli_exclusions_extend_defaults(monkeypatch, tmp_path, command, include_
     if include_tests:
         args.append("--no-default-excludes")
     result = CliRunner().invoke(cli.cli, args)
-    assert result.exit_code in {0, 1}, result.output
+    assert result.exit_code == expected_exit_code, result.output
     units = CodeExtractor(tmp_path, exclude_patterns=captured[0].exclude_patterns).extract_all()
     assert {unit.file_path.name for unit in units} == (
         {"keep.py", "test_entry.py"} if include_tests else {"keep.py"}
     )
+
+
+@pytest.mark.parametrize(("command", "expected_exit_code"), [("check", 1), ("search", 0)])
+def test_cli_implicit_default_exclusions_preserve_analyzer_default(
+    monkeypatch, tmp_path, command, expected_exit_code
+):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n", encoding="utf-8")
+    captured = []
+    patch_cli_analyzer(
+        monkeypatch, cli, analyze_result=_build_result(tmp_path), captured_configs=captured
+    )
+
+    args = [command, str(path)]
+    if command == "check":
+        args.append("--traditional-only")
+    else:
+        args.append("entry")
+    result = CliRunner().invoke(cli.cli, args)
+
+    assert result.exit_code == expected_exit_code, result.output
+    assert captured[0].exclude_patterns is None
 
 
 @pytest.mark.parametrize("command", ["check", "search"])

@@ -326,8 +326,12 @@ class CheckOptions:
             semantic_kwargs["semantic_task"] = None
 
         return cli_module.AnalyzerConfig(
-            exclude_patterns=([] if self.no_default_excludes else DEFAULT_EXCLUDE_PATTERNS.copy())
-            + list(self.exclude),
+            exclude_patterns=(
+                None
+                if not self.no_default_excludes and not self.exclude
+                else ([] if self.no_default_excludes else DEFAULT_EXCLUDE_PATTERNS.copy())
+                + list(self.exclude)
+            ),
             include_private=not self.no_private,
             languages=self.languages or None,
             jaccard_threshold=traditional_threshold,
@@ -396,8 +400,12 @@ class SearchOptions:
 
         return cli_module.AnalyzerConfig(
             mode="search",
-            exclude_patterns=([] if self.no_default_excludes else DEFAULT_EXCLUDE_PATTERNS.copy())
-            + list(self.exclude),
+            exclude_patterns=(
+                None
+                if not self.no_default_excludes and not self.exclude
+                else ([] if self.no_default_excludes else DEFAULT_EXCLUDE_PATTERNS.copy())
+                + list(self.exclude)
+            ),
             include_private=not self.no_private,
             languages=self.languages or None,
             semantic_threshold=_resolve_search_threshold(
