@@ -1,6 +1,9 @@
 # CLI reference
 
-The supported command-line entry point is `codedupes`. Examples assume it is installed and available on `PATH`.
+The supported command-line entry point is `codedupes`. Install it first with the
+[installation guide](install.md), then run `codedupes info` to confirm the installed
+parsers and the device that semantic analysis will use. Examples below assume the
+command is available on `PATH`.
 
 See [Output and exit codes](output.md) for JSON and process status, [Polyglot language support](polyglot-languages.md) for extraction semantics, [Analysis defaults](analysis-defaults.md) for heuristics, [Model profiles](model-profiles.md) for semantic defaults, [Accelerators](accelerators.md) for device behavior, and [Embedding cache](caching.md) for persistent cache behavior.
 
@@ -8,7 +11,14 @@ See [Output and exit codes](output.md) for JSON and process status, [Polyglot la
 
 Run duplicate and unused-code analysis.
 
-Review the reported candidates, then adjust thresholds or scope if needed. See [hybrid gate tuning](hybrid-tuning.md) for calibration experiments.
+The default combined scan runs structural/token matching and semantic matching. Review
+the `Hybrid Duplicates` panel first: it is the synthesized duplicate list. `Likely
+Dead Code` is a conservative Python-only static-analysis candidate list, so review it
+before removing anything. The first semantic run may download the selected embedding
+model; use `--traditional-only` when you want a fast structural/token-only pass.
+
+Review the reported candidates, then adjust thresholds or scope if needed. See [hybrid
+gate tuning](hybrid-tuning.md) for calibration experiments.
 
 Examples:
 
@@ -16,6 +26,7 @@ Examples:
 codedupes check ./src
 codedupes check ./src --json --threshold 0.82
 codedupes check ./src --semantic-only
+# Fast structural/token scan without semantic model inference.
 codedupes check ./src --traditional-only --no-unused
 codedupes check ./src --show-all
 codedupes check ./src --fail-on all
@@ -46,6 +57,11 @@ Options, in addition to the [shared options](#options-shared-by-check-and-search
 ## `codedupes search <path> "<query>"`
 
 Run semantic search over extracted code units.
+
+Search indexes the chosen path for this command invocation, then returns matching
+functions and methods by default. Use `--semantic-unit-type` to change the eligible
+unit types, including classes. Each invocation extracts the current source; the
+persistent cache reuses embeddings between runs.
 
 Examples:
 

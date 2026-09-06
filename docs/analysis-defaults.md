@@ -2,6 +2,28 @@
 
 These defaults apply to `codedupes check` and `AnalyzerConfig`. See the [CLI reference](cli.md) for syntax, [model profiles](model-profiles.md) for semantic thresholds and tasks, and [accelerators](accelerators.md) for device behavior.
 
+## What a default check does
+
+`codedupes check <path>` runs combined duplicate detection: deterministic matching across every extracted function, method, and class, plus semantic comparison of eligible functions and methods. It also reports potentially unused Python units. Supported files, default test exclusions, and parser diagnostics determine the extracted set; see [polyglot language support](polyglot-languages.md#supported-files) and [extraction scope defaults](#extraction-scope-defaults).
+
+The semantic pass may load the selected embedding model and may download it on its first use. For a fast, deterministic baseline with no embedding model, run:
+
+```bash
+codedupes check ./src --traditional-only --no-unused
+```
+
+Combined output ranks each pair by a tier. The default exit policy treats only the tiers with deterministic corroboration as actionable:
+
+| tier | evidence | default handling |
+| --- | --- | --- |
+| `exact` | structural or token fingerprints agree | actionable |
+| `traditional_near` | identifier Jaccard match | actionable |
+| `hybrid_confirmed` | semantic and traditional-near match | actionable |
+| `semantic_high_confidence` | semantic match plus weak identifier and size corroboration | advisory review |
+| `semantic_review` | semantic match only | advisory review |
+
+Potentially unused findings are also advisory unless `--strict-unused` is set. Use `--fail-on all` to make every reported finding fail a check, or `--fail-on none` when reviewing intentional fixture findings. See [exit codes](output.md#exit-codes) for the complete policy and single-method behavior.
+
 ## Semantic duplicate gate defaults
 
 Semantic duplicate detection is gated per language: each built-in model profile carries a calibrated cosine gate for every supported language, measured against `test_fixtures/polyglot_calibration/`.

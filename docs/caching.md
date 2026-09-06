@@ -2,6 +2,16 @@
 
 `codedupes` freshly extracts the selected files on each run, then reuses embeddings for unchanged inputs and attaches them to the current code units. A fully cached corpus and query can run without loading the model. Every eligible unit has a cacheable vector, including inputs the embedding backend truncates to its context window.
 
+You normally do not need to configure the cache. Run the same command against the same source root again to reuse unchanged embeddings. These are the useful day-to-day controls:
+
+```bash
+codedupes cache info
+codedupes cache clear --model gte-modernbert-base
+codedupes check ./src --no-cache
+```
+
+`cache clear --model` removes one model's cached embeddings; omit `--model` to clear all of them. `--no-cache` bypasses reads and writes only for that run. In the Python API, set `AnalyzerConfig(embedding_cache=False)` for the equivalent per-analyzer behavior.
+
 ## Controls
 
 | Variable | Behavior |
@@ -11,7 +21,7 @@
 | `CODEDUPES_CACHE_MAX_MB` | Global size cap, default `2048` MB. Values must be at least `1` and are floored to whole MB. Invalid values warn once per process and use the default. |
 | `CODEDUPES_NO_CACHE=1` | Disables persistent cache reads and writes for the process. |
 
-`--no-cache` bypasses persistent storage for one `check` or `search` run without changing existing files. Use the [cache commands](cli.md#codedupes-cache-info) to inspect usage or clear entries. Built-in aliases match case-insensitively in `cache clear --model`; pass other model names exactly as used for analysis.
+Use the [cache commands](cli.md#codedupes-cache-info) to inspect usage or clear entries. Built-in aliases match case-insensitively in `cache clear --model`; pass other model names exactly as used for analysis.
 
 After each nonempty batch write, codedupes inventories shard sizes. When the global cap is exceeded, it removes least-recently-used shards toward 80% of the cap. The shard just written is protected, even if it alone exceeds the cap; an oversized or undeletable shard produces a warning and remains included in usage. Inventory reads the filesystem so cooperating processes see each other's writes.
 

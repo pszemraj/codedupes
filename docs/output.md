@@ -1,16 +1,46 @@
 # Output and exit codes
 
-stdout carries report output only: JSON under `--json`, Rich tables otherwise. Errors and parser-unavailable remediation use stderr; Rich mode also sends logs, cache warnings, sentence-transformers progress, and Hugging Face download progress there. JSON mode disables progress and records non-fatal cache failures in `summary.embeddings.cache_warnings` instead of emitting them. It captures Python and native backend stderr in a temporary file from configuration through reporting and discards it when a report completes, so merged streams remain parseable even when findings produce exit code `1`:
+## Report streams
+
+For `check` and `search`, stdout contains the report: JSON under `--json` and Rich
+tables otherwise. Errors and parser-unavailable remediation use stderr; Rich mode also
+sends logs, cache warnings, sentence-transformers progress, and Hugging Face download
+progress there. A completed JSON report is a single parseable JSON document even when
+`check` exits `1` for findings. JSON mode disables progress and records non-fatal cache
+failures in `summary.embeddings.cache_warnings` instead of emitting them. Runtime
+failures restore stderr and do not produce a completed JSON report.
+
+Write a JSON report directly in automation:
 
 ```text
-codedupes check ./src --json --no-cache 2>&1 | python -c "import json,sys; json.load(sys.stdin)"
+codedupes check ./src --json > codedupes-report.json
 ```
 
-Runtime failures restore stderr and replay captured diagnostics; they do not produce a completed JSON report.
+On a completed scan, the report is written before the command returns its finding
+status. With the default `--fail-on actionable`, a completed report with exit `1`
+contains an actionable finding. Runtime failures also exit `1`, but leave no completed
+report and explain the error on stderr. Use `--fail-on none` to collect a report
+without making findings fail an incremental rollout:
+
+```text
+codedupes check ./src --json --fail-on none > codedupes-report.json
+```
+
+If a Bash or Zsh pipeline validates JSON, enable `pipefail` so the parser's successful
+exit does not hide `codedupes`' status:
+
+```text
+set -o pipefail
+codedupes check ./src --json | python -m json.tool > /dev/null
+```
 
 ## JSON schema v2
 
-`check --json` and `search --json` emit schema version `2`. Units are nodes in a top-level `units` object keyed by `CodeUnit.uid`; findings refer to those keys instead of repeating a complete unit object for every pair endpoint.
+`check --json` and `search --json` emit schema version `2`. Units are nodes in a
+top-level `units` object keyed by `CodeUnit.uid`; findings refer to those keys instead
+of repeating a complete unit object for every pair endpoint. A UID is unique within one
+report and includes the source path and byte position, so use it to join data within
+that report rather than as a cross-machine finding identifier.
 
 ### Check
 
@@ -92,7 +122,10 @@ Runtime failures restore stderr and replay captured diagnostics; they do not pro
 }
 ```
 
-The shortened example omits the other two referenced entries from `units`; real output includes every UID referenced by `duplicates` or `potentially_unused` exactly once. Units with no finding are not emitted; `summary.total_units` is the full extracted corpus count.
+The shortened example omits the other two referenced entries from `units`; real output
+includes every UID referenced by any finding list exactly once. Units with no finding
+are not emitted, so `summary.total_units` is the full extracted corpus count while
+`units` contains only units needed to resolve reported findings.
 
 In default combined mode, `duplicates` contains hybrid edges. With `--show-all`, `traditional_duplicates` and `semantic_duplicates` are added as raw edge lists with `unit_a`, `unit_b`, `similarity`, and `method`.
 

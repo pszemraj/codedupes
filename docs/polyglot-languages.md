@@ -34,7 +34,9 @@ The [parser packages](install.md#polyglot-parser-dependencies) are exact-pinned 
 | TypeScript | `.ts`, `.mts`, `.cts` | TypeScript grammar |
 | TSX | `.tsx` | Separate TSX grammar |
 
-TypeScript declaration files ending in `.d.ts`, `.d.mts`, or `.d.cts` are skipped. They contain API declarations rather than implementation bodies and would produce misleading duplicate candidates.
+Files whose suffix is not in this table are not analyzed. `--language` narrows automatic discovery; it cannot make an arbitrary extension parse as a supported language. Python stub files require `--include-stubs` for directory scans, and TypeScript declaration files ending in `.d.ts`, `.d.mts`, or `.d.cts` are always skipped because they contain API declarations rather than implementation bodies.
+
+Run `codedupes info` after installation or a dependency update to confirm that every selected Tree-sitter dialect is loadable. A missing or incompatible grammar stops analysis rather than producing partial results from a different parser.
 
 ### C headers
 
