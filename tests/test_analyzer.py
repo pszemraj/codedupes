@@ -27,7 +27,6 @@ _SEMANTIC_ANALYSIS_KWARG_NAMES = {
     "model_name",
     "mps_fallback",
     "mps_memory_fraction",
-    "overflow_report",
     "progress",
     "stats",
     "revision",
@@ -1104,16 +1103,26 @@ def test_explicit_semantic_threshold_applies_flat_across_languages(
     assert len(result.semantic_duplicates) == 1
 
 
-def test_unused_semantic_pairs_are_filtered(tmp_path: Path, monkeypatch) -> None:
+@pytest.mark.parametrize("run_unused", [True, False])
+@pytest.mark.parametrize("run_traditional", [True, False])
+def test_unused_analysis_preserves_duplicate_findings(
+    tmp_path: Path, monkeypatch, run_unused: bool, run_traditional: bool
+) -> None:
+    """Keep duplicate evidence for callbacks the unused heuristic cannot resolve."""
     source = dedent(
         """
-        def _a():
-            x = 1
+        def _a(value):
+            x = value + 1
+            x *= 2
             return x + 1
 
-        def _b():
-            y = 2
+        def _b(value):
+            y = value + 2
+            y *= 3
             return y + 2
+
+        list(map(_a, [1, 2]))
+        list(map(_b, [1, 2]))
         """
     ).strip()
     project = create_project(tmp_path, source, module="pairs.py")
@@ -1135,16 +1144,23 @@ def test_unused_semantic_pairs_are_filtered(tmp_path: Path, monkeypatch) -> None
 
     analyzer = CodeAnalyzer(
         AnalyzerConfig(
-            run_traditional=False,
+            run_traditional=run_traditional,
             run_semantic=True,
-            run_unused=True,
-            min_semantic_statements=0,
+            run_unused=run_unused,
+            embedding_cache=False,
             strict_unused=False,
         )
     )
 
     result = analyzer.analyze(project)
-    assert result.semantic_duplicates == []
+    assert len(result.semantic_duplicates) == 1
+    assert result.semantic_duplicates[0].similarity == 0.99
+    assert {unit.name for unit in result.potentially_unused} == (
+        {"_a", "_b"} if run_unused else set()
+    )
+    if run_traditional:
+        assert len(result.hybrid_duplicates) == 1
+        assert result.hybrid_duplicates[0].semantic_similarity == 0.99
 
 
 def test_semantic_only_pre_excludes_exact_hash_pairs(tmp_path: Path, monkeypatch) -> None:
@@ -2273,7 +2289,14 @@ class _ContextLimitedModel:
     def encode(self, texts, **_kwargs):
         self.encoded.extend(texts)
         return np.array(
-            [[0.0, 1.0] if "second_axis" in text else [1.0, 0.0] for text in texts],
+            [
+                [0.0, 1.0]
+                if "second_axis" in text
+                else [0.5, 0.5]
+                if "long_tail" in text
+                else [1.0, 0.0]
+                for text in texts
+            ],
             dtype=np.float32,
         )
 
@@ -2296,7 +2319,9 @@ _OVERFLOW_PROJECT_SOURCE = dedent(
 ).strip()
 
 
-def test_over_context_units_are_skipped_with_a_diagnostic(tmp_path: Path, monkeypatch) -> None:
+def test_over_context_units_are_embedded_with_backend_truncation(
+    tmp_path: Path, monkeypatch
+) -> None:
     project = create_project(tmp_path, _OVERFLOW_PROJECT_SOURCE)
     model = _ContextLimitedModel()
     monkeypatch.setattr(semantic_module, "get_model", lambda *args, **kwargs: model)
@@ -2307,26 +2332,22 @@ def test_over_context_units_are_skipped_with_a_diagnostic(tmp_path: Path, monkey
             run_semantic=True,
             run_unused=False,
             min_semantic_statements=0,
+            semantic_threshold=0.5,
             embedding_cache=False,
         )
     )
     result = analyzer.analyze(project)
 
     assert [unit.name for unit in result.units] == ["short_one", "short_two", "long_tail"]
-    assert [
-        (duplicate.unit_a.name, duplicate.unit_b.name) for duplicate in result.semantic_duplicates
-    ] == [("short_one", "short_two")]
-    assert [diagnostic.code for diagnostic in result.semantic_diagnostics] == [
-        "semantic-context-overflow"
-    ]
-    diagnostic = result.semantic_diagnostics[0]
-    assert "long_tail" in diagnostic.message
-    assert diagnostic.severity == "warning"
-    assert diagnostic.language == "python"
-    assert not any("long_tail" in text for text in model.encoded)
+    assert any(
+        "long_tail" in (duplicate.unit_a.name, duplicate.unit_b.name)
+        for duplicate in result.semantic_duplicates
+    )
+    assert result.semantic_diagnostics == []
+    assert any("long_tail" in text for text in model.encoded)
 
 
-def test_skipped_over_context_units_never_enter_the_embedding_cache(
+def test_over_context_units_enter_and_reuse_the_embedding_cache(
     tmp_path: Path, monkeypatch
 ) -> None:
     project = create_project(tmp_path, _OVERFLOW_PROJECT_SOURCE)
@@ -2340,6 +2361,7 @@ def test_skipped_over_context_units_never_enter_the_embedding_cache(
                 run_semantic=True,
                 run_unused=False,
                 min_semantic_statements=0,
+                semantic_threshold=0.5,
                 embedding_cache=True,
             )
         )
@@ -2352,21 +2374,18 @@ def test_skipped_over_context_units_never_enter_the_embedding_cache(
     assert second.embedding_stats is not None
     assert first.embedding_stats.manifest_generation == 1
     assert second.embedding_stats.manifest_generation == 2
-
-    # A warm second run must not resurrect the skipped unit from the cache.
+    assert first.embedding_stats.encoded_inputs == 3
+    assert second.embedding_stats.cache_hit_rows == 3
+    assert second.embedding_stats.encoded_inputs == 0
     for result in (first, second):
-        assert [diagnostic.code for diagnostic in result.semantic_diagnostics] == [
-            "semantic-context-overflow"
-        ]
-        assert [
-            (duplicate.unit_a.name, duplicate.unit_b.name)
+        assert result.semantic_diagnostics == []
+        assert any(
+            "long_tail" in (duplicate.unit_a.name, duplicate.unit_b.name)
             for duplicate in result.semantic_duplicates
-        ] == [("short_one", "short_two")]
+        )
 
 
-def test_index_drops_over_context_units_and_keeps_search_rows_aligned(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_index_keeps_over_context_units_searchable(tmp_path: Path, monkeypatch) -> None:
     source = dedent(
         """
         def long_tail(x):
@@ -2392,20 +2411,20 @@ def test_index_drops_over_context_units_and_keeps_search_rows_aligned(
             run_semantic=True,
             run_unused=False,
             min_semantic_statements=0,
+            semantic_threshold=0.0,
             embedding_cache=False,
         )
     )
     indexed = analyzer.index(project)
-    results = analyzer.search("anything", top_k=1)
+    results = analyzer.search("anything", top_k=3)
 
-    assert indexed == 2
-    assert [diagnostic.code for diagnostic in analyzer.semantic_diagnostics] == [
-        "semantic-context-overflow"
-    ]
-    assert [unit.name for unit, _score in results] == ["wanted"]
+    assert indexed == 3
+    assert analyzer.semantic_diagnostics == []
+    assert results[0][0].name == "wanted"
+    assert "long_tail" in [unit.name for unit, _score in results]
 
 
-def test_over_context_search_query_still_fails_hard(tmp_path: Path, monkeypatch) -> None:
+def test_over_context_search_query_reaches_backend(tmp_path: Path, monkeypatch) -> None:
     project = create_project(tmp_path, "def wanted(x):\n    y = x + 1\n    return y\n")
     model = _ContextLimitedModel()
     monkeypatch.setattr(semantic_module, "get_model", lambda *args, **kwargs: model)
@@ -2421,8 +2440,11 @@ def test_over_context_search_query_still_fails_hard(tmp_path: Path, monkeypatch)
     )
     analyzer.index(project)
 
-    with pytest.raises(semantic_module.SemanticInputTooLongError, match="search query"):
-        analyzer.search(" ".join(["word"] * 40))
+    query = " ".join(["word"] * 40)
+    results = analyzer.search(query)
+
+    assert [unit.name for unit, _score in results] == ["wanted"]
+    assert any(query in text for text in model.encoded)
 
 
 @pytest.mark.parametrize(

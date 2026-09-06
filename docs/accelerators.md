@@ -103,6 +103,16 @@ pytest tests/test_semantic_cuda.py
 
 It covers the five behaviors this documentation advertises for CUDA hosts: bfloat16 is pinned only where `torch.cuda.is_bf16_supported(including_emulation=False)` is true and the loaded model's live parameter dtype agrees; cold CUDA inference completes and tracks CPU within the tolerance its dtype allows; a genuine allocator out-of-memory (provoked by lowering `torch.cuda.set_per_process_memory_fraction`) drives the load-time CPU fallback with a re-pinned CPU dtype, the batch-halving ladder, and the capped CPU restart; a keyed-bfloat16 corpus that lands on CPU rebuilds as one coherent float32 matrix that stays searchable; and a query whose fallback casts it to float32 aborts before the dot product instead of comparing across policies. Tests that require native bfloat16 skip on pre-Ampere hardware, where CUDA keys as float32 and those paths do not exist. The bfloat16 tests are the only CUDA-specific coverage of the dtype re-pin: MPS always resolves float32, so the MPS suite cannot exercise it.
 
+The CUDA memory cap limits allocator growth; it does not prevent reuse of cached blocks. Lowering it after loading or warming a model can therefore leave inference working, especially with `PYTORCH_ALLOC_CONF=expandable_segments:True`. Clearing unused cache is insufficient when free blocks share an active segment with model weights. The inference-OOM tests run on a fresh CUDA stream that waits for prior model work, forcing an allocation that cannot reuse the original stream's cached blocks. The tests restore the previous memory cap afterward and exercise real allocator errors without changing the configured allocator or simulating exceptions. The load-time OOM test sets the cap before loading weights.
+
+Run the CUDA suite together with the default-model and labeled Rust-fixture GPU smoke tests:
+
+```bash
+CODEDUPES_SMOKE_GPU=1 pytest tests/test_semantic_cuda.py tests/test_semantic_smoke.py -m gpu
+```
+
+Validated on an NVIDIA GeForce RTX 5090 with PyTorch `2.13.0+cu130` and `expandable_segments:True` on 2026-09-05: all 16 selected tests passed in both normal and reversed collection order, with no CUDA tests skipped.
+
 A companion opt-in smoke test validates every built-in profile against the multi-domain probe corpus in `test_fixtures/search_probes/`: every relevant query must surface its expected function at that profile's default search threshold and every off-topic query must return nothing:
 
 ```bash
@@ -112,6 +122,7 @@ CODEDUPES_SMOKE_SEARCH=1 pytest tests/test_semantic_smoke.py
 ## Upstream references
 
 - [PyTorch 2.13 release notes](https://pytorch.org/blog/pytorch-2-13-release-blog/)
+- [PyTorch 2.13 CUDA streams and memory management](https://docs.pytorch.org/docs/2.13/notes/cuda.html)
 - [PyTorch 2.13 MPS backend requirements](https://docs.pytorch.org/docs/2.13/notes/mps.html)
 - [PyTorch 2.13 MPS environment variables](https://docs.pytorch.org/docs/2.13/mps_environment_variables.html)
 - [PyTorch 2.13 `torch.mps` API](https://docs.pytorch.org/docs/2.13/mps.html)

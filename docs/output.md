@@ -131,11 +131,12 @@ Search hits use `{"unit": "<uid>", "score": 0.95}`; their unit records have the 
   },
   "results": [],
   "units": {},
+  "extraction_diagnostics": [],
   "semantic_diagnostics": []
 }
 ```
 
-`summary.indexed_units` is the semantic corpus size after eligibility and context-window filtering. An empty terminal index warns on stderr and distinguishes empty extraction, eligibility filtering, and context-window exclusions.
+`summary.indexed_units` is the semantic corpus size after eligibility filtering. An empty terminal index warns on stderr and distinguishes empty extraction from eligibility filtering.
 
 ## Embedding telemetry
 
@@ -143,11 +144,11 @@ Search hits use `{"unit": "<uid>", "score": 0.95}`; their unit records have the 
 
 | Field | Meaning |
 | --- | --- |
-| `requested_rows` | Corpus rows retained after context-window filtering. |
+| `requested_rows` | Corpus rows selected for embedding. |
 | `unique_inputs` | Distinct prepared texts among those rows. |
-| `cache_hit_rows` | Retained rows supplied by persistent cache, including repeated references to one key. |
+| `cache_hit_rows` | Corpus rows supplied by persistent cache, including repeated references to one key. |
 | `duplicate_rows_reused` | Additional uncached rows sharing an input encoded within this call. |
-| `encoded_inputs` | Retained input rows encoded on the final execution path; discarded retry work is not accumulated. Cache-key reuse deduplicates repeated inputs when caching is active; without it, repeated inputs are encoded separately. |
+| `encoded_inputs` | Input rows encoded on the final execution path; discarded retry work is not accumulated. Cache-key reuse deduplicates repeated inputs when caching is active; without it, repeated inputs are encoded separately. |
 | `model_loaded` | Whether the corpus call needed the model, including a previously loaded process-local instance. |
 | `cache_enabled` | Whether persistent reuse was enabled for the call; writes can still fail. |
 | `cache_warnings` | Non-fatal cache read/write, manifest, and query-cache failures observed during the run. |
@@ -163,7 +164,7 @@ Move and deletion counts need a comparable [corpus baseline](caching.md#corpus-l
 
 ## Diagnostics
 
-`check` emits `extraction_diagnostics` and `semantic_diagnostics` arrays with matching counts in `summary`. `search` emits only the semantic diagnostic array, without a summary count; its JSON does not include extraction diagnostics. Entries use `file`, `language`, `severity`, `code`, `message`, `line`, and `end_line`. Terminal checks print counts and up to ten entries per diagnostic category; terminal searches print semantic diagnostics.
+`check` emits `extraction_diagnostics` and `semantic_diagnostics` arrays with matching counts in `summary`. `search` emits both diagnostic arrays, without summary counts, so recoverable extraction failures remain visible even when the search index is empty. Entries use `file`, `language`, `severity`, `code`, `message`, `line`, and `end_line`. Terminal checks print counts and up to ten entries per diagnostic category; terminal searches print semantic diagnostics.
 
 ## Exit codes
 

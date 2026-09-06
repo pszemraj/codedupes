@@ -58,6 +58,8 @@ def cache_info_command() -> None:
 )
 def cache_clear_command(model: str | None) -> None:
     """Clear cached embeddings, optionally scoped to a single model."""
+    if model is not None and not model.strip():
+        raise click.BadParameter("must not be empty", param_hint="--model")
     if model and is_explicit_local_model_path(model) and resolve_local_model_path(model) is None:
         click.echo(
             f"Local model directory '{model}' does not exist, so its cache identity "

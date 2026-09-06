@@ -432,7 +432,7 @@ def test_cli_json_replays_python_and_native_stderr_on_failure(tmp_path, command)
     assert "schema_version" not in result.stdout
 
 
-def test_cli_reports_semantic_context_diagnostics(monkeypatch, tmp_path):
+def test_cli_reports_semantic_diagnostics(monkeypatch, tmp_path):
     path = tmp_path / "sample.py"
     path.write_text("def entry():\n    return 1\n")
     unit = _build_unit(tmp_path)
@@ -447,8 +447,8 @@ def test_cli_reports_semantic_context_diagnostics(monkeypatch, tmp_path):
             ExtractionDiagnostic(
                 file_path=unit.file_path,
                 language="python",
-                code="semantic-context-overflow",
-                message="sample.entry is 4096 tokens including the encode prompt",
+                code="semantic-warning",
+                message="sample.entry has a semantic warning",
                 lineno=1,
                 end_lineno=2,
             )
@@ -459,12 +459,12 @@ def test_cli_reports_semantic_context_diagnostics(monkeypatch, tmp_path):
 
     table_result = runner.invoke(cli.cli, ["check", str(path)])
     assert "Semantic diagnostics" in table_result.output
-    assert "4096 tokens" in table_result.output
+    assert "semantic warning" in table_result.output
 
     json_result = runner.invoke(cli.cli, ["check", str(path), "--json"])
     payload = json.loads(json_result.output)
     assert payload["summary"]["semantic_diagnostics"] == 1
-    assert payload["semantic_diagnostics"][0]["code"] == "semantic-context-overflow"
+    assert payload["semantic_diagnostics"][0]["code"] == "semantic-warning"
 
 
 def test_cli_search_json_surfaces_semantic_diagnostics(monkeypatch, tmp_path):
@@ -488,8 +488,8 @@ def test_cli_search_json_surfaces_semantic_diagnostics(monkeypatch, tmp_path):
             ExtractionDiagnostic(
                 file_path=unit.file_path,
                 language="python",
-                code="semantic-context-overflow",
-                message="sample.entry is 4096 tokens including the encode prompt",
+                code="semantic-warning",
+                message="sample.entry has a semantic warning",
                 lineno=1,
                 end_lineno=2,
             )
@@ -503,7 +503,25 @@ def test_cli_search_json_surfaces_semantic_diagnostics(monkeypatch, tmp_path):
     payload = json.loads(result.output)
     result_uid = payload["results"][0]["unit"]
     assert payload["units"][result_uid]["name"] == "entry"
-    assert payload["semantic_diagnostics"][0]["code"] == "semantic-context-overflow"
+    assert payload["semantic_diagnostics"][0]["code"] == "semantic-warning"
+
+
+def test_cli_search_json_surfaces_extraction_failures(tmp_path: Path) -> None:
+    """Preserve a real parser failure in an otherwise successful search report."""
+    path = tmp_path / "broken.py"
+    path.write_text("def broken(\n", encoding="utf-8")
+
+    result = CliRunner().invoke(
+        cli.cli, ["search", str(path), "entry", "--json", "--no-cache", "--device", "cpu"]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert result.stderr == ""
+    payload = json.loads(result.stdout)
+    assert payload["summary"]["indexed_units"] == 0
+    assert payload["results"] == []
+    assert payload["extraction_diagnostics"][0]["code"] == "parse-error"
+    assert payload["extraction_diagnostics"][0]["file"] == str(path)
 
 
 def test_cli_search_indexes_without_running_full_analysis(monkeypatch, tmp_path):
@@ -513,6 +531,7 @@ def test_cli_search_indexes_without_running_full_analysis(monkeypatch, tmp_path)
     class IndexOnlyAnalyzer:
         def __init__(self, config):
             del config
+            self.extraction_diagnostics = []
             self.semantic_diagnostics = []
             self.embedding_stats = None
 
@@ -552,6 +571,7 @@ def _patch_search_analyzer(
         def __init__(self, config):
             del config
             self.extracted_unit_count = extracted_unit_count
+            self.extraction_diagnostics = []
             self.semantic_diagnostics = list(semantic_diagnostics or [])
             self.embedding_stats = None
 
@@ -596,14 +616,16 @@ def test_cli_search_empty_extraction_warning_does_not_blame_candidate_filters(
     assert "--semantic-unit-type" not in result.stderr
 
 
-def test_cli_search_empty_index_reports_semantic_context_diagnostics(monkeypatch, tmp_path):
+def test_cli_search_empty_index_uses_eligibility_reason_with_semantic_diagnostics(
+    monkeypatch, tmp_path
+):
     path = tmp_path / "sample.py"
     path.write_text("def entry():\n    return 1\n")
     diagnostic = ExtractionDiagnostic(
         file_path=path,
         language="python",
-        code="semantic-context-overflow",
-        message="sample.entry exceeds the model context window",
+        code="semantic-warning",
+        message="sample.entry has a semantic warning",
         lineno=1,
         end_lineno=2,
     )
@@ -620,9 +642,9 @@ def test_cli_search_empty_index_reports_semantic_context_diagnostics(monkeypatch
     result = CliRunner().invoke(cli.cli, ["search", str(path), "entry", "--output-width", "400"])
 
     assert result.exit_code == 0
-    assert "no semantic candidates survived indexing" in result.stderr
+    assert "semantic eligibility filtering removed all" in result.stderr
     assert "Semantic diagnostics" in result.stdout
-    assert "exceeds the model context window" in result.stdout
+    assert "semantic warning" in result.stdout
 
 
 def test_cli_search_does_not_warn_when_the_index_has_units(monkeypatch, tmp_path):
@@ -666,6 +688,45 @@ def test_cli_search_reports_path_deleted_after_validation(monkeypatch, tmp_path)
     assert result.exit_code == 1
     assert not isinstance(result.exception, FileNotFoundError)
     assert "Error: Path does not exist" in result.stderr
+
+
+@pytest.mark.parametrize("phase", ["construction", "query"])
+@pytest.mark.parametrize("as_json", [False, True])
+def test_cli_search_reports_runtime_failures(monkeypatch, tmp_path, phase, as_json):
+    def fail(*args, **kwargs):
+        raise FileNotFoundError("model asset disappeared")
+
+    if phase == "construction":
+        monkeypatch.setattr(cli, "CodeAnalyzer", fail)
+    else:
+        patch_cli_analyzer(
+            monkeypatch, cli, analyze_result=_build_result(tmp_path), search_results=fail
+        )
+    args = ["search", str(tmp_path), "entry"] + (["--json"] if as_json else [])
+    result = CliRunner().invoke(cli.cli, args)
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert "model asset disappeared" in result.stderr
+    assert "Traceback" not in result.stderr
+    assert not isinstance(result.exception, FileNotFoundError)
+
+
+@pytest.mark.parametrize("command", ["check", "search"])
+@pytest.mark.parametrize("value", ["nan", "inf", "-inf", "-0.1", "1.1"])
+def test_cli_rejects_invalid_active_threshold_before_analysis(
+    monkeypatch, tmp_path, command, value
+):
+    def unexpected(*args, **kwargs):
+        pytest.fail("Invalid threshold reached analysis")
+
+    monkeypatch.setattr(cli, "CodeAnalyzer", unexpected)
+    args = [command, str(tmp_path)] + (["entry"] if command == "search" else [])
+    result = CliRunner().invoke(cli.cli, [*args, "--threshold", value, "--json"])
+
+    assert result.exit_code == 2
+    assert result.stdout == ""
+    assert "[0.0, 1.0]" in result.stderr
 
 
 def test_cli_json_show_all_includes_raw_sections(monkeypatch, tmp_path):
@@ -836,7 +897,15 @@ def test_cli_search_builds_search_mode_config(monkeypatch, tmp_path):
     runner = CliRunner()
     result = runner.invoke(
         cli.cli,
-        ["search", str(path), "find entry", "--instruction-prefix", "custom: "],
+        [
+            "search",
+            str(path),
+            "find entry",
+            "--instruction-prefix",
+            "custom: ",
+            "--threshold",
+            "0.0",
+        ],
     )
 
     assert result.exit_code == 0
@@ -1080,6 +1149,42 @@ def test_cli_search_defaults_to_code_retrieval_task(monkeypatch, tmp_path):
     assert captured[0].search_document == "source"
 
 
+@pytest.mark.parametrize(
+    "options, reason",
+    [
+        (["--instruction-prefix", "custom"], "instruction prefix"),
+        (["--model-revision", "other"], "model revision"),
+        (["--trust-remote-code"], "trust_remote_code"),
+        (["--model", "embeddinggemma", "--semantic-task", "classification"], "semantic task"),
+    ],
+)
+def test_cli_search_rejects_uncalibrated_context_before_indexing(
+    monkeypatch, tmp_path: Path, options: list[str], reason: str
+) -> None:
+    """Reject known-invalid options before analyzer construction or corpus work."""
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n", encoding="utf-8")
+    captured = []
+    patch_cli_analyzer(
+        monkeypatch,
+        cli,
+        analyze_result=lambda: _build_result(tmp_path),
+        captured_configs=captured,
+    )
+    args = ["search", str(path), "entry", *options]
+    runner = CliRunner()
+    result = runner.invoke(cli.cli, args)
+    assert result.exit_code == 2, result.output
+    assert reason in " ".join(result.output.replace("│", "").split())
+    assert "explicit threshold" in result.output
+    assert captured == []
+
+    for option in ("--threshold", "--semantic-threshold"):
+        result = runner.invoke(cli.cli, [*args, option, "0.0"])
+        assert result.exit_code == 0, result.output
+    assert len(captured) == 2
+
+
 def test_cli_contextual_search_requires_explicit_threshold(monkeypatch, tmp_path):
     path = tmp_path / "sample.py"
     path.write_text("def entry():\n    return 1\n")
@@ -1100,12 +1205,11 @@ def test_cli_contextual_search_requires_explicit_threshold(monkeypatch, tmp_path
     runner = CliRunner()
     missing = runner.invoke(cli.cli, args)
 
-    assert missing.exit_code == 1
+    assert missing.exit_code == 2
     assert "contextual" in missing.output
     assert "explicit threshold" in missing.output
     assert "--semantic-threshold" in missing.output
-    assert len(model.encode_calls) == 1
-    assert model.encode_calls[0][0].startswith("language: python\n")
+    assert model.encode_calls == []
 
     for option in ("--semantic-threshold", "--threshold"):
         result = runner.invoke(cli.cli, [*args, option, "0.0"])
@@ -1117,8 +1221,9 @@ def test_cli_contextual_search_requires_explicit_threshold(monkeypatch, tmp_path
 
 
 @pytest.mark.parametrize("command_tail", [[], ["entry"]], ids=["check", "search"])
-def test_cli_shared_options_use_unqualified_environment_variables(
-    monkeypatch, tmp_path, command_tail
+@pytest.mark.parametrize("explicit_options", [False, True])
+def test_cli_options_ignore_automatic_environment_variables(
+    monkeypatch, tmp_path, command_tail, explicit_options
 ) -> None:
     path = tmp_path / "sample.py"
     path.write_text("def entry():\n    return 1\n")
@@ -1136,15 +1241,33 @@ def test_cli_shared_options_use_unqualified_environment_variables(
             "CODEDUPES_DEVICE": "cpu",
             "CODEDUPES_MODEL": "test-model",
             "CODEDUPES_NO_CACHE": "1",
+            "CODEDUPES_LANGUAGES": "invalid-language",
+            "CODEDUPES_THRESHOLD": "not-a-number",
+            "CODEDUPES_NO_PRIVATE": "1",
+            "CODEDUPES_EXCLUDE": "*.py",
+            f"CODEDUPES_{command.upper()}_DEVICE": "cpu",
+            f"CODEDUPES_{command.upper()}_MODEL": "test-model",
+            f"CODEDUPES_{command.upper()}_THRESHOLD": "not-a-number",
         }
     )
 
-    result = runner.invoke(cli.cli, [command, str(path), *command_tail])
+    args = [command, str(path), *command_tail]
+    if explicit_options:
+        args.extend(["--device", "cpu", "--model", "explicit-model", "--no-cache"])
+    result = runner.invoke(cli.cli, args)
 
-    assert result.exit_code in {0, 1}
-    assert captured[0].device == "cpu"
-    assert captured[0].model_name == "test-model"
-    assert captured[0].embedding_cache is False
+    assert result.exit_code == (0 if command_tail else 1), result.output
+    assert captured[0].device == ("cpu" if explicit_options else cli.DEFAULT_SEMANTIC_DEVICE)
+    assert captured[0].model_name == ("explicit-model" if explicit_options else cli.DEFAULT_MODEL)
+    # The cache library's explicit process control is independent of CLI parsing.
+    assert captured[0].embedding_cache is (not explicit_options)
+    assert captured[0].languages is None
+    assert captured[0].include_private is True
+    assert captured[0].exclude_patterns is None
+
+    help_result = runner.invoke(cli.cli, [command, "--help"])
+    assert help_result.exit_code == 0
+    assert "CODEDUPES_" not in help_result.output
 
 
 def test_cli_search_semantic_unit_type_pass_through(monkeypatch, tmp_path):
@@ -1518,7 +1641,7 @@ def test_cli_search_help_is_search_specific() -> None:
     assert result.exit_code == 0
     assert "also narrows traditional duplicate scope in combined mode" not in result.output
     assert "Built-in" in result.output
-    assert "always apply." in result.output
+    assert "still apply." in result.output
 
 
 @pytest.mark.parametrize("command", ["check", "search"])
@@ -2319,12 +2442,143 @@ def test_cli_cache_clear_removes_all_entries(tmp_path):
     scope.mkdir()
     cache.put_many(scope, "some/model", "rev1", [("k1", np.array([1.0, 2.0], dtype=np.float32))])
 
-    runner = CliRunner()
+    runner = CliRunner(env={"CODEDUPES_CACHE_CLEAR_MODEL": "unrelated/model"})
     result = runner.invoke(cli.cli, ["cache", "clear"])
 
     assert result.exit_code == 0
     assert "Cleared 1 cached embedding" in result.output
     assert cache.stats()["entries"] == 0
+
+
+@pytest.mark.parametrize("model", ["", " ", "\t"])
+def test_cli_cache_clear_rejects_empty_model_without_deleting(tmp_path, model):
+    cache = EmbeddingCache()
+    cache.put_many(tmp_path, "some/model", "rev1", [("k1", np.array([1.0, 2.0]))])
+
+    result = CliRunner().invoke(cli.cli, ["cache", "clear", "--model", model])
+
+    assert result.exit_code == 2
+    assert result.stdout == ""
+    assert "must not be empty" in result.stderr
+    assert cache.stats()["entries"] == 1
+
+
+@pytest.mark.parametrize(("command", "expected_exit_code"), [("check", 1), ("search", 0)])
+@pytest.mark.parametrize("include_tests", [False, True])
+def test_cli_exclusions_extend_defaults(
+    monkeypatch, tmp_path, command, expected_exit_code, include_tests
+):
+    from codedupes.extractor import CodeExtractor
+
+    for relative in ["keep.py", "test_entry.py", "pkg/examples/deep.py", "node_modules/mod.py"]:
+        path = tmp_path / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("def entry():\n    return 1\n", encoding="utf-8")
+    captured = []
+    patch_cli_analyzer(
+        monkeypatch, cli, analyze_result=_build_result(tmp_path), captured_configs=captured
+    )
+    args = [command, str(tmp_path)] + (["entry"] if command == "search" else ["--traditional-only"])
+    args += ["--exclude", "examples", "--json"]
+    if include_tests:
+        args.append("--no-default-excludes")
+    result = CliRunner().invoke(cli.cli, args)
+    assert result.exit_code == expected_exit_code, result.output
+    units = CodeExtractor(tmp_path, exclude_patterns=captured[0].exclude_patterns).extract_all()
+    assert {unit.file_path.name for unit in units} == (
+        {"keep.py", "test_entry.py"} if include_tests else {"keep.py"}
+    )
+
+
+@pytest.mark.parametrize(("command", "expected_exit_code"), [("check", 1), ("search", 0)])
+def test_cli_implicit_default_exclusions_preserve_analyzer_default(
+    monkeypatch, tmp_path, command, expected_exit_code
+):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n", encoding="utf-8")
+    captured = []
+    patch_cli_analyzer(
+        monkeypatch, cli, analyze_result=_build_result(tmp_path), captured_configs=captured
+    )
+
+    args = [command, str(path)]
+    if command == "check":
+        args.append("--traditional-only")
+    else:
+        args.append("entry")
+    result = CliRunner().invoke(cli.cli, args)
+
+    assert result.exit_code == expected_exit_code, result.output
+    assert captured[0].exclude_patterns is None
+
+
+@pytest.mark.parametrize("command", ["check", "search"])
+@pytest.mark.parametrize("outside_root", [False, True])
+@pytest.mark.parametrize("symlinked_parent", [False, True])
+def test_cli_explicit_symlink_exclusions(
+    monkeypatch, tmp_path, command, outside_root, symlinked_parent
+):
+    root = tmp_path / "project"
+    root.mkdir()
+    target = (tmp_path if outside_root else root) / "target.py"
+    target.write_text("def entry():\n    return 1\n", encoding="utf-8")
+    alias = root / "test_alias.py"
+    alias.symlink_to(target)
+    if symlinked_parent:
+        parent_alias = tmp_path / "project_link"
+        parent_alias.symlink_to(root, target_is_directory=True)
+        alias = parent_alias / alias.name
+    model = CountingModel()
+    _patch_get_model(monkeypatch, model)
+
+    args = [command, str(alias), "--json"]
+    if command == "check":
+        args += ["--traditional-only", "--no-unused"]
+        count_key = "total_units"
+    else:
+        args += ["entry", "--device", "cpu", "--min-statements", "0", "--threshold", "0"]
+        count_key = "indexed_units"
+
+    for options, expected_count in (
+        ([], 0),
+        (["--no-default-excludes"], 1),
+        (["--no-default-excludes", "--exclude", alias.name], 0),
+    ):
+        result = CliRunner().invoke(cli.cli, [*args, *options])
+        assert result.exit_code == 0, result.output
+        assert json.loads(result.stdout)["summary"][count_key] == expected_count
+        assert result.stderr == ""
+
+
+@pytest.mark.grammar
+@pytest.mark.parametrize("exclude", ["ignored.cpp", "examples"])
+def test_cli_header_detection_ignores_excluded_symlink_targets(tmp_path, exclude):
+    (tmp_path / "main.c").write_text("int main(void) { return 1; }", encoding="utf-8")
+    (tmp_path / "header.h").write_text(
+        "static inline int header(void) { return 2; }", encoding="utf-8"
+    )
+    target = tmp_path / "examples" / "ignored.cpp"
+    target.parent.mkdir()
+    target.write_text("", encoding="utf-8")
+    (tmp_path / "alias.cpp").symlink_to(target)
+
+    result = CliRunner().invoke(
+        cli.cli,
+        [
+            "check",
+            str(tmp_path),
+            "--exclude",
+            exclude,
+            "--traditional-only",
+            "--no-unused",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["summary"]["units_by_language"] == {"c": 2}
+    assert payload["extraction_diagnostics"] == []
 
 
 def test_cli_cache_clear_scoped_to_model(tmp_path):

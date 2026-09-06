@@ -2,12 +2,12 @@
 
 ## Migration
 
+- CLI `--exclude` now extends default test exclusions and matches directory descendants. Use `--no-default-excludes` to scan tests; Python `exclude_patterns=[]` now disables test defaults. See [extraction scope](analysis-defaults.md#extraction-scope-defaults).
 - JSON consumers must adopt [schema v2](output.md#json-schema-v2) instead of expecting full unit objects at each pair endpoint.
 - `CodeUnit.uid` now includes language and start byte. The private `_ast_hash` alias, `has_body`, and `AnalysisResult.filtered_raw_duplicates` were removed. See [result types](python-api.md#key-result-types).
 - `--min-lines` / `min_semantic_lines` became `--min-statements` / `min_semantic_statements`. The redundant `--tiny-near-jaccard-min` exception and `--hybrid-semantic-threshold` sweep flag were removed.
 - Flat duplicate defaults were replaced by [per-language gates](analysis-defaults.md#semantic-duplicate-gate-defaults). Pass an explicit threshold to retain a flat policy. Semantic-only matches now remain visible as review candidates rather than disappearing below a second synthesis threshold.
 - Search-only Python callers should use the [search configuration](python-api.md#semantic-query-search).
-- Embedding pipeline schema 5 invalidates older cache entries that could contain prefix-truncated vectors. The first run re-embeds them under the [complete-definition context policy](analysis-defaults.md#semantic-candidate-defaults).
 - The default [Hub revision policy](caching.md#hub-revisions) now uses labels; `--strict-revision-cache` retains the previous policy.
 - Runtime dependency minimums changed; use the [installation requirements](install.md). The C2LLM profile and DeepSpeed-only `gpu` extra were removed. Replace `semantic_profiles.resolve_model_name()` with `resolve_model_profile(...).canonical_name`.
 - Source archives without VCS metadata build as `0.0.0+unknown`; tagged Git builds retain VCS-derived versions. Source distributions use an explicit file allowlist.
@@ -27,16 +27,18 @@
 - Added explicit CPU/CUDA/MPS selection, dtype control, allocator diagnostics, and bounded OOM recovery. See [accelerator behavior](accelerators.md).
 - Fixed task prompts being applied twice and added [model-context calibration requirements](model-profiles.md#semantic-task-defaults-and-choices).
 - Added [linear-time search indexing, per-query thresholds, and contextual documents](python-api.md#semantic-query-search).
+- Eligible long definitions and queries now use normal embedding-backend truncation rather than being excluded from semantic analysis.
 - Local-model fingerprints, revision provenance, and runtime identities prevent mixing vectors from different model states. Corrupt cache rows become misses and repair on recomputation.
 - Semantic pair scanning now thresholds NumPy row-block products; traditional Jaccard matching uses a prefix-filtered join. Recorded 8,000-unit comparisons improved from 3.5 s to 0.08 s and 55.6 s to 0.42 s respectively, with equivalence tests for pairs, scores, and order. Rust attribute traversal also avoids repeated linear sibling scans.
 
 ## CLI and API output
 
-- Split the CLI into command, option, and rendering modules. Added grouped help, `-h`, paired boolean flags, and `CODEDUPES_*` option environment variables. See [CLI options](cli.md).
+- Split the CLI into command, option, and rendering modules. Added grouped help, `-h`, and paired boolean flags. CLI options use command-line flags without automatic environment-variable overrides. See [CLI options](cli.md).
 - Added configurable [finding exit policies](output.md#exit-codes), [embedding telemetry](output.md#embedding-telemetry), and clean JSON output under merged streams.
-- Paths retain enough context to distinguish files in different directories, including literal Rich markup characters. Empty search indexes distinguish extraction, eligibility, and context-window exclusions.
+- Paths retain enough context to distinguish files in different directories, including literal Rich markup characters. Empty search indexes distinguish extraction and eligibility filtering.
 - Reused analyzers clear prior corpus state. Python callers can control [progress](python-api.md#progress-and-embedding-telemetry) and [dependency logging](python-api.md#logging).
 - Cache deletion failures now return a failing status, unavailable explicit accelerators are validated on warm and empty runs, and contradictory command options fail validation.
+- Empty `cache clear --model` scopes are rejected without deleting entries. Contextual search requires a threshold before indexing; search construction and missing model-file failures use the normal stderr error path.
 
 ## Validation
 

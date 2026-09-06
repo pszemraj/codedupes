@@ -33,7 +33,6 @@ from ._render import format_location
 @click.group(
     context_settings={
         "help_option_names": ["-h", "--help"],
-        "auto_envvar_prefix": "CODEDUPES",
     },
     no_args_is_help=False,
     invoke_without_command=True,
@@ -41,7 +40,7 @@ from ._render import format_location
 @click.rich_config(
     {
         "options_table_column_types": ["opt_long", "opt_short", "help"],
-        "options_table_help_sections": ["metavar", "help", "default", "envvar"],
+        "options_table_help_sections": ["metavar", "help", "default"],
     }
 )
 @click.version_option(__version__, prog_name="codedupes")

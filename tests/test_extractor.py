@@ -2,10 +2,14 @@ from __future__ import annotations
 
 import ast
 import codecs
+import fnmatch
 import os
 from pathlib import Path
 from textwrap import dedent
 from typing import Any
+from unittest.mock import Mock
+
+import pytest
 
 from codedupes.extractor import CodeExtractor, compute_ast_hash, compute_token_hash
 from codedupes.models import CodeUnitType
@@ -137,6 +141,7 @@ def test_non_header_extraction_does_not_resolve_c_header_policy(
 def test_header_only_tree_reports_c_header_policy_diagnostic(tmp_path: Path) -> None:
     root = tmp_path / "lib"
     root.mkdir()
+    (root / "test_ignored.h").write_text("", encoding="utf-8")
     (root / "clamp.h").write_text(
         "static inline int clamp_value(int v, int lo, int hi) {\n"
         "    if (v < lo) return lo;\n"
@@ -152,6 +157,8 @@ def test_header_only_tree_reports_c_header_policy_diagnostic(tmp_path: Path) -> 
     codes = [diagnostic.code for diagnostic in extractor.diagnostics]
     assert codes == ["c-header-policy"]
     assert "--language c" in extractor.diagnostics[0].message
+    assert extractor.diagnostics[0].message.startswith("1 .h file(s)")
+    assert extractor.diagnostics[0].file_path == root / "clamp.h"
 
 
 def test_cpp_presence_reports_skipped_headers(tmp_path: Path) -> None:
@@ -315,6 +322,153 @@ def test_extract_all_double_star_pattern_matches_root_level_files(tmp_path: Path
     extractor = CodeExtractor(tmp_path, exclude_patterns=["**/sample.py"], include_private=True)
     units = extractor.extract_all()
     assert units == []
+
+
+@pytest.mark.parametrize(
+    "pattern", ["examples", "examples/", "**/examples", "**/examples/**", "exam*"]
+)
+def test_exclude_directory_at_any_depth(tmp_path: Path, pattern: str) -> None:
+    paths = ["examples/a.py", "pkg/examples/deep/b.py", "pkg/keep.py", "myexamples/c.py"]
+    for relative in paths:
+        path = tmp_path / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("def entry():\n    return 1\n", encoding="utf-8")
+    extractor = CodeExtractor(tmp_path, exclude_patterns=[pattern])
+
+    assert {
+        unit.file_path.relative_to(tmp_path).as_posix() for unit in extractor.extract_all()
+    } == {"pkg/keep.py", "myexamples/c.py"}
+    assert list(extractor.extract_from_file(tmp_path / "pkg/examples/deep/b.py")) == []
+
+
+@pytest.mark.parametrize(
+    "pattern", ["./examples/", "examples/deep", "examples/deep/", "examples/deep/**"]
+)
+def test_exclude_root_relative_paths(tmp_path: Path, pattern: str) -> None:
+    paths = ["examples/deep/a.py", "pkg/examples/deep/b.py"]
+    for relative in paths:
+        path = tmp_path / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("def entry():\n    return 1\n", encoding="utf-8")
+    units = CodeExtractor(tmp_path, exclude_patterns=[pattern]).extract_all()
+    assert [unit.file_path.relative_to(tmp_path).as_posix() for unit in units] == [paths[1]]
+
+
+def test_explicit_empty_excludes_include_tests(tmp_path: Path) -> None:
+    path = tmp_path / "test_entry.py"
+    path.write_text("def entry():\n    return 1\n", encoding="utf-8")
+    assert len(CodeExtractor(tmp_path, exclude_patterns=[]).extract_all()) == 1
+
+
+@pytest.mark.parametrize("cpp_path", ["examples/foreign.cpp", "test_foreign.cpp"])
+def test_header_detection_ignores_excluded_cpp(tmp_path: Path, cpp_path: str) -> None:
+    (tmp_path / "main.c").write_text("int run(void) { return 1; }", encoding="utf-8")
+    foreign = tmp_path / cpp_path
+    foreign.parent.mkdir(parents=True, exist_ok=True)
+    foreign.write_text("", encoding="utf-8")
+    from codedupes.extractor import DEFAULT_EXCLUDE_PATTERNS
+
+    extractor = CodeExtractor(tmp_path, exclude_patterns=[*DEFAULT_EXCLUDE_PATTERNS, "examples"])
+    assert extractor._allow_c_headers()
+
+
+def test_header_detection_requires_included_c_source(tmp_path: Path) -> None:
+    (tmp_path / "ignored.c").write_text("", encoding="utf-8")
+    assert not CodeExtractor(tmp_path, exclude_patterns=["ignored.c"])._allow_c_headers()
+
+
+@pytest.mark.parametrize("suffix", [".c", ".cpp"])
+@pytest.mark.parametrize("exclude", ["target", "alias"])
+def test_header_detection_respects_symlink_exclusions(
+    tmp_path: Path, suffix: str, exclude: str
+) -> None:
+    if suffix == ".cpp":
+        (tmp_path / "main.c").write_text("", encoding="utf-8")
+    target = tmp_path / f"target{suffix}"
+    target.write_text("", encoding="utf-8")
+    (tmp_path / f"alias{suffix}").symlink_to(target)
+    patterns = [f"{exclude}{suffix}"]
+    if exclude == "alias":
+        # Excluding an alias must not exclude the actual included target.
+        expected = suffix == ".c"
+    else:
+        expected = suffix == ".cpp"
+    assert CodeExtractor(tmp_path, exclude_patterns=patterns)._allow_c_headers() is expected
+
+
+def test_excluded_alias_does_not_hide_included_target(tmp_path: Path) -> None:
+    target = tmp_path / "z_target.py"
+    target.write_text("def entry():\n    return 1\n", encoding="utf-8")
+    alias = tmp_path / "a_alias.py"
+    alias.symlink_to(target)
+    units = CodeExtractor(tmp_path, exclude_patterns=[alias.name]).extract_all()
+    assert [unit.file_path for unit in units] == [target]
+
+
+def test_direct_symlink_respects_its_excluded_name(tmp_path: Path) -> None:
+    target = tmp_path / "target.py"
+    target.write_text("def entry():\n    return 1\n", encoding="utf-8")
+    alias = tmp_path / "excluded.py"
+    alias.symlink_to(target)
+    extractor = CodeExtractor(tmp_path, exclude_patterns=[alias.name])
+    assert list(extractor.extract_from_file(alias)) == []
+
+
+@pytest.mark.parametrize("pattern", ["examples", "examples/", "examples/**", "**/examples/**"])
+def test_excluded_directories_are_not_walked(tmp_path: Path, monkeypatch, pattern: str) -> None:
+    (tmp_path / "examples" / "deep").mkdir(parents=True)
+    visited = []
+    original_walk = os.walk
+
+    def recording_walk(*args, **kwargs):
+        for entry in original_walk(*args, **kwargs):
+            visited.append(Path(entry[0]))
+            yield entry
+
+    monkeypatch.setattr(os, "walk", recording_walk)
+    CodeExtractor(tmp_path, exclude_patterns=[pattern]).extract_all()
+    assert visited == [tmp_path]
+
+
+@pytest.mark.parametrize("depth", [1, 6])
+def test_walk_exclusion_matching_cost(tmp_path: Path, monkeypatch: Any, depth: int) -> None:
+    directory = tmp_path.joinpath(*[f"level{i}" for i in range(depth)])
+    directory.mkdir(parents=True)
+    source = directory / "entry.py"
+    source.touch()
+    for i in range(40):
+        (directory / f"notes{i}.txt").touch()
+    extractor = CodeExtractor(tmp_path)
+    matchers = [
+        (use_path, directory_only, Mock(wraps=matcher), Mock(wraps=zero_depth))
+        for use_path, directory_only, matcher, zero_depth in extractor._exclude_matchers
+    ]
+    extractor._exclude_matchers = matchers
+    translate = Mock(side_effect=AssertionError("Patterns must be compiled before walking"))
+    monkeypatch.setattr(fnmatch, "translate", translate)
+    extract = Mock(return_value=iter(()))
+    monkeypatch.setattr(extractor, "extract_from_file", extract)
+
+    extractor.extract_all()
+
+    extract.assert_called_once_with(source)
+    # Each directory gets at most four matches per pattern, and the source two.
+    # Unsupported files and previously visited ancestors add no matching work.
+    calls = sum(m.match.call_count + z.match.call_count for _, _, m, z in matchers)
+    assert calls <= len(matchers) * (4 * depth + 2)
+    translate.assert_not_called()
+
+
+def test_walk_symlink_checks_excluded_target_ancestors(tmp_path: Path) -> None:
+    target = tmp_path / "examples" / "deep" / "target.py"
+    target.parent.mkdir(parents=True)
+    target.write_text("def entry():\n    return 1\n", encoding="utf-8")
+    alias = tmp_path / "alias.py"
+    alias.symlink_to(target)
+    extractor = CodeExtractor(tmp_path, exclude_patterns=["examples/"])
+
+    assert extractor.extract_all() == []
+    assert list(extractor.extract_from_file(alias)) == []
 
 
 def test_python_byte_range_matches_emitted_source_with_unicode(tmp_path: Path) -> None:

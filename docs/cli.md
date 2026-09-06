@@ -61,7 +61,9 @@ Options, in addition to the [shared options](#options-shared-by-check-and-search
 - `--top-k <int>`: Number of results (default `10`)
 - `--threshold <float>`: Shared semantic threshold override
 - `--semantic-task <name>`: Semantic task mode for query/document embeddings (default `code-retrieval`)
-- `--search-document <source|contextual>`: Choose the [search document representation](python-api.md#semantic-query-search), source only by default. Contextual search requires an explicit `--semantic-threshold` or `--threshold`; tune the value against representative queries
+- `--search-document <source|contextual>`: Choose the [search document representation](python-api.md#semantic-query-search), source only by default. Contextual search requires an explicit `--semantic-threshold` or `--threshold`; omission is a usage error (exit `2`) before indexing. Tune the value against representative queries
+
+Search also requires an explicit threshold for a custom instruction prefix, a changed built-in model revision or trust setting, or an alternate EmbeddingGemma task. These option errors are rejected before indexing with exit `2`. Python callers may still index first and supply the threshold to `search()` later.
 
 ## Options shared by `check` and `search`
 
@@ -76,7 +78,8 @@ codedupes search . "validate session token" --language js --language ts
 
 - `--language <name>`: Restrict extraction to a language; repeat for multiple languages, or omit to auto-detect. See [supported files](polyglot-languages.md#supported-files) for names, aliases, and C header selection.
 - `--no-private`: Exclude private units according to [language visibility rules](polyglot-languages.md#visibility-filtering)
-- `--exclude <glob>`: Replace the default file globs (repeat for multiple patterns); see [extraction scope](analysis-defaults.md#extraction-scope-defaults)
+- `--exclude <name|glob>`: Add to the default test exclusions (repeat for multiple patterns). Bare names such as `examples` match at any depth and exclude whole directory subtrees; paths containing `/` are relative to the scan root. Quote globs to prevent shell expansion; see [extraction scope](analysis-defaults.md#extraction-scope-defaults)
+- `--no-default-excludes`: Disable the default test-file patterns, allowing tests to be analyzed. Custom excludes and built-in artifact-directory exclusions still apply
 - `--include-stubs`: Include `.pyi` files when scanning a directory (single-file `.pyi` targets are analyzed as given)
 
 ### Semantic model
@@ -116,7 +119,7 @@ See [model profiles](model-profiles.md#semantic-task-defaults-and-choices) for t
 
 ## Environment variables
 
-Help for `check` and `search` displays option environment variables; command-line values take precedence. Names use the `CODEDUPES_` prefix and the internal parameter name, which can differ from the flag: `--json` uses `CODEDUPES_AS_JSON=1`, and `--language` uses `CODEDUPES_LANGUAGES="python rust"`. Other examples are `CODEDUPES_DEVICE=cpu`, `CODEDUPES_NO_CACHE=1`, `CODEDUPES_FAIL_ON=all` for `check`, and `CODEDUPES_SEARCH_DOCUMENT=contextual` for `search`. See [cache controls](caching.md#controls) for cache-library variables.
+CLI options are configured through command-line flags; automatic `CODEDUPES_*` option overrides are disabled. Explicit library-level [cache controls](caching.md#controls) and [accelerator controls](accelerators.md#precision-and-metal-environment-variables) remain supported.
 
 ## `codedupes info`
 
@@ -128,7 +131,7 @@ Print the embedding-cache summary plus per-model entry counts and a per-repo bre
 
 ## `codedupes cache clear [--model <name>]`
 
-Clear all cached embeddings or only entries for one model. See [Embedding cache](caching.md).
+Clear all cached embeddings or only entries for one model. An empty or whitespace-only `--model` is a usage error (exit `2`) and deletes nothing; omit the option to clear all models. See [Embedding cache](caching.md).
 
 ## Validation and mode notes
 
@@ -145,4 +148,4 @@ Clear all cached embeddings or only entries for one model. See [Embedding cache]
 - Explicit semantic-analysis controls are rejected with `--traditional-only`, including model/task, candidate-scope, device/runtime options, and `--strict-revision-cache`. `--no-cache` is accepted as a harmless no-op.
 - Explicit traditional-analysis controls are rejected with `--semantic-only`: `--traditional-threshold`, `--no-tiny-filter`, and `--tiny-cutoff`
 
-To investigate a surprising combined result, compare `--traditional-only`, `--semantic-only`, and the default run. Add `--verbose` for model-loading, device-resolution, and fallback logs. See [semantic candidate rules](analysis-defaults.md#semantic-candidate-defaults) for context-window exclusions and [Output and exit codes](output.md) for diagnostics and failure behavior.
+To investigate a surprising combined result, compare `--traditional-only`, `--semantic-only`, and the default run. Add `--verbose` for model-loading, device-resolution, and fallback logs. See [semantic candidate rules](analysis-defaults.md#semantic-candidate-defaults) for candidate selection and long-input handling, and [Output and exit codes](output.md) for diagnostics and failure behavior.

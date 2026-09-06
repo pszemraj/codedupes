@@ -375,6 +375,44 @@ def test_single_file_scan_orphans_candidate_that_became_ineligible(tmp_path, mon
     assert filtered.embedding_stats.orphan_rows_retained == 1
 
 
+@pytest.mark.parametrize("operation", ["analyze", "index"])
+@pytest.mark.parametrize("outside_root", [False, True])
+def test_single_symlink_scan_updates_observed_target(
+    tmp_path, monkeypatch, operation, outside_root
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    target = (tmp_path if outside_root else repo) / "target.py"
+    target.write_text(
+        "def only(value):\n    adjusted = value + 1\n    return adjusted\n", encoding="utf-8"
+    )
+    alias = repo / "alias.py"
+    alias.symlink_to(target)
+    _patch_get_model(monkeypatch, CountingModel())
+    analyzer = CodeAnalyzer(
+        AnalyzerConfig(
+            model_name="test-model",
+            model_revision=REVISION_1,
+            semantic_threshold=0.0,
+            device="cpu",
+            run_traditional=False,
+            run_unused=False,
+            min_semantic_statements=2,
+            progress="never",
+        )
+    )
+    scan = getattr(analyzer, operation)
+    scan(repo)
+    target.write_text("def only(value):\n    return value + 1\n", encoding="utf-8")
+
+    scan(alias)
+
+    assert analyzer.embedding_stats is not None
+    assert analyzer.embedding_stats.requested_rows == 0
+    assert analyzer.embedding_stats.deleted_units == 1
+    assert analyzer.embedding_stats.orphan_rows_retained == 1
+
+
 def test_move_and_edit_reencodes_changed_function_but_hits_sibling(tmp_path, monkeypatch) -> None:
     repo = _write_repo(
         tmp_path,
