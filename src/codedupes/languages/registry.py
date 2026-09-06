@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Callable
 from dataclasses import dataclass
 from functools import cache
 from importlib import metadata
@@ -178,17 +179,22 @@ def language_for_path(
     return selection
 
 
-def repository_allows_c_headers(root: Path, selected_languages: tuple[str, ...] | None) -> bool:
+def repository_allows_c_headers(
+    root: Path,
+    selected_languages: tuple[str, ...] | None,
+    *,
+    should_exclude: Callable[[Path], bool] | None = None,
+) -> bool:
     """Return whether ambiguous ``.h`` files can safely be treated as C.
 
     Explicit ``--language c`` selection wins.  Automatic detection accepts headers only
     when the scanned tree contains C source and no C++ source.  The scan mirrors the
-    default extraction walk exactly, pruning the same directories, so the decision is
-    made over precisely the files extraction will parse.  User-supplied ``--exclude``
-    globs are consulted by neither the scan nor this alignment.
+    extraction walk, pruning artifact directories and applying the extractor's
+    exclusion predicate when supplied.
 
     :param root: Scan root for the analysis.
     :param selected_languages: Canonical language filter, or ``None`` for auto-detection.
+    :param should_exclude: Optional extractor predicate for ignored files/directories.
     :return: ``True`` when ``.h`` files may be parsed as C.
     """
     if selected_languages is not None:
@@ -200,8 +206,16 @@ def repository_allows_c_headers(root: Path, selected_languages: tuple[str, ...] 
     # vendored C++ tree flip `.h` handling for files extraction never visits, and let
     # `*.egg-info` C++ flip it for files extraction always skips.
     for directory, dirnames, filenames in os.walk(scan_root):
-        dirnames[:] = [name for name in dirnames if not is_default_excluded_dir(name)]
+        current = Path(directory)
+        dirnames[:] = [
+            name
+            for name in dirnames
+            if not is_default_excluded_dir(name)
+            and (should_exclude is None or not should_exclude(current / name))
+        ]
         for filename in filenames:
+            if should_exclude is not None and should_exclude(current / filename):
+                continue
             suffix = Path(filename).suffix
             if _is_cpp_suffix(suffix):
                 return False

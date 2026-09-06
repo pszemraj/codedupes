@@ -44,7 +44,7 @@ Use the [CLI candidate options](cli.md#semantic-model) or `AnalyzerConfig.semant
 
 Directory-name exclusions always apply. They cover common artifact, dependency, and cache directories such as `node_modules`, `target`, `.venv`, `.pytest_cache`, `dist`, and `build`; directories ending in `.egg-info` are also skipped. A literal `vendor/` directory is not excluded by default: what the walk analyzes, the C-header policy scan also sees.
 
-When no nonempty `exclude_patterns` list is supplied, these file globs apply:
+By default, these test-file globs apply:
 
 - `**/test_*`
 - `**/*_test.*`
@@ -54,7 +54,13 @@ When no nonempty `exclude_patterns` list is supplied, these file globs apply:
 - `**/tests/**`
 - `**/__tests__/**`
 
-A nonempty `AnalyzerConfig.exclude_patterns` list or one or more CLI `--exclude` options replaces those file globs. Directory-name exclusions still apply. Repeat any built-in file globs that you want to preserve alongside custom patterns.
+CLI `--exclude` options extend these patterns. Use `--no-default-excludes` to scan tests while retaining custom exclusions. For Python callers, `AnalyzerConfig.exclude_patterns=None` uses the defaults; a supplied list replaces them, including `[]` to disable test-file exclusions. Built-in artifact-directory exclusions always apply.
+
+Bare names and basename globs match at any depth: `--exclude examples` skips both `examples/demo.py` and `pkg/examples/nested/demo.py`, without matching `myexamples`. A matched directory excludes all descendants and is pruned from traversal. A trailing `/` restricts a pattern to directories. Paths containing `/` match relative to the scan root; `./examples/` restricts the match to the root-level directory, while `**/examples/**` matches at any depth, including the root. Shell-style `*`, `?`, and character classes are supported; in path patterns `*` can also span `/`. Quote glob arguments in the shell.
+
+Exclusions apply to direct file extraction too, relative to the file's parent for a single-file CLI target. Excluded symlink names are skipped before deduplication; aliases cannot reintroduce excluded in-tree targets.
+
+Automatic C-header detection uses the same exclusions, so excluded C/C++ files do not affect whether included `.h` files are parsed as C.
 
 ## Potentially unused defaults
 

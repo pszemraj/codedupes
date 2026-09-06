@@ -7,6 +7,8 @@ from pathlib import Path
 from textwrap import dedent
 from typing import Any
 
+import pytest
+
 from codedupes.extractor import CodeExtractor, compute_ast_hash, compute_token_hash
 from codedupes.models import CodeUnitType
 from tests.conftest import extract_units
@@ -315,6 +317,93 @@ def test_extract_all_double_star_pattern_matches_root_level_files(tmp_path: Path
     extractor = CodeExtractor(tmp_path, exclude_patterns=["**/sample.py"], include_private=True)
     units = extractor.extract_all()
     assert units == []
+
+
+@pytest.mark.parametrize(
+    "pattern", ["examples", "examples/", "**/examples", "**/examples/**", "exam*"]
+)
+def test_exclude_directory_at_any_depth(tmp_path: Path, pattern: str) -> None:
+    paths = ["examples/a.py", "pkg/examples/deep/b.py", "pkg/keep.py", "myexamples/c.py"]
+    for relative in paths:
+        path = tmp_path / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("def entry():\n    return 1\n", encoding="utf-8")
+    extractor = CodeExtractor(tmp_path, exclude_patterns=[pattern])
+
+    assert {
+        unit.file_path.relative_to(tmp_path).as_posix() for unit in extractor.extract_all()
+    } == {"pkg/keep.py", "myexamples/c.py"}
+    assert list(extractor.extract_from_file(tmp_path / "pkg/examples/deep/b.py")) == []
+
+
+@pytest.mark.parametrize(
+    "pattern", ["./examples/", "examples/deep", "examples/deep/", "examples/deep/**"]
+)
+def test_exclude_root_relative_paths(tmp_path: Path, pattern: str) -> None:
+    paths = ["examples/deep/a.py", "pkg/examples/deep/b.py"]
+    for relative in paths:
+        path = tmp_path / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("def entry():\n    return 1\n", encoding="utf-8")
+    units = CodeExtractor(tmp_path, exclude_patterns=[pattern]).extract_all()
+    assert [unit.file_path.relative_to(tmp_path).as_posix() for unit in units] == [paths[1]]
+
+
+def test_explicit_empty_excludes_include_tests(tmp_path: Path) -> None:
+    path = tmp_path / "test_entry.py"
+    path.write_text("def entry():\n    return 1\n", encoding="utf-8")
+    assert len(CodeExtractor(tmp_path, exclude_patterns=[]).extract_all()) == 1
+
+
+@pytest.mark.parametrize("cpp_path", ["examples/foreign.cpp", "test_foreign.cpp"])
+def test_header_detection_ignores_excluded_cpp(tmp_path: Path, cpp_path: str) -> None:
+    (tmp_path / "main.c").write_text("int run(void) { return 1; }", encoding="utf-8")
+    foreign = tmp_path / cpp_path
+    foreign.parent.mkdir(parents=True, exist_ok=True)
+    foreign.write_text("", encoding="utf-8")
+    from codedupes.extractor import DEFAULT_EXCLUDE_PATTERNS
+
+    extractor = CodeExtractor(tmp_path, exclude_patterns=[*DEFAULT_EXCLUDE_PATTERNS, "examples"])
+    assert extractor._allow_c_headers()
+
+
+def test_header_detection_requires_included_c_source(tmp_path: Path) -> None:
+    (tmp_path / "ignored.c").write_text("", encoding="utf-8")
+    assert not CodeExtractor(tmp_path, exclude_patterns=["ignored.c"])._allow_c_headers()
+
+
+def test_excluded_alias_does_not_hide_included_target(tmp_path: Path) -> None:
+    target = tmp_path / "z_target.py"
+    target.write_text("def entry():\n    return 1\n", encoding="utf-8")
+    alias = tmp_path / "a_alias.py"
+    alias.symlink_to(target)
+    units = CodeExtractor(tmp_path, exclude_patterns=[alias.name]).extract_all()
+    assert [unit.file_path for unit in units] == [target]
+
+
+def test_direct_symlink_respects_its_excluded_name(tmp_path: Path) -> None:
+    target = tmp_path / "target.py"
+    target.write_text("def entry():\n    return 1\n", encoding="utf-8")
+    alias = tmp_path / "excluded.py"
+    alias.symlink_to(target)
+    extractor = CodeExtractor(tmp_path, exclude_patterns=[alias.name])
+    assert list(extractor.extract_from_file(alias)) == []
+
+
+@pytest.mark.parametrize("pattern", ["examples", "examples/", "examples/**", "**/examples/**"])
+def test_excluded_directories_are_not_walked(tmp_path: Path, monkeypatch, pattern: str) -> None:
+    (tmp_path / "examples" / "deep").mkdir(parents=True)
+    visited = []
+    original_walk = os.walk
+
+    def recording_walk(*args, **kwargs):
+        for entry in original_walk(*args, **kwargs):
+            visited.append(Path(entry[0]))
+            yield entry
+
+    monkeypatch.setattr(os, "walk", recording_walk)
+    CodeExtractor(tmp_path, exclude_patterns=[pattern]).extract_all()
+    assert visited == [tmp_path]
 
 
 def test_python_byte_range_matches_emitted_source_with_unicode(tmp_path: Path) -> None:
