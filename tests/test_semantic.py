@@ -19,8 +19,6 @@ from codedupes.models import CodeUnit, CodeUnitType
 from codedupes.pairs import ordered_pair_key
 from codedupes.semantic import (
     SemanticBackendError,
-    SemanticContextOverflow,
-    SemanticInputTooLongError,
     compute_embeddings,
     find_semantic_duplicates,
     find_similar_to_query,
@@ -1454,7 +1452,7 @@ def test_compute_embeddings_retries_with_reduced_batch_before_cpu(monkeypatch, t
     assert seen_batch_sizes[:3] == [8, 4, 2]
 
 
-def test_compute_embeddings_rejects_code_beyond_model_context(monkeypatch, tmp_path: Path) -> None:
+def test_compute_embeddings_passes_long_code_to_backend(monkeypatch, tmp_path: Path) -> None:
     units = extract_arithmetic_units(tmp_path)
     units[0].qualified_name = "module.long_tail"
     units[0].source = "one two three four five six seven eight changed_tail"
@@ -1474,18 +1472,13 @@ def test_compute_embeddings_rejects_code_beyond_model_context(monkeypatch, tmp_p
 
     monkeypatch.setattr(semantic, "get_model", lambda *args, **kwargs: ShortContextModel())
 
-    with pytest.raises(
-        SemanticInputTooLongError,
-        match=r"module\.long_tail.*9 tokens.*8-token context window",
-    ):
-        compute_embeddings([units[0]], use_cache=False)
+    embeddings = compute_embeddings([units[0]], use_cache=False)
 
-    assert encode_calls == []
+    assert embeddings.shape == (1, 2)
+    assert encode_calls == [[units[0].source]]
 
 
-def test_find_similar_to_query_rejects_query_beyond_model_context(
-    monkeypatch, tmp_path: Path
-) -> None:
+def test_find_similar_to_query_passes_long_query_to_backend(monkeypatch, tmp_path: Path) -> None:
     units = extract_arithmetic_units(tmp_path)
     embeddings = np.array([[1.0, 0.0], [0.0, 1.0]], dtype=np.float32)
     encode_calls: list[list[str]] = []
@@ -1504,19 +1497,17 @@ def test_find_similar_to_query_rejects_query_beyond_model_context(
 
     monkeypatch.setattr(semantic, "get_model", lambda *args, **kwargs: ShortContextModel())
 
-    with pytest.raises(
-        SemanticInputTooLongError,
-        match=r"search query.*6 tokens.*4-token context window",
-    ):
-        find_similar_to_query(
-            "find code that validates every record",
-            units,
-            embeddings,
-            threshold=0.0,
-            use_cache=False,
-        )
+    query = "find code that validates every record"
+    results = find_similar_to_query(
+        query,
+        units,
+        embeddings,
+        threshold=0.0,
+        use_cache=False,
+    )
 
-    assert encode_calls == []
+    assert len(results) == len(units)
+    assert encode_calls == [[query]]
 
 
 class _WhitespaceTokenizer:
@@ -1534,15 +1525,17 @@ class _ShortContextModel:
 
     def __init__(self) -> None:
         self.encode_calls: list[list[str]] = []
+        self.prompts: list[str | None] = []
 
-    def encode(self, texts, **_kwargs):
+    def encode(self, texts, **kwargs):
         self.encode_calls.append(list(texts))
+        self.prompts.append(kwargs.get("prompt"))
         return np.ones((len(texts), 2), dtype=np.float32)
 
 
-def test_context_guard_counts_the_prompt_the_backend_prepends(monkeypatch, tmp_path: Path) -> None:
-    # SentenceTransformers prepends the encode prompt before tokenizing with
-    # truncation, so a text that fits alone can still be silently truncated.
+def test_code_truncation_is_left_to_backend_with_prompt(monkeypatch, tmp_path: Path) -> None:
+    # Even when the prompt pushes the input over the context limit, pass both
+    # through unchanged so the backend applies its normal tokenization policy.
     units = extract_arithmetic_units(tmp_path)
     units[0].qualified_name = "module.exact_fit"
     units[0].source = "one two three four five six seven eight"
@@ -1552,18 +1545,14 @@ def test_context_guard_counts_the_prompt_the_backend_prepends(monkeypatch, tmp_p
     compute_embeddings([units[0]], use_cache=False)
     assert model.encode_calls == [["one two three four five six seven eight"]]
 
-    with pytest.raises(
-        SemanticInputTooLongError,
-        match=r"module\.exact_fit.*10 tokens.*8-token context window",
-    ):
-        compute_embeddings([units[0]], instruction_prefix="task: code ", use_cache=False)
+    embeddings = compute_embeddings([units[0]], instruction_prefix="task: code ", use_cache=False)
 
-    assert len(model.encode_calls) == 1
+    assert embeddings.shape == (1, 2)
+    assert model.encode_calls == [[units[0].source], [units[0].source]]
+    assert model.prompts == [None, "task: code "]
 
 
-def test_query_context_guard_counts_the_prompt_the_backend_prepends(
-    monkeypatch, tmp_path: Path
-) -> None:
+def test_query_truncation_is_left_to_backend_with_prompt(monkeypatch, tmp_path: Path) -> None:
     units = extract_arithmetic_units(tmp_path)
     embeddings = np.array([[1.0, 0.0], [0.0, 1.0]], dtype=np.float32)
     model = _ShortContextModel()
@@ -1572,28 +1561,25 @@ def test_query_context_guard_counts_the_prompt_the_backend_prepends(
         instruction_prefix="task: search ",
     )
 
-    with pytest.raises(
-        SemanticInputTooLongError,
-        match=r"search query.*10 tokens.*8-token context window",
-    ):
-        find_similar_to_query(
-            "find the code that validates every incoming record",
-            units,
-            embeddings,
-            instruction_prefix="task: search ",
-            threshold=0.0,
-            use_cache=False,
-            corpus_identity=corpus_identity,
-        )
+    query = "find the code that validates every incoming record"
+    results = find_similar_to_query(
+        query,
+        units,
+        embeddings,
+        instruction_prefix="task: search ",
+        threshold=0.0,
+        use_cache=False,
+        corpus_identity=corpus_identity,
+    )
 
-    assert model.encode_calls == []
+    assert len(results) == len(units)
+    assert model.encode_calls == [[query]]
+    assert model.prompts == ["task: search "]
 
 
-def test_overflow_report_skips_every_row_sharing_an_over_context_text(
-    monkeypatch, tmp_path: Path
-) -> None:
-    # Duplicate sources share one cache key, so only one representative row is
-    # context-checked; every row carrying that text must still be dropped.
+def test_long_duplicate_texts_retain_all_rows_and_reuse_cache(monkeypatch, tmp_path: Path) -> None:
+    # Duplicate sources share one encoded input and cache key while each unit
+    # keeps its own row in the returned matrix.
     long_source = "one two three four five six seven eight nine"
     units = [
         CodeUnit(
@@ -1627,36 +1613,32 @@ def test_overflow_report_skips_every_row_sharing_an_over_context_text(
     model = _ShortContextModel()
     monkeypatch.setattr(semantic, "get_model", lambda *args, **kwargs: model)
 
-    report: list[SemanticContextOverflow] = []
     embeddings, _identity = semantic.compute_embeddings_with_identity(
         units,
         cache_scope=tmp_path,
-        overflow_report=report,
     )
 
-    assert model.encode_calls == [["one two"]]
-    assert embeddings.shape == (1, 2)
-    assert [skip.unit.name for skip in report] == ["long_a", "long_b"]
-    assert {skip.token_count for skip in report} == {9}
+    assert model.encode_calls == [[long_source, "one two"]]
+    assert embeddings.shape == (3, 2)
+    warm, _ = semantic.compute_embeddings_with_identity(units, cache_scope=tmp_path)
+    np.testing.assert_array_equal(warm, embeddings)
+    assert len(model.encode_calls) == 1
 
 
-def test_overflow_report_handles_a_fully_skipped_corpus(monkeypatch, tmp_path: Path) -> None:
+def test_all_long_inputs_remain_in_corpus(monkeypatch, tmp_path: Path) -> None:
     units = extract_arithmetic_units(tmp_path)
     for index, unit in enumerate(units):
         unit.source = f"one two three four five six seven eight nine {index}"
     model = _ShortContextModel()
     monkeypatch.setattr(semantic, "get_model", lambda *args, **kwargs: model)
 
-    report: list[SemanticContextOverflow] = []
     embeddings, _identity = semantic.compute_embeddings_with_identity(
         units,
         cache_scope=tmp_path,
-        overflow_report=report,
     )
 
-    assert model.encode_calls == []
-    assert embeddings.shape == (0, 0)
-    assert len(report) == len(units)
+    assert model.encode_calls == [[unit.source for unit in units]]
+    assert embeddings.shape == (len(units), 2)
 
 
 class _RecordingModel:
