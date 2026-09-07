@@ -923,6 +923,26 @@ class CodeExtractor:
         seen: set[Path] = set()
         allow_c_header: bool | None = None
         skipped_headers: list[Path] = []
+        skipped_test_files = 0
+        skipped_test_dirs = 0
+        default_test_patterns = set(DEFAULT_EXCLUDE_PATTERNS).intersection(self.exclude_patterns)
+
+        def matches_default_tests(path: Path) -> bool:
+            """Identify active default test globs on an already excluded path.
+
+            :param path: File or directory skipped by the current walk.
+            :return: Whether active default test globs match the path.
+            """
+            if self._should_exclude(path, match_patterns=False):
+                return False
+            relative = path.relative_to(self.root).as_posix()
+            if path.is_dir():
+                relative += "/"
+            return any(
+                fnmatch.fnmatch(relative, pattern)
+                or fnmatch.fnmatch(relative, pattern.removeprefix("**/"))
+                for pattern in default_test_patterns
+            )
 
         for dirpath, dirnames, filenames in os.walk(
             self.root, followlinks=False, onerror=self._report_walk_error
@@ -930,11 +950,14 @@ class CodeExtractor:
             # Sorted in place so the walk descends deterministically: raw ``os.walk``
             # order is filesystem-dependent and would reorder the reported units.
             current_dir = Path(dirpath)
-            dirnames[:] = sorted(
-                name
-                for name in dirnames
-                if not self._should_exclude(current_dir / name, check_ancestors=False)
-            )
+            included_dirs = []
+            for name in sorted(dirnames):
+                directory = current_dir / name
+                if self._should_exclude(directory, check_ancestors=False):
+                    skipped_test_dirs += matches_default_tests(directory)
+                else:
+                    included_dirs.append(name)
+            dirnames[:] = included_dirs
 
             for filename in sorted(filenames):
                 source_file = current_dir / filename
@@ -956,6 +979,7 @@ class CodeExtractor:
 
                 # Ancestors were pruned above; symlink targets still need a full check.
                 if self._should_exclude(source_file, check_ancestors=False):
+                    skipped_test_files += matches_default_tests(source_file)
                     continue
                 if selection is None:
                     skipped_headers.append(source_file)
@@ -970,6 +994,14 @@ class CodeExtractor:
                 seen.add(resolved)
 
                 units.extend(self.extract_from_file(source_file))
+
+        if skipped_test_files or skipped_test_dirs:
+            logger.info(
+                "Skipped %d files and %d directories matching default test exclusions; "
+                "use --no-default-excludes to include them.",
+                skipped_test_files,
+                skipped_test_dirs,
+            )
 
         if skipped_headers:
             message = (

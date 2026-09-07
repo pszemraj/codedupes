@@ -294,14 +294,38 @@ def test_extract_all_skips_common_artifact_directories(tmp_path: Path) -> None:
     assert all("ignore_me" not in name for name in qualified_names)
 
 
-def test_extract_all_skips_suffix_test_files_by_default(tmp_path: Path) -> None:
+def test_extract_all_skips_suffix_test_files_by_default(tmp_path: Path, caplog) -> None:
     source = "def entry():\n    return 1\n"
     (tmp_path / "inject_test.py").write_text(source)
     (tmp_path / "inject_tests.py").write_text(source)
     (tmp_path / "keeper.py").write_text(source)
 
-    units = CodeExtractor(tmp_path, include_private=True).extract_all()
+    with caplog.at_level("INFO", logger="codedupes.extractor"):
+        units = CodeExtractor(tmp_path, include_private=True).extract_all()
     assert [unit.file_path.name for unit in units] == ["keeper.py"]
+    assert (
+        "Skipped 2 files and 0 directories matching default test exclusions; "
+        "use --no-default-excludes to include them."
+    ) in caplog.text
+
+
+@pytest.mark.parametrize("include_tests", [False, True])
+def test_default_exclusion_hint_counts_pruned_directories(tmp_path: Path, caplog, include_tests):
+    from codedupes.extractor import DEFAULT_EXCLUDE_PATTERNS
+
+    for relative in ["test_one.py", "test_helpers/deep.py", "node_modules/test_dep.py", "skip.py"]:
+        path = tmp_path / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("def entry():\n    return 1\n", encoding="utf-8")
+    patterns = ([] if include_tests else DEFAULT_EXCLUDE_PATTERNS) + ["skip.py"]
+
+    with caplog.at_level("INFO", logger="codedupes.extractor"):
+        CodeExtractor(tmp_path, exclude_patterns=patterns).extract_all()
+
+    if include_tests:
+        assert "matching default test exclusions" not in caplog.text
+    else:
+        assert "Skipped 1 files and 1 directories matching default test exclusions" in caplog.text
 
 
 def test_extract_from_file_respects_exclude_patterns(tmp_path: Path) -> None:
