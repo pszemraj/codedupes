@@ -36,7 +36,7 @@ The [parser packages](install.md#polyglot-parser-dependencies) are exact-pinned 
 
 Files whose suffix is not in this table are not analyzed. `--language` narrows automatic discovery; it cannot make an arbitrary extension parse as a supported language. Python stub files require `--include-stubs` for directory scans; explicitly selected stubs, including in-tree symlinks to them, are analyzed as given. TypeScript declaration files ending in `.d.ts`, `.d.mts`, or `.d.cts` are always skipped because they contain API declarations rather than implementation bodies.
 
-Run `codedupes info` after installation or a dependency update to confirm that every selected Tree-sitter dialect is loadable. A missing or incompatible grammar stops analysis rather than producing partial results from a different parser.
+Run `codedupes info --verbose` after installation or a dependency update to confirm that every selected Tree-sitter dialect is loadable. A missing or incompatible grammar stops analysis rather than producing partial results from a different parser.
 
 ### C headers
 
@@ -136,7 +136,7 @@ The [unused-code heuristic](analysis-defaults.md#potentially-unused-defaults) ev
 
 ## Parser readiness
 
-Run `codedupes info` to inspect each parser dialect's required and installed package versions. Readiness checks construct a parser and run an empty parse, so a wrong-platform or ABI-broken wheel is reported before analysis.
+Run `codedupes info --verbose` to inspect each parser dialect's required and installed package versions. Readiness checks construct a parser and run an empty parse, so a wrong-platform or ABI-broken wheel is reported before analysis.
 
 ## Grammar upgrade procedure
 

@@ -185,7 +185,9 @@ def _run_cli_action(
         raise click.exceptions.Exit(1) from exc
     except GrammarUnavailableError as exc:
         error_console.print(f"[red]Parser unavailable:[/red] {exc}")
-        error_console.print("Run `codedupes info` to check Tree-sitter parser package status.")
+        error_console.print(
+            "Run `codedupes info --verbose` to check Tree-sitter parser package status."
+        )
         raise click.exceptions.Exit(1) from exc
     except Exception as exc:
         error_console.print(f"[red]Error during {error_label}:[/red] {exc}")

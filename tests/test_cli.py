@@ -1672,9 +1672,10 @@ def test_cli_rejects_strict_unused_with_no_unused(tmp_path):
     assert "Cannot combine --no-unused and --strict-unused" in result.output
 
 
-def test_cli_info_exit_zero():
+@pytest.mark.parametrize("flag", ["--verbose", "-v"])
+def test_cli_info_verbose_exit_zero(flag):
     runner = CliRunner()
-    result = runner.invoke(cli.cli, ["info"])
+    result = runner.invoke(cli.cli, ["info", flag])
     assert result.exit_code == 0
     assert "codedupes" in result.output.lower()
     assert "PyTorch" in result.output
@@ -2598,7 +2599,7 @@ def test_cli_info_survives_cache_construction_failure(monkeypatch):
 
     monkeypatch.setattr(cli, "EmbeddingCache", _raise)
 
-    result = CliRunner().invoke(cli.cli, ["info"])
+    result = CliRunner().invoke(cli.cli, ["info", "--verbose"])
 
     assert result.exit_code == 0
     assert "Unavailable" in result.output
@@ -2816,7 +2817,7 @@ def test_cli_cache_clear_reports_best_effort_deletion_failures(monkeypatch):
     assert "1 deletion operation(s) failed" in result.stderr
 
 
-@pytest.mark.parametrize("command", [["info"], ["cache", "info"]])
+@pytest.mark.parametrize("command", [["info", "--verbose"], ["cache", "info"]])
 @pytest.mark.parametrize("width", [80, 100, 160])
 def test_cli_diagnostic_tables_respect_width(command, width, monkeypatch, tmp_path):
     cache_path = tmp_path / "[red]literal[/red]" / ("long-cache-path-" * 8)
@@ -2872,3 +2873,36 @@ def test_cli_cache_clear_wraps_literal_status(monkeypatch):
     assert result.stderr == ""
     assert max(map(len, result.stdout.splitlines())) <= 80
     assert model in "".join(line.strip() for line in result.stdout.splitlines())
+
+
+@pytest.mark.parametrize("width", [80, 160])
+def test_cli_info_default_is_compact(monkeypatch, width):
+    from importlib import import_module
+
+    info_module = import_module("codedupes.cli.info")
+
+    def unexpected_details(*_args, **_kwargs):
+        pytest.fail("Compact info must not collect verbose-only details")
+
+    monkeypatch.setattr(cli, "EmbeddingCache", unexpected_details)
+    monkeypatch.setattr(info_module, "get_grammar_statuses", unexpected_details)
+    monkeypatch.setattr(info_module, "list_supported_models", unexpected_details)
+    result = CliRunner().invoke(cli.cli, ["info", "--output-width", str(width)])
+
+    assert result.exit_code == 0, result.output
+    assert result.stderr == ""
+    assert "Default model" in result.stdout and cli.DEFAULT_MODEL in result.stdout
+    assert "Python" in result.stdout and "PyTorch" in result.stdout
+    assert "Device" in result.stdout and "Supported languages" in result.stdout
+    assert "--verbose" in result.stdout
+    assert len(result.stdout.splitlines()) <= 12
+    assert max(map(len, result.stdout.splitlines())) == width
+    for detail in (
+        "Default exclusions",
+        "Tree-sitter grammar packages",
+        "Embedding cache",
+        "Built-in semantic model aliases",
+        "CPU bfloat16",
+        "Default model revision",
+    ):
+        assert detail not in result.stdout

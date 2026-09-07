@@ -2,7 +2,7 @@
 
 Profiles resolve model aliases, thresholds, revisions, trust settings, and task-specific embedding behavior. See [Installation](install.md) for dependencies, the [CLI reference](cli.md) for option syntax, and [Accelerators](accelerators.md) for device and precision behavior.
 
-Most users should leave model and task settings unset. `codedupes` uses the pinned `gte-modernbert-base` profile and downloads it automatically on the first semantic run. Run `codedupes info` to see the effective profile, checkpoint, device, and installed runtime. Choose another model only when you have a reason to evaluate its results or need an already-downloaded local copy.
+Most users should leave model and task settings unset. `codedupes` uses the pinned `gte-modernbert-base` profile and downloads it automatically on the first semantic run. Run `codedupes info --verbose` to see the effective profile, checkpoint, device, and installed runtime. Choose another model only when you have a reason to evaluate its results or need an already-downloaded local copy.
 
 ## Built-in profiles
 
@@ -46,7 +46,7 @@ codedupes search ./src "parse json payload" \
 For live effective values in your environment, run:
 
 ```bash
-codedupes info
+codedupes info --verbose
 ```
 
 ## Semantic task defaults and choices

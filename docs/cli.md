@@ -143,7 +143,9 @@ CLI options are configured through command-line flags; automatic `CODEDUPES_*` o
 
 ## `codedupes info`
 
-Display installed runtime and parser versions, model aliases and effective defaults, analysis settings, device capabilities, and the embedding-cache summary in grouped Rich tables. Use `--output-width <int>` to set the render width (default `160`, minimum `80`); long values wrap within the tables, including when output is piped. See [parser readiness](polyglot-languages.md#parser-readiness) and [accelerator precision](accelerators.md#precision-and-metal-environment-variables) for interpreting those fields.
+Show a compact table with the tool version, Python and PyTorch versions, resolved device, default model, and supported languages. Add `-v` or `--verbose` for the full runtime/device diagnostics, parser package status, analysis defaults, exclusions, model profiles, and embedding-cache summary. Device diagnostic errors remain visible in the compact overview.
+
+Use `--output-width <int>` to set the render width (default `160`, minimum `80`); long values wrap within the tables, including when output is piped. See [parser readiness](polyglot-languages.md#parser-readiness) and [accelerator precision](accelerators.md#precision-and-metal-environment-variables) for interpreting the verbose fields.
 
 ## `codedupes cache info`
 

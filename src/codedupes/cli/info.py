@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import platform
 
+import rich_click as click
 from rich.console import Console
 
 import codedupes.cli as cli_module
@@ -32,7 +33,7 @@ from codedupes.semantic_profiles import (
     resolve_model_profile,
 )
 
-from ._options import output_width_option
+from ._options import Panel, output_width_option
 from ._output import DEFAULT_OUTPUT_WIDTH
 from ._render import _settings_table
 from .cache import _cache_summary_table
@@ -51,16 +52,42 @@ def _format_language_gates(profile: SemanticModelProfile) -> str:
     return f"{gates} ({fallback})" if gates else fallback
 
 
-@cli_module.cli.command("info", help="Show runtime, device, model, and analysis defaults")
+@cli_module.cli.command("info", help="Show a compact runtime, device, and model overview")
+@click.option(
+    "--verbose",
+    "-v",
+    is_flag=True,
+    panel=Panel.OUTPUT,
+    help="Include full runtime/device diagnostics, parser status, defaults, models, and cache",
+)
 @output_width_option
-def info_command(output_width: int) -> None:
-    """Display runtime diagnostics and defaults in grouped Rich tables.
+def info_command(output_width: int, verbose: bool) -> None:
+    """Display a compact overview or full diagnostics in Rich tables.
 
     :param output_width: Width used for Rich terminal rendering.
+    :param verbose: Whether to include detailed diagnostics and defaults.
     """
     console = Console(width=output_width)
-    default_profile = resolve_model_profile(DEFAULT_MODEL)
     runtime_versions = get_semantic_runtime_versions()
+    cli_module.configure_mps_environment(DEFAULT_SEMANTIC_DEVICE, fallback=None)
+    diagnostics = cli_module.get_device_diagnostics(DEFAULT_SEMANTIC_DEVICE)
+    if not verbose:
+        rows = [
+            ("Python", runtime_versions["python"]),
+            ("PyTorch", runtime_versions["torch"]),
+            ("Device", diagnostics.resolved or "unavailable"),
+            ("Default model", DEFAULT_MODEL),
+            ("Supported languages", ", ".join(SUPPORTED_LANGUAGES)),
+        ]
+        if diagnostics.error is not None:
+            rows.append(("Device diagnostic error", diagnostics.error))
+        console.print(_settings_table(f"codedupes {__version__}", rows))
+        console.print(
+            "Run codedupes info --verbose for full diagnostics and defaults.", style="dim"
+        )
+        return
+
+    default_profile = resolve_model_profile(DEFAULT_MODEL)
     console.print(
         _settings_table(
             f"codedupes {__version__}",
@@ -73,8 +100,6 @@ def info_command(output_width: int) -> None:
             ],
         )
     )
-    cli_module.configure_mps_environment(DEFAULT_SEMANTIC_DEVICE, fallback=None)
-    diagnostics = cli_module.get_device_diagnostics(DEFAULT_SEMANTIC_DEVICE)
     if cpu_bf16_opted_in():
         cpu_bf16_policy = (
             "enabled (experimental)"

@@ -69,7 +69,7 @@ Model loads pin an explicit dtype instead of inheriting the checkpoint's configu
 | Other CUDA devices and MPS | float32 |
 | CPU | float32, unless the experimental policy below is enabled |
 
-`CODEDUPES_CPU_BF16=1` enables experimental CPU bfloat16 only when the machine has both a native bf16 ISA (`bf16` on ARM, `amx_bf16`/`avx512_bf16` on x86) and an available mkldnn GEMM backend. The capability check runs at most once per process and persists nothing. `codedupes info` reports the hardware checks and effective policy.
+`CODEDUPES_CPU_BF16=1` enables experimental CPU bfloat16 only when the machine has both a native bf16 ISA (`bf16` on ARM, `amx_bf16`/`avx512_bf16` on x86) and an available mkldnn GEMM backend. The capability check runs at most once per process and persists nothing. `codedupes info --verbose` reports the hardware checks and effective policy.
 
 The CPU capability gate does not establish accuracy at the built-in duplicate and search thresholds. Automatic enablement awaits speed and decision-parity validation on supported hardware. TODO before promotion: measure agreement between CPU and CUDA bfloat16 vectors, which currently share a cache namespace, and split their identities if needed.
 
