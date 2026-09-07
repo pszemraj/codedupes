@@ -430,14 +430,16 @@ class CodeExtractor:
         """Construct an extractor for a project root.
 
         :param root: Root path to scan.
-        :param exclude_patterns: Path/name globs; ``None`` uses test defaults,
-            while an empty list disables those defaults.
+        :param exclude_patterns: Path/name globs; ``None`` uses test defaults for
+            directory discovery, while an empty list disables those defaults.
+            Directly named files bypass only the implicit test defaults.
         :param include_private: Include private names when true.
         :param include_stubs: Include ``.pyi`` files.
         :param languages: Optional canonical/alias language filter. Auto-detects
             supported source files when omitted.
         """
         self.root = root.resolve()
+        self._uses_default_exclude_patterns = exclude_patterns is None
         self.exclude_patterns = (
             DEFAULT_EXCLUDE_PATTERNS.copy() if exclude_patterns is None else exclude_patterns
         )
@@ -472,14 +474,25 @@ class CodeExtractor:
         """
         return is_default_excluded_dir(name)
 
-    def _should_exclude(self, path: Path, *, check_ancestors: bool = True) -> bool:
+    def _should_exclude(
+        self,
+        path: Path,
+        *,
+        check_ancestors: bool = True,
+        match_patterns: bool = True,
+    ) -> bool:
         """Check exclusions for a path and its resolved in-tree symlink target.
 
         :param path: Candidate path.
         :param check_ancestors: Check parents unless the walk already pruned them.
+        :param match_patterns: Apply configured path/name globs when true.
         :return: ``True`` when extraction should skip this file or directory.
         """
-        if self._matches_exclude(path, check_ancestors=check_ancestors):
+        if self._matches_exclude(
+            path,
+            check_ancestors=check_ancestors,
+            match_patterns=match_patterns,
+        ):
             return True
         if not path.is_symlink():
             return False
@@ -488,13 +501,23 @@ class CodeExtractor:
         except (OSError, RuntimeError):
             # Leave broken/looping links for the normal read-error diagnostic.
             return False
-        return resolved.is_relative_to(self.root) and self._matches_exclude(resolved)
+        return resolved.is_relative_to(self.root) and self._matches_exclude(
+            resolved,
+            match_patterns=match_patterns,
+        )
 
-    def _matches_exclude(self, path: Path, *, check_ancestors: bool = True) -> bool:
+    def _matches_exclude(
+        self,
+        path: Path,
+        *,
+        check_ancestors: bool = True,
+        match_patterns: bool = True,
+    ) -> bool:
         """Match a path's in-tree name against the configured exclusions.
 
         :param path: Candidate path under the extraction root.
         :param check_ancestors: Include parent directories in the match candidates.
+        :param match_patterns: Apply configured path/name globs when true.
         :return: Whether the name or an ancestor matches an exclusion.
         """
         rel = path.relative_to(self.root)
@@ -504,6 +527,8 @@ class CodeExtractor:
             directory_parts = (rel.name,) if path_is_directory else ()
         if any(self._is_excluded_dir_name(part) for part in directory_parts):
             return True
+        if not match_patterns:
+            return False
 
         # Match ancestors too: excluding a directory excludes its whole subtree.
         candidates = [rel]
@@ -568,7 +593,11 @@ class CodeExtractor:
         # naming are computed relative to the root, and the symlink is the
         # file's identity within the analyzed tree.
         file_path = file_path.absolute()
-        if file_path.is_relative_to(self.root) and self._should_exclude(file_path):
+        match_patterns = not self._uses_default_exclude_patterns
+        if file_path.is_relative_to(self.root) and self._should_exclude(
+            file_path,
+            match_patterns=match_patterns,
+        ):
             return
         try:
             resolved = file_path.resolve()
@@ -578,7 +607,7 @@ class CodeExtractor:
             resolved = file_path
         if resolved.is_relative_to(self.root):
             file_path = resolved
-        if self._should_exclude(file_path):
+        if self._should_exclude(file_path, match_patterns=match_patterns):
             logger.debug(f"Skipping excluded file {file_path}")
             return
 

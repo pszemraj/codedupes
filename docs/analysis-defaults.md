@@ -84,7 +84,7 @@ Bare names and basename globs match at any depth: `--exclude examples` skips bot
 
 Custom exclusions apply to direct file extraction too, relative to the file's parent for a single-file CLI target. `check` and `search` preserve an explicitly named file symlink for exclusion matching. Excluded symlink names are skipped before deduplication; aliases cannot reintroduce excluded in-tree targets. Targets outside the scan root retain the symlink's in-tree name for extraction and exclusions.
 
-Automatic C-header detection uses the same exclusions and symlink identity rules, so excluded C/C++ files do not affect whether included `.h` files are parsed as C. In-tree symlinks use the target's extension; links outside the root use the alias's extension.
+Automatic C-header detection uses the same exclusions and symlink identity rules, so excluded C/C++ files do not affect whether included `.h` files are parsed as C. Naming a header explicitly bypasses implicit test globs only for that header; sibling discovery still applies those globs. In-tree symlinks use the target's extension; links outside the root use the alias's extension.
 
 ## Potentially unused defaults
 

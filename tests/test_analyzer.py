@@ -2647,6 +2647,54 @@ def test_analyze_explicit_stub_target_ignores_include_stubs_default(tmp_path: Pa
     assert [unit.qualified_name for unit in result.units] == ["typed_mod.entry"]
 
 
+def test_explicit_stub_symlink_target_ignores_include_stubs_default(
+    tmp_path: Path, monkeypatch
+) -> None:
+    stub = tmp_path / "typed_mod.pyi"
+    stub.write_text("def entry() -> int: ...\n", encoding="utf-8")
+    alias = tmp_path / "typed_mod.py"
+    alias.symlink_to(stub)
+
+    check_result = CodeAnalyzer(AnalyzerConfig(run_semantic=False, run_unused=False)).analyze(alias)
+    assert [unit.qualified_name for unit in check_result.units] == ["typed_mod.entry"]
+
+    def fake_compute_embeddings(units, **kwargs):
+        return (
+            np.zeros((len(units), 2), dtype=np.float32),
+            _embedding_identity_from_kwargs(kwargs),
+        )
+
+    monkeypatch.setattr(analyzer_module, "compute_embeddings", fake_compute_embeddings)
+    search_analyzer = CodeAnalyzer(
+        AnalyzerConfig(
+            mode="search",
+            run_traditional=False,
+            run_unused=False,
+            min_semantic_statements=0,
+        )
+    )
+    assert search_analyzer.index(alias) == 1
+
+
+@pytest.mark.grammar
+def test_explicit_c_header_probe_honors_default_test_exclusions(tmp_path: Path) -> None:
+    (tmp_path / "main.c").write_text("int main(void) { return 0; }\n", encoding="utf-8")
+    header = tmp_path / "test_util.h"
+    header.write_text(
+        "static inline int helper(int value) { return value + 1; }\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "test_foreign.cpp").write_text(
+        "int ignored(void) { return 2; }\n",
+        encoding="utf-8",
+    )
+
+    result = CodeAnalyzer(AnalyzerConfig(run_semantic=False, run_unused=False)).analyze(header)
+
+    assert [unit.qualified_name for unit in result.units] == ["test_util.helper"]
+    assert result.extraction_diagnostics == []
+
+
 def test_explicit_test_file_bypasses_defaults_but_honors_configured_excludes(
     tmp_path: Path,
 ) -> None:

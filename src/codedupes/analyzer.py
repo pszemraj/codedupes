@@ -762,18 +762,15 @@ class CodeAnalyzer:
 
         if path.is_file():
             # An explicitly named file is a deliberate request to analyze that
-            # file. Keep supplied exclusions, but do not let the implicit test
-            # filename globs turn the request into an empty scan.
-            exclude_patterns = (
-                [] if self.config.exclude_patterns is None else self.config.exclude_patterns
-            )
+            # file. The extractor bypasses implicit test globs for this direct
+            # target while retaining them for C-header sibling discovery.
             extractor = CodeExtractor(
                 path.parent,
-                exclude_patterns=exclude_patterns,
+                exclude_patterns=self.config.exclude_patterns,
                 include_private=self.config.include_private,
-                # include_stubs gates directory walks; a .pyi named explicitly
-                # as the analysis target is analyzed as given.
-                include_stubs=self.config.include_stubs or path.suffix.lower() == ".pyi",
+                # Stub filtering only gates directory discovery. This target
+                # is explicit, including aliases resolving to in-tree .pyi files.
+                include_stubs=True,
                 languages=self.config.languages,
             )
             units = list(extractor.extract_from_file(path))
