@@ -1811,6 +1811,17 @@ def test_cli_table_locations_disambiguate_same_named_files(monkeypatch, tmp_path
 
 
 @pytest.mark.parametrize("result_level", ["unit", "file"])
+@pytest.mark.parametrize("query", ["parse [/] markup", "render [bold]text[/bold]"])
+def test_cli_search_preserves_literal_query_markup(tmp_path, result_level, query):
+    result = CliRunner().invoke(
+        cli.cli, ["search", str(tmp_path), query, "--result-level", result_level]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert repr(query) in result.stdout
+
+
+@pytest.mark.parametrize("result_level", ["unit", "file"])
 def test_cli_table_locations_preserve_bracketed_path_segments(monkeypatch, tmp_path, result_level):
     path = tmp_path / "sample.py"
     path.write_text("def entry():\n    return 1\n")

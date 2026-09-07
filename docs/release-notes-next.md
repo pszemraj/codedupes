@@ -38,7 +38,7 @@ This draft changelog is for people upgrading an existing integration. Read the m
 - Added `search --result-level file` to rank distinct files by their strongest matching code unit, with brief contributing-unit details in terminal and JSON reports. Unit-level search remains the default.
 - Split the CLI into command, option, and rendering modules. Added grouped help, `-h`, and paired boolean flags. CLI options use command-line flags without automatic environment-variable overrides. See [CLI options](cli.md).
 - Added configurable [finding exit policies](output.md#exit-codes), [embedding telemetry](output.md#embedding-telemetry), and clean JSON output under merged streams.
-- Paths retain enough context to distinguish files in different directories, including literal Rich markup characters. Empty search indexes distinguish extraction and eligibility filtering.
+- Paths retain enough context to distinguish files in different directories, including literal Rich markup characters. Search queries also preserve literal markup syntax in terminal output. Empty search indexes distinguish extraction and eligibility filtering.
 - Reused analyzers clear prior corpus state. Python callers can control [progress](python-api.md#progress-and-embedding-telemetry) and [dependency logging](python-api.md#logging).
 - Cache deletion failures now return a failing status, unavailable explicit accelerators are validated on warm and empty runs, and contradictory command options fail validation.
 - Empty `cache clear --model` scopes are rejected without deleting entries. Contextual search requires a threshold before indexing; search construction and missing model-file failures use the normal stderr error path.

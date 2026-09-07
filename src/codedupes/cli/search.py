@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import rich_click as click
+from rich.markup import escape
 
 import codedupes.cli as cli_module
 from codedupes.constants import (
@@ -172,7 +173,7 @@ def search_command(ctx: click.Context, path: Path, query: str, **params: Any) ->
                 file_results=file_results,
             )
         else:
-            _output.console.print(f"[bold cyan]Query:[/bold cyan] {query!r}")
+            _output.console.print(f"[bold cyan]Query:[/bold cyan] {escape(repr(query))}")
             if analyzer.embedding_stats is not None:
                 _output.console.print(
                     "[bold]Embeddings:[/bold]", _format_embedding_stats(analyzer.embedding_stats)
