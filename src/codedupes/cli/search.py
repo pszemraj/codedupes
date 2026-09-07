@@ -133,7 +133,7 @@ def search_command(ctx: click.Context, path: Path, query: str, **params: Any) ->
         output_width=opts.output_width,
     ):
         try:
-            config = opts.to_analysis_config()
+            config = opts.to_analysis_config(path)
         except ValueError as exc:
             raise click.UsageError(str(exc)) from exc
 
@@ -165,10 +165,10 @@ def search_command(ctx: click.Context, path: Path, query: str, **params: Any) ->
             print_search_json(
                 query,
                 results,
-                analyzer.extraction_diagnostics,
-                analyzer.semantic_diagnostics,
                 indexed_units,
                 analyzer.embedding_stats,
+                extraction_diagnostics=analyzer.extraction_diagnostics,
+                semantic_diagnostics=analyzer.semantic_diagnostics,
                 file_results=file_results,
             )
         else:

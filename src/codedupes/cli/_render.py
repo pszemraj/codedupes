@@ -54,26 +54,35 @@ def _format_embedding_stats(stats: EmbeddingRunStats) -> str:
     return f"{', '.join(parts)} ({', '.join(context)})"
 
 
-def format_location(unit: CodeUnit) -> str:
-    """Format a compact, markup-safe file:line location for table rendering.
+def format_path(path: os.PathLike[str] | str) -> str:
+    """Format a compact, markup-safe path for table rendering.
 
     Bare file names collide across directories, which renders a cross-directory
     duplicate pair as two identical cells. Prefer the shorter of the relative
     and absolute spellings so deeply nested working directories retain the
     filename within narrow tables.
 
-    :param unit: Unit to format.
-    :return: Markup-escaped ``<path>:<lineno>`` string.
+    :param path: Path to format.
+    :return: Markup-escaped path.
     """
-    absolute = str(unit.file_path)
+    absolute = os.fspath(path)
     try:
-        relative = os.path.relpath(unit.file_path)
+        relative = os.path.relpath(path)
     except ValueError:
         # Windows: no relative path exists across drives.
         location = absolute
     else:
         location = min(relative, absolute, key=len)
-    return escape(f"{location}:{unit.lineno}")
+    return escape(location)
+
+
+def format_location(unit: CodeUnit) -> str:
+    """Format a compact, markup-safe file:line location for table rendering.
+
+    :param unit: Unit to format.
+    :return: Markup-escaped ``<path>:<lineno>`` string.
+    """
+    return f"{format_path(unit.file_path)}:{unit.lineno}"
 
 
 def truncate_source(source: str, max_lines: int = 5) -> str:
@@ -432,8 +441,7 @@ def print_file_search_results(results: list[FileSearchResult]) -> None:
     table.add_column("Matching code units")
 
     for rank, result in enumerate(results, start=1):
-        # Reuse the normal compact path display, omitting the first unit's line.
-        location = format_location(result.matches[0][0]).rsplit(":", 1)[0]
+        location = format_path(result.file_path)
         evidence = [
             f"{escape(unit.qualified_name)}:{unit.lineno} ({score:.2%})"
             for unit, score in result.matches

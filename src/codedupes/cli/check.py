@@ -196,7 +196,7 @@ def check_command(ctx: click.Context, path: Path, **params: Any) -> None:
         output_width=opts.output_width,
     ):
         try:
-            config = opts.to_analysis_config()
+            config = opts.to_analysis_config(path)
         except ValueError as exc:
             raise click.UsageError(str(exc)) from exc
 

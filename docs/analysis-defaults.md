@@ -76,11 +76,11 @@ By default, these test-file globs apply:
 - `**/tests/**`
 - `**/__tests__/**`
 
-CLI `--exclude` options extend these patterns. Use `--no-default-excludes` to scan tests while retaining custom exclusions. For Python callers, `AnalyzerConfig.exclude_patterns=None` uses the defaults; a supplied list replaces them, including `[]` to disable test-file exclusions. Built-in artifact-directory exclusions always apply.
+CLI `--exclude` options extend these patterns for directory scans. Use `--no-default-excludes` to scan tests while retaining custom exclusions. For Python callers, `AnalyzerConfig.exclude_patterns=None` uses the defaults; a supplied list replaces them, including `[]` to disable test-file exclusions. An explicitly named source file bypasses the default test-file patterns, but supplied `--exclude` options and `AnalyzerConfig.exclude_patterns` still apply. Built-in artifact-directory exclusions always apply.
 
 Bare names and basename globs match at any depth: `--exclude examples` skips both `examples/demo.py` and `pkg/examples/nested/demo.py`, without matching `myexamples`. A matched directory excludes all descendants and is pruned from traversal. A trailing `/` restricts a pattern to directories. Paths containing `/` match relative to the scan root; `./examples/` restricts the match to the root-level directory, while `**/examples/**` matches at any depth, including the root. Shell-style `*`, `?`, and character classes are supported; in path patterns `*` can also span `/`. Quote glob arguments in the shell.
 
-Exclusions apply to direct file extraction too, relative to the file's parent for a single-file CLI target. `check` and `search` preserve an explicitly named file symlink for exclusion matching. Excluded symlink names are skipped before deduplication; aliases cannot reintroduce excluded in-tree targets. Targets outside the scan root retain the symlink's in-tree name for extraction and exclusions.
+Custom exclusions apply to direct file extraction too, relative to the file's parent for a single-file CLI target. `check` and `search` preserve an explicitly named file symlink for exclusion matching. Excluded symlink names are skipped before deduplication; aliases cannot reintroduce excluded in-tree targets. Targets outside the scan root retain the symlink's in-tree name for extraction and exclusions.
 
 Automatic C-header detection uses the same exclusions and symlink identity rules, so excluded C/C++ files do not affect whether included `.h` files are parsed as C. In-tree symlinks use the target's extension; links outside the root use the alias's extension.
 

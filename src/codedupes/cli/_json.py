@@ -219,11 +219,11 @@ def print_check_json(
 def search_result_to_json(
     query: str,
     results: list[tuple[CodeUnit, float]],
-    extraction_diagnostics: list[ExtractionDiagnostic],
-    semantic_diagnostics: list[ExtractionDiagnostic],
     indexed_units: int,
     embedding_stats: EmbeddingRunStats | None,
     *,
+    extraction_diagnostics: list[ExtractionDiagnostic],
+    semantic_diagnostics: list[ExtractionDiagnostic],
     file_results: list[FileSearchResult] | None = None,
 ) -> dict[str, Any]:
     """Serialize semantic search results using schema-v2 unit references.
@@ -288,11 +288,11 @@ def search_result_to_json(
 def print_search_json(
     query: str,
     results: list[tuple[CodeUnit, float]],
-    extraction_diagnostics: list[ExtractionDiagnostic],
-    semantic_diagnostics: list[ExtractionDiagnostic],
     indexed_units: int,
     embedding_stats: EmbeddingRunStats | None,
     *,
+    extraction_diagnostics: list[ExtractionDiagnostic],
+    semantic_diagnostics: list[ExtractionDiagnostic],
     file_results: list[FileSearchResult] | None = None,
 ) -> None:
     """Output search results as schema-v2 JSON.
@@ -311,10 +311,10 @@ def print_search_json(
             search_result_to_json(
                 query,
                 results,
-                extraction_diagnostics,
-                semantic_diagnostics,
                 indexed_units,
                 embedding_stats,
+                extraction_diagnostics=extraction_diagnostics,
+                semantic_diagnostics=semantic_diagnostics,
                 file_results=file_results,
             ),
             indent=2,

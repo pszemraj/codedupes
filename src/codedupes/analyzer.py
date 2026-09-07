@@ -761,9 +761,15 @@ class CodeAnalyzer:
         logger.info(f"Extracting code units from {path}")
 
         if path.is_file():
+            # An explicitly named file is a deliberate request to analyze that
+            # file. Keep supplied exclusions, but do not let the implicit test
+            # filename globs turn the request into an empty scan.
+            exclude_patterns = (
+                [] if self.config.exclude_patterns is None else self.config.exclude_patterns
+            )
             extractor = CodeExtractor(
                 path.parent,
-                exclude_patterns=self.config.exclude_patterns,
+                exclude_patterns=exclude_patterns,
                 include_private=self.config.include_private,
                 # include_stubs gates directory walks; a .pyi named explicitly
                 # as the analysis target is analyzed as given.
@@ -911,6 +917,8 @@ class CodeAnalyzer:
                     statement_cutoff=self.config.tiny_unit_statement_cutoff,
                     private_members_included=self.config.include_private,
                 )
+            logger.info("Found %d exact duplicates", len(exact_dupes))
+            logger.info("Found %d near duplicates (Jaccard)", len(near_dupes))
             traditional_duplicates = exact_dupes + near_dupes
 
         unused_excluded_units = 0

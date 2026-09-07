@@ -649,7 +649,8 @@ def test_cli_search_file_ranking_groups_before_top_k(
 @pytest.mark.parametrize("indexed_units", [0, 4])
 @pytest.mark.parametrize("as_json", [False, True])
 def test_cli_file_search_without_matches(monkeypatch, tmp_path, indexed_units, as_json):
-    _patch_search_analyzer(monkeypatch, indexed_units=indexed_units)
+    if indexed_units:
+        _patch_search_analyzer(monkeypatch, indexed_units=indexed_units)
     args = ["search", str(tmp_path), "nothing", "--result-level", "file"]
     if as_json:
         args.append("--json")
@@ -1763,8 +1764,8 @@ def test_cli_search_help_is_search_specific() -> None:
 
     assert result.exit_code == 0
     assert "also narrows traditional duplicate scope in combined mode" not in result.output
-    assert "Built-in" in result.output
-    assert "still apply." in result.output
+    assert "Default test exclusions" in result.output
+    assert "artifact exclusions always apply." in result.output
 
 
 @pytest.mark.parametrize("command", ["check", "search"])
@@ -1809,7 +1810,8 @@ def test_cli_table_locations_disambiguate_same_named_files(monkeypatch, tmp_path
     assert cli.format_location(unit_a) != cli.format_location(unit_b)
 
 
-def test_cli_table_locations_preserve_bracketed_path_segments(monkeypatch, tmp_path):
+@pytest.mark.parametrize("result_level", ["unit", "file"])
+def test_cli_table_locations_preserve_bracketed_path_segments(monkeypatch, tmp_path, result_level):
     path = tmp_path / "sample.py"
     path.write_text("def entry():\n    return 1\n")
     unit = _build_unit(tmp_path)
@@ -1822,10 +1824,13 @@ def test_cli_table_locations_preserve_bracketed_path_segments(monkeypatch, tmp_p
         search_results=[(unit, 0.99)],
     )
 
-    result = CliRunner().invoke(cli.cli, ["search", str(path), "entry"])
+    result = CliRunner().invoke(
+        cli.cli, ["search", str(path), "entry", "--result-level", result_level]
+    )
 
     assert result.exit_code == 0
-    assert os.path.join("corpus", "pages", "[id].ts") + ":1" in result.stdout
+    expected_path = os.path.join("corpus", "pages", "[id].ts")
+    assert expected_path + (":1" if result_level == "unit" else "") in result.stdout
 
 
 def test_cli_diagnostics_preserve_bracketed_fields(monkeypatch, tmp_path):
@@ -2663,8 +2668,10 @@ def test_cli_explicit_symlink_exclusions(
         count_key = "indexed_units"
 
     for options, expected_count in (
-        ([], 0),
+        ([], 1),
         (["--no-default-excludes"], 1),
+        (["--exclude", "unrelated.py"], 1),
+        (["--exclude", alias.name], 0),
         (["--no-default-excludes", "--exclude", alias.name], 0),
     ):
         result = CliRunner().invoke(cli.cli, [*args, *options])

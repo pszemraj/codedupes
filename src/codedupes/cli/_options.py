@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
+from pathlib import Path
 from typing import Any, Literal, TypeVar
 
 import rich_click as click
@@ -35,8 +36,24 @@ F = TypeVar("F", bound=Callable[..., Any])
 DEFAULT_EXCLUDE_HELP_HINT = (
     "Add a name or root-relative glob to exclude (repeat for multiple patterns). "
     "Bare names match at any depth; excluded directories include all descendants. "
-    "Built-in test and artifact exclusions still apply."
+    "Default test exclusions apply to directory scans; artifact exclusions always apply."
 )
+
+
+def _resolve_exclude_patterns(
+    exclude: tuple[str, ...], no_default_excludes: bool, path: Path
+) -> list[str] | None:
+    """Combine CLI exclusions while respecting explicitly selected files.
+
+    :param exclude: User-supplied exclusion patterns.
+    :param no_default_excludes: Whether default test patterns are disabled.
+    :param path: Selected file or directory.
+    :return: Explicit patterns, or ``None`` for the analyzer's scope-aware defaults.
+    """
+    if not no_default_excludes and not exclude:
+        return None
+    defaults = [] if no_default_excludes or path.is_file() else DEFAULT_EXCLUDE_PATTERNS.copy()
+    return defaults + list(exclude)
 
 
 class Panel(StrEnum):
@@ -309,8 +326,12 @@ class CheckOptions:
         """Return the terminal table row cap."""
         return None if self.full_table else 20
 
-    def to_analysis_config(self) -> Any:
-        """Build the analyzer config represented by this option bundle."""
+    def to_analysis_config(self, path: Path) -> Any:
+        """Build the analyzer config represented by this option bundle.
+
+        :param path: Selected file or directory.
+        :return: Analyzer configuration with scope-appropriate exclusions.
+        """
         import codedupes.cli as cli_module
 
         semantic_threshold, traditional_threshold = _resolve_check_thresholds(
@@ -326,11 +347,8 @@ class CheckOptions:
             semantic_kwargs["semantic_task"] = None
 
         return cli_module.AnalyzerConfig(
-            exclude_patterns=(
-                None
-                if not self.no_default_excludes and not self.exclude
-                else ([] if self.no_default_excludes else DEFAULT_EXCLUDE_PATTERNS.copy())
-                + list(self.exclude)
+            exclude_patterns=_resolve_exclude_patterns(
+                self.exclude, self.no_default_excludes, path
             ),
             include_private=not self.no_private,
             languages=self.languages or None,
@@ -395,17 +413,18 @@ class SearchOptions:
             **{name: params[name] for name in cls.__dataclass_fields__ if name != "semantic"},
         )
 
-    def to_analysis_config(self) -> Any:
-        """Build the analyzer config represented by this option bundle."""
+    def to_analysis_config(self, path: Path) -> Any:
+        """Build the analyzer config represented by this option bundle.
+
+        :param path: Selected file or directory.
+        :return: Analyzer configuration with scope-appropriate exclusions.
+        """
         import codedupes.cli as cli_module
 
         config = cli_module.AnalyzerConfig(
             mode="search",
-            exclude_patterns=(
-                None
-                if not self.no_default_excludes and not self.exclude
-                else ([] if self.no_default_excludes else DEFAULT_EXCLUDE_PATTERNS.copy())
-                + list(self.exclude)
+            exclude_patterns=_resolve_exclude_patterns(
+                self.exclude, self.no_default_excludes, path
             ),
             include_private=not self.no_private,
             languages=self.languages or None,

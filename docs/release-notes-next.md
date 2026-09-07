@@ -4,7 +4,7 @@ This draft changelog is for people upgrading an existing integration. Read the m
 
 ## Migration
 
-- CLI `--exclude` now extends default test exclusions and matches directory descendants. Use `--no-default-excludes` to scan tests; Python `exclude_patterns=[]` now disables test defaults. See [extraction scope](analysis-defaults.md#extraction-scope-defaults).
+- CLI `--exclude` now extends default test exclusions for directory scans and matches directory descendants. Explicit file targets bypass default test patterns but honor custom exclusions. Use `--no-default-excludes` to include tests in directory scans; Python `exclude_patterns=[]` now disables test defaults. See [extraction scope](analysis-defaults.md#extraction-scope-defaults).
 - JSON consumers must adopt [schema v2](output.md#json-schema-v2) instead of expecting full unit objects at each pair endpoint.
 - `CodeUnit.uid` now includes language and start byte. The private `_ast_hash` alias, `has_body`, and `AnalysisResult.filtered_raw_duplicates` were removed. See [result types](python-api.md#key-result-types).
 - `--min-lines` / `min_semantic_lines` became `--min-statements` / `min_semantic_statements`. The redundant `--tiny-near-jaccard-min` exception and `--hybrid-semantic-threshold` sweep flag were removed.
