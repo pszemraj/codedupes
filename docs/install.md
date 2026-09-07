@@ -4,12 +4,14 @@
 
 Use Python 3.11 or newer, with Git available for the source install:
 
+Install [PyTorch for your platform](https://pytorch.org/get-started/locally/) **before installing codedupes**, or pip may select an unwanted build. The required version range is `>=2.13.0,<3`.
+
 ```bash
 python -m pip install "codedupes @ git+https://github.com/pszemraj/codedupes.git"
 codedupes info
 ```
 
-The package requires PyTorch `>=2.13.0,<3`; installation resolves it together with the other dependencies declared in [pyproject.toml](../pyproject.toml). You do not need to clone this repository to analyze your own code.
+Other dependencies are declared in [pyproject.toml](../pyproject.toml) and installed with the package. You do not need to clone this repository to analyze your own code.
 
 A GPU is optional. Semantic analysis automatically uses available CUDA, Apple Silicon MPS, or CPU hardware; CPU inference can be slower. On Apple Silicon, use macOS 14.0+ and a PyTorch wheel built with MPS support. `codedupes info` reports installed runtime versions, parser availability, and device diagnostics, including `MPS built/available`.
 
