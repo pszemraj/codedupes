@@ -1552,6 +1552,52 @@ def test_code_truncation_is_left_to_backend_with_prompt(monkeypatch, tmp_path: P
     assert model.prompts == [None, "task: code "]
 
 
+def test_context_diagnostic_counts_prompt_and_special_tokens(monkeypatch, tmp_path: Path) -> None:
+    unit = extract_arithmetic_units(tmp_path)[0]
+    unit.source = "one two three four five six seven"
+    tokenizer_calls: list[tuple[str, bool]] = []
+
+    class Tokenizer:
+        def encode(self, text, *, add_special_tokens, truncation, verbose):
+            assert truncation is False
+            assert verbose is False
+            tokenizer_calls.append((text, add_special_tokens))
+            return text.split() + (["special"] if add_special_tokens else [])
+
+    class ShortContextModel:
+        max_seq_length = 8
+        tokenizer = Tokenizer()
+
+        def __init__(self) -> None:
+            self.encode_calls: list[list[str]] = []
+            self.prompts: list[str | None] = []
+
+        def encode(self, texts, **kwargs):
+            self.encode_calls.append(list(texts))
+            self.prompts.append(kwargs.get("prompt"))
+            return np.ones((len(texts), 2), dtype=np.float32)
+
+    model = ShortContextModel()
+    monkeypatch.setattr(semantic, "get_model", lambda *args, **kwargs: model)
+
+    diagnostics = []
+    embeddings = compute_embeddings(
+        [unit],
+        instruction_prefix="task: code ",
+        diagnostics=diagnostics,
+        use_cache=False,
+    )
+
+    assert embeddings.shape == (1, 2)
+    assert model.encode_calls == [[unit.source]]
+    assert model.prompts == ["task: code "]
+    assert tokenizer_calls == [("task: code " + unit.source, True)]
+    assert len(diagnostics) == 1
+    assert "10 tokens including the encode prompt" in diagnostics[0].message
+    assert diagnostics[0].code == "semantic-context-overflow"
+    assert diagnostics[0].severity == "warning"
+
+
 def test_query_truncation_is_left_to_backend_with_prompt(monkeypatch, tmp_path: Path) -> None:
     units = extract_arithmetic_units(tmp_path)
     embeddings = np.array([[1.0, 0.0], [0.0, 1.0]], dtype=np.float32)
@@ -1612,17 +1658,30 @@ def test_long_duplicate_texts_retain_all_rows_and_reuse_cache(monkeypatch, tmp_p
     ]
     model = _ShortContextModel()
     monkeypatch.setattr(semantic, "get_model", lambda *args, **kwargs: model)
+    diagnostics = []
 
     embeddings, _identity = semantic.compute_embeddings_with_identity(
         units,
         cache_scope=tmp_path,
+        diagnostics=diagnostics,
     )
 
     assert model.encode_calls == [[long_source, "one two"]]
     assert embeddings.shape == (3, 2)
-    warm, _ = semantic.compute_embeddings_with_identity(units, cache_scope=tmp_path)
+    assert [diagnostic.file_path for diagnostic in diagnostics] == [
+        tmp_path / "a.py",
+        tmp_path / "b.py",
+    ]
+    assert all(diagnostic.code == "semantic-context-overflow" for diagnostic in diagnostics)
+    warm_diagnostics = []
+    warm, _ = semantic.compute_embeddings_with_identity(
+        units,
+        cache_scope=tmp_path,
+        diagnostics=warm_diagnostics,
+    )
     np.testing.assert_array_equal(warm, embeddings)
     assert len(model.encode_calls) == 1
+    assert warm_diagnostics == []
 
 
 def test_all_long_inputs_remain_in_corpus(monkeypatch, tmp_path: Path) -> None:

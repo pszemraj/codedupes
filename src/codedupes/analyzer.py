@@ -620,7 +620,7 @@ class CodeAnalyzer:
     def semantic_diagnostics(self) -> list[ExtractionDiagnostic]:
         """Return diagnostics raised by the semantic stage of the last run.
 
-        :return: Diagnostics for units excluded from semantic comparison.
+        :return: Semantic warnings for retained units, including backend truncation.
         """
         return list(self._semantic_diagnostics)
 
@@ -958,6 +958,7 @@ class CodeAnalyzer:
                     "cross_language": self.config.cross_language,
                     "progress": self.config.progress,
                     "stats": embedding_stats,
+                    "diagnostics": self._semantic_diagnostics,
                 }
                 (
                     self._embeddings,
@@ -1113,6 +1114,7 @@ class CodeAnalyzer:
                 strict_revision_cache=self.config.strict_revision_cache,
                 progress=self.config.progress,
                 stats=self._embedding_stats,
+                diagnostics=self._semantic_diagnostics,
                 document_texts=document_texts,
                 search_document=self.config.search_document,
             )

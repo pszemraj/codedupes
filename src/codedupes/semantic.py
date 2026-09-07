@@ -58,7 +58,7 @@ from codedupes.embedding_cache import (
 )
 from codedupes.extractor import count_executable_statements
 from codedupes.logging_utils import quiet_unconfigured_dependency_loggers
-from codedupes.models import CodeUnit, DuplicatePair
+from codedupes.models import CodeUnit, DuplicatePair, ExtractionDiagnostic
 from codedupes.pairs import ordered_pair_key
 from codedupes.semantic_profiles import (
     SemanticModelProfile,
@@ -1176,6 +1176,86 @@ def _prepare_embedding_text(source: str) -> str:
     :return: Prepared embedding input with LF line endings and no outer blanks.
     """
     return source.replace("\r\n", "\n").replace("\r", "\n").strip()
+
+
+def _append_context_truncation_diagnostics(
+    units: Sequence[CodeUnit],
+    prepared_texts: Sequence[str],
+    miss_indices: Sequence[int],
+    model: Any,
+    prompt: str | None,
+    diagnostics: list[ExtractionDiagnostic] | None,
+) -> None:
+    """Append warnings for miss texts that the backend will truncate.
+
+    The backend still receives every complete text. Counting is only diagnostic
+    work, so cache-only runs remain model-free and do not produce new warnings.
+
+    :param units: Code units aligned with ``prepared_texts``.
+    :param prepared_texts: Complete normalized embedding inputs.
+    :param miss_indices: One representative row per text to encode.
+    :param model: Loaded embedding model exposing tokenizer metadata.
+    :param prompt: Prompt the backend prepends before tokenization, when any.
+    :param diagnostics: Optional caller-owned warning collector.
+    :return: ``None``.
+    """
+    if diagnostics is None:
+        return
+
+    max_tokens = getattr(model, "max_seq_length", None)
+    tokenizer = getattr(model, "tokenizer", None)
+    if not max_tokens or tokenizer is None:
+        return
+
+    try:
+        context_window = int(max_tokens)
+    except (TypeError, ValueError):
+        return
+    if context_window <= 0:
+        return
+
+    overflow_by_text: dict[str, int] = {}
+    for text in dict.fromkeys(prepared_texts[index] for index in miss_indices):
+        try:
+            token_count = len(
+                tokenizer.encode(
+                    f"{prompt or ''}{text}",
+                    add_special_tokens=True,
+                    truncation=False,
+                    verbose=False,
+                )
+            )
+        except Exception:
+            logger.debug(
+                "Tokenization failed while checking semantic context; "
+                "passing the complete text to the backend",
+                exc_info=True,
+            )
+            continue
+        if token_count > context_window:
+            overflow_by_text[text] = token_count
+
+    existing_diagnostics = set(diagnostics)
+    for unit, text in zip(units, prepared_texts, strict=True):
+        token_count = overflow_by_text.get(text)
+        if token_count is None:
+            continue
+        diagnostic = ExtractionDiagnostic(
+            file_path=unit.file_path,
+            language=unit.language,
+            message=(
+                f"{unit.qualified_name} is {token_count} tokens including the encode prompt, "
+                f"exceeding the selected model's {context_window}-token context window; "
+                "the embedding backend will truncate it."
+            ),
+            severity="warning",
+            code="semantic-context-overflow",
+            lineno=unit.lineno,
+            end_lineno=unit.end_lineno,
+        )
+        if diagnostic not in existing_diagnostics:
+            diagnostics.append(diagnostic)
+            existing_diagnostics.add(diagnostic)
 
 
 def _embedding_runtime_fingerprint() -> str:
@@ -2706,6 +2786,7 @@ def _compute_embeddings_unlocked(
     strict_revision_cache: bool = False,
     progress: ProgressMode = "auto",
     stats: EmbeddingRunStats | None = None,
+    diagnostics: list[ExtractionDiagnostic] | None = None,
     document_texts: Sequence[str] | None = None,
     search_document: SearchDocumentMode = "source",
 ) -> tuple[np.ndarray, EmbeddingSpaceIdentity]:
@@ -2717,7 +2798,8 @@ def _compute_embeddings_unlocked(
     Cache keys are derived from the complete prepared text so they can be
     computed without loading the model; when every unit hits the on-disk cache,
     the model is never loaded at all. On a cache miss, only the miss texts are
-    context-checked and encoded through the existing OOM-retry ladder.
+    diagnosed for context truncation and encoded through the existing OOM-retry
+    ladder.
 
     :param units: Code units to embed, preserved in input order.
     :param model_name: Model alias or identifier, defaults to ``DEFAULT_MODEL``.
@@ -2740,6 +2822,7 @@ def _compute_embeddings_unlocked(
         requested revision label, defaults to ``False``.
     :param progress: Progress-bar policy for corpus embedding inference.
     :param stats: Optional telemetry collector filled in place.
+    :param diagnostics: Optional collector for over-context unit warnings.
     :param document_texts: Optional prepared document text for each input unit.
     :param search_document: Search document mode represented by ``document_texts``.
     :return: Normalized embedding matrix and its effective vector-space identity.
@@ -2833,6 +2916,7 @@ def _compute_embeddings_unlocked(
             strict_revision_cache=strict_revision_cache,
             progress=progress,
             stats=stats,
+            diagnostics=diagnostics,
             document_texts=document_texts,
             search_document=search_document,
         )
@@ -3101,6 +3185,14 @@ def _compute_embeddings_unlocked(
     # prompt-aware truncation. Every input unit retains an embedding row.
     miss_indices = _select_cache_miss_indices(cache_keys, hits, len(units))
     miss_texts = [prepared_texts[index] for index in miss_indices]
+    _append_context_truncation_diagnostics(
+        units,
+        prepared_texts,
+        miss_indices,
+        model,
+        encode_plan.prompt,
+        diagnostics,
+    )
     cache_covered_rows = (
         sum(1 for key in cache_keys if key in hits) if cache_keys is not None else 0
     )
@@ -3228,6 +3320,7 @@ def compute_embeddings_with_identity(
     strict_revision_cache: bool = False,
     progress: ProgressMode = "auto",
     stats: EmbeddingRunStats | None = None,
+    diagnostics: list[ExtractionDiagnostic] | None = None,
     document_texts: Sequence[str] | None = None,
     search_document: SearchDocumentMode = "source",
 ) -> tuple[np.ndarray, EmbeddingSpaceIdentity]:
@@ -3254,6 +3347,7 @@ def compute_embeddings_with_identity(
         requested revision label, defaults to ``False``.
     :param progress: Progress-bar policy for corpus embedding inference.
     :param stats: Optional telemetry collector filled in place.
+    :param diagnostics: Optional collector for over-context unit warnings.
     :param document_texts: Optional prepared document text for each input unit.
     :param search_document: Search document mode represented by ``document_texts``.
     :return: Normalized embedding matrix and its effective vector-space identity.
@@ -3285,6 +3379,7 @@ def compute_embeddings_with_identity(
             strict_revision_cache=strict_revision_cache,
             progress=progress,
             stats=stats,
+            diagnostics=diagnostics,
             document_texts=document_texts,
             search_document=search_document,
         )
@@ -3306,6 +3401,7 @@ def compute_embeddings(
     strict_revision_cache: bool = False,
     progress: ProgressMode = "auto",
     stats: EmbeddingRunStats | None = None,
+    diagnostics: list[ExtractionDiagnostic] | None = None,
     document_texts: Sequence[str] | None = None,
     search_document: SearchDocumentMode = "source",
 ) -> np.ndarray:
@@ -3332,6 +3428,7 @@ def compute_embeddings(
         requested revision label, defaults to ``False``.
     :param progress: Progress-bar policy for corpus embedding inference.
     :param stats: Optional telemetry collector filled in place.
+    :param diagnostics: Optional collector for over-context unit warnings.
     :param document_texts: Optional prepared document text for each input unit.
     :param search_document: Search document mode represented by ``document_texts``.
     :return: Normalized embedding matrix row-aligned with ``units``.
@@ -3353,6 +3450,7 @@ def compute_embeddings(
         strict_revision_cache=strict_revision_cache,
         progress=progress,
         stats=stats,
+        diagnostics=diagnostics,
         document_texts=document_texts,
         search_document=search_document,
     )
@@ -4086,6 +4184,7 @@ def run_semantic_analysis_with_identity(
     language_thresholds: Mapping[str, float] | None = None,
     progress: ProgressMode = "auto",
     stats: EmbeddingRunStats | None = None,
+    diagnostics: list[ExtractionDiagnostic] | None = None,
 ) -> tuple[np.ndarray, list[DuplicatePair], EmbeddingSpaceIdentity]:
     """Run semantic duplicate detection and return the corpus identity.
 
@@ -4119,6 +4218,7 @@ def run_semantic_analysis_with_identity(
         pairwise scan; ``None`` applies ``threshold`` flat to every language.
     :param progress: Progress-bar policy for corpus embedding inference.
     :param stats: Optional telemetry collector filled in place.
+    :param diagnostics: Optional collector for over-context unit warnings.
     :return: ``(embeddings, duplicates, identity)``; ``embeddings`` is row-aligned
         with ``units``. Long inputs use the backend's normal truncation.
     """
@@ -4142,6 +4242,7 @@ def run_semantic_analysis_with_identity(
         strict_revision_cache=strict_revision_cache,
         progress=progress,
         stats=stats,
+        diagnostics=diagnostics,
     )
     if not units:
         return embeddings, [], identity
@@ -4178,6 +4279,7 @@ def run_semantic_analysis(
     language_thresholds: Mapping[str, float] | None = None,
     progress: ProgressMode = "auto",
     stats: EmbeddingRunStats | None = None,
+    diagnostics: list[ExtractionDiagnostic] | None = None,
 ) -> tuple[np.ndarray, list[DuplicatePair]]:
     """Run full semantic duplicate detection.
 
@@ -4211,6 +4313,7 @@ def run_semantic_analysis(
         pairwise scan; ``None`` applies ``threshold`` flat to every language.
     :param progress: Progress-bar policy for corpus embedding inference.
     :param stats: Optional telemetry collector filled in place.
+    :param diagnostics: Optional collector for over-context unit warnings.
     :return: ``(embeddings, duplicates)``; both are empty when ``units`` is empty.
     """
     embeddings, duplicates, _identity = run_semantic_analysis_with_identity(
@@ -4233,5 +4336,6 @@ def run_semantic_analysis(
         language_thresholds=language_thresholds,
         progress=progress,
         stats=stats,
+        diagnostics=diagnostics,
     )
     return embeddings, duplicates

@@ -29,8 +29,8 @@ class ExtractionDiagnostic:
     """A recoverable or fatal issue observed while processing one source file.
 
     Extraction reports parse problems here; later stages reuse the same shape for
-    per-unit problems they can survive, such as a definition skipped because it
-    exceeds the embedding model's context window.
+    per-unit warnings, such as backend truncation of a definition that remains
+    eligible for semantic comparison.
     """
 
     file_path: Path

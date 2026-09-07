@@ -231,7 +231,7 @@ def search_result_to_json(
     :param query: Original search query.
     :param results: Ranked unit and score pairs.
     :param extraction_diagnostics: Diagnostics from corpus extraction.
-    :param semantic_diagnostics: Units skipped by semantic indexing.
+    :param semantic_diagnostics: Warnings from semantic indexing.
     :param indexed_units: Number of indexed corpus units.
     :param embedding_stats: Optional indexing telemetry.
     :param file_results: Ranked file results, or ``None`` for unit-level output.
@@ -300,7 +300,7 @@ def print_search_json(
     :param query: Original search query.
     :param results: Ranked unit and score pairs.
     :param extraction_diagnostics: Diagnostics from corpus extraction.
-    :param semantic_diagnostics: Units skipped by semantic indexing.
+    :param semantic_diagnostics: Warnings from semantic indexing.
     :param indexed_units: Number of indexed corpus units.
     :param embedding_stats: Optional indexing telemetry.
     :param file_results: Ranked file results, or ``None`` for unit-level output.

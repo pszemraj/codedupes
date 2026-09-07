@@ -29,7 +29,7 @@ This draft changelog is for people upgrading an existing integration. Read the m
 - Added explicit CPU/CUDA/MPS selection, dtype control, allocator diagnostics, and bounded OOM recovery. See [accelerator behavior](accelerators.md).
 - Fixed task prompts being applied twice and added [model-context calibration requirements](model-profiles.md#semantic-task-defaults-and-choices).
 - Added [linear-time search indexing, per-query thresholds, and contextual documents](python-api.md#semantic-query-search).
-- Eligible long definitions and queries now use normal embedding-backend truncation rather than being excluded from semantic analysis.
+- Eligible long definitions and queries now use normal embedding-backend truncation rather than being excluded from semantic analysis. Newly encoded over-context units emit warning diagnostics without losing their embedding rows; cache hits do not repeat those warnings.
 - Local-model fingerprints, revision provenance, and runtime identities prevent mixing vectors from different model states. Corrupt cache rows become misses and repair on recomputation.
 - Semantic pair scanning now thresholds NumPy row-block products; traditional Jaccard matching uses a prefix-filtered join. Recorded 8,000-unit comparisons improved from 3.5 s to 0.08 s and 55.6 s to 0.42 s respectively, with equivalence tests for pairs, scores, and order. Rust attribute traversal also avoids repeated linear sibling scans.
 

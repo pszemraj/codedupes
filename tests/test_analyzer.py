@@ -21,6 +21,7 @@ _SEMANTIC_ANALYSIS_KWARG_NAMES = {
     "cache_scope",
     "cross_language",
     "device",
+    "diagnostics",
     "exclude_pairs",
     "instruction_prefix",
     "language_thresholds",
@@ -2355,7 +2356,12 @@ def test_over_context_units_are_embedded_with_backend_truncation(
         "long_tail" in (duplicate.unit_a.name, duplicate.unit_b.name)
         for duplicate in result.semantic_duplicates
     )
-    assert result.semantic_diagnostics == []
+    assert len(result.semantic_diagnostics) == 1
+    diagnostic = result.semantic_diagnostics[0]
+    assert diagnostic.code == "semantic-context-overflow"
+    assert diagnostic.severity == "warning"
+    assert diagnostic.lineno == result.units[-1].lineno
+    assert "truncat" in diagnostic.message
     assert any("long_tail" in text for text in model.encoded)
 
 
@@ -2389,8 +2395,10 @@ def test_over_context_units_enter_and_reuse_the_embedding_cache(
     assert first.embedding_stats.encoded_inputs == 3
     assert second.embedding_stats.cache_hit_rows == 3
     assert second.embedding_stats.encoded_inputs == 0
+    assert len(first.semantic_diagnostics) == 1
+    assert first.semantic_diagnostics[0].code == "semantic-context-overflow"
+    assert second.semantic_diagnostics == []
     for result in (first, second):
-        assert result.semantic_diagnostics == []
         assert any(
             "long_tail" in (duplicate.unit_a.name, duplicate.unit_b.name)
             for duplicate in result.semantic_duplicates
@@ -2431,7 +2439,8 @@ def test_index_keeps_over_context_units_searchable(tmp_path: Path, monkeypatch) 
     results = analyzer.search("anything", top_k=3)
 
     assert indexed == 3
-    assert analyzer.semantic_diagnostics == []
+    assert len(analyzer.semantic_diagnostics) == 1
+    assert analyzer.semantic_diagnostics[0].code == "semantic-context-overflow"
     assert results[0][0].name == "wanted"
     assert "long_tail" in [unit.name for unit, _score in results]
 

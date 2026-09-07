@@ -101,6 +101,8 @@ for unit, score in hits:
 
 Inspect `analyzer.extraction_diagnostics` for recoverable parse errors after indexing and `analyzer.semantic_diagnostics` for semantic-stage diagnostics. An empty result can mean no eligible definitions or no scores above the threshold; it does not by itself establish that every file was parsed successfully.
 
+Over-context units produce `semantic-context-overflow` warnings when newly encoded; they retain their embedding rows and remain searchable. Cache-only runs do not repeat these warnings. Low-level `compute_embeddings*` and `run_semantic_analysis*` callers can supply a list through `diagnostics=` to collect the same warnings.
+
 `search(query, top_k=10, threshold=None)` resolves its floor as `threshold`, then `config.semantic_threshold`, then the model profile's search default. Prefer the per-call value when tuning one query: `config.semantic_threshold` also replaces every calibrated per-language duplicate gate with one flat value. Per-call thresholds must be finite; `NaN` and infinity raise `ValueError`, including for empty corpora and cached queries. Zero and finite negative floors are supported.
 
 Set `search_document="contextual"` only when paths and symbol names should influence retrieval. It changes each document's input, so it requires an explicit `search(threshold=...)` or `semantic_threshold`; tune that threshold against representative queries.

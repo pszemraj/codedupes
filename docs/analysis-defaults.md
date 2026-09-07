@@ -55,6 +55,8 @@ Default semantic candidate selection:
 - each semantic input is one complete logical definition - signature, docstring, and body, starting at the definition line (`def`/`class` in Python; decorators are not included); functions are not split into arbitrary text chunks
 - eligible definitions and search queries are passed to the embedding backend unchanged. The backend applies its normal tokenization and context-window truncation, including any encode prompt.
 
+When a newly encoded unit exceeds the loaded model's context window, `semantic_diagnostics` includes a `semantic-context-overflow` warning with its token count and source location. The unit remains searchable and eligible for duplicate detection. Counts include the encode prompt and special tokens. Cache-only runs do not load a tokenizer just to repeat warnings; use `--no-cache` to recheck every selected unit. This diagnostic covers corpus units, not query length.
+
 Traditional/semantic scope rule:
 
 - traditional duplicate matching always uses the full extraction scope (functions, methods, and classes), in both combined and traditional-only modes
