@@ -1185,6 +1185,7 @@ def _append_context_truncation_diagnostics(
     model: Any,
     prompt: str | None,
     diagnostics: list[ExtractionDiagnostic] | None,
+    batch_size: int,
 ) -> None:
     """Append warnings for miss texts that the backend will truncate.
 
@@ -1197,6 +1198,7 @@ def _append_context_truncation_diagnostics(
     :param model: Loaded embedding model exposing tokenizer metadata.
     :param prompt: Prompt the backend prepends before tokenization, when any.
     :param diagnostics: Optional caller-owned warning collector.
+    :param batch_size: Maximum number of texts to tokenize together.
     :return: ``None``.
     """
     if diagnostics is None:
@@ -1215,16 +1217,27 @@ def _append_context_truncation_diagnostics(
         return
 
     miss_texts = list(dict.fromkeys(prepared_texts[index] for index in miss_indices))
+    overflow_by_text: dict[str, int] = {}
     try:
-        token_ids = tokenizer(
-            [f"{prompt or ''}{text}" for text in miss_texts],
-            add_special_tokens=True,
-            truncation=False,
-            padding=False,
-            return_attention_mask=False,
-            return_token_type_ids=False,
-            verbose=False,
-        )["input_ids"]
+        # Keep diagnostic token IDs bounded by the embedding batch size, not
+        # the corpus size, and retain only overflow counts between batches.
+        for start in range(0, len(miss_texts), batch_size):
+            batch = miss_texts[start : start + batch_size]
+            token_ids = tokenizer(
+                [f"{prompt or ''}{text}" for text in batch],
+                add_special_tokens=True,
+                truncation=False,
+                padding=False,
+                return_attention_mask=False,
+                return_token_type_ids=False,
+                verbose=False,
+            )["input_ids"]
+            overflow_by_text.update(
+                (text, len(ids))
+                for text, ids in zip(batch, token_ids, strict=True)
+                if len(ids) > context_window
+            )
+            del token_ids
     except Exception:
         logger.debug(
             "Tokenization failed while checking semantic context; "
@@ -1232,11 +1245,6 @@ def _append_context_truncation_diagnostics(
             exc_info=True,
         )
         return
-    overflow_by_text = {
-        text: len(ids)
-        for text, ids in zip(miss_texts, token_ids, strict=True)
-        if len(ids) > context_window
-    }
 
     existing_diagnostics = set(diagnostics)
     for unit, text in zip(units, prepared_texts, strict=True):
@@ -3207,7 +3215,7 @@ def _compute_embeddings_unlocked(
         """
         texts = [prepared_texts[index] for index in indices]
         _append_context_truncation_diagnostics(
-            units, prepared_texts, indices, model, encode_plan.prompt, diagnostics
+            units, prepared_texts, indices, model, encode_plan.prompt, diagnostics, batch_size
         )
         return _encode_with_retries(
             model,

@@ -5,6 +5,7 @@ import logging
 import math
 import os
 import stat
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -1556,6 +1557,7 @@ def test_context_diagnostic_counts_prompt_and_special_tokens(monkeypatch, tmp_pa
     unit, short_unit = extract_arithmetic_units(tmp_path)
     unit.source = "one two three four five six seven"
     short_unit.source = "one"
+    later_unit = replace(unit, qualified_name="later", source=unit.source + " eight")
     tokenizer_calls: list[tuple[list[str], bool]] = []
 
     class Tokenizer:
@@ -1600,22 +1602,25 @@ def test_context_diagnostic_counts_prompt_and_special_tokens(monkeypatch, tmp_pa
 
     diagnostics = []
     embeddings = compute_embeddings(
-        [unit, short_unit],
+        [unit, short_unit, later_unit],
+        batch_size=2,
         instruction_prefix="task: code ",
         diagnostics=diagnostics,
         use_cache=False,
     )
 
-    assert embeddings.shape == (2, 2)
-    assert model.encode_calls == [[unit.source, short_unit.source]]
+    assert embeddings.shape == (3, 2)
+    assert model.encode_calls == [[unit.source, short_unit.source, later_unit.source]]
     assert model.prompts == ["task: code "]
     assert tokenizer_calls == [
-        (["task: code " + unit.source, "task: code " + short_unit.source], True)
+        (["task: code " + unit.source, "task: code " + short_unit.source], True),
+        (["task: code " + later_unit.source], True),
     ]
-    assert len(diagnostics) == 1
+    assert len(diagnostics) == 2
     assert "10 tokens including the encode prompt" in diagnostics[0].message
-    assert diagnostics[0].code == "semantic-context-overflow"
-    assert diagnostics[0].severity == "warning"
+    assert "11 tokens including the encode prompt" in diagnostics[1].message
+    assert all(diagnostic.code == "semantic-context-overflow" for diagnostic in diagnostics)
+    assert all(diagnostic.severity == "warning" for diagnostic in diagnostics)
 
 
 def test_query_truncation_is_left_to_backend_with_prompt(monkeypatch, tmp_path: Path) -> None:
