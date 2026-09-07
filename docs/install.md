@@ -7,7 +7,7 @@ Use Python 3.11 or newer, with Git available for the source install:
 Install [PyTorch for your platform](https://pytorch.org/get-started/locally/) **before installing codedupes**, or pip may select an unwanted build. The required version range is `>=2.13.0,<3`.
 
 ```bash
-python -m pip install "codedupes @ git+https://github.com/pszemraj/codedupes.git"
+pip install "codedupes @ git+https://github.com/pszemraj/codedupes.git"
 codedupes info
 ```
 
@@ -48,21 +48,21 @@ To work on codedupes itself, clone the repository and install its development de
 ```bash
 git clone https://github.com/pszemraj/codedupes.git
 cd codedupes
-python -m pip install -e ".[dev]"
+pip install -e ".[dev]"
 ```
 
 Run the ordinary test suite without live accelerator or network tests, then check formatting and lint:
 
 ```bash
-python -m pytest -m "not gpu and not mps and not network"
-python -m ruff check src tests scripts
-python -m ruff format --check src tests scripts
+pytest -m "not gpu and not mps and not network"
+ruff check src tests scripts
+ruff format --check src tests scripts
 ```
 
-An unfiltered `python -m pytest` also runs the real CUDA or MPS tests when that hardware is available. Those tests load actual models and exercise memory exhaustion and recovery; they are not substitutes for the ordinary suite and may need downloaded model assets. Network smoke tests are opt-in:
+An unfiltered `pytest` also runs the real CUDA or MPS tests when that hardware is available. Those tests load actual models and exercise memory exhaustion and recovery; they are not substitutes for the ordinary suite and may need downloaded model assets. Network smoke tests are opt-in:
 
 ```bash
-CODEDUPES_SMOKE_NETWORK=1 python -m pytest tests/test_semantic_smoke.py -k network_smoke
+CODEDUPES_SMOKE_NETWORK=1 pytest tests/test_semantic_smoke.py -k network_smoke
 ```
 
 For the real accelerator suites and model/search smoke checks, see [accelerator validation](accelerators.md#hardware-validation).

@@ -26,12 +26,12 @@ without making findings fail an incremental rollout:
 codedupes check ./src --json --fail-on none > codedupes-report.json
 ```
 
-If a Bash or Zsh pipeline validates JSON, enable `pipefail` so the parser's successful
+If a Bash or Zsh pipeline validates JSON with `jq`, enable `pipefail` so the parser's successful
 exit does not hide `codedupes`' status:
 
 ```text
 set -o pipefail
-codedupes check ./src --json | python -m json.tool > /dev/null
+codedupes check ./src --json | jq empty
 ```
 
 ## JSON schema v2
