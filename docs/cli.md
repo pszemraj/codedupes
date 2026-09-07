@@ -143,15 +143,15 @@ CLI options are configured through command-line flags; automatic `CODEDUPES_*` o
 
 ## `codedupes info`
 
-Print installed runtime and parser versions, model aliases and effective defaults, analysis settings, device capabilities, and the embedding-cache summary. See [parser readiness](polyglot-languages.md#parser-readiness) and [accelerator precision](accelerators.md#precision-and-metal-environment-variables) for interpreting those fields.
+Display installed runtime and parser versions, model aliases and effective defaults, analysis settings, device capabilities, and the embedding-cache summary in grouped Rich tables. Use `--output-width <int>` to set the render width (default `160`, minimum `80`); long values wrap within the tables, including when output is piped. See [parser readiness](polyglot-languages.md#parser-readiness) and [accelerator precision](accelerators.md#precision-and-metal-environment-variables) for interpreting those fields.
 
 ## `codedupes cache info`
 
-Print the embedding-cache summary plus per-model entry counts and a per-repo breakdown including orphan rows and the last complete manifest generation.
+Display the embedding-cache summary plus per-model entry counts and a per-repo breakdown in Rich tables, including orphan rows and the last complete manifest generation. Supports the same `--output-width <int>` option as `info`, `check`, and `search`.
 
 ## `codedupes cache clear [--model <name>]`
 
-Clear all cached embeddings or only entries for one model. An empty or whitespace-only `--model` is a usage error (exit `2`) and deletes nothing; omit the option to clear all models. See [Embedding cache](caching.md).
+Clear all cached embeddings or only entries for one model. An empty or whitespace-only `--model` is a usage error (exit `2`) and deletes nothing; omit the option to clear all models. Status messages use Rich formatting and support `--output-width <int>` with the same default and minimum as the other commands. See [Embedding cache](caching.md).
 
 ## Validation and mode notes
 

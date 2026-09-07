@@ -1677,17 +1677,21 @@ def test_cli_info_exit_zero():
     result = runner.invoke(cli.cli, ["info"])
     assert result.exit_code == 0
     assert "codedupes" in result.output.lower()
-    assert "pytorch:" in result.output.lower()
-    assert "mps built/available:" in result.output.lower()
-    assert "mlx loaded in process:" in result.output.lower()
+    assert "PyTorch" in result.output
+    assert "┌" in result.output and "│" in result.output
+    assert result.stderr == ""
+    assert "mps built/available" in result.output.lower()
+    assert "mlx loaded in process" in result.output.lower()
     assert "built-in semantic model aliases" in result.output.lower()
-    assert "family=gte-modernbert search_threshold=0.5" in result.output
+    assert "Family" in result.output and "gte-modernbert" in result.output
+    assert "Search threshold" in result.output and "0.5" in result.output
     assert (
-        "semantic duplicate gates: python=0.8, c=0.82, rust=0.74, "
+        "python=0.8, c=0.82, rust=0.74, "
         "javascript=0.7, typescript=0.68 (fallback=0.82)" in result.output
     )
     default_revision = cli.resolve_model_profile(cli.DEFAULT_MODEL).default_revision
-    assert f"Default model revision: {default_revision}" in result.output
+    assert "Default model revision" in result.output
+    assert default_revision in result.output
 
 
 def test_cli_info_configures_mps_environment_before_diagnostics(monkeypatch):
@@ -2554,8 +2558,9 @@ def test_cli_cache_info_reports_empty_cache():
     result = runner.invoke(cli.cli, ["cache", "info"])
 
     assert result.exit_code == 0
-    assert "Cache path:" in result.output
-    assert "Entries: 0" in result.output
+    assert "Cache path" in result.output
+    assert "┌" in result.output and "│" in result.output
+    assert any("Entries" in line and "│ 0" in line for line in result.output.splitlines())
 
 
 def test_cli_cache_info_reports_populated_cache(tmp_path):
@@ -2568,8 +2573,10 @@ def test_cli_cache_info_reports_populated_cache(tmp_path):
     result = runner.invoke(cli.cli, ["cache", "info"])
 
     assert result.exit_code == 0
-    assert "Entries: 1" in result.output
-    assert "some/model: 1" in result.output
+    assert any("Entries" in line and "│ 1" in line for line in result.output.splitlines())
+    assert any("some/model" in line and "│ 1" in line for line in result.output.splitlines())
+    assert "Per-repo breakdown" in result.output
+    assert "1 shard(s), 1 entries" in result.output
 
 
 def test_cli_cache_info_errors_when_cache_construction_fails(monkeypatch):
@@ -2594,7 +2601,8 @@ def test_cli_info_survives_cache_construction_failure(monkeypatch):
     result = CliRunner().invoke(cli.cli, ["info"])
 
     assert result.exit_code == 0
-    assert "unavailable: no home directory" in result.output
+    assert "Unavailable" in result.output
+    assert "no home directory" in result.output
     assert "Run with --help for CLI usage" in result.output
 
 
@@ -2806,3 +2814,61 @@ def test_cli_cache_clear_reports_best_effort_deletion_failures(monkeypatch):
     assert result.stdout == ""
     assert "removed 2 cached embedding(s)" in result.stderr
     assert "1 deletion operation(s) failed" in result.stderr
+
+
+@pytest.mark.parametrize("command", [["info"], ["cache", "info"]])
+@pytest.mark.parametrize("width", [80, 100, 160])
+def test_cli_diagnostic_tables_respect_width(command, width, monkeypatch, tmp_path):
+    cache_path = tmp_path / "[red]literal[/red]" / ("long-cache-path-" * 8)
+    monkeypatch.setenv("CODEDUPES_CACHE_DIR", str(cache_path))
+    result = CliRunner().invoke(cli.cli, [*command, "--output-width", str(width)])
+
+    assert result.exit_code == 0, result.output
+    assert result.stderr == ""
+    assert "┌" in result.stdout and "│" in result.stdout
+    assert max(map(len, result.stdout.splitlines())) == width
+    # Reassemble wrapped value cells to verify paths are neither markup nor truncated.
+    values = "".join(
+        line.split("│")[-2].strip() for line in result.stdout.splitlines() if "│" in line
+    )
+    assert str(cache_path) in values
+    assert "\x1b[" not in result.stdout
+
+
+@pytest.mark.parametrize("command", [["info"], ["cache", "info"], ["cache", "clear"]])
+def test_cli_diagnostic_width_validation(command):
+    result = CliRunner().invoke(cli.cli, [*command, "--output-width", "79"])
+    assert result.exit_code == 2
+    assert "must be >= 80" in result.output
+
+
+@pytest.mark.parametrize(
+    "command",
+    [[], ["check"], ["search"], ["info"], ["cache"], ["cache", "info"], ["cache", "clear"]],
+)
+def test_cli_all_command_help_is_formatted(command):
+    result = CliRunner().invoke(cli.cli, [*command, "--help"])
+    short = CliRunner().invoke(cli.cli, [*command, "-h"])
+    assert result.exit_code == short.exit_code == 0
+    assert result.stdout == short.stdout
+    assert "Usage:" in result.stdout
+    assert "╭" in result.stdout
+    if command in (["check"], ["search"], ["info"], ["cache", "info"], ["cache", "clear"]):
+        assert "--output-width" in result.stdout
+        assert "160" in result.stdout
+
+
+def test_cli_cache_clear_wraps_literal_status(monkeypatch):
+    model = "org/[red]" + "long-model-name-" * 10
+    monkeypatch.setattr(
+        cli.EmbeddingCache,
+        "clear",
+        lambda _self, model=None: CacheClearResult(removed_entries=1, failed_deletions=0),
+    )
+    result = CliRunner().invoke(
+        cli.cli, ["cache", "clear", "--model", model, "--output-width", "80"]
+    )
+    assert result.exit_code == 0, result.output
+    assert result.stderr == ""
+    assert max(map(len, result.stdout.splitlines())) <= 80
+    assert model in "".join(line.strip() for line in result.stdout.splitlines())

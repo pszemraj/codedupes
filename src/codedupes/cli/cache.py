@@ -5,6 +5,8 @@ from __future__ import annotations
 from typing import Any
 
 import rich_click as click
+from rich.console import Console
+from rich.table import Table
 
 import codedupes.cli as cli_module
 from codedupes.semantic_profiles import (
@@ -13,41 +15,67 @@ from codedupes.semantic_profiles import (
     resolve_model_profile,
 )
 
+from ._options import output_width_option
+from ._render import _settings_table
+
 
 @cli_module.cli.group("cache", help="Inspect or clear the persistent embedding cache")
 def cache_group() -> None:
     """Group namespace for embedding-cache management subcommands."""
 
 
-def _echo_cache_summary(stats: dict[str, Any]) -> None:
-    """Print cache summary lines shared by ``info`` and ``cache info``."""
-    click.echo(f"Cache path: {stats['path']}")
-    click.echo(f"Disabled via CODEDUPES_NO_CACHE: {stats['disabled']}")
-    click.echo(f"Entries: {stats['entries']}")
-    click.echo(f"Size on disk: {stats['size_bytes']} bytes")
+def _cache_summary_table(stats: dict[str, Any]) -> Table:
+    """Build the cache summary shared by ``info`` and ``cache info``.
+
+    :param stats: Embedding cache statistics.
+    :return: Rich summary table.
+    """
+    return _settings_table(
+        "Embedding cache",
+        [
+            ("Cache path", stats["path"]),
+            ("Disabled via CODEDUPES_NO_CACHE", stats["disabled"]),
+            ("Entries", stats["entries"]),
+            ("Size on disk", f"{stats['size_bytes']} bytes"),
+        ],
+    )
 
 
 @cache_group.command("info", help="Show embedding cache location, size, and breakdown")
-def cache_info_command() -> None:
-    """Print cache path, entry counts, size, and per-model/per-repo breakdown."""
+@output_width_option
+def cache_info_command(output_width: int) -> None:
+    """Display cache summary and per-model/per-repo breakdown in Rich tables.
+
+    :param output_width: Width used for Rich terminal rendering.
+    """
+    console = Console(width=output_width)
     try:
         stats = cli_module.EmbeddingCache().stats()
     except Exception as exc:
-        click.echo(f"Cache unavailable: {exc}", err=True)
+        Console(stderr=True, width=output_width).print(
+            f"Cache unavailable: {exc}", style="red", markup=False, highlight=False
+        )
         raise click.exceptions.Exit(1) from exc
-    _echo_cache_summary(stats)
+    console.print(_cache_summary_table(stats))
     if stats["models"]:
-        click.echo("Per-model entry counts:")
-        for model_name, count in sorted(stats["models"].items()):
-            click.echo(f"  - {model_name}: {count}")
+        console.print(_settings_table("Per-model entry counts", sorted(stats["models"].items())))
     if stats["repos"]:
-        click.echo("Per-repo breakdown:")
-        for repo in stats["repos"]:
-            click.echo(
-                f"  - {repo['repo']}: {repo['shards']} shard(s), {repo['entries']} entries, "
-                f"{repo['size_bytes']} bytes, {repo['orphan_rows']} orphan rows, "
-                f"last complete generation {repo['last_complete_generation']}"
+        console.print(
+            _settings_table(
+                "Per-repo breakdown",
+                [
+                    (
+                        repo["repo"],
+                        (
+                            f"{repo['shards']} shard(s), {repo['entries']} entries, "
+                            f"{repo['size_bytes']} bytes, {repo['orphan_rows']} orphan rows, "
+                            f"last complete generation {repo['last_complete_generation']}"
+                        ),
+                    )
+                    for repo in stats["repos"]
+                ],
             )
+        )
 
 
 @cache_group.command("clear", help="Clear cached embeddings")
@@ -56,34 +84,41 @@ def cache_info_command() -> None:
     default=None,
     help="Only clear entries for this model alias or canonical HuggingFace ID",
 )
-def cache_clear_command(model: str | None) -> None:
-    """Clear cached embeddings, optionally scoped to a single model."""
+@output_width_option
+def cache_clear_command(model: str | None, output_width: int) -> None:
+    """Clear cached embeddings, optionally scoped to a single model.
+
+    :param model: Optional model alias or canonical identifier to clear.
+    :param output_width: Width used for Rich terminal rendering.
+    """
+    console = Console(width=output_width, markup=False, highlight=False, style="green")
+    error_console = Console(
+        stderr=True, width=output_width, markup=False, highlight=False, style="red"
+    )
     if model is not None and not model.strip():
         raise click.BadParameter("must not be empty", param_hint="--model")
     if model and is_explicit_local_model_path(model) and resolve_local_model_path(model) is None:
-        click.echo(
+        error_console.print(
             f"Local model directory '{model}' does not exist, so its cache identity "
             "cannot be resolved; run `codedupes cache clear` without --model to drop "
             "its entries.",
-            err=True,
         )
     canonical_model = resolve_model_profile(model).canonical_name if model else None
     try:
         clear_result = cli_module.EmbeddingCache().clear(model=canonical_model)
     except Exception as exc:
-        click.echo(f"Cache clear failed: {exc}", err=True)
+        error_console.print(f"Cache clear failed: {exc}")
         raise click.exceptions.Exit(1) from exc
     if clear_result.failed_deletions:
-        click.echo(
+        error_console.print(
             f"Cache clear incomplete: removed {clear_result.removed_entries} cached "
             f"embedding(s), but {clear_result.failed_deletions} deletion operation(s) failed.",
-            err=True,
         )
         raise click.exceptions.Exit(1)
     if model:
-        click.echo(
+        console.print(
             f"Cleared {clear_result.removed_entries} cached embedding(s) for model '{model}' "
             f"({canonical_model})."
         )
     else:
-        click.echo(f"Cleared {clear_result.removed_entries} cached embedding(s).")
+        console.print(f"Cleared {clear_result.removed_entries} cached embedding(s).")

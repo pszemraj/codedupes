@@ -71,6 +71,17 @@ class Panel(StrEnum):
 SEMANTIC_ONLY_PANELS = frozenset({Panel.SEMANTIC, Panel.DEVICE})
 
 
+output_width_option = click.option(
+    "--output-width",
+    type=int,
+    default=DEFAULT_OUTPUT_WIDTH,
+    show_default=True,
+    callback=_validate_output_width,
+    panel=Panel.OUTPUT,
+    help="Width used for rich terminal rendering",
+)
+
+
 def options_in_panels(command: click.Command, panels: frozenset[Panel]) -> list[str]:
     """Return parameter names assigned to any requested help panel.
 
@@ -605,15 +616,7 @@ def semantic_options() -> Callable[[F], F]:
             panel=Panel.OUTPUT,
             help="Verbose logging",
         ),
-        click.option(
-            "--output-width",
-            type=int,
-            default=DEFAULT_OUTPUT_WIDTH,
-            show_default=True,
-            callback=_validate_output_width,
-            panel=Panel.OUTPUT,
-            help="Width used for rich terminal rendering",
-        ),
+        output_width_option,
     ]
 
     def decorator(func: F) -> F:

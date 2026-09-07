@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import os
 from collections import Counter
+from collections.abc import Iterable
 from typing import TYPE_CHECKING, Literal, cast
 
 from rich.markup import escape
 from rich.panel import Panel
 from rich.syntax import Syntax
 from rich.table import Table
+from rich.text import Text
 
 from codedupes.models import (
     AnalysisResult,
@@ -26,6 +28,21 @@ if TYPE_CHECKING:
     from .search import FileSearchResult
 
 DEFAULT_TABLE_ROWS = 20
+
+
+def _settings_table(title: str, rows: Iterable[tuple[str, object]]) -> Table:
+    """Build a diagnostic table with literal labels and values.
+
+    :param title: Section heading.
+    :param rows: Label/value pairs to display.
+    :return: Rich table with wrapped, untruncated values.
+    """
+    table = Table(title=Text(title, style="bold cyan"), show_header=False, expand=True)
+    table.add_column(style="cyan", ratio=1)
+    table.add_column(ratio=2, overflow="fold")
+    for label, value in rows:
+        table.add_row(Text(label), Text(str(value)))
+    return table
 
 
 def _format_embedding_stats(stats: EmbeddingRunStats) -> str:
