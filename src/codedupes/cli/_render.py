@@ -244,14 +244,14 @@ def _print_source_panels(unit_a: CodeUnit, unit_b: CodeUnit) -> None:
     _output.console.print(
         Panel(
             Syntax(truncate_source(unit_a.source), _syntax_lexer(unit_a), theme="monokai"),
-            title=f"[cyan]{unit_a.qualified_name}[/cyan]",
+            title=f"[cyan]{escape(unit_a.qualified_name)}[/cyan]",
             border_style="dim",
         )
     )
     _output.console.print(
         Panel(
             Syntax(truncate_source(unit_b.source), _syntax_lexer(unit_b), theme="monokai"),
-            title=f"[cyan]{unit_b.qualified_name}[/cyan]",
+            title=f"[cyan]{escape(unit_b.qualified_name)}[/cyan]",
             border_style="dim",
         )
     )

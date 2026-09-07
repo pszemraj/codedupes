@@ -1810,6 +1810,29 @@ def test_cli_table_locations_disambiguate_same_named_files(monkeypatch, tmp_path
     assert cli.format_location(unit_a) != cli.format_location(unit_b)
 
 
+def test_cli_source_panel_titles_preserve_bracketed_module_names(tmp_path: Path) -> None:
+    source = "def duplicate(value):\n    result = value + 1\n    return result\n"
+    (tmp_path / "[bold].py").write_text(source, encoding="utf-8")
+    (tmp_path / "other.py").write_text(source, encoding="utf-8")
+
+    result = CliRunner().invoke(
+        cli.cli,
+        [
+            "check",
+            str(tmp_path),
+            "--traditional-only",
+            "--no-unused",
+            "--no-tiny-filter",
+            "--show-source",
+            "--full-table",
+        ],
+    )
+
+    assert result.exit_code == 1, result.output
+    assert "[bold].duplicate" in result.stdout
+    assert "other.duplicate" in result.stdout
+
+
 @pytest.mark.parametrize("result_level", ["unit", "file"])
 @pytest.mark.parametrize("query", ["parse [/] markup", "render [bold]text[/bold]"])
 def test_cli_search_preserves_literal_query_markup(tmp_path, result_level, query):
