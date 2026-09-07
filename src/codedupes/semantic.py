@@ -3184,33 +3184,28 @@ def _compute_embeddings_unlocked(
     # Pass complete texts to Sentence Transformers, which applies its normal
     # prompt-aware truncation. Every input unit retains an embedding row.
     miss_indices = _select_cache_miss_indices(cache_keys, hits, len(units))
-    miss_texts = [prepared_texts[index] for index in miss_indices]
-    _append_context_truncation_diagnostics(
-        units,
-        prepared_texts,
-        miss_indices,
-        model,
-        encode_plan.prompt,
-        diagnostics,
-    )
     cache_covered_rows = (
         sum(1 for key in cache_keys if key in hits) if cache_keys is not None else 0
     )
     reused_duplicate_rows = len(units) - cache_covered_rows - len(miss_indices)
 
     logger.info(
-        f"Computing embeddings for {len(miss_texts)} inputs on {execution_device} "
+        f"Computing embeddings for {len(miss_indices)} inputs on {execution_device} "
         f"({cache_covered_rows} cache-covered rows, {reused_duplicate_rows} duplicate rows reused)"
     )
 
     encode_fn = _select_encode_fn(model, encode_plan.route)
 
-    def _encode_miss_texts(texts: list[str]) -> np.ndarray:
+    def _encode_miss_texts(indices: Sequence[int]) -> np.ndarray:
         """Encode prepared miss texts through the shared OOM-retry ladder.
 
-        :param texts: Complete embedding inputs for backend tokenization and truncation.
-        :return: Normalized embedding matrix row-aligned with ``texts``.
+        :param indices: Rows to encode, including cache hits discarded during recovery.
+        :return: Normalized embedding matrix in the order of ``indices``.
         """
+        texts = [prepared_texts[index] for index in indices]
+        _append_context_truncation_diagnostics(
+            units, prepared_texts, indices, model, encode_plan.prompt, diagnostics
+        )
         return _encode_with_retries(
             model,
             encode_fn,
@@ -3225,7 +3220,7 @@ def _compute_embeddings_unlocked(
             prompt=encode_plan.prompt,
         )
 
-    miss_vectors = _encode_miss_texts(miss_texts)
+    miss_vectors = _encode_miss_texts(miss_indices)
     coherence_break_reason = _coherence_break_reason(model)
     if coherence_break_reason is not None:
         return _restart_faithfully_on_cpu(coherence_break_reason)
@@ -3247,8 +3242,7 @@ def _compute_embeddings_unlocked(
             # variable is what _encode_miss_texts passes as initial_device.
             execution_device = _get_effective_model_device(model, resolved_device)
             miss_indices = _select_cache_miss_indices(cache_keys, hits, len(units))
-            retry_texts = [prepared_texts[index] for index in miss_indices]
-            miss_vectors = _encode_miss_texts(retry_texts)
+            miss_vectors = _encode_miss_texts(miss_indices)
             coherence_break_reason = _coherence_break_reason(model)
             if coherence_break_reason is not None:
                 return _restart_faithfully_on_cpu(coherence_break_reason)

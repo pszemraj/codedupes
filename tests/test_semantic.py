@@ -2414,6 +2414,9 @@ def test_dimension_mismatch_reencode_reads_live_device(tmp_path: Path, monkeypat
     class DriftingDeviceModel:
         """Model whose reported ``.device`` flips to cpu mid-first-encode."""
 
+        max_seq_length = 3
+        tokenizer = _WhitespaceTokenizer()
+
         def __init__(self) -> None:
             self.device = "cuda"
 
@@ -2467,15 +2470,23 @@ def test_dimension_mismatch_reencode_reads_live_device(tmp_path: Path, monkeypat
         namespace=cache_namespace,
     )
 
-    compute_embeddings(
+    diagnostics = []
+    embeddings = compute_embeddings(
         units,
         model_name="gte-modernbert-base",
         revision=_FULL_REVISION,
         device="cuda",
         cache_scope=tmp_path,
+        diagnostics=diagnostics,
     )
 
     assert recorded_initial_devices == ["cuda", "cpu"]
+    assert embeddings.shape == (2, 2)
+    # Recovery re-encodes the previously cached unit as well as the initial
+    # miss. Both overflow warnings must appear exactly once.
+    assert len(diagnostics) == 2
+    assert {diagnostic.lineno for diagnostic in diagnostics} == {unit.lineno for unit in units}
+    assert all(diagnostic.code == "semantic-context-overflow" for diagnostic in diagnostics)
 
 
 def test_fingerprint_local_model_dir_follows_symlinked_subdirectories(tmp_path: Path) -> None:

@@ -217,7 +217,7 @@ Move and deletion counts need a comparable [corpus baseline](caching.md#corpus-l
 
 `check` emits `extraction_diagnostics` and `semantic_diagnostics` arrays with matching counts in `summary`. `search` emits both diagnostic arrays, without summary counts, so recoverable extraction failures remain visible even when the search index is empty. Entries use `file`, `language`, `severity`, `code`, `message`, `line`, and `end_line`. Terminal checks print counts and up to ten entries per diagnostic category; terminal searches print semantic diagnostics.
 
-`semantic-context-overflow` warns that a newly encoded unit exceeds the model's context window and will be truncated by the backend. It remains in results. These warnings are produced during corpus inference, not replayed on cache hits; see [long-input behavior](analysis-defaults.md#semantic-candidate-defaults).
+`semantic-context-overflow` warns that a newly encoded unit exceeds the model's context window and will be truncated by the backend. It remains in results. These warnings also cover units re-encoded after incompatible cached vectors are discarded. They are produced during corpus inference, not replayed on reused cache hits; see [long-input behavior](analysis-defaults.md#semantic-candidate-defaults).
 
 ## Exit codes
 
