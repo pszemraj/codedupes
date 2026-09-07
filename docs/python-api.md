@@ -1,6 +1,8 @@
 # Python API
 
-Use `analyze_directory` for a one-shot analysis or `CodeAnalyzer` when configuration and semantic search share one analyzed corpus.
+Use `analyze_directory` for a one-shot analysis or `CodeAnalyzer` when configuration and semantic search share one analyzed corpus. The defaults run traditional duplicate detection, semantic duplicate detection, and the Python unused-code heuristic. The first semantic run downloads the default `gte-modernbert-base` model if it is not already available; later runs reuse the model and the embedding cache. See [Installation](install.md) before running these examples. Replace `./src` with your source directory or file; paths are relative to the process's working directory.
+
+Use `AnalyzerConfig(run_semantic=False)` when you need a no-model traditional/unused analysis. Use `AnalyzerConfig(mode="search", ...)` when the workflow is indexing and querying code rather than reporting duplicate pairs.
 
 ## Quick start
 
@@ -11,6 +13,8 @@ result = analyze_directory(
     "./src",
     traditional_threshold=0.85,
 )
+
+print(f"Analyzed {len(result.units)} code units")
 
 for dup in result.hybrid_duplicates:
     print(
@@ -26,6 +30,8 @@ for unit in result.potentially_unused:
 ```
 
 ## Configurable analyzer
+
+Start with the defaults unless you need to narrow the scan. Semantic comparison normally considers functions and methods with at least three statements; this example also includes classes and one-statement units, and limits extraction to Rust and TypeScript.
 
 ```python
 from codedupes import AnalyzerConfig, CodeAnalyzer
@@ -70,6 +76,10 @@ print("non-Python units excluded from unused analysis:", result.unused_excluded_
 
 ## Semantic query search
 
+`CodeAnalyzer.search()` returns code-unit/score pairs. File grouping is available through the [CLI's `--result-level file`](cli.md#codedupes-search-path-query) report option.
+
+For code search, call `index()` once, then call `search()` as many times as needed on that analyzer. The default source-only index has a calibrated profile threshold, so the basic workflow needs no threshold tuning:
+
 ```python
 from codedupes import AnalyzerConfig, CodeAnalyzer
 
@@ -77,42 +87,37 @@ analyzer = CodeAnalyzer(
     AnalyzerConfig(
         mode="search",
         run_traditional=False,
-        run_semantic=True,
         run_unused=False,
-        search_document="contextual",
     )
 )
 
 analyzer.index("./src")
-hits = analyzer.search("load csv data", top_k=10, threshold=0.55)
+hits = analyzer.search("load csv data")
 
 print("extracted:", analyzer.extracted_unit_count)
 for unit, score in hits:
     print(f"{score:.3f}", unit.qualified_name)
 ```
 
-`search(query, top_k=10, threshold=None)` resolves its floor as `threshold`, else `config.semantic_threshold`, else the model profile's search default. Prefer the per-call `threshold`: it applies to that query only, while `config.semantic_threshold` also replaces every calibrated per-language duplicate gate with one flat value. Per-call thresholds must be finite; `NaN` and infinity raise `ValueError`, including for empty corpora and cached queries. Zero and finite negative floors are supported.
+Inspect `analyzer.extraction_diagnostics` for recoverable parse errors after indexing and `analyzer.semantic_diagnostics` for semantic-stage diagnostics. An empty result can mean no eligible definitions or no scores above the threshold; it does not by itself establish that every file was parsed successfully.
+
+Over-context units produce `semantic-context-overflow` warnings when newly encoded; they retain their embedding rows and remain searchable. Cache-only runs do not repeat these warnings. Low-level `compute_embeddings*` and `run_semantic_analysis*` callers can supply a list through `diagnostics=` to collect the same warnings.
+
+`search(query, top_k=10, threshold=None)` resolves its floor as `threshold`, then `config.semantic_threshold`, then the model profile's search default. Prefer the per-call value when tuning one query: `config.semantic_threshold` also replaces every calibrated per-language duplicate gate with one flat value. Per-call thresholds must be finite; `NaN` and infinity raise `ValueError`, including for empty corpora and cached queries. Zero and finite negative floors are supported.
+
+Set `search_document="contextual"` only when paths and symbol names should influence retrieval. It changes each document's input, so it requires an explicit `search(threshold=...)` or `semantic_threshold`; tune that threshold against representative queries.
 
 See [task defaults and calibration requirements](model-profiles.md#semantic-task-defaults-and-choices) before overriding `semantic_task`, the prompt, revision, or remote-code setting.
 
 `AnalyzerConfig.mode` declares which contract enforces that requirement. The default `mode="check"` rejects an uncalibrated context without `semantic_threshold` at construction, before any extraction or model load. `index()` and `search()` accept either mode. For a search-only workflow, use `mode="search"` to defer calibration validation to query time (`search()` raises if the resolved context has no calibrated search default and no explicit threshold). `analyze()` rejects `mode="search"` configs.
 
-`index()` extracts the corpus and computes (or loads from cache) its embeddings without the all-pairs duplicate scan, traditional analysis, or unused-code analysis that `analyze()` runs, so building a search corpus stays linear in corpus size. Prefer `index()` before search. `analyzer.extracted_unit_count` reports the pre-filter extraction count from the latest `index()` or `analyze()` run, which can be larger than the count returned by `index()` after semantic eligibility and context-window filtering. A search after `analyze()` reuses the analysis task and therefore requires an explicit search threshold when that task changes the model's prompt or route, as it does for EmbeddingGemma.
+`index()` extracts the corpus and computes (or loads from cache) its embeddings without the all-pairs duplicate scan, traditional analysis, or unused-code analysis that `analyze()` runs, so building a search corpus stays linear in corpus size. Prefer `index()` before search. `analyzer.extracted_unit_count` reports the pre-filter extraction count from the latest `index()` or `analyze()` run, which can be larger than the count returned by `index()` after semantic eligibility filtering. Eligible corpus units and queries are passed unchanged to the embedding backend, which applies its normal context-window truncation, including any prompt. A search after `analyze()` reuses the analysis task and therefore requires an explicit search threshold when that task changes the model's prompt or route, as it does for EmbeddingGemma.
 
-`AnalyzerConfig.search_document` is `"source"` by default, preserving the calibrated source-only score distribution. `"contextual"` prepends language, root-relative path, and qualified symbol to each search document before the code. Contextual mode makes paths and symbols available to retrieval but changes the input distribution; the source-only thresholds have not been calibrated for it. Searching a contextual index requires an explicit `search(threshold=...)` or `config.semantic_threshold`; tune that value against representative queries. This requirement follows the indexed representation even if the config is changed afterward. Its [cache behavior](caching.md#what-invalidates-what) follows the complete document input. `analyze()` always embeds bare source for duplicate detection regardless of this search-only setting.
+The contextual-threshold requirement follows the indexed representation even if the config changes afterward. Its [cache behavior](caching.md#what-invalidates-what) follows the complete document input. `analyze()` always embeds bare source for duplicate detection regardless of this search-only setting.
 
 For direct embedding/query calls, pass the identity returned by `compute_embeddings_with_identity(...)` as `find_similar_to_query(corpus_identity=...)`. It is required for contextual documents and prompt- or route-sensitive models, and preserves calibration and checkpoint checks on both cold and warm cache paths. Use `search_document="contextual"` with aligned `document_texts` when supplying contextual inputs.
 
 Direct `compute_embeddings()` and `compute_embeddings_with_identity()` calls require one `document_texts` entry per input unit when supplied. Mismatched lengths raise `ValueError` before revision resolution, cache lookup, or model loading, including for an empty corpus.
-
-Units skipped by the [context-window policy](analysis-defaults.md#semantic-candidate-defaults) are reported through `analyzer.semantic_diagnostics` and, for `analyze()`, `AnalysisResult.semantic_diagnostics`:
-
-```python
-analyzer.index("./src")
-
-for diagnostic in analyzer.semantic_diagnostics:
-    print(diagnostic.code, diagnostic.file_path, diagnostic.message)
-```
 
 Each `index()` or `analyze()` call replaces the analyzer's corpus-specific state before extraction. `search()` therefore targets only the most recent run and requires it to have semantic embeddings. A later empty or nonsemantic analysis cannot reuse an older corpus accidentally. The analyzer binds the matrix to its model, revision, and vector-affecting runtime configuration. If any of those changes before a query, `search()` requires a fresh `index()`/`analyze()`. Set `AnalyzerConfig(strict_revision_cache=True)` for [strict revision resolution](caching.md#what-invalidates-what).
 
@@ -139,7 +144,7 @@ embeddings = compute_embeddings(
 print(stats.cache_hit_rows, stats.encoded_inputs, stats.model_loaded)
 ```
 
-See [embedding telemetry](output.md#embedding-telemetry) for field definitions. Low-level `compute_embeddings*` calls require `cache_scope` for persistent reuse and do not publish corpus manifests; use `CodeAnalyzer` for move/deletion tracking. Without `overflow_report`, an over-context input raises. Supplying that collector drops its rows, so callers must remove the reported units before using the returned matrix. `CodeAnalyzer` maintains that alignment automatically.
+See [embedding telemetry](output.md#embedding-telemetry) for field definitions. Low-level `compute_embeddings*` calls require `cache_scope` for persistent reuse and do not publish corpus manifests; use `CodeAnalyzer` for move/deletion tracking.
 
 ## Apple Silicon configuration
 
@@ -172,6 +177,8 @@ clear_model_cache()
 Model loading quiets known-noisy dependency loggers (httpx request lines, transformers/sentence-transformers chatter) automatically, but only ones still inheriting the root level - any logger you configure explicitly is left alone. To pin them yourself, or to a different level:
 
 ```python
+import logging
+
 from codedupes import quiet_dependency_loggers
 
 quiet_dependency_loggers()  # or quiet_dependency_loggers(logging.ERROR)
@@ -185,7 +192,8 @@ quiet_dependency_loggers()  # or quiet_dependency_loggers(logging.ERROR)
 - `AnalysisResult.semantic_duplicates`: raw semantic duplicates (diagnostics)
 - `AnalysisResult.potentially_unused`: Python-only heuristic unused candidates
 - `AnalysisResult.extraction_diagnostics`: recoverable parser diagnostics and skipped-unit reasons
-- `AnalysisResult.semantic_diagnostics`: units the semantic stage skipped, mirroring `CodeAnalyzer.semantic_diagnostics` for that run
+- `CodeAnalyzer.extraction_diagnostics`: extraction diagnostics from the latest `index()` or `analyze()` run
+- `AnalysisResult.semantic_diagnostics`: semantic-stage diagnostics, mirroring `CodeAnalyzer.semantic_diagnostics` for that run
 - `AnalysisResult.unused_excluded_units`: non-Python units intentionally excluded from unused analysis
 - `AnalysisResult.unused_supported_languages`: languages the unused heuristic evaluates (currently always `("python",)`)
 - `AnalysisResult.all_duplicates`: hybrid duplicates in combined mode; raw duplicates in single-method mode

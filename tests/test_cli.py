@@ -6,6 +6,7 @@ import os
 import subprocess
 import sys
 import textwrap
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -432,7 +433,7 @@ def test_cli_json_replays_python_and_native_stderr_on_failure(tmp_path, command)
     assert "schema_version" not in result.stdout
 
 
-def test_cli_reports_semantic_context_diagnostics(monkeypatch, tmp_path):
+def test_cli_reports_semantic_diagnostics(monkeypatch, tmp_path):
     path = tmp_path / "sample.py"
     path.write_text("def entry():\n    return 1\n")
     unit = _build_unit(tmp_path)
@@ -447,8 +448,8 @@ def test_cli_reports_semantic_context_diagnostics(monkeypatch, tmp_path):
             ExtractionDiagnostic(
                 file_path=unit.file_path,
                 language="python",
-                code="semantic-context-overflow",
-                message="sample.entry is 4096 tokens including the encode prompt",
+                code="semantic-warning",
+                message="sample.entry has a semantic warning",
                 lineno=1,
                 end_lineno=2,
             )
@@ -459,12 +460,12 @@ def test_cli_reports_semantic_context_diagnostics(monkeypatch, tmp_path):
 
     table_result = runner.invoke(cli.cli, ["check", str(path)])
     assert "Semantic diagnostics" in table_result.output
-    assert "4096 tokens" in table_result.output
+    assert "semantic warning" in table_result.output
 
     json_result = runner.invoke(cli.cli, ["check", str(path), "--json"])
     payload = json.loads(json_result.output)
     assert payload["summary"]["semantic_diagnostics"] == 1
-    assert payload["semantic_diagnostics"][0]["code"] == "semantic-context-overflow"
+    assert payload["semantic_diagnostics"][0]["code"] == "semantic-warning"
 
 
 def test_cli_search_json_surfaces_semantic_diagnostics(monkeypatch, tmp_path):
@@ -488,8 +489,8 @@ def test_cli_search_json_surfaces_semantic_diagnostics(monkeypatch, tmp_path):
             ExtractionDiagnostic(
                 file_path=unit.file_path,
                 language="python",
-                code="semantic-context-overflow",
-                message="sample.entry is 4096 tokens including the encode prompt",
+                code="semantic-warning",
+                message="sample.entry has a semantic warning",
                 lineno=1,
                 end_lineno=2,
             )
@@ -503,7 +504,25 @@ def test_cli_search_json_surfaces_semantic_diagnostics(monkeypatch, tmp_path):
     payload = json.loads(result.output)
     result_uid = payload["results"][0]["unit"]
     assert payload["units"][result_uid]["name"] == "entry"
-    assert payload["semantic_diagnostics"][0]["code"] == "semantic-context-overflow"
+    assert payload["semantic_diagnostics"][0]["code"] == "semantic-warning"
+
+
+def test_cli_search_json_surfaces_extraction_failures(tmp_path: Path) -> None:
+    """Preserve a real parser failure in an otherwise successful search report."""
+    path = tmp_path / "broken.py"
+    path.write_text("def broken(\n", encoding="utf-8")
+
+    result = CliRunner().invoke(
+        cli.cli, ["search", str(path), "entry", "--json", "--no-cache", "--device", "cpu"]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert result.stderr == ""
+    payload = json.loads(result.stdout)
+    assert payload["summary"]["indexed_units"] == 0
+    assert payload["results"] == []
+    assert payload["extraction_diagnostics"][0]["code"] == "parse-error"
+    assert payload["extraction_diagnostics"][0]["file"] == str(path)
 
 
 def test_cli_search_indexes_without_running_full_analysis(monkeypatch, tmp_path):
@@ -513,6 +532,7 @@ def test_cli_search_indexes_without_running_full_analysis(monkeypatch, tmp_path)
     class IndexOnlyAnalyzer:
         def __init__(self, config):
             del config
+            self.extraction_diagnostics = []
             self.semantic_diagnostics = []
             self.embedding_stats = None
 
@@ -537,6 +557,129 @@ def test_cli_search_indexes_without_running_full_analysis(monkeypatch, tmp_path)
     assert payload["units"][result_uid]["name"] == "entry"
 
 
+@pytest.mark.parametrize("result_level", [None, "unit", "file"])
+@pytest.mark.parametrize("as_json", [False, True])
+def test_cli_search_file_ranking_groups_before_top_k(
+    monkeypatch, tmp_path: Path, result_level: str | None, as_json: bool
+) -> None:
+    """Return distinct files without letting one file's unit hits fill top-k."""
+    hits = [
+        (
+            replace(
+                make_code_unit(tmp_path, name=name, source=f"def {name}():\n    return 1"),
+                file_path=tmp_path / directory / "shared.py",
+                lineno=line,
+            ),
+            score,
+        )
+        for directory, name, line, score in [
+            ("first", "alpha", 10, 0.99),
+            ("first", "beta", 20, 0.98),
+            ("first", "gamma", 30, 0.97),
+            ("first", "delta", 40, 0.96),
+            ("second", "epsilon", 50, 0.95),
+            ("third", "zeta", 60, 0.90),
+        ]
+    ]
+    requested_limits = []
+
+    class RankedAnalyzer:
+        def __init__(self, config):
+            self.extraction_diagnostics = []
+            self.semantic_diagnostics = []
+            self.embedding_stats = None
+
+        def index(self, path):
+            return len(hits)
+
+        def search(self, query, top_k=10):
+            requested_limits.append(top_k)
+            return hits[:top_k]
+
+    monkeypatch.setattr(cli, "CodeAnalyzer", RankedAnalyzer)
+    args = ["search", str(tmp_path), "find helpers", "--top-k", "2"]
+    if result_level is not None:
+        args += ["--result-level", result_level]
+    if as_json:
+        args += ["--json"]
+    result = CliRunner().invoke(cli.cli, args)
+
+    assert result.exit_code == 0, result.output
+    assert requested_limits == [6 if result_level == "file" else 2]
+    if as_json:
+        payload = json.loads(result.output)
+        assert payload["summary"]["results"] == 2
+        assert payload["summary"]["indexed_units"] == 6
+        if result_level == "file":
+            assert payload["result_level"] == "file"
+            first, second = payload["results"]
+            assert first["file"] == str(tmp_path / "first" / "shared.py")
+            assert second["file"] == str(tmp_path / "second" / "shared.py")
+            assert first["score"] == 0.99
+            assert second["score"] == 0.95
+            assert first["matching_units"] == 4
+            assert second["matching_units"] == 1
+            assert [payload["units"][hit["unit"]]["name"] for hit in first["matches"]] == [
+                "alpha",
+                "beta",
+                "gamma",
+            ]
+            assert [hit["score"] for hit in first["matches"]] == [0.99, 0.98, 0.97]
+            assert len(payload["units"]) == 4
+        else:
+            assert "result_level" not in payload
+            assert [payload["units"][hit["unit"]]["name"] for hit in payload["results"]] == [
+                "alpha",
+                "beta",
+            ]
+    elif result_level == "file":
+        assert "Matching code units" in result.output
+        assert "sample.alpha:10 (99.00%)" in result.output
+        assert "sample.gamma:30 (97.00%)" in result.output
+        assert "sample.epsilon:50 (95.00%)" in result.output
+        assert "+1 more matching units" in result.output
+        assert "delta" not in result.output
+        assert "zeta" not in result.output
+    else:
+        assert "alpha" in result.output
+        assert "beta" in result.output
+        assert "gamma" not in result.output
+
+
+@pytest.mark.parametrize("indexed_units", [0, 4])
+@pytest.mark.parametrize("as_json", [False, True])
+def test_cli_file_search_without_matches(monkeypatch, tmp_path, indexed_units, as_json):
+    if indexed_units:
+        _patch_search_analyzer(monkeypatch, indexed_units=indexed_units)
+    args = ["search", str(tmp_path), "nothing", "--result-level", "file"]
+    if as_json:
+        args.append("--json")
+    result = CliRunner().invoke(cli.cli, args)
+
+    assert result.exit_code == 0, result.output
+    if as_json:
+        payload = json.loads(result.output)
+        assert payload["result_level"] == "file"
+        assert payload["results"] == []
+        assert payload["units"] == {}
+        assert payload["summary"]["results"] == 0
+        assert payload["summary"]["indexed_units"] == indexed_units
+    else:
+        assert "No matches found" in result.output
+
+
+def test_cli_search_rejects_unknown_result_level_before_indexing(monkeypatch, tmp_path):
+    def unexpected_analyzer(config):
+        raise AssertionError("Invalid result levels must fail before indexing")
+
+    monkeypatch.setattr(cli, "CodeAnalyzer", unexpected_analyzer)
+    result = CliRunner().invoke(
+        cli.cli, ["search", str(tmp_path), "entry", "--result-level", "directory"]
+    )
+    assert result.exit_code == 2
+    assert "Invalid value" in result.output
+
+
 def _patch_search_analyzer(
     monkeypatch,
     *,
@@ -552,6 +695,7 @@ def _patch_search_analyzer(
         def __init__(self, config):
             del config
             self.extracted_unit_count = extracted_unit_count
+            self.extraction_diagnostics = []
             self.semantic_diagnostics = list(semantic_diagnostics or [])
             self.embedding_stats = None
 
@@ -596,14 +740,16 @@ def test_cli_search_empty_extraction_warning_does_not_blame_candidate_filters(
     assert "--semantic-unit-type" not in result.stderr
 
 
-def test_cli_search_empty_index_reports_semantic_context_diagnostics(monkeypatch, tmp_path):
+def test_cli_search_empty_index_uses_eligibility_reason_with_semantic_diagnostics(
+    monkeypatch, tmp_path
+):
     path = tmp_path / "sample.py"
     path.write_text("def entry():\n    return 1\n")
     diagnostic = ExtractionDiagnostic(
         file_path=path,
         language="python",
-        code="semantic-context-overflow",
-        message="sample.entry exceeds the model context window",
+        code="semantic-warning",
+        message="sample.entry has a semantic warning",
         lineno=1,
         end_lineno=2,
     )
@@ -620,9 +766,9 @@ def test_cli_search_empty_index_reports_semantic_context_diagnostics(monkeypatch
     result = CliRunner().invoke(cli.cli, ["search", str(path), "entry", "--output-width", "400"])
 
     assert result.exit_code == 0
-    assert "no semantic candidates survived indexing" in result.stderr
+    assert "semantic eligibility filtering removed all" in result.stderr
     assert "Semantic diagnostics" in result.stdout
-    assert "exceeds the model context window" in result.stdout
+    assert "semantic warning" in result.stdout
 
 
 def test_cli_search_does_not_warn_when_the_index_has_units(monkeypatch, tmp_path):
@@ -666,6 +812,45 @@ def test_cli_search_reports_path_deleted_after_validation(monkeypatch, tmp_path)
     assert result.exit_code == 1
     assert not isinstance(result.exception, FileNotFoundError)
     assert "Error: Path does not exist" in result.stderr
+
+
+@pytest.mark.parametrize("phase", ["construction", "query"])
+@pytest.mark.parametrize("as_json", [False, True])
+def test_cli_search_reports_runtime_failures(monkeypatch, tmp_path, phase, as_json):
+    def fail(*args, **kwargs):
+        raise FileNotFoundError("model asset disappeared")
+
+    if phase == "construction":
+        monkeypatch.setattr(cli, "CodeAnalyzer", fail)
+    else:
+        patch_cli_analyzer(
+            monkeypatch, cli, analyze_result=_build_result(tmp_path), search_results=fail
+        )
+    args = ["search", str(tmp_path), "entry"] + (["--json"] if as_json else [])
+    result = CliRunner().invoke(cli.cli, args)
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert "model asset disappeared" in result.stderr
+    assert "Traceback" not in result.stderr
+    assert not isinstance(result.exception, FileNotFoundError)
+
+
+@pytest.mark.parametrize("command", ["check", "search"])
+@pytest.mark.parametrize("value", ["nan", "inf", "-inf", "-0.1", "1.1"])
+def test_cli_rejects_invalid_active_threshold_before_analysis(
+    monkeypatch, tmp_path, command, value
+):
+    def unexpected(*args, **kwargs):
+        pytest.fail("Invalid threshold reached analysis")
+
+    monkeypatch.setattr(cli, "CodeAnalyzer", unexpected)
+    args = [command, str(tmp_path)] + (["entry"] if command == "search" else [])
+    result = CliRunner().invoke(cli.cli, [*args, "--threshold", value, "--json"])
+
+    assert result.exit_code == 2
+    assert result.stdout == ""
+    assert "[0.0, 1.0]" in result.stderr
 
 
 def test_cli_json_show_all_includes_raw_sections(monkeypatch, tmp_path):
@@ -836,7 +1021,15 @@ def test_cli_search_builds_search_mode_config(monkeypatch, tmp_path):
     runner = CliRunner()
     result = runner.invoke(
         cli.cli,
-        ["search", str(path), "find entry", "--instruction-prefix", "custom: "],
+        [
+            "search",
+            str(path),
+            "find entry",
+            "--instruction-prefix",
+            "custom: ",
+            "--threshold",
+            "0.0",
+        ],
     )
 
     assert result.exit_code == 0
@@ -1080,6 +1273,42 @@ def test_cli_search_defaults_to_code_retrieval_task(monkeypatch, tmp_path):
     assert captured[0].search_document == "source"
 
 
+@pytest.mark.parametrize(
+    "options, reason",
+    [
+        (["--instruction-prefix", "custom"], "instruction prefix"),
+        (["--model-revision", "other"], "model revision"),
+        (["--trust-remote-code"], "trust_remote_code"),
+        (["--model", "embeddinggemma", "--semantic-task", "classification"], "semantic task"),
+    ],
+)
+def test_cli_search_rejects_uncalibrated_context_before_indexing(
+    monkeypatch, tmp_path: Path, options: list[str], reason: str
+) -> None:
+    """Reject known-invalid options before analyzer construction or corpus work."""
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n", encoding="utf-8")
+    captured = []
+    patch_cli_analyzer(
+        monkeypatch,
+        cli,
+        analyze_result=lambda: _build_result(tmp_path),
+        captured_configs=captured,
+    )
+    args = ["search", str(path), "entry", *options]
+    runner = CliRunner()
+    result = runner.invoke(cli.cli, args)
+    assert result.exit_code == 2, result.output
+    assert reason in " ".join(result.output.replace("│", "").split())
+    assert "explicit threshold" in result.output
+    assert captured == []
+
+    for option in ("--threshold", "--semantic-threshold"):
+        result = runner.invoke(cli.cli, [*args, option, "0.0"])
+        assert result.exit_code == 0, result.output
+    assert len(captured) == 2
+
+
 def test_cli_contextual_search_requires_explicit_threshold(monkeypatch, tmp_path):
     path = tmp_path / "sample.py"
     path.write_text("def entry():\n    return 1\n")
@@ -1100,12 +1329,11 @@ def test_cli_contextual_search_requires_explicit_threshold(monkeypatch, tmp_path
     runner = CliRunner()
     missing = runner.invoke(cli.cli, args)
 
-    assert missing.exit_code == 1
+    assert missing.exit_code == 2
     assert "contextual" in missing.output
     assert "explicit threshold" in missing.output
     assert "--semantic-threshold" in missing.output
-    assert len(model.encode_calls) == 1
-    assert model.encode_calls[0][0].startswith("language: python\n")
+    assert model.encode_calls == []
 
     for option in ("--semantic-threshold", "--threshold"):
         result = runner.invoke(cli.cli, [*args, option, "0.0"])
@@ -1117,8 +1345,9 @@ def test_cli_contextual_search_requires_explicit_threshold(monkeypatch, tmp_path
 
 
 @pytest.mark.parametrize("command_tail", [[], ["entry"]], ids=["check", "search"])
-def test_cli_shared_options_use_unqualified_environment_variables(
-    monkeypatch, tmp_path, command_tail
+@pytest.mark.parametrize("explicit_options", [False, True])
+def test_cli_options_ignore_automatic_environment_variables(
+    monkeypatch, tmp_path, command_tail, explicit_options
 ) -> None:
     path = tmp_path / "sample.py"
     path.write_text("def entry():\n    return 1\n")
@@ -1136,15 +1365,33 @@ def test_cli_shared_options_use_unqualified_environment_variables(
             "CODEDUPES_DEVICE": "cpu",
             "CODEDUPES_MODEL": "test-model",
             "CODEDUPES_NO_CACHE": "1",
+            "CODEDUPES_LANGUAGES": "invalid-language",
+            "CODEDUPES_THRESHOLD": "not-a-number",
+            "CODEDUPES_NO_PRIVATE": "1",
+            "CODEDUPES_EXCLUDE": "*.py",
+            f"CODEDUPES_{command.upper()}_DEVICE": "cpu",
+            f"CODEDUPES_{command.upper()}_MODEL": "test-model",
+            f"CODEDUPES_{command.upper()}_THRESHOLD": "not-a-number",
         }
     )
 
-    result = runner.invoke(cli.cli, [command, str(path), *command_tail])
+    args = [command, str(path), *command_tail]
+    if explicit_options:
+        args.extend(["--device", "cpu", "--model", "explicit-model", "--no-cache"])
+    result = runner.invoke(cli.cli, args)
 
-    assert result.exit_code in {0, 1}
-    assert captured[0].device == "cpu"
-    assert captured[0].model_name == "test-model"
-    assert captured[0].embedding_cache is False
+    assert result.exit_code == (0 if command_tail else 1), result.output
+    assert captured[0].device == ("cpu" if explicit_options else cli.DEFAULT_SEMANTIC_DEVICE)
+    assert captured[0].model_name == ("explicit-model" if explicit_options else cli.DEFAULT_MODEL)
+    # The cache library's explicit process control is independent of CLI parsing.
+    assert captured[0].embedding_cache is (not explicit_options)
+    assert captured[0].languages is None
+    assert captured[0].include_private is True
+    assert captured[0].exclude_patterns is None
+
+    help_result = runner.invoke(cli.cli, [command, "--help"])
+    assert help_result.exit_code == 0
+    assert "CODEDUPES_" not in help_result.output
 
 
 def test_cli_search_semantic_unit_type_pass_through(monkeypatch, tmp_path):
@@ -1425,22 +1672,27 @@ def test_cli_rejects_strict_unused_with_no_unused(tmp_path):
     assert "Cannot combine --no-unused and --strict-unused" in result.output
 
 
-def test_cli_info_exit_zero():
+@pytest.mark.parametrize("flag", ["--verbose", "-v"])
+def test_cli_info_verbose_exit_zero(flag):
     runner = CliRunner()
-    result = runner.invoke(cli.cli, ["info"])
+    result = runner.invoke(cli.cli, ["info", flag])
     assert result.exit_code == 0
     assert "codedupes" in result.output.lower()
-    assert "pytorch:" in result.output.lower()
-    assert "mps built/available:" in result.output.lower()
-    assert "mlx loaded in process:" in result.output.lower()
+    assert "PyTorch" in result.output
+    assert "╭" in result.output and "│" in result.output
+    assert result.stderr == ""
+    assert "mps built/available" in result.output.lower()
+    assert "mlx loaded in process" in result.output.lower()
     assert "built-in semantic model aliases" in result.output.lower()
-    assert "family=gte-modernbert search_threshold=0.5" in result.output
+    assert "Family" in result.output and "gte-modernbert" in result.output
+    assert "Search threshold" in result.output and "0.5" in result.output
     assert (
-        "semantic duplicate gates: python=0.8, c=0.82, rust=0.74, "
+        "python=0.8, c=0.82, rust=0.74, "
         "javascript=0.7, typescript=0.68 (fallback=0.82)" in result.output
     )
     default_revision = cli.resolve_model_profile(cli.DEFAULT_MODEL).default_revision
-    assert f"Default model revision: {default_revision}" in result.output
+    assert "Default model revision" in result.output
+    assert default_revision in result.output
 
 
 def test_cli_info_configures_mps_environment_before_diagnostics(monkeypatch):
@@ -1517,8 +1769,8 @@ def test_cli_search_help_is_search_specific() -> None:
 
     assert result.exit_code == 0
     assert "also narrows traditional duplicate scope in combined mode" not in result.output
-    assert "Built-in" in result.output
-    assert "always apply." in result.output
+    assert "Default test exclusions" in result.output
+    assert "scan root are always excluded." in result.output
 
 
 @pytest.mark.parametrize("command", ["check", "search"])
@@ -1563,7 +1815,42 @@ def test_cli_table_locations_disambiguate_same_named_files(monkeypatch, tmp_path
     assert cli.format_location(unit_a) != cli.format_location(unit_b)
 
 
-def test_cli_table_locations_preserve_bracketed_path_segments(monkeypatch, tmp_path):
+def test_cli_source_panel_titles_preserve_bracketed_module_names(tmp_path: Path) -> None:
+    source = "def duplicate(value):\n    result = value + 1\n    return result\n"
+    (tmp_path / "[bold].py").write_text(source, encoding="utf-8")
+    (tmp_path / "other.py").write_text(source, encoding="utf-8")
+
+    result = CliRunner().invoke(
+        cli.cli,
+        [
+            "check",
+            str(tmp_path),
+            "--traditional-only",
+            "--no-unused",
+            "--no-tiny-filter",
+            "--show-source",
+            "--full-table",
+        ],
+    )
+
+    assert result.exit_code == 1, result.output
+    assert "[bold].duplicate" in result.stdout
+    assert "other.duplicate" in result.stdout
+
+
+@pytest.mark.parametrize("result_level", ["unit", "file"])
+@pytest.mark.parametrize("query", ["parse [/] markup", "render [bold]text[/bold]"])
+def test_cli_search_preserves_literal_query_markup(tmp_path, result_level, query):
+    result = CliRunner().invoke(
+        cli.cli, ["search", str(tmp_path), query, "--result-level", result_level]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert repr(query) in result.stdout
+
+
+@pytest.mark.parametrize("result_level", ["unit", "file"])
+def test_cli_table_locations_preserve_bracketed_path_segments(monkeypatch, tmp_path, result_level):
     path = tmp_path / "sample.py"
     path.write_text("def entry():\n    return 1\n")
     unit = _build_unit(tmp_path)
@@ -1576,10 +1863,13 @@ def test_cli_table_locations_preserve_bracketed_path_segments(monkeypatch, tmp_p
         search_results=[(unit, 0.99)],
     )
 
-    result = CliRunner().invoke(cli.cli, ["search", str(path), "entry"])
+    result = CliRunner().invoke(
+        cli.cli, ["search", str(path), "entry", "--result-level", result_level]
+    )
 
     assert result.exit_code == 0
-    assert os.path.join("corpus", "pages", "[id].ts") + ":1" in result.stdout
+    expected_path = os.path.join("corpus", "pages", "[id].ts")
+    assert expected_path + (":1" if result_level == "unit" else "") in result.stdout
 
 
 def test_cli_diagnostics_preserve_bracketed_fields(monkeypatch, tmp_path):
@@ -2269,8 +2559,9 @@ def test_cli_cache_info_reports_empty_cache():
     result = runner.invoke(cli.cli, ["cache", "info"])
 
     assert result.exit_code == 0
-    assert "Cache path:" in result.output
-    assert "Entries: 0" in result.output
+    assert "Cache path" in result.output
+    assert "╭" in result.output and "│" in result.output
+    assert any("Entries 0" in " ".join(line.split()) for line in result.output.splitlines())
 
 
 def test_cli_cache_info_reports_populated_cache(tmp_path):
@@ -2283,8 +2574,10 @@ def test_cli_cache_info_reports_populated_cache(tmp_path):
     result = runner.invoke(cli.cli, ["cache", "info"])
 
     assert result.exit_code == 0
-    assert "Entries: 1" in result.output
-    assert "some/model: 1" in result.output
+    assert any("Entries 1" in " ".join(line.split()) for line in result.output.splitlines())
+    assert any("some/model 1" in " ".join(line.split()) for line in result.output.splitlines())
+    assert "Per-repo breakdown" in result.output
+    assert "1 shard(s), 1 entries" in result.output
 
 
 def test_cli_cache_info_errors_when_cache_construction_fails(monkeypatch):
@@ -2306,10 +2599,11 @@ def test_cli_info_survives_cache_construction_failure(monkeypatch):
 
     monkeypatch.setattr(cli, "EmbeddingCache", _raise)
 
-    result = CliRunner().invoke(cli.cli, ["info"])
+    result = CliRunner().invoke(cli.cli, ["info", "--verbose"])
 
     assert result.exit_code == 0
-    assert "unavailable: no home directory" in result.output
+    assert "Unavailable" in result.output
+    assert "no home directory" in result.output
     assert "Run with --help for CLI usage" in result.output
 
 
@@ -2319,12 +2613,145 @@ def test_cli_cache_clear_removes_all_entries(tmp_path):
     scope.mkdir()
     cache.put_many(scope, "some/model", "rev1", [("k1", np.array([1.0, 2.0], dtype=np.float32))])
 
-    runner = CliRunner()
+    runner = CliRunner(env={"CODEDUPES_CACHE_CLEAR_MODEL": "unrelated/model"})
     result = runner.invoke(cli.cli, ["cache", "clear"])
 
     assert result.exit_code == 0
     assert "Cleared 1 cached embedding" in result.output
     assert cache.stats()["entries"] == 0
+
+
+@pytest.mark.parametrize("model", ["", " ", "\t"])
+def test_cli_cache_clear_rejects_empty_model_without_deleting(tmp_path, model):
+    cache = EmbeddingCache()
+    cache.put_many(tmp_path, "some/model", "rev1", [("k1", np.array([1.0, 2.0]))])
+
+    result = CliRunner().invoke(cli.cli, ["cache", "clear", "--model", model])
+
+    assert result.exit_code == 2
+    assert result.stdout == ""
+    assert "must not be empty" in result.stderr
+    assert cache.stats()["entries"] == 1
+
+
+@pytest.mark.parametrize(("command", "expected_exit_code"), [("check", 1), ("search", 0)])
+@pytest.mark.parametrize("include_tests", [False, True])
+def test_cli_exclusions_extend_defaults(
+    monkeypatch, tmp_path, command, expected_exit_code, include_tests
+):
+    from codedupes.extractor import CodeExtractor
+
+    for relative in ["keep.py", "test_entry.py", "pkg/examples/deep.py", "node_modules/mod.py"]:
+        path = tmp_path / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("def entry():\n    return 1\n", encoding="utf-8")
+    captured = []
+    patch_cli_analyzer(
+        monkeypatch, cli, analyze_result=_build_result(tmp_path), captured_configs=captured
+    )
+    args = [command, str(tmp_path)] + (["entry"] if command == "search" else ["--traditional-only"])
+    args += ["--exclude", "examples", "--json"]
+    if include_tests:
+        args.append("--no-default-excludes")
+    result = CliRunner().invoke(cli.cli, args)
+    assert result.exit_code == expected_exit_code, result.output
+    units = CodeExtractor(tmp_path, exclude_patterns=captured[0].exclude_patterns).extract_all()
+    assert {unit.file_path.name for unit in units} == (
+        {"keep.py", "test_entry.py"} if include_tests else {"keep.py"}
+    )
+
+
+@pytest.mark.parametrize(("command", "expected_exit_code"), [("check", 1), ("search", 0)])
+def test_cli_implicit_default_exclusions_preserve_analyzer_default(
+    monkeypatch, tmp_path, command, expected_exit_code
+):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n", encoding="utf-8")
+    captured = []
+    patch_cli_analyzer(
+        monkeypatch, cli, analyze_result=_build_result(tmp_path), captured_configs=captured
+    )
+
+    args = [command, str(path)]
+    if command == "check":
+        args.append("--traditional-only")
+    else:
+        args.append("entry")
+    result = CliRunner().invoke(cli.cli, args)
+
+    assert result.exit_code == expected_exit_code, result.output
+    assert captured[0].exclude_patterns is None
+
+
+@pytest.mark.parametrize("command", ["check", "search"])
+@pytest.mark.parametrize("outside_root", [False, True])
+@pytest.mark.parametrize("symlinked_parent", [False, True])
+def test_cli_explicit_symlink_exclusions(
+    monkeypatch, tmp_path, command, outside_root, symlinked_parent
+):
+    root = tmp_path / "project"
+    root.mkdir()
+    target = (tmp_path if outside_root else root) / "target.py"
+    target.write_text("def entry():\n    return 1\n", encoding="utf-8")
+    alias = root / "test_alias.py"
+    alias.symlink_to(target)
+    if symlinked_parent:
+        parent_alias = tmp_path / "project_link"
+        parent_alias.symlink_to(root, target_is_directory=True)
+        alias = parent_alias / alias.name
+    model = CountingModel()
+    _patch_get_model(monkeypatch, model)
+
+    args = [command, str(alias), "--json"]
+    if command == "check":
+        args += ["--traditional-only", "--no-unused"]
+        count_key = "total_units"
+    else:
+        args += ["entry", "--device", "cpu", "--min-statements", "0", "--threshold", "0"]
+        count_key = "indexed_units"
+
+    for options, expected_count in (
+        ([], 1),
+        (["--no-default-excludes"], 1),
+        (["--exclude", "unrelated.py"], 1),
+        (["--exclude", alias.name], 0),
+        (["--no-default-excludes", "--exclude", alias.name], 0),
+    ):
+        result = CliRunner().invoke(cli.cli, [*args, *options])
+        assert result.exit_code == 0, result.output
+        assert json.loads(result.stdout)["summary"][count_key] == expected_count
+        assert result.stderr == ""
+
+
+@pytest.mark.grammar
+@pytest.mark.parametrize("exclude", ["ignored.cpp", "examples"])
+def test_cli_header_detection_ignores_excluded_symlink_targets(tmp_path, exclude):
+    (tmp_path / "main.c").write_text("int main(void) { return 1; }", encoding="utf-8")
+    (tmp_path / "header.h").write_text(
+        "static inline int header(void) { return 2; }", encoding="utf-8"
+    )
+    target = tmp_path / "examples" / "ignored.cpp"
+    target.parent.mkdir()
+    target.write_text("", encoding="utf-8")
+    (tmp_path / "alias.cpp").symlink_to(target)
+
+    result = CliRunner().invoke(
+        cli.cli,
+        [
+            "check",
+            str(tmp_path),
+            "--exclude",
+            exclude,
+            "--traditional-only",
+            "--no-unused",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["summary"]["units_by_language"] == {"c": 2}
+    assert payload["extraction_diagnostics"] == []
 
 
 def test_cli_cache_clear_scoped_to_model(tmp_path):
@@ -2388,3 +2815,238 @@ def test_cli_cache_clear_reports_best_effort_deletion_failures(monkeypatch):
     assert result.stdout == ""
     assert "removed 2 cached embedding(s)" in result.stderr
     assert "1 deletion operation(s) failed" in result.stderr
+
+
+@pytest.mark.parametrize("command", [["info", "--verbose"], ["cache", "info"]])
+@pytest.mark.parametrize("width", [80, 100, 160])
+def test_cli_diagnostic_tables_respect_width(command, width, monkeypatch, tmp_path):
+    cache_path = tmp_path / "[red]literal[/red]" / ("long-cache-path-" * 8)
+    monkeypatch.setenv("CODEDUPES_CACHE_DIR", str(cache_path))
+    result = CliRunner().invoke(cli.cli, [*command, "--output-width", str(width)])
+
+    assert result.exit_code == 0, result.output
+    assert result.stderr == ""
+    assert "╭" in result.stdout and "│" in result.stdout
+    assert max(map(len, result.stdout.splitlines())) <= width
+    # Reassemble wrapped value cells to verify paths are neither markup nor truncated.
+    values = "".join(
+        line.split("│")[-2].strip() for line in result.stdout.splitlines() if "│" in line
+    )
+    assert str(cache_path) in values
+    assert "\x1b[" not in result.stdout
+
+
+@pytest.mark.parametrize("command", [["info"], ["cache", "info"], ["cache", "clear"]])
+def test_cli_diagnostic_width_validation(command):
+    result = CliRunner().invoke(cli.cli, [*command, "--output-width", "79"])
+    assert result.exit_code == 2
+    assert "must be >= 80" in result.output
+
+
+@pytest.mark.parametrize(
+    "command",
+    [[], ["check"], ["search"], ["info"], ["cache"], ["cache", "info"], ["cache", "clear"]],
+)
+def test_cli_all_command_help_is_formatted(command):
+    result = CliRunner().invoke(cli.cli, [*command, "--help"])
+    short = CliRunner().invoke(cli.cli, [*command, "-h"])
+    assert result.exit_code == short.exit_code == 0
+    assert result.stdout == short.stdout
+    assert "Usage:" in result.stdout
+    assert "╭" in result.stdout
+    if command in (["check"], ["search"], ["info"], ["cache", "info"], ["cache", "clear"]):
+        assert "--output-width" in result.stdout
+        assert "160" in result.stdout
+
+
+def test_cli_cache_clear_wraps_literal_status(monkeypatch):
+    model = "org/[red]" + "long-model-name-" * 10
+    monkeypatch.setattr(
+        cli.EmbeddingCache,
+        "clear",
+        lambda _self, model=None: CacheClearResult(removed_entries=1, failed_deletions=0),
+    )
+    result = CliRunner().invoke(
+        cli.cli, ["cache", "clear", "--model", model, "--output-width", "80"]
+    )
+    assert result.exit_code == 0, result.output
+    assert result.stderr == ""
+    assert max(map(len, result.stdout.splitlines())) <= 80
+    assert model in "".join(line.strip() for line in result.stdout.splitlines())
+
+
+@pytest.mark.parametrize("width", [80, 160])
+def test_cli_info_default_is_compact(monkeypatch, width):
+    from importlib import import_module
+
+    info_module = import_module("codedupes.cli.info")
+
+    def unexpected_details(*_args, **_kwargs):
+        pytest.fail("Compact info must not collect verbose-only details")
+
+    monkeypatch.setattr(cli, "EmbeddingCache", unexpected_details)
+    monkeypatch.setattr(info_module, "get_grammar_statuses", unexpected_details)
+    monkeypatch.setattr(info_module, "list_supported_models", unexpected_details)
+    result = CliRunner().invoke(cli.cli, ["info", "--output-width", str(width)])
+
+    assert result.exit_code == 0, result.output
+    assert result.stderr == ""
+    assert "Default model" in result.stdout and cli.DEFAULT_MODEL in result.stdout
+    assert "Python" in result.stdout and "PyTorch" in result.stdout
+    assert "Device" in result.stdout and "Supported languages" in result.stdout
+    assert "--verbose" in result.stdout
+    assert len(result.stdout.splitlines()) <= 12
+    assert max(map(len, result.stdout.splitlines())) <= width
+    for detail in (
+        "Default exclusions",
+        "Tree-sitter grammar packages",
+        "Embedding cache",
+        "Built-in semantic model aliases",
+        "CPU bfloat16",
+        "Default model revision",
+    ):
+        assert detail not in result.stdout
+
+
+@pytest.mark.parametrize("terminal_width", [60, 80, 100, 120])
+@pytest.mark.parametrize("width_args", [[], ["--output-width", "400"]])
+def test_cli_info_fits_actual_terminal(terminal_width, width_args):
+    """Catch fixed render widths that would wrap borders in a real terminal."""
+    pty = pytest.importorskip("pty")
+    termios = pytest.importorskip("termios")
+    from rich.text import Text
+
+    master, slave = pty.openpty()
+    termios.tcsetwinsize(slave, (40, terminal_width))
+    env = dict(os.environ, TERM="xterm-256color")
+    env.pop("COLUMNS", None)
+    env.pop("LINES", None)
+    try:
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "from codedupes.cli import main; raise SystemExit(main())",
+                "info",
+                *width_args,
+            ],
+            stdin=subprocess.DEVNULL,
+            stdout=slave,
+            stderr=subprocess.PIPE,
+            env=env,
+            timeout=30,
+            check=False,
+        )
+        # The compact report fits the PTY buffer, so it can be read after exit.
+        raw = os.read(master, 16384).decode()
+    finally:
+        os.close(slave)
+        os.close(master)
+    assert result.returncode == 0, result.stderr.decode()
+    assert result.stderr == b""
+    lines = Text.from_ansi(raw.replace("\r\n", "\n")).plain.splitlines()
+    assert max(map(len, lines)) <= terminal_width
+    assert "Default model" in raw and cli.DEFAULT_MODEL in raw
+    borders = [line for line in lines if line.startswith(("╭", "│", "╰"))]
+    assert len(borders) >= 7
+    assert len({len(line) for line in borders}) == 1
+    assert borders[0].endswith("╮") and borders[-1].endswith("╯")
+
+
+@pytest.mark.parametrize("width", [80, 100, 120, 160])
+@pytest.mark.parametrize("command", ["check", "search"])
+def test_cli_long_results_keep_scores_and_headers(monkeypatch, tmp_path, width, command):
+    monkeypatch.chdir(tmp_path)
+    unit = _build_unit(tmp_path)
+    unit.name = "calculate_normalized_customer_score"
+    unit.file_path = tmp_path / "deeply" / "nested" / "customer_scoring.py"
+    path = tmp_path / "sample.py"
+    path.write_text(unit.source)
+    duplicate = DuplicatePair(unit, unit, 0.91, "jaccard")
+    hybrid = HybridDuplicate(
+        unit,
+        unit,
+        tier="hybrid_confirmed",
+        confidence=0.94,
+        semantic_similarity=0.96,
+        jaccard_similarity=0.91,
+    )
+    patch_cli_analyzer(
+        monkeypatch,
+        cli,
+        analyze_result=AnalysisResult(
+            units=[unit],
+            traditional_duplicates=[duplicate],
+            semantic_duplicates=[],
+            hybrid_duplicates=[hybrid],
+            potentially_unused=[unit],
+            analysis_mode="combined",
+        ),
+        search_results=[(unit, 0.99)],
+    )
+    args = [command, str(path), "--output-width", str(width)]
+    args += ["--show-all"] if command == "check" else ["entry"]
+    result = CliRunner().invoke(cli.cli, args)
+
+    assert result.exit_code == (1 if command == "check" else 0), result.output
+    assert max(map(len, result.stdout.splitlines())) <= width
+    assert "…" not in result.stdout
+    if command == "check":
+        for field in (
+            "Confidence",
+            "Semantic",
+            "Jaccard",
+            "94.00%",
+            "96.00%",
+            "91.00%",
+            "Similarity",
+            "Name",
+            "Type",
+            "Location",
+            "function",
+        ):
+            assert field in result.stdout
+        if width < 120:
+            assert "Evidence" in result.stdout and "Code units" in result.stdout
+    else:
+        for field in ("Rank", "Score", "Name", "Location", "99.00%"):
+            assert field in result.stdout
+
+
+def test_main_renders_usage_errors_with_rich(monkeypatch, capsys):
+    monkeypatch.setattr(sys, "argv", ["codedupes", "info", "--unknown-option"])
+
+    assert cli.main() == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "╭" in captured.err and "╯" in captured.err
+    assert "No such option" in captured.err
+    assert "--unknown-option" in captured.err
+
+
+@pytest.mark.parametrize("command", [["info", "--verbose"], ["cache", "info"], ["cache", "clear"]])
+def test_cli_cache_warnings_use_rich_stderr(monkeypatch, command):
+    original_stats = EmbeddingCache.stats
+
+    def warn():
+        logging.getLogger("codedupes.embedding_cache").warning(
+            "Cache operation failed at " + "deeply/nested/" * 12 + "cache.json"
+        )
+
+    def noisy_stats(cache):
+        warn()
+        return original_stats(cache)
+
+    def noisy_clear(_cache, model=None):
+        warn()
+        return CacheClearResult(removed_entries=0, failed_deletions=1)
+
+    monkeypatch.setattr(EmbeddingCache, "stats", noisy_stats)
+    monkeypatch.setattr(EmbeddingCache, "clear", noisy_clear)
+    result = CliRunner().invoke(cli.cli, [*command, "--output-width", "80"])
+
+    assert result.exit_code == (1 if command[-1] == "clear" else 0), result.output
+    assert "WARNING" in result.stderr
+    assert "Cache operation failed" in result.stderr
+    assert max(map(len, result.stderr.splitlines())) <= 80
+    assert "Cache operation failed" not in result.stdout

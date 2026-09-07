@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
+from pathlib import Path
 from typing import Any, Literal, TypeVar
 
 import rich_click as click
@@ -21,7 +22,8 @@ from codedupes.constants import (
     DEFAULT_TRADITIONAL_THRESHOLD,
     SEMANTIC_DEVICE_CHOICES,
 )
-from codedupes.semantic import ProgressMode
+from codedupes.extractor import DEFAULT_EXCLUDE_PATTERNS
+from codedupes.semantic import ProgressMode, resolve_search_threshold
 
 from ._output import (
     DEFAULT_OUTPUT_WIDTH,
@@ -32,9 +34,27 @@ from ._output import (
 
 F = TypeVar("F", bound=Callable[..., Any])
 DEFAULT_EXCLUDE_HELP_HINT = (
-    "Replace default test-file globs with patterns to exclude (repeat for multiple patterns). "
-    "Built-in common artifact-directory excludes always apply."
+    "Add a name or root-relative glob to exclude (repeat for multiple patterns). "
+    "Bare names match at any depth; excluded directories include all descendants. "
+    "Default test exclusions apply to directory scans; artifact directories beneath the scan "
+    "root are always excluded."
 )
+
+
+def _resolve_exclude_patterns(
+    exclude: tuple[str, ...], no_default_excludes: bool, path: Path
+) -> list[str] | None:
+    """Combine CLI exclusions while respecting explicitly selected files.
+
+    :param exclude: User-supplied exclusion patterns.
+    :param no_default_excludes: Whether default test patterns are disabled.
+    :param path: Selected file or directory.
+    :return: Explicit patterns, or ``None`` for the analyzer's scope-aware defaults.
+    """
+    if not no_default_excludes and not exclude:
+        return None
+    defaults = [] if no_default_excludes or path.is_file() else DEFAULT_EXCLUDE_PATTERNS.copy()
+    return defaults + list(exclude)
 
 
 class Panel(StrEnum):
@@ -49,6 +69,17 @@ class Panel(StrEnum):
 
 
 SEMANTIC_ONLY_PANELS = frozenset({Panel.SEMANTIC, Panel.DEVICE})
+
+
+output_width_option = click.option(
+    "--output-width",
+    type=int,
+    default=DEFAULT_OUTPUT_WIDTH,
+    show_default=True,
+    callback=_validate_output_width,
+    panel=Panel.OUTPUT,
+    help="Maximum render width (limited to terminal width; fixed when redirected)",
+)
 
 
 def options_in_panels(command: click.Command, panels: frozenset[Panel]) -> list[str]:
@@ -211,6 +242,7 @@ class CheckOptions:
     languages: tuple[str, ...]
     no_private: bool
     exclude: tuple[str, ...]
+    no_default_excludes: bool
     include_stubs: bool
     as_json: bool
     verbose: bool
@@ -306,8 +338,12 @@ class CheckOptions:
         """Return the terminal table row cap."""
         return None if self.full_table else 20
 
-    def to_analysis_config(self) -> Any:
-        """Build the analyzer config represented by this option bundle."""
+    def to_analysis_config(self, path: Path) -> Any:
+        """Build the analyzer config represented by this option bundle.
+
+        :param path: Selected file or directory.
+        :return: Analyzer configuration with scope-appropriate exclusions.
+        """
         import codedupes.cli as cli_module
 
         semantic_threshold, traditional_threshold = _resolve_check_thresholds(
@@ -323,7 +359,9 @@ class CheckOptions:
             semantic_kwargs["semantic_task"] = None
 
         return cli_module.AnalyzerConfig(
-            exclude_patterns=list(self.exclude) or None,
+            exclude_patterns=_resolve_exclude_patterns(
+                self.exclude, self.no_default_excludes, path
+            ),
             include_private=not self.no_private,
             languages=self.languages or None,
             jaccard_threshold=traditional_threshold,
@@ -350,11 +388,13 @@ class SearchOptions:
     languages: tuple[str, ...]
     no_private: bool
     exclude: tuple[str, ...]
+    no_default_excludes: bool
     include_stubs: bool
     as_json: bool
     verbose: bool
     output_width: int
     top_k: int
+    result_level: Literal["unit", "file"]
     threshold: float | None
     semantic_threshold: float | None
     search_document: Literal["source", "contextual"]
@@ -372,18 +412,32 @@ class SearchOptions:
             verbose=params["verbose"],
             output_width_explicit=_is_cli_explicit(ctx, "output_width"),
         )
+        if (
+            params["search_document"] == "contextual"
+            and _resolve_search_threshold(params["threshold"], params["semantic_threshold"]) is None
+        ):
+            raise click.UsageError(
+                "Search over contextual documents requires an explicit threshold; "
+                "pass --semantic-threshold or --threshold."
+            )
         return cls(
             semantic=SemanticOptions.from_params(params),
             **{name: params[name] for name in cls.__dataclass_fields__ if name != "semantic"},
         )
 
-    def to_analysis_config(self) -> Any:
-        """Build the analyzer config represented by this option bundle."""
+    def to_analysis_config(self, path: Path) -> Any:
+        """Build the analyzer config represented by this option bundle.
+
+        :param path: Selected file or directory.
+        :return: Analyzer configuration with scope-appropriate exclusions.
+        """
         import codedupes.cli as cli_module
 
-        return cli_module.AnalyzerConfig(
+        config = cli_module.AnalyzerConfig(
             mode="search",
-            exclude_patterns=list(self.exclude) or None,
+            exclude_patterns=_resolve_exclude_patterns(
+                self.exclude, self.no_default_excludes, path
+            ),
             include_private=not self.no_private,
             languages=self.languages or None,
             semantic_threshold=_resolve_search_threshold(
@@ -396,6 +450,16 @@ class SearchOptions:
             search_document=self.search_document,
             **self.semantic.analysis_kwargs(),
         )
+
+        resolve_search_threshold(
+            config.model_name,
+            config.semantic_threshold,
+            instruction_prefix=config.instruction_prefix,
+            revision=config.model_revision,
+            trust_remote_code=config.trust_remote_code,
+            semantic_task=config.semantic_task,
+        )
+        return config
 
 
 def semantic_options() -> Callable[[F], F]:
@@ -411,7 +475,6 @@ def semantic_options() -> Callable[[F], F]:
             type=str,
             metavar="LANGUAGE",
             panel=Panel.SCOPE,
-            show_envvar=True,
             help=(
                 "Limit extraction to a language (repeat for multiple). Aliases such as py, rs, "
                 "js, jsx, ts, and tsx are accepted. Omit to auto-detect all supported languages."
@@ -421,21 +484,27 @@ def semantic_options() -> Callable[[F], F]:
             "--no-private",
             is_flag=True,
             panel=Panel.SCOPE,
-            show_envvar=True,
             help="Exclude private functions/classes",
         ),
         click.option(
             "--exclude",
             multiple=True,
             panel=Panel.SCOPE,
-            show_envvar=True,
             help=DEFAULT_EXCLUDE_HELP_HINT,
+        ),
+        click.option(
+            "--no-default-excludes",
+            is_flag=True,
+            panel=Panel.SCOPE,
+            help=(
+                "Disable default test-file exclusions; artifact directories beneath the scan "
+                "root remain excluded."
+            ),
         ),
         click.option(
             "--include-stubs",
             is_flag=True,
             panel=Panel.SCOPE,
-            show_envvar=True,
             help=(
                 "Include .pyi files when scanning a directory "
                 "(single-file targets are analyzed as given)"
@@ -447,7 +516,6 @@ def semantic_options() -> Callable[[F], F]:
             default=DEFAULT_MIN_SEMANTIC_STATEMENTS,
             show_default=True,
             panel=Panel.SEMANTIC,
-            show_envvar=True,
             help="Skip semantic comparison for code units with fewer body statements",
         ),
         click.option(
@@ -457,7 +525,6 @@ def semantic_options() -> Callable[[F], F]:
             default=DEFAULT_SEMANTIC_UNIT_TYPES,
             show_default=True,
             panel=Panel.SEMANTIC,
-            show_envvar=True,
             help="Unit type(s) eligible for semantic embedding (repeat option to add more)",
         ),
         click.option(
@@ -465,14 +532,12 @@ def semantic_options() -> Callable[[F], F]:
             default=DEFAULT_MODEL,
             show_default=True,
             panel=Panel.SEMANTIC,
-            show_envvar=True,
             help="Embedding model alias, Hugging Face model ID, or complete local model directory",
         ),
         click.option(
             "--instruction-prefix",
             default=None,
             panel=Panel.SEMANTIC,
-            show_envvar=True,
             help="Custom instruction prefix prepended to semantic inputs",
         ),
         click.option(
@@ -480,7 +545,6 @@ def semantic_options() -> Callable[[F], F]:
             default=None,
             show_default="auto",
             panel=Panel.SEMANTIC,
-            show_envvar=True,
             help="Model revision/commit. If omitted, uses the model-profile default.",
         ),
         click.option(
@@ -488,14 +552,12 @@ def semantic_options() -> Callable[[F], F]:
             default=None,
             multiple=True,
             panel=Panel.SEMANTIC,
-            show_envvar=True,
             help="Override the model profile's remote-code trust setting",
         ),
         click.option(
             "--strict-revision-cache",
             is_flag=True,
             panel=Panel.SEMANTIC,
-            show_envvar=True,
             help=(
                 "Key an unpinned hub model's cache revision to a resolved commit hash instead of "
                 "the requested revision label"
@@ -507,7 +569,6 @@ def semantic_options() -> Callable[[F], F]:
             default=DEFAULT_SEMANTIC_DEVICE,
             show_default=True,
             panel=Panel.DEVICE,
-            show_envvar=True,
             help="Semantic inference device (auto prefers CUDA, then MPS, then CPU)",
         ),
         click.option(
@@ -515,7 +576,6 @@ def semantic_options() -> Callable[[F], F]:
             default=None,
             multiple=True,
             panel=Panel.DEVICE,
-            show_envvar=True,
             help="Override MPS unsupported-op CPU fallback",
         ),
         click.option(
@@ -523,7 +583,6 @@ def semantic_options() -> Callable[[F], F]:
             type=float,
             default=None,
             panel=Panel.DEVICE,
-            show_envvar=True,
             help=(
                 "Optional PyTorch MPS allocator limit as a fraction of the recommended working "
                 "set, in (0, 2]. Values above 1 increase system memory pressure."
@@ -535,14 +594,12 @@ def semantic_options() -> Callable[[F], F]:
             default=DEFAULT_BATCH_SIZE,
             show_default=True,
             panel=Panel.DEVICE,
-            show_envvar=True,
             help="Batch size for embeddings",
         ),
         click.option(
             "--no-cache",
             is_flag=True,
             panel=Panel.CACHE,
-            show_envvar=True,
             help="Disable the persistent on-disk embedding cache for this run",
         ),
         click.option(
@@ -550,7 +607,6 @@ def semantic_options() -> Callable[[F], F]:
             "as_json",
             is_flag=True,
             panel=Panel.OUTPUT,
-            show_envvar=True,
             help="Output JSON instead of rich tables",
         ),
         click.option(
@@ -558,19 +614,9 @@ def semantic_options() -> Callable[[F], F]:
             "-v",
             is_flag=True,
             panel=Panel.OUTPUT,
-            show_envvar=True,
             help="Verbose logging",
         ),
-        click.option(
-            "--output-width",
-            type=int,
-            default=DEFAULT_OUTPUT_WIDTH,
-            show_default=True,
-            callback=_validate_output_width,
-            panel=Panel.OUTPUT,
-            show_envvar=True,
-            help="Width used for rich terminal rendering",
-        ),
+        output_width_option,
     ]
 
     def decorator(func: F) -> F:

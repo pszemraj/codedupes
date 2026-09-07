@@ -33,7 +33,6 @@ from ._render import format_location
 @click.group(
     context_settings={
         "help_option_names": ["-h", "--help"],
-        "auto_envvar_prefix": "CODEDUPES",
     },
     no_args_is_help=False,
     invoke_without_command=True,
@@ -41,7 +40,7 @@ from ._render import format_location
 @click.rich_config(
     {
         "options_table_column_types": ["opt_long", "opt_short", "help"],
-        "options_table_help_sections": ["metavar", "help", "default", "envvar"],
+        "options_table_help_sections": ["metavar", "help", "default"],
     }
 )
 @click.version_option(__version__, prog_name="codedupes")
@@ -56,10 +55,10 @@ def cli(ctx: click.Context) -> None:
 # Importing the command modules registers them on the group above. Public names
 # remain re-exported here because callers and tests historically import them from
 # ``codedupes.cli``.
-from .cache import cache_clear_command, cache_group, cache_info_command
-from .check import check_command, run_should_fail
-from .info import info_command
-from .search import search_command
+from .cache import cache_clear_command, cache_group, cache_info_command  # noqa: E402, RUF100
+from .check import check_command, run_should_fail  # noqa: E402, RUF100
+from .info import info_command  # noqa: E402, RUF100
+from .search import search_command  # noqa: E402, RUF100
 
 
 def __getattr__(name: str) -> Any:
@@ -74,19 +73,11 @@ def main() -> int:
 
     ``pyproject.toml`` registers this callable as the supported console entry point.
     """
-    argv = sys.argv[1:]
     try:
-        result = cli.main(args=argv, prog_name="codedupes", standalone_mode=False)
-        if isinstance(result, int):
-            return result
-    except click.exceptions.Exit as exc:
-        return int(exc.exit_code)
-    except click.ClickException as exc:
-        exc.show()
-        return exc.exit_code
-    except click.Abort:
-        click.echo("Aborted!", err=True)
-        return 1
+        # Let rich-click render usage errors and aborts through its help formatter.
+        cli.main(args=sys.argv[1:], prog_name="codedupes")
+    except SystemExit as exc:
+        return int(exc.code or 0)
     return 0
 
 

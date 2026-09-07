@@ -2,6 +2,8 @@
 
 Tune how gated semantic-only matches are divided between high-confidence and review tiers.
 
+This is a maintainer workflow for changing shipped gates or corroboration defaults. It is not needed to tune one repository scan: start with the calibrated defaults, then use ordinary `check` scope and threshold options if that scan needs adjustment. Run these commands from a development checkout after installation; they load the pinned embedding models and can take time on their first run. Write exploratory reports under `scratch/`, which is ignored by Git.
+
 ## Guardrail corpus and labels
 
 - Corpus: [`../test_fixtures/hybrid_tuning/crab_visibility`](../test_fixtures/hybrid_tuning/crab_visibility)
@@ -56,7 +58,10 @@ The harness uses the analyzer's [hybrid synthesis logic](analysis-defaults.md#hy
 Run the duplicate and search threshold sweeps for built-in model profiles:
 
 ```bash
-CUDA_VISIBLE_DEVICES='' python scripts/sweep_semantic_thresholds.py --top-n 10
+python scripts/sweep_semantic_thresholds.py \
+  --top-n 10 \
+  --json-out scratch/semantic_threshold_report.json \
+  --search-json-out scratch/search_threshold_report.json
 ```
 
 By default this sweeps the legacy Python-only `crab_visibility` corpus; its duplicate-threshold report is a guardrail, not the source of the shipped per-language duplicate gates. Those are calibrated from [`../test_fixtures/polyglot_calibration/`](../test_fixtures/polyglot_calibration/README.md), whose README records the per-language re-run command (`--corpus-path`, `--labels-path`, `--language`, and `--duplicate-start`/`--duplicate-stop` to widen the grid below the default floor).

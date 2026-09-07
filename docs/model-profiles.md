@@ -2,6 +2,8 @@
 
 Profiles resolve model aliases, thresholds, revisions, trust settings, and task-specific embedding behavior. See [Installation](install.md) for dependencies, the [CLI reference](cli.md) for option syntax, and [Accelerators](accelerators.md) for device and precision behavior.
 
+Most users should leave model and task settings unset. `codedupes` uses the pinned `gte-modernbert-base` profile and downloads it automatically on the first semantic run. Run `codedupes info --verbose` to see the effective profile, checkpoint, device, and installed runtime. Choose another model only when you have a reason to evaluate its results or need an already-downloaded local copy.
+
 ## Built-in profiles
 
 | profile key | canonical model ID | family | search threshold | default revision | default trust mode |
@@ -9,10 +11,9 @@ Profiles resolve model aliases, thresholds, revisions, trust settings, and task-
 | `gte-modernbert-base` | `Alibaba-NLP/gte-modernbert-base` | `gte-modernbert` | `0.50` | `e7f32e3c00f91d699e8c43b53106206bcc72bb22` | `False` |
 | `embeddinggemma-300m` | `unsloth/embeddinggemma-300m` | `embeddinggemma` | `0.40` | `bfa3c846ac738e62aa61806ef9112d34acb1dc5a` | `False` |
 
-- [Per-language duplicate gates and their selection policy](analysis-defaults.md#semantic-duplicate-gate-defaults) control `check` reporting. The search threshold is the floor for query matches. Query-to-code similarity runs far below code-to-code duplicate similarity, so search defaults are intentionally much lower.
+- [Per-language duplicate gates and their selection policy](analysis-defaults.md#semantic-duplicate-gate-defaults) control `check` reporting. The table's search threshold is only the floor for query matches; query-to-code similarity is much lower than code-to-code duplicate similarity.
 - Every builtin default revision is a pinned immutable commit. [Calibration sweeps](hybrid-tuning.md#semantic-threshold-sweep-model-profiles) record the checkpoint, prompt plan, pipeline, and candidate policy behind each threshold.
-- The gte-modernbert search default is calibrated recall-safe against real corpora: genuinely relevant hits start near `0.59` while fully off-topic queries ceiling near `0.48` on most corpora. Vocabulary overlap from a shared domain (GPU kernels vs a graphics query) or even a single shared word ("pattern", "parse", "warp") can push off-topic matches to `0.52`-`0.65`; those carry visible scores and rank below real hits, but raise `--semantic-threshold` toward `0.6` if they clutter results. No fixed floor separates them everywhere, and the default deliberately favors recall over precision. The synthetic-corpus search sweep saturates for this model (every unit shares one domain), so its report is a guardrail, not the default's source.
-- The EmbeddingGemma search default is recall-calibrated against the held-out, multi-domain probes in `test_fixtures/search_probes/`. Under the pinned checkpoint and fixed prompt pipeline, relevant top hits bottom out near `0.45` while the off-topic ceiling stays below `0.28`; the `0.40` floor keeps margin on both sides. The single-domain synthetic sweep remains a reproducible guardrail, but its higher F1 optimum is not used as a production search floor.
+- Search defaults favor recall. Inspect scores on representative queries and raise `--semantic-threshold` (or the Python API's per-query `threshold`) if results are too broad; no fixed floor separates relevant and off-topic code on every repository. The multi-domain probes in `test_fixtures/search_probes/` check the built-in search floors; the single-domain [calibration sweeps](hybrid-tuning.md#semantic-threshold-sweep-model-profiles) are additional guardrails, not the source of those floors.
 - Generic/unknown models fall back to duplicate threshold `0.82` and search threshold `0.35` unless you override `--semantic-threshold` / `semantic_threshold`.
 
 ## Alias resolution rules
@@ -24,19 +25,17 @@ Profiles resolve model aliases, thresholds, revisions, trust settings, and task-
 
 ### Local model directories and offline use
 
-Both `check` and `search` accept a directory written by `save_pretrained()` or a complete Hugging Face repository download, using the [explicit path rules](#alias-resolution-rules). Local paths are passed to Sentence Transformers with `local_files_only=True`.
+Use a Hub model ID for the normal online path; manual downloads are only needed for offline use or a custom checkpoint. Both `check` and `search` accept a directory written by `save_pretrained()` or a complete Hugging Face repository download, using the [explicit path rules](#alias-resolution-rules). Local paths are passed to Sentence Transformers with `local_files_only=True`.
 
 ```bash
 hf download Alibaba-NLP/gte-modernbert-base \
   --local-dir ./models/gte-modernbert-base
 
 codedupes check ./src \
-  --model ./models/gte-modernbert-base \
-  --device mps
+  --model ./models/gte-modernbert-base
 
 codedupes search ./src "parse json payload" \
-  --model ./models/gte-modernbert-base \
-  --device mps
+  --model ./models/gte-modernbert-base
 ```
 
 - Download the complete repository rather than selecting only configuration or tokenizer files. Local directories without `config.json` and model weights fail before model loading with a corrective error.
@@ -47,10 +46,12 @@ codedupes search ./src "parse json payload" \
 For live effective values in your environment, run:
 
 ```bash
-codedupes info
+codedupes info --verbose
 ```
 
 ## Semantic task defaults and choices
+
+Leave `semantic_task` unset unless you are deliberately changing a model's embedding behavior. `analyze()`/`codedupes check` use `semantic-similarity`; `index()`/`codedupes search` use `code-retrieval`. Those defaults align the model's prompt and encode route with the operation.
 
 CLI task defaults:
 

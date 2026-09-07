@@ -1,6 +1,16 @@
 # Embedding cache
 
-`codedupes` freshly extracts the selected files on each run, then reuses embeddings for unchanged inputs and attaches them to the current code units. A fully cached corpus and query can run without loading the model. Over-context units have no vector to cache, so repeated scans that include them can still load the tokenizer/model to check their length, even when every retained row is a hit.
+`codedupes` freshly extracts the selected files on each run, then reuses embeddings for unchanged inputs and attaches them to the current code units. A fully cached corpus and query can run without loading the model. Every eligible unit has a cacheable vector, including inputs the embedding backend truncates to its context window.
+
+You normally do not need to configure the cache. Run the same command against the same source root again to reuse unchanged embeddings. These are the useful day-to-day controls:
+
+```bash
+codedupes cache info
+codedupes cache clear --model gte-modernbert-base
+codedupes check ./src --no-cache
+```
+
+`cache clear --model` removes one model's cached embeddings; omit `--model` to clear all of them. `--no-cache` bypasses reads and writes only for that run. In the Python API, set `AnalyzerConfig(embedding_cache=False)` for the equivalent per-analyzer behavior.
 
 ## Controls
 
@@ -11,7 +21,7 @@
 | `CODEDUPES_CACHE_MAX_MB` | Global size cap, default `2048` MB. Values must be at least `1` and are floored to whole MB. Invalid values warn once per process and use the default. |
 | `CODEDUPES_NO_CACHE=1` | Disables persistent cache reads and writes for the process. |
 
-`--no-cache` bypasses persistent storage for one `check` or `search` run without changing existing files. Use the [cache commands](cli.md#codedupes-cache-info) to inspect usage or clear entries. Built-in aliases match case-insensitively in `cache clear --model`; pass other model names exactly as used for analysis.
+Use the [cache commands](cli.md#codedupes-cache-info) to inspect usage or clear entries. Built-in aliases match case-insensitively in `cache clear --model`; pass other model names exactly as used for analysis.
 
 After each nonempty batch write, codedupes inventories shard sizes. When the global cap is exceeded, it removes least-recently-used shards toward 80% of the cap. The shard just written is protected, even if it alone exceeds the cap; an oversized or undeletable shard produces a warning and remains included in usage. Inventory reads the filesystem so cooperating processes see each other's writes.
 
@@ -54,7 +64,7 @@ The cache tracks three distinct objects:
 - A content key identifies prepared embedding input; several units can share it.
 - A vector row stores that key's embedding. Compaction can change its row number.
 
-With persistent caching enabled, a successful semantic `analyze()` or `index()` publishes the unit-to-key map and exact file paths in `manifest.json`. Failed runs leave the previous manifest in place, even if they already wrote some vectors. Recoverable read, decoding, parse, or directory traversal failures also skip publication for both directory and single-file targets: findings and valid embeddings remain available, while the prior manifest and complete-scan clock stay unchanged. Intentional selection warnings and semantic context-window exclusions do not block publication. Complete scans publish empty selections too, so deleting the final unit still updates the baseline.
+With persistent caching enabled, a successful semantic `analyze()` or `index()` publishes the unit-to-key map and exact file paths in `manifest.json`. Failed runs leave the previous manifest in place, even if they already wrote some vectors. Recoverable read, decoding, parse, or directory traversal failures also skip publication for both directory and single-file targets: findings and valid embeddings remain available, while the prior manifest and complete-scan clock stay unchanged. Intentional selection warnings do not block publication. Complete scans publish empty selections too, so deleting the final unit still updates the baseline.
 
 Comparable scans first match occurrences by file path, language, and qualified name, ignoring byte-offset shifts caused by edits. Remaining new UIDs match departed UIDs one-to-one by content key to infer moves. Unmatched departed UIDs count as deleted even if another unit still shares their vector. A key becomes orphaned only when the current selection has no unit referencing it, including when a surviving unit's source changes.
 

@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import os
 from collections import Counter
-from typing import Literal, cast
+from collections.abc import Iterable
+from typing import TYPE_CHECKING, Literal, cast
 
+from rich import box
 from rich.markup import escape
 from rich.panel import Panel
 from rich.syntax import Syntax
 from rich.table import Table
+from rich.text import Text
 
 from codedupes.models import (
     AnalysisResult,
@@ -22,7 +25,31 @@ from codedupes.semantic import EmbeddingRunStats
 
 from . import _output
 
+if TYPE_CHECKING:
+    from .search import FileSearchResult
+
 DEFAULT_TABLE_ROWS = 20
+
+
+def _settings_panel(title: str, rows: Iterable[tuple[str, object]]) -> Panel:
+    """Build a fitted diagnostic panel with literal labels and values.
+
+    :param title: Section heading.
+    :param rows: Label/value pairs to display.
+    :return: Rich panel with naturally sized columns and wrapped values.
+    """
+    table = Table.grid(padding=(0, 2))
+    table.add_column(style="cyan", max_width=24, overflow="fold")
+    table.add_column(overflow="fold")
+    for label, value in rows:
+        table.add_row(Text(label), Text(str(value)))
+    return Panel(
+        table,
+        title=Text(title, style="bold cyan"),
+        title_align="left",
+        border_style="dim",
+        expand=False,
+    )
 
 
 def _format_embedding_stats(stats: EmbeddingRunStats) -> str:
@@ -51,26 +78,35 @@ def _format_embedding_stats(stats: EmbeddingRunStats) -> str:
     return f"{', '.join(parts)} ({', '.join(context)})"
 
 
-def format_location(unit: CodeUnit) -> str:
-    """Format a compact, markup-safe file:line location for table rendering.
+def format_path(path: os.PathLike[str] | str) -> str:
+    """Format a compact, markup-safe path for table rendering.
 
     Bare file names collide across directories, which renders a cross-directory
     duplicate pair as two identical cells. Prefer the shorter of the relative
     and absolute spellings so deeply nested working directories retain the
     filename within narrow tables.
 
-    :param unit: Unit to format.
-    :return: Markup-escaped ``<path>:<lineno>`` string.
+    :param path: Path to format.
+    :return: Markup-escaped path.
     """
-    absolute = str(unit.file_path)
+    absolute = os.fspath(path)
     try:
-        relative = os.path.relpath(unit.file_path)
+        relative = os.path.relpath(path)
     except ValueError:
         # Windows: no relative path exists across drives.
         location = absolute
     else:
         location = min(relative, absolute, key=len)
-    return escape(f"{location}:{unit.lineno}")
+    return escape(location)
+
+
+def format_location(unit: CodeUnit) -> str:
+    """Format a compact, markup-safe file:line location for table rendering.
+
+    :param unit: Unit to format.
+    :return: Markup-escaped ``<path>:<lineno>`` string.
+    """
+    return f"{format_path(unit.file_path)}:{unit.lineno}"
 
 
 def truncate_source(source: str, max_lines: int = 5) -> str:
@@ -128,8 +164,8 @@ def print_summary(
     _output.console.print()
 
     summary = Table(title="Analysis Summary", show_header=False, box=None)
-    summary.add_column(style="bold cyan", no_wrap=True)
-    summary.add_column(style="white", no_wrap=True)
+    summary.add_column(style="bold cyan", overflow="fold")
+    summary.add_column(style="white", overflow="fold")
 
     summary.add_row("Total code units", str(len(result.units)))
     language_counts = Counter(unit.language for unit in result.units)
@@ -182,25 +218,29 @@ def print_summary(
     _output.console.print()
 
 
-def _build_duplicates_table(*, hybrid: bool = False) -> Table:
+def _build_duplicates_table(*, hybrid: bool = False, compact: bool = False) -> Table:
     """Build the duplicate table columns for terminal output.
 
     :param hybrid: When true, build columns for hybrid duplicate mode.
+    :param compact: Whether to stack metrics and code units for a narrow terminal.
     :return: Configured rich ``Table`` instance.
     """
-    table = Table(show_header=True, header_style="bold")
-    if hybrid:
-        table.add_column("Confidence", style="green", width=10, no_wrap=True)
-        table.add_column("Tier", style="magenta", no_wrap=True)
-        table.add_column("Semantic", style="green", width=10, no_wrap=True)
-        table.add_column("Jaccard", style="green", width=10, no_wrap=True)
-        table.add_column("Unit A", style="cyan", no_wrap=True)
-        table.add_column("Unit B", style="cyan", no_wrap=True)
+    table = Table(header_style="bold", box=box.ROUNDED, border_style="dim", show_lines=True)
+    if compact:
+        table.add_column("Evidence", width=26, min_width=18, overflow="fold")
+        table.add_column("Code units", style="cyan", overflow="fold")
+    elif hybrid:
+        table.add_column("Confidence", style="green", width=10, min_width=10, no_wrap=True)
+        table.add_column("Tier", style="magenta", overflow="fold")
+        table.add_column("Semantic", style="green", width=8, min_width=8, no_wrap=True)
+        table.add_column("Jaccard", style="green", width=7, min_width=7, no_wrap=True)
+        table.add_column("Unit A", style="cyan", overflow="fold")
+        table.add_column("Unit B", style="cyan", overflow="fold")
     else:
-        table.add_column("Similarity", style="green", width=10, no_wrap=True)
-        table.add_column("Unit A", style="cyan", no_wrap=True)
-        table.add_column("Unit B", style="cyan", no_wrap=True)
-        table.add_column("Method", style="dim", no_wrap=True)
+        table.add_column("Similarity", style="green", width=10, min_width=10, no_wrap=True)
+        table.add_column("Unit A", style="cyan", overflow="fold")
+        table.add_column("Unit B", style="cyan", overflow="fold")
+        table.add_column("Method", style="dim", overflow="fold")
     return table
 
 
@@ -232,14 +272,14 @@ def _print_source_panels(unit_a: CodeUnit, unit_b: CodeUnit) -> None:
     _output.console.print(
         Panel(
             Syntax(truncate_source(unit_a.source), _syntax_lexer(unit_a), theme="monokai"),
-            title=f"[cyan]{unit_a.qualified_name}[/cyan]",
+            title=f"[cyan]{escape(unit_a.qualified_name)}[/cyan]",
             border_style="dim",
         )
     )
     _output.console.print(
         Panel(
             Syntax(truncate_source(unit_b.source), _syntax_lexer(unit_b), theme="monokai"),
-            title=f"[cyan]{unit_b.qualified_name}[/cyan]",
+            title=f"[cyan]{escape(unit_b.qualified_name)}[/cyan]",
             border_style="dim",
         )
     )
@@ -266,7 +306,8 @@ def _print_duplicate_table(
         return
 
     _output.console.print(f"\n[bold yellow]{title}[/bold yellow] ({len(duplicates)} pairs)")
-    table = _build_duplicates_table(hybrid=hybrid)
+    compact = _output.console.width < 120
+    table = _build_duplicates_table(hybrid=hybrid, compact=compact)
 
     visible = duplicates if max_items is None else duplicates[:max_items]
     for duplicate in visible:
@@ -278,7 +319,7 @@ def _print_duplicate_table(
             jaccard = (
                 f"{pair.jaccard_similarity:.2%}" if pair.jaccard_similarity is not None else "-"
             )
-            table.add_row(
+            cells = (
                 f"{pair.confidence:.2%}",
                 pair.tier,
                 semantic,
@@ -290,7 +331,7 @@ def _print_duplicate_table(
             unit_b = pair.unit_b
         else:
             pair = cast(DuplicatePair, duplicate)
-            table.add_row(
+            cells = (
                 f"{pair.similarity:.2%}",
                 f"{pair.unit_a.name}\n[dim]{format_location(pair.unit_a)}[/dim]",
                 f"{pair.unit_b.name}\n[dim]{format_location(pair.unit_b)}[/dim]",
@@ -299,10 +340,25 @@ def _print_duplicate_table(
             unit_a = pair.unit_a
             unit_b = pair.unit_b
 
+        if compact:
+            evidence = (
+                f"Confidence: {cells[0]}\nTier: {cells[1]}\n"
+                f"Semantic: {cells[2]}\nJaccard: {cells[3]}"
+                if hybrid
+                else f"Similarity: {cells[0]}\nMethod: {cells[3]}"
+            )
+            table.add_row(
+                evidence,
+                f"A: {escape(unit_a.name)}\n[dim]{format_location(unit_a)}[/dim]\n"
+                f"B: {escape(unit_b.name)}\n[dim]{format_location(unit_b)}[/dim]",
+            )
+        else:
+            table.add_row(*cells)
+
         if show_source:
             _output.console.print(table)
             _print_source_panels(unit_a, unit_b)
-            table = _build_duplicates_table(hybrid=hybrid)
+            table = _build_duplicates_table(hybrid=hybrid, compact=compact)
 
     if not show_source:
         _output.console.print(table)
@@ -375,10 +431,10 @@ def print_unused(
         "[dim]These have no detected references and don't appear to be public API.[/dim]"
     )
 
-    table = Table(show_header=True, header_style="bold")
-    table.add_column("Name", style="cyan", no_wrap=True)
-    table.add_column("Type", style="dim", no_wrap=True)
-    table.add_column("Location", style="dim", no_wrap=True)
+    table = Table(header_style="bold", box=box.ROUNDED, border_style="dim", show_lines=True)
+    table.add_column("Name", style="cyan", overflow="fold")
+    table.add_column("Type", style="dim", width=8, min_width=8, no_wrap=True)
+    table.add_column("Location", style="dim", overflow="fold")
 
     visible = unused if max_items is None else unused[:max_items]
     for unit in visible:
@@ -400,13 +456,43 @@ def print_search_results(results: list[tuple[CodeUnit, float]]) -> None:
         _output.console.print("[yellow]No matches found.[/yellow]")
         return
 
-    table = Table(show_header=True, header_style="bold")
-    table.add_column("Rank", justify="right", no_wrap=True)
-    table.add_column("Score", style="green", width=10, no_wrap=True)
-    table.add_column("Name", no_wrap=True)
-    table.add_column("Location", style="dim", no_wrap=True)
+    table = Table(header_style="bold", box=box.ROUNDED, border_style="dim", show_lines=True)
+    table.add_column("Rank", justify="right", width=4, min_width=4, no_wrap=True)
+    table.add_column("Score", style="green", width=7, min_width=7, no_wrap=True)
+    table.add_column("Name", overflow="fold")
+    table.add_column("Location", style="dim", overflow="fold")
 
     for idx, (unit, score) in enumerate(results, start=1):
         table.add_row(str(idx), f"{score:.2%}", unit.name, format_location(unit))
+
+    _output.console.print(table)
+
+
+def print_file_search_results(results: list[FileSearchResult]) -> None:
+    """Print ranked files with brief evidence from their matching code units.
+
+    :param results: Ranked files with up to three contributing units each.
+    :return: ``None``.
+    """
+    if not results:
+        _output.console.print("[yellow]No matches found.[/yellow]")
+        return
+
+    table = Table(header_style="bold", box=box.ROUNDED, border_style="dim", show_lines=True)
+    table.add_column("Rank", justify="right", width=4, min_width=4, no_wrap=True)
+    table.add_column("Score", style="green", width=7, min_width=7, no_wrap=True)
+    table.add_column("File", style="dim", overflow="fold")
+    table.add_column("Matching code units", overflow="fold")
+
+    for rank, result in enumerate(results, start=1):
+        location = format_path(result.file_path)
+        evidence = [
+            f"{escape(unit.qualified_name)}:{unit.lineno} ({score:.2%})"
+            for unit, score in result.matches
+        ]
+        remaining = result.matching_units - len(result.matches)
+        if remaining:
+            evidence.append(f"+{remaining} more matching units")
+        table.add_row(str(rank), f"{result.score:.2%}", location, "\n".join(evidence))
 
     _output.console.print(table)

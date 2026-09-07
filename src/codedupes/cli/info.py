@@ -32,8 +32,11 @@ from codedupes.semantic_profiles import (
     resolve_model_profile,
 )
 
-from ._output import DEFAULT_OUTPUT_WIDTH
-from .cache import _echo_cache_summary
+from . import _output
+from ._options import Panel, output_width_option
+from ._output import DEFAULT_OUTPUT_WIDTH, _configured_cli_output
+from ._render import _settings_panel
+from .cache import _cache_summary_panel
 
 
 def _format_language_gates(profile: SemanticModelProfile) -> str:
@@ -49,96 +52,159 @@ def _format_language_gates(profile: SemanticModelProfile) -> str:
     return f"{gates} ({fallback})" if gates else fallback
 
 
-@cli_module.cli.command("info", help="Print tool and model defaults")
-def info_command() -> None:
-    """Print version and default settings."""
-    default_profile = resolve_model_profile(DEFAULT_MODEL)
-    click.echo(f"codedupes {__version__}")
-    runtime_versions = get_semantic_runtime_versions()
-    click.echo(f"Python: {runtime_versions['python']}")
-    click.echo(f"Platform: {platform.platform()}")
-    click.echo(f"PyTorch: {runtime_versions['torch']}")
-    click.echo(f"Transformers: {runtime_versions['transformers']}")
-    click.echo(f"Sentence Transformers: {runtime_versions['sentence-transformers']}")
-    cli_module.configure_mps_environment(DEFAULT_SEMANTIC_DEVICE, fallback=None)
-    diagnostics = cli_module.get_device_diagnostics(DEFAULT_SEMANTIC_DEVICE)
-    click.echo(f"Default semantic device request: {DEFAULT_SEMANTIC_DEVICE}")
-    click.echo(f"Resolved semantic device: {diagnostics.resolved or 'unavailable'}")
-    click.echo(f"CUDA available: {diagnostics.cuda_available}")
-    click.echo(f"MPS built/available: {diagnostics.mps_built}/{diagnostics.mps_available}")
-    click.echo(
-        f"PYTORCH_ENABLE_MPS_FALLBACK: {diagnostics.mps_fallback_env} "
-        f"(torch reads this as: {describe_mps_fallback_env(diagnostics.mps_fallback_env)})"
-    )
-    click.echo(
-        f"MLX loaded in process: {diagnostics.mlx_loaded} "
-        "(MLX allocator is not managed by codedupes)"
-    )
-    click.echo(
-        f"CPU: {diagnostics.cpu_name or 'unknown'} ({diagnostics.cpu_architecture or 'unknown'})"
-    )
-    click.echo(
-        f"CPU bfloat16 GEMM capable: {diagnostics.cpu_bf16_native} "
-        f"(native bf16 ISA={diagnostics.cpu_bf16_isa}, "
-        f"mkldnn available={diagnostics.cpu_mkldnn_available})"
-    )
-    if cpu_bf16_opted_in():
-        cpu_bf16_policy = (
-            "enabled (experimental)"
-            if diagnostics.cpu_bf16_native
-            else "disabled (CODEDUPES_CPU_BF16=1 set, but the capability gate failed)"
+@cli_module.cli.command("info", help="Show a compact runtime, device, and model overview")
+@click.option(
+    "--verbose",
+    "-v",
+    is_flag=True,
+    panel=Panel.OUTPUT,
+    help="Include full runtime/device diagnostics, parser status, defaults, models, and cache",
+)
+@output_width_option
+def info_command(output_width: int, verbose: bool) -> None:
+    """Display a compact overview or full diagnostics in Rich panels.
+
+    :param output_width: Width used for Rich terminal rendering.
+    :param verbose: Whether to include detailed diagnostics and defaults.
+    """
+    with _configured_cli_output(as_json=False, verbose=False, output_width=output_width):
+        console = _output.console
+        runtime_versions = get_semantic_runtime_versions()
+        cli_module.configure_mps_environment(DEFAULT_SEMANTIC_DEVICE, fallback=None)
+        diagnostics = cli_module.get_device_diagnostics(DEFAULT_SEMANTIC_DEVICE)
+        if not verbose:
+            rows = [
+                ("Python", runtime_versions["python"]),
+                ("PyTorch", runtime_versions["torch"]),
+                ("Device", diagnostics.resolved or "unavailable"),
+                ("Default model", DEFAULT_MODEL),
+                ("Supported languages", ", ".join(SUPPORTED_LANGUAGES)),
+            ]
+            if diagnostics.error is not None:
+                rows.append(("Device diagnostic error", diagnostics.error))
+            console.print(_settings_panel(f"codedupes {__version__}", rows))
+            console.print(
+                "Run codedupes info --verbose for full diagnostics and defaults.", style="dim"
+            )
+            return
+
+        default_profile = resolve_model_profile(DEFAULT_MODEL)
+        console.print(
+            _settings_panel(
+                f"codedupes {__version__}",
+                [
+                    ("Python", runtime_versions["python"]),
+                    ("Platform", platform.platform()),
+                    ("PyTorch", runtime_versions["torch"]),
+                    ("Transformers", runtime_versions["transformers"]),
+                    ("Sentence Transformers", runtime_versions["sentence-transformers"]),
+                ],
+            )
         )
-    else:
-        cpu_bf16_policy = (
-            "disabled (experimental; set CODEDUPES_CPU_BF16=1 on gate-capable hardware)"
+        if cpu_bf16_opted_in():
+            cpu_bf16_policy = (
+                "enabled (experimental)"
+                if diagnostics.cpu_bf16_native
+                else "disabled (CODEDUPES_CPU_BF16=1 set, but the capability gate failed)"
+            )
+        else:
+            cpu_bf16_policy = (
+                "disabled (experimental; set CODEDUPES_CPU_BF16=1 on gate-capable hardware)"
+            )
+        device_rows = [
+            ("Default semantic device request", DEFAULT_SEMANTIC_DEVICE),
+            ("Resolved semantic device", diagnostics.resolved or "unavailable"),
+            ("CUDA available", str(diagnostics.cuda_available)),
+            ("MPS built/available", f"{diagnostics.mps_built}/{diagnostics.mps_available}"),
+            (
+                "MPS fallback environment",
+                (
+                    f"PYTORCH_ENABLE_MPS_FALLBACK={diagnostics.mps_fallback_env} "
+                    f"(torch reads this as: {describe_mps_fallback_env(diagnostics.mps_fallback_env)})"
+                ),
+            ),
+            (
+                "MLX loaded in process",
+                f"{diagnostics.mlx_loaded} (MLX allocator is not managed by codedupes)",
+            ),
+            (
+                "CPU",
+                f"{diagnostics.cpu_name or 'unknown'} ({diagnostics.cpu_architecture or 'unknown'})",
+            ),
+            (
+                "CPU bfloat16 GEMM capable",
+                (
+                    f"{diagnostics.cpu_bf16_native} "
+                    f"(native bf16 ISA={diagnostics.cpu_bf16_isa}, "
+                    f"mkldnn available={diagnostics.cpu_mkldnn_available})"
+                ),
+            ),
+            ("CPU bfloat16 inference", cpu_bf16_policy),
+        ]
+        if diagnostics.mps_memory_bytes:
+            device_rows.append(
+                ("MPS memory", format_mps_memory_snapshot(diagnostics.mps_memory_bytes))
+            )
+        if diagnostics.error is not None:
+            device_rows.append(("Device diagnostic error", diagnostics.error))
+        console.print(_settings_panel("Device", device_rows))
+        console.print(
+            _settings_panel(
+                "Analysis defaults",
+                [
+                    ("Default model", DEFAULT_MODEL),
+                    ("Default model revision", default_profile.default_revision or "auto"),
+                    (
+                        f"Semantic duplicate gates ({DEFAULT_MODEL})",
+                        _format_language_gates(default_profile),
+                    ),
+                    ("Default traditional threshold", DEFAULT_TRADITIONAL_THRESHOLD),
+                    ("Default semantic task for check", DEFAULT_CHECK_SEMANTIC_TASK),
+                    ("Default semantic task for search", DEFAULT_SEARCH_SEMANTIC_TASK),
+                    ("Default min_statements for semantic", DEFAULT_MIN_SEMANTIC_STATEMENTS),
+                    ("Default output width", DEFAULT_OUTPUT_WIDTH),
+                    ("Default combined semantic fallback", "disabled"),
+                    ("Supported languages", ", ".join(SUPPORTED_LANGUAGES)),
+                    ("Unused-code analysis languages", "python"),
+                ],
+            )
         )
-    click.echo(f"CPU bfloat16 inference: {cpu_bf16_policy}")
-    if diagnostics.mps_memory_bytes:
-        click.echo(f"MPS memory: {format_mps_memory_snapshot(diagnostics.mps_memory_bytes)}")
-    if diagnostics.error is not None:
-        click.echo(f"Device diagnostic error: {diagnostics.error}")
-    click.echo(f"Default model: {DEFAULT_MODEL}")
-    click.echo(f"Default model revision: {default_profile.default_revision or 'auto'}")
-    click.echo(
-        f"Semantic duplicate gates ({DEFAULT_MODEL}): {_format_language_gates(default_profile)}"
-    )
-    click.echo(f"Default traditional threshold: {DEFAULT_TRADITIONAL_THRESHOLD}")
-    click.echo(f"Default semantic task for check: {DEFAULT_CHECK_SEMANTIC_TASK}")
-    click.echo(f"Default semantic task for search: {DEFAULT_SEARCH_SEMANTIC_TASK}")
-    click.echo(f"Default min_statements for semantic: {DEFAULT_MIN_SEMANTIC_STATEMENTS}")
-    click.echo(f"Default output width: {DEFAULT_OUTPUT_WIDTH}")
-    click.echo("Default combined semantic fallback: disabled")
-    click.echo(f"Supported languages: {', '.join(SUPPORTED_LANGUAGES)}")
-    click.echo("Unused-code analysis languages: python")
-    click.echo("Tree-sitter grammar packages:")
-    for status in get_grammar_statuses():
-        installed = status.installed_version or "not installed"
-        state = "ready" if status.available else "unavailable"
-        click.echo(
-            f"  - {status.dialect}: {status.package}=={status.pinned_version} "
-            f"(installed={installed}, {state})"
+        grammar_rows = []
+        for status in get_grammar_statuses():
+            installed = status.installed_version or "not installed"
+            state = "ready" if status.available else "unavailable"
+            detail = f"{status.package}=={status.pinned_version} (installed={installed}, {state})"
+            if status.error:
+                detail += f"\n{status.error}"
+            grammar_rows.append((status.dialect, detail))
+        console.print(_settings_panel("Tree-sitter grammar packages", grammar_rows))
+        console.print(
+            _settings_panel(
+                "Default exclusions",
+                [
+                    ("Default built-in exclude globs", "\n".join(DEFAULT_EXCLUDE_PATTERNS)),
+                    (
+                        f"Default excluded directory names ({len(DEFAULT_EXCLUDE_DIR_NAMES)} total)",
+                        ", ".join(sorted(DEFAULT_EXCLUDE_DIR_NAMES)),
+                    ),
+                ],
+            )
         )
-        if status.error:
-            click.echo(f"      {status.error}")
-    click.echo("Default built-in exclude globs:")
-    for pattern in DEFAULT_EXCLUDE_PATTERNS:
-        click.echo(f"  - {pattern}")
-    click.echo(f"Default excluded directory names ({len(DEFAULT_EXCLUDE_DIR_NAMES)} total):")
-    click.echo(f"  {', '.join(sorted(DEFAULT_EXCLUDE_DIR_NAMES))}")
-    click.echo("Built-in semantic model aliases:")
-    for profile in list_supported_models():
-        aliases = ", ".join(profile.all_aliases())
-        search_threshold = get_default_search_threshold(profile.key)
-        click.echo(f"  - {profile.key} -> {profile.canonical_name}")
-        click.echo(f"      family={profile.family} search_threshold={search_threshold}")
-        click.echo(f"      semantic duplicate gates: {_format_language_gates(profile)}")
-        click.echo(f"      aliases: {aliases}")
-        if profile.default_revision is not None:
-            click.echo(f"      default_revision: {profile.default_revision}")
-        click.echo(f"      default_trust_remote_code: {profile.default_trust_remote_code}")
-    click.echo("Embedding cache:")
-    try:
-        _echo_cache_summary(cli_module.EmbeddingCache().stats())
-    except Exception as exc:  # noqa: BLE001 - info is diagnostics; report and keep printing
-        click.echo(f"  unavailable: {exc}")
-    click.echo("Run with --help for CLI usage")
+        console.print("Built-in semantic model aliases", style="bold cyan")
+        for profile in list_supported_models():
+            model_rows = [
+                ("Model", profile.canonical_name),
+                ("Family", profile.family),
+                ("Search threshold", str(get_default_search_threshold(profile.key))),
+                ("Semantic duplicate gates", _format_language_gates(profile)),
+                ("Aliases", ", ".join(profile.all_aliases())),
+            ]
+            if profile.default_revision is not None:
+                model_rows.append(("Default revision", profile.default_revision))
+            model_rows.append(("Default trust remote code", str(profile.default_trust_remote_code)))
+            console.print(_settings_panel(profile.key, model_rows))
+        try:
+            console.print(_cache_summary_panel(cli_module.EmbeddingCache().stats()))
+        except Exception as exc:  # noqa: BLE001 - info is diagnostics; report and keep printing
+            console.print(_settings_panel("Embedding cache", [("Unavailable", str(exc))]))
+        console.print("Run with --help for CLI usage", style="dim")

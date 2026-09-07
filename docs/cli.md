@@ -1,6 +1,9 @@
 # CLI reference
 
-The supported command-line entry point is `codedupes`. Examples assume it is installed and available on `PATH`.
+The supported command-line entry point is `codedupes`. Install it first with the
+[installation guide](install.md), then run `codedupes info` to confirm the installed
+parsers and the device that semantic analysis will use. Examples below assume the
+command is available on `PATH`.
 
 See [Output and exit codes](output.md) for JSON and process status, [Polyglot language support](polyglot-languages.md) for extraction semantics, [Analysis defaults](analysis-defaults.md) for heuristics, [Model profiles](model-profiles.md) for semantic defaults, [Accelerators](accelerators.md) for device behavior, and [Embedding cache](caching.md) for persistent cache behavior.
 
@@ -8,7 +11,14 @@ See [Output and exit codes](output.md) for JSON and process status, [Polyglot la
 
 Run duplicate and unused-code analysis.
 
-Review the reported candidates, then adjust thresholds or scope if needed. See [hybrid gate tuning](hybrid-tuning.md) for calibration experiments.
+The default combined scan runs structural/token matching and semantic matching. Review
+the `Hybrid Duplicates` panel first: it is the synthesized duplicate list. `Likely
+Dead Code` is a conservative Python-only static-analysis candidate list, so review it
+before removing anything. The first semantic run may download the selected embedding
+model; use `--traditional-only` when you want a fast structural/token-only pass.
+
+Review the reported candidates, then adjust thresholds or scope if needed. See [hybrid
+gate tuning](hybrid-tuning.md) for calibration experiments.
 
 Examples:
 
@@ -16,6 +26,7 @@ Examples:
 codedupes check ./src
 codedupes check ./src --json --threshold 0.82
 codedupes check ./src --semantic-only
+# Fast structural/token scan without semantic model inference.
 codedupes check ./src --traditional-only --no-unused
 codedupes check ./src --show-all
 codedupes check ./src --fail-on all
@@ -47,21 +58,32 @@ Options, in addition to the [shared options](#options-shared-by-check-and-search
 
 Run semantic search over extracted code units.
 
+Search indexes the chosen path for this command invocation, then returns matching
+functions and methods by default. Use `--semantic-unit-type` to change the eligible
+unit types, including classes. Each invocation extracts the current source; the
+persistent cache reuses embeddings between runs.
+
 Examples:
 
 ```bash
 codedupes search ./src "sum values in a list" --top-k 5
 codedupes search ./src "normalize request payload" --json
+codedupes search ./src "normalize request payload" --result-level file --top-k 5
 codedupes search ./src "parse json payload" --semantic-threshold 0.6 --top-k 20
 codedupes search ./src "refund validation" --search-document contextual --semantic-threshold 0.55
 ```
 
 Options, in addition to the [shared options](#options-shared-by-check-and-search):
 
-- `--top-k <int>`: Number of results (default `10`)
+- `--result-level <unit|file>`: Return individual code units (default `unit`) or group matches into files
+- `--top-k <int>`: Maximum results at the selected level: code units or distinct files (default `10`)
 - `--threshold <float>`: Shared semantic threshold override
 - `--semantic-task <name>`: Semantic task mode for query/document embeddings (default `code-retrieval`)
-- `--search-document <source|contextual>`: Choose the [search document representation](python-api.md#semantic-query-search), source only by default. Contextual search requires an explicit `--semantic-threshold` or `--threshold`; tune the value against representative queries
+- `--search-document <source|contextual>`: Choose the [search document representation](python-api.md#semantic-query-search), source only by default. Contextual search requires an explicit `--semantic-threshold` or `--threshold`; omission is a usage error (exit `2`) before indexing. Tune the value against representative queries
+
+Search also requires an explicit threshold for a custom instruction prefix, a changed built-in model revision or trust setting, or an alternate EmbeddingGemma task. These option errors are rejected before indexing with exit `2`. Python callers may still index first and supply the threshold to `search()` later.
+
+At `--result-level file`, the threshold still applies to individual code units. Matching units are grouped by their full file path, and each file's score is the highest unit score. Grouping happens before `--top-k`, so several strong units in one file do not crowd out other files. The report shows up to three strongest definitions with line numbers and scores, plus a count of further matches. Files with no qualifying units are absent. This uses the same unit embeddings, candidate filters, and cache as ordinary search; it does not embed whole files. `--semantic-unit-type` selects what gets searched, while `--result-level` selects how matches are reported. See [file search JSON](output.md#file-search) for machine-readable output.
 
 ## Options shared by `check` and `search`
 
@@ -76,7 +98,8 @@ codedupes search . "validate session token" --language js --language ts
 
 - `--language <name>`: Restrict extraction to a language; repeat for multiple languages, or omit to auto-detect. See [supported files](polyglot-languages.md#supported-files) for names, aliases, and C header selection.
 - `--no-private`: Exclude private units according to [language visibility rules](polyglot-languages.md#visibility-filtering)
-- `--exclude <glob>`: Replace the default file globs (repeat for multiple patterns); see [extraction scope](analysis-defaults.md#extraction-scope-defaults)
+- `--exclude <name|glob>`: Add an exclusion (repeat for multiple patterns). On a directory target, these extend the default test exclusions; on a single-file target, supplied excludes still apply while the default test-file patterns do not. Bare names such as `examples` match at any depth and exclude whole directory subtrees; paths containing `/` are relative to the scan root. Quote globs to prevent shell expansion; see [extraction scope](analysis-defaults.md#extraction-scope-defaults)
+- `--no-default-excludes`: Disable the default test-file patterns for directory targets, allowing tests to be analyzed. Custom excludes and built-in artifact-directory exclusions beneath the scan root still apply
 - `--include-stubs`: Include `.pyi` files when scanning a directory (single-file `.pyi` targets are analyzed as given)
 
 ### Semantic model
@@ -110,25 +133,27 @@ See [model profiles](model-profiles.md#semantic-task-defaults-and-choices) for t
 
 ### Output
 
-- `--output-width <int>`: Rich render width for non-JSON output (default `160`, min `80`)
+- `--output-width <int>`: Maximum Rich render width for non-JSON output (default `160`, min `80`); capped at the terminal width, even on narrower terminals. Redirected output uses the requested width
 - `--json`: Emit JSON instead of rich tables
 - `-v, --verbose`: Verbose logs
 
 ## Environment variables
 
-Help for `check` and `search` displays option environment variables; command-line values take precedence. Names use the `CODEDUPES_` prefix and the internal parameter name, which can differ from the flag: `--json` uses `CODEDUPES_AS_JSON=1`, and `--language` uses `CODEDUPES_LANGUAGES="python rust"`. Other examples are `CODEDUPES_DEVICE=cpu`, `CODEDUPES_NO_CACHE=1`, `CODEDUPES_FAIL_ON=all` for `check`, and `CODEDUPES_SEARCH_DOCUMENT=contextual` for `search`. See [cache controls](caching.md#controls) for cache-library variables.
+CLI options are configured through command-line flags; automatic `CODEDUPES_*` option overrides are disabled. Explicit library-level [cache controls](caching.md#controls) and [accelerator controls](accelerators.md#precision-and-metal-environment-variables) remain supported.
 
 ## `codedupes info`
 
-Print installed runtime and parser versions, model aliases and effective defaults, analysis settings, device capabilities, and the embedding-cache summary. See [parser readiness](polyglot-languages.md#parser-readiness) and [accelerator precision](accelerators.md#precision-and-metal-environment-variables) for interpreting those fields.
+Show a compact panel with the tool version, Python and PyTorch versions, resolved device, default model, and supported languages. Add `-v` or `--verbose` for the full runtime/device diagnostics, parser package status, analysis defaults, exclusions, model profiles, and embedding-cache summary. Device diagnostic errors remain visible in the compact overview.
+
+Use `--output-width <int>` to set the maximum render width (default `160`, minimum option value `80`). Output fits the actual terminal even when it is narrower; redirected output uses the requested width. Diagnostic panels fit their content, and long values wrap inside the panel. See [parser readiness](polyglot-languages.md#parser-readiness) and [accelerator precision](accelerators.md#precision-and-metal-environment-variables) for interpreting the verbose fields.
 
 ## `codedupes cache info`
 
-Print the embedding-cache summary plus per-model entry counts and a per-repo breakdown including orphan rows and the last complete manifest generation.
+Display the embedding-cache summary plus per-model entry counts and a per-repo breakdown in Rich panels, including orphan rows and the last complete manifest generation. Supports the same `--output-width <int>` option as `info`, `check`, and `search`.
 
 ## `codedupes cache clear [--model <name>]`
 
-Clear all cached embeddings or only entries for one model. See [Embedding cache](caching.md).
+Clear all cached embeddings or only entries for one model. An empty or whitespace-only `--model` is a usage error (exit `2`) and deletes nothing; omit the option to clear all models. Status messages use Rich formatting and support `--output-width <int>` with the same default and minimum as the other commands. See [Embedding cache](caching.md).
 
 ## Validation and mode notes
 
@@ -145,4 +170,4 @@ Clear all cached embeddings or only entries for one model. See [Embedding cache]
 - Explicit semantic-analysis controls are rejected with `--traditional-only`, including model/task, candidate-scope, device/runtime options, and `--strict-revision-cache`. `--no-cache` is accepted as a harmless no-op.
 - Explicit traditional-analysis controls are rejected with `--semantic-only`: `--traditional-threshold`, `--no-tiny-filter`, and `--tiny-cutoff`
 
-To investigate a surprising combined result, compare `--traditional-only`, `--semantic-only`, and the default run. Add `--verbose` for model-loading, device-resolution, and fallback logs. See [semantic candidate rules](analysis-defaults.md#semantic-candidate-defaults) for context-window exclusions and [Output and exit codes](output.md) for diagnostics and failure behavior.
+To investigate a surprising combined result, compare `--traditional-only`, `--semantic-only`, and the default run. Add `--verbose` for model-loading, device-resolution, and fallback logs. See [semantic candidate rules](analysis-defaults.md#semantic-candidate-defaults) for candidate selection and long-input handling, and [Output and exit codes](output.md) for diagnostics and failure behavior.

@@ -133,6 +133,20 @@ def test_c_header_auto_detection_requires_c_without_cpp(tmp_path: Path) -> None:
     assert not repository_allows_c_headers(tmp_path, None)
 
 
+@pytest.mark.parametrize("outside_root", [False, True])
+def test_c_header_detection_uses_extraction_symlink_identity(
+    tmp_path: Path, outside_root: bool
+) -> None:
+    root = tmp_path / "project"
+    root.mkdir()
+    target = (tmp_path if outside_root else root) / "target.c"
+    target.write_text("int run(void) { return 1; }\n", encoding="utf-8")
+    (root / "alias.cpp").symlink_to(target)
+    (root / "main.c").write_text("int main(void) { return 0; }\n", encoding="utf-8")
+
+    assert repository_allows_c_headers(root, None) is (not outside_root)
+
+
 @pytest.mark.parametrize("cpp_filename", ["other.C", "other.H"])
 def test_case_sensitive_cpp_suffixes_disable_c_header_detection(
     tmp_path: Path, cpp_filename: str

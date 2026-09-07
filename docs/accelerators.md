@@ -2,6 +2,8 @@
 
 Install the supported runtime and verify MPS availability as described in [Installation](install.md). The [CLI reference](cli.md) lists device options, and [model profiles](model-profiles.md) lists model-specific thresholds and tasks.
 
+Most users should leave the device at `auto`. It chooses CUDA, then MPS, then CPU, and applies only to semantic embedding; traditional-only analysis does not load a model or initialize PyTorch. Use `--device cpu` when you need to avoid accelerator use, and use an explicit accelerator only to require that hardware.
+
 ## Device selection
 
 Both `check` and `search` accept:
@@ -67,7 +69,7 @@ Model loads pin an explicit dtype instead of inheriting the checkpoint's configu
 | Other CUDA devices and MPS | float32 |
 | CPU | float32, unless the experimental policy below is enabled |
 
-`CODEDUPES_CPU_BF16=1` enables experimental CPU bfloat16 only when the machine has both a native bf16 ISA (`bf16` on ARM, `amx_bf16`/`avx512_bf16` on x86) and an available mkldnn GEMM backend. The capability check runs at most once per process and persists nothing. `codedupes info` reports the hardware checks and effective policy.
+`CODEDUPES_CPU_BF16=1` enables experimental CPU bfloat16 only when the machine has both a native bf16 ISA (`bf16` on ARM, `amx_bf16`/`avx512_bf16` on x86) and an available mkldnn GEMM backend. The capability check runs at most once per process and persists nothing. `codedupes info --verbose` reports the hardware checks and effective policy.
 
 The CPU capability gate does not establish accuracy at the built-in duplicate and search thresholds. Automatic enablement awaits speed and decision-parity validation on supported hardware. TODO before promotion: measure agreement between CPU and CUDA bfloat16 vectors, which currently share a cache namespace, and split their identities if needed.
 
@@ -87,21 +89,27 @@ MLX and PyTorch both consume Apple unified memory but manage it separately. `cod
 
 ## Hardware validation
 
-MPS behavior is validated on real Apple Silicon hardware only - the test suite contains no simulated MPS. `tests/test_semantic_mps.py` runs automatically wherever PyTorch reports a usable MPS device and skips only where the hardware is genuinely absent (a non-Mac host, or a sandbox that blocks Metal device access - a skipped run performs zero MPS validation, so run it from an environment with device access):
+This section is for contributors validating accelerator support; normal use only needs `codedupes info` and the default `--device auto`. The tests run against real hardware and need the default model already available locally. Run a semantic check first to fetch it.
+
+MPS validation runs only where PyTorch reports a usable MPS device; otherwise the suite skips:
 
 ```bash
 pytest tests/test_semantic_mps.py
 ```
 
-The suite loads the pinned default model on `mps`, checks CPU/MPS embedding parity, validates explicit `--device mps` requests against a warm embedding cache, and provokes genuine Metal allocator out-of-memory (by lowering `torch.mps.set_per_process_memory_fraction`) to prove load-time CPU fallback, the batch-halving ladder, and query-encode recovery work on the real allocator. The default model must already be cached locally (any prior `codedupes check` or `hf download` does this).
-
-CUDA behavior is validated the same way, on real GPUs only. `tests/test_semantic_cuda.py` runs automatically wherever `torch.cuda.is_available()` is true and skips otherwise:
+CUDA validation likewise runs only where `torch.cuda.is_available()` is true:
 
 ```bash
 pytest tests/test_semantic_cuda.py
 ```
 
-It covers the five behaviors this documentation advertises for CUDA hosts: bfloat16 is pinned only where `torch.cuda.is_bf16_supported(including_emulation=False)` is true and the loaded model's live parameter dtype agrees; cold CUDA inference completes and tracks CPU within the tolerance its dtype allows; a genuine allocator out-of-memory (provoked by lowering `torch.cuda.set_per_process_memory_fraction`) drives the load-time CPU fallback with a re-pinned CPU dtype, the batch-halving ladder, and the capped CPU restart; a keyed-bfloat16 corpus that lands on CPU rebuilds as one coherent float32 matrix that stays searchable; and a query whose fallback casts it to float32 aborts before the dot product instead of comparing across policies. Tests that require native bfloat16 skip on pre-Ampere hardware, where CUDA keys as float32 and those paths do not exist. The bfloat16 tests are the only CUDA-specific coverage of the dtype re-pin: MPS always resolves float32, so the MPS suite cannot exercise it.
+Both suites check inference against the requested device, cache behavior, and CPU recovery. They intentionally provoke real accelerator OOMs to exercise the recovery ladder, so do not run them alongside a workload that needs the GPU/Metal memory.
+
+The optional CUDA smoke command also exercises the default model and labeled Rust fixture:
+
+```bash
+CODEDUPES_SMOKE_GPU=1 pytest tests/test_semantic_cuda.py tests/test_semantic_smoke.py -m gpu
+```
 
 A companion opt-in smoke test validates every built-in profile against the multi-domain probe corpus in `test_fixtures/search_probes/`: every relevant query must surface its expected function at that profile's default search threshold and every off-topic query must return nothing:
 
@@ -112,6 +120,7 @@ CODEDUPES_SMOKE_SEARCH=1 pytest tests/test_semantic_smoke.py
 ## Upstream references
 
 - [PyTorch 2.13 release notes](https://pytorch.org/blog/pytorch-2-13-release-blog/)
+- [PyTorch 2.13 CUDA streams and memory management](https://docs.pytorch.org/docs/2.13/notes/cuda.html)
 - [PyTorch 2.13 MPS backend requirements](https://docs.pytorch.org/docs/2.13/notes/mps.html)
 - [PyTorch 2.13 MPS environment variables](https://docs.pytorch.org/docs/2.13/mps_environment_variables.html)
 - [PyTorch 2.13 `torch.mps` API](https://docs.pytorch.org/docs/2.13/mps.html)

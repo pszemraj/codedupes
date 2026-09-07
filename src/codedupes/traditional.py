@@ -550,12 +550,12 @@ def run_traditional_analysis(
     ast_dupes = _find_exact_duplicates(units, "structural_hash", "ast_hash")
     token_dupes = _find_exact_duplicates(units, "token_hash", "token_hash")
     exact = _dedupe_duplicate_pairs(ast_dupes + token_dupes)
-    logger.info(f"Found {len(exact)} exact duplicates")
+    logger.debug("Found %d exact duplicates before caller filtering", len(exact))
 
     near = find_near_duplicates_jaccard(units, threshold=jaccard_threshold)
     exact_pairs = {ordered_pair_key(d.unit_a, d.unit_b) for d in exact}
     near = [d for d in near if ordered_pair_key(d.unit_a, d.unit_b) not in exact_pairs]
-    logger.info(f"Found {len(near)} near duplicates (Jaccard)")
+    logger.debug("Found %d near duplicates before caller filtering (Jaccard)", len(near))
 
     unused = find_potentially_unused(units, strict_unused=strict_unused) if compute_unused else []
     if compute_unused:

@@ -36,6 +36,30 @@ def test_skipped_unused_analysis_does_not_log_a_zero_count(
     assert "potentially unused" not in caplog.text
 
 
+def test_duplicate_counts_are_debug_only_before_caller_filtering(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Leave final duplicate counts to the caller that applies result filters."""
+    units = extract_units(
+        tmp_path,
+        "def first():\n    return 1\n\ndef second():\n    return 1",
+        include_private=True,
+    )
+
+    with caplog.at_level(logging.INFO, logger="codedupes.traditional"):
+        run_traditional_analysis(units, compute_unused=False)
+
+    assert "exact duplicates before caller filtering" not in caplog.text
+    assert "near duplicates before caller filtering" not in caplog.text
+
+    caplog.clear()
+    with caplog.at_level(logging.DEBUG, logger="codedupes.traditional"):
+        run_traditional_analysis(units, compute_unused=False)
+
+    assert "Found 1 exact duplicates before caller filtering" in caplog.text
+    assert "Found 0 near duplicates before caller filtering (Jaccard)" in caplog.text
+
+
 def test_exact_duplicates_via_ast_hash(tmp_path: Path) -> None:
     source = dedent(
         """

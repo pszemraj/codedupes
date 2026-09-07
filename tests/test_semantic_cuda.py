@@ -6,6 +6,10 @@ real allocator state, and real CUDA out-of-memory errors provoked through
 simulated backend anywhere - if this module skips, the hardware is genuinely
 absent and the run does not count as CUDA validation.
 
+The memory cap limits allocator growth, not reuse of cached blocks. Inference
+OOM cases therefore run on a fresh CUDA stream so warmed blocks from the
+original stream cannot satisfy the allocation, including with expandable segments.
+
 This is the executable form of the release checklist for CUDA hosts:
 
 1. Native CUDA bfloat16 is selected only on natively capable hardware -
@@ -29,6 +33,8 @@ from __future__ import annotations
 
 import gc
 import logging
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 import numpy as np
@@ -50,9 +56,8 @@ if not torch.cuda.is_available():
 
 pytestmark = pytest.mark.gpu
 
-# Small enough that any further allocation exceeds the caching allocator's
-# ceiling, which turns a genuine CUDA OOM into a deterministic fixture. Already
-# resident weights are unaffected: the cap applies to new allocations.
+# The cap prevents allocator growth, but cached blocks can still be reused.
+# Inference OOM cases use a fresh stream to avoid the warmed stream's free blocks.
 _TINY_MEMORY_FRACTION = 0.0001
 _UNCAPPED_MEMORY_FRACTION = 1.0
 
@@ -71,6 +76,23 @@ def _reset_real_cuda_state():
     yield
     semantic.clear_model_cache()
     torch.cuda.set_per_process_memory_fraction(_UNCAPPED_MEMORY_FRACTION)
+
+
+@contextmanager
+def _cuda_inference_oom() -> Iterator[None]:
+    """Force real allocator OOM on a stream without warmed cached blocks.
+
+    :return: Context running inference on a fresh stream under a tiny memory cap.
+    """
+    stream = torch.cuda.Stream()
+    stream.wait_stream(torch.cuda.current_stream())
+    previous_fraction = torch.cuda.get_per_process_memory_fraction()
+    torch.cuda.set_per_process_memory_fraction(_TINY_MEMORY_FRACTION)
+    try:
+        with torch.cuda.stream(stream):
+            yield
+    finally:
+        torch.cuda.set_per_process_memory_fraction(previous_fraction)
 
 
 def _recording_encode(model: object) -> list[tuple[int | None, str | None]]:
@@ -242,9 +264,7 @@ def test_encode_oom_halves_batch_then_restarts_on_cpu_at_the_cap(tmp_path: Path,
     model = semantic.get_model(DEFAULT_MODEL, device="cuda")
     attempts = _recording_encode(model)
 
-    torch.cuda.set_per_process_memory_fraction(_TINY_MEMORY_FRACTION)
-
-    with caplog.at_level(logging.WARNING, logger="codedupes.semantic"):
+    with _cuda_inference_oom(), caplog.at_level(logging.WARNING, logger="codedupes.semantic"):
         embeddings = semantic.compute_embeddings(units, device="cuda", batch_size=64)
 
     # Prefix, not equality: on a bfloat16 GPU the CPU landing also breaks dtype
@@ -276,11 +296,10 @@ def test_corpus_oom_completes_on_cpu_and_stays_searchable(tmp_path: Path) -> Non
     units = extract_arithmetic_units(tmp_path)
     semantic.get_model(DEFAULT_MODEL, device="cuda")
 
-    torch.cuda.set_per_process_memory_fraction(_TINY_MEMORY_FRACTION)
-
-    embeddings, identity = semantic.compute_embeddings_with_identity(
-        units, device="cuda", batch_size=8, cache_scope=tmp_path
-    )
+    with _cuda_inference_oom():
+        embeddings, identity = semantic.compute_embeddings_with_identity(
+            units, device="cuda", batch_size=8, cache_scope=tmp_path
+        )
 
     assert semantic._model_execution_device == "cpu"
     assert embeddings.shape[0] == len(units)
@@ -318,11 +337,10 @@ def test_bf16_corpus_oom_rebuilds_one_float32_matrix(tmp_path: Path) -> None:
     )
     assert "dtype=torch.bfloat16" in warm_identity.runtime_variant
 
-    torch.cuda.set_per_process_memory_fraction(_TINY_MEMORY_FRACTION)
-
-    embeddings, identity = semantic.compute_embeddings_with_identity(
-        units, device="cuda", batch_size=8, cache_scope=tmp_path
-    )
+    with _cuda_inference_oom():
+        embeddings, identity = semantic.compute_embeddings_with_identity(
+            units, device="cuda", batch_size=8, cache_scope=tmp_path
+        )
 
     assert semantic._model_execution_device == "cpu"
     assert embeddings.shape[0] == len(units)
@@ -343,9 +361,7 @@ def test_bf16_query_fallback_aborts_before_similarity(tmp_path: Path) -> None:
     )
     assert "dtype=torch.bfloat16" in identity.runtime_variant
 
-    torch.cuda.set_per_process_memory_fraction(_TINY_MEMORY_FRACTION)
-
-    with pytest.raises(RuntimeError, match="keyed under a bfloat16 policy"):
+    with _cuda_inference_oom(), pytest.raises(RuntimeError, match="keyed under a bfloat16 policy"):
         semantic.find_similar_to_query(
             "addition",
             units,

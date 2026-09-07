@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import rich_click as click
+from rich.markup import escape
 
 import codedupes.cli as cli_module
 from codedupes.constants import (
@@ -13,21 +15,64 @@ from codedupes.constants import (
     DEFAULT_TOP_K,
     SEMANTIC_TASK_CHOICES,
 )
+from codedupes.models import CodeUnit
 
 from . import _output
 from ._json import print_search_json
 from ._options import Panel, SearchOptions, option_panels, semantic_options
 from ._output import _configured_cli_output, _run_cli_action, _validate_positive_int
-from ._render import _format_embedding_stats, _print_diagnostics, print_search_results
+from ._render import (
+    _format_embedding_stats,
+    _print_diagnostics,
+    print_file_search_results,
+    print_search_results,
+)
+
+
+@dataclass
+class FileSearchResult:
+    """One ranked file with its score and up to three contributing code units."""
+
+    file_path: Path
+    score: float
+    matching_units: int
+    matches: list[tuple[CodeUnit, float]]
+
+
+def _group_file_results(
+    results: list[tuple[CodeUnit, float]], top_k: int
+) -> list[FileSearchResult]:
+    """Group matching units into files ranked by their strongest unit score.
+
+    :param results: All unit matches above the search threshold.
+    :param top_k: Maximum number of distinct files to return.
+    :return: Ranked files with at most three contributing units each.
+    """
+    grouped: dict[Path, list[tuple[CodeUnit, float]]] = {}
+    for unit, score in results:
+        grouped.setdefault(unit.file_path, []).append((unit, score))
+
+    files = []
+    for path, matches in grouped.items():
+        matches.sort(key=lambda match: (-match[1], match[0].lineno, match[0].uid))
+        files.append(FileSearchResult(path, matches[0][1], len(matches), matches[:3]))
+    return sorted(files, key=lambda result: (-result.score, str(result.file_path)))[:top_k]
 
 
 @cli_module.cli.command(
     "search",
     help="Search for semantically similar code",
-    context_settings={"auto_envvar_prefix": "CODEDUPES"},
 )
 @click.argument("path", type=click.Path(path_type=Path, exists=True), panel=Panel.SCOPE)
 @click.argument("query", panel=Panel.SCOPE)
+@click.option(
+    "--result-level",
+    type=click.Choice(["unit", "file"]),
+    default="unit",
+    show_default=True,
+    panel=Panel.DETECTION,
+    help="Return matching code units or files ranked by their best matching unit",
+)
 @click.option(
     "--top-k",
     type=int,
@@ -35,8 +80,7 @@ from ._render import _format_embedding_stats, _print_diagnostics, print_search_r
     show_default=True,
     callback=_validate_positive_int,
     panel=Panel.DETECTION,
-    show_envvar=True,
-    help="Maximum results",
+    help="Maximum results at the selected result level",
 )
 @click.option(
     "--threshold",
@@ -44,14 +88,12 @@ from ._render import _format_embedding_stats, _print_diagnostics, print_search_r
     default=None,
     show_default=False,
     panel=Panel.DETECTION,
-    show_envvar=True,
     help="Shared threshold override for semantic search",
 )
 @click.option(
     "--semantic-threshold",
     type=float,
     panel=Panel.DETECTION,
-    show_envvar=True,
     help="Override semantic threshold",
 )
 @click.option(
@@ -60,7 +102,6 @@ from ._render import _format_embedding_stats, _print_diagnostics, print_search_r
     default=DEFAULT_SEARCH_SEMANTIC_TASK,
     show_default=True,
     panel=Panel.SEMANTIC,
-    show_envvar=True,
     help="Semantic task mode for query/document embeddings",
 )
 @click.option(
@@ -69,7 +110,6 @@ from ._render import _format_embedding_stats, _print_diagnostics, print_search_r
     default="source",
     show_default=True,
     panel=Panel.SEMANTIC,
-    show_envvar=True,
     help=(
         "Text representation embedded for each search-index unit; "
         "contextual requires an explicit threshold"
@@ -94,11 +134,16 @@ def search_command(ctx: click.Context, path: Path, query: str, **params: Any) ->
         output_width=opts.output_width,
     ):
         try:
-            config = opts.to_analysis_config()
+            config = opts.to_analysis_config(path)
         except ValueError as exc:
             raise click.UsageError(str(exc)) from exc
 
-        analyzer = cli_module.CodeAnalyzer(config)
+        analyzer = _run_cli_action(
+            lambda: cli_module.CodeAnalyzer(config),
+            error_label="search",
+            verbose=opts.verbose,
+            catch_file_not_found=True,
+        )
         indexed_units = _run_cli_action(
             lambda: analyzer.index(path),
             error_label="search",
@@ -106,21 +151,29 @@ def search_command(ctx: click.Context, path: Path, query: str, **params: Any) ->
             catch_file_not_found=True,
         )
         results = _run_cli_action(
-            lambda: analyzer.search(query, top_k=opts.top_k),
+            lambda: analyzer.search(
+                query, top_k=indexed_units if opts.result_level == "file" else opts.top_k
+            ),
             error_label="search",
             verbose=opts.verbose,
+            catch_file_not_found=True,
+        )
+        file_results = (
+            _group_file_results(results, opts.top_k) if opts.result_level == "file" else None
         )
 
         if opts.as_json:
             print_search_json(
                 query,
                 results,
-                analyzer.semantic_diagnostics,
                 indexed_units,
                 analyzer.embedding_stats,
+                extraction_diagnostics=analyzer.extraction_diagnostics,
+                semantic_diagnostics=analyzer.semantic_diagnostics,
+                file_results=file_results,
             )
         else:
-            _output.console.print(f"[bold cyan]Query:[/bold cyan] {query!r}")
+            _output.console.print(f"[bold cyan]Query:[/bold cyan] {escape(repr(query))}")
             if analyzer.embedding_stats is not None:
                 _output.console.print(
                     "[bold]Embeddings:[/bold]", _format_embedding_stats(analyzer.embedding_stats)
@@ -130,11 +183,6 @@ def search_command(ctx: click.Context, path: Path, query: str, **params: Any) ->
                     reason = (
                         "extraction produced no code units; ensure the path contains "
                         "supported source code and that extraction filters permit it"
-                    )
-                elif analyzer.semantic_diagnostics:
-                    reason = (
-                        "no semantic candidates survived indexing; inspect the semantic "
-                        "diagnostics below"
                     )
                 else:
                     reason = (
@@ -147,6 +195,9 @@ def search_command(ctx: click.Context, path: Path, query: str, **params: Any) ->
                     f"match: {reason}."
                 )
             _print_diagnostics("Semantic diagnostics", analyzer.semantic_diagnostics)
-            print_search_results(results)
+            if file_results is not None:
+                print_file_search_results(file_results)
+            else:
+                print_search_results(results)
 
     raise click.exceptions.Exit(0)

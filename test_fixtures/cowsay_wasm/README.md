@@ -12,11 +12,19 @@ A working Rust application that targets both a native CLI and browser WebAssembl
 
 Labels are stored in [`fixtures/clone-ground-truth.json`](fixtures/clone-ground-truth.json). Stable region markers are included in the Rust files, along with one-based line spans for tools that require coordinates. Prefer markers when source changes. The duplicated code is deliberate; do not deduplicate these implementations before evaluating a detector. `cargo test` checks that the exact clone remains exact and that the semantic implementations remain behaviorally equivalent.
 
-Run the following commands from `test_fixtures/cowsay_wasm/` in the codedupes checkout.
+## Analyze the fixture
+
+To inspect the planted deterministic clone with codedupes, run this from the repository root:
+
+```sh
+codedupes check test_fixtures/cowsay_wasm --language rust --traditional-only --no-unused --fail-on none
+```
+
+It reports the intentional `make_borders` exact pair. `--fail-on none` keeps that expected finding from failing the command. A normal combined `codedupes check` also evaluates the semantic wrapper pair after the embedding model is available.
 
 ## Native use
 
-With Rust installed, run:
+With Rust installed, run these commands from `test_fixtures/cowsay_wasm/` in the codedupes checkout:
 
 ```sh
 cargo test

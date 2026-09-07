@@ -34,11 +34,13 @@ The [parser packages](install.md#polyglot-parser-dependencies) are exact-pinned 
 | TypeScript | `.ts`, `.mts`, `.cts` | TypeScript grammar |
 | TSX | `.tsx` | Separate TSX grammar |
 
-TypeScript declaration files ending in `.d.ts`, `.d.mts`, or `.d.cts` are skipped. They contain API declarations rather than implementation bodies and would produce misleading duplicate candidates.
+Files whose suffix is not in this table are not analyzed. `--language` narrows automatic discovery; it cannot make an arbitrary extension parse as a supported language. Python stub files require `--include-stubs` for directory scans; explicitly selected stubs, including in-tree symlinks to them, are analyzed as given. TypeScript declaration files ending in `.d.ts`, `.d.mts`, or `.d.cts` are always skipped because they contain API declarations rather than implementation bodies.
+
+Run `codedupes info --verbose` after installation or a dependency update to confirm that every selected Tree-sitter dialect is loadable. A missing or incompatible grammar stops analysis rather than producing partial results from a different parser.
 
 ### C headers
 
-A lowercase `.h` file is ambiguous because both C and C++ use that extension. Automatic detection treats headers as C only when the scanned tree contains at least one `.c` file and no detected C++ source/header extension. Case-sensitive `.C` and `.H` suffixes are conventional C++ spellings and are never normalized into supported C files. The repository-wide ambiguity probe runs only when a lowercase `.h` candidate is encountered, so analyzing an explicit non-header file does not scan its sibling tree for an irrelevant header decision. The detection scan prunes exactly the directories default extraction skips: C++ inside an excluded directory such as `node_modules` cannot flip the decision, while C++ in a directory the walk analyzes (including `vendor/`) disables header parsing rather than letting C++ headers be parsed with the C grammar. Explicitly selecting C also accepts lowercase `.h` headers:
+A lowercase `.h` file is ambiguous because both C and C++ use that extension. Automatic detection treats headers as C only when the scanned tree contains at least one `.c` file and no detected C++ source/header extension. Case-sensitive `.C` and `.H` suffixes are conventional C++ spellings and are never normalized into supported C files. The repository-wide ambiguity probe runs only when a lowercase `.h` candidate is encountered, so analyzing an explicit non-header file does not scan its sibling tree for an irrelevant header decision. The detection scan honors both default and custom extraction exclusions: C++ inside an excluded directory such as `node_modules` cannot flip the decision, while C++ in a directory the walk analyzes (including `vendor/`) disables header parsing rather than letting C++ headers be parsed with the C grammar. Explicitly selecting C also accepts lowercase `.h` headers:
 
 ```bash
 codedupes check ./include --language c --traditional-only
@@ -134,7 +136,7 @@ The [unused-code heuristic](analysis-defaults.md#potentially-unused-defaults) ev
 
 ## Parser readiness
 
-Run `codedupes info` to inspect each parser dialect's required and installed package versions. Readiness checks construct a parser and run an empty parse, so a wrong-platform or ABI-broken wheel is reported before analysis.
+Run `codedupes info --verbose` to inspect each parser dialect's required and installed package versions. Readiness checks construct a parser and run an empty parse, so a wrong-platform or ABI-broken wheel is reported before analysis.
 
 ## Grammar upgrade procedure
 

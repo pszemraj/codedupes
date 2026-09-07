@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from collections import Counter
 from dataclasses import asdict
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from codedupes.models import (
     AnalysisResult,
@@ -15,6 +15,9 @@ from codedupes.models import (
     HybridDuplicate,
 )
 from codedupes.semantic import EmbeddingRunStats
+
+if TYPE_CHECKING:
+    from .search import FileSearchResult
 
 
 def _embedding_stats_to_dict(stats: EmbeddingRunStats | None) -> dict[str, Any] | None:
@@ -216,17 +219,22 @@ def print_check_json(
 def search_result_to_json(
     query: str,
     results: list[tuple[CodeUnit, float]],
-    semantic_diagnostics: list[ExtractionDiagnostic],
     indexed_units: int,
     embedding_stats: EmbeddingRunStats | None,
+    *,
+    extraction_diagnostics: list[ExtractionDiagnostic],
+    semantic_diagnostics: list[ExtractionDiagnostic],
+    file_results: list[FileSearchResult] | None = None,
 ) -> dict[str, Any]:
     """Serialize semantic search results using schema-v2 unit references.
 
     :param query: Original search query.
     :param results: Ranked unit and score pairs.
-    :param semantic_diagnostics: Units skipped by semantic indexing.
+    :param extraction_diagnostics: Diagnostics from corpus extraction.
+    :param semantic_diagnostics: Warnings from semantic indexing.
     :param indexed_units: Number of indexed corpus units.
     :param embedding_stats: Optional indexing telemetry.
+    :param file_results: Ranked file results, or ``None`` for unit-level output.
     :return: Schema-v2 search payload.
     """
     units: dict[str, dict[str, Any]] = {}
@@ -240,37 +248,62 @@ def search_result_to_json(
         units.setdefault(unit.uid, _unit_to_dict(unit))
         return unit.uid
 
-    serialized_results = [{"unit": ref(unit), "score": float(score)} for unit, score in results]
-    return {
+    serialized_results = (
+        [{"unit": ref(unit), "score": float(score)} for unit, score in results]
+        if file_results is None
+        else [
+            {
+                "file": str(result.file_path),
+                "score": float(result.score),
+                "matching_units": result.matching_units,
+                "matches": [
+                    {"unit": ref(unit), "score": float(score)} for unit, score in result.matches
+                ],
+            }
+            for result in file_results
+        ]
+    )
+    payload = {
         "schema_version": 2,
         "query": query,
         "summary": {
             "indexed_units": indexed_units,
-            "results": len(results),
+            "results": len(serialized_results),
             "embeddings": _embedding_stats_to_dict(embedding_stats),
         },
         "results": serialized_results,
         "units": units,
+        "extraction_diagnostics": [
+            _diagnostic_to_dict(diagnostic) for diagnostic in extraction_diagnostics
+        ],
         "semantic_diagnostics": [
             _diagnostic_to_dict(diagnostic) for diagnostic in semantic_diagnostics
         ],
     }
+    if file_results is not None:
+        payload["result_level"] = "file"
+    return payload
 
 
 def print_search_json(
     query: str,
     results: list[tuple[CodeUnit, float]],
-    semantic_diagnostics: list[ExtractionDiagnostic],
     indexed_units: int,
     embedding_stats: EmbeddingRunStats | None,
+    *,
+    extraction_diagnostics: list[ExtractionDiagnostic],
+    semantic_diagnostics: list[ExtractionDiagnostic],
+    file_results: list[FileSearchResult] | None = None,
 ) -> None:
     """Output search results as schema-v2 JSON.
 
     :param query: Original search query.
     :param results: Ranked unit and score pairs.
-    :param semantic_diagnostics: Units skipped by semantic indexing.
+    :param extraction_diagnostics: Diagnostics from corpus extraction.
+    :param semantic_diagnostics: Warnings from semantic indexing.
     :param indexed_units: Number of indexed corpus units.
     :param embedding_stats: Optional indexing telemetry.
+    :param file_results: Ranked file results, or ``None`` for unit-level output.
     :return: ``None``.
     """
     print(
@@ -278,9 +311,11 @@ def print_search_json(
             search_result_to_json(
                 query,
                 results,
-                semantic_diagnostics,
                 indexed_units,
                 embedding_stats,
+                extraction_diagnostics=extraction_diagnostics,
+                semantic_diagnostics=semantic_diagnostics,
+                file_results=file_results,
             ),
             indent=2,
             sort_keys=True,

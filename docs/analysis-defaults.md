@@ -2,6 +2,28 @@
 
 These defaults apply to `codedupes check` and `AnalyzerConfig`. See the [CLI reference](cli.md) for syntax, [model profiles](model-profiles.md) for semantic thresholds and tasks, and [accelerators](accelerators.md) for device behavior.
 
+## What a default check does
+
+`codedupes check <path>` runs combined duplicate detection: deterministic matching across every extracted function, method, and class, plus semantic comparison of eligible functions and methods. It also reports potentially unused Python units. Supported files, default test exclusions, and parser diagnostics determine the extracted set; see [polyglot language support](polyglot-languages.md#supported-files) and [extraction scope defaults](#extraction-scope-defaults).
+
+The semantic pass may load the selected embedding model and may download it on its first use. For a fast, deterministic baseline with no embedding model, run:
+
+```bash
+codedupes check ./src --traditional-only --no-unused
+```
+
+Combined output ranks each pair by a tier. The default exit policy treats only the tiers with deterministic corroboration as actionable:
+
+| tier | evidence | default handling |
+| --- | --- | --- |
+| `exact` | structural or token fingerprints agree | actionable |
+| `traditional_near` | identifier Jaccard match | actionable |
+| `hybrid_confirmed` | semantic and traditional-near match | actionable |
+| `semantic_high_confidence` | semantic match plus weak identifier and size corroboration | advisory review |
+| `semantic_review` | semantic match only | advisory review |
+
+Potentially unused findings are also advisory unless `--strict-unused` is set. Use `--fail-on all` to make every reported finding fail a check, or `--fail-on none` when reviewing intentional fixture findings. See [exit codes](output.md#exit-codes) for the complete policy and single-method behavior.
+
 ## Semantic duplicate gate defaults
 
 Semantic duplicate detection is gated per language: each built-in model profile carries a calibrated cosine gate for every supported language, measured against `test_fixtures/polyglot_calibration/`.
@@ -31,7 +53,9 @@ Default semantic candidate selection:
 - minimum statement count: `3` (via `min_semantic_statements`)
 - statements are counted recursively through control-flow bodies, so a large function implemented inside one outer block is not measured as a single statement; nested function/class definitions count as one declaration each. Python counts via the AST (`try`, `with`, loops, conditionals, `match`, with indented definitions dedented before counting); Tree-sitter languages apply each grammar's equivalent statement and nested-scope node rules, including Rust's semicolon-free tail expression as one statement
 - each semantic input is one complete logical definition - signature, docstring, and body, starting at the definition line (`def`/`class` in Python; decorators are not included); functions are not split into arbitrary text chunks
-- a definition whose tokenized input (the encode prompt included) exceeds the selected model's context window is never embedded from a partial prefix: it is skipped with a warning and a `semantic-context-overflow` diagnostic, and the run continues without it. `--allow-semantic-fallback` is unrelated to this path. An over-long `search` query still fails hard, because a truncated query has no result to omit
+- eligible definitions and search queries are passed to the embedding backend unchanged. The backend applies its normal tokenization and context-window truncation, including any encode prompt.
+
+When a newly encoded unit exceeds the loaded model's context window, `semantic_diagnostics` includes a `semantic-context-overflow` warning with its token count and source location. The unit remains searchable and eligible for duplicate detection. Counts include the encode prompt and special tokens. Cache-only runs do not load a tokenizer just to repeat warnings; use `--no-cache` to recheck every selected unit. This diagnostic covers corpus units, not query length.
 
 Traditional/semantic scope rule:
 
@@ -42,9 +66,9 @@ Use the [CLI candidate options](cli.md#semantic-model) or `AnalyzerConfig.semant
 
 ## Extraction scope defaults
 
-Directory-name exclusions always apply. They cover common artifact, dependency, and cache directories such as `node_modules`, `target`, `.venv`, `.pytest_cache`, `dist`, and `build`; directories ending in `.egg-info` are also skipped. A literal `vendor/` directory is not excluded by default: what the walk analyzes, the C-header policy scan also sees.
+Directory-name exclusions prune directories beneath the scan root. They cover common artifact, dependency, and cache directories such as `node_modules`, `target`, `.venv`, `.pytest_cache`, `dist`, and `build`; directories ending in `.egg-info` are also skipped. The selected root and its ancestors are outside exclusion matching: selecting `node_modules/` directly scans its contents. A literal `vendor/` directory is not excluded by default: what the walk analyzes, the C-header policy scan also sees.
 
-When no nonempty `exclude_patterns` list is supplied, these file globs apply:
+By default, these test-file globs apply:
 
 - `**/test_*`
 - `**/*_test.*`
@@ -54,7 +78,15 @@ When no nonempty `exclude_patterns` list is supplied, these file globs apply:
 - `**/tests/**`
 - `**/__tests__/**`
 
-A nonempty `AnalyzerConfig.exclude_patterns` list or one or more CLI `--exclude` options replaces those file globs. Directory-name exclusions still apply. Repeat any built-in file globs that you want to preserve alongside custom patterns.
+CLI `--exclude` options extend these patterns for directory scans. Use `--no-default-excludes` to scan tests while retaining custom exclusions. For Python callers, `AnalyzerConfig.exclude_patterns=None` uses the defaults; a supplied list replaces them, including `[]` to disable test-file exclusions. An explicitly named source file bypasses the default test-file patterns, but supplied `--exclude` options and `AnalyzerConfig.exclude_patterns` still apply relative to its parent directory. That parent becomes the scan root, so its own name and ancestor names do not exclude the file. Built-in artifact-directory exclusions beneath the scan root remain active.
+
+Directory scans log an INFO hint when default test patterns skip files or prune directories. The counts cover encountered source files and pruned directories; they do not enumerate files inside those directories. `--json` suppresses this informational log.
+
+Bare names and basename globs match at any depth: `--exclude examples` skips both `examples/demo.py` and `pkg/examples/nested/demo.py`, without matching `myexamples`. A matched directory excludes all descendants and is pruned from traversal. A trailing `/` restricts a pattern to directories. Paths containing `/` match relative to the scan root; `./examples/` restricts the match to the root-level directory, while `**/examples/**` matches at any depth, including the root. Shell-style `*`, `?`, and character classes are supported; in path patterns `*` can also span `/`. Quote glob arguments in the shell.
+
+Custom exclusions apply to direct file extraction too, relative to the file's parent for a single-file CLI target. `check` and `search` preserve an explicitly named file symlink for exclusion matching. Excluded symlink names are skipped before deduplication; aliases cannot reintroduce excluded in-tree targets. Targets outside the scan root retain the symlink's in-tree name for extraction and exclusions.
+
+Automatic C-header detection uses the same exclusions and symlink identity rules, so excluded C/C++ files do not affect whether included `.h` files are parsed as C. Naming a header explicitly bypasses implicit test globs only for that header; sibling discovery still applies those globs. In-tree symlinks use the target's extension; links outside the root use the alias's extension.
 
 ## Potentially unused defaults
 
@@ -71,7 +103,7 @@ The following units are not reported:
 
 Call matching is name-based rather than scope-resolved: a call to any same-named symbol keeps every candidate definition out of the report, trading missed dead code for fewer false "unused" flags. Default mode also skips public non-method functions. Strict mode (`--strict-unused` or `strict_unused=True`) removes only that suppression; the other API and runtime exclusions still apply. Only call expressions count as references: attribute access without a call, decorator usage, callbacks passed as arguments, and type annotations do not, so framework-dispatched methods (for example `ast.NodeVisitor` `visit_*` hooks) surface as candidates. Dynamic registration, reflection, and string-based lookups likewise remain outside the static reference graph, so unused findings require review.
 
-When unused detection runs, semantic duplicate pairs whose two units are both reported as potentially unused are removed before hybrid synthesis. Traditional duplicate findings remain available. `--no-unused` disables this suppression along with unused reporting.
+Unused findings are independent of duplicate detection: a potentially unused unit remains eligible for semantic and traditional duplicate reporting. `--no-unused` disables unused reporting without changing duplicate findings.
 
 ## Tiny traditional duplicate filtering defaults
 
@@ -89,7 +121,7 @@ Use `--no-tiny-filter` / `--tiny-cutoff`, or `AnalyzerConfig.filter_tiny_traditi
 - weak identifier jaccard minimum: `0.20`
 - statement ratio minimum: `0.35`
 
-A semantic-only pair retained after the [unused-code filter](#potentially-unused-defaults) has already passed its language's duplicate gate, so it remains visible in default output. Identifier overlap and a comparable statement count promote it to `semantic_high_confidence`; otherwise it is labeled `semantic_review`. These corroborators affect ranking and review priority, not admission. Tune them with the [hybrid gate workflow](hybrid-tuning.md).
+A semantic-only pair has already passed its language's duplicate gate, so it remains visible in default output. Identifier overlap and a comparable statement count promote it to `semantic_high_confidence`; otherwise it is labeled `semantic_review`. These corroborators affect ranking and review priority, not admission. Tune them with the [hybrid gate workflow](hybrid-tuning.md).
 
 ## Confidence scale
 

@@ -5,9 +5,11 @@ from __future__ import annotations
 import ast
 import codecs
 import copy
+import fnmatch
 import hashlib
 import logging
 import os
+import re
 from collections.abc import Iterator, Sequence
 from pathlib import Path
 
@@ -428,14 +430,35 @@ class CodeExtractor:
         """Construct an extractor for a project root.
 
         :param root: Root path to scan.
-        :param exclude_patterns: Optional path glob patterns.
+        :param exclude_patterns: Path/name globs; ``None`` uses test defaults for
+            directory discovery, while an empty list disables those defaults.
+            Directly named files bypass only the implicit test defaults.
         :param include_private: Include private names when true.
         :param include_stubs: Include ``.pyi`` files.
         :param languages: Optional canonical/alias language filter. Auto-detects
             supported source files when omitted.
         """
         self.root = root.resolve()
-        self.exclude_patterns = exclude_patterns or DEFAULT_EXCLUDE_PATTERNS.copy()
+        self._uses_default_exclude_patterns = exclude_patterns is None
+        self.exclude_patterns = (
+            DEFAULT_EXCLUDE_PATTERNS.copy() if exclude_patterns is None else exclude_patterns
+        )
+        self._exclude_matchers: list[
+            tuple[bool, bool, re.Pattern[str], re.Pattern[str] | None]
+        ] = []
+        for pattern in self.exclude_patterns:
+            anchored = pattern.startswith(("./", "/"))
+            directory_only = pattern.endswith("/")
+            pattern = pattern.removeprefix("./").lstrip("/").rstrip("/")
+            matcher = re.compile(fnmatch.translate(os.path.normcase(pattern)))
+            zero_depth = (
+                re.compile(fnmatch.translate(os.path.normcase(pattern[3:])))
+                if pattern.startswith("**/")
+                else None
+            )
+            self._exclude_matchers.append(
+                (anchored or "/" in pattern, directory_only, matcher, zero_depth)
+            )
         self.include_private = include_private
         self.include_stubs = include_stubs
         self.languages = normalize_languages(languages)
@@ -451,25 +474,82 @@ class CodeExtractor:
         """
         return is_default_excluded_dir(name)
 
-    def _should_exclude(self, path: Path) -> bool:
-        """Check if path matches any exclude pattern.
+    def _should_exclude(
+        self,
+        path: Path,
+        *,
+        check_ancestors: bool = True,
+        match_patterns: bool = True,
+    ) -> bool:
+        """Check exclusions for a path and its resolved in-tree symlink target.
 
         :param path: Candidate path.
-        :return: ``True`` when extraction should skip this file.
+        :param check_ancestors: Check parents unless the walk already pruned them.
+        :param match_patterns: Apply configured path/name globs when true.
+        :return: ``True`` when extraction should skip this file or directory.
         """
-        from fnmatch import fnmatch
-
-        rel = path.relative_to(self.root)
-        if any(self._is_excluded_dir_name(part) for part in rel.parts[:-1]):
+        if self._matches_exclude(
+            path,
+            check_ancestors=check_ancestors,
+            match_patterns=match_patterns,
+        ):
             return True
+        if not path.is_symlink():
+            return False
+        try:
+            resolved = path.resolve()
+        except (OSError, RuntimeError):
+            # Leave broken/looping links for the normal read-error diagnostic.
+            return False
+        return resolved.is_relative_to(self.root) and self._matches_exclude(
+            resolved,
+            match_patterns=match_patterns,
+        )
 
-        rel_path = str(rel)
-        for pattern in self.exclude_patterns:
-            if fnmatch(rel_path, pattern):
-                return True
-            # ``fnmatch`` does not treat ``**/name.py`` as matching root-level ``name.py``.
-            if pattern.startswith("**/") and fnmatch(rel_path, pattern[3:]):
-                return True
+    def _matches_exclude(
+        self,
+        path: Path,
+        *,
+        check_ancestors: bool = True,
+        match_patterns: bool = True,
+    ) -> bool:
+        """Match a path's in-tree name against the configured exclusions.
+
+        :param path: Candidate path under the extraction root.
+        :param check_ancestors: Include parent directories in the match candidates.
+        :param match_patterns: Apply configured path/name globs when true.
+        :return: Whether the name or an ancestor matches an exclusion.
+        """
+        rel = path.relative_to(self.root)
+        path_is_directory = path.is_dir()
+        directory_parts = rel.parts if path_is_directory else rel.parts[:-1]
+        if not check_ancestors:
+            directory_parts = (rel.name,) if path_is_directory else ()
+        if any(self._is_excluded_dir_name(part) for part in directory_parts):
+            return True
+        if not match_patterns:
+            return False
+
+        # Match ancestors too: excluding a directory excludes its whole subtree.
+        candidates = [rel]
+        if check_ancestors:
+            candidates.extend(parent for parent in rel.parents if parent != Path("."))
+        for candidate in candidates:
+            is_directory = candidate != rel or path_is_directory
+            relative_name = os.path.normcase(candidate.as_posix())
+            basename = os.path.normcase(candidate.name)
+            for use_path, directory_only, matcher, zero_depth in self._exclude_matchers:
+                if directory_only and not is_directory:
+                    continue
+                value = relative_name if use_path else basename
+                if matcher.match(value) or (is_directory and matcher.match(value + os.sep)):
+                    return True
+                # ``**/`` also matches zero directory levels.
+                if zero_depth is not None and (
+                    zero_depth.match(relative_name)
+                    or (is_directory and zero_depth.match(relative_name + os.sep))
+                ):
+                    return True
         return False
 
     def _get_module_name(self, file_path: Path) -> str:
@@ -492,7 +572,9 @@ class CodeExtractor:
         :return: ``True`` when ambiguous ``.h`` files may be parsed as C.
         """
         if self._c_headers_allowed is None:
-            self._c_headers_allowed = repository_allows_c_headers(self.root, self.languages)
+            self._c_headers_allowed = repository_allows_c_headers(
+                self.root, self.languages, should_exclude=self._should_exclude
+            )
         return self._c_headers_allowed
 
     def extract_from_file(self, file_path: Path) -> Iterator[CodeUnit]:
@@ -510,6 +592,13 @@ class CodeExtractor:
         # that are symlinks to targets outside the root: exclusion and module
         # naming are computed relative to the root, and the symlink is the
         # file's identity within the analyzed tree.
+        file_path = file_path.absolute()
+        match_patterns = not self._uses_default_exclude_patterns
+        if file_path.is_relative_to(self.root) and self._should_exclude(
+            file_path,
+            match_patterns=match_patterns,
+        ):
+            return
         try:
             resolved = file_path.resolve()
         except (OSError, RuntimeError):
@@ -518,7 +607,7 @@ class CodeExtractor:
             resolved = file_path
         if resolved.is_relative_to(self.root):
             file_path = resolved
-        if self._should_exclude(file_path):
+        if self._should_exclude(file_path, match_patterns=match_patterns):
             logger.debug(f"Skipping excluded file {file_path}")
             return
 
@@ -834,14 +923,41 @@ class CodeExtractor:
         seen: set[Path] = set()
         allow_c_header: bool | None = None
         skipped_headers: list[Path] = []
+        skipped_test_files = 0
+        skipped_test_dirs = 0
+        default_test_patterns = set(DEFAULT_EXCLUDE_PATTERNS).intersection(self.exclude_patterns)
+
+        def matches_default_tests(path: Path) -> bool:
+            """Identify active default test globs on an already excluded path.
+
+            :param path: File or directory skipped by the current walk.
+            :return: Whether active default test globs match the path.
+            """
+            if self._should_exclude(path, match_patterns=False):
+                return False
+            relative = path.relative_to(self.root).as_posix()
+            if path.is_dir():
+                relative += "/"
+            return any(
+                fnmatch.fnmatch(relative, pattern)
+                or fnmatch.fnmatch(relative, pattern.removeprefix("**/"))
+                for pattern in default_test_patterns
+            )
 
         for dirpath, dirnames, filenames in os.walk(
             self.root, followlinks=False, onerror=self._report_walk_error
         ):
             # Sorted in place so the walk descends deterministically: raw ``os.walk``
             # order is filesystem-dependent and would reorder the reported units.
-            dirnames[:] = sorted(name for name in dirnames if not self._is_excluded_dir_name(name))
             current_dir = Path(dirpath)
+            included_dirs = []
+            for name in sorted(dirnames):
+                directory = current_dir / name
+                if self._should_exclude(directory, check_ancestors=False):
+                    skipped_test_dirs += matches_default_tests(directory)
+                else:
+                    included_dirs.append(name)
+            dirnames[:] = included_dirs
 
             for filename in sorted(filenames):
                 source_file = current_dir / filename
@@ -855,14 +971,18 @@ class CodeExtractor:
                     selected_languages=self.languages,
                     allow_c_header=header_allowed,
                 )
+                report_skipped_header = (
+                    is_c_header and not header_allowed and self.languages is None
+                )
+                if selection is None and not report_skipped_header:
+                    continue
+
+                # Ancestors were pruned above; symlink targets still need a full check.
+                if self._should_exclude(source_file, check_ancestors=False):
+                    skipped_test_files += matches_default_tests(source_file)
+                    continue
                 if selection is None:
-                    if (
-                        is_c_header
-                        and not header_allowed
-                        and self.languages is None
-                        and not self._should_exclude(source_file)
-                    ):
-                        skipped_headers.append(source_file)
+                    skipped_headers.append(source_file)
                     continue
 
                 try:
@@ -873,10 +993,15 @@ class CodeExtractor:
                     continue
                 seen.add(resolved)
 
-                if self._should_exclude(source_file):
-                    continue
-
                 units.extend(self.extract_from_file(source_file))
+
+        if skipped_test_files or skipped_test_dirs:
+            logger.info(
+                "Skipped %d files and %d directories matching default test exclusions; "
+                "use --no-default-excludes to include them.",
+                skipped_test_files,
+                skipped_test_dirs,
+            )
 
         if skipped_headers:
             message = (
