@@ -10,6 +10,10 @@ progress there. A completed JSON report is a single parseable JSON document even
 failures in `summary.embeddings.cache_warnings` instead of emitting them. Runtime
 failures restore stderr and do not produce a completed JSON report.
 
+Terminal reports fit the available width. Below 120 columns, duplicate tables stack
+their metrics and both code locations into **Evidence** and **Code units** columns.
+Search scores keep their own columns, and long names and paths wrap within rows.
+
 Write a JSON report directly in automation:
 
 ```text

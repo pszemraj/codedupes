@@ -73,19 +73,11 @@ def main() -> int:
 
     ``pyproject.toml`` registers this callable as the supported console entry point.
     """
-    argv = sys.argv[1:]
     try:
-        result = cli.main(args=argv, prog_name="codedupes", standalone_mode=False)
-        if isinstance(result, int):
-            return result
-    except click.exceptions.Exit as exc:
-        return int(exc.exit_code)
-    except click.ClickException as exc:
-        exc.show()
-        return exc.exit_code
-    except click.Abort:
-        click.echo("Aborted!", err=True)
-        return 1
+        # Let rich-click render usage errors and aborts through its help formatter.
+        cli.main(args=sys.argv[1:], prog_name="codedupes")
+    except SystemExit as exc:
+        return int(exc.code or 0)
     return 0
 
 

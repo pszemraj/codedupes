@@ -133,7 +133,7 @@ See [model profiles](model-profiles.md#semantic-task-defaults-and-choices) for t
 
 ### Output
 
-- `--output-width <int>`: Rich render width for non-JSON output (default `160`, min `80`)
+- `--output-width <int>`: Maximum Rich render width for non-JSON output (default `160`, min `80`); capped at the terminal width, even on narrower terminals. Redirected output uses the requested width
 - `--json`: Emit JSON instead of rich tables
 - `-v, --verbose`: Verbose logs
 
@@ -143,13 +143,13 @@ CLI options are configured through command-line flags; automatic `CODEDUPES_*` o
 
 ## `codedupes info`
 
-Show a compact table with the tool version, Python and PyTorch versions, resolved device, default model, and supported languages. Add `-v` or `--verbose` for the full runtime/device diagnostics, parser package status, analysis defaults, exclusions, model profiles, and embedding-cache summary. Device diagnostic errors remain visible in the compact overview.
+Show a compact panel with the tool version, Python and PyTorch versions, resolved device, default model, and supported languages. Add `-v` or `--verbose` for the full runtime/device diagnostics, parser package status, analysis defaults, exclusions, model profiles, and embedding-cache summary. Device diagnostic errors remain visible in the compact overview.
 
-Use `--output-width <int>` to set the render width (default `160`, minimum `80`); long values wrap within the tables, including when output is piped. See [parser readiness](polyglot-languages.md#parser-readiness) and [accelerator precision](accelerators.md#precision-and-metal-environment-variables) for interpreting the verbose fields.
+Use `--output-width <int>` to set the maximum render width (default `160`, minimum option value `80`). Output fits the actual terminal even when it is narrower; redirected output uses the requested width. Diagnostic panels fit their content, and long values wrap inside the panel. See [parser readiness](polyglot-languages.md#parser-readiness) and [accelerator precision](accelerators.md#precision-and-metal-environment-variables) for interpreting the verbose fields.
 
 ## `codedupes cache info`
 
-Display the embedding-cache summary plus per-model entry counts and a per-repo breakdown in Rich tables, including orphan rows and the last complete manifest generation. Supports the same `--output-width <int>` option as `info`, `check`, and `search`.
+Display the embedding-cache summary plus per-model entry counts and a per-repo breakdown in Rich panels, including orphan rows and the last complete manifest generation. Supports the same `--output-width <int>` option as `info`, `check`, and `search`.
 
 ## `codedupes cache clear [--model <name>]`
 

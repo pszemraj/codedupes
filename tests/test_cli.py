@@ -1679,7 +1679,7 @@ def test_cli_info_verbose_exit_zero(flag):
     assert result.exit_code == 0
     assert "codedupes" in result.output.lower()
     assert "PyTorch" in result.output
-    assert "┌" in result.output and "│" in result.output
+    assert "╭" in result.output and "│" in result.output
     assert result.stderr == ""
     assert "mps built/available" in result.output.lower()
     assert "mlx loaded in process" in result.output.lower()
@@ -2560,8 +2560,8 @@ def test_cli_cache_info_reports_empty_cache():
 
     assert result.exit_code == 0
     assert "Cache path" in result.output
-    assert "┌" in result.output and "│" in result.output
-    assert any("Entries" in line and "│ 0" in line for line in result.output.splitlines())
+    assert "╭" in result.output and "│" in result.output
+    assert any("Entries 0" in " ".join(line.split()) for line in result.output.splitlines())
 
 
 def test_cli_cache_info_reports_populated_cache(tmp_path):
@@ -2574,8 +2574,8 @@ def test_cli_cache_info_reports_populated_cache(tmp_path):
     result = runner.invoke(cli.cli, ["cache", "info"])
 
     assert result.exit_code == 0
-    assert any("Entries" in line and "│ 1" in line for line in result.output.splitlines())
-    assert any("some/model" in line and "│ 1" in line for line in result.output.splitlines())
+    assert any("Entries 1" in " ".join(line.split()) for line in result.output.splitlines())
+    assert any("some/model 1" in " ".join(line.split()) for line in result.output.splitlines())
     assert "Per-repo breakdown" in result.output
     assert "1 shard(s), 1 entries" in result.output
 
@@ -2826,8 +2826,8 @@ def test_cli_diagnostic_tables_respect_width(command, width, monkeypatch, tmp_pa
 
     assert result.exit_code == 0, result.output
     assert result.stderr == ""
-    assert "┌" in result.stdout and "│" in result.stdout
-    assert max(map(len, result.stdout.splitlines())) == width
+    assert "╭" in result.stdout and "│" in result.stdout
+    assert max(map(len, result.stdout.splitlines())) <= width
     # Reassemble wrapped value cells to verify paths are neither markup nor truncated.
     values = "".join(
         line.split("│")[-2].strip() for line in result.stdout.splitlines() if "│" in line
@@ -2896,7 +2896,7 @@ def test_cli_info_default_is_compact(monkeypatch, width):
     assert "Device" in result.stdout and "Supported languages" in result.stdout
     assert "--verbose" in result.stdout
     assert len(result.stdout.splitlines()) <= 12
-    assert max(map(len, result.stdout.splitlines())) == width
+    assert max(map(len, result.stdout.splitlines())) <= width
     for detail in (
         "Default exclusions",
         "Tree-sitter grammar packages",
@@ -2906,3 +2906,147 @@ def test_cli_info_default_is_compact(monkeypatch, width):
         "Default model revision",
     ):
         assert detail not in result.stdout
+
+
+@pytest.mark.parametrize("terminal_width", [60, 80, 100, 120])
+@pytest.mark.parametrize("width_args", [[], ["--output-width", "400"]])
+def test_cli_info_fits_actual_terminal(terminal_width, width_args):
+    """Catch fixed render widths that would wrap borders in a real terminal."""
+    pty = pytest.importorskip("pty")
+    termios = pytest.importorskip("termios")
+    from rich.text import Text
+
+    master, slave = pty.openpty()
+    termios.tcsetwinsize(slave, (40, terminal_width))
+    env = dict(os.environ, TERM="xterm-256color")
+    env.pop("COLUMNS", None)
+    env.pop("LINES", None)
+    try:
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "from codedupes.cli import main; raise SystemExit(main())",
+                "info",
+                *width_args,
+            ],
+            stdin=subprocess.DEVNULL,
+            stdout=slave,
+            stderr=subprocess.PIPE,
+            env=env,
+            timeout=30,
+            check=False,
+        )
+        # The compact report fits the PTY buffer, so it can be read after exit.
+        raw = os.read(master, 16384).decode()
+    finally:
+        os.close(slave)
+        os.close(master)
+    assert result.returncode == 0, result.stderr.decode()
+    assert result.stderr == b""
+    lines = Text.from_ansi(raw.replace("\r\n", "\n")).plain.splitlines()
+    assert max(map(len, lines)) <= terminal_width
+    assert "Default model" in raw and cli.DEFAULT_MODEL in raw
+    borders = [line for line in lines if line.startswith(("╭", "│", "╰"))]
+    assert len(borders) >= 7
+    assert len({len(line) for line in borders}) == 1
+    assert borders[0].endswith("╮") and borders[-1].endswith("╯")
+
+
+@pytest.mark.parametrize("width", [80, 100, 120, 160])
+@pytest.mark.parametrize("command", ["check", "search"])
+def test_cli_long_results_keep_scores_and_headers(monkeypatch, tmp_path, width, command):
+    monkeypatch.chdir(tmp_path)
+    unit = _build_unit(tmp_path)
+    unit.name = "calculate_normalized_customer_score"
+    unit.file_path = tmp_path / "deeply" / "nested" / "customer_scoring.py"
+    path = tmp_path / "sample.py"
+    path.write_text(unit.source)
+    duplicate = DuplicatePair(unit, unit, 0.91, "jaccard")
+    hybrid = HybridDuplicate(
+        unit,
+        unit,
+        tier="hybrid_confirmed",
+        confidence=0.94,
+        semantic_similarity=0.96,
+        jaccard_similarity=0.91,
+    )
+    patch_cli_analyzer(
+        monkeypatch,
+        cli,
+        analyze_result=AnalysisResult(
+            units=[unit],
+            traditional_duplicates=[duplicate],
+            semantic_duplicates=[],
+            hybrid_duplicates=[hybrid],
+            potentially_unused=[unit],
+            analysis_mode="combined",
+        ),
+        search_results=[(unit, 0.99)],
+    )
+    args = [command, str(path), "--output-width", str(width)]
+    args += ["--show-all"] if command == "check" else ["entry"]
+    result = CliRunner().invoke(cli.cli, args)
+
+    assert result.exit_code == (1 if command == "check" else 0), result.output
+    assert max(map(len, result.stdout.splitlines())) <= width
+    assert "…" not in result.stdout
+    if command == "check":
+        for field in (
+            "Confidence",
+            "Semantic",
+            "Jaccard",
+            "94.00%",
+            "96.00%",
+            "91.00%",
+            "Similarity",
+            "Name",
+            "Type",
+            "Location",
+            "function",
+        ):
+            assert field in result.stdout
+        if width < 120:
+            assert "Evidence" in result.stdout and "Code units" in result.stdout
+    else:
+        for field in ("Rank", "Score", "Name", "Location", "99.00%"):
+            assert field in result.stdout
+
+
+def test_main_renders_usage_errors_with_rich(monkeypatch, capsys):
+    monkeypatch.setattr(sys, "argv", ["codedupes", "info", "--unknown-option"])
+
+    assert cli.main() == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "╭" in captured.err and "╯" in captured.err
+    assert "No such option" in captured.err
+    assert "--unknown-option" in captured.err
+
+
+@pytest.mark.parametrize("command", [["info", "--verbose"], ["cache", "info"], ["cache", "clear"]])
+def test_cli_cache_warnings_use_rich_stderr(monkeypatch, command):
+    original_stats = EmbeddingCache.stats
+
+    def warn():
+        logging.getLogger("codedupes.embedding_cache").warning(
+            "Cache operation failed at " + "deeply/nested/" * 12 + "cache.json"
+        )
+
+    def noisy_stats(cache):
+        warn()
+        return original_stats(cache)
+
+    def noisy_clear(_cache, model=None):
+        warn()
+        return CacheClearResult(removed_entries=0, failed_deletions=1)
+
+    monkeypatch.setattr(EmbeddingCache, "stats", noisy_stats)
+    monkeypatch.setattr(EmbeddingCache, "clear", noisy_clear)
+    result = CliRunner().invoke(cli.cli, [*command, "--output-width", "80"])
+
+    assert result.exit_code == (1 if command[-1] == "clear" else 0), result.output
+    assert "WARNING" in result.stderr
+    assert "Cache operation failed" in result.stderr
+    assert max(map(len, result.stderr.splitlines())) <= 80
+    assert "Cache operation failed" not in result.stdout

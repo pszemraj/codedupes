@@ -78,7 +78,7 @@ output_width_option = click.option(
     show_default=True,
     callback=_validate_output_width,
     panel=Panel.OUTPUT,
-    help="Width used for rich terminal rendering",
+    help="Maximum render width (limited to terminal width; fixed when redirected)",
 )
 
 

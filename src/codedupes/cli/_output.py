@@ -21,10 +21,23 @@ from codedupes.logging_utils import quiet_dependency_loggers
 DEFAULT_OUTPUT_WIDTH = 160
 MIN_OUTPUT_WIDTH = 80
 
-console = Console(width=DEFAULT_OUTPUT_WIDTH)
+
+def _make_console(output_width: int = DEFAULT_OUTPUT_WIDTH, *, stderr: bool = False) -> Console:
+    """Create a console whose requested width fits the terminal it writes to.
+
+    :param output_width: Maximum terminal width, or fixed width for redirected output.
+    :param stderr: Whether to write to stderr instead of stdout.
+    :return: Rich console sized for its output stream.
+    """
+    result = Console(stderr=stderr)
+    result.width = min(output_width, result.width) if result.is_terminal else output_width
+    return result
+
+
+console = _make_console()
 # Errors and warnings never share stdout: `--json` promises machine-parseable
 # JSON only on stdout, so diagnostics go to stderr.
-error_console = Console(stderr=True, width=DEFAULT_OUTPUT_WIDTH)
+error_console = _make_console(stderr=True)
 TResult = TypeVar("TResult")
 
 
@@ -52,8 +65,8 @@ class _CodedupesLogFilter(logging.Filter):
 def _set_console(output_width: int) -> None:
     """Set global stdout/stderr consoles used by all rich output helpers."""
     global console, error_console
-    console = Console(width=output_width)
-    error_console = Console(stderr=True, width=output_width)
+    console = _make_console(output_width)
+    error_console = _make_console(output_width, stderr=True)
 
 
 def _suppress_logs_for_json() -> tuple[int, list[logging.Handler]]:
