@@ -1765,7 +1765,7 @@ def test_cli_search_help_is_search_specific() -> None:
     assert result.exit_code == 0
     assert "also narrows traditional duplicate scope in combined mode" not in result.output
     assert "Default test exclusions" in result.output
-    assert "artifact exclusions always apply." in result.output
+    assert "scan root are always excluded." in result.output
 
 
 @pytest.mark.parametrize("command", ["check", "search"])

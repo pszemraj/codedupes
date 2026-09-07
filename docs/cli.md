@@ -99,7 +99,7 @@ codedupes search . "validate session token" --language js --language ts
 - `--language <name>`: Restrict extraction to a language; repeat for multiple languages, or omit to auto-detect. See [supported files](polyglot-languages.md#supported-files) for names, aliases, and C header selection.
 - `--no-private`: Exclude private units according to [language visibility rules](polyglot-languages.md#visibility-filtering)
 - `--exclude <name|glob>`: Add an exclusion (repeat for multiple patterns). On a directory target, these extend the default test exclusions; on a single-file target, supplied excludes still apply while the default test-file patterns do not. Bare names such as `examples` match at any depth and exclude whole directory subtrees; paths containing `/` are relative to the scan root. Quote globs to prevent shell expansion; see [extraction scope](analysis-defaults.md#extraction-scope-defaults)
-- `--no-default-excludes`: Disable the default test-file patterns for directory targets, allowing tests to be analyzed. Custom excludes and built-in artifact-directory exclusions still apply
+- `--no-default-excludes`: Disable the default test-file patterns for directory targets, allowing tests to be analyzed. Custom excludes and built-in artifact-directory exclusions beneath the scan root still apply
 - `--include-stubs`: Include `.pyi` files when scanning a directory (single-file `.pyi` targets are analyzed as given)
 
 ### Semantic model

@@ -36,7 +36,8 @@ F = TypeVar("F", bound=Callable[..., Any])
 DEFAULT_EXCLUDE_HELP_HINT = (
     "Add a name or root-relative glob to exclude (repeat for multiple patterns). "
     "Bare names match at any depth; excluded directories include all descendants. "
-    "Default test exclusions apply to directory scans; artifact exclusions always apply."
+    "Default test exclusions apply to directory scans; artifact directories beneath the scan "
+    "root are always excluded."
 )
 
 
@@ -484,7 +485,10 @@ def semantic_options() -> Callable[[F], F]:
             "--no-default-excludes",
             is_flag=True,
             panel=Panel.SCOPE,
-            help="Disable default test-file exclusions; artifact-directory exclusions still apply.",
+            help=(
+                "Disable default test-file exclusions; artifact directories beneath the scan "
+                "root remain excluded."
+            ),
         ),
         click.option(
             "--include-stubs",
