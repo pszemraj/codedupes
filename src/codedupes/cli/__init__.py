@@ -55,10 +55,10 @@ def cli(ctx: click.Context) -> None:
 # Importing the command modules registers them on the group above. Public names
 # remain re-exported here because callers and tests historically import them from
 # ``codedupes.cli``.
-from .cache import cache_clear_command, cache_group, cache_info_command
-from .check import check_command, run_should_fail
-from .info import info_command
-from .search import search_command
+from .cache import cache_clear_command, cache_group, cache_info_command  # noqa: E402, RUF100
+from .check import check_command, run_should_fail  # noqa: E402, RUF100
+from .info import info_command  # noqa: E402, RUF100
+from .search import search_command  # noqa: E402, RUF100
 
 
 def __getattr__(name: str) -> Any:
