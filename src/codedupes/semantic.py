@@ -1214,26 +1214,29 @@ def _append_context_truncation_diagnostics(
     if context_window <= 0:
         return
 
-    overflow_by_text: dict[str, int] = {}
-    for text in dict.fromkeys(prepared_texts[index] for index in miss_indices):
-        try:
-            token_count = len(
-                tokenizer.encode(
-                    f"{prompt or ''}{text}",
-                    add_special_tokens=True,
-                    truncation=False,
-                    verbose=False,
-                )
-            )
-        except Exception:
-            logger.debug(
-                "Tokenization failed while checking semantic context; "
-                "passing the complete text to the backend",
-                exc_info=True,
-            )
-            continue
-        if token_count > context_window:
-            overflow_by_text[text] = token_count
+    miss_texts = list(dict.fromkeys(prepared_texts[index] for index in miss_indices))
+    try:
+        token_ids = tokenizer(
+            [f"{prompt or ''}{text}" for text in miss_texts],
+            add_special_tokens=True,
+            truncation=False,
+            padding=False,
+            return_attention_mask=False,
+            return_token_type_ids=False,
+            verbose=False,
+        )["input_ids"]
+    except Exception:
+        logger.debug(
+            "Tokenization failed while checking semantic context; "
+            "passing the complete texts to the backend",
+            exc_info=True,
+        )
+        return
+    overflow_by_text = {
+        text: len(ids)
+        for text, ids in zip(miss_texts, token_ids, strict=True)
+        if len(ids) > context_window
+    }
 
     existing_diagnostics = set(diagnostics)
     for unit, text in zip(units, prepared_texts, strict=True):

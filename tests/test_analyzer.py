@@ -2286,8 +2286,8 @@ def test_semantic_failures_fall_back_when_traditional_enabled(
 class _WhitespaceTokenizer:
     """Tokenizer stub whose token count is the whitespace-separated word count."""
 
-    def encode(self, text, **_kwargs):
-        return text.split()
+    def __call__(self, texts, **_kwargs):
+        return {"input_ids": [text.split() for text in texts]}
 
 
 class _ContextLimitedModel:

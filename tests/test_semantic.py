@@ -1513,8 +1513,8 @@ def test_find_similar_to_query_passes_long_query_to_backend(monkeypatch, tmp_pat
 class _WhitespaceTokenizer:
     """Tokenizer stub whose token count is the whitespace-separated word count."""
 
-    def encode(self, text, **_kwargs):
-        return text.split()
+    def __call__(self, texts, **_kwargs):
+        return {"input_ids": [text.split() for text in texts]}
 
 
 class _ShortContextModel:
@@ -1553,16 +1553,34 @@ def test_code_truncation_is_left_to_backend_with_prompt(monkeypatch, tmp_path: P
 
 
 def test_context_diagnostic_counts_prompt_and_special_tokens(monkeypatch, tmp_path: Path) -> None:
-    unit = extract_arithmetic_units(tmp_path)[0]
+    unit, short_unit = extract_arithmetic_units(tmp_path)
     unit.source = "one two three four five six seven"
-    tokenizer_calls: list[tuple[str, bool]] = []
+    short_unit.source = "one"
+    tokenizer_calls: list[tuple[list[str], bool]] = []
 
     class Tokenizer:
-        def encode(self, text, *, add_special_tokens, truncation, verbose):
+        def __call__(
+            self,
+            texts,
+            *,
+            add_special_tokens,
+            truncation,
+            padding,
+            return_attention_mask,
+            return_token_type_ids,
+            verbose,
+        ):
             assert truncation is False
+            assert padding is False
+            assert return_attention_mask is False
+            assert return_token_type_ids is False
             assert verbose is False
-            tokenizer_calls.append((text, add_special_tokens))
-            return text.split() + (["special"] if add_special_tokens else [])
+            tokenizer_calls.append((texts, add_special_tokens))
+            return {
+                "input_ids": [
+                    text.split() + (["special"] if add_special_tokens else []) for text in texts
+                ]
+            }
 
     class ShortContextModel:
         max_seq_length = 8
@@ -1582,16 +1600,18 @@ def test_context_diagnostic_counts_prompt_and_special_tokens(monkeypatch, tmp_pa
 
     diagnostics = []
     embeddings = compute_embeddings(
-        [unit],
+        [unit, short_unit],
         instruction_prefix="task: code ",
         diagnostics=diagnostics,
         use_cache=False,
     )
 
-    assert embeddings.shape == (1, 2)
-    assert model.encode_calls == [[unit.source]]
+    assert embeddings.shape == (2, 2)
+    assert model.encode_calls == [[unit.source, short_unit.source]]
     assert model.prompts == ["task: code "]
-    assert tokenizer_calls == [("task: code " + unit.source, True)]
+    assert tokenizer_calls == [
+        (["task: code " + unit.source, "task: code " + short_unit.source], True)
+    ]
     assert len(diagnostics) == 1
     assert "10 tokens including the encode prompt" in diagnostics[0].message
     assert diagnostics[0].code == "semantic-context-overflow"
