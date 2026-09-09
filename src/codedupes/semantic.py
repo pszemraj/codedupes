@@ -764,11 +764,18 @@ def _fingerprint_local_model_dir(
             for filename in filenames:
                 file_path = Path(dirpath) / filename
                 name = filename.lower()
-                if (
-                    name in {".git", ".gitignore", ".gitattributes"}
-                    or name.startswith(("readme", "license", "notice"))
-                    or file_path.suffix.lower() in {".md", ".rst"}
-                ):
+                # Prefixes alone can also name model assets (e.g. license_head.safetensors).
+                if name in {
+                    ".git",
+                    ".gitignore",
+                    ".gitattributes",
+                    "readme",
+                    "readme.txt",
+                    "license",
+                    "license.txt",
+                    "notice",
+                    "notice.txt",
+                } or file_path.suffix.lower() in {".md", ".rst"}:
                     continue
                 if not file_path.is_file():
                     continue

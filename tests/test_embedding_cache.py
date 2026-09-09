@@ -2488,11 +2488,17 @@ def _fake_local_model_dir(tmp_path: Path, name: str = "gemma-work-copy") -> Path
     return model_dir
 
 
-def test_local_model_dir_cache_uses_fingerprint_not_revision(tmp_path, monkeypatch):
+@pytest.mark.parametrize(
+    "asset_name",
+    ["model.safetensors", "license_head.safetensors", "notice_tokens.json", "readme_encoder.py"],
+)
+def test_local_model_dir_cache_uses_fingerprint_not_revision(tmp_path, monkeypatch, asset_name):
     units = _five_units(tmp_path)
     model = CountingModel()
     get_model_counts = _patch_get_model(monkeypatch, model)
     model_dir = _fake_local_model_dir(tmp_path)
+    asset = model_dir / asset_name
+    asset.write_text("weights-v1", encoding="utf-8")
 
     compute_embeddings(
         units,
@@ -2513,9 +2519,9 @@ def test_local_model_dir_cache_uses_fingerprint_not_revision(tmp_path, monkeypat
     assert len(model.encode_calls) == 1
     assert second.shape == (5, 4)
 
-    # Replacing the weights in place must change the fingerprint revision and
+    # Replacing an embedding asset in place must change the fingerprint revision and
     # invalidate every cached vector for this model directory.
-    (model_dir / "model.safetensors").write_text("weights-v2-longer")
+    asset.write_text("weights-v2-longer", encoding="utf-8")
     compute_embeddings(
         units,
         model_name=str(model_dir),

@@ -2596,10 +2596,12 @@ def test_fingerprint_local_model_dir_follows_symlinked_subdirectories(tmp_path: 
     "relative",
     [
         "README.md",
+        "README",
         "ReadMe.txt",
         "LICENSE",
         "license.txt",
         "NOTICE",
+        "Notice.txt",
         "notes.MD",
         "guide.rst",
         ".git/config",
@@ -2637,6 +2639,12 @@ def test_local_fingerprint_ignores_documentation_and_metadata(tmp_path, relative
         "3_Dense/config.json",
         "weights/model-00001-of-00002.safetensors",
         "modeling_custom.py",
+        "license_head.safetensors",
+        "notice_tokens.json",
+        "readme_encoder.py",
+        "LICENSE.safetensors",
+        "NOTICE.json",
+        "README.py",
     ],
 )
 def test_local_fingerprint_tracks_embedding_assets(tmp_path, relative) -> None:
