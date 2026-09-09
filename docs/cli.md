@@ -5,6 +5,8 @@ The supported command-line entry point is `codedupes`. Install it first with the
 parsers and the device that semantic analysis will use. Examples below assume the
 command is available on `PATH`.
 
+`codedupes --version` prints the installed version. Running `codedupes` without a subcommand prints help and exits `2`.
+
 See [Output and exit codes](output.md) for JSON and process status, [Polyglot language support](polyglot-languages.md) for extraction semantics, [Analysis defaults](analysis-defaults.md) for heuristics, [Model profiles](model-profiles.md) for semantic defaults, [Accelerators](accelerators.md) for device behavior, and [Embedding cache](caching.md) for persistent cache behavior.
 
 ## `codedupes check <path>`
@@ -116,7 +118,7 @@ See [model profiles](model-profiles.md#semantic-task-defaults-and-choices) for t
 
 - `--device <name>`: Semantic inference device: `auto`, `cpu`, `cuda`, or `mps` (default `auto`; see [device selection](accelerators.md#device-selection))
 - `--mps-fallback` / `--no-mps-fallback`: Enable or disable PyTorch CPU fallback for unsupported MPS operators
-- `--mps-memory-fraction <float>`: Optional PyTorch MPS allocator fraction; see [memory policy](accelerators.md#mps-memory-policy-and-oom-recovery)
+- `--mps-memory-fraction <float>`: Optional PyTorch MPS allocator fraction; see [memory policy](accelerators.md#accelerator-oom-recovery-and-mps-memory-policy)
 - `--batch-size <int>`: Embedding batch size (default `8`)
 
 ### Cache

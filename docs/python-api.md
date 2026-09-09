@@ -49,6 +49,17 @@ analyzer = CodeAnalyzer(config)
 result = analyzer.analyze("./src")
 ```
 
+### `AnalyzerConfig` field map
+
+| Area | Fields | Behavior |
+| --- | --- | --- |
+| Extraction | `exclude_patterns`, `include_private`, `languages`, `include_stubs` | [Scope defaults](analysis-defaults.md#extraction-scope-defaults) and [language selection](polyglot-languages.md#supported-files) |
+| Analysis stages | `mode`, `run_traditional`, `run_semantic`, `run_unused`, `strict_unused`, `allow_semantic_fallback`, `suppress_test_semantic_matches` | [Check defaults and heuristics](analysis-defaults.md) |
+| Traditional matching | `jaccard_threshold`, `filter_tiny_traditional`, `tiny_unit_statement_cutoff` | [Traditional filtering](analysis-defaults.md#tiny-traditional-duplicate-filtering-defaults) |
+| Semantic matching | `semantic_threshold`, `threshold_profile`, `cross_language`, `min_semantic_statements`, `semantic_unit_types`, `semantic_task` | [Semantic candidates and gates](analysis-defaults.md#semantic-duplicate-gate-defaults) and [model profiles](model-profiles.md) |
+| Model runtime | `model_name`, `instruction_prefix`, `model_revision`, `trust_remote_code`, `device`, `mps_fallback`, `mps_memory_fraction`, `batch_size` | [Model loading](model-profiles.md) and [accelerator behavior](accelerators.md) |
+| Cache, progress, and search | `embedding_cache`, `strict_revision_cache`, `progress`, `search_document` | [Cache controls](caching.md), [telemetry](#progress-and-embedding-telemetry), and [query search](#semantic-query-search) |
+
 ## Language selection and extraction diagnostics
 
 Omit `languages` to auto-detect every supported source type, or pass canonical names/aliases through `AnalyzerConfig`:
