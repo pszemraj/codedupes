@@ -33,7 +33,7 @@ codedupes check ./src --exclude "**/generated/**" --exclude "**/migrations/**"
 Options, in addition to the [shared options](#options-shared-by-check-and-search):
 
 - `-t, --threshold <float>`: Shared threshold override for semantic and traditional checks (in single-method modes, it applies to the active method only)
-- `--traditional-threshold <float>`: Override traditional (Jaccard) threshold only
+- `--traditional-threshold <float>`: Override the [traditional Jaccard threshold](analysis-defaults.md#traditional-duplicate-defaults) only
 - `--cross-language`: Also report semantic duplicate pairs across languages; see [comparison boundaries](polyglot-languages.md#fingerprints-and-comparison-boundaries)
 - `--semantic-task <name>`: Semantic task mode for duplicate detection embeddings (default `semantic-similarity`)
 - `--semantic-only`: Run semantic analysis only

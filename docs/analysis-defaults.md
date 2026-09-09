@@ -101,7 +101,9 @@ Call matching is name-based rather than scope-resolved: a call to any same-named
 
 Unused findings are independent of duplicate detection: a potentially unused unit remains eligible for semantic and traditional duplicate reporting. `--no-unused` disables unused reporting without changing duplicate findings.
 
-## Tiny traditional duplicate filtering defaults
+## Traditional duplicate defaults
+
+The traditional pass reports near-duplicate pairs when identifier-set Jaccard similarity is at least `0.85` by default (`jaccard_threshold`). Structural and token exact matches do not use this threshold. [Fingerprint and comparison boundaries](polyglot-languages.md#fingerprints-and-comparison-boundaries) define which units can be paired.
 
 Default tiny-filter behavior for traditional duplicates:
 
