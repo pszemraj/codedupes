@@ -553,6 +553,72 @@ def test_local_family_threshold_changes_reuse_embeddings(tmp_path, monkeypatch):
     assert tuned.embedding_stats.cache_revision == generic.embedding_stats.cache_revision
 
 
+def test_local_model_card_family_changes_split_only_prompt_sensitive_cache(tmp_path, monkeypatch):
+    units = _five_units(tmp_path)
+    model_dir = tmp_path / "local-model-copy"
+    model_dir.mkdir()
+    (model_dir / "config.json").write_text('{"model_type": "unknown"}', encoding="utf-8")
+    (model_dir / "model.safetensors").write_bytes(b"weights")
+    readme = model_dir / "README.md"
+    readme.write_text("# local checkpoint\n", encoding="utf-8")
+
+    model = CountingModel()
+    _patch_get_model(monkeypatch, model)
+
+    generic_stats = EmbeddingRunStats()
+    _, generic_identity = compute_embeddings_with_identity(
+        units,
+        model_name=str(model_dir),
+        device="cpu",
+        cache_scope=tmp_path,
+        stats=generic_stats,
+    )
+
+    # Model cards are excluded from the local content fingerprint, but this
+    # heading changes the code encode plan from no prompt to EmbeddingGemma's
+    # semantic-similarity prompt, so the vectors must not be reused.
+    readme.write_text("# embeddinggemma-300m\n", encoding="utf-8")
+    gemma_stats = EmbeddingRunStats()
+    _, gemma_identity = compute_embeddings_with_identity(
+        units,
+        model_name=str(model_dir),
+        device="cpu",
+        cache_scope=tmp_path,
+        stats=gemma_stats,
+    )
+
+    assert generic_identity.resolved_revision == gemma_identity.resolved_revision
+    assert generic_identity != gemma_identity
+    assert generic_identity.runtime_variant != gemma_identity.runtime_variant
+    assert gemma_stats.cache_hit_rows == 0
+    assert gemma_stats.encoded_inputs == len(units)
+    assert len(model.encode_calls) == 2
+    assert model.prompts_seen == [
+        None,
+        semantic.EMBEDDINGGEMMA_QUERY_PREFIXES["semantic-similarity"],
+    ]
+
+    # GTE and the original generic profile both encode code symmetrically
+    # without a prompt, so their full embedding identities agree and the
+    # original vectors can be reused despite the same README-only edit.
+    readme.write_text("# gte-modernbert-base\n", encoding="utf-8")
+    gte_stats = EmbeddingRunStats()
+    _, gte_identity = compute_embeddings_with_identity(
+        units,
+        model_name=str(model_dir),
+        device="cpu",
+        cache_scope=tmp_path,
+        stats=gte_stats,
+    )
+
+    assert gte_identity == generic_identity
+    assert gte_identity.resolved_revision == gemma_identity.resolved_revision
+    assert gte_stats.cache_hit_rows == len(units)
+    assert gte_stats.encoded_inputs == 0
+    assert gte_stats.model_loaded is False
+    assert len(model.encode_calls) == 2
+
+
 def test_search_profile_changes_reuse_corpus_and_query_vectors(tmp_path, monkeypatch):
     project = tmp_path / "project"
     project.mkdir()
