@@ -363,12 +363,7 @@ def test_resolving_family_copy_does_not_log_threshold_selection(tmp_path: Path, 
     assert not caplog.records
 
 
-def test_suppressed_threshold_notice_is_available_for_later_visible_run(
-    monkeypatch, caplog
-) -> None:
-    import codedupes.semantic_profiles as profiles
-
-    monkeypatch.setattr(profiles, "_threshold_notice_models", set())
+def test_suppressed_threshold_notice_is_available_for_later_visible_run(caplog) -> None:
     profile = resolve_model_profile("someone/embeddinggemma-300m-code-ft")
     with caplog.at_level(logging.CRITICAL + 1):
         log_family_threshold_notice(profile)

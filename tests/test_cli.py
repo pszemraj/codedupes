@@ -221,6 +221,8 @@ def test_cli_embedding_telemetry_tracks_filesystem_transitions(
         "0",
     ]
     args += ["--json"] if as_json else ["--output-width", "240"]
+    if command == "search" and not as_json:
+        args.append("-v")
     runner = CliRunner()
     cached_payload = None
 
@@ -258,6 +260,9 @@ def test_cli_embedding_telemetry_tracks_filesystem_transitions(
             elif phase == "uncached":
                 assert payload == cached_payload
         else:
+            if command == "search":
+                assert result.output.count("Effective search threshold: 0.0") == 1
+                assert result.output.count("Search threshold: 0.0") == 1
             assert "Embeddings" in result.stdout
             assert f"{hits} rows from cache" in result.stdout
             assert f"{encoded} inputs encoded" in result.stdout
@@ -1140,9 +1145,9 @@ def test_cli_threshold_profiles(monkeypatch, tmp_path, command, choice, as_json)
     assert result.exit_code == (1 if command == "check" else 0), result.output
     if as_json:
         json.loads(result.stdout)
-        assert "Search threshold:" not in result.output
+        assert "Effective search threshold:" not in result.output
     elif command == "search":
-        assert result.output.count("Search threshold:") == 1
+        assert result.output.count("Effective search threshold:") == 1
         assert f"threshold-profile={choice}" in result.output
     assert "Use --threshold-profile generic" not in result.output
     assert captured[-1].threshold_profile == choice
@@ -1153,7 +1158,7 @@ def test_cli_threshold_profiles(monkeypatch, tmp_path, command, choice, as_json)
     assert result.exit_code == (1 if command == "check" else 0), result.output
     assert captured[-1].semantic_threshold == 0.91
     if command == "search" and not as_json:
-        assert "Search threshold: 0.91 (explicit numeric override)" in result.output
+        assert "Effective search threshold: 0.91 (explicit numeric override)" in result.output
 
 
 @pytest.mark.parametrize("command", ["check", "search"])

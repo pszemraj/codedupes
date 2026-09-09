@@ -9,7 +9,6 @@ import pytest
 
 import codedupes.semantic as semantic_module
 from codedupes import analyzer as analyzer_module
-from codedupes import semantic_profiles
 from codedupes.analyzer import AnalyzerConfig, CodeAnalyzer, analyze_directory
 from codedupes.models import AnalysisResult, CodeUnit, CodeUnitType, DuplicatePair
 from codedupes.pairs import ordered_pair_key
@@ -945,7 +944,6 @@ def test_analyze_directory_threshold_profiles(
     }[model_kind]
     if model_kind == "default" and choice == "auto":
         expected = 0.80
-    monkeypatch.setattr(semantic_profiles, "_threshold_notice_models", set())
     project = create_project(tmp_path, "def alpha(x):\n    return x + 1\n")
     captured = {}
     monkeypatch.setattr(

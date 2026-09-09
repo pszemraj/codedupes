@@ -478,7 +478,7 @@ class SearchOptions:
                 resolve_model_profile(config.model_name), config.threshold_profile
             )
             selection = f"threshold-profile={config.threshold_profile}, {profile.family} family"
-        logger.info(f"Search threshold: {threshold} ({selection})")
+        logger.info(f"Effective search threshold: {threshold} ({selection})")
         return config
 
 

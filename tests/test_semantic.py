@@ -13,7 +13,7 @@ import pytest
 import sentence_transformers
 import torch
 
-from codedupes import devices, semantic, semantic_profiles
+from codedupes import devices, semantic
 from codedupes.constants import CPU_FALLBACK_MAX_BATCH_SIZE
 from codedupes.embedding_cache import EmbeddingCache, compute_cache_key
 from codedupes.models import CodeUnit, CodeUnitType
@@ -377,7 +377,6 @@ def test_search_threshold_notices_do_not_repeat_on_warm_queries(
     }[model_kind]
     model = PromptAwareGemmaModel()
     monkeypatch.setattr(semantic, "get_model", lambda *args, **kwargs: model)
-    monkeypatch.setattr(semantic_profiles, "_threshold_notice_models", set())
     revision = "f" * 40 if model_kind == "hub" else None
     identity = semantic.resolve_embedding_space_identity(
         model_name=model_name,
