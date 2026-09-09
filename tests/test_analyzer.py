@@ -38,6 +38,7 @@ _SEMANTIC_ANALYSIS_KWARG_NAMES = {
     "use_cache",
 }
 _QUERY_KWARG_NAMES = {
+    "threshold_profile",
     "cache_scope",
     "corpus_identity",
     "device",
@@ -916,6 +917,57 @@ def test_analyzer_resolves_per_language_semantic_gate(tmp_path: Path, monkeypatc
     assert captured["threshold"] == 0.77
 
 
+@pytest.mark.parametrize(
+    ("choice", "expected"),
+    [
+        ("auto", 0.74),
+        ("generic", 0.82),
+        ("embeddinggemma-300m", 0.74),
+        ("gte-modernbert-base", 0.80),
+    ],
+)
+@pytest.mark.parametrize("numeric", [None, 0.91])
+def test_analyze_directory_threshold_profiles(
+    tmp_path, monkeypatch, caplog, choice, expected, numeric
+) -> None:
+    model_dir = tmp_path / "approved-model"
+    model_dir.mkdir()
+    (model_dir / "config.json").write_text(
+        '{"model_type": "gemma3_text", "use_bidirectional_attention": true}', encoding="utf-8"
+    )
+    project = create_project(tmp_path, "def alpha(x):\n    return x + 1\n")
+    captured = {}
+    monkeypatch.setattr(
+        analyzer_module, "run_semantic_analysis", _make_semantic_runner(capture=captured)
+    )
+    with caplog.at_level("INFO", logger="codedupes.analyzer"):
+        analyze_directory(
+            project,
+            model_name=str(model_dir),
+            threshold_profile=choice,
+            semantic_threshold=numeric,
+            min_semantic_statements=0,
+            run_unused=False,
+        )
+    assert captured["language_thresholds"] == {
+        "python": numeric if numeric is not None else expected
+    }
+    assert captured["model_name"] == str(model_dir)
+    assert captured["revision"] is None
+    if numeric is not None:
+        assert "explicit numeric override" in caplog.text
+        assert "family duplicate thresholds" not in caplog.text
+    else:
+        assert f"threshold-profile={choice}" in caplog.text
+
+
+def test_analyzer_rejects_invalid_or_disabled_threshold_profile() -> None:
+    with pytest.raises(ValueError, match="threshold_profile must be one of"):
+        AnalyzerConfig(threshold_profile="invalid")
+    with pytest.raises(ValueError, match="threshold_profile"):
+        AnalyzerConfig(run_semantic=False, threshold_profile="generic")
+
+
 def _create_two_language_project(tmp_path: Path) -> Path:
     """Write a small mixed Python/JavaScript project for gate tests.
 
@@ -1538,8 +1590,10 @@ def test_search_threshold_defaults_to_none_and_honors_explicit_config(
         {"trust_remote_code": True},
     ],
 )
+@pytest.mark.parametrize("threshold_profile", ["auto", "generic", "embeddinggemma-300m"])
 def test_uncalibrated_duplicate_context_rejected_at_construction(
     config_overrides: dict[str, str],
+    threshold_profile: str,
 ) -> None:
     with pytest.raises(ValueError, match="provide semantic_threshold explicitly"):
         AnalyzerConfig(
@@ -1548,6 +1602,7 @@ def test_uncalibrated_duplicate_context_rejected_at_construction(
             run_unused=False,
             min_semantic_statements=0,
             model_name="embeddinggemma-300m",
+            threshold_profile=threshold_profile,
             **config_overrides,
         )
 

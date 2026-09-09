@@ -111,7 +111,8 @@ codedupes check ./src --instruction-prefix "Represent this code for duplicate de
 
 See [model profiles](model-profiles.md#semantic-task-defaults-and-choices) for task choices and when a custom configuration requires an explicit threshold.
 
-- `--semantic-threshold <float>`: Flat semantic gate for every language; without it, `check` uses the model profile's calibrated [per-language gates](analysis-defaults.md#semantic-duplicate-gate-defaults) and `search` uses the profile search default
+- `--semantic-threshold <float>`: Flat semantic gate for every language; without it, `check` uses the selected threshold profile's [per-language gates](analysis-defaults.md#semantic-duplicate-gate-defaults) and `search` uses its search default
+- `--threshold-profile <auto|generic|embeddinggemma-300m|gte-modernbert-base>`: Choose threshold defaults (default `auto`). Recognized local copies retain family tuning; unknown models use generic defaults. Numeric thresholds take precedence. This changes filtering only and does not bypass explicit numeric threshold requirements for custom prompts/tasks or contextual search. See [threshold profiles](model-profiles.md#choosing-threshold-defaults)
 - `--semantic-unit-type <name>`: Semantic candidate unit type (`function`, `method`, `class`); repeat option to include multiple types (default `function, method`)
 - `--min-statements <int>`: Minimum statement count for semantic candidate code units (default `3`); these [candidate filters](analysis-defaults.md#semantic-candidate-defaults) do not narrow traditional matching
 - `--model <name>`: Embedding model alias, Hugging Face ID, or explicit path (absolute, `./`/`../`, or `~`) to a complete local `save_pretrained`/`hf download` directory (default `gte-modernbert-base`)

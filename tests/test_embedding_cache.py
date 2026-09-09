@@ -509,6 +509,90 @@ def _active_vectors_path(shard_dir: Path) -> Path:
     return shard_dir / embedding_cache._vectors_filename(payload["generation"])
 
 
+def test_local_family_threshold_changes_reuse_embeddings(tmp_path, monkeypatch):
+    model_dir = tmp_path / "approved-copy"
+    model_dir.mkdir()
+    (model_dir / "config.json").write_text(
+        '{"model_type": "gemma3_text", "use_bidirectional_attention": true}', encoding="utf-8"
+    )
+    (model_dir / "model.safetensors").write_bytes(b"weights")
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "arithmetic.py").write_text(
+        "def alpha(x):\n    return x + 1\n\ndef beta(x):\n    return x * 2\n", encoding="utf-8"
+    )
+
+    class Model(CountingModel):
+        def encode(self, texts, **kwargs):
+            self.encode_calls.append(list(texts))
+            self.prompts_seen.append(kwargs.get("prompt"))
+            return np.array(
+                [[1.0, 0.0] if "alpha" in text else [0.78, np.sqrt(1 - 0.78**2)] for text in texts],
+                dtype=np.float32,
+            )
+
+    model = Model()
+    loads = _patch_get_model(monkeypatch, model)
+    settings = {
+        "model_name": str(model_dir),
+        "device": "cpu",
+        "min_semantic_statements": 0,
+        "run_traditional": False,
+        "run_unused": False,
+    }
+    tuned = CodeAnalyzer(AnalyzerConfig(**settings)).analyze(project)
+    assert len(tuned.semantic_duplicates) == 1
+    calls = len(model.encode_calls)
+    assert calls == 1
+    (model_dir / "README.md").write_text("Approved workplace copy", encoding="utf-8")
+    generic = CodeAnalyzer(AnalyzerConfig(threshold_profile="generic", **settings)).analyze(project)
+    assert generic.semantic_duplicates == []
+    assert generic.embedding_stats.cache_hit_rows == 2
+    assert len(model.encode_calls) == calls
+    assert loads["count"] == 1
+    assert tuned.embedding_stats.cache_revision == generic.embedding_stats.cache_revision
+
+
+def test_search_profile_changes_reuse_corpus_and_query_vectors(tmp_path, monkeypatch):
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "arithmetic.py").write_text("def alpha(x):\n    return x + 1\n", encoding="utf-8")
+
+    class Model(CountingModel):
+        def encode(self, texts, **kwargs):
+            self.encode_calls.append(list(texts))
+            self.prompts_seen.append(kwargs.get("prompt"))
+            return np.array(
+                [
+                    [1.0, 0.0] if "def alpha" in text else [0.45, np.sqrt(1 - 0.45**2)]
+                    for text in texts
+                ],
+                dtype=np.float32,
+            )
+
+    model = Model()
+    loads = _patch_get_model(monkeypatch, model)
+    config = AnalyzerConfig(
+        mode="search",
+        device="cpu",
+        min_semantic_statements=0,
+        run_traditional=False,
+        run_unused=False,
+    )
+    analyzer = CodeAnalyzer(config)
+    analyzer.index(project)
+    assert analyzer.search("addition") == []  # GTE search default is 0.50.
+    config.threshold_profile = "embeddinggemma-300m"
+    assert len(analyzer.search("addition")) == 1
+    config.threshold_profile = "generic"
+    analyzer.index(project)
+    assert len(analyzer.search("addition")) == 1
+    assert analyzer.search("addition", threshold=0.6) == []
+    assert len(model.encode_calls) == 2
+    assert loads["count"] == 2
+    assert model.prompts_seen == [None, None]  # Threshold choices do not select Gemma prompts.
+
+
 def test_full_cache_hit_skips_model_load_and_encode(tmp_path, monkeypatch):
     units = _five_units(tmp_path)
     model = CountingModel()

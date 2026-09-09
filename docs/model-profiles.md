@@ -20,8 +20,29 @@ Most users should leave model and task settings unset. `codedupes` uses the pinn
 
 - Built-in alias keys and known aliases resolve to the profile's canonical model ID.
 - Built-in aliases and Hub IDs cannot be shadowed by same-named directories in the current working directory. A local model must use explicit path syntax (an absolute path, `./` or `../`, or `~`); it is then canonicalized to its resolved absolute path - including the on-disk letter case on case-insensitive filesystems such as macOS - so equivalent explicit spellings share one cache identity.
-- Known local model families are inferred from a recognizable directory name, Hugging Face cache ancestor, saved configuration, or model-card title.
-- Family inference selects loading and prompt behavior only. Non-builtin models, including fine-tunes and local copies, use the [generic thresholds](#built-in-profiles). Calibrated thresholds belong to the pinned builtin checkpoint; a recognizable name does not establish calibration. A family-matched model warns once per model per process about its generic duplicate gate. Pass `--threshold`/`--semantic-threshold` for tuned weights.
+- Known local model families are inferred from saved configuration first, then a recognizable directory name, Hugging Face cache ancestor, or model-card title. EmbeddingGemma is recognized from its `gemma3_text` configuration with bidirectional attention even in an arbitrarily named directory without a README. A plain ModernBERT architecture does not establish GTE identity.
+- Recognized copies and fine-tunes use their family's loading/prompt behavior and tuned thresholds by default. Recognition works offline and does not verify exact checkpoint equivalence: family tuning is a practical starting point, not a guarantee of identical score distributions. Actual local paths and non-builtin Hub IDs are preserved without inheriting the built-in revision pin.
+
+### Choosing threshold defaults
+
+Both `check` and `search` accept `--threshold-profile`; the Python setting is `threshold_profile` (default `"auto"`).
+
+| choice | threshold behavior |
+| --- | --- |
+| `auto` | Use the recognized model family's thresholds, or generic defaults for an unknown model. |
+| `generic` | Use duplicate gate `0.82` for every language and search floor `0.35`. |
+| `embeddinggemma-300m` | Use EmbeddingGemma's per-language duplicate gates and search floor `0.40`. |
+| `gte-modernbert-base` | Use GTE's per-language duplicate gates and search floor `0.50`. |
+
+Explicit numeric thresholds take precedence. Selecting a threshold profile changes only result filtering; it does not change the model, prompts, revision, or cached embeddings. It also does not bypass the explicit numeric threshold requirements for [custom embedding contexts](#semantic-task-defaults-and-choices). The CLI reports its effective threshold choice and values without prompting.
+
+For an approved local EmbeddingGemma copy, normal family recognition is enough:
+
+```bash
+codedupes check ./src --model ./models/approved-copy
+codedupes search ./src "parse json payload" --model ./models/approved-copy
+codedupes check ./src --model ./models/approved-copy --threshold-profile generic
+```
 
 ### Local model directories and offline use
 
@@ -58,7 +79,7 @@ CLI task defaults:
 - `codedupes check`: `semantic-similarity`
 - `codedupes search`: `code-retrieval`
 
-The Python API resolves the same defaults by operation: an unset `AnalyzerConfig.semantic_task` uses `semantic-similarity` for `CodeAnalyzer.analyze()` and `code-retrieval` for `CodeAnalyzer.index()`. A later `search()` uses the task that produced its current corpus embeddings. Built-in default thresholds apply only to the pinned revision, default task/prompt plan, and default remote-code setting they were calibrated on; a custom instruction prefix, alternate EmbeddingGemma task, alternate built-in revision, or a `trust_remote_code` value differing from the profile default requires an explicit threshold. Remote code can change the vectors, so it splits the embedding cache key and invalidates the calibrated defaults the same way a prompt change does; this applies to both the duplicate gates and the search default.
+The Python API resolves the same defaults by operation: an unset `AnalyzerConfig.semantic_task` uses `semantic-similarity` for `CodeAnalyzer.analyze()` and `code-retrieval` for `CodeAnalyzer.index()`. A later `search()` uses the task that produced its current corpus embeddings. The shipped thresholds were calibrated on the pinned built-in checkpoints and are also offered as family defaults for recognized copies. A custom instruction prefix, alternate EmbeddingGemma task, alternate built-in revision, or a `trust_remote_code` value differing from the model profile default still requires an explicit numeric threshold, regardless of `threshold_profile`. Remote code can change the vectors, so it splits the embedding cache key and invalidates the threshold defaults the same way a prompt change does; this applies to both the duplicate gates and the search default.
 
 [Contextual search documents](python-api.md#semantic-query-search) also require an explicit threshold because the built-in search defaults were calibrated on source-only documents.
 

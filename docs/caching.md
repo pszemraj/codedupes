@@ -34,6 +34,8 @@ After each nonempty batch write, codedupes inventories shard sizes. When the glo
 | Move a contextual search document | Re-embeds because its path is part of the input. |
 | Change model, revision, prompt, encode route, or vector-affecting runtime settings | Uses a different embedding identity. |
 | Replace local weights in place | Changes the directory content fingerprint. Touching modification times alone does not invalidate vectors. |
+| Edit local model documentation or Git/download metadata | Keeps the embedding identity unchanged. |
+| Change threshold profile or numeric thresholds | Reuses embeddings and applies the new result filtering. |
 | Repeat a search query | Reuses its query vector when both corpus and query identities match. |
 
 EmbeddingGemma uses different corpus prompts for `check` and `search`, so they warm independently. GTE uses the same symmetric corpus route for both: a warm check can cover the first search's corpus, but a new query still embeds. See [prompt behavior](model-profiles.md#taskprompt-behavior-by-model-family).
@@ -52,7 +54,7 @@ An indexed corpus retains its source commit even without persistent storage. Que
 
 ### Local directories
 
-Local model identity hashes file contents, including files reached through symlinked subdirectories. Per-file digests are reused from `<cache_root>/local-models/` when size, mtime, ctime, and inode match, keeping unchanged runs to a stat walk. A no-cache run maintains this information only in memory; enabling caching later can persist it.
+Local model identity hashes file contents, including files reached through symlinked subdirectories. It excludes `.git/`, Hugging Face download metadata, `.gitignore`, `.gitattributes`, Markdown/reStructuredText documentation, and case-insensitive `README*`, `LICENSE*`, and `NOTICE*` files. All remaining files still contribute, including weights and shards, tokenizer assets, configuration, pooling/Dense modules, and custom model code. Per-file digests are reused from `<cache_root>/local-models/` when size, mtime, ctime, and inode match, keeping unchanged runs to a stat walk. A no-cache run maintains this information only in memory; enabling caching later can persist it. Previously cached local directories containing excluded files may miss once under the revised fingerprint; no migration is required.
 
 Model loading checks fingerprints before and after reading weights. A change during loading triggers one reload; a second change fails the run. Earlier hits are discarded if their fingerprint differs from the loaded weights.
 

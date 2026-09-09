@@ -25,6 +25,8 @@ This draft changelog is for people upgrading an existing integration. Read the m
 
 ## Semantic inference and caching
 
+- Recognized local copies and fine-tunes now retain their family's tuned thresholds. Configuration-based recognition takes precedence over directory names; local official EmbeddingGemma copies need no README or online checkpoint verification. Use `--threshold-profile generic` to restore generic defaults, or select a named profile through the CLI/Python API. Numeric overrides and custom-context requirements remain in effect.
+- Local model fingerprints now ignore documentation and Git/download metadata while continuing to track weights, tokenizer assets, configuration, pooling/Dense modules, and custom code. Existing local caches may miss once; changing a threshold profile reuses embeddings.
 - Added persistent [embedding caching](caching.md) and [corpus lifecycle tracking](caching.md#corpus-lifecycle).
 - Added explicit CPU/CUDA/MPS selection, dtype control, allocator diagnostics, and bounded OOM recovery. See [accelerator behavior](accelerators.md).
 - Fixed task prompts being applied twice and added [model-context calibration requirements](model-profiles.md#semantic-task-defaults-and-choices).

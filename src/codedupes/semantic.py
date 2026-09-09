@@ -62,11 +62,12 @@ from codedupes.models import CodeUnit, DuplicatePair, ExtractionDiagnostic
 from codedupes.pairs import ordered_pair_key
 from codedupes.semantic_profiles import (
     SemanticModelProfile,
-    get_default_search_threshold,
+    ThresholdProfile,
     get_default_semantic_threshold,
     is_explicit_local_model_path,
     resolve_local_model_path,
     resolve_model_profile,
+    resolve_threshold_profile,
 )
 
 logger = logging.getLogger(__name__)
@@ -711,8 +712,8 @@ def _fingerprint_local_model_dir(
     """Fingerprint a local model directory's contents for use as a cache revision.
 
     The fingerprint hashes each model file's relative path and content digest,
-    excluding Hugging Face's ``--local-dir`` download metadata, so replacing or
-    retraining weights in place changes the cache revision while metadata-only
+    excluding documentation, Git metadata, and Hugging Face download metadata.
+    Replacing or retraining weights in place changes the cache revision while metadata-only
     touches keep it stable. The walk follows symlinks
     (``os.walk(..., followlinks=True)``) so weight shards stored behind a
     symlinked subdirectory move the fingerprint too; a visited-realpath set
@@ -747,6 +748,11 @@ def _fingerprint_local_model_dir(
     visited_dirs: set[str] = set()
     try:
         for dirpath, dirnames, filenames in os.walk(model_dir, followlinks=True):
+            dirnames[:] = [
+                name
+                for name in dirnames
+                if name != ".git" and Path(dirpath) / name != hf_download_metadata
+            ]
             real_dir = os.path.realpath(dirpath)
             if real_dir in visited_dirs:
                 # A symlink cycle looped back to an already-processed real
@@ -756,6 +762,13 @@ def _fingerprint_local_model_dir(
             visited_dirs.add(real_dir)
             for filename in filenames:
                 file_path = Path(dirpath) / filename
+                name = filename.lower()
+                if (
+                    name in {".git", ".gitignore", ".gitattributes"}
+                    or name.startswith(("readme", "license", "notice"))
+                    or file_path.suffix.lower() in {".md", ".rst"}
+                ):
+                    continue
                 if not file_path.is_file():
                     continue
                 if file_path.is_relative_to(hf_download_metadata):
@@ -3632,6 +3645,7 @@ def resolve_search_threshold(
     revision: str | None = None,
     trust_remote_code: bool | None = None,
     semantic_task: str | None = None,
+    threshold_profile: ThresholdProfile = "auto",
 ) -> float:
     """Resolve a search gate without loading or indexing a model.
 
@@ -3641,10 +3655,12 @@ def resolve_search_threshold(
     :param revision: Optional model revision override.
     :param trust_remote_code: Optional remote-code trust override.
     :param semantic_task: Task used to embed corpus and query.
+    :param threshold_profile: Threshold defaults to select; numeric gates take precedence.
     :return: Explicit gate or the applicable profile default.
     :raises ValueError: If the search context requires an explicit threshold override.
     """
     profile = resolve_model_profile(model_name)
+    selected_profile = resolve_threshold_profile(profile, threshold_profile)
     semantic_task = normalize_semantic_task(
         semantic_task, default_task=DEFAULT_SEARCH_SEMANTIC_TASK
     )
@@ -3672,7 +3688,7 @@ def resolve_search_threshold(
                 "pass an explicit threshold (CodeAnalyzer.search(threshold=...), "
                 "find_similar_to_query(threshold=...), or --semantic-threshold)."
             )
-        return get_default_search_threshold(model_name)
+        return selected_profile.default_search_threshold
     return threshold
 
 
@@ -3694,6 +3710,7 @@ def _find_similar_to_query_unlocked(
     cache_scope: Path | None = None,
     corpus_identity: EmbeddingSpaceIdentity | None = None,
     strict_revision_cache: bool = False,
+    threshold_profile: ThresholdProfile = "auto",
 ) -> list[tuple[CodeUnit, float]]:
     """Find code units most similar to a natural-language query.
 
@@ -3710,6 +3727,7 @@ def _find_similar_to_query_unlocked(
     :param revision: Optional model revision; ``None`` uses the profile default.
     :param trust_remote_code: Optional remote-code trust setting; ``None`` uses the
         profile default.
+    :param threshold_profile: Threshold defaults to select; numeric gates take precedence.
     :param threshold: Finite minimum cosine similarity; negative floors are allowed.
         ``None`` uses the model profile search default only for its calibrated task,
         prompt, revision, and source representation.
@@ -3797,7 +3815,17 @@ def _find_similar_to_query_unlocked(
         revision=revision,
         trust_remote_code=trust_remote_code,
         semantic_task=resolved_task,
+        threshold_profile=threshold_profile,
     )
+    selection = (
+        "explicit numeric override"
+        if threshold is not None
+        else f"threshold-profile={threshold_profile}, "
+        f"{resolve_threshold_profile(profile, threshold_profile).family} family"
+    )
+    logger.info(f"Search threshold: {resolved_threshold} ({selection})")
+    if threshold is None and threshold_profile == "auto" and profile.family != "generic":
+        logger.info("Use --threshold-profile generic for generic defaults.")
 
     encode_plan = _resolve_encode_plan(profile, "query", resolved_task, instruction_prefix)
     query_text = _prepare_embedding_text(query)
@@ -4108,6 +4136,7 @@ def find_similar_to_query(
     cache_scope: Path | None = None,
     corpus_identity: EmbeddingSpaceIdentity | None = None,
     strict_revision_cache: bool = False,
+    threshold_profile: ThresholdProfile = "auto",
 ) -> list[tuple[CodeUnit, float]]:
     """Search embeddings while serializing shared-model lifecycle and inference.
 
@@ -4120,6 +4149,7 @@ def find_similar_to_query(
     :param revision: Optional model revision; ``None`` uses the profile default.
     :param trust_remote_code: Optional remote-code trust setting; ``None`` uses the
         profile default.
+    :param threshold_profile: Threshold defaults to select; numeric gates take precedence.
     :param threshold: Finite minimum cosine similarity; negative floors are allowed.
         ``None`` uses the model profile search default only for its calibrated task,
         prompt, revision, and source representation.
@@ -4158,6 +4188,7 @@ def find_similar_to_query(
             revision=revision,
             trust_remote_code=trust_remote_code,
             threshold=threshold,
+            threshold_profile=threshold_profile,
             semantic_task=semantic_task,
             device=device,
             mps_fallback=mps_fallback,

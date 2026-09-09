@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 from pathlib import Path
 
@@ -18,6 +19,7 @@ from codedupes.semantic_profiles import (
     list_supported_models,
     resolve_local_model_path,
     resolve_model_profile,
+    resolve_threshold_profile,
 )
 
 
@@ -229,10 +231,10 @@ def test_local_directory_family_inferred_from_basename(tmp_path: Path) -> None:
     gemma = resolve_model_profile(str(gemma_dir))
     assert gemma.family == "embeddinggemma"
     assert gemma.canonical_name == str(gemma_dir.resolve())
-    # Family selects loading/prompt behavior only; calibrated thresholds belong
-    # to the pinned builtin checkpoint, and an arbitrary local copy may not be it.
-    assert gemma.default_semantic_threshold == DEFAULT_FALLBACK_SEMANTIC_THRESHOLD
-    assert gemma.default_search_threshold == DEFAULT_FALLBACK_SEARCH_THRESHOLD
+    builtin = resolve_model_profile("embeddinggemma-300m")
+    assert gemma.language_semantic_thresholds == builtin.language_semantic_thresholds
+    assert gemma.default_semantic_threshold == builtin.default_semantic_threshold
+    assert gemma.default_search_threshold == builtin.default_search_threshold
 
 
 def test_hash_named_hf_snapshot_infers_family_from_cache_ancestor(tmp_path: Path) -> None:
@@ -247,7 +249,7 @@ def test_hash_named_hf_snapshot_infers_family_from_cache_ancestor(tmp_path: Path
     profile = resolve_model_profile(str(snapshot))
 
     assert profile.family == "gte-modernbert"
-    assert profile.default_search_threshold == DEFAULT_FALLBACK_SEARCH_THRESHOLD
+    assert profile.default_search_threshold == 0.50
 
 
 def test_arbitrary_local_directory_infers_embeddinggemma_from_config(tmp_path: Path) -> None:
@@ -260,7 +262,54 @@ def test_arbitrary_local_directory_infers_embeddinggemma_from_config(tmp_path: P
     profile = resolve_model_profile(str(model_dir))
 
     assert profile.family == "embeddinggemma"
-    assert profile.default_semantic_threshold == DEFAULT_FALLBACK_SEMANTIC_THRESHOLD
+    assert profile.default_semantic_threshold == 0.78
+    assert profile.default_search_threshold == 0.40
+    assert profile.semantic_threshold_for_language("python") == 0.74
+    assert profile.canonical_name == str(model_dir)
+    assert profile.default_revision is None
+
+
+@pytest.mark.parametrize(
+    "config",
+    [
+        {"model_type": "gemma3_text", "use_bidirectional_attention": True},
+        {"_name_or_path": "google/embeddinggemma-300m"},
+    ],
+)
+def test_local_configuration_precedes_conflicting_directory_and_readme(tmp_path, config) -> None:
+    model_dir = tmp_path / "gte-modernbert-base"
+    model_dir.mkdir()
+    (model_dir / "config.json").write_text(json.dumps(config), encoding="utf-8")
+    (model_dir / "README.md").write_text("# gte-modernbert-base", encoding="utf-8")
+    assert resolve_model_profile(str(model_dir)).family == "embeddinggemma"
+
+
+def test_plain_modernbert_configuration_does_not_imply_gte(tmp_path) -> None:
+    (tmp_path / "config.json").write_text('{"model_type": "modernbert"}', encoding="utf-8")
+    assert resolve_model_profile(str(tmp_path)).family == "generic"
+
+
+@pytest.mark.parametrize(
+    ("choice", "duplicate", "search"),
+    [
+        ("auto", 0.82, 0.35),
+        ("generic", 0.82, 0.35),
+        ("embeddinggemma-300m", 0.74, 0.40),
+        ("gte-modernbert-base", 0.80, 0.50),
+    ],
+)
+def test_threshold_profile_selection_for_unknown_model(choice, duplicate, search) -> None:
+    model = resolve_model_profile("unknown/model")
+    selected = resolve_threshold_profile(model, choice)
+    assert selected.semantic_threshold_for_language("python") == duplicate
+    assert selected.default_search_threshold == search
+    assert model.canonical_name == "unknown/model"
+    assert model.family == "generic"
+
+
+def test_invalid_threshold_profile_rejected() -> None:
+    with pytest.raises(ValueError, match="threshold_profile must be one of"):
+        resolve_threshold_profile(resolve_model_profile("embeddinggemma"), "invalid")
 
 
 def test_arbitrary_local_directory_infers_gte_family_from_model_card(tmp_path: Path) -> None:
@@ -287,21 +336,21 @@ def test_dynamic_embeddinggemma_profile_for_non_builtin_hub_id() -> None:
     assert profile.canonical_name == "someone/embeddinggemma-300m-code-ft"
 
 
-def test_dynamic_gte_modernbert_profile_keeps_family_but_not_calibration(tmp_path: Path) -> None:
+def test_dynamic_gte_modernbert_profile_inherits_family_thresholds_without_revision(
+    tmp_path: Path,
+) -> None:
     local_dir = tmp_path / "gte-modernbert-base"
     local_dir.mkdir()
     profile = resolve_model_profile(str(local_dir))
     builtin = resolve_model_profile("gte-modernbert-base")
     assert profile.family == "gte-modernbert"
     assert profile.default_revision is None
-    # Calibrated per-language gates belong to the pinned builtin checkpoint only.
-    assert builtin.language_semantic_thresholds
-    assert profile.language_semantic_thresholds == {}
-    assert profile.default_semantic_threshold == DEFAULT_FALLBACK_SEMANTIC_THRESHOLD
-    assert profile.default_search_threshold == DEFAULT_FALLBACK_SEARCH_THRESHOLD
+    assert profile.language_semantic_thresholds == builtin.language_semantic_thresholds
+    assert profile.default_semantic_threshold == builtin.default_semantic_threshold
+    assert profile.default_search_threshold == 0.50
 
 
-def test_uncalibrated_family_copy_warns_about_the_gates_it_forgoes(tmp_path: Path, caplog) -> None:
+def test_resolving_family_copy_does_not_log_threshold_selection(tmp_path: Path, caplog) -> None:
     local_dir = tmp_path / "gte-modernbert-base-copy"
     local_dir.mkdir()
     (local_dir / "README.md").write_text("# gte-modernbert-base\n", encoding="utf-8")
@@ -310,9 +359,4 @@ def test_uncalibrated_family_copy_warns_about_the_gates_it_forgoes(tmp_path: Pat
         resolve_model_profile(str(local_dir))
         resolve_model_profile(str(local_dir))
 
-    warnings = [record for record in caplog.records if record.levelname == "WARNING"]
-    # Warned once per model, naming both the forgone gates and the fallback.
-    assert len(warnings) == 1
-    message = warnings[0].getMessage()
-    assert "javascript=0.7" in message
-    assert str(DEFAULT_FALLBACK_SEMANTIC_THRESHOLD) in message
+    assert not caplog.records

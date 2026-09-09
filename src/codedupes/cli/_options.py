@@ -24,6 +24,7 @@ from codedupes.constants import (
 )
 from codedupes.extractor import DEFAULT_EXCLUDE_PATTERNS
 from codedupes.semantic import ProgressMode, resolve_search_threshold
+from codedupes.semantic_profiles import THRESHOLD_PROFILE_CHOICES, ThresholdProfile
 
 from ._output import (
     DEFAULT_OUTPUT_WIDTH,
@@ -174,6 +175,7 @@ class SemanticOptions:
     """Shared semantic-analysis command options."""
 
     model: str
+    threshold_profile: ThresholdProfile
     semantic_task: str
     instruction_prefix: str | None
     model_revision: str | None
@@ -197,6 +199,7 @@ class SemanticOptions:
         """
         return cls(
             model=params["model"],
+            threshold_profile=params["threshold_profile"],
             semantic_task=params["semantic_task"],
             instruction_prefix=params["instruction_prefix"],
             model_revision=params["model_revision"],
@@ -218,6 +221,7 @@ class SemanticOptions:
         """Return analyzer keyword arguments shared by check and search."""
         return {
             "model_name": self.model,
+            "threshold_profile": self.threshold_profile,
             "semantic_task": self.semantic_task,
             "instruction_prefix": self.instruction_prefix,
             "model_revision": self.model_revision,
@@ -454,6 +458,7 @@ class SearchOptions:
         resolve_search_threshold(
             config.model_name,
             config.semantic_threshold,
+            threshold_profile=config.threshold_profile,
             instruction_prefix=config.instruction_prefix,
             revision=config.model_revision,
             trust_remote_code=config.trust_remote_code,
@@ -468,6 +473,17 @@ def semantic_options() -> Callable[[F], F]:
     :return: Decorator applying the shared Click options.
     """
     options = [
+        click.option(
+            "--threshold-profile",
+            type=click.Choice(THRESHOLD_PROFILE_CHOICES),
+            default="auto",
+            show_default=True,
+            panel=Panel.SEMANTIC,
+            help=(
+                "Threshold defaults: auto uses the recognized model family. "
+                "Numeric thresholds take precedence; model loading and prompts are unchanged."
+            ),
+        ),
         click.option(
             "--language",
             "languages",

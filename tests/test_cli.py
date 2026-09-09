@@ -1118,6 +1118,44 @@ def test_cli_local_model_path_pass_through(
     assert captured[0].model_name == str(model_dir)
 
 
+@pytest.mark.parametrize("command", ["check", "search"])
+@pytest.mark.parametrize(
+    "choice", ["auto", "generic", "embeddinggemma-300m", "gte-modernbert-base"]
+)
+def test_cli_threshold_profiles(monkeypatch, tmp_path, command, choice):
+    captured = []
+    patch_cli_analyzer(
+        monkeypatch,
+        cli,
+        analyze_result=lambda: _build_result(tmp_path),
+        captured_configs=captured,
+        search_results=[],
+    )
+    args = [command, str(tmp_path)] + (["query"] if command == "search" else [])
+    args += ["--threshold-profile", choice, "--json"]
+    result = CliRunner().invoke(cli.cli, args)
+    assert result.exit_code == (1 if command == "check" else 0), result.output
+    json.loads(result.stdout)
+    assert captured[-1].threshold_profile == choice
+    assert captured[-1].semantic_threshold is None
+    result = CliRunner().invoke(
+        cli.cli, args + ["--threshold", "0.67", "--semantic-threshold", "0.91"]
+    )
+    assert result.exit_code == (1 if command == "check" else 0), result.output
+    assert captured[-1].semantic_threshold == 0.91
+
+
+@pytest.mark.parametrize("command", ["check", "search"])
+def test_cli_invalid_threshold_profile_and_help(tmp_path, command):
+    args = [command, str(tmp_path)] + (["query"] if command == "search" else [])
+    result = CliRunner().invoke(cli.cli, args + ["--threshold-profile", "invalid"])
+    assert result.exit_code == 2
+    assert "Invalid value for '--threshold-profile'" in result.output
+    help_result = CliRunner().invoke(cli.cli, [command, "--help"])
+    assert help_result.exit_code == 0
+    assert "--threshold-profile" in help_result.output
+
+
 def test_cli_threshold_precedence(monkeypatch, tmp_path):
     path = tmp_path / "sample.py"
     path.write_text("def entry():\n    return 1\n")
