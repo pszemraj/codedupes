@@ -23,7 +23,7 @@ codedupes check ./src --no-cache
 
 Use the [cache commands](cli.md#codedupes-cache-info) to inspect usage or clear entries. Built-in aliases match case-insensitively in `cache clear --model`; pass other model names exactly as used for analysis.
 
-After each nonempty batch write, codedupes inventories shard sizes. When the global cap is exceeded, it removes least-recently-used shards toward 80% of the cap. The shard just written is protected, even if it alone exceeds the cap; an oversized or undeletable shard produces a warning and remains included in usage. Inventory reads the filesystem so cooperating processes see each other's writes.
+After nonempty writes, codedupes inventories shard sizes on the first write for a cache root and thereafter when five minutes have elapsed or accumulated writes reach 2% of the cap. When the global cap is exceeded, it removes least-recently-used shards toward 80% of the cap. The shard just written is protected, even if it alone exceeds the cap; an oversized or undeletable shard produces a warning and remains included in usage. Inventory reads the filesystem so cooperating processes see each other's writes.
 
 ## What invalidates what
 
@@ -34,7 +34,7 @@ After each nonempty batch write, codedupes inventories shard sizes. When the glo
 | Move a contextual search document | Re-embeds because its path is part of the input. |
 | Change model, revision, prompt, encode route, or vector-affecting runtime settings | Uses a different embedding identity. |
 | Replace local weights in place | Changes the directory content fingerprint. Touching modification times alone does not invalidate vectors. |
-| Edit local model documentation or Git/download metadata | Keeps the local-directory content fingerprint unchanged. A `README.md` title change that alters the inferred model family can still change the embedding identity. |
+| Edit local model documentation or Git/download metadata | Keeps the local-directory content fingerprint unchanged. A `README.md` top-level heading change that alters the inferred model family can still change the embedding identity. |
 | Change threshold profile or numeric thresholds | Reuses embeddings and applies the new result filtering. |
 | Repeat a search query | Reuses its query vector when both corpus and query identities match. |
 
@@ -56,7 +56,7 @@ An indexed corpus retains its source commit even without persistent storage. Que
 
 The local-directory content fingerprint hashes file contents, including files reached through symlinked subdirectories. It excludes `.git/`, Hugging Face download metadata, `.gitignore`, `.gitattributes`, Markdown/reStructuredText documentation, and case-insensitive `README*`, `LICENSE*`, and `NOTICE*` files. All remaining files still contribute, including weights and shards, tokenizer assets, configuration, pooling/Dense modules, and custom model code. Per-file digests are reused from `<cache_root>/local-models/` when size, mtime, ctime, and inode match, keeping unchanged runs to a stat walk. A no-cache run maintains this information only in memory; enabling caching later can persist it. Previously cached local directories containing excluded files may miss once under the revised fingerprint; no migration is required.
 
-`README.md` remains a fallback family-recognition hint. Changing its first Markdown heading to or from a recognized model family can change the selected prompts or encode route, and therefore the complete embedding identity, even though documentation is excluded from the content fingerprint.
+`README.md` remains a fallback family-recognition hint. Changing a top-level `# ` heading within its first 128 lines to or from a recognized model family can change the selected prompts or encode route, and therefore the complete embedding identity, even though documentation is excluded from the content fingerprint.
 
 Model loading checks fingerprints before and after reading weights. A change during loading triggers one reload; a second change fails the run. Earlier hits are discarded if their fingerprint differs from the loaded weights.
 
