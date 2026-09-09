@@ -187,6 +187,8 @@ clear_model_cache()
 
 ## Logging
 
+Python query calls log the effective search threshold at DEBUG; human-readable CLI output reports it once per command. [Family-threshold notices](model-profiles.md#alias-resolution-rules) are emitted once per model per process when automatic defaults are selected for a recognized copy or non-builtin Hub model.
+
 Model loading quiets known-noisy dependency loggers (httpx request lines, transformers/sentence-transformers chatter) automatically, but only ones still inheriting the root level - any logger you configure explicitly is left alone. To pin them yourself, or to a different level:
 
 ```python

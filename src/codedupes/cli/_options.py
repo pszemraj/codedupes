@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
@@ -24,7 +25,12 @@ from codedupes.constants import (
 )
 from codedupes.extractor import DEFAULT_EXCLUDE_PATTERNS
 from codedupes.semantic import ProgressMode, resolve_search_threshold
-from codedupes.semantic_profiles import THRESHOLD_PROFILE_CHOICES, ThresholdProfile
+from codedupes.semantic_profiles import (
+    THRESHOLD_PROFILE_CHOICES,
+    ThresholdProfile,
+    resolve_model_profile,
+    resolve_threshold_profile,
+)
 
 from ._output import (
     DEFAULT_OUTPUT_WIDTH,
@@ -34,6 +40,7 @@ from ._output import (
 )
 
 F = TypeVar("F", bound=Callable[..., Any])
+logger = logging.getLogger(__name__)
 DEFAULT_EXCLUDE_HELP_HINT = (
     "Add a name or root-relative glob to exclude (repeat for multiple patterns). "
     "Bare names match at any depth; excluded directories include all descendants. "
@@ -455,7 +462,7 @@ class SearchOptions:
             **self.semantic.analysis_kwargs(),
         )
 
-        resolve_search_threshold(
+        threshold = resolve_search_threshold(
             config.model_name,
             config.semantic_threshold,
             threshold_profile=config.threshold_profile,
@@ -464,6 +471,14 @@ class SearchOptions:
             trust_remote_code=config.trust_remote_code,
             semantic_task=config.semantic_task,
         )
+        if config.semantic_threshold is not None:
+            selection = "explicit numeric override"
+        else:
+            profile = resolve_threshold_profile(
+                resolve_model_profile(config.model_name), config.threshold_profile
+            )
+            selection = f"threshold-profile={config.threshold_profile}, {profile.family} family"
+        logger.info(f"Search threshold: {threshold} ({selection})")
         return config
 
 

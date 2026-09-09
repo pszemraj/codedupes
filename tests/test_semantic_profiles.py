@@ -17,6 +17,7 @@ from codedupes.semantic_profiles import (
     get_semantic_threshold_for_language,
     is_explicit_local_model_path,
     list_supported_models,
+    log_family_threshold_notice,
     resolve_local_model_path,
     resolve_model_profile,
     resolve_threshold_profile,
@@ -360,3 +361,20 @@ def test_resolving_family_copy_does_not_log_threshold_selection(tmp_path: Path, 
         resolve_model_profile(str(local_dir))
 
     assert not caplog.records
+
+
+def test_suppressed_threshold_notice_is_available_for_later_visible_run(
+    monkeypatch, caplog
+) -> None:
+    import codedupes.semantic_profiles as profiles
+
+    monkeypatch.setattr(profiles, "_threshold_notice_models", set())
+    profile = resolve_model_profile("someone/embeddinggemma-300m-code-ft")
+    with caplog.at_level(logging.CRITICAL + 1):
+        log_family_threshold_notice(profile)
+    assert not caplog.records
+    with caplog.at_level(logging.WARNING):
+        log_family_threshold_notice(profile)
+        log_family_threshold_notice(profile)
+    assert len(caplog.records) == 1
+    assert "score distribution may differ" in caplog.text

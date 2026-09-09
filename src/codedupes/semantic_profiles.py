@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import math
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -14,6 +15,8 @@ SemanticModelFamily = Literal["gte-modernbert", "embeddinggemma", "generic"]
 CalibratedModelFamily = Literal["gte-modernbert", "embeddinggemma"]
 ThresholdProfile = Literal["auto", "generic", "embeddinggemma-300m", "gte-modernbert-base"]
 THRESHOLD_PROFILE_CHOICES = ("auto", "generic", "embeddinggemma-300m", "gte-modernbert-base")
+logger = logging.getLogger(__name__)
+_threshold_notice_models: set[tuple[str, SemanticModelFamily]] = set()
 
 DEFAULT_FALLBACK_SEMANTIC_THRESHOLD = 0.82
 DEFAULT_FALLBACK_SEARCH_THRESHOLD = 0.35
@@ -393,6 +396,31 @@ def resolve_threshold_profile(
         if profile.key == threshold_profile:
             return profile
     raise ValueError(f"threshold_profile must be one of {', '.join(THRESHOLD_PROFILE_CHOICES)}")
+
+
+def log_family_threshold_notice(profile: SemanticModelProfile) -> None:
+    """Explain inferred family defaults once per model when they are selected.
+
+    :param profile: Actual model profile whose family defaults are being used.
+    :return: ``None``.
+    """
+    if profile.default_revision is not None or profile.family == "generic":
+        return
+    local = is_explicit_local_model_path(profile.canonical_name)
+    level = logging.INFO if local else logging.WARNING
+    key = (profile.canonical_name, profile.family)
+    # Disabled notices must remain available for a later visible run.
+    if key in _threshold_notice_models or not logger.isEnabledFor(level):
+        return
+    _threshold_notice_models.add(key)
+    if local:
+        logger.info("Use --threshold-profile generic for generic defaults.")
+    else:
+        logger.warning(
+            f"Using {profile.family} family thresholds for {profile.canonical_name}; "
+            "this Hub model's score distribution may differ from the calibrated checkpoint. "
+            "Use --threshold-profile generic or an explicit numeric threshold to override."
+        )
 
 
 def get_default_semantic_threshold(model_name: str) -> float:

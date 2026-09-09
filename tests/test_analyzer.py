@@ -9,6 +9,7 @@ import pytest
 
 import codedupes.semantic as semantic_module
 from codedupes import analyzer as analyzer_module
+from codedupes import semantic_profiles
 from codedupes.analyzer import AnalyzerConfig, CodeAnalyzer, analyze_directory
 from codedupes.models import AnalysisResult, CodeUnit, CodeUnitType, DuplicatePair
 from codedupes.pairs import ordered_pair_key
@@ -927,38 +928,54 @@ def test_analyzer_resolves_per_language_semantic_gate(tmp_path: Path, monkeypatc
     ],
 )
 @pytest.mark.parametrize("numeric", [None, 0.91])
+@pytest.mark.parametrize("model_kind", ["local", "builtin", "default", "hub"])
 def test_analyze_directory_threshold_profiles(
-    tmp_path, monkeypatch, caplog, choice, expected, numeric
+    tmp_path, monkeypatch, caplog, choice, expected, numeric, model_kind
 ) -> None:
     model_dir = tmp_path / "approved-model"
     model_dir.mkdir()
     (model_dir / "config.json").write_text(
         '{"model_type": "gemma3_text", "use_bidirectional_attention": true}', encoding="utf-8"
     )
+    model_name = {
+        "local": str(model_dir),
+        "builtin": "embeddinggemma-300m",
+        "default": analyzer_module.DEFAULT_MODEL,
+        "hub": "someone/embeddinggemma-300m-code-ft",
+    }[model_kind]
+    if model_kind == "default" and choice == "auto":
+        expected = 0.80
+    monkeypatch.setattr(semantic_profiles, "_threshold_notice_models", set())
     project = create_project(tmp_path, "def alpha(x):\n    return x + 1\n")
     captured = {}
     monkeypatch.setattr(
         analyzer_module, "run_semantic_analysis", _make_semantic_runner(capture=captured)
     )
-    with caplog.at_level("INFO", logger="codedupes.analyzer"):
-        analyze_directory(
-            project,
-            model_name=str(model_dir),
-            threshold_profile=choice,
-            semantic_threshold=numeric,
-            min_semantic_statements=0,
-            run_unused=False,
-        )
+    with caplog.at_level("INFO"):
+        for _ in range(2):
+            analyze_directory(
+                project,
+                model_name=model_name,
+                threshold_profile=choice,
+                semantic_threshold=numeric,
+                min_semantic_statements=0,
+                run_unused=False,
+            )
     assert captured["language_thresholds"] == {
         "python": numeric if numeric is not None else expected
     }
-    assert captured["model_name"] == str(model_dir)
+    assert captured["model_name"] == model_name
     assert captured["revision"] is None
     if numeric is not None:
         assert "explicit numeric override" in caplog.text
         assert "family duplicate thresholds" not in caplog.text
     else:
         assert f"threshold-profile={choice}" in caplog.text
+    automatic_copy = choice == "auto" and numeric is None and model_kind in {"local", "hub"}
+    assert caplog.text.count("Use --threshold-profile generic") == int(automatic_copy)
+    assert caplog.text.count("score distribution may differ") == int(
+        automatic_copy and model_kind == "hub"
+    )
 
 
 def test_analyzer_rejects_invalid_or_disabled_threshold_profile() -> None:
@@ -1082,14 +1099,23 @@ def test_per_language_gates_survive_the_whole_semantic_pipeline(
 
 
 @pytest.mark.grammar
+@pytest.mark.parametrize(
+    ("threshold_profile", "score", "accepted"),
+    [
+        ("auto", 0.70, True),
+        ("generic", 0.75, False),
+        ("gte-modernbert-base", 0.75, True),
+        ("embeddinggemma-300m", 0.73, True),
+    ],
+)
 def test_cross_language_pairs_require_opt_in_and_use_looser_gate(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch, threshold_profile, score, accepted
 ) -> None:
     project = _create_two_language_project(tmp_path)
     vectors = _two_language_vectors()
-    # A mixed pair at 0.70: below python's gate, above javascript's.
+    # Named profiles use a score between their Python and JavaScript gates.
     vectors["alpha_one"] = [1.0, 0.0, 0.0, 0.0]
-    vectors["betaOne"] = [0.70, 0.0, float(np.sqrt(1.0 - 0.70**2)), 0.0]
+    vectors["betaOne"] = [score, 0.0, float(np.sqrt(1.0 - score**2)), 0.0]
 
     monkeypatch.setattr(
         analyzer_module,
@@ -1108,6 +1134,7 @@ def test_cross_language_pairs_require_opt_in_and_use_looser_gate(
         "run_unused": False,
         "min_semantic_statements": 0,
         "embedding_cache": False,
+        "threshold_profile": threshold_profile,
     }
     default_result = CodeAnalyzer(AnalyzerConfig(**base_config)).analyze(project)
     assert all(
@@ -1115,12 +1142,19 @@ def test_cross_language_pairs_require_opt_in_and_use_looser_gate(
         for duplicate in default_result.semantic_duplicates
     )
 
-    # Opted in, the mixed pair is held to the looser of its two language gates:
-    # 0.70 clears min(0.90, 0.60) but would fail the python gate alone.
+    # The selected profile supplies both language gates to the mixed scan.
     opted_result = CodeAnalyzer(AnalyzerConfig(cross_language=True, **base_config)).analyze(project)
-    assert frozenset({"alpha_one", "betaOne"}) in {
+    pairs = {
         frozenset({duplicate.unit_a.name, duplicate.unit_b.name})
         for duplicate in opted_result.semantic_duplicates
+    }
+    assert (frozenset({"alpha_one", "betaOne"}) in pairs) is accepted
+    numeric_result = CodeAnalyzer(
+        AnalyzerConfig(cross_language=True, semantic_threshold=0.76, **base_config)
+    ).analyze(project)
+    assert frozenset({"alpha_one", "betaOne"}) not in {
+        frozenset({duplicate.unit_a.name, duplicate.unit_b.name})
+        for duplicate in numeric_result.semantic_duplicates
     }
 
 

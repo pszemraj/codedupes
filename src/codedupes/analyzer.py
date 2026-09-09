@@ -53,6 +53,7 @@ from codedupes.semantic import (
 from codedupes.semantic_profiles import (
     THRESHOLD_PROFILE_CHOICES,
     ThresholdProfile,
+    log_family_threshold_notice,
     resolve_model_profile,
     resolve_threshold_profile,
 )
@@ -859,8 +860,8 @@ class CodeAnalyzer:
             f"Using {profile.family} family duplicate thresholds "
             f"(threshold-profile={self.config.threshold_profile})."
         )
-        if self.config.threshold_profile == "auto" and profile.family != "generic":
-            logger.info("Use --threshold-profile generic for generic defaults.")
+        if self.config.threshold_profile == "auto":
+            log_family_threshold_notice(profile)
         if gates:
             gate_text = ", ".join(f"{language}={gate:.2f}" for language, gate in gates.items())
             logger.info(
@@ -1159,7 +1160,7 @@ class CodeAnalyzer:
 
         Must run index() (or analyze() with semantic analysis enabled) first to
         compute embeddings. The search floor is ``threshold`` when given, else
-        ``config.semantic_threshold``, else the model profile's search default
+        ``config.semantic_threshold``, else the selected threshold profile's search default
         (far looser than a duplicate gate, because query-to-code similarity runs
         well below code-to-code similarity). Prefer ``threshold`` over setting
         ``config.semantic_threshold``: the latter also replaces every calibrated

@@ -21,6 +21,7 @@ Most users should leave model and task settings unset. `codedupes` uses the pinn
 - Built-in aliases and Hub IDs cannot be shadowed by same-named directories in the current working directory. A local model must use explicit path syntax (an absolute path, `./` or `../`, or `~`); it is then canonicalized to its resolved absolute path - including the on-disk letter case on case-insensitive filesystems such as macOS - so equivalent explicit spellings share one cache identity.
 - Known local model families are inferred from saved configuration first, then a recognizable directory name, Hugging Face cache ancestor, or top-level `# ` model-card heading within the first 128 lines. EmbeddingGemma is recognized from its `gemma3_text` configuration with bidirectional attention even in an arbitrarily named directory without a README. A plain ModernBERT architecture does not establish GTE identity.
 - Recognized copies and fine-tunes use their family's loading/prompt behavior and tuned thresholds by default. Recognition works offline and does not verify exact checkpoint equivalence: family tuning is a practical starting point, not a guarantee of identical score distributions. Actual local paths and non-builtin Hub IDs are preserved without inheriting the built-in revision pin.
+- Automatically selecting family defaults for a non-builtin Hub model emits a warning once per model per process about possible score-distribution differences. Built-in defaults need no generic-policy hint; recognized local copies get that hint once when INFO logging is enabled. Explicit numeric or named/generic profile choices do not emit these notices.
 
 ### Choosing threshold defaults
 
@@ -33,7 +34,7 @@ Both `check` and `search` accept `--threshold-profile`; the Python setting is `t
 | `embeddinggemma-300m` | Use the built-in EmbeddingGemma profile's thresholds. |
 | `gte-modernbert-base` | Use the built-in GTE profile's thresholds. |
 
-Explicit numeric thresholds take precedence. Selecting a threshold profile changes only result filtering; it does not change the model, prompts, revision, or cached embeddings. It also does not bypass the explicit numeric threshold requirements for [custom embedding contexts](#semantic-task-defaults-and-choices). The CLI reports its effective threshold choice and values without prompting.
+Explicit numeric thresholds take precedence. Selecting a threshold profile changes only result filtering; it does not change the model, prompts, revision, or cached embeddings. It also does not bypass the explicit numeric threshold requirements for [custom embedding contexts](#semantic-task-defaults-and-choices). In human-readable output, the CLI reports its effective threshold choice and values without prompting; `--json` suppresses those logs and does not add threshold metadata to the JSON schema.
 
 For an approved local EmbeddingGemma copy, normal family recognition is enough:
 

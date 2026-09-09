@@ -1119,10 +1119,11 @@ def test_cli_local_model_path_pass_through(
 
 
 @pytest.mark.parametrize("command", ["check", "search"])
+@pytest.mark.parametrize("as_json", [False, True])
 @pytest.mark.parametrize(
     "choice", ["auto", "generic", "embeddinggemma-300m", "gte-modernbert-base"]
 )
-def test_cli_threshold_profiles(monkeypatch, tmp_path, command, choice):
+def test_cli_threshold_profiles(monkeypatch, tmp_path, command, choice, as_json):
     captured = []
     patch_cli_analyzer(
         monkeypatch,
@@ -1132,10 +1133,18 @@ def test_cli_threshold_profiles(monkeypatch, tmp_path, command, choice):
         search_results=[],
     )
     args = [command, str(tmp_path)] + (["query"] if command == "search" else [])
-    args += ["--threshold-profile", choice, "--json"]
+    args += ["--threshold-profile", choice]
+    if as_json:
+        args.append("--json")
     result = CliRunner().invoke(cli.cli, args)
     assert result.exit_code == (1 if command == "check" else 0), result.output
-    json.loads(result.stdout)
+    if as_json:
+        json.loads(result.stdout)
+        assert "Search threshold:" not in result.output
+    elif command == "search":
+        assert result.output.count("Search threshold:") == 1
+        assert f"threshold-profile={choice}" in result.output
+    assert "Use --threshold-profile generic" not in result.output
     assert captured[-1].threshold_profile == choice
     assert captured[-1].semantic_threshold is None
     result = CliRunner().invoke(
@@ -1143,6 +1152,8 @@ def test_cli_threshold_profiles(monkeypatch, tmp_path, command, choice):
     )
     assert result.exit_code == (1 if command == "check" else 0), result.output
     assert captured[-1].semantic_threshold == 0.91
+    if command == "search" and not as_json:
+        assert "Search threshold: 0.91 (explicit numeric override)" in result.output
 
 
 @pytest.mark.parametrize("command", ["check", "search"])
@@ -1269,7 +1280,10 @@ def test_cli_traditional_only_shared_threshold_sets_only_traditional_threshold(
     assert captured[-1].semantic_task is None
 
 
-def test_cli_cross_language_flag_passes_through(monkeypatch, tmp_path):
+@pytest.mark.parametrize(
+    "choice", ["auto", "generic", "gte-modernbert-base", "embeddinggemma-300m"]
+)
+def test_cli_cross_language_flag_passes_through(monkeypatch, tmp_path, choice):
     path = tmp_path / "sample.py"
     path.write_text("def entry():\n    return 1\n")
 
@@ -1286,9 +1300,12 @@ def test_cli_cross_language_flag_passes_through(monkeypatch, tmp_path):
     assert result_default.exit_code == 1
     assert captured[-1].cross_language is False
 
-    result_flag = runner.invoke(cli.cli, ["check", str(path), "--cross-language"])
+    result_flag = runner.invoke(
+        cli.cli, ["check", str(path), "--cross-language", "--threshold-profile", choice]
+    )
     assert result_flag.exit_code == 1
     assert captured[-1].cross_language is True
+    assert captured[-1].threshold_profile == choice
 
 
 def test_cli_search_defaults_to_code_retrieval_task(monkeypatch, tmp_path):

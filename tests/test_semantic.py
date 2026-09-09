@@ -13,7 +13,7 @@ import pytest
 import sentence_transformers
 import torch
 
-from codedupes import devices, semantic
+from codedupes import devices, semantic, semantic_profiles
 from codedupes.constants import CPU_FALLBACK_MAX_BATCH_SIZE
 from codedupes.embedding_cache import EmbeddingCache, compute_cache_key
 from codedupes.models import CodeUnit, CodeUnitType
@@ -357,6 +357,56 @@ def test_embeddinggemma_query_route_single_task_prompt(tmp_path: Path, monkeypat
     ((method, effective),) = model.calls
     assert method == "encode_query"
     assert effective == ["task: code retrieval | query: find addition"]
+
+
+@pytest.mark.parametrize("model_kind", ["gte", "gemma", "local", "hub"])
+@pytest.mark.parametrize("selection", ["auto", "generic", "embeddinggemma-300m", "numeric"])
+def test_search_threshold_notices_do_not_repeat_on_warm_queries(
+    tmp_path, monkeypatch, caplog, model_kind, selection
+) -> None:
+    units = extract_arithmetic_units(tmp_path)
+    local = tmp_path / "embeddinggemma-copy"
+    local.mkdir()
+    (local / "config.json").write_text("{}", encoding="utf-8")
+    (local / "model.safetensors").write_bytes(b"weights")
+    model_name = {
+        "gte": "gte-modernbert-base",
+        "gemma": "embeddinggemma-300m",
+        "local": str(local),
+        "hub": "someone/embeddinggemma-300m-code-ft",
+    }[model_kind]
+    model = PromptAwareGemmaModel()
+    monkeypatch.setattr(semantic, "get_model", lambda *args, **kwargs: model)
+    monkeypatch.setattr(semantic_profiles, "_threshold_notice_models", set())
+    revision = "f" * 40 if model_kind == "hub" else None
+    identity = semantic.resolve_embedding_space_identity(
+        model_name=model_name,
+        revision=revision,
+        device="cpu",
+        semantic_task=semantic.DEFAULT_SEARCH_SEMANTIC_TASK,
+    )
+    with caplog.at_level(logging.INFO):
+        for _ in range(2):
+            find_similar_to_query(
+                "find addition",
+                units,
+                np.eye(2, dtype=np.float32),
+                model_name=model_name,
+                revision=revision,
+                device="cpu",
+                corpus_identity=identity,
+                cache_scope=tmp_path,
+                threshold=0.5 if selection == "numeric" else None,
+                threshold_profile="auto" if selection == "numeric" else selection,
+            )
+    assert len(model.calls) == 1
+    assert "Search threshold:" not in caplog.text  # Per-query detail is DEBUG in the API.
+    assert caplog.text.count("Use --threshold-profile generic") == int(
+        selection == "auto" and model_kind in {"local", "hub"}
+    )
+    assert caplog.text.count("score distribution may differ") == int(
+        selection == "auto" and model_kind == "hub"
+    )
 
 
 def test_embeddinggemma_custom_instruction_replaces_saved_prompt(

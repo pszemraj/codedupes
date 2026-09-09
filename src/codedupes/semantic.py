@@ -65,6 +65,7 @@ from codedupes.semantic_profiles import (
     ThresholdProfile,
     get_default_semantic_threshold,
     is_explicit_local_model_path,
+    log_family_threshold_notice,
     resolve_local_model_path,
     resolve_model_profile,
     resolve_threshold_profile,
@@ -3650,7 +3651,7 @@ def resolve_search_threshold(
     """Resolve a search gate without loading or indexing a model.
 
     :param model_name: Model identifier used for the search corpus.
-    :param threshold: Explicit finite gate, or ``None`` for the calibrated default.
+    :param threshold: Explicit finite gate, or ``None`` for the selected profile's default.
     :param instruction_prefix: Optional custom embedding prompt.
     :param revision: Optional model revision override.
     :param trust_remote_code: Optional remote-code trust override.
@@ -3729,8 +3730,8 @@ def _find_similar_to_query_unlocked(
         profile default.
     :param threshold_profile: Threshold defaults to select; numeric gates take precedence.
     :param threshold: Finite minimum cosine similarity; negative floors are allowed.
-        ``None`` uses the model profile search default only for its calibrated task,
-        prompt, revision, and source representation.
+        ``None`` uses the selected threshold profile's search default, subject to
+        the model's task, prompt, revision, and source representation requirements.
     :param semantic_task: Optional task override; ``None`` uses
         ``DEFAULT_SEARCH_SEMANTIC_TASK``.
     :param device: ``auto``, ``cpu``, ``cuda``, or ``mps``, defaults to
@@ -3823,9 +3824,9 @@ def _find_similar_to_query_unlocked(
         else f"threshold-profile={threshold_profile}, "
         f"{resolve_threshold_profile(profile, threshold_profile).family} family"
     )
-    logger.info(f"Search threshold: {resolved_threshold} ({selection})")
-    if threshold is None and threshold_profile == "auto" and profile.family != "generic":
-        logger.info("Use --threshold-profile generic for generic defaults.")
+    logger.debug(f"Search threshold: {resolved_threshold} ({selection})")
+    if threshold is None and threshold_profile == "auto":
+        log_family_threshold_notice(profile)
 
     encode_plan = _resolve_encode_plan(profile, "query", resolved_task, instruction_prefix)
     query_text = _prepare_embedding_text(query)
@@ -4151,8 +4152,8 @@ def find_similar_to_query(
         profile default.
     :param threshold_profile: Threshold defaults to select; numeric gates take precedence.
     :param threshold: Finite minimum cosine similarity; negative floors are allowed.
-        ``None`` uses the model profile search default only for its calibrated task,
-        prompt, revision, and source representation.
+        ``None`` uses the selected threshold profile's search default, subject to
+        the model's task, prompt, revision, and source representation requirements.
     :param semantic_task: Optional task override; ``None`` uses
         ``DEFAULT_SEARCH_SEMANTIC_TASK``.
     :param device: ``auto``, ``cpu``, ``cuda``, or ``mps``, defaults to
