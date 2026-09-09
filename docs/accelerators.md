@@ -64,7 +64,7 @@ Fresh embeddings must have the expected shape and row count. Non-finite or zero 
 Model loads pin an explicit dtype instead of inheriting the checkpoint's configuration:
 
 | Device | Inference dtype |
-|---|---|
+| --- | --- |
 | CUDA with native bfloat16 support | bfloat16 (emulated support is excluded) |
 | Other CUDA devices and MPS | float32 |
 | CPU | float32, unless the experimental policy below is enabled |

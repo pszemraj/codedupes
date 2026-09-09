@@ -12,7 +12,7 @@ Most users should leave model and task settings unset. `codedupes` uses the pinn
 | `embeddinggemma-300m` | `unsloth/embeddinggemma-300m` | `embeddinggemma` | `0.40` | `bfa3c846ac738e62aa61806ef9112d34acb1dc5a` | `False` |
 
 - [Per-language duplicate gates and their selection policy](analysis-defaults.md#semantic-duplicate-gate-defaults) control `check` reporting. The table's search threshold is only the floor for query matches; query-to-code similarity is much lower than code-to-code duplicate similarity.
-- Every builtin default revision is a pinned immutable commit. [Calibration sweeps](hybrid-tuning.md#semantic-threshold-sweep-model-profiles) record the checkpoint, prompt plan, pipeline, and candidate policy behind each threshold.
+- Every built-in default revision is a pinned immutable commit. [Calibration sweeps](hybrid-tuning.md#semantic-threshold-sweep-model-profiles) record the checkpoint, prompt plan, pipeline, and candidate policy behind each threshold.
 - Search defaults favor recall. Inspect scores on representative queries and raise `--semantic-threshold` (or the Python API's per-query `threshold`) if results are too broad; no fixed floor separates relevant and off-topic code on every repository. The multi-domain probes in `test_fixtures/search_probes/` check the built-in search floors; the single-domain [calibration sweeps](hybrid-tuning.md#semantic-threshold-sweep-model-profiles) are additional guardrails, not the source of those floors.
 
 ## Alias resolution rules
