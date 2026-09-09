@@ -14,7 +14,6 @@ Most users should leave model and task settings unset. `codedupes` uses the pinn
 - [Per-language duplicate gates and their selection policy](analysis-defaults.md#semantic-duplicate-gate-defaults) control `check` reporting. The table's search threshold is only the floor for query matches; query-to-code similarity is much lower than code-to-code duplicate similarity.
 - Every builtin default revision is a pinned immutable commit. [Calibration sweeps](hybrid-tuning.md#semantic-threshold-sweep-model-profiles) record the checkpoint, prompt plan, pipeline, and candidate policy behind each threshold.
 - Search defaults favor recall. Inspect scores on representative queries and raise `--semantic-threshold` (or the Python API's per-query `threshold`) if results are too broad; no fixed floor separates relevant and off-topic code on every repository. The multi-domain probes in `test_fixtures/search_probes/` check the built-in search floors; the single-domain [calibration sweeps](hybrid-tuning.md#semantic-threshold-sweep-model-profiles) are additional guardrails, not the source of those floors.
-- Generic/unknown models fall back to duplicate threshold `0.82` and search threshold `0.35` unless you override `--semantic-threshold` / `semantic_threshold`.
 
 ## Alias resolution rules
 
@@ -31,8 +30,8 @@ Both `check` and `search` accept `--threshold-profile`; the Python setting is `t
 | --- | --- |
 | `auto` | Use the recognized model family's thresholds, or generic defaults for an unknown model. |
 | `generic` | Use duplicate gate `0.82` for every language and search floor `0.35`. |
-| `embeddinggemma-300m` | Use EmbeddingGemma's per-language duplicate gates and search floor `0.40`. |
-| `gte-modernbert-base` | Use GTE's per-language duplicate gates and search floor `0.50`. |
+| `embeddinggemma-300m` | Use the built-in EmbeddingGemma profile's thresholds. |
+| `gte-modernbert-base` | Use the built-in GTE profile's thresholds. |
 
 Explicit numeric thresholds take precedence. Selecting a threshold profile changes only result filtering; it does not change the model, prompts, revision, or cached embeddings. It also does not bypass the explicit numeric threshold requirements for [custom embedding contexts](#semantic-task-defaults-and-choices). The CLI reports its effective threshold choice and values without prompting.
 
@@ -40,22 +39,18 @@ For an approved local EmbeddingGemma copy, normal family recognition is enough:
 
 ```bash
 codedupes check ./src --model ./models/approved-copy
-codedupes search ./src "parse json payload" --model ./models/approved-copy
 codedupes check ./src --model ./models/approved-copy --threshold-profile generic
 ```
 
 ### Local model directories and offline use
 
-Use a Hub model ID for the normal online path; manual downloads are only needed for offline use or a custom checkpoint. Both `check` and `search` accept a directory written by `save_pretrained()` or a complete Hugging Face repository download, using the [explicit path rules](#alias-resolution-rules). Local paths are passed to Sentence Transformers with `local_files_only=True`.
+Use a Hub model ID for the normal online path; Hub access downloads model assets, while source and queries are embedded locally. Manual downloads are only needed for offline use or a custom checkpoint. Both `check` and `search` accept a directory written by `save_pretrained()` or a complete Hugging Face repository download, using the [explicit path rules](#alias-resolution-rules). Local paths are passed to Sentence Transformers with `local_files_only=True`.
 
 ```bash
 hf download Alibaba-NLP/gte-modernbert-base \
   --local-dir ./models/gte-modernbert-base
 
 codedupes check ./src \
-  --model ./models/gte-modernbert-base
-
-codedupes search ./src "parse json payload" \
   --model ./models/gte-modernbert-base
 ```
 
@@ -64,20 +59,9 @@ codedupes search ./src "parse json payload" \
 - `--model-revision` is ignored for local directories (with a warning): on-disk weights have no hub revision. See [local-model cache invalidation](caching.md#what-invalidates-what) for how weight changes affect cached vectors.
 - For a Hub model ID rather than a directory path, set `HF_HUB_OFFLINE=1` to guarantee no network access.
 
-For live effective values in your environment, run:
-
-```bash
-codedupes info --verbose
-```
-
 ## Semantic task defaults and choices
 
 Leave `semantic_task` unset unless you are deliberately changing a model's embedding behavior. `analyze()`/`codedupes check` use `semantic-similarity`; `index()`/`codedupes search` use `code-retrieval`. Those defaults align the model's prompt and encode route with the operation.
-
-CLI task defaults:
-
-- `codedupes check`: `semantic-similarity`
-- `codedupes search`: `code-retrieval`
 
 The Python API resolves the same defaults by operation: an unset `AnalyzerConfig.semantic_task` uses `semantic-similarity` for `CodeAnalyzer.analyze()` and `code-retrieval` for `CodeAnalyzer.index()`. A later `search()` uses the task that produced its current corpus embeddings. The shipped thresholds were calibrated on the pinned built-in checkpoints and are also offered as family defaults for recognized copies. A custom instruction prefix, alternate EmbeddingGemma task, alternate built-in revision, or a `trust_remote_code` value differing from the model profile default still requires an explicit numeric threshold, regardless of `threshold_profile`. Remote code can change the vectors, so it splits the embedding cache key and invalidates the threshold defaults the same way a prompt change does; this applies to both the duplicate gates and the search default.
 

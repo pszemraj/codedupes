@@ -111,7 +111,7 @@ Cache inspection, eviction, and clearing continue past shards that disappear or 
 
 Keys cover the canonical model, revision, complete prepared input, encode route/prompt, pipeline schema, dtype variant, library versions, and remote-code trust setting. Old preprocessing schemas cannot reuse current vectors. Deriving keys does not require loading weights.
 
-CPU and MPS float32 share keys; bfloat16 and MPS fast math use separate variants. Device kernels can round differently, so clear the cache when measuring a single-device reference. [Accelerator precision and fallback](accelerators.md#precision-and-metal-environment-variables) explains which policies can share vectors and when a corpus must restart.
+[Accelerator precision and fallback](accelerators.md#precision-and-metal-environment-variables) define which execution policies share an identity and when a corpus must restart.
 
 A warm CPU run, or `auto` on macOS, can avoid importing PyTorch. The experimental CPU bfloat16 opt-in requires a live capability probe. `auto` elsewhere imports PyTorch for device/dtype resolution; explicit accelerator requests validate availability even when no inference is needed.
 

@@ -20,11 +20,9 @@ Write a JSON report directly in automation:
 codedupes check ./src --json > codedupes-report.json
 ```
 
-On a completed scan, the report is written before the command returns its finding
-status. With the default `--fail-on actionable`, a completed report with exit `1`
-contains an actionable finding. Runtime failures also exit `1`, but leave no completed
-report and explain the error on stderr. Use `--fail-on none` to collect a report
-without making findings fail an incremental rollout:
+On a completed scan, the report is written before the command returns its [finding
+status](#exit-codes). Use `--fail-on none` to collect a report without making findings
+fail an incremental rollout:
 
 ```text
 codedupes check ./src --json --fail-on none > codedupes-report.json

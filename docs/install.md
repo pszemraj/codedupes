@@ -13,27 +13,9 @@ codedupes info
 
 Other dependencies are declared in [pyproject.toml](../pyproject.toml) and installed with the package. You do not need to clone this repository to analyze your own code.
 
-A GPU is optional. Semantic analysis automatically uses available CUDA, Apple Silicon MPS, or CPU hardware; CPU inference can be slower. On Apple Silicon, use macOS 14.0+ and a PyTorch wheel built with MPS support. `codedupes info --verbose` reports installed runtime versions, parser availability, and device diagnostics, including `MPS built/available`.
+A GPU is optional. On Apple Silicon, use macOS 14.0+ and a PyTorch wheel built with MPS support. [Accelerator behavior](accelerators.md) covers automatic device selection and diagnostics.
 
-If `codedupes` is not found after installation, ensure your Python installation's scripts directory is on `PATH` and that you are using the same Python installation as the install command. If installation reports no matching PyTorch distribution, check the Python/platform compatibility and the required version above; inference fallback only applies after installation succeeds.
-
-## First scan and model downloads
-
-From the project you want to analyze:
-
-```bash
-codedupes check ./src
-```
-
-Replace `./src` with an existing source directory or file. The first semantic run downloads the default `Alibaba-NLP/gte-modernbert-base` model from Hugging Face; later runs can reuse the downloaded model and cached embeddings. Source is processed locally. Internet access is needed for model assets that are not already available; see [local models and offline use](model-profiles.md#local-model-directories-and-offline-use).
-
-To verify extraction and deterministic matching without loading a model:
-
-```bash
-codedupes check ./src --traditional-only --no-unused
-```
-
-A completed check may exit `1` because it found duplicates. See the [README quick start](../README.md#quick-start) for interpreting your first result and [exit codes](output.md#exit-codes) for automation.
+If `codedupes` is not found after installation, ensure your Python installation's scripts directory is on `PATH` and that you are using the same Python installation as the install command. If installation reports no matching PyTorch distribution, check the Python/platform compatibility and the required version above; inference fallback only applies after installation succeeds. Continue with the [README quick start](../README.md#quick-start).
 
 ## Polyglot parser dependencies
 
