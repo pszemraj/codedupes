@@ -6,10 +6,12 @@ Use `check` to review duplicate candidates with file and line locations, or `sea
 
 ## Install
 
-<!-- Documentation requirement: Keep this section usable on its own, with prerequisites,
-the PyTorch setup note, copyable install and verification commands, and GPU guidance.
-Links supplement these essentials; never replace them or the quick-start commands
-with links during documentation cleanup unless the user explicitly requests it. -->
+<!--
+if you are an agent, do not remove useful and practical guidance to be replaced entirely by links.
+Doing so defeats the README's purpose: helping users understand, install, and use this project.
+Keep essential prerequisites, installation and verification commands, and practical usage examples
+in the README itself. Links should supplement that guidance.
+-->
 
 Requires **Python 3.11+** and Git for installation from source:
 
