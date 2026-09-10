@@ -6,16 +6,7 @@ Use `check` to review duplicate candidates with file and line locations, or `sea
 
 ## Install
 
-Requires **Python 3.11+** and Git for installation from source:
-
-Install [PyTorch for your platform](https://pytorch.org/get-started/locally/) **before installing codedupes**; otherwise pip may select a build you don't want. This repo requires PyTorch `>=2.13.0,<3`.
-
-```bash
-pip install "codedupes @ git+https://github.com/pszemraj/codedupes.git"
-codedupes info
-```
-
-The installation includes the supported language parsers. A GPU is optional: semantic inference automatically selects CUDA, Apple Silicon MPS, or CPU. See [installation](docs/install.md) for runtime requirements and editable development setup.
+Follow the [installation guide](docs/install.md) for runtime requirements, platform-specific PyTorch setup, and editable development setup.
 
 ## Quick start
 
@@ -32,7 +23,7 @@ codedupes search ./src "normalize request payload" --top-k 5
 codedupes search ./src "normalize request payload" --result-level file --top-k 5
 ```
 
-The first semantic run downloads the default `gte-modernbert-base` model from Hugging Face and computes embeddings. It can take longer than later runs, which reuse cached embeddings. The scan runs locally; source code is not sent to a hosted embedding API. [Model profiles and offline use](docs/model-profiles.md) explain model selection and downloads.
+See [model profiles and offline use](docs/model-profiles.md) before the first semantic run.
 
 For a first scan without loading or downloading an embedding model:
 
@@ -44,27 +35,11 @@ This checks structural/token duplicates and disables unused-code guesses. It sti
 
 ### Read the results
 
-`check` prints duplicate locations, similarity evidence, and a summary. In combined mode, start with the `exact`, `traditional_near`, and `hybrid_confirmed` tiers; `semantic_high_confidence` and `semantic_review` are semantic candidates that need closer inspection. Scores rank candidates; they are not probabilities that two definitions are interchangeable. Potentially unused Python findings are also review suggestions, especially for callbacks and framework hooks.
-
-**Exit code `1` can mean the scan found actionable duplicates, not that it crashed.** Runtime errors also use `1` and explain the failure on stderr; invalid options use `2`. For an interactive review that should succeed regardless of findings, or a machine-readable report:
-
-```bash
-codedupes check ./src --fail-on none
-codedupes check ./src --json --fail-on none
-```
-
-See [output and exit codes](docs/output.md) for tiers, JSON fields, diagnostics, and CI policies.
-
-Search returns code units by default. With `--result-level file`, each file appears once, ranked by its best matching unit, with up to three matching definitions and line numbers. `--top-k` then limits files. See [search options](docs/cli.md#codedupes-search-path-query) for scope and threshold controls.
+See [output and exit codes](docs/output.md) for finding tiers, score interpretation, JSON fields, diagnostics, CI policies, and file-level search results.
 
 ### Know what gets scanned
 
-- Tests and common dependency/build directories are excluded by default. Use `--no-default-excludes` to include tests, or repeat `--exclude` to narrow the scan.
-- Semantic checks and search consider functions and methods with at least three statements by default. Traditional matching also considers classes and filters pairs where both definitions are tiny.
-- Duplicate comparisons stay within each language by default. `--cross-language` opts into semantic comparisons across languages.
-- Parsing is syntax-only: no compiler preprocessing, macro expansion, or project-wide name resolution. Unused-code analysis supports Python only.
-
-If expected code is missing, check [analysis scope and filters](docs/analysis-defaults.md) and [supported files and parser limits](docs/polyglot-languages.md).
+[Analysis scope and filters](docs/analysis-defaults.md) define candidate selection and exclusions. [Supported files and parser limits](docs/polyglot-languages.md) define language-specific extraction boundaries.
 
 ## Next steps
 

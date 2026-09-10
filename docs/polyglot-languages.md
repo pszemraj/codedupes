@@ -106,7 +106,7 @@ TypeScript and TSX are distinct parser dialects even though both report the cano
 
 ## Source ranges and parse recovery
 
-Tree-sitter is byte-addressed. The backend reads files as bytes, parses those bytes, and slices snippets with `start_byte:end_byte`; decoding happens only after the slice. This prevents Unicode text before a function from corrupting its range.
+Tree-sitter is byte-addressed. The backend reads and validates the complete file as UTF-8, parses the original bytes, slices snippets with `start_byte:end_byte`, and then decodes each emitted slice. This prevents Unicode text before a function from corrupting its range while still reporting invalid full-file input.
 
 A missing or incompatible grammar is a configuration error and stops analysis. codedupes never substitutes arbitrary line chunks.
 

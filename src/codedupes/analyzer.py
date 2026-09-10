@@ -50,7 +50,13 @@ from codedupes.semantic import (
 from codedupes.semantic import (
     run_semantic_analysis_with_identity as run_semantic_analysis,
 )
-from codedupes.semantic_profiles import resolve_model_profile
+from codedupes.semantic_profiles import (
+    THRESHOLD_PROFILE_CHOICES,
+    ThresholdProfile,
+    log_family_threshold_notice,
+    resolve_model_profile,
+    resolve_threshold_profile,
+)
 from codedupes.traditional import (
     build_reference_graph,
     find_exact_pair_keys,
@@ -419,6 +425,7 @@ class AnalyzerConfig:
 
     # Semantic detection
     semantic_threshold: float | None = None
+    threshold_profile: ThresholdProfile = "auto"
     cross_language: bool = False
     model_name: str = DEFAULT_MODEL
     semantic_task: str | None = None
@@ -468,6 +475,10 @@ class AnalyzerConfig:
 
         if self.semantic_threshold is not None and not 0.0 <= self.semantic_threshold <= 1.0:
             raise ValueError("semantic_threshold must be in [0.0, 1.0]")
+        if self.threshold_profile not in THRESHOLD_PROFILE_CHOICES:
+            raise ValueError(
+                f"threshold_profile must be one of {', '.join(THRESHOLD_PROFILE_CHOICES)}"
+            )
 
         self.device = normalize_semantic_device(self.device)
         self.mps_memory_fraction = validate_mps_memory_fraction(self.mps_memory_fraction)
@@ -514,6 +525,7 @@ class AnalyzerConfig:
             "run_semantic",
             (
                 ("semantic_threshold", self.semantic_threshold is not None),
+                ("threshold_profile", self.threshold_profile != "auto"),
                 ("cross_language", self.cross_language),
                 ("semantic_task", self.semantic_task is not None),
                 ("instruction_prefix", self.instruction_prefix is not None),
@@ -824,9 +836,12 @@ class CodeAnalyzer:
         explicit = self.config.semantic_threshold
         languages = sorted({unit.language for unit in semantic_candidates})
         if explicit is not None:
+            logger.info(f"Semantic duplicate threshold: {explicit} (explicit numeric override)")
             return dict.fromkeys(languages, explicit), explicit
 
-        profile = resolve_model_profile(self.config.model_name)
+        profile = resolve_threshold_profile(
+            resolve_model_profile(self.config.model_name), self.config.threshold_profile
+        )
         # Backstop for configs mutated after construction; __post_init__
         # enforces this for every check-mode config it accepts.
         uncalibrated_reasons = self.config._uncalibrated_gate_reasons(semantic_task)
@@ -841,6 +856,12 @@ class CodeAnalyzer:
             language: profile.semantic_threshold_for_language(language) for language in languages
         }
         floor = min(gates.values(), default=profile.semantic_threshold_for_language(None))
+        logger.info(
+            f"Using {profile.family} family duplicate thresholds "
+            f"(threshold-profile={self.config.threshold_profile})."
+        )
+        if self.config.threshold_profile == "auto":
+            log_family_threshold_notice(profile)
         if gates:
             gate_text = ", ".join(f"{language}={gate:.2f}" for language, gate in gates.items())
             logger.info(
@@ -1139,7 +1160,7 @@ class CodeAnalyzer:
 
         Must run index() (or analyze() with semantic analysis enabled) first to
         compute embeddings. The search floor is ``threshold`` when given, else
-        ``config.semantic_threshold``, else the model profile's search default
+        ``config.semantic_threshold``, else the selected threshold profile's search default
         (far looser than a duplicate gate, because query-to-code similarity runs
         well below code-to-code similarity). Prefer ``threshold`` over setting
         ``config.semantic_threshold``: the latter also replaces every calibrated
@@ -1186,6 +1207,7 @@ class CodeAnalyzer:
                 revision=self.config.model_revision,
                 trust_remote_code=self.config.trust_remote_code,
                 threshold=resolved_threshold,
+                threshold_profile=self.config.threshold_profile,
                 semantic_task=self._resolved_search_semantic_task,
                 device=self.config.device,
                 mps_fallback=self.config.mps_fallback,
@@ -1220,45 +1242,40 @@ def analyze_directory(
     allow_semantic_fallback: bool = False,
     run_unused: bool = True,
     strict_unused: bool = False,
+    threshold_profile: ThresholdProfile = "auto",
 ) -> AnalysisResult:
-    """
-    Convenience function for quick analysis.
+    """Analyze a directory with the supplied detection settings.
 
-    Args:
-        path: Directory to analyze
-        semantic_threshold: Flat cosine gate applied to every language; ``None``
-            uses the model profile's calibrated per-language gates
-        cross_language: Report semantic duplicate pairs across languages
-            (uncalibrated; a mixed pair uses the looser of its two gates)
-        traditional_threshold: Jaccard threshold for traditional near-duplicates
-        exclude_patterns: Glob patterns for files to exclude
-        languages: Optional language filter; omitted means auto-detect supported files.
-        model_name: HuggingFace model for embeddings
-        semantic_task: Semantic task mode for prompt/inference behavior
-        instruction_prefix: Custom instruction prefix prepended to semantic inputs
-        model_revision: Optional HuggingFace model revision/commit hash.
-            If None, semantic backend chooses model-specific default behavior.
-        trust_remote_code: Whether remote model code may execute while loading.
-        device: Semantic inference device: ``auto``, ``cpu``, ``cuda``, or ``mps``.
-        mps_fallback: Whether unsupported MPS operators may fall back to CPU.
-            ``None`` enables the safe automatic policy while respecting an existing
-            ``PYTORCH_ENABLE_MPS_FALLBACK`` environment setting.
-        mps_memory_fraction: Optional PyTorch MPS allocator fraction in ``(0, 2]``.
-        min_semantic_statements: Minimum statement count required for semantic analysis.
-        semantic_unit_types: Unit types eligible for semantic embeddings.
-        filter_tiny_traditional: Filter tiny traditional duplicates when true.
-        tiny_unit_statement_cutoff: Tiny code-unit cutoff (exclusive).
-        include_stubs: Whether to analyze ``.pyi`` files.
-        allow_semantic_fallback: Allow combined mode to keep full-scope traditional results
-            when semantic backend loading/inference fails.
-        strict_unused: Whether to ignore public API exclusions when reporting unused code.
-        run_unused: Run potentially-unused detection even when traditional analysis is off
-
-    Returns:
-        AnalysisResult
+    :param path: Directory or source file to analyze.
+    :param semantic_threshold: Flat cosine gate for every language; ``None`` uses
+        the selected profile's per-language gates.
+    :param cross_language: Report cross-language semantic pairs using the looser gate.
+    :param traditional_threshold: Jaccard threshold for traditional near-duplicates.
+    :param exclude_patterns: Glob patterns for files to exclude.
+    :param languages: Language filter; ``None`` auto-detects supported files.
+    :param model_name: Model alias, Hub ID, or explicit local directory path.
+    :param semantic_task: Semantic task mode for prompt/inference behavior.
+    :param instruction_prefix: Custom prompt replacing the model's default prompt.
+    :param model_revision: Hub revision override; ``None`` uses the model default.
+    :param trust_remote_code: Whether remote model code may execute while loading.
+    :param device: Inference device: ``auto``, ``cpu``, ``cuda``, or ``mps``.
+    :param mps_fallback: Unsupported MPS operator fallback; ``None`` uses the
+        automatic policy while respecting the existing environment setting.
+    :param mps_memory_fraction: Optional MPS allocator fraction in ``(0, 2]``.
+    :param min_semantic_statements: Minimum statement count for semantic analysis.
+    :param semantic_unit_types: Unit types eligible for semantic embeddings.
+    :param filter_tiny_traditional: Whether to filter tiny traditional duplicates.
+    :param tiny_unit_statement_cutoff: Tiny code-unit cutoff (exclusive).
+    :param include_stubs: Whether to analyze ``.pyi`` files.
+    :param allow_semantic_fallback: Keep traditional results on semantic backend failure.
+    :param run_unused: Whether to run potentially-unused detection.
+    :param strict_unused: Ignore public API exclusions when reporting unused code.
+    :param threshold_profile: Threshold defaults to select; numeric gates take precedence.
+    :return: Analysis result containing duplicate and potentially-unused findings.
     """
     config = AnalyzerConfig(
         semantic_threshold=semantic_threshold,
+        threshold_profile=threshold_profile,
         cross_language=cross_language,
         jaccard_threshold=traditional_threshold,
         exclude_patterns=exclude_patterns,

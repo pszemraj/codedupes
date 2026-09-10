@@ -359,6 +359,55 @@ def test_embeddinggemma_query_route_single_task_prompt(tmp_path: Path, monkeypat
     assert effective == ["task: code retrieval | query: find addition"]
 
 
+@pytest.mark.parametrize("model_kind", ["gte", "gemma", "local", "hub"])
+@pytest.mark.parametrize("selection", ["auto", "generic", "embeddinggemma-300m", "numeric"])
+def test_search_threshold_notices_do_not_repeat_on_warm_queries(
+    tmp_path, monkeypatch, caplog, model_kind, selection
+) -> None:
+    units = extract_arithmetic_units(tmp_path)
+    local = tmp_path / "embeddinggemma-copy"
+    local.mkdir()
+    (local / "config.json").write_text("{}", encoding="utf-8")
+    (local / "model.safetensors").write_bytes(b"weights")
+    model_name = {
+        "gte": "gte-modernbert-base",
+        "gemma": "embeddinggemma-300m",
+        "local": str(local),
+        "hub": "someone/embeddinggemma-300m-code-ft",
+    }[model_kind]
+    model = PromptAwareGemmaModel()
+    monkeypatch.setattr(semantic, "get_model", lambda *args, **kwargs: model)
+    revision = "f" * 40 if model_kind == "hub" else None
+    identity = semantic.resolve_embedding_space_identity(
+        model_name=model_name,
+        revision=revision,
+        device="cpu",
+        semantic_task=semantic.DEFAULT_SEARCH_SEMANTIC_TASK,
+    )
+    with caplog.at_level(logging.INFO):
+        for _ in range(2):
+            find_similar_to_query(
+                "find addition",
+                units,
+                np.eye(2, dtype=np.float32),
+                model_name=model_name,
+                revision=revision,
+                device="cpu",
+                corpus_identity=identity,
+                cache_scope=tmp_path,
+                threshold=0.5 if selection == "numeric" else None,
+                threshold_profile="auto" if selection == "numeric" else selection,
+            )
+    assert len(model.calls) == 1
+    assert "Search threshold:" not in caplog.text  # Per-query detail is DEBUG in the API.
+    assert caplog.text.count("Use --threshold-profile generic") == int(
+        selection == "auto" and model_kind in {"local", "hub"}
+    )
+    assert caplog.text.count("score distribution may differ") == int(
+        selection == "auto" and model_kind == "hub"
+    )
+
+
 def test_embeddinggemma_custom_instruction_replaces_saved_prompt(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -414,8 +463,9 @@ def test_prompt_sensitive_search_requires_corpus_identity(tmp_path: Path) -> Non
     ],
 )
 @pytest.mark.parametrize("use_cache", [False, True])
+@pytest.mark.parametrize("threshold_profile", ["auto", "generic", "embeddinggemma-300m"])
 def test_uncalibrated_search_context_requires_explicit_threshold(
-    tmp_path: Path, monkeypatch, kwargs: dict[str, object], use_cache: bool
+    tmp_path: Path, monkeypatch, kwargs: dict[str, object], use_cache: bool, threshold_profile: str
 ) -> None:
     units = extract_arithmetic_units(tmp_path)
     model = _RecordingModel()
@@ -446,7 +496,12 @@ def test_uncalibrated_search_context_requires_explicit_threshold(
         calls_before = len(model.encoded)
         with pytest.raises(ValueError, match=r"find_similar_to_query\(threshold=\.\.\.\)"):
             find_similar_to_query(
-                "find addition", units, embeddings, corpus_identity=identity, **options
+                "find addition",
+                units,
+                embeddings,
+                corpus_identity=identity,
+                threshold_profile=threshold_profile,
+                **options,
             )
         assert len(model.encoded) == calls_before
         assert len(
@@ -455,6 +510,7 @@ def test_uncalibrated_search_context_requires_explicit_threshold(
                 units,
                 embeddings,
                 threshold=0.0,
+                threshold_profile=threshold_profile,
                 corpus_identity=identity,
                 **options,
             )
@@ -2534,6 +2590,89 @@ def test_fingerprint_local_model_dir_follows_symlinked_subdirectories(tmp_path: 
     assert before is not None
     assert after is not None
     assert before != after
+
+
+@pytest.mark.parametrize(
+    "relative",
+    [
+        "README.md",
+        "README",
+        "ReadMe.txt",
+        "LICENSE",
+        "license.txt",
+        "NOTICE",
+        "Notice.txt",
+        "notes.MD",
+        "guide.rst",
+        ".git/config",
+        ".gitignore",
+        ".gitattributes",
+        ".cache/huggingface/download/model.metadata",
+    ],
+)
+def test_local_fingerprint_ignores_documentation_and_metadata(tmp_path, relative) -> None:
+    (tmp_path / "model.safetensors").write_bytes(b"weights")
+    before = semantic._fingerprint_local_model_dir(tmp_path, persist_manifest=False)
+    metadata = tmp_path / relative
+    metadata.parent.mkdir(parents=True, exist_ok=True)
+    metadata.write_text("metadata", encoding="utf-8")
+    assert semantic._fingerprint_local_model_dir(tmp_path, persist_manifest=False) == before
+    metadata.write_text("changed", encoding="utf-8")
+    assert semantic._fingerprint_local_model_dir(tmp_path, persist_manifest=False) == before
+    metadata.unlink()
+    assert semantic._fingerprint_local_model_dir(tmp_path, persist_manifest=False) == before
+
+
+@pytest.mark.parametrize(
+    "relative",
+    [
+        "model.safetensors",
+        "config.json",
+        "tokenizer.json",
+        "tokenizer.model",
+        "vocab.txt",
+        "tokenizer_config.json",
+        "modules.json",
+        "config_sentence_transformers.json",
+        "1_Pooling/config.json",
+        "2_Dense/model.safetensors",
+        "3_Dense/config.json",
+        "weights/model-00001-of-00002.safetensors",
+        "modeling_custom.py",
+        "license_head.safetensors",
+        "notice_tokens.json",
+        "readme_encoder.py",
+        "LICENSE.safetensors",
+        "NOTICE.json",
+        "README.py",
+    ],
+)
+def test_local_fingerprint_tracks_embedding_assets(tmp_path, relative) -> None:
+    asset = tmp_path / relative
+    asset.parent.mkdir(parents=True, exist_ok=True)
+    asset.write_bytes(b"before")
+    before = semantic._fingerprint_local_model_dir(tmp_path, persist_manifest=False)
+    asset.write_bytes(b"after!")
+    assert semantic._fingerprint_local_model_dir(tmp_path, persist_manifest=False) != before
+
+
+@pytest.mark.parametrize(
+    ("choice", "expected"),
+    [
+        ("auto", 0.40),
+        ("generic", 0.35),
+        ("embeddinggemma-300m", 0.40),
+        ("gte-modernbert-base", 0.50),
+    ],
+)
+def test_search_threshold_profile_defaults_and_numeric_precedence(choice, expected) -> None:
+    assert (
+        semantic.resolve_search_threshold("embeddinggemma", None, threshold_profile=choice)
+        == expected
+    )
+    assert (
+        semantic.resolve_search_threshold("embeddinggemma", 0.62, threshold_profile=choice) == 0.62
+    )
 
 
 def test_fingerprint_local_model_dir_handles_symlink_cycles(tmp_path: Path) -> None:

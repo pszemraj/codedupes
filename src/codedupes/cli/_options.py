@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
@@ -24,6 +25,12 @@ from codedupes.constants import (
 )
 from codedupes.extractor import DEFAULT_EXCLUDE_PATTERNS
 from codedupes.semantic import ProgressMode, resolve_search_threshold
+from codedupes.semantic_profiles import (
+    THRESHOLD_PROFILE_CHOICES,
+    ThresholdProfile,
+    resolve_model_profile,
+    resolve_threshold_profile,
+)
 
 from ._output import (
     DEFAULT_OUTPUT_WIDTH,
@@ -33,6 +40,7 @@ from ._output import (
 )
 
 F = TypeVar("F", bound=Callable[..., Any])
+logger = logging.getLogger(__name__)
 DEFAULT_EXCLUDE_HELP_HINT = (
     "Add a name or root-relative glob to exclude (repeat for multiple patterns). "
     "Bare names match at any depth; excluded directories include all descendants. "
@@ -174,6 +182,7 @@ class SemanticOptions:
     """Shared semantic-analysis command options."""
 
     model: str
+    threshold_profile: ThresholdProfile
     semantic_task: str
     instruction_prefix: str | None
     model_revision: str | None
@@ -197,6 +206,7 @@ class SemanticOptions:
         """
         return cls(
             model=params["model"],
+            threshold_profile=params["threshold_profile"],
             semantic_task=params["semantic_task"],
             instruction_prefix=params["instruction_prefix"],
             model_revision=params["model_revision"],
@@ -218,6 +228,7 @@ class SemanticOptions:
         """Return analyzer keyword arguments shared by check and search."""
         return {
             "model_name": self.model,
+            "threshold_profile": self.threshold_profile,
             "semantic_task": self.semantic_task,
             "instruction_prefix": self.instruction_prefix,
             "model_revision": self.model_revision,
@@ -451,14 +462,23 @@ class SearchOptions:
             **self.semantic.analysis_kwargs(),
         )
 
-        resolve_search_threshold(
+        threshold = resolve_search_threshold(
             config.model_name,
             config.semantic_threshold,
+            threshold_profile=config.threshold_profile,
             instruction_prefix=config.instruction_prefix,
             revision=config.model_revision,
             trust_remote_code=config.trust_remote_code,
             semantic_task=config.semantic_task,
         )
+        if config.semantic_threshold is not None:
+            selection = "explicit numeric override"
+        else:
+            profile = resolve_threshold_profile(
+                resolve_model_profile(config.model_name), config.threshold_profile
+            )
+            selection = f"threshold-profile={config.threshold_profile}, {profile.family} family"
+        logger.info(f"Effective search threshold: {threshold} ({selection})")
         return config
 
 
@@ -468,6 +488,17 @@ def semantic_options() -> Callable[[F], F]:
     :return: Decorator applying the shared Click options.
     """
     options = [
+        click.option(
+            "--threshold-profile",
+            type=click.Choice(THRESHOLD_PROFILE_CHOICES),
+            default="auto",
+            show_default=True,
+            panel=Panel.SEMANTIC,
+            help=(
+                "Threshold defaults: auto uses the recognized model family. "
+                "Numeric thresholds take precedence; model loading and prompts are unchanged."
+            ),
+        ),
         click.option(
             "--language",
             "languages",

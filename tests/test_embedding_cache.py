@@ -509,6 +509,156 @@ def _active_vectors_path(shard_dir: Path) -> Path:
     return shard_dir / embedding_cache._vectors_filename(payload["generation"])
 
 
+def test_local_family_threshold_changes_reuse_embeddings(tmp_path, monkeypatch):
+    model_dir = tmp_path / "approved-copy"
+    model_dir.mkdir()
+    (model_dir / "config.json").write_text(
+        '{"model_type": "gemma3_text", "use_bidirectional_attention": true}', encoding="utf-8"
+    )
+    (model_dir / "model.safetensors").write_bytes(b"weights")
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "arithmetic.py").write_text(
+        "def alpha(x):\n    return x + 1\n\ndef beta(x):\n    return x * 2\n", encoding="utf-8"
+    )
+
+    class Model(CountingModel):
+        def encode(self, texts, **kwargs):
+            self.encode_calls.append(list(texts))
+            self.prompts_seen.append(kwargs.get("prompt"))
+            return np.array(
+                [[1.0, 0.0] if "alpha" in text else [0.78, np.sqrt(1 - 0.78**2)] for text in texts],
+                dtype=np.float32,
+            )
+
+    model = Model()
+    loads = _patch_get_model(monkeypatch, model)
+    settings = {
+        "model_name": str(model_dir),
+        "device": "cpu",
+        "min_semantic_statements": 0,
+        "run_traditional": False,
+        "run_unused": False,
+    }
+    tuned = CodeAnalyzer(AnalyzerConfig(**settings)).analyze(project)
+    assert len(tuned.semantic_duplicates) == 1
+    calls = len(model.encode_calls)
+    assert calls == 1
+    (model_dir / "README.md").write_text("Approved workplace copy", encoding="utf-8")
+    generic = CodeAnalyzer(AnalyzerConfig(threshold_profile="generic", **settings)).analyze(project)
+    assert generic.semantic_duplicates == []
+    assert generic.embedding_stats.cache_hit_rows == 2
+    assert len(model.encode_calls) == calls
+    assert loads["count"] == 1
+    assert tuned.embedding_stats.cache_revision == generic.embedding_stats.cache_revision
+
+
+def test_local_model_card_family_changes_split_only_prompt_sensitive_cache(tmp_path, monkeypatch):
+    units = _five_units(tmp_path)
+    model_dir = tmp_path / "local-model-copy"
+    model_dir.mkdir()
+    (model_dir / "config.json").write_text('{"model_type": "unknown"}', encoding="utf-8")
+    (model_dir / "model.safetensors").write_bytes(b"weights")
+    readme = model_dir / "README.md"
+    readme.write_text("# local checkpoint\n", encoding="utf-8")
+
+    model = CountingModel()
+    _patch_get_model(monkeypatch, model)
+
+    generic_stats = EmbeddingRunStats()
+    _, generic_identity = compute_embeddings_with_identity(
+        units,
+        model_name=str(model_dir),
+        device="cpu",
+        cache_scope=tmp_path,
+        stats=generic_stats,
+    )
+
+    # Model cards are excluded from the local content fingerprint, but this
+    # heading changes the code encode plan from no prompt to EmbeddingGemma's
+    # semantic-similarity prompt, so the vectors must not be reused.
+    readme.write_text("# embeddinggemma-300m\n", encoding="utf-8")
+    gemma_stats = EmbeddingRunStats()
+    _, gemma_identity = compute_embeddings_with_identity(
+        units,
+        model_name=str(model_dir),
+        device="cpu",
+        cache_scope=tmp_path,
+        stats=gemma_stats,
+    )
+
+    assert generic_identity.resolved_revision == gemma_identity.resolved_revision
+    assert generic_identity != gemma_identity
+    assert generic_identity.runtime_variant != gemma_identity.runtime_variant
+    assert gemma_stats.cache_hit_rows == 0
+    assert gemma_stats.encoded_inputs == len(units)
+    assert len(model.encode_calls) == 2
+    assert model.prompts_seen == [
+        None,
+        semantic.EMBEDDINGGEMMA_QUERY_PREFIXES["semantic-similarity"],
+    ]
+
+    # GTE and the original generic profile both encode code symmetrically
+    # without a prompt, so their full embedding identities agree and the
+    # original vectors can be reused despite the same README-only edit.
+    readme.write_text("# gte-modernbert-base\n", encoding="utf-8")
+    gte_stats = EmbeddingRunStats()
+    _, gte_identity = compute_embeddings_with_identity(
+        units,
+        model_name=str(model_dir),
+        device="cpu",
+        cache_scope=tmp_path,
+        stats=gte_stats,
+    )
+
+    assert gte_identity == generic_identity
+    assert gte_identity.resolved_revision == gemma_identity.resolved_revision
+    assert gte_stats.cache_hit_rows == len(units)
+    assert gte_stats.encoded_inputs == 0
+    assert gte_stats.model_loaded is False
+    assert len(model.encode_calls) == 2
+
+
+def test_search_profile_changes_reuse_corpus_and_query_vectors(tmp_path, monkeypatch):
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "arithmetic.py").write_text("def alpha(x):\n    return x + 1\n", encoding="utf-8")
+
+    class Model(CountingModel):
+        def encode(self, texts, **kwargs):
+            self.encode_calls.append(list(texts))
+            self.prompts_seen.append(kwargs.get("prompt"))
+            return np.array(
+                [
+                    [1.0, 0.0] if "def alpha" in text else [0.45, np.sqrt(1 - 0.45**2)]
+                    for text in texts
+                ],
+                dtype=np.float32,
+            )
+
+    model = Model()
+    loads = _patch_get_model(monkeypatch, model)
+    config = AnalyzerConfig(
+        mode="search",
+        device="cpu",
+        min_semantic_statements=0,
+        run_traditional=False,
+        run_unused=False,
+    )
+    analyzer = CodeAnalyzer(config)
+    analyzer.index(project)
+    assert analyzer.search("addition") == []  # GTE search default is 0.50.
+    config.threshold_profile = "embeddinggemma-300m"
+    assert len(analyzer.search("addition")) == 1
+    config.threshold_profile = "generic"
+    analyzer.index(project)
+    assert len(analyzer.search("addition")) == 1
+    assert analyzer.search("addition", threshold=0.6) == []
+    assert len(model.encode_calls) == 2
+    assert loads["count"] == 2
+    assert model.prompts_seen == [None, None]  # Threshold choices do not select Gemma prompts.
+
+
 def test_full_cache_hit_skips_model_load_and_encode(tmp_path, monkeypatch):
     units = _five_units(tmp_path)
     model = CountingModel()
@@ -2338,11 +2488,17 @@ def _fake_local_model_dir(tmp_path: Path, name: str = "gemma-work-copy") -> Path
     return model_dir
 
 
-def test_local_model_dir_cache_uses_fingerprint_not_revision(tmp_path, monkeypatch):
+@pytest.mark.parametrize(
+    "asset_name",
+    ["model.safetensors", "license_head.safetensors", "notice_tokens.json", "readme_encoder.py"],
+)
+def test_local_model_dir_cache_uses_fingerprint_not_revision(tmp_path, monkeypatch, asset_name):
     units = _five_units(tmp_path)
     model = CountingModel()
     get_model_counts = _patch_get_model(monkeypatch, model)
     model_dir = _fake_local_model_dir(tmp_path)
+    asset = model_dir / asset_name
+    asset.write_text("weights-v1", encoding="utf-8")
 
     compute_embeddings(
         units,
@@ -2363,9 +2519,9 @@ def test_local_model_dir_cache_uses_fingerprint_not_revision(tmp_path, monkeypat
     assert len(model.encode_calls) == 1
     assert second.shape == (5, 4)
 
-    # Replacing the weights in place must change the fingerprint revision and
+    # Replacing an embedding asset in place must change the fingerprint revision and
     # invalidate every cached vector for this model directory.
-    (model_dir / "model.safetensors").write_text("weights-v2-longer")
+    asset.write_text("weights-v2-longer", encoding="utf-8")
     compute_embeddings(
         units,
         model_name=str(model_dir),

@@ -7,15 +7,16 @@ import logging
 import math
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from functools import cache
 from pathlib import Path
 from types import MappingProxyType
 from typing import Literal
 
-logger = logging.getLogger(__name__)
-
 SemanticModelFamily = Literal["gte-modernbert", "embeddinggemma", "generic"]
 CalibratedModelFamily = Literal["gte-modernbert", "embeddinggemma"]
+ThresholdProfile = Literal["auto", "generic", "embeddinggemma-300m", "gte-modernbert-base"]
+THRESHOLD_PROFILE_CHOICES = ("auto", "generic", "embeddinggemma-300m", "gte-modernbert-base")
+logger = logging.getLogger(__name__)
+_threshold_notice_models: set[tuple[str, SemanticModelFamily]] = set()
 
 DEFAULT_FALLBACK_SEMANTIC_THRESHOLD = 0.82
 DEFAULT_FALLBACK_SEARCH_THRESHOLD = 0.35
@@ -76,9 +77,10 @@ class SemanticModelProfile:
         return self.default_semantic_threshold
 
 
-# Calibrated thresholds are only meaningful against the exact checkpoint they
-# were swept on, so every builtin profile pins the immutable commit recorded in
-# test_fixtures/polyglot_calibration/reports/. Each per-language duplicate gate
+# Every builtin profile pins the immutable calibration commit recorded in
+# test_fixtures/polyglot_calibration/reports/. Recognized copies also use these
+# thresholds as family defaults, without claiming checkpoint equivalence.
+# Each per-language duplicate gate
 # is the loosest sweep threshold whose F1 stays near that language's best while
 # final combined-output precision remains workable (recall-first selection); the profile
 # fallback is the strictest calibrated gate and applies only to languages
@@ -173,45 +175,40 @@ def _match_calibrated_family(value: str) -> CalibratedModelFamily | None:
 def _infer_local_model_family(model_dir: Path) -> CalibratedModelFamily | None:
     """Infer a calibrated family from a local model directory.
 
-    The nearest directory name handles intentionally named ``save_pretrained``
-    copies. Hugging Face cache snapshots use commit hashes as directory names,
-    so their ``models--org--name`` ancestor is also inspected. For arbitrary
-    ``hf download --local-dir`` destinations, stable configuration fields and
-    the model-card title provide identity without loading model weights.
+    Structured configuration takes precedence over directory and model-card
+    hints. This recognizes the family without verifying checkpoint equivalence
+    or loading model weights.
 
     :param model_dir: Resolved local model directory.
     :return: Matching calibrated family, or ``None`` for an unknown model.
     """
+    configs: list[dict[str, object]] = []
+    for filename in ("config.json", "config_sentence_transformers.json"):
+        config_path = model_dir / filename
+        try:
+            parsed = json.loads(config_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            continue
+        if isinstance(parsed, dict):
+            if (
+                filename == "config.json"
+                and parsed.get("model_type") == "gemma3_text"
+                and parsed.get("use_bidirectional_attention") is True
+            ):
+                return "embeddinggemma"
+            configs.append(parsed)
+
+    for config in configs:
+        family = _match_calibrated_family(json.dumps(config))
+        if family is not None:
+            return family
+
     path_hints = [model_dir.name]
     path_hints.extend(part for part in model_dir.parts if part.startswith("models--"))
     for hint in path_hints:
         family = _match_calibrated_family(hint)
         if family is not None:
             return family
-
-    config_data: dict[str, object] = {}
-    for filename in ("config.json", "config_sentence_transformers.json"):
-        config_path = model_dir / filename
-        try:
-            config_text = config_path.read_text(encoding="utf-8")
-        except (OSError, UnicodeError):
-            continue
-        family = _match_calibrated_family(config_text)
-        if family is not None:
-            return family
-        if filename == "config.json":
-            try:
-                parsed = json.loads(config_text)
-            except json.JSONDecodeError:
-                continue
-            if isinstance(parsed, dict):
-                config_data = parsed
-
-    if (
-        config_data.get("model_type") == "gemma3_text"
-        and config_data.get("use_bidirectional_attention") is True
-    ):
-        return "embeddinggemma"
 
     try:
         with (model_dir / "README.md").open(encoding="utf-8", errors="replace") as model_card:
@@ -315,52 +312,29 @@ def resolve_local_model_path(model_name: str) -> Path | None:
     return None
 
 
-@cache
-def _warn_uncalibrated_family_copy(model_name: str, family: CalibratedModelFamily) -> None:
-    """Warn once that a family-matched model forgoes its family's calibrated gates.
-
-    :param model_name: Canonical model name or local directory path.
-    :param family: Built-in family the model was matched to.
-    :return: ``None``.
-    """
-    builtin = next(
-        (profile for profile in _BUILTIN_MODEL_PROFILES if profile.family == family), None
-    )
-    gates = builtin.language_semantic_thresholds if builtin is not None else {}
-    gate_text = ", ".join(f"{language}={gate}" for language, gate in gates.items())
-    logger.warning(
-        f"{model_name} looks like the {family} family but is not the calibrated built-in "
-        f"checkpoint, so its per-language duplicate gates ({gate_text}) do not apply. Using the "
-        f"uncalibrated generic gate {DEFAULT_FALLBACK_SEMANTIC_THRESHOLD} for every language; "
-        "pass an explicit threshold if you calibrated this checkpoint yourself."
-    )
-
-
 def _build_dynamic_profile(
     model_name: str,
     family: CalibratedModelFamily,
 ) -> SemanticModelProfile:
     """Build a family-aware profile for a non-builtin model.
 
-    Family membership selects loading and prompt behavior only. Calibrated
-    thresholds are a property of the exact pinned checkpoint they were swept
-    on, and a name or config that merely resembles a family (a fine-tune, a
-    modified local copy) can have an entirely different score distribution, so
-    dynamic profiles keep the uncalibrated generic thresholds. Pass an explicit
-    threshold to override.
+    Family thresholds are practical defaults for copies and fine-tunes, not
+    proof that their score distributions match the calibrated checkpoint.
+    The actual model identifier and unpinned revision are preserved.
 
     :param model_name: Model name or local directory path.
     :param family: Built-in family whose loading/prompt behavior applies.
-    :return: Dynamic family-appropriate profile with generic thresholds.
+    :return: Dynamic profile with the family's loading behavior and thresholds.
     """
-    _warn_uncalibrated_family_copy(model_name, family)
+    builtin = next(profile for profile in _BUILTIN_MODEL_PROFILES if profile.family == family)
     return SemanticModelProfile(
         key=model_name,
         canonical_name=model_name,
         aliases=(),
         family=family,
-        default_semantic_threshold=_GENERIC_PROFILE.default_semantic_threshold,
-        default_search_threshold=_GENERIC_PROFILE.default_search_threshold,
+        default_semantic_threshold=builtin.default_semantic_threshold,
+        default_search_threshold=builtin.default_search_threshold,
+        language_semantic_thresholds=builtin.language_semantic_thresholds,
     )
 
 
@@ -371,8 +345,8 @@ def resolve_model_profile(model_name: str) -> SemanticModelProfile:
     ``save_pretrained``-style model copy passed as an absolute, dot-relative, or
     home-relative path) canonicalizes to its resolved, true-cased absolute path
     so equivalent path spellings share one cache identity, and its family is
-    inferred from that true-cased directory name. Remaining hub-style names fall
-    back to name-based family inference.
+    inferred from configuration, then directory/model-card hints. Remaining
+    hub-style names fall back to name-based family inference.
 
     :param model_name: Alias, hub model name, or local model directory path.
     :return: Matching profile from builtins or a dynamic fallback.
@@ -401,6 +375,52 @@ def resolve_model_profile(model_name: str) -> SemanticModelProfile:
         default_semantic_threshold=_GENERIC_PROFILE.default_semantic_threshold,
         default_search_threshold=_GENERIC_PROFILE.default_search_threshold,
     )
+
+
+def resolve_threshold_profile(
+    model_profile: SemanticModelProfile,
+    threshold_profile: ThresholdProfile = "auto",
+) -> SemanticModelProfile:
+    """Select threshold defaults independently of the model used for embeddings.
+
+    :param model_profile: Resolved profile of the actual embedding model.
+    :param threshold_profile: ``auto``, ``generic``, or a built-in profile key.
+    :return: Profile supplying thresholds only; never use it for model loading.
+    :raises ValueError: If the threshold profile is not a supported choice.
+    """
+    if threshold_profile == "auto":
+        return model_profile
+    if threshold_profile == "generic":
+        return _GENERIC_PROFILE
+    for profile in _BUILTIN_MODEL_PROFILES:
+        if profile.key == threshold_profile:
+            return profile
+    raise ValueError(f"threshold_profile must be one of {', '.join(THRESHOLD_PROFILE_CHOICES)}")
+
+
+def log_family_threshold_notice(profile: SemanticModelProfile) -> None:
+    """Explain inferred family defaults once per model when they are selected.
+
+    :param profile: Actual model profile whose family defaults are being used.
+    :return: ``None``.
+    """
+    if profile.default_revision is not None or profile.family == "generic":
+        return
+    local = is_explicit_local_model_path(profile.canonical_name)
+    level = logging.INFO if local else logging.WARNING
+    key = (profile.canonical_name, profile.family)
+    # Disabled notices must remain available for a later visible run.
+    if key in _threshold_notice_models or not logger.isEnabledFor(level):
+        return
+    _threshold_notice_models.add(key)
+    if local:
+        logger.info("Use --threshold-profile generic for generic defaults.")
+    else:
+        logger.warning(
+            f"Using {profile.family} family thresholds for {profile.canonical_name}; "
+            "this Hub model's score distribution may differ from the calibrated checkpoint. "
+            "Use --threshold-profile generic or an explicit numeric threshold to override."
+        )
 
 
 def get_default_semantic_threshold(model_name: str) -> float:

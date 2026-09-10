@@ -1,28 +1,24 @@
 # Analysis defaults and heuristics
 
-These defaults apply to `codedupes check` and `AnalyzerConfig`. See the [CLI reference](cli.md) for syntax, [model profiles](model-profiles.md) for semantic thresholds and tasks, and [accelerators](accelerators.md) for device behavior.
+These defaults apply to `codedupes check` and `AnalyzerConfig` in check mode. See the [CLI reference](cli.md) for syntax, [model profiles](model-profiles.md) for semantic thresholds and tasks, and [accelerators](accelerators.md) for device behavior.
 
 ## What a default check does
 
 `codedupes check <path>` runs combined duplicate detection: deterministic matching across every extracted function, method, and class, plus semantic comparison of eligible functions and methods. It also reports potentially unused Python units. Supported files, default test exclusions, and parser diagnostics determine the extracted set; see [polyglot language support](polyglot-languages.md#supported-files) and [extraction scope defaults](#extraction-scope-defaults).
 
-The semantic pass may load the selected embedding model and may download it on its first use. For a fast, deterministic baseline with no embedding model, run:
+The semantic pass may load the selected embedding model and may download it on its first use. [CLI options](cli.md#codedupes-check-path) cover single-method and unused-analysis controls.
 
-```bash
-codedupes check ./src --traditional-only --no-unused
-```
+Combined output ranks each pair by an evidence tier:
 
-Combined output ranks each pair by a tier. The default exit policy treats only the tiers with deterministic corroboration as actionable:
+| tier | evidence |
+| --- | --- |
+| `exact` | structural or token fingerprints agree |
+| `traditional_near` | identifier Jaccard match |
+| `hybrid_confirmed` | semantic and traditional-near match |
+| `semantic_high_confidence` | semantic match plus weak identifier and size corroboration |
+| `semantic_review` | semantic match only |
 
-| tier | evidence | default handling |
-| --- | --- | --- |
-| `exact` | structural or token fingerprints agree | actionable |
-| `traditional_near` | identifier Jaccard match | actionable |
-| `hybrid_confirmed` | semantic and traditional-near match | actionable |
-| `semantic_high_confidence` | semantic match plus weak identifier and size corroboration | advisory review |
-| `semantic_review` | semantic match only | advisory review |
-
-Potentially unused findings are also advisory unless `--strict-unused` is set. Use `--fail-on all` to make every reported finding fail a check, or `--fail-on none` when reviewing intentional fixture findings. See [exit codes](output.md#exit-codes) for the complete policy and single-method behavior.
+[Exit codes](output.md#exit-codes) define which tiers and unused findings are actionable under each failure policy.
 
 ## Semantic duplicate gate defaults
 
@@ -37,6 +33,8 @@ Semantic duplicate detection is gated per language: each built-in model profile 
 | typescript | `0.68` | `0.78` |
 
 Gate selection is recall-first. A shipped gate may sit below the sweep's F1-selected threshold wherever the sweep shows recall gains below it, however many grid steps down that is (gte `c` `0.82` against a selected `0.90`; embeddinggemma `javascript` `0.72` against `0.82` and `rust` `0.78` against `0.82`). Where recall is flat, a gate sits at most one grid step looser as an off-corpus generalization hedge, never further. Every shipped gate keeps recall at or above the selection's and F1 within 80% of it; `tests/test_calibration_reports.py` enforces both against the recorded sweep reports.
+
+Without an explicit numeric threshold, `--threshold-profile auto` selects the recognized model family's gates; recognized local copies and fine-tunes inherit their family's gates. `--threshold-profile generic` uses one `0.82` gate for every language, while a named profile selects that profile's gates. See [threshold-profile choices](model-profiles.md#choosing-threshold-defaults).
 
 The profile fallback (`0.82` gte, `0.78` gemma) is the strictest calibrated gate and applies only to languages without their own entry. An explicit `--semantic-threshold`/`--threshold` (or `AnalyzerConfig.semantic_threshold`) replaces every per-language gate with one flat value. The pairwise embedding scan partitions candidates by language and scans each group at that language's own gate, so a loosely gated language never drags another language's scan down; the scalar floor handed to the scan covers only languages that arrive without a calibrated entry.
 
@@ -86,7 +84,7 @@ Bare names and basename globs match at any depth: `--exclude examples` skips bot
 
 Custom exclusions apply to direct file extraction too, relative to the file's parent for a single-file CLI target. `check` and `search` preserve an explicitly named file symlink for exclusion matching. Excluded symlink names are skipped before deduplication; aliases cannot reintroduce excluded in-tree targets. Targets outside the scan root retain the symlink's in-tree name for extraction and exclusions.
 
-Automatic C-header detection uses the same exclusions and symlink identity rules, so excluded C/C++ files do not affect whether included `.h` files are parsed as C. Naming a header explicitly bypasses implicit test globs only for that header; sibling discovery still applies those globs. In-tree symlinks use the target's extension; links outside the root use the alias's extension.
+[C-header detection](polyglot-languages.md#c-headers) uses the same exclusions and symlink identity rules as extraction.
 
 ## Potentially unused defaults
 
@@ -105,7 +103,9 @@ Call matching is name-based rather than scope-resolved: a call to any same-named
 
 Unused findings are independent of duplicate detection: a potentially unused unit remains eligible for semantic and traditional duplicate reporting. `--no-unused` disables unused reporting without changing duplicate findings.
 
-## Tiny traditional duplicate filtering defaults
+## Traditional duplicate defaults
+
+The traditional pass reports near-duplicate pairs when identifier-set Jaccard similarity is at least `0.85` by default (`jaccard_threshold`). Structural and token exact matches do not use this threshold. [Fingerprint and comparison boundaries](polyglot-languages.md#fingerprints-and-comparison-boundaries) define which units can be paired.
 
 Default tiny-filter behavior for traditional duplicates:
 

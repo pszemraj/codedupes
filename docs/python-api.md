@@ -1,6 +1,6 @@
 # Python API
 
-Use `analyze_directory` for a one-shot analysis or `CodeAnalyzer` when configuration and semantic search share one analyzed corpus. The defaults run traditional duplicate detection, semantic duplicate detection, and the Python unused-code heuristic. The first semantic run downloads the default `gte-modernbert-base` model if it is not already available; later runs reuse the model and the embedding cache. See [Installation](install.md) before running these examples. Replace `./src` with your source directory or file; paths are relative to the process's working directory.
+Use `analyze_directory` for a one-shot analysis or `CodeAnalyzer` when configuration and semantic search share one analyzed corpus. See [analysis defaults](analysis-defaults.md#what-a-default-check-does) for the stages enabled by default and [installation](install.md) before running these examples. Paths are relative to the process's working directory.
 
 Use `AnalyzerConfig(run_semantic=False)` when you need a no-model traditional/unused analysis. Use `AnalyzerConfig(mode="search", ...)` when the workflow is indexing and querying code rather than reporting duplicate pairs.
 
@@ -31,7 +31,7 @@ for unit in result.potentially_unused:
 
 ## Configurable analyzer
 
-Start with the defaults unless you need to narrow the scan. Semantic comparison normally considers functions and methods with at least three statements; this example also includes classes and one-statement units, and limits extraction to Rust and TypeScript.
+This example includes classes and one-statement units in semantic comparison and limits extraction to Rust and TypeScript:
 
 ```python
 from codedupes import AnalyzerConfig, CodeAnalyzer
@@ -48,6 +48,17 @@ config = AnalyzerConfig(
 analyzer = CodeAnalyzer(config)
 result = analyzer.analyze("./src")
 ```
+
+### `AnalyzerConfig` field map
+
+| Area | Fields | Behavior |
+| --- | --- | --- |
+| Extraction | `exclude_patterns`, `include_private`, `languages`, `include_stubs` | [Scope defaults](analysis-defaults.md#extraction-scope-defaults) and [language selection](polyglot-languages.md#supported-files) |
+| Analysis stages | `mode`, `run_traditional`, `run_semantic`, `run_unused`, `strict_unused`, `allow_semantic_fallback`, `suppress_test_semantic_matches` | [Check defaults](analysis-defaults.md), [fallback behavior](output.md#exit-codes), and [CLI option mapping](cli.md#codedupes-check-path) |
+| Traditional matching | `jaccard_threshold`, `filter_tiny_traditional`, `tiny_unit_statement_cutoff` | [Traditional defaults](analysis-defaults.md#traditional-duplicate-defaults) |
+| Semantic matching | `semantic_threshold`, `threshold_profile`, `cross_language`, `min_semantic_statements`, `semantic_unit_types`, `semantic_task` | [Semantic candidates and gates](analysis-defaults.md#semantic-duplicate-gate-defaults) and [model profiles](model-profiles.md) |
+| Model runtime | `model_name`, `instruction_prefix`, `model_revision`, `trust_remote_code`, `device`, `mps_fallback`, `mps_memory_fraction`, `batch_size` | [Model loading](model-profiles.md) and [accelerator behavior](accelerators.md) |
+| Cache, progress, and search | `embedding_cache`, `strict_revision_cache`, `progress`, `search_document` | [Cache controls](caching.md), [telemetry](#progress-and-embedding-telemetry), and [query search](#semantic-query-search) |
 
 ## Language selection and extraction diagnostics
 
@@ -101,9 +112,11 @@ for unit, score in hits:
 
 Inspect `analyzer.extraction_diagnostics` for recoverable parse errors after indexing and `analyzer.semantic_diagnostics` for semantic-stage diagnostics. An empty result can mean no eligible definitions or no scores above the threshold; it does not by itself establish that every file was parsed successfully.
 
-Over-context units produce `semantic-context-overflow` warnings when newly encoded; they retain their embedding rows and remain searchable. Cache-only runs do not repeat these warnings. Low-level `compute_embeddings*` and `run_semantic_analysis*` callers can supply a list through `diagnostics=` to collect the same warnings.
+[Long-input diagnostics](analysis-defaults.md#semantic-candidate-defaults) remain available through `analyzer.semantic_diagnostics`; low-level `compute_embeddings*` and `run_semantic_analysis*` callers can collect them through `diagnostics=`.
 
-`search(query, top_k=10, threshold=None)` resolves its floor as `threshold`, then `config.semantic_threshold`, then the model profile's search default. Prefer the per-call value when tuning one query: `config.semantic_threshold` also replaces every calibrated per-language duplicate gate with one flat value. Per-call thresholds must be finite; `NaN` and infinity raise `ValueError`, including for empty corpora and cached queries. Zero and finite negative floors are supported.
+`search(query, top_k=10, threshold=None)` resolves its floor as `threshold`, then `config.semantic_threshold`, then the selected threshold profile's search default. Prefer the per-call value when tuning one query: `config.semantic_threshold` also replaces every calibrated per-language duplicate gate with one flat value. Per-call thresholds must be finite; `NaN` and infinity raise `ValueError`, including for empty corpora and cached queries. Zero and finite negative floors are supported.
+
+`AnalyzerConfig`, `analyze_directory()`, `semantic.resolve_search_threshold()`, and `semantic.find_similar_to_query()` accept the [threshold profile choices](model-profiles.md#choosing-threshold-defaults). Numeric thresholds take precedence.
 
 Set `search_document="contextual"` only when paths and symbol names should influence retrieval. It changes each document's input, so it requires an explicit `search(threshold=...)` or `semantic_threshold`; tune that threshold against representative queries.
 
@@ -173,6 +186,8 @@ clear_model_cache()
 ```
 
 ## Logging
+
+Python query calls log the effective search threshold at DEBUG; human-readable CLI output reports it once per command. [Family-threshold notices](model-profiles.md#alias-resolution-rules) are emitted once per model per process when automatic defaults are selected for a recognized copy or non-builtin Hub model.
 
 Model loading quiets known-noisy dependency loggers (httpx request lines, transformers/sentence-transformers chatter) automatically, but only ones still inheriting the root level - any logger you configure explicitly is left alone. To pin them yourself, or to a different level:
 

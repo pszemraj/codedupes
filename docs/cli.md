@@ -5,20 +5,15 @@ The supported command-line entry point is `codedupes`. Install it first with the
 parsers and the device that semantic analysis will use. Examples below assume the
 command is available on `PATH`.
 
+`codedupes --version` prints the installed version. Running `codedupes` without a subcommand prints help and exits `2`.
+
 See [Output and exit codes](output.md) for JSON and process status, [Polyglot language support](polyglot-languages.md) for extraction semantics, [Analysis defaults](analysis-defaults.md) for heuristics, [Model profiles](model-profiles.md) for semantic defaults, [Accelerators](accelerators.md) for device behavior, and [Embedding cache](caching.md) for persistent cache behavior.
 
 ## `codedupes check <path>`
 
 Run duplicate and unused-code analysis.
 
-The default combined scan runs structural/token matching and semantic matching. Review
-the `Hybrid Duplicates` panel first: it is the synthesized duplicate list. `Likely
-Dead Code` is a conservative Python-only static-analysis candidate list, so review it
-before removing anything. The first semantic run may download the selected embedding
-model; use `--traditional-only` when you want a fast structural/token-only pass.
-
-Review the reported candidates, then adjust thresholds or scope if needed. See [hybrid
-gate tuning](hybrid-tuning.md) for calibration experiments.
+[Analysis defaults](analysis-defaults.md#what-a-default-check-does) describe the combined scan, candidate tiers, and unused-code heuristic. See [hybrid gate tuning](hybrid-tuning.md) only when changing shipped calibration defaults.
 
 Examples:
 
@@ -38,7 +33,7 @@ codedupes check ./src --exclude "**/generated/**" --exclude "**/migrations/**"
 Options, in addition to the [shared options](#options-shared-by-check-and-search):
 
 - `-t, --threshold <float>`: Shared threshold override for semantic and traditional checks (in single-method modes, it applies to the active method only)
-- `--traditional-threshold <float>`: Override traditional (Jaccard) threshold only
+- `--traditional-threshold <float>`: Override the [traditional Jaccard threshold](analysis-defaults.md#traditional-duplicate-defaults) only
 - `--cross-language`: Also report semantic duplicate pairs across languages; see [comparison boundaries](polyglot-languages.md#fingerprints-and-comparison-boundaries)
 - `--semantic-task <name>`: Semantic task mode for duplicate detection embeddings (default `semantic-similarity`)
 - `--semantic-only`: Run semantic analysis only
@@ -79,11 +74,9 @@ Options, in addition to the [shared options](#options-shared-by-check-and-search
 - `--top-k <int>`: Maximum results at the selected level: code units or distinct files (default `10`)
 - `--threshold <float>`: Shared semantic threshold override
 - `--semantic-task <name>`: Semantic task mode for query/document embeddings (default `code-retrieval`)
-- `--search-document <source|contextual>`: Choose the [search document representation](python-api.md#semantic-query-search), source only by default. Contextual search requires an explicit `--semantic-threshold` or `--threshold`; omission is a usage error (exit `2`) before indexing. Tune the value against representative queries
+- `--search-document <source|contextual>`: Choose the [search document representation](python-api.md#semantic-query-search), source only by default. Contextual search requires an explicit numeric threshold
 
-Search also requires an explicit threshold for a custom instruction prefix, a changed built-in model revision or trust setting, or an alternate EmbeddingGemma task. These option errors are rejected before indexing with exit `2`. Python callers may still index first and supply the threshold to `search()` later.
-
-At `--result-level file`, the threshold still applies to individual code units. Matching units are grouped by their full file path, and each file's score is the highest unit score. Grouping happens before `--top-k`, so several strong units in one file do not crowd out other files. The report shows up to three strongest definitions with line numbers and scores, plus a count of further matches. Files with no qualifying units are absent. This uses the same unit embeddings, candidate filters, and cache as ordinary search; it does not embed whole files. `--semantic-unit-type` selects what gets searched, while `--result-level` selects how matches are reported. See [file search JSON](output.md#file-search) for machine-readable output.
+For file-level grouping and `--top-k` order, see [file search output](output.md#file-search).
 
 ## Options shared by `check` and `search`
 
@@ -111,7 +104,8 @@ codedupes check ./src --instruction-prefix "Represent this code for duplicate de
 
 See [model profiles](model-profiles.md#semantic-task-defaults-and-choices) for task choices and when a custom configuration requires an explicit threshold.
 
-- `--semantic-threshold <float>`: Flat semantic gate for every language; without it, `check` uses the model profile's calibrated [per-language gates](analysis-defaults.md#semantic-duplicate-gate-defaults) and `search` uses the profile search default
+- `--semantic-threshold <float>`: Flat semantic gate for every language; without it, `check` uses the selected threshold profile's [per-language gates](analysis-defaults.md#semantic-duplicate-gate-defaults) and `search` uses its search default
+- `--threshold-profile <auto|generic|embeddinggemma-300m|gte-modernbert-base>`: Choose [threshold defaults](model-profiles.md#choosing-threshold-defaults) (default `auto`); numeric thresholds take precedence
 - `--semantic-unit-type <name>`: Semantic candidate unit type (`function`, `method`, `class`); repeat option to include multiple types (default `function, method`)
 - `--min-statements <int>`: Minimum statement count for semantic candidate code units (default `3`); these [candidate filters](analysis-defaults.md#semantic-candidate-defaults) do not narrow traditional matching
 - `--model <name>`: Embedding model alias, Hugging Face ID, or explicit path (absolute, `./`/`../`, or `~`) to a complete local `save_pretrained`/`hf download` directory (default `gte-modernbert-base`)
@@ -124,7 +118,7 @@ See [model profiles](model-profiles.md#semantic-task-defaults-and-choices) for t
 
 - `--device <name>`: Semantic inference device: `auto`, `cpu`, `cuda`, or `mps` (default `auto`; see [device selection](accelerators.md#device-selection))
 - `--mps-fallback` / `--no-mps-fallback`: Enable or disable PyTorch CPU fallback for unsupported MPS operators
-- `--mps-memory-fraction <float>`: Optional PyTorch MPS allocator fraction; see [memory policy](accelerators.md#mps-memory-policy-and-oom-recovery)
+- `--mps-memory-fraction <float>`: Optional PyTorch MPS allocator fraction; see [memory policy](accelerators.md#accelerator-oom-recovery-and-mps-memory-policy)
 - `--batch-size <int>`: Embedding batch size (default `8`)
 
 ### Cache
@@ -133,7 +127,7 @@ See [model profiles](model-profiles.md#semantic-task-defaults-and-choices) for t
 
 ### Output
 
-- `--output-width <int>`: Maximum Rich render width for non-JSON output (default `160`, min `80`); capped at the terminal width, even on narrower terminals. Redirected output uses the requested width
+- `--output-width <int>`: Maximum Rich render width for non-JSON output (default `160`, min `80`); capped at the terminal width, even on narrower terminals. Redirected output uses the requested width. Also accepted by `info`, `cache info`, and `cache clear`
 - `--json`: Emit JSON instead of rich tables
 - `-v, --verbose`: Verbose logs
 
@@ -145,15 +139,15 @@ CLI options are configured through command-line flags; automatic `CODEDUPES_*` o
 
 Show a compact panel with the tool version, Python and PyTorch versions, resolved device, default model, and supported languages. Add `-v` or `--verbose` for the full runtime/device diagnostics, parser package status, analysis defaults, exclusions, model profiles, and embedding-cache summary. Device diagnostic errors remain visible in the compact overview.
 
-Use `--output-width <int>` to set the maximum render width (default `160`, minimum option value `80`). Output fits the actual terminal even when it is narrower; redirected output uses the requested width. Diagnostic panels fit their content, and long values wrap inside the panel. See [parser readiness](polyglot-languages.md#parser-readiness) and [accelerator precision](accelerators.md#precision-and-metal-environment-variables) for interpreting the verbose fields.
+Diagnostic panels fit their content, and long values wrap inside the panel. See [parser readiness](polyglot-languages.md#parser-readiness) and [accelerator precision](accelerators.md#precision-and-metal-environment-variables) for interpreting the verbose fields.
 
 ## `codedupes cache info`
 
-Display the embedding-cache summary plus per-model entry counts and a per-repo breakdown in Rich panels, including orphan rows and the last complete manifest generation. Supports the same `--output-width <int>` option as `info`, `check`, and `search`.
+Display the embedding-cache summary plus per-model entry counts and a per-repo breakdown in Rich panels, including orphan rows and the last complete manifest generation.
 
 ## `codedupes cache clear [--model <name>]`
 
-Clear all cached embeddings or only entries for one model. An empty or whitespace-only `--model` is a usage error (exit `2`) and deletes nothing; omit the option to clear all models. Status messages use Rich formatting and support `--output-width <int>` with the same default and minimum as the other commands. See [Embedding cache](caching.md).
+Clear all cached embeddings or only entries for one model. An empty or whitespace-only `--model` is a usage error (exit `2`) and deletes nothing; omit the option to clear all models. See [Embedding cache](caching.md).
 
 ## Validation and mode notes
 

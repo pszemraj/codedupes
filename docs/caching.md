@@ -23,7 +23,7 @@ codedupes check ./src --no-cache
 
 Use the [cache commands](cli.md#codedupes-cache-info) to inspect usage or clear entries. Built-in aliases match case-insensitively in `cache clear --model`; pass other model names exactly as used for analysis.
 
-After each nonempty batch write, codedupes inventories shard sizes. When the global cap is exceeded, it removes least-recently-used shards toward 80% of the cap. The shard just written is protected, even if it alone exceeds the cap; an oversized or undeletable shard produces a warning and remains included in usage. Inventory reads the filesystem so cooperating processes see each other's writes.
+After nonempty writes, codedupes inventories shard sizes on the first write for a cache root and thereafter when five minutes have elapsed or accumulated writes reach 2% of the cap. When the global cap is exceeded, it removes least-recently-used shards toward 80% of the cap. The shard just written is protected, even if it alone exceeds the cap; an oversized or undeletable shard produces a warning and remains included in usage. Inventory reads the filesystem so cooperating processes see each other's writes.
 
 ## What invalidates what
 
@@ -34,6 +34,8 @@ After each nonempty batch write, codedupes inventories shard sizes. When the glo
 | Move a contextual search document | Re-embeds because its path is part of the input. |
 | Change model, revision, prompt, encode route, or vector-affecting runtime settings | Uses a different embedding identity. |
 | Replace local weights in place | Changes the directory content fingerprint. Touching modification times alone does not invalidate vectors. |
+| Edit local model documentation or Git/download metadata | Keeps the local-directory content fingerprint unchanged. A `README.md` top-level heading change that alters the inferred model family can still change the embedding identity. |
+| Change threshold profile or numeric thresholds | Reuses embeddings and applies the new result filtering. |
 | Repeat a search query | Reuses its query vector when both corpus and query identities match. |
 
 EmbeddingGemma uses different corpus prompts for `check` and `search`, so they warm independently. GTE uses the same symmetric corpus route for both: a warm check can cover the first search's corpus, but a new query still embeds. See [prompt behavior](model-profiles.md#taskprompt-behavior-by-model-family).
@@ -52,7 +54,9 @@ An indexed corpus retains its source commit even without persistent storage. Que
 
 ### Local directories
 
-Local model identity hashes file contents, including files reached through symlinked subdirectories. Per-file digests are reused from `<cache_root>/local-models/` when size, mtime, ctime, and inode match, keeping unchanged runs to a stat walk. A no-cache run maintains this information only in memory; enabling caching later can persist it.
+The local-directory content fingerprint hashes file contents, including files reached through symlinked subdirectories. It excludes `.git/`, Hugging Face download metadata, `.gitignore`, `.gitattributes`, Markdown/reStructuredText documentation, and case-insensitive `README`, `LICENSE`, and `NOTICE` basenames with no extension or a `.txt` extension. These names are matched exactly: assets such as `license_head.safetensors` and `notice_tokens.json` still contribute. All remaining files still contribute, including weights and shards, tokenizer assets, configuration, pooling/Dense modules, and custom model code. Per-file digests are reused from `<cache_root>/local-models/` when size, mtime, ctime, and inode match, keeping unchanged runs to a stat walk. A no-cache run maintains this information only in memory; enabling caching later can persist it. Previously cached local directories containing excluded files may miss once under the revised fingerprint; no migration is required.
+
+`README.md` remains a fallback family-recognition hint. Changing a top-level `# ` heading within its first 128 lines to or from a recognized model family can change the selected prompts or encode route, and therefore the complete embedding identity, even though documentation is excluded from the content fingerprint.
 
 Model loading checks fingerprints before and after reading weights. A change during loading triggers one reload; a second change fails the run. Earlier hits are discarded if their fingerprint differs from the loaded weights.
 
@@ -107,7 +111,7 @@ Cache inspection, eviction, and clearing continue past shards that disappear or 
 
 Keys cover the canonical model, revision, complete prepared input, encode route/prompt, pipeline schema, dtype variant, library versions, and remote-code trust setting. Old preprocessing schemas cannot reuse current vectors. Deriving keys does not require loading weights.
 
-CPU and MPS float32 share keys; bfloat16 and MPS fast math use separate variants. Device kernels can round differently, so clear the cache when measuring a single-device reference. [Accelerator precision and fallback](accelerators.md#precision-and-metal-environment-variables) explains which policies can share vectors and when a corpus must restart.
+[Accelerator precision and fallback](accelerators.md#precision-and-metal-environment-variables) define which execution policies share an identity and when a corpus must restart.
 
 A warm CPU run, or `auto` on macOS, can avoid importing PyTorch. The experimental CPU bfloat16 opt-in requires a live capability probe. `auto` elsewhere imports PyTorch for device/dtype resolution; explicit accelerator requests validate availability even when no inference is needed.
 

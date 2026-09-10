@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-from codedupes import devices
+from codedupes import devices, semantic_profiles
 from codedupes.extractor import CodeExtractor
 from codedupes.models import AnalysisResult, CodeUnit, CodeUnitType, ExtractionDiagnostic
 
@@ -27,6 +27,16 @@ def _isolated_embedding_cache_dir(tmp_path: Path, monkeypatch: Any) -> None:
     # The live CPU bf16 probe is memoized per process; without a reset a
     # verdict cached by one test would leak into the next.
     devices._reset_cpu_bf16_probe_cache()
+
+
+@pytest.fixture(autouse=True)
+def _isolated_threshold_notices(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Give every test its own set of emitted family-threshold notices.
+
+    :param monkeypatch: Pytest fixture restoring the process state after the test.
+    :return: ``None``.
+    """
+    monkeypatch.setattr(semantic_profiles, "_threshold_notice_models", set())
 
 
 def make_code_unit(
