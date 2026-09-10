@@ -6,7 +6,16 @@ Use `check` to review duplicate candidates with file and line locations, or `sea
 
 ## Install
 
-Follow the [installation guide](docs/install.md) for runtime requirements, platform-specific PyTorch setup, and editable development setup.
+Requires **Python 3.11+** and Git for installation from source:
+
+Install [PyTorch for your platform](https://pytorch.org/get-started/locally/) **before installing codedupes**; otherwise pip may select a build you don't want. This repo requires PyTorch `>=2.13.0,<3`.
+
+```bash
+pip install "codedupes @ git+https://github.com/pszemraj/codedupes.git"
+codedupes info
+```
+
+The installation includes the supported language parsers. A GPU is optional: semantic inference automatically selects CUDA, Apple Silicon MPS, or CPU. See [installation](docs/install.md) for runtime requirements and editable development setup.
 
 ## Quick start
 
