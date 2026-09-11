@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -15,10 +14,10 @@ from codedupes.constants import (
     DEFAULT_TOP_K,
     SEMANTIC_TASK_CHOICES,
 )
-from codedupes.models import CodeUnit
+from codedupes.report.json import search_result_to_json, to_json_text
+from codedupes.report.selection import group_file_results
 
 from . import _output
-from ._json import print_search_json
 from ._options import Panel, SearchOptions, option_panels, semantic_options
 from ._output import _configured_cli_output, _run_cli_action, _validate_positive_int
 from ._render import (
@@ -27,36 +26,6 @@ from ._render import (
     print_file_search_results,
     print_search_results,
 )
-
-
-@dataclass
-class FileSearchResult:
-    """One ranked file with its score and up to three contributing code units."""
-
-    file_path: Path
-    score: float
-    matching_units: int
-    matches: list[tuple[CodeUnit, float]]
-
-
-def _group_file_results(
-    results: list[tuple[CodeUnit, float]], top_k: int
-) -> list[FileSearchResult]:
-    """Group matching units into files ranked by their strongest unit score.
-
-    :param results: All unit matches above the search threshold.
-    :param top_k: Maximum number of distinct files to return.
-    :return: Ranked files with at most three contributing units each.
-    """
-    grouped: dict[Path, list[tuple[CodeUnit, float]]] = {}
-    for unit, score in results:
-        grouped.setdefault(unit.file_path, []).append((unit, score))
-
-    files = []
-    for path, matches in grouped.items():
-        matches.sort(key=lambda match: (-match[1], match[0].lineno, match[0].uid))
-        files.append(FileSearchResult(path, matches[0][1], len(matches), matches[:3]))
-    return sorted(files, key=lambda result: (-result.score, str(result.file_path)))[:top_k]
 
 
 @cli_module.cli.command(
@@ -159,18 +128,22 @@ def search_command(ctx: click.Context, path: Path, query: str, **params: Any) ->
             catch_file_not_found=True,
         )
         file_results = (
-            _group_file_results(results, opts.top_k) if opts.result_level == "file" else None
+            group_file_results(results, opts.top_k) if opts.result_level == "file" else None
         )
 
         if opts.as_json:
-            print_search_json(
-                query,
-                results,
-                indexed_units,
-                analyzer.embedding_stats,
-                extraction_diagnostics=analyzer.extraction_diagnostics,
-                semantic_diagnostics=analyzer.semantic_diagnostics,
-                file_results=file_results,
+            print(
+                to_json_text(
+                    search_result_to_json(
+                        query,
+                        results,
+                        indexed_units,
+                        analyzer.embedding_stats,
+                        extraction_diagnostics=analyzer.extraction_diagnostics,
+                        semantic_diagnostics=analyzer.semantic_diagnostics,
+                        file_results=file_results,
+                    )
+                )
             )
         else:
             _output.console.print(f"[bold cyan]Query:[/bold cyan] {escape(repr(query))}")

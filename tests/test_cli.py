@@ -2223,7 +2223,7 @@ def test_cli_combined_exit_code_ignores_raw_filtered_findings(monkeypatch, tmp_p
             semantic_duplicates=[],
             hybrid_duplicates=[],
             potentially_unused=[],
-            analysis_mode="traditional",
+            analysis_mode="combined",
         ),
     )
 
@@ -2289,15 +2289,7 @@ def test_run_should_fail_policy(
         analysis_mode="combined" if combined_mode else "traditional",
     )
 
-    assert (
-        cli.run_should_fail(
-            result,
-            policy=policy,
-            combined_mode=combined_mode,
-            strict_unused=strict_unused,
-        )
-        is expected
-    )
+    assert cli.run_should_fail(result, policy=policy, strict_unused=strict_unused) is expected
 
 
 def test_cli_fail_on_all_and_none(monkeypatch, tmp_path):

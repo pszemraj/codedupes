@@ -34,6 +34,7 @@ from codedupes.semantic_profiles import (
 
 from ._output import (
     DEFAULT_OUTPUT_WIDTH,
+    DEFAULT_TABLE_ROWS,
     _is_cli_explicit,
     _validate_json_output_controls,
     _validate_output_width,
@@ -347,7 +348,7 @@ class CheckOptions:
     @property
     def table_max_items(self) -> int | None:
         """Return the terminal table row cap."""
-        return None if self.full_table else 20
+        return None if self.full_table else DEFAULT_TABLE_ROWS
 
     def to_analysis_config(self, path: Path) -> Any:
         """Build the analyzer config represented by this option bundle.

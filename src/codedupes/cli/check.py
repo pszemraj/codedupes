@@ -3,54 +3,18 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 import rich_click as click
 
 import codedupes.cli as cli_module
 from codedupes.constants import DEFAULT_CHECK_SEMANTIC_TASK, SEMANTIC_TASK_CHOICES
-from codedupes.models import AnalysisResult, HybridTier
+from codedupes.report.json import check_result_to_json, to_json_text
+from codedupes.report.selection import ReportPolicy, run_should_fail, select_findings
 
-from ._json import print_check_json
 from ._options import CheckOptions, Panel, option_panels, semantic_options
 from ._output import _configured_cli_output, _run_cli_action
-from ._render import print_duplicates, print_hybrid_duplicates, print_summary, print_unused
-
-FailOnPolicy = Literal["actionable", "all", "none"]
-ACTIONABLE_TIERS: frozenset[HybridTier] = frozenset(
-    {"exact", "traditional_near", "hybrid_confirmed"}
-)
-
-
-def run_should_fail(
-    result: AnalysisResult,
-    *,
-    policy: FailOnPolicy,
-    combined_mode: bool,
-    strict_unused: bool,
-) -> bool:
-    """Return whether reported findings should make ``check`` exit one.
-
-    :param result: Completed analysis result.
-    :param policy: Selected finding policy.
-    :param combined_mode: Whether hybrid output is active.
-    :param strict_unused: Whether unused findings are strict rather than heuristic.
-    :return: Whether findings require exit code one.
-    """
-    if policy == "none":
-        return False
-    if combined_mode:
-        duplicates = result.hybrid_duplicates
-        if policy == "actionable":
-            duplicates = [
-                duplicate for duplicate in duplicates if duplicate.tier in ACTIONABLE_TIERS
-            ]
-    else:
-        duplicates = result.traditional_duplicates + result.semantic_duplicates
-    unused = result.potentially_unused
-    if policy == "actionable" and not strict_unused:
-        unused = []
-    return bool(duplicates or unused)
+from ._render import print_findings, print_summary
 
 
 @cli_module.cli.command(
@@ -206,79 +170,27 @@ def check_command(ctx: click.Context, path: Path, **params: Any) -> None:
             verbose=opts.verbose,
             catch_file_not_found=True,
         )
+        # Exit status is decided on the complete result before any report
+        # selection so visibility flags can never change CI outcomes.
         exit_code = int(
-            run_should_fail(
-                result,
-                policy=opts.fail_on,
-                combined_mode=opts.combined_mode,
-                strict_unused=opts.strict_unused,
-            )
+            run_should_fail(result, policy=opts.fail_on, strict_unused=opts.strict_unused)
+        )
+        selection = select_findings(
+            result, ReportPolicy(include_review=True, show_all=opts.show_all)
         )
 
         if opts.as_json:
-            print_check_json(
-                result,
-                show_all=opts.show_all,
-                fail_on=opts.fail_on,
-                exit_code=exit_code,
-            )
-        elif opts.combined_mode:
-            print_summary(
-                result,
-                mode="combined",
-                fail_on=opts.fail_on,
-                exit_code=exit_code,
-            )
-            print_hybrid_duplicates(
-                result.hybrid_duplicates,
-                show_source=opts.show_source,
-                max_items=opts.table_max_items,
-            )
-            print_unused(
-                result.potentially_unused,
-                title="Likely Dead Code",
-                max_items=opts.table_max_items,
-            )
-            if opts.show_all:
-                print_duplicates(
-                    result.traditional_duplicates,
-                    "Traditional Duplicates (Raw Structural/Token/Jaccard)",
-                    show_source=opts.show_source,
-                    max_items=opts.table_max_items,
+            print(
+                to_json_text(
+                    check_result_to_json(selection, fail_on=opts.fail_on, exit_code=exit_code)
                 )
-                print_duplicates(
-                    result.semantic_duplicates,
-                    "Semantic Duplicates (Raw Embedding)",
-                    show_source=opts.show_source,
-                    max_items=opts.table_max_items,
-                )
-        elif opts.semantic_only:
-            print_summary(
-                result,
-                mode="semantic",
-                fail_on=opts.fail_on,
-                exit_code=exit_code,
             )
-            print_duplicates(
-                result.semantic_duplicates,
-                "Semantic Duplicates (Embedding)",
-                show_source=opts.show_source,
-                max_items=opts.table_max_items,
-            )
-            print_unused(result.potentially_unused, max_items=opts.table_max_items)
         else:
-            print_summary(
-                result,
-                mode="traditional",
-                fail_on=opts.fail_on,
-                exit_code=exit_code,
-            )
-            print_duplicates(
-                result.traditional_duplicates,
-                "Traditional Duplicates (Structural/Token/Jaccard)",
+            print_summary(selection, fail_on=opts.fail_on, exit_code=exit_code)
+            print_findings(
+                selection,
                 show_source=opts.show_source,
                 max_items=opts.table_max_items,
             )
-            print_unused(result.potentially_unused, max_items=opts.table_max_items)
 
     raise click.exceptions.Exit(exit_code)

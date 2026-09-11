@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from collections import Counter
 from collections.abc import Iterable
-from typing import TYPE_CHECKING, Literal, cast
+from typing import cast
 
 from rich import box
 from rich.markup import escape
@@ -15,20 +15,22 @@ from rich.table import Table
 from rich.text import Text
 
 from codedupes.models import (
-    AnalysisResult,
     CodeUnit,
     DuplicatePair,
     ExtractionDiagnostic,
     HybridDuplicate,
 )
+from codedupes.report.selection import FileSearchResult, ReportSelection
 from codedupes.semantic import EmbeddingRunStats
 
 from . import _output
+from ._output import DEFAULT_TABLE_ROWS
 
-if TYPE_CHECKING:
-    from .search import FileSearchResult
-
-DEFAULT_TABLE_ROWS = 20
+_RAW_DUPLICATE_TITLES = {
+    "traditional": "Traditional Duplicates (Structural/Token/Jaccard)",
+    "semantic": "Semantic Duplicates (Embedding)",
+    "none": "Duplicates",
+}
 
 
 def _settings_panel(title: str, rows: Iterable[tuple[str, object]]) -> Panel:
@@ -147,20 +149,19 @@ def _print_diagnostics(title: str, diagnostics: list[ExtractionDiagnostic]) -> N
 
 
 def print_summary(
-    result: AnalysisResult,
+    selection: ReportSelection,
     *,
-    mode: Literal["combined", "traditional", "semantic"],
     fail_on: str,
     exit_code: int,
 ) -> None:
     """Print analysis summary.
 
-    :param result: Complete analysis result.
-    :param mode: Output mode used for this result.
+    :param selection: Findings selected for this report, with the complete result.
     :param fail_on: Finding policy selected for this run.
     :param exit_code: Exit code computed from the selected policy.
     :return: ``None``.
     """
+    result = selection.result
     _output.console.print()
 
     summary = Table(title="Analysis Summary", show_header=False, box=None)
@@ -185,17 +186,20 @@ def print_summary(
     )
     summary.add_row("", "")
 
-    if mode == "combined":
+    if selection.mode == "combined":
         summary.add_row("Hybrid duplicates", str(len(result.hybrid_duplicates)))
         summary.add_row("Likely dead code", str(len(result.potentially_unused)))
         summary.add_row("", "")
         summary.add_row("Raw traditional duplicates", str(len(result.traditional_duplicates)))
         summary.add_row("Raw semantic duplicates", str(len(result.semantic_duplicates)))
-    elif mode == "traditional":
+    elif selection.mode == "traditional":
         summary.add_row("Traditional duplicates", str(len(result.traditional_duplicates)))
         summary.add_row("Potentially unused", str(len(result.potentially_unused)))
-    else:
+    elif selection.mode == "semantic":
         summary.add_row("Semantic duplicates", str(len(result.semantic_duplicates)))
+        summary.add_row("Potentially unused", str(len(result.potentially_unused)))
+    else:
+        summary.add_row("Duplicates", str(len(selection.duplicates)))
         summary.add_row("Potentially unused", str(len(result.potentially_unused)))
 
     if result.extraction_diagnostics:
@@ -448,6 +452,51 @@ def print_unused(
 
     if max_items is not None and len(unused) > max_items:
         _output.console.print(f"[dim]... and {len(unused) - max_items} more[/dim]")
+
+
+def print_findings(
+    selection: ReportSelection,
+    *,
+    show_source: bool,
+    max_items: int | None,
+) -> None:
+    """Print every finding panel selected for one check report.
+
+    :param selection: Findings selected for this report.
+    :param show_source: Whether to render source snippets.
+    :param max_items: Optional row limit per table.
+    :return: ``None``.
+    """
+    if selection.mode == "combined":
+        print_hybrid_duplicates(
+            cast(list[HybridDuplicate], selection.duplicates),
+            show_source=show_source,
+            max_items=max_items,
+        )
+        print_unused(selection.potentially_unused, title="Likely Dead Code", max_items=max_items)
+        if selection.traditional_duplicates is not None:
+            print_duplicates(
+                selection.traditional_duplicates,
+                "Traditional Duplicates (Raw Structural/Token/Jaccard)",
+                show_source=show_source,
+                max_items=max_items,
+            )
+        if selection.semantic_duplicates is not None:
+            print_duplicates(
+                selection.semantic_duplicates,
+                "Semantic Duplicates (Raw Embedding)",
+                show_source=show_source,
+                max_items=max_items,
+            )
+        return
+
+    print_duplicates(
+        cast(list[DuplicatePair], selection.duplicates),
+        _RAW_DUPLICATE_TITLES[selection.mode],
+        show_source=show_source,
+        max_items=max_items,
+    )
+    print_unused(selection.potentially_unused, max_items=max_items)
 
 
 def print_search_results(results: list[tuple[CodeUnit, float]]) -> None:

@@ -20,10 +20,10 @@ from codedupes.constants import (
 )
 from codedupes.devices import configure_mps_environment, get_device_diagnostics
 from codedupes.embedding_cache import EmbeddingCache
+from codedupes.report.selection import run_should_fail
 from codedupes.semantic_profiles import resolve_model_profile
 
 from . import _output
-from ._json import _unit_to_dict as _unit_to_dict
 from ._options import Panel, options_in_panels
 from ._output import DEFAULT_OUTPUT_WIDTH, setup_logging
 from ._render import _syntax_lexer as _syntax_lexer
@@ -56,7 +56,7 @@ def cli(ctx: click.Context) -> None:
 # remain re-exported here because callers and tests historically import them from
 # ``codedupes.cli``.
 from .cache import cache_clear_command, cache_group, cache_info_command  # noqa: E402, RUF100
-from .check import check_command, run_should_fail  # noqa: E402, RUF100
+from .check import check_command  # noqa: E402, RUF100
 from .info import info_command  # noqa: E402, RUF100
 from .search import search_command  # noqa: E402, RUF100
 

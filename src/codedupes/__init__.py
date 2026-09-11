@@ -20,12 +20,24 @@ Example:
 from .analyzer import AnalyzerConfig, CodeAnalyzer, analyze_directory
 from .logging_utils import quiet_dependency_loggers
 from .models import (
+    HYBRID_TIERS,
     AnalysisResult,
     CodeUnit,
     CodeUnitType,
     DuplicatePair,
     ExtractionDiagnostic,
     HybridDuplicate,
+)
+from .report import (
+    ACTIONABLE_TIERS,
+    ReportPolicy,
+    ReportSelection,
+    check_result_to_json,
+    run_should_fail,
+    search_result_to_json,
+    select_findings,
+    to_json_text,
+    withheld_only_failure,
 )
 
 try:
@@ -35,6 +47,8 @@ except ImportError:
     __version_tuple__ = (0, 0, 0, "+unknown")
 
 __all__ = [
+    "ACTIONABLE_TIERS",
+    "HYBRID_TIERS",
     "AnalysisResult",
     "AnalyzerConfig",
     "CodeAnalyzer",
@@ -43,8 +57,16 @@ __all__ = [
     "DuplicatePair",
     "ExtractionDiagnostic",
     "HybridDuplicate",
+    "ReportPolicy",
+    "ReportSelection",
     "__version__",
     "__version_tuple__",
     "analyze_directory",
+    "check_result_to_json",
     "quiet_dependency_loggers",
+    "run_should_fail",
+    "search_result_to_json",
+    "select_findings",
+    "to_json_text",
+    "withheld_only_failure",
 ]

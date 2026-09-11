@@ -20,6 +20,7 @@ from codedupes.logging_utils import quiet_dependency_loggers
 
 DEFAULT_OUTPUT_WIDTH = 160
 MIN_OUTPUT_WIDTH = 80
+DEFAULT_TABLE_ROWS = 20
 
 
 def _make_console(output_width: int = DEFAULT_OUTPUT_WIDTH, *, stderr: bool = False) -> Console:
