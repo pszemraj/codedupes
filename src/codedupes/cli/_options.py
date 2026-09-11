@@ -353,14 +353,6 @@ class CheckOptions:
         )
 
     @property
-    def combined_mode(self) -> bool:
-        """Report whether both duplicate-detection methods are enabled.
-
-        :return: ``True`` unless a single-method flag was passed.
-        """
-        return not self.semantic_only and not self.traditional_only
-
-    @property
     def report_policy(self) -> ReportPolicy:
         """Build the report visibility policy these options select.
 
