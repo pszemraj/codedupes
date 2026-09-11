@@ -37,26 +37,72 @@
       "selected_threshold": 0.72,
       "selected_metrics": {
         "threshold": 0.72,
-        "predicted": 26,
-        "tp": 21,
+        "predicted": 27,
+        "tp": 22,
         "fp": 5,
-        "fn": 14,
-        "precision": 0.8076923076923077,
-        "recall": 0.6,
-        "f1": 0.6885245901639345
+        "fn": 13,
+        "precision": 0.8148148148148148,
+        "recall": 0.6285714285714286,
+        "f1": 0.7096774193548386,
+        "tiers": {
+          "exact": {
+            "predicted": 15,
+            "tp": 15,
+            "fp": 0,
+            "precision": 1.0,
+            "positive_share": 0.42857142857142855
+          },
+          "traditional_near": {
+            "predicted": 0,
+            "tp": 0,
+            "fp": 0,
+            "precision": null,
+            "positive_share": 0.0
+          },
+          "hybrid_confirmed": {
+            "predicted": 0,
+            "tp": 0,
+            "fp": 0,
+            "precision": null,
+            "positive_share": 0.0
+          },
+          "semantic_high_confidence": {
+            "predicted": 10,
+            "tp": 7,
+            "fp": 3,
+            "precision": 0.7,
+            "positive_share": 0.2
+          },
+          "semantic_review": {
+            "predicted": 2,
+            "tp": 0,
+            "fp": 2,
+            "precision": 0.0,
+            "positive_share": 0.0
+          }
+        },
+        "visible": {
+          "predicted": 25,
+          "tp": 22,
+          "fp": 3,
+          "fn": 13,
+          "precision": 0.88,
+          "recall": 0.6285714285714286,
+          "f1": 0.7333333333333334
+        }
       },
       "calibration": {
         "model": "Alibaba-NLP/gte-modernbert-base",
         "resolved_revision": "e7f32e3c00f91d699e8c43b53106206bcc72bb22",
         "embedding_pipeline_schema": 5,
-        "embedding_runtime_identity": "e7aed934f076717fc73f",
+        "embedding_runtime_identity": "263d5c868bf6f139a43a",
         "runtime_versions": {
           "python": "3.12.13",
           "torch": "2.13.0",
           "transformers": "5.14.1",
-          "sentence-transformers": "5.6.1"
+          "sentence-transformers": "5.7.0"
         },
-        "codedupes_version": "0.4.1.dev102+gf31fa48e1",
+        "codedupes_version": "0.5.3",
         "mode": "duplicate",
         "semantic_task": "semantic-similarity",
         "encode_plan": {
@@ -69,8 +115,9 @@
         "embedding_space": {
           "model_name": "Alibaba-NLP/gte-modernbert-base",
           "resolved_revision": "e7f32e3c00f91d699e8c43b53106206bcc72bb22",
-          "runtime_variant": "route=symmetric\u0000prompt_set=0\u0000prompt=\u0000\u0000\u0000e7aed934f076717fc73f\u0000trc=0",
-          "source_commit": null
+          "runtime_variant": "route=symmetric\u0000prompt_set=0\u0000prompt=\u0000\u0000\u0000263d5c868bf6f139a43a\u0000trc=0",
+          "source_commit": null,
+          "search_document": "source"
         },
         "dimension": 768,
         "normalized": true,
@@ -88,342 +135,1703 @@
         "labels_path": "test_fixtures/polyglot_calibration/labels/javascript.json",
         "labels_sha256": "e71d07a961e1cf89bb8cc91542bdf7c061864a17f699de1bdba70d29a0e7ea20",
         "output_policy": "hybrid_duplicates",
+        "visible_policy": {
+          "excluded_tiers": [
+            "semantic_review"
+          ],
+          "metrics_field": "visible"
+        },
+        "corroboration": {
+          "weak_identifier_jaccard_min": 0.0,
+          "statement_ratio_min": 0.8,
+          "high_confidence_gates": {
+            "javascript": null
+          }
+        },
         "selected_at_grid_edge": null,
         "candidate_coverage": {
           "labeled_positive_pairs": 35,
           "scoreable_positive_pairs": 26,
-          "traditional_recovered_pairs": 0,
-          "unreachable_positive_pairs": 9,
-          "recall_ceiling": 0.7428571428571429
+          "traditional_recovered_pairs": 1,
+          "unreachable_positive_pairs": 8,
+          "recall_ceiling": 0.7714285714285715
         },
         "selected_category_recall": {
           "exact": {
             "labeled": 4,
             "detected": 4,
-            "recall": 1.0
+            "recall": 1.0,
+            "visible_detected": 4,
+            "visible_recall": 1.0
           },
           "reformat": {
             "labeled": 3,
             "detected": 3,
-            "recall": 1.0
+            "recall": 1.0,
+            "visible_detected": 3,
+            "visible_recall": 1.0
           },
           "doc_variant": {
             "labeled": 3,
             "detected": 3,
-            "recall": 1.0
+            "recall": 1.0,
+            "visible_detected": 3,
+            "visible_recall": 1.0
           },
           "renamed": {
             "labeled": 5,
-            "detected": 4,
-            "recall": 0.8
+            "detected": 5,
+            "recall": 1.0,
+            "visible_detected": 5,
+            "visible_recall": 1.0
           },
           "near_rename": {
             "labeled": 8,
             "detected": 3,
-            "recall": 0.375
+            "recall": 0.375,
+            "visible_detected": 3,
+            "visible_recall": 0.375
           },
           "near_translation": {
             "labeled": 8,
             "detected": 3,
-            "recall": 0.375
+            "recall": 0.375,
+            "visible_detected": 3,
+            "visible_recall": 0.375
           },
           "near_restructure": {
             "labeled": 4,
             "detected": 1,
-            "recall": 0.25
+            "recall": 0.25,
+            "visible_detected": 1,
+            "visible_recall": 0.25
           }
         }
       },
       "rows": [
         {
           "threshold": 0.72,
-          "predicted": 26,
-          "tp": 21,
+          "predicted": 27,
+          "tp": 22,
           "fp": 5,
-          "fn": 14,
-          "precision": 0.8076923076923077,
-          "recall": 0.6,
-          "f1": 0.6885245901639345
-        },
-        {
-          "threshold": 0.7,
-          "predicted": 29,
-          "tp": 21,
-          "fp": 8,
-          "fn": 14,
-          "precision": 0.7241379310344828,
-          "recall": 0.6,
-          "f1": 0.65625
+          "fn": 13,
+          "precision": 0.8148148148148148,
+          "recall": 0.6285714285714286,
+          "f1": 0.7096774193548386,
+          "tiers": {
+            "exact": {
+              "predicted": 15,
+              "tp": 15,
+              "fp": 0,
+              "precision": 1.0,
+              "positive_share": 0.42857142857142855
+            },
+            "traditional_near": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "hybrid_confirmed": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "semantic_high_confidence": {
+              "predicted": 10,
+              "tp": 7,
+              "fp": 3,
+              "precision": 0.7,
+              "positive_share": 0.2
+            },
+            "semantic_review": {
+              "predicted": 2,
+              "tp": 0,
+              "fp": 2,
+              "precision": 0.0,
+              "positive_share": 0.0
+            }
+          },
+          "visible": {
+            "predicted": 25,
+            "tp": 22,
+            "fp": 3,
+            "fn": 13,
+            "precision": 0.88,
+            "recall": 0.6285714285714286,
+            "f1": 0.7333333333333334
+          }
         },
         {
           "threshold": 0.76,
-          "predicted": 20,
-          "tp": 18,
+          "predicted": 21,
+          "tp": 19,
           "fp": 2,
-          "fn": 17,
-          "precision": 0.9,
-          "recall": 0.5142857142857142,
-          "f1": 0.6545454545454545
+          "fn": 16,
+          "precision": 0.9047619047619048,
+          "recall": 0.5428571428571428,
+          "f1": 0.6785714285714285,
+          "tiers": {
+            "exact": {
+              "predicted": 15,
+              "tp": 15,
+              "fp": 0,
+              "precision": 1.0,
+              "positive_share": 0.42857142857142855
+            },
+            "traditional_near": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "hybrid_confirmed": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "semantic_high_confidence": {
+              "predicted": 5,
+              "tp": 4,
+              "fp": 1,
+              "precision": 0.8,
+              "positive_share": 0.11428571428571428
+            },
+            "semantic_review": {
+              "predicted": 1,
+              "tp": 0,
+              "fp": 1,
+              "precision": 0.0,
+              "positive_share": 0.0
+            }
+          },
+          "visible": {
+            "predicted": 20,
+            "tp": 19,
+            "fp": 1,
+            "fn": 16,
+            "precision": 0.95,
+            "recall": 0.5428571428571428,
+            "f1": 0.6909090909090908
+          }
+        },
+        {
+          "threshold": 0.7,
+          "predicted": 30,
+          "tp": 22,
+          "fp": 8,
+          "fn": 13,
+          "precision": 0.7333333333333333,
+          "recall": 0.6285714285714286,
+          "f1": 0.6769230769230768,
+          "tiers": {
+            "exact": {
+              "predicted": 15,
+              "tp": 15,
+              "fp": 0,
+              "precision": 1.0,
+              "positive_share": 0.42857142857142855
+            },
+            "traditional_near": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "hybrid_confirmed": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "semantic_high_confidence": {
+              "predicted": 11,
+              "tp": 7,
+              "fp": 4,
+              "precision": 0.6363636363636364,
+              "positive_share": 0.2
+            },
+            "semantic_review": {
+              "predicted": 4,
+              "tp": 0,
+              "fp": 4,
+              "precision": 0.0,
+              "positive_share": 0.0
+            }
+          },
+          "visible": {
+            "predicted": 26,
+            "tp": 22,
+            "fp": 4,
+            "fn": 13,
+            "precision": 0.8461538461538461,
+            "recall": 0.6285714285714286,
+            "f1": 0.721311475409836
+          }
         },
         {
           "threshold": 0.78,
-          "predicted": 18,
-          "tp": 17,
+          "predicted": 19,
+          "tp": 18,
           "fp": 1,
-          "fn": 18,
-          "precision": 0.9444444444444444,
-          "recall": 0.4857142857142857,
-          "f1": 0.6415094339622641
+          "fn": 17,
+          "precision": 0.9473684210526315,
+          "recall": 0.5142857142857142,
+          "f1": 0.6666666666666666,
+          "tiers": {
+            "exact": {
+              "predicted": 15,
+              "tp": 15,
+              "fp": 0,
+              "precision": 1.0,
+              "positive_share": 0.42857142857142855
+            },
+            "traditional_near": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "hybrid_confirmed": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "semantic_high_confidence": {
+              "predicted": 4,
+              "tp": 3,
+              "fp": 1,
+              "precision": 0.75,
+              "positive_share": 0.08571428571428572
+            },
+            "semantic_review": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            }
+          },
+          "visible": {
+            "predicted": 19,
+            "tp": 18,
+            "fp": 1,
+            "fn": 17,
+            "precision": 0.9473684210526315,
+            "recall": 0.5142857142857142,
+            "f1": 0.6666666666666666
+          }
         },
         {
           "threshold": 0.8,
+          "predicted": 19,
+          "tp": 18,
+          "fp": 1,
+          "fn": 17,
+          "precision": 0.9473684210526315,
+          "recall": 0.5142857142857142,
+          "f1": 0.6666666666666666,
+          "tiers": {
+            "exact": {
+              "predicted": 15,
+              "tp": 15,
+              "fp": 0,
+              "precision": 1.0,
+              "positive_share": 0.42857142857142855
+            },
+            "traditional_near": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "hybrid_confirmed": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "semantic_high_confidence": {
+              "predicted": 4,
+              "tp": 3,
+              "fp": 1,
+              "precision": 0.75,
+              "positive_share": 0.08571428571428572
+            },
+            "semantic_review": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            }
+          },
+          "visible": {
+            "predicted": 19,
+            "tp": 18,
+            "fp": 1,
+            "fn": 17,
+            "precision": 0.9473684210526315,
+            "recall": 0.5142857142857142,
+            "f1": 0.6666666666666666
+          }
+        },
+        {
+          "threshold": 0.74,
+          "predicted": 23,
+          "tp": 19,
+          "fp": 4,
+          "fn": 16,
+          "precision": 0.8260869565217391,
+          "recall": 0.5428571428571428,
+          "f1": 0.6551724137931034,
+          "tiers": {
+            "exact": {
+              "predicted": 15,
+              "tp": 15,
+              "fp": 0,
+              "precision": 1.0,
+              "positive_share": 0.42857142857142855
+            },
+            "traditional_near": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "hybrid_confirmed": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "semantic_high_confidence": {
+              "predicted": 6,
+              "tp": 4,
+              "fp": 2,
+              "precision": 0.6666666666666666,
+              "positive_share": 0.11428571428571428
+            },
+            "semantic_review": {
+              "predicted": 2,
+              "tp": 0,
+              "fp": 2,
+              "precision": 0.0,
+              "positive_share": 0.0
+            }
+          },
+          "visible": {
+            "predicted": 21,
+            "tp": 19,
+            "fp": 2,
+            "fn": 16,
+            "precision": 0.9047619047619048,
+            "recall": 0.5428571428571428,
+            "f1": 0.6785714285714285
+          }
+        },
+        {
+          "threshold": 0.82,
           "predicted": 18,
           "tp": 17,
           "fp": 1,
           "fn": 18,
           "precision": 0.9444444444444444,
           "recall": 0.4857142857142857,
-          "f1": 0.6415094339622641
-        },
-        {
-          "threshold": 0.74,
-          "predicted": 22,
-          "tp": 18,
-          "fp": 4,
-          "fn": 17,
-          "precision": 0.8181818181818182,
-          "recall": 0.5142857142857142,
-          "f1": 0.6315789473684209
-        },
-        {
-          "threshold": 0.82,
-          "predicted": 17,
-          "tp": 16,
-          "fp": 1,
-          "fn": 19,
-          "precision": 0.9411764705882353,
-          "recall": 0.45714285714285713,
-          "f1": 0.6153846153846154
+          "f1": 0.6415094339622641,
+          "tiers": {
+            "exact": {
+              "predicted": 15,
+              "tp": 15,
+              "fp": 0,
+              "precision": 1.0,
+              "positive_share": 0.42857142857142855
+            },
+            "traditional_near": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "hybrid_confirmed": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "semantic_high_confidence": {
+              "predicted": 3,
+              "tp": 2,
+              "fp": 1,
+              "precision": 0.6666666666666666,
+              "positive_share": 0.05714285714285714
+            },
+            "semantic_review": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            }
+          },
+          "visible": {
+            "predicted": 18,
+            "tp": 17,
+            "fp": 1,
+            "fn": 18,
+            "precision": 0.9444444444444444,
+            "recall": 0.4857142857142857,
+            "f1": 0.6415094339622641
+          }
         },
         {
           "threshold": 0.84,
+          "predicted": 16,
+          "tp": 16,
+          "fp": 0,
+          "fn": 19,
+          "precision": 1.0,
+          "recall": 0.45714285714285713,
+          "f1": 0.6274509803921569,
+          "tiers": {
+            "exact": {
+              "predicted": 15,
+              "tp": 15,
+              "fp": 0,
+              "precision": 1.0,
+              "positive_share": 0.42857142857142855
+            },
+            "traditional_near": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "hybrid_confirmed": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "semantic_high_confidence": {
+              "predicted": 1,
+              "tp": 1,
+              "fp": 0,
+              "precision": 1.0,
+              "positive_share": 0.02857142857142857
+            },
+            "semantic_review": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            }
+          },
+          "visible": {
+            "predicted": 16,
+            "tp": 16,
+            "fp": 0,
+            "fn": 19,
+            "precision": 1.0,
+            "recall": 0.45714285714285713,
+            "f1": 0.6274509803921569
+          }
+        },
+        {
+          "threshold": 0.86,
           "predicted": 15,
           "tp": 15,
           "fp": 0,
           "fn": 20,
           "precision": 1.0,
           "recall": 0.42857142857142855,
-          "f1": 0.6
-        },
-        {
-          "threshold": 0.86,
-          "predicted": 14,
-          "tp": 14,
-          "fp": 0,
-          "fn": 21,
-          "precision": 1.0,
-          "recall": 0.4,
-          "f1": 0.5714285714285715
+          "f1": 0.6,
+          "tiers": {
+            "exact": {
+              "predicted": 15,
+              "tp": 15,
+              "fp": 0,
+              "precision": 1.0,
+              "positive_share": 0.42857142857142855
+            },
+            "traditional_near": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "hybrid_confirmed": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "semantic_high_confidence": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "semantic_review": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            }
+          },
+          "visible": {
+            "predicted": 15,
+            "tp": 15,
+            "fp": 0,
+            "fn": 20,
+            "precision": 1.0,
+            "recall": 0.42857142857142855,
+            "f1": 0.6
+          }
         },
         {
           "threshold": 0.88,
-          "predicted": 14,
-          "tp": 14,
+          "predicted": 15,
+          "tp": 15,
           "fp": 0,
-          "fn": 21,
+          "fn": 20,
           "precision": 1.0,
-          "recall": 0.4,
-          "f1": 0.5714285714285715
+          "recall": 0.42857142857142855,
+          "f1": 0.6,
+          "tiers": {
+            "exact": {
+              "predicted": 15,
+              "tp": 15,
+              "fp": 0,
+              "precision": 1.0,
+              "positive_share": 0.42857142857142855
+            },
+            "traditional_near": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "hybrid_confirmed": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "semantic_high_confidence": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "semantic_review": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            }
+          },
+          "visible": {
+            "predicted": 15,
+            "tp": 15,
+            "fp": 0,
+            "fn": 20,
+            "precision": 1.0,
+            "recall": 0.42857142857142855,
+            "f1": 0.6
+          }
         },
         {
           "threshold": 0.9,
-          "predicted": 14,
-          "tp": 14,
+          "predicted": 15,
+          "tp": 15,
           "fp": 0,
-          "fn": 21,
+          "fn": 20,
           "precision": 1.0,
-          "recall": 0.4,
-          "f1": 0.5714285714285715
+          "recall": 0.42857142857142855,
+          "f1": 0.6,
+          "tiers": {
+            "exact": {
+              "predicted": 15,
+              "tp": 15,
+              "fp": 0,
+              "precision": 1.0,
+              "positive_share": 0.42857142857142855
+            },
+            "traditional_near": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "hybrid_confirmed": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "semantic_high_confidence": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "semantic_review": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            }
+          },
+          "visible": {
+            "predicted": 15,
+            "tp": 15,
+            "fp": 0,
+            "fn": 20,
+            "precision": 1.0,
+            "recall": 0.42857142857142855,
+            "f1": 0.6
+          }
         },
         {
           "threshold": 0.92,
-          "predicted": 14,
-          "tp": 14,
+          "predicted": 15,
+          "tp": 15,
           "fp": 0,
-          "fn": 21,
+          "fn": 20,
           "precision": 1.0,
-          "recall": 0.4,
-          "f1": 0.5714285714285715
+          "recall": 0.42857142857142855,
+          "f1": 0.6,
+          "tiers": {
+            "exact": {
+              "predicted": 15,
+              "tp": 15,
+              "fp": 0,
+              "precision": 1.0,
+              "positive_share": 0.42857142857142855
+            },
+            "traditional_near": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "hybrid_confirmed": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "semantic_high_confidence": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "semantic_review": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            }
+          },
+          "visible": {
+            "predicted": 15,
+            "tp": 15,
+            "fp": 0,
+            "fn": 20,
+            "precision": 1.0,
+            "recall": 0.42857142857142855,
+            "f1": 0.6
+          }
         },
         {
           "threshold": 0.94,
-          "predicted": 14,
-          "tp": 14,
+          "predicted": 15,
+          "tp": 15,
           "fp": 0,
-          "fn": 21,
+          "fn": 20,
           "precision": 1.0,
-          "recall": 0.4,
-          "f1": 0.5714285714285715
+          "recall": 0.42857142857142855,
+          "f1": 0.6,
+          "tiers": {
+            "exact": {
+              "predicted": 15,
+              "tp": 15,
+              "fp": 0,
+              "precision": 1.0,
+              "positive_share": 0.42857142857142855
+            },
+            "traditional_near": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "hybrid_confirmed": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "semantic_high_confidence": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "semantic_review": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            }
+          },
+          "visible": {
+            "predicted": 15,
+            "tp": 15,
+            "fp": 0,
+            "fn": 20,
+            "precision": 1.0,
+            "recall": 0.42857142857142855,
+            "f1": 0.6
+          }
         },
         {
           "threshold": 0.96,
-          "predicted": 14,
-          "tp": 14,
+          "predicted": 15,
+          "tp": 15,
           "fp": 0,
-          "fn": 21,
+          "fn": 20,
           "precision": 1.0,
-          "recall": 0.4,
-          "f1": 0.5714285714285715
+          "recall": 0.42857142857142855,
+          "f1": 0.6,
+          "tiers": {
+            "exact": {
+              "predicted": 15,
+              "tp": 15,
+              "fp": 0,
+              "precision": 1.0,
+              "positive_share": 0.42857142857142855
+            },
+            "traditional_near": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "hybrid_confirmed": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "semantic_high_confidence": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "semantic_review": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            }
+          },
+          "visible": {
+            "predicted": 15,
+            "tp": 15,
+            "fp": 0,
+            "fn": 20,
+            "precision": 1.0,
+            "recall": 0.42857142857142855,
+            "f1": 0.6
+          }
         },
         {
           "threshold": 0.68,
-          "predicted": 52,
-          "tp": 24,
+          "predicted": 53,
+          "tp": 25,
           "fp": 28,
-          "fn": 11,
-          "precision": 0.46153846153846156,
-          "recall": 0.6857142857142857,
-          "f1": 0.5517241379310346
+          "fn": 10,
+          "precision": 0.4716981132075472,
+          "recall": 0.7142857142857143,
+          "f1": 0.5681818181818181,
+          "tiers": {
+            "exact": {
+              "predicted": 15,
+              "tp": 15,
+              "fp": 0,
+              "precision": 1.0,
+              "positive_share": 0.42857142857142855
+            },
+            "traditional_near": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "hybrid_confirmed": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "semantic_high_confidence": {
+              "predicted": 19,
+              "tp": 8,
+              "fp": 11,
+              "precision": 0.42105263157894735,
+              "positive_share": 0.22857142857142856
+            },
+            "semantic_review": {
+              "predicted": 19,
+              "tp": 2,
+              "fp": 17,
+              "precision": 0.10526315789473684,
+              "positive_share": 0.05714285714285714
+            }
+          },
+          "visible": {
+            "predicted": 34,
+            "tp": 23,
+            "fp": 11,
+            "fn": 12,
+            "precision": 0.6764705882352942,
+            "recall": 0.6571428571428571,
+            "f1": 0.6666666666666666
+          }
         },
         {
           "threshold": 0.66,
-          "predicted": 66,
-          "tp": 24,
+          "predicted": 67,
+          "tp": 25,
           "fp": 42,
-          "fn": 11,
-          "precision": 0.36363636363636365,
-          "recall": 0.6857142857142857,
-          "f1": 0.4752475247524753
+          "fn": 10,
+          "precision": 0.373134328358209,
+          "recall": 0.7142857142857143,
+          "f1": 0.49019607843137253,
+          "tiers": {
+            "exact": {
+              "predicted": 15,
+              "tp": 15,
+              "fp": 0,
+              "precision": 1.0,
+              "positive_share": 0.42857142857142855
+            },
+            "traditional_near": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "hybrid_confirmed": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "semantic_high_confidence": {
+              "predicted": 23,
+              "tp": 8,
+              "fp": 15,
+              "precision": 0.34782608695652173,
+              "positive_share": 0.22857142857142856
+            },
+            "semantic_review": {
+              "predicted": 29,
+              "tp": 2,
+              "fp": 27,
+              "precision": 0.06896551724137931,
+              "positive_share": 0.05714285714285714
+            }
+          },
+          "visible": {
+            "predicted": 38,
+            "tp": 23,
+            "fp": 15,
+            "fn": 12,
+            "precision": 0.6052631578947368,
+            "recall": 0.6571428571428571,
+            "f1": 0.6301369863013698
+          }
         },
         {
           "threshold": 0.64,
-          "predicted": 85,
-          "tp": 25,
+          "predicted": 86,
+          "tp": 26,
           "fp": 60,
-          "fn": 10,
-          "precision": 0.29411764705882354,
-          "recall": 0.7142857142857143,
-          "f1": 0.4166666666666667
+          "fn": 9,
+          "precision": 0.3023255813953488,
+          "recall": 0.7428571428571429,
+          "f1": 0.42975206611570244,
+          "tiers": {
+            "exact": {
+              "predicted": 15,
+              "tp": 15,
+              "fp": 0,
+              "precision": 1.0,
+              "positive_share": 0.42857142857142855
+            },
+            "traditional_near": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "hybrid_confirmed": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "semantic_high_confidence": {
+              "predicted": 33,
+              "tp": 9,
+              "fp": 24,
+              "precision": 0.2727272727272727,
+              "positive_share": 0.2571428571428571
+            },
+            "semantic_review": {
+              "predicted": 38,
+              "tp": 2,
+              "fp": 36,
+              "precision": 0.05263157894736842,
+              "positive_share": 0.05714285714285714
+            }
+          },
+          "visible": {
+            "predicted": 48,
+            "tp": 24,
+            "fp": 24,
+            "fn": 11,
+            "precision": 0.5,
+            "recall": 0.6857142857142857,
+            "f1": 0.5783132530120482
+          }
         },
         {
           "threshold": 0.62,
-          "predicted": 102,
-          "tp": 25,
+          "predicted": 103,
+          "tp": 26,
           "fp": 77,
-          "fn": 10,
-          "precision": 0.24509803921568626,
-          "recall": 0.7142857142857143,
-          "f1": 0.364963503649635
+          "fn": 9,
+          "precision": 0.2524271844660194,
+          "recall": 0.7428571428571429,
+          "f1": 0.37681159420289856,
+          "tiers": {
+            "exact": {
+              "predicted": 15,
+              "tp": 15,
+              "fp": 0,
+              "precision": 1.0,
+              "positive_share": 0.42857142857142855
+            },
+            "traditional_near": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "hybrid_confirmed": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "semantic_high_confidence": {
+              "predicted": 43,
+              "tp": 9,
+              "fp": 34,
+              "precision": 0.20930232558139536,
+              "positive_share": 0.2571428571428571
+            },
+            "semantic_review": {
+              "predicted": 45,
+              "tp": 2,
+              "fp": 43,
+              "precision": 0.044444444444444446,
+              "positive_share": 0.05714285714285714
+            }
+          },
+          "visible": {
+            "predicted": 58,
+            "tp": 24,
+            "fp": 34,
+            "fn": 11,
+            "precision": 0.41379310344827586,
+            "recall": 0.6857142857142857,
+            "f1": 0.5161290322580646
+          }
         },
         {
           "threshold": 0.6,
-          "predicted": 137,
-          "tp": 25,
+          "predicted": 138,
+          "tp": 26,
           "fp": 112,
-          "fn": 10,
-          "precision": 0.18248175182481752,
-          "recall": 0.7142857142857143,
-          "f1": 0.29069767441860467
+          "fn": 9,
+          "precision": 0.18840579710144928,
+          "recall": 0.7428571428571429,
+          "f1": 0.300578034682081,
+          "tiers": {
+            "exact": {
+              "predicted": 15,
+              "tp": 15,
+              "fp": 0,
+              "precision": 1.0,
+              "positive_share": 0.42857142857142855
+            },
+            "traditional_near": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "hybrid_confirmed": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "semantic_high_confidence": {
+              "predicted": 55,
+              "tp": 9,
+              "fp": 46,
+              "precision": 0.16363636363636364,
+              "positive_share": 0.2571428571428571
+            },
+            "semantic_review": {
+              "predicted": 68,
+              "tp": 2,
+              "fp": 66,
+              "precision": 0.029411764705882353,
+              "positive_share": 0.05714285714285714
+            }
+          },
+          "visible": {
+            "predicted": 70,
+            "tp": 24,
+            "fp": 46,
+            "fn": 11,
+            "precision": 0.34285714285714286,
+            "recall": 0.6857142857142857,
+            "f1": 0.45714285714285724
+          }
         },
         {
           "threshold": 0.58,
-          "predicted": 170,
-          "tp": 25,
+          "predicted": 171,
+          "tp": 26,
           "fp": 145,
-          "fn": 10,
-          "precision": 0.14705882352941177,
-          "recall": 0.7142857142857143,
-          "f1": 0.24390243902439024
+          "fn": 9,
+          "precision": 0.15204678362573099,
+          "recall": 0.7428571428571429,
+          "f1": 0.2524271844660194,
+          "tiers": {
+            "exact": {
+              "predicted": 15,
+              "tp": 15,
+              "fp": 0,
+              "precision": 1.0,
+              "positive_share": 0.42857142857142855
+            },
+            "traditional_near": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "hybrid_confirmed": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "semantic_high_confidence": {
+              "predicted": 67,
+              "tp": 9,
+              "fp": 58,
+              "precision": 0.13432835820895522,
+              "positive_share": 0.2571428571428571
+            },
+            "semantic_review": {
+              "predicted": 89,
+              "tp": 2,
+              "fp": 87,
+              "precision": 0.02247191011235955,
+              "positive_share": 0.05714285714285714
+            }
+          },
+          "visible": {
+            "predicted": 82,
+            "tp": 24,
+            "fp": 58,
+            "fn": 11,
+            "precision": 0.2926829268292683,
+            "recall": 0.6857142857142857,
+            "f1": 0.41025641025641024
+          }
         },
         {
           "threshold": 0.56,
-          "predicted": 233,
-          "tp": 26,
+          "predicted": 234,
+          "tp": 27,
           "fp": 207,
-          "fn": 9,
-          "precision": 0.11158798283261803,
-          "recall": 0.7428571428571429,
-          "f1": 0.19402985074626866
+          "fn": 8,
+          "precision": 0.11538461538461539,
+          "recall": 0.7714285714285715,
+          "f1": 0.2007434944237918,
+          "tiers": {
+            "exact": {
+              "predicted": 15,
+              "tp": 15,
+              "fp": 0,
+              "precision": 1.0,
+              "positive_share": 0.42857142857142855
+            },
+            "traditional_near": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "hybrid_confirmed": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "semantic_high_confidence": {
+              "predicted": 95,
+              "tp": 9,
+              "fp": 86,
+              "precision": 0.09473684210526316,
+              "positive_share": 0.2571428571428571
+            },
+            "semantic_review": {
+              "predicted": 124,
+              "tp": 3,
+              "fp": 121,
+              "precision": 0.024193548387096774,
+              "positive_share": 0.08571428571428572
+            }
+          },
+          "visible": {
+            "predicted": 110,
+            "tp": 24,
+            "fp": 86,
+            "fn": 11,
+            "precision": 0.21818181818181817,
+            "recall": 0.6857142857142857,
+            "f1": 0.3310344827586207
+          }
         },
         {
           "threshold": 0.54,
-          "predicted": 312,
-          "tp": 26,
+          "predicted": 313,
+          "tp": 27,
           "fp": 286,
-          "fn": 9,
-          "precision": 0.08333333333333333,
-          "recall": 0.7428571428571429,
-          "f1": 0.14985590778097982
+          "fn": 8,
+          "precision": 0.08626198083067092,
+          "recall": 0.7714285714285715,
+          "f1": 0.15517241379310345,
+          "tiers": {
+            "exact": {
+              "predicted": 15,
+              "tp": 15,
+              "fp": 0,
+              "precision": 1.0,
+              "positive_share": 0.42857142857142855
+            },
+            "traditional_near": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "hybrid_confirmed": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "semantic_high_confidence": {
+              "predicted": 129,
+              "tp": 9,
+              "fp": 120,
+              "precision": 0.06976744186046512,
+              "positive_share": 0.2571428571428571
+            },
+            "semantic_review": {
+              "predicted": 169,
+              "tp": 3,
+              "fp": 166,
+              "precision": 0.01775147928994083,
+              "positive_share": 0.08571428571428572
+            }
+          },
+          "visible": {
+            "predicted": 144,
+            "tp": 24,
+            "fp": 120,
+            "fn": 11,
+            "precision": 0.16666666666666666,
+            "recall": 0.6857142857142857,
+            "f1": 0.2681564245810056
+          }
         },
         {
           "threshold": 0.52,
-          "predicted": 379,
-          "tp": 26,
+          "predicted": 380,
+          "tp": 27,
           "fp": 353,
-          "fn": 9,
-          "precision": 0.06860158311345646,
-          "recall": 0.7428571428571429,
-          "f1": 0.12560386473429952
+          "fn": 8,
+          "precision": 0.07105263157894737,
+          "recall": 0.7714285714285715,
+          "f1": 0.13012048192771083,
+          "tiers": {
+            "exact": {
+              "predicted": 15,
+              "tp": 15,
+              "fp": 0,
+              "precision": 1.0,
+              "positive_share": 0.42857142857142855
+            },
+            "traditional_near": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "hybrid_confirmed": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "semantic_high_confidence": {
+              "predicted": 156,
+              "tp": 9,
+              "fp": 147,
+              "precision": 0.057692307692307696,
+              "positive_share": 0.2571428571428571
+            },
+            "semantic_review": {
+              "predicted": 209,
+              "tp": 3,
+              "fp": 206,
+              "precision": 0.014354066985645933,
+              "positive_share": 0.08571428571428572
+            }
+          },
+          "visible": {
+            "predicted": 171,
+            "tp": 24,
+            "fp": 147,
+            "fn": 11,
+            "precision": 0.14035087719298245,
+            "recall": 0.6857142857142857,
+            "f1": 0.23300970873786406
+          }
         },
         {
           "threshold": 0.5,
-          "predicted": 485,
-          "tp": 26,
+          "predicted": 486,
+          "tp": 27,
           "fp": 459,
-          "fn": 9,
-          "precision": 0.05360824742268041,
-          "recall": 0.7428571428571429,
-          "f1": 0.09999999999999999
+          "fn": 8,
+          "precision": 0.05555555555555555,
+          "recall": 0.7714285714285715,
+          "f1": 0.10364683301343569,
+          "tiers": {
+            "exact": {
+              "predicted": 15,
+              "tp": 15,
+              "fp": 0,
+              "precision": 1.0,
+              "positive_share": 0.42857142857142855
+            },
+            "traditional_near": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "hybrid_confirmed": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "semantic_high_confidence": {
+              "predicted": 187,
+              "tp": 9,
+              "fp": 178,
+              "precision": 0.0481283422459893,
+              "positive_share": 0.2571428571428571
+            },
+            "semantic_review": {
+              "predicted": 284,
+              "tp": 3,
+              "fp": 281,
+              "precision": 0.01056338028169014,
+              "positive_share": 0.08571428571428572
+            }
+          },
+          "visible": {
+            "predicted": 202,
+            "tp": 24,
+            "fp": 178,
+            "fn": 11,
+            "precision": 0.1188118811881188,
+            "recall": 0.6857142857142857,
+            "f1": 0.20253164556962022
+          }
         },
         {
           "threshold": 0.48,
-          "predicted": 580,
-          "tp": 26,
+          "predicted": 581,
+          "tp": 27,
           "fp": 554,
-          "fn": 9,
-          "precision": 0.04482758620689655,
-          "recall": 0.7428571428571429,
-          "f1": 0.08455284552845528
+          "fn": 8,
+          "precision": 0.04647160068846816,
+          "recall": 0.7714285714285715,
+          "f1": 0.08766233766233766,
+          "tiers": {
+            "exact": {
+              "predicted": 15,
+              "tp": 15,
+              "fp": 0,
+              "precision": 1.0,
+              "positive_share": 0.42857142857142855
+            },
+            "traditional_near": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "hybrid_confirmed": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "semantic_high_confidence": {
+              "predicted": 224,
+              "tp": 9,
+              "fp": 215,
+              "precision": 0.04017857142857143,
+              "positive_share": 0.2571428571428571
+            },
+            "semantic_review": {
+              "predicted": 342,
+              "tp": 3,
+              "fp": 339,
+              "precision": 0.008771929824561403,
+              "positive_share": 0.08571428571428572
+            }
+          },
+          "visible": {
+            "predicted": 239,
+            "tp": 24,
+            "fp": 215,
+            "fn": 11,
+            "precision": 0.100418410041841,
+            "recall": 0.6857142857142857,
+            "f1": 0.1751824817518248
+          }
         },
         {
           "threshold": 0.46,
-          "predicted": 691,
-          "tp": 26,
+          "predicted": 692,
+          "tp": 27,
           "fp": 665,
-          "fn": 9,
-          "precision": 0.03762662807525326,
-          "recall": 0.7428571428571429,
-          "f1": 0.07162534435261708
+          "fn": 8,
+          "precision": 0.03901734104046243,
+          "recall": 0.7714285714285715,
+          "f1": 0.07427785419532325,
+          "tiers": {
+            "exact": {
+              "predicted": 15,
+              "tp": 15,
+              "fp": 0,
+              "precision": 1.0,
+              "positive_share": 0.42857142857142855
+            },
+            "traditional_near": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "hybrid_confirmed": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "semantic_high_confidence": {
+              "predicted": 271,
+              "tp": 9,
+              "fp": 262,
+              "precision": 0.033210332103321034,
+              "positive_share": 0.2571428571428571
+            },
+            "semantic_review": {
+              "predicted": 406,
+              "tp": 3,
+              "fp": 403,
+              "precision": 0.007389162561576354,
+              "positive_share": 0.08571428571428572
+            }
+          },
+          "visible": {
+            "predicted": 286,
+            "tp": 24,
+            "fp": 262,
+            "fn": 11,
+            "precision": 0.08391608391608392,
+            "recall": 0.6857142857142857,
+            "f1": 0.14953271028037382
+          }
         },
         {
           "threshold": 0.44,
-          "predicted": 806,
-          "tp": 26,
+          "predicted": 807,
+          "tp": 27,
           "fp": 780,
-          "fn": 9,
-          "precision": 0.03225806451612903,
-          "recall": 0.7428571428571429,
-          "f1": 0.061831153388822835
+          "fn": 8,
+          "precision": 0.03345724907063197,
+          "recall": 0.7714285714285715,
+          "f1": 0.06413301662707838,
+          "tiers": {
+            "exact": {
+              "predicted": 15,
+              "tp": 15,
+              "fp": 0,
+              "precision": 1.0,
+              "positive_share": 0.42857142857142855
+            },
+            "traditional_near": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "hybrid_confirmed": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "semantic_high_confidence": {
+              "predicted": 306,
+              "tp": 9,
+              "fp": 297,
+              "precision": 0.029411764705882353,
+              "positive_share": 0.2571428571428571
+            },
+            "semantic_review": {
+              "predicted": 486,
+              "tp": 3,
+              "fp": 483,
+              "precision": 0.006172839506172839,
+              "positive_share": 0.08571428571428572
+            }
+          },
+          "visible": {
+            "predicted": 321,
+            "tp": 24,
+            "fp": 297,
+            "fn": 11,
+            "precision": 0.07476635514018691,
+            "recall": 0.6857142857142857,
+            "f1": 0.1348314606741573
+          }
         },
         {
           "threshold": 0.42,
-          "predicted": 983,
-          "tp": 26,
+          "predicted": 984,
+          "tp": 27,
           "fp": 957,
-          "fn": 9,
-          "precision": 0.026449643947100712,
-          "recall": 0.7428571428571429,
-          "f1": 0.05108055009823183
+          "fn": 8,
+          "precision": 0.027439024390243903,
+          "recall": 0.7714285714285715,
+          "f1": 0.05299313052011776,
+          "tiers": {
+            "exact": {
+              "predicted": 15,
+              "tp": 15,
+              "fp": 0,
+              "precision": 1.0,
+              "positive_share": 0.42857142857142855
+            },
+            "traditional_near": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "hybrid_confirmed": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "semantic_high_confidence": {
+              "predicted": 365,
+              "tp": 9,
+              "fp": 356,
+              "precision": 0.024657534246575342,
+              "positive_share": 0.2571428571428571
+            },
+            "semantic_review": {
+              "predicted": 604,
+              "tp": 3,
+              "fp": 601,
+              "precision": 0.004966887417218543,
+              "positive_share": 0.08571428571428572
+            }
+          },
+          "visible": {
+            "predicted": 380,
+            "tp": 24,
+            "fp": 356,
+            "fn": 11,
+            "precision": 0.06315789473684211,
+            "recall": 0.6857142857142857,
+            "f1": 0.11566265060240966
+          }
         },
         {
           "threshold": 0.4,
-          "predicted": 1146,
-          "tp": 26,
+          "predicted": 1147,
+          "tp": 27,
           "fp": 1120,
-          "fn": 9,
-          "precision": 0.02268760907504363,
-          "recall": 0.7428571428571429,
-          "f1": 0.04403048264182896
+          "fn": 8,
+          "precision": 0.023539668700959023,
+          "recall": 0.7714285714285715,
+          "f1": 0.045685279187817264,
+          "tiers": {
+            "exact": {
+              "predicted": 15,
+              "tp": 15,
+              "fp": 0,
+              "precision": 1.0,
+              "positive_share": 0.42857142857142855
+            },
+            "traditional_near": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "hybrid_confirmed": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "semantic_high_confidence": {
+              "predicted": 427,
+              "tp": 9,
+              "fp": 418,
+              "precision": 0.02107728337236534,
+              "positive_share": 0.2571428571428571
+            },
+            "semantic_review": {
+              "predicted": 705,
+              "tp": 3,
+              "fp": 702,
+              "precision": 0.00425531914893617,
+              "positive_share": 0.08571428571428572
+            }
+          },
+          "visible": {
+            "predicted": 442,
+            "tp": 24,
+            "fp": 418,
+            "fn": 11,
+            "precision": 0.05429864253393665,
+            "recall": 0.6857142857142857,
+            "f1": 0.10062893081761005
+          }
         }
       ]
     },
@@ -433,26 +1841,72 @@
       "selected_threshold": 0.82,
       "selected_metrics": {
         "threshold": 0.82,
-        "predicted": 22,
-        "tp": 21,
+        "predicted": 23,
+        "tp": 22,
         "fp": 1,
-        "fn": 14,
-        "precision": 0.9545454545454546,
-        "recall": 0.6,
-        "f1": 0.7368421052631579
+        "fn": 13,
+        "precision": 0.9565217391304348,
+        "recall": 0.6285714285714286,
+        "f1": 0.7586206896551724,
+        "tiers": {
+          "exact": {
+            "predicted": 15,
+            "tp": 15,
+            "fp": 0,
+            "precision": 1.0,
+            "positive_share": 0.42857142857142855
+          },
+          "traditional_near": {
+            "predicted": 0,
+            "tp": 0,
+            "fp": 0,
+            "precision": null,
+            "positive_share": 0.0
+          },
+          "hybrid_confirmed": {
+            "predicted": 0,
+            "tp": 0,
+            "fp": 0,
+            "precision": null,
+            "positive_share": 0.0
+          },
+          "semantic_high_confidence": {
+            "predicted": 8,
+            "tp": 7,
+            "fp": 1,
+            "precision": 0.875,
+            "positive_share": 0.2
+          },
+          "semantic_review": {
+            "predicted": 0,
+            "tp": 0,
+            "fp": 0,
+            "precision": null,
+            "positive_share": 0.0
+          }
+        },
+        "visible": {
+          "predicted": 23,
+          "tp": 22,
+          "fp": 1,
+          "fn": 13,
+          "precision": 0.9565217391304348,
+          "recall": 0.6285714285714286,
+          "f1": 0.7586206896551724
+        }
       },
       "calibration": {
         "model": "unsloth/embeddinggemma-300m",
         "resolved_revision": "bfa3c846ac738e62aa61806ef9112d34acb1dc5a",
         "embedding_pipeline_schema": 5,
-        "embedding_runtime_identity": "e7aed934f076717fc73f",
+        "embedding_runtime_identity": "263d5c868bf6f139a43a",
         "runtime_versions": {
           "python": "3.12.13",
           "torch": "2.13.0",
           "transformers": "5.14.1",
-          "sentence-transformers": "5.6.1"
+          "sentence-transformers": "5.7.0"
         },
-        "codedupes_version": "0.4.1.dev102+gf31fa48e1",
+        "codedupes_version": "0.5.3",
         "mode": "duplicate",
         "semantic_task": "semantic-similarity",
         "encode_plan": {
@@ -465,8 +1919,9 @@
         "embedding_space": {
           "model_name": "unsloth/embeddinggemma-300m",
           "resolved_revision": "bfa3c846ac738e62aa61806ef9112d34acb1dc5a",
-          "runtime_variant": "route=symmetric\u0000prompt_set=1\u0000prompt=task: sentence similarity | query: \u0000\u0000\u0000e7aed934f076717fc73f\u0000trc=0",
-          "source_commit": null
+          "runtime_variant": "route=symmetric\u0000prompt_set=1\u0000prompt=task: sentence similarity | query: \u0000\u0000\u0000263d5c868bf6f139a43a\u0000trc=0",
+          "source_commit": null,
+          "search_document": "source"
         },
         "dimension": 768,
         "normalized": true,
@@ -484,342 +1939,1703 @@
         "labels_path": "test_fixtures/polyglot_calibration/labels/javascript.json",
         "labels_sha256": "e71d07a961e1cf89bb8cc91542bdf7c061864a17f699de1bdba70d29a0e7ea20",
         "output_policy": "hybrid_duplicates",
+        "visible_policy": {
+          "excluded_tiers": [
+            "semantic_review"
+          ],
+          "metrics_field": "visible"
+        },
+        "corroboration": {
+          "weak_identifier_jaccard_min": 0.0,
+          "statement_ratio_min": 0.2,
+          "high_confidence_gates": {
+            "javascript": null
+          }
+        },
         "selected_at_grid_edge": null,
         "candidate_coverage": {
           "labeled_positive_pairs": 35,
           "scoreable_positive_pairs": 26,
-          "traditional_recovered_pairs": 0,
-          "unreachable_positive_pairs": 9,
-          "recall_ceiling": 0.7428571428571429
+          "traditional_recovered_pairs": 1,
+          "unreachable_positive_pairs": 8,
+          "recall_ceiling": 0.7714285714285715
         },
         "selected_category_recall": {
           "exact": {
             "labeled": 4,
             "detected": 4,
-            "recall": 1.0
+            "recall": 1.0,
+            "visible_detected": 4,
+            "visible_recall": 1.0
           },
           "reformat": {
             "labeled": 3,
             "detected": 3,
-            "recall": 1.0
+            "recall": 1.0,
+            "visible_detected": 3,
+            "visible_recall": 1.0
           },
           "doc_variant": {
             "labeled": 3,
             "detected": 3,
-            "recall": 1.0
+            "recall": 1.0,
+            "visible_detected": 3,
+            "visible_recall": 1.0
           },
           "renamed": {
             "labeled": 5,
-            "detected": 4,
-            "recall": 0.8
+            "detected": 5,
+            "recall": 1.0,
+            "visible_detected": 5,
+            "visible_recall": 1.0
           },
           "near_rename": {
             "labeled": 8,
             "detected": 4,
-            "recall": 0.5
+            "recall": 0.5,
+            "visible_detected": 4,
+            "visible_recall": 0.5
           },
           "near_translation": {
             "labeled": 8,
             "detected": 2,
-            "recall": 0.25
+            "recall": 0.25,
+            "visible_detected": 2,
+            "visible_recall": 0.25
           },
           "near_restructure": {
             "labeled": 4,
             "detected": 1,
-            "recall": 0.25
+            "recall": 0.25,
+            "visible_detected": 1,
+            "visible_recall": 0.25
           }
         }
       },
       "rows": [
         {
           "threshold": 0.82,
-          "predicted": 22,
-          "tp": 21,
+          "predicted": 23,
+          "tp": 22,
           "fp": 1,
-          "fn": 14,
-          "precision": 0.9545454545454546,
-          "recall": 0.6,
-          "f1": 0.7368421052631579
+          "fn": 13,
+          "precision": 0.9565217391304348,
+          "recall": 0.6285714285714286,
+          "f1": 0.7586206896551724,
+          "tiers": {
+            "exact": {
+              "predicted": 15,
+              "tp": 15,
+              "fp": 0,
+              "precision": 1.0,
+              "positive_share": 0.42857142857142855
+            },
+            "traditional_near": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "hybrid_confirmed": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "semantic_high_confidence": {
+              "predicted": 8,
+              "tp": 7,
+              "fp": 1,
+              "precision": 0.875,
+              "positive_share": 0.2
+            },
+            "semantic_review": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            }
+          },
+          "visible": {
+            "predicted": 23,
+            "tp": 22,
+            "fp": 1,
+            "fn": 13,
+            "precision": 0.9565217391304348,
+            "recall": 0.6285714285714286,
+            "f1": 0.7586206896551724
+          }
         },
         {
           "threshold": 0.78,
-          "predicted": 28,
-          "tp": 23,
+          "predicted": 29,
+          "tp": 24,
           "fp": 5,
-          "fn": 12,
-          "precision": 0.8214285714285714,
-          "recall": 0.6571428571428571,
-          "f1": 0.73015873015873
+          "fn": 11,
+          "precision": 0.8275862068965517,
+          "recall": 0.6857142857142857,
+          "f1": 0.75,
+          "tiers": {
+            "exact": {
+              "predicted": 15,
+              "tp": 15,
+              "fp": 0,
+              "precision": 1.0,
+              "positive_share": 0.42857142857142855
+            },
+            "traditional_near": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "hybrid_confirmed": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "semantic_high_confidence": {
+              "predicted": 14,
+              "tp": 9,
+              "fp": 5,
+              "precision": 0.6428571428571429,
+              "positive_share": 0.2571428571428571
+            },
+            "semantic_review": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            }
+          },
+          "visible": {
+            "predicted": 29,
+            "tp": 24,
+            "fp": 5,
+            "fn": 11,
+            "precision": 0.8275862068965517,
+            "recall": 0.6857142857142857,
+            "f1": 0.75
+          }
         },
         {
           "threshold": 0.8,
-          "predicted": 26,
-          "tp": 22,
+          "predicted": 27,
+          "tp": 23,
           "fp": 4,
-          "fn": 13,
-          "precision": 0.8461538461538461,
-          "recall": 0.6285714285714286,
-          "f1": 0.721311475409836
+          "fn": 12,
+          "precision": 0.8518518518518519,
+          "recall": 0.6571428571428571,
+          "f1": 0.7419354838709677,
+          "tiers": {
+            "exact": {
+              "predicted": 15,
+              "tp": 15,
+              "fp": 0,
+              "precision": 1.0,
+              "positive_share": 0.42857142857142855
+            },
+            "traditional_near": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "hybrid_confirmed": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "semantic_high_confidence": {
+              "predicted": 12,
+              "tp": 8,
+              "fp": 4,
+              "precision": 0.6666666666666666,
+              "positive_share": 0.22857142857142856
+            },
+            "semantic_review": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            }
+          },
+          "visible": {
+            "predicted": 27,
+            "tp": 23,
+            "fp": 4,
+            "fn": 12,
+            "precision": 0.8518518518518519,
+            "recall": 0.6571428571428571,
+            "f1": 0.7419354838709677
+          }
         },
         {
           "threshold": 0.84,
-          "predicted": 19,
-          "tp": 19,
+          "predicted": 20,
+          "tp": 20,
           "fp": 0,
-          "fn": 16,
+          "fn": 15,
           "precision": 1.0,
-          "recall": 0.5428571428571428,
-          "f1": 0.7037037037037037
+          "recall": 0.5714285714285714,
+          "f1": 0.7272727272727273,
+          "tiers": {
+            "exact": {
+              "predicted": 15,
+              "tp": 15,
+              "fp": 0,
+              "precision": 1.0,
+              "positive_share": 0.42857142857142855
+            },
+            "traditional_near": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "hybrid_confirmed": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "semantic_high_confidence": {
+              "predicted": 5,
+              "tp": 5,
+              "fp": 0,
+              "precision": 1.0,
+              "positive_share": 0.14285714285714285
+            },
+            "semantic_review": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            }
+          },
+          "visible": {
+            "predicted": 20,
+            "tp": 20,
+            "fp": 0,
+            "fn": 15,
+            "precision": 1.0,
+            "recall": 0.5714285714285714,
+            "f1": 0.7272727272727273
+          }
         },
         {
           "threshold": 0.74,
-          "predicted": 39,
-          "tp": 25,
+          "predicted": 40,
+          "tp": 26,
           "fp": 14,
-          "fn": 10,
-          "precision": 0.6410256410256411,
-          "recall": 0.7142857142857143,
-          "f1": 0.6756756756756757
+          "fn": 9,
+          "precision": 0.65,
+          "recall": 0.7428571428571429,
+          "f1": 0.6933333333333334,
+          "tiers": {
+            "exact": {
+              "predicted": 15,
+              "tp": 15,
+              "fp": 0,
+              "precision": 1.0,
+              "positive_share": 0.42857142857142855
+            },
+            "traditional_near": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "hybrid_confirmed": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "semantic_high_confidence": {
+              "predicted": 25,
+              "tp": 11,
+              "fp": 14,
+              "precision": 0.44,
+              "positive_share": 0.3142857142857143
+            },
+            "semantic_review": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            }
+          },
+          "visible": {
+            "predicted": 40,
+            "tp": 26,
+            "fp": 14,
+            "fn": 9,
+            "precision": 0.65,
+            "recall": 0.7428571428571429,
+            "f1": 0.6933333333333334
+          }
         },
         {
           "threshold": 0.76,
-          "predicted": 37,
-          "tp": 24,
+          "predicted": 38,
+          "tp": 25,
           "fp": 13,
-          "fn": 11,
-          "precision": 0.6486486486486487,
-          "recall": 0.6857142857142857,
-          "f1": 0.6666666666666667
+          "fn": 10,
+          "precision": 0.6578947368421053,
+          "recall": 0.7142857142857143,
+          "f1": 0.684931506849315,
+          "tiers": {
+            "exact": {
+              "predicted": 15,
+              "tp": 15,
+              "fp": 0,
+              "precision": 1.0,
+              "positive_share": 0.42857142857142855
+            },
+            "traditional_near": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "hybrid_confirmed": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "semantic_high_confidence": {
+              "predicted": 23,
+              "tp": 10,
+              "fp": 13,
+              "precision": 0.43478260869565216,
+              "positive_share": 0.2857142857142857
+            },
+            "semantic_review": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            }
+          },
+          "visible": {
+            "predicted": 38,
+            "tp": 25,
+            "fp": 13,
+            "fn": 10,
+            "precision": 0.6578947368421053,
+            "recall": 0.7142857142857143,
+            "f1": 0.684931506849315
+          }
         },
         {
           "threshold": 0.86,
+          "predicted": 18,
+          "tp": 18,
+          "fp": 0,
+          "fn": 17,
+          "precision": 1.0,
+          "recall": 0.5142857142857142,
+          "f1": 0.6792452830188679,
+          "tiers": {
+            "exact": {
+              "predicted": 15,
+              "tp": 15,
+              "fp": 0,
+              "precision": 1.0,
+              "positive_share": 0.42857142857142855
+            },
+            "traditional_near": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "hybrid_confirmed": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "semantic_high_confidence": {
+              "predicted": 3,
+              "tp": 3,
+              "fp": 0,
+              "precision": 1.0,
+              "positive_share": 0.08571428571428572
+            },
+            "semantic_review": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            }
+          },
+          "visible": {
+            "predicted": 18,
+            "tp": 18,
+            "fp": 0,
+            "fn": 17,
+            "precision": 1.0,
+            "recall": 0.5142857142857142,
+            "f1": 0.6792452830188679
+          }
+        },
+        {
+          "threshold": 0.72,
+          "predicted": 47,
+          "tp": 27,
+          "fp": 20,
+          "fn": 8,
+          "precision": 0.574468085106383,
+          "recall": 0.7714285714285715,
+          "f1": 0.6585365853658536,
+          "tiers": {
+            "exact": {
+              "predicted": 15,
+              "tp": 15,
+              "fp": 0,
+              "precision": 1.0,
+              "positive_share": 0.42857142857142855
+            },
+            "traditional_near": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "hybrid_confirmed": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "semantic_high_confidence": {
+              "predicted": 32,
+              "tp": 12,
+              "fp": 20,
+              "precision": 0.375,
+              "positive_share": 0.34285714285714286
+            },
+            "semantic_review": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            }
+          },
+          "visible": {
+            "predicted": 47,
+            "tp": 27,
+            "fp": 20,
+            "fn": 8,
+            "precision": 0.574468085106383,
+            "recall": 0.7714285714285715,
+            "f1": 0.6585365853658536
+          }
+        },
+        {
+          "threshold": 0.88,
           "predicted": 17,
           "tp": 17,
           "fp": 0,
           "fn": 18,
           "precision": 1.0,
           "recall": 0.4857142857142857,
-          "f1": 0.6538461538461539
-        },
-        {
-          "threshold": 0.72,
-          "predicted": 46,
-          "tp": 26,
-          "fp": 20,
-          "fn": 9,
-          "precision": 0.5652173913043478,
-          "recall": 0.7428571428571429,
-          "f1": 0.6419753086419753
-        },
-        {
-          "threshold": 0.88,
-          "predicted": 16,
-          "tp": 16,
-          "fp": 0,
-          "fn": 19,
-          "precision": 1.0,
-          "recall": 0.45714285714285713,
-          "f1": 0.6274509803921569
+          "f1": 0.6538461538461539,
+          "tiers": {
+            "exact": {
+              "predicted": 15,
+              "tp": 15,
+              "fp": 0,
+              "precision": 1.0,
+              "positive_share": 0.42857142857142855
+            },
+            "traditional_near": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "hybrid_confirmed": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "semantic_high_confidence": {
+              "predicted": 2,
+              "tp": 2,
+              "fp": 0,
+              "precision": 1.0,
+              "positive_share": 0.05714285714285714
+            },
+            "semantic_review": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            }
+          },
+          "visible": {
+            "predicted": 17,
+            "tp": 17,
+            "fp": 0,
+            "fn": 18,
+            "precision": 1.0,
+            "recall": 0.4857142857142857,
+            "f1": 0.6538461538461539
+          }
         },
         {
           "threshold": 0.9,
+          "predicted": 17,
+          "tp": 17,
+          "fp": 0,
+          "fn": 18,
+          "precision": 1.0,
+          "recall": 0.4857142857142857,
+          "f1": 0.6538461538461539,
+          "tiers": {
+            "exact": {
+              "predicted": 15,
+              "tp": 15,
+              "fp": 0,
+              "precision": 1.0,
+              "positive_share": 0.42857142857142855
+            },
+            "traditional_near": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "hybrid_confirmed": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "semantic_high_confidence": {
+              "predicted": 2,
+              "tp": 2,
+              "fp": 0,
+              "precision": 1.0,
+              "positive_share": 0.05714285714285714
+            },
+            "semantic_review": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            }
+          },
+          "visible": {
+            "predicted": 17,
+            "tp": 17,
+            "fp": 0,
+            "fn": 18,
+            "precision": 1.0,
+            "recall": 0.4857142857142857,
+            "f1": 0.6538461538461539
+          }
+        },
+        {
+          "threshold": 0.92,
           "predicted": 16,
           "tp": 16,
           "fp": 0,
           "fn": 19,
           "precision": 1.0,
           "recall": 0.45714285714285713,
-          "f1": 0.6274509803921569
+          "f1": 0.6274509803921569,
+          "tiers": {
+            "exact": {
+              "predicted": 15,
+              "tp": 15,
+              "fp": 0,
+              "precision": 1.0,
+              "positive_share": 0.42857142857142855
+            },
+            "traditional_near": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "hybrid_confirmed": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "semantic_high_confidence": {
+              "predicted": 1,
+              "tp": 1,
+              "fp": 0,
+              "precision": 1.0,
+              "positive_share": 0.02857142857142857
+            },
+            "semantic_review": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            }
+          },
+          "visible": {
+            "predicted": 16,
+            "tp": 16,
+            "fp": 0,
+            "fn": 19,
+            "precision": 1.0,
+            "recall": 0.45714285714285713,
+            "f1": 0.6274509803921569
+          }
         },
         {
-          "threshold": 0.92,
+          "threshold": 0.94,
           "predicted": 15,
           "tp": 15,
           "fp": 0,
           "fn": 20,
           "precision": 1.0,
           "recall": 0.42857142857142855,
-          "f1": 0.6
-        },
-        {
-          "threshold": 0.94,
-          "predicted": 14,
-          "tp": 14,
-          "fp": 0,
-          "fn": 21,
-          "precision": 1.0,
-          "recall": 0.4,
-          "f1": 0.5714285714285715
+          "f1": 0.6,
+          "tiers": {
+            "exact": {
+              "predicted": 15,
+              "tp": 15,
+              "fp": 0,
+              "precision": 1.0,
+              "positive_share": 0.42857142857142855
+            },
+            "traditional_near": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "hybrid_confirmed": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "semantic_high_confidence": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "semantic_review": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            }
+          },
+          "visible": {
+            "predicted": 15,
+            "tp": 15,
+            "fp": 0,
+            "fn": 20,
+            "precision": 1.0,
+            "recall": 0.42857142857142855,
+            "f1": 0.6
+          }
         },
         {
           "threshold": 0.96,
-          "predicted": 14,
-          "tp": 14,
+          "predicted": 15,
+          "tp": 15,
           "fp": 0,
-          "fn": 21,
+          "fn": 20,
           "precision": 1.0,
-          "recall": 0.4,
-          "f1": 0.5714285714285715
+          "recall": 0.42857142857142855,
+          "f1": 0.6,
+          "tiers": {
+            "exact": {
+              "predicted": 15,
+              "tp": 15,
+              "fp": 0,
+              "precision": 1.0,
+              "positive_share": 0.42857142857142855
+            },
+            "traditional_near": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "hybrid_confirmed": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "semantic_high_confidence": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "semantic_review": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            }
+          },
+          "visible": {
+            "predicted": 15,
+            "tp": 15,
+            "fp": 0,
+            "fn": 20,
+            "precision": 1.0,
+            "recall": 0.42857142857142855,
+            "f1": 0.6
+          }
         },
         {
           "threshold": 0.7,
-          "predicted": 62,
-          "tp": 26,
+          "predicted": 63,
+          "tp": 27,
           "fp": 36,
-          "fn": 9,
-          "precision": 0.41935483870967744,
-          "recall": 0.7428571428571429,
-          "f1": 0.5360824742268042
+          "fn": 8,
+          "precision": 0.42857142857142855,
+          "recall": 0.7714285714285715,
+          "f1": 0.5510204081632654,
+          "tiers": {
+            "exact": {
+              "predicted": 15,
+              "tp": 15,
+              "fp": 0,
+              "precision": 1.0,
+              "positive_share": 0.42857142857142855
+            },
+            "traditional_near": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "hybrid_confirmed": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "semantic_high_confidence": {
+              "predicted": 48,
+              "tp": 12,
+              "fp": 36,
+              "precision": 0.25,
+              "positive_share": 0.34285714285714286
+            },
+            "semantic_review": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            }
+          },
+          "visible": {
+            "predicted": 63,
+            "tp": 27,
+            "fp": 36,
+            "fn": 8,
+            "precision": 0.42857142857142855,
+            "recall": 0.7714285714285715,
+            "f1": 0.5510204081632654
+          }
         },
         {
           "threshold": 0.68,
-          "predicted": 75,
-          "tp": 26,
+          "predicted": 76,
+          "tp": 27,
           "fp": 49,
-          "fn": 9,
-          "precision": 0.3466666666666667,
-          "recall": 0.7428571428571429,
-          "f1": 0.4727272727272728
+          "fn": 8,
+          "precision": 0.35526315789473684,
+          "recall": 0.7714285714285715,
+          "f1": 0.48648648648648646,
+          "tiers": {
+            "exact": {
+              "predicted": 15,
+              "tp": 15,
+              "fp": 0,
+              "precision": 1.0,
+              "positive_share": 0.42857142857142855
+            },
+            "traditional_near": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "hybrid_confirmed": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "semantic_high_confidence": {
+              "predicted": 61,
+              "tp": 12,
+              "fp": 49,
+              "precision": 0.19672131147540983,
+              "positive_share": 0.34285714285714286
+            },
+            "semantic_review": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            }
+          },
+          "visible": {
+            "predicted": 76,
+            "tp": 27,
+            "fp": 49,
+            "fn": 8,
+            "precision": 0.35526315789473684,
+            "recall": 0.7714285714285715,
+            "f1": 0.48648648648648646
+          }
         },
         {
           "threshold": 0.66,
-          "predicted": 94,
-          "tp": 26,
+          "predicted": 95,
+          "tp": 27,
           "fp": 68,
-          "fn": 9,
-          "precision": 0.2765957446808511,
-          "recall": 0.7428571428571429,
-          "f1": 0.40310077519379844
+          "fn": 8,
+          "precision": 0.28421052631578947,
+          "recall": 0.7714285714285715,
+          "f1": 0.4153846153846154,
+          "tiers": {
+            "exact": {
+              "predicted": 15,
+              "tp": 15,
+              "fp": 0,
+              "precision": 1.0,
+              "positive_share": 0.42857142857142855
+            },
+            "traditional_near": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "hybrid_confirmed": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "semantic_high_confidence": {
+              "predicted": 80,
+              "tp": 12,
+              "fp": 68,
+              "precision": 0.15,
+              "positive_share": 0.34285714285714286
+            },
+            "semantic_review": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            }
+          },
+          "visible": {
+            "predicted": 95,
+            "tp": 27,
+            "fp": 68,
+            "fn": 8,
+            "precision": 0.28421052631578947,
+            "recall": 0.7714285714285715,
+            "f1": 0.4153846153846154
+          }
         },
         {
           "threshold": 0.64,
-          "predicted": 130,
-          "tp": 26,
+          "predicted": 131,
+          "tp": 27,
           "fp": 104,
-          "fn": 9,
-          "precision": 0.2,
-          "recall": 0.7428571428571429,
-          "f1": 0.3151515151515152
+          "fn": 8,
+          "precision": 0.20610687022900764,
+          "recall": 0.7714285714285715,
+          "f1": 0.32530120481927716,
+          "tiers": {
+            "exact": {
+              "predicted": 15,
+              "tp": 15,
+              "fp": 0,
+              "precision": 1.0,
+              "positive_share": 0.42857142857142855
+            },
+            "traditional_near": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "hybrid_confirmed": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "semantic_high_confidence": {
+              "predicted": 116,
+              "tp": 12,
+              "fp": 104,
+              "precision": 0.10344827586206896,
+              "positive_share": 0.34285714285714286
+            },
+            "semantic_review": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            }
+          },
+          "visible": {
+            "predicted": 131,
+            "tp": 27,
+            "fp": 104,
+            "fn": 8,
+            "precision": 0.20610687022900764,
+            "recall": 0.7714285714285715,
+            "f1": 0.32530120481927716
+          }
         },
         {
           "threshold": 0.62,
-          "predicted": 191,
-          "tp": 26,
+          "predicted": 192,
+          "tp": 27,
           "fp": 165,
-          "fn": 9,
-          "precision": 0.13612565445026178,
-          "recall": 0.7428571428571429,
-          "f1": 0.23008849557522126
+          "fn": 8,
+          "precision": 0.140625,
+          "recall": 0.7714285714285715,
+          "f1": 0.23788546255506607,
+          "tiers": {
+            "exact": {
+              "predicted": 15,
+              "tp": 15,
+              "fp": 0,
+              "precision": 1.0,
+              "positive_share": 0.42857142857142855
+            },
+            "traditional_near": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "hybrid_confirmed": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "semantic_high_confidence": {
+              "predicted": 177,
+              "tp": 12,
+              "fp": 165,
+              "precision": 0.06779661016949153,
+              "positive_share": 0.34285714285714286
+            },
+            "semantic_review": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            }
+          },
+          "visible": {
+            "predicted": 192,
+            "tp": 27,
+            "fp": 165,
+            "fn": 8,
+            "precision": 0.140625,
+            "recall": 0.7714285714285715,
+            "f1": 0.23788546255506607
+          }
         },
         {
           "threshold": 0.6,
-          "predicted": 295,
-          "tp": 26,
+          "predicted": 296,
+          "tp": 27,
           "fp": 269,
-          "fn": 9,
-          "precision": 0.08813559322033898,
-          "recall": 0.7428571428571429,
-          "f1": 0.1575757575757576
+          "fn": 8,
+          "precision": 0.09121621621621621,
+          "recall": 0.7714285714285715,
+          "f1": 0.16314199395770393,
+          "tiers": {
+            "exact": {
+              "predicted": 15,
+              "tp": 15,
+              "fp": 0,
+              "precision": 1.0,
+              "positive_share": 0.42857142857142855
+            },
+            "traditional_near": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "hybrid_confirmed": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "semantic_high_confidence": {
+              "predicted": 281,
+              "tp": 12,
+              "fp": 269,
+              "precision": 0.042704626334519574,
+              "positive_share": 0.34285714285714286
+            },
+            "semantic_review": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            }
+          },
+          "visible": {
+            "predicted": 296,
+            "tp": 27,
+            "fp": 269,
+            "fn": 8,
+            "precision": 0.09121621621621621,
+            "recall": 0.7714285714285715,
+            "f1": 0.16314199395770393
+          }
         },
         {
           "threshold": 0.58,
-          "predicted": 401,
-          "tp": 26,
+          "predicted": 402,
+          "tp": 27,
           "fp": 375,
-          "fn": 9,
-          "precision": 0.06483790523690773,
-          "recall": 0.7428571428571429,
-          "f1": 0.11926605504587157
+          "fn": 8,
+          "precision": 0.06716417910447761,
+          "recall": 0.7714285714285715,
+          "f1": 0.12356979405034325,
+          "tiers": {
+            "exact": {
+              "predicted": 15,
+              "tp": 15,
+              "fp": 0,
+              "precision": 1.0,
+              "positive_share": 0.42857142857142855
+            },
+            "traditional_near": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "hybrid_confirmed": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "semantic_high_confidence": {
+              "predicted": 387,
+              "tp": 12,
+              "fp": 375,
+              "precision": 0.031007751937984496,
+              "positive_share": 0.34285714285714286
+            },
+            "semantic_review": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            }
+          },
+          "visible": {
+            "predicted": 402,
+            "tp": 27,
+            "fp": 375,
+            "fn": 8,
+            "precision": 0.06716417910447761,
+            "recall": 0.7714285714285715,
+            "f1": 0.12356979405034325
+          }
         },
         {
           "threshold": 0.56,
-          "predicted": 524,
-          "tp": 26,
+          "predicted": 525,
+          "tp": 27,
           "fp": 498,
-          "fn": 9,
-          "precision": 0.04961832061068702,
-          "recall": 0.7428571428571429,
-          "f1": 0.09302325581395349
+          "fn": 8,
+          "precision": 0.05142857142857143,
+          "recall": 0.7714285714285715,
+          "f1": 0.09642857142857143,
+          "tiers": {
+            "exact": {
+              "predicted": 15,
+              "tp": 15,
+              "fp": 0,
+              "precision": 1.0,
+              "positive_share": 0.42857142857142855
+            },
+            "traditional_near": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "hybrid_confirmed": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "semantic_high_confidence": {
+              "predicted": 510,
+              "tp": 12,
+              "fp": 498,
+              "precision": 0.023529411764705882,
+              "positive_share": 0.34285714285714286
+            },
+            "semantic_review": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            }
+          },
+          "visible": {
+            "predicted": 525,
+            "tp": 27,
+            "fp": 498,
+            "fn": 8,
+            "precision": 0.05142857142857143,
+            "recall": 0.7714285714285715,
+            "f1": 0.09642857142857143
+          }
         },
         {
           "threshold": 0.54,
-          "predicted": 637,
-          "tp": 26,
+          "predicted": 638,
+          "tp": 27,
           "fp": 611,
-          "fn": 9,
-          "precision": 0.04081632653061224,
-          "recall": 0.7428571428571429,
-          "f1": 0.07738095238095237
+          "fn": 8,
+          "precision": 0.04231974921630094,
+          "recall": 0.7714285714285715,
+          "f1": 0.08023774145616641,
+          "tiers": {
+            "exact": {
+              "predicted": 15,
+              "tp": 15,
+              "fp": 0,
+              "precision": 1.0,
+              "positive_share": 0.42857142857142855
+            },
+            "traditional_near": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "hybrid_confirmed": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "semantic_high_confidence": {
+              "predicted": 623,
+              "tp": 12,
+              "fp": 611,
+              "precision": 0.019261637239165328,
+              "positive_share": 0.34285714285714286
+            },
+            "semantic_review": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            }
+          },
+          "visible": {
+            "predicted": 638,
+            "tp": 27,
+            "fp": 611,
+            "fn": 8,
+            "precision": 0.04231974921630094,
+            "recall": 0.7714285714285715,
+            "f1": 0.08023774145616641
+          }
         },
         {
           "threshold": 0.52,
-          "predicted": 778,
-          "tp": 26,
+          "predicted": 779,
+          "tp": 27,
           "fp": 752,
-          "fn": 9,
-          "precision": 0.033419023136246784,
-          "recall": 0.7428571428571429,
-          "f1": 0.06396063960639606
+          "fn": 8,
+          "precision": 0.03465982028241335,
+          "recall": 0.7714285714285715,
+          "f1": 0.06633906633906635,
+          "tiers": {
+            "exact": {
+              "predicted": 15,
+              "tp": 15,
+              "fp": 0,
+              "precision": 1.0,
+              "positive_share": 0.42857142857142855
+            },
+            "traditional_near": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "hybrid_confirmed": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "semantic_high_confidence": {
+              "predicted": 764,
+              "tp": 12,
+              "fp": 752,
+              "precision": 0.015706806282722512,
+              "positive_share": 0.34285714285714286
+            },
+            "semantic_review": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            }
+          },
+          "visible": {
+            "predicted": 779,
+            "tp": 27,
+            "fp": 752,
+            "fn": 8,
+            "precision": 0.03465982028241335,
+            "recall": 0.7714285714285715,
+            "f1": 0.06633906633906635
+          }
         },
         {
           "threshold": 0.5,
-          "predicted": 1000,
-          "tp": 26,
+          "predicted": 1001,
+          "tp": 27,
           "fp": 974,
-          "fn": 9,
-          "precision": 0.026,
-          "recall": 0.7428571428571429,
-          "f1": 0.050241545893719805
+          "fn": 8,
+          "precision": 0.026973026973026972,
+          "recall": 0.7714285714285715,
+          "f1": 0.052123552123552123,
+          "tiers": {
+            "exact": {
+              "predicted": 15,
+              "tp": 15,
+              "fp": 0,
+              "precision": 1.0,
+              "positive_share": 0.42857142857142855
+            },
+            "traditional_near": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "hybrid_confirmed": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "semantic_high_confidence": {
+              "predicted": 986,
+              "tp": 12,
+              "fp": 974,
+              "precision": 0.012170385395537525,
+              "positive_share": 0.34285714285714286
+            },
+            "semantic_review": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            }
+          },
+          "visible": {
+            "predicted": 1001,
+            "tp": 27,
+            "fp": 974,
+            "fn": 8,
+            "precision": 0.026973026973026972,
+            "recall": 0.7714285714285715,
+            "f1": 0.052123552123552123
+          }
         },
         {
           "threshold": 0.48,
-          "predicted": 1222,
-          "tp": 26,
+          "predicted": 1223,
+          "tp": 27,
           "fp": 1196,
-          "fn": 9,
-          "precision": 0.02127659574468085,
-          "recall": 0.7428571428571429,
-          "f1": 0.04136833731105807
+          "fn": 8,
+          "precision": 0.022076860179885527,
+          "recall": 0.7714285714285715,
+          "f1": 0.04292527821939587,
+          "tiers": {
+            "exact": {
+              "predicted": 15,
+              "tp": 15,
+              "fp": 0,
+              "precision": 1.0,
+              "positive_share": 0.42857142857142855
+            },
+            "traditional_near": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "hybrid_confirmed": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "semantic_high_confidence": {
+              "predicted": 1208,
+              "tp": 12,
+              "fp": 1196,
+              "precision": 0.009933774834437087,
+              "positive_share": 0.34285714285714286
+            },
+            "semantic_review": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            }
+          },
+          "visible": {
+            "predicted": 1223,
+            "tp": 27,
+            "fp": 1196,
+            "fn": 8,
+            "precision": 0.022076860179885527,
+            "recall": 0.7714285714285715,
+            "f1": 0.04292527821939587
+          }
         },
         {
           "threshold": 0.46,
-          "predicted": 1455,
-          "tp": 26,
+          "predicted": 1456,
+          "tp": 27,
           "fp": 1429,
-          "fn": 9,
-          "precision": 0.017869415807560136,
-          "recall": 0.7428571428571429,
-          "f1": 0.0348993288590604
+          "fn": 8,
+          "precision": 0.018543956043956044,
+          "recall": 0.7714285714285715,
+          "f1": 0.03621730382293763,
+          "tiers": {
+            "exact": {
+              "predicted": 15,
+              "tp": 15,
+              "fp": 0,
+              "precision": 1.0,
+              "positive_share": 0.42857142857142855
+            },
+            "traditional_near": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "hybrid_confirmed": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "semantic_high_confidence": {
+              "predicted": 1441,
+              "tp": 12,
+              "fp": 1429,
+              "precision": 0.008327550312283136,
+              "positive_share": 0.34285714285714286
+            },
+            "semantic_review": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            }
+          },
+          "visible": {
+            "predicted": 1456,
+            "tp": 27,
+            "fp": 1429,
+            "fn": 8,
+            "precision": 0.018543956043956044,
+            "recall": 0.7714285714285715,
+            "f1": 0.03621730382293763
+          }
         },
         {
           "threshold": 0.44,
-          "predicted": 1624,
-          "tp": 26,
+          "predicted": 1625,
+          "tp": 27,
           "fp": 1598,
-          "fn": 9,
-          "precision": 0.01600985221674877,
-          "recall": 0.7428571428571429,
-          "f1": 0.03134418324291743
+          "fn": 8,
+          "precision": 0.016615384615384615,
+          "recall": 0.7714285714285715,
+          "f1": 0.03253012048192771,
+          "tiers": {
+            "exact": {
+              "predicted": 15,
+              "tp": 15,
+              "fp": 0,
+              "precision": 1.0,
+              "positive_share": 0.42857142857142855
+            },
+            "traditional_near": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "hybrid_confirmed": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "semantic_high_confidence": {
+              "predicted": 1610,
+              "tp": 12,
+              "fp": 1598,
+              "precision": 0.007453416149068323,
+              "positive_share": 0.34285714285714286
+            },
+            "semantic_review": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            }
+          },
+          "visible": {
+            "predicted": 1625,
+            "tp": 27,
+            "fp": 1598,
+            "fn": 8,
+            "precision": 0.016615384615384615,
+            "recall": 0.7714285714285715,
+            "f1": 0.03253012048192771
+          }
         },
         {
           "threshold": 0.42,
-          "predicted": 1744,
-          "tp": 26,
+          "predicted": 1745,
+          "tp": 27,
           "fp": 1718,
-          "fn": 9,
-          "precision": 0.014908256880733946,
-          "recall": 0.7428571428571429,
-          "f1": 0.02922990444069702
+          "fn": 8,
+          "precision": 0.015472779369627506,
+          "recall": 0.7714285714285715,
+          "f1": 0.03033707865168539,
+          "tiers": {
+            "exact": {
+              "predicted": 15,
+              "tp": 15,
+              "fp": 0,
+              "precision": 1.0,
+              "positive_share": 0.42857142857142855
+            },
+            "traditional_near": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "hybrid_confirmed": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "semantic_high_confidence": {
+              "predicted": 1730,
+              "tp": 12,
+              "fp": 1718,
+              "precision": 0.006936416184971098,
+              "positive_share": 0.34285714285714286
+            },
+            "semantic_review": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            }
+          },
+          "visible": {
+            "predicted": 1745,
+            "tp": 27,
+            "fp": 1718,
+            "fn": 8,
+            "precision": 0.015472779369627506,
+            "recall": 0.7714285714285715,
+            "f1": 0.03033707865168539
+          }
         },
         {
           "threshold": 0.4,
-          "predicted": 1812,
-          "tp": 26,
+          "predicted": 1813,
+          "tp": 27,
           "fp": 1786,
-          "fn": 9,
-          "precision": 0.01434878587196468,
-          "recall": 0.7428571428571429,
-          "f1": 0.02815376285868977
+          "fn": 8,
+          "precision": 0.014892443463872035,
+          "recall": 0.7714285714285715,
+          "f1": 0.02922077922077922,
+          "tiers": {
+            "exact": {
+              "predicted": 15,
+              "tp": 15,
+              "fp": 0,
+              "precision": 1.0,
+              "positive_share": 0.42857142857142855
+            },
+            "traditional_near": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "hybrid_confirmed": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            },
+            "semantic_high_confidence": {
+              "predicted": 1798,
+              "tp": 12,
+              "fp": 1786,
+              "precision": 0.006674082313681869,
+              "positive_share": 0.34285714285714286
+            },
+            "semantic_review": {
+              "predicted": 0,
+              "tp": 0,
+              "fp": 0,
+              "precision": null,
+              "positive_share": 0.0
+            }
+          },
+          "visible": {
+            "predicted": 1813,
+            "tp": 27,
+            "fp": 1786,
+            "fn": 8,
+            "precision": 0.014892443463872035,
+            "recall": 0.7714285714285715,
+            "f1": 0.02922077922077922
+          }
         }
       ]
     }

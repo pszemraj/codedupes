@@ -21,6 +21,8 @@ from typing import Any
 
 import pytest
 
+from codedupes.models import HYBRID_TIERS
+from codedupes.report.selection import WITHHELD_TIERS
 from codedupes.semantic_profiles import get_semantic_threshold_for_language, list_supported_models
 
 REPORTS_PATH = Path(__file__).resolve().parents[1] / "test_fixtures" / "polyglot_calibration"
@@ -120,3 +122,75 @@ def test_report_was_swept_on_the_checkpoint_the_profile_ships(
     assert calibration["mode"] == "duplicate"
     # The gates are only transferable if the sweep used the production candidate policy.
     assert calibration["candidate_policy"]["min_recursive_statements"] == 3
+
+
+def _shipped_gate_row(language: str, model_key: str) -> dict[str, Any]:
+    """Return the sweep row at the gate the profile ships for one language.
+
+    :param str language: Corpus language key.
+    :param str model_key: Built-in model profile key.
+    :return dict[str, Any]: The recorded row at the shipped gate.
+    """
+    entry = _model_entry(_load_report(language), model_key)
+    gate = round(get_semantic_threshold_for_language(model_key, language), GRID_DECIMALS)
+    return next(row for row in entry["rows"] if round(row["threshold"], GRID_DECIMALS) == gate)
+
+
+@pytest.mark.parametrize("model_key", MODEL_KEYS)
+@pytest.mark.parametrize("language", LANGUAGES)
+def test_report_tier_split_matches_the_profile_it_ships_with(language: str, model_key: str) -> None:
+    """A constant or gate edit without regenerating the reports must fail here."""
+    calibration = _model_entry(_load_report(language), model_key)["calibration"]
+    profile = next(item for item in list_supported_models() if item.key == model_key)
+
+    assert calibration["visible_policy"] == {
+        "excluded_tiers": sorted(WITHHELD_TIERS),
+        "metrics_field": "visible",
+    }
+    assert calibration["corroboration"] == {
+        "weak_identifier_jaccard_min": profile.hybrid_weak_identifier_jaccard_min,
+        "statement_ratio_min": profile.hybrid_statement_ratio_min,
+        "high_confidence_gates": {
+            language: profile.high_confidence_threshold_for_language(language)
+        },
+    }
+
+
+@pytest.mark.parametrize("model_key", MODEL_KEYS)
+@pytest.mark.parametrize("language", LANGUAGES)
+def test_tier_breakdown_partitions_the_published_output(language: str, model_key: str) -> None:
+    """Per-tier counts must sum back to the row's published counts at the shipped gate."""
+    row = _shipped_gate_row(language, model_key)
+    tiers = row["tiers"]
+    visible = row["visible"]
+    review = tiers["semantic_review"]
+
+    assert tuple(tiers) == HYBRID_TIERS
+    assert sum(tier["predicted"] for tier in tiers.values()) == row["predicted"]
+    assert sum(tier["tp"] for tier in tiers.values()) == row["tp"]
+    assert sum(tier["fp"] for tier in tiers.values()) == row["fp"]
+    assert sum(tier["positive_share"] for tier in tiers.values()) == pytest.approx(
+        row["recall"], abs=FLOAT_TOLERANCE
+    )
+    for tier in tiers.values():
+        assert (tier["precision"] is None) == (tier["predicted"] == 0)
+
+    # The visible subset is exactly the published set minus the withheld tier.
+    assert visible["predicted"] == row["predicted"] - review["predicted"]
+    assert visible["tp"] == row["tp"] - review["tp"]
+    assert visible["fp"] == row["fp"] - review["fp"]
+    assert visible["fn"] == row["fn"] + review["tp"]
+    assert visible["recall"] <= row["recall"] + FLOAT_TOLERANCE
+
+
+@pytest.mark.parametrize("model_key", MODEL_KEYS)
+@pytest.mark.parametrize("language", LANGUAGES)
+def test_withholding_review_never_lowers_precision_at_the_shipped_gate(
+    language: str, model_key: str
+) -> None:
+    """The default view must be at least as precise as everything admitted, or the split is misplaced."""
+    row = _shipped_gate_row(language, model_key)
+    assert row["visible"]["precision"] >= row["precision"] - FLOAT_TOLERANCE, (
+        f"{language}/{model_key}: hiding semantic_review drops precision from "
+        f"{row['precision']:.3f} to {row['visible']['precision']:.3f}"
+    )
