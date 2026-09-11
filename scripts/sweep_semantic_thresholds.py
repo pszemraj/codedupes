@@ -26,7 +26,9 @@ from codedupes.constants import (
     DEFAULT_SEARCH_SEMANTIC_TASK,
     DEFAULT_TRADITIONAL_THRESHOLD,
 )
+from codedupes.models import HYBRID_TIERS, HybridDuplicate
 from codedupes.pairs import ordered_pair_key
+from codedupes.report.selection import WITHHELD_TIERS
 from codedupes.semantic import (
     EMBEDDING_PIPELINE_SCHEMA,
     EmbeddingSpaceIdentity,
@@ -73,6 +75,9 @@ SEARCH_THRESHOLD_START = 0.20
 SEARCH_THRESHOLD_STOP = 0.90
 THRESHOLD_STEP = 0.02
 SEARCH_SWEEP_FLOOR = 0.01
+# Tiers the CLI reports by default; mirrors the report policy so ``visible``
+# metrics describe exactly what ``codedupes check`` shows without flags.
+VISIBLE_TIERS: tuple[str, ...] = tuple(tier for tier in HYBRID_TIERS if tier not in WITHHELD_TIERS)
 
 
 @dataclass(frozen=True)
@@ -87,6 +92,44 @@ class SweepRow:
     precision: float
     recall: float
     f1: float
+
+
+@dataclass(frozen=True)
+class TierCounts:
+    """Published pairs of one hybrid tier scored against the labeled positives.
+
+    ``precision`` is ``None`` rather than ``0.0`` for an empty tier: no
+    prediction is not the same as every prediction being wrong. ``positive_share``
+    is the tier's true positives over all labeled positives; tiers partition the
+    published set, so the shares of one row sum to that row's recall.
+    """
+
+    predicted: int
+    tp: int
+    fp: int
+    precision: float | None
+    positive_share: float
+
+
+@dataclass(frozen=True)
+class SubsetMetrics:
+    """Full precision/recall of one published subset (for example the visible tiers)."""
+
+    predicted: int
+    tp: int
+    fp: int
+    fn: int
+    precision: float
+    recall: float
+    f1: float
+
+
+@dataclass(frozen=True)
+class DuplicateSweepRow(SweepRow):
+    """Duplicate-threshold row with the per-tier split of its published pairs."""
+
+    tiers: dict[str, TierCounts]
+    visible: SubsetMetrics
 
 
 @dataclass(frozen=True)
@@ -118,6 +161,48 @@ def _threshold_grid(start: float, stop: float) -> list[float]:
         values.append(current)
         steps += 1
     return values
+
+
+def _tier_breakdown(
+    hybrid: list[HybridDuplicate],
+    positive_pairs: set[tuple[str, str]],
+) -> tuple[dict[str, TierCounts], SubsetMetrics, set[tuple[str, str]]]:
+    """Split one published hybrid list by tier and score the default-visible subset.
+
+    :param list[HybridDuplicate] hybrid: Published pairs at one threshold.
+    :param set[tuple[str, str]] positive_pairs: Labeled positive pair keys.
+    :return tuple: Per-tier counts (every tier present), visible-subset metrics, and the visible pair keys.
+    """
+    pairs_by_tier: dict[str, set[tuple[str, str]]] = {tier: set() for tier in HYBRID_TIERS}
+    for item in hybrid:
+        pairs_by_tier[item.tier].add(ordered_pair_key(item.unit_a, item.unit_b))
+
+    tiers: dict[str, TierCounts] = {}
+    for tier, pairs in pairs_by_tier.items():
+        tp = len(pairs & positive_pairs)
+        fp = len(pairs) - tp
+        tiers[tier] = TierCounts(
+            predicted=len(pairs),
+            tp=tp,
+            fp=fp,
+            precision=tp / len(pairs) if pairs else None,
+            positive_share=tp / len(positive_pairs) if positive_pairs else 0.0,
+        )
+
+    visible_pairs: set[tuple[str, str]] = set()
+    for tier in VISIBLE_TIERS:
+        visible_pairs |= pairs_by_tier[tier]
+    tp, fp, fn, precision, recall, f1 = metrics(visible_pairs, positive_pairs)
+    visible = SubsetMetrics(
+        predicted=len(visible_pairs),
+        tp=tp,
+        fp=fp,
+        fn=fn,
+        precision=precision,
+        recall=recall,
+        f1=f1,
+    )
+    return tiers, visible, visible_pairs
 
 
 def _grid_edge(selected: float, grid: list[float]) -> str | None:
@@ -346,6 +431,7 @@ def _run_duplicate_sweep(
     thresholds = _threshold_grid(duplicate_start, duplicate_stop)
     rows: list[SweepRow] = []
     predicted_by_threshold: dict[float, set[tuple[str, str]]] = {}
+    visible_by_threshold: dict[float, set[tuple[str, str]]] = {}
     for threshold in thresholds:
         gated_semantic = [
             duplicate
@@ -360,8 +446,10 @@ def _run_duplicate_sweep(
         predicted_pairs = {ordered_pair_key(item.unit_a, item.unit_b) for item in hybrid}
         predicted_by_threshold[threshold] = predicted_pairs
         tp, fp, fn, precision, recall, f1 = metrics(predicted_pairs, positive_pairs)
+        tiers, visible, visible_pairs = _tier_breakdown(hybrid, positive_pairs)
+        visible_by_threshold[threshold] = visible_pairs
         rows.append(
-            SweepRow(
+            DuplicateSweepRow(
                 threshold=threshold,
                 predicted=len(predicted_pairs),
                 tp=tp,
@@ -370,8 +458,12 @@ def _run_duplicate_sweep(
                 precision=precision,
                 recall=recall,
                 f1=f1,
+                tiers=tiers,
+                visible=visible,
             )
         )
+    # Selection still ranks the complete published set: the admission gate is
+    # recall-first by policy, and the tier split only decides default visibility.
     rank_sweep_rows(rows, extra_key=lambda row: (-row.threshold,))
     selected = rows[0]
 
@@ -389,6 +481,16 @@ def _run_duplicate_sweep(
         labels_path=labels_path,
     )
     manifest["output_policy"] = "hybrid_duplicates"
+    # The tier split, and therefore every ``tiers``/``visible`` field, depends on
+    # the corroboration constants in force when the sweep ran.
+    manifest["visible_policy"] = {
+        "excluded_tiers": sorted(WITHHELD_TIERS),
+        "metrics_field": "visible",
+    }
+    manifest["corroboration"] = {
+        "weak_identifier_jaccard_min": analyzer_module.HYBRID_WEAK_JACCARD_MIN,
+        "statement_ratio_min": analyzer_module.HYBRID_STATEMENT_RATIO_MIN,
+    }
     manifest["selected_at_grid_edge"] = _grid_edge(selected.threshold, thresholds)
     # Every count shares one population: reachable = scoreable + traditional
     # recoveries, unreachable = labeled - reachable, and the ceiling divides
@@ -403,14 +505,18 @@ def _run_duplicate_sweep(
         "recall_ceiling": (len(reachable_pairs) / len(positive_pairs) if positive_pairs else 0.0),
     }
     selected_pairs = predicted_by_threshold[selected.threshold]
+    selected_visible = visible_by_threshold[selected.threshold]
     manifest["selected_category_recall"] = {}
     for category, groups in labels.get("categories", {}).items():
         category_pairs = build_positive_pairs(result.units, {"positive_groups": groups})
         detected = len(selected_pairs & category_pairs)
+        visible_detected = len(selected_visible & category_pairs)
         manifest["selected_category_recall"][category] = {
             "labeled": len(category_pairs),
             "detected": detected,
             "recall": detected / len(category_pairs) if category_pairs else 0.0,
+            "visible_detected": visible_detected,
+            "visible_recall": (visible_detected / len(category_pairs) if category_pairs else 0.0),
         }
 
     return ModelSweep(
@@ -522,11 +628,18 @@ def _print_sweep(model_sweep: ModelSweep, top_n: int) -> None:
         )
     print("Top rows:")
     for idx, row in enumerate(model_sweep.rows[:top_n], start=1):
-        print(
+        line = (
             f"  {idx:02d}. threshold={row.threshold:g} f1={row.f1:.3f} "
             f"precision={row.precision:.3f} recall={row.recall:.3f} "
             f"tp={row.tp} fp={row.fp} fn={row.fn} pred={row.predicted}"
         )
+        if isinstance(row, DuplicateSweepRow):
+            review = row.tiers["semantic_review"]
+            line += (
+                f" | visible precision={row.visible.precision:.3f} "
+                f"recall={row.visible.recall:.3f} review tp={review.tp} fp={review.fp}"
+            )
+        print(line)
 
 
 def _report_payload(results: list[ModelSweep], grid: list[float]) -> dict[str, Any]:

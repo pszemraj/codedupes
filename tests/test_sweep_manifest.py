@@ -11,9 +11,10 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
+import codedupes.analyzer as analyzer_module
 from codedupes.analyzer import CodeAnalyzer
 from codedupes.constants import DEFAULT_CHECK_SEMANTIC_TASK, DEFAULT_MIN_SEMANTIC_STATEMENTS
-from codedupes.models import CodeUnit, CodeUnitType, DuplicatePair
+from codedupes.models import HYBRID_TIERS, CodeUnit, CodeUnitType, DuplicatePair
 from codedupes.semantic import EmbeddingSpaceIdentity
 from codedupes.semantic_profiles import resolve_model_profile
 from scripts.report_calibration_distributions import _analyze_language
@@ -27,8 +28,10 @@ from scripts.sweep_hybrid_gates import _run_sweep as _run_hybrid_gate_sweep
 from scripts.sweep_hybrid_gates import main as _hybrid_gates_main
 from scripts.sweep_semantic_thresholds import (
     THRESHOLD_STEP,
+    DuplicateSweepRow,
     _calibration_manifest,
     _grid_edge,
+    _report_payload,
     _run_duplicate_sweep,
     _threshold_grid,
 )
@@ -113,6 +116,14 @@ def test_manifest_records_effective_embedding_space_not_the_request(
     assert "device" not in manifest
     assert "dtype_variant" not in manifest
     assert manifest["output_policy"] == "hybrid_duplicates"
+    assert manifest["visible_policy"] == {
+        "excluded_tiers": ["semantic_review"],
+        "metrics_field": "visible",
+    }
+    assert manifest["corroboration"] == {
+        "weak_identifier_jaccard_min": analyzer_module.HYBRID_WEAK_JACCARD_MIN,
+        "statement_ratio_min": analyzer_module.HYBRID_STATEMENT_RATIO_MIN,
+    }
     # Zero candidates tie every row at f1=0, so the loosest-tie policy selects
     # the grid floor - a boundary selection the manifest must record.
     assert manifest["selected_at_grid_edge"] == "start"
@@ -123,6 +134,11 @@ def test_manifest_records_effective_embedding_space_not_the_request(
         "unreachable_positive_pairs": 0,
         "recall_ceiling": 1.0,
     }
+    row = sweep.rows[0]
+    assert isinstance(row, DuplicateSweepRow)
+    assert set(row.tiers) == set(HYBRID_TIERS)
+    assert all(counts.predicted == 0 and counts.precision is None for counts in row.tiers.values())
+    assert (row.visible.predicted, row.visible.tp, row.visible.fp, row.visible.fn) == (0, 0, 0, 1)
 
 
 def test_manifest_recall_ceiling_includes_traditional_overflow_recovery(
@@ -183,6 +199,132 @@ def test_manifest_recall_ceiling_includes_traditional_overflow_recovery(
         "recall_ceiling": 1.0,
     }
     assert {row.recall for row in sweep.rows} == {1.0}
+
+
+def test_duplicate_rows_split_published_pairs_by_tier(tmp_path: Path, monkeypatch) -> None:
+    """Rows must attribute tp/fp to tiers and score the default-visible subset separately.
+
+    One labeled exact pair and one unlabeled alpha-renamed semantic pair (zero
+    identifier overlap, so it lands in ``semantic_review``) must produce a row
+    whose published metrics count both, whose ``visible`` metrics count only the
+    exact pair, and whose per-tier sums reproduce the published totals.
+    """
+    corpus_path = tmp_path / "corpus"
+    corpus_path.mkdir()
+    alpha_path = corpus_path / "alpha.py"
+    beta_path = corpus_path / "beta.py"
+    alpha_path.write_text(
+        "def first(a, b):\n    c = a + b\n    d = c * 2\n    return d\n\n\n"
+        "def second(a, b):\n    c = a + b\n    d = c * 2\n    return d\n"
+    )
+    beta_path.write_text(
+        "def left(x, y):\n    z = x + y\n    w = z * 2\n    return w\n\n\n"
+        "def right(p, q):\n    r = p - q\n    s = r * 3\n    return s\n"
+    )
+    labels = {
+        "positive_groups": [["alpha.py::first", "alpha.py::second"]],
+        "categories": {"exact": [["alpha.py::first", "alpha.py::second"]]},
+    }
+    labels_path = tmp_path / "labels.json"
+    labels_path.write_text(json.dumps(labels))
+
+    profile = resolve_model_profile("gte-modernbert-base")
+    identity = EmbeddingSpaceIdentity(
+        model_name=profile.canonical_name,
+        resolved_revision=PINNED_COMMIT,
+        runtime_variant="cpu-faithful",
+    )
+    first = CodeUnit(
+        name="first",
+        qualified_name="first",
+        unit_type=CodeUnitType.FUNCTION,
+        file_path=alpha_path,
+        lineno=1,
+        end_lineno=4,
+        source="def first(a, b):\n    c = a + b\n    d = c * 2\n    return d\n",
+    )
+    second = CodeUnit(
+        name="second",
+        qualified_name="second",
+        unit_type=CodeUnitType.FUNCTION,
+        file_path=alpha_path,
+        lineno=7,
+        end_lineno=10,
+        source="def second(a, b):\n    c = a + b\n    d = c * 2\n    return d\n",
+        start_byte=60,
+    )
+    left = CodeUnit(
+        name="left",
+        qualified_name="left",
+        unit_type=CodeUnitType.FUNCTION,
+        file_path=beta_path,
+        lineno=1,
+        end_lineno=4,
+        source="def left(x, y):\n    z = x + y\n    w = z * 2\n    return w\n",
+    )
+    right = CodeUnit(
+        name="right",
+        qualified_name="right",
+        unit_type=CodeUnitType.FUNCTION,
+        file_path=beta_path,
+        lineno=7,
+        end_lineno=10,
+        source="def right(p, q):\n    r = p - q\n    s = r * 3\n    return s\n",
+        start_byte=60,
+    )
+    units = [first, second, left, right]
+
+    def fake_analyze(self: CodeAnalyzer, path: Path) -> SimpleNamespace:
+        self._embeddings = np.zeros((4, 4), dtype=np.float32)
+        self._embedding_space_identity = identity
+        self._semantic_units = units
+        return SimpleNamespace(
+            units=units,
+            traditional_duplicates=[DuplicatePair(first, second, 1.0, "ast_hash")],
+            semantic_duplicates=[DuplicatePair(left, right, 0.91, "semantic")],
+        )
+
+    monkeypatch.setattr(CodeAnalyzer, "analyze", fake_analyze)
+
+    sweep = _run_duplicate_sweep(
+        model_name="gte-modernbert-base",
+        revision=PINNED_COMMIT,
+        corpus_path=corpus_path,
+        labels_path=labels_path,
+        labels=labels,
+        min_statements=0,
+        batch_size=4,
+        device="cpu",
+        duplicate_start=0.90,
+        duplicate_stop=0.90,
+    )
+
+    row = sweep.rows[0]
+    assert isinstance(row, DuplicateSweepRow)
+    assert (row.predicted, row.tp, row.fp, row.fn) == (2, 1, 1, 0)
+    assert row.tiers["exact"].tp == 1
+    assert row.tiers["exact"].precision == 1.0
+    assert row.tiers["semantic_review"].fp == 1
+    assert row.tiers["semantic_review"].precision == 0.0
+    assert sum(counts.predicted for counts in row.tiers.values()) == row.predicted
+    assert sum(counts.tp for counts in row.tiers.values()) == row.tp
+    assert sum(counts.fp for counts in row.tiers.values()) == row.fp
+    assert sum(counts.positive_share for counts in row.tiers.values()) == pytest.approx(row.recall)
+    assert (row.visible.predicted, row.visible.tp, row.visible.fp, row.visible.fn) == (1, 1, 0, 0)
+    assert row.visible.precision == 1.0
+    assert sweep.manifest["selected_category_recall"]["exact"] == {
+        "labeled": 1,
+        "detected": 1,
+        "recall": 1.0,
+        "visible_detected": 1,
+        "visible_recall": 1.0,
+    }
+
+    payload = json.loads(json.dumps(_report_payload([sweep], [0.90])))
+    serialized_row = payload["models"][0]["rows"][0]
+    assert serialized_row["tiers"]["hybrid_confirmed"]["precision"] is None
+    assert serialized_row["visible"]["precision"] == 1.0
+    assert payload["models"][0]["selected_metrics"]["tiers"]["exact"]["tp"] == 1
 
 
 def test_common_sweep_defaults_match_production_candidate_policy() -> None:
