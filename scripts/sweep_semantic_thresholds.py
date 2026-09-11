@@ -429,6 +429,12 @@ def _run_duplicate_sweep(
             "counts as a false negative unless the traditional tier matched it."
         )
     thresholds = _threshold_grid(duplicate_start, duplicate_stop)
+    corpus_languages = sorted({unit.language for unit in result.units})
+    high_gates = {
+        language: gate
+        for language in corpus_languages
+        if (gate := profile.high_confidence_threshold_for_language(language)) is not None
+    }
     rows: list[SweepRow] = []
     predicted_by_threshold: dict[float, set[tuple[str, str]]] = {}
     visible_by_threshold: dict[float, set[tuple[str, str]]] = {}
@@ -438,10 +444,14 @@ def _run_duplicate_sweep(
             for duplicate in result.semantic_duplicates
             if duplicate.similarity >= threshold
         ]
+        # Split the published set exactly as the analyzer would for this profile.
         hybrid = analyzer_module._synthesize_hybrid_duplicates(
             result.traditional_duplicates,
             gated_semantic,
             jaccard_threshold=DEFAULT_TRADITIONAL_THRESHOLD,
+            weak_identifier_jaccard_min=profile.hybrid_weak_identifier_jaccard_min,
+            statement_ratio_min=profile.hybrid_statement_ratio_min,
+            semantic_high_gates=high_gates,
         )
         predicted_pairs = {ordered_pair_key(item.unit_a, item.unit_b) for item in hybrid}
         predicted_by_threshold[threshold] = predicted_pairs
@@ -488,8 +498,12 @@ def _run_duplicate_sweep(
         "metrics_field": "visible",
     }
     manifest["corroboration"] = {
-        "weak_identifier_jaccard_min": analyzer_module.HYBRID_WEAK_JACCARD_MIN,
-        "statement_ratio_min": analyzer_module.HYBRID_STATEMENT_RATIO_MIN,
+        "weak_identifier_jaccard_min": profile.hybrid_weak_identifier_jaccard_min,
+        "statement_ratio_min": profile.hybrid_statement_ratio_min,
+        "high_confidence_gates": {
+            language: profile.high_confidence_threshold_for_language(language)
+            for language in corpus_languages
+        },
     }
     manifest["selected_at_grid_edge"] = _grid_edge(selected.threshold, thresholds)
     # Every count shares one population: reachable = scoreable + traditional

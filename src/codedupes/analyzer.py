@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -18,6 +19,8 @@ from codedupes.constants import (
     DEFAULT_SEARCH_SEMANTIC_TASK,
     DEFAULT_SEMANTIC_DEVICE,
     DEFAULT_TRADITIONAL_THRESHOLD,
+    HYBRID_STATEMENT_RATIO_MIN,
+    HYBRID_WEAK_JACCARD_MIN,
     normalize_semantic_task,
 )
 from codedupes.devices import normalize_semantic_device, validate_mps_memory_fraction
@@ -68,8 +71,6 @@ from codedupes.traditional import (
 
 logger = logging.getLogger(__name__)
 
-HYBRID_WEAK_JACCARD_MIN = 0.20
-HYBRID_STATEMENT_RATIO_MIN = 0.35
 DEFAULT_SEMANTIC_UNIT_TYPES = ("function", "method")
 SEMANTIC_UNIT_TYPE_TO_ENUM: dict[str, CodeUnitType] = {
     "function": CodeUnitType.FUNCTION,
@@ -264,6 +265,31 @@ def _filter_tiny_traditional_duplicates(
     return filtered_exact, filtered_near
 
 
+def _semantic_high_gate(
+    unit_a: CodeUnit,
+    unit_b: CodeUnit,
+    gates: Mapping[str, float] | None,
+) -> float | None:
+    """Return the similarity promotion gate for one pair, or ``None`` when disabled.
+
+    A cross-language pair must clear the stricter of its two gates: promotion
+    widens the default view, so it takes the conservative side, unlike admission,
+    which lets a mixed pair through the looser gate.
+
+    :param unit_a: First unit in the pair.
+    :param unit_b: Second unit in the pair.
+    :param gates: Per-language promotion gates, or ``None``.
+    :return: Gate to compare the pair's similarity against, or ``None``.
+    """
+    if not gates:
+        return None
+    languages = {unit_a.language, unit_b.language}
+    values = [gates[language] for language in languages if language in gates]
+    if len(values) != len(languages):
+        return None
+    return max(values)
+
+
 def _synthesize_hybrid_duplicates(
     traditional_duplicates: list[DuplicatePair],
     semantic_duplicates: list[DuplicatePair],
@@ -271,15 +297,17 @@ def _synthesize_hybrid_duplicates(
     jaccard_threshold: float,
     weak_identifier_jaccard_min: float = HYBRID_WEAK_JACCARD_MIN,
     statement_ratio_min: float = HYBRID_STATEMENT_RATIO_MIN,
+    semantic_high_gates: Mapping[str, float] | None = None,
 ) -> list[HybridDuplicate]:
     """Build ranked hybrid duplicates from traditional and semantic outputs.
 
     ``semantic_duplicates`` must already be gated (the pairwise scan applies the
     per-language calibrated gates, or an explicit flat override), so a recorded
     semantic similarity is itself the evidence that the pair cleared its
-    duplicate gate. Identifier overlap and statement-count
-    similarity promote semantic-only pairs to ``semantic_high_confidence``;
-    pairs without that corroboration remain visible as ``semantic_review``.
+    duplicate gate. A semantic-only pair is promoted to
+    ``semantic_high_confidence`` when identifier overlap and statement-count
+    similarity corroborate it, or when its similarity clears the language's
+    promotion gate; otherwise it stays a ``semantic_review`` candidate.
 
     :param traditional_duplicates: Traditional duplicate pairs (exact + Jaccard).
     :param semantic_duplicates: Gated semantic duplicate pairs.
@@ -288,6 +316,9 @@ def _synthesize_hybrid_duplicates(
         semantic-only candidate to high confidence.
     :param statement_ratio_min: Statement-count ratio needed to promote a
         semantic-only candidate to high confidence.
+    :param semantic_high_gates: Per-language similarity at which an
+        uncorroborated semantic-only candidate is promoted anyway; ``None`` or
+        a missing language disables that path for the pair.
     :return: Hybrid duplicates sorted by descending confidence. Every candidate
         pair reaches a tier: semantic-only pairs without corroboration fall back
         to ``semantic_review`` rather than being dropped.
@@ -371,10 +402,13 @@ def _synthesize_hybrid_duplicates(
             weak_identifier_jaccard = jaccard_similarity(ids_a, ids_b)
             statement_ratio = _statement_count_ratio(unit_a, unit_b)
 
-            if (
+            corroborated = (
                 weak_identifier_jaccard >= weak_identifier_jaccard_min
                 and statement_ratio >= statement_ratio_min
-            ):
+            )
+            high_gate = _semantic_high_gate(unit_a, unit_b, semantic_high_gates)
+            strong = high_gate is not None and semantic_sim >= high_gate
+            if corroborated or strong:
                 tier = "semantic_high_confidence"
                 confidence = 0.45 + (0.55 * semantic_sim)
             else:
@@ -870,6 +904,43 @@ class CodeAnalyzer:
             )
         return gates, floor
 
+    def _resolve_hybrid_split(
+        self, semantic_candidates: list[CodeUnit]
+    ) -> tuple[float, float, dict[str, float]]:
+        """Resolve the tier split hybrid synthesis applies to semantic-only pairs.
+
+        The corroboration constants are size/identifier signals and follow the
+        model profile regardless of how admission was gated. The similarity
+        promotion gates are calibrated relative to the profile's shipped
+        admission gates, so an explicit flat ``semantic_threshold`` turns them
+        off the same way it bypasses the per-language gates.
+
+        :param semantic_candidates: Units eligible for semantic comparison.
+        :return: Weak identifier Jaccard minimum, statement ratio minimum, and the
+            promotion gate per present language (absent when promotion is off).
+        """
+        profile = resolve_threshold_profile(
+            resolve_model_profile(self.config.model_name), self.config.threshold_profile
+        )
+        gates: dict[str, float] = {}
+        if self.config.semantic_threshold is None:
+            for language in sorted({unit.language for unit in semantic_candidates}):
+                gate = profile.high_confidence_threshold_for_language(language)
+                if gate is not None:
+                    gates[language] = gate
+        gate_text = ", ".join(f"{language}={gate:.2f}" for language, gate in gates.items())
+        logger.info(
+            f"Hybrid tier split: weak identifier jaccard >= "
+            f"{profile.hybrid_weak_identifier_jaccard_min:.2f} and statement ratio >= "
+            f"{profile.hybrid_statement_ratio_min:.2f}, or similarity promotion gates "
+            f"{gate_text or 'off'}"
+        )
+        return (
+            profile.hybrid_weak_identifier_jaccard_min,
+            profile.hybrid_statement_ratio_min,
+            gates,
+        )
+
     def analyze(self, path: Path | str) -> AnalysisResult:
         """
         Run full analysis on a directory or file.
@@ -913,6 +984,11 @@ class CodeAnalyzer:
         semantic_candidates: list[CodeUnit] = []
         semantic_gates: dict[str, float] = {}
         semantic_scan_floor = 0.0
+        hybrid_split: tuple[float, float, dict[str, float]] = (
+            HYBRID_WEAK_JACCARD_MIN,
+            HYBRID_STATEMENT_RATIO_MIN,
+            {},
+        )
         if self.config.run_semantic:
             semantic_candidates = self._select_semantic_candidates(units)
             self._semantic_units = semantic_candidates
@@ -920,6 +996,8 @@ class CodeAnalyzer:
                 semantic_candidates,
                 semantic_task,
             )
+            if self.config.run_traditional:
+                hybrid_split = self._resolve_hybrid_split(semantic_candidates)
 
         if self.config.run_traditional:
             exact_dupes, near_dupes, _ = run_traditional_analysis(
@@ -1043,10 +1121,14 @@ class CodeAnalyzer:
         hybrid_duplicates: list[HybridDuplicate] = []
 
         if combined_mode:
+            weak_min, ratio_min, semantic_high_gates = hybrid_split
             hybrid_duplicates = _synthesize_hybrid_duplicates(
                 traditional_duplicates,
                 semantic_duplicates,
                 jaccard_threshold=self.config.jaccard_threshold,
+                weak_identifier_jaccard_min=weak_min,
+                statement_ratio_min=ratio_min,
+                semantic_high_gates=semantic_high_gates,
             )
 
         if not units:

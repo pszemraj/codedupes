@@ -117,11 +117,18 @@ Use `--no-tiny-filter` / `--tiny-cutoff`, or `AnalyzerConfig.filter_tiny_traditi
 
 ## Hybrid synthesis confidence defaults
 
-- semantic evidence: the per-language duplicate gate above (applied before synthesis; there is no separate semantic-only minimum)
-- weak identifier jaccard minimum: `0.20`
-- statement ratio minimum: `0.35`
+A semantic-only pair has already passed its language's duplicate gate (applied before synthesis; there is no separate semantic-only minimum). Synthesis then splits it into `semantic_high_confidence` or `semantic_review`; the split affects ranking and default visibility, never admission. A pair is promoted when either path holds:
 
-A semantic-only pair has already passed its language's duplicate gate, so it remains visible in default output. Identifier overlap and a comparable statement count promote it to `semantic_high_confidence`; otherwise it is labeled `semantic_review`. These corroborators affect ranking and review priority, not admission. Tune them with the [hybrid gate workflow](hybrid-tuning.md).
+- corroboration: weak identifier Jaccard ≥ `hybrid_weak_identifier_jaccard_min` and statement-count ratio ≥ `hybrid_statement_ratio_min`, both on the model profile;
+- similarity promotion: cosine ≥ the language's `language_high_confidence_thresholds` entry on the profile (cross-language pairs must clear the stricter of the two gates; a language without a calibrated entry has promotion off).
+
+| profile | identifier Jaccard min | statement ratio min | promotion gates |
+| --- | --- | --- | --- |
+| `gte-modernbert-base` | `0.00` | `0.80` | typescript `0.88`; off elsewhere |
+| `embeddinggemma-300m` | `0.00` | `0.20` | off |
+| `generic` | `0.00` | `0.20` | off |
+
+The identifier minimum is `0.00` on both profiles because the Python extractor collects bound and referenced names but not attribute names, so renamed Python clones score near-zero identifier overlap while the tree-sitter languages collect every identifier leaf; no positive identifier floor was feasible in every language. The statement-ratio floor carries the split: at gte's `0.80` the high-confidence subset measures precision `0.778` / recall `0.566` on the polyglot corpus against `0.677` / `0.618` for everything admitted (9 labeled positives and 23 false positives move to review). embeddinggemma's admitted set is already size-consistent at its gates, so its `0.20` floor hides only pairs whose statement counts differ more than fivefold and its corpus metrics are unchanged (`0.611` / `0.763`). An explicit `--semantic-threshold` keeps the profile's corroboration constants but turns promotion off, because the gates are calibrated relative to the shipped admission gates. Values come from `test_fixtures/polyglot_calibration/reports/corroboration_report.json`; `tests/test_corroboration_reports.py` re-derives them, and the [hybrid gate workflow](hybrid-tuning.md) regenerates them.
 
 ## Confidence scale
 

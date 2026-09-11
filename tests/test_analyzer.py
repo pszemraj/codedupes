@@ -1972,6 +1972,12 @@ def test_hybrid_synthesis_hybrid_confirmed(tmp_path: Path) -> None:
     assert hybrid[0].confidence == pytest.approx((0.5 * 0.93) + (0.5 * 0.88))
 
 
+# The corroborator mechanism tests below pin the identifier/size thresholds
+# explicitly: the shipped split is calibrated per model profile and asserted
+# end-to-end by ``test_analyzer_applies_the_profile_hybrid_split``.
+_MECHANISM_SPLIT = {"weak_identifier_jaccard_min": 0.20, "statement_ratio_min": 0.35}
+
+
 def test_hybrid_synthesis_semantic_only_corroboration_sets_tier(tmp_path: Path) -> None:
     unit_a = make_code_unit(
         tmp_path, name="a", source="def alpha(v):\n    z = v + 1\n    return z\n", lineno=1
@@ -1989,6 +1995,7 @@ def test_hybrid_synthesis_semantic_only_corroboration_sets_tier(tmp_path: Path) 
         [],
         gated_semantic,
         jaccard_threshold=0.85,
+        **_MECHANISM_SPLIT,
     )
     assert len(hybrid) == 1
     assert hybrid[0].tier == "semantic_high_confidence"
@@ -2015,6 +2022,7 @@ def test_hybrid_synthesis_semantic_only_corroboration_sets_tier(tmp_path: Path) 
         [],
         weak_semantic,
         jaccard_threshold=0.85,
+        **_MECHANISM_SPLIT,
     )
     assert len(hybrid_weak) == 1
     assert hybrid_weak[0].tier == "semantic_review"
@@ -2051,6 +2059,7 @@ def test_semantic_review_never_outranks_a_corroborated_pair(tmp_path: Path) -> N
             ),
         ],
         jaccard_threshold=0.85,
+        **_MECHANISM_SPLIT,
     )
 
     assert [duplicate.tier for duplicate in hybrid] == ["hybrid_confirmed", "semantic_review"]
@@ -2086,12 +2095,158 @@ def test_hybrid_synthesis_publishes_alpha_renamed_semantic_pair(tmp_path: Path) 
         [],
         semantic,
         jaccard_threshold=0.85,
+        **_MECHANISM_SPLIT,
     )
 
     assert len(hybrid) == 1
     assert hybrid[0].tier == "semantic_review"
     assert hybrid[0].weak_identifier_jaccard == 0.0
     assert hybrid[0].statement_count_ratio == 1.0
+
+
+def _alpha_renamed_pair(tmp_path: Path, similarity: float) -> list[DuplicatePair]:
+    unit_a = make_code_unit(
+        tmp_path,
+        name="collect_total",
+        source=(
+            "def collect_total(records):\n"
+            "    accepted = [record for record in records if record.enabled]\n"
+            "    amount = sum(record.value for record in accepted)\n"
+            "    return amount\n"
+        ),
+        lineno=1,
+    )
+    unit_b = make_code_unit(
+        tmp_path,
+        name="measure_sum",
+        source=(
+            "def measure_sum(entries):\n"
+            "    chosen = [entry for entry in entries if entry.ready]\n"
+            "    result = sum(entry.weight for entry in chosen)\n"
+            "    return result\n"
+        ),
+        lineno=8,
+    )
+    return [DuplicatePair(unit_a=unit_a, unit_b=unit_b, similarity=similarity, method="semantic")]
+
+
+@pytest.mark.parametrize(
+    ("gates", "expected_tier"),
+    [
+        (None, "semantic_review"),
+        ({}, "semantic_review"),
+        ({"python": 0.92}, "semantic_review"),
+        ({"python": 0.91}, "semantic_high_confidence"),
+        ({"rust": 0.50}, "semantic_review"),
+    ],
+)
+def test_hybrid_synthesis_promotes_uncorroborated_pair_only_above_its_high_gate(
+    tmp_path: Path, gates, expected_tier
+) -> None:
+    hybrid = analyzer_module._synthesize_hybrid_duplicates(
+        [],
+        _alpha_renamed_pair(tmp_path, 0.91),
+        jaccard_threshold=0.85,
+        semantic_high_gates=gates,
+        **_MECHANISM_SPLIT,
+    )
+
+    assert [pair.tier for pair in hybrid] == [expected_tier]
+    assert hybrid[0].weak_identifier_jaccard == 0.0
+    if expected_tier == "semantic_high_confidence":
+        assert hybrid[0].confidence == pytest.approx(0.45 + 0.55 * 0.91)
+    else:
+        assert hybrid[0].confidence == pytest.approx(0.40 + 0.45 * 0.91)
+
+
+def test_hybrid_synthesis_cross_language_promotion_uses_the_stricter_gate(
+    tmp_path: Path,
+) -> None:
+    semantic = _alpha_renamed_pair(tmp_path, 0.93)
+    semantic[0].unit_b.language = "rust"
+    gates = {"python": 0.90, "rust": 0.95}
+
+    review = analyzer_module._synthesize_hybrid_duplicates(
+        [], semantic, jaccard_threshold=0.85, semantic_high_gates=gates, **_MECHANISM_SPLIT
+    )
+    promoted = analyzer_module._synthesize_hybrid_duplicates(
+        [],
+        semantic,
+        jaccard_threshold=0.85,
+        semantic_high_gates={"python": 0.90, "rust": 0.93},
+        **_MECHANISM_SPLIT,
+    )
+
+    assert review[0].tier == "semantic_review"
+    assert promoted[0].tier == "semantic_high_confidence"
+
+
+@pytest.mark.parametrize(
+    ("model_name", "expected_tiers"),
+    [
+        # gte: statement ratio 0.80 withholds the 3-vs-1 pair; identifier overlap is not required.
+        (
+            "gte-modernbert-base",
+            {"same_size": "semantic_high_confidence", "lopsided": "semantic_review"},
+        ),
+        # embeddinggemma: only >5x size mismatches are withheld, so both are reported.
+        (
+            "embeddinggemma-300m",
+            {"same_size": "semantic_high_confidence", "lopsided": "semantic_high_confidence"},
+        ),
+    ],
+)
+def test_analyzer_applies_the_profile_hybrid_split(
+    tmp_path: Path, monkeypatch, model_name: str, expected_tiers: dict[str, str]
+) -> None:
+    """The analyzer must split semantic-only pairs with the profile's calibrated constants."""
+    source = dedent(
+        """
+        def collect_total(records):
+            accepted = [record for record in records if record.enabled]
+            amount = sum(record.value for record in accepted)
+            return amount
+
+        def measure_sum(entries):
+            chosen = [entry for entry in entries if entry.ready]
+            result = sum(entry.weight for entry in chosen)
+            return result
+
+        def tiny(v):
+            return v
+        """
+    ).strip()
+    project = create_project(tmp_path, source)
+
+    def paired(units: list[CodeUnit]) -> list[DuplicatePair]:
+        by_name = {unit.name: unit for unit in units}
+        return [
+            DuplicatePair(by_name["collect_total"], by_name["measure_sum"], 0.91, "semantic"),
+            DuplicatePair(by_name["collect_total"], by_name["tiny"], 0.91, "semantic"),
+        ]
+
+    monkeypatch.setattr(
+        analyzer_module, "run_semantic_analysis", _make_semantic_runner(duplicate_factory=paired)
+    )
+    analyzer = CodeAnalyzer(
+        AnalyzerConfig(
+            run_traditional=True,
+            run_semantic=True,
+            run_unused=False,
+            min_semantic_statements=0,
+            filter_tiny_traditional=False,
+            model_name=model_name,
+        )
+    )
+
+    result = analyzer.analyze(project)
+
+    tiers = {
+        ("same_size" if pair.unit_b.name == "measure_sum" else "lopsided"): pair.tier
+        for pair in result.hybrid_duplicates
+    }
+    assert tiers == expected_tiers
+    assert all(pair.weak_identifier_jaccard == 0.0 for pair in result.hybrid_duplicates)
 
 
 def test_mixed_mode_semantic_failure_still_builds_hybrid_from_traditional(

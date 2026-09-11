@@ -11,7 +11,6 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-import codedupes.analyzer as analyzer_module
 from codedupes.analyzer import CodeAnalyzer
 from codedupes.constants import DEFAULT_CHECK_SEMANTIC_TASK, DEFAULT_MIN_SEMANTIC_STATEMENTS
 from codedupes.models import HYBRID_TIERS, CodeUnit, CodeUnitType, DuplicatePair
@@ -23,7 +22,15 @@ from scripts.sweep_common import (
     validate_labels_shape,
     validate_probes_shape,
 )
-from scripts.sweep_hybrid_gates import GateConfig
+from scripts.sweep_hybrid_gates import (
+    GateConfig,
+    SweepRow,
+    _high_gate_grid,
+    is_feasible,
+    pool_rows,
+    select_pooled_row,
+    select_visible_row,
+)
 from scripts.sweep_hybrid_gates import _run_sweep as _run_hybrid_gate_sweep
 from scripts.sweep_hybrid_gates import main as _hybrid_gates_main
 from scripts.sweep_semantic_thresholds import (
@@ -121,8 +128,11 @@ def test_manifest_records_effective_embedding_space_not_the_request(
         "metrics_field": "visible",
     }
     assert manifest["corroboration"] == {
-        "weak_identifier_jaccard_min": analyzer_module.HYBRID_WEAK_JACCARD_MIN,
-        "statement_ratio_min": analyzer_module.HYBRID_STATEMENT_RATIO_MIN,
+        "weak_identifier_jaccard_min": profile.hybrid_weak_identifier_jaccard_min,
+        "statement_ratio_min": profile.hybrid_statement_ratio_min,
+        "high_confidence_gates": {
+            "python": profile.high_confidence_threshold_for_language("python")
+        },
     }
     # Zero candidates tie every row at f1=0, so the loosest-tie policy selects
     # the grid floor - a boundary selection the manifest must record.
@@ -204,10 +214,11 @@ def test_manifest_recall_ceiling_includes_traditional_overflow_recovery(
 def test_duplicate_rows_split_published_pairs_by_tier(tmp_path: Path, monkeypatch) -> None:
     """Rows must attribute tp/fp to tiers and score the default-visible subset separately.
 
-    One labeled exact pair and one unlabeled alpha-renamed semantic pair (zero
-    identifier overlap, so it lands in ``semantic_review``) must produce a row
-    whose published metrics count both, whose ``visible`` metrics count only the
-    exact pair, and whose per-tier sums reproduce the published totals.
+    One labeled exact pair and one unlabeled lopsided semantic pair (three
+    statements against one, below the profile's statement-ratio floor, so it
+    lands in ``semantic_review``) must produce a row whose published metrics
+    count both, whose ``visible`` metrics count only the exact pair, and whose
+    per-tier sums reproduce the published totals.
     """
     corpus_path = tmp_path / "corpus"
     corpus_path.mkdir()
@@ -218,8 +229,7 @@ def test_duplicate_rows_split_published_pairs_by_tier(tmp_path: Path, monkeypatc
         "def second(a, b):\n    c = a + b\n    d = c * 2\n    return d\n"
     )
     beta_path.write_text(
-        "def left(x, y):\n    z = x + y\n    w = z * 2\n    return w\n\n\n"
-        "def right(p, q):\n    r = p - q\n    s = r * 3\n    return s\n"
+        "def left(x, y):\n    z = x + y\n    w = z * 2\n    return w\n\n\ndef right(p, q):\n    return p - q\n"
     )
     labels = {
         "positive_groups": [["alpha.py::first", "alpha.py::second"]],
@@ -268,8 +278,8 @@ def test_duplicate_rows_split_published_pairs_by_tier(tmp_path: Path, monkeypatc
         unit_type=CodeUnitType.FUNCTION,
         file_path=beta_path,
         lineno=7,
-        end_lineno=10,
-        source="def right(p, q):\n    r = p - q\n    s = r * 3\n    return s\n",
+        end_lineno=8,
+        source="def right(p, q):\n    return p - q\n",
         start_byte=60,
     )
     units = [first, second, left, right]
@@ -410,19 +420,20 @@ def test_distribution_report_carries_the_sweep_calibration_manifest(
     assert manifest == expected
 
 
-def test_hybrid_gate_ties_resolve_to_the_loosest_gate_not_grid_order() -> None:
+def test_hybrid_gate_ties_resolve_to_the_loosest_split_not_grid_order() -> None:
     """Equal-metric hybrid rows must rank recall-first, like the semantic sweep.
 
     Without an explicit tiebreak the winner is whichever configuration
     ``itertools.product`` happened to emit first, so a grid reordering silently
-    changes the recommended gate.
+    changes the recommended split. A disabled promotion gate is the strictest
+    setting on that axis.
     """
     # Deliberately ordered strictest-first so grid order and the policy disagree.
     grid = [
-        GateConfig(0.92, 0.30, 0.55),
-        GateConfig(0.92, 0.10, 0.20),
-        GateConfig(0.68, 0.30, 0.55),
-        GateConfig(0.68, 0.10, 0.20),
+        GateConfig(0.80, 0.30, 0.55, None),
+        GateConfig(0.80, 0.30, 0.55, 0.90),
+        GateConfig(0.80, 0.10, 0.20, None),
+        GateConfig(0.80, 0.10, 0.20, 0.90),
     ]
 
     rows, _ = _run_hybrid_gate_sweep(
@@ -435,11 +446,112 @@ def test_hybrid_gate_ties_resolve_to_the_loosest_gate_not_grid_order() -> None:
 
     assert {(row.f1, row.precision, row.recall, row.fp) for row in rows} == {(0.0, 0.0, 0.0, 0)}
     assert [row.config for row in rows] == [
-        GateConfig(0.68, 0.10, 0.20),
-        GateConfig(0.68, 0.30, 0.55),
-        GateConfig(0.92, 0.10, 0.20),
-        GateConfig(0.92, 0.30, 0.55),
+        GateConfig(0.80, 0.10, 0.20, 0.90),
+        GateConfig(0.80, 0.10, 0.20, None),
+        GateConfig(0.80, 0.30, 0.55, 0.90),
+        GateConfig(0.80, 0.30, 0.55, None),
     ]
+
+
+def _row(
+    weak: float,
+    ratio: float,
+    high: float | None,
+    *,
+    tp: int,
+    fp: int,
+    fn: int,
+    published: tuple[int, int, int],
+) -> SweepRow:
+    """Build one synthetic sweep row from visible and published counts."""
+    p_tp, p_fp, p_fn = published
+
+    def prf(a: int, b: int, c: int) -> tuple[float, float, float]:
+        precision = a / (a + b) if a + b else 0.0
+        recall = a / (a + c) if a + c else 0.0
+        f1 = 2 * precision * recall / (precision + recall) if precision + recall else 0.0
+        return precision, recall, f1
+
+    precision, recall, f1 = prf(tp, fp, fn)
+    p_precision, p_recall, p_f1 = prf(p_tp, p_fp, p_fn)
+    return SweepRow(
+        config=GateConfig(0.80, weak, ratio, high),
+        published=p_tp + p_fp,
+        review=(p_tp + p_fp) - (tp + fp),
+        high_confidence=tp + fp,
+        tp=tp,
+        fp=fp,
+        fn=fn,
+        precision=precision,
+        recall=recall,
+        f1=f1,
+        published_tp=p_tp,
+        published_fp=p_fp,
+        published_fn=p_fn,
+        published_precision=p_precision,
+        published_recall=p_recall,
+        published_f1=p_f1,
+        review_tp=p_tp - tp,
+        review_fp=p_fp - fp,
+    )
+
+
+def test_select_visible_row_maximizes_precision_within_the_retention_floor() -> None:
+    """The split must buy precision, keep 85% of published recall, and prefer stricter ties."""
+    published = (20, 10, 4)  # precision 0.667, recall 0.833
+    everything = _row(0.0, 0.0, None, tp=20, fp=10, fn=4, published=published)
+    too_lossy = _row(0.30, 0.50, None, tp=15, fp=1, fn=9, published=published)  # recall 0.625
+    good = _row(0.20, 0.35, None, tp=18, fp=3, fn=6, published=published)  # recall 0.75
+    good_looser = _row(0.10, 0.35, None, tp=18, fp=3, fn=6, published=published)
+    worse_precision = _row(0.05, 0.20, None, tp=19, fp=10, fn=5, published=published)
+
+    assert is_feasible(everything, recall_retention_min=0.85)
+    assert not is_feasible(too_lossy, recall_retention_min=0.85)
+    assert is_feasible(good, recall_retention_min=0.85)
+    assert not is_feasible(worse_precision, recall_retention_min=0.85)
+
+    selected = select_visible_row(
+        [too_lossy, everything, good_looser, worse_precision, good], recall_retention_min=0.85
+    )
+    # Equal on the corpus: the looser row would only widen the default view on no evidence.
+    assert selected is good
+    assert select_visible_row([too_lossy, worse_precision], recall_retention_min=0.85) is None
+
+
+def test_pooled_selection_requires_feasibility_in_every_corpus() -> None:
+    """A split that guts one language's default view must not win on pooled precision."""
+    strict = (0.30, 0.50)
+    mild = (0.10, 0.35)
+    python_rows = [
+        _row(*strict, None, tp=5, fp=0, fn=15, published=(20, 10, 0)),  # recall 0.25: infeasible
+        _row(*mild, None, tp=18, fp=4, fn=2, published=(20, 10, 0)),
+    ]
+    rust_rows = [
+        _row(*strict, None, tp=19, fp=0, fn=1, published=(20, 10, 0)),
+        _row(*mild, None, tp=18, fp=5, fn=2, published=(20, 10, 0)),
+    ]
+    rows_by_corpus = {"python": python_rows, "rust": rust_rows}
+
+    pooled = pool_rows(rows_by_corpus)
+    by_key = {
+        (row.config.weak_identifier_jaccard_min, row.config.statement_ratio_min): row
+        for row in pooled
+    }
+    assert by_key[strict].tp == 24 and by_key[strict].published_tp == 40
+    assert by_key[strict].config.semantic_gate is None
+    assert by_key[strict].precision > by_key[mild].precision
+
+    selected = select_pooled_row(pooled, rows_by_corpus, recall_retention_min=0.85)
+    assert selected is not None
+    assert (
+        selected.config.weak_identifier_jaccard_min,
+        selected.config.statement_ratio_min,
+    ) == mild
+
+
+def test_high_gate_grid_starts_at_the_admission_gate_and_ends_disabled() -> None:
+    assert _high_gate_grid(0.90, 0.96, 0.02) == [0.90, 0.92, 0.94, 0.96, None]
+    assert _high_gate_grid(0.97, 0.96, 0.02) == [None]
 
 
 def test_hybrid_gate_sweep_records_calibration_provenance(tmp_path: Path, monkeypatch) -> None:
@@ -487,6 +599,10 @@ def test_hybrid_gate_sweep_records_calibration_provenance(tmp_path: Path, monkey
             str(corpus_path),
             "--labels-path",
             str(labels_path),
+            "--language",
+            "python",
+            "--models",
+            "gte-modernbert-base",
             "--json-out",
             str(json_out),
         ],
@@ -496,12 +612,31 @@ def test_hybrid_gate_sweep_records_calibration_provenance(tmp_path: Path, monkey
 
     payload = json.loads(json_out.read_text())
     assert payload["output_policy"] == "hybrid_high_confidence"
-    manifest = payload["calibration"]
+    assert payload["selection_policy"]["recall_retention_min"] == 0.85
+    model_entry = payload["models"][0]
+    assert model_entry["resolved_revision"] == profile.default_revision
+    corpus_entry = model_entry["corpora"]["python"]
+    manifest = corpus_entry["calibration"]
     assert manifest["model"] == profile.canonical_name
     assert manifest["resolved_revision"] == profile.default_revision
     assert manifest["mode"] == "hybrid_gates"
     assert manifest["requested_device"] == "cpu"
     assert manifest["embedding_space"]["runtime_variant"] == "cpu-faithful"
+    assert manifest["semantic_gate"] == {
+        "language": "python",
+        "value": profile.semantic_threshold_for_language("python"),
+        "source": "profile",
+    }
+    # No candidates: every split ties at zero and equality with the published
+    # precision floor is allowed, so the strictest row wins the tie.
+    stage1 = model_entry["stage1"]
+    assert stage1["pooled"]["selected"]["config"]["weak_identifier_jaccard_min"] == 0.40
+    assert stage1["pooled"]["selected"]["config"]["statement_ratio_min"] == 0.80
+    assert stage1["pooled"]["selected"]["config"]["semantic_gate"] is None
+    stage2 = model_entry["stage2"]["corpora"]["python"]
+    assert stage2["selected"]["config"]["high_gate"] is None
+    assert stage2["rows"][0]["config"]["high_gate"] == stage2["semantic_gate"]
+    assert stage2["rows"][-1]["config"]["high_gate"] is None
 
 
 def test_hybrid_gate_sweep_refuses_a_mutable_model_revision(tmp_path: Path, monkeypatch) -> None:
@@ -521,6 +656,8 @@ def test_hybrid_gate_sweep_refuses_a_mutable_model_revision(tmp_path: Path, monk
             "sweep_hybrid_gates.py",
             "--labels-path",
             str(labels_path),
+            "--models",
+            "gte-modernbert-base",
             "--model-revision",
             "main",
         ],
