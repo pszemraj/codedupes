@@ -108,11 +108,15 @@ def test_cli_json_output_hybrid_default(monkeypatch, tmp_path):
     assert output["summary"]["embeddings"]["cache_warnings"] == []
     assert output["summary"]["fail_on"] == "actionable"
     assert output["summary"]["exit_code"] == 1
-    assert output["schema_version"] == 2
+    assert output["schema_version"] == 3
+    assert output["summary"]["reported_duplicates"] == 1
+    assert output["summary"]["omitted_review_duplicates"] == 0
+    assert output["summary"]["duplicates_by_tier"]["exact"] == 1
     assert "duplicates" in output
-    assert output["duplicates"][0]["unit_a"] in output["units"]
+    assert output["duplicates"][0]["unit_a"] == "u0"
     assert output["duplicates"][0]["unit_b"] in output["units"]
     assert output["potentially_unused"][0] in output["units"]
+    assert output["units"]["u0"]["uid"] == _build_unit(tmp_path).uid
     assert len(output["units"]) <= 2 * len(output["duplicates"]) + len(output["potentially_unused"])
     assert "hybrid_duplicates" not in output
     assert "traditional_duplicates" not in output
@@ -322,7 +326,7 @@ def test_cli_json_discards_direct_backend_stderr_on_success(monkeypatch, tmp_pat
 
     assert result.exit_code == 1
     assert result.stderr == ""
-    assert json.loads(result.output)["schema_version"] == 2
+    assert json.loads(result.output)["schema_version"] == 3
 
 
 def _run_merged_cli(args: list[str], setup: str = "") -> subprocess.CompletedProcess[str]:
@@ -354,7 +358,7 @@ def test_cli_json_isolates_custom_family_warning_before_config(tmp_path, command
     result = _run_merged_cli([*args, "--model", "review/gte-modernbert-base", "--json"])
 
     assert result.returncode == 0, result.stdout
-    assert json.loads(result.stdout)["schema_version"] == 2
+    assert json.loads(result.stdout)["schema_version"] == 3
 
 
 @pytest.mark.parametrize(
@@ -401,7 +405,7 @@ def test_cli_json_isolates_native_stderr_in_completed_report(tmp_path, command, 
 
     assert result.returncode == exit_code, result.stdout
     payload = json.loads(result.stdout)
-    assert payload["schema_version"] == 2
+    assert payload["schema_version"] == 3
     if command == "check":
         assert payload["duplicates"]
         assert payload["summary"]["exit_code"] == exit_code
@@ -798,7 +802,7 @@ def test_cli_search_json_reports_indexed_unit_count(monkeypatch, tmp_path, index
 
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
-    assert payload["schema_version"] == 2
+    assert payload["schema_version"] == 3
     assert payload["summary"]["indexed_units"] == indexed_units
     assert payload["results"] == []
     assert result.stderr == ""
@@ -879,7 +883,7 @@ def test_cli_json_show_all_includes_raw_sections(monkeypatch, tmp_path):
             assert edge["unit_b"] in payload["units"]
 
 
-def test_cli_json_v2_raw_mode_uses_edge_list(monkeypatch, tmp_path):
+def test_cli_json_v3_raw_mode_uses_edge_list(monkeypatch, tmp_path):
     path = tmp_path / "sample.py"
     path.write_text("def entry():\n    return 1\n")
     unit = _build_unit(tmp_path)
@@ -904,21 +908,23 @@ def test_cli_json_v2_raw_mode_uses_edge_list(monkeypatch, tmp_path):
 
     assert result.exit_code == 1
     payload = json.loads(result.output)
-    assert payload["schema_version"] == 2
+    assert payload["schema_version"] == 3
     assert payload["duplicates"] == [
         {
             "method": "semantic",
             "similarity": 0.95,
-            "unit_a": unit.uid,
-            "unit_b": unit.uid,
+            "unit_a": "u0",
+            "unit_b": "u0",
         }
     ]
-    assert payload["units"][unit.uid]["name"] == "entry"
+    assert payload["units"]["u0"]["name"] == "entry"
+    assert payload["units"]["u0"]["uid"] == unit.uid
+    assert set(payload["summary"]["duplicates_by_tier"].values()) == {0}
     assert "traditional_duplicates" not in payload
     assert "semantic_duplicates" not in payload
 
 
-def test_cli_json_v2_emits_each_unit_once(monkeypatch, tmp_path):
+def test_cli_json_v3_emits_each_unit_once(monkeypatch, tmp_path):
     path = tmp_path / "sample.py"
     path.write_text("def entry():\n    return 1\n")
     result_obj = _build_result(tmp_path)

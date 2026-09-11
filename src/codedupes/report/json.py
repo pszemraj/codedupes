@@ -15,9 +15,15 @@ from codedupes.models import (
 )
 from codedupes.semantic import EmbeddingRunStats
 
-from .selection import FailOnPolicy, FileSearchResult, ReportSelection, collect_units
+from .selection import (
+    FailOnPolicy,
+    FileSearchResult,
+    ReportSelection,
+    assign_unit_ids,
+    collect_units,
+)
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 def _embedding_stats_to_dict(stats: EmbeddingRunStats | None) -> dict[str, Any] | None:
@@ -59,9 +65,10 @@ def unit_to_dict(unit: CodeUnit) -> dict[str, Any]:
     """Convert a code unit to a JSON-serializable summary.
 
     :param unit: Code unit to serialize.
-    :return: Serialized unit fields.
+    :return: Serialized unit fields, including the in-run ``uid``.
     """
     return {
+        "uid": unit.uid,
         "name": unit.name,
         "qualified_name": unit.qualified_name,
         "type": unit.unit_type.name.lower(),
@@ -81,24 +88,26 @@ def unit_to_dict(unit: CodeUnit) -> dict[str, Any]:
     }
 
 
-def _unit_nodes(units: list[CodeUnit]) -> dict[str, dict[str, Any]]:
-    """Serialize referenced units once each, keyed by their report identifier.
+def _unit_nodes(units: list[CodeUnit], ids: dict[str, str]) -> dict[str, dict[str, Any]]:
+    """Serialize referenced units once each, keyed by their report-local id.
 
     :param units: Distinct referenced units in report order.
-    :return: Node map keyed by unit identifier.
+    :param ids: Mapping from unit uid to report-local id.
+    :return: Node map keyed by report-local id.
     """
-    return {unit.uid: unit_to_dict(unit) for unit in units}
+    return {ids[unit.uid]: unit_to_dict(unit) for unit in units}
 
 
-def _hybrid_edge(duplicate: HybridDuplicate) -> dict[str, Any]:
-    """Serialize one hybrid duplicate as an edge between unit identifiers.
+def _hybrid_edge(duplicate: HybridDuplicate, ids: dict[str, str]) -> dict[str, Any]:
+    """Serialize one hybrid duplicate as an edge between report-local ids.
 
     :param duplicate: Hybrid duplicate to serialize.
+    :param ids: Mapping from unit uid to report-local id.
     :return: Serialized hybrid edge.
     """
     return {
-        "unit_a": duplicate.unit_a.uid,
-        "unit_b": duplicate.unit_b.uid,
+        "unit_a": ids[duplicate.unit_a.uid],
+        "unit_b": ids[duplicate.unit_b.uid],
         "tier": duplicate.tier,
         "confidence": duplicate.confidence,
         "has_exact": duplicate.has_exact,
@@ -109,15 +118,16 @@ def _hybrid_edge(duplicate: HybridDuplicate) -> dict[str, Any]:
     }
 
 
-def _raw_edge(duplicate: DuplicatePair) -> dict[str, Any]:
-    """Serialize one raw duplicate as an edge between unit identifiers.
+def _raw_edge(duplicate: DuplicatePair, ids: dict[str, str]) -> dict[str, Any]:
+    """Serialize one raw duplicate as an edge between report-local ids.
 
     :param duplicate: Raw duplicate to serialize.
+    :param ids: Mapping from unit uid to report-local id.
     :return: Serialized raw edge.
     """
     return {
-        "unit_a": duplicate.unit_a.uid,
-        "unit_b": duplicate.unit_b.uid,
+        "unit_a": ids[duplicate.unit_a.uid],
+        "unit_b": ids[duplicate.unit_b.uid],
         "similarity": duplicate.similarity,
         "method": duplicate.method,
     }
@@ -137,8 +147,9 @@ def check_result_to_json(
     :return: Check payload.
     """
     result = selection.result
+    ids = assign_unit_ids(selection.units)
     duplicates = [
-        _hybrid_edge(pair) if isinstance(pair, HybridDuplicate) else _raw_edge(pair)
+        _hybrid_edge(pair, ids) if isinstance(pair, HybridDuplicate) else _raw_edge(pair, ids)
         for pair in selection.duplicates
     ]
 
@@ -149,6 +160,9 @@ def check_result_to_json(
             "total_units": len(result.units),
             "units_by_language": _language_counts(result.units),
             "hybrid_duplicates": len(result.hybrid_duplicates),
+            "reported_duplicates": len(selection.duplicates),
+            "omitted_review_duplicates": len(selection.omitted_review),
+            "duplicates_by_tier": dict(selection.duplicates_by_tier),
             "potentially_unused": len(result.potentially_unused),
             "raw_traditional_duplicates": len(result.traditional_duplicates),
             "raw_semantic_duplicates": len(result.semantic_duplicates),
@@ -163,7 +177,7 @@ def check_result_to_json(
             "exit_code": exit_code,
         },
         "duplicates": duplicates,
-        "potentially_unused": [unit.uid for unit in selection.potentially_unused],
+        "potentially_unused": [ids[unit.uid] for unit in selection.potentially_unused],
         "extraction_diagnostics": [
             _diagnostic_to_dict(diagnostic) for diagnostic in result.extraction_diagnostics
         ],
@@ -173,11 +187,13 @@ def check_result_to_json(
     }
     if selection.traditional_duplicates is not None:
         output["traditional_duplicates"] = [
-            _raw_edge(pair) for pair in selection.traditional_duplicates
+            _raw_edge(pair, ids) for pair in selection.traditional_duplicates
         ]
     if selection.semantic_duplicates is not None:
-        output["semantic_duplicates"] = [_raw_edge(pair) for pair in selection.semantic_duplicates]
-    output["units"] = _unit_nodes(selection.units)
+        output["semantic_duplicates"] = [
+            _raw_edge(pair, ids) for pair in selection.semantic_duplicates
+        ]
+    output["units"] = _unit_nodes(selection.units, ids)
     return output
 
 
@@ -203,23 +219,25 @@ def search_result_to_json(
     :return: Search payload.
     """
     if file_results is None:
-        serialized_results: list[dict[str, Any]] = [
-            {"unit": unit.uid, "score": float(score)} for unit, score in results
-        ]
         referenced = collect_units(unit for unit, _ in results)
+        ids = assign_unit_ids(referenced)
+        serialized_results: list[dict[str, Any]] = [
+            {"unit": ids[unit.uid], "score": float(score)} for unit, score in results
+        ]
     else:
+        referenced = collect_units(unit for result in file_results for unit, _ in result.matches)
+        ids = assign_unit_ids(referenced)
         serialized_results = [
             {
                 "file": str(result.file_path),
                 "score": float(result.score),
                 "matching_units": result.matching_units,
                 "matches": [
-                    {"unit": unit.uid, "score": float(score)} for unit, score in result.matches
+                    {"unit": ids[unit.uid], "score": float(score)} for unit, score in result.matches
                 ],
             }
             for result in file_results
         ]
-        referenced = collect_units(unit for result in file_results for unit, _ in result.matches)
     payload = {
         "schema_version": SCHEMA_VERSION,
         "query": query,
@@ -229,7 +247,7 @@ def search_result_to_json(
             "embeddings": _embedding_stats_to_dict(embedding_stats),
         },
         "results": serialized_results,
-        "units": _unit_nodes(referenced),
+        "units": _unit_nodes(referenced, ids),
         "extraction_diagnostics": [
             _diagnostic_to_dict(diagnostic) for diagnostic in extraction_diagnostics
         ],

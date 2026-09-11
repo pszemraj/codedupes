@@ -202,7 +202,7 @@ quiet_dependency_loggers()  # or quiet_dependency_loggers(logging.ERROR)
 ## Key result types
 
 - `AnalysisResult.units`: extracted functions, methods, and classes
-- `AnalysisResult.hybrid_duplicates`: synthesized duplicate candidates with [confidence tiers](analysis-defaults.md#hybrid-synthesis-confidence-defaults)
+- `AnalysisResult.hybrid_duplicates`: every synthesized duplicate candidate with its [confidence tier](analysis-defaults.md#hybrid-synthesis-confidence-defaults); the CLI applies [report selection](#report-selection-and-json) on top of this complete list
 - `AnalysisResult.traditional_duplicates`: raw traditional duplicates (diagnostics)
 - `AnalysisResult.semantic_duplicates`: raw semantic duplicates (diagnostics)
 - `AnalysisResult.potentially_unused`: Python-only heuristic unused candidates
@@ -218,6 +218,21 @@ quiet_dependency_loggers()  # or quiet_dependency_loggers(logging.ERROR)
 - `CodeUnit.language`, `dialect`, and `native_kind`: canonical language plus parser-specific syntax kind
 - `CodeUnit.start_byte`/`end_byte`: exact byte range used to slice the emitted source
 - `CodeUnit.structural_hash`, `identifiers`, and `statement_count`: backend-computed language-neutral features
+- `HYBRID_TIERS`: the five tier names in rank order, for zero-filled counts
+
+## Report selection and JSON
+
+The CLI's report policy and [JSON schema](output.md#json-schema-v3) are importable, so Python callers can produce the same document as `check --json`:
+
+```python
+from codedupes import ReportPolicy, check_result_to_json, run_should_fail, select_findings, to_json_text
+
+selection = select_findings(result, ReportPolicy(include_review=False, show_all=False))
+exit_code = int(run_should_fail(result, policy="actionable", strict_unused=False))
+print(to_json_text(check_result_to_json(selection, fail_on="actionable", exit_code=exit_code)))
+```
+
+`select_findings` applies the visibility policy to a complete result and returns a `ReportSelection` with the emitted `duplicates`, the withheld `omitted_review` pairs, zero-filled `duplicates_by_tier` counts, and the referenced `units` in report-id order. `run_should_fail` always evaluates the complete result, so withheld pairs still count under `policy="all"`; `withheld_only_failure(selection, ...)` reports when they are the only reason a run fails. `search_result_to_json` serializes `CodeAnalyzer.search()` hits the same way.
 
 ## Notes
 

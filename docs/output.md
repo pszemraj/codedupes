@@ -36,27 +36,32 @@ set -o pipefail
 codedupes check ./src --json | jq empty
 ```
 
-## JSON schema v2
+## JSON schema v3
 
-`check --json` and `search --json` emit schema version `2`. Units are nodes in a
-top-level `units` object keyed by `CodeUnit.uid`; findings refer to those keys instead
-of repeating a complete unit object for every pair endpoint. A UID is unique within one
-report and includes the source path and byte position, so use it to join data within
-that report rather than as a cross-machine finding identifier.
+`check --json` and `search --json` emit schema version `3`. Units are nodes in a top-level `units` object keyed by report-local ids (`u0`, `u1`, ...); findings refer to those ids instead of repeating a complete unit object for every pair endpoint. Ids are assigned in file-path then source-offset order over the referenced units only, so they renumber whenever the referenced set changes (for example with `--include-review`) — treat them as opaque within one report. Each unit record carries `uid`, the in-run `CodeUnit.uid` (source path, language, qualified name, byte offset), which is unique within one report but not a cross-machine finding identifier.
 
 ### Check
 
 ```json
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "analysis_mode": "combined",
   "summary": {
     "total_units": 42,
     "units_by_language": {"python": 42},
-    "hybrid_duplicates": 1,
+    "hybrid_duplicates": 3,
+    "reported_duplicates": 1,
+    "omitted_review_duplicates": 2,
+    "duplicates_by_tier": {
+      "exact": 0,
+      "traditional_near": 0,
+      "hybrid_confirmed": 1,
+      "semantic_high_confidence": 0,
+      "semantic_review": 2
+    },
     "potentially_unused": 1,
     "raw_traditional_duplicates": 1,
-    "raw_semantic_duplicates": 1,
+    "raw_semantic_duplicates": 3,
     "semantic_fallback": false,
     "semantic_fallback_reason": null,
     "extraction_diagnostics": 0,
@@ -85,8 +90,8 @@ that report rather than as a cross-machine finding identifier.
   },
   "duplicates": [
     {
-      "unit_a": "/repo/src/a.py::python::a.normalize::0",
-      "unit_b": "/repo/src/b.py::python::b.normalize::0",
+      "unit_a": "u0",
+      "unit_b": "u1",
       "tier": "hybrid_confirmed",
       "confidence": 0.94,
       "has_exact": false,
@@ -96,13 +101,12 @@ that report rather than as a cross-machine finding identifier.
       "statement_count_ratio": 1.0
     }
   ],
-  "potentially_unused": [
-    "/repo/src/unused.py::python::unused.helper::0"
-  ],
+  "potentially_unused": ["u2"],
   "extraction_diagnostics": [],
   "semantic_diagnostics": [],
   "units": {
-    "/repo/src/a.py::python::a.normalize::0": {
+    "u0": {
+      "uid": "/repo/src/a.py::python::a.normalize::0",
       "name": "normalize",
       "qualified_name": "a.normalize",
       "type": "function",
@@ -124,24 +128,21 @@ that report rather than as a cross-machine finding identifier.
 }
 ```
 
-The shortened example omits the other two referenced entries from `units`; real output
-includes every UID referenced by any finding list exactly once. Units with no finding
-are not emitted, so `summary.total_units` is the full extracted corpus count while
-`units` contains only units needed to resolve reported findings.
+The shortened example omits `u1` and `u2` from `units`; real output includes every id referenced by any emitted finding list exactly once. Units with no emitted finding are not present, so `summary.total_units` is the full extracted corpus count while `units` contains only units needed to resolve the report.
 
-In default combined mode, `duplicates` contains hybrid edges. With `--show-all`, `traditional_duplicates` and `semantic_duplicates` are added as raw edge lists with `unit_a`, `unit_b`, `similarity`, and `method`.
+In default combined mode, `duplicates` contains hybrid edges. `summary.hybrid_duplicates` counts the complete synthesis, `summary.duplicates_by_tier` breaks that count down over all five tiers (always present, zero-filled), `summary.reported_duplicates` counts the edges actually emitted, and `summary.omitted_review_duplicates` counts pairs withheld by the report policy, so `reported_duplicates + omitted_review_duplicates == hybrid_duplicates`. With `--show-all`, `traditional_duplicates` and `semantic_duplicates` are added as raw edge lists with `unit_a`, `unit_b`, `similarity`, and `method`.
 
-In `--semantic-only` or `--traditional-only` mode, `duplicates` directly contains the active raw edge list and the `--show-all` arrays are omitted. `analysis_mode` is always one of `combined`, `traditional`, `semantic`, or `none`.
+In `--semantic-only` or `--traditional-only` mode, `duplicates` directly contains the active raw edge list, `duplicates_by_tier` is all zeros, and the `--show-all` arrays are omitted. `analysis_mode` is always one of `combined`, `traditional`, `semantic`, or `none`.
 
 See [hybrid confidence tiers](analysis-defaults.md#hybrid-synthesis-confidence-defaults) to interpret `tier` and `confidence`.
 
 ### Search
 
-Default search hits (`--result-level unit`) use `{"unit": "<uid>", "score": 0.95}`; their unit records have the same fields as check results. An empty index with `--no-cache` produces:
+Default search hits (`--result-level unit`) use `{"unit": "u0", "score": 0.95}`; their unit records have the same fields as check results. An empty index with `--no-cache` produces:
 
 ```json
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "query": "refund validation",
   "summary": {
     "indexed_units": 0,
@@ -183,13 +184,13 @@ Default search hits (`--result-level unit`) use `{"unit": "<uid>", "score": 0.95
   "score": 0.91,
   "matching_units": 2,
   "matches": [
-    {"unit": "/repo/src/parser.py::python::parser.parse::0", "score": 0.91},
-    {"unit": "/repo/src/parser.py::python::parser.decode::240", "score": 0.86}
+    {"unit": "u0", "score": 0.91},
+    {"unit": "u1", "score": 0.86}
   ]
 }
 ```
 
-The file's `score` is its highest unit score. `matching_units` counts all of that file's units above the search threshold; `matches` contains up to three strongest contributors. Their UIDs reference the top-level `units` map, which supplies names, types, and line ranges. Only these displayed contributors appear in `units`. Files are ranked before applying `--top-k`; `summary.results` counts returned files, while `summary.indexed_units` still counts indexed code units. Diagnostics and embedding telemetry keep the same shape. Unit-level output remains the default and does not add `result_level`.
+The file's `score` is its highest unit score. `matching_units` counts all of that file's units above the search threshold; `matches` contains up to three strongest contributors. Their ids reference the top-level `units` map, whose records carry `uid`, names, types, and line ranges. Only these displayed contributors appear in `units`. Files are ranked before applying `--top-k`; `summary.results` counts returned files, while `summary.indexed_units` still counts indexed code units. Diagnostics and embedding telemetry keep the same shape. Unit-level output remains the default and does not add `result_level`.
 
 ## Embedding telemetry
 
