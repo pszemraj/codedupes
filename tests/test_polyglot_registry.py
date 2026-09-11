@@ -157,33 +157,24 @@ def test_case_sensitive_cpp_suffixes_disable_c_header_detection(
     assert not repository_allows_c_headers(tmp_path, None)
 
 
-def test_c_header_detection_ignores_dependency_trees(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("nested_dir", "allows_headers"),
+    [
+        pytest.param("node_modules/native", True, id="dependency-tree-is-pruned"),
+        pytest.param("vendor/lib", False, id="vendor-is-walked"),
+        pytest.param("something.egg-info/native", True, id="egg-info-is-pruned"),
+    ],
+)
+def test_c_header_detection_prunes_exactly_what_extraction_prunes(
+    tmp_path: Path, nested_dir: str, allows_headers: bool
+) -> None:
+    """C++ under a directory extraction skips must not disable ``.h`` parsing, and vice versa."""
     (tmp_path / "module.c").write_text("int run(void) { return 1; }\n")
-    dependency = tmp_path / "node_modules" / "native"
-    dependency.mkdir(parents=True)
-    (dependency / "addon.cpp").write_text("int addon() { return 2; }\n")
+    nested = tmp_path / nested_dir
+    nested.mkdir(parents=True)
+    (nested / "addon.cpp").write_text("int addon() { return 2; }\n")
 
-    assert repository_allows_c_headers(tmp_path, None)
-
-
-def test_c_header_detection_walks_vendor_because_extraction_does(tmp_path: Path) -> None:
-    """``vendor`` is not a default exclusion, so its C++ must disable ``.h`` parsing."""
-    (tmp_path / "module.c").write_text("int run(void) { return 1; }\n")
-    vendored = tmp_path / "vendor" / "lib"
-    vendored.mkdir(parents=True)
-    (vendored / "addon.cpp").write_text("int addon() { return 2; }\n")
-
-    assert not repository_allows_c_headers(tmp_path, None)
-
-
-def test_c_header_detection_skips_egg_info_because_extraction_does(tmp_path: Path) -> None:
-    """Extraction never reads ``*.egg-info``, so its C++ must not disable ``.h`` parsing."""
-    (tmp_path / "module.c").write_text("int run(void) { return 1; }\n")
-    packaged = tmp_path / "something.egg-info" / "native"
-    packaged.mkdir(parents=True)
-    (packaged / "addon.cpp").write_text("int addon() { return 2; }\n")
-
-    assert repository_allows_c_headers(tmp_path, None)
+    assert repository_allows_c_headers(tmp_path, None) is allows_headers
 
 
 def test_header_scan_and_extraction_prune_identical_directories() -> None:

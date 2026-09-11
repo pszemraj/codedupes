@@ -1561,14 +1561,25 @@ def test_cli_rejects_missing_path(tmp_path, command, tail_args):
     assert "does not exist" in result.output
 
 
-def test_cli_invalid_threshold(tmp_path):
+@pytest.mark.parametrize(
+    ("options", "expected_message"),
+    [
+        (["--threshold", "1.2"], "must be in [0.0, 1.0]"),
+        (["--output-width", "60"], "must be >= 80"),
+        (["--max-duplicates", "0"], "0 is not in the range x>=1"),
+        (["--mps-memory-fraction", "0"], "must be finite and in the interval (0.0, 2.0]"),
+        (["--no-unused", "--strict-unused"], "Cannot combine --no-unused and --strict-unused"),
+    ],
+    ids=lambda value: value[0] if isinstance(value, list) else None,
+)
+def test_cli_check_rejects_invalid_option_values(tmp_path, options, expected_message):
     path = tmp_path / "sample.py"
     path.write_text("def entry():\n    return 1\n")
 
-    runner = CliRunner()
-    result = runner.invoke(cli.cli, ["check", str(path), "--threshold", "1.2"])
+    result = CliRunner().invoke(cli.cli, ["check", str(path), *options])
+
     assert result.exit_code == 2
-    assert "must be in [0.0, 1.0]" in result.output
+    assert expected_message in result.output
 
 
 def test_cli_rejects_conflicting_single_method_flags(tmp_path):
@@ -1724,20 +1735,6 @@ def test_cli_rejects_all_traditional_mode_flags_with_semantic_only(
 
     assert result.exit_code == 2
     assert f"Cannot use {expected_option}" in result.output
-
-
-def test_cli_rejects_strict_unused_with_no_unused(tmp_path):
-    path = tmp_path / "sample.py"
-    path.write_text("def entry():\n    return 1\n")
-
-    runner = CliRunner()
-    result = runner.invoke(
-        cli.cli,
-        ["check", str(path), "--no-unused", "--strict-unused"],
-    )
-
-    assert result.exit_code == 2
-    assert "Cannot combine --no-unused and --strict-unused" in result.output
 
 
 @pytest.mark.parametrize("flag", ["--verbose", "-v"])
@@ -2067,16 +2064,6 @@ def test_cli_full_table_disables_truncation(monkeypatch, tmp_path):
     full_result = runner.invoke(cli.cli, ["check", str(path), "--full-table"])
     assert full_result.exit_code == 1
     assert "... and 5 more" not in full_result.output
-
-
-def test_cli_invalid_output_width(tmp_path):
-    path = tmp_path / "sample.py"
-    path.write_text("def entry():\n    return 1\n")
-
-    runner = CliRunner()
-    result = runner.invoke(cli.cli, ["check", str(path), "--output-width", "60"])
-    assert result.exit_code == 2
-    assert "must be >= 80" in result.output
 
 
 def test_cli_check_fails_on_semantic_backend_error_without_fallback(monkeypatch, tmp_path):
@@ -2511,15 +2498,6 @@ def test_cli_max_duplicates_caps_the_report_but_not_the_exit_code(monkeypatch, t
     assert "lonely" not in capped.output
 
 
-def test_cli_max_duplicates_rejects_zero():
-    runner = CliRunner()
-
-    result = runner.invoke(cli.cli, ["check", ".", "--max-duplicates", "0"])
-
-    assert result.exit_code == 2
-    assert "--max-duplicates" in result.output
-
-
 def test_cli_truncated_only_failure_is_named_in_the_status(monkeypatch, tmp_path):
     path = tmp_path / "sample.py"
     path.write_text("def entry():\n    return 1\n")
@@ -2732,20 +2710,6 @@ def test_cli_device_controls_pass_through(
     assert captured[0].mps_memory_fraction == 0.8
 
 
-def test_cli_rejects_unsafe_mps_memory_fraction(tmp_path):
-    path = tmp_path / "sample.py"
-    path.write_text("def entry():\n    return 1\n")
-
-    runner = CliRunner()
-    result = runner.invoke(
-        cli.cli,
-        ["check", str(path), "--mps-memory-fraction", "0"],
-    )
-
-    assert result.exit_code == 2
-    assert "must be finite and in the interval (0.0, 2.0]" in result.output
-
-
 def test_cli_rejects_mps_memory_fraction_with_cpu_device(tmp_path):
     path = tmp_path / "sample.py"
     path.write_text("def entry():\n    return 1\n")
@@ -2799,12 +2763,22 @@ def test_cli_rejects_device_controls_with_traditional_only(
     ("command", "tail_args", "expected_exit_code"),
     [("check", [], 1), ("search", ["entry"], 0)],
 )
-def test_cli_no_cache_flag_disables_embedding_cache(
+@pytest.mark.parametrize(
+    ("flag", "config_field", "expected_value"),
+    [
+        ("--no-cache", "embedding_cache", False),
+        ("--strict-revision-cache", "strict_revision_cache", True),
+    ],
+)
+def test_cli_cache_flags_plumb_to_config(
     monkeypatch,
     tmp_path,
     command,
     tail_args,
     expected_exit_code,
+    flag,
+    config_field,
+    expected_value,
 ):
     path = tmp_path / "sample.py"
     path.write_text("def entry():\n    return 1\n")
@@ -2817,11 +2791,10 @@ def test_cli_no_cache_flag_disables_embedding_cache(
         search_results=[(_build_unit(tmp_path), 0.9)],
         captured_configs=captured,
     )
-    runner = CliRunner()
-    result = runner.invoke(cli.cli, [command, str(path), *tail_args, "--no-cache"])
+    result = CliRunner().invoke(cli.cli, [command, str(path), *tail_args, flag])
 
     assert result.exit_code == expected_exit_code
-    assert captured[0].embedding_cache is False
+    assert getattr(captured[0], config_field) is expected_value
 
 
 def test_cli_traditional_only_accepts_no_cache_as_noop(monkeypatch, tmp_path):
@@ -2861,35 +2834,6 @@ def test_cli_check_defaults_to_embedding_cache_enabled(monkeypatch, tmp_path):
 
     assert result.exit_code == 1
     assert captured[0].embedding_cache is True
-
-
-@pytest.mark.parametrize(
-    ("command", "tail_args", "expected_exit_code"),
-    [("check", [], 1), ("search", ["entry"], 0)],
-)
-def test_cli_strict_revision_cache_flag_plumbs_to_config(
-    monkeypatch,
-    tmp_path,
-    command,
-    tail_args,
-    expected_exit_code,
-):
-    path = tmp_path / "sample.py"
-    path.write_text("def entry():\n    return 1\n")
-
-    captured = []
-    patch_cli_analyzer(
-        monkeypatch,
-        cli,
-        analyze_result=lambda: _build_result(tmp_path),
-        search_results=[(_build_unit(tmp_path), 0.9)],
-        captured_configs=captured,
-    )
-    runner = CliRunner()
-    result = runner.invoke(cli.cli, [command, str(path), *tail_args, "--strict-revision-cache"])
-
-    assert result.exit_code == expected_exit_code
-    assert captured[0].strict_revision_cache is True
 
 
 def test_cli_defaults_to_loose_revision_cache(monkeypatch, tmp_path):

@@ -59,6 +59,36 @@ def _unit(name: str, file_path: Path, lineno: int) -> CodeUnit:
     )
 
 
+def _patch_analyze(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    units: list[CodeUnit],
+    identity: EmbeddingSpaceIdentity,
+    embeddings: np.ndarray,
+    semantic_units: list[CodeUnit] | None = None,
+    traditional_duplicates: list[DuplicatePair] | None = None,
+    semantic_duplicates: list[DuplicatePair] | None = None,
+) -> None:
+    """Replace ``CodeAnalyzer.analyze`` with a stub that plants one embedding state.
+
+    ``semantic_units`` defaults to ``units``; pass ``[]`` for a corpus whose units
+    were dropped from the semantic matrix after traditional analysis.
+    """
+    matrix_units = units if semantic_units is None else semantic_units
+
+    def fake_analyze(self: CodeAnalyzer, path: Path) -> SimpleNamespace:
+        self._embeddings = embeddings
+        self._embedding_space_identity = identity
+        self._semantic_units = matrix_units
+        return SimpleNamespace(
+            units=units,
+            traditional_duplicates=list(traditional_duplicates or []),
+            semantic_duplicates=list(semantic_duplicates or []),
+        )
+
+    monkeypatch.setattr(CodeAnalyzer, "analyze", fake_analyze)
+
+
 def test_manifest_records_effective_embedding_space_not_the_request(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -86,17 +116,12 @@ def test_manifest_records_effective_embedding_space_not_the_request(
     )
     units = [_unit("first", corpus_file, 1), _unit("second", corpus_file, 5)]
 
-    def fake_analyze(self: CodeAnalyzer, path: Path) -> SimpleNamespace:
-        self._embeddings = np.zeros((2, 4), dtype=np.float32)
-        self._embedding_space_identity = effective_identity
-        self._semantic_units = units
-        return SimpleNamespace(
-            units=units,
-            traditional_duplicates=[],
-            semantic_duplicates=[],
-        )
-
-    monkeypatch.setattr(CodeAnalyzer, "analyze", fake_analyze)
+    _patch_analyze(
+        monkeypatch,
+        units=units,
+        identity=effective_identity,
+        embeddings=np.zeros((2, 4), dtype=np.float32),
+    )
     monkeypatch.setenv("PYTORCH_MPS_FAST_MATH", "1")
 
     sweep = _run_duplicate_sweep(
@@ -174,19 +199,16 @@ def test_manifest_recall_ceiling_includes_traditional_overflow_recovery(
     second = _unit("second", second_path, 1)
     traditional = DuplicatePair(first, second, 1.0, "ast_hash")
 
-    def fake_analyze(self: CodeAnalyzer, path: Path) -> SimpleNamespace:
-        self._embeddings = np.zeros((0, 0), dtype=np.float32)
-        self._embedding_space_identity = identity
-        # Both units passed the initial candidate policy but were dropped from
-        # the semantic matrix after traditional analysis, as context overflows are.
-        self._semantic_units = []
-        return SimpleNamespace(
-            units=[first, second],
-            traditional_duplicates=[traditional],
-            semantic_duplicates=[],
-        )
-
-    monkeypatch.setattr(CodeAnalyzer, "analyze", fake_analyze)
+    # Both units passed the initial candidate policy but were dropped from
+    # the semantic matrix after traditional analysis, as context overflows are.
+    _patch_analyze(
+        monkeypatch,
+        units=[first, second],
+        identity=identity,
+        embeddings=np.zeros((0, 0), dtype=np.float32),
+        semantic_units=[],
+        traditional_duplicates=[traditional],
+    )
 
     sweep = _run_duplicate_sweep(
         model_name="gte-modernbert-base",
@@ -284,17 +306,14 @@ def test_duplicate_rows_split_published_pairs_by_tier(tmp_path: Path, monkeypatc
     )
     units = [first, second, left, right]
 
-    def fake_analyze(self: CodeAnalyzer, path: Path) -> SimpleNamespace:
-        self._embeddings = np.zeros((4, 4), dtype=np.float32)
-        self._embedding_space_identity = identity
-        self._semantic_units = units
-        return SimpleNamespace(
-            units=units,
-            traditional_duplicates=[DuplicatePair(first, second, 1.0, "ast_hash")],
-            semantic_duplicates=[DuplicatePair(left, right, 0.91, "semantic")],
-        )
-
-    monkeypatch.setattr(CodeAnalyzer, "analyze", fake_analyze)
+    _patch_analyze(
+        monkeypatch,
+        units=units,
+        identity=identity,
+        embeddings=np.zeros((4, 4), dtype=np.float32),
+        traditional_duplicates=[DuplicatePair(first, second, 1.0, "ast_hash")],
+        semantic_duplicates=[DuplicatePair(left, right, 0.91, "semantic")],
+    )
 
     sweep = _run_duplicate_sweep(
         model_name="gte-modernbert-base",
@@ -377,13 +396,9 @@ def test_distribution_report_carries_the_sweep_calibration_manifest(
         runtime_variant="cpu-faithful",
     )
 
-    def fake_analyze(self: CodeAnalyzer, path: Path) -> SimpleNamespace:
-        self._embeddings = np.eye(2, 4, dtype=np.float32)
-        self._embedding_space_identity = identity
-        self._semantic_units = units
-        return SimpleNamespace(units=units, traditional_duplicates=[], semantic_duplicates=[])
-
-    monkeypatch.setattr(CodeAnalyzer, "analyze", fake_analyze)
+    _patch_analyze(
+        monkeypatch, units=units, identity=identity, embeddings=np.eye(2, 4, dtype=np.float32)
+    )
 
     report = _analyze_language(
         language="python",
@@ -580,17 +595,9 @@ def test_hybrid_gate_sweep_records_calibration_provenance(tmp_path: Path, monkey
     )
     units = [_unit("first", corpus_file, 1), _unit("second", corpus_file, 5)]
 
-    def fake_analyze(self: CodeAnalyzer, path: Path) -> SimpleNamespace:
-        self._embeddings = np.zeros((2, 4), dtype=np.float32)
-        self._embedding_space_identity = identity
-        self._semantic_units = units
-        return SimpleNamespace(
-            units=units,
-            traditional_duplicates=[],
-            semantic_duplicates=[],
-        )
-
-    monkeypatch.setattr(CodeAnalyzer, "analyze", fake_analyze)
+    _patch_analyze(
+        monkeypatch, units=units, identity=identity, embeddings=np.zeros((2, 4), dtype=np.float32)
+    )
     monkeypatch.setattr(
         "sys.argv",
         [

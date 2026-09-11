@@ -1509,50 +1509,46 @@ def test_compute_embeddings_retries_with_reduced_batch_before_cpu(monkeypatch, t
     assert seen_batch_sizes[:3] == [8, 4, 2]
 
 
+class _WhitespaceTokenizer:
+    """Tokenizer stub whose token count is the whitespace-separated word count."""
+
+    def __call__(self, texts, **_kwargs):
+        return {"input_ids": [text.split() for text in texts]}
+
+
+class _ShortContextModel:
+    """Model stub with a tiny context window that records every encode call."""
+
+    def __init__(self, *, max_seq_length: int = 8, tokenizer: object | None = None) -> None:
+        self.max_seq_length = max_seq_length
+        self.tokenizer = _WhitespaceTokenizer() if tokenizer is None else tokenizer
+        self.encode_calls: list[list[str]] = []
+        self.prompts: list[str | None] = []
+
+    def encode(self, texts, **kwargs):
+        self.encode_calls.append(list(texts))
+        self.prompts.append(kwargs.get("prompt"))
+        return np.ones((len(texts), 2), dtype=np.float32)
+
+
 def test_compute_embeddings_passes_long_code_to_backend(monkeypatch, tmp_path: Path) -> None:
     units = extract_arithmetic_units(tmp_path)
     units[0].qualified_name = "module.long_tail"
     units[0].source = "one two three four five six seven eight changed_tail"
-    encode_calls: list[list[str]] = []
-
-    class Tokenizer:
-        def encode(self, text, **kwargs):
-            return text.split()
-
-    class ShortContextModel:
-        max_seq_length = 8
-        tokenizer = Tokenizer()
-
-        def encode(self, texts, **kwargs):
-            encode_calls.append(list(texts))
-            return np.ones((len(texts), 2), dtype=np.float32)
-
-    monkeypatch.setattr(semantic, "get_model", lambda *args, **kwargs: ShortContextModel())
+    model = _ShortContextModel()
+    monkeypatch.setattr(semantic, "get_model", lambda *args, **kwargs: model)
 
     embeddings = compute_embeddings([units[0]], use_cache=False)
 
     assert embeddings.shape == (1, 2)
-    assert encode_calls == [[units[0].source]]
+    assert model.encode_calls == [[units[0].source]]
 
 
 def test_find_similar_to_query_passes_long_query_to_backend(monkeypatch, tmp_path: Path) -> None:
     units = extract_arithmetic_units(tmp_path)
     embeddings = np.array([[1.0, 0.0], [0.0, 1.0]], dtype=np.float32)
-    encode_calls: list[list[str]] = []
-
-    class Tokenizer:
-        def encode(self, text, **kwargs):
-            return text.split()
-
-    class ShortContextModel:
-        max_seq_length = 4
-        tokenizer = Tokenizer()
-
-        def encode(self, texts, **kwargs):
-            encode_calls.append(list(texts))
-            return np.ones((len(texts), 2), dtype=np.float32)
-
-    monkeypatch.setattr(semantic, "get_model", lambda *args, **kwargs: ShortContextModel())
+    model = _ShortContextModel(max_seq_length=4)
+    monkeypatch.setattr(semantic, "get_model", lambda *args, **kwargs: model)
 
     query = "find code that validates every record"
     results = find_similar_to_query(
@@ -1564,30 +1560,7 @@ def test_find_similar_to_query_passes_long_query_to_backend(monkeypatch, tmp_pat
     )
 
     assert len(results) == len(units)
-    assert encode_calls == [[query]]
-
-
-class _WhitespaceTokenizer:
-    """Tokenizer stub whose token count is the whitespace-separated word count."""
-
-    def __call__(self, texts, **_kwargs):
-        return {"input_ids": [text.split() for text in texts]}
-
-
-class _ShortContextModel:
-    """Model stub with a tiny context window that records every encode call."""
-
-    max_seq_length = 8
-    tokenizer = _WhitespaceTokenizer()
-
-    def __init__(self) -> None:
-        self.encode_calls: list[list[str]] = []
-        self.prompts: list[str | None] = []
-
-    def encode(self, texts, **kwargs):
-        self.encode_calls.append(list(texts))
-        self.prompts.append(kwargs.get("prompt"))
-        return np.ones((len(texts), 2), dtype=np.float32)
+    assert model.encode_calls == [[query]]
 
 
 def test_code_truncation_is_left_to_backend_with_prompt(monkeypatch, tmp_path: Path) -> None:
@@ -1640,20 +1613,7 @@ def test_context_diagnostic_counts_prompt_and_special_tokens(monkeypatch, tmp_pa
                 ]
             }
 
-    class ShortContextModel:
-        max_seq_length = 8
-        tokenizer = Tokenizer()
-
-        def __init__(self) -> None:
-            self.encode_calls: list[list[str]] = []
-            self.prompts: list[str | None] = []
-
-        def encode(self, texts, **kwargs):
-            self.encode_calls.append(list(texts))
-            self.prompts.append(kwargs.get("prompt"))
-            return np.ones((len(texts), 2), dtype=np.float32)
-
-    model = ShortContextModel()
+    model = _ShortContextModel(tokenizer=Tokenizer())
     monkeypatch.setattr(semantic, "get_model", lambda *args, **kwargs: model)
 
     diagnostics = []
