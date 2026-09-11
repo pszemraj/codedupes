@@ -20,7 +20,12 @@ from codedupes.models import (
     ExtractionDiagnostic,
     HybridDuplicate,
 )
-from codedupes.report.selection import FileSearchResult, ReportSelection
+from codedupes.report.selection import (
+    FailOnPolicy,
+    FileSearchResult,
+    ReportSelection,
+    withheld_only_failure,
+)
 from codedupes.semantic import EmbeddingRunStats
 
 from . import _output
@@ -151,17 +156,20 @@ def _print_diagnostics(title: str, diagnostics: list[ExtractionDiagnostic]) -> N
 def print_summary(
     selection: ReportSelection,
     *,
-    fail_on: str,
+    fail_on: FailOnPolicy,
     exit_code: int,
+    strict_unused: bool = False,
 ) -> None:
     """Print analysis summary.
 
     :param selection: Findings selected for this report, with the complete result.
     :param fail_on: Finding policy selected for this run.
     :param exit_code: Exit code computed from the selected policy.
+    :param strict_unused: Whether unused findings count under the failure policy.
     :return: ``None``.
     """
     result = selection.result
+    withheld = len(selection.omitted_review)
     _output.console.print()
 
     summary = Table(title="Analysis Summary", show_header=False, box=None)
@@ -188,6 +196,11 @@ def print_summary(
 
     if selection.mode == "combined":
         summary.add_row("Hybrid duplicates", str(len(result.hybrid_duplicates)))
+        for tier, count in selection.duplicates_by_tier.items():
+            summary.add_row(f"  {tier}", str(count))
+        summary.add_row("Reported duplicates", str(len(selection.duplicates)))
+        if withheld:
+            summary.add_row("Withheld review candidates", f"{withheld} (use --include-review)")
         summary.add_row("Likely dead code", str(len(result.potentially_unused)))
         summary.add_row("", "")
         summary.add_row("Raw traditional duplicates", str(len(result.traditional_duplicates)))
@@ -214,7 +227,13 @@ def print_summary(
     if result.embedding_stats is not None:
         summary.add_row("Embeddings", _format_embedding_stats(result.embedding_stats))
     summary.add_row("Failure policy", fail_on)
-    summary.add_row("Finding status", f"{'fail' if exit_code else 'pass'} (exit {exit_code})")
+    status = f"{'fail' if exit_code else 'pass'} (exit {exit_code})"
+    if exit_code and withheld_only_failure(selection, policy=fail_on, strict_unused=strict_unused):
+        status = (
+            f"fail (exit {exit_code}; only withheld semantic_review candidates fail "
+            f"--fail-on {fail_on}, use --include-review to list them)"
+        )
+    summary.add_row("Finding status", status)
 
     _output.console.print(summary)
     _print_diagnostics("Extraction diagnostics", result.extraction_diagnostics)
@@ -296,6 +315,7 @@ def _print_duplicate_table(
     show_source: bool,
     max_items: int | None,
     hybrid: bool,
+    withheld: int = 0,
 ) -> None:
     """Render duplicate pairs in either raw or hybrid layout.
 
@@ -304,12 +324,21 @@ def _print_duplicate_table(
     :param show_source: Whether to render source snippets.
     :param max_items: Optional row limit.
     :param hybrid: Whether the payload is hybrid duplicates.
+    :param withheld: Review pairs the report policy withheld from this table.
     :return: ``None``.
     """
     if not duplicates:
+        if withheld:
+            _output.console.print(
+                f"\n[dim]{title}: no reported pairs; {withheld} semantic_review "
+                "candidates withheld (use --include-review to list them).[/dim]"
+            )
         return
 
-    _output.console.print(f"\n[bold yellow]{title}[/bold yellow] ({len(duplicates)} pairs)")
+    counts = f"{len(duplicates)} pairs"
+    if withheld:
+        counts += f", {withheld} review withheld"
+    _output.console.print(f"\n[bold yellow]{title}[/bold yellow] ({counts})")
     compact = _output.console.width < 120
     table = _build_duplicates_table(hybrid=hybrid, compact=compact)
 
@@ -398,12 +427,14 @@ def print_hybrid_duplicates(
     duplicates: list[HybridDuplicate],
     show_source: bool = False,
     max_items: int | None = DEFAULT_TABLE_ROWS,
+    withheld: int = 0,
 ) -> None:
     """Print synthesized hybrid duplicate pairs.
 
     :param duplicates: Hybrid duplicates to print.
     :param show_source: Whether to render source snippets.
     :param max_items: Optional max rows.
+    :param withheld: Review pairs the report policy withheld from the table.
     :return: ``None``.
     """
     _print_duplicate_table(
@@ -412,6 +443,7 @@ def print_hybrid_duplicates(
         show_source=show_source,
         max_items=max_items,
         hybrid=True,
+        withheld=withheld,
     )
 
 
@@ -472,6 +504,7 @@ def print_findings(
             cast(list[HybridDuplicate], selection.duplicates),
             show_source=show_source,
             max_items=max_items,
+            withheld=len(selection.omitted_review),
         )
         print_unused(selection.potentially_unused, title="Likely Dead Code", max_items=max_items)
         if selection.traditional_duplicates is not None:

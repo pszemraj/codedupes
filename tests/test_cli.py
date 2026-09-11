@@ -1586,6 +1586,7 @@ def test_cli_rejects_conflicting_single_method_flags(tmp_path):
     ("flag", "expected_message"),
     [
         ("--show-all", "--show-all is only valid in default combined mode."),
+        ("--include-review", "--include-review is only valid in default combined mode."),
         (
             "--allow-semantic-fallback",
             "--allow-semantic-fallback is only valid in default combined mode.",
@@ -2322,18 +2323,185 @@ def test_cli_fail_on_all_and_none(monkeypatch, tmp_path):
 
     default_result = runner.invoke(cli.cli, ["check", str(path)])
     all_result = runner.invoke(cli.cli, ["check", str(path), "--fail-on", "all", "--json"])
+    all_terminal = runner.invoke(cli.cli, ["check", str(path), "--fail-on", "all"])
     none_result = runner.invoke(cli.cli, ["check", str(path), "--fail-on", "none"])
 
     assert default_result.exit_code == 0
     assert all_result.exit_code == 1
+    assert all_terminal.exit_code == 1
     assert none_result.exit_code == 0
     assert "Failure policy" in default_result.output
     assert "actionable" in default_result.output
     assert "Finding status" in default_result.output
     assert "pass (exit 0)" in default_result.output
+    # The unused unit fails --fail-on all on its own, so this is not a
+    # withheld-only failure and the terminal must not claim it is.
+    assert "fail (exit 1)" in all_terminal.output
+    assert "only withheld" not in all_terminal.output
     summary = json.loads(all_result.output)["summary"]
     assert summary["fail_on"] == "all"
     assert summary["exit_code"] == 1
+    assert summary["reported_duplicates"] == 0
+    assert summary["omitted_review_duplicates"] == 1
+
+
+def _build_tiered_result(tmp_path: Path) -> AnalysisResult:
+    """Combined result with one confirmed pair, two review pairs, and an unused unit."""
+    unit = _build_unit(tmp_path)
+    other = make_code_unit(tmp_path, name="other", source="def other():\n    return 2", lineno=5)
+    review_only = make_code_unit(
+        tmp_path, name="lonely", source="def lonely():\n    return 3", lineno=9
+    )
+    return AnalysisResult(
+        units=[unit, other, review_only],
+        traditional_duplicates=[
+            DuplicatePair(unit_a=unit, unit_b=other, similarity=0.9, method="jaccard")
+        ],
+        semantic_duplicates=[
+            DuplicatePair(unit_a=unit, unit_b=other, similarity=0.95, method="semantic"),
+            DuplicatePair(unit_a=unit, unit_b=review_only, similarity=0.81, method="semantic"),
+            DuplicatePair(unit_a=other, unit_b=review_only, similarity=0.80, method="semantic"),
+        ],
+        hybrid_duplicates=[
+            HybridDuplicate(
+                unit_a=unit,
+                unit_b=other,
+                tier="hybrid_confirmed",
+                confidence=0.92,
+                semantic_similarity=0.95,
+                jaccard_similarity=0.9,
+            ),
+            HybridDuplicate(
+                unit_a=unit,
+                unit_b=review_only,
+                tier="semantic_review",
+                confidence=0.76,
+                semantic_similarity=0.81,
+            ),
+            HybridDuplicate(
+                unit_a=other,
+                unit_b=review_only,
+                tier="semantic_review",
+                confidence=0.76,
+                semantic_similarity=0.80,
+            ),
+        ],
+        potentially_unused=[other],
+        analysis_mode="combined",
+    )
+
+
+def test_cli_withholds_semantic_review_by_default(monkeypatch, tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+    patch_cli_analyzer(monkeypatch, cli, analyze_result=lambda: _build_tiered_result(tmp_path))
+    runner = CliRunner()
+
+    json_result = runner.invoke(cli.cli, ["check", str(path), "--json", "--no-unused"])
+    assert json_result.exit_code == 1
+    output = json.loads(json_result.output)
+    assert output["summary"]["hybrid_duplicates"] == 3
+    assert output["summary"]["reported_duplicates"] == 1
+    assert output["summary"]["omitted_review_duplicates"] == 2
+    assert output["summary"]["duplicates_by_tier"] == {
+        "exact": 0,
+        "traditional_near": 0,
+        "hybrid_confirmed": 1,
+        "semantic_high_confidence": 0,
+        "semantic_review": 2,
+    }
+    assert [edge["tier"] for edge in output["duplicates"]] == ["hybrid_confirmed"]
+    # A unit referenced only by withheld pairs is not serialized.
+    assert {record["name"] for record in output["units"].values()} == {"entry", "other"}
+
+    terminal = runner.invoke(cli.cli, ["check", str(path), "--no-unused"])
+    assert terminal.exit_code == 1
+    assert "Reported duplicates" in terminal.output
+    assert "Withheld review candidates" in terminal.output
+    assert "2 (use --include-review)" in terminal.output
+    assert "semantic_review" in terminal.output  # the tier breakdown row
+    assert "(1 pairs, 2 review withheld)" in terminal.output
+    assert "lonely" not in terminal.output
+
+
+def test_cli_include_review_restores_withheld_pairs(monkeypatch, tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+    patch_cli_analyzer(monkeypatch, cli, analyze_result=lambda: _build_tiered_result(tmp_path))
+    runner = CliRunner()
+
+    json_result = runner.invoke(
+        cli.cli, ["check", str(path), "--json", "--no-unused", "--include-review"]
+    )
+    assert json_result.exit_code == 1
+    output = json.loads(json_result.output)
+    assert output["summary"]["reported_duplicates"] == 3
+    assert output["summary"]["omitted_review_duplicates"] == 0
+    assert [edge["tier"] for edge in output["duplicates"]] == [
+        "hybrid_confirmed",
+        "semantic_review",
+        "semantic_review",
+    ]
+    assert {record["name"] for record in output["units"].values()} == {"entry", "other", "lonely"}
+    assert "traditional_duplicates" not in output
+
+    terminal = runner.invoke(cli.cli, ["check", str(path), "--no-unused", "--include-review"])
+    assert terminal.exit_code == 1
+    assert "Withheld review candidates" not in terminal.output
+    assert "(3 pairs)" in terminal.output
+    assert "lonely" in terminal.output
+
+
+def test_cli_show_all_implies_include_review(monkeypatch, tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+    patch_cli_analyzer(monkeypatch, cli, analyze_result=lambda: _build_tiered_result(tmp_path))
+    runner = CliRunner()
+
+    result = runner.invoke(cli.cli, ["check", str(path), "--json", "--no-unused", "--show-all"])
+    assert result.exit_code == 1
+    output = json.loads(result.output)
+    assert output["summary"]["reported_duplicates"] == 3
+    assert output["summary"]["omitted_review_duplicates"] == 0
+    assert len(output["traditional_duplicates"]) == 1
+    assert len(output["semantic_duplicates"]) == 3
+
+
+def test_cli_withheld_only_result_prints_a_placeholder_instead_of_nothing(monkeypatch, tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+    unit = _build_unit(tmp_path)
+    review_only = AnalysisResult(
+        units=[unit],
+        traditional_duplicates=[],
+        semantic_duplicates=[],
+        hybrid_duplicates=[
+            HybridDuplicate(unit_a=unit, unit_b=unit, tier="semantic_review", confidence=0.8)
+        ],
+        potentially_unused=[],
+        analysis_mode="combined",
+    )
+    patch_cli_analyzer(monkeypatch, cli, analyze_result=review_only)
+    runner = CliRunner()
+
+    result = runner.invoke(cli.cli, ["check", str(path)])
+    assert result.exit_code == 0
+    assert "Hybrid Duplicates: no reported pairs; 1 semantic_review" in result.output
+    assert "Withheld review candidates" in result.output
+    assert "pass (exit 0)" in result.output
+    # --fail-on actionable ignores withheld review pairs, so no withheld-only note.
+    assert "only withheld" not in result.output
+
+    # Under --fail-on all the withheld pair decides the exit code, and the
+    # terminal says so instead of failing over an invisible finding.
+    strict = runner.invoke(cli.cli, ["check", str(path), "--fail-on", "all"])
+    assert strict.exit_code == 1
+    assert "only withheld semantic_review candidates fail --fail-on all" in strict.output
+    assert "use --include-review to list them" in strict.output
+    listed = runner.invoke(cli.cli, ["check", str(path), "--fail-on", "all", "--include-review"])
+    assert listed.exit_code == 1
+    assert "fail (exit 1)" in listed.output
+    assert "only withheld" not in listed.output
 
 
 def test_cli_semantic_only_uses_raw_findings_for_exit(monkeypatch, tmp_path):

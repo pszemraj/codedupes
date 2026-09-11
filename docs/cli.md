@@ -23,6 +23,7 @@ codedupes check ./src --json --threshold 0.82
 codedupes check ./src --semantic-only
 # Fast structural/token scan without semantic model inference.
 codedupes check ./src --traditional-only --no-unused
+codedupes check ./src --include-review
 codedupes check ./src --show-all
 codedupes check ./src --fail-on all
 codedupes check ./src/module.py
@@ -44,10 +45,11 @@ Options, in addition to the [shared options](#options-shared-by-check-and-search
 - `--suppress-test-semantic`: Suppress semantic duplicate matches involving `test_*` functions
 - `--no-tiny-filter`: Disable tiny code-unit filtering for traditional duplicates
 - `--tiny-cutoff <int>`: Tiny code-unit statement cutoff (exclusive) for traditional filtering (default `3`)
-- `--show-all`: Also print raw traditional + raw semantic duplicate lists in combined mode
+- `--include-review`: Also list `semantic_review` pairs, which combined mode [withholds by default](output.md#json-schema-v3); the exit code does not change
+- `--show-all`: Print every hybrid tier plus the raw traditional and raw semantic duplicate lists in combined mode (implies `--include-review`)
 - `--full-table`: Disable table row truncation and print all rows in terminal output
 - `--show-source`: Show truncated duplicate snippets
-- `--fail-on <actionable|all|none>`: Select which reported findings produce exit code `1` (default `actionable`; see [exit codes](output.md#exit-codes))
+- `--fail-on <actionable|all|none>`: Select which findings in the complete result produce exit code `1` (default `actionable`; `all` also counts withheld review pairs; see [exit codes](output.md#exit-codes))
 
 ## `codedupes search <path> "<query>"`
 
@@ -155,7 +157,7 @@ Clear all cached embeddings or only entries for one model. An empty or whitespac
 - `--semantic-threshold` and `--traditional-threshold` override `--threshold` for their respective methods
 - `--batch-size` and `--top-k` must be greater than `0`
 - `--min-statements` and `--tiny-cutoff` must be greater than or equal to `0`
-- `--show-all` and `--allow-semantic-fallback` are only valid in default combined `check` mode (not with `--semantic-only` or `--traditional-only`)
+- `--include-review`, `--show-all`, and `--allow-semantic-fallback` are only valid in default combined `check` mode (not with `--semantic-only` or `--traditional-only`)
 - `--json` rejects rich-only display controls: `--show-source`, `--full-table`, `--verbose`, and explicit `--output-width`
 - `--semantic-only` and `--traditional-only` are mutually exclusive
 - `--no-unused` and `--strict-unused` are mutually exclusive

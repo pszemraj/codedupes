@@ -24,6 +24,7 @@ from codedupes.constants import (
     SEMANTIC_DEVICE_CHOICES,
 )
 from codedupes.extractor import DEFAULT_EXCLUDE_PATTERNS
+from codedupes.report.selection import ReportPolicy
 from codedupes.semantic import ProgressMode, resolve_search_threshold
 from codedupes.semantic_profiles import (
     THRESHOLD_PROFILE_CHOICES,
@@ -272,6 +273,7 @@ class CheckOptions:
     no_tiny_filter: bool
     tiny_cutoff: int
     show_all: bool
+    include_review: bool
     show_source: bool
     full_table: bool
     fail_on: Literal["actionable", "all", "none"]
@@ -296,8 +298,12 @@ class CheckOptions:
             raise click.UsageError(
                 "--allow-semantic-fallback is only valid in default combined mode."
             )
-        if params["show_all"] and (params["semantic_only"] or params["traditional_only"]):
-            raise click.UsageError("--show-all is only valid in default combined mode.")
+        if params["semantic_only"] or params["traditional_only"]:
+            for name in ("show_all", "include_review"):
+                if params[name]:
+                    raise click.UsageError(
+                        f"--{name.replace('_', '-')} is only valid in default combined mode."
+                    )
 
         _validate_json_output_controls(
             as_json=params["as_json"],
@@ -337,13 +343,29 @@ class CheckOptions:
 
         return cls(
             semantic=SemanticOptions.from_params(params),
-            **{name: params[name] for name in cls.__dataclass_fields__ if name != "semantic"},
+            **{
+                name: params[name]
+                for name in cls.__dataclass_fields__
+                if name not in {"semantic", "include_review"}
+            },
+            include_review=params["include_review"] or params["show_all"],
         )
 
     @property
     def combined_mode(self) -> bool:
-        """Return whether both duplicate-detection methods are enabled."""
+        """Report whether both duplicate-detection methods are enabled.
+
+        :return: ``True`` unless a single-method flag was passed.
+        """
         return not self.semantic_only and not self.traditional_only
+
+    @property
+    def report_policy(self) -> ReportPolicy:
+        """Build the report visibility policy these options select.
+
+        :return: Policy with ``include_review`` already implied by ``--show-all``.
+        """
+        return ReportPolicy(include_review=self.include_review, show_all=self.show_all)
 
     @property
     def table_max_items(self) -> int | None:

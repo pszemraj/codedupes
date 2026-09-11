@@ -130,7 +130,7 @@ codedupes check ./src --json | jq empty
 
 The shortened example omits `u1` and `u2` from `units`; real output includes every id referenced by any emitted finding list exactly once. Units with no emitted finding are not present, so `summary.total_units` is the full extracted corpus count while `units` contains only units needed to resolve the report.
 
-In default combined mode, `duplicates` contains hybrid edges. `summary.hybrid_duplicates` counts the complete synthesis, `summary.duplicates_by_tier` breaks that count down over all five tiers (always present, zero-filled), `summary.reported_duplicates` counts the edges actually emitted, and `summary.omitted_review_duplicates` counts pairs withheld by the report policy, so `reported_duplicates + omitted_review_duplicates == hybrid_duplicates`. With `--show-all`, `traditional_duplicates` and `semantic_duplicates` are added as raw edge lists with `unit_a`, `unit_b`, `similarity`, and `method`.
+In default combined mode, `duplicates` contains hybrid edges of every tier except `semantic_review`, which is withheld by default: those pairs passed their language's semantic gate but have neither deterministic corroboration nor the calibrated similarity margin, and on real repositories they are mostly noise. `--include-review` emits them too (ordered after the reported tiers, as the analyzer ranks them); `--show-all` implies `--include-review` and also adds `traditional_duplicates` and `semantic_duplicates` as raw edge lists with `unit_a`, `unit_b`, `similarity`, and `method`. `summary.hybrid_duplicates` counts the complete synthesis, `summary.duplicates_by_tier` breaks that count down over all five tiers (always present, zero-filled), `summary.reported_duplicates` counts the edges actually emitted, and `summary.omitted_review_duplicates` counts pairs withheld by the report policy, so `reported_duplicates + omitted_review_duplicates == hybrid_duplicates` regardless of flags. Nothing is truncated: every edge the policy admits is emitted.
 
 In `--semantic-only` or `--traditional-only` mode, `duplicates` directly contains the active raw edge list, `duplicates_by_tier` is all zeros, and the `--show-all` arrays are omitted. `analysis_mode` is always one of `combined`, `traditional`, `semantic`, or `none`.
 
@@ -226,11 +226,11 @@ Move and deletion counts need a comparable [corpus baseline](caching.md#corpus-l
 
 `check --fail-on` controls findings only; runtime and usage failures retain their normal status:
 
-- `--fail-on actionable` (default): combined mode exits `1` for `exact`, `traditional_near`, or `hybrid_confirmed`. Pure-semantic `semantic_high_confidence` and `semantic_review` pairs remain visible but advisory because neither has deterministic structural/token corroboration. Non-strict unused guesses are also advisory, while `--strict-unused` makes them actionable. Raw single-method duplicates already passed the explicitly selected method thresholds and remain actionable.
-- `--fail-on all`: any reported duplicate or unused finding exits `1`.
+- `--fail-on actionable` (default): combined mode exits `1` for `exact`, `traditional_near`, or `hybrid_confirmed`. Pure-semantic `semantic_high_confidence` pairs are reported but advisory, and `semantic_review` pairs are withheld and advisory, because neither has deterministic structural/token corroboration. Non-strict unused guesses are also advisory, while `--strict-unused` makes them actionable. Raw single-method duplicates already passed the explicitly selected method thresholds and remain actionable.
+- `--fail-on all`: any duplicate or unused finding in the complete result exits `1`, including `semantic_review` pairs the report withheld.
 - `--fail-on none`: findings never change the successful exit code.
 
-The selected policy and computed result are always present as `summary.fail_on` and `summary.exit_code`. Terminal summaries show the same values as `Failure policy` and `Finding status` rows.
+The exit code is computed on the complete analysis result before report selection, so `--include-review` and `--show-all` never change it. When withheld review pairs are the only reason a run fails, the terminal `Finding status` row says so and points at `--include-review`; in JSON the same situation reads as `exit_code: 1` with `reported_duplicates: 0` and a non-zero `omitted_review_duplicates`. The selected policy and computed result are always present as `summary.fail_on` and `summary.exit_code`. Terminal summaries show the same values as `Failure policy` and `Finding status` rows.
 
 Command status conventions:
 
@@ -246,6 +246,6 @@ Tables show up to 20 rows by default; `--full-table` removes that limit.
 
 Locations use the shorter of working-directory-relative and absolute `<path>:<line>` spellings.
 
-- Combined: `Hybrid Duplicates`, plus raw traditional and semantic panels under `--show-all`.
+- Combined: `Hybrid Duplicates (N pairs, M review withheld)` without `semantic_review` rows; `--include-review` lists them, and `--show-all` adds the raw traditional and semantic panels as well. When every hybrid pair is withheld, one dim line reports the withheld count instead of an empty table. The summary lists every tier's count under `Hybrid duplicates`, then `Reported duplicates` and `Withheld review candidates`.
 - `--traditional-only`: `Traditional Duplicates (Structural/Token/Jaccard)`.
 - `--semantic-only`: `Semantic Duplicates (Embedding)`.

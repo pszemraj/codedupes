@@ -10,15 +10,15 @@ The semantic pass may load the selected embedding model and may download it on i
 
 Combined output ranks each pair by an evidence tier:
 
-| tier | evidence |
-| --- | --- |
-| `exact` | structural or token fingerprints agree |
-| `traditional_near` | identifier Jaccard match |
-| `hybrid_confirmed` | semantic and traditional-near match |
-| `semantic_high_confidence` | semantic match plus weak identifier and size corroboration |
-| `semantic_review` | semantic match only |
+| tier | evidence | reported by default |
+| --- | --- | --- |
+| `exact` | structural or token fingerprints agree | yes |
+| `traditional_near` | identifier Jaccard match | yes |
+| `hybrid_confirmed` | semantic and traditional-near match | yes |
+| `semantic_high_confidence` | semantic match plus size/identifier corroboration or a calibrated similarity margin | yes |
+| `semantic_review` | semantic match only | no (`--include-review`) |
 
-[Exit codes](output.md#exit-codes) define which tiers and unused findings are actionable under each failure policy.
+Every tier is synthesized and counted; the default report withholds `semantic_review` because on real repositories those pairs are mostly noise, and `--include-review` (or `--show-all`) lists them. [Exit codes](output.md#exit-codes) define which tiers and unused findings are actionable under each failure policy; withholding never changes the exit code.
 
 ## Semantic duplicate gate defaults
 

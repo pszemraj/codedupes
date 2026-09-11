@@ -10,7 +10,7 @@ import rich_click as click
 import codedupes.cli as cli_module
 from codedupes.constants import DEFAULT_CHECK_SEMANTIC_TASK, SEMANTIC_TASK_CHOICES
 from codedupes.report.json import check_result_to_json, to_json_text
-from codedupes.report.selection import ReportPolicy, run_should_fail, select_findings
+from codedupes.report.selection import run_should_fail, select_findings
 
 from ._options import CheckOptions, Panel, option_panels, semantic_options
 from ._output import _configured_cli_output, _run_cli_action
@@ -117,10 +117,22 @@ from ._render import print_findings, print_summary
     help="Tiny code-unit statement cutoff (exclusive) for traditional filtering",
 )
 @click.option(
+    "--include-review",
+    is_flag=True,
+    panel=Panel.OUTPUT,
+    help=(
+        "Also list semantic_review pairs (semantic match without corroboration); "
+        "implied by --show-all"
+    ),
+)
+@click.option(
     "--show-all",
     is_flag=True,
     panel=Panel.OUTPUT,
-    help="Show raw traditional/semantic duplicate lists alongside hybrid output",
+    help=(
+        "Show every hybrid tier plus the raw traditional/semantic duplicate lists "
+        "(implies --include-review)"
+    ),
 )
 @click.option(
     "--show-source",
@@ -175,9 +187,7 @@ def check_command(ctx: click.Context, path: Path, **params: Any) -> None:
         exit_code = int(
             run_should_fail(result, policy=opts.fail_on, strict_unused=opts.strict_unused)
         )
-        selection = select_findings(
-            result, ReportPolicy(include_review=True, show_all=opts.show_all)
-        )
+        selection = select_findings(result, opts.report_policy)
 
         if opts.as_json:
             print(
@@ -186,7 +196,12 @@ def check_command(ctx: click.Context, path: Path, **params: Any) -> None:
                 )
             )
         else:
-            print_summary(selection, fail_on=opts.fail_on, exit_code=exit_code)
+            print_summary(
+                selection,
+                fail_on=opts.fail_on,
+                exit_code=exit_code,
+                strict_unused=opts.strict_unused,
+            )
             print_findings(
                 selection,
                 show_source=opts.show_source,
