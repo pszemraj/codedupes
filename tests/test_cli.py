@@ -6,6 +6,7 @@ import os
 import subprocess
 import sys
 import textwrap
+import threading
 from dataclasses import replace
 from pathlib import Path
 
@@ -3145,8 +3146,10 @@ def test_cli_cache_clear_warns_for_missing_local_model_directory(tmp_path):
     result = CliRunner().invoke(cli.cli, ["cache", "clear", "--model", str(missing)])
 
     assert result.exit_code == 0
-    assert "does not exist" in result.stderr
-    assert "without --model" in result.stderr
+    # Rich wraps the long temporary path, so compare with line breaks collapsed.
+    message = " ".join(result.stderr.split())
+    assert "does not exist" in message
+    assert "without --model" in message
 
 
 def test_cli_cache_clear_reports_failure(monkeypatch):
@@ -3279,34 +3282,54 @@ def test_cli_info_fits_actual_terminal(terminal_width, width_args):
     termios = pytest.importorskip("termios")
     from rich.text import Text
 
-    master, slave = pty.openpty()
+    try:
+        master, slave = pty.openpty()
+    except OSError as exc:  # sandboxes may refuse to allocate a pseudo-terminal
+        pytest.skip(f"no pty available: {exc}")
     termios.tcsetwinsize(slave, (40, terminal_width))
     env = dict(os.environ, TERM="xterm-256color")
     env.pop("COLUMNS", None)
     env.pop("LINES", None)
+
+    # The PTY buffer is smaller than a narrow-width report, so drain the master
+    # while the child runs or the child blocks on write and never exits.
+    chunks: list[bytes] = []
+
+    def drain() -> None:
+        while True:
+            try:
+                chunk = os.read(master, 4096)
+            except OSError:  # EIO once the child's slave descriptor closes
+                return
+            if not chunk:
+                return
+            chunks.append(chunk)
+
+    proc = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            "from codedupes.cli import main; raise SystemExit(main())",
+            "info",
+            *width_args,
+        ],
+        stdin=subprocess.DEVNULL,
+        stdout=slave,
+        stderr=subprocess.PIPE,
+        env=env,
+    )
+    os.close(slave)  # only the child holds the slave now, so its exit ends the read loop
+    reader = threading.Thread(target=drain, daemon=True)
+    reader.start()
     try:
-        result = subprocess.run(
-            [
-                sys.executable,
-                "-c",
-                "from codedupes.cli import main; raise SystemExit(main())",
-                "info",
-                *width_args,
-            ],
-            stdin=subprocess.DEVNULL,
-            stdout=slave,
-            stderr=subprocess.PIPE,
-            env=env,
-            timeout=30,
-            check=False,
-        )
-        # The compact report fits the PTY buffer, so it can be read after exit.
-        raw = os.read(master, 16384).decode()
+        _, stderr = proc.communicate(timeout=60)
     finally:
-        os.close(slave)
+        proc.kill()
+        reader.join(timeout=5)
         os.close(master)
-    assert result.returncode == 0, result.stderr.decode()
-    assert result.stderr == b""
+    raw = b"".join(chunks).decode()
+    assert proc.returncode == 0, stderr.decode()
+    assert stderr == b""
     lines = Text.from_ansi(raw.replace("\r\n", "\n")).plain.splitlines()
     assert max(map(len, lines)) <= terminal_width
     assert "Default model" in raw and cli.DEFAULT_MODEL in raw
