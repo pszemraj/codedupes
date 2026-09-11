@@ -2467,6 +2467,143 @@ def test_cli_show_all_implies_include_review(monkeypatch, tmp_path):
     assert len(output["semantic_duplicates"]) == 3
 
 
+def test_cli_max_duplicates_caps_the_report_but_not_the_exit_code(monkeypatch, tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+    patch_cli_analyzer(monkeypatch, cli, analyze_result=lambda: _build_tiered_result(tmp_path))
+    runner = CliRunner()
+
+    json_result = runner.invoke(
+        cli.cli,
+        ["check", str(path), "--json", "--no-unused", "--include-review", "--max-duplicates", "2"],
+    )
+    assert json_result.exit_code == 1
+    output = json.loads(json_result.output)
+    summary = output["summary"]
+    assert summary["hybrid_duplicates"] == 3
+    assert summary["reported_duplicates"] == 2
+    assert summary["omitted_review_duplicates"] == 0
+    assert summary["truncated_duplicates"] == 1
+    assert summary["max_duplicates"] == 2
+    assert [edge["tier"] for edge in output["duplicates"]] == [
+        "hybrid_confirmed",
+        "semantic_review",
+    ]
+    # Ids stay resolvable; units referenced only by the cut pair are dropped.
+    referenced = {edge[key] for edge in output["duplicates"] for key in ("unit_a", "unit_b")}
+    assert referenced == set(output["units"])
+
+    terminal = runner.invoke(cli.cli, ["check", str(path), "--no-unused", "--max-duplicates", "1"])
+    assert terminal.exit_code == 1
+    # Default policy withholds both review pairs first, so the cap cuts nothing
+    # and the summary does not mention it.
+    assert "Truncated duplicates" not in terminal.output
+    assert "(1 pairs, 2 review withheld)" in terminal.output
+
+    capped = runner.invoke(
+        cli.cli,
+        ["check", str(path), "--no-unused", "--include-review", "--max-duplicates", "1"],
+    )
+    assert capped.exit_code == 1
+    assert "2 (--max-duplicates 1)" in capped.output
+    assert "(1 pairs, 2 truncated)" in capped.output
+    assert "lonely" not in capped.output
+
+
+def test_cli_max_duplicates_rejects_zero():
+    runner = CliRunner()
+
+    result = runner.invoke(cli.cli, ["check", ".", "--max-duplicates", "0"])
+
+    assert result.exit_code == 2
+    assert "--max-duplicates" in result.output
+
+
+def test_cli_truncated_only_failure_is_named_in_the_status(monkeypatch, tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+    unit = _build_unit(tmp_path)
+    other = make_code_unit(tmp_path, name="other", source="def other():\n    return 2", lineno=5)
+    third = make_code_unit(tmp_path, name="third", source="def third():\n    return 3", lineno=9)
+    # A strong pure-semantic pair outranks the corroborated one, so a cap of
+    # one hides the only pair that fails the default policy.
+    result = AnalysisResult(
+        units=[unit, other, third],
+        traditional_duplicates=[],
+        semantic_duplicates=[],
+        hybrid_duplicates=[
+            HybridDuplicate(
+                unit_a=unit,
+                unit_b=third,
+                tier="semantic_high_confidence",
+                confidence=0.97,
+                semantic_similarity=0.95,
+            ),
+            HybridDuplicate(
+                unit_a=unit,
+                unit_b=other,
+                tier="hybrid_confirmed",
+                confidence=0.80,
+                semantic_similarity=0.85,
+                jaccard_similarity=0.75,
+            ),
+        ],
+        potentially_unused=[],
+        analysis_mode="combined",
+    )
+    patch_cli_analyzer(monkeypatch, cli, analyze_result=result)
+    runner = CliRunner()
+
+    capped = runner.invoke(cli.cli, ["check", str(path), "--max-duplicates", "1"])
+    assert capped.exit_code == 1
+    assert "only pairs truncated by --max-duplicates 1 fail --fail-on actionable" in capped.output
+    assert "use a higher --max-duplicates to list them" in capped.output
+    assert "other" not in capped.output.split("Hybrid Duplicates")[1]
+
+    listed = runner.invoke(cli.cli, ["check", str(path), "--max-duplicates", "2"])
+    assert listed.exit_code == 1
+    assert "fail (exit 1)" in listed.output
+    assert "Truncated duplicates" not in listed.output
+    assert "truncated by" not in listed.output
+
+    as_json = runner.invoke(cli.cli, ["check", str(path), "--json", "--max-duplicates", "1"])
+    summary = json.loads(as_json.output)["summary"]
+    assert summary["exit_code"] == 1
+    assert summary["truncated_duplicates"] == 1
+
+
+def test_cli_max_duplicates_applies_to_single_method_modes(monkeypatch, tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+    result = replace(
+        _build_tiered_result(tmp_path),
+        traditional_duplicates=[],
+        hybrid_duplicates=[],
+        analysis_mode="semantic",
+    )
+    patch_cli_analyzer(monkeypatch, cli, analyze_result=result)
+    runner = CliRunner()
+
+    as_json = runner.invoke(
+        cli.cli,
+        ["check", str(path), "--semantic-only", "--no-unused", "--json", "--max-duplicates", "1"],
+    )
+    assert as_json.exit_code == 1
+    output = json.loads(as_json.output)
+    assert output["summary"]["raw_semantic_duplicates"] == 3
+    assert output["summary"]["reported_duplicates"] == 1
+    assert output["summary"]["truncated_duplicates"] == 2
+    assert len(output["duplicates"]) == 1
+
+    terminal = runner.invoke(
+        cli.cli, ["check", str(path), "--semantic-only", "--no-unused", "--max-duplicates", "1"]
+    )
+    assert terminal.exit_code == 1
+    assert "Reported duplicates" in terminal.output
+    assert "2 (--max-duplicates 1)" in terminal.output
+    assert "(1 pairs, 2 truncated)" in terminal.output
+
+
 def test_cli_withheld_only_result_prints_a_placeholder_instead_of_nothing(monkeypatch, tmp_path):
     path = tmp_path / "sample.py"
     path.write_text("def entry():\n    return 1\n")

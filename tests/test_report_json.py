@@ -128,16 +128,19 @@ def test_check_json_v3_summary_counts(tmp_path):
     }
     assert summary["hybrid_duplicates"] == 2
     assert summary["reported_duplicates"] + summary["omitted_review_duplicates"] == 2
+    assert summary["truncated_duplicates"] == 0
+    assert summary["max_duplicates"] is None
     assert summary["raw_traditional_duplicates"] == 1
     assert summary["raw_semantic_duplicates"] == 1
 
 
-def test_check_json_emits_every_selected_finding_untruncated(tmp_path):
-    units = [_unit(tmp_path, f"f{i}", start_byte=i * 30) for i in range(26)]
+def _chain_result(tmp_path: Path, pairs: int) -> AnalysisResult:
+    """Build ``pairs`` exact hybrid edges chaining ``pairs + 1`` units."""
+    units = [_unit(tmp_path, f"f{i}", start_byte=i * 30) for i in range(pairs + 1)]
     hybrid = [
-        HybridDuplicate(units[i], units[i + 1], "exact", 1.0, has_exact=True) for i in range(25)
+        HybridDuplicate(units[i], units[i + 1], "exact", 1.0, has_exact=True) for i in range(pairs)
     ]
-    result = AnalysisResult(
+    return AnalysisResult(
         units=units,
         traditional_duplicates=[],
         semantic_duplicates=[],
@@ -146,10 +149,34 @@ def test_check_json_emits_every_selected_finding_untruncated(tmp_path):
         analysis_mode="combined",
     )
 
-    payload = _payload(result)
+
+def test_check_json_emits_every_selected_finding_untruncated(tmp_path):
+    payload = _payload(_chain_result(tmp_path, 25))
 
     assert len(payload["duplicates"]) == 25
     assert len(payload["units"]) == 26
+    assert payload["summary"]["truncated_duplicates"] == 0
+
+
+def test_check_json_max_duplicates_caps_edges_and_units_but_not_counts(tmp_path):
+    payload = _payload(_chain_result(tmp_path, 25), ReportPolicy(max_duplicates=10))
+    summary = payload["summary"]
+
+    assert len(payload["duplicates"]) == 10
+    assert len(payload["units"]) == 11
+    assert _referenced_ids(payload) == set(payload["units"])
+    assert summary["hybrid_duplicates"] == 25
+    assert summary["reported_duplicates"] == 10
+    assert summary["truncated_duplicates"] == 15
+    assert summary["max_duplicates"] == 10
+    assert (
+        summary["reported_duplicates"]
+        + summary["omitted_review_duplicates"]
+        + summary["truncated_duplicates"]
+        == summary["hybrid_duplicates"]
+    )
+    assert summary["duplicates_by_tier"]["exact"] == 25
+    assert summary["exit_code"] == 1
 
 
 def test_check_json_show_all_raw_edges_use_short_ids(tmp_path):

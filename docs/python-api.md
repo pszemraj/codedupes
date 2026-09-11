@@ -227,12 +227,12 @@ The CLI's report policy and [JSON schema](output.md#json-schema-v3) are importab
 ```python
 from codedupes import ReportPolicy, check_result_to_json, run_should_fail, select_findings, to_json_text
 
-selection = select_findings(result, ReportPolicy(include_review=False, show_all=False))
+selection = select_findings(result, ReportPolicy(include_review=False, show_all=False, max_duplicates=None))
 exit_code = int(run_should_fail(result, policy="actionable", strict_unused=False))
 print(to_json_text(check_result_to_json(selection, fail_on="actionable", exit_code=exit_code)))
 ```
 
-`select_findings` applies the visibility policy to a complete result and returns a `ReportSelection` with the emitted `duplicates`, the withheld `omitted_review` pairs, zero-filled `duplicates_by_tier` counts, and the referenced `units` in report-id order. `run_should_fail` always evaluates the complete result, so withheld pairs still count under `policy="all"`; `withheld_only_failure(selection, ...)` reports when they are the only reason a run fails. `search_result_to_json` serializes `CodeAnalyzer.search()` hits the same way.
+`select_findings` applies the visibility policy to a complete result and returns a `ReportSelection` with the emitted `duplicates`, the withheld `omitted_review` pairs, the `truncated` pairs cut by `max_duplicates` (a prefix of the analyzer's ranking survives), zero-filled `duplicates_by_tier` counts, and the referenced `units` in report-id order. `run_should_fail` always evaluates the complete result, so hidden pairs still count; `hidden_only_failure(selection, ...)` returns which hidden groups (`"review"`, `"truncated"`) fail when every emitted finding passes, so a renderer can name what the reader cannot see. `search_result_to_json` serializes `CodeAnalyzer.search()` hits the same way.
 
 ## Notes
 

@@ -274,6 +274,7 @@ class CheckOptions:
     tiny_cutoff: int
     show_all: bool
     include_review: bool
+    max_duplicates: int | None
     show_source: bool
     full_table: bool
     fail_on: Literal["actionable", "all", "none"]
@@ -365,7 +366,11 @@ class CheckOptions:
 
         :return: Policy with ``include_review`` already implied by ``--show-all``.
         """
-        return ReportPolicy(include_review=self.include_review, show_all=self.show_all)
+        return ReportPolicy(
+            include_review=self.include_review,
+            show_all=self.show_all,
+            max_duplicates=self.max_duplicates,
+        )
 
     @property
     def table_max_items(self) -> int | None:

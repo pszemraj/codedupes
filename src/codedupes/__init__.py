@@ -33,11 +33,11 @@ from .report import (
     ReportPolicy,
     ReportSelection,
     check_result_to_json,
+    hidden_only_failure,
     run_should_fail,
     search_result_to_json,
     select_findings,
     to_json_text,
-    withheld_only_failure,
 )
 
 try:
@@ -63,10 +63,10 @@ __all__ = [
     "__version_tuple__",
     "analyze_directory",
     "check_result_to_json",
+    "hidden_only_failure",
     "quiet_dependency_loggers",
     "run_should_fail",
     "search_result_to_json",
     "select_findings",
     "to_json_text",
-    "withheld_only_failure",
 ]

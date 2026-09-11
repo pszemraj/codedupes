@@ -135,6 +135,16 @@ from ._render import print_findings, print_summary
     ),
 )
 @click.option(
+    "--max-duplicates",
+    type=click.IntRange(min=1),
+    default=None,
+    panel=Panel.OUTPUT,
+    help=(
+        "Emit at most N duplicate pairs, highest confidence first, in JSON and terminal "
+        "output; the exit code still counts every finding"
+    ),
+)
+@click.option(
     "--show-source",
     is_flag=True,
     panel=Panel.OUTPUT,

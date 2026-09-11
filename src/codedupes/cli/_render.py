@@ -23,8 +23,9 @@ from codedupes.models import (
 from codedupes.report.selection import (
     FailOnPolicy,
     FileSearchResult,
+    HiddenGroup,
     ReportSelection,
-    withheld_only_failure,
+    hidden_only_failure,
 )
 from codedupes.semantic import EmbeddingRunStats
 
@@ -153,6 +154,44 @@ def _print_diagnostics(title: str, diagnostics: list[ExtractionDiagnostic]) -> N
         _output.console.print(f"  [dim]... and {remaining} more diagnostics[/dim]")
 
 
+def _truncation_note(selection: ReportSelection) -> str:
+    """Describe pairs cut by the ``--max-duplicates`` cap for a summary row.
+
+    :param selection: Report selection with a non-empty ``truncated`` list.
+    :return: Count plus the cap that produced it.
+    """
+    return f"{len(selection.truncated)} (--max-duplicates {selection.policy.max_duplicates})"
+
+
+def _hidden_failure_status(
+    selection: ReportSelection,
+    hidden: frozenset[HiddenGroup],
+    *,
+    fail_on: FailOnPolicy,
+    exit_code: int,
+) -> str:
+    """Word a failing status whose every failing finding is hidden from the report.
+
+    :param selection: Report selection that produced ``hidden``.
+    :param hidden: Hidden groups that fail the policy while emitted findings pass.
+    :param fail_on: Finding policy selected for this run.
+    :param exit_code: Exit code computed from the selected policy.
+    :return: Status text naming the hidden groups and how to list them.
+    """
+    culprits: list[str] = []
+    remedies: list[str] = []
+    if "review" in hidden:
+        culprits.append("withheld semantic_review candidates")
+        remedies.append("--include-review")
+    if "truncated" in hidden:
+        culprits.append(f"pairs truncated by --max-duplicates {selection.policy.max_duplicates}")
+        remedies.append("a higher --max-duplicates")
+    return (
+        f"fail (exit {exit_code}; only {' and '.join(culprits)} fail --fail-on {fail_on}, "
+        f"use {' and '.join(remedies)} to list them)"
+    )
+
+
 def print_summary(
     selection: ReportSelection,
     *,
@@ -170,6 +209,7 @@ def print_summary(
     """
     result = selection.result
     withheld = len(selection.omitted_review)
+    truncated = len(selection.truncated)
     _output.console.print()
 
     summary = Table(title="Analysis Summary", show_header=False, box=None)
@@ -201,18 +241,25 @@ def print_summary(
         summary.add_row("Reported duplicates", str(len(selection.duplicates)))
         if withheld:
             summary.add_row("Withheld review candidates", f"{withheld} (use --include-review)")
+        if truncated:
+            summary.add_row("Truncated duplicates", _truncation_note(selection))
         summary.add_row("Likely dead code", str(len(result.potentially_unused)))
         summary.add_row("", "")
         summary.add_row("Raw traditional duplicates", str(len(result.traditional_duplicates)))
         summary.add_row("Raw semantic duplicates", str(len(result.semantic_duplicates)))
-    elif selection.mode == "traditional":
-        summary.add_row("Traditional duplicates", str(len(result.traditional_duplicates)))
-        summary.add_row("Potentially unused", str(len(result.potentially_unused)))
-    elif selection.mode == "semantic":
-        summary.add_row("Semantic duplicates", str(len(result.semantic_duplicates)))
-        summary.add_row("Potentially unused", str(len(result.potentially_unused)))
     else:
-        summary.add_row("Duplicates", str(len(selection.duplicates)))
+        if selection.mode == "traditional":
+            summary.add_row("Traditional duplicates", str(len(result.traditional_duplicates)))
+        elif selection.mode == "semantic":
+            summary.add_row("Semantic duplicates", str(len(result.semantic_duplicates)))
+        else:
+            summary.add_row(
+                "Duplicates",
+                str(len(result.traditional_duplicates) + len(result.semantic_duplicates)),
+            )
+        if truncated:
+            summary.add_row("Reported duplicates", str(len(selection.duplicates)))
+            summary.add_row("Truncated duplicates", _truncation_note(selection))
         summary.add_row("Potentially unused", str(len(result.potentially_unused)))
 
     if result.extraction_diagnostics:
@@ -228,11 +275,9 @@ def print_summary(
         summary.add_row("Embeddings", _format_embedding_stats(result.embedding_stats))
     summary.add_row("Failure policy", fail_on)
     status = f"{'fail' if exit_code else 'pass'} (exit {exit_code})"
-    if exit_code and withheld_only_failure(selection, policy=fail_on, strict_unused=strict_unused):
-        status = (
-            f"fail (exit {exit_code}; only withheld semantic_review candidates fail "
-            f"--fail-on {fail_on}, use --include-review to list them)"
-        )
+    hidden = hidden_only_failure(selection, policy=fail_on, strict_unused=strict_unused)
+    if exit_code and hidden:
+        status = _hidden_failure_status(selection, hidden, fail_on=fail_on, exit_code=exit_code)
     summary.add_row("Finding status", status)
 
     _output.console.print(summary)
@@ -316,6 +361,7 @@ def _print_duplicate_table(
     max_items: int | None,
     hybrid: bool,
     withheld: int = 0,
+    truncated: int = 0,
 ) -> None:
     """Render duplicate pairs in either raw or hybrid layout.
 
@@ -325,6 +371,7 @@ def _print_duplicate_table(
     :param max_items: Optional row limit.
     :param hybrid: Whether the payload is hybrid duplicates.
     :param withheld: Review pairs the report policy withheld from this table.
+    :param truncated: Pairs the ``--max-duplicates`` cap cut from this table.
     :return: ``None``.
     """
     if not duplicates:
@@ -338,6 +385,8 @@ def _print_duplicate_table(
     counts = f"{len(duplicates)} pairs"
     if withheld:
         counts += f", {withheld} review withheld"
+    if truncated:
+        counts += f", {truncated} truncated"
     _output.console.print(f"\n[bold yellow]{title}[/bold yellow] ({counts})")
     compact = _output.console.width < 120
     table = _build_duplicates_table(hybrid=hybrid, compact=compact)
@@ -405,6 +454,7 @@ def print_duplicates(
     title: str,
     show_source: bool = False,
     max_items: int | None = DEFAULT_TABLE_ROWS,
+    truncated: int = 0,
 ) -> None:
     """Print duplicate pairs in a table.
 
@@ -412,6 +462,7 @@ def print_duplicates(
     :param title: Section title.
     :param show_source: Whether to render source snippets.
     :param max_items: Optional max rows.
+    :param truncated: Pairs the ``--max-duplicates`` cap cut from the table.
     :return: ``None``.
     """
     _print_duplicate_table(
@@ -420,6 +471,7 @@ def print_duplicates(
         show_source=show_source,
         max_items=max_items,
         hybrid=False,
+        truncated=truncated,
     )
 
 
@@ -428,6 +480,7 @@ def print_hybrid_duplicates(
     show_source: bool = False,
     max_items: int | None = DEFAULT_TABLE_ROWS,
     withheld: int = 0,
+    truncated: int = 0,
 ) -> None:
     """Print synthesized hybrid duplicate pairs.
 
@@ -435,6 +488,7 @@ def print_hybrid_duplicates(
     :param show_source: Whether to render source snippets.
     :param max_items: Optional max rows.
     :param withheld: Review pairs the report policy withheld from the table.
+    :param truncated: Pairs the ``--max-duplicates`` cap cut from the table.
     :return: ``None``.
     """
     _print_duplicate_table(
@@ -444,6 +498,7 @@ def print_hybrid_duplicates(
         max_items=max_items,
         hybrid=True,
         withheld=withheld,
+        truncated=truncated,
     )
 
 
@@ -505,6 +560,7 @@ def print_findings(
             show_source=show_source,
             max_items=max_items,
             withheld=len(selection.omitted_review),
+            truncated=len(selection.truncated),
         )
         print_unused(selection.potentially_unused, title="Likely Dead Code", max_items=max_items)
         if selection.traditional_duplicates is not None:
@@ -528,6 +584,7 @@ def print_findings(
         _RAW_DUPLICATE_TITLES[selection.mode],
         show_source=show_source,
         max_items=max_items,
+        truncated=len(selection.truncated),
     )
     print_unused(selection.potentially_unused, max_items=max_items)
 

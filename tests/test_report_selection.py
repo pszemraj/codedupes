@@ -6,6 +6,8 @@ import random
 from pathlib import Path
 from typing import get_args
 
+import pytest
+
 from codedupes.models import (
     HYBRID_TIERS,
     AnalysisResult,
@@ -20,9 +22,9 @@ from codedupes.report.selection import (
     ReportPolicy,
     assign_unit_ids,
     collect_units,
+    hidden_only_failure,
     run_should_fail,
     select_findings,
-    withheld_only_failure,
 )
 
 
@@ -197,7 +199,7 @@ def test_run_should_fail_uses_result_analysis_mode(tmp_path):
     assert run_should_fail(single, policy="actionable", strict_unused=False) is True
 
 
-def test_withheld_only_failure_cases(tmp_path):
+def test_hidden_only_failure_names_withheld_review(tmp_path):
     a = _unit(tmp_path, "a")
     b = _unit(tmp_path, "b", start_byte=40)
     review_only = _result(
@@ -208,14 +210,15 @@ def test_withheld_only_failure_cases(tmp_path):
     )
     selection = select_findings(review_only)
 
-    assert withheld_only_failure(selection, policy="all", strict_unused=False) is True
-    assert withheld_only_failure(selection, policy="actionable", strict_unused=False) is False
-    assert withheld_only_failure(selection, policy="none", strict_unused=False) is False
+    assert hidden_only_failure(selection, policy="all", strict_unused=False) == {"review"}
+    assert hidden_only_failure(selection, policy="actionable", strict_unused=False) == set()
+    assert hidden_only_failure(selection, policy="none", strict_unused=False) == set()
 
+    # An emitted failing pair explains the exit code on its own.
     with_visible = _result(tmp_path)
     assert (
-        withheld_only_failure(select_findings(with_visible), policy="all", strict_unused=False)
-        is False
+        hidden_only_failure(select_findings(with_visible), policy="all", strict_unused=False)
+        == set()
     )
 
     with_unused = _result(
@@ -226,9 +229,107 @@ def test_withheld_only_failure_cases(tmp_path):
         potentially_unused=[a],
     )
     assert (
-        withheld_only_failure(select_findings(with_unused), policy="all", strict_unused=True)
-        is False
+        hidden_only_failure(select_findings(with_unused), policy="all", strict_unused=True) == set()
     )
 
     shown = select_findings(review_only, ReportPolicy(include_review=True))
-    assert withheld_only_failure(shown, policy="all", strict_unused=False) is False
+    assert hidden_only_failure(shown, policy="all", strict_unused=False) == set()
+
+
+def _ranked_result(tmp_path: Path, tiers: list[HybridTier]) -> AnalysisResult:
+    """Build a combined result whose hybrid list is ``tiers`` in analyzer order."""
+    units = [_unit(tmp_path, f"f{i}", start_byte=i * 30) for i in range(len(tiers) + 1)]
+    hybrid = [
+        HybridDuplicate(units[i], units[i + 1], tier, confidence=1.0 - i * 0.01)
+        for i, tier in enumerate(tiers)
+    ]
+    return _result(
+        tmp_path,
+        units=units,
+        traditional_duplicates=[],
+        semantic_duplicates=[],
+        hybrid_duplicates=hybrid,
+    )
+
+
+def test_max_duplicates_keeps_a_prefix_after_the_review_filter(tmp_path):
+    result = _ranked_result(
+        tmp_path,
+        ["exact", "semantic_review", "hybrid_confirmed", "semantic_high_confidence"],
+    )
+
+    capped = select_findings(result, ReportPolicy(max_duplicates=2))
+
+    assert [pair.tier for pair in capped.duplicates] == ["exact", "hybrid_confirmed"]
+    assert [pair.tier for pair in capped.truncated] == ["semantic_high_confidence"]
+    assert [pair.tier for pair in capped.omitted_review] == ["semantic_review"]
+    assert len(capped.duplicates) + len(capped.omitted_review) + len(capped.truncated) == 4
+    # The tier breakdown still describes the complete result.
+    assert capped.duplicates_by_tier["semantic_high_confidence"] == 1
+    # Units referenced only by truncated pairs drop out with them.
+    assert [unit.name for unit in capped.units] == ["f0", "f1", "f2", "f3"]
+
+    with_review = select_findings(result, ReportPolicy(include_review=True, max_duplicates=2))
+    assert [pair.tier for pair in with_review.duplicates] == ["exact", "semantic_review"]
+    assert with_review.omitted_review == []
+    assert len(with_review.truncated) == 2
+
+
+def test_max_duplicates_is_a_no_op_at_or_above_the_admitted_count(tmp_path):
+    result = _ranked_result(tmp_path, ["exact", "hybrid_confirmed"])
+
+    exact = select_findings(result, ReportPolicy(max_duplicates=2))
+    generous = select_findings(result, ReportPolicy(max_duplicates=50))
+
+    assert exact.truncated == generous.truncated == []
+    assert exact.duplicates == generous.duplicates == result.hybrid_duplicates
+
+
+def test_max_duplicates_leaves_show_all_raw_lists_complete(tmp_path):
+    result = _result(tmp_path)
+
+    selection = select_findings(result, ReportPolicy(show_all=True, max_duplicates=1))
+
+    assert len(selection.duplicates) == 1
+    assert len(selection.truncated) == 1
+    assert selection.traditional_duplicates == result.traditional_duplicates
+    assert selection.semantic_duplicates == result.semantic_duplicates
+
+
+def test_max_duplicates_applies_to_single_method_raw_lists(tmp_path):
+    result = _result(tmp_path, analysis_mode="semantic", hybrid_duplicates=[])
+
+    selection = select_findings(result, ReportPolicy(max_duplicates=1))
+
+    assert selection.duplicates == result.traditional_duplicates[:1]
+    assert selection.truncated == result.semantic_duplicates
+    assert run_should_fail(result, policy="actionable", strict_unused=False) is True
+
+
+@pytest.mark.parametrize("cap", [0, -1])
+def test_report_policy_rejects_a_cap_that_emits_nothing(cap):
+    with pytest.raises(ValueError, match="at least 1"):
+        ReportPolicy(max_duplicates=cap)
+
+
+def test_hidden_only_failure_names_truncated_pairs(tmp_path):
+    # Confidence is only tier-monotone at equal similarity, so a strong
+    # semantic_high_confidence pair can outrank an actionable hybrid_confirmed
+    # one; a cap of one then hides the pair that fails the default policy.
+    result = _ranked_result(
+        tmp_path, ["semantic_high_confidence", "hybrid_confirmed", "semantic_review"]
+    )
+    capped = select_findings(result, ReportPolicy(max_duplicates=1))
+
+    assert run_should_fail(result, policy="actionable", strict_unused=False) is True
+    assert hidden_only_failure(capped, policy="actionable", strict_unused=False) == {"truncated"}
+    # Under --fail-on all the emitted pair fails by itself, so nothing hidden is named.
+    assert hidden_only_failure(capped, policy="all", strict_unused=False) == set()
+
+    # Truncating only advisory pairs hides nothing that fails.
+    advisory = select_findings(
+        _ranked_result(tmp_path, ["semantic_high_confidence", "semantic_high_confidence"]),
+        ReportPolicy(max_duplicates=1),
+    )
+    assert run_should_fail(advisory.result, policy="actionable", strict_unused=False) is False
+    assert hidden_only_failure(advisory, policy="actionable", strict_unused=False) == set()

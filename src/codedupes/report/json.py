@@ -162,6 +162,8 @@ def check_result_to_json(
             "hybrid_duplicates": len(result.hybrid_duplicates),
             "reported_duplicates": len(selection.duplicates),
             "omitted_review_duplicates": len(selection.omitted_review),
+            "truncated_duplicates": len(selection.truncated),
+            "max_duplicates": selection.policy.max_duplicates,
             "duplicates_by_tier": dict(selection.duplicates_by_tier),
             "potentially_unused": len(result.potentially_unused),
             "raw_traditional_duplicates": len(result.traditional_duplicates),
