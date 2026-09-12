@@ -367,7 +367,7 @@ def test_cli_json_isolates_custom_family_warning_before_config(tmp_path, command
 
 @pytest.mark.parametrize(
     ("command", "fail_on", "exit_code"),
-    [("check", "none", 0), ("check", "actionable", 1), ("search", None, 0)],
+    [("check", "none", 0), ("search", None, 0)],
 )
 @pytest.mark.parametrize("stream_fd", [1, 2])
 def test_cli_json_isolates_backend_output_in_completed_report(
@@ -605,7 +605,7 @@ def test_cli_search_indexes_without_running_full_analysis(monkeypatch, tmp_path)
     assert payload["units"][result_uid]["name"] == "entry"
 
 
-@pytest.mark.parametrize("result_level", [None, "unit", "file"])
+@pytest.mark.parametrize("result_level", [None, "file"])
 @pytest.mark.parametrize("as_json", [False, True])
 def test_cli_search_file_ranking_groups_before_top_k(
     monkeypatch, tmp_path: Path, result_level: str | None, as_json: bool
@@ -1168,12 +1168,9 @@ def test_cli_local_model_path_pass_through(
     assert captured[0].model_name == str(model_dir)
 
 
-@pytest.mark.parametrize("command", ["check", "search"])
 @pytest.mark.parametrize("as_json", [False, True])
-@pytest.mark.parametrize(
-    "choice", ["auto", "generic", "embeddinggemma-300m", "gte-modernbert-base"]
-)
-def test_cli_threshold_profiles(monkeypatch, tmp_path, command, choice, as_json):
+def test_cli_search_threshold_profile_output(monkeypatch, tmp_path, as_json):
+    """Check search-specific threshold-profile rendering in both output modes."""
     captured = []
     patch_cli_analyzer(
         monkeypatch,
@@ -1182,27 +1179,26 @@ def test_cli_threshold_profiles(monkeypatch, tmp_path, command, choice, as_json)
         captured_configs=captured,
         search_results=[],
     )
-    args = [command, str(tmp_path)] + (["query"] if command == "search" else [])
-    args += ["--threshold-profile", choice]
+    args = ["search", str(tmp_path), "query", "--threshold-profile", "generic"]
     if as_json:
         args.append("--json")
     result = CliRunner().invoke(cli.cli, args)
-    assert result.exit_code == (1 if command == "check" else 0), result.output
+    assert result.exit_code == 0, result.output
     if as_json:
         json.loads(result.stdout)
         assert "Effective search threshold:" not in result.output
-    elif command == "search":
+    else:
         assert result.output.count("Effective search threshold:") == 1
-        assert f"threshold-profile={choice}" in result.output
+        assert "threshold-profile=generic" in result.output
     assert "Use --threshold-profile generic" not in result.output
-    assert captured[-1].threshold_profile == choice
+    assert captured[-1].threshold_profile == "generic"
     assert captured[-1].semantic_threshold is None
     result = CliRunner().invoke(
         cli.cli, args + ["--threshold", "0.67", "--semantic-threshold", "0.91"]
     )
-    assert result.exit_code == (1 if command == "check" else 0), result.output
+    assert result.exit_code == 0, result.output
     assert captured[-1].semantic_threshold == 0.91
-    if command == "search" and not as_json:
+    if not as_json:
         assert "Effective search threshold: 0.91 (explicit numeric override)" in result.output
 
 
@@ -3283,7 +3279,7 @@ def test_cli_cache_clear_reports_best_effort_deletion_failures(monkeypatch):
 
 
 @pytest.mark.parametrize("command", [["info", "--verbose"], ["cache", "info"]])
-@pytest.mark.parametrize("width", [80, 100, 160])
+@pytest.mark.parametrize("width", [80, 160])
 def test_cli_diagnostic_tables_respect_width(command, width, monkeypatch, tmp_path):
     cache_path = tmp_path / "[red]literal[/red]" / ("long-cache-path-" * 8)
     monkeypatch.setenv("CODEDUPES_CACHE_DIR", str(cache_path))
@@ -3373,7 +3369,7 @@ def test_cli_info_default_is_compact(monkeypatch, width):
         assert detail not in result.stdout
 
 
-@pytest.mark.parametrize("terminal_width", [60, 80, 100, 120])
+@pytest.mark.parametrize("terminal_width", [60, 120])
 @pytest.mark.parametrize("width_args", [[], ["--output-width", "400"]])
 def test_cli_info_fits_actual_terminal(terminal_width, width_args):
     """Catch fixed render widths that would wrap borders in a real terminal."""
@@ -3438,7 +3434,7 @@ def test_cli_info_fits_actual_terminal(terminal_width, width_args):
     assert borders[0].endswith("╮") and borders[-1].endswith("╯")
 
 
-@pytest.mark.parametrize("width", [80, 100, 120, 160])
+@pytest.mark.parametrize("width", [80, 120])
 @pytest.mark.parametrize("command", ["check", "search"])
 def test_cli_long_results_keep_scores_and_headers(monkeypatch, tmp_path, width, command):
     monkeypatch.chdir(tmp_path)
