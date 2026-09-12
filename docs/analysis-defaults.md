@@ -132,7 +132,7 @@ The identifier minimum is `0.00` because the Python extractor collects bound and
 
 ## Confidence scale
 
-Confidence combines similarity and corroborating evidence into a ranking score. Interpret it alongside the tier:
+Finite cosine scores are bounded to [-1, 1] before reporting, so float32 rounding cannot produce values above 1. Confidence combines similarity and corroborating evidence into a ranking score. Interpret it alongside the tier:
 
 | tier | confidence |
 | --- | --- |

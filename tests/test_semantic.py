@@ -611,6 +611,32 @@ def test_find_semantic_duplicates_ignores_nan_similarity(tmp_path: Path) -> None
     assert duplicates == []
 
 
+def test_semantic_pair_scores_bound_float32_cosine_overshoot(tmp_path: Path) -> None:
+    units = extract_arithmetic_units(tmp_path)
+    vector = [-1.2083186, -0.004454133, 0.65647495]
+    embeddings = semantic.canonicalize_embeddings([vector, vector], expected_rows=2)
+
+    duplicates = find_semantic_duplicates(units, embeddings, threshold=1.0)
+
+    assert len(duplicates) == 1
+    assert duplicates[0].similarity == 1.0
+
+
+def test_query_scores_bound_cosine_overshoot_before_thresholding(tmp_path: Path, monkeypatch):
+    units = extract_arithmetic_units(tmp_path)
+    vector = np.array([-1.2083186, -0.004454133, 0.65647495], dtype=np.float32)
+    embeddings = semantic.canonicalize_embeddings([vector, -vector], expected_rows=2)
+
+    class QueryModel:
+        def encode(self, texts, **kwargs):
+            return vector[None, :]
+
+    monkeypatch.setattr(semantic, "get_model", lambda *args, **kwargs: QueryModel())
+    results = find_similar_to_query("entry", units, embeddings, threshold=-1.0, use_cache=False)
+
+    assert results == [(units[0], 1.0), (units[1], -1.0)]
+
+
 def test_find_semantic_duplicates_rejects_nan_and_inf_but_keeps_finite_pair(
     tmp_path: Path,
 ) -> None:
