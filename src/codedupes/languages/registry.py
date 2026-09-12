@@ -245,12 +245,8 @@ def get_backend(
     :param root: Extraction root used for qualified naming.
     :param selection: Language and dialect chosen for the file.
     :param include_private: Whether non-public units are extracted.
-    :raises ValueError: If ``selection`` names Python, which has a dedicated extractor.
     :return: Backend for the selected language and dialect.
     """
-    if selection.language == "python":
-        raise ValueError("Python extraction is implemented by codedupes.extractor.CodeExtractor")
-
     from codedupes.languages.tree_sitter_backend import create_backend
 
     return create_backend(

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import codecs
 import time
 from pathlib import Path
 from textwrap import dedent
@@ -9,7 +10,9 @@ from textwrap import dedent
 import pytest
 
 from codedupes.extractor import CodeExtractor
+from codedupes.languages.base import BackendResult
 from codedupes.languages.registry import get_grammar_statuses
+from codedupes.languages.tree_sitter_backend import PythonBackend
 from codedupes.models import CodeUnit, CodeUnitType
 
 pytestmark = pytest.mark.grammar
@@ -1167,3 +1170,598 @@ def test_rust_attribute_lookup_stays_linear_in_item_count(tmp_path: Path) -> Non
 
     assert len(units) == 2000
     assert elapsed < 5.0, f"3000-item Rust file took {elapsed:.1f}s"
+
+
+# ---------------------------------------------------------------------------
+# Python backend. Until extraction routes Python through it, these tests drive
+# the backend directly; the extractor still parses Python with ``ast``.
+# ---------------------------------------------------------------------------
+
+
+def _python_result(
+    tmp_path: Path,
+    source: str,
+    *,
+    filename: str = "sample.py",
+    include_private: bool = True,
+) -> BackendResult:
+    path = tmp_path / filename
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(dedent(source).strip() + "\n", encoding="utf-8")
+    return PythonBackend(tmp_path, "python", include_private=include_private).extract_file(path)
+
+
+def _python_units(
+    tmp_path: Path,
+    source: str,
+    *,
+    filename: str = "sample.py",
+    include_private: bool = True,
+) -> dict[str, CodeUnit]:
+    result = _python_result(tmp_path, source, filename=filename, include_private=include_private)
+    return {unit.qualified_name: unit for unit in result.units}
+
+
+def _python_unit(tmp_path: Path, filename: str, source: str) -> CodeUnit:
+    """Return the outermost unit of a single-definition source."""
+    return min(
+        _python_result(tmp_path, source, filename=filename).units, key=lambda u: u.start_byte
+    )
+
+
+def test_python_nested_scopes_methods_and_decorated_spans(tmp_path: Path) -> None:
+    """Decorators belong to the unit; qualified names follow lexical nesting in order."""
+    source = '''
+    import functools
+
+    @functools.lru_cache
+    def top(value):
+        def inner(v):
+            return v + 1
+        return inner(value)
+
+    class Widget:
+        """Doc."""
+
+        @property
+        def _hidden(self):
+            return 1
+
+        def shown(self):
+            class Local:
+                def run(self):
+                    return 2
+            return Local
+
+    def outer():
+        class C:
+            def m(self):
+                return 1
+        return C
+    '''
+    units = _python_units(tmp_path, source)
+    raw = (tmp_path / "sample.py").read_bytes()
+
+    assert {name: unit.unit_type for name, unit in units.items()} == {
+        "sample.top": CodeUnitType.FUNCTION,
+        "sample.top.inner": CodeUnitType.FUNCTION,
+        "sample.Widget": CodeUnitType.CLASS,
+        "sample.Widget._hidden": CodeUnitType.METHOD,
+        "sample.Widget.shown": CodeUnitType.METHOD,
+        "sample.Widget.shown.Local": CodeUnitType.CLASS,
+        "sample.Widget.shown.Local.run": CodeUnitType.METHOD,
+        "sample.outer": CodeUnitType.FUNCTION,
+        "sample.outer.C": CodeUnitType.CLASS,
+        "sample.outer.C.m": CodeUnitType.METHOD,
+    }
+    assert {unit.native_kind for unit in units.values()} == {
+        "function_definition",
+        "class_definition",
+    }
+    assert all(unit.language == "python" and unit.dialect == "python" for unit in units.values())
+    for unit in units.values():
+        assert raw[unit.start_byte : unit.end_byte].decode("utf-8") == unit.source
+        assert not unit.source.endswith("\n")
+
+    top = units["sample.top"]
+    assert top.source.startswith("@functools.lru_cache\ndef top")
+    assert (top.lineno, top.end_lineno, top.start_column) == (3, 7, 0)
+    hidden = units["sample.Widget._hidden"]
+    assert hidden.source.startswith("@property\n    def _hidden")
+    assert (hidden.lineno, hidden.end_lineno, hidden.start_column) == (12, 14, 4)
+    assert units["sample.Widget.shown.Local.run"].start_column == 12
+
+
+def test_python_renamed_locals_hash_structurally_equal_but_api_shape_does_not(
+    tmp_path: Path,
+) -> None:
+    """Local names normalize; attribute, keyword, and import names are API shape."""
+    units = _python_units(
+        tmp_path,
+        """
+        def add(a, b):
+            return a + b
+
+        def total(x, y):
+            return x + y
+
+        def attr_a(o):
+            return o.alpha
+
+        def attr_b(o):
+            return o.beta
+
+        def kw_a():
+            return call(key=1)
+
+        def kw_b():
+            return call(name=1)
+
+        def imp_a():
+            import os
+            return os
+
+        def imp_b():
+            import sys
+            return sys
+
+        def sync_f():
+            return 1
+
+        async def async_f():
+            return 1
+        """,
+    )
+
+    assert units["sample.add"].structural_hash == units["sample.total"].structural_hash
+    assert units["sample.add"].token_hash != units["sample.total"].token_hash
+    assert units["sample.attr_a"].structural_hash != units["sample.attr_b"].structural_hash
+    assert units["sample.kw_a"].structural_hash != units["sample.kw_b"].structural_hash
+    assert units["sample.imp_a"].structural_hash != units["sample.imp_b"].structural_hash
+    assert units["sample.sync_f"].structural_hash != units["sample.async_f"].structural_hash
+
+
+def test_python_docstrings_are_pruned_structurally_but_kept_in_tokens(tmp_path: Path) -> None:
+    """Docstrings drop positionally at every nesting level; comments never count."""
+    documented = _python_unit(
+        tmp_path,
+        "documented.py",
+        '''
+        def helper(a):
+            """Explain."""
+            def inner():
+                """Inner doc."""
+                return a
+            return inner()
+        ''',
+    )
+    bare = _python_unit(
+        tmp_path,
+        "bare.py",
+        """
+        def helper(a):
+            def inner():
+                return a
+            return inner()
+        """,
+    )
+    commented = _python_unit(
+        tmp_path,
+        "commented.py",
+        """
+        def helper(a):
+            # explain
+            def inner():
+                # inner note
+                return a
+            return inner()
+        """,
+    )
+
+    assert documented.structural_hash == bare.structural_hash
+    assert documented.token_hash != bare.token_hash
+    assert commented.structural_hash == bare.structural_hash
+    assert commented.token_hash == bare.token_hash
+
+
+def test_python_only_a_leading_plain_string_is_a_docstring(tmp_path: Path) -> None:
+    """f-strings and bytes are not ``ast.Constant(str)``, and a string inside an
+    ``if`` block is a statement, so none of them prune."""
+    units = _python_units(
+        tmp_path,
+        """
+        def formatted(a):
+            f"not a docstring"
+            return a
+
+        def raw_bytes(a):
+            b"not a docstring"
+            return a
+
+        def plain(a):
+            return a
+
+        def conditional(x):
+            if x:
+                "note"
+            return x
+
+        def unconditional(x):
+            if x:
+                pass
+            return x
+        """,
+    )
+
+    assert units["sample.formatted"].structural_hash != units["sample.plain"].structural_hash
+    assert units["sample.raw_bytes"].structural_hash != units["sample.plain"].structural_hash
+    assert (
+        units["sample.conditional"].structural_hash != units["sample.unconditional"].structural_hash
+    )
+
+
+def test_python_escape_sequence_literal_text_survives_the_token_hash(tmp_path: Path) -> None:
+    """tree-sitter-python only exposes the escape as a child; the surrounding
+    literal text must still reach the token stream."""
+    first = _python_unit(tmp_path, "first.py", 'def text():\n    return "a\\nb"\n')
+    second = _python_unit(tmp_path, "second.py", 'def text():\n    return "a\\nc"\n')
+
+    assert first.token_hash != second.token_hash
+    assert first.structural_hash == second.structural_hash
+
+
+def test_python_backslash_continuation_is_formatting(tmp_path: Path) -> None:
+    continued = _python_unit(
+        tmp_path,
+        "continued.py",
+        "def add(a):\n    return a + \\\n        1\n",
+    )
+    joined = _python_unit(tmp_path, "joined.py", "def add(a):\n    return a + 1\n")
+
+    assert continued.structural_hash == joined.structural_hash
+    assert continued.token_hash == joined.token_hash
+
+
+def test_python_fstring_interpolation_is_structural(tmp_path: Path) -> None:
+    """Interpolated expressions are code; the literal text around them is not."""
+    units = _python_units(
+        tmp_path,
+        """
+        def name(x):
+            return f"v{x}w"
+
+        def member(x):
+            return f"v{x.y}w"
+
+        def relabeled(x):
+            return f"v{x}z"
+        """,
+    )
+
+    assert units["sample.name"].structural_hash != units["sample.member"].structural_hash
+    assert units["sample.name"].structural_hash == units["sample.relabeled"].structural_hash
+    assert units["sample.name"].token_hash != units["sample.relabeled"].token_hash
+
+
+@pytest.mark.parametrize(
+    ("source", "expected_count"),
+    [
+        pytest.param(
+            """
+            def f(x):
+                if x:
+                    a = 1
+                elif x is None:
+                    a = 2
+                else:
+                    a = 3
+                return a
+            """,
+            6,
+            id="if-elif-else-return",
+        ),
+        pytest.param(
+            """
+            def f(items):
+                for item in items:
+                    use(item)
+                else:
+                    done()
+            """,
+            3,
+            id="for-else",
+        ),
+        pytest.param(
+            """
+            def f(ready):
+                while ready:
+                    ready = step()
+                else:
+                    done()
+            """,
+            3,
+            id="while-else",
+        ),
+        pytest.param(
+            """
+            def f():
+                try:
+                    risky()
+                except ValueError as error:
+                    handle(error)
+                else:
+                    celebrate()
+                finally:
+                    cleanup()
+            """,
+            5,
+            id="try-except-else-finally",
+        ),
+        pytest.param(
+            """
+            def f(path):
+                with open(path) as handle:
+                    data = handle.read()
+                return data
+            """,
+            3,
+            id="with",
+        ),
+        pytest.param(
+            """
+            def f(value):
+                match value:
+                    case 0:
+                        return "zero"
+                    case _:
+                        return "other"
+            """,
+            3,
+            id="match-two-cases",
+        ),
+        pytest.param(
+            """
+            def outer():
+                def inner():
+                    return 1
+                return inner
+            """,
+            2,
+            id="nested-def",
+        ),
+        pytest.param(
+            """
+            def outer():
+                @staticmethod
+                def inner():
+                    return 1
+                return inner
+            """,
+            2,
+            id="decorated-nested-def",
+        ),
+        pytest.param(
+            '''
+            def f():
+                """Only a docstring."""
+            ''',
+            0,
+            id="docstring-only",
+        ),
+        pytest.param(
+            """
+            def f():
+                ...
+            """,
+            1,
+            id="ellipsis",
+        ),
+        pytest.param(
+            '''
+            def f():
+                """Doc."""
+                ...
+            ''',
+            1,
+            id="docstring-ellipsis",
+        ),
+        pytest.param(
+            '''
+            class Widget:
+                """Doc."""
+
+                size: int = 1
+
+                @staticmethod
+                def build():
+                    return Widget()
+
+                def run(self):
+                    return self.size
+            ''',
+            3,
+            id="class-body",
+        ),
+        pytest.param(
+            """
+            async def f(items, lock):
+                async for item in items:
+                    await item
+                async with lock as held:
+                    held.touch()
+            """,
+            4,
+            id="async-for-await-async-with",
+        ),
+        pytest.param(
+            """
+            def f():
+                x = 1; y = 2
+            """,
+            2,
+            id="semicolon-separated",
+        ),
+    ],
+)
+def test_python_statement_counts_follow_ast_stmt_semantics(
+    tmp_path: Path, source: str, expected_count: int
+) -> None:
+    """Counts recurse through control-flow bodies, count nested definitions once,
+    and never count a docstring. ``elif`` is a nested ``ast.If``, so it counts."""
+    result = _python_result(tmp_path, source)
+    outer = min(result.units, key=lambda unit: unit.start_byte)
+
+    assert outer.statement_count == expected_count
+
+
+def test_python_identifiers_include_api_names_and_exclude_builtins(tmp_path: Path) -> None:
+    units = _python_units(
+        tmp_path,
+        """
+        class Bag:
+            def add(self, item):
+                cls = type(self)
+                return self.items.append(item, key=len(item))
+        """,
+    )
+    identifiers = units["sample.Bag.add"].identifiers
+
+    assert {"add", "item", "items", "append", "key"} <= identifiers
+    assert not ({"self", "cls", "len", "type", "return", "def"} & identifiers)
+
+
+def test_python_private_filter_keeps_dunder_and_mangled_names(tmp_path: Path) -> None:
+    """A single underscore is private; ``__x`` and ``__x__`` are not public but still
+    extract, and a filtered private class takes its methods with it."""
+    source = """
+    def _private():
+        return 1
+
+    def __mangled():
+        return 2
+
+    def __dunder__():
+        return 3
+
+    class _Hidden:
+        def visible(self):
+            return 4
+
+    class Shown:
+        def _helper(self):
+            return 5
+
+        def __init__(self):
+            pass
+    """
+    everything = _python_units(tmp_path, source)
+    public_only = _python_units(tmp_path, source, include_private=False)
+
+    assert len(everything) == 8
+    assert set(public_only) == {
+        "sample.__mangled",
+        "sample.__dunder__",
+        "sample.Shown",
+        "sample.Shown.__init__",
+    }
+    init = public_only["sample.Shown.__init__"]
+    assert not init.is_public
+    assert init.is_dunder
+
+
+def test_python_dunder_all_unions_assignment_and_augmented_assignment(tmp_path: Path) -> None:
+    units = _python_units(
+        tmp_path,
+        """
+        __all__ = ["alpha"]
+        __all__ += ("beta",)
+
+        def alpha():
+            return 1
+
+        def beta():
+            return 2
+
+        def gamma():
+            return 3
+        """,
+    )
+
+    assert {name: unit.is_exported for name, unit in units.items()} == {
+        "sample.alpha": True,
+        "sample.beta": True,
+        "sample.gamma": False,
+    }
+
+
+@pytest.mark.parametrize(
+    ("filename", "expected_qualified_name"),
+    [
+        ("pkg/__init__.py", "pkg.func"),
+        ("__init__.py", "func"),
+        ("pkg/mod.py", "pkg.mod.func"),
+        ("pkg/mod.pyi", "pkg.mod.func"),
+    ],
+)
+def test_python_module_prefix_follows_package_layout(
+    tmp_path: Path, filename: str, expected_qualified_name: str
+) -> None:
+    units = _python_units(tmp_path, "def func():\n    return 1", filename=filename)
+
+    assert list(units) == [expected_qualified_name]
+
+
+def test_python_error_recovery_reports_partial_parse_and_skips_the_broken_unit(
+    tmp_path: Path,
+) -> None:
+    result = _python_result(
+        tmp_path,
+        """
+        def broken(:
+            pass
+
+        def ok():
+            return 1
+        """,
+    )
+
+    assert [unit.qualified_name for unit in result.units] == ["sample.ok"]
+    assert [diagnostic.code for diagnostic in result.diagnostics] == [
+        "partial-parse",
+        "unit-parse-error",
+    ]
+    assert all(diagnostic.language == "python" for diagnostic in result.diagnostics)
+
+
+def test_python_bom_keeps_on_disk_byte_offsets(tmp_path: Path) -> None:
+    """The lexer skips the BOM, so the first unit starts at byte 3 and the byte
+    range still slices the file as stored."""
+    path = tmp_path / "bom_sample.py"
+    body = 'def greet(name):\n    message = "héllo " + name\n    return message\n'
+    path.write_bytes(codecs.BOM_UTF8 + body.encode("utf-8"))
+
+    result = PythonBackend(tmp_path, "python", include_private=True).extract_file(path)
+    raw = path.read_bytes()
+
+    assert result.diagnostics == ()
+    [unit] = result.units
+    assert unit.start_byte == len(codecs.BOM_UTF8)
+    assert raw[unit.start_byte : unit.end_byte].decode("utf-8") == unit.source
+    assert not unit.source.startswith("﻿")
+
+
+def test_python_crlf_source_stays_byte_exact(tmp_path: Path) -> None:
+    path = tmp_path / "crlf_sample.py"
+    path.write_bytes(
+        b"# leading comment\r\ndef greet(name):\r\n"
+        b'    message = "hi " + name\r\n'
+        b"    return message\r\n"
+    )
+
+    result = PythonBackend(tmp_path, "python", include_private=True).extract_file(path)
+    raw = path.read_bytes()
+
+    [unit] = result.units
+    assert "\r\n" in unit.source
+    assert raw[unit.start_byte : unit.end_byte].decode("utf-8") == unit.source
+    assert (unit.lineno, unit.end_lineno) == (2, 4)
