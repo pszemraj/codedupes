@@ -120,7 +120,7 @@ A file containing Tree-sitter recovery nodes is different: unaffected units can 
 
 Each backend computes features while its original syntax tree is in memory:
 
-- A structural fingerprint with a schema version, canonical language, and unit type
+- A structural fingerprint with a schema version, canonical language, and comparison kind (functions and methods share the function domain; classes remain separate)
 - A token fingerprint retaining literal token text while ignoring comments and whitespace
 - An identifier set for Jaccard near matching
 - A statement count for semantic eligibility and hybrid scoring
@@ -131,7 +131,7 @@ Python applies the same rules with its own preserved-name and pruning policy. At
 
 Identifier sets exclude each language's builtins. Python's exclude keywords, builtins, `self`, and `cls` (but not the `site`-injected `exit`, `quit`, `help`, `copyright`, `credits`, and `license`, which are not language builtins), and include attribute and keyword-argument names, so an alpha-renamed Python clone keeps a measurable identifier overlap with its original through the API it touches. Identifier matching is Unicode-aware. Python, ECMAScript (from ES2015 on), and Rust accept non-ASCII identifiers, so a non-ASCII name yields a unit and identifier-set entries instead of being dropped by an ASCII-only pattern.
 
-Traditional exact and Jaccard comparisons are blocked by canonical language and blocking kind before pair generation. Functions and methods share one `callable` kind, so a function copied into a class body stays comparable with its module-level original, matching how semantic pairing treats them; classes block separately. Exact matching stays same-language: a C and a Rust function cannot become exact duplicates because their canonical token streams align. Overlapping units in the same file, such as a parent function and its nested function, are not reported as duplicates of each other.
+Traditional exact and Jaccard comparisons are blocked by canonical language and blocking kind before pair generation. Functions and methods share one `callable` kind and the same structural fingerprint domain, so a function copied into a class body stays comparable with its module-level original even after renaming the definition and local variables; reported unit types remain distinct. Classes block separately. Exact matching stays same-language: a C and a Rust function cannot become exact duplicates because their canonical token streams align. Overlapping units in the same file, such as a parent function and its nested function, are not reported as duplicates of each other.
 
 Semantic comparison follows the [per-language gates and cross-language policy](analysis-defaults.md#semantic-duplicate-gate-defaults). Semantic search retrieves across the selected languages.
 

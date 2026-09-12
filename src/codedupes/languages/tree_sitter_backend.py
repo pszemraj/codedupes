@@ -529,10 +529,14 @@ def _structural_hash(
     :param node: Unit node to fingerprint.
     :param source: Full file source bytes.
     :param language: Canonical language name, mixed into the fingerprint.
-    :param unit_type: Unit kind, mixed into the fingerprint.
+    :param unit_type: Unit kind; functions and methods share the function fingerprint domain.
     :param policy: Language hooks applied during the walk, defaults to no exceptions.
     :return: Truncated SHA-256 digest of the normalized structural token stream.
     """
+    # Exact comparison groups functions and methods together. Use the existing
+    # function domain for both, retaining the reported type on the CodeUnit.
+    if unit_type == CodeUnitType.METHOD:
+        unit_type = CodeUnitType.FUNCTION
     normalized_names: dict[str, str] = {}
     pieces: list[str] = [
         f"schema={FINGERPRINT_SCHEMA_VERSION}",

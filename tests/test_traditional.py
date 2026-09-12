@@ -118,24 +118,30 @@ def test_exact_duplicates_across_function_and_method(tmp_path: Path) -> None:
             return "\\n".join(lines)
 
         class Report:
-            def render_summary(rows, limit, header):
-                lines = [header]
-                for row in rows[:limit]:
-                    lines.append(str(row))
-                return "\\n".join(lines)
+            def format_summary(entries, count, title):
+                parts = [title]
+                for entry in entries[:count]:
+                    parts.append(str(entry))
+                return "\\n".join(parts)
         """
     ).strip()
     units = extract_units(tmp_path, source, include_private=True)
 
     exact, _near = run_traditional_analysis(units, jaccard_threshold=0.85)
 
-    # A function copied verbatim into a class body must stay visible to exact
-    # detection: functions and methods share a blocking kind, matching semantic
-    # pairing.
-    pairs = {
-        tuple(sorted((pair.unit_a.qualified_name, pair.unit_b.qualified_name))) for pair in exact
+    # Renaming the definition and locals prevents token equality from masking
+    # a structural mismatch between function and method fingerprints.
+    [pair] = exact
+    assert {pair.unit_a.qualified_name, pair.unit_b.qualified_name} == {
+        "sample.render_summary",
+        "sample.Report.format_summary",
     }
-    assert ("sample.Report.render_summary", "sample.render_summary") in pairs
+    assert pair.method == "structural_hash"
+    assert pair.unit_a.token_hash != pair.unit_b.token_hash
+    assert {pair.unit_a.unit_type, pair.unit_b.unit_type} == {
+        CodeUnitType.FUNCTION,
+        CodeUnitType.METHOD,
+    }
 
 
 def test_decorated_method_is_not_an_exact_duplicate_of_the_plain_function(tmp_path: Path) -> None:
