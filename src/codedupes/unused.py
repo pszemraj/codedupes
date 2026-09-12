@@ -478,18 +478,41 @@ def build_reference_graph(units: list[CodeUnit], project_root: Path | None = Non
                 candidate.references.add("project.entrypoint")
 
 
+def _enclosing_class_is_public(unit: CodeUnit) -> bool:
+    """Return whether the class directly enclosing a method has a public name.
+
+    :param unit: Method unit.
+    :return: ``True`` when the enclosing class name does not start with ``_``.
+    """
+    parts = unit.qualified_name.split(".")
+    return len(parts) >= 2 and not parts[-2].startswith("_")
+
+
+def _is_public_surface(unit: CodeUnit) -> bool:
+    """Return whether default mode treats the unit as public API that callers outside the tree may use.
+
+    :param unit: Candidate unit.
+    :return: ``True`` for public functions and public methods of public classes.
+    """
+    if not unit.is_public:
+        return False
+    if unit.unit_type == CodeUnitType.FUNCTION:
+        return True
+    return unit.unit_type == CodeUnitType.METHOD and _enclosing_class_is_public(unit)
+
+
 def find_potentially_unused(units: list[CodeUnit], strict_unused: bool = False) -> list[CodeUnit]:
     """Find code units that are never referenced and are not likely API.
 
     :param units: Candidate code units.
-    :param strict_unused: Whether to include likely public functions in results.
+    :param strict_unused: Whether to report public functions and public methods of public classes too.
     :return: Units with no references and not classified as API.
     """
     unused = []
     for unit in units:
         if unit.language != "python":
             continue
-        if not strict_unused and unit.unit_type == CodeUnitType.FUNCTION and unit.is_public:
+        if not strict_unused and _is_public_surface(unit):
             continue
 
         if unit.references:

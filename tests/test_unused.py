@@ -532,3 +532,40 @@ def test_project_only_bases_are_not_framework_derived(tmp_path: Path) -> None:
     for qualified_name in ("sample._Root.run", "sample._Child.step", "sample._Plain.go"):
         assert _unit(units, qualified_name).references == set()
     assert unused == {"run", "step", "go", "_Child", "_Plain"}
+
+
+def test_public_method_of_public_class_is_skipped_by_default(tmp_path: Path) -> None:
+    source = dedent(
+        """
+        class Service:
+            def run(self):
+                return 1
+
+            def _helper(self):
+                return 2
+        """
+    ).strip()
+    units = extract_units(tmp_path, source, include_private=True)
+    build_reference_graph(units)
+
+    default_names = {unit.name for unit in find_potentially_unused(units, strict_unused=False)}
+    strict_names = {unit.name for unit in find_potentially_unused(units, strict_unused=True)}
+
+    assert default_names == {"_helper"}
+    assert strict_names == {"run", "_helper"}
+
+
+def test_public_method_of_private_class_is_reported_by_default(tmp_path: Path) -> None:
+    source = dedent(
+        """
+        class _Service:
+            def run(self):
+                return 1
+        """
+    ).strip()
+    units = extract_units(tmp_path, source, include_private=True)
+    build_reference_graph(units)
+
+    default_names = {unit.name for unit in find_potentially_unused(units, strict_unused=False)}
+
+    assert default_names == {"run", "_Service"}
