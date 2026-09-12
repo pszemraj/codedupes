@@ -252,7 +252,7 @@ Default combined semantic failures are fatal. `--allow-semantic-fallback` contin
 
 ## Terminal duplicate panels
 
-Tables show up to 20 rows by default; `--full-table` removes that presentation limit. The footer counts additional selected pairs. The [report-level cap](#report-selection) applies before table rendering.
+Tables show up to 20 rows by default; their footers count additional selected rows and point to `--full-table`. The [report-level cap](#report-selection) applies before table rendering. When hidden findings fail the run, the status guidance also names `--full-table` if restoring the hidden pairs can exceed the terminal limit; raising `--max-duplicates` alone does not remove that limit.
 
 Locations use the shorter of working-directory-relative and absolute `<path>:<line>` spellings.
 

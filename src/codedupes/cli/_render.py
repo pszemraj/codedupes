@@ -169,6 +169,7 @@ def _hidden_failure_status(
     *,
     fail_on: FailOnPolicy,
     exit_code: int,
+    max_items: int | None,
 ) -> str:
     """Word a failing status whose every failing finding is hidden from the report.
 
@@ -176,6 +177,7 @@ def _hidden_failure_status(
     :param hidden: Hidden groups that fail the policy while emitted findings pass.
     :param fail_on: Finding policy selected for this run.
     :param exit_code: Exit code computed from the selected policy.
+    :param max_items: Terminal row limit, or ``None`` when all rows are displayed.
     :return: Status text naming the hidden groups and how to list them.
     """
     culprits: list[str] = []
@@ -186,6 +188,11 @@ def _hidden_failure_status(
     if "truncated" in hidden:
         culprits.append(f"pairs truncated by --max-duplicates {selection.policy.max_duplicates}")
         remedies.append("a higher --max-duplicates")
+    complete_pairs = (
+        len(selection.duplicates) + len(selection.omitted_review) + len(selection.truncated)
+    )
+    if max_items is not None and complete_pairs > max_items:
+        remedies.append("--full-table")
     return (
         f"fail (exit {exit_code}; only {' and '.join(culprits)} fail --fail-on {fail_on}, "
         f"use {' and '.join(remedies)} to list them)"
@@ -198,6 +205,7 @@ def print_summary(
     fail_on: FailOnPolicy,
     exit_code: int,
     strict_unused: bool = False,
+    max_items: int | None = DEFAULT_TABLE_ROWS,
 ) -> None:
     """Print analysis summary.
 
@@ -205,6 +213,7 @@ def print_summary(
     :param fail_on: Finding policy selected for this run.
     :param exit_code: Exit code computed from the selected policy.
     :param strict_unused: Whether unused findings count under the failure policy.
+    :param max_items: Terminal row limit, or ``None`` when all rows are displayed.
     :return: ``None``.
     """
     result = selection.result
@@ -277,7 +286,9 @@ def print_summary(
     status = f"{'fail' if exit_code else 'pass'} (exit {exit_code})"
     hidden = hidden_only_failure(selection, policy=fail_on, strict_unused=strict_unused)
     if exit_code and hidden:
-        status = _hidden_failure_status(selection, hidden, fail_on=fail_on, exit_code=exit_code)
+        status = _hidden_failure_status(
+            selection, hidden, fail_on=fail_on, exit_code=exit_code, max_items=max_items
+        )
     summary.add_row("Finding status", status)
 
     _output.console.print(summary)
@@ -446,7 +457,10 @@ def _print_duplicate_table(
         _output.console.print(table)
 
     if max_items is not None and len(duplicates) > max_items:
-        _output.console.print(f"[dim]... and {len(duplicates) - max_items} more[/dim]")
+        _output.console.print(
+            f"[dim]... and {len(duplicates) - max_items} more "
+            "(use --full-table to list all rows)[/dim]"
+        )
 
 
 def print_duplicates(
@@ -538,7 +552,9 @@ def print_unused(
     _output.console.print(table)
 
     if max_items is not None and len(unused) > max_items:
-        _output.console.print(f"[dim]... and {len(unused) - max_items} more[/dim]")
+        _output.console.print(
+            f"[dim]... and {len(unused) - max_items} more (use --full-table to list all rows)[/dim]"
+        )
 
 
 def print_findings(

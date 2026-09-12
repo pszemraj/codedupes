@@ -2590,6 +2590,75 @@ def test_cli_truncated_only_failure_is_named_in_the_status(monkeypatch, tmp_path
     assert summary["truncated_duplicates"] == 1
 
 
+def test_cli_hidden_failure_remedy_accounts_for_terminal_row_limit(monkeypatch, tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+    anchor = _build_unit(tmp_path)
+    targets = [
+        make_code_unit(
+            tmp_path,
+            name=f"advisory_{i}",
+            source=f"def advisory_{i}():\n    return {i}",
+            lineno=5 + i * 3,
+        )
+        for i in range(20)
+    ]
+    failing = make_code_unit(
+        tmp_path,
+        name="actionable_target",
+        source="def actionable_target():\n    return 1",
+        lineno=100,
+    )
+    pairs = [
+        HybridDuplicate(anchor, unit, "semantic_high_confidence", 0.99, semantic_similarity=0.98)
+        for unit in targets
+    ]
+    pairs.append(
+        HybridDuplicate(
+            anchor,
+            failing,
+            "hybrid_confirmed",
+            0.94,
+            semantic_similarity=0.96,
+            jaccard_similarity=0.92,
+        )
+    )
+    result = AnalysisResult(
+        units=[anchor, *targets, failing],
+        traditional_duplicates=[],
+        semantic_duplicates=[],
+        hybrid_duplicates=pairs,
+        potentially_unused=[],
+        analysis_mode="combined",
+    )
+    patch_cli_analyzer(monkeypatch, cli, analyze_result=result)
+    runner = CliRunner()
+
+    capped = runner.invoke(cli.cli, ["check", str(path), "--max-duplicates", "20"])
+    assert capped.exit_code == 1
+    assert "use a higher --max-duplicates and --full-table to list them" in " ".join(
+        capped.output.split()
+    )
+    assert "actionable_target" not in capped.output
+
+    # Raising the report cap alone still leaves the failing row behind the
+    # independent terminal limit. The footer must explain how to reveal it.
+    limited = runner.invoke(cli.cli, ["check", str(path), "--max-duplicates", "21"])
+    assert limited.exit_code == 1
+    assert "actionable_target" not in limited.output
+    assert "... and 1 more (use --full-table to list all rows)" in limited.output
+
+    listed = runner.invoke(cli.cli, ["check", str(path), "--max-duplicates", "21", "--full-table"])
+    assert listed.exit_code == 1
+    assert "actionable_target" in listed.output
+    assert "... and 1 more" not in listed.output
+
+    already_full = runner.invoke(
+        cli.cli, ["check", str(path), "--max-duplicates", "20", "--full-table"]
+    )
+    assert "use a higher --max-duplicates to list them" in already_full.output
+
+
 def test_cli_max_duplicates_applies_to_single_method_modes(monkeypatch, tmp_path):
     path = tmp_path / "sample.py"
     path.write_text("def entry():\n    return 1\n")

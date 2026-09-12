@@ -140,8 +140,9 @@ from ._render import print_findings, print_summary
     default=None,
     panel=Panel.OUTPUT,
     help=(
-        "Emit at most N duplicate pairs, highest confidence first, in JSON and terminal "
-        "output; the exit code still counts every finding"
+        "Cap the primary duplicate list at N pairs, highest confidence first, in JSON "
+        "and terminal output. Raw --show-all lists stay complete; the exit code counts "
+        "every finding"
     ),
 )
 @click.option(
@@ -211,6 +212,7 @@ def check_command(ctx: click.Context, path: Path, **params: Any) -> None:
                 fail_on=opts.fail_on,
                 exit_code=exit_code,
                 strict_unused=opts.strict_unused,
+                max_items=opts.table_max_items,
             )
             print_findings(
                 selection,
