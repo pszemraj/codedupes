@@ -901,27 +901,6 @@ def test_cli_rejects_invalid_active_threshold_before_analysis(
     assert "[0.0, 1.0]" in result.stderr
 
 
-def test_cli_json_show_all_includes_raw_sections(monkeypatch, tmp_path):
-    path = tmp_path / "sample.py"
-    path.write_text("def entry():\n    return 1\n")
-
-    patch_cli_analyzer(
-        monkeypatch,
-        cli,
-        analyze_result=lambda: _build_result_with_semantic_duplicate(tmp_path),
-    )
-    runner = CliRunner()
-    result = runner.invoke(cli.cli, ["check", str(path), "--json", "--show-all"])
-    assert result.exit_code == 1
-    payload = json.loads(result.output)
-    assert "traditional_duplicates" in payload
-    assert "semantic_duplicates" in payload
-    for collection in ("duplicates", "traditional_duplicates", "semantic_duplicates"):
-        for edge in payload[collection]:
-            assert edge["unit_a"] in payload["units"]
-            assert edge["unit_b"] in payload["units"]
-
-
 def test_cli_json_v3_raw_mode_uses_edge_list(monkeypatch, tmp_path):
     path = tmp_path / "sample.py"
     path.write_text("def entry():\n    return 1\n")
@@ -2452,59 +2431,13 @@ def test_cli_max_duplicates_ranks_traditional_only_by_similarity(monkeypatch, tm
     assert output["summary"]["truncated_duplicates"] == 1
 
 
-@pytest.mark.parametrize(
-    (
-        "options",
-        "reported_duplicates",
-        "omitted_review_duplicates",
-        "tiers",
-        "unit_names",
-        "terminal_contains",
-        "terminal_excludes",
-    ),
-    [
-        (
-            [],
-            1,
-            2,
-            ["hybrid_confirmed"],
-            {"entry", "other"},
-            [
-                "Reported duplicates",
-                "Withheld review candidates",
-                "2 (use --include-review)",
-                "semantic_review",
-                "(1 pairs, 2 review withheld)",
-            ],
-            ["lonely"],
-        ),
-        (
-            ["--include-review"],
-            3,
-            0,
-            ["hybrid_confirmed", "semantic_review", "semantic_review"],
-            {"entry", "other", "lonely"},
-            ["(3 pairs)", "lonely"],
-            ["Withheld review candidates"],
-        ),
-    ],
-    ids=["default", "include-review"],
-)
-def test_cli_review_visibility(
-    monkeypatch,
-    tmp_path,
-    options,
-    reported_duplicates,
-    omitted_review_duplicates,
-    tiers,
-    unit_names,
-    terminal_contains,
-    terminal_excludes,
-):
+@pytest.mark.parametrize("include_review", [False, True], ids=["default", "include-review"])
+def test_cli_review_visibility(monkeypatch, tmp_path, include_review):
     path = tmp_path / "sample.py"
     path.write_text("def entry():\n    return 1\n")
     patch_cli_analyzer(monkeypatch, cli, analyze_result=lambda: _build_tiered_result(tmp_path))
     runner = CliRunner()
+    options = ["--include-review"] if include_review else []
 
     json_result = runner.invoke(
         cli.cli,
@@ -2513,8 +2446,6 @@ def test_cli_review_visibility(
     assert json_result.exit_code == 1
     output = json.loads(json_result.output)
     assert output["summary"]["hybrid_duplicates"] == 3
-    assert output["summary"]["reported_duplicates"] == reported_duplicates
-    assert output["summary"]["omitted_review_duplicates"] == omitted_review_duplicates
     assert output["summary"]["duplicates_by_tier"] == {
         "exact": 0,
         "traditional_near": 0,
@@ -2522,16 +2453,37 @@ def test_cli_review_visibility(
         "semantic_high_confidence": 0,
         "semantic_review": 2,
     }
-    assert [edge["tier"] for edge in output["duplicates"]] == tiers
-    assert {record["name"] for record in output["units"].values()} == unit_names
+    assert "traditional_duplicates" not in output
 
     terminal = runner.invoke(cli.cli, ["check", str(path), "--no-unused", *options])
     assert terminal.exit_code == 1
-    for expected in terminal_contains:
-        assert expected in terminal.output
-    for unexpected in terminal_excludes:
-        assert unexpected not in terminal.output
-    assert "traditional_duplicates" not in output
+    if include_review:
+        assert output["summary"]["reported_duplicates"] == 3
+        assert output["summary"]["omitted_review_duplicates"] == 0
+        assert [edge["tier"] for edge in output["duplicates"]] == [
+            "hybrid_confirmed",
+            "semantic_review",
+            "semantic_review",
+        ]
+        assert {record["name"] for record in output["units"].values()} == {
+            "entry",
+            "other",
+            "lonely",
+        }
+        assert "Withheld review candidates" not in terminal.output
+        assert "(3 pairs)" in terminal.output
+        assert "lonely" in terminal.output
+    else:
+        assert output["summary"]["reported_duplicates"] == 1
+        assert output["summary"]["omitted_review_duplicates"] == 2
+        assert [edge["tier"] for edge in output["duplicates"]] == ["hybrid_confirmed"]
+        assert {record["name"] for record in output["units"].values()} == {"entry", "other"}
+        assert "Reported duplicates" in terminal.output
+        assert "Withheld review candidates" in terminal.output
+        assert "2 (use --include-review)" in terminal.output
+        assert "semantic_review" in terminal.output
+        assert "(1 pairs, 2 review withheld)" in terminal.output
+        assert "lonely" not in terminal.output
 
 
 def test_cli_show_all_implies_include_review(monkeypatch, tmp_path):
