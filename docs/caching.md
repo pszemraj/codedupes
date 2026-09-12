@@ -56,8 +56,6 @@ An indexed corpus retains its source commit even without persistent storage. Que
 
 The local-directory content fingerprint hashes file contents, including files reached through symlinked subdirectories. It excludes `.git/`, Hugging Face download metadata, `.gitignore`, `.gitattributes`, Markdown/reStructuredText documentation, and case-insensitive `README`, `LICENSE`, and `NOTICE` basenames with no extension or a `.txt` extension. These names are matched exactly: assets such as `license_head.safetensors` and `notice_tokens.json` still contribute. All remaining files still contribute, including weights and shards, tokenizer assets, configuration, pooling/Dense modules, and custom model code. Per-file digests are reused from `<cache_root>/local-models/` when size, mtime, ctime, and inode match, keeping unchanged runs to a stat walk. A no-cache run maintains this information only in memory; enabling caching later can persist it. Previously cached local directories containing excluded files may miss once under the revised fingerprint; no migration is required.
 
-`README.md` remains a fallback family-recognition hint. Changing a top-level `# ` heading within its first 128 lines to or from a recognized model family can change the selected prompts or encode route, and therefore the complete embedding identity, even though documentation is excluded from the content fingerprint.
-
 Model loading checks fingerprints before and after reading weights. A change during loading triggers one reload; a second change fails the run. Earlier hits are discarded if their fingerprint differs from the loaded weights.
 
 ## Corpus lifecycle

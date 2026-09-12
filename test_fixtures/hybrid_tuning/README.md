@@ -1,8 +1,6 @@
 # Hybrid gate tuning fixtures
 
-This directory contains the synthetic corpus and labels used by the [hybrid gate tuning workflow](../../docs/hybrid-tuning.md).
-
-It is a calibration guardrail, not an end-user sample project. Run tuning commands from the repository root and write exploratory JSON under `scratch/`; compare it with the recorded reports before making a deliberate calibration change.
+This synthetic Python corpus is a [hybrid-tuning](../../docs/hybrid-tuning.md) guardrail, not an end-user sample project.
 
 ## Contents
 

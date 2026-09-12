@@ -62,9 +62,9 @@ codedupes check ./src \
 
 ## Semantic task defaults and choices
 
-Leave `semantic_task` unset unless you are deliberately changing a model's embedding behavior. `analyze()`/`codedupes check` use `semantic-similarity`; `index()`/`codedupes search` use `code-retrieval`. Those defaults align the model's prompt and encode route with the operation.
+Leave `semantic_task` unset unless you are deliberately changing a model's embedding behavior. `analyze()`/`codedupes check` use `semantic-similarity`; `index()`/`codedupes search` use `code-retrieval`; a later `search()` uses the task that produced its current corpus embeddings. Those defaults align the model's prompt and encode route with the operation.
 
-The Python API resolves the same defaults by operation: an unset `AnalyzerConfig.semantic_task` uses `semantic-similarity` for `CodeAnalyzer.analyze()` and `code-retrieval` for `CodeAnalyzer.index()`. A later `search()` uses the task that produced its current corpus embeddings. The shipped thresholds were calibrated on the pinned built-in checkpoints and are also offered as family defaults for recognized copies. A custom instruction prefix, alternate EmbeddingGemma task, alternate built-in revision, or a `trust_remote_code` value differing from the model profile default still requires an explicit numeric threshold, regardless of `threshold_profile`. Remote code can change the vectors, so it splits the embedding cache key and invalidates the threshold defaults the same way a prompt change does; this applies to both the duplicate gates and the search default.
+The shipped thresholds were calibrated on the pinned built-in checkpoints and are also offered as family defaults for recognized copies. A custom instruction prefix, alternate EmbeddingGemma task, alternate built-in revision, or a `trust_remote_code` value differing from the model profile default still requires an explicit numeric threshold, regardless of `threshold_profile`. Remote code can change the vectors, so it splits the embedding cache key and invalidates the threshold defaults the same way a prompt change does; this applies to both the duplicate gates and the search default.
 
 [Contextual search documents](python-api.md#semantic-query-search) also require an explicit threshold because the built-in search defaults were calibrated on source-only documents.
 

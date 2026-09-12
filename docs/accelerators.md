@@ -2,7 +2,7 @@
 
 Install the supported runtime and verify MPS availability as described in [Installation](install.md). The [CLI reference](cli.md) lists device options, and [model profiles](model-profiles.md) lists model-specific thresholds and tasks.
 
-Most users should leave the device at `auto`. It chooses CUDA, then MPS, then CPU, and applies only to semantic embedding; traditional-only analysis does not load a model or initialize PyTorch. Use `--device cpu` when you need to avoid accelerator use, and use an explicit accelerator only to require that hardware.
+Device selection applies only to semantic embedding; traditional-only analysis does not load a model or initialize PyTorch. Use `--device cpu` when you need to avoid accelerator use, and use an explicit accelerator only to require that hardware.
 
 ## Device selection
 
@@ -51,7 +51,7 @@ CUDA and MPS inference use the same deterministic OOM recovery ladder. An MPS `I
 2. Log one warning per failed attempt, including MPS tensor, driver, and recommended-memory statistics when available.
 3. Synchronize queued MPS work, run garbage collection, and call `torch.mps.empty_cache()`.
 4. Halve the embedding batch size until it reaches one.
-5. If an accelerator still OOMs at batch size one, move the cached model to CPU once and retry from the originally requested batch size capped at 32 (`CPU_FALLBACK_MAX_BATCH_SIZE`); host memory has different limits, but host OOM can arrive as an uncatchable OOM-killer kill rather than a Python exception, so an accelerator-sized request (say 512) never carries over. A catchable CPU OOM re-enters the halving ladder above before aborting. The move re-checks the CPU bfloat16 inference policy described below: a model loaded in bfloat16 is cast to float32 unless the experimental opt-in is set and this CPU passes the capability gate.
+5. If an accelerator still OOMs at batch size one, move the cached model to CPU once and retry from the originally requested batch size capped at 32 (`CPU_FALLBACK_MAX_BATCH_SIZE`); host memory has different limits, but host OOM can arrive as an uncatchable OOM-killer kill rather than a Python exception, so an accelerator-sized request (say 512) never carries over. A catchable CPU OOM re-enters the halving ladder above before aborting. The move reapplies the [CPU dtype policy](#precision-and-metal-environment-variables).
 
 A model-loading accelerator OOM has no batch to shrink, so it clears that device's cache and retries loading once on CPU. After an accelerator-to-CPU OOM fallback, the CPU model remains sticky for that model in a long-lived process. Call `codedupes.semantic.clear_model_cache()` to force a fresh accelerator load.
 

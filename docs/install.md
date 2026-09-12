@@ -2,20 +2,13 @@
 
 ## Install (GitHub source)
 
-Use Python 3.11 or newer, with Git available for the source install:
-
-Install [PyTorch for your platform](https://pytorch.org/get-started/locally/) **before installing codedupes**, or pip may select an unwanted build. The required version range is `>=2.13.0,<3`.
-
-```bash
-pip install "codedupes @ git+https://github.com/pszemraj/codedupes.git"
-codedupes info
-```
+Follow the [installation commands and prerequisites](../README.md#install).
 
 Other dependencies are declared in [pyproject.toml](../pyproject.toml) and installed with the package. You do not need to clone this repository to analyze your own code.
 
 A GPU is optional. On Apple Silicon, use macOS 14.0+ and a PyTorch wheel built with MPS support. [Accelerator behavior](accelerators.md) covers automatic device selection and diagnostics.
 
-If `codedupes` is not found after installation, ensure your Python installation's scripts directory is on `PATH` and that you are using the same Python installation as the install command. If installation reports no matching PyTorch distribution, check the Python/platform compatibility and the required version above; inference fallback only applies after installation succeeds. Continue with the [README quick start](../README.md#quick-start).
+If `codedupes` is not found after installation, ensure your Python installation's scripts directory is on `PATH` and that you are using the same Python installation as the install command. If installation reports no matching PyTorch distribution, check the Python/platform compatibility and [required version](../README.md#install); inference fallback only applies after installation succeeds. Continue with the [README quick start](../README.md#quick-start).
 
 ## Polyglot parser dependencies
 

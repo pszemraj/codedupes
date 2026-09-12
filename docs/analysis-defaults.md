@@ -10,15 +10,15 @@ The semantic pass may load the selected embedding model and may download it on i
 
 Combined output ranks each pair by an evidence tier:
 
-| tier | evidence | reported by default |
-| --- | --- | --- |
-| `exact` | structural or token fingerprints agree | yes |
-| `traditional_near` | identifier Jaccard match | yes |
-| `hybrid_confirmed` | semantic and traditional-near match | yes |
-| `semantic_high_confidence` | semantic match plus size/identifier corroboration or a calibrated similarity margin | yes |
-| `semantic_review` | semantic match only | no (`--include-review`) |
+| tier | evidence |
+| --- | --- |
+| `exact` | structural or token fingerprints agree |
+| `traditional_near` | identifier Jaccard match |
+| `hybrid_confirmed` | semantic and traditional-near match |
+| `semantic_high_confidence` | semantic match plus size/identifier corroboration or a calibrated similarity margin |
+| `semantic_review` | semantic match only |
 
-Every tier is synthesized and counted; the default report withholds `semantic_review` because on real repositories those pairs are mostly noise, and `--include-review` (or `--show-all`) lists them. [Exit codes](output.md#exit-codes) define which tiers and unused findings are actionable under each failure policy; withholding never changes the exit code.
+See [report selection](output.md#report-selection) and [exit codes](output.md#exit-codes) for visibility and failure-policy behavior.
 
 ## Semantic duplicate gate defaults
 
@@ -34,7 +34,7 @@ Semantic duplicate detection is gated per language: each built-in model profile 
 
 Gate selection is recall-first. A shipped gate may sit below the sweep's F1-selected threshold wherever the sweep shows recall gains below it, however many grid steps down that is (gte `c` `0.82` against a selected `0.90`; embeddinggemma `javascript` `0.72` against `0.82` and `rust` `0.78` against `0.82`). Where recall is flat, a gate sits at most one grid step looser as an off-corpus generalization hedge, never further. Every shipped gate keeps recall at or above the selection's and F1 within 80% of it; `tests/test_calibration_reports.py` enforces both against the recorded sweep reports.
 
-Without an explicit numeric threshold, `--threshold-profile auto` selects the recognized model family's gates; recognized local copies and fine-tunes inherit their family's gates. `--threshold-profile generic` uses one `0.82` gate for every language, while a named profile selects that profile's gates. See [threshold-profile choices](model-profiles.md#choosing-threshold-defaults).
+See [threshold-profile choices](model-profiles.md#choosing-threshold-defaults) for profile selection.
 
 The profile fallback (`0.82` gte, `0.78` gemma) is the strictest calibrated gate and applies only to languages without their own entry. An explicit `--semantic-threshold`/`--threshold` (or `AnalyzerConfig.semantic_threshold`) replaces every per-language gate with one flat value. The pairwise embedding scan partitions candidates by language and scans each group at that language's own gate, so a loosely gated language never drags another language's scan down; the scalar floor handed to the scan covers only languages that arrive without a calibrated entry.
 
@@ -128,7 +128,7 @@ A semantic-only pair has already passed its language's duplicate gate (applied b
 | `embeddinggemma-300m` | `0.00` | `0.20` | off |
 | `generic` | `0.00` | `0.20` | off |
 
-The identifier minimum is `0.00` on both profiles because the Python extractor collects bound and referenced names but not attribute names, so renamed Python clones score near-zero identifier overlap while the tree-sitter languages collect every identifier leaf; no positive identifier floor was feasible in every language. The statement-ratio floor carries the split: at gte's `0.80` the high-confidence subset measures precision `0.778` / recall `0.566` on the polyglot corpus against `0.677` / `0.618` for everything admitted (9 labeled positives and 23 false positives move to review). embeddinggemma's admitted set is already size-consistent at its gates, so its `0.20` floor hides only pairs whose statement counts differ more than fivefold and its corpus metrics are unchanged (`0.611` / `0.763`). An explicit `--semantic-threshold` keeps the profile's corroboration constants but turns promotion off, because the gates are calibrated relative to the shipped admission gates. Values come from `test_fixtures/polyglot_calibration/reports/corroboration_report.json`; `tests/test_corroboration_reports.py` re-derives them, and the [hybrid gate workflow](hybrid-tuning.md) regenerates them.
+The identifier minimum is `0.00` because the Python extractor collects bound and referenced names but not attribute names, while tree-sitter languages collect every identifier leaf; no positive floor was feasible across languages. The statement-ratio floor carries GTE's split; EmbeddingGemma's `0.20` floor withholds only extreme size mismatches. An explicit `--semantic-threshold` keeps the profile's corroboration constants but turns promotion off because the gates are calibrated relative to the shipped admission gates. See the [calibration results](../test_fixtures/polyglot_calibration/README.md#calibration-results) and [hybrid gate workflow](hybrid-tuning.md).
 
 ## Confidence scale
 

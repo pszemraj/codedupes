@@ -53,7 +53,9 @@ Whole-tree status at shipped defaults (2026-08-14): 368 units across five langua
 
 The validator now enforces the zero-unlabeled-deterministic-pairs property per language rather than leaving it as a one-off observation: every exact/near pair the traditional tier reports must appear in `positive_groups` (14/14/15/16/14 pairs for c/rust/javascript/typescript/python).
 
-## Calibration results (2026-08-25, pinned profiles, cpu/fp32, production `--min-statements 3`)
+## Calibration results
+
+The 2026-08-25 sweep used pinned profiles, cpu/fp32, and production `--min-statements 3`.
 
 Sweeps ran per language over a 0.40-0.96 duplicate grid (`--duplicate-start 0.40`; the default 0.70 floor would hide most non-Python near clones) with both models; search sweeps used the per-language probes over the default 0.20-0.90 search grid. See [sweep metrics and calibration identity](../../docs/hybrid-tuning.md#semantic-threshold-sweep-model-profiles) for how output and candidate coverage are scored. Reports: `reports/<lang>_semantic_threshold_report.json`, `reports/<lang>_search_threshold_report.json`, `reports/similarity_distributions.json`, and `reports/corroboration_report.json` for the [default-visible split](#default-visible-split-2026-09-11-reportscorroboration_reportjson).
 
@@ -89,28 +91,18 @@ The 2026-08-21 regeneration under embedding pipeline schema 5 reproduced every m
 
 Candidate policy, model threshold, and hybrid publication must be evaluated together. Apply the [gate selection policy](../../docs/analysis-defaults.md#semantic-duplicate-gate-defaults) to these production-policy grids. Search rows remain a single-domain synthetic guardrail; [model profiles](../../docs/model-profiles.md#built-in-profiles) describes the held-out evidence used for search defaults.
 
-## Default-visible split (2026-09-11, `reports/corroboration_report.json`)
+## Default-visible results (2026-09-11, `reports/corroboration_report.json`)
 
-`codedupes check` withholds `semantic_review` by default, so the [corroboration constants and promotion gates](../../docs/analysis-defaults.md#hybrid-synthesis-confidence-defaults) decide which admitted pairs the default report shows. `scripts/sweep_hybrid_gates.py` swept them at each language's shipped admission gate (cpu/fp32, `--min-statements 3`): stage 1 selected one `(identifier Jaccard min, statement ratio min)` per model that is feasible in every language (visible recall ≥ 0.85 × admitted recall, visible precision ≥ admitted precision), stage 2 selected a per-language promotion gate at those constants. The visible subset at the shipped split, precision / recall, against everything admitted:
+The table records default-visible and admitted precision/recall at the shipped split. See [hybrid confidence defaults](../../docs/analysis-defaults.md#hybrid-synthesis-confidence-defaults) for the settings and the [tuning workflow](../../docs/hybrid-tuning.md) for selection.
 
-| language | gte-modernbert-base `(0.00, 0.80)` visible vs admitted | gate | embeddinggemma-300m `(0.00, 0.20)` visible vs admitted | gate |
-| --- | --- | --- | --- | --- |
-| c | 0.74 / 0.41 vs 0.65 / 0.44 | off | 0.47 / 0.74 (unchanged) | off |
-| rust | 0.89 / 0.50 vs 0.74 / 0.59 | off | 0.61 / 0.79 (unchanged) | off |
-| javascript | 0.85 / 0.63 vs 0.73 / 0.63 | off | 0.57 / 0.77 (unchanged) | off |
-| typescript | 0.83 / 0.69 vs 0.76 / 0.78 | 0.88 | 0.70 / 0.78 (unchanged) | off |
-| python (control) | 0.64 / 0.62 vs 0.54 / 0.65 | off | 0.78 / 0.74 (unchanged) | off |
+| language | gte-modernbert-base visible vs admitted | embeddinggemma-300m visible vs admitted |
+| --- | --- | --- |
+| c | 0.74 / 0.41 vs 0.65 / 0.44 | 0.47 / 0.74 (unchanged) |
+| rust | 0.89 / 0.50 vs 0.74 / 0.59 | 0.61 / 0.79 (unchanged) |
+| javascript | 0.85 / 0.63 vs 0.73 / 0.63 | 0.57 / 0.77 (unchanged) |
+| typescript | 0.83 / 0.69 vs 0.76 / 0.78 | 0.70 / 0.78 (unchanged) |
+| python (control) | 0.64 / 0.62 vs 0.54 / 0.65 | 0.78 / 0.74 (unchanged) |
 
-Pooled, gte moves from 0.68 / 0.62 to 0.78 / 0.57 (9 labeled positives and 23 false positives withheld). No positive identifier floor was feasible for every language because the Python extractor collects no attribute names, so both profiles carry a `0.00` identifier minimum and the statement-ratio floor does the work; gemma's admitted set is already size-consistent at its gates, so its split changes no corpus row. `tests/test_corroboration_reports.py` re-derives the shipped values from the report.
+Pooled gte moves from 0.68 / 0.62 to 0.78 / 0.57, withholding 9 labeled positives and 23 false positives. `tests/test_corroboration_reports.py` re-derives the shipped values from the report.
 
-## Re-running
-
-Use the same repository root and `lang` value as above:
-
-```bash
-python scripts/sweep_semantic_thresholds.py --corpus-path test_fixtures/polyglot_calibration/$lang --labels-path test_fixtures/polyglot_calibration/labels/$lang.json --search-probes-path test_fixtures/polyglot_calibration/search_probes/$lang.json --language "$lang" --duplicate-start 0.40 --json-out scratch/${lang}_semantic_threshold_report.json --search-json-out scratch/${lang}_search_threshold_report.json
-python scripts/report_calibration_distributions.py --languages "$lang" --json-out scratch/${lang}_similarity_distributions.json
-python scripts/sweep_hybrid_gates.py --corpus-root test_fixtures/polyglot_calibration --json-out scratch/corroboration_report.json
-```
-
-Keep corpus and label changes explicit in review; if a grammar pin bump changes any recorded number above, understand the difference before changing a gate.
+Re-run calibration through the [tuning workflow](../../docs/hybrid-tuning.md#semantic-threshold-sweep-model-profiles). Keep corpus and label changes explicit in review; if a grammar pin bump changes any recorded number above, understand the difference before changing a gate.

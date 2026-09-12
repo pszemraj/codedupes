@@ -38,7 +38,7 @@ codedupes check ./src --json | jq empty
 
 ## JSON schema v3
 
-`check --json` and `search --json` emit schema version `3`. Units are nodes in a top-level `units` object keyed by report-local ids (`u0`, `u1`, ...); findings refer to those ids instead of repeating a complete unit object for every pair endpoint. Ids are assigned in file-path then source-offset order over the referenced units only, so they renumber whenever the referenced set changes (for example with `--include-review`) — treat them as opaque within one report. Each unit record carries `uid`, the in-run `CodeUnit.uid` (source path, language, qualified name, byte offset), which is unique within one report but not a cross-machine finding identifier.
+`check --json` and `search --json` emit schema version `3`. Units are nodes in a top-level `units` object keyed by report-local ids (`u0`, `u1`, ...); findings refer to those ids instead of repeating a complete unit object for every pair endpoint. Ids are assigned in file-path then source-offset order over the referenced units only, so they renumber whenever the referenced set changes (for example with `--include-review`) — treat them as opaque within one report. Each unit record also carries the [in-run `CodeUnit.uid`](python-api.md#key-result-types), not a cross-machine finding identifier.
 
 ### Check
 
@@ -132,7 +132,11 @@ codedupes check ./src --json | jq empty
 
 The shortened example omits `u1` and `u2` from `units`; real output includes every id referenced by any emitted finding list exactly once. Units with no emitted finding are not present, so `summary.total_units` is the full extracted corpus count while `units` contains only units needed to resolve the report.
 
-In default combined mode, `duplicates` contains hybrid edges of every tier except `semantic_review`, which is withheld by default: those pairs passed their language's semantic gate but have neither deterministic corroboration nor the calibrated similarity margin, and on real repositories they are mostly noise. `--include-review` emits them too (ordered after the reported tiers, as the analyzer ranks them); `--show-all` implies `--include-review` and also adds `traditional_duplicates` and `semantic_duplicates` as raw edge lists with `unit_a`, `unit_b`, `similarity`, and `method`. `summary.hybrid_duplicates` counts the complete synthesis, `summary.duplicates_by_tier` breaks that count down over all five tiers (always present, zero-filled), `summary.reported_duplicates` counts the edges actually emitted, `summary.omitted_review_duplicates` counts pairs withheld by the report policy, and `summary.truncated_duplicates` counts pairs cut by `--max-duplicates`, so `reported_duplicates + omitted_review_duplicates + truncated_duplicates == hybrid_duplicates` regardless of flags.
+#### Report selection
+
+In default combined mode, `duplicates` contains hybrid edges of every tier except `semantic_review`; see [tier evidence and confidence](analysis-defaults.md#hybrid-synthesis-confidence-defaults). `--include-review` emits the review tier too (ordered after the reported tiers, as the analyzer ranks them). `--show-all` implies `--include-review` and also adds `traditional_duplicates` and `semantic_duplicates` as raw edge lists with `unit_a`, `unit_b`, `similarity`, and `method`.
+
+`summary.hybrid_duplicates` counts the complete synthesis, `summary.duplicates_by_tier` breaks that count down over all five tiers (always present, zero-filled), `summary.reported_duplicates` counts the edges actually emitted, `summary.omitted_review_duplicates` counts pairs withheld by the report policy, and `summary.truncated_duplicates` counts pairs cut by `--max-duplicates`, so `reported_duplicates + omitted_review_duplicates + truncated_duplicates == hybrid_duplicates` regardless of flags.
 
 Nothing is truncated unless you ask: `--max-duplicates N` keeps the first `N` edges of the admitted list in the analyzer's confidence order (so the strongest evidence survives), records the cap as `summary.max_duplicates` (`null` when unset), and drops units referenced only by cut edges from `units`. The cap applies after the review filter, so `--include-review --max-duplicates N` ranks review pairs into the same budget; the raw `--show-all` lists are never capped. The exit code ignores the cap, see [exit codes](#exit-codes).
 
@@ -224,7 +228,7 @@ Move and deletion counts need a comparable [corpus baseline](caching.md#corpus-l
 
 `check` emits `extraction_diagnostics` and `semantic_diagnostics` arrays with matching counts in `summary`. `search` emits both diagnostic arrays, without summary counts, so recoverable extraction failures remain visible even when the search index is empty. Entries use `file`, `language`, `severity`, `code`, `message`, `line`, and `end_line`. Terminal checks print counts and up to ten entries per diagnostic category; terminal searches print semantic diagnostics.
 
-`semantic-context-overflow` warns that a newly encoded unit exceeds the model's context window and will be truncated by the backend. It remains in results. These warnings also cover units re-encoded after incompatible cached vectors are discarded. They are produced during corpus inference, not replayed on reused cache hits; see [long-input behavior](analysis-defaults.md#semantic-candidate-defaults).
+For `semantic-context-overflow` warnings and their cache behavior, see [long-input handling](analysis-defaults.md#semantic-candidate-defaults).
 
 ## Exit codes
 
@@ -246,10 +250,10 @@ Default combined semantic failures are fatal. `--allow-semantic-fallback` contin
 
 ## Terminal duplicate panels
 
-Tables show up to 20 rows by default; `--full-table` removes that limit. That is presentation only: the report still contains every admitted pair and the footer counts the rest. `--max-duplicates N` is different, it removes pairs from the report itself (JSON and terminal alike) and the table title and summary say how many were cut.
+Tables show up to 20 rows by default; `--full-table` removes that presentation limit. The footer counts additional selected pairs. The [report-level cap](#report-selection) applies before table rendering.
 
 Locations use the shorter of working-directory-relative and absolute `<path>:<line>` spellings.
 
-- Combined: `Hybrid Duplicates (N pairs, M review withheld, K truncated)` without `semantic_review` rows; `--include-review` lists them, and `--show-all` adds the raw traditional and semantic panels as well. When every hybrid pair is withheld, one dim line reports the withheld count instead of an empty table. The summary lists every tier's count under `Hybrid duplicates`, then `Reported duplicates`, `Withheld review candidates`, and `Truncated duplicates` (the last two only when non-zero).
+- Combined: `Hybrid Duplicates (N pairs, M review withheld, K truncated)`, followed by any raw panels requested through [report selection](#report-selection). When every hybrid pair is withheld, one dim line reports the withheld count instead of an empty table. The summary lists every tier's count; withheld and truncated totals appear when non-zero.
 - `--traditional-only`: `Traditional Duplicates (Structural/Token/Jaccard)`.
 - `--semantic-only`: `Semantic Duplicates (Embedding)`.

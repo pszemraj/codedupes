@@ -1,6 +1,6 @@
 # Hybrid confidence tuning
 
-Tune the split between the tiers `codedupes check` shows by default and the `semantic_review` tier it withholds (see [report selection](output.md#json-schema-v3)). Admission — which semantic pairs exist at all — is set by the [per-language duplicate gates](analysis-defaults.md#semantic-duplicate-gate-defaults) and is not tuned here.
+Tune the shipped values for the [hybrid confidence split](analysis-defaults.md#hybrid-synthesis-confidence-defaults). Admission — which semantic pairs exist at all — is set by the [per-language duplicate gates](analysis-defaults.md#semantic-duplicate-gate-defaults) and is not tuned here.
 
 This is a maintainer workflow for changing shipped gates or corroboration defaults. It is not needed to tune one repository scan: start with the calibrated defaults, then use ordinary `check` scope and threshold options if that scan needs adjustment. Run these commands from a development checkout after installation; they load the pinned embedding models and can take time on their first run. Write exploratory reports under `scratch/`, which is ignored by Git.
 
@@ -12,15 +12,6 @@ This is a maintainer workflow for changing shipped gates or corroboration defaul
 - Semantic threshold harness: [`../scripts/sweep_semantic_thresholds.py`](../scripts/sweep_semantic_thresholds.py)
 
 Use these synthetic corpora to check for regressions; validate changes on a real repository too.
-
-## What the split is made of
-
-A semantic-only pair (admitted by its language gate, no exact or Jaccard evidence) is promoted to `semantic_high_confidence` when either path holds; otherwise it is `semantic_review`:
-
-- corroboration: identifier Jaccard ≥ `hybrid_weak_identifier_jaccard_min` and statement-count ratio ≥ `hybrid_statement_ratio_min` on the model profile (`src/codedupes/semantic_profiles.py`; both signals are embedding-independent, but which candidates they must split depends on the admission gate, so the constants are swept and shipped per model — `src/codedupes/constants.py` holds the generic-profile values);
-- similarity promotion: cosine ≥ the language's `language_high_confidence_thresholds` entry on the same profile (per model and language; a cross-language pair must clear the stricter gate, a language without a calibrated entry has promotion off, and an explicit `--semantic-threshold` disables this path along with the calibrated admission gates while keeping the profile's corroboration constants).
-
-Identifier corroboration is weak for Python by construction: the Python extractor collects bound and referenced names but not attribute names, while the tree-sitter languages collect every identifier leaf, so renamed Python clones score near zero identifier overlap. The similarity path exists so that strongly similar renamed clones still reach the default view.
 
 ## Recommended process
 
@@ -39,7 +30,7 @@ python scripts/sweep_hybrid_gates.py \
 
 Omit `--json-out` to print results without writing a report. `--languages` and `--models` narrow the run; `--corpus-path`/`--labels-path` sweep a single legacy corpus instead of the polyglot root. Without `--corpus-root`, exactly one `--language` is required before model work begins so the sweep uses that language's admission gate. Run the bundled Python guardrail with `python scripts/sweep_hybrid_gates.py --language python`; aliases such as `py` use the same gate, and missing or repeated `--language` options are rejected.
 
-Semantic candidates are collected once per (model, corpus) at that language's shipped admission gate (`--semantic-gate` overrides it flat), so every row scores exactly the pairs the analyzer would admit. The report records `output_policy: hybrid_high_confidence`: each row's `tp`/`fp`/`fn` and `precision`/`recall`/`f1` score the visible subset (published output minus `semantic_review`), its `published_*` fields score every published pair, and `review_tp`/`review_fp` score the withheld tier alone. The semantic sweep's same-named fields score all published pairs. Both sweeps require a model pinned to an immutable 40-character commit and embed the [calibration manifest](#semantic-threshold-sweep-model-profiles) per corpus.
+Semantic candidates are collected once per (model, corpus) at that language's shipped admission gate (`--semantic-gate` overrides it flat), so every row scores exactly the pairs the analyzer would admit. The report records `output_policy: hybrid_high_confidence`: each row's `tp`/`fp`/`fn` and `precision`/`recall`/`f1` score the visible subset, its `published_*` fields score every published pair, and `review_tp`/`review_fp` score the withheld tier alone. The semantic sweep's same-named fields score all published pairs. Both sweeps require a model pinned to an immutable 40-character commit and embed the [calibration manifest](#semantic-threshold-sweep-model-profiles) per corpus.
 
 ## Stages, grids, and selection
 
@@ -63,7 +54,24 @@ python scripts/sweep_semantic_thresholds.py \
   --search-json-out scratch/search_threshold_report.json
 ```
 
-By default this sweeps the legacy Python-only `crab_visibility` corpus; its duplicate-threshold report is a guardrail, not the source of the shipped per-language duplicate gates. Those are calibrated from [`../test_fixtures/polyglot_calibration/`](../test_fixtures/polyglot_calibration/README.md), whose README records the per-language re-run command (`--corpus-path`, `--labels-path`, `--language`, `--skip-search`, and `--duplicate-start`/`--duplicate-stop` to widen the grid below the default floor).
+By default this sweeps the legacy Python-only `crab_visibility` corpus; its duplicate-threshold report is a guardrail, not the source of the shipped per-language duplicate gates. Those are calibrated from the [polyglot corpus](../test_fixtures/polyglot_calibration/README.md).
+
+To re-run one polyglot corpus, set `lang` to `c`, `rust`, `javascript`, `typescript`, or `python`:
+
+```bash
+lang=c
+python scripts/sweep_semantic_thresholds.py \
+  --corpus-path test_fixtures/polyglot_calibration/$lang \
+  --labels-path test_fixtures/polyglot_calibration/labels/$lang.json \
+  --search-probes-path test_fixtures/polyglot_calibration/search_probes/$lang.json \
+  --language "$lang" \
+  --duplicate-start 0.40 \
+  --json-out scratch/${lang}_semantic_threshold_report.json \
+  --search-json-out scratch/${lang}_search_threshold_report.json
+python scripts/report_calibration_distributions.py \
+  --languages "$lang" \
+  --json-out scratch/${lang}_similarity_distributions.json
+```
 
 Default report paths:
 

@@ -146,7 +146,7 @@ Treat every grammar update as a behavioral change:
 2. Construct its parser and run every extraction fixture (`pytest -m grammar`), including the golden structural-hash values.
 3. Review changes in unit names, ranges, native kinds, statement counts, and fingerprints.
 4. Run parser-independent normalization tests.
-5. Run the [calibration validator](../test_fixtures/polyglot_calibration/README.md#validation), [sweep, and distribution report](../test_fixtures/polyglot_calibration/README.md#re-running). Compare results with the recorded tables and reassess the [duplicate gates](analysis-defaults.md#semantic-duplicate-gate-defaults) if measurements change.
+5. Run the [calibration validator](../test_fixtures/polyglot_calibration/README.md#validation), [hybrid split sweep](hybrid-tuning.md#run-the-sweep), and [threshold sweep and distribution report](hybrid-tuning.md#semantic-threshold-sweep-model-profiles). Compare results with the recorded tables and reassess the [duplicate gates](analysis-defaults.md#semantic-duplicate-gate-defaults) if measurements change.
 6. Update the pin only after every difference is understood.
 
 A semver-compatible grammar update can still rename a node or field. Broad version ranges would let an ordinary dependency refresh silently change duplicate reports.
