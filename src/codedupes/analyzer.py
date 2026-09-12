@@ -651,6 +651,7 @@ class CodeAnalyzer:
         self._embedding_stats: EmbeddingRunStats | None = None
         self._cache_scope: Path | None = None
         self._extraction_diagnostics: list[ExtractionDiagnostic] = []
+        self._python_files: list[Path] = []
         self._semantic_diagnostics: list[ExtractionDiagnostic] = []
 
     @property
@@ -702,6 +703,7 @@ class CodeAnalyzer:
         self._embedding_stats = None
         self._cache_scope = cache_scope
         self._extraction_diagnostics = []
+        self._python_files = []
         self._semantic_diagnostics = []
 
     def _publish_corpus_manifest(
@@ -832,6 +834,7 @@ class CodeAnalyzer:
             units = extractor.extract_all()
 
         self._extraction_diagnostics = list(extractor.diagnostics)
+        self._python_files = list(extractor.extracted_files.get("python", []))
         logger.info(f"Extracted {len(units)} code units")
         return units
 
@@ -1116,6 +1119,7 @@ class CodeAnalyzer:
                 units,
                 project_root=path,
                 strict_unused=self.config.strict_unused,
+                source_files=self._python_files,
             )
             unused_excluded_units = sum(unit.language != "python" for unit in units)
 

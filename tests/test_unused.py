@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import ast
+import logging
 from pathlib import Path
 from textwrap import dedent
 
+import pytest
+
 from codedupes import unused as unused_module
+from codedupes.analyzer import AnalyzerConfig, CodeAnalyzer
 from codedupes.extractor import CodeExtractor
 from codedupes.models import CodeUnit
 from codedupes.unused import (
@@ -47,6 +51,27 @@ def _referenced_graph(tmp_path: Path, source: str) -> tuple[list[CodeUnit], set[
     build_reference_graph(units)
     unused = find_potentially_unused(units, strict_unused=True)
     return units, {unit.name for unit in unused}
+
+
+def _package_graph(
+    tmp_path: Path, modules: dict[str, str]
+) -> tuple[Path, list[CodeUnit], set[str]]:
+    """Write a package, extract every file, build the graph, and report strict-mode unused names.
+
+    :param tmp_path: Test directory.
+    :param modules: Module sources keyed by file name under the package.
+    :return: Package root, its units, and the names strict mode reports.
+    """
+    root = tmp_path / "pkg"
+    root.mkdir()
+    (root / "__init__.py").write_text("")
+    for name, source in modules.items():
+        (root / name).write_text(dedent(source).strip() + "\n")
+    extractor = CodeExtractor(tmp_path, include_private=True)
+    units = extractor.extract_all()
+    build_reference_graph(units, source_files=extractor.extracted_files["python"])
+    unused = find_potentially_unused(units, strict_unused=True)
+    return root, units, {unit.name for unit in unused}
 
 
 def test_alias_aware_reference_graph(tmp_path: Path) -> None:
@@ -170,6 +195,41 @@ def test_pyproject_entry_points_mark_as_used(tmp_path: Path) -> None:
     names = {unit.name for unit in unused}
     assert "cli_entry" not in names
     assert "helper" in names
+
+
+def test_pyproject_entry_point_groups_mark_as_used(tmp_path: Path) -> None:
+    """``[project.entry-points."group"]`` tables seed entry points like ``scripts`` does."""
+    source = dedent(
+        """
+        def plugin_entry():
+            return 1
+
+        def helper():
+            return 2
+        """
+    ).strip()
+    (tmp_path / "pyproject.toml").write_text(
+        dedent(
+            """
+            [project]
+            name = "sample"
+
+            [project.entry-points."sample.plugins"]
+            default = "sample_module:plugin_entry"
+            """
+        ).strip()
+    )
+    project = tmp_path / "src"
+    project.mkdir()
+    (project / "__init__.py").write_text("")
+    (project / "sample_module.py").write_text(source)
+
+    units = list(CodeExtractor(project).extract_from_file(project / "sample_module.py"))
+    build_reference_graph(units, project_root=tmp_path)
+    unused = find_potentially_unused(units, strict_unused=True)
+
+    assert _unit(units, "sample_module.plugin_entry").references == {"project.entrypoint"}
+    assert {unit.name for unit in unused} == {"helper"}
 
 
 def test_reference_graph_parses_each_file_once(tmp_path: Path, monkeypatch) -> None:
@@ -348,6 +408,21 @@ def test_self_recursion_is_not_a_reference(tmp_path: Path) -> None:
     assert unused == {"_factorial"}
 
 
+def test_self_recursive_method_is_not_a_reference(tmp_path: Path) -> None:
+    """A method's own body must not reach it through the enclosing class scope."""
+    source = dedent(
+        """
+        class _Node:
+            def _walk(self):
+                return self._walk()
+        """
+    ).strip()
+    units, unused = _referenced_graph(tmp_path, source)
+
+    assert _unit(units, "sample._Node._walk").references == set()
+    assert unused == {"_Node", "_walk"}
+
+
 def test_decorator_and_default_argument_names_are_references(tmp_path: Path) -> None:
     source = dedent(
         """
@@ -425,14 +500,14 @@ def test_decorated_definition_references_are_attributed_to_its_unit(tmp_path: Pa
     units, unused = _referenced_graph(tmp_path, source)
 
     target = _unit(units, "sample._target")
-    # The unit starts on the decorator or the def line depending on the
-    # extractor; the definition key covers both.
+    # The backend starts a decorated unit at its first decorator; the
+    # definition key also carries the def line so any other unit builder resolves.
     definitions = {
         definition.name: definition.linenos
         for definition in collect_module_references(target.file_path).definitions
     }
     assert definitions["_target"] == (7, 8)
-    assert target.lineno in definitions["_target"]
+    assert target.lineno == 7
     assert _unit(units, "sample._helper").references == {target.uid}
     assert unused == {"_target"}
 
@@ -569,3 +644,238 @@ def test_public_method_of_private_class_is_reported_by_default(tmp_path: Path) -
     default_names = {unit.name for unit in find_potentially_unused(units, strict_unused=False)}
 
     assert default_names == {"run", "_Service"}
+
+
+def test_public_definitions_nested_in_a_private_function_are_reported_by_default(
+    tmp_path: Path,
+) -> None:
+    """Every segment of the qualified name must be public for the surface rule to apply."""
+    source = dedent(
+        """
+        def _factory():
+            def nested_public():
+                return 1
+
+            class Local:
+                def local_method(self):
+                    return 2
+
+            return Local
+        """
+    ).strip()
+    units = extract_units(tmp_path, source, include_private=True)
+    build_reference_graph(units)
+
+    default_names = {
+        unit.qualified_name for unit in find_potentially_unused(units, strict_unused=False)
+    }
+
+    assert default_names == {
+        "sample._factory",
+        "sample._factory.nested_public",
+        "sample._factory.Local.local_method",
+    }
+
+
+def test_framework_rule_resolves_bases_through_module_aliases(tmp_path: Path) -> None:
+    """An imported-as or assigned alias of a project class is still a project base."""
+    _root, units, unused = _package_graph(
+        tmp_path,
+        {
+            "mod.py": """
+                class _Props:
+                    pass
+                """,
+            "other.py": """
+                from .mod import _Props as _Base
+
+                class _FromAlias(_Base):
+                    def dead_public(self):
+                        return 1
+
+                class _Later:
+                    pass
+
+                _Alias = _Later
+
+                class _Via(_Alias):
+                    def also_dead(self):
+                        return 2
+                """,
+        },
+    )
+
+    assert _unit(units, "pkg.other._FromAlias.dead_public").references == set()
+    assert _unit(units, "pkg.other._Via.also_dead").references == set()
+    assert unused == {"_FromAlias", "dead_public", "_Via", "also_dead"}
+
+
+def test_literal_annotation_values_are_not_references(tmp_path: Path) -> None:
+    """``Literal["run"]`` names a value, not the unit ``run``; other subscripts still count."""
+    source = dedent(
+        """
+        from collections.abc import Sequence
+        from typing import Literal
+
+        class _Node:
+            pass
+
+        def run():
+            return 1
+
+        def _dispatch(mode: Literal["run", "stop"], nodes: Sequence["_Node"]) -> None:
+            return None
+        """
+    ).strip()
+    units, unused = _referenced_graph(tmp_path, source)
+
+    assert _unit(units, "sample.run").references == set()
+    assert _unit(units, "sample._Node").references == {_module_ref(units)}
+    assert unused == {"run", "_dispatch"}
+
+
+def test_import_in_a_module_without_units_is_a_reference(tmp_path: Path) -> None:
+    """A re-export module yields no units but is still parsed, and its import counts."""
+    root, units, unused = _package_graph(
+        tmp_path,
+        {
+            "impl.py": """
+                def reexported():
+                    return 1
+                """,
+            "api.py": """
+                from .impl import reexported
+
+                __all__ = ["reexported"]
+                """,
+        },
+    )
+
+    assert [unit.qualified_name for unit in units] == ["pkg.impl.reexported"]
+    assert _unit(units, "pkg.impl.reexported").references == {
+        f"__module__::{(root / 'api.py').resolve()}"
+    }
+    assert unused == set()
+
+
+def test_analyzer_hands_every_visited_python_file_to_the_unused_analysis(
+    tmp_path: Path,
+) -> None:
+    """``CodeAnalyzer`` forwards the extractor's file list so unit-less modules count."""
+    root = tmp_path / "pkg"
+    root.mkdir()
+    (root / "__init__.py").write_text("")
+    (root / "impl.py").write_text("def reexported():\n    return 1\n\ndef _dead():\n    return 2\n")
+    (root / "api.py").write_text("from .impl import reexported\n")
+    analyzer = CodeAnalyzer(
+        AnalyzerConfig(
+            run_traditional=False, run_semantic=False, run_unused=True, strict_unused=True
+        )
+    )
+
+    result = analyzer.analyze(root)
+
+    assert [unit.name for unit in result.potentially_unused] == ["_dead"]
+
+
+def test_non_utf8_module_still_contributes_references(tmp_path: Path) -> None:
+    """The graph decodes lossily like the extractor instead of dropping the file."""
+    path = tmp_path / "legacy.py"
+    path.write_bytes(
+        "def _latin():\n    return 'café'\n\ndef _latin_user():\n    return _latin()\n".encode(
+            "latin-1"
+        )
+    )
+
+    units = list(CodeExtractor(tmp_path, include_private=True).extract_from_file(path))
+    build_reference_graph(units)
+    unused = find_potentially_unused(units, strict_unused=True)
+
+    assert _unit(units, "legacy._latin").references == {_unit(units, "legacy._latin_user").uid}
+    assert {unit.name for unit in unused} == {"_latin_user"}
+
+
+def test_module_the_stdlib_parser_rejects_warns_and_contributes_no_references(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """tree-sitter recovers the intact units, but ``ast`` sees no references at all."""
+    source = dedent(
+        """
+        def _intact():
+            return 1
+
+        def _caller():
+            return _intact()
+
+        def _oops(:
+        """
+    ).strip()
+    units = extract_units(tmp_path, source, include_private=True)
+    assert [unit.qualified_name for unit in units] == ["sample._intact", "sample._caller"]
+
+    with caplog.at_level(logging.WARNING, logger="codedupes.unused"):
+        build_reference_graph(units)
+    unused = find_potentially_unused(units, strict_unused=True)
+
+    [record] = [record for record in caplog.records if record.name == "codedupes.unused"]
+    assert record.levelno == logging.WARNING
+    assert record.getMessage().startswith(
+        f"Unused analysis collected no references from {units[0].file_path}: SyntaxError"
+    )
+    assert _unit(units, "sample._intact").references == set()
+    assert {unit.name for unit in unused} == {"_intact", "_caller"}
+
+
+def test_deep_elif_chain_warns_instead_of_aborting_the_analysis(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """``ast.NodeVisitor`` recurses per node; a generated chain must not crash ``analyze()``."""
+    branches = "\n".join(f"    elif x == {i}:\n        return {i}" for i in range(1, 600))
+    root = tmp_path / "pkg"
+    root.mkdir()
+    (root / "__init__.py").write_text("")
+    (root / "chain.py").write_text(
+        f"def _big(x):\n    if x == 0:\n        return 0\n{branches}\n\n"
+        "def _user():\n    return _big(1)\n"
+    )
+    analyzer = CodeAnalyzer(
+        AnalyzerConfig(
+            run_traditional=False, run_semantic=False, run_unused=True, strict_unused=True
+        )
+    )
+
+    with caplog.at_level(logging.WARNING, logger="codedupes.unused"):
+        result = analyzer.analyze(root)
+
+    [record] = [record for record in caplog.records if record.name == "codedupes.unused"]
+    assert record.getMessage().startswith(
+        f"Unused analysis collected no references from {(root / 'chain.py').resolve()}: "
+    )
+    assert "recursion" in record.getMessage()
+    assert {unit.name for unit in result.potentially_unused} == {"_big", "_user"}
+
+
+def test_abstractmethod_exemption_reads_only_the_units_own_decorators(tmp_path: Path) -> None:
+    """The decorated method is exempt; its class and a body mentioning the text are not."""
+    source = dedent(
+        """
+        import abc
+        from abc import abstractmethod
+
+        class _Holder(abc.ABC):
+            @abc.abstractmethod
+            def _do(self):
+                return 1
+
+            @abstractmethod
+            def _step(self):
+                return 2
+
+        def _fake():
+            return "@abstractmethod"
+        """
+    ).strip()
+    units, unused = _referenced_graph(tmp_path, source)
+
+    assert _unit(units, "sample._Holder._do").references == set()
+    assert unused == {"_Holder", "_fake"}

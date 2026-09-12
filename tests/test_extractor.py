@@ -90,6 +90,28 @@ def test_extract_all_deduplicates_symlinked_paths(tmp_path: Path) -> None:
     assert len(units) == 1
 
 
+def test_extract_all_records_every_visited_file_even_without_units(tmp_path: Path) -> None:
+    """A re-export module yields nothing, yet ``extracted_files`` lists it by language."""
+    package = tmp_path / "package"
+    package.mkdir()
+    (package / "__init__.py").write_text("")
+    (package / "impl.py").write_text("def real():\n    return 1\n")
+    (package / "api.py").write_text("from .impl import real\n\n__all__ = ['real']\n")
+    (package / "helper.js").write_text("export const run = () => 1;\n")
+
+    extractor = CodeExtractor(package, include_private=True)
+    units = extractor.extract_all()
+
+    assert [unit.qualified_name for unit in units] == ["helper.run", "impl.real"]
+    assert {
+        language: sorted(path.name for path in paths)
+        for language, paths in extractor.extracted_files.items()
+    } == {
+        "javascript": ["helper.js"],
+        "python": ["__init__.py", "api.py", "impl.py"],
+    }
+
+
 def test_extract_all_survives_symlink_to_file_outside_root(tmp_path: Path) -> None:
     outside = tmp_path / "ext"
     outside.mkdir()

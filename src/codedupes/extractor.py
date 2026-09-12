@@ -79,6 +79,10 @@ class CodeExtractor:
         self.include_stubs = include_stubs
         self.languages = normalize_languages(languages)
         self.diagnostics: list[ExtractionDiagnostic] = []
+        # Every file handed to a backend, by canonical language, whether or not
+        # it yielded units: the unused analysis parses each Python file for
+        # references, and a re-export module or script has none to yield.
+        self.extracted_files: dict[str, list[Path]] = {}
         self._c_headers_allowed: bool | None = None
 
     @staticmethod
@@ -230,6 +234,7 @@ class CodeExtractor:
         )
         result = backend.extract_file(file_path)
         self.diagnostics.extend(result.diagnostics)
+        self.extracted_files.setdefault(selection.language, []).append(file_path)
         yield from result.units
 
     def _diagnose_unsupported_file(self, file_path: Path) -> None:

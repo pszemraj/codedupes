@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import codecs
 import logging
 import tomllib
 from collections import defaultdict
@@ -16,13 +17,21 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class DefinitionReferences:
-    """Names one ``def``/``class`` statement references, keyed to the unit it maps to."""
+    """Names one ``def``/``class`` statement references, keyed to the unit it maps to.
+
+    ``references`` holds the names loaded directly in this definition's body;
+    ``nested`` holds the names loaded inside definitions nested in it, keyed by
+    the nested definition, so that a nested definition's reference to itself
+    can be excluded when the enclosing unit is credited with it.
+    """
 
     name: str
-    # (first decorator line, def line) or (def line,): a unit's ``lineno`` is one
-    # of the two depending on whether the extractor spans decorators.
+    # (first decorator line, def line) or (def line,): the tree-sitter backend
+    # starts a decorated unit at its decorator; the def line is kept so a unit
+    # built any other way still resolves.
     linenos: tuple[int, ...]
     references: set[str] = field(default_factory=set)
+    nested: dict[int, tuple[DefinitionReferences, set[str]]] = field(default_factory=dict)
 
 
 @dataclass
@@ -105,14 +114,19 @@ class _ReferenceCollector(ast.NodeVisitor):
     def _record(self, name: str) -> None:
         """Attribute one referenced name to the enclosing scopes or the module.
 
+        The innermost definition owns the reference; every enclosing definition
+        records it as nested, tagged with its origin.
+
         :param name: Referenced name or dotted attribute path.
         :return: ``None``.
         """
         if not self._scopes:
             self.module_references.add(name)
             return
-        for scope in self._scopes:
-            scope.references.add(name)
+        origin = self._scopes[-1]
+        origin.references.add(name)
+        for scope in self._scopes[:-1]:
+            scope.nested.setdefault(id(origin), (origin, set()))[1].add(name)
 
     def _visit_annotation(self, node: ast.expr) -> None:
         """Visit an annotation, unquoting string forward references on the way.
@@ -147,6 +161,22 @@ class _ReferenceCollector(ast.NodeVisitor):
         except (SyntaxError, ValueError):
             return
         self.visit(tree)
+
+    def visit_Subscript(self, node: ast.Subscript) -> None:
+        """Visit a subscript, skipping the string values of ``Literal[...]``."""
+        self.visit(node.value)
+        if (_dotted_name(node.value) or "").rsplit(".", 1)[-1] != "Literal":
+            self.visit(node.slice)
+
+    def visit_Import(self, node: ast.Import) -> None:
+        """Count an import as a reference to what it imports."""
+        for alias in node.names:
+            self._record(alias.name)
+
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+        """Count a from-import as a reference to each imported name."""
+        for alias in node.names:
+            self._record(alias.name)
 
     def visit_arg(self, node: ast.arg) -> None:
         """Visit a parameter annotation."""
@@ -242,18 +272,30 @@ class _ReferenceCollector(ast.NodeVisitor):
 
 
 def _parse_module(file_path: Path) -> ast.Module | None:
-    """Parse one Python file, tolerating the same inputs the extractor tolerates.
+    """Parse one Python file the way the extractor reads it, warning when ``ast`` cannot.
+
+    The extractor skips a BOM and decodes invalid UTF-8 lossily, so the same
+    bytes are parsed here; a file ``ast`` still rejects (a syntax error the
+    grammar recovered from, syntax newer than the interpreter) contributes no
+    references, which the warning makes visible.
 
     :param file_path: Python source path.
     :return: Parsed module, or ``None`` when the file cannot be read or parsed.
     """
     try:
-        # utf-8-sig matches the BOM-tolerant extractor read: a file that
-        # extraction accepts must not silently lose its references.
+        raw = file_path.read_bytes()
+    except OSError as error:
+        logger.warning(f"Unused analysis skipped {file_path}: {error}")
+        return None
+    source = raw.removeprefix(codecs.BOM_UTF8).decode("utf-8", errors="replace")
+    try:
         # ValueError covers Python 3.11's embedded-NUL report.
-        source = file_path.read_text(encoding="utf-8-sig")
         return ast.parse(source)
-    except (OSError, SyntaxError, UnicodeDecodeError, ValueError):
+    except (SyntaxError, ValueError, RecursionError) as error:
+        logger.warning(
+            f"Unused analysis collected no references from {file_path}: "
+            f"{type(error).__name__}: {error}"
+        )
         return None
 
 
@@ -301,7 +343,16 @@ def collect_module_references(file_path: Path) -> ModuleReferences:
     if tree is None:
         return ModuleReferences()
     collector = _ReferenceCollector()
-    collector.visit(tree)
+    try:
+        collector.visit(tree)
+    except RecursionError:
+        # ast.NodeVisitor recurses per node; a generated elif or operator
+        # chain a few hundred deep overflows it while tree-sitter copes.
+        logger.warning(
+            f"Unused analysis collected no references from {file_path}: "
+            "expression nesting exceeds the interpreter recursion limit"
+        )
+        return ModuleReferences()
     return ModuleReferences(
         aliases=_extract_aliases(tree),
         module_references=collector.module_references,
@@ -328,7 +379,7 @@ def _resolve_reference_targets(name: str, aliases: dict[str, str]) -> set[str]:
 
 
 def _extract_pyproject_entry_points(project_root: Path) -> set[str]:
-    """Collect callable targets from ``[project.scripts]`` and ``[project.gui-scripts]``.
+    """Collect callable targets from ``[project.scripts]``, ``gui-scripts``, and ``entry-points``.
 
     :param project_root: Project root path.
     :return: Entry point callable names.
@@ -346,12 +397,16 @@ def _extract_pyproject_entry_points(project_root: Path) -> set[str]:
     if not isinstance(project_cfg, dict):
         return set()
 
+    tables = [project_cfg.get("scripts", {}), project_cfg.get("gui-scripts", {})]
+    groups = project_cfg.get("entry-points", {})
+    if isinstance(groups, dict):
+        tables.extend(groups.values())
+
     targets: set[str] = set()
-    for section in ("scripts", "gui-scripts"):
-        script_entries = project_cfg.get(section, {})
-        if not isinstance(script_entries, dict):
+    for table in tables:
+        if not isinstance(table, dict):
             continue
-        for value in script_entries.values():
+        for value in table.values():
             if not isinstance(value, str):
                 continue
             target = value.split(":", 1)[-1]
@@ -365,42 +420,51 @@ def _extract_pyproject_entry_points(project_root: Path) -> set[str]:
 
 
 def _framework_derived_classes(
-    classes: list[tuple[Path, ClassInfo]],
+    classes: list[tuple[Path, ClassInfo, dict[str, str]]],
 ) -> list[tuple[Path, ClassInfo, str]]:
     """Find classes with a base that does not resolve to a project class.
 
-    Resolution is by name: a base's last dotted segment is a project class when
-    some collected class carries that name, so an external base whose name
-    collides with a project class resolves as project. ``object`` never counts.
+    Each base is expanded through its module's import and assignment aliases,
+    then resolved by name: a last dotted segment is a project class when some
+    collected class carries that name, so an external base whose name collides
+    with a project class resolves as project. ``object`` never counts.
     Derivation is transitive, so subclasses of a derived class are derived too.
 
-    :param classes: Every collected class with the file it lives in.
+    :param classes: Every collected class with its file and module alias map.
     :return: Each derived class with the base that made it derived.
     """
-    project_names = {class_info.definition.name for _path, class_info in classes}
+    project_names = {class_info.definition.name for _path, class_info, _aliases in classes}
     derived_names: set[str] = set()
     derived_base: dict[int, str] = {}
     changed = True
     while changed:
         changed = False
-        for _path, class_info in classes:
+        for _path, class_info, aliases in classes:
             if id(class_info) in derived_base:
                 continue
             for base in class_info.bases:
-                tail = base.rsplit(".", 1)[-1]
-                if tail in derived_names or (tail != "object" and tail not in project_names):
+                tails = {
+                    target.rsplit(".", 1)[-1]
+                    for target in _resolve_reference_targets(base, aliases)
+                }
+                external = "object" not in tails and not (tails & project_names)
+                if tails & derived_names or external:
                     derived_base[id(class_info)] = base
                     derived_names.add(class_info.definition.name)
                     changed = True
                     break
     return [
         (path, class_info, derived_base[id(class_info)])
-        for path, class_info in classes
+        for path, class_info, _aliases in classes
         if id(class_info) in derived_base
     ]
 
 
-def build_reference_graph(units: list[CodeUnit], project_root: Path | None = None) -> None:
+def build_reference_graph(
+    units: list[CodeUnit],
+    project_root: Path | None = None,
+    source_files: list[Path] | None = None,
+) -> None:
     """Populate ``unit.references`` from every name each Python module loads.
 
     Matching is by name: a reference to ``helper`` marks every unit named
@@ -409,6 +473,8 @@ def build_reference_graph(units: list[CodeUnit], project_root: Path | None = Non
 
     :param units: Collected code units; non-Python units are ignored.
     :param project_root: Optional root for pyproject entry-point resolution.
+    :param source_files: Every Python file the extractor visited; files without
+        units (re-export modules, scripts) still contribute references.
     :return: ``None``.
     """
     units = [unit for unit in units if unit.language == "python"]
@@ -424,18 +490,26 @@ def build_reference_graph(units: list[CodeUnit], project_root: Path | None = Non
             by_name[".".join(parts[i:])].append(unit)
         by_location[(unit.file_path, unit.lineno, unit.name)].append(unit)
 
-    def mark(referrer_uid: str, names: set[str], aliases: dict[str, str]) -> None:
+    def mark(
+        referrer_uid: str,
+        names: set[str],
+        aliases: dict[str, str],
+        excluded: frozenset[str] = frozenset(),
+    ) -> None:
         """Add one referrer to every unit a set of names resolves to.
 
         :param referrer_uid: Unit uid or synthetic scope id doing the referencing.
         :param names: Referenced names.
         :param aliases: Alias map of the referring module.
+        :param excluded: Unit uids a match must not credit (the referrer and the
+            definition whose own body produced the names).
         :return: ``None``.
         """
+        excluded = excluded | {referrer_uid}
         for name in names:
             for target in _resolve_reference_targets(name, aliases):
                 for candidate in by_name.get(target, []):
-                    if candidate.uid != referrer_uid:
+                    if candidate.uid not in excluded:
                         candidate.references.add(referrer_uid)
 
     def units_for(file_path: Path, definition: DefinitionReferences) -> list[CodeUnit]:
@@ -451,20 +525,27 @@ def build_reference_graph(units: list[CodeUnit], project_root: Path | None = Non
             for unit in by_location.get((file_path, lineno, definition.name), [])
         ]
 
+    module_paths = {unit.file_path for unit in units} | set(source_files or ())
     modules = {
-        file_path: collect_module_references(file_path)
-        for file_path in sorted({unit.file_path for unit in units})
+        file_path: collect_module_references(file_path) for file_path in sorted(module_paths)
     }
     for file_path, module in modules.items():
         mark(f"__module__::{file_path}", module.module_references, module.aliases)
         for definition in module.definitions:
             for unit in units_for(file_path, definition):
                 mark(unit.uid, definition.references, module.aliases)
+                # A nested definition's reference to itself must not surface
+                # as the enclosing unit referencing it.
+                for origin, names in definition.nested.values():
+                    own = frozenset(item.uid for item in units_for(file_path, origin))
+                    mark(unit.uid, names, module.aliases, own)
 
     # Public methods of classes deriving from outside the project are reached
     # by the framework's dispatch (NodeVisitor.visit_*, logging.Filter.filter),
     # which no in-project name can show.
-    all_classes = [(path, cls) for path, module in modules.items() for cls in module.classes]
+    all_classes = [
+        (path, cls, module.aliases) for path, module in modules.items() for cls in module.classes
+    ]
     for file_path, class_info, base in _framework_derived_classes(all_classes):
         for method in class_info.public_methods:
             for unit in units_for(file_path, method):
@@ -478,27 +559,34 @@ def build_reference_graph(units: list[CodeUnit], project_root: Path | None = Non
                 candidate.references.add("project.entrypoint")
 
 
-def _enclosing_class_is_public(unit: CodeUnit) -> bool:
-    """Return whether the class directly enclosing a method has a public name.
-
-    :param unit: Method unit.
-    :return: ``True`` when the enclosing class name does not start with ``_``.
-    """
-    parts = unit.qualified_name.split(".")
-    return len(parts) >= 2 and not parts[-2].startswith("_")
-
-
 def _is_public_surface(unit: CodeUnit) -> bool:
     """Return whether default mode treats the unit as public API that callers outside the tree may use.
+
+    A public name reachable only through a private module, class, or function
+    (``pkg._impl.helper``, ``_Outer.Inner.method``, ``_factory.inner``) is not
+    surface, so every segment of the qualified name must be public.
 
     :param unit: Candidate unit.
     :return: ``True`` for public functions and public methods of public classes.
     """
-    if not unit.is_public:
+    if unit.unit_type not in (CodeUnitType.FUNCTION, CodeUnitType.METHOD):
         return False
-    if unit.unit_type == CodeUnitType.FUNCTION:
-        return True
-    return unit.unit_type == CodeUnitType.METHOD and _enclosing_class_is_public(unit)
+    return not any(part.startswith("_") for part in unit.qualified_name.split("."))
+
+
+def _decorators(unit: CodeUnit) -> str:
+    """Return the decorator lines that precede a unit's own ``def``/``class`` line.
+
+    :param unit: Unit whose source starts at its first decorator when decorated.
+    :return: The decorator text, empty when the unit is not decorated.
+    """
+    lines: list[str] = []
+    for line in unit.source.splitlines():
+        stripped = line.lstrip()
+        if stripped.startswith(("def ", "async def ", "class ")):
+            break
+        lines.append(stripped)
+    return "\n".join(lines)
 
 
 def find_potentially_unused(units: list[CodeUnit], strict_unused: bool = False) -> list[CodeUnit]:
@@ -528,7 +616,8 @@ def find_potentially_unused(units: list[CodeUnit], strict_unused: bool = False) 
             continue
         if unit.name.startswith("get_") or unit.name.startswith("set_"):
             continue
-        if "@abstractmethod" in unit.source or "@abc.abstractmethod" in unit.source:
+        decorators = _decorators(unit)
+        if "@abstractmethod" in decorators or "@abc.abstractmethod" in decorators:
             continue
         if unit.name.startswith("test_") or "_test" in unit.file_path.name:
             continue
@@ -543,15 +632,17 @@ def run_unused_analysis(
     *,
     project_root: Path | None,
     strict_unused: bool,
+    source_files: list[Path] | None = None,
 ) -> list[CodeUnit]:
     """Build the reference graph and report the units it leaves unreferenced.
 
     :param units: Collected code units; non-Python units are ignored.
     :param project_root: Project root for pyproject entry-point resolution, or ``None``.
-    :param strict_unused: Whether to keep public functions in the results.
+    :param source_files: Every Python file the extractor visited, units or not.
+    :param strict_unused: Whether to report public functions and public methods of public classes too.
     :return: Potentially unused Python units.
     """
-    build_reference_graph(units, project_root=project_root)
+    build_reference_graph(units, project_root=project_root, source_files=source_files)
     unused = find_potentially_unused(units, strict_unused=strict_unused)
     logger.info(f"Found {len(unused)} potentially unused code units")
     return unused
