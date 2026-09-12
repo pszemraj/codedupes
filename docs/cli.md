@@ -30,6 +30,7 @@ codedupes check ./src --fail-on all
 codedupes check ./src/module.py
 codedupes check ./src --semantic-threshold 0.84 --traditional-threshold 0.75
 codedupes check ./src --exclude "**/generated/**" --exclude "**/migrations/**"
+codedupes check tests --no-default-excludes --no-unused
 ```
 
 Options, in addition to the [shared options](#options-shared-by-check-and-search):
@@ -38,8 +39,8 @@ Options, in addition to the [shared options](#options-shared-by-check-and-search
 - `--traditional-threshold <float>`: Override the [traditional Jaccard threshold](analysis-defaults.md#traditional-duplicate-defaults) only
 - `--cross-language`: Also report semantic duplicate pairs across languages; see [comparison boundaries](polyglot-languages.md#fingerprints-and-comparison-boundaries)
 - `--semantic-task <name>`: Duplicate embedding task; see [task defaults and choices](model-profiles.md#semantic-task-defaults-and-choices)
-- `--semantic-only`: Run semantic analysis only
-- `--traditional-only`: Run traditional analysis only
+- `--semantic-only`: Use only semantic matching for duplicate detection
+- `--traditional-only`: Use only traditional matching for duplicate detection
 - `--allow-semantic-fallback`: Enable [combined-mode fallback](output.md#exit-codes)
 - `--no-unused`: Disable unused-code detection
 - `--strict-unused`: Apply the [strict unused-code policy](analysis-defaults.md#potentially-unused-defaults)
@@ -51,6 +52,8 @@ Options, in addition to the [shared options](#options-shared-by-check-and-search
 - `--full-table`: Disable table row truncation and print all rows in terminal output
 - `--show-source`: Show truncated duplicate snippets
 - `--fail-on <actionable|all|none>`: Select the [finding exit policy](output.md#exit-codes)
+
+Single-method flags leave unused-code detection enabled; add `--no-unused` to disable it.
 
 ## `codedupes search <path> "<query>"`
 

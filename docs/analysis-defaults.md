@@ -76,7 +76,7 @@ By default, these test-file globs apply:
 - `**/tests/**`
 - `**/__tests__/**`
 
-CLI `--exclude` options extend these patterns for directory scans. Use `--no-default-excludes` to scan tests while retaining custom exclusions. For Python callers, `AnalyzerConfig.exclude_patterns=None` uses the defaults; a supplied list replaces them, including `[]` to disable test-file exclusions. An explicitly named source file bypasses the default test-file patterns, but supplied `--exclude` options and `AnalyzerConfig.exclude_patterns` still apply relative to its parent directory. That parent becomes the scan root, so its own name and ancestor names do not exclude the file. Built-in artifact-directory exclusions beneath the scan root remain active.
+CLI `--exclude` options extend these patterns for directory scans. Scans do not read `.gitignore`; add explicit exclusions such as `--exclude scratch` for other local checkouts or generated sources. Use `--no-default-excludes` to scan tests while retaining custom exclusions. For Python callers, `AnalyzerConfig.exclude_patterns=None` uses the defaults; a supplied list replaces them, including `[]` to disable test-file exclusions. An explicitly named source file bypasses the default test-file patterns, but supplied `--exclude` options and `AnalyzerConfig.exclude_patterns` still apply relative to its parent directory. That parent becomes the scan root, so its own name and ancestor names do not exclude the file. Built-in artifact-directory exclusions beneath the scan root remain active.
 
 Directory scans log an INFO hint when default test patterns skip files or prune directories. The counts cover encountered source files and pruned directories; they do not enumerate files inside those directories. `--json` suppresses this informational log.
 
@@ -119,8 +119,8 @@ Use `--no-tiny-filter` / `--tiny-cutoff`, or `AnalyzerConfig.filter_tiny_traditi
 
 A semantic-only pair has already passed its language's duplicate gate (applied before synthesis; there is no separate semantic-only minimum). Synthesis then splits it into `semantic_high_confidence` or `semantic_review`; the split affects ranking and default visibility, never admission. A pair is promoted when either path holds:
 
-- corroboration: weak identifier Jaccard ≥ `hybrid_weak_identifier_jaccard_min` and statement-count ratio ≥ `hybrid_statement_ratio_min`, both on the model profile;
-- similarity promotion: cosine ≥ the language's `language_high_confidence_thresholds` entry on the profile (cross-language pairs must clear the stricter of the two gates; a language without a calibrated entry has promotion off).
+- corroboration: weak identifier Jaccard >= `hybrid_weak_identifier_jaccard_min` and statement-count ratio >= `hybrid_statement_ratio_min`, both on the model profile;
+- similarity promotion: cosine >= the language's `language_high_confidence_thresholds` entry on the profile (cross-language pairs must clear the stricter of the two gates; a language without a calibrated entry has promotion off).
 
 | profile | identifier Jaccard min | statement ratio min | promotion gates |
 | --- | --- | --- | --- |

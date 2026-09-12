@@ -19,9 +19,9 @@ codedupes check ./src --no-cache
 | `CODEDUPES_CACHE_DIR` | Explicit cache root; takes precedence over other settings. |
 | `XDG_CACHE_HOME` | Uses `$XDG_CACHE_HOME/codedupes` when no explicit root is set. Otherwise defaults to `~/.cache/codedupes`. |
 | `CODEDUPES_CACHE_MAX_MB` | Global size cap, default `2048` MB. Values must be at least `1` and are floored to whole MB. Invalid values warn once per process and use the default. |
-| `CODEDUPES_NO_CACHE=1` | Disables persistent cache reads and writes for the process. |
+| `CODEDUPES_NO_CACHE` | Values `1`, `true`, `yes`, or `on` (case-insensitive) disable persistent cache reads and writes for the process. |
 
-Use the [cache commands](cli.md#codedupes-cache-info) to inspect usage or clear entries. Built-in aliases match case-insensitively in `cache clear --model`; pass other model names exactly as used for analysis.
+Use the [cache commands](cli.md#codedupes-cache-info) to inspect usage or clear entries. In `cache clear --model`, built-in aliases match case-insensitively and explicit local paths resolve to the same canonical directory used for analysis. Pass other Hub IDs exactly as used for analysis.
 
 After nonempty writes, codedupes inventories shard sizes on the first write for a cache root and thereafter when five minutes have elapsed or accumulated writes reach 2% of the cap. When the global cap is exceeded, it removes least-recently-used shards toward 80% of the cap. The shard just written is protected, even if it alone exceeds the cap; an oversized or undeletable shard produces a warning and remains included in usage. Inventory reads the filesystem so cooperating processes see each other's writes.
 
