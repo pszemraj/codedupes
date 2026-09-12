@@ -1,13 +1,13 @@
 # Hybrid confidence tuning
 
-Tune the shipped values for the [hybrid confidence split](analysis-defaults.md#hybrid-synthesis-confidence-defaults). Admission — which semantic pairs exist at all — is set by the [per-language duplicate gates](analysis-defaults.md#semantic-duplicate-gate-defaults) and is not tuned here.
+Calibrate the [per-language duplicate gates](analysis-defaults.md#semantic-duplicate-gate-defaults), [hybrid confidence split](analysis-defaults.md#hybrid-synthesis-confidence-defaults), and [search thresholds](model-profiles.md#built-in-profiles) against labeled corpora.
 
 For one repository scan, start with the calibrated defaults and adjust the ordinary `check` scope and threshold options as needed. To change shipped gates or corroboration defaults, run these sweeps from a development checkout after installation. They load the pinned embedding models and can take time on their first run. Write exploratory reports under `scratch/`, which is ignored by Git.
 
 ## Corpora and labels
 
-- Source of the shipped split: [`../test_fixtures/polyglot_calibration/`](../test_fixtures/polyglot_calibration/README.md) — one labeled corpus per language, swept at that language's shipped admission gate.
-- Legacy guardrail: [`../test_fixtures/hybrid_tuning/crab_visibility`](../test_fixtures/hybrid_tuning/crab_visibility) with [`labels.json`](../test_fixtures/hybrid_tuning/labels.json) — Python only, identifier-sharing clones, the optimistic bound for identifier corroboration.
+- Source of the shipped split: [polyglot calibration corpora](../test_fixtures/polyglot_calibration/README.md), swept at each language's shipped admission gate.
+- Legacy guardrail: [`crab_visibility`](../test_fixtures/hybrid_tuning/crab_visibility) with [`labels.json`](../test_fixtures/hybrid_tuning/labels.json), Python clones that share identifiers and provide an optimistic bound for identifier corroboration.
 - Sweep harness: [`../scripts/sweep_hybrid_gates.py`](../scripts/sweep_hybrid_gates.py)
 - Semantic threshold harness: [`../scripts/sweep_semantic_thresholds.py`](../scripts/sweep_semantic_thresholds.py)
 
@@ -36,10 +36,10 @@ Semantic candidates are collected once per (model, corpus) at that language's sh
 
 Per model the harness runs two stages:
 
-1. **Corroboration constants**, promotion disabled, over `--weak-jaccard-grid` × `--statement-ratio-grid` (defaults `0,0.05,…,0.40` × `0,0.20,0.35,0.50,0.65,0.80`) on every corpus. Per-corpus rows are pooled by summing counts, and one global pair is selected.
+1. **Corroboration constants**, promotion disabled, over `--weak-jaccard-grid` × `--statement-ratio-grid` (defaults `0,0.05,...,0.40` × `0,0.20,0.35,0.50,0.65,0.80`) on every corpus. Per-corpus rows are pooled by summing counts, and one global pair is selected.
 2. **Promotion gate**, per corpus, at the stage-1 constants, from the admission gate up to `--high-gate-stop` (default `0.96`) in `--high-gate-step` (default `0.02`) steps plus `off`.
 
-A row is feasible when its visible recall is at least `--recall-retention-min` (default `0.85`) of its published recall **and** its visible precision is not below its published precision — hiding review pairs must buy precision and may cost bounded recall. The pooled selection additionally requires feasibility in every corpus, so no single language's default view can be gutted by a constant that helps the others. Among feasible rows the harness maximizes precision, then F1, then prefers the stricter split (higher constants, higher gate; `off` is the strictest gate). Stricter wins ties because a gate that buys nothing on the corpus still promotes pairs off-corpus — the first polyglot sweep's looser tie-break picked a Python gate that changed no corpus row and promoted 88 mixed-quality pairs on this repository. The `(0, 0)` constants and an `off` gate equal all-published output, so "the split does nothing useful" is a detectable outcome rather than a hidden one.
+A row is feasible when its visible recall is at least `--recall-retention-min` (default `0.85`) of its published recall and its visible precision is at least its published precision. The pooled selection requires feasibility in every corpus, so aggregate improvements cannot conceal a language's regression. Among feasible rows the harness maximizes precision, then F1, then prefers the stricter split (higher constants, higher gate; `off` is the strictest gate). The stricter split wins ties because a gate that changes no labeled pair can still promote unvalidated pairs elsewhere. The `(0, 0)` constants and an `off` gate retain every published pair, allowing the sweep to select no filtering when the alternatives offer no benefit.
 
 `tests/test_corroboration_reports.py` re-derives the shipped constants and gates from the recorded report and checks this policy, the same way `tests/test_calibration_reports.py` checks the admission gates.
 

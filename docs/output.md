@@ -38,7 +38,7 @@ codedupes check ./src --json | jq empty
 
 ## JSON schema v3
 
-`check --json` and `search --json` emit schema version `3`. Units are nodes in a top-level `units` object keyed by report-local ids (`u0`, `u1`, ...); findings refer to those ids instead of repeating a complete unit object for every pair endpoint. Ids are assigned in file-path then source-offset order over the referenced units only, so they renumber whenever the referenced set changes (for example with `--include-review`) — treat them as opaque within one report. Each unit record also carries the [in-run `CodeUnit.uid`](python-api.md#key-result-types), not a cross-machine finding identifier.
+`check --json` and `search --json` emit schema version `3`. Units are nodes in a top-level `units` object keyed by report-local ids (`u0`, `u1`, ...); findings refer to those ids instead of repeating a complete unit object for every pair endpoint. Ids are assigned in file-path then source-offset order over the referenced units only, so they renumber whenever the referenced set changes (for example with `--include-review`). Treat them as opaque within one report. Each unit record also carries the [in-run `CodeUnit.uid`](python-api.md#key-result-types).
 
 ### Check
 
