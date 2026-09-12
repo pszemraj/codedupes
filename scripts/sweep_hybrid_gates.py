@@ -577,37 +577,46 @@ def _sweep_model(
     pooled_selected = select_pooled_row(
         pooled, stage1_rows, recall_retention_min=args.recall_retention_min
     )
-    constants = (
-        (
-            pooled_selected.config.weak_identifier_jaccard_min,
-            pooled_selected.config.statement_ratio_min,
-        )
-        if pooled_selected is not None
-        else (baseline["weak_min"], baseline["ratio_min"])
-    )
     _describe_selected(f"[{model}] stage 1 pooled selection", pooled_selected)
     _print_rows(f"[{model}] stage 1 pooled rows", pooled, top_n=args.top_n)
 
     # Stage 2: per-corpus promotion gate at the stage-1 constants.
-    stage2: dict[str, dict[str, Any]] = {}
-    for run in runs:
-        grid = [
-            GateConfig(run.semantic_gate, constants[0], constants[1], high)
-            for high in _high_gate_grid(run.semantic_gate, args.high_gate_stop, args.high_gate_step)
-        ]
-        rows = _run_sweep(
-            traditional_duplicates=run.traditional_duplicates,
-            semantic_duplicates=run.semantic_duplicates,
-            positive_pairs=run.positive_pairs,
-            traditional_threshold=args.traditional_threshold,
-            grid=grid,
+    stage2: dict[str, Any] | None = None
+    if pooled_selected is None:
+        print(f"[{model}] stage 2: not run because stage 1 has no feasible pooled selection")
+    else:
+        constants = (
+            pooled_selected.config.weak_identifier_jaccard_min,
+            pooled_selected.config.statement_ratio_min,
         )
-        selected = select_visible_row(rows, recall_retention_min=args.recall_retention_min)
-        _describe_selected(f"[{model}] stage 2 {run.spec.name}", selected)
-        stage2[run.spec.name] = {
-            "semantic_gate": run.semantic_gate,
-            "selected": _optional_row(selected),
-            "rows": [_row_payload(row) for row in rows],
+        stage2_corpora: dict[str, dict[str, Any]] = {}
+        for run in runs:
+            grid = [
+                GateConfig(run.semantic_gate, constants[0], constants[1], high)
+                for high in _high_gate_grid(
+                    run.semantic_gate, args.high_gate_stop, args.high_gate_step
+                )
+            ]
+            rows = _run_sweep(
+                traditional_duplicates=run.traditional_duplicates,
+                semantic_duplicates=run.semantic_duplicates,
+                positive_pairs=run.positive_pairs,
+                traditional_threshold=args.traditional_threshold,
+                grid=grid,
+            )
+            selected = select_visible_row(rows, recall_retention_min=args.recall_retention_min)
+            _describe_selected(f"[{model}] stage 2 {run.spec.name}", selected)
+            stage2_corpora[run.spec.name] = {
+                "semantic_gate": run.semantic_gate,
+                "selected": _optional_row(selected),
+                "rows": [_row_payload(row) for row in rows],
+            }
+        stage2 = {
+            "constants": {
+                "weak_identifier_jaccard_min": constants[0],
+                "statement_ratio_min": constants[1],
+            },
+            "corpora": stage2_corpora,
         }
 
     return {
@@ -648,13 +657,7 @@ def _sweep_model(
                 "rows": [_row_payload(row) for row in pooled],
             },
         },
-        "stage2": {
-            "constants": {
-                "weak_identifier_jaccard_min": constants[0],
-                "statement_ratio_min": constants[1],
-            },
-            "corpora": stage2,
-        },
+        "stage2": stage2,
     }
 
 
@@ -845,7 +848,10 @@ def main() -> int:
                 "recall_retention_min": args.recall_retention_min,
                 "precision_floor": "published",
                 "stage1": "global corroboration constants, promotion disabled, pooled over corpora",
-                "stage2": "per-language promotion gate at the stage-1 constants",
+                "stage2": (
+                    "per-language promotion gate at the stage-1 constants; null when stage 1 "
+                    "has no feasible pooled selection"
+                ),
             },
             "grid": {
                 "weak_identifier_jaccard_min": args.weak_jaccard_grid,

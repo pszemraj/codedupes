@@ -41,6 +41,8 @@ Per model the harness runs two stages:
 
 A row is feasible when its visible recall is at least `--recall-retention-min` (default `0.85`) of its published recall and its visible precision is at least its published precision. The pooled selection requires feasibility in every corpus, so aggregate improvements cannot conceal a language's regression. Among feasible rows the harness maximizes precision, then F1, then prefers the stricter split (higher constants, higher gate; `off` is the strictest gate). The stricter split wins ties because a gate that changes no labeled pair can still promote unvalidated pairs elsewhere. The `(0, 0)` constants and an `off` gate retain every published pair, allowing the sweep to select no filtering when the alternatives offer no benefit.
 
+Stage 2 runs only when stage 1 finds a pooled selection. If a custom grid contains no split that is feasible in every corpus, the report preserves the stage-1 rows with `stage1.pooled.selected: null` and records `stage2: null`. Broaden the stage-1 grid, including `(0, 0)` when appropriate, before evaluating promotion gates.
+
 `tests/test_corroboration_reports.py` re-derives the shipped constants and gates from the recorded report and checks this policy, the same way `tests/test_calibration_reports.py` checks the admission gates.
 
 ## Semantic threshold sweep (model profiles)

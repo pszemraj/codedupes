@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from dataclasses import replace
 from itertools import pairwise
 from pathlib import Path
 from types import SimpleNamespace
@@ -639,6 +640,64 @@ def test_pooled_selection_requires_feasibility_in_every_corpus() -> None:
         selected.config.weak_identifier_jaccard_min,
         selected.config.statement_ratio_min,
     ) == mild
+
+
+def test_hybrid_sweep_skips_stage2_without_a_feasible_pooled_selection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An infeasible custom grid must not fall back to unswept profile constants."""
+    spec = sweep_hybrid_gates.CorpusSpec(
+        name="python",
+        corpus_path=tmp_path / "corpus",
+        labels_path=tmp_path / "labels.json",
+        language="python",
+    )
+    run = sweep_hybrid_gates.CorpusRun(
+        spec=spec,
+        semantic_gate=0.74,
+        manifest={},
+        units=0,
+        traditional_duplicates=[],
+        semantic_duplicates=[],
+        positive_pairs=set(),
+    )
+    infeasible = _row(0.40, 0.80, None, tp=5, fp=0, fn=15, published=(20, 10, 0))
+    sweep_calls = 0
+
+    def fake_run_sweep(**kwargs) -> list[SweepRow]:
+        nonlocal sweep_calls
+        sweep_calls += 1
+        assert kwargs["grid"] == [GateConfig(0.74, 0.40, 0.80)]
+        return [replace(infeasible, config=kwargs["grid"][0])]
+
+    monkeypatch.setattr(sweep_hybrid_gates, "_require_immutable_revision", lambda *_: PINNED_COMMIT)
+    monkeypatch.setattr(sweep_hybrid_gates, "_run_corpus", lambda *_, **__: run)
+    monkeypatch.setattr(sweep_hybrid_gates, "_run_sweep", fake_run_sweep)
+    args = SimpleNamespace(
+        model_revision=None,
+        semantic_gate=None,
+        weak_jaccard_grid=[0.40],
+        statement_ratio_grid=[0.80],
+        recall_retention_min=0.85,
+        traditional_threshold=0.85,
+        high_gate_stop=0.96,
+        high_gate_step=0.02,
+        top_n=0,
+    )
+
+    result = sweep_hybrid_gates._sweep_model("embeddinggemma-300m", [spec], args)
+
+    assert sweep_calls == 1
+    assert result["baseline_defaults"]["weak_min"] == 0.0
+    assert result["baseline_defaults"]["ratio_min"] == 0.20
+    assert result["stage1"]["pooled"]["selected"] is None
+    assert result["stage1"]["pooled"]["rows"][0]["config"] == {
+        "semantic_gate": None,
+        "weak_identifier_jaccard_min": 0.40,
+        "statement_ratio_min": 0.80,
+        "high_gate": None,
+    }
+    assert result["stage2"] is None
 
 
 def test_high_gate_grid_starts_at_the_admission_gate_and_ends_disabled() -> None:
