@@ -71,7 +71,10 @@ def _set_console(output_width: int) -> None:
 
 
 def _suppress_logs_for_json() -> tuple[int, list[logging.Handler]]:
-    """Prevent log output from contaminating JSON responses."""
+    """Prevent log output from contaminating JSON responses.
+
+    :return: Prior root logger level and handlers for :func:`_restore_root_logger_state`.
+    """
     root_logger = logging.getLogger()
     prior_state = (root_logger.level, list(root_logger.handlers))
     for handler in list(root_logger.handlers):

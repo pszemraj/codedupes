@@ -683,7 +683,10 @@ class CodeAnalyzer:
 
     @property
     def embedding_stats(self) -> EmbeddingRunStats | None:
-        """Return telemetry from the most recent successful semantic corpus run."""
+        """Return telemetry from the most recent successful semantic corpus run.
+
+        :return: Embedding run statistics, or ``None`` before the first semantic run.
+        """
         return self._embedding_stats
 
     def _reset_analysis_state(self, cache_scope: Path) -> None:

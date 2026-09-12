@@ -72,6 +72,8 @@ def main() -> int:
     """Run the installed ``codedupes`` command and return its process exit code.
 
     ``pyproject.toml`` registers this callable as the supported console entry point.
+
+    :return: Process exit code from the invoked command.
     """
     try:
         # Let rich-click render usage errors and aborts through its help formatter.

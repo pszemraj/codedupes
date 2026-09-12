@@ -227,7 +227,10 @@ class SemanticOptions:
         )
 
     def analysis_kwargs(self) -> dict[str, Any]:
-        """Return analyzer keyword arguments shared by check and search."""
+        """Return analyzer keyword arguments shared by check and search.
+
+        :return: Keyword arguments for :class:`~codedupes.analyzer.AnalyzerConfig`.
+        """
         return {
             "model_name": self.model,
             "threshold_profile": self.threshold_profile,
@@ -366,7 +369,10 @@ class CheckOptions:
 
     @property
     def table_max_items(self) -> int | None:
-        """Return the terminal table row cap."""
+        """Return the terminal table row cap.
+
+        :return: Maximum table rows, or ``None`` when ``--full-table`` disables the cap.
+        """
         return None if self.full_table else DEFAULT_TABLE_ROWS
 
     def to_analysis_config(self, path: Path) -> Any:
