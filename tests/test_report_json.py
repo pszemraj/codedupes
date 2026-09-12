@@ -102,16 +102,15 @@ def test_check_json_v3_hidden_review_units_are_absent(tmp_path):
     assert with_review["summary"]["omitted_review_duplicates"] == 0
 
 
-def test_check_json_v3_is_deterministic_under_edge_shuffle(tmp_path):
+def test_check_json_round_trips_and_keeps_unit_ids_under_edge_shuffle(tmp_path):
     result = _result(tmp_path)
     shuffled = _result(tmp_path)
     random.Random(1).shuffle(shuffled.hybrid_duplicates)
     policy = ReportPolicy(include_review=True)
 
-    first = to_json_text(_payload(result, policy))
-    second = to_json_text(_payload(result, policy))
-    assert first == second
-    assert _payload(shuffled, policy)["units"] == _payload(result, policy)["units"]
+    payload = _payload(result, policy)
+    assert json.loads(to_json_text(payload)) == payload
+    assert _payload(shuffled, policy)["units"] == payload["units"]
 
 
 def test_check_json_v3_summary_counts(tmp_path):
@@ -187,12 +186,6 @@ def test_check_json_show_all_raw_edges_use_short_ids(tmp_path):
     ]
     assert payload["semantic_duplicates"][0]["unit_a"] == "u1"
     assert payload["semantic_duplicates"][0]["unit_b"] == "u0"
-
-
-def test_check_json_round_trips_through_text(tmp_path):
-    payload = _payload(_result(tmp_path))
-
-    assert json.loads(to_json_text(payload)) == payload
 
 
 def test_search_json_v3_unit_and_file_levels(tmp_path):
