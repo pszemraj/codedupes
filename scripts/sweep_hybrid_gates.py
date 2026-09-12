@@ -143,6 +143,9 @@ def _parse_csv_floats(value: str) -> list[float]:
     if not out:
         msg = "Expected at least one float value."
         raise argparse.ArgumentTypeError(msg)
+    if any(not math.isfinite(item) or not 0.0 <= item <= 1.0 for item in out):
+        msg = "Expected comma-separated finite values in [0.0, 1.0]."
+        raise argparse.ArgumentTypeError(msg)
     return out
 
 
@@ -391,10 +394,14 @@ def _high_gate_grid(start: float, stop: float, step: float) -> list[float | None
     :param float stop: Inclusive upper bound.
     :param float step: Grid step.
     :return list[float | None]: Ascending gates followed by ``None``.
-    :raises ValueError: If ``step`` is not positive.
+    :raises ValueError: If a bound is non-finite or outside ``[0.0, 1.0]``,
+        or if ``step`` is not finite and positive.
     """
-    if step <= 0:
-        raise ValueError("step must be positive")
+    for name, value in (("start", start), ("stop", stop)):
+        if not math.isfinite(value) or not 0.0 <= value <= 1.0:
+            raise ValueError(f"{name} must be finite and in [0.0, 1.0]")
+    if not math.isfinite(step) or step <= 0:
+        raise ValueError("step must be finite and positive")
     values: list[float | None] = []
     steps = 0
     while True:
@@ -773,6 +780,12 @@ def main() -> int:
         parser.error("--recall-retention-min must be in (0, 1].")
     if not math.isfinite(args.high_gate_step) or args.high_gate_step <= 0:
         parser.error("--high-gate-step must be positive.")
+    if not math.isfinite(args.high_gate_stop) or not 0.0 <= args.high_gate_stop <= 1.0:
+        parser.error("--high-gate-stop must be finite and in [0.0, 1.0].")
+    if args.semantic_gate is not None and (
+        not math.isfinite(args.semantic_gate) or not 0.0 <= args.semantic_gate <= 1.0
+    ):
+        parser.error("--semantic-gate must be finite and in [0.0, 1.0].")
 
     if args.corpus_root is not None:
         corpora = [

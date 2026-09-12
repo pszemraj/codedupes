@@ -570,11 +570,60 @@ def test_high_gate_grid_starts_at_the_admission_gate_and_ends_disabled() -> None
     assert _high_gate_grid(0.97, 0.96, 0.02) == [None]
 
 
-@pytest.mark.parametrize("step", [0.0, -0.02])
+@pytest.mark.parametrize("step", [0.0, -0.02, float("nan"), float("inf")])
 def test_high_gate_grid_rejects_non_positive_step(step: float) -> None:
     assert _high_gate_grid(0.68, 0.72, 0.02) == [0.68, 0.70, 0.72, None]
-    with pytest.raises(ValueError, match="step must be positive"):
+    with pytest.raises(ValueError, match="step must be finite and positive"):
         _high_gate_grid(0.68, 0.96, step)
+
+
+@pytest.mark.parametrize(
+    ("start", "stop"),
+    [
+        (float("nan"), 0.96),
+        (float("inf"), 0.96),
+        (-0.01, 0.96),
+        (0.68, float("nan")),
+        (0.68, float("inf")),
+        (0.68, 1.01),
+    ],
+)
+def test_high_gate_grid_rejects_invalid_bounds(start: float, stop: float) -> None:
+    with pytest.raises(ValueError, match=r"must be finite and in \[0.0, 1.0\]"):
+        _high_gate_grid(start, stop, 0.02)
+
+
+@pytest.mark.parametrize(
+    ("flag", "value"),
+    [
+        ("--weak-jaccard-grid", "0.0,nan"),
+        ("--weak-jaccard-grid", "-0.1,0.2"),
+        ("--statement-ratio-grid", "0.2,inf"),
+        ("--statement-ratio-grid", "0.2,1.1"),
+        ("--high-gate-stop", "nan"),
+        ("--high-gate-stop", "1.1"),
+        ("--semantic-gate", "inf"),
+        ("--semantic-gate", "-0.1"),
+    ],
+)
+def test_hybrid_gate_sweep_rejects_invalid_grid_values_before_model_work(
+    monkeypatch, capsys, flag: str, value: str
+) -> None:
+    def fail_sweep(*args, **kwargs):
+        raise AssertionError("model work must not begin with an invalid grid")
+
+    monkeypatch.setattr(sweep_hybrid_gates, "_sweep_model", fail_sweep)
+    option_args = [f"{flag}={value}"] if value.startswith("-") else [flag, value]
+    monkeypatch.setattr(
+        "sys.argv",
+        ["sweep_hybrid_gates.py", "--language", "python", *option_args],
+    )
+
+    with pytest.raises(SystemExit) as exc:
+        _hybrid_gates_main()
+
+    assert exc.value.code == 2
+    assert "finite" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize(
