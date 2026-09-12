@@ -276,6 +276,7 @@ def _calibration_manifest(
     batch_size: int,
     corpus_path: Path,
     labels_path: Path,
+    traditional_config: AnalyzerConfig | None = None,
 ) -> dict[str, Any]:
     """Assemble the reproducible identity under which one threshold was swept.
 
@@ -283,7 +284,9 @@ def _calibration_manifest(
     verbatim: it reflects the policy that produced the swept matrix (dtype and
     Metal math policy included) even when the requested accelerator fell back
     and the run restarted on CPU, so thresholds are never labeled with a device
-    or dtype that did not produce them.
+    or dtype that did not produce them. When traditional analysis contributes
+    candidates, ``traditional_config`` records the exact gate and tiny-pair
+    filter applied to those candidates.
     """
     code_plan = resolve_encode_plan(profile.canonical_name, "code", None, semantic_task)
     manifest: dict[str, Any] = {
@@ -316,6 +319,12 @@ def _calibration_manifest(
         manifest["encode_plan"]["query"] = {
             "route": query_plan.route,
             "prompt": query_plan.prompt,
+        }
+    if traditional_config is not None:
+        manifest["traditional_candidate_policy"] = {
+            "jaccard_threshold": traditional_config.jaccard_threshold,
+            "filter_tiny_traditional": traditional_config.filter_tiny_traditional,
+            "tiny_unit_statement_cutoff": traditional_config.tiny_unit_statement_cutoff,
         }
     return manifest
 
@@ -390,19 +399,18 @@ def _run_duplicate_sweep(
     duplicate_stop: float = DUPLICATE_THRESHOLD_STOP,
 ) -> ModelSweep:
     profile = resolve_model_profile(model_name)
-    analyzer = CodeAnalyzer(
-        _analyzer_config(
-            model_name=model_name,
-            revision=revision,
-            semantic_task=DEFAULT_CHECK_SEMANTIC_TASK,
-            semantic_threshold=duplicate_start,
-            min_statements=min_statements,
-            batch_size=batch_size,
-            device=device,
-            languages=languages,
-            run_traditional=True,
-        )
+    config = _analyzer_config(
+        model_name=model_name,
+        revision=revision,
+        semantic_task=DEFAULT_CHECK_SEMANTIC_TASK,
+        semantic_threshold=duplicate_start,
+        min_statements=min_statements,
+        batch_size=batch_size,
+        device=device,
+        languages=languages,
+        run_traditional=True,
     )
+    analyzer = CodeAnalyzer(config)
     result = analyzer.analyze(corpus_path)
     embeddings = analyzer._embeddings
     dimension = int(embeddings.shape[1]) if embeddings is not None and embeddings.size else 0
@@ -489,6 +497,7 @@ def _run_duplicate_sweep(
         batch_size=batch_size,
         corpus_path=corpus_path,
         labels_path=labels_path,
+        traditional_config=config,
     )
     manifest["output_policy"] = "hybrid_duplicates"
     # The tier split, and therefore every ``tiers``/``visible`` field, depends on

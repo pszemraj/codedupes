@@ -149,6 +149,11 @@ def test_manifest_records_effective_embedding_space_not_the_request(
     assert "device" not in manifest
     assert "dtype_variant" not in manifest
     assert manifest["output_policy"] == "hybrid_duplicates"
+    assert manifest["traditional_candidate_policy"] == {
+        "jaccard_threshold": 0.85,
+        "filter_tiny_traditional": True,
+        "tiny_unit_statement_cutoff": 3,
+    }
     assert manifest["visible_policy"] == {
         "excluded_tiers": ["semantic_review"],
         "metrics_field": "visible",
@@ -771,6 +776,8 @@ def test_hybrid_gate_sweep_records_calibration_provenance(
             model_name,
             "--json-out",
             str(json_out),
+            "--traditional-threshold",
+            "0.91",
             *(["--semantic-gate", str(semantic_gate)] if semantic_gate is not None else []),
         ],
     )
@@ -788,6 +795,11 @@ def test_hybrid_gate_sweep_records_calibration_provenance(
     assert manifest["resolved_revision"] == profile.default_revision
     assert manifest["mode"] == "hybrid_gates"
     assert manifest["requested_device"] == "cpu"
+    assert manifest["traditional_candidate_policy"] == {
+        "jaccard_threshold": 0.91,
+        "filter_tiny_traditional": True,
+        "tiny_unit_statement_cutoff": 3,
+    }
     assert manifest["embedding_space"]["runtime_variant"] == "cpu-faithful"
     assert manifest["semantic_gate"] == {
         "language": "python",

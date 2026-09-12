@@ -466,6 +466,7 @@ def _run_corpus(
         batch_size=args.batch_size,
         corpus_path=spec.corpus_path,
         labels_path=spec.labels_path,
+        traditional_config=config,
     )
     manifest["semantic_gate"] = {
         "language": spec.language,
