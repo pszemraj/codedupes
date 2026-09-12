@@ -9,6 +9,10 @@
 - Flat duplicate defaults were replaced by [per-language gates](analysis-defaults.md#semantic-duplicate-gate-defaults). Pass `--semantic-threshold` (or `AnalyzerConfig.semantic_threshold`) to retain a flat semantic policy.
 - `codedupes check` now [withholds `semantic_review` pairs by default](output.md#report-selection). Consumers that require every hybrid edge should add `--include-review`.
 - Default unused reporting now also [skips public methods of public classes](analysis-defaults.md#potentially-unused-defaults); pass `--strict-unused` to keep them. `build_reference_graph` and `find_potentially_unused` moved to `codedupes.unused`, and `run_traditional_analysis` returns `(exact, near)` only.
+- Python is extracted with the exact-pinned `tree-sitter-python` grammar (a new runtime dependency) through the [same backend as every other language](polyglot-languages.md#python). A decorated definition is one unit from its first decorator, so `lineno`, `start_byte`, `start_column`, `source`, fingerprints, identifiers, and the `CodeUnit.uid` byte offset of decorated units move to the `@` line; `source` no longer ends with a newline and `start_column` is the real column.
+- Python `native_kind` is `function_definition` or `class_definition` (was `FunctionDef`/`AsyncFunctionDef`/`ClassDef`), and a class defined inside a function is qualified `mod.func.Class` (was `mod.Class`).
+- Python identifier sets now include attribute and keyword-argument names and exclude builtins, keywords, `self`, and `cls`; `codedupes.traditional.extract_identifiers` and `unit_identifier_set` were removed - read `CodeUnit.identifiers`. `CodeUnit.docstring` and `CodeUnit.calls` were removed, and `CodeUnit.statement_count` is always set at extraction.
+- The Python-only `parse-error` diagnostic was replaced by the [shared codes](polyglot-languages.md#source-ranges-and-parse-recovery): a syntax error now yields `partial-parse` plus `unit-parse-error` for the broken unit while intact units are still extracted, and a non-UTF-8 file yields `invalid-utf8` and is analyzed after lossy decoding instead of being skipped.
 - Search-only Python callers should use `AnalyzerConfig(mode="search")`; see the [search configuration](python-api.md#semantic-query-search). `analyze()` rejects that mode, while `index()` and `search()` support it.
 - The default [Hub revision policy](caching.md#hub-revisions) now uses labels; `--strict-revision-cache` retains the previous policy.
 - Runtime dependency minimums changed; use the [installation requirements](install.md). The C2LLM profile and DeepSpeed-only `gpu` extra were removed. Replace `semantic_profiles.resolve_model_name()` with `resolve_model_profile(...).canonical_name`.
@@ -16,7 +20,7 @@
 
 ## Detection and extraction
 
-- Added [C, Rust, JavaScript/JSX, and TypeScript/TSX extraction](polyglot-languages.md). Unused analysis remains Python-only.
+- Added [C, Rust, JavaScript/JSX, and TypeScript/TSX extraction](polyglot-languages.md), and moved Python onto the same Tree-sitter path so all five languages share one fingerprint, identifier, statement-count, and diagnostic implementation. Unused analysis remains Python-only.
 - Unused analysis now builds its [reference graph](analysis-defaults.md#potentially-unused-defaults) from every loaded name, attribute access, annotation, and module-level statement rather than call sites alone, and treats public methods of framework-derived classes (`ast.NodeVisitor`, `logging.Filter`) as referenced.
 - Improved language-specific extraction, traditional matching, and source-range handling; see [polyglot language support](polyglot-languages.md).
 - Added [polyglot calibration corpora](../test_fixtures/polyglot_calibration/README.md) and a runnable [Rust/WebAssembly clone fixture](../test_fixtures/cowsay_wasm/README.md).

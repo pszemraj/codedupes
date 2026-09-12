@@ -16,7 +16,7 @@ source discovery
   -> language-aware reporting
 ```
 
-Python keeps the CPython `ast` backend. C, Rust, JavaScript/JSX, TypeScript, and TSX use Tree-sitter. The registry in [registry](../src/codedupes/languages/registry.py) defines extensions, aliases, dialects, grammar package pins, and ambiguous C-header handling. `CodeExtractor` remains the public facade.
+Every language is parsed with Tree-sitter through one backend code path. Python, C, Rust, JavaScript/JSX, TypeScript, and TSX each pair a pinned grammar with a backend that decides which nodes become units and how visibility is read; parsing, diagnostics, fingerprints, identifier collection, and statement counting are shared. The registry in [registry](../src/codedupes/languages/registry.py) defines extensions, aliases, dialects, grammar package pins, and ambiguous C-header handling. `CodeExtractor` remains the public facade.
 
 The [parser packages](install.md#polyglot-parser-dependencies) are exact-pinned because grammar node kinds and field layouts affect extraction.
 
@@ -26,7 +26,7 @@ The [parser packages](install.md#polyglot-parser-dependencies) are exact-pinned 
 
 | Language | Extensions | Dialect behavior |
 | --- | --- | --- |
-| Python | `.py`, optional `.pyi` | CPython AST |
+| Python | `.py`, optional `.pyi` | Python grammar |
 | C | `.c`, conditionally `.h` | C grammar |
 | Rust | `.rs` | Rust grammar |
 | JavaScript | `.js`, `.mjs`, `.cjs` | JavaScript grammar |
@@ -54,7 +54,11 @@ Skipped headers are reported rather than silently dropped: a directory scan emit
 
 ### Python
 
-Python emits functions, async functions, methods, nested functions, classes, and nested classes. Source snippets retain complete source lines, and byte ranges describe those emitted bytes, including Unicode, BOM, and CRLF offsets.
+`function_definition` and `class_definition` nodes are emitted: functions, async functions, methods, classes, and nested definitions at any depth. A decorated definition is one unit from its first decorator, so its line, byte range, source, fingerprints, and identifiers all start at the `@`. A definition is a `METHOD` exactly when its nearest enclosing definition is a class; otherwise it is a `FUNCTION`. Qualified names follow lexical nesting in order (`mod.outer.Inner.method`), so a class defined inside a function is `mod.func.Class`. The module prefix follows the package layout under the scan root: `pkg/__init__.py` contributes `pkg`, and a root-level `__init__.py` contributes nothing.
+
+`is_public` is false for any `_`-prefixed name, but dunder and name-mangled definitions (`__init__`, `__helper`) are still extracted when private units are excluded. `is_exported` reflects module-level `__all__`; `=` and `+=` lists are unioned.
+
+Statement counts follow `ast.stmt` semantics for every unit kind, class bodies included: simple and compound statements count once each, an `elif` counts as its own statement, `else`/`except`/`finally`/`case`/`with` clauses are transparent containers whose bodies count on their own, a nested definition counts once, and a leading docstring is not counted (`def f(): "doc"` is 0; `def f(): ...` is 1).
 
 ### C
 
@@ -102,15 +106,15 @@ TypeScript and TSX are distinct parser dialects even though both report the cano
 
 ### Visibility filtering
 
-`--no-private` (`include_private=False`) filters on each backend's computed visibility rather than a name-prefix subset of it: C internal linkage, Rust `pub` including the trait rules above, TypeScript `private`/`protected` accessibility modifiers, and `_`/`#`-prefixed member names. A filtered-out private class takes its members with it, matching the Python extractor - emitting a method whose owner was never reported would leak the container's internals under an unreachable name.
+`--no-private` (`include_private=False`) filters on each backend's computed visibility rather than a name-prefix subset of it: Python `_`-prefixed names (dunder and mangled names excepted), C internal linkage, Rust `pub` including the trait rules above, TypeScript `private`/`protected` accessibility modifiers, and `_`/`#`-prefixed ECMAScript member names. In every language a filtered-out private class takes its members with it - emitting a method whose owner was never reported would leak the container's internals under an unreachable name.
 
 ## Source ranges and parse recovery
 
-Tree-sitter is byte-addressed. The backend reads and validates the complete file as UTF-8, parses the original bytes, slices snippets with `start_byte:end_byte`, and then decodes each emitted slice. This prevents Unicode text before a function from corrupting its range while still reporting invalid full-file input.
+Tree-sitter is byte-addressed. The backend reads and validates the complete file as UTF-8, parses the original bytes, slices snippets with `start_byte:end_byte`, and then decodes each emitted slice. This prevents Unicode text before a function from corrupting its range while still reporting invalid full-file input. A unit is the exact node span: `start_column` is the real column (an indented method reports a non-zero value), `source` carries no trailing newline, and byte offsets are on-disk offsets, so a UTF-8 BOM is never inside a unit (the first definition of a BOM-prefixed file starts at byte 3) and CRLF files keep their two-byte line endings.
 
 A missing or incompatible grammar is a configuration error and stops analysis. codedupes never substitutes arbitrary line chunks.
 
-A file containing Tree-sitter recovery nodes is different: unaffected units can still be useful. codedupes emits a file-level `partial-parse` diagnostic, skips any extracted unit whose own syntax subtree contains an error, and emits a `unit-parse-error` diagnostic for that skipped unit. See [diagnostic output](output.md#diagnostics) for how commands expose these records. Unreadable files emit `read-error` and are skipped; non-UTF-8 Tree-sitter files emit `invalid-utf8` while continuing with replacement characters.
+A file containing Tree-sitter recovery nodes is different: unaffected units can still be useful. codedupes emits a file-level `partial-parse` diagnostic, skips any extracted unit whose own syntax subtree contains an error, and emits a `unit-parse-error` diagnostic for that skipped unit; a Python file with one broken `def` still yields its intact definitions. See [diagnostic output](output.md#diagnostics) for how commands expose these records. Unreadable files emit `read-error` and are skipped; non-UTF-8 files emit `invalid-utf8`, are decoded with replacement characters, and are still analyzed. Every language emits the same four parse codes.
 
 ## Fingerprints and comparison boundaries
 
@@ -120,11 +124,12 @@ Each backend computes features while its original syntax tree is in memory:
 - A token fingerprint retaining literal token text while ignoring comments and whitespace
 - An identifier set for Jaccard near matching
 - A statement count for semantic eligibility and hybrid scoring
-- Direct call names for future language-specific reference analyzers
 
-The structural stream includes significant anonymous operator tokens. `a + b` and `a - b` therefore cannot collapse merely because both expressions have the same named syntax nodes. Local identifiers are normalized by encounter order, while field/property/type names are preserved where they carry API or behavioral meaning. String values are normalized for structural matching; numeric values are preserved. JSX text is display copy, not structure, so it normalizes with the other string forms and two otherwise identical React components do not fingerprint apart on their labels. Token matching remains stricter and retains literal text.
+The structural stream includes significant anonymous operator tokens. `a + b` and `a - b` therefore cannot collapse merely because both expressions have the same named syntax nodes. Local identifiers are normalized by encounter order, while field/property/type names are preserved where they carry API or behavioral meaning. String values are normalized for structural matching; numeric values are preserved. JSX text is display copy, not structure, so it normalizes with the other string forms and two otherwise identical React components do not fingerprint apart on their labels. A trailing comma in a literal is structural in every language. Token matching remains stricter and retains literal text.
 
-Identifier matching is Unicode-aware. ECMAScript identifiers are Unicode from ES2015 on and Rust accepts non-ASCII identifiers, so a non-ASCII name yields a unit and identifier-set entries instead of being dropped by an ASCII-only pattern.
+Python applies the same rules with its own preserved-name and pruning policy. Attribute names (`obj.attr`), keyword-argument names (`f(name=...)`), imported names, and dunders are API shape and survive normalization; parameters, locals, and other bound names normalize by encounter order. A leading docstring - on the unit and on every nested definition - is pruned from the structural stream but kept in the token stream, so a docstring edit or removal changes the token hash and not the structural hash; comments and backslash line continuations are formatting in both streams. String literals normalize to a string marker, except that f-string interpolations and implicit concatenations are walked because their contents are code. The token stream keeps string contents verbatim, escape sequences included, so `"a\nb"` and `"a\nc"` stay distinct. A renamed clone is therefore structurally equal and token-different, a docstring-only variant likewise, and a near-duplicate differs in both.
+
+Identifier sets exclude each language's builtins. Python's exclude keywords, `self`, and `cls`, and include attribute and keyword-argument names, so an alpha-renamed Python clone keeps a measurable identifier overlap with its original through the API it touches. Identifier matching is Unicode-aware. Python, ECMAScript (from ES2015 on), and Rust accept non-ASCII identifiers, so a non-ASCII name yields a unit and identifier-set entries instead of being dropped by an ASCII-only pattern.
 
 Traditional exact and Jaccard comparisons are blocked by canonical language and blocking kind before pair generation. Functions and methods share one `callable` kind, so a function copied into a class body stays comparable with its module-level original, matching how semantic pairing treats them; classes block separately. Exact matching stays same-language: a C and a Rust function cannot become exact duplicates because their canonical token streams align. Overlapping units in the same file, such as a parent function and its nested function, are not reported as duplicates of each other.
 
@@ -132,11 +137,11 @@ Semantic comparison follows the [per-language gates and cross-language policy](a
 
 ## Unused-code analysis
 
-The [unused-code heuristic](analysis-defaults.md#potentially-unused-defaults) evaluates Python only, from a name-based reference graph built with the standard-library `ast`. Extending it requires translation-unit and preprocessor context for C, Cargo/module/trait resolution for Rust, and project-wide module resolution for JavaScript/TypeScript. Syntax extraction alone cannot establish those references.
+The [unused-code heuristic](analysis-defaults.md#potentially-unused-defaults) evaluates Python only, from a name-based reference graph built with the standard-library `ast` - the one place codedupes parses with `ast` rather than a grammar. It matches units by file, line, and name, so decorator-inclusive spans resolve. Extending it requires translation-unit and preprocessor context for C, Cargo/module/trait resolution for Rust, and project-wide module resolution for JavaScript/TypeScript. Syntax extraction alone cannot establish those references.
 
 ## Parser readiness
 
-Run `codedupes info --verbose` to inspect each parser dialect's required and installed package versions. Readiness checks construct a parser and run an empty parse, so a wrong-platform or ABI-broken wheel is reported before analysis.
+Run `codedupes info --verbose` to inspect the required and installed package version of each of the six parser dialects (`python`, `c`, `rust`, `javascript`, `typescript`, `tsx`). Readiness checks construct a parser and run an empty parse, so a wrong-platform or ABI-broken wheel is reported before analysis.
 
 ## Grammar upgrade procedure
 
@@ -149,7 +154,7 @@ Treat every grammar update as a behavioral change:
 5. Run the [calibration validator](../test_fixtures/polyglot_calibration/README.md#validation), [hybrid split sweep](hybrid-tuning.md#run-the-sweep), and [threshold sweep and distribution report](hybrid-tuning.md#semantic-threshold-sweep-model-profiles). Compare results with the recorded tables and reassess the [duplicate gates](analysis-defaults.md#semantic-duplicate-gate-defaults) if measurements change.
 6. Update the pin only after every difference is understood.
 
-A semver-compatible grammar update can still rename a node or field. Broad version ranges would let an ordinary dependency refresh silently change duplicate reports.
+A semver-compatible grammar update can still rename a node or field, or change which nodes are visible. Broad version ranges would let an ordinary dependency refresh silently change duplicate reports. `tree-sitter-python` is held to the same procedure as the other grammars: its statement-count and docstring-pruning tests are the tripwire for a release that hides or renames the statement nodes the backend counts.
 
 ## Known limits
 

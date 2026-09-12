@@ -19,13 +19,13 @@ These measurements inform the [per-language duplicate gates](../../docs/analysis
 | --- | --- | --- | --- | --- |
 | exact | identical | equal | equal | deterministic |
 | reformat | differs | equal | equal | deterministic |
-| doc_variant | differs (docs/comments only) | equal | equal (non-Python) / differs (Python) | deterministic |
+| doc_variant | differs (docs/comments only) | equal | equal, or differs when a Python docstring changed | deterministic |
 | renamed | differs | equal | differs | deterministic |
 | near_rename / near_translation / near_restructure | differs | differs | differs | semantic only |
 
 Per language: 4 exact, 3 reformat, 3 doc_variant, 4 renamed, 8 near_rename, 8 near_translation, 4 near_restructure (TypeScript carries 4 reformat/5 renamed and JavaScript 5 renamed after labeling transitive pairs of multi-copy clone clusters).
 
-`doc_variant` doubles as a per-language regression test of comment pruning: tree-sitter languages prune comments from both fingerprints (pairs must land fully deterministic), while Python docstrings are stripped from the structural hash but kept as string tokens. Only Python docstrings are inside the embedded unit span; leading doc comments in the other languages are preceding siblings outside it, so their `doc_variant` B-sides also carry in-body comments to make the delta embedder-visible.
+`doc_variant` doubles as a per-language regression test of documentation pruning: every language prunes comments from both fingerprints (pairs must land fully deterministic), and Python additionally prunes a leading docstring from the structural stream while keeping it in the token stream, so a Python docstring variant lands structurally equal and token-different. Only Python docstrings are inside the embedded unit span; leading doc comments in the other languages are preceding siblings outside it, so their `doc_variant` B-sides also carry in-body comments to make the delta embedder-visible.
 
 ## Authoring constraints
 

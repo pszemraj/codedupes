@@ -12,7 +12,7 @@ If `codedupes` is not found after installation, ensure your Python installation'
 
 ## Polyglot parser dependencies
 
-A normal installation includes the pinned Tree-sitter parser packages from [pyproject.toml](../pyproject.toml). They provide precompiled grammars; scanning does not download or compile them. You do not need a C, Rust, or JavaScript build toolchain to scan those source files.
+A normal installation includes the pinned Tree-sitter parser packages from [pyproject.toml](../pyproject.toml): `tree-sitter` plus the `tree-sitter-python`, `tree-sitter-c`, `tree-sitter-rust`, `tree-sitter-javascript`, and `tree-sitter-typescript` grammars, each exact-pinned; `codedupes info --verbose` shows the required and installed version of every grammar. They provide precompiled grammars; scanning does not download or compile them. Python source is parsed with its pinned grammar rather than the interpreter's `ast`, so every language shares one extraction path. You do not need a C, Rust, or JavaScript build toolchain to scan those source files.
 
 See [Polyglot language support](polyglot-languages.md) for supported extensions, extraction scope, and parser errors.
 
