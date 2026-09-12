@@ -451,7 +451,7 @@ def test_hybrid_gate_ties_resolve_to_the_loosest_split_not_grid_order() -> None:
         GateConfig(0.80, 0.10, 0.20, 0.90),
     ]
 
-    rows, _ = _run_hybrid_gate_sweep(
+    rows = _run_hybrid_gate_sweep(
         traditional_duplicates=[],
         semantic_duplicates=[],
         positive_pairs=set(),

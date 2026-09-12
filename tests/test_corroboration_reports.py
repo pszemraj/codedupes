@@ -68,6 +68,16 @@ def _feasible(row: dict[str, Any], retention: float) -> bool:
     )
 
 
+def test_recorded_selection_policy_matches_the_tie_break_the_sweep_applies() -> None:
+    """The recorded objective must say "strictest", matching ``select_visible_row``.
+
+    ``select_visible_row`` breaks ties in favor of the stricter split (see its
+    docstring and ``docs/hybrid-tuning.md``), so the report's recorded policy
+    must say the same thing rather than the opposite ("loosest").
+    """
+    assert _report()["selection_policy"]["objective"] == ["precision", "f1", "strictest"]
+
+
 @pytest.mark.parametrize("model_key", MODEL_KEYS)
 def test_shipped_constants_are_the_pooled_selection(model_key: str) -> None:
     """The profile's corroboration constants must be the report's pooled, everywhere-feasible pick."""

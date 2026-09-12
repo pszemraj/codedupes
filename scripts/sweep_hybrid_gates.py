@@ -36,8 +36,6 @@ from codedupes.analyzer import AnalyzerConfig, CodeAnalyzer
 from codedupes.constants import (
     DEFAULT_CHECK_SEMANTIC_TASK,
     DEFAULT_TRADITIONAL_THRESHOLD,
-    HYBRID_STATEMENT_RATIO_MIN,
-    HYBRID_WEAK_JACCARD_MIN,
 )
 from codedupes.models import DuplicatePair, HybridDuplicate
 from codedupes.pairs import ordered_pair_key
@@ -172,7 +170,7 @@ def _run_sweep(
     positive_pairs: set[tuple[str, str]],
     traditional_threshold: float,
     grid: list[GateConfig],
-) -> tuple[list[SweepRow], dict[str, float]]:
+) -> list[SweepRow]:
     """Evaluate every grid configuration on one corpus's collected candidates.
 
     :param list[DuplicatePair] traditional_duplicates: Traditional pairs from the analyzer run.
@@ -180,12 +178,8 @@ def _run_sweep(
     :param set[tuple[str, str]] positive_pairs: Labeled positive pair keys.
     :param float traditional_threshold: Jaccard threshold used by hybrid synthesis.
     :param list[GateConfig] grid: Configurations to evaluate.
-    :return tuple: Rows ranked best-first by the recall-preferring policy, and the generic baseline constants.
+    :return list[SweepRow]: Rows ranked best-first by the recall-preferring policy.
     """
-    baseline = {
-        "weak_min": float(HYBRID_WEAK_JACCARD_MIN),
-        "ratio_min": float(HYBRID_STATEMENT_RATIO_MIN),
-    }
     languages = {
         unit.language
         for duplicate in semantic_duplicates
@@ -245,7 +239,7 @@ def _run_sweep(
     # Ties prefer the looser split on every axis, matching the semantic sweep's
     # recall-first policy; without it equal-metric rows resolve by grid order.
     rank_sweep_rows(rows, extra_key=lambda row: _looseness(row.config))
-    return rows, baseline
+    return rows
 
 
 def is_feasible(row: SweepRow, *, recall_retention_min: float) -> bool:
@@ -560,7 +554,7 @@ def _sweep_model(
             GateConfig(run.semantic_gate, weak, ratio)
             for weak, ratio in itertools.product(args.weak_jaccard_grid, args.statement_ratio_grid)
         ]
-        stage1_rows[run.spec.name], _ = _run_sweep(
+        stage1_rows[run.spec.name] = _run_sweep(
             traditional_duplicates=run.traditional_duplicates,
             semantic_duplicates=run.semantic_duplicates,
             positive_pairs=run.positive_pairs,
@@ -589,7 +583,7 @@ def _sweep_model(
             GateConfig(run.semantic_gate, constants[0], constants[1], high)
             for high in _high_gate_grid(run.semantic_gate, args.high_gate_stop, args.high_gate_step)
         ]
-        rows, _ = _run_sweep(
+        rows = _run_sweep(
             traditional_duplicates=run.traditional_duplicates,
             semantic_duplicates=run.semantic_duplicates,
             positive_pairs=run.positive_pairs,
@@ -797,7 +791,7 @@ def main() -> int:
     print(
         f"Selection: max visible precision, subject to visible recall >= "
         f"{args.recall_retention_min:.2f} x published recall and visible precision >= "
-        "published precision in every corpus; ties prefer f1, then the looser split."
+        "published precision in every corpus; ties prefer f1, then the stricter split."
     )
     results = [_sweep_model(model, corpora, args) for model in args.models]
 
@@ -805,7 +799,7 @@ def main() -> int:
         payload = {
             "output_policy": "hybrid_high_confidence",
             "selection_policy": {
-                "objective": ["precision", "f1", "loosest"],
+                "objective": ["precision", "f1", "strictest"],
                 "recall_retention_min": args.recall_retention_min,
                 "precision_floor": "published",
                 "stage1": "global corroboration constants, promotion disabled, pooled over corpora",

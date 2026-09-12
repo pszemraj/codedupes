@@ -4,7 +4,7 @@
     "objective": [
       "precision",
       "f1",
-      "loosest"
+      "strictest"
     ],
     "recall_retention_min": 0.85,
     "precision_floor": "published",
