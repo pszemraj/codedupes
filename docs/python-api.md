@@ -225,9 +225,17 @@ quiet_dependency_loggers()  # or quiet_dependency_loggers(logging.ERROR)
 The CLI's report policy and [JSON schema](output.md#json-schema-v3) are importable, so Python callers can produce the same document as `check --json`:
 
 ```python
-from codedupes import ReportPolicy, check_result_to_json, run_should_fail, select_findings, to_json_text
+from codedupes import (
+    ReportPolicy,
+    check_result_to_json,
+    run_should_fail,
+    select_findings,
+    to_json_text,
+)
 
-selection = select_findings(result, ReportPolicy(include_review=False, show_all=False, max_duplicates=None))
+selection = select_findings(
+    result, ReportPolicy(include_review=False, show_all=False, max_duplicates=None)
+)
 exit_code = int(run_should_fail(result, policy="actionable", strict_unused=False))
 print(to_json_text(check_result_to_json(selection, fail_on="actionable", exit_code=exit_code)))
 ```
