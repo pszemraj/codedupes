@@ -29,6 +29,21 @@ from codedupes.semantic import (
 from tests.conftest import extract_arithmetic_units, extract_units
 
 
+def _constant_embeddings(row_count: int, vector: tuple[float, float]) -> np.ndarray:
+    """Return one float32 embedding vector for each requested row."""
+    return np.tile(np.asarray(vector, dtype=np.float32), (row_count, 1))
+
+
+class _StaticEmbeddingModel:
+    """Model stub that returns a precomputed embedding matrix."""
+
+    def __init__(self, output: np.ndarray) -> None:
+        self.output = output
+
+    def encode(self, _texts, **_kwargs):
+        return self.output
+
+
 class FakeModel:
     """Simple deterministic embedding model stub."""
 
@@ -45,7 +60,7 @@ class FakeModel:
                 ],
                 dtype=np.float32,
             )
-        return np.array([[1.0, 0.0]], dtype=np.float32)
+        return _constant_embeddings(len(texts), (1.0, 0.0))
 
 
 def test_run_semantic_analysis_with_mock_model(tmp_path, monkeypatch):
@@ -692,42 +707,35 @@ def test_find_semantic_duplicates_rechecks_threshold_after_numpy_prefilter(
     assert duplicates == []
 
 
-def test_compute_embeddings_rejects_nonfinite_model_output(tmp_path: Path, monkeypatch) -> None:
+@pytest.mark.parametrize(
+    ("output_factory", "match"),
+    [
+        pytest.param(
+            lambda row_count: _constant_embeddings(row_count, (np.nan, 0.0)),
+            "NaN or infinity",
+            id="nonfinite",
+        ),
+        pytest.param(
+            lambda row_count: np.zeros((row_count, 2), dtype=np.float32),
+            "zero or invalid vector",
+            id="zero-vector",
+        ),
+        pytest.param(
+            lambda _row_count: np.array([[1.0, 0.0]], dtype=np.float32),
+            "rows",
+            id="wrong-row-count",
+        ),
+    ],
+)
+def test_compute_embeddings_rejects_invalid_model_output(
+    tmp_path: Path, monkeypatch, output_factory, match: str
+) -> None:
     units = extract_arithmetic_units(tmp_path)
 
-    class NanModel:
-        def encode(self, texts, **kwargs):
-            return np.array([[np.nan, 0.0]] * len(texts), dtype=np.float32)
+    model = _StaticEmbeddingModel(output_factory(len(units)))
+    monkeypatch.setattr(semantic, "get_model", lambda *args, **kwargs: model)
 
-    monkeypatch.setattr(semantic, "get_model", lambda *args, **kwargs: NanModel())
-
-    with pytest.raises(semantic.InvalidEmbeddingError, match="NaN or infinity"):
-        compute_embeddings(units, device="cpu")
-
-
-def test_compute_embeddings_rejects_zero_vector_output(tmp_path: Path, monkeypatch) -> None:
-    units = extract_arithmetic_units(tmp_path)
-
-    class ZeroModel:
-        def encode(self, texts, **kwargs):
-            return np.zeros((len(texts), 2), dtype=np.float32)
-
-    monkeypatch.setattr(semantic, "get_model", lambda *args, **kwargs: ZeroModel())
-
-    with pytest.raises(semantic.InvalidEmbeddingError, match="zero or invalid vector"):
-        compute_embeddings(units, device="cpu")
-
-
-def test_compute_embeddings_rejects_wrong_row_count(tmp_path: Path, monkeypatch) -> None:
-    units = extract_arithmetic_units(tmp_path)
-
-    class ShortModel:
-        def encode(self, texts, **kwargs):
-            return np.array([[1.0, 0.0]], dtype=np.float32)
-
-    monkeypatch.setattr(semantic, "get_model", lambda *args, **kwargs: ShortModel())
-
-    with pytest.raises(semantic.InvalidEmbeddingError, match="rows"):
+    with pytest.raises(semantic.InvalidEmbeddingError, match=match):
         compute_embeddings(units, device="cpu")
 
 
@@ -786,12 +794,8 @@ def test_invalid_output_cpu_retry_restarts_at_capped_batch(tmp_path: Path, monke
 
 def test_fresh_embeddings_are_renormalized_centrally(tmp_path: Path, monkeypatch) -> None:
     units = extract_arithmetic_units(tmp_path)
-
-    class UnnormalizedModel:
-        def encode(self, texts, **kwargs):
-            return np.array([[3.0, 4.0]] * len(texts), dtype=np.float32)
-
-    monkeypatch.setattr(semantic, "get_model", lambda *args, **kwargs: UnnormalizedModel())
+    model = _StaticEmbeddingModel(_constant_embeddings(len(units), (3.0, 4.0)))
+    monkeypatch.setattr(semantic, "get_model", lambda *args, **kwargs: model)
 
     embeddings = compute_embeddings(units, device="cpu")
 
@@ -1775,7 +1779,7 @@ class _RecordingModel:
 
     def encode(self, texts, **_kwargs):
         self.encoded.append(list(texts))
-        return np.tile(np.array([[1.0, 0.0]], dtype=np.float32), (len(texts), 1))
+        return _constant_embeddings(len(texts), (1.0, 0.0))
 
 
 @pytest.mark.parametrize(
@@ -1984,7 +1988,7 @@ class _WarmCacheModel:
 
     def encode(self, texts, **_kwargs):
         self.encode_calls += 1
-        return np.array([[1.0, 0.0]] * len(texts), dtype=np.float32)
+        return _constant_embeddings(len(texts), (1.0, 0.0))
 
 
 def _fail_if_called(*_args, **_kwargs):
@@ -2264,11 +2268,12 @@ def test_runtime_env_configured_before_capability_probe_can_import_torch(
     assert all(value == "1" for value in env_at_torch_probe)
 
 
-class _BfloatAcceleratorFallbackModel:
-    """Fake bf16 accelerator model whose encode OOMs down to a real CPU dtype cast."""
+class _BfloatAcceleratorOomModel:
+    """Fake bf16 model with configurable successful encodes before accelerator OOM."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, successful_encodes_before_oom: int = 0) -> None:
         self._dtype = torch.bfloat16
+        self._successful_encodes_before_oom = successful_encodes_before_oom
 
     def parameters(self):
         yield torch.zeros(1, dtype=self._dtype)
@@ -2279,9 +2284,11 @@ class _BfloatAcceleratorFallbackModel:
         return self
 
     def encode(self, texts, **kwargs):
-        if kwargs.get("device") != "cpu":
+        if self._successful_encodes_before_oom:
+            self._successful_encodes_before_oom -= 1
+        elif kwargs.get("device") != "cpu":
             raise RuntimeError("CUDA out of memory")
-        return np.array([[1.0, 0.0]] * len(texts), dtype=np.float32)
+        return _constant_embeddings(len(texts), (1.0, 0.0))
 
 
 def test_dtype_diverging_accelerator_fallback_skips_bf16_keyed_cache_write(
@@ -2294,7 +2301,7 @@ def test_dtype_diverging_accelerator_fallback_skips_bf16_keyed_cache_write(
     monkeypatch.setattr(torch.cuda, "is_bf16_supported", lambda **_kwargs: True)
     monkeypatch.setattr(semantic, "_resolve_semantic_device_request", lambda *_a, **_k: "cuda")
     units = extract_arithmetic_units(tmp_path)
-    model = _BfloatAcceleratorFallbackModel()
+    model = _BfloatAcceleratorOomModel()
     monkeypatch.setattr(semantic, "get_model", lambda *_a, **_k: model)
 
     profile = semantic.resolve_model_profile("gte-modernbert-base")
@@ -2354,7 +2361,7 @@ def test_cpu_restarted_accelerator_corpus_stays_searchable(tmp_path: Path, monke
         lambda device, **_k: "cpu" if device == "cpu" else "cuda",
     )
     units = extract_arithmetic_units(tmp_path)
-    model = _BfloatAcceleratorFallbackModel()
+    model = _BfloatAcceleratorOomModel()
     monkeypatch.setattr(semantic, "get_model", lambda *_a, **_k: model)
 
     embeddings, identity = semantic.compute_embeddings_with_identity(
@@ -2397,30 +2404,6 @@ def test_cpu_restarted_accelerator_corpus_stays_searchable(tmp_path: Path, monke
     assert hits
 
 
-class _QueryOOMBfloatModel:
-    """Fake bf16 CUDA model whose corpus encode succeeds but whose query encode OOMs."""
-
-    def __init__(self) -> None:
-        self._dtype = torch.bfloat16
-        self.corpus_encoded = False
-
-    def parameters(self):
-        yield torch.zeros(1, dtype=self._dtype)
-
-    def to(self, device=None, dtype=None):
-        if dtype is not None:
-            self._dtype = dtype
-        return self
-
-    def encode(self, texts, **kwargs):
-        if not self.corpus_encoded:
-            self.corpus_encoded = True
-            return np.array([[1.0, 0.0]] * len(texts), dtype=np.float32)
-        if kwargs.get("device") != "cpu":
-            raise RuntimeError("CUDA out of memory")
-        return np.array([[1.0, 0.0]] * len(texts), dtype=np.float32)
-
-
 def test_query_dtype_fallback_never_reaches_the_dot_product(tmp_path: Path, monkeypatch) -> None:
     """A query cast to float32 mid-encode must not be compared with a bf16 corpus.
 
@@ -2437,7 +2420,7 @@ def test_query_dtype_fallback_never_reaches_the_dot_product(tmp_path: Path, monk
         lambda device, **_k: "cpu" if device == "cpu" else "cuda",
     )
     units = extract_arithmetic_units(tmp_path)
-    model = _QueryOOMBfloatModel()
+    model = _BfloatAcceleratorOomModel(successful_encodes_before_oom=1)
     monkeypatch.setattr(semantic, "get_model", lambda *_a, **_k: model)
 
     embeddings, identity = semantic.compute_embeddings_with_identity(
