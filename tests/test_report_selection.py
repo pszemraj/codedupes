@@ -199,6 +199,19 @@ def test_run_should_fail_uses_result_analysis_mode(tmp_path):
     assert run_should_fail(single, policy="actionable", strict_unused=False) is True
 
 
+@pytest.mark.parametrize("policy", ["actonable", "nonee"])
+@pytest.mark.parametrize("has_findings", [False, True])
+def test_failure_helpers_reject_unknown_policies(tmp_path, policy, has_findings):
+    result = _result(tmp_path)
+    if not has_findings:
+        result.hybrid_duplicates.clear()
+
+    with pytest.raises(ValueError, match="Unknown failure policy"):
+        run_should_fail(result, policy=policy, strict_unused=False)
+    with pytest.raises(ValueError, match="Unknown failure policy"):
+        hidden_only_failure(select_findings(result), policy=policy, strict_unused=False)
+
+
 def test_hidden_only_failure_names_withheld_review(tmp_path):
     a = _unit(tmp_path, "a")
     b = _unit(tmp_path, "b", start_byte=40)

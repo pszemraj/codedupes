@@ -217,7 +217,10 @@ def _findings_fail(
     :param policy: Selected finding policy.
     :param strict_unused: Whether unused findings are strict rather than heuristic.
     :return: Whether these findings require exit code one.
+    :raises ValueError: If ``policy`` is not a supported failure policy.
     """
+    if policy not in ("actionable", "all", "none"):
+        raise ValueError(f"Unknown failure policy {policy!r}; expected actionable, all, or none.")
     if policy == "none":
         return False
     failing = list(duplicates)
@@ -246,6 +249,7 @@ def run_should_fail(
     :param policy: Selected finding policy.
     :param strict_unused: Whether unused findings are strict rather than heuristic.
     :return: Whether findings require exit code one.
+    :raises ValueError: If ``policy`` is not a supported failure policy.
     """
     combined = result.analysis_mode == "combined"
     duplicates: Sequence[HybridDuplicate | DuplicatePair] = (
@@ -278,6 +282,7 @@ def hidden_only_failure(
     :param policy: Selected finding policy.
     :param strict_unused: Whether unused findings are strict rather than heuristic.
     :return: Failing hidden groups; empty when the run passes or an emitted finding already fails it.
+    :raises ValueError: If ``policy`` is not a supported failure policy.
     """
     combined = selection.mode == "combined"
     if _findings_fail(
