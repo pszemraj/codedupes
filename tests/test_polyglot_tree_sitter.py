@@ -1470,6 +1470,16 @@ def test_python_backslash_continuation_is_formatting(tmp_path: Path) -> None:
             id="set-trailing-comma",
         ),
         pytest.param(
+            "def f(data, a, b):\n    return data[a, b,]\n",
+            "def f(data, a, b):\n    return data[a, b]\n",
+            id="multiple-indices-trailing-comma",
+        ),
+        pytest.param(
+            "def f(data, keys):\n    return data[*keys,]\n",
+            "def f(data, keys):\n    return data[*keys]\n",
+            id="starred-index-trailing-comma",
+        ),
+        pytest.param(
             'def f():\n    ("doc")\n    return 1\n',
             'def f():\n    "doc"\n    return 1\n',
             id="parenthesized-docstring",

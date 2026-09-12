@@ -63,6 +63,21 @@ def test_exact_duplicates_via_structural_hash(tmp_path: Path) -> None:
     assert methods == {"structural_hash"}
 
 
+@pytest.mark.parametrize("index", ["key", "start:stop", "(key,)"])
+def test_singleton_tuple_subscripts_are_not_exact_duplicates(tmp_path: Path, index: str) -> None:
+    """A comma wraps a single index in a tuple, including slices and tuple-valued keys."""
+    units = extract_units(
+        tmp_path,
+        f"def first(data, key, start, stop):\n    return data[{index}]\n\n"
+        f"def second(data, key, start, stop):\n    return data[{index},]\n",
+    )
+
+    exact, _near = run_traditional_analysis(units)
+
+    assert len(units) == 2
+    assert exact == []
+
+
 def test_exact_duplicates_across_function_and_method(tmp_path: Path) -> None:
     source = dedent(
         """

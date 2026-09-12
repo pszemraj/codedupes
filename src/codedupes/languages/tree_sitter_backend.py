@@ -1019,8 +1019,7 @@ def _python_docstring(body: Any) -> Any | None:
     return first
 
 
-# Punctuation that ``ast`` never represents: a formatter adds or removes it
-# without changing the tree, so it must not move the structural hash.
+# Formatting punctuation, except for a subscript comma that introduces a tuple.
 _PYTHON_FORMATTING_TOKENS = frozenset({"line_continuation", ";", ","})
 
 
@@ -1029,15 +1028,25 @@ def _python_prune_structural(node: Any, parent: Any | None) -> bool:
 
     Docstrings are stripped positionally for every definition inside the unit,
     nested ones included, mirroring how the ``ast`` hasher dropped ``body[0]``.
-    Statement separators, trailing commas, and backslash continuations are not
-    part of the ``ast`` either; a formatter's magic trailing comma or a
-    ``x = 1; y = 2`` split is a reformat, not a change.
+    Statement separators, optional trailing commas, and backslash continuations
+    are formatting. A comma after a lone, unstarred subscript changes the index
+    into a tuple, which the grammar does not represent with a separate node.
 
     :param node: Node under consideration.
     :param parent: Parent of ``node`` in the walk.
     :return: ``True`` for formatting punctuation or a definition's docstring statement.
     """
     node_type = getattr(node, "type", "")
+    if node_type == "," and getattr(parent, "type", "") == "subscript":
+        index = _child_by_field(parent, "subscript")
+        if index is not None and index.type != "list_splat":
+            # Multiple indices or a starred index already imply a tuple. Look
+            # only for a second index, without rescanning all indices per comma.
+            following = index.next_named_sibling
+            while following is not None and _is_comment(following):
+                following = following.next_named_sibling
+            if following is None:
+                return False
     if node_type in _PYTHON_FORMATTING_TOKENS:
         return True
     if node_type != "expression_statement" or getattr(parent, "type", "") != "block":
