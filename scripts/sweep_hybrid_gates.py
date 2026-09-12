@@ -38,6 +38,7 @@ from codedupes.constants import (
     DEFAULT_CHECK_SEMANTIC_TASK,
     DEFAULT_TRADITIONAL_THRESHOLD,
 )
+from codedupes.languages import normalize_languages
 from codedupes.models import DuplicatePair, HybridDuplicate
 from codedupes.pairs import ordered_pair_key
 from codedupes.semantic_profiles import list_supported_models, resolve_model_profile
@@ -116,12 +117,12 @@ class SweepRow:
 
 @dataclass(frozen=True)
 class CorpusSpec:
-    """One labeled corpus the sweep embeds and scores."""
+    """One labeled, single-language corpus the sweep embeds and scores."""
 
     name: str
     corpus_path: Path
     labels_path: Path
-    language: str | None
+    language: str
 
 
 @dataclass(frozen=True)
@@ -425,13 +426,12 @@ def _run_corpus(
     """
     labels = json.loads(spec.labels_path.read_text())
     validate_labels_shape(labels)
-    languages = (spec.language,) if spec.language else None
     config = AnalyzerConfig(
         run_traditional=True,
         run_semantic=True,
         run_unused=False,
         include_private=True,
-        languages=languages,
+        languages=(spec.language,),
         min_semantic_statements=args.min_statements,
         jaccard_threshold=args.traditional_threshold,
         semantic_threshold=semantic_gate,
@@ -655,10 +655,17 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         description=(
             "Sweep the hybrid tier split (corroboration constants and similarity promotion "
-            "gate) that decides which semantic pairs codedupes shows by default."
+            "gate) that decides which semantic pairs codedupes shows by default. "
+            "Without --corpus-root, specify exactly one --language for the single corpus."
         )
     )
-    add_common_sweep_arguments(parser)
+    add_common_sweep_arguments(
+        parser,
+        language_help=(
+            "Single-corpus language; required exactly once without --corpus-root. "
+            "Use --languages with --corpus-root."
+        ),
+    )
     parser.add_argument(
         "--corpus-root",
         type=Path,
@@ -778,10 +785,20 @@ def main() -> int:
             for language in args.languages
         ]
     else:
-        language = args.language[0] if args.language and len(args.language) == 1 else None
+        if not args.language or len(args.language) != 1:
+            parser.error(
+                "--language must be specified exactly once without --corpus-root "
+                "(for example, --language python)."
+            )
+        try:
+            languages = normalize_languages(args.language)
+        except ValueError as exc:
+            parser.error(str(exc))
+        assert languages is not None
+        language = languages[0]
         corpora = [
             CorpusSpec(
-                name=language or "corpus",
+                name=language,
                 corpus_path=args.corpus_path,
                 labels_path=args.labels_path,
                 language=language,

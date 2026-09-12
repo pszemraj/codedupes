@@ -16,6 +16,7 @@ from codedupes.constants import DEFAULT_CHECK_SEMANTIC_TASK, DEFAULT_MIN_SEMANTI
 from codedupes.models import HYBRID_TIERS, CodeUnit, CodeUnitType, DuplicatePair
 from codedupes.semantic import EmbeddingSpaceIdentity
 from codedupes.semantic_profiles import resolve_model_profile
+from scripts import sweep_hybrid_gates
 from scripts.report_calibration_distributions import _analyze_language
 from scripts.sweep_common import (
     add_common_sweep_arguments,
@@ -576,7 +577,35 @@ def test_high_gate_grid_rejects_non_positive_step(step: float) -> None:
         _high_gate_grid(0.68, 0.96, step)
 
 
-def test_hybrid_gate_sweep_records_calibration_provenance(tmp_path: Path, monkeypatch) -> None:
+@pytest.mark.parametrize(
+    "language_args", [[], ["--language", "python", "--language", "typescript"]]
+)
+def test_hybrid_gate_sweep_requires_one_language_before_model_work(
+    monkeypatch, capsys, language_args: list[str]
+) -> None:
+    """A single-corpus sweep must never silently select the fallback admission gate."""
+
+    def fail_sweep(*args, **kwargs):
+        raise AssertionError("model work must not begin without one corpus language")
+
+    monkeypatch.setattr(sweep_hybrid_gates, "_sweep_model", fail_sweep)
+    monkeypatch.setattr("sys.argv", ["sweep_hybrid_gates.py", *language_args])
+
+    with pytest.raises(SystemExit) as exc:
+        _hybrid_gates_main()
+
+    assert exc.value.code == 2
+    assert (
+        "--language must be specified exactly once without --corpus-root" in capsys.readouterr().err
+    )
+
+
+@pytest.mark.parametrize("model_name", ["gte-modernbert-base", "embeddinggemma-300m"])
+@pytest.mark.parametrize("semantic_gate", [None, 0.90])
+@pytest.mark.parametrize("language", ["python", "py"])
+def test_hybrid_gate_sweep_records_calibration_provenance(
+    tmp_path: Path, monkeypatch, model_name: str, semantic_gate: float | None, language: str
+) -> None:
     """The hybrid report needs the same identity block the semantic sweep records.
 
     Without it a report carried no model, revision, device, or embedding-space
@@ -594,7 +623,7 @@ def test_hybrid_gate_sweep_records_calibration_provenance(tmp_path: Path, monkey
     )
     json_out = tmp_path / "hybrid_report.json"
 
-    profile = resolve_model_profile("gte-modernbert-base")
+    profile = resolve_model_profile(model_name)
     identity = EmbeddingSpaceIdentity(
         model_name=profile.canonical_name,
         resolved_revision=profile.default_revision or PINNED_COMMIT,
@@ -614,11 +643,12 @@ def test_hybrid_gate_sweep_records_calibration_provenance(tmp_path: Path, monkey
             "--labels-path",
             str(labels_path),
             "--language",
-            "python",
+            language,
             "--models",
-            "gte-modernbert-base",
+            model_name,
             "--json-out",
             str(json_out),
+            *(["--semantic-gate", str(semantic_gate)] if semantic_gate is not None else []),
         ],
     )
 
@@ -638,8 +668,12 @@ def test_hybrid_gate_sweep_records_calibration_provenance(tmp_path: Path, monkey
     assert manifest["embedding_space"]["runtime_variant"] == "cpu-faithful"
     assert manifest["semantic_gate"] == {
         "language": "python",
-        "value": profile.semantic_threshold_for_language("python"),
-        "source": "profile",
+        "value": (
+            semantic_gate
+            if semantic_gate is not None
+            else profile.semantic_threshold_for_language("python")
+        ),
+        "source": "explicit" if semantic_gate is not None else "profile",
     }
     # No candidates: every split ties at zero and equality with the published
     # precision floor is allowed, so the strictest row wins the tie.
@@ -670,6 +704,8 @@ def test_hybrid_gate_sweep_refuses_a_mutable_model_revision(tmp_path: Path, monk
             "sweep_hybrid_gates.py",
             "--labels-path",
             str(labels_path),
+            "--language",
+            "python",
             "--models",
             "gte-modernbert-base",
             "--model-revision",

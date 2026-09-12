@@ -13,10 +13,13 @@ from codedupes.models import CodeUnit
 from codedupes.pairs import ordered_pair_key
 
 
-def add_common_sweep_arguments(parser: argparse.ArgumentParser) -> None:
+def add_common_sweep_arguments(
+    parser: argparse.ArgumentParser, *, language_help: str | None = None
+) -> None:
     """Register the corpus/labels/extraction options shared by all sweep scripts.
 
     :param argparse.ArgumentParser parser: Sweep script argument parser.
+    :param str | None language_help: Optional command-specific language option help.
     :return None: ``None``.
     """
     parser.add_argument(
@@ -37,7 +40,11 @@ def add_common_sweep_arguments(parser: argparse.ArgumentParser) -> None:
         dest="language",
         default=None,
         metavar="LANGUAGE",
-        help="Restrict extraction to a language (repeat for multiple); omit to auto-detect.",
+        help=(
+            language_help
+            if language_help is not None
+            else "Restrict extraction to a language (repeat for multiple); omit to auto-detect."
+        ),
     )
     parser.add_argument(
         "--min-statements",
