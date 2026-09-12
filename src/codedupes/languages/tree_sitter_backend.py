@@ -1155,8 +1155,9 @@ class PythonBackend(TreeSitterBackend):
 
     language = "python"
     # ``elif_clause`` counts because an ``elif`` is a nested ``ast.If``; the
-    # ``else``/``except``/``finally``/``case``/``with`` clauses are transparent
-    # containers whose bodies count on their own.
+    # ``else``/``except``/``finally``/``case`` clauses are transparent
+    # containers whose bodies count on their own, while ``with_statement``
+    # counts once plus its body like every other compound statement.
     statement_types = frozenset(
         {
             "future_import_statement",

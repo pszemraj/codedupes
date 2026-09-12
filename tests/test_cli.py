@@ -2044,7 +2044,7 @@ def test_cli_traditional_panel_label_is_language_neutral(monkeypatch, tmp_path):
     )
 
     result = CliRunner().invoke(cli.cli, ["check", str(path), "--traditional-only"])
-    # Only Python parses to an AST here; the other backends fingerprint tokens.
+    # Every language reports the shared structural fingerprint; no table names an AST.
     assert "Traditional Duplicates (Structural/Token/Jaccard)" in result.output
     assert "AST" not in result.output
 

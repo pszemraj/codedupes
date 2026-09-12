@@ -49,7 +49,7 @@ Default semantic candidate selection:
 - unit types: `function`, `method`
 - class units are excluded by default from semantic embedding
 - minimum statement count: `3` (via `min_semantic_statements`)
-- statements are counted recursively through control-flow bodies, so a large function implemented inside one outer block is not measured as a single statement; nested function/class definitions count as one declaration each. Each grammar defines its statement and nested-scope node kinds: Python follows `ast.stmt` semantics (`elif` counts, `else`/`except`/`finally`/`case`/`with` clauses are transparent, a leading docstring is not counted; see [Python units](polyglot-languages.md#python)), and Rust's semicolon-free tail expression counts as one statement. Every backend sets the count at extraction
+- statements are counted recursively through control-flow bodies, so a large function implemented inside one outer block is not measured as a single statement; nested function/class definitions count as one declaration each. Each grammar defines its statement and nested-scope node kinds: Python follows `ast.stmt` semantics (`elif` counts, a `with` statement counts once plus its body, only `else`/`except`/`finally`/`case` clauses are transparent, a leading docstring is not counted; see [Python units](polyglot-languages.md#python)), and Rust's semicolon-free tail expression counts as one statement. Every backend sets the count at extraction.
 - each semantic input is one complete logical definition - the unit's exact source span of decorators (a decorated Python definition starts at its first decorator), signature, docstring, and body; functions are not split into arbitrary text chunks
 - eligible definitions and search queries are passed to the embedding backend unchanged. The backend applies its normal tokenization and context-window truncation, including any encode prompt.
 
@@ -88,29 +88,29 @@ Custom exclusions apply to direct file extraction too, relative to the file's pa
 
 ## Potentially unused defaults
 
-Unused detection evaluates Python units only; non-Python units are excluded and surfaced as a count (`unused_excluded_units`). It runs by default. `--no-unused` (`run_unused=False`) disables it without changing duplicate findings; `--strict-unused` (`strict_unused=True`) also reports unreferenced public functions and public methods. Each analyzed file is parsed once with the standard-library `ast`; no model or grammar is loaded.
+Unused detection evaluates Python units only; non-Python units are excluded and surfaced as a count (`unused_excluded_units`). It runs by default. `--no-unused` (`run_unused=False`) disables it without changing duplicate findings; `--strict-unused` (`strict_unused=True`) also reports unreferenced public functions and public methods. Every Python file the extractor visits is parsed once with the standard-library `ast`, whether or not it yielded units, so a re-export module or a script still contributes references; no model or grammar is loaded. A file `ast` rejects (a syntax error the grammar recovered from, syntax newer than the interpreter, an expression nested past the recursion limit) contributes no references and logs a warning naming it, so units only that file references may surface as unused.
 
 A unit is referenced when module-level code or another definition uses its name through any of:
 
 - a loaded name: calls, decorators, base classes, default arguments, callbacks passed as values, and class-body aliases such as `visit_Name = _impl`
 - attribute access in any context, including stores through a property setter and bound-method callbacks such as `onerror=self._cleanup`
-- annotations on parameters, returns, and annotated assignments, including quoted forward references such as `"Node | None"`
+- annotations on parameters, returns, and annotated assignments, including quoted forward references such as `"Node | None"`; the string values of `Literal[...]` are not names
+- `import` and `from ... import` statements, which reference what they import
 - module-level statements, `if __name__ == "__main__"` blocks included (module code runs on import)
-- module-level import and assignment aliases, which resolve to their targets
-- `[project.scripts]` and `[project.gui-scripts]` entries in `pyproject.toml`
+- `[project.scripts]`, `[project.gui-scripts]`, and `[project.entry-points]` group entries in `pyproject.toml`
 - framework dispatch: public methods of a class whose base does not resolve by name to a class in the analyzed tree (`object` excluded; subclasses of such a class inherit the rule), such as `ast.NodeVisitor` `visit_*` hooks or `logging.Filter.filter`
 
-Matching is name-based rather than scope-resolved: a reference to `helper` keeps every unit named `helper` (or whose qualified name ends in the referenced dotted path) out of the report, trading missed dead code for fewer false "unused" flags. Likewise an external base whose last segment matches a project class name resolves as project. A unit's own body does not count, so a self-recursive helper nobody calls is still reported; references inside a nested definition count for every enclosing definition. Dynamic registration, reflection, and string lookups such as `getattr(obj, "name")` stay outside the graph, so unused findings require review.
+Module-level import and assignment aliases (`from .mod import _Props as _Base`, `_Alias = _Later`) expand a reference to its target; an assignment alias is not itself a reference, and the framework rule resolves bases through the same aliases. Matching is name-based rather than scope-resolved: a reference to `helper` keeps every unit named `helper` (or whose qualified name ends in the referenced dotted path) out of the report, trading missed dead code for fewer false "unused" flags. Likewise an external base whose last segment matches a project class name resolves as project. A unit's own body never counts for itself, methods included, so a self-recursive helper nobody calls is still reported; references inside a nested definition count for every enclosing definition, except a nested definition's reference to itself. Dynamic registration, reflection, and string lookups such as `getattr(obj, "name")` stay outside the graph, so unused findings require review.
 
 Unreferenced units are still not reported when they are:
 
 - names exported through `__all__`, public classes, and dunder methods such as `__init__`
 - `get_*` and `set_*` definitions of any unit type (not only methods - a module-level `get_thing()` is suppressed too, even in strict mode)
-- definitions decorated with `@abstractmethod` or `@abc.abstractmethod`
+- definitions whose own decorators include `@abstractmethod` or `@abc.abstractmethod` (the enclosing class and a body that merely mentions the text are not exempt)
 - `test_*` definitions and definitions in files whose names contain `_test`
 - units containing `# noqa: codedupes` or `# codedupes: ignore`
 
-Default mode also skips public functions and public methods of public classes: unreferenced public surface is API, not a finding. Public methods of private classes and every private definition stay reportable. Strict mode removes only that suppression; the exclusions above still apply, and framework-dispatched methods stay referenced because that rule is a reference, not a policy.
+Default mode also skips public surface: a function or method every segment of whose qualified name is public (`pkg.mod.run`, `Service.run`) is API, not a finding. A public name reached only through a private module, class, or function (`_Service.run`, `_factory.helper`, `_factory.Local.run`) and every private definition stay reportable. Strict mode removes only that suppression; the exclusions above still apply, and framework-dispatched methods stay referenced because that rule is a reference, not a policy.
 
 Unused findings are independent of duplicate detection: a potentially unused unit remains eligible for semantic and traditional duplicate reporting.
 
@@ -139,7 +139,7 @@ A semantic-only pair has already passed its language's duplicate gate (applied b
 | `embeddinggemma-300m` | `0.00` | `0.20` | off |
 | `generic` | `0.00` | `0.20` | off |
 
-Both corroboration constants are one pooled selection per profile from the [corroboration sweep](hybrid-tuning.md#run-the-sweep) at the shipped admission gates. Identifier overlap is measured from the same identifier collection in every language (Python's includes attribute and keyword-argument names, see [fingerprints](polyglot-languages.md#fingerprints-and-comparison-boundaries)), so the identifier floor is a cross-language measurement, not an artifact of one extractor. It is `0.00` because the semantic-only positives in every corpus are alpha-renamed: even a `0.05` floor drops Rust, TypeScript, and Python (`gte-modernbert-base`) or C, Rust, TypeScript, and Python (`embeddinggemma-300m`) below the recall-retention floor, so no positive value is feasible everywhere. The statement-ratio floor carries GTE's split; EmbeddingGemma's `0.20` floor withholds only extreme size mismatches. An explicit `--semantic-threshold` keeps the profile's corroboration constants but turns promotion off because the gates are calibrated relative to the shipped admission gates. See the [calibration results](../test_fixtures/polyglot_calibration/README.md#calibration-results) and [hybrid gate workflow](hybrid-tuning.md).
+Both corroboration constants are one pooled selection per profile from the [corroboration sweep](hybrid-tuning.md#run-the-sweep) at the shipped admission gates. Identifier overlap is measured from the same identifier collection in every language (Python's includes attribute and keyword-argument names, see [fingerprints](polyglot-languages.md#fingerprints-and-comparison-boundaries)), so the identifier floor is a cross-language measurement, not an artifact of one extractor. It is `0.00` because the semantic-only positives in every corpus are alpha-renamed: at each profile's shipped statement-ratio floor no positive identifier floor is feasible in all five languages - even `0.05` drops Rust and Python below recall retention under both models, TypeScript below recall retention under `gte-modernbert-base` and below published precision under `embeddinggemma-300m`, and C below published precision under `embeddinggemma-300m`. The statement-ratio floor carries GTE's split; EmbeddingGemma's `0.20` floor withholds only extreme size mismatches. An explicit `--semantic-threshold` keeps the profile's corroboration constants but turns promotion off because the gates are calibrated relative to the shipped admission gates. See the [calibration results](../test_fixtures/polyglot_calibration/README.md#calibration-results) and [hybrid gate workflow](hybrid-tuning.md).
 
 ## Confidence scale
 

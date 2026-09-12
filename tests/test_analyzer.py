@@ -1265,10 +1265,10 @@ def test_semantic_only_pre_excludes_exact_hash_pairs(tmp_path: Path, monkeypatch
     assert not captured_exclude_pairs
 
 
-def test_combined_mode_excludes_tiny_filtered_ast_only_exact_pairs(
+def test_combined_mode_excludes_tiny_filtered_structural_only_exact_pairs(
     tmp_path: Path, monkeypatch
 ) -> None:
-    """Tiny-filtered ast-hash-only exact pairs must stay excluded from semantic scoring."""
+    """Tiny-filtered structural-hash-only exact pairs must stay excluded from semantic scoring."""
     project = tmp_path / "src"
     project.mkdir()
     (project / "__init__.py").write_text("")
