@@ -13,6 +13,8 @@ from codedupes.languages import registry
 from codedupes.languages.registry import (
     GRAMMAR_PACKAGES,
     TREE_SITTER_PACKAGE,
+    LanguageSelection,
+    get_backend,
     get_grammar_statuses,
     language_for_path,
     normalize_languages,
@@ -221,6 +223,46 @@ def test_grammar_status_requires_exact_pins(monkeypatch: pytest.MonkeyPatch) -> 
     rust = next(status for status in statuses if status.dialect == "rust")
     assert not rust.available
     assert "tree-sitter-rust==0.24.2 is required" in (rust.error or "")
+
+
+def test_grammar_status_pins_the_python_grammar(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Python parses through a pinned grammar wheel like every other language."""
+    installed = {
+        TREE_SITTER_PACKAGE[0]: TREE_SITTER_PACKAGE[1],
+        **{package: version for package, version in GRAMMAR_PACKAGES.values()},
+    }
+    monkeypatch.setattr(metadata, "version", installed.__getitem__)
+    monkeypatch.setattr(registry, "_probe_dialect", lambda dialect: None)
+
+    statuses = {status.dialect: status for status in get_grammar_statuses()}
+
+    python = statuses["python"]
+    assert python.language == "python"
+    assert (python.package, python.pinned_version) == ("tree-sitter-python", "0.25.0")
+    assert python.available and python.error is None
+
+
+@pytest.mark.parametrize(
+    ("language", "dialect", "backend_name"),
+    [
+        ("python", "python", "PythonBackend"),
+        ("c", "c", "CBackend"),
+        ("rust", "rust", "RustBackend"),
+        ("javascript", "jsx", "JavaScriptBackend"),
+        ("typescript", "tsx", "TypeScriptBackend"),
+    ],
+)
+def test_get_backend_builds_a_tree_sitter_backend_for_every_language(
+    tmp_path: Path, language: str, dialect: str, backend_name: str
+) -> None:
+    backend = get_backend(
+        root=tmp_path,
+        selection=LanguageSelection(language, dialect),
+        include_private=True,
+    )
+
+    assert type(backend).__name__ == backend_name
+    assert (backend.language, backend.dialect) == (language, dialect)
 
 
 def test_grammar_status_reports_wheels_that_fail_parser_construction(

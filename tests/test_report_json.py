@@ -47,7 +47,7 @@ def _result(tmp_path: Path) -> AnalysisResult:
     orphan = _unit(tmp_path, "orphan", file="z.py")
     return AnalysisResult(
         units=[a, b, c, orphan],
-        traditional_duplicates=[DuplicatePair(a, b, 1.0, "ast_hash")],
+        traditional_duplicates=[DuplicatePair(a, b, 1.0, "structural_hash")],
         semantic_duplicates=[DuplicatePair(b, c, 0.9, "semantic")],
         hybrid_duplicates=[
             HybridDuplicate(a, b, "exact", 1.0, has_exact=True),
@@ -182,7 +182,7 @@ def test_check_json_show_all_raw_edges_use_short_ids(tmp_path):
     payload = _payload(_result(tmp_path), ReportPolicy(show_all=True))
 
     assert payload["traditional_duplicates"] == [
-        {"unit_a": "u2", "unit_b": "u1", "similarity": 1.0, "method": "ast_hash"}
+        {"unit_a": "u2", "unit_b": "u1", "similarity": 1.0, "method": "structural_hash"}
     ]
     assert payload["semantic_duplicates"][0]["unit_a"] == "u1"
     assert payload["semantic_duplicates"][0]["unit_b"] == "u0"

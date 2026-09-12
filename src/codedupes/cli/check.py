@@ -94,7 +94,7 @@ from ._render import print_findings, print_summary
     "--strict-unused",
     is_flag=True,
     panel=Panel.DETECTION,
-    help="Do not skip public functions",
+    help="Report unreferenced public functions and public methods too",
 )
 @click.option(
     "--suppress-test-semantic",

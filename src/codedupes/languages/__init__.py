@@ -1,5 +1,6 @@
 """Polyglot extraction support for codedupes."""
 
+from codedupes.languages.naming import module_prefix, qualified
 from codedupes.languages.registry import (
     GRAMMAR_PACKAGES,
     REQUIRED_PARSER_PACKAGES,
@@ -24,6 +25,8 @@ __all__ = [
     "get_backend",
     "get_grammar_statuses",
     "language_for_path",
+    "module_prefix",
     "normalize_languages",
+    "qualified",
     "repository_allows_c_headers",
 ]

@@ -46,14 +46,22 @@ def make_code_unit(
     source: str,
     lineno: int = 1,
     unit_type: CodeUnitType = CodeUnitType.FUNCTION,
+    identifiers: frozenset[str] = frozenset(),
+    statement_count: int | None = None,
 ) -> CodeUnit:
     """Build one minimal public code unit for tests.
+
+    Nothing is derived from ``source``: a hand-built unit carries only the
+    identifiers and statement count it is given, exactly like a unit whose
+    backend features were never computed.
 
     :param tmp_path: Test directory the unit's file path points into.
     :param name: Unit name; the qualified name becomes ``sample.<name>``.
     :param source: Unit source text.
     :param lineno: Starting line number, defaults to 1.
     :param unit_type: Unit type, defaults to ``FUNCTION``.
+    :param identifiers: Backend identifier set, defaults to empty.
+    :param statement_count: Backend statement count, defaults to ``None``.
     :return: Constructed code unit.
     """
     return CodeUnit(
@@ -64,6 +72,8 @@ def make_code_unit(
         lineno=lineno,
         end_lineno=lineno + max(1, len(source.strip().splitlines()) - 1),
         source=source,
+        identifiers=identifiers,
+        statement_count=statement_count,
         is_public=True,
         is_exported=False,
     )

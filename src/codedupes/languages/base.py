@@ -18,7 +18,7 @@ class BackendResult:
 
 
 class LanguageBackend(Protocol):
-    """Contract implemented by non-Python language backends."""
+    """Contract implemented by every language backend."""
 
     language: str
     dialect: str

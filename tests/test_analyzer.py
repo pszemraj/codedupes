@@ -131,13 +131,9 @@ def _capture_semantic_unit_types(captured_types: list[CodeUnitType]):
 def _capture_traditional_units_runner(captured_units: list[CodeUnit]):
     """Build a traditional runner that records incoming units and returns no matches."""
 
-    def fake_traditional(
-        units,
-        jaccard_threshold=0.85,
-        compute_unused=True,
-    ):
+    def fake_traditional(units, jaccard_threshold=0.85):
         captured_units.extend(units)
-        return [], [], []
+        return [], []
 
     return fake_traditional
 
@@ -145,15 +141,10 @@ def _capture_traditional_units_runner(captured_units: list[CodeUnit]):
 def _traditional_single_jaccard_runner(similarity: float = 0.9):
     """Build a traditional runner returning one jaccard duplicate for first two units."""
 
-    def fake_traditional(
-        units,
-        jaccard_threshold=0.85,
-        compute_unused=True,
-    ):
+    def fake_traditional(units, jaccard_threshold=0.85):
         first, second = units[:2]
         return (
             [DuplicatePair(unit_a=first, unit_b=second, similarity=similarity, method="jaccard")],
-            [],
             [],
         )
 
@@ -341,18 +332,13 @@ def test_combined_mode_preserves_near_dupes_for_semantic_confirmation(
     captured_exclude_pairs: set[tuple[str, str]] = set()
     expected_exact_pair: tuple[str, str] = ("", "")
 
-    def fake_traditional(
-        units,
-        jaccard_threshold=0.85,
-        compute_unused=True,
-    ):
+    def fake_traditional(units, jaccard_threshold=0.85):
         first, second, third = units
         nonlocal expected_exact_pair
         expected_exact_pair = tuple(sorted((first.uid, second.uid)))
         return (
-            [DuplicatePair(unit_a=first, unit_b=second, similarity=1.0, method="ast_hash")],
+            [DuplicatePair(unit_a=first, unit_b=second, similarity=1.0, method="structural_hash")],
             [DuplicatePair(unit_a=second, unit_b=third, similarity=0.9, method="jaccard")],
-            [],
         )
 
     monkeypatch.setattr(analyzer_module, "run_traditional_analysis", fake_traditional)
@@ -633,12 +619,12 @@ def test_tiny_exact_duplicate_filter(
         result = analyzer.analyze(project)
 
     has_exact_duplicate = any(
-        duplicate.method in {"ast_hash", "token_hash"}
+        duplicate.method in {"structural_hash", "token_hash"}
         for duplicate in result.traditional_duplicates
     )
     assert has_exact_duplicate is expected_exact_duplicate
     exact_count = sum(
-        duplicate.method in {"ast_hash", "token_hash"}
+        duplicate.method in {"structural_hash", "token_hash"}
         for duplicate in result.traditional_duplicates
     )
     exact_logs = [
@@ -839,15 +825,10 @@ def test_tiny_near_duplicates_follow_tiny_filter(
     ).strip()
     project = create_project(tmp_path, source, module="tiny_near.py")
 
-    def fake_traditional(
-        units,
-        jaccard_threshold=0.85,
-        compute_unused=True,
-    ):
+    def fake_traditional(units, jaccard_threshold=0.85):
         return (
             [],
             [DuplicatePair(unit_a=units[0], unit_b=units[1], similarity=1.0, method="jaccard")],
-            [],
         )
 
     monkeypatch.setattr(analyzer_module, "run_traditional_analysis", fake_traditional)
@@ -1203,7 +1184,7 @@ def test_explicit_semantic_threshold_applies_flat_across_languages(
 def test_unused_analysis_preserves_duplicate_findings(
     tmp_path: Path, monkeypatch, run_unused: bool, run_traditional: bool
 ) -> None:
-    """Keep duplicate evidence for callbacks the unused heuristic cannot resolve."""
+    """Keep duplicate evidence for units the unused heuristic reports."""
     source = dedent(
         """
         def _a(value):
@@ -1215,9 +1196,6 @@ def test_unused_analysis_preserves_duplicate_findings(
             y = value + 2
             y *= 3
             return y + 2
-
-        list(map(_a, [1, 2]))
-        list(map(_b, [1, 2]))
         """
     ).strip()
     project = create_project(tmp_path, source, module="pairs.py")
@@ -1287,10 +1265,10 @@ def test_semantic_only_pre_excludes_exact_hash_pairs(tmp_path: Path, monkeypatch
     assert not captured_exclude_pairs
 
 
-def test_combined_mode_excludes_tiny_filtered_ast_only_exact_pairs(
+def test_combined_mode_excludes_tiny_filtered_structural_only_exact_pairs(
     tmp_path: Path, monkeypatch
 ) -> None:
-    """Tiny-filtered ast-hash-only exact pairs must stay excluded from semantic scoring."""
+    """Tiny-filtered structural-hash-only exact pairs must stay excluded from semantic scoring."""
     project = tmp_path / "src"
     project.mkdir()
     (project / "__init__.py").write_text("")
@@ -1321,7 +1299,7 @@ def test_combined_mode_excludes_tiny_filtered_ast_only_exact_pairs(
     unit_by_name = {unit.name: unit for unit in result.units}
     pair = ordered_pair_key(unit_by_name["alpha"], unit_by_name["beta"])
 
-    # Same normalized AST, different identifiers: an ast_hash-only exact pair.
+    # Same normalized structure, different identifiers: a structural_hash-only exact pair.
     assert unit_by_name["alpha"].structural_hash == unit_by_name["beta"].structural_hash
     assert unit_by_name["alpha"].token_hash != unit_by_name["beta"].token_hash
     # The tiny filter strips the pair from traditional output...
@@ -1396,15 +1374,11 @@ def test_combined_mode_fallback_keeps_full_scope_traditional_units(
 
     traditional_calls: list[tuple[tuple[str, ...], list[str]]] = []
 
-    def fake_traditional(
-        units,
-        jaccard_threshold=0.85,
-        compute_unused=True,
-    ):
+    def fake_traditional(units, jaccard_threshold=0.85):
         traditional_calls.append(
             (tuple(unit.name for unit in units), [unit.name for unit in units])
         )
-        return [], [], []
+        return [], []
 
     monkeypatch.setattr(analyzer_module, "run_traditional_analysis", fake_traditional)
     monkeypatch.setattr(
@@ -1926,7 +1900,9 @@ def test_suppress_test_semantic_matches_filters_test_named_pairs(
 def test_hybrid_synthesis_exact_only_included(tmp_path: Path) -> None:
     unit_a = make_code_unit(tmp_path, name="a", source="def a(x):\n    return x + 1\n", lineno=1)
     unit_b = make_code_unit(tmp_path, name="b", source="def b(y):\n    return y + 1\n", lineno=5)
-    traditional = [DuplicatePair(unit_a=unit_a, unit_b=unit_b, similarity=1.0, method="ast_hash")]
+    traditional = [
+        DuplicatePair(unit_a=unit_a, unit_b=unit_b, similarity=1.0, method="structural_hash")
+    ]
 
     hybrid = analyzer_module._synthesize_hybrid_duplicates(
         traditional,
@@ -1979,11 +1955,22 @@ _MECHANISM_SPLIT = {"weak_identifier_jaccard_min": 0.20, "statement_ratio_min": 
 
 
 def test_hybrid_synthesis_semantic_only_corroboration_sets_tier(tmp_path: Path) -> None:
+    # One shared identifier out of five clears the 0.20 overlap floor exactly.
     unit_a = make_code_unit(
-        tmp_path, name="a", source="def alpha(v):\n    z = v + 1\n    return z\n", lineno=1
+        tmp_path,
+        name="a",
+        source="def alpha(v):\n    z = v + 1\n    return z\n",
+        lineno=1,
+        identifiers=frozenset({"alpha", "v", "z"}),
+        statement_count=2,
     )
     unit_b = make_code_unit(
-        tmp_path, name="b", source="def beta(v):\n    q = v + 2\n    return q\n", lineno=6
+        tmp_path,
+        name="b",
+        source="def beta(v):\n    q = v + 2\n    return q\n",
+        lineno=6,
+        identifiers=frozenset({"beta", "v", "q"}),
+        statement_count=2,
     )
 
     # Semantic pairs arrive pre-gated. Corroborating lexical/size evidence
@@ -2006,12 +1993,16 @@ def test_hybrid_synthesis_semantic_only_corroboration_sets_tier(tmp_path: Path) 
         name="c",
         source="def c(a):\n    x = a + 1\n    y = x + 1\n    z = y + 1\n    return z\n",
         lineno=12,
+        identifiers=frozenset({"c", "a", "x", "y", "z"}),
+        statement_count=4,
     )
     weak_sources_b = make_code_unit(
         tmp_path,
         name="d",
         source="def d(v):\n    return v\n",
         lineno=20,
+        identifiers=frozenset({"d", "v"}),
+        statement_count=1,
     )
     weak_semantic = [
         DuplicatePair(
@@ -2039,15 +2030,32 @@ def test_semantic_review_never_outranks_a_corroborated_pair(tmp_path: Path) -> N
         name="review_a",
         source="def review_a(a):\n    x = a + 1\n    y = x + 1\n    z = y + 1\n    return z\n",
         lineno=1,
+        identifiers=frozenset({"review_a", "a", "x", "y", "z"}),
+        statement_count=4,
     )
     review_b = make_code_unit(
-        tmp_path, name="review_b", source="def review_b(v):\n    return v\n", lineno=12
+        tmp_path,
+        name="review_b",
+        source="def review_b(v):\n    return v\n",
+        lineno=12,
+        identifiers=frozenset({"review_b", "v"}),
+        statement_count=1,
     )
     confirmed_a = make_code_unit(
-        tmp_path, name="confirmed_a", source="def confirmed_a(x):\n    return x + 1\n", lineno=20
+        tmp_path,
+        name="confirmed_a",
+        source="def confirmed_a(x):\n    return x + 1\n",
+        lineno=20,
+        identifiers=frozenset({"confirmed_a", "x"}),
+        statement_count=1,
     )
     confirmed_b = make_code_unit(
-        tmp_path, name="confirmed_b", source="def confirmed_b(y):\n    return y + 1\n", lineno=26
+        tmp_path,
+        name="confirmed_b",
+        source="def confirmed_b(y):\n    return y + 1\n",
+        lineno=26,
+        identifiers=frozenset({"confirmed_b", "y"}),
+        statement_count=1,
     )
 
     hybrid = analyzer_module._synthesize_hybrid_duplicates(
@@ -2066,7 +2074,13 @@ def test_semantic_review_never_outranks_a_corroborated_pair(tmp_path: Path) -> N
     assert hybrid[0].confidence > hybrid[1].confidence
 
 
-def test_hybrid_synthesis_publishes_alpha_renamed_semantic_pair(tmp_path: Path) -> None:
+def _alpha_renamed_pair(tmp_path: Path, similarity: float) -> list[DuplicatePair]:
+    """Build a same-shape pair whose identifier sets are fully disjoint.
+
+    :param tmp_path: Test directory the units' file path points into.
+    :param similarity: Semantic similarity to record on the pair.
+    :return: One semantic duplicate pair with no lexical overlap.
+    """
     unit_a = make_code_unit(
         tmp_path,
         name="collect_total",
@@ -2077,6 +2091,10 @@ def test_hybrid_synthesis_publishes_alpha_renamed_semantic_pair(tmp_path: Path) 
             "    return amount\n"
         ),
         lineno=1,
+        identifiers=frozenset(
+            {"collect_total", "records", "accepted", "record", "enabled", "amount", "value"}
+        ),
+        statement_count=3,
     )
     unit_b = make_code_unit(
         tmp_path,
@@ -2088,12 +2106,18 @@ def test_hybrid_synthesis_publishes_alpha_renamed_semantic_pair(tmp_path: Path) 
             "    return result\n"
         ),
         lineno=8,
+        identifiers=frozenset(
+            {"measure_sum", "entries", "chosen", "entry", "ready", "result", "weight"}
+        ),
+        statement_count=3,
     )
-    semantic = [DuplicatePair(unit_a=unit_a, unit_b=unit_b, similarity=0.91, method="semantic")]
+    return [DuplicatePair(unit_a=unit_a, unit_b=unit_b, similarity=similarity, method="semantic")]
 
+
+def test_hybrid_synthesis_publishes_alpha_renamed_semantic_pair(tmp_path: Path) -> None:
     hybrid = analyzer_module._synthesize_hybrid_duplicates(
         [],
-        semantic,
+        _alpha_renamed_pair(tmp_path, 0.91),
         jaccard_threshold=0.85,
         **_MECHANISM_SPLIT,
     )
@@ -2102,32 +2126,6 @@ def test_hybrid_synthesis_publishes_alpha_renamed_semantic_pair(tmp_path: Path) 
     assert hybrid[0].tier == "semantic_review"
     assert hybrid[0].weak_identifier_jaccard == 0.0
     assert hybrid[0].statement_count_ratio == 1.0
-
-
-def _alpha_renamed_pair(tmp_path: Path, similarity: float) -> list[DuplicatePair]:
-    unit_a = make_code_unit(
-        tmp_path,
-        name="collect_total",
-        source=(
-            "def collect_total(records):\n"
-            "    accepted = [record for record in records if record.enabled]\n"
-            "    amount = sum(record.value for record in accepted)\n"
-            "    return amount\n"
-        ),
-        lineno=1,
-    )
-    unit_b = make_code_unit(
-        tmp_path,
-        name="measure_sum",
-        source=(
-            "def measure_sum(entries):\n"
-            "    chosen = [entry for entry in entries if entry.ready]\n"
-            "    result = sum(entry.weight for entry in chosen)\n"
-            "    return result\n"
-        ),
-        lineno=8,
-    )
-    return [DuplicatePair(unit_a=unit_a, unit_b=unit_b, similarity=similarity, method="semantic")]
 
 
 @pytest.mark.parametrize(

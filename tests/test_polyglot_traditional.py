@@ -5,11 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from codedupes.models import CodeUnit, CodeUnitType
-from codedupes.traditional import (
-    find_near_duplicates_jaccard,
-    find_potentially_unused,
-    run_traditional_analysis,
-)
+from codedupes.traditional import find_near_duplicates_jaccard, run_traditional_analysis
+from codedupes.unused import find_potentially_unused
 
 
 def _unit(
@@ -71,11 +68,7 @@ def test_exact_hashes_never_cross_language_boundaries(tmp_path: Path) -> None:
         ),
     ]
 
-    exact, near, _unused = run_traditional_analysis(
-        units,
-        jaccard_threshold=0.8,
-        compute_unused=False,
-    )
+    exact, near = run_traditional_analysis(units, jaccard_threshold=0.8)
 
     assert exact == []
     assert near == []
@@ -101,14 +94,10 @@ def test_exact_hashes_still_match_within_one_language(tmp_path: Path) -> None:
         ),
     ]
 
-    exact, _near, _unused = run_traditional_analysis(
-        units,
-        jaccard_threshold=0.8,
-        compute_unused=False,
-    )
+    exact, _near = run_traditional_analysis(units, jaccard_threshold=0.8)
 
     assert len(exact) == 1
-    assert exact[0].method == "ast_hash"
+    assert exact[0].method == "structural_hash"
 
 
 def test_overlapping_nested_units_are_not_reported_as_exact(tmp_path: Path) -> None:
@@ -131,11 +120,7 @@ def test_overlapping_nested_units_are_not_reported_as_exact(tmp_path: Path) -> N
         ),
     ]
 
-    exact, _near, _unused = run_traditional_analysis(
-        units,
-        jaccard_threshold=0.8,
-        compute_unused=False,
-    )
+    exact, _near = run_traditional_analysis(units, jaccard_threshold=0.8)
 
     assert exact == []
 

@@ -1,6 +1,6 @@
 # codedupes
 
-`codedupes` finds duplicate code in Python, C, Rust, JavaScript/JSX, and TypeScript/TSX. It combines structural/token matching with semantic embeddings to find both similar syntax and similar intent. It also reports potentially unused Python definitions for review.
+`codedupes` finds duplicate code in Python, C, Rust, JavaScript/JSX, and TypeScript/TSX. It combines structural/token matching with semantic embeddings to find both similar syntax and similar intent. It also reports potentially unused Python definitions, ones nothing in the tree references, for review.
 
 Use `check` to review duplicate candidates with file and line locations, or `search` to find functions and methods using a natural-language query. It analyzes source files without building or running your project.
 

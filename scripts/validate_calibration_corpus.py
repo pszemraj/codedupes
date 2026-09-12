@@ -4,7 +4,7 @@ Checks that every label resolves, that each labeled category exhibits the hash
 relations that define it (exact, reformat, doc_variant, renamed, near_*), that
 negative controls share no fingerprint, and that corpus files obey the
 authoring constraints (no test-glob filenames, unique unit names per file,
-zero parse-error diagnostics). Runs extraction only, so it is cheap enough for
+zero parse diagnostics). Runs extraction only, so it is cheap enough for
 corpus authors to iterate against.
 """
 
@@ -42,7 +42,7 @@ CATEGORY_NAMES = (
     "near_restructure",
 )
 NEAR_CATEGORIES = ("near_rename", "near_translation", "near_restructure")
-PARSE_FAILURE_DIAGNOSTIC_CODES = frozenset({"parse-error", "partial-parse", "unit-parse-error"})
+PARSE_FAILURE_DIAGNOSTIC_CODES = frozenset({"partial-parse", "unit-parse-error"})
 
 
 def _group_key(group: list[str]) -> tuple[str, ...]:

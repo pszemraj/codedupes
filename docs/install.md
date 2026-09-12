@@ -12,7 +12,7 @@ If `codedupes` is not found after installation, ensure your Python installation'
 
 ## Polyglot parser dependencies
 
-A normal installation includes the pinned Tree-sitter parser packages from [pyproject.toml](../pyproject.toml). They provide precompiled grammars; scanning does not download or compile them. You do not need a C, Rust, or JavaScript build toolchain to scan those source files.
+A normal installation includes the pinned Tree-sitter parser packages from [pyproject.toml](../pyproject.toml): `tree-sitter` plus the `tree-sitter-python`, `tree-sitter-c`, `tree-sitter-rust`, `tree-sitter-javascript`, and `tree-sitter-typescript` grammars, each exact-pinned; `codedupes info --verbose` shows the required and installed version of every grammar. They provide precompiled grammars; scanning does not download or compile them. Python source is parsed with its pinned grammar rather than the interpreter's `ast`, so every language shares one extraction path. You do not need a C, Rust, or JavaScript build toolchain to scan those source files.
 
 See [Polyglot language support](polyglot-languages.md) for supported extensions, extraction scope, and parser errors.
 
@@ -42,4 +42,4 @@ CODEDUPES_SMOKE_NETWORK=1 pytest tests/test_semantic_smoke.py -k network_smoke
 
 For the real accelerator suites and model/search smoke checks, see [accelerator validation](accelerators.md#hardware-validation).
 
-The source lives in [`src/codedupes/`](../src/codedupes/): [`cli/`](../src/codedupes/cli/) handles commands and terminal rendering, [`report/`](../src/codedupes/report/) selects findings and serializes JSON, `analyzer.py` coordinates analysis, `extractor.py` and `languages/` extract definitions, and `traditional.py` / `semantic.py` implement matching. Tests live in [`tests/`](../tests/); labeled examples and calibration inputs live in [`test_fixtures/`](../test_fixtures/), with sweep tools in [`scripts/`](../scripts/). Start with [analysis defaults](analysis-defaults.md) when changing behavior, or the [Python API](python-api.md) when integrating the package.
+The source lives in [`src/codedupes/`](../src/codedupes/): [`cli/`](../src/codedupes/cli/) handles commands and terminal rendering, [`report/`](../src/codedupes/report/) selects findings and serializes JSON, `analyzer.py` coordinates analysis, `extractor.py` and `languages/` extract definitions, `traditional.py` / `semantic.py` implement matching, and `unused.py` builds the reference graph. Tests live in [`tests/`](../tests/); labeled examples and calibration inputs live in [`test_fixtures/`](../test_fixtures/), with sweep tools in [`scripts/`](../scripts/). Start with [analysis defaults](analysis-defaults.md) when changing behavior, or the [Python API](python-api.md) when integrating the package.

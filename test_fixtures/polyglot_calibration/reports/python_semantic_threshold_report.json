@@ -102,7 +102,7 @@
           "transformers": "5.14.1",
           "sentence-transformers": "5.7.0"
         },
-        "codedupes_version": "0.5.3",
+        "codedupes_version": "0.5.4.dev1+g582759789",
         "mode": "duplicate",
         "semantic_task": "semantic-similarity",
         "encode_plan": {
@@ -127,13 +127,21 @@
             "method"
           ],
           "min_recursive_statements": 3,
-          "include_private": true
+          "include_private": true,
+          "languages": [
+            "python"
+          ]
         },
         "batch_size": 4,
         "corpus_path": "test_fixtures/polyglot_calibration/python",
         "corpus_sha256": "43deed0fdcf0eed447a58883eeba7afe9ff26de24b4d5d8df74c682177cad66f",
         "labels_path": "test_fixtures/polyglot_calibration/labels/python.json",
         "labels_sha256": "e43bac816cde43d174b0342898d49cde143b94448c571c3fdab0afaa9cb53121",
+        "traditional_candidate_policy": {
+          "jaccard_threshold": 0.85,
+          "filter_tiny_traditional": true,
+          "tiny_unit_statement_cutoff": 3
+        },
         "output_policy": "hybrid_duplicates",
         "visible_policy": {
           "excluded_tiers": [
@@ -151,8 +159,10 @@
         "selected_at_grid_edge": null,
         "candidate_coverage": {
           "labeled_positive_pairs": 34,
-          "scoreable_positive_pairs": 29,
-          "traditional_recovered_pairs": 0,
+          "embedded_positive_pairs": 29,
+          "scoreable_positive_pairs": 15,
+          "traditional_recovered_pairs": 14,
+          "reachable_positive_pairs": 29,
           "unreachable_positive_pairs": 5,
           "recall_ceiling": 0.8529411764705882
         },
@@ -1906,7 +1916,7 @@
           "transformers": "5.14.1",
           "sentence-transformers": "5.7.0"
         },
-        "codedupes_version": "0.5.3",
+        "codedupes_version": "0.5.4.dev1+g582759789",
         "mode": "duplicate",
         "semantic_task": "semantic-similarity",
         "encode_plan": {
@@ -1931,13 +1941,21 @@
             "method"
           ],
           "min_recursive_statements": 3,
-          "include_private": true
+          "include_private": true,
+          "languages": [
+            "python"
+          ]
         },
         "batch_size": 4,
         "corpus_path": "test_fixtures/polyglot_calibration/python",
         "corpus_sha256": "43deed0fdcf0eed447a58883eeba7afe9ff26de24b4d5d8df74c682177cad66f",
         "labels_path": "test_fixtures/polyglot_calibration/labels/python.json",
         "labels_sha256": "e43bac816cde43d174b0342898d49cde143b94448c571c3fdab0afaa9cb53121",
+        "traditional_candidate_policy": {
+          "jaccard_threshold": 0.85,
+          "filter_tiny_traditional": true,
+          "tiny_unit_statement_cutoff": 3
+        },
         "output_policy": "hybrid_duplicates",
         "visible_policy": {
           "excluded_tiers": [
@@ -1955,8 +1973,10 @@
         "selected_at_grid_edge": null,
         "candidate_coverage": {
           "labeled_positive_pairs": 34,
-          "scoreable_positive_pairs": 29,
-          "traditional_recovered_pairs": 0,
+          "embedded_positive_pairs": 29,
+          "scoreable_positive_pairs": 15,
+          "traditional_recovered_pairs": 14,
+          "reachable_positive_pairs": 29,
           "unreachable_positive_pairs": 5,
           "recall_ceiling": 0.8529411764705882
         },

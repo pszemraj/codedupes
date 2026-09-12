@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import ast
 import contextlib
 import hashlib
 import importlib
@@ -10,7 +9,6 @@ import json
 import logging
 import os
 import sys
-import textwrap
 import threading
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -56,7 +54,6 @@ from codedupes.embedding_cache import (
     log_warning_once,
     resolve_cache_dir,
 )
-from codedupes.extractor import count_executable_statements
 from codedupes.logging_utils import quiet_unconfigured_dependency_loggers
 from codedupes.models import CodeUnit, DuplicatePair, ExtractionDiagnostic
 from codedupes.pairs import ordered_pair_key
@@ -2001,43 +1998,19 @@ def _cache_write_allowed(
 
 
 def get_code_unit_statement_count(unit: CodeUnit) -> int:
-    """Get effective statement count for a unit, excluding docstring.
+    """Get the effective statement count for a unit, excluding its docstring.
 
-    Statements are counted recursively through control-flow bodies (``try``,
-    ``with``, loops, conditionals, ``match``) so a large function implemented
-    inside one outer block is not measured as a single statement. Nested
-    function/class definitions count as one declaration each; their bodies
-    belong to their own units.
+    Extraction stores the count on every unit: statements are counted recursively
+    through control-flow bodies (``try``, ``with``, loops, conditionals,
+    ``match``) so a large function implemented inside one outer block is not
+    measured as a single statement, and nested function/class definitions count
+    as one declaration each because their bodies belong to their own units. A
+    unit built without a count measures as empty.
 
     :param unit: Unit to measure.
     :return: Number of executable statements.
     """
-    if unit.statement_count is not None:
-        return unit.statement_count
-
-    if not unit.source:
-        return 0
-
-    # Extracted nested methods/classes retain their file indentation. Dedent
-    # the definition before parsing so it parses at module level.
-    text = textwrap.dedent(unit.source).strip()
-    if not text:
-        return 0
-
-    try:
-        tree = ast.parse(text)
-    except SyntaxError:
-        return 0
-
-    if not tree.body:
-        return 0
-
-    top_node = tree.body[0]
-    if isinstance(top_node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-        body = top_node.body
-    else:
-        body = tree.body
-    return count_executable_statements(body)
+    return unit.statement_count if unit.statement_count is not None else 0
 
 
 def _resolve_model_dtype(family: str, device: str) -> Any:

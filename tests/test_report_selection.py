@@ -53,7 +53,7 @@ def _result(tmp_path: Path, **overrides) -> AnalysisResult:
     c = _unit(tmp_path, "c", file="b.py", start_byte=0)
     fields = {
         "units": [a, b, c],
-        "traditional_duplicates": [DuplicatePair(a, b, 1.0, "ast_hash")],
+        "traditional_duplicates": [DuplicatePair(a, b, 1.0, "structural_hash")],
         "semantic_duplicates": [
             DuplicatePair(a, b, 0.95, "semantic"),
             DuplicatePair(b, c, 0.85, "semantic"),
@@ -318,7 +318,7 @@ def test_max_duplicates_ranks_traditional_only_mode_by_similarity(tmp_path):
     d = _unit(tmp_path, "d", start_byte=60)
     e = _unit(tmp_path, "e", start_byte=80)
     f = _unit(tmp_path, "f", start_byte=100)
-    exact = DuplicatePair(a, b, 1.0, "ast_hash")
+    exact = DuplicatePair(a, b, 1.0, "structural_hash")
     near_086 = DuplicatePair(b, c, 0.86, "jaccard")
     near_099 = DuplicatePair(c, d, 0.99, "jaccard")
     near_090_first = DuplicatePair(d, e, 0.90, "jaccard")

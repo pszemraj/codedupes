@@ -115,7 +115,7 @@ codedupes check ./src --json | jq empty
       "type": "function",
       "language": "python",
       "dialect": "python",
-      "native_kind": "FunctionDef",
+      "native_kind": "function_definition",
       "file": "/repo/src/a.py",
       "line": 1,
       "end_line": 2,
@@ -133,11 +133,13 @@ codedupes check ./src --json | jq empty
 
 The shortened example omits `u1` and `u2` from `units`; real output includes every id referenced by any emitted finding list exactly once. Units with no emitted finding are not present, so `summary.total_units` is the full extracted corpus count while `units` contains only units needed to resolve the report.
 
+`native_kind` is the grammar node kind (`function_definition` or `class_definition` for Python, whether or not the definition is decorated). `line`, `start_byte`, and `start_column` locate the unit's first byte - the first decorator of a decorated Python definition - so an indented method reports a non-zero `start_column`; see [source ranges](polyglot-languages.md#source-ranges-and-parse-recovery).
+
 `weak_identifier_jaccard` and `statement_count_ratio` are computed only for the two semantic-only tiers; they are `null` for exact, traditional-near, and hybrid-confirmed pairs.
 
 #### Report selection
 
-In default combined mode, `duplicates` contains hybrid edges of every tier except `semantic_review`; see [tier evidence](analysis-defaults.md#hybrid-synthesis-confidence-defaults). `--include-review` admits review pairs into the same [confidence ranking](analysis-defaults.md#confidence-scale). `--show-all` implies `--include-review` and also adds `traditional_duplicates` and `semantic_duplicates` as raw edge lists with `unit_a`, `unit_b`, `similarity`, and `method`.
+In default combined mode, `duplicates` contains hybrid edges of every tier except `semantic_review`; see [tier evidence](analysis-defaults.md#hybrid-synthesis-confidence-defaults). `--include-review` admits review pairs into the same [confidence ranking](analysis-defaults.md#confidence-scale). `--show-all` implies `--include-review` and also adds `traditional_duplicates` and `semantic_duplicates` as raw edge lists with `unit_a`, `unit_b`, `similarity`, and `method` (`structural_hash`, `token_hash`, or `jaccard` for traditional edges; `semantic` for semantic edges).
 
 `summary.hybrid_duplicates` counts the complete synthesis, `summary.duplicates_by_tier` breaks that count down over all five tiers (always present, zero-filled), `summary.reported_duplicates` counts the edges actually emitted, `summary.omitted_review_duplicates` counts pairs withheld by the report policy, and `summary.truncated_duplicates` counts pairs cut by `--max-duplicates`. In combined mode, `reported_duplicates + omitted_review_duplicates + truncated_duplicates == hybrid_duplicates` regardless of report-selection flags.
 

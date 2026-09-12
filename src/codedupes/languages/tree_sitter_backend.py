@@ -1,22 +1,25 @@
-"""Tree-sitter extraction backends for C, Rust, JavaScript, and TypeScript.
+"""Tree-sitter extraction backends for Python, C, Rust, JavaScript, and TypeScript.
 
 The parser packages are imported only when one of these languages is actually
 encountered.  No grammar is downloaded or compiled at analysis time: the
-project pins the official precompiled Python grammar wheels in ``pyproject``.
+project pins the official precompiled grammar wheels in ``pyproject``.
 """
 
 from __future__ import annotations
 
+import builtins as builtins_module
 import hashlib
 import importlib
+import keyword
 import re
 import threading
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, ClassVar
 
 from codedupes.languages.base import BackendResult
+from codedupes.languages.naming import module_prefix, qualified
 from codedupes.languages.registry import GRAMMAR_PACKAGES
 from codedupes.models import CodeUnit, CodeUnitType, ExtractionDiagnostic
 
@@ -74,6 +77,44 @@ _CLASS_MEMBER_CALLABLE_TYPES = {
 _STRING_MARKERS = ("string", "char_literal", "template_string", "raw_string", "jsx_text")
 _NUMBER_MARKERS = ("number", "integer", "float", "decimal", "hex", "octal", "binary")
 
+_PYTHON_DEFINITION_TYPES = frozenset({"function_definition", "class_definition"})
+_PYTHON_IMPORT_TYPES = frozenset(
+    {"import_statement", "import_from_statement", "future_import_statement"}
+)
+# ``dotted_name`` also spells the class of a ``case Point(x=0)`` pattern, so an
+# identifier under one is import shape only when an import statement encloses it.
+_PYTHON_IMPORT_NAME_PARENTS = frozenset({"dotted_name", "aliased_import"})
+# Module-level statements whose bodies still run at import time, walked when
+# looking for ``__all__``.
+_PYTHON_MODULE_CONTAINER_TYPES = frozenset(
+    {
+        "if_statement",
+        "elif_clause",
+        "else_clause",
+        "try_statement",
+        "except_clause",
+        "except_group_clause",
+        "finally_clause",
+        "with_statement",
+        "block",
+    }
+)
+# ``dir(builtins)`` rather than ``dir(__builtins__)``: the latter is a plain dict
+# inside imported modules. ``self``/``cls`` are conventions every method shares,
+# so they carry no identifier signal between units.
+# ``site`` injects ``exit``/``quit``/``help``/``copyright``/``credits``/``license``
+# into ``builtins`` at startup; they are excluded so identifier sets do not
+# depend on whether the interpreter ran with ``-S``.
+_PYTHON_BUILTINS = (
+    frozenset(keyword.kwlist)
+    | frozenset(
+        name
+        for name, value in vars(builtins_module).items()
+        if getattr(type(value), "__module__", "") != "_sitebuiltins"
+    )
+    | frozenset({"self", "cls"})
+)
+
 
 class GrammarUnavailableError(RuntimeError):
     """Raised when a requested precompiled parser package cannot be loaded."""
@@ -108,7 +149,9 @@ class GrammarProvider:
 
             module_name: str
             function_name: str
-            if grammar_key == "c":
+            if grammar_key == "python":
+                module_name, function_name = "tree_sitter_python", "language"
+            elif grammar_key == "c":
                 module_name, function_name = "tree_sitter_c", "language"
             elif grammar_key == "rust":
                 module_name, function_name = "tree_sitter_rust", "language"
@@ -259,7 +302,8 @@ def _preceding_named_siblings(node: Any) -> Iterable[Any]:
 
     py-tree-sitter exposes ``prev_named_sibling``, which is O(1) per step; scanning
     the parent's named children instead is O(siblings) per lookup and turns
-    attribute collection quadratic in the number of items in a file. Node doubles
+    attribute collection and docstring detection quadratic in the number of
+    items in a file. Node doubles
     and parsers without that attribute fall back to the scan, which matches nodes
     by source identity because bindings may hand out fresh wrappers.
 
@@ -364,7 +408,7 @@ def _has_ancestor(node: Any, node_types: set[str]) -> bool:
 
 
 def _contains_error(node: Any) -> bool:
-    """Report whether a node is, or contains, a parse-error marker.
+    """Report whether a node is, or contains, a syntax-error recovery marker.
 
     :param node: Node to inspect.
     :return: ``True`` when the node is erroneous, missing, or covers recovery nodes.
@@ -374,49 +418,6 @@ def _contains_error(node: Any) -> bool:
     if bool(getattr(node, "is_error", False)) or bool(getattr(node, "is_missing", False)):
         return True
     return getattr(node, "type", "") == "ERROR"
-
-
-def _module_prefix(root: Path, file_path: Path, language: str) -> str:
-    """Build the dotted module prefix that qualifies every unit in one file.
-
-    :param root: Extraction root the file path is made relative to.
-    :param file_path: File being extracted.
-    :param language: Canonical language name.
-    :return: Dotted prefix, with conventional entry-point stems collapsed away.
-    """
-    try:
-        rel = file_path.relative_to(root)
-    except ValueError:
-        rel = Path(file_path.name)
-
-    parts = list(rel.parts[:-1])
-    stem = rel.name
-    for suffix in (".d.ts", ".d.mts", ".d.cts", ".tsx", ".mts", ".cts", ".jsx", ".mjs", ".cjs"):
-        if stem.lower().endswith(suffix):
-            stem = stem[: -len(suffix)]
-            break
-    else:
-        stem = Path(stem).stem
-
-    conventional = {"index"}
-    if language == "rust":
-        conventional |= {"mod", "lib", "main"}
-    if stem not in conventional or not parts:
-        parts.append(stem)
-    if not parts:
-        parts.append(stem or file_path.stem)
-    return ".".join(part for part in parts if part)
-
-
-def _qualified(prefix: str, *parts: str) -> str:
-    """Join a module prefix and name segments into one dotted name.
-
-    :param prefix: Module prefix, possibly empty.
-    :param parts: Name segments in outermost-first order.
-    :return: Dotted qualified name with empty segments dropped.
-    """
-    clean = [part for part in (prefix, *parts) if part]
-    return ".".join(clean)
 
 
 def _push_context_segment(segments: list[str], segment: str) -> None:
@@ -461,15 +462,81 @@ def _leaf_nodes(node: Any) -> Iterable[Any]:
             yield candidate
 
 
-def _structural_hash(node: Any, source: bytes, language: str, unit_type: CodeUnitType) -> str:
+NodePredicate = Callable[[Any, Any | None], bool]
+NodeRename = Callable[[Any, Any | None], str | None]
+
+
+def _never(node: Any, parent: Any | None) -> bool:
+    """Default hook answer: the generic walk applies with no language exception.
+
+    :param node: Node under consideration.
+    :param parent: Parent of ``node`` in the walk, ``None`` at the unit root.
+    :return: Always ``False``.
+    """
+    return False
+
+
+def _keep_type(node: Any, parent: Any | None) -> str | None:
+    """Default marker answer: a collapsed string is labeled with its own node type.
+
+    :param node: String-like node being collapsed.
+    :param parent: Parent of ``node`` in the walk.
+    :return: Always ``None``.
+    """
+    return None
+
+
+@dataclass(frozen=True)
+class HashPolicy:
+    """Language hooks consulted by the generic fingerprint walks.
+
+    Every hook receives ``(node, parent)`` from the walk itself, so a backend can
+    key on grammar context without re-deriving it through ``node.parent``. The
+    defaults answer ``False`` everywhere, which is exactly the walk every backend
+    used before the hooks existed; ``FINGERPRINT_SCHEMA_VERSION`` therefore does
+    not move when a backend adopts a policy.
+    """
+
+    prune_structural: NodePredicate = _never
+    """Drop the subtree from the structural stream (formatting artifacts, docstrings)."""
+    prune_tokens: NodePredicate = _never
+    """Drop the subtree from the token stream."""
+    preserve_identifier: NodePredicate = _never
+    """Keep an identifier leaf's text instead of normalizing it (API shape, not a local)."""
+    opaque_token: NodePredicate = _never
+    """Emit the node's full text as one token instead of flattening its leaves."""
+    descend_string: NodePredicate = _never
+    """Walk into a string-like node instead of collapsing it to ``<STR>``."""
+    unwrap: NodePredicate = _never
+    """Emit only the node's named children, dropping its wrapper and punctuation (grouping parentheses)."""
+    string_marker: NodeRename = _keep_type
+    """Label a collapsed string with another node type so equivalent literal shapes share a marker."""
+
+
+DEFAULT_HASH_POLICY = HashPolicy()
+
+
+def _structural_hash(
+    node: Any,
+    source: bytes,
+    language: str,
+    unit_type: CodeUnitType,
+    *,
+    policy: HashPolicy = DEFAULT_HASH_POLICY,
+) -> str:
     """Fingerprint a subtree with local identifiers, literals, and comments normalized.
 
     :param node: Unit node to fingerprint.
     :param source: Full file source bytes.
     :param language: Canonical language name, mixed into the fingerprint.
-    :param unit_type: Unit kind, mixed into the fingerprint.
+    :param unit_type: Unit kind; functions and methods share the function fingerprint domain.
+    :param policy: Language hooks applied during the walk, defaults to no exceptions.
     :return: Truncated SHA-256 digest of the normalized structural token stream.
     """
+    # Exact comparison groups functions and methods together. Use the existing
+    # function domain for both, retaining the reported type on the CodeUnit.
+    if unit_type == CodeUnitType.METHOD:
+        unit_type = CodeUnitType.FUNCTION
     normalized_names: dict[str, str] = {}
     pieces: list[str] = [
         f"schema={FINGERPRINT_SCHEMA_VERSION}",
@@ -494,12 +561,14 @@ def _structural_hash(node: Any, source: bytes, language: str, unit_type: CodeUni
             (int(getattr(name_node, "start_byte", -1)), int(getattr(name_node, "end_byte", -1)))
         )
 
-    # Iterative preorder walk with a close-paren sentinel: minified or
-    # generated sources nest deeply enough to blow the Python recursion limit.
+    # Iterative preorder walk over ``(node, parent)`` pairs with a close-paren
+    # sentinel: minified or generated sources nest deeply enough to blow the
+    # Python recursion limit, and carrying the parent keeps the policy hooks
+    # O(1) instead of climbing ``node.parent`` per node.
     close_marker = object()
-    stack: list[Any] = [node]
+    stack: list[tuple[Any, Any | None]] = [(node, None)]
     while stack:
-        current = stack.pop()
+        current, parent = stack.pop()
         if current is close_marker:
             pieces.append(")")
             continue
@@ -507,34 +576,41 @@ def _structural_hash(node: Any, source: bytes, language: str, unit_type: CodeUni
         node_type = str(getattr(current, "type", ""))
         if node_type in _COMMENT_TYPES or "comment" in node_type:
             continue
+        if policy.prune_structural(current, parent):
+            continue
+        if policy.unwrap(current, parent):
+            stack.extend((child, current) for child in reversed(_named_children(current)))
+            continue
 
-        text = _node_text(source, current)
         lower_type = node_type.lower()
         children = _children(current)
 
-        if any(marker in lower_type for marker in _STRING_MARKERS) and not (
-            "template" in lower_type and children
+        if (
+            any(marker in lower_type for marker in _STRING_MARKERS)
+            and not ("template" in lower_type and children)
+            and not policy.descend_string(current, parent)
         ):
-            pieces.append(f"<{node_type}:STR>")
+            marker_type = policy.string_marker(current, parent) or node_type
+            pieces.append(f"<{marker_type}:STR>")
             continue
 
         if node_type in _CLASS_DECLARATION_TYPES or (
             node_type in _CLASS_MEMBER_CALLABLE_TYPES
-            and (
-                current is node
-                or getattr(getattr(current, "parent", None), "type", "") == "class_body"
-            )
+            and (current is node or getattr(parent, "type", "") == "class_body")
         ):
             _mark_declaration_name(current)
 
         if not children:
+            text = _node_text(source, current)
             if node_type in _IDENTIFIER_TYPES:
                 span = (
                     int(getattr(current, "start_byte", -1)),
                     int(getattr(current, "end_byte", -1)),
                 )
-                preserved = node_type in _PRESERVED_IDENTIFIER_TYPES or (
-                    text.startswith("__") and text.endswith("__")
+                preserved = (
+                    node_type in _PRESERVED_IDENTIFIER_TYPES
+                    or (text.startswith("__") and text.endswith("__"))
+                    or policy.preserve_identifier(current, parent)
                 )
                 if preserved and span not in declaration_name_spans:
                     value = text
@@ -550,34 +626,40 @@ def _structural_hash(node: Any, source: bytes, language: str, unit_type: CodeUni
             continue
 
         pieces.append(f"({node_type}")
-        stack.append(close_marker)
-        stack.extend(reversed(children))
+        stack.append((close_marker, None))
+        stack.extend((child, current) for child in reversed(children))
 
     return hashlib.sha256("\x1f".join(pieces).encode("utf-8")).hexdigest()[:16]
 
 
-def _token_hash(node: Any, source: bytes) -> str:
+def _token_hash(node: Any, source: bytes, *, policy: HashPolicy = DEFAULT_HASH_POLICY) -> str:
     """Fingerprint a subtree's literal token stream, ignoring comments.
 
     Comment subtrees are pruned before flattening: some grammars (for example
     tree-sitter-rust) parse comments with delimiter children whose leaf types
     do not mention "comment", so a leaf-level filter alone would let ``//``
-    and ``/* */`` markers leak into the token stream.
+    and ``/* */`` markers leak into the token stream. Nodes the policy marks
+    opaque contribute their full text as one token; grammars that only expose
+    escape sequences as children (tree-sitter-python's ``string_content``)
+    would otherwise drop the literal text between them.
 
     :param node: Unit node to fingerprint.
     :param source: Full file source bytes.
+    :param policy: Language hooks applied during the walk, defaults to no exceptions.
     :return: Truncated SHA-256 digest of the typed token stream.
     """
     tokens: list[str] = []
-    stack = [node]
+    stack: list[tuple[Any, Any | None]] = [(node, None)]
     while stack:
-        current = stack.pop()
+        current, parent = stack.pop()
         node_type = str(getattr(current, "type", ""))
         if node_type in _COMMENT_TYPES or "comment" in node_type:
             continue
+        if policy.prune_tokens(current, parent):
+            continue
         children = _children(current)
-        if children:
-            stack.extend(reversed(children))
+        if children and not policy.opaque_token(current, parent):
+            stack.extend((child, current) for child in reversed(children))
             continue
         text = _node_text(source, current)
         if text.strip():
@@ -605,41 +687,6 @@ def _collect_identifiers(node: Any, source: bytes, builtins: frozenset[str]) -> 
     return frozenset(identifiers)
 
 
-def _collect_calls(node: Any, source: bytes) -> set[str]:
-    """Collect callee names for calls, constructions, and macro invocations.
-
-    :param node: Unit node to scan.
-    :param source: Full file source bytes.
-    :return: Callee texts plus their trailing name segments.
-    """
-    calls: set[str] = set()
-    for candidate in _walk(node):
-        node_type = getattr(candidate, "type", "")
-        if node_type not in {
-            "call_expression",
-            "new_expression",
-            "macro_invocation",
-            "method_call_expression",
-        }:
-            continue
-        callee = _first_node(
-            _child_by_field(candidate, "function"),
-            _child_by_field(candidate, "callee"),
-            _child_by_field(candidate, "macro"),
-        )
-        if callee is None:
-            named = _named_children(candidate)
-            callee = named[0] if named else None
-        text = _clean_name(_node_text(source, callee))
-        if not text:
-            continue
-        calls.add(text)
-        final = re.split(r"[.:]+", text)[-1]
-        if final:
-            calls.add(final)
-    return calls
-
-
 class TreeSitterBackend:
     """Shared parse, diagnostics, fingerprint, and unit-construction machinery."""
 
@@ -649,6 +696,7 @@ class TreeSitterBackend:
     nested_scope_types: frozenset[str] = frozenset()
     class_member_types: frozenset[str] = frozenset()
     builtins: frozenset[str] = frozenset()
+    hash_policy: ClassVar[HashPolicy] = DEFAULT_HASH_POLICY
 
     def __init__(self, root: Path, dialect: str, include_private: bool) -> None:
         """Store the extraction root, parser dialect, and visibility policy.
@@ -679,16 +727,18 @@ class TreeSitterBackend:
         :return: ``True`` when private units are included or the spec is public.
         """
         # ``is_public`` already encodes each language's visibility rules (C
-        # ``static``, Rust ``pub``, naming conventions, and TypeScript
-        # accessibility modifiers), so filtering must use it rather than
-        # re-deriving a name-prefix subset of those rules.
+        # ``static``, Rust ``pub``, and TypeScript accessibility modifiers), so
+        # filtering uses it rather than re-deriving a subset of those rules.
+        # Python overrides this: its dunder and mangled names are not public
+        # yet are still extracted.
         return self.include_private or spec.is_public
 
-    def _statement_count(self, body: Any, unit_type: CodeUnitType) -> int:
+    def _statement_count(self, body: Any, unit_type: CodeUnitType, source: bytes) -> int:
         """Count statements or class members, expanding static initializer bodies.
 
         :param body: Body node of the unit, or ``None``.
         :param unit_type: Kind of unit the body belongs to.
+        :param source: Full file source bytes, for backends that must read node text.
         :return: Statement count, with nested scopes counted once each.
         """
         if body is None:
@@ -697,7 +747,7 @@ class TreeSitterBackend:
             # Static initializers have no separate code unit; measure their
             # bodies here using the same traversal as callable bodies.
             return sum(
-                max(1, self._statement_count(child, CodeUnitType.FUNCTION))
+                max(1, self._statement_count(child, CodeUnitType.FUNCTION, source))
                 if child.type == "class_static_block"
                 else 1
                 for child in _named_children(body)
@@ -823,13 +873,12 @@ class TreeSitterBackend:
             )
             deduped[key] = spec
 
-        # A filtered-out private class takes its members with it, matching the
-        # Python extractor: emitting them would leak the container's internals
-        # under a name whose owner was never reported.
+        # A filtered-out private definition takes everything nested in it:
+        # emitting a private class's methods or a private function's inner
+        # definitions would leak internals under a name whose owner was never
+        # reported, and nothing outside the container can reach them.
         private_container_spans = [
-            _spec_span(spec)
-            for spec in deduped.values()
-            if spec.unit_type == CodeUnitType.CLASS and not self._include_spec(spec)
+            _spec_span(spec) for spec in deduped.values() if not self._include_spec(spec)
         ]
 
         units: list[CodeUnit] = []
@@ -873,6 +922,7 @@ class TreeSitterBackend:
                 source,
                 self.language,
                 spec.unit_type,
+                policy=self.hash_policy,
             )
             units.append(
                 CodeUnit(
@@ -890,11 +940,10 @@ class TreeSitterBackend:
                     end_byte=end_byte,
                     start_column=start_column,
                     end_column=end_column,
-                    statement_count=self._statement_count(spec.body, spec.unit_type),
+                    statement_count=self._statement_count(spec.body, spec.unit_type, source),
                     structural_hash=structural_hash,
-                    token_hash=_token_hash(spec.node, source),
+                    token_hash=_token_hash(spec.node, source, policy=self.hash_policy),
                     identifiers=_collect_identifiers(spec.node, source, self.builtins),
-                    calls=_collect_calls(spec.node, source),
                     is_public=spec.is_public,
                     is_dunder=spec.name.startswith("__") and spec.name.endswith("__"),
                     is_exported=spec.is_exported,
@@ -902,6 +951,429 @@ class TreeSitterBackend:
             )
 
         return BackendResult(tuple(units), tuple(diagnostics))
+
+
+def _python_string_prefix(string: Any) -> str:
+    """Return the lowercased literal prefix of one tree-sitter-python ``string`` node.
+
+    The prefix is read from the node's own text rather than the file source so the
+    policy hooks, which only see ``(node, parent)``, can classify literals.
+
+    :param string: ``string`` node.
+    :return: Prefix letters before the opening quote (``"rb"`` for ``rb'...'``), or ``""``.
+    """
+    start = next(
+        (child for child in _children(string) if getattr(child, "type", "") == "string_start"),
+        None,
+    )
+    text = getattr(start, "text", None) or b""
+    return text.decode("utf-8", errors="replace").rstrip("\"'").lower()
+
+
+def _python_is_plain_string(value: Any) -> bool:
+    """Report whether an expression is a string literal that ``ast`` reads as ``Constant(str)``.
+
+    Bytes and f-strings are excluded: ``ast`` parses them as ``Constant(bytes)``
+    and ``JoinedStr``, so neither can be a docstring.
+
+    :param value: Expression node.
+    :return: ``True`` for a ``string`` or ``concatenated_string`` of plain text parts.
+    """
+    node_type = getattr(value, "type", "")
+    if node_type == "string":
+        parts: tuple[Any, ...] = (value,)
+    elif node_type == "concatenated_string":
+        parts = tuple(
+            child for child in _named_children(value) if getattr(child, "type", "") == "string"
+        )
+        if not parts:
+            return False
+    else:
+        return False
+    return all(not ({"b", "f"} & set(_python_string_prefix(part))) for part in parts)
+
+
+def _python_is_docstring_statement(statement: Any) -> bool:
+    """Report whether a statement has the docstring shape: one bare plain string.
+
+    :param statement: Statement node.
+    :return: ``True`` for an ``expression_statement`` holding a single plain string literal.
+    """
+    if getattr(statement, "type", "") != "expression_statement":
+        return False
+    values = _named_children(statement)
+    # ``("doc")`` is a docstring to ``ast``: grouping parentheses are not a node there.
+    while len(values) == 1 and getattr(values[0], "type", "") == "parenthesized_expression":
+        values = _named_children(values[0])
+    return len(values) == 1 and _python_is_plain_string(values[0])
+
+
+def _python_docstring(body: Any) -> Any | None:
+    """Return the docstring statement of one definition body, or ``None``.
+
+    Positional like ``ast.get_docstring``: the first statement, comments aside,
+    must be an expression statement holding a single plain string literal.
+
+    :param body: ``block`` node of a function or class definition.
+    :return: The docstring ``expression_statement`` node, or ``None``.
+    """
+    first = next((child for child in _named_children(body) if not _is_comment(child)), None)
+    if first is None or not _python_is_docstring_statement(first):
+        return None
+    return first
+
+
+# Formatting punctuation, except for a subscript comma that introduces a tuple.
+_PYTHON_FORMATTING_TOKENS = frozenset({"line_continuation", ";", ","})
+
+
+def _python_prune_structural(node: Any, parent: Any | None) -> bool:
+    """Drop formatting-only nodes and docstrings from the Python structural stream.
+
+    Docstrings are stripped positionally for every definition inside the unit,
+    nested ones included, mirroring how the ``ast`` hasher dropped ``body[0]``.
+    Statement separators, optional trailing commas, and backslash continuations
+    are formatting. A comma after a lone, unstarred subscript changes the index
+    into a tuple, which the grammar does not represent with a separate node.
+
+    :param node: Node under consideration.
+    :param parent: Parent of ``node`` in the walk.
+    :return: ``True`` for formatting punctuation or a definition's docstring statement.
+    """
+    node_type = getattr(node, "type", "")
+    if node_type == "," and getattr(parent, "type", "") == "subscript":
+        index = _child_by_field(parent, "subscript")
+        if index is not None and index.type != "list_splat":
+            # Multiple indices or a starred index already imply a tuple. Look
+            # only for a second index, without rescanning all indices per comma.
+            following = index.next_named_sibling
+            while following is not None and _is_comment(following):
+                following = following.next_named_sibling
+            if following is None:
+                return False
+    if node_type in _PYTHON_FORMATTING_TOKENS:
+        return True
+    if node_type != "expression_statement" or getattr(parent, "type", "") != "block":
+        return False
+    # Position first: only a block's first statement can be a docstring, and
+    # walking back one named sibling settles that for every later statement
+    # without materializing the block's child list per statement.
+    if not all(_is_comment(sibling) for sibling in _preceding_named_siblings(node)):
+        return False
+    if not _python_is_docstring_statement(node):
+        return False
+    return getattr(getattr(parent, "parent", None), "type", "") in _PYTHON_DEFINITION_TYPES
+
+
+def _python_prune_tokens(node: Any, parent: Any | None) -> bool:
+    """Drop backslash line continuations from the Python token stream.
+
+    :param node: Node under consideration.
+    :param parent: Parent of ``node`` in the walk.
+    :return: ``True`` for a ``line_continuation`` node.
+    """
+    return getattr(node, "type", "") == "line_continuation"
+
+
+def _python_opaque_token(node: Any, parent: Any | None) -> bool:
+    """Keep string bodies whole in the token stream.
+
+    tree-sitter-python exposes escape sequences as the only children of
+    ``string_content``; flattening to leaves would drop the literal text around
+    them and make ``"a\\nb"`` and ``"a\\nc"`` token-equal.
+
+    :param node: Node under consideration.
+    :param parent: Parent of ``node`` in the walk.
+    :return: ``True`` for a ``string_content`` node.
+    """
+    return getattr(node, "type", "") == "string_content"
+
+
+def _python_has_interpolation(string: Any) -> bool:
+    """Report whether a ``string`` node carries f-string interpolations.
+
+    :param string: ``string`` node.
+    :return: ``True`` when any named child is an ``interpolation``.
+    """
+    return any(getattr(child, "type", "") == "interpolation" for child in _named_children(string))
+
+
+def _python_descend_string(node: Any, parent: Any | None) -> bool:
+    """Walk into strings that contain code instead of collapsing them.
+
+    An interpolation is code, so ``f"{x}"`` and ``f"{x.y}"`` must fingerprint
+    differently; the literal text around it still normalizes as ``<STR>``. An
+    implicit concatenation is walked only when one of its parts interpolates;
+    ``"a" "b"`` is one literal to ``ast`` and collapses like ``"ab"``.
+
+    :param node: Node under consideration.
+    :param parent: Parent of ``node`` in the walk.
+    :return: ``True`` for a ``string`` or ``concatenated_string`` with interpolations.
+    """
+    node_type = getattr(node, "type", "")
+    if node_type == "string":
+        return _python_has_interpolation(node)
+    return node_type == "concatenated_string" and any(
+        getattr(child, "type", "") == "string" and _python_has_interpolation(child)
+        for child in _named_children(node)
+    )
+
+
+def _python_string_marker(node: Any, parent: Any | None) -> str | None:
+    """Label a plain implicit concatenation as a single ``string``.
+
+    :param node: String-like node being collapsed.
+    :param parent: Parent of ``node`` in the walk.
+    :return: ``"string"`` for a ``concatenated_string``, else ``None``.
+    """
+    return "string" if getattr(node, "type", "") == "concatenated_string" else None
+
+
+def _python_unwrap(node: Any, parent: Any | None) -> bool:
+    """Drop grouping parentheses from the structural stream.
+
+    ``ast`` has no node for ``(expr)``: precedence is already the nesting, so
+    the parentheses a formatter wraps long expressions in are formatting.
+
+    :param node: Node under consideration.
+    :param parent: Parent of ``node`` in the walk.
+    :return: ``True`` for a ``parenthesized_expression``.
+    """
+    return getattr(node, "type", "") == "parenthesized_expression"
+
+
+def _python_preserve_identifier(node: Any, parent: Any | None) -> bool:
+    """Keep names that are API shape rather than local bindings.
+
+    Attribute names, keyword-argument names, class-pattern attributes, and
+    imported names are preserved; parameters, locals, definition names,
+    ``global``/``nonlocal`` targets, and pattern captures normalize as bindings.
+
+    :param node: Identifier leaf under consideration.
+    :param parent: Parent of ``node`` in the walk.
+    :return: ``True`` when the identifier text must survive normalization.
+    """
+    parent_type = getattr(parent, "type", "")
+    if parent_type == "attribute":
+        return _same_node(_child_by_field(parent, "attribute"), node)
+    if parent_type == "keyword_argument":
+        return _same_node(_child_by_field(parent, "name"), node)
+    if parent_type == "keyword_pattern":
+        # The direct identifier names the attribute; capture identifiers are
+        # nested inside the value pattern, not direct children of this node.
+        return True
+    if parent_type in _PYTHON_IMPORT_NAME_PARENTS:
+        return _has_ancestor(node, _PYTHON_IMPORT_TYPES)
+    return False
+
+
+class PythonBackend(TreeSitterBackend):
+    """Extract Python functions, methods, and classes; decorators belong to the unit."""
+
+    language = "python"
+    # ``elif_clause`` counts because an ``elif`` is a nested ``ast.If``; the
+    # ``else``/``except``/``finally``/``case`` clauses are transparent
+    # containers whose bodies count on their own, while ``with_statement``
+    # counts once plus its body like every other compound statement.
+    statement_types = frozenset(
+        {
+            "future_import_statement",
+            "import_statement",
+            "import_from_statement",
+            "print_statement",
+            "assert_statement",
+            "expression_statement",
+            "return_statement",
+            "delete_statement",
+            "raise_statement",
+            "pass_statement",
+            "break_statement",
+            "continue_statement",
+            "global_statement",
+            "nonlocal_statement",
+            "exec_statement",
+            "type_alias_statement",
+            "if_statement",
+            "elif_clause",
+            "for_statement",
+            "while_statement",
+            "try_statement",
+            "with_statement",
+            "match_statement",
+        }
+    )
+    nested_scope_types = frozenset(
+        {"function_definition", "class_definition", "decorated_definition"}
+    )
+    builtins = _PYTHON_BUILTINS
+    hash_policy = HashPolicy(
+        prune_structural=_python_prune_structural,
+        prune_tokens=_python_prune_tokens,
+        preserve_identifier=_python_preserve_identifier,
+        opaque_token=_python_opaque_token,
+        descend_string=_python_descend_string,
+        unwrap=_python_unwrap,
+        string_marker=_python_string_marker,
+    )
+
+    def _include_spec(self, spec: UnitSpec) -> bool:
+        """Apply Python's naming convention to the visibility filter.
+
+        A single leading underscore marks a private unit; dunder and mangled
+        names (``__init__``, ``__helper``) are not public but are still extracted.
+
+        :param spec: Candidate unit spec.
+        :return: ``True`` when private units are included or the name is not private.
+        """
+        name = spec.name
+        return self.include_private or not (name.startswith("_") and not name.startswith("__"))
+
+    def _statement_count(self, body: Any, unit_type: CodeUnitType, source: bytes) -> int:
+        """Count executable statements, excluding a docstring, for every unit kind.
+
+        Class bodies use the statement rule as well: ``ast.stmt`` semantics do
+        not distinguish a class body from a function body, and nested
+        definitions count once either way.
+
+        :param body: ``block`` node of the definition, or ``None``.
+        :param unit_type: Kind of unit the body belongs to.
+        :param source: Full file source bytes.
+        :return: Statement count with the docstring removed.
+        """
+        if body is None:
+            return 0
+        count = super()._statement_count(body, CodeUnitType.FUNCTION, source)
+        if _python_docstring(body) is not None:
+            count -= 1
+        return count
+
+    @staticmethod
+    def _exported_names(root_node: Any, source: bytes) -> frozenset[str]:
+        """Collect the string entries of every module-level ``__all__`` assignment.
+
+        Plain and augmented assignments are unioned, so ``__all__ = [...]``
+        followed by ``__all__ += [...]`` exports both lists.
+
+        :param root_node: Root node of the parsed module.
+        :param source: Full file source bytes.
+        :return: Exported names, empty when the module declares no ``__all__``.
+        """
+        names: set[str] = set()
+        # Module-level compound statements (``if sys.version_info``, ``try``)
+        # can assign ``__all__`` too; definitions are not descended into.
+        pending = list(reversed(_named_children(root_node)))
+        while pending:
+            statement = pending.pop()
+            statement_type = getattr(statement, "type", "")
+            if statement_type in _PYTHON_MODULE_CONTAINER_TYPES:
+                pending.extend(reversed(_named_children(statement)))
+                continue
+            if statement_type != "expression_statement":
+                continue
+            for assignment in _named_children(statement):
+                if getattr(assignment, "type", "") not in {"assignment", "augmented_assignment"}:
+                    continue
+                left = _child_by_field(assignment, "left")
+                if (
+                    getattr(left, "type", "") != "identifier"
+                    or _node_text(source, left) != "__all__"
+                ):
+                    continue
+                right = _child_by_field(assignment, "right")
+                if getattr(right, "type", "") not in {"list", "tuple", "expression_list"}:
+                    continue
+                for element in _named_children(right):
+                    if getattr(element, "type", "") != "string":
+                        continue
+                    content = next(
+                        (
+                            child
+                            for child in _children(element)
+                            if getattr(child, "type", "") == "string_content"
+                        ),
+                        None,
+                    )
+                    if content is not None:
+                        names.add(_node_text(source, content))
+        return frozenset(names)
+
+    @staticmethod
+    def _enclosing_definitions(node: Any, source: bytes) -> tuple[list[str], bool]:
+        """Collect the names of the definitions enclosing one definition, outermost first.
+
+        :param node: Function or class definition node.
+        :param source: Full file source bytes.
+        :return: Enclosing definition names and whether the nearest one is a class.
+        """
+        names: list[str] = []
+        nearest_is_class: bool | None = None
+        current = getattr(node, "parent", None)
+        while current is not None:
+            node_type = getattr(current, "type", "")
+            if node_type in _PYTHON_DEFINITION_TYPES:
+                if nearest_is_class is None:
+                    nearest_is_class = node_type == "class_definition"
+                names.append(_node_text(source, _child_by_field(current, "name")).strip())
+            current = getattr(current, "parent", None)
+        names.reverse()
+        return names, bool(nearest_is_class)
+
+    def collect_specs(self, root_node: Any, source: bytes, file_path: Path) -> list[UnitSpec]:
+        """Collect every function, method, and class definition in one module.
+
+        A decorated definition's unit is the whole ``decorated_definition`` node,
+        so spans, hashes, and identifiers start at the first decorator. Qualified
+        names follow lexical nesting in order (``mod.outer.Inner.method``), and a
+        definition is a method exactly when its nearest enclosing definition is a
+        class.
+
+        :param root_node: Root node of the parsed module.
+        :param source: Full file source bytes.
+        :param file_path: File being extracted.
+        :return: Unit specs for every named, body-bearing definition.
+        """
+        prefix = module_prefix(self.root, file_path, self.language)
+        exported = self._exported_names(root_node, source)
+        specs: list[UnitSpec] = []
+        for node in _walk(root_node):
+            node_type = getattr(node, "type", "")
+            if node_type not in _PYTHON_DEFINITION_TYPES:
+                continue
+            name = _node_text(source, _child_by_field(node, "name")).strip()
+            body = _child_by_field(node, "body")
+            if not name or body is None:
+                continue
+            # ``def f():`` with nothing indented under it is a syntax error to
+            # CPython; tree-sitter hands back an empty block without an error
+            # node. A definition whose body was lost to error recovery keeps
+            # going so ``extract_file`` reports it as ``unit-parse-error``.
+            if not getattr(node, "has_error", False) and all(
+                _is_comment(child) for child in _named_children(body)
+            ):
+                continue
+            parent = getattr(node, "parent", None)
+            outer = parent if getattr(parent, "type", "") == "decorated_definition" else node
+            scopes, nearest_is_class = self._enclosing_definitions(node, source)
+            if node_type == "class_definition":
+                unit_type = CodeUnitType.CLASS
+            elif nearest_is_class:
+                unit_type = CodeUnitType.METHOD
+            else:
+                unit_type = CodeUnitType.FUNCTION
+            specs.append(
+                UnitSpec(
+                    node=outer,
+                    source_node=outer,
+                    body=body,
+                    name=name,
+                    qualified_name=qualified(prefix, *scopes, name),
+                    unit_type=unit_type,
+                    native_kind=node_type,
+                    is_public=not name.startswith("_"),
+                    is_exported=name in exported,
+                )
+            )
+        return specs
 
 
 class CBackend(TreeSitterBackend):
@@ -994,7 +1466,7 @@ class CBackend(TreeSitterBackend):
         :param file_path: File being extracted.
         :return: Unit specs for every named, body-bearing function definition.
         """
-        prefix = _module_prefix(self.root, file_path, self.language)
+        prefix = module_prefix(self.root, file_path, self.language)
         specs: list[UnitSpec] = []
         for node in _walk(root_node):
             if getattr(node, "type", "") != "function_definition":
@@ -1014,7 +1486,7 @@ class CBackend(TreeSitterBackend):
                     source_node=node,
                     body=body,
                     name=name,
-                    qualified_name=_qualified(prefix, name),
+                    qualified_name=qualified(prefix, name),
                     unit_type=CodeUnitType.FUNCTION,
                     native_kind="function_definition",
                     is_public=is_public,
@@ -1048,14 +1520,15 @@ class RustBackend(TreeSitterBackend):
         }
     )
 
-    def _statement_count(self, body: Any, unit_type: CodeUnitType) -> int:
+    def _statement_count(self, body: Any, unit_type: CodeUnitType, source: bytes) -> int:
         """Count Rust statements, including one semicolon-free tail expression.
 
         :param body: Rust function body node.
         :param unit_type: Kind of unit the body belongs to.
+        :param source: Full file source bytes.
         :return: Recursive statement count with the tail expression counted once.
         """
-        count = super()._statement_count(body, unit_type)
+        count = super()._statement_count(body, unit_type, source)
         if body is None or getattr(body, "type", "") != "block":
             return count
 
@@ -1301,7 +1774,7 @@ class RustBackend(TreeSitterBackend):
         :param file_path: File being extracted.
         :return: Unit specs for every non-test, body-bearing function item.
         """
-        prefix = _module_prefix(self.root, file_path, self.language)
+        prefix = module_prefix(self.root, file_path, self.language)
         specs: list[UnitSpec] = []
         local_trait_visibility = self._local_trait_visibility(root_node, source)
         for node in _walk(root_node):
@@ -1335,7 +1808,7 @@ class RustBackend(TreeSitterBackend):
                     source_node=node,
                     body=body,
                     name=name,
-                    qualified_name=_qualified(prefix, *contexts, name),
+                    qualified_name=qualified(prefix, *contexts, name),
                     unit_type=CodeUnitType.METHOD if is_method else CodeUnitType.FUNCTION,
                     native_kind="function_item",
                     is_public=public,
@@ -1788,7 +2261,7 @@ class ECMAScriptBackend(TreeSitterBackend):
                 name = "default"
                 source_node = export_parent
             context = self._lexical_context(node, source)
-            qualified_name = _qualified(prefix, *context, name)
+            qualified_name = qualified(prefix, *context, name)
             unit_type = CodeUnitType.FUNCTION
         else:
             binding = self._binding_for_value(node, source)
@@ -1797,7 +2270,7 @@ class ECMAScriptBackend(TreeSitterBackend):
                 bound_name, source_node = binding
                 contextual_name = self._contextual_binding(node, bound_name, source)
                 name = bound_name.rsplit(".", 1)[-1]
-                qualified_name = _qualified(prefix, contextual_name)
+                qualified_name = qualified(prefix, contextual_name)
                 source_kind = getattr(source_node, "type", "")
                 unit_type = (
                     CodeUnitType.METHOD
@@ -1806,7 +2279,7 @@ class ECMAScriptBackend(TreeSitterBackend):
                 )
             elif own_name:
                 name = own_name
-                qualified_name = _qualified(prefix, *self._lexical_context(node, source), name)
+                qualified_name = qualified(prefix, *self._lexical_context(node, source), name)
                 unit_type = CodeUnitType.FUNCTION
             else:
                 return None
@@ -1861,9 +2334,9 @@ class ECMAScriptBackend(TreeSitterBackend):
             bound_name = name
             contextual_name = self._contextual_binding(node, bound_name, source)
             name = bound_name.rsplit(".", 1)[-1]
-            qualified_name = _qualified(prefix, contextual_name)
+            qualified_name = qualified(prefix, contextual_name)
         else:
-            qualified_name = _qualified(prefix, *self._lexical_context(node, source), name)
+            qualified_name = qualified(prefix, *self._lexical_context(node, source), name)
         exported = self._is_exported(
             source_node,
             source,
@@ -1906,7 +2379,7 @@ class ECMAScriptBackend(TreeSitterBackend):
         container = self._member_container(node, source)
         if not container:
             return None
-        qualified_name = _qualified(prefix, container, name)
+        qualified_name = qualified(prefix, container, name)
         exported = self._is_exported(node, source, container, exported_names)
         return UnitSpec(
             node=node,
@@ -1928,7 +2401,7 @@ class ECMAScriptBackend(TreeSitterBackend):
         :param file_path: File being extracted.
         :return: Unit specs for every nameable, body-bearing unit in the file.
         """
-        prefix = _module_prefix(self.root, file_path, self.language)
+        prefix = module_prefix(self.root, file_path, self.language)
         exported_names = self._file_export_names(root_node, source)
         specs: list[UnitSpec] = []
         for node in _walk(root_node):
@@ -1980,7 +2453,9 @@ def create_backend(
     :return: Backend instance for the language.
     """
     backend_type: type[TreeSitterBackend]
-    if language == "c":
+    if language == "python":
+        backend_type = PythonBackend
+    elif language == "c":
         backend_type = CBackend
     elif language == "rust":
         backend_type = RustBackend

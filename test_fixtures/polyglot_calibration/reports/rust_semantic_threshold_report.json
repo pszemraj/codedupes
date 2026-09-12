@@ -102,7 +102,7 @@
           "transformers": "5.14.1",
           "sentence-transformers": "5.7.0"
         },
-        "codedupes_version": "0.5.3",
+        "codedupes_version": "0.5.4.dev1+g582759789",
         "mode": "duplicate",
         "semantic_task": "semantic-similarity",
         "encode_plan": {
@@ -127,13 +127,21 @@
             "method"
           ],
           "min_recursive_statements": 3,
-          "include_private": true
+          "include_private": true,
+          "languages": [
+            "rust"
+          ]
         },
         "batch_size": 4,
         "corpus_path": "test_fixtures/polyglot_calibration/rust",
         "corpus_sha256": "aeb277a81fa2d73d9bf021202ecde0790a7b560afd708a5cfe66d477cdd36cb4",
         "labels_path": "test_fixtures/polyglot_calibration/labels/rust.json",
         "labels_sha256": "a3e7472d2e3603d095e0cc4e47b86dff9c0874829beed469e6b305ef2f33b70e",
+        "traditional_candidate_policy": {
+          "jaccard_threshold": 0.85,
+          "filter_tiny_traditional": true,
+          "tiny_unit_statement_cutoff": 3
+        },
         "output_policy": "hybrid_duplicates",
         "visible_policy": {
           "excluded_tiers": [
@@ -151,8 +159,10 @@
         "selected_at_grid_edge": null,
         "candidate_coverage": {
           "labeled_positive_pairs": 34,
-          "scoreable_positive_pairs": 28,
-          "traditional_recovered_pairs": 0,
+          "embedded_positive_pairs": 28,
+          "scoreable_positive_pairs": 14,
+          "traditional_recovered_pairs": 14,
+          "reachable_positive_pairs": 28,
           "unreachable_positive_pairs": 6,
           "recall_ceiling": 0.8235294117647058
         },
@@ -1906,7 +1916,7 @@
           "transformers": "5.14.1",
           "sentence-transformers": "5.7.0"
         },
-        "codedupes_version": "0.5.3",
+        "codedupes_version": "0.5.4.dev1+g582759789",
         "mode": "duplicate",
         "semantic_task": "semantic-similarity",
         "encode_plan": {
@@ -1931,13 +1941,21 @@
             "method"
           ],
           "min_recursive_statements": 3,
-          "include_private": true
+          "include_private": true,
+          "languages": [
+            "rust"
+          ]
         },
         "batch_size": 4,
         "corpus_path": "test_fixtures/polyglot_calibration/rust",
         "corpus_sha256": "aeb277a81fa2d73d9bf021202ecde0790a7b560afd708a5cfe66d477cdd36cb4",
         "labels_path": "test_fixtures/polyglot_calibration/labels/rust.json",
         "labels_sha256": "a3e7472d2e3603d095e0cc4e47b86dff9c0874829beed469e6b305ef2f33b70e",
+        "traditional_candidate_policy": {
+          "jaccard_threshold": 0.85,
+          "filter_tiny_traditional": true,
+          "tiny_unit_statement_cutoff": 3
+        },
         "output_policy": "hybrid_duplicates",
         "visible_policy": {
           "excluded_tiers": [
@@ -1955,8 +1973,10 @@
         "selected_at_grid_edge": null,
         "candidate_coverage": {
           "labeled_positive_pairs": 34,
-          "scoreable_positive_pairs": 28,
-          "traditional_recovered_pairs": 0,
+          "embedded_positive_pairs": 28,
+          "scoreable_positive_pairs": 14,
+          "traditional_recovered_pairs": 14,
+          "reachable_positive_pairs": 28,
           "unreachable_positive_pairs": 6,
           "recall_ceiling": 0.8235294117647058
         },

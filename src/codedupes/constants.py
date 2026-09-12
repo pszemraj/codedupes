@@ -68,9 +68,9 @@ DEFAULT_MODEL = "gte-modernbert-base"
 DEFAULT_TRADITIONAL_THRESHOLD = 0.85
 # Generic-profile tier split for semantic-only hybrid pairs; built-in model
 # profiles carry their own swept values (semantic_profiles.py). Uncalibrated
-# models get the conservative split: no identifier requirement (the Python
-# extractor makes identifier overlap unreliable) and only absurd statement-count
-# mismatches withheld from the default view.
+# models get the conservative split: no identifier-overlap requirement, because
+# no sweep has measured identifier Jaccard on their similarity scale, and only
+# absurd statement-count mismatches withheld from the default view.
 HYBRID_WEAK_JACCARD_MIN = 0.0
 HYBRID_STATEMENT_RATIO_MIN = 0.20
 DEFAULT_BATCH_SIZE = 8

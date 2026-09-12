@@ -14,3 +14,4 @@ This synthetic Python corpus is a [hybrid-tuning](../../docs/hybrid-tuning.md) g
 
 - Keep corpus deterministic and free from generated artifacts.
 - Re-run the [semantic threshold sweep](../../docs/hybrid-tuning.md#semantic-threshold-sweep-model-profiles) whenever the corpus, labels, probes, pinned model commits, or embedding pipeline change. Treat changed metrics as a calibration review, not an automatic default change.
+- Last regenerated 2026-09-12 with the default invocation after Python extraction moved to the tree-sitter backend: every duplicate and search row reproduced byte-identically (the reports gained the `tiers`/`visible` fields and the `corroboration` manifest block), and gte-modernbert-base's duplicate pick still sits at the 0.96 top of the default grid, which is why this report is a guardrail rather than a gate source.

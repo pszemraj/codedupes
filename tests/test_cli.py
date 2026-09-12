@@ -42,7 +42,7 @@ def _build_result(tmp_path: Path) -> AnalysisResult:
         unit_a=unit,
         unit_b=unit,
         similarity=1.0,
-        method="ast_hash",
+        method="structural_hash",
     )
     hybrid = HybridDuplicate(
         unit_a=unit,
@@ -543,14 +543,14 @@ def test_cli_search_json_surfaces_semantic_diagnostics(monkeypatch, tmp_path):
 @pytest.mark.parametrize(
     ("filename", "source", "diagnostic_code"),
     [
-        ("broken.py", "def broken(\n", "parse-error"),
+        ("broken.py", "def broken(\n", "partial-parse"),
         ("broken.js", "function broken( {", "partial-parse"),
     ],
 )
 def test_cli_search_surfaces_extraction_failures(
     tmp_path: Path, filename: str, source: str, diagnostic_code: str
 ) -> None:
-    """Preserve real Python and Tree-sitter failures in both search report formats."""
+    """Preserve real Tree-sitter failures in both search report formats."""
     path = tmp_path / filename
     path.write_text(source, encoding="utf-8")
     runner = CliRunner()
@@ -2044,7 +2044,7 @@ def test_cli_traditional_panel_label_is_language_neutral(monkeypatch, tmp_path):
     )
 
     result = CliRunner().invoke(cli.cli, ["check", str(path), "--traditional-only"])
-    # Only Python parses to an AST here; the other backends fingerprint tokens.
+    # Every language reports the shared structural fingerprint; no table names an AST.
     assert "Traditional Duplicates (Structural/Token/Jaccard)" in result.output
     assert "AST" not in result.output
 

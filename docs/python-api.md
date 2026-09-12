@@ -205,7 +205,7 @@ quiet_dependency_loggers()  # or quiet_dependency_loggers(logging.ERROR)
 - `AnalysisResult.hybrid_duplicates`: every synthesized duplicate candidate with its [confidence tier](analysis-defaults.md#hybrid-synthesis-confidence-defaults); the CLI applies [report selection](#report-selection-and-json) on top of this complete list
 - `AnalysisResult.traditional_duplicates`: raw traditional duplicates (diagnostics)
 - `AnalysisResult.semantic_duplicates`: raw semantic duplicates (diagnostics)
-- `AnalysisResult.potentially_unused`: Python-only heuristic unused candidates
+- `AnalysisResult.potentially_unused`: Python-only [unused candidates](analysis-defaults.md#potentially-unused-defaults) from a name-based reference graph
 - `AnalysisResult.extraction_diagnostics`: recoverable parser diagnostics and skipped-unit reasons
 - `CodeAnalyzer.extraction_diagnostics`: extraction diagnostics from the latest `index()` or `analyze()` run
 - `AnalysisResult.semantic_diagnostics`: semantic-stage diagnostics, mirroring `CodeAnalyzer.semantic_diagnostics` for that run
@@ -215,9 +215,9 @@ quiet_dependency_loggers()  # or quiet_dependency_loggers(logging.ERROR)
 - `AnalysisResult.analysis_mode`: `"combined"`, `"traditional"`, `"semantic"`, or `"none"`
 - `AnalysisResult.embedding_stats`: [embedding telemetry](#progress-and-embedding-telemetry)
 - `CodeUnit.uid`: in-run definition identity, `<path>::<language>::<qualified name>::<start byte>` for every language; the byte position keeps overloads and redefinitions distinct
-- `CodeUnit.language`, `dialect`, and `native_kind`: canonical language plus parser-specific syntax kind
-- `CodeUnit.start_byte`/`end_byte`: exact byte range used to slice the emitted source
-- `CodeUnit.structural_hash`, `identifiers`, and `statement_count`: backend-computed language-neutral features
+- `CodeUnit.language`, `dialect`, and `native_kind`: canonical language, parser dialect, and grammar node kind (`function_definition`/`class_definition` for Python)
+- `CodeUnit.start_byte`/`end_byte`: exact byte range used to slice the emitted source; a decorated Python definition starts at its first decorator
+- `CodeUnit.structural_hash`, `token_hash`, `identifiers`, and `statement_count`: computed by the language backend from one Tree-sitter parse for every language; see [fingerprints](polyglot-languages.md#fingerprints-and-comparison-boundaries)
 - `HYBRID_TIERS`: the five tier names in declaration order, for zero-filled counts; pairs sort by [confidence](analysis-defaults.md#confidence-scale)
 
 ## Report selection and JSON
