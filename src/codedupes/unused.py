@@ -364,6 +364,42 @@ def _extract_pyproject_entry_points(project_root: Path) -> set[str]:
     return targets
 
 
+def _framework_derived_classes(
+    classes: list[tuple[Path, ClassInfo]],
+) -> list[tuple[Path, ClassInfo, str]]:
+    """Find classes with a base that does not resolve to a project class.
+
+    Resolution is by name: a base's last dotted segment is a project class when
+    some collected class carries that name, so an external base whose name
+    collides with a project class resolves as project. ``object`` never counts.
+    Derivation is transitive, so subclasses of a derived class are derived too.
+
+    :param classes: Every collected class with the file it lives in.
+    :return: Each derived class with the base that made it derived.
+    """
+    project_names = {class_info.definition.name for _path, class_info in classes}
+    derived_names: set[str] = set()
+    derived_base: dict[int, str] = {}
+    changed = True
+    while changed:
+        changed = False
+        for _path, class_info in classes:
+            if id(class_info) in derived_base:
+                continue
+            for base in class_info.bases:
+                tail = base.rsplit(".", 1)[-1]
+                if tail in derived_names or (tail != "object" and tail not in project_names):
+                    derived_base[id(class_info)] = base
+                    derived_names.add(class_info.definition.name)
+                    changed = True
+                    break
+    return [
+        (path, class_info, derived_base[id(class_info)])
+        for path, class_info in classes
+        if id(class_info) in derived_base
+    ]
+
+
 def build_reference_graph(units: list[CodeUnit], project_root: Path | None = None) -> None:
     """Populate ``unit.references`` from every name each Python module loads.
 
@@ -415,12 +451,24 @@ def build_reference_graph(units: list[CodeUnit], project_root: Path | None = Non
             for unit in by_location.get((file_path, lineno, definition.name), [])
         ]
 
-    for file_path in sorted({unit.file_path for unit in units}):
-        module = collect_module_references(file_path)
+    modules = {
+        file_path: collect_module_references(file_path)
+        for file_path in sorted({unit.file_path for unit in units})
+    }
+    for file_path, module in modules.items():
         mark(f"__module__::{file_path}", module.module_references, module.aliases)
         for definition in module.definitions:
             for unit in units_for(file_path, definition):
                 mark(unit.uid, definition.references, module.aliases)
+
+    # Public methods of classes deriving from outside the project are reached
+    # by the framework's dispatch (NodeVisitor.visit_*, logging.Filter.filter),
+    # which no in-project name can show.
+    all_classes = [(path, cls) for path, module in modules.items() for cls in module.classes]
+    for file_path, class_info, base in _framework_derived_classes(all_classes):
+        for method in class_info.public_methods:
+            for unit in units_for(file_path, method):
+                unit.references.add(f"framework::{base}")
 
     # Seed references from project entry points.
     if project_root is not None:

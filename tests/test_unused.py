@@ -451,3 +451,84 @@ def test_callback_passed_as_a_value_is_a_reference(tmp_path: Path) -> None:
 
     assert _unit(units, "sample._increment").references == {_unit(units, "sample._apply").uid}
     assert unused == {"_apply"}
+
+
+def test_public_methods_of_node_visitor_subclass_are_framework_referenced(tmp_path: Path) -> None:
+    source = dedent(
+        """
+        import ast
+
+        class _Walker(ast.NodeVisitor):
+            def visit_Name(self, node):
+                return node
+
+            def _helper(self, node):
+                return node
+        """
+    ).strip()
+    units, unused = _referenced_graph(tmp_path, source)
+
+    assert _unit(units, "sample._Walker.visit_Name").references == {"framework::ast.NodeVisitor"}
+    assert _unit(units, "sample._Walker._helper").references == set()
+    assert unused == {"_Walker", "_helper"}
+
+
+def test_logging_filter_subclass_method_is_framework_referenced(tmp_path: Path) -> None:
+    source = dedent(
+        """
+        import logging
+
+        class _Quiet(logging.Filter):
+            def filter(self, record):
+                return True
+        """
+    ).strip()
+    units, unused = _referenced_graph(tmp_path, source)
+
+    assert _unit(units, "sample._Quiet.filter").references == {"framework::logging.Filter"}
+    assert "filter" not in unused
+
+
+def test_framework_derivation_is_transitive(tmp_path: Path) -> None:
+    source = dedent(
+        """
+        from ast import NodeVisitor
+
+        class _Base(NodeVisitor):
+            pass
+
+        class _Mid(_Base):
+            pass
+
+        class _Leaf(_Mid):
+            def visit_Call(self, node):
+                return node
+        """
+    ).strip()
+    units, unused = _referenced_graph(tmp_path, source)
+
+    assert _unit(units, "sample._Leaf.visit_Call").references == {"framework::_Mid"}
+    assert unused == {"_Leaf"}
+
+
+def test_project_only_bases_are_not_framework_derived(tmp_path: Path) -> None:
+    source = dedent(
+        """
+        class _Root:
+            def run(self):
+                return 1
+
+        class _Child(_Root):
+            def step(self):
+                return 2
+
+        class _Plain(object):
+            def go(self):
+                return 3
+        """
+    ).strip()
+    units, unused = _referenced_graph(tmp_path, source)
+
+    for qualified_name in ("sample._Root.run", "sample._Child.step", "sample._Plain.go"):
+        assert _unit(units, qualified_name).references == set()
+    assert unused == {"run", "step", "go", "_Child", "_Plain"}
