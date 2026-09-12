@@ -26,7 +26,7 @@ from codedupes.constants import (
     DEFAULT_SEARCH_SEMANTIC_TASK,
     DEFAULT_TRADITIONAL_THRESHOLD,
 )
-from codedupes.models import HYBRID_TIERS, HybridDuplicate
+from codedupes.models import HYBRID_TIERS, CodeUnit, HybridDuplicate
 from codedupes.pairs import ordered_pair_key
 from codedupes.report.selection import WITHHELD_TIERS
 from codedupes.semantic import (
@@ -41,6 +41,7 @@ from codedupes.semantic_profiles import (
     list_supported_models,
     resolve_model_profile,
 )
+from codedupes.traditional import _block_kind, find_exact_pair_keys
 
 try:
     from .sweep_common import (
@@ -161,6 +162,38 @@ def _threshold_grid(start: float, stop: float) -> list[float]:
         values.append(current)
         steps += 1
     return values
+
+
+def _scoreable_semantic_pairs(
+    positive_pairs: set[tuple[str, str]],
+    semantic_units: list[CodeUnit],
+    *,
+    cross_language: bool,
+    exclude_pairs: set[tuple[str, str]],
+) -> set[tuple[str, str]]:
+    """Return labeled pairs the semantic scanner is eligible to compare.
+
+    :param positive_pairs: Labeled positive pair keys.
+    :param semantic_units: Units retained by the analyzer's candidate policy.
+    :param cross_language: Whether the scanner compares units across languages.
+    :param exclude_pairs: Pair keys deliberately suppressed from semantic output.
+    :return: Positive pair keys eligible for semantic comparison.
+    """
+    units_by_uid = {unit.uid: unit for unit in semantic_units}
+    scoreable: set[tuple[str, str]] = set()
+    for pair in positive_pairs:
+        unit_a = units_by_uid.get(pair[0])
+        unit_b = units_by_uid.get(pair[1])
+        if unit_a is None or unit_b is None or pair in exclude_pairs:
+            continue
+        if not cross_language and unit_a.language != unit_b.language:
+            continue
+        if _block_kind(unit_a.unit_type) != _block_kind(unit_b.unit_type):
+            continue
+        if unit_a.overlaps(unit_b):
+            continue
+        scoreable.add(pair)
+    return scoreable
 
 
 def _tier_breakdown(
@@ -418,10 +451,18 @@ def _run_duplicate_sweep(
     assert identity is not None
 
     positive_pairs = build_positive_pairs(result.units, labels)
-    embedded_uids = {unit.uid for unit in analyzer._semantic_units or []}
-    scoreable_pairs = {
-        pair for pair in positive_pairs if pair[0] in embedded_uids and pair[1] in embedded_uids
+    semantic_units = analyzer._semantic_units or []
+    semantic_uids = {unit.uid for unit in semantic_units}
+    embedded_pairs = {
+        pair for pair in positive_pairs if pair[0] in semantic_uids and pair[1] in semantic_uids
     }
+    semantic_exclusions = find_exact_pair_keys(semantic_units) if config.run_traditional else set()
+    scoreable_pairs = _scoreable_semantic_pairs(
+        positive_pairs,
+        semantic_units,
+        cross_language=config.cross_language,
+        exclude_pairs=semantic_exclusions,
+    )
     traditional_pairs = {
         ordered_pair_key(duplicate.unit_a, duplicate.unit_b)
         for duplicate in result.traditional_duplicates
@@ -430,11 +471,11 @@ def _run_duplicate_sweep(
     excluded_pairs = len(positive_pairs) - len(scoreable_pairs)
     if excluded_pairs:
         print(
-            f"{excluded_pairs} labeled pairs sit outside the embedded candidate pool. "
+            f"{excluded_pairs} labeled pairs are not eligible for semantic comparison. "
             "They stay in the metric denominator and are threshold-invariant. "
-            "Candidate-policy exclusions (class-level or below-min-statement units) "
-            "can still be recovered by full-scope traditional analysis. Any exclusion "
-            "counts as a false negative unless the traditional tier matched it."
+            "Candidate-policy and pair-scan exclusions can still be recovered by "
+            "full-scope traditional analysis. Any exclusion counts as a false negative "
+            "unless the traditional tier matched it."
         )
     thresholds = _threshold_grid(duplicate_start, duplicate_stop)
     corpus_languages = sorted({unit.language for unit in result.units})
@@ -515,15 +556,16 @@ def _run_duplicate_sweep(
         },
     }
     manifest["selected_at_grid_edge"] = _grid_edge(selected.threshold, thresholds)
-    # Every count shares one population: reachable = scoreable + traditional
-    # recoveries, unreachable = labeled - reachable, and the ceiling divides
-    # reachable by labeled. The old ``excluded_positive_pairs`` counted only
-    # embedding-pool exclusions, so a traditional recovery made the block read
-    # "1 of 1 excluded, ceiling 1.0".
+    # Every count shares one population: embedded measures endpoint coverage,
+    # scoreable applies the scanner's pair predicate, reachable adds traditional
+    # recoveries, and the ceiling divides reachable by labeled. This is a
+    # structural upper bound before cosine scores and thresholds are considered.
     manifest["candidate_coverage"] = {
         "labeled_positive_pairs": len(positive_pairs),
+        "embedded_positive_pairs": len(embedded_pairs),
         "scoreable_positive_pairs": len(scoreable_pairs),
         "traditional_recovered_pairs": len(reachable_pairs) - len(scoreable_pairs),
+        "reachable_positive_pairs": len(reachable_pairs),
         "unreachable_positive_pairs": len(positive_pairs) - len(reachable_pairs),
         "recall_ceiling": (len(reachable_pairs) / len(positive_pairs) if positive_pairs else 0.0),
     }

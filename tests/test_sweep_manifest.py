@@ -170,8 +170,10 @@ def test_manifest_records_effective_embedding_space_not_the_request(
     assert manifest["selected_at_grid_edge"] == "start"
     assert manifest["candidate_coverage"] == {
         "labeled_positive_pairs": 1,
+        "embedded_positive_pairs": 1,
         "scoreable_positive_pairs": 1,
         "traditional_recovered_pairs": 0,
+        "reachable_positive_pairs": 1,
         "unreachable_positive_pairs": 0,
         "recall_ceiling": 1.0,
     }
@@ -203,16 +205,17 @@ def test_manifest_recall_ceiling_includes_traditional_overflow_recovery(
     )
     first = _unit("first", first_path, 1)
     second = _unit("second", second_path, 1)
+    first.structural_hash = "shared-exact-fingerprint"
+    second.structural_hash = "shared-exact-fingerprint"
     traditional = DuplicatePair(first, second, 1.0, "ast_hash")
 
-    # Both units passed the initial candidate policy but were dropped from
-    # the semantic matrix after traditional analysis, as context overflows are.
+    # Both endpoints are embedded, but the analyzer suppresses exact-hash pairs
+    # from semantic output. The traditional result must still make it reachable.
     _patch_analyze(
         monkeypatch,
         units=[first, second],
         identity=identity,
-        embeddings=np.zeros((0, 0), dtype=np.float32),
-        semantic_units=[],
+        embeddings=np.zeros((2, 4), dtype=np.float32),
         traditional_duplicates=[traditional],
     )
 
@@ -231,12 +234,78 @@ def test_manifest_recall_ceiling_includes_traditional_overflow_recovery(
     # field names read "1 of 1 excluded, ceiling 1.0" for exactly this case.
     assert sweep.manifest["candidate_coverage"] == {
         "labeled_positive_pairs": 1,
+        "embedded_positive_pairs": 1,
         "scoreable_positive_pairs": 0,
         "traditional_recovered_pairs": 1,
+        "reachable_positive_pairs": 1,
         "unreachable_positive_pairs": 0,
         "recall_ceiling": 1.0,
     }
     assert {row.recall for row in sweep.rows} == {1.0}
+
+
+@pytest.mark.parametrize("ineligible_reason", ["cross-language", "overlap", "kind"])
+def test_manifest_excludes_pairs_the_semantic_scanner_will_not_compare(
+    tmp_path: Path, monkeypatch, ineligible_reason: str
+) -> None:
+    corpus_path = tmp_path / "corpus"
+    corpus_path.mkdir()
+    first_path = corpus_path / "alpha.py"
+    second_path = corpus_path / "beta.py"
+    first_path.write_text("def first():\n    return 1\n")
+    second_path.write_text("def second():\n    return 2\n")
+    first = _unit("first", first_path, 1)
+    second = _unit("second", second_path, 1)
+    if ineligible_reason == "cross-language":
+        second.language = "rust"
+    elif ineligible_reason == "overlap":
+        second.file_path = first.file_path
+    else:
+        second.unit_type = CodeUnitType.CLASS
+
+    labels = {
+        "positive_groups": [
+            [
+                "alpha.py::first",
+                f"{second.file_path.name}::second",
+            ]
+        ]
+    }
+    labels_path = tmp_path / "labels.json"
+    labels_path.write_text(json.dumps(labels))
+    profile = resolve_model_profile("gte-modernbert-base")
+    identity = EmbeddingSpaceIdentity(
+        model_name=profile.canonical_name,
+        resolved_revision=PINNED_COMMIT,
+        runtime_variant="cpu-faithful",
+    )
+    _patch_analyze(
+        monkeypatch,
+        units=[first, second],
+        identity=identity,
+        embeddings=np.zeros((2, 4), dtype=np.float32),
+    )
+
+    sweep = _run_duplicate_sweep(
+        model_name="gte-modernbert-base",
+        revision=PINNED_COMMIT,
+        corpus_path=corpus_path,
+        labels_path=labels_path,
+        labels=labels,
+        min_statements=0,
+        batch_size=4,
+        device="cpu",
+    )
+
+    assert sweep.manifest["candidate_coverage"] == {
+        "labeled_positive_pairs": 1,
+        "embedded_positive_pairs": 1,
+        "scoreable_positive_pairs": 0,
+        "traditional_recovered_pairs": 0,
+        "reachable_positive_pairs": 0,
+        "unreachable_positive_pairs": 1,
+        "recall_ceiling": 0.0,
+    }
 
 
 def test_duplicate_rows_split_published_pairs_by_tier(tmp_path: Path, monkeypatch) -> None:
