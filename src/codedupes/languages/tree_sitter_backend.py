@@ -84,11 +84,35 @@ _PYTHON_IMPORT_TYPES = frozenset(
 # ``dotted_name`` also spells the class of a ``case Point(x=0)`` pattern, so an
 # identifier under one is import shape only when an import statement encloses it.
 _PYTHON_IMPORT_NAME_PARENTS = frozenset({"dotted_name", "aliased_import"})
+# Module-level statements whose bodies still run at import time, walked when
+# looking for ``__all__``.
+_PYTHON_MODULE_CONTAINER_TYPES = frozenset(
+    {
+        "if_statement",
+        "elif_clause",
+        "else_clause",
+        "try_statement",
+        "except_clause",
+        "except_group_clause",
+        "finally_clause",
+        "with_statement",
+        "block",
+    }
+)
 # ``dir(builtins)`` rather than ``dir(__builtins__)``: the latter is a plain dict
 # inside imported modules. ``self``/``cls`` are conventions every method shares,
 # so they carry no identifier signal between units.
+# ``site`` injects ``exit``/``quit``/``help``/``copyright``/``credits``/``license``
+# into ``builtins`` at startup; they are excluded so identifier sets do not
+# depend on whether the interpreter ran with ``-S``.
 _PYTHON_BUILTINS = (
-    frozenset(keyword.kwlist) | frozenset(dir(builtins_module)) | frozenset({"self", "cls"})
+    frozenset(keyword.kwlist)
+    | frozenset(
+        name
+        for name, value in vars(builtins_module).items()
+        if getattr(type(value), "__module__", "") != "_sitebuiltins"
+    )
+    | frozenset({"self", "cls"})
 )
 
 
@@ -278,7 +302,8 @@ def _preceding_named_siblings(node: Any) -> Iterable[Any]:
 
     py-tree-sitter exposes ``prev_named_sibling``, which is O(1) per step; scanning
     the parent's named children instead is O(siblings) per lookup and turns
-    attribute collection quadratic in the number of items in a file. Node doubles
+    attribute collection and docstring detection quadratic in the number of
+    items in a file. Node doubles
     and parsers without that attribute fall back to the scan, which matches nodes
     by source identity because bindings may hand out fresh wrappers.
 
@@ -698,9 +723,10 @@ class TreeSitterBackend:
         :return: ``True`` when private units are included or the spec is public.
         """
         # ``is_public`` already encodes each language's visibility rules (C
-        # ``static``, Rust ``pub``, naming conventions, and TypeScript
-        # accessibility modifiers), so filtering must use it rather than
-        # re-deriving a name-prefix subset of those rules.
+        # ``static``, Rust ``pub``, and TypeScript accessibility modifiers), so
+        # filtering uses it rather than re-deriving a subset of those rules.
+        # Python overrides this: its dunder and mangled names are not public
+        # yet are still extracted.
         return self.include_private or spec.is_public
 
     def _statement_count(self, body: Any, unit_type: CodeUnitType, source: bytes) -> int:
@@ -843,13 +869,12 @@ class TreeSitterBackend:
             )
             deduped[key] = spec
 
-        # A filtered-out private class takes its members with it: emitting them
-        # would leak the container's internals under a name whose owner was
-        # never reported.
+        # A filtered-out private definition takes everything nested in it:
+        # emitting a private class's methods or a private function's inner
+        # definitions would leak internals under a name whose owner was never
+        # reported, and nothing outside the container can reach them.
         private_container_spans = [
-            _spec_span(spec)
-            for spec in deduped.values()
-            if spec.unit_type == CodeUnitType.CLASS and not self._include_spec(spec)
+            _spec_span(spec) for spec in deduped.values() if not self._include_spec(spec)
         ]
 
         units: list[CodeUnit] = []
@@ -1107,8 +1132,9 @@ def _python_unwrap(node: Any, parent: Any | None) -> bool:
 def _python_preserve_identifier(node: Any, parent: Any | None) -> bool:
     """Keep names that are API shape rather than local bindings.
 
-    Mirrors the ``ast`` fields that were plain strings and therefore never
-    normalized: ``Attribute.attr``, ``keyword.arg``, and import ``alias`` names.
+    Attribute names, keyword-argument names, and imported names are preserved;
+    parameters, locals, definition names, ``global``/``nonlocal`` targets, and
+    ``case`` pattern names normalize like every other binding.
 
     :param node: Identifier leaf under consideration.
     :param parent: Parent of ``node`` in the walk.
@@ -1215,8 +1241,16 @@ class PythonBackend(TreeSitterBackend):
         :return: Exported names, empty when the module declares no ``__all__``.
         """
         names: set[str] = set()
-        for statement in _named_children(root_node):
-            if getattr(statement, "type", "") != "expression_statement":
+        # Module-level compound statements (``if sys.version_info``, ``try``)
+        # can assign ``__all__`` too; definitions are not descended into.
+        pending = list(reversed(_named_children(root_node)))
+        while pending:
+            statement = pending.pop()
+            statement_type = getattr(statement, "type", "")
+            if statement_type in _PYTHON_MODULE_CONTAINER_TYPES:
+                pending.extend(reversed(_named_children(statement)))
+                continue
+            if statement_type != "expression_statement":
                 continue
             for assignment in _named_children(statement):
                 if getattr(assignment, "type", "") not in {"assignment", "augmented_assignment"}:
@@ -1228,7 +1262,7 @@ class PythonBackend(TreeSitterBackend):
                 ):
                     continue
                 right = _child_by_field(assignment, "right")
-                if getattr(right, "type", "") not in {"list", "tuple"}:
+                if getattr(right, "type", "") not in {"list", "tuple", "expression_list"}:
                     continue
                 for element in _named_children(right):
                     if getattr(element, "type", "") != "string":
@@ -1290,6 +1324,14 @@ class PythonBackend(TreeSitterBackend):
             name = _node_text(source, _child_by_field(node, "name")).strip()
             body = _child_by_field(node, "body")
             if not name or body is None:
+                continue
+            # ``def f():`` with nothing indented under it is a syntax error to
+            # CPython; tree-sitter hands back an empty block without an error
+            # node. A definition whose body was lost to error recovery keeps
+            # going so ``extract_file`` reports it as ``unit-parse-error``.
+            if not getattr(node, "has_error", False) and all(
+                _is_comment(child) for child in _named_children(body)
+            ):
                 continue
             parent = getattr(node, "parent", None)
             outer = parent if getattr(parent, "type", "") == "decorated_definition" else node

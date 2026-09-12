@@ -12,6 +12,7 @@ import pytest
 from codedupes.extractor import CodeExtractor
 from codedupes.languages.base import BackendResult
 from codedupes.languages.registry import get_grammar_statuses
+from codedupes.languages.tree_sitter_backend import _PYTHON_BUILTINS
 from codedupes.models import CodeUnit, CodeUnitType
 
 pytestmark = pytest.mark.grammar
@@ -1890,6 +1891,114 @@ def test_python_dunder_all_unions_assignment_and_augmented_assignment(tmp_path: 
         "sample.beta": True,
         "sample.gamma": False,
     }
+
+
+def test_python_dunder_all_accepts_bare_tuples_and_module_level_containers(
+    tmp_path: Path,
+) -> None:
+    """``__all__`` inside a module-level ``if``/``try`` runs at import; one inside a
+    function body does not."""
+    units = _python_units(
+        tmp_path,
+        """
+        import sys
+
+        __all__ = "alpha", "beta"
+
+        if sys.version_info >= (3, 12):
+            __all__ += ["gamma"]
+        else:
+            __all__ += ["gamma"]
+
+        try:
+            from ._fast import delta
+            __all__ += ("delta",)
+        except ImportError:
+            pass
+
+        def _register():
+            __all__ = ["epsilon"]
+
+        def alpha():
+            return 1
+
+        def beta():
+            return 2
+
+        def gamma():
+            return 3
+
+        def delta():
+            return 4
+
+        def epsilon():
+            return 5
+        """,
+    )
+
+    assert {name: unit.is_exported for name, unit in units.items()} == {
+        "sample._register": False,
+        "sample.alpha": True,
+        "sample.beta": True,
+        "sample.gamma": True,
+        "sample.delta": True,
+        "sample.epsilon": False,
+    }
+
+
+def test_python_bodiless_definitions_yield_no_units_and_no_diagnostics(tmp_path: Path) -> None:
+    """``def f():`` with nothing under it is a CPython syntax error that tree-sitter
+    accepts as an empty block, so there is no body to fingerprint and no error node
+    to report."""
+    result = _python_result(tmp_path, "def a():\n\ndef b():\n\nclass C:\n\nx = 1\n")
+
+    assert result.units == ()
+    assert result.diagnostics == ()
+
+
+def test_python_builtins_exclude_the_site_injected_names(tmp_path: Path) -> None:
+    """``exit``/``quit``/``help`` come from ``site``, not the language, so they stay identifiers."""
+    units = _python_units(
+        tmp_path,
+        """
+        def bail(items):
+            exit(1)
+            return len(items)
+        """,
+    )
+    identifiers = units["sample.bail"].identifiers
+
+    assert "exit" in identifiers
+    assert "len" not in identifiers
+    assert "exit" not in _PYTHON_BUILTINS
+    assert {"len", "print", "self", "cls", "def"} <= _PYTHON_BUILTINS
+
+
+def test_python_private_function_filter_drops_its_nested_definitions(tmp_path: Path) -> None:
+    """A filtered private container of any kind takes what it nests with it."""
+    units = _python_units(
+        tmp_path,
+        """
+        def _outer():
+            def inner():
+                return 1
+
+            class Local:
+                def run(self):
+                    return 2
+
+            return inner, Local
+
+        def outer():
+            def inner():
+                return 3
+
+            return inner
+        """,
+        include_private=False,
+    )
+
+    assert set(units) == {"sample.outer", "sample.outer.inner"}
 
 
 @pytest.mark.parametrize(

@@ -45,8 +45,6 @@ def module_prefix(root: Path, file_path: Path, language: str) -> str:
         conventional |= {"mod", "lib", "main"}
     if stem not in conventional or not parts:
         parts.append(stem)
-    if not parts:
-        parts.append(stem or file_path.stem)
     return ".".join(part for part in parts if part)
 
 
