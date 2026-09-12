@@ -421,6 +421,33 @@ def test_dynamic_gte_modernbert_profile_inherits_family_thresholds_without_revis
     assert profile.default_search_threshold == 0.50
 
 
+@pytest.mark.parametrize(
+    ("dynamic_model_name", "builtin_alias", "is_local_path"),
+    [
+        ("gte-modernbert-base", "gte-modernbert-base", True),
+        ("someone/embeddinggemma-300m-code-ft", "embeddinggemma-300m", False),
+    ],
+)
+def test_dynamic_profile_inherits_the_family_hybrid_split(
+    tmp_path: Path, dynamic_model_name: str, builtin_alias: str, is_local_path: bool
+) -> None:
+    if is_local_path:
+        local_dir = tmp_path / dynamic_model_name
+        local_dir.mkdir()
+        profile = resolve_model_profile(str(local_dir))
+    else:
+        profile = resolve_model_profile(dynamic_model_name)
+    builtin = resolve_model_profile(builtin_alias)
+
+    assert profile.hybrid_weak_identifier_jaccard_min == builtin.hybrid_weak_identifier_jaccard_min
+    assert profile.hybrid_statement_ratio_min == builtin.hybrid_statement_ratio_min
+    assert dict(profile.language_high_confidence_thresholds) == dict(
+        builtin.language_high_confidence_thresholds
+    )
+    if builtin_alias == "gte-modernbert-base":
+        assert profile.high_confidence_threshold_for_language("typescript") == 0.88
+
+
 def test_resolving_family_copy_does_not_log_threshold_selection(tmp_path: Path, caplog) -> None:
     local_dir = tmp_path / "gte-modernbert-base-copy"
     local_dir.mkdir()

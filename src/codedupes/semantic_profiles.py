@@ -390,9 +390,10 @@ def _build_dynamic_profile(
 ) -> SemanticModelProfile:
     """Build a family-aware profile for a non-builtin model.
 
-    Family thresholds are practical defaults for copies and fine-tunes, not
-    proof that their score distributions match the calibrated checkpoint.
-    The actual model identifier and unpinned revision are preserved.
+    Family thresholds and hybrid tier split are practical defaults for copies
+    and fine-tunes, not proof that their score distributions match the
+    calibrated checkpoint. The actual model identifier and unpinned revision
+    are preserved.
 
     :param model_name: Model name or local directory path.
     :param family: Built-in family whose loading/prompt behavior applies.
@@ -407,6 +408,9 @@ def _build_dynamic_profile(
         default_semantic_threshold=builtin.default_semantic_threshold,
         default_search_threshold=builtin.default_search_threshold,
         language_semantic_thresholds=builtin.language_semantic_thresholds,
+        hybrid_weak_identifier_jaccard_min=builtin.hybrid_weak_identifier_jaccard_min,
+        hybrid_statement_ratio_min=builtin.hybrid_statement_ratio_min,
+        language_high_confidence_thresholds=builtin.language_high_confidence_thresholds,
     )
 
 
