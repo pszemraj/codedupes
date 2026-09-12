@@ -42,7 +42,7 @@ def _build_result(tmp_path: Path) -> AnalysisResult:
         unit_a=unit,
         unit_b=unit,
         similarity=1.0,
-        method="ast_hash",
+        method="structural_hash",
     )
     hybrid = HybridDuplicate(
         unit_a=unit,

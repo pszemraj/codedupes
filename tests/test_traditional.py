@@ -43,7 +43,7 @@ def test_duplicate_counts_are_debug_only_before_caller_filtering(
     assert "Found 0 near duplicates before caller filtering (Jaccard)" in caplog.text
 
 
-def test_exact_duplicates_via_ast_hash(tmp_path: Path) -> None:
+def test_exact_duplicates_via_structural_hash(tmp_path: Path) -> None:
     source = dedent(
         """
         def foo(a, b):
@@ -60,7 +60,7 @@ def test_exact_duplicates_via_ast_hash(tmp_path: Path) -> None:
     assert len(exact) == 1
     assert len(near) == 0
     methods = {pair.method for pair in exact}
-    assert methods == {"ast_hash"}
+    assert methods == {"structural_hash"}
 
 
 def test_exact_duplicates_across_function_and_method(tmp_path: Path) -> None:

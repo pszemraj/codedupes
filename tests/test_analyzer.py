@@ -337,7 +337,7 @@ def test_combined_mode_preserves_near_dupes_for_semantic_confirmation(
         nonlocal expected_exact_pair
         expected_exact_pair = tuple(sorted((first.uid, second.uid)))
         return (
-            [DuplicatePair(unit_a=first, unit_b=second, similarity=1.0, method="ast_hash")],
+            [DuplicatePair(unit_a=first, unit_b=second, similarity=1.0, method="structural_hash")],
             [DuplicatePair(unit_a=second, unit_b=third, similarity=0.9, method="jaccard")],
         )
 
@@ -619,12 +619,12 @@ def test_tiny_exact_duplicate_filter(
         result = analyzer.analyze(project)
 
     has_exact_duplicate = any(
-        duplicate.method in {"ast_hash", "token_hash"}
+        duplicate.method in {"structural_hash", "token_hash"}
         for duplicate in result.traditional_duplicates
     )
     assert has_exact_duplicate is expected_exact_duplicate
     exact_count = sum(
-        duplicate.method in {"ast_hash", "token_hash"}
+        duplicate.method in {"structural_hash", "token_hash"}
         for duplicate in result.traditional_duplicates
     )
     exact_logs = [
@@ -1299,7 +1299,7 @@ def test_combined_mode_excludes_tiny_filtered_ast_only_exact_pairs(
     unit_by_name = {unit.name: unit for unit in result.units}
     pair = ordered_pair_key(unit_by_name["alpha"], unit_by_name["beta"])
 
-    # Same normalized AST, different identifiers: an ast_hash-only exact pair.
+    # Same normalized structure, different identifiers: a structural_hash-only exact pair.
     assert unit_by_name["alpha"].structural_hash == unit_by_name["beta"].structural_hash
     assert unit_by_name["alpha"].token_hash != unit_by_name["beta"].token_hash
     # The tiny filter strips the pair from traditional output...
@@ -1900,7 +1900,9 @@ def test_suppress_test_semantic_matches_filters_test_named_pairs(
 def test_hybrid_synthesis_exact_only_included(tmp_path: Path) -> None:
     unit_a = make_code_unit(tmp_path, name="a", source="def a(x):\n    return x + 1\n", lineno=1)
     unit_b = make_code_unit(tmp_path, name="b", source="def b(y):\n    return y + 1\n", lineno=5)
-    traditional = [DuplicatePair(unit_a=unit_a, unit_b=unit_b, similarity=1.0, method="ast_hash")]
+    traditional = [
+        DuplicatePair(unit_a=unit_a, unit_b=unit_b, similarity=1.0, method="structural_hash")
+    ]
 
     hybrid = analyzer_module._synthesize_hybrid_duplicates(
         traditional,

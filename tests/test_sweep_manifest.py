@@ -261,7 +261,7 @@ def test_manifest_recall_ceiling_includes_traditional_overflow_recovery(
     second = _unit("second", second_path, 1)
     first.structural_hash = "shared-exact-fingerprint"
     second.structural_hash = "shared-exact-fingerprint"
-    traditional = DuplicatePair(first, second, 1.0, "ast_hash")
+    traditional = DuplicatePair(first, second, 1.0, "structural_hash")
 
     # Both endpoints are embedded, but the analyzer suppresses exact-hash pairs
     # from semantic output. The traditional result must still make it reachable.
@@ -440,7 +440,7 @@ def test_duplicate_rows_split_published_pairs_by_tier(tmp_path: Path, monkeypatc
         units=units,
         identity=identity,
         embeddings=np.zeros((4, 4), dtype=np.float32),
-        traditional_duplicates=[DuplicatePair(first, second, 1.0, "ast_hash")],
+        traditional_duplicates=[DuplicatePair(first, second, 1.0, "structural_hash")],
         semantic_duplicates=[DuplicatePair(left, right, 0.91, "semantic")],
     )
 

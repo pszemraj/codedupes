@@ -97,7 +97,7 @@ def test_exact_hashes_still_match_within_one_language(tmp_path: Path) -> None:
     exact, _near = run_traditional_analysis(units, jaccard_threshold=0.8)
 
     assert len(exact) == 1
-    assert exact[0].method == "ast_hash"
+    assert exact[0].method == "structural_hash"
 
 
 def test_overlapping_nested_units_are_not_reported_as_exact(tmp_path: Path) -> None:

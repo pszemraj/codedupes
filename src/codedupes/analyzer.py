@@ -346,7 +346,7 @@ def _synthesize_hybrid_duplicates(
 
     for duplicate in traditional_duplicates:
         entry = ensure_entry(duplicate.unit_a, duplicate.unit_b)
-        if duplicate.method in {"ast_hash", "token_hash"}:
+        if duplicate.method in {"structural_hash", "token_hash"}:
             entry["has_exact"] = True
         elif duplicate.method == "jaccard":
             previous = entry["jaccard_similarity"]
