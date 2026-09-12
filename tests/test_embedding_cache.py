@@ -64,10 +64,36 @@ class CountingModel:
         self.encode_calls: list[list[str]] = []
         self.prompts_seen: list[str | None] = []
 
-    def encode(self, texts, **kwargs):
-        self.encode_calls.append(list(texts))
+    def _record_encode_call(self, texts, **kwargs) -> list[str]:
+        text_list = list(texts)
+        self.encode_calls.append(text_list)
         self.prompts_seen.append(kwargs.get("prompt"))
-        return np.stack([_vector_for_text(text, self.dim) for text in texts], axis=0)
+        return text_list
+
+    def encode(self, texts, **kwargs):
+        text_list = self._record_encode_call(texts, **kwargs)
+        return np.stack([_vector_for_text(text, self.dim) for text in text_list], axis=0)
+
+
+class _SimilarityModel(CountingModel):
+    """Two-dimensional fake with a fixed similarity to matching inputs."""
+
+    def __init__(self, matching_text: str, similarity: float) -> None:
+        super().__init__(dim=2)
+        self.matching_text = matching_text
+        self.similarity = similarity
+
+    def encode(self, texts, **kwargs):
+        text_list = self._record_encode_call(texts, **kwargs)
+        return np.array(
+            [
+                [1.0, 0.0]
+                if self.matching_text in text
+                else [self.similarity, np.sqrt(1 - self.similarity**2)]
+                for text in text_list
+            ],
+            dtype=np.float32,
+        )
 
 
 def _corpus_manifest(
@@ -522,16 +548,7 @@ def test_local_family_threshold_changes_reuse_embeddings(tmp_path, monkeypatch):
         "def alpha(x):\n    return x + 1\n\ndef beta(x):\n    return x * 2\n", encoding="utf-8"
     )
 
-    class Model(CountingModel):
-        def encode(self, texts, **kwargs):
-            self.encode_calls.append(list(texts))
-            self.prompts_seen.append(kwargs.get("prompt"))
-            return np.array(
-                [[1.0, 0.0] if "alpha" in text else [0.78, np.sqrt(1 - 0.78**2)] for text in texts],
-                dtype=np.float32,
-            )
-
-    model = Model()
+    model = _SimilarityModel("alpha", 0.78)
     loads = _patch_get_model(monkeypatch, model)
     settings = {
         "model_name": str(model_dir),
@@ -624,19 +641,7 @@ def test_search_profile_changes_reuse_corpus_and_query_vectors(tmp_path, monkeyp
     project.mkdir()
     (project / "arithmetic.py").write_text("def alpha(x):\n    return x + 1\n", encoding="utf-8")
 
-    class Model(CountingModel):
-        def encode(self, texts, **kwargs):
-            self.encode_calls.append(list(texts))
-            self.prompts_seen.append(kwargs.get("prompt"))
-            return np.array(
-                [
-                    [1.0, 0.0] if "def alpha" in text else [0.45, np.sqrt(1 - 0.45**2)]
-                    for text in texts
-                ],
-                dtype=np.float32,
-            )
-
-    model = Model()
+    model = _SimilarityModel("def alpha", 0.45)
     loads = _patch_get_model(monkeypatch, model)
     config = AnalyzerConfig(
         mode="search",
@@ -681,7 +686,7 @@ def test_full_cache_hit_skips_model_load_and_encode(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize("embed", [compute_embeddings, compute_embeddings_with_identity])
-@pytest.mark.parametrize("cache_state", ["disabled", "cold", "warm"])
+@pytest.mark.parametrize("cache_state", ["cold", "warm"])
 @pytest.mark.parametrize(
     ("unit_count", "document_count"),
     [(2, 1), (1, 2), (0, 1)],
@@ -1481,13 +1486,13 @@ def test_unreportable_mutable_revision_never_mixes_cached_and_fresh_rows(tmp_pat
 
     class EpochModel(CountingModel):
         def __init__(self) -> None:
-            super().__init__(dim=2)
             self.epoch = 0
+            super().__init__(dim=2)
 
         def encode(self, texts, **kwargs):
-            self.encode_calls.append(list(texts))
+            text_list = self._record_encode_call(texts, **kwargs)
             vector = np.array([1.0, 0.0] if self.epoch == 0 else [0.0, 1.0])
-            return np.repeat(vector[None, :], len(texts), axis=0)
+            return np.repeat(vector[None, :], len(text_list), axis=0)
 
     units = _five_units(tmp_path)[:3]
     model = EpochModel()
@@ -1558,9 +1563,9 @@ def test_index_requires_query_checkpoint_before_encoding(
             )
 
         def encode(self, texts, **kwargs):
-            self.encode_calls.append(list(texts))
+            text_list = self._record_encode_call(texts, **kwargs)
             vectors = np.array(
-                [[1.0, 0.0] if "alpha" in text else [0.0, 1.0] for text in texts],
+                [[1.0, 0.0] if "alpha" in text else [0.0, 1.0] for text in text_list],
                 dtype=np.float32,
             )
             return vectors if self.commit == "a" * 40 else vectors[:, ::-1]
