@@ -10,10 +10,11 @@ import pytest
 import codedupes.semantic as semantic_module
 from codedupes import analyzer as analyzer_module
 from codedupes.analyzer import AnalyzerConfig, CodeAnalyzer, analyze_directory
+from codedupes.constants import HYBRID_STATEMENT_RATIO_MIN, HYBRID_WEAK_JACCARD_MIN
 from codedupes.models import AnalysisResult, CodeUnit, CodeUnitType, DuplicatePair
 from codedupes.pairs import ordered_pair_key
 from codedupes.semantic import SemanticBackendError
-from codedupes.semantic_profiles import SemanticModelProfile
+from codedupes.semantic_profiles import SemanticModelProfile, resolve_model_profile
 from tests.conftest import build_two_function_source, create_project, make_code_unit
 
 _SEMANTIC_ANALYSIS_KWARG_NAMES = {
@@ -2241,6 +2242,131 @@ def test_analyzer_applies_the_profile_hybrid_split(
     }
     assert tiers == expected_tiers
     assert all(pair.weak_identifier_jaccard == 0.0 for pair in result.hybrid_duplicates)
+
+
+def test_resolve_hybrid_split_gates_off_with_explicit_semantic_threshold(tmp_path: Path) -> None:
+    """An explicit ``semantic_threshold`` keeps the profile constants but disables its gates."""
+    ts_unit = make_code_unit(tmp_path, name="ts_unit", source="function f() {}\n")
+    ts_unit.language = "typescript"
+    py_unit = make_code_unit(tmp_path, name="py_unit", source="def f():\n    pass\n")
+    py_unit.language = "python"
+    units = [ts_unit, py_unit]
+
+    profile = resolve_model_profile("gte-modernbert-base")
+
+    default_analyzer = CodeAnalyzer(
+        AnalyzerConfig(
+            run_traditional=True,
+            run_semantic=True,
+            run_unused=False,
+            model_name="gte-modernbert-base",
+        )
+    )
+    weak_min, ratio_min, gates = default_analyzer._resolve_hybrid_split(units)
+    assert gates == {"typescript": 0.88}
+    assert weak_min == profile.hybrid_weak_identifier_jaccard_min
+    assert ratio_min == profile.hybrid_statement_ratio_min
+
+    flat_threshold_analyzer = CodeAnalyzer(
+        AnalyzerConfig(
+            run_traditional=True,
+            run_semantic=True,
+            run_unused=False,
+            model_name="gte-modernbert-base",
+            semantic_threshold=0.80,
+        )
+    )
+    flat_weak_min, flat_ratio_min, flat_gates = flat_threshold_analyzer._resolve_hybrid_split(units)
+    assert flat_gates == {}
+    assert flat_weak_min == profile.hybrid_weak_identifier_jaccard_min
+    assert flat_ratio_min == profile.hybrid_statement_ratio_min
+
+    generic_analyzer = CodeAnalyzer(
+        AnalyzerConfig(
+            run_traditional=True,
+            run_semantic=True,
+            run_unused=False,
+            model_name="gte-modernbert-base",
+            threshold_profile="generic",
+        )
+    )
+    generic_weak_min, generic_ratio_min, generic_gates = generic_analyzer._resolve_hybrid_split(
+        units
+    )
+    assert generic_gates == {}
+    assert generic_weak_min == HYBRID_WEAK_JACCARD_MIN
+    assert generic_ratio_min == HYBRID_STATEMENT_RATIO_MIN
+
+
+def test_analyzer_typescript_promotion_gate_requires_no_corroboration(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The typescript promotion gate alone must promote a pair statement-ratio corroboration
+    would withhold, and an explicit ``semantic_threshold`` must turn that gate back off."""
+    source = dedent(
+        """
+        export function collectTotal(value: number): number {
+            const total = value + 1;
+            return total;
+        }
+
+        export function measureSum(value: number): number {
+            const total = value + 1;
+            const doubled = total * 2;
+            const tripled = doubled + total;
+            const scaled = tripled - 1;
+            return scaled;
+        }
+        """
+    ).strip()
+    project = create_project(tmp_path, source, module="mod.ts")
+
+    def paired(units: list[CodeUnit]) -> list[DuplicatePair]:
+        by_name = {unit.name: unit for unit in units}
+        return [
+            DuplicatePair(by_name["collectTotal"], by_name["measureSum"], 0.90, "semantic"),
+        ]
+
+    monkeypatch.setattr(
+        analyzer_module, "run_semantic_analysis", _make_semantic_runner(duplicate_factory=paired)
+    )
+
+    default_analyzer = CodeAnalyzer(
+        AnalyzerConfig(
+            run_traditional=True,
+            run_semantic=True,
+            run_unused=False,
+            min_semantic_statements=0,
+            filter_tiny_traditional=False,
+            model_name="gte-modernbert-base",
+        )
+    )
+    default_result = default_analyzer.analyze(project)
+
+    units_by_name = {unit.name: unit for unit in default_result.units}
+    # The lopsided statement counts (ratio 2/5 = 0.4) sit below the profile's
+    # 0.80 statement-ratio corroboration floor, so only the gate can promote this pair.
+    assert units_by_name["collectTotal"].statement_count == 2
+    assert units_by_name["measureSum"].statement_count == 5
+
+    [default_pair] = default_result.hybrid_duplicates
+    assert default_pair.tier == "semantic_high_confidence"
+
+    gated_off_analyzer = CodeAnalyzer(
+        AnalyzerConfig(
+            run_traditional=True,
+            run_semantic=True,
+            run_unused=False,
+            min_semantic_statements=0,
+            filter_tiny_traditional=False,
+            model_name="gte-modernbert-base",
+            semantic_threshold=0.80,
+        )
+    )
+    gated_off_result = gated_off_analyzer.analyze(project)
+
+    [gated_off_pair] = gated_off_result.hybrid_duplicates
+    assert gated_off_pair.tier == "semantic_review"
 
 
 def test_mixed_mode_semantic_failure_still_builds_hybrid_from_traditional(
