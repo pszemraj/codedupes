@@ -250,7 +250,7 @@ def _parse_module(file_path: Path) -> ast.Module | None:
     try:
         # utf-8-sig matches the BOM-tolerant extractor read: a file that
         # extraction accepts must not silently lose its references.
-        # ValueError covers CPython 3.11's embedded-NUL report.
+        # ValueError covers Python 3.11's embedded-NUL report.
         source = file_path.read_text(encoding="utf-8-sig")
         return ast.parse(source)
     except (OSError, SyntaxError, UnicodeDecodeError, ValueError):

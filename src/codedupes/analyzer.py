@@ -64,7 +64,6 @@ from codedupes.traditional import (
     find_exact_pair_keys,
     jaccard_similarity,
     run_traditional_analysis,
-    unit_identifier_set,
 )
 from codedupes.unused import run_unused_analysis
 
@@ -397,8 +396,8 @@ def _synthesize_hybrid_duplicates(
                 tier = "traditional_near"
                 confidence = 0.55 + (0.45 * jaccard_sim)
         elif semantic_sim is not None:
-            ids_a = identifier_cache.setdefault(unit_a.uid, unit_identifier_set(unit_a))
-            ids_b = identifier_cache.setdefault(unit_b.uid, unit_identifier_set(unit_b))
+            ids_a = identifier_cache.setdefault(unit_a.uid, set(unit_a.identifiers))
+            ids_b = identifier_cache.setdefault(unit_b.uid, set(unit_b.identifiers))
             weak_identifier_jaccard = jaccard_similarity(ids_a, ids_b)
             statement_ratio = _statement_count_ratio(unit_a, unit_b)
 
@@ -729,7 +728,6 @@ class CodeAnalyzer:
             diagnostic.code
             in {
                 "read-error",
-                "parse-error",
                 "invalid-utf8",
                 "partial-parse",
                 "unit-parse-error",

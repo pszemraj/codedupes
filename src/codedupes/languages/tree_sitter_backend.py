@@ -383,7 +383,7 @@ def _has_ancestor(node: Any, node_types: set[str]) -> bool:
 
 
 def _contains_error(node: Any) -> bool:
-    """Report whether a node is, or contains, a parse-error marker.
+    """Report whether a node is, or contains, a syntax-error recovery marker.
 
     :param node: Node to inspect.
     :return: ``True`` when the node is erroneous, missing, or covers recovery nodes.
@@ -639,41 +639,6 @@ def _collect_identifiers(node: Any, source: bytes, builtins: frozenset[str]) -> 
     return frozenset(identifiers)
 
 
-def _collect_calls(node: Any, source: bytes) -> set[str]:
-    """Collect callee names for calls, constructions, and macro invocations.
-
-    :param node: Unit node to scan.
-    :param source: Full file source bytes.
-    :return: Callee texts plus their trailing name segments.
-    """
-    calls: set[str] = set()
-    for candidate in _walk(node):
-        node_type = getattr(candidate, "type", "")
-        if node_type not in {
-            "call_expression",
-            "new_expression",
-            "macro_invocation",
-            "method_call_expression",
-        }:
-            continue
-        callee = _first_node(
-            _child_by_field(candidate, "function"),
-            _child_by_field(candidate, "callee"),
-            _child_by_field(candidate, "macro"),
-        )
-        if callee is None:
-            named = _named_children(candidate)
-            callee = named[0] if named else None
-        text = _clean_name(_node_text(source, callee))
-        if not text:
-            continue
-        calls.add(text)
-        final = re.split(r"[.:]+", text)[-1]
-        if final:
-            calls.add(final)
-    return calls
-
-
 class TreeSitterBackend:
     """Shared parse, diagnostics, fingerprint, and unit-construction machinery."""
 
@@ -859,9 +824,9 @@ class TreeSitterBackend:
             )
             deduped[key] = spec
 
-        # A filtered-out private class takes its members with it, matching the
-        # Python extractor: emitting them would leak the container's internals
-        # under a name whose owner was never reported.
+        # A filtered-out private class takes its members with it: emitting them
+        # would leak the container's internals under a name whose owner was
+        # never reported.
         private_container_spans = [
             _spec_span(spec)
             for spec in deduped.values()
@@ -931,7 +896,6 @@ class TreeSitterBackend:
                     structural_hash=structural_hash,
                     token_hash=_token_hash(spec.node, source, policy=self.hash_policy),
                     identifiers=_collect_identifiers(spec.node, source, self.builtins),
-                    calls=_collect_calls(spec.node, source),
                     is_public=spec.is_public,
                     is_dunder=spec.name.startswith("__") and spec.name.endswith("__"),
                     is_exported=spec.is_exported,

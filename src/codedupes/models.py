@@ -46,10 +46,11 @@ class ExtractionDiagnostic:
 class CodeUnit:
     """Represents an extracted function, method, or class.
 
-    Python remains the compatibility baseline, while the language-neutral fields
-    make the same model usable by Tree-sitter backends.  Backend-computed
-    features are stored on the unit so downstream duplicate and semantic stages
-    never need to reparse source in a language-specific way.
+    Every language backend produces the same shape: the exact node span of the
+    definition as its grammar delimits it (a Python decorated definition starts
+    at its first decorator) plus the features computed while the syntax tree
+    was in hand, so downstream duplicate and semantic stages never reparse
+    source in a language-specific way.
     """
 
     name: str
@@ -59,10 +60,9 @@ class CodeUnit:
     lineno: int
     end_lineno: int
     source: str
-    docstring: str | None = None
 
-    # Language and source-range metadata. Defaults preserve source compatibility
-    # for callers that manually construct Python CodeUnit instances.
+    # Language and source-range metadata. The defaults let tests and callers
+    # build a unit by hand without spelling out every backend field.
     language: str = "python"
     dialect: str | None = None
     native_kind: str | None = None
@@ -72,16 +72,14 @@ class CodeUnit:
     end_column: int = 0
     statement_count: int | None = None
 
-    # Backend-computed structural/token fingerprints. Python derives both from
-    # its normalized CPython AST; Tree-sitter backends use the canonical
-    # fingerprint stream.
+    # Fingerprints from the shared canonical stream: the structural hash
+    # normalizes local names and strips formatting and docstrings, while the
+    # token hash keeps every token that survives the language's hash policy.
     structural_hash: str | None = field(default=None, repr=False)
     token_hash: str | None = field(default=None, repr=False)
     identifiers: frozenset[str] = field(default_factory=frozenset, repr=False)
 
-    # For call graph / usage analysis.  Reference resolution is intentionally
-    # Python-only in the first polyglot release.
-    calls: set[str] = field(default_factory=set)
+    # Populated by unused-code analysis, which is Python-only by design.
     references: set[str] = field(default_factory=set)
 
     # API exposure markers

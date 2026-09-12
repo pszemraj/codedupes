@@ -820,10 +820,10 @@ def test_failed_analysis_keeps_previous_manifest_authoritative(tmp_path, monkeyp
 @pytest.mark.parametrize(
     ("failure", "single_file"),
     [
-        ("parse-error", False),
+        ("partial-parse", False),
         ("read-error", False),
         ("walk-error", False),
-        ("parse-error", True),
+        ("partial-parse", True),
         ("read-error", True),
     ],
 )
@@ -868,7 +868,8 @@ def test_incomplete_extraction_keeps_previous_manifest_authoritative(
         (repo / "a.py").write_text("def alpha(value):\n    return value + 99\n")
 
     with monkeypatch.context() as failed_scan:
-        if failure == "parse-error":
+        if failure == "partial-parse":
+            # Error recovery keeps ``beta``; only the trailing fragment is lost.
             affected.write_bytes(original_source + b"\ndef unfinished(\n")
         elif failure == "read-error":
             read_bytes = Path.read_bytes
@@ -897,8 +898,9 @@ def test_incomplete_extraction_keeps_previous_manifest_authoritative(
             assert diagnostics[0].file_path == (
                 affected.parent if failure == "walk-error" else affected
             )
+            surviving = {"beta"} if failure == "partial-parse" else set()
             assert {unit.name for unit in incomplete._units} == (
-                set() if single_file else {"alpha"}
+                surviving if single_file else {"alpha", *surviving}
             )
             stats = incomplete.embedding_stats
             assert stats is not None

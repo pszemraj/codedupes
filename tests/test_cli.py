@@ -543,14 +543,14 @@ def test_cli_search_json_surfaces_semantic_diagnostics(monkeypatch, tmp_path):
 @pytest.mark.parametrize(
     ("filename", "source", "diagnostic_code"),
     [
-        ("broken.py", "def broken(\n", "parse-error"),
+        ("broken.py", "def broken(\n", "partial-parse"),
         ("broken.js", "function broken( {", "partial-parse"),
     ],
 )
 def test_cli_search_surfaces_extraction_failures(
     tmp_path: Path, filename: str, source: str, diagnostic_code: str
 ) -> None:
-    """Preserve real Python and Tree-sitter failures in both search report formats."""
+    """Preserve real Tree-sitter failures in both search report formats."""
     path = tmp_path / filename
     path.write_text(source, encoding="utf-8")
     runner = CliRunner()

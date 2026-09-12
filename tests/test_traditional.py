@@ -12,11 +12,9 @@ import pytest
 from codedupes.models import CodeUnit, CodeUnitType
 from codedupes.traditional import (
     _block_kind,
-    extract_identifiers,
     find_near_duplicates_jaccard,
     jaccard_similarity,
     run_traditional_analysis,
-    unit_identifier_set,
 )
 from tests.conftest import extract_units
 
@@ -75,7 +73,6 @@ def test_exact_duplicates_across_function_and_method(tmp_path: Path) -> None:
             return "\\n".join(lines)
 
         class Report:
-            @staticmethod
             def render_summary(rows, limit, header):
                 lines = [header]
                 for row in rows[:limit]:
@@ -89,7 +86,8 @@ def test_exact_duplicates_across_function_and_method(tmp_path: Path) -> None:
 
     # A function copied verbatim into a class body must stay visible to exact
     # detection: functions and methods share a blocking kind, matching semantic
-    # pairing.
+    # pairing. (A decorator would be part of the method's span and break the
+    # token match; the blocking kind is what this test is about.)
     pairs = {
         tuple(sorted((pair.unit_a.qualified_name, pair.unit_b.qualified_name))) for pair in exact
     }
@@ -158,7 +156,7 @@ def _fake_unit(
     unit_type: CodeUnitType,
     start_byte: int,
 ) -> CodeUnit:
-    """Build one non-Python unit whose identifier set is taken verbatim.
+    """Build one unit whose identifier set is taken verbatim.
 
     :param file_path: File all corpus units share, so range overlap can trigger.
     :param index: Corpus position, used to keep names and uids unique.
@@ -176,8 +174,6 @@ def _fake_unit(
         lineno=index + 1,
         end_lineno=index + 1,
         source="",
-        # A non-Python language keeps unit_identifier_set from reparsing source,
-        # so empty sets stay empty.
         language=language,
         start_byte=start_byte,
         end_byte=start_byte + 50,
@@ -239,7 +235,7 @@ def _brute_force_near_duplicates(
     :param threshold: Jaccard cutoff.
     :return: ``(uid_a, uid_b, similarity)`` triples in report order.
     """
-    identifier_sets = {unit.uid: unit_identifier_set(unit) for unit in units}
+    identifier_sets = {unit.uid: set(unit.identifiers) for unit in units}
     groups: dict[tuple[str, str], list[CodeUnit]] = defaultdict(list)
     for unit in units:
         groups[(unit.language, _block_kind(unit.unit_type))].append(unit)
@@ -276,19 +272,3 @@ def test_jaccard_join_matches_brute_force(tmp_path: Path, seed: int, threshold: 
     # Pairs, scores, and report order must all survive candidate pruning.
     assert actual == expected
     assert expected, "corpus produced no duplicates; the comparison would be vacuous"
-
-
-def test_extract_identifiers_filters_builtin_names() -> None:
-    source = dedent(
-        """
-        def helper(items):
-            total = len(items)
-            print(total)
-            return sorted(items)
-        """
-    ).strip()
-
-    identifiers = extract_identifiers(source)
-
-    assert {"helper", "items", "total"} <= identifiers
-    assert not {"len", "print", "sorted"} & identifiers

@@ -118,7 +118,7 @@ def _capture_json_output() -> Iterator[None]:
     with tempfile.TemporaryFile(
         mode="w+", encoding="utf-8", errors="replace", buffering=1
     ) as captured:
-        # CPython uses the Universal CRT on Windows; POSIX exposes libc in the
+        # Python links the Universal CRT on Windows; POSIX exposes libc in the
         # process handle. C buffers must be flushed while their fds still point
         # at the stream where those bytes were written.
         native_fflush = ctypes.CDLL("ucrtbase" if os.name == "nt" else None).fflush

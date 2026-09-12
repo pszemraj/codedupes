@@ -1953,11 +1953,22 @@ _MECHANISM_SPLIT = {"weak_identifier_jaccard_min": 0.20, "statement_ratio_min": 
 
 
 def test_hybrid_synthesis_semantic_only_corroboration_sets_tier(tmp_path: Path) -> None:
+    # One shared identifier out of five clears the 0.20 overlap floor exactly.
     unit_a = make_code_unit(
-        tmp_path, name="a", source="def alpha(v):\n    z = v + 1\n    return z\n", lineno=1
+        tmp_path,
+        name="a",
+        source="def alpha(v):\n    z = v + 1\n    return z\n",
+        lineno=1,
+        identifiers=frozenset({"alpha", "v", "z"}),
+        statement_count=2,
     )
     unit_b = make_code_unit(
-        tmp_path, name="b", source="def beta(v):\n    q = v + 2\n    return q\n", lineno=6
+        tmp_path,
+        name="b",
+        source="def beta(v):\n    q = v + 2\n    return q\n",
+        lineno=6,
+        identifiers=frozenset({"beta", "v", "q"}),
+        statement_count=2,
     )
 
     # Semantic pairs arrive pre-gated. Corroborating lexical/size evidence
@@ -1980,12 +1991,16 @@ def test_hybrid_synthesis_semantic_only_corroboration_sets_tier(tmp_path: Path) 
         name="c",
         source="def c(a):\n    x = a + 1\n    y = x + 1\n    z = y + 1\n    return z\n",
         lineno=12,
+        identifiers=frozenset({"c", "a", "x", "y", "z"}),
+        statement_count=4,
     )
     weak_sources_b = make_code_unit(
         tmp_path,
         name="d",
         source="def d(v):\n    return v\n",
         lineno=20,
+        identifiers=frozenset({"d", "v"}),
+        statement_count=1,
     )
     weak_semantic = [
         DuplicatePair(
@@ -2013,15 +2028,32 @@ def test_semantic_review_never_outranks_a_corroborated_pair(tmp_path: Path) -> N
         name="review_a",
         source="def review_a(a):\n    x = a + 1\n    y = x + 1\n    z = y + 1\n    return z\n",
         lineno=1,
+        identifiers=frozenset({"review_a", "a", "x", "y", "z"}),
+        statement_count=4,
     )
     review_b = make_code_unit(
-        tmp_path, name="review_b", source="def review_b(v):\n    return v\n", lineno=12
+        tmp_path,
+        name="review_b",
+        source="def review_b(v):\n    return v\n",
+        lineno=12,
+        identifiers=frozenset({"review_b", "v"}),
+        statement_count=1,
     )
     confirmed_a = make_code_unit(
-        tmp_path, name="confirmed_a", source="def confirmed_a(x):\n    return x + 1\n", lineno=20
+        tmp_path,
+        name="confirmed_a",
+        source="def confirmed_a(x):\n    return x + 1\n",
+        lineno=20,
+        identifiers=frozenset({"confirmed_a", "x"}),
+        statement_count=1,
     )
     confirmed_b = make_code_unit(
-        tmp_path, name="confirmed_b", source="def confirmed_b(y):\n    return y + 1\n", lineno=26
+        tmp_path,
+        name="confirmed_b",
+        source="def confirmed_b(y):\n    return y + 1\n",
+        lineno=26,
+        identifiers=frozenset({"confirmed_b", "y"}),
+        statement_count=1,
     )
 
     hybrid = analyzer_module._synthesize_hybrid_duplicates(
@@ -2040,7 +2072,13 @@ def test_semantic_review_never_outranks_a_corroborated_pair(tmp_path: Path) -> N
     assert hybrid[0].confidence > hybrid[1].confidence
 
 
-def test_hybrid_synthesis_publishes_alpha_renamed_semantic_pair(tmp_path: Path) -> None:
+def _alpha_renamed_pair(tmp_path: Path, similarity: float) -> list[DuplicatePair]:
+    """Build a same-shape pair whose identifier sets are fully disjoint.
+
+    :param tmp_path: Test directory the units' file path points into.
+    :param similarity: Semantic similarity to record on the pair.
+    :return: One semantic duplicate pair with no lexical overlap.
+    """
     unit_a = make_code_unit(
         tmp_path,
         name="collect_total",
@@ -2051,6 +2089,10 @@ def test_hybrid_synthesis_publishes_alpha_renamed_semantic_pair(tmp_path: Path) 
             "    return amount\n"
         ),
         lineno=1,
+        identifiers=frozenset(
+            {"collect_total", "records", "accepted", "record", "enabled", "amount", "value"}
+        ),
+        statement_count=3,
     )
     unit_b = make_code_unit(
         tmp_path,
@@ -2062,12 +2104,18 @@ def test_hybrid_synthesis_publishes_alpha_renamed_semantic_pair(tmp_path: Path) 
             "    return result\n"
         ),
         lineno=8,
+        identifiers=frozenset(
+            {"measure_sum", "entries", "chosen", "entry", "ready", "result", "weight"}
+        ),
+        statement_count=3,
     )
-    semantic = [DuplicatePair(unit_a=unit_a, unit_b=unit_b, similarity=0.91, method="semantic")]
+    return [DuplicatePair(unit_a=unit_a, unit_b=unit_b, similarity=similarity, method="semantic")]
 
+
+def test_hybrid_synthesis_publishes_alpha_renamed_semantic_pair(tmp_path: Path) -> None:
     hybrid = analyzer_module._synthesize_hybrid_duplicates(
         [],
-        semantic,
+        _alpha_renamed_pair(tmp_path, 0.91),
         jaccard_threshold=0.85,
         **_MECHANISM_SPLIT,
     )
@@ -2076,32 +2124,6 @@ def test_hybrid_synthesis_publishes_alpha_renamed_semantic_pair(tmp_path: Path) 
     assert hybrid[0].tier == "semantic_review"
     assert hybrid[0].weak_identifier_jaccard == 0.0
     assert hybrid[0].statement_count_ratio == 1.0
-
-
-def _alpha_renamed_pair(tmp_path: Path, similarity: float) -> list[DuplicatePair]:
-    unit_a = make_code_unit(
-        tmp_path,
-        name="collect_total",
-        source=(
-            "def collect_total(records):\n"
-            "    accepted = [record for record in records if record.enabled]\n"
-            "    amount = sum(record.value for record in accepted)\n"
-            "    return amount\n"
-        ),
-        lineno=1,
-    )
-    unit_b = make_code_unit(
-        tmp_path,
-        name="measure_sum",
-        source=(
-            "def measure_sum(entries):\n"
-            "    chosen = [entry for entry in entries if entry.ready]\n"
-            "    result = sum(entry.weight for entry in chosen)\n"
-            "    return result\n"
-        ),
-        lineno=8,
-    )
-    return [DuplicatePair(unit_a=unit_a, unit_b=unit_b, similarity=similarity, method="semantic")]
 
 
 @pytest.mark.parametrize(

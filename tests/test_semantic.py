@@ -93,22 +93,17 @@ def test_query_search_with_mocked_semantic_model(tmp_path, monkeypatch):
     assert results[0][0] in units
 
 
-def test_code_unit_statement_count_ignores_docstring(tmp_path: Path) -> None:
-    source = """
-    def sample(a, b):
-        \"\"\"doc\"\"\"
-        x = 1
-        return a + b + x
-    """
+def test_code_unit_statement_count_trusts_the_unit(tmp_path: Path) -> None:
+    """Extraction stores the count; a unit built without one measures as empty."""
     unit = extract_arithmetic_units(tmp_path)[0]
-    unit.source = source
-    # The precomputed extraction-time count no longer matches the swapped
-    # source; force the Python AST fallback these tests exercise.
+    assert unit.statement_count == 1
+    assert get_code_unit_statement_count(unit) == 1
+
     unit.statement_count = None
-    assert get_code_unit_statement_count(unit) == 2
+    assert get_code_unit_statement_count(unit) == 0
 
 
-def test_statement_count_dedents_decorated_method_source(tmp_path: Path) -> None:
+def test_decorated_method_statement_count_excludes_the_decorator(tmp_path: Path) -> None:
     units = extract_units(
         tmp_path,
         """
@@ -130,86 +125,9 @@ def test_statement_count_dedents_decorated_method_source(tmp_path: Path) -> None
     )
     by_name = {unit.name: unit for unit in units}
 
+    assert by_name["area"].source.startswith("@property")
     assert get_code_unit_statement_count(by_name["area"]) == 4
     assert get_code_unit_statement_count(by_name["perimeter"]) == 4
-
-
-@pytest.mark.parametrize(
-    ("source", "expected"),
-    [
-        pytest.param(
-            """
-            def guarded():
-                try:
-                    a = 1
-                    b = 2
-                    c = 3
-                    return a + b + c
-                except ValueError:
-                    return 0
-            """,
-            # try + 4 body statements + handler return; the except clause itself
-            # is an ast.excepthandler, not a statement.
-            6,
-            id="single-try",
-        ),
-        pytest.param(
-            """
-            def managed(path):
-                with open(path) as handle:
-                    first = handle.readline()
-                    second = handle.readline()
-                    return first + second
-            """,
-            4,
-            id="single-with",
-        ),
-        pytest.param(
-            """
-            def looped(items):
-                for item in items:
-                    if item:
-                        yield item
-                    else:
-                        continue
-            """,
-            4,
-            id="single-loop",
-        ),
-    ],
-)
-def test_statement_count_recurses_into_control_flow(
-    tmp_path: Path, source: str, expected: int
-) -> None:
-    unit = extract_arithmetic_units(tmp_path)[0]
-    unit.source = source
-    # The precomputed extraction-time count no longer matches the swapped
-    # source; force the Python AST fallback these tests exercise.
-    unit.statement_count = None
-    assert get_code_unit_statement_count(unit) == expected
-
-
-def test_statement_count_stops_at_nested_scopes(tmp_path: Path) -> None:
-    source = """
-    def outer():
-        def inner():
-            a = 1
-            b = 2
-            return a + b
-
-        class Helper:
-            def method(self):
-                return 1
-
-        return inner
-    """
-    unit = extract_arithmetic_units(tmp_path)[0]
-    unit.source = source
-    # The precomputed extraction-time count no longer matches the swapped
-    # source; force the Python AST fallback these tests exercise.
-    unit.statement_count = None
-    # inner (1) + Helper (1) + return (1); nested bodies belong to their own units.
-    assert get_code_unit_statement_count(unit) == 3
 
 
 def test_resolve_encode_plan_default_model_symmetric_no_prompt() -> None:

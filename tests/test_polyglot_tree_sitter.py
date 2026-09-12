@@ -12,7 +12,6 @@ import pytest
 from codedupes.extractor import CodeExtractor
 from codedupes.languages.base import BackendResult
 from codedupes.languages.registry import get_grammar_statuses
-from codedupes.languages.tree_sitter_backend import PythonBackend
 from codedupes.models import CodeUnit, CodeUnitType
 
 pytestmark = pytest.mark.grammar
@@ -36,6 +35,7 @@ def _extract(
     path = tmp_path / filename
     path.write_text(dedent(source).strip() + "\n", encoding="utf-8")
     language = {
+        ".py": "python",
         ".c": "c",
         ".h": "c",
         ".rs": "rust",
@@ -55,6 +55,7 @@ def _extract(
 @pytest.mark.parametrize(
     ("filename", "source", "expected_qualified_name"),
     [
+        ("sample.py", "def add(left, right):\n    return left + right\n", "sample.add"),
         ("sample.c", "int add(int left, int right) { return left + right; }\n", "sample.add"),
         ("sample.rs", "pub fn add(left: i32, right: i32) -> i32 { left + right }\n", "sample.add"),
         ("sample.js", "export const add = (left, right) => left + right;\n", "sample.add"),
@@ -87,6 +88,7 @@ def test_every_dialect_reproduces_unit_source_from_byte_ranges(
 @pytest.mark.parametrize(
     ("filename", "source", "expected_hash"),
     [
+        ("sample.py", "def add(a, b):\n    return a + b", "a142c968e159764c"),
         ("sample.c", "int add(int a, int b) { return a + b; }", "055dad2cb951cd16"),
         ("sample.rs", "pub fn add(a: i32, b: i32) -> i32 { a + b }", "f0e9ce5598395030"),
         ("sample.js", "function add(a, b) { return a + b; }", "06dc5b63c208ce88"),
@@ -104,7 +106,7 @@ def test_structural_hash_golden_values_pin_the_fingerprint_schema(
     expected_hash: str,
 ) -> None:
     """Nothing else persists these hashes, so canonical-stream drift would
-    otherwise silently rename every non-Python fingerprint."""
+    otherwise silently rename every fingerprint."""
     units = _extract(tmp_path, filename, source)
 
     assert [unit.structural_hash for unit in units] == [expected_hash]
@@ -983,7 +985,7 @@ def test_typescript_accessibility_and_naming_rules_gate_private_extraction(
 
 
 def test_private_container_members_are_dropped_with_their_container(tmp_path: Path) -> None:
-    """The Python extractor skips descendants of a filtered class; so must this one."""
+    """A filtered class takes its members with it in every backend, TypeScript included."""
     units = _extract(
         tmp_path,
         "sample.ts",
@@ -1173,8 +1175,7 @@ def test_rust_attribute_lookup_stays_linear_in_item_count(tmp_path: Path) -> Non
 
 
 # ---------------------------------------------------------------------------
-# Python backend. Until extraction routes Python through it, these tests drive
-# the backend directly; the extractor still parses Python with ``ast``.
+# Python backend.
 # ---------------------------------------------------------------------------
 
 
@@ -1185,10 +1186,18 @@ def _python_result(
     filename: str = "sample.py",
     include_private: bool = True,
 ) -> BackendResult:
+    """Extract one Python file through the extractor, keeping its diagnostics."""
     path = tmp_path / filename
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(dedent(source).strip() + "\n", encoding="utf-8")
-    return PythonBackend(tmp_path, "python", include_private=include_private).extract_file(path)
+    extractor = CodeExtractor(
+        tmp_path,
+        include_private=include_private,
+        include_stubs=True,
+        languages=("python",),
+    )
+    units = tuple(extractor.extract_from_file(path))
+    return BackendResult(units, tuple(extractor.diagnostics))
 
 
 def _python_units(
@@ -1601,6 +1610,73 @@ def test_python_fstring_interpolation_is_structural(tmp_path: Path) -> None:
             2,
             id="semicolon-separated",
         ),
+        pytest.param(
+            '''
+            def sample(a, b):
+                """doc"""
+                x = 1
+                return a + b + x
+            ''',
+            2,
+            id="docstring-then-statements",
+        ),
+        pytest.param(
+            """
+            def guarded():
+                try:
+                    a = 1
+                    b = 2
+                    c = 3
+                    return a + b + c
+                except ValueError:
+                    return 0
+            """,
+            # try + 4 body statements + handler return; the except clause itself
+            # is an ``ast.excepthandler``, not a statement.
+            6,
+            id="try-with-multi-statement-body",
+        ),
+        pytest.param(
+            """
+            def managed(path):
+                with open(path) as handle:
+                    first = handle.readline()
+                    second = handle.readline()
+                    return first + second
+            """,
+            4,
+            id="with-multi-statement-body",
+        ),
+        pytest.param(
+            """
+            def looped(items):
+                for item in items:
+                    if item:
+                        yield item
+                    else:
+                        continue
+            """,
+            4,
+            id="loop-if-else",
+        ),
+        pytest.param(
+            """
+            def outer():
+                def inner():
+                    a = 1
+                    b = 2
+                    return a + b
+
+                class Helper:
+                    def method(self):
+                        return 1
+
+                return inner
+            """,
+            # inner (1) + Helper (1) + return (1); nested bodies belong to their own units.
+            3,
+            id="nested-def-and-class",
+        ),
     ],
 )
 def test_python_statement_counts_follow_ast_stmt_semantics(
@@ -1740,11 +1816,12 @@ def test_python_bom_keeps_on_disk_byte_offsets(tmp_path: Path) -> None:
     body = 'def greet(name):\n    message = "héllo " + name\n    return message\n'
     path.write_bytes(codecs.BOM_UTF8 + body.encode("utf-8"))
 
-    result = PythonBackend(tmp_path, "python", include_private=True).extract_file(path)
+    extractor = CodeExtractor(tmp_path, include_private=True, languages=("python",))
+    units = list(extractor.extract_from_file(path))
     raw = path.read_bytes()
 
-    assert result.diagnostics == ()
-    [unit] = result.units
+    assert extractor.diagnostics == []
+    [unit] = units
     assert unit.start_byte == len(codecs.BOM_UTF8)
     assert raw[unit.start_byte : unit.end_byte].decode("utf-8") == unit.source
     assert not unit.source.startswith("﻿")
@@ -1758,10 +1835,12 @@ def test_python_crlf_source_stays_byte_exact(tmp_path: Path) -> None:
         b"    return message\r\n"
     )
 
-    result = PythonBackend(tmp_path, "python", include_private=True).extract_file(path)
+    units = list(
+        CodeExtractor(tmp_path, include_private=True, languages=("python",)).extract_from_file(path)
+    )
     raw = path.read_bytes()
 
-    [unit] = result.units
+    [unit] = units
     assert "\r\n" in unit.source
     assert raw[unit.start_byte : unit.end_byte].decode("utf-8") == unit.source
     assert (unit.lineno, unit.end_lineno) == (2, 4)

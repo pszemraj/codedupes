@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import ast
 import codecs
 import fnmatch
 import os
@@ -11,7 +10,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from codedupes.extractor import CodeExtractor, compute_ast_hash, compute_token_hash
+from codedupes.extractor import CodeExtractor
 from codedupes.models import CodeUnitType
 from tests.conftest import extract_units
 
@@ -54,22 +53,7 @@ def test_nested_scope_extraction_and_private_filtering(tmp_path: Path) -> None:
     assert "sample._PrivateClass" not in names
 
 
-def test_compute_ast_hash_normalizes_variable_names() -> None:
-    first = ast.parse("def add(a, b):\n    return a + b").body[0]
-    second = ast.parse("def total(x, y):\n    return x + y").body[0]
-
-    assert compute_ast_hash(first) == compute_ast_hash(second)
-
-
-def test_compute_token_hash_ignores_formatting() -> None:
-    assert compute_token_hash("def f(x):\n    return x + 1") == compute_token_hash(
-        "def f( x ):\n\treturn x+1"
-    )
-    lf_source = 'def f():\n    """first\n    second"""\n    return 1\n'
-    assert compute_token_hash(lf_source) == compute_token_hash(lf_source.replace("\n", "\r\n"))
-
-
-def test_parse_error_is_skipped(tmp_path: Path) -> None:
+def test_python_syntax_error_skips_the_broken_unit_and_reports_it(tmp_path: Path) -> None:
     root = tmp_path / "project"
     root.mkdir()
     root.joinpath("__init__.py").write_text("")
@@ -78,6 +62,11 @@ def test_parse_error_is_skipped(tmp_path: Path) -> None:
     extractor = CodeExtractor(root, include_private=False)
 
     assert list(extractor.extract_from_file(bad)) == []
+    assert [diagnostic.code for diagnostic in extractor.diagnostics] == [
+        "partial-parse",
+        "unit-parse-error",
+    ]
+    assert all(diagnostic.language == "python" for diagnostic in extractor.diagnostics)
 
 
 def test_extract_all_deduplicates_symlinked_paths(tmp_path: Path) -> None:
@@ -214,7 +203,7 @@ def test_explicit_language_filtered_file_reports_diagnostic(tmp_path: Path) -> N
     assert diagnostic.language == "python"
 
 
-def test_get_module_name_handles_stub_suffix(tmp_path: Path) -> None:
+def test_stub_module_name_drops_the_pyi_suffix(tmp_path: Path) -> None:
     package = tmp_path / "package"
     package.mkdir()
     (package / "__init__.py").write_text("")
@@ -512,8 +501,8 @@ def test_python_byte_range_matches_emitted_source_with_unicode(tmp_path: Path) -
 
 
 def test_python_source_lines_survive_form_feed_separator(tmp_path: Path) -> None:
-    # PEP 8 allows form feeds as section separators, and CPython's line numbers do
-    # not advance on ``\f``/``\v``; the emitted source must follow the same rule.
+    # PEP 8 allows form feeds as section separators, and Python line numbers do
+    # not advance on ``\f``/``\v``; the emitted span must follow the same rule.
     source = (
         "def before():\n"
         '    return "\v"\n'
@@ -529,8 +518,9 @@ def test_python_source_lines_survive_form_feed_separator(tmp_path: Path) -> None
     unit = next(unit for unit in units if unit.name == "after")
     encoded = source.encode("utf-8")
 
-    assert unit.source == 'def after(name):\n    message = "hi " + name\n    return message\n'
+    assert unit.source == 'def after(name):\n    message = "hi " + name\n    return message'
     assert encoded[unit.start_byte : unit.end_byte] == unit.source.encode("utf-8")
+    assert (unit.lineno, unit.end_lineno) == (4, 6)
     assert unit.end_column == len(b"    return message")
 
 
@@ -579,7 +569,10 @@ def test_python_file_with_nul_byte_reports_a_diagnostic(tmp_path: Path) -> None:
     units = list(extractor.extract_from_file(file_path))
 
     assert units == []
-    assert [diagnostic.code for diagnostic in extractor.diagnostics] == ["parse-error"]
+    assert [diagnostic.code for diagnostic in extractor.diagnostics] == [
+        "partial-parse",
+        "unit-parse-error",
+    ]
 
 
 def test_unreadable_files_do_not_abort_extraction(tmp_path: Path) -> None:
