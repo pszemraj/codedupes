@@ -40,6 +40,7 @@ from codedupes.semantic import (
 from codedupes.semantic_profiles import (
     SemanticModelProfile,
     list_supported_models,
+    resolve_local_model_path,
     resolve_model_profile,
 )
 from codedupes.traditional import _block_kind, find_exact_pair_keys
@@ -288,6 +289,14 @@ def _sha256_of_file(path: Path) -> str:
 
 def _require_immutable_revision(model_name: str, explicit_revision: str | None) -> str:
     """Resolve the pinned commit for calibration, refusing mutable identities."""
+    local_model_path = resolve_local_model_path(model_name)
+    if local_model_path is not None:
+        raise SystemExit(
+            f"Refusing to calibrate local model directory {str(local_model_path)!r} as an "
+            "immutable Hub commit. Local weights are identified by their content "
+            "fingerprint and ignore --model-revision; calibrate a Hub model ID instead."
+        )
+
     profile = resolve_model_profile(model_name)
     revision = explicit_revision or profile.default_revision
     is_commit = (

@@ -40,6 +40,7 @@ from scripts.sweep_semantic_thresholds import (
     _calibration_manifest,
     _grid_edge,
     _report_payload,
+    _require_immutable_revision,
     _run_duplicate_sweep,
     _run_search_sweep,
     _threshold_grid,
@@ -920,6 +921,15 @@ def test_hybrid_gate_sweep_refuses_a_mutable_model_revision(tmp_path: Path, monk
 
     with pytest.raises(SystemExit, match="immutable 40-character commit"):
         _hybrid_gates_main()
+
+
+def test_calibration_refuses_a_local_model_even_with_a_commit_revision(tmp_path: Path) -> None:
+    """A caller-supplied commit cannot pin local weights whose loader ignores it."""
+    model_dir = tmp_path / "local-model"
+    model_dir.mkdir()
+
+    with pytest.raises(SystemExit, match="local model directory.*ignore --model-revision"):
+        _require_immutable_revision(str(model_dir), PINNED_COMMIT)
 
 
 def test_threshold_grid_rows_are_the_exact_gates_evaluated() -> None:
