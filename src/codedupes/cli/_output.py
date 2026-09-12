@@ -8,7 +8,7 @@ import shutil
 import sys
 import tempfile
 from collections.abc import Callable, Iterator
-from contextlib import contextmanager, nullcontext, redirect_stderr
+from contextlib import contextmanager, nullcontext, redirect_stderr, redirect_stdout
 from typing import TypeVar
 
 import rich_click as click
@@ -109,22 +109,27 @@ def setup_logging(verbose: bool = False) -> None:
 
 
 @contextmanager
-def _capture_json_stderr() -> Iterator[None]:
-    """Spool Python/native stderr and replay it only if the CLI operation fails.
+def _capture_json_output() -> Iterator[None]:
+    """Spool backend output and replay it to stderr only if the CLI operation fails.
 
-    :return: Context manager restoring Python stderr and file descriptor 2 on exit.
+    :return: Context manager restoring Python stdout/stderr and file descriptors 1/2 on exit.
     """
     with tempfile.TemporaryFile(
         mode="w+", encoding="utf-8", errors="replace", buffering=1
     ) as captured:
+        sys.stdout.flush()
         sys.stderr.flush()
+        stdout_fd = os.dup(1)
         stderr_fd = os.dup(2)
         try:
             try:
+                os.dup2(captured.fileno(), 1)
                 os.dup2(captured.fileno(), 2)
-                with redirect_stderr(captured):
+                with redirect_stdout(captured), redirect_stderr(captured):
                     yield
             finally:
+                os.dup2(stdout_fd, 1)
+                os.close(stdout_fd)
                 os.dup2(stderr_fd, 2)
                 os.close(stderr_fd)
         except BaseException:
@@ -148,7 +153,7 @@ def _configured_cli_output(
     :param output_width: Rich console width.
     :return: Context manager that restores the prior output configuration on exit.
     """
-    with _capture_json_stderr() if as_json else nullcontext():
+    with _capture_json_output() if as_json else nullcontext():
         _set_console(output_width)
         logging_state: tuple[int, list[logging.Handler]] | None = None
         restore_hub_progress: Callable[[], None] | None = None

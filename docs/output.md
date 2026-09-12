@@ -7,8 +7,9 @@ tables otherwise. Errors and parser-unavailable remediation use stderr; Rich mod
 sends logs, cache warnings, sentence-transformers progress, and Hugging Face download
 progress there. A completed JSON report is a single parseable JSON document even when
 `check` exits `1` for findings. JSON mode disables progress and records non-fatal cache
-failures in `summary.embeddings.cache_warnings` instead of emitting them. Runtime
-failures restore stderr and do not produce a completed JSON report.
+failures in `summary.embeddings.cache_warnings` instead of emitting them. Direct
+backend output on stdout or stderr is captured during JSON runs and replayed to
+stderr only on runtime failure, without a completed JSON report.
 
 Terminal reports fit the available width. Below 120 columns, duplicate tables stack
 their metrics and both code locations into **Evidence** and **Code units** columns.

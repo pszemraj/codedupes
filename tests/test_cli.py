@@ -309,7 +309,8 @@ def test_cli_json_restores_huggingface_progress_state(monkeypatch, tmp_path, ini
     assert state["disabled"] is initially_disabled
 
 
-def test_cli_json_discards_direct_backend_stderr_on_success(monkeypatch, tmp_path):
+@pytest.mark.parametrize("stream", ["stdout", "stderr"])
+def test_cli_json_discards_direct_backend_output_on_success(monkeypatch, tmp_path, stream):
     path = tmp_path / "sample.py"
     path.write_text("def entry():\n    return 1\n")
 
@@ -318,7 +319,7 @@ def test_cli_json_discards_direct_backend_stderr_on_success(monkeypatch, tmp_pat
             pass
 
         def analyze(self, _path):
-            print("backend progress", file=sys.stderr)
+            print("backend progress", file=getattr(sys, stream))
             return _build_result(tmp_path)
 
     monkeypatch.setattr(cli, "CodeAnalyzer", NoisyAnalyzer)
@@ -366,7 +367,10 @@ def test_cli_json_isolates_custom_family_warning_before_config(tmp_path, command
     ("command", "fail_on", "exit_code"),
     [("check", "none", 0), ("check", "actionable", 1), ("search", None, 0)],
 )
-def test_cli_json_isolates_native_stderr_in_completed_report(tmp_path, command, fail_on, exit_code):
+@pytest.mark.parametrize("stream_fd", [1, 2])
+def test_cli_json_isolates_backend_output_in_completed_report(
+    tmp_path, command, fail_on, exit_code, stream_fd
+):
     args = [command, str(tmp_path), "--json"]
     if command == "check":
         (tmp_path / "sample.py").write_text(
@@ -377,27 +381,27 @@ def test_cli_json_isolates_native_stderr_in_completed_report(tmp_path, command, 
         args.append("entry")
     result = _run_merged_cli(
         args,
-        """
+        f"""
         import os
         import sys
 
         class NoisyAnalyzer(cli.CodeAnalyzer):
             def __init__(self, config):
-                os.write(2, b"native initialization diagnostic\\n")
+                os.write({stream_fd}, b"native initialization diagnostic\\n")
                 super().__init__(config)
 
             def analyze(self, path):
-                print("Python analysis diagnostic", file=sys.stderr)
-                os.write(2, b"native analysis diagnostic\\n")
+                print("Python analysis diagnostic", file=sys.{"stdout" if stream_fd == 1 else "stderr"})
+                os.write({stream_fd}, b"native analysis diagnostic\\n")
                 return super().analyze(path)
 
             def index(self, path):
-                print("Python indexing diagnostic", file=sys.stderr)
-                os.write(2, b"native indexing diagnostic\\n")
+                print("Python indexing diagnostic", file=sys.{"stdout" if stream_fd == 1 else "stderr"})
+                os.write({stream_fd}, b"native indexing diagnostic\\n")
                 return super().index(path)
 
             def search(self, *args, **kwargs):
-                os.write(2, b"native query diagnostic\\n")
+                os.write({stream_fd}, b"native query diagnostic\\n")
                 return super().search(*args, **kwargs)
 
         cli.CodeAnalyzer = NoisyAnalyzer
@@ -413,20 +417,21 @@ def test_cli_json_isolates_native_stderr_in_completed_report(tmp_path, command, 
 
 
 @pytest.mark.parametrize("command", ["check", "search"])
-def test_cli_json_replays_python_and_native_stderr_on_failure(tmp_path, command):
+@pytest.mark.parametrize("stream_fd", [1, 2])
+def test_cli_json_replays_python_and_native_output_on_failure(tmp_path, command, stream_fd):
     args = [command, str(tmp_path), "--json"]
     if command == "search":
         args.append("entry")
     result = _run_merged_cli(
         args,
-        """
+        f"""
         import os
         import sys
 
         class FailingAnalyzer(cli.CodeAnalyzer):
             def analyze(self, path):
-                print("Python backend diagnostic", file=sys.stderr)
-                os.write(2, b"native backend diagnostic\\n")
+                print("Python backend diagnostic", file=sys.{"stdout" if stream_fd == 1 else "stderr"})
+                os.write({stream_fd}, b"native backend diagnostic\\n")
                 raise RuntimeError("backend exploded")
 
             index = analyze

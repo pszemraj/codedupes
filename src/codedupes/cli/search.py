@@ -132,17 +132,15 @@ def search_command(ctx: click.Context, path: Path, query: str, **params: Any) ->
         )
 
         if opts.as_json:
-            print(
-                to_json_text(
-                    search_result_to_json(
-                        query,
-                        results,
-                        indexed_units,
-                        analyzer.embedding_stats,
-                        extraction_diagnostics=analyzer.extraction_diagnostics,
-                        semantic_diagnostics=analyzer.semantic_diagnostics,
-                        file_results=file_results,
-                    )
+            report_text = to_json_text(
+                search_result_to_json(
+                    query,
+                    results,
+                    indexed_units,
+                    analyzer.embedding_stats,
+                    extraction_diagnostics=analyzer.extraction_diagnostics,
+                    semantic_diagnostics=analyzer.semantic_diagnostics,
+                    file_results=file_results,
                 )
             )
         else:
@@ -173,4 +171,6 @@ def search_command(ctx: click.Context, path: Path, query: str, **params: Any) ->
             else:
                 print_search_results(results)
 
+    if opts.as_json:
+        print(report_text)
     raise click.exceptions.Exit(0)

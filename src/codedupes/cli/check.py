@@ -201,10 +201,8 @@ def check_command(ctx: click.Context, path: Path, **params: Any) -> None:
         selection = select_findings(result, opts.report_policy)
 
         if opts.as_json:
-            print(
-                to_json_text(
-                    check_result_to_json(selection, fail_on=opts.fail_on, exit_code=exit_code)
-                )
+            report_text = to_json_text(
+                check_result_to_json(selection, fail_on=opts.fail_on, exit_code=exit_code)
             )
         else:
             print_summary(
@@ -220,4 +218,6 @@ def check_command(ctx: click.Context, path: Path, **params: Any) -> None:
                 max_items=opts.table_max_items,
             )
 
+    if opts.as_json:
+        print(report_text)
     raise click.exceptions.Exit(exit_code)
