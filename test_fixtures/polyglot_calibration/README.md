@@ -103,6 +103,6 @@ The 2026-09-11 `reports/corroboration_report.json` records default-visible and a
 | typescript | 0.83 / 0.69 vs 0.76 / 0.78 | 0.70 / 0.78 (unchanged) |
 | python (control) | 0.64 / 0.62 vs 0.54 / 0.65 | 0.78 / 0.74 (unchanged) |
 
-Pooled gte moves from 0.68 / 0.62 to 0.78 / 0.57, withholding 9 labeled positives and 23 false positives. `tests/test_corroboration_reports.py` re-derives the shipped values from the report.
+Pooled gte moves from 0.68 / 0.62 to 0.78 / 0.57, withholding 9 labeled positives and 23 false positives.
 
 Re-run calibration through the [tuning workflow](../../docs/hybrid-tuning.md#semantic-threshold-sweep-model-profiles). Keep corpus and label changes explicit in review; if a grammar pin bump changes any recorded number above, understand the difference before changing a gate.
