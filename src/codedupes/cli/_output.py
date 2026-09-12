@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ctypes
 import logging
 import os
 import shutil
@@ -117,8 +118,15 @@ def _capture_json_output() -> Iterator[None]:
     with tempfile.TemporaryFile(
         mode="w+", encoding="utf-8", errors="replace", buffering=1
     ) as captured:
+        # CPython uses the Universal CRT on Windows; POSIX exposes libc in the
+        # process handle. C buffers must be flushed while their fds still point
+        # at the stream where those bytes were written.
+        native_fflush = ctypes.CDLL("ucrtbase" if os.name == "nt" else None).fflush
+        native_fflush.argtypes = [ctypes.c_void_p]
+        native_fflush.restype = ctypes.c_int
         sys.stdout.flush()
         sys.stderr.flush()
+        native_fflush(None)
         stdout_fd = os.dup(1)
         stderr_fd = os.dup(2)
         try:
@@ -128,10 +136,17 @@ def _capture_json_output() -> Iterator[None]:
                 with redirect_stdout(captured), redirect_stderr(captured):
                     yield
             finally:
-                os.dup2(stdout_fd, 1)
-                os.close(stdout_fd)
-                os.dup2(stderr_fd, 2)
-                os.close(stderr_fd)
+                try:
+                    # The original Python streams may also have been retained
+                    # by a backend before redirect_stdout/redirect_stderr.
+                    sys.stdout.flush()
+                    sys.stderr.flush()
+                    native_fflush(None)
+                finally:
+                    os.dup2(stdout_fd, 1)
+                    os.close(stdout_fd)
+                    os.dup2(stderr_fd, 2)
+                    os.close(stderr_fd)
         except BaseException:
             captured.seek(0)
             shutil.copyfileobj(captured, sys.stderr)

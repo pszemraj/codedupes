@@ -331,8 +331,10 @@ def test_cli_json_discards_direct_backend_output_on_success(monkeypatch, tmp_pat
     assert json.loads(result.output)["schema_version"] == 3
 
 
-def _run_merged_cli(args: list[str], setup: str = "") -> subprocess.CompletedProcess[str]:
-    """Run the real CLI in a subprocess with stderr merged into stdout."""
+def _run_cli_subprocess(
+    args: list[str], setup: str = "", *, merge_stderr: bool = True
+) -> subprocess.CompletedProcess[str]:
+    """Run the real CLI in a subprocess, optionally merging stderr into stdout."""
     command = ["codedupes", *args]
     if setup:
         # Fault injection needs an interpreter; ordinary runs test the installed command.
@@ -345,7 +347,7 @@ def _run_merged_cli(args: list[str], setup: str = "") -> subprocess.CompletedPro
     return subprocess.run(
         command,
         stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
+        stderr=subprocess.STDOUT if merge_stderr else subprocess.PIPE,
         text=True,
         env={**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src")},
         check=False,
@@ -357,7 +359,7 @@ def test_cli_json_isolates_custom_family_warning_before_config(tmp_path, command
     args = [command, str(tmp_path)]
     if command == "search":
         args.append("entry")
-    result = _run_merged_cli([*args, "--model", "review/gte-modernbert-base", "--json"])
+    result = _run_cli_subprocess([*args, "--model", "review/gte-modernbert-base", "--json"])
 
     assert result.returncode == 0, result.stdout
     assert json.loads(result.stdout)["schema_version"] == 3
@@ -379,15 +381,21 @@ def test_cli_json_isolates_backend_output_in_completed_report(
         args.extend(["--traditional-only", "--no-unused", "--no-tiny-filter", "--fail-on", fail_on])
     else:
         args.append("entry")
-    result = _run_merged_cli(
+    result = _run_cli_subprocess(
         args,
         f"""
+        import ctypes
         import os
         import sys
+
+        native_printf = ctypes.CDLL("ucrtbase" if os.name == "nt" else None).printf
+        native_printf.argtypes = [ctypes.c_char_p]
+        native_printf.restype = ctypes.c_int
 
         class NoisyAnalyzer(cli.CodeAnalyzer):
             def __init__(self, config):
                 os.write({stream_fd}, b"native initialization diagnostic\\n")
+                native_printf(b"buffered native initialization diagnostic")
                 super().__init__(config)
 
             def analyze(self, path):
@@ -422,30 +430,39 @@ def test_cli_json_replays_python_and_native_output_on_failure(tmp_path, command,
     args = [command, str(tmp_path), "--json"]
     if command == "search":
         args.append("entry")
-    result = _run_merged_cli(
+    result = _run_cli_subprocess(
         args,
         f"""
+        import ctypes
         import os
         import sys
+
+        native_printf = ctypes.CDLL("ucrtbase" if os.name == "nt" else None).printf
+        native_printf.argtypes = [ctypes.c_char_p]
+        native_printf.restype = ctypes.c_int
 
         class FailingAnalyzer(cli.CodeAnalyzer):
             def analyze(self, path):
                 print("Python backend diagnostic", file=sys.{"stdout" if stream_fd == 1 else "stderr"})
                 os.write({stream_fd}, b"native backend diagnostic\\n")
+                native_printf(b"buffered native backend diagnostic")
                 raise RuntimeError("backend exploded")
 
             index = analyze
 
         cli.CodeAnalyzer = FailingAnalyzer
         """,
+        merge_stderr=False,
     )
 
     assert result.returncode == 1
-    assert "Python backend diagnostic" in result.stdout
-    assert "native backend diagnostic" in result.stdout
+    assert result.stdout == ""
+    assert "Python backend diagnostic" in result.stderr
+    assert "native backend diagnostic" in result.stderr
     error_label = "analysis" if command == "check" else "search"
-    assert f"Error during {error_label}: backend exploded" in result.stdout
-    assert "schema_version" not in result.stdout
+    assert f"Error during {error_label}: backend exploded" in result.stderr
+    assert "buffered native backend diagnostic" in result.stderr
+    assert "schema_version" not in result.stderr
 
 
 def test_cli_reports_semantic_diagnostics(monkeypatch, tmp_path):
@@ -1547,7 +1564,7 @@ def test_cli_no_subcommand_token_exits_usage_error(token):
 
 
 def test_cli_no_args_prints_help_and_exits_usage_error():
-    result = _run_merged_cli([])
+    result = _run_cli_subprocess([])
     assert result.returncode == 2
     assert "Commands" in result.stdout
     assert "check" in result.stdout
@@ -1822,13 +1839,13 @@ def test_cli_surfaces_analyzer_config_validation_error(monkeypatch, tmp_path, co
 
 
 def test_cli_help_and_version():
-    help_result = _run_merged_cli(["--help"])
+    help_result = _run_cli_subprocess(["--help"])
     assert help_result.returncode == 0
     assert "Commands" in help_result.stdout
     assert "check" in help_result.stdout
     assert "search" in help_result.stdout
 
-    version_result = _run_merged_cli(["--version"])
+    version_result = _run_cli_subprocess(["--version"])
     assert version_result.returncode == 0
     assert version_result.stdout.lower().startswith("codedupes")
 
