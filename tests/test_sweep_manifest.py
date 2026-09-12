@@ -569,6 +569,13 @@ def test_high_gate_grid_starts_at_the_admission_gate_and_ends_disabled() -> None
     assert _high_gate_grid(0.97, 0.96, 0.02) == [None]
 
 
+@pytest.mark.parametrize("step", [0.0, -0.02])
+def test_high_gate_grid_rejects_non_positive_step(step: float) -> None:
+    assert _high_gate_grid(0.68, 0.72, 0.02) == [0.68, 0.70, 0.72, None]
+    with pytest.raises(ValueError, match="step must be positive"):
+        _high_gate_grid(0.68, 0.96, step)
+
+
 def test_hybrid_gate_sweep_records_calibration_provenance(tmp_path: Path, monkeypatch) -> None:
     """The hybrid report needs the same identity block the semantic sweep records.
 

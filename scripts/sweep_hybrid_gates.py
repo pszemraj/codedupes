@@ -26,6 +26,7 @@ from __future__ import annotations
 import argparse
 import itertools
 import json
+import math
 from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
@@ -389,7 +390,10 @@ def _high_gate_grid(start: float, stop: float, step: float) -> list[float | None
     :param float stop: Inclusive upper bound.
     :param float step: Grid step.
     :return list[float | None]: Ascending gates followed by ``None``.
+    :raises ValueError: If ``step`` is not positive.
     """
+    if step <= 0:
+        raise ValueError("step must be positive")
     values: list[float | None] = []
     steps = 0
     while True:
@@ -760,6 +764,8 @@ def main() -> int:
         parser.error("--model-revision applies to exactly one --models entry.")
     if not 0.0 < args.recall_retention_min <= 1.0:
         parser.error("--recall-retention-min must be in (0, 1].")
+    if not math.isfinite(args.high_gate_step) or args.high_gate_step <= 0:
+        parser.error("--high-gate-step must be positive.")
 
     if args.corpus_root is not None:
         corpora = [
