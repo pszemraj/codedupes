@@ -367,7 +367,8 @@ def test_cli_json_isolates_custom_family_warning_before_config(tmp_path, command
 
 @pytest.mark.parametrize(
     ("command", "fail_on", "exit_code"),
-    [("check", "none", 0), ("search", None, 0)],
+    # Findings exit 1 must not replay backend noise as an operation failure.
+    [("check", "actionable", 1), ("search", None, 0)],
 )
 @pytest.mark.parametrize("stream_fd", [1, 2])
 def test_cli_json_isolates_backend_output_in_completed_report(
