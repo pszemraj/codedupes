@@ -5,7 +5,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import pytest
+
+from codedupes.languages.naming import module_prefix, qualified
 from codedupes.languages.tree_sitter_backend import (
+    DEFAULT_HASH_POLICY,
+    HashPolicy,
     JavaScriptBackend,
     RustBackend,
     TypeScriptBackend,
@@ -153,6 +158,198 @@ def test_token_hash_ignores_comments_but_retains_literal_text() -> None:
     assert _token_hash(FakeNode("string", 0, len(lf_literal)), lf_literal) == _token_hash(
         FakeNode("string", 0, len(crlf_literal)), crlf_literal
     )
+
+
+def test_default_policy_reproduces_the_hook_free_hashes() -> None:
+    """A policy of no-op hooks must not move a single fingerprint."""
+    source = b"fn add(a, b) { return a + b; }"
+    tree = _flat_function(source)
+
+    baseline_structural = _structural_hash(tree, source, "rust", CodeUnitType.FUNCTION)
+    baseline_tokens = _token_hash(tree, source)
+
+    for policy in (DEFAULT_HASH_POLICY, HashPolicy()):
+        assert (
+            _structural_hash(tree, source, "rust", CodeUnitType.FUNCTION, policy=policy)
+            == baseline_structural
+        )
+        assert _token_hash(tree, source, policy=policy) == baseline_tokens
+
+
+def _escaped_string(source: bytes) -> FakeNode:
+    """Model tree-sitter-python's ``string_content`` whose only child is the escape."""
+    escape = _leaf(source, b"\\n", "escape_sequence")
+    content = FakeNode("string_content", 1, len(source) - 1, children=(escape,))
+    return FakeNode(
+        "string",
+        0,
+        len(source),
+        children=(
+            _leaf(source, b'"', "string_start"),
+            content,
+            _leaf(source, b'"', "string_end", start=len(source) - 1),
+        ),
+    )
+
+
+def test_opaque_token_keeps_escape_split_literals_distinct() -> None:
+    """Leaf flattening drops the literal text around an escape child; opaque nodes keep it."""
+    first = b'"a\\nb"'
+    second = b'"a\\nc"'
+    opaque = HashPolicy(opaque_token=lambda node, parent: node.type == "string_content")
+
+    assert _token_hash(_escaped_string(first), first) == _token_hash(
+        _escaped_string(second), second
+    )
+    assert _token_hash(_escaped_string(first), first, policy=opaque) != _token_hash(
+        _escaped_string(second), second, policy=opaque
+    )
+
+
+def _binary(source: bytes, *, continued: bool) -> FakeNode:
+    children = [_leaf(source, b"a", "identifier"), _leaf(source, b"+", "+", named=False)]
+    if continued:
+        children.append(_leaf(source, b"\\\n", "line_continuation"))
+    children.append(_leaf(source, b"1", "integer"))
+    return FakeNode("binary_operator", 0, len(source), children=tuple(children))
+
+
+def test_prune_hooks_drop_subtrees_from_each_stream() -> None:
+    plain = b"a + 1"
+    continued = b"a + \\\n 1"
+    policy = HashPolicy(
+        prune_structural=lambda node, parent: node.type == "line_continuation",
+        prune_tokens=lambda node, parent: node.type == "line_continuation",
+    )
+
+    def structural(tree: FakeNode, source: bytes, hook_policy: HashPolicy) -> str:
+        return _structural_hash(tree, source, "python", CodeUnitType.FUNCTION, policy=hook_policy)
+
+    assert structural(_binary(plain, continued=False), plain, DEFAULT_HASH_POLICY) != structural(
+        _binary(continued, continued=True), continued, DEFAULT_HASH_POLICY
+    )
+    assert _token_hash(_binary(plain, continued=False), plain) != _token_hash(
+        _binary(continued, continued=True), continued
+    )
+    assert structural(_binary(plain, continued=False), plain, policy) == structural(
+        _binary(continued, continued=True), continued, policy
+    )
+    assert _token_hash(_binary(plain, continued=False), plain, policy=policy) == _token_hash(
+        _binary(continued, continued=True), continued, policy=policy
+    )
+
+
+def _attribute(source: bytes) -> FakeNode:
+    owner = _leaf(source, b"a", "identifier")
+    member = FakeNode("identifier", 2, len(source))
+    return FakeNode(
+        "attribute",
+        0,
+        len(source),
+        children=(owner, _leaf(source, b".", ".", named=False), member),
+        fields={"object": owner, "attribute": member},
+    )
+
+
+def test_preserve_identifier_keeps_text_and_receives_the_walk_parent() -> None:
+    first = b"a.b"
+    second = b"a.c"
+    seen_parents: list[str | None] = []
+
+    def preserve(node: FakeNode, parent: FakeNode | None) -> bool:
+        seen_parents.append(None if parent is None else parent.type)
+        return parent is not None and _same_node(parent.child_by_field_name("attribute"), node)
+
+    policy = HashPolicy(preserve_identifier=preserve)
+    default_first = _structural_hash(_attribute(first), first, "python", CodeUnitType.FUNCTION)
+    default_second = _structural_hash(_attribute(second), second, "python", CodeUnitType.FUNCTION)
+    preserved_first = _structural_hash(
+        _attribute(first), first, "python", CodeUnitType.FUNCTION, policy=policy
+    )
+    preserved_second = _structural_hash(
+        _attribute(second), second, "python", CodeUnitType.FUNCTION, policy=policy
+    )
+
+    assert default_first == default_second
+    assert preserved_first != preserved_second
+    assert seen_parents == ["attribute", "attribute"] * 2
+
+
+def _formatted_string(source: bytes, *, interpolated: bool) -> FakeNode:
+    children: list[FakeNode] = [_leaf(source, b'f"', "string_start")]
+    if interpolated:
+        name = _leaf(source, b"x", "identifier")
+        children.append(
+            FakeNode(
+                "interpolation",
+                name.start_byte - 1,
+                name.end_byte + 1,
+                children=(
+                    FakeNode("{", name.start_byte - 1, name.start_byte, is_named=False),
+                    name,
+                    FakeNode("}", name.end_byte, name.end_byte + 1, is_named=False),
+                ),
+            )
+        )
+    children.append(_leaf(source, b'"', "string_end", start=len(source) - 1))
+    return FakeNode("string", 0, len(source), children=tuple(children))
+
+
+def test_descend_string_makes_interpolation_structural() -> None:
+    plain = b'f""'
+    interpolated = b'f"{x}"'
+    policy = HashPolicy(
+        descend_string=lambda node, parent: (
+            node.type == "string" and any(child.type == "interpolation" for child in node.children)
+        )
+    )
+
+    def structural(tree: FakeNode, source: bytes, hook_policy: HashPolicy) -> str:
+        return _structural_hash(tree, source, "python", CodeUnitType.FUNCTION, policy=hook_policy)
+
+    assert structural(
+        _formatted_string(plain, interpolated=False), plain, DEFAULT_HASH_POLICY
+    ) == structural(
+        _formatted_string(interpolated, interpolated=True), interpolated, DEFAULT_HASH_POLICY
+    )
+    assert structural(_formatted_string(plain, interpolated=False), plain, policy) != structural(
+        _formatted_string(interpolated, interpolated=True), interpolated, policy
+    )
+
+
+@pytest.mark.parametrize(
+    ("relative", "language", "expected"),
+    [
+        ("pkg/mod.py", "python", "pkg.mod"),
+        ("pkg/__init__.py", "python", "pkg"),
+        ("pkg/sub/__init__.py", "python", "pkg.sub"),
+        ("__init__.py", "python", ""),
+        ("pkg/index.py", "python", "pkg.index"),
+        ("pkg/mod.pyi", "python", "pkg.mod"),
+        ("pkg/index.js", "javascript", "pkg"),
+        ("index.js", "javascript", "index"),
+        ("pkg/view.tsx", "typescript", "pkg.view"),
+        ("src/lib.rs", "rust", "src"),
+        ("src/net/mod.rs", "rust", "src.net"),
+        ("main.rs", "rust", "main"),
+        ("pkg/util.c", "c", "pkg.util"),
+    ],
+)
+def test_module_prefix_follows_each_language_convention(
+    tmp_path: Path, relative: str, language: str, expected: str
+) -> None:
+    assert module_prefix(tmp_path, tmp_path / relative, language) == expected
+
+
+def test_module_prefix_falls_back_to_the_file_name_outside_the_root(tmp_path: Path) -> None:
+    outside = tmp_path.parent / "elsewhere" / "mod.py"
+
+    assert module_prefix(tmp_path / "root", outside, "python") == "mod"
+
+
+def test_qualified_drops_empty_segments() -> None:
+    assert qualified("", "func") == "func"
+    assert qualified("pkg", "", "Klass", "method") == "pkg.Klass.method"
 
 
 def test_javascript_binding_accepts_fresh_field_wrappers(tmp_path: Path) -> None:

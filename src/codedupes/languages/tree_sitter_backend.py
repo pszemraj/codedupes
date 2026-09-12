@@ -12,12 +12,13 @@ import hashlib
 import importlib
 import re
 import threading
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, ClassVar
 
 from codedupes.languages.base import BackendResult
+from codedupes.languages.naming import module_prefix, qualified
 from codedupes.languages.registry import GRAMMAR_PACKAGES
 from codedupes.models import CodeUnit, CodeUnitType, ExtractionDiagnostic
 
@@ -379,49 +380,6 @@ def _contains_error(node: Any) -> bool:
     return getattr(node, "type", "") == "ERROR"
 
 
-def _module_prefix(root: Path, file_path: Path, language: str) -> str:
-    """Build the dotted module prefix that qualifies every unit in one file.
-
-    :param root: Extraction root the file path is made relative to.
-    :param file_path: File being extracted.
-    :param language: Canonical language name.
-    :return: Dotted prefix, with conventional entry-point stems collapsed away.
-    """
-    try:
-        rel = file_path.relative_to(root)
-    except ValueError:
-        rel = Path(file_path.name)
-
-    parts = list(rel.parts[:-1])
-    stem = rel.name
-    for suffix in (".d.ts", ".d.mts", ".d.cts", ".tsx", ".mts", ".cts", ".jsx", ".mjs", ".cjs"):
-        if stem.lower().endswith(suffix):
-            stem = stem[: -len(suffix)]
-            break
-    else:
-        stem = Path(stem).stem
-
-    conventional = {"index"}
-    if language == "rust":
-        conventional |= {"mod", "lib", "main"}
-    if stem not in conventional or not parts:
-        parts.append(stem)
-    if not parts:
-        parts.append(stem or file_path.stem)
-    return ".".join(part for part in parts if part)
-
-
-def _qualified(prefix: str, *parts: str) -> str:
-    """Join a module prefix and name segments into one dotted name.
-
-    :param prefix: Module prefix, possibly empty.
-    :param parts: Name segments in outermost-first order.
-    :return: Dotted qualified name with empty segments dropped.
-    """
-    clean = [part for part in (prefix, *parts) if part]
-    return ".".join(clean)
-
-
 def _push_context_segment(segments: list[str], segment: str) -> None:
     """Add one outer context segment unless the inner path already spells it out.
 
@@ -464,13 +422,60 @@ def _leaf_nodes(node: Any) -> Iterable[Any]:
             yield candidate
 
 
-def _structural_hash(node: Any, source: bytes, language: str, unit_type: CodeUnitType) -> str:
+NodePredicate = Callable[[Any, Any | None], bool]
+
+
+def _never(node: Any, parent: Any | None) -> bool:
+    """Default hook answer: the generic walk applies with no language exception.
+
+    :param node: Node under consideration.
+    :param parent: Parent of ``node`` in the walk, ``None`` at the unit root.
+    :return: Always ``False``.
+    """
+    return False
+
+
+@dataclass(frozen=True)
+class HashPolicy:
+    """Language hooks consulted by the generic fingerprint walks.
+
+    Every hook receives ``(node, parent)`` from the walk itself, so a backend can
+    key on grammar context without re-deriving it through ``node.parent``. The
+    defaults answer ``False`` everywhere, which is exactly the walk every backend
+    used before the hooks existed; ``FINGERPRINT_SCHEMA_VERSION`` therefore does
+    not move when a backend adopts a policy.
+    """
+
+    prune_structural: NodePredicate = _never
+    """Drop the subtree from the structural stream (formatting artifacts, docstrings)."""
+    prune_tokens: NodePredicate = _never
+    """Drop the subtree from the token stream."""
+    preserve_identifier: NodePredicate = _never
+    """Keep an identifier leaf's text instead of normalizing it (API shape, not a local)."""
+    opaque_token: NodePredicate = _never
+    """Emit the node's full text as one token instead of flattening its leaves."""
+    descend_string: NodePredicate = _never
+    """Walk into a string-like node instead of collapsing it to ``<STR>``."""
+
+
+DEFAULT_HASH_POLICY = HashPolicy()
+
+
+def _structural_hash(
+    node: Any,
+    source: bytes,
+    language: str,
+    unit_type: CodeUnitType,
+    *,
+    policy: HashPolicy = DEFAULT_HASH_POLICY,
+) -> str:
     """Fingerprint a subtree with local identifiers, literals, and comments normalized.
 
     :param node: Unit node to fingerprint.
     :param source: Full file source bytes.
     :param language: Canonical language name, mixed into the fingerprint.
     :param unit_type: Unit kind, mixed into the fingerprint.
+    :param policy: Language hooks applied during the walk, defaults to no exceptions.
     :return: Truncated SHA-256 digest of the normalized structural token stream.
     """
     normalized_names: dict[str, str] = {}
@@ -497,12 +502,14 @@ def _structural_hash(node: Any, source: bytes, language: str, unit_type: CodeUni
             (int(getattr(name_node, "start_byte", -1)), int(getattr(name_node, "end_byte", -1)))
         )
 
-    # Iterative preorder walk with a close-paren sentinel: minified or
-    # generated sources nest deeply enough to blow the Python recursion limit.
+    # Iterative preorder walk over ``(node, parent)`` pairs with a close-paren
+    # sentinel: minified or generated sources nest deeply enough to blow the
+    # Python recursion limit, and carrying the parent keeps the policy hooks
+    # O(1) instead of climbing ``node.parent`` per node.
     close_marker = object()
-    stack: list[Any] = [node]
+    stack: list[tuple[Any, Any | None]] = [(node, None)]
     while stack:
-        current = stack.pop()
+        current, parent = stack.pop()
         if current is close_marker:
             pieces.append(")")
             continue
@@ -510,23 +517,24 @@ def _structural_hash(node: Any, source: bytes, language: str, unit_type: CodeUni
         node_type = str(getattr(current, "type", ""))
         if node_type in _COMMENT_TYPES or "comment" in node_type:
             continue
+        if policy.prune_structural(current, parent):
+            continue
 
         text = _node_text(source, current)
         lower_type = node_type.lower()
         children = _children(current)
 
-        if any(marker in lower_type for marker in _STRING_MARKERS) and not (
-            "template" in lower_type and children
+        if (
+            any(marker in lower_type for marker in _STRING_MARKERS)
+            and not ("template" in lower_type and children)
+            and not policy.descend_string(current, parent)
         ):
             pieces.append(f"<{node_type}:STR>")
             continue
 
         if node_type in _CLASS_DECLARATION_TYPES or (
             node_type in _CLASS_MEMBER_CALLABLE_TYPES
-            and (
-                current is node
-                or getattr(getattr(current, "parent", None), "type", "") == "class_body"
-            )
+            and (current is node or getattr(parent, "type", "") == "class_body")
         ):
             _mark_declaration_name(current)
 
@@ -536,8 +544,10 @@ def _structural_hash(node: Any, source: bytes, language: str, unit_type: CodeUni
                     int(getattr(current, "start_byte", -1)),
                     int(getattr(current, "end_byte", -1)),
                 )
-                preserved = node_type in _PRESERVED_IDENTIFIER_TYPES or (
-                    text.startswith("__") and text.endswith("__")
+                preserved = (
+                    node_type in _PRESERVED_IDENTIFIER_TYPES
+                    or (text.startswith("__") and text.endswith("__"))
+                    or policy.preserve_identifier(current, parent)
                 )
                 if preserved and span not in declaration_name_spans:
                     value = text
@@ -553,34 +563,40 @@ def _structural_hash(node: Any, source: bytes, language: str, unit_type: CodeUni
             continue
 
         pieces.append(f"({node_type}")
-        stack.append(close_marker)
-        stack.extend(reversed(children))
+        stack.append((close_marker, None))
+        stack.extend((child, current) for child in reversed(children))
 
     return hashlib.sha256("\x1f".join(pieces).encode("utf-8")).hexdigest()[:16]
 
 
-def _token_hash(node: Any, source: bytes) -> str:
+def _token_hash(node: Any, source: bytes, *, policy: HashPolicy = DEFAULT_HASH_POLICY) -> str:
     """Fingerprint a subtree's literal token stream, ignoring comments.
 
     Comment subtrees are pruned before flattening: some grammars (for example
     tree-sitter-rust) parse comments with delimiter children whose leaf types
     do not mention "comment", so a leaf-level filter alone would let ``//``
-    and ``/* */`` markers leak into the token stream.
+    and ``/* */`` markers leak into the token stream. Nodes the policy marks
+    opaque contribute their full text as one token; grammars that only expose
+    escape sequences as children (tree-sitter-python's ``string_content``)
+    would otherwise drop the literal text between them.
 
     :param node: Unit node to fingerprint.
     :param source: Full file source bytes.
+    :param policy: Language hooks applied during the walk, defaults to no exceptions.
     :return: Truncated SHA-256 digest of the typed token stream.
     """
     tokens: list[str] = []
-    stack = [node]
+    stack: list[tuple[Any, Any | None]] = [(node, None)]
     while stack:
-        current = stack.pop()
+        current, parent = stack.pop()
         node_type = str(getattr(current, "type", ""))
         if node_type in _COMMENT_TYPES or "comment" in node_type:
             continue
+        if policy.prune_tokens(current, parent):
+            continue
         children = _children(current)
-        if children:
-            stack.extend(reversed(children))
+        if children and not policy.opaque_token(current, parent):
+            stack.extend((child, current) for child in reversed(children))
             continue
         text = _node_text(source, current)
         if text.strip():
@@ -652,6 +668,7 @@ class TreeSitterBackend:
     nested_scope_types: frozenset[str] = frozenset()
     class_member_types: frozenset[str] = frozenset()
     builtins: frozenset[str] = frozenset()
+    hash_policy: ClassVar[HashPolicy] = DEFAULT_HASH_POLICY
 
     def __init__(self, root: Path, dialect: str, include_private: bool) -> None:
         """Store the extraction root, parser dialect, and visibility policy.
@@ -687,11 +704,12 @@ class TreeSitterBackend:
         # re-deriving a name-prefix subset of those rules.
         return self.include_private or spec.is_public
 
-    def _statement_count(self, body: Any, unit_type: CodeUnitType) -> int:
+    def _statement_count(self, body: Any, unit_type: CodeUnitType, source: bytes) -> int:
         """Count statements or class members, expanding static initializer bodies.
 
         :param body: Body node of the unit, or ``None``.
         :param unit_type: Kind of unit the body belongs to.
+        :param source: Full file source bytes, for backends that must read node text.
         :return: Statement count, with nested scopes counted once each.
         """
         if body is None:
@@ -700,7 +718,7 @@ class TreeSitterBackend:
             # Static initializers have no separate code unit; measure their
             # bodies here using the same traversal as callable bodies.
             return sum(
-                max(1, self._statement_count(child, CodeUnitType.FUNCTION))
+                max(1, self._statement_count(child, CodeUnitType.FUNCTION, source))
                 if child.type == "class_static_block"
                 else 1
                 for child in _named_children(body)
@@ -876,6 +894,7 @@ class TreeSitterBackend:
                 source,
                 self.language,
                 spec.unit_type,
+                policy=self.hash_policy,
             )
             units.append(
                 CodeUnit(
@@ -893,9 +912,9 @@ class TreeSitterBackend:
                     end_byte=end_byte,
                     start_column=start_column,
                     end_column=end_column,
-                    statement_count=self._statement_count(spec.body, spec.unit_type),
+                    statement_count=self._statement_count(spec.body, spec.unit_type, source),
                     structural_hash=structural_hash,
-                    token_hash=_token_hash(spec.node, source),
+                    token_hash=_token_hash(spec.node, source, policy=self.hash_policy),
                     identifiers=_collect_identifiers(spec.node, source, self.builtins),
                     calls=_collect_calls(spec.node, source),
                     is_public=spec.is_public,
@@ -997,7 +1016,7 @@ class CBackend(TreeSitterBackend):
         :param file_path: File being extracted.
         :return: Unit specs for every named, body-bearing function definition.
         """
-        prefix = _module_prefix(self.root, file_path, self.language)
+        prefix = module_prefix(self.root, file_path, self.language)
         specs: list[UnitSpec] = []
         for node in _walk(root_node):
             if getattr(node, "type", "") != "function_definition":
@@ -1017,7 +1036,7 @@ class CBackend(TreeSitterBackend):
                     source_node=node,
                     body=body,
                     name=name,
-                    qualified_name=_qualified(prefix, name),
+                    qualified_name=qualified(prefix, name),
                     unit_type=CodeUnitType.FUNCTION,
                     native_kind="function_definition",
                     is_public=is_public,
@@ -1051,14 +1070,15 @@ class RustBackend(TreeSitterBackend):
         }
     )
 
-    def _statement_count(self, body: Any, unit_type: CodeUnitType) -> int:
+    def _statement_count(self, body: Any, unit_type: CodeUnitType, source: bytes) -> int:
         """Count Rust statements, including one semicolon-free tail expression.
 
         :param body: Rust function body node.
         :param unit_type: Kind of unit the body belongs to.
+        :param source: Full file source bytes.
         :return: Recursive statement count with the tail expression counted once.
         """
-        count = super()._statement_count(body, unit_type)
+        count = super()._statement_count(body, unit_type, source)
         if body is None or getattr(body, "type", "") != "block":
             return count
 
@@ -1304,7 +1324,7 @@ class RustBackend(TreeSitterBackend):
         :param file_path: File being extracted.
         :return: Unit specs for every non-test, body-bearing function item.
         """
-        prefix = _module_prefix(self.root, file_path, self.language)
+        prefix = module_prefix(self.root, file_path, self.language)
         specs: list[UnitSpec] = []
         local_trait_visibility = self._local_trait_visibility(root_node, source)
         for node in _walk(root_node):
@@ -1338,7 +1358,7 @@ class RustBackend(TreeSitterBackend):
                     source_node=node,
                     body=body,
                     name=name,
-                    qualified_name=_qualified(prefix, *contexts, name),
+                    qualified_name=qualified(prefix, *contexts, name),
                     unit_type=CodeUnitType.METHOD if is_method else CodeUnitType.FUNCTION,
                     native_kind="function_item",
                     is_public=public,
@@ -1791,7 +1811,7 @@ class ECMAScriptBackend(TreeSitterBackend):
                 name = "default"
                 source_node = export_parent
             context = self._lexical_context(node, source)
-            qualified_name = _qualified(prefix, *context, name)
+            qualified_name = qualified(prefix, *context, name)
             unit_type = CodeUnitType.FUNCTION
         else:
             binding = self._binding_for_value(node, source)
@@ -1800,7 +1820,7 @@ class ECMAScriptBackend(TreeSitterBackend):
                 bound_name, source_node = binding
                 contextual_name = self._contextual_binding(node, bound_name, source)
                 name = bound_name.rsplit(".", 1)[-1]
-                qualified_name = _qualified(prefix, contextual_name)
+                qualified_name = qualified(prefix, contextual_name)
                 source_kind = getattr(source_node, "type", "")
                 unit_type = (
                     CodeUnitType.METHOD
@@ -1809,7 +1829,7 @@ class ECMAScriptBackend(TreeSitterBackend):
                 )
             elif own_name:
                 name = own_name
-                qualified_name = _qualified(prefix, *self._lexical_context(node, source), name)
+                qualified_name = qualified(prefix, *self._lexical_context(node, source), name)
                 unit_type = CodeUnitType.FUNCTION
             else:
                 return None
@@ -1864,9 +1884,9 @@ class ECMAScriptBackend(TreeSitterBackend):
             bound_name = name
             contextual_name = self._contextual_binding(node, bound_name, source)
             name = bound_name.rsplit(".", 1)[-1]
-            qualified_name = _qualified(prefix, contextual_name)
+            qualified_name = qualified(prefix, contextual_name)
         else:
-            qualified_name = _qualified(prefix, *self._lexical_context(node, source), name)
+            qualified_name = qualified(prefix, *self._lexical_context(node, source), name)
         exported = self._is_exported(
             source_node,
             source,
@@ -1909,7 +1929,7 @@ class ECMAScriptBackend(TreeSitterBackend):
         container = self._member_container(node, source)
         if not container:
             return None
-        qualified_name = _qualified(prefix, container, name)
+        qualified_name = qualified(prefix, container, name)
         exported = self._is_exported(node, source, container, exported_names)
         return UnitSpec(
             node=node,
@@ -1931,7 +1951,7 @@ class ECMAScriptBackend(TreeSitterBackend):
         :param file_path: File being extracted.
         :return: Unit specs for every nameable, body-bearing unit in the file.
         """
-        prefix = _module_prefix(self.root, file_path, self.language)
+        prefix = module_prefix(self.root, file_path, self.language)
         exported_names = self._file_export_names(root_node, source)
         specs: list[UnitSpec] = []
         for node in _walk(root_node):
