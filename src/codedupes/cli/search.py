@@ -165,6 +165,7 @@ def search_command(ctx: click.Context, path: Path, query: str, **params: Any) ->
                     "[yellow]Warning:[/yellow] the search index is empty, so no query can "
                     f"match: {reason}."
                 )
+            _print_diagnostics("Extraction diagnostics", analyzer.extraction_diagnostics)
             _print_diagnostics("Semantic diagnostics", analyzer.semantic_diagnostics)
             if file_results is not None:
                 print_file_search_results(file_results)

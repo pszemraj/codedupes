@@ -539,22 +539,38 @@ def test_cli_search_json_surfaces_semantic_diagnostics(monkeypatch, tmp_path):
     assert payload["semantic_diagnostics"][0]["code"] == "semantic-warning"
 
 
-def test_cli_search_json_surfaces_extraction_failures(tmp_path: Path) -> None:
-    """Preserve a real parser failure in an otherwise successful search report."""
-    path = tmp_path / "broken.py"
-    path.write_text("def broken(\n", encoding="utf-8")
-
-    result = CliRunner().invoke(
-        cli.cli, ["search", str(path), "entry", "--json", "--no-cache", "--device", "cpu"]
-    )
+@pytest.mark.parametrize(
+    ("filename", "source", "diagnostic_code"),
+    [
+        ("broken.py", "def broken(\n", "parse-error"),
+        ("broken.js", "function broken( {", "partial-parse"),
+    ],
+)
+def test_cli_search_surfaces_extraction_failures(
+    tmp_path: Path, filename: str, source: str, diagnostic_code: str
+) -> None:
+    """Preserve real Python and Tree-sitter failures in both search report formats."""
+    path = tmp_path / filename
+    path.write_text(source, encoding="utf-8")
+    runner = CliRunner()
+    args = ["search", str(path), "entry", "--no-cache", "--min-statements", "99"]
+    result = runner.invoke(cli.cli, [*args, "--json"])
 
     assert result.exit_code == 0, result.output
     assert result.stderr == ""
     payload = json.loads(result.stdout)
     assert payload["summary"]["indexed_units"] == 0
     assert payload["results"] == []
-    assert payload["extraction_diagnostics"][0]["code"] == "parse-error"
+    assert payload["extraction_diagnostics"][0]["code"] == diagnostic_code
     assert payload["extraction_diagnostics"][0]["file"] == str(path)
+
+    terminal = runner.invoke(cli.cli, args)
+    assert terminal.exit_code == 0, terminal.output
+    assert "Extraction diagnostics" in terminal.stdout
+    assert " ".join(payload["extraction_diagnostics"][0]["message"].split()) in " ".join(
+        terminal.stdout.split()
+    )
+    assert filename in terminal.stdout
 
 
 def test_cli_search_indexes_without_running_full_analysis(monkeypatch, tmp_path):
