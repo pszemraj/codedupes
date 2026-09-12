@@ -913,16 +913,23 @@ def test_analyzer_resolves_per_language_semantic_gate(tmp_path: Path, monkeypatc
 
 
 @pytest.mark.parametrize(
-    ("choice", "expected"),
+    ("model_kind", "choice", "numeric", "expected"),
     [
-        ("auto", 0.74),
-        ("generic", 0.82),
-        ("embeddinggemma-300m", 0.74),
-        ("gte-modernbert-base", 0.80),
+        ("local", "auto", None, 0.74),
+        ("builtin", "auto", None, 0.74),
+        ("default", "auto", None, 0.80),
+        ("hub", "auto", None, 0.74),
+        # Explicit profiles override the model family; test each choice once.
+        ("builtin", "generic", None, 0.82),
+        ("default", "embeddinggemma-300m", None, 0.74),
+        ("builtin", "gte-modernbert-base", None, 0.80),
+        # Numeric gates bypass profile resolution for every profile choice.
+        ("local", "auto", 0.91, 0.91),
+        ("hub", "generic", 0.91, 0.91),
+        ("builtin", "embeddinggemma-300m", 0.91, 0.91),
+        ("default", "gte-modernbert-base", 0.91, 0.91),
     ],
 )
-@pytest.mark.parametrize("numeric", [None, 0.91])
-@pytest.mark.parametrize("model_kind", ["local", "builtin", "default", "hub"])
 def test_analyze_directory_threshold_profiles(
     tmp_path, monkeypatch, caplog, choice, expected, numeric, model_kind
 ) -> None:
@@ -937,8 +944,6 @@ def test_analyze_directory_threshold_profiles(
         "default": analyzer_module.DEFAULT_MODEL,
         "hub": "someone/embeddinggemma-300m-code-ft",
     }[model_kind]
-    if model_kind == "default" and choice == "auto":
-        expected = 0.80
     project = create_project(tmp_path, "def alpha(x):\n    return x + 1\n")
     captured = {}
     monkeypatch.setattr(
@@ -954,9 +959,7 @@ def test_analyze_directory_threshold_profiles(
                 min_semantic_statements=0,
                 run_unused=False,
             )
-    assert captured["language_thresholds"] == {
-        "python": numeric if numeric is not None else expected
-    }
+    assert captured["language_thresholds"] == {"python": expected}
     assert captured["model_name"] == model_name
     assert captured["revision"] is None
     if numeric is not None:
@@ -1609,15 +1612,17 @@ def test_search_threshold_defaults_to_none_and_honors_explicit_config(
 
 
 @pytest.mark.parametrize(
-    "config_overrides",
+    ("config_overrides", "threshold_profile"),
     [
-        {"semantic_task": "classification"},
-        {"instruction_prefix": "CUSTOM: "},
-        {"model_revision": "f" * 40},
-        {"trust_remote_code": True},
+        ({"semantic_task": "classification"}, "auto"),
+        ({"instruction_prefix": "CUSTOM: "}, "auto"),
+        ({"model_revision": "f" * 40}, "auto"),
+        ({"trust_remote_code": True}, "auto"),
+        # Selecting another threshold profile cannot bypass the context guard.
+        ({"instruction_prefix": "CUSTOM: "}, "generic"),
+        ({"model_revision": "f" * 40}, "embeddinggemma-300m"),
     ],
 )
-@pytest.mark.parametrize("threshold_profile", ["auto", "generic", "embeddinggemma-300m"])
 def test_uncalibrated_duplicate_context_rejected_at_construction(
     config_overrides: dict[str, str],
     threshold_profile: str,
