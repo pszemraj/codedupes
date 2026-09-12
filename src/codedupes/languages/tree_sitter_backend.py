@@ -1141,9 +1141,9 @@ def _python_unwrap(node: Any, parent: Any | None) -> bool:
 def _python_preserve_identifier(node: Any, parent: Any | None) -> bool:
     """Keep names that are API shape rather than local bindings.
 
-    Attribute names, keyword-argument names, and imported names are preserved;
-    parameters, locals, definition names, ``global``/``nonlocal`` targets, and
-    ``case`` pattern names normalize like every other binding.
+    Attribute names, keyword-argument names, class-pattern attributes, and
+    imported names are preserved; parameters, locals, definition names,
+    ``global``/``nonlocal`` targets, and pattern captures normalize as bindings.
 
     :param node: Identifier leaf under consideration.
     :param parent: Parent of ``node`` in the walk.
@@ -1154,6 +1154,10 @@ def _python_preserve_identifier(node: Any, parent: Any | None) -> bool:
         return _same_node(_child_by_field(parent, "attribute"), node)
     if parent_type == "keyword_argument":
         return _same_node(_child_by_field(parent, "name"), node)
+    if parent_type == "keyword_pattern":
+        # The direct identifier names the attribute; capture identifiers are
+        # nested inside the value pattern, not direct children of this node.
+        return True
     if parent_type in _PYTHON_IMPORT_NAME_PARENTS:
         return _has_ancestor(node, _PYTHON_IMPORT_TYPES)
     return False

@@ -78,6 +78,36 @@ def test_singleton_tuple_subscripts_are_not_exact_duplicates(tmp_path: Path, ind
     assert exact == []
 
 
+def test_class_patterns_preserve_attributes_but_normalize_captures(tmp_path: Path) -> None:
+    """Class-pattern keywords select attributes; only their captured bindings may rename."""
+    units = extract_units(
+        tmp_path,
+        """
+        def first(point):
+            match point:
+                case Point(x=value):
+                    return value
+
+        def second(point):
+            match point:
+                case Point(y=value):
+                    return value
+
+        def renamed(other):
+            match other:
+                case Point(x=captured):
+                    return captured
+        """,
+    )
+
+    exact, _near = run_traditional_analysis(units)
+
+    assert len(units) == 3
+    assert [(pair.unit_a.name, pair.unit_b.name, pair.method) for pair in exact] == [
+        ("first", "renamed", "structural_hash")
+    ]
+
+
 def test_exact_duplicates_across_function_and_method(tmp_path: Path) -> None:
     source = dedent(
         """
