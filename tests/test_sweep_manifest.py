@@ -1009,7 +1009,8 @@ def test_search_sweep_collects_at_its_chosen_grid_floor(
             return 1
 
         def search(self, query: str, top_k: int) -> list[tuple[CodeUnit, float]]:
-            return [(unit, 0.05)]
+            score = 0.005
+            return [(unit, score)] if score >= self.config.semantic_threshold else []
 
     monkeypatch.setattr("scripts.sweep_semantic_thresholds.CodeAnalyzer", FakeAnalyzer)
     monkeypatch.setattr(
@@ -1025,12 +1026,14 @@ def test_search_sweep_collects_at_its_chosen_grid_floor(
         min_statements=0,
         batch_size=4,
         device="cpu",
-        search_start=0.04,
-        search_stop=0.08,
+        search_start=0.004,
+        search_stop=0.024,
     )
 
-    assert captured_thresholds == [0.04]
-    assert {row.threshold for row in sweep.rows} == {0.04, 0.06, 0.08}
+    assert captured_thresholds == [0.004]
+    rows = {row.threshold: row for row in sweep.rows}
+    assert rows[0.004].tp == 1
+    assert rows[0.024].tp == 0
 
 
 def test_grid_edge_labels_boundary_selections() -> None:
