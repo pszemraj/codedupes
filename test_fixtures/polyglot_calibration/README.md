@@ -57,7 +57,7 @@ The validator now enforces the zero-unlabeled-deterministic-pairs property per l
 
 The 2026-08-25 sweep used pinned profiles, cpu/fp32, and production `--min-statements 3`.
 
-Sweeps ran per language over a 0.40-0.96 duplicate grid (`--duplicate-start 0.40`; the default 0.70 floor would hide most non-Python near clones) with both models; search sweeps used the per-language probes over the default 0.20-0.90 search grid. See [sweep metrics and calibration identity](../../docs/hybrid-tuning.md#semantic-threshold-sweep-model-profiles) for how output and candidate coverage are scored. Reports: `reports/<lang>_semantic_threshold_report.json`, `reports/<lang>_search_threshold_report.json`, `reports/similarity_distributions.json`, and `reports/corroboration_report.json` for the [default-visible split](#default-visible-split-2026-09-11-reportscorroboration_reportjson).
+Sweeps ran per language over a 0.40-0.96 duplicate grid (`--duplicate-start 0.40`; the default 0.70 floor would hide most non-Python near clones) with both models; search sweeps used the per-language probes over the default 0.20-0.90 search grid. See [sweep metrics and calibration identity](../../docs/hybrid-tuning.md#semantic-threshold-sweep-model-profiles) for how output and candidate coverage are scored. Reports: `reports/<lang>_semantic_threshold_report.json`, `reports/<lang>_search_threshold_report.json`, `reports/similarity_distributions.json`, and `reports/corroboration_report.json` for the [default-visible split](#default-visible-results).
 
 Duplicate threshold, best final-output F1 row per language. Candidate coverage is the number of labeled pairs whose two units reach semantic embedding under the production policy; traditional detection can still recover an excluded deterministic pair.
 
@@ -91,9 +91,9 @@ The 2026-08-21 regeneration under embedding pipeline schema 5 reproduced every m
 
 Candidate policy, model threshold, and hybrid publication must be evaluated together. Apply the [gate selection policy](../../docs/analysis-defaults.md#semantic-duplicate-gate-defaults) to these production-policy grids. Search rows remain a single-domain synthetic guardrail; [model profiles](../../docs/model-profiles.md#built-in-profiles) describes the held-out evidence used for search defaults.
 
-## Default-visible results (2026-09-11, `reports/corroboration_report.json`)
+## Default-visible results
 
-The table records default-visible and admitted precision/recall at the shipped split. See [hybrid confidence defaults](../../docs/analysis-defaults.md#hybrid-synthesis-confidence-defaults) for the settings and the [tuning workflow](../../docs/hybrid-tuning.md) for selection.
+The 2026-09-11 `reports/corroboration_report.json` records default-visible and admitted precision/recall at the shipped split. See [hybrid confidence defaults](../../docs/analysis-defaults.md#hybrid-synthesis-confidence-defaults) for the settings and the [tuning workflow](../../docs/hybrid-tuning.md) for selection.
 
 | language | gte-modernbert-base visible vs admitted | embeddinggemma-300m visible vs admitted |
 | --- | --- | --- |

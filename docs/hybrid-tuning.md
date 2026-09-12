@@ -2,7 +2,7 @@
 
 Tune the shipped values for the [hybrid confidence split](analysis-defaults.md#hybrid-synthesis-confidence-defaults). Admission — which semantic pairs exist at all — is set by the [per-language duplicate gates](analysis-defaults.md#semantic-duplicate-gate-defaults) and is not tuned here.
 
-This is a maintainer workflow for changing shipped gates or corroboration defaults. It is not needed to tune one repository scan: start with the calibrated defaults, then use ordinary `check` scope and threshold options if that scan needs adjustment. Run these commands from a development checkout after installation; they load the pinned embedding models and can take time on their first run. Write exploratory reports under `scratch/`, which is ignored by Git.
+For one repository scan, start with the calibrated defaults and adjust the ordinary `check` scope and threshold options as needed. To change shipped gates or corroboration defaults, run these sweeps from a development checkout after installation. They load the pinned embedding models and can take time on their first run. Write exploratory reports under `scratch/`, which is ignored by Git.
 
 ## Corpora and labels
 
@@ -25,7 +25,7 @@ Use these synthetic corpora to check for regressions; validate changes on a real
 ```bash
 python scripts/sweep_hybrid_gates.py \
   --corpus-root test_fixtures/polyglot_calibration \
-  --json-out test_fixtures/polyglot_calibration/reports/corroboration_report.json
+  --json-out scratch/corroboration_report.json
 ```
 
 Omit `--json-out` to print results without writing a report. `--languages` and `--models` narrow the run; `--corpus-path`/`--labels-path` sweep a single legacy corpus instead of the polyglot root. Without `--corpus-root`, exactly one `--language` is required before model work begins so the sweep uses that language's admission gate. Run the bundled Python guardrail with `python scripts/sweep_hybrid_gates.py --language python`; aliases such as `py` use the same gate, and missing or repeated `--language` options are rejected.

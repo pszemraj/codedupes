@@ -35,7 +35,7 @@ After nonempty writes, codedupes inventories shard sizes on the first write for 
 | Change model, revision, prompt, encode route, or vector-affecting runtime settings | Uses a different embedding identity. |
 | Replace local weights in place | Changes the directory content fingerprint. Touching modification times alone does not invalidate vectors. |
 | Edit local model documentation or Git/download metadata | Keeps the local-directory content fingerprint unchanged. A `README.md` top-level heading change that alters the inferred model family can still change the embedding identity. |
-| Change threshold profile or numeric thresholds | Reuses embeddings and applies the new result filtering. |
+| Change threshold profile or numeric thresholds | Reuses embeddings; applies the selected [thresholds and hybrid split](model-profiles.md#choosing-threshold-defaults). |
 | Repeat a search query | Reuses its query vector when both corpus and query identities match. |
 
 EmbeddingGemma uses different corpus prompts for `check` and `search`, so they warm independently. GTE uses the same symmetric corpus route for both: a warm check can cover the first search's corpus, but a new query still embeds. See [prompt behavior](model-profiles.md#taskprompt-behavior-by-model-family).

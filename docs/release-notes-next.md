@@ -1,7 +1,5 @@
 # Next release
 
-This draft changelog is for people upgrading an existing integration. Read the migration section before updating CI commands or Python callers; new users should start with the [README](../README.md) and [installation guide](install.md).
-
 ## Migration
 
 - `--exclude` now extends default test exclusions for directory scans and matches directory descendants. Explicit file targets bypass default test patterns but honor custom exclusions. See [extraction scope](analysis-defaults.md#extraction-scope-defaults).
