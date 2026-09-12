@@ -997,10 +997,8 @@ class CodeExtractor:
 
         if skipped_test_files or skipped_test_dirs:
             logger.info(
-                "Skipped %d files and %d directories matching default test exclusions; "
-                "use --no-default-excludes to include them.",
-                skipped_test_files,
-                skipped_test_dirs,
+                f"Skipped {skipped_test_files} files and {skipped_test_dirs} directories "
+                "matching default test exclusions; use --no-default-excludes to include them."
             )
 
         if skipped_headers:

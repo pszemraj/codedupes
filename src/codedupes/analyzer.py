@@ -1015,8 +1015,8 @@ class CodeAnalyzer:
                     statement_cutoff=self.config.tiny_unit_statement_cutoff,
                     private_members_included=self.config.include_private,
                 )
-            logger.info("Found %d exact duplicates", len(exact_dupes))
-            logger.info("Found %d near duplicates (Jaccard)", len(near_dupes))
+            logger.info(f"Found {len(exact_dupes)} exact duplicates")
+            logger.info(f"Found {len(near_dupes)} near duplicates (Jaccard)")
             traditional_duplicates = exact_dupes + near_dupes
 
         unused_excluded_units = 0
