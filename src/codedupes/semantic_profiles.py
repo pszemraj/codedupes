@@ -153,10 +153,12 @@ class SemanticModelProfile:
 # every language (Python's includes attribute and keyword-argument names), so
 # the identifier floor is a cross-language measurement rather than an artifact
 # of one extractor; re-run the sweep after any extraction change and copy every
-# regenerated report together. In the recorded sweep the statement-ratio floor
-# carries the split for gte-modernbert, while for embeddinggemma no size split
-# improves precision without cutting C or Rust recall below the floor, so only
-# absurd size mismatches are withheld.
+# regenerated report together. In the recorded sweep no positive identifier
+# floor is feasible in every language (the semantic-only positives are
+# alpha-renamed, so 0.05 already cuts Rust, TypeScript, and Python recall below
+# retention); the statement-ratio floor carries the split for gte-modernbert,
+# while for embeddinggemma no size split improves precision without cutting C
+# or Rust recall below the floor, so only absurd size mismatches are withheld.
 _BUILTIN_MODEL_PROFILES: tuple[SemanticModelProfile, ...] = (
     SemanticModelProfile(
         key="gte-modernbert-base",
