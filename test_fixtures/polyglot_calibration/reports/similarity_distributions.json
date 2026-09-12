@@ -5,14 +5,14 @@
         "model": "Alibaba-NLP/gte-modernbert-base",
         "resolved_revision": "e7f32e3c00f91d699e8c43b53106206bcc72bb22",
         "embedding_pipeline_schema": 5,
-        "embedding_runtime_identity": "e7aed934f076717fc73f",
+        "embedding_runtime_identity": "263d5c868bf6f139a43a",
         "runtime_versions": {
           "python": "3.12.13",
           "torch": "2.13.0",
           "transformers": "5.14.1",
-          "sentence-transformers": "5.6.1"
+          "sentence-transformers": "5.7.0"
         },
-        "codedupes_version": "0.4.0",
+        "codedupes_version": "0.5.4.dev1+g582759789",
         "mode": "distribution",
         "semantic_task": "semantic-similarity",
         "encode_plan": {
@@ -25,8 +25,9 @@
         "embedding_space": {
           "model_name": "Alibaba-NLP/gte-modernbert-base",
           "resolved_revision": "e7f32e3c00f91d699e8c43b53106206bcc72bb22",
-          "runtime_variant": "route=symmetric\u0000prompt_set=0\u0000prompt=\u0000\u0000\u0000e7aed934f076717fc73f\u0000trc=0",
-          "source_commit": null
+          "runtime_variant": "route=symmetric\u0000prompt_set=0\u0000prompt=\u0000\u0000\u0000263d5c868bf6f139a43a\u0000trc=0",
+          "source_commit": null,
+          "search_document": "source"
         },
         "dimension": 768,
         "normalized": true,
@@ -36,7 +37,10 @@
             "method"
           ],
           "min_recursive_statements": 3,
-          "include_private": true
+          "include_private": true,
+          "languages": [
+            "c"
+          ]
         },
         "batch_size": 4,
         "corpus_path": "test_fixtures/polyglot_calibration/c",
@@ -126,14 +130,14 @@
         "model": "Alibaba-NLP/gte-modernbert-base",
         "resolved_revision": "e7f32e3c00f91d699e8c43b53106206bcc72bb22",
         "embedding_pipeline_schema": 5,
-        "embedding_runtime_identity": "e7aed934f076717fc73f",
+        "embedding_runtime_identity": "263d5c868bf6f139a43a",
         "runtime_versions": {
           "python": "3.12.13",
           "torch": "2.13.0",
           "transformers": "5.14.1",
-          "sentence-transformers": "5.6.1"
+          "sentence-transformers": "5.7.0"
         },
-        "codedupes_version": "0.4.0",
+        "codedupes_version": "0.5.4.dev1+g582759789",
         "mode": "distribution",
         "semantic_task": "semantic-similarity",
         "encode_plan": {
@@ -146,8 +150,9 @@
         "embedding_space": {
           "model_name": "Alibaba-NLP/gte-modernbert-base",
           "resolved_revision": "e7f32e3c00f91d699e8c43b53106206bcc72bb22",
-          "runtime_variant": "route=symmetric\u0000prompt_set=0\u0000prompt=\u0000\u0000\u0000e7aed934f076717fc73f\u0000trc=0",
-          "source_commit": null
+          "runtime_variant": "route=symmetric\u0000prompt_set=0\u0000prompt=\u0000\u0000\u0000263d5c868bf6f139a43a\u0000trc=0",
+          "source_commit": null,
+          "search_document": "source"
         },
         "dimension": 768,
         "normalized": true,
@@ -157,7 +162,10 @@
             "method"
           ],
           "min_recursive_statements": 3,
-          "include_private": true
+          "include_private": true,
+          "languages": [
+            "rust"
+          ]
         },
         "batch_size": 4,
         "corpus_path": "test_fixtures/polyglot_calibration/rust",
@@ -248,14 +256,14 @@
         "model": "Alibaba-NLP/gte-modernbert-base",
         "resolved_revision": "e7f32e3c00f91d699e8c43b53106206bcc72bb22",
         "embedding_pipeline_schema": 5,
-        "embedding_runtime_identity": "e7aed934f076717fc73f",
+        "embedding_runtime_identity": "263d5c868bf6f139a43a",
         "runtime_versions": {
           "python": "3.12.13",
           "torch": "2.13.0",
           "transformers": "5.14.1",
-          "sentence-transformers": "5.6.1"
+          "sentence-transformers": "5.7.0"
         },
-        "codedupes_version": "0.4.0",
+        "codedupes_version": "0.5.4.dev1+g582759789",
         "mode": "distribution",
         "semantic_task": "semantic-similarity",
         "encode_plan": {
@@ -268,8 +276,9 @@
         "embedding_space": {
           "model_name": "Alibaba-NLP/gte-modernbert-base",
           "resolved_revision": "e7f32e3c00f91d699e8c43b53106206bcc72bb22",
-          "runtime_variant": "route=symmetric\u0000prompt_set=0\u0000prompt=\u0000\u0000\u0000e7aed934f076717fc73f\u0000trc=0",
-          "source_commit": null
+          "runtime_variant": "route=symmetric\u0000prompt_set=0\u0000prompt=\u0000\u0000\u0000263d5c868bf6f139a43a\u0000trc=0",
+          "source_commit": null,
+          "search_document": "source"
         },
         "dimension": 768,
         "normalized": true,
@@ -279,7 +288,10 @@
             "method"
           ],
           "min_recursive_statements": 3,
-          "include_private": true
+          "include_private": true,
+          "languages": [
+            "javascript"
+          ]
         },
         "batch_size": 4,
         "corpus_path": "test_fixtures/polyglot_calibration/javascript",
@@ -373,14 +385,14 @@
         "model": "Alibaba-NLP/gte-modernbert-base",
         "resolved_revision": "e7f32e3c00f91d699e8c43b53106206bcc72bb22",
         "embedding_pipeline_schema": 5,
-        "embedding_runtime_identity": "e7aed934f076717fc73f",
+        "embedding_runtime_identity": "263d5c868bf6f139a43a",
         "runtime_versions": {
           "python": "3.12.13",
           "torch": "2.13.0",
           "transformers": "5.14.1",
-          "sentence-transformers": "5.6.1"
+          "sentence-transformers": "5.7.0"
         },
-        "codedupes_version": "0.4.0",
+        "codedupes_version": "0.5.4.dev1+g582759789",
         "mode": "distribution",
         "semantic_task": "semantic-similarity",
         "encode_plan": {
@@ -393,8 +405,9 @@
         "embedding_space": {
           "model_name": "Alibaba-NLP/gte-modernbert-base",
           "resolved_revision": "e7f32e3c00f91d699e8c43b53106206bcc72bb22",
-          "runtime_variant": "route=symmetric\u0000prompt_set=0\u0000prompt=\u0000\u0000\u0000e7aed934f076717fc73f\u0000trc=0",
-          "source_commit": null
+          "runtime_variant": "route=symmetric\u0000prompt_set=0\u0000prompt=\u0000\u0000\u0000263d5c868bf6f139a43a\u0000trc=0",
+          "source_commit": null,
+          "search_document": "source"
         },
         "dimension": 768,
         "normalized": true,
@@ -404,7 +417,10 @@
             "method"
           ],
           "min_recursive_statements": 3,
-          "include_private": true
+          "include_private": true,
+          "languages": [
+            "typescript"
+          ]
         },
         "batch_size": 4,
         "corpus_path": "test_fixtures/polyglot_calibration/typescript",
@@ -496,14 +512,14 @@
         "model": "Alibaba-NLP/gte-modernbert-base",
         "resolved_revision": "e7f32e3c00f91d699e8c43b53106206bcc72bb22",
         "embedding_pipeline_schema": 5,
-        "embedding_runtime_identity": "e7aed934f076717fc73f",
+        "embedding_runtime_identity": "263d5c868bf6f139a43a",
         "runtime_versions": {
           "python": "3.12.13",
           "torch": "2.13.0",
           "transformers": "5.14.1",
-          "sentence-transformers": "5.6.1"
+          "sentence-transformers": "5.7.0"
         },
-        "codedupes_version": "0.4.0",
+        "codedupes_version": "0.5.4.dev1+g582759789",
         "mode": "distribution",
         "semantic_task": "semantic-similarity",
         "encode_plan": {
@@ -516,8 +532,9 @@
         "embedding_space": {
           "model_name": "Alibaba-NLP/gte-modernbert-base",
           "resolved_revision": "e7f32e3c00f91d699e8c43b53106206bcc72bb22",
-          "runtime_variant": "route=symmetric\u0000prompt_set=0\u0000prompt=\u0000\u0000\u0000e7aed934f076717fc73f\u0000trc=0",
-          "source_commit": null
+          "runtime_variant": "route=symmetric\u0000prompt_set=0\u0000prompt=\u0000\u0000\u0000263d5c868bf6f139a43a\u0000trc=0",
+          "source_commit": null,
+          "search_document": "source"
         },
         "dimension": 768,
         "normalized": true,
@@ -527,7 +544,10 @@
             "method"
           ],
           "min_recursive_statements": 3,
-          "include_private": true
+          "include_private": true,
+          "languages": [
+            "python"
+          ]
         },
         "batch_size": 4,
         "corpus_path": "test_fixtures/polyglot_calibration/python",
@@ -621,14 +641,14 @@
         "model": "unsloth/embeddinggemma-300m",
         "resolved_revision": "bfa3c846ac738e62aa61806ef9112d34acb1dc5a",
         "embedding_pipeline_schema": 5,
-        "embedding_runtime_identity": "e7aed934f076717fc73f",
+        "embedding_runtime_identity": "263d5c868bf6f139a43a",
         "runtime_versions": {
           "python": "3.12.13",
           "torch": "2.13.0",
           "transformers": "5.14.1",
-          "sentence-transformers": "5.6.1"
+          "sentence-transformers": "5.7.0"
         },
-        "codedupes_version": "0.4.0",
+        "codedupes_version": "0.5.4.dev1+g582759789",
         "mode": "distribution",
         "semantic_task": "semantic-similarity",
         "encode_plan": {
@@ -641,8 +661,9 @@
         "embedding_space": {
           "model_name": "unsloth/embeddinggemma-300m",
           "resolved_revision": "bfa3c846ac738e62aa61806ef9112d34acb1dc5a",
-          "runtime_variant": "route=symmetric\u0000prompt_set=1\u0000prompt=task: sentence similarity | query: \u0000\u0000\u0000e7aed934f076717fc73f\u0000trc=0",
-          "source_commit": null
+          "runtime_variant": "route=symmetric\u0000prompt_set=1\u0000prompt=task: sentence similarity | query: \u0000\u0000\u0000263d5c868bf6f139a43a\u0000trc=0",
+          "source_commit": null,
+          "search_document": "source"
         },
         "dimension": 768,
         "normalized": true,
@@ -652,7 +673,10 @@
             "method"
           ],
           "min_recursive_statements": 3,
-          "include_private": true
+          "include_private": true,
+          "languages": [
+            "c"
+          ]
         },
         "batch_size": 4,
         "corpus_path": "test_fixtures/polyglot_calibration/c",
@@ -742,14 +766,14 @@
         "model": "unsloth/embeddinggemma-300m",
         "resolved_revision": "bfa3c846ac738e62aa61806ef9112d34acb1dc5a",
         "embedding_pipeline_schema": 5,
-        "embedding_runtime_identity": "e7aed934f076717fc73f",
+        "embedding_runtime_identity": "263d5c868bf6f139a43a",
         "runtime_versions": {
           "python": "3.12.13",
           "torch": "2.13.0",
           "transformers": "5.14.1",
-          "sentence-transformers": "5.6.1"
+          "sentence-transformers": "5.7.0"
         },
-        "codedupes_version": "0.4.0",
+        "codedupes_version": "0.5.4.dev1+g582759789",
         "mode": "distribution",
         "semantic_task": "semantic-similarity",
         "encode_plan": {
@@ -762,8 +786,9 @@
         "embedding_space": {
           "model_name": "unsloth/embeddinggemma-300m",
           "resolved_revision": "bfa3c846ac738e62aa61806ef9112d34acb1dc5a",
-          "runtime_variant": "route=symmetric\u0000prompt_set=1\u0000prompt=task: sentence similarity | query: \u0000\u0000\u0000e7aed934f076717fc73f\u0000trc=0",
-          "source_commit": null
+          "runtime_variant": "route=symmetric\u0000prompt_set=1\u0000prompt=task: sentence similarity | query: \u0000\u0000\u0000263d5c868bf6f139a43a\u0000trc=0",
+          "source_commit": null,
+          "search_document": "source"
         },
         "dimension": 768,
         "normalized": true,
@@ -773,7 +798,10 @@
             "method"
           ],
           "min_recursive_statements": 3,
-          "include_private": true
+          "include_private": true,
+          "languages": [
+            "rust"
+          ]
         },
         "batch_size": 4,
         "corpus_path": "test_fixtures/polyglot_calibration/rust",
@@ -864,14 +892,14 @@
         "model": "unsloth/embeddinggemma-300m",
         "resolved_revision": "bfa3c846ac738e62aa61806ef9112d34acb1dc5a",
         "embedding_pipeline_schema": 5,
-        "embedding_runtime_identity": "e7aed934f076717fc73f",
+        "embedding_runtime_identity": "263d5c868bf6f139a43a",
         "runtime_versions": {
           "python": "3.12.13",
           "torch": "2.13.0",
           "transformers": "5.14.1",
-          "sentence-transformers": "5.6.1"
+          "sentence-transformers": "5.7.0"
         },
-        "codedupes_version": "0.4.0",
+        "codedupes_version": "0.5.4.dev1+g582759789",
         "mode": "distribution",
         "semantic_task": "semantic-similarity",
         "encode_plan": {
@@ -884,8 +912,9 @@
         "embedding_space": {
           "model_name": "unsloth/embeddinggemma-300m",
           "resolved_revision": "bfa3c846ac738e62aa61806ef9112d34acb1dc5a",
-          "runtime_variant": "route=symmetric\u0000prompt_set=1\u0000prompt=task: sentence similarity | query: \u0000\u0000\u0000e7aed934f076717fc73f\u0000trc=0",
-          "source_commit": null
+          "runtime_variant": "route=symmetric\u0000prompt_set=1\u0000prompt=task: sentence similarity | query: \u0000\u0000\u0000263d5c868bf6f139a43a\u0000trc=0",
+          "source_commit": null,
+          "search_document": "source"
         },
         "dimension": 768,
         "normalized": true,
@@ -895,7 +924,10 @@
             "method"
           ],
           "min_recursive_statements": 3,
-          "include_private": true
+          "include_private": true,
+          "languages": [
+            "javascript"
+          ]
         },
         "batch_size": 4,
         "corpus_path": "test_fixtures/polyglot_calibration/javascript",
@@ -989,14 +1021,14 @@
         "model": "unsloth/embeddinggemma-300m",
         "resolved_revision": "bfa3c846ac738e62aa61806ef9112d34acb1dc5a",
         "embedding_pipeline_schema": 5,
-        "embedding_runtime_identity": "e7aed934f076717fc73f",
+        "embedding_runtime_identity": "263d5c868bf6f139a43a",
         "runtime_versions": {
           "python": "3.12.13",
           "torch": "2.13.0",
           "transformers": "5.14.1",
-          "sentence-transformers": "5.6.1"
+          "sentence-transformers": "5.7.0"
         },
-        "codedupes_version": "0.4.0",
+        "codedupes_version": "0.5.4.dev1+g582759789",
         "mode": "distribution",
         "semantic_task": "semantic-similarity",
         "encode_plan": {
@@ -1009,8 +1041,9 @@
         "embedding_space": {
           "model_name": "unsloth/embeddinggemma-300m",
           "resolved_revision": "bfa3c846ac738e62aa61806ef9112d34acb1dc5a",
-          "runtime_variant": "route=symmetric\u0000prompt_set=1\u0000prompt=task: sentence similarity | query: \u0000\u0000\u0000e7aed934f076717fc73f\u0000trc=0",
-          "source_commit": null
+          "runtime_variant": "route=symmetric\u0000prompt_set=1\u0000prompt=task: sentence similarity | query: \u0000\u0000\u0000263d5c868bf6f139a43a\u0000trc=0",
+          "source_commit": null,
+          "search_document": "source"
         },
         "dimension": 768,
         "normalized": true,
@@ -1020,7 +1053,10 @@
             "method"
           ],
           "min_recursive_statements": 3,
-          "include_private": true
+          "include_private": true,
+          "languages": [
+            "typescript"
+          ]
         },
         "batch_size": 4,
         "corpus_path": "test_fixtures/polyglot_calibration/typescript",
@@ -1112,14 +1148,14 @@
         "model": "unsloth/embeddinggemma-300m",
         "resolved_revision": "bfa3c846ac738e62aa61806ef9112d34acb1dc5a",
         "embedding_pipeline_schema": 5,
-        "embedding_runtime_identity": "e7aed934f076717fc73f",
+        "embedding_runtime_identity": "263d5c868bf6f139a43a",
         "runtime_versions": {
           "python": "3.12.13",
           "torch": "2.13.0",
           "transformers": "5.14.1",
-          "sentence-transformers": "5.6.1"
+          "sentence-transformers": "5.7.0"
         },
-        "codedupes_version": "0.4.0",
+        "codedupes_version": "0.5.4.dev1+g582759789",
         "mode": "distribution",
         "semantic_task": "semantic-similarity",
         "encode_plan": {
@@ -1132,8 +1168,9 @@
         "embedding_space": {
           "model_name": "unsloth/embeddinggemma-300m",
           "resolved_revision": "bfa3c846ac738e62aa61806ef9112d34acb1dc5a",
-          "runtime_variant": "route=symmetric\u0000prompt_set=1\u0000prompt=task: sentence similarity | query: \u0000\u0000\u0000e7aed934f076717fc73f\u0000trc=0",
-          "source_commit": null
+          "runtime_variant": "route=symmetric\u0000prompt_set=1\u0000prompt=task: sentence similarity | query: \u0000\u0000\u0000263d5c868bf6f139a43a\u0000trc=0",
+          "source_commit": null,
+          "search_document": "source"
         },
         "dimension": 768,
         "normalized": true,
@@ -1143,7 +1180,10 @@
             "method"
           ],
           "min_recursive_statements": 3,
-          "include_private": true
+          "include_private": true,
+          "languages": [
+            "python"
+          ]
         },
         "batch_size": 4,
         "corpus_path": "test_fixtures/polyglot_calibration/python",

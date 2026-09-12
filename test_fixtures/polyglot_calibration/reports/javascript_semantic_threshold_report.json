@@ -102,7 +102,7 @@
           "transformers": "5.14.1",
           "sentence-transformers": "5.7.0"
         },
-        "codedupes_version": "0.5.3",
+        "codedupes_version": "0.5.4.dev1+g582759789",
         "mode": "duplicate",
         "semantic_task": "semantic-similarity",
         "encode_plan": {
@@ -127,13 +127,21 @@
             "method"
           ],
           "min_recursive_statements": 3,
-          "include_private": true
+          "include_private": true,
+          "languages": [
+            "javascript"
+          ]
         },
         "batch_size": 4,
         "corpus_path": "test_fixtures/polyglot_calibration/javascript",
         "corpus_sha256": "826a20709d88205179b83766e3bb7a7f060ea0aa7ff9849b30de7cfb319f0397",
         "labels_path": "test_fixtures/polyglot_calibration/labels/javascript.json",
         "labels_sha256": "e71d07a961e1cf89bb8cc91542bdf7c061864a17f699de1bdba70d29a0e7ea20",
+        "traditional_candidate_policy": {
+          "jaccard_threshold": 0.85,
+          "filter_tiny_traditional": true,
+          "tiny_unit_statement_cutoff": 3
+        },
         "output_policy": "hybrid_duplicates",
         "visible_policy": {
           "excluded_tiers": [
@@ -151,8 +159,10 @@
         "selected_at_grid_edge": null,
         "candidate_coverage": {
           "labeled_positive_pairs": 35,
-          "scoreable_positive_pairs": 26,
-          "traditional_recovered_pairs": 1,
+          "embedded_positive_pairs": 26,
+          "scoreable_positive_pairs": 12,
+          "traditional_recovered_pairs": 15,
+          "reachable_positive_pairs": 27,
           "unreachable_positive_pairs": 8,
           "recall_ceiling": 0.7714285714285715
         },
@@ -1906,7 +1916,7 @@
           "transformers": "5.14.1",
           "sentence-transformers": "5.7.0"
         },
-        "codedupes_version": "0.5.3",
+        "codedupes_version": "0.5.4.dev1+g582759789",
         "mode": "duplicate",
         "semantic_task": "semantic-similarity",
         "encode_plan": {
@@ -1931,13 +1941,21 @@
             "method"
           ],
           "min_recursive_statements": 3,
-          "include_private": true
+          "include_private": true,
+          "languages": [
+            "javascript"
+          ]
         },
         "batch_size": 4,
         "corpus_path": "test_fixtures/polyglot_calibration/javascript",
         "corpus_sha256": "826a20709d88205179b83766e3bb7a7f060ea0aa7ff9849b30de7cfb319f0397",
         "labels_path": "test_fixtures/polyglot_calibration/labels/javascript.json",
         "labels_sha256": "e71d07a961e1cf89bb8cc91542bdf7c061864a17f699de1bdba70d29a0e7ea20",
+        "traditional_candidate_policy": {
+          "jaccard_threshold": 0.85,
+          "filter_tiny_traditional": true,
+          "tiny_unit_statement_cutoff": 3
+        },
         "output_policy": "hybrid_duplicates",
         "visible_policy": {
           "excluded_tiers": [
@@ -1955,8 +1973,10 @@
         "selected_at_grid_edge": null,
         "candidate_coverage": {
           "labeled_positive_pairs": 35,
-          "scoreable_positive_pairs": 26,
-          "traditional_recovered_pairs": 1,
+          "embedded_positive_pairs": 26,
+          "scoreable_positive_pairs": 12,
+          "traditional_recovered_pairs": 15,
+          "reachable_positive_pairs": 27,
           "unreachable_positive_pairs": 8,
           "recall_ceiling": 0.7714285714285715
         },
