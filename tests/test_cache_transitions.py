@@ -802,7 +802,7 @@ def test_failed_analysis_keeps_previous_manifest_authoritative(tmp_path, monkeyp
         raise RuntimeError("unused failed")
 
     with monkeypatch.context() as crash_patch:
-        crash_patch.setattr(analyzer_module, "find_potentially_unused", fail_unused)
+        crash_patch.setattr(analyzer_module, "run_unused_analysis", fail_unused)
         with pytest.raises(RuntimeError, match="unused failed"):
             _analyze(repo)
 

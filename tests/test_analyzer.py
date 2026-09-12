@@ -131,13 +131,9 @@ def _capture_semantic_unit_types(captured_types: list[CodeUnitType]):
 def _capture_traditional_units_runner(captured_units: list[CodeUnit]):
     """Build a traditional runner that records incoming units and returns no matches."""
 
-    def fake_traditional(
-        units,
-        jaccard_threshold=0.85,
-        compute_unused=True,
-    ):
+    def fake_traditional(units, jaccard_threshold=0.85):
         captured_units.extend(units)
-        return [], [], []
+        return [], []
 
     return fake_traditional
 
@@ -145,15 +141,10 @@ def _capture_traditional_units_runner(captured_units: list[CodeUnit]):
 def _traditional_single_jaccard_runner(similarity: float = 0.9):
     """Build a traditional runner returning one jaccard duplicate for first two units."""
 
-    def fake_traditional(
-        units,
-        jaccard_threshold=0.85,
-        compute_unused=True,
-    ):
+    def fake_traditional(units, jaccard_threshold=0.85):
         first, second = units[:2]
         return (
             [DuplicatePair(unit_a=first, unit_b=second, similarity=similarity, method="jaccard")],
-            [],
             [],
         )
 
@@ -341,18 +332,13 @@ def test_combined_mode_preserves_near_dupes_for_semantic_confirmation(
     captured_exclude_pairs: set[tuple[str, str]] = set()
     expected_exact_pair: tuple[str, str] = ("", "")
 
-    def fake_traditional(
-        units,
-        jaccard_threshold=0.85,
-        compute_unused=True,
-    ):
+    def fake_traditional(units, jaccard_threshold=0.85):
         first, second, third = units
         nonlocal expected_exact_pair
         expected_exact_pair = tuple(sorted((first.uid, second.uid)))
         return (
             [DuplicatePair(unit_a=first, unit_b=second, similarity=1.0, method="ast_hash")],
             [DuplicatePair(unit_a=second, unit_b=third, similarity=0.9, method="jaccard")],
-            [],
         )
 
     monkeypatch.setattr(analyzer_module, "run_traditional_analysis", fake_traditional)
@@ -839,15 +825,10 @@ def test_tiny_near_duplicates_follow_tiny_filter(
     ).strip()
     project = create_project(tmp_path, source, module="tiny_near.py")
 
-    def fake_traditional(
-        units,
-        jaccard_threshold=0.85,
-        compute_unused=True,
-    ):
+    def fake_traditional(units, jaccard_threshold=0.85):
         return (
             [],
             [DuplicatePair(unit_a=units[0], unit_b=units[1], similarity=1.0, method="jaccard")],
-            [],
         )
 
     monkeypatch.setattr(analyzer_module, "run_traditional_analysis", fake_traditional)
@@ -1396,15 +1377,11 @@ def test_combined_mode_fallback_keeps_full_scope_traditional_units(
 
     traditional_calls: list[tuple[tuple[str, ...], list[str]]] = []
 
-    def fake_traditional(
-        units,
-        jaccard_threshold=0.85,
-        compute_unused=True,
-    ):
+    def fake_traditional(units, jaccard_threshold=0.85):
         traditional_calls.append(
             (tuple(unit.name for unit in units), [unit.name for unit in units])
         )
-        return [], [], []
+        return [], []
 
     monkeypatch.setattr(analyzer_module, "run_traditional_analysis", fake_traditional)
     monkeypatch.setattr(

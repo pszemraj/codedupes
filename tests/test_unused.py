@@ -1,0 +1,163 @@
+from __future__ import annotations
+
+from pathlib import Path
+from textwrap import dedent
+
+from codedupes import unused as unused_module
+from codedupes.extractor import CodeExtractor
+from codedupes.unused import build_reference_graph, find_potentially_unused
+from tests.conftest import extract_units
+
+
+def test_alias_aware_reference_graph(tmp_path: Path) -> None:
+    source = dedent(
+        """
+        def helper(value):
+            return value
+
+        alias = helper
+
+        def caller(value):
+            return alias(value)
+
+        def dead():
+            return 0
+        """
+    ).strip()
+    units = extract_units(tmp_path, source, include_private=False)
+    build_reference_graph(units)
+
+    unused = find_potentially_unused(units, strict_unused=True)
+    names = {unit.name for unit in unused}
+
+    assert "helper" not in names
+    assert "caller" in names
+    assert "dead" in names
+
+
+def test_public_function_is_skipped_by_default(tmp_path: Path) -> None:
+    source = dedent(
+        """
+        def public_function():
+            return 1
+
+        def _private_function():
+            return 2
+
+        def _unused_private():
+            return _private_function() + public_function()
+        """
+    ).strip()
+    units = extract_units(tmp_path, source, include_private=True)
+    unused = find_potentially_unused(units, strict_unused=False)
+
+    names = {unit.name for unit in unused}
+    assert "public_function" not in names
+    assert "_private_function" in names
+
+
+def test_noqa_and_main_block_mark_as_used(tmp_path: Path) -> None:
+    source = dedent(
+        """
+        def ignored_unused():  # noqa: codedupes
+            return 42
+
+        def used_by_main():
+            return 7
+
+        if __name__ == "__main__":
+            used_by_main()
+        """
+    ).strip()
+    units = extract_units(tmp_path, source, include_private=True)
+    build_reference_graph(units, project_root=tmp_path)
+    unused = find_potentially_unused(units, strict_unused=True)
+    names = {unit.name for unit in unused}
+
+    assert "ignored_unused" not in names
+    assert "used_by_main" not in names
+
+
+def test_main_block_references_survive_a_bom(tmp_path: Path) -> None:
+    source = dedent(
+        """
+        def used_by_main():
+            return 7
+
+        if __name__ == "__main__":
+            used_by_main()
+        """
+    ).strip()
+    path = tmp_path / "bom_sample.py"
+    path.write_bytes(b"\xef\xbb\xbf" + source.encode("utf-8"))
+
+    units = list(CodeExtractor(tmp_path, include_private=True).extract_from_file(path))
+    build_reference_graph(units, project_root=tmp_path)
+    unused = find_potentially_unused(units, strict_unused=True)
+
+    assert "used_by_main" not in {unit.name for unit in unused}
+
+
+def test_pyproject_entry_points_mark_as_used(tmp_path: Path) -> None:
+    source = dedent(
+        """
+        def cli_entry():
+            return 1
+
+        def helper():
+            return 2
+        """
+    ).strip()
+    (tmp_path / "pyproject.toml").write_text(
+        dedent(
+            """
+            [project]
+            name = "sample"
+            scripts = { sample-cli = "sample_module:cli_entry" }
+            """
+        ).strip()
+    )
+    project = tmp_path / "src"
+    project.mkdir()
+    (project / "__init__.py").write_text("")
+    (project / "sample_module.py").write_text(source)
+    extractor_file = project / "sample_module.py"
+
+    units = list(CodeExtractor(project).extract_from_file(extractor_file))
+    assert len(units) == 2
+    build_reference_graph(units, project_root=tmp_path)
+    unused = find_potentially_unused(units, strict_unused=True)
+    names = {unit.name for unit in unused}
+    assert "cli_entry" not in names
+    assert "helper" in names
+
+
+def test_main_block_calls_are_parsed_once_per_file(tmp_path: Path, monkeypatch) -> None:
+    source = dedent(
+        """
+        def first():
+            return 1
+
+        def second():
+            return 2
+
+        if __name__ == "__main__":
+            first()
+        """
+    ).strip()
+    units = extract_units(tmp_path, source, include_private=True)
+    calls: list[Path] = []
+
+    def fake_extract_main_block_calls(path: Path) -> set[str]:
+        calls.append(path)
+        return {"first"}
+
+    monkeypatch.setattr(
+        unused_module,
+        "_extract_main_block_calls",
+        fake_extract_main_block_calls,
+    )
+
+    build_reference_graph(units)
+
+    assert len(calls) == 1

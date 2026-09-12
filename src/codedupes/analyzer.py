@@ -61,13 +61,12 @@ from codedupes.semantic_profiles import (
     resolve_threshold_profile,
 )
 from codedupes.traditional import (
-    build_reference_graph,
     find_exact_pair_keys,
-    find_potentially_unused,
     jaccard_similarity,
     run_traditional_analysis,
     unit_identifier_set,
 )
+from codedupes.unused import run_unused_analysis
 
 logger = logging.getLogger(__name__)
 
@@ -105,8 +104,9 @@ def _reject_mode_gated_fields(
 def _is_test_function_unit(unit: CodeUnit) -> bool:
     """Return whether the unit is a pytest-style test function.
 
-    Deliberately narrower than the test check in ``find_potentially_unused``
-    (no file-name matching, function/method only): this predicate suppresses
+    Deliberately narrower than the test check in
+    :func:`codedupes.unused.find_potentially_unused` (no file-name matching,
+    function/method only): this predicate suppresses
     semantic duplicate pairs, where a class or a helper in a ``_test`` file must
     stay eligible for matching.
 
@@ -1003,10 +1003,9 @@ class CodeAnalyzer:
                 hybrid_split = self._resolve_hybrid_split(semantic_candidates)
 
         if self.config.run_traditional:
-            exact_dupes, near_dupes, _ = run_traditional_analysis(
+            exact_dupes, near_dupes = run_traditional_analysis(
                 units,
                 jaccard_threshold=self.config.jaccard_threshold,
-                compute_unused=False,
             )
             if self.config.filter_tiny_traditional:
                 exact_dupes, near_dupes = _filter_tiny_traditional_duplicates(
@@ -1115,10 +1114,12 @@ class CodeAnalyzer:
                 ]
 
         if self.config.run_unused:
-            build_reference_graph(units, project_root=path)
-            unused = find_potentially_unused(units, strict_unused=self.config.strict_unused)
+            unused = run_unused_analysis(
+                units,
+                project_root=path,
+                strict_unused=self.config.strict_unused,
+            )
             unused_excluded_units = sum(unit.language != "python" for unit in units)
-            logger.info(f"Found {len(unused)} potentially unused code units")
 
         combined_mode = self.config.run_traditional and self.config.run_semantic
         hybrid_duplicates: list[HybridDuplicate] = []
