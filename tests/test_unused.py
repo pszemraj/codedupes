@@ -646,6 +646,30 @@ def test_public_method_of_private_class_is_reported_by_default(tmp_path: Path) -
     assert default_names == {"run", "_Service"}
 
 
+def test_main_module_reports_unreferenced_public_functions_by_default(tmp_path: Path) -> None:
+    """An entry-point module is not public API; its main-block call still counts as a use."""
+    units = extract_units(
+        tmp_path,
+        """
+        def run():
+            return 1
+
+        def unused_helper():
+            return 2
+
+        if __name__ == "__main__":
+            run()
+        """,
+        filename="__main__.py",
+    )
+    build_reference_graph(units)
+
+    unused = find_potentially_unused(units, strict_unused=False)
+
+    assert _unit(units, "__main__.run").references == {_module_ref(units)}
+    assert [unit.qualified_name for unit in unused] == ["__main__.unused_helper"]
+
+
 def test_public_definitions_nested_in_a_private_function_are_reported_by_default(
     tmp_path: Path,
 ) -> None:

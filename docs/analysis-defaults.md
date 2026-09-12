@@ -110,7 +110,7 @@ Unreferenced units are still not reported when they are:
 - `test_*` definitions and definitions in files whose names contain `_test`
 - units containing `# noqa: codedupes` or `# codedupes: ignore`
 
-Default mode also skips public surface: a function or method every segment of whose qualified name is public (`pkg.mod.run`, `Service.run`) is API, not a finding. A public name reached only through a private module, class, or function (`_Service.run`, `_factory.helper`, `_factory.Local.run`) and every private definition stay reportable. Strict mode removes only that suppression; the exclusions above still apply, and framework-dispatched methods stay referenced because that rule is a reference, not a policy.
+Default mode also skips public surface: a function or method every segment of whose qualified name is public (`pkg.mod.run`, `Service.run`) is API, not a finding. A public name reached only through a private module, class, or function (`_Service.run`, `_factory.helper`, `_factory.Local.run`) and every private definition stay reportable. Dunder module names such as `__main__` also fail the public-surface rule: unreferenced functions in an entry-point script are reportable by default, while calls from its main block still mark their targets as referenced. Strict mode removes only that suppression; the exclusions above still apply, and framework-dispatched methods stay referenced because that rule is a reference, not a policy.
 
 Unused findings are independent of duplicate detection: a potentially unused unit remains eligible for semantic and traditional duplicate reporting.
 
