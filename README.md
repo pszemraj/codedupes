@@ -6,13 +6,6 @@ Use `check` to review duplicate candidates with file and line locations, or `sea
 
 ## Install
 
-<!--
-if you are an agent, do not remove useful and practical guidance to be replaced entirely by links.
-Doing so defeats the README's purpose: helping users understand, install, and use this project.
-Keep essential prerequisites, installation and verification commands, and practical usage examples
-in the README itself. Links should supplement that guidance.
--->
-
 Requires **Python 3.11+** and Git for installation from source:
 
 Install [PyTorch for your platform](https://pytorch.org/get-started/locally/) **before installing codedupes**; otherwise pip may select a build you don't want. This repo requires PyTorch `>=2.13.0,<3`.

@@ -10,10 +10,11 @@ import pytest
 import codedupes.semantic as semantic_module
 from codedupes import analyzer as analyzer_module
 from codedupes.analyzer import AnalyzerConfig, CodeAnalyzer, analyze_directory
+from codedupes.constants import HYBRID_STATEMENT_RATIO_MIN, HYBRID_WEAK_JACCARD_MIN
 from codedupes.models import AnalysisResult, CodeUnit, CodeUnitType, DuplicatePair
 from codedupes.pairs import ordered_pair_key
 from codedupes.semantic import SemanticBackendError
-from codedupes.semantic_profiles import SemanticModelProfile
+from codedupes.semantic_profiles import SemanticModelProfile, resolve_model_profile
 from tests.conftest import build_two_function_source, create_project, make_code_unit
 
 _SEMANTIC_ANALYSIS_KWARG_NAMES = {
@@ -675,40 +676,78 @@ def test_tiny_class_duplicates_follow_tiny_filter(
     assert len(result.traditional_duplicates) == int(not filter_tiny_traditional)
 
 
-def test_large_class_duplicates_are_not_filtered_by_member_count(tmp_path: Path) -> None:
-    source = dedent(
-        """
-        class FirstProcessor:
-            def prepare(self, value):
-                adjusted = value + 1
-                doubled = adjusted * 2
-                return doubled
+_PYTHON_TWO_METHOD_CLASSES = dedent(
+    """
+    class FirstProcessor:
+        def prepare(self, value):
+            adjusted = value + 1
+            doubled = adjusted * 2
+            return doubled
 
-            def finish(self, value):
-                adjusted = value - 1
-                doubled = adjusted * 2
-                return doubled
+        def finish(self, value):
+            adjusted = value - 1
+            doubled = adjusted * 2
+            return doubled
 
-        class SecondProcessor:
-            def prepare(self, value):
-                adjusted = value + 1
-                doubled = adjusted * 2
-                return doubled
+    class SecondProcessor:
+        def prepare(self, value):
+            adjusted = value + 1
+            doubled = adjusted * 2
+            return doubled
 
-            def finish(self, value):
-                adjusted = value - 1
-                doubled = adjusted * 2
-                return doubled
-        """
-    ).strip()
-    project = create_project(tmp_path, source, module="large_classes.py")
+        def finish(self, value):
+            adjusted = value - 1
+            doubled = adjusted * 2
+            return doubled
+    """
+).strip()
+
+_JAVASCRIPT_TWO_METHOD_CLASSES = dedent(
+    """
+    class FirstProcessor {
+      prepare(value) {
+        const adjusted = value + 1;
+        const doubled = adjusted * 2;
+        return doubled;
+      }
+      finish(value) {
+        const adjusted = value - 1;
+        const doubled = adjusted * 2;
+        return doubled;
+      }
+    }
+    class SecondProcessor {
+      prepare(value) {
+        const adjusted = value + 1;
+        const doubled = adjusted * 2;
+        return doubled;
+      }
+      finish(value) {
+        const adjusted = value - 1;
+        const doubled = adjusted * 2;
+        return doubled;
+      }
+    }
+    """
+).strip()
+
+
+@pytest.mark.parametrize(
+    ("module", "source"),
+    [
+        ("large_classes.py", _PYTHON_TWO_METHOD_CLASSES),
+        ("large_classes.js", _JAVASCRIPT_TWO_METHOD_CLASSES),
+    ],
+    ids=["python", "tree-sitter"],
+)
+def test_large_class_duplicates_are_not_filtered_by_member_count(
+    tmp_path: Path, module: str, source: str
+) -> None:
+    """Two members with substantial bodies are not a tiny class, whichever extractor counts them."""
+    project = create_project(tmp_path, source, module=module)
 
     result = CodeAnalyzer(
-        AnalyzerConfig(
-            run_semantic=False,
-            run_unused=False,
-            filter_tiny_traditional=True,
-        )
+        AnalyzerConfig(run_semantic=False, run_unused=False, filter_tiny_traditional=True)
     ).analyze(project)
 
     classes = [unit for unit in result.units if unit.unit_type == CodeUnitType.CLASS]
@@ -756,50 +795,6 @@ def test_large_class_duplicates_survive_private_member_filter(tmp_path: Path) ->
     )
 
 
-def test_large_tree_sitter_class_duplicates_are_not_filtered(tmp_path: Path) -> None:
-    source = dedent(
-        """
-        class FirstProcessor {
-          prepare(value) {
-            const adjusted = value + 1;
-            const doubled = adjusted * 2;
-            return doubled;
-          }
-          finish(value) {
-            const adjusted = value - 1;
-            const doubled = adjusted * 2;
-            return doubled;
-          }
-        }
-        class SecondProcessor {
-          prepare(value) {
-            const adjusted = value + 1;
-            const doubled = adjusted * 2;
-            return doubled;
-          }
-          finish(value) {
-            const adjusted = value - 1;
-            const doubled = adjusted * 2;
-            return doubled;
-          }
-        }
-        """
-    ).strip()
-    project = create_project(tmp_path, source, module="large_classes.js")
-
-    result = CodeAnalyzer(
-        AnalyzerConfig(run_semantic=False, run_unused=False, filter_tiny_traditional=True)
-    ).analyze(project)
-
-    classes = [unit for unit in result.units if unit.unit_type == CodeUnitType.CLASS]
-    assert {unit.statement_count for unit in classes} == {2}
-    assert any(
-        duplicate.unit_a.unit_type == CodeUnitType.CLASS
-        and duplicate.unit_b.unit_type == CodeUnitType.CLASS
-        for duplicate in result.traditional_duplicates
-    )
-
-
 @pytest.mark.parametrize("suffix", ["js", "jsx", "ts", "tsx"])
 @pytest.mark.parametrize(
     ("initializer", "expected_duplicate"),
@@ -826,7 +821,7 @@ def test_class_static_initializers_follow_tiny_filter(
     filtered = CodeAnalyzer(AnalyzerConfig(run_semantic=False, run_unused=False)).analyze(project)
     assert len(filtered.units) == 2
     assert all(unit.unit_type == CodeUnitType.CLASS for unit in filtered.units)
-    assert len(filtered.exact_duplicates) == int(expected_duplicate)
+    assert len(filtered.traditional_duplicates) == int(expected_duplicate)
 
 
 @pytest.mark.parametrize("filter_tiny_traditional", [True, False])
@@ -918,16 +913,23 @@ def test_analyzer_resolves_per_language_semantic_gate(tmp_path: Path, monkeypatc
 
 
 @pytest.mark.parametrize(
-    ("choice", "expected"),
+    ("model_kind", "choice", "numeric", "expected"),
     [
-        ("auto", 0.74),
-        ("generic", 0.82),
-        ("embeddinggemma-300m", 0.74),
-        ("gte-modernbert-base", 0.80),
+        ("local", "auto", None, 0.74),
+        ("builtin", "auto", None, 0.74),
+        ("default", "auto", None, 0.80),
+        ("hub", "auto", None, 0.74),
+        # Explicit profiles override the model family; test each choice once.
+        ("builtin", "generic", None, 0.82),
+        ("default", "embeddinggemma-300m", None, 0.74),
+        ("builtin", "gte-modernbert-base", None, 0.80),
+        # Numeric gates bypass profile resolution for every profile choice.
+        ("local", "auto", 0.91, 0.91),
+        ("hub", "generic", 0.91, 0.91),
+        ("builtin", "embeddinggemma-300m", 0.91, 0.91),
+        ("default", "gte-modernbert-base", 0.91, 0.91),
     ],
 )
-@pytest.mark.parametrize("numeric", [None, 0.91])
-@pytest.mark.parametrize("model_kind", ["local", "builtin", "default", "hub"])
 def test_analyze_directory_threshold_profiles(
     tmp_path, monkeypatch, caplog, choice, expected, numeric, model_kind
 ) -> None:
@@ -942,8 +944,6 @@ def test_analyze_directory_threshold_profiles(
         "default": analyzer_module.DEFAULT_MODEL,
         "hub": "someone/embeddinggemma-300m-code-ft",
     }[model_kind]
-    if model_kind == "default" and choice == "auto":
-        expected = 0.80
     project = create_project(tmp_path, "def alpha(x):\n    return x + 1\n")
     captured = {}
     monkeypatch.setattr(
@@ -959,9 +959,7 @@ def test_analyze_directory_threshold_profiles(
                 min_semantic_statements=0,
                 run_unused=False,
             )
-    assert captured["language_thresholds"] == {
-        "python": numeric if numeric is not None else expected
-    }
+    assert captured["language_thresholds"] == {"python": expected}
     assert captured["model_name"] == model_name
     assert captured["revision"] is None
     if numeric is not None:
@@ -1614,15 +1612,17 @@ def test_search_threshold_defaults_to_none_and_honors_explicit_config(
 
 
 @pytest.mark.parametrize(
-    "config_overrides",
+    ("config_overrides", "threshold_profile"),
     [
-        {"semantic_task": "classification"},
-        {"instruction_prefix": "CUSTOM: "},
-        {"model_revision": "f" * 40},
-        {"trust_remote_code": True},
+        ({"semantic_task": "classification"}, "auto"),
+        ({"instruction_prefix": "CUSTOM: "}, "auto"),
+        ({"model_revision": "f" * 40}, "auto"),
+        ({"trust_remote_code": True}, "auto"),
+        # Selecting another threshold profile cannot bypass the context guard.
+        ({"instruction_prefix": "CUSTOM: "}, "generic"),
+        ({"model_revision": "f" * 40}, "embeddinggemma-300m"),
     ],
 )
-@pytest.mark.parametrize("threshold_profile", ["auto", "generic", "embeddinggemma-300m"])
 def test_uncalibrated_duplicate_context_rejected_at_construction(
     config_overrides: dict[str, str],
     threshold_profile: str,
@@ -1972,6 +1972,12 @@ def test_hybrid_synthesis_hybrid_confirmed(tmp_path: Path) -> None:
     assert hybrid[0].confidence == pytest.approx((0.5 * 0.93) + (0.5 * 0.88))
 
 
+# The corroborator mechanism tests below pin the identifier/size thresholds
+# explicitly: the shipped split is calibrated per model profile and asserted
+# end-to-end by ``test_analyzer_applies_the_profile_hybrid_split``.
+_MECHANISM_SPLIT = {"weak_identifier_jaccard_min": 0.20, "statement_ratio_min": 0.35}
+
+
 def test_hybrid_synthesis_semantic_only_corroboration_sets_tier(tmp_path: Path) -> None:
     unit_a = make_code_unit(
         tmp_path, name="a", source="def alpha(v):\n    z = v + 1\n    return z\n", lineno=1
@@ -1989,6 +1995,7 @@ def test_hybrid_synthesis_semantic_only_corroboration_sets_tier(tmp_path: Path) 
         [],
         gated_semantic,
         jaccard_threshold=0.85,
+        **_MECHANISM_SPLIT,
     )
     assert len(hybrid) == 1
     assert hybrid[0].tier == "semantic_high_confidence"
@@ -2015,6 +2022,7 @@ def test_hybrid_synthesis_semantic_only_corroboration_sets_tier(tmp_path: Path) 
         [],
         weak_semantic,
         jaccard_threshold=0.85,
+        **_MECHANISM_SPLIT,
     )
     assert len(hybrid_weak) == 1
     assert hybrid_weak[0].tier == "semantic_review"
@@ -2051,6 +2059,7 @@ def test_semantic_review_never_outranks_a_corroborated_pair(tmp_path: Path) -> N
             ),
         ],
         jaccard_threshold=0.85,
+        **_MECHANISM_SPLIT,
     )
 
     assert [duplicate.tier for duplicate in hybrid] == ["hybrid_confirmed", "semantic_review"]
@@ -2086,12 +2095,283 @@ def test_hybrid_synthesis_publishes_alpha_renamed_semantic_pair(tmp_path: Path) 
         [],
         semantic,
         jaccard_threshold=0.85,
+        **_MECHANISM_SPLIT,
     )
 
     assert len(hybrid) == 1
     assert hybrid[0].tier == "semantic_review"
     assert hybrid[0].weak_identifier_jaccard == 0.0
     assert hybrid[0].statement_count_ratio == 1.0
+
+
+def _alpha_renamed_pair(tmp_path: Path, similarity: float) -> list[DuplicatePair]:
+    unit_a = make_code_unit(
+        tmp_path,
+        name="collect_total",
+        source=(
+            "def collect_total(records):\n"
+            "    accepted = [record for record in records if record.enabled]\n"
+            "    amount = sum(record.value for record in accepted)\n"
+            "    return amount\n"
+        ),
+        lineno=1,
+    )
+    unit_b = make_code_unit(
+        tmp_path,
+        name="measure_sum",
+        source=(
+            "def measure_sum(entries):\n"
+            "    chosen = [entry for entry in entries if entry.ready]\n"
+            "    result = sum(entry.weight for entry in chosen)\n"
+            "    return result\n"
+        ),
+        lineno=8,
+    )
+    return [DuplicatePair(unit_a=unit_a, unit_b=unit_b, similarity=similarity, method="semantic")]
+
+
+@pytest.mark.parametrize(
+    ("gates", "expected_tier"),
+    [
+        (None, "semantic_review"),
+        ({}, "semantic_review"),
+        ({"python": 0.92}, "semantic_review"),
+        ({"python": 0.91}, "semantic_high_confidence"),
+        ({"rust": 0.50}, "semantic_review"),
+    ],
+)
+def test_hybrid_synthesis_promotes_uncorroborated_pair_only_above_its_high_gate(
+    tmp_path: Path, gates, expected_tier
+) -> None:
+    hybrid = analyzer_module._synthesize_hybrid_duplicates(
+        [],
+        _alpha_renamed_pair(tmp_path, 0.91),
+        jaccard_threshold=0.85,
+        semantic_high_gates=gates,
+        **_MECHANISM_SPLIT,
+    )
+
+    assert [pair.tier for pair in hybrid] == [expected_tier]
+    assert hybrid[0].weak_identifier_jaccard == 0.0
+    if expected_tier == "semantic_high_confidence":
+        assert hybrid[0].confidence == pytest.approx(0.45 + 0.55 * 0.91)
+    else:
+        assert hybrid[0].confidence == pytest.approx(0.40 + 0.45 * 0.91)
+
+
+def test_hybrid_synthesis_cross_language_promotion_uses_the_stricter_gate(
+    tmp_path: Path,
+) -> None:
+    semantic = _alpha_renamed_pair(tmp_path, 0.93)
+    semantic[0].unit_b.language = "rust"
+    gates = {"python": 0.90, "rust": 0.95}
+
+    review = analyzer_module._synthesize_hybrid_duplicates(
+        [], semantic, jaccard_threshold=0.85, semantic_high_gates=gates, **_MECHANISM_SPLIT
+    )
+    promoted = analyzer_module._synthesize_hybrid_duplicates(
+        [],
+        semantic,
+        jaccard_threshold=0.85,
+        semantic_high_gates={"python": 0.90, "rust": 0.93},
+        **_MECHANISM_SPLIT,
+    )
+
+    assert review[0].tier == "semantic_review"
+    assert promoted[0].tier == "semantic_high_confidence"
+
+
+@pytest.mark.parametrize(
+    ("model_name", "expected_tiers"),
+    [
+        # gte: statement ratio 0.80 withholds the 3-vs-1 pair; identifier overlap is not required.
+        (
+            "gte-modernbert-base",
+            {"same_size": "semantic_high_confidence", "lopsided": "semantic_review"},
+        ),
+        # embeddinggemma: only >5x size mismatches are withheld, so both are reported.
+        (
+            "embeddinggemma-300m",
+            {"same_size": "semantic_high_confidence", "lopsided": "semantic_high_confidence"},
+        ),
+    ],
+)
+def test_analyzer_applies_the_profile_hybrid_split(
+    tmp_path: Path, monkeypatch, model_name: str, expected_tiers: dict[str, str]
+) -> None:
+    """The analyzer must split semantic-only pairs with the profile's calibrated constants."""
+    source = dedent(
+        """
+        def collect_total(records):
+            accepted = [record for record in records if record.enabled]
+            amount = sum(record.value for record in accepted)
+            return amount
+
+        def measure_sum(entries):
+            chosen = [entry for entry in entries if entry.ready]
+            result = sum(entry.weight for entry in chosen)
+            return result
+
+        def tiny(v):
+            return v
+        """
+    ).strip()
+    project = create_project(tmp_path, source)
+
+    def paired(units: list[CodeUnit]) -> list[DuplicatePair]:
+        by_name = {unit.name: unit for unit in units}
+        return [
+            DuplicatePair(by_name["collect_total"], by_name["measure_sum"], 0.91, "semantic"),
+            DuplicatePair(by_name["collect_total"], by_name["tiny"], 0.91, "semantic"),
+        ]
+
+    monkeypatch.setattr(
+        analyzer_module, "run_semantic_analysis", _make_semantic_runner(duplicate_factory=paired)
+    )
+    analyzer = CodeAnalyzer(
+        AnalyzerConfig(
+            run_traditional=True,
+            run_semantic=True,
+            run_unused=False,
+            min_semantic_statements=0,
+            filter_tiny_traditional=False,
+            model_name=model_name,
+        )
+    )
+
+    result = analyzer.analyze(project)
+
+    tiers = {
+        ("same_size" if pair.unit_b.name == "measure_sum" else "lopsided"): pair.tier
+        for pair in result.hybrid_duplicates
+    }
+    assert tiers == expected_tiers
+    assert all(pair.weak_identifier_jaccard == 0.0 for pair in result.hybrid_duplicates)
+
+
+def test_resolve_hybrid_split_gates_off_with_explicit_semantic_threshold(tmp_path: Path) -> None:
+    """An explicit ``semantic_threshold`` keeps the profile constants but disables its gates."""
+    ts_unit = make_code_unit(tmp_path, name="ts_unit", source="function f() {}\n")
+    ts_unit.language = "typescript"
+    py_unit = make_code_unit(tmp_path, name="py_unit", source="def f():\n    pass\n")
+    py_unit.language = "python"
+    units = [ts_unit, py_unit]
+
+    profile = resolve_model_profile("gte-modernbert-base")
+
+    default_analyzer = CodeAnalyzer(
+        AnalyzerConfig(
+            run_traditional=True,
+            run_semantic=True,
+            run_unused=False,
+            model_name="gte-modernbert-base",
+        )
+    )
+    weak_min, ratio_min, gates = default_analyzer._resolve_hybrid_split(units)
+    assert gates == {"typescript": 0.88}
+    assert weak_min == profile.hybrid_weak_identifier_jaccard_min
+    assert ratio_min == profile.hybrid_statement_ratio_min
+
+    flat_threshold_analyzer = CodeAnalyzer(
+        AnalyzerConfig(
+            run_traditional=True,
+            run_semantic=True,
+            run_unused=False,
+            model_name="gte-modernbert-base",
+            semantic_threshold=0.80,
+        )
+    )
+    flat_weak_min, flat_ratio_min, flat_gates = flat_threshold_analyzer._resolve_hybrid_split(units)
+    assert flat_gates == {}
+    assert flat_weak_min == profile.hybrid_weak_identifier_jaccard_min
+    assert flat_ratio_min == profile.hybrid_statement_ratio_min
+
+    generic_analyzer = CodeAnalyzer(
+        AnalyzerConfig(
+            run_traditional=True,
+            run_semantic=True,
+            run_unused=False,
+            model_name="gte-modernbert-base",
+            threshold_profile="generic",
+        )
+    )
+    generic_weak_min, generic_ratio_min, generic_gates = generic_analyzer._resolve_hybrid_split(
+        units
+    )
+    assert generic_gates == {}
+    assert generic_weak_min == HYBRID_WEAK_JACCARD_MIN
+    assert generic_ratio_min == HYBRID_STATEMENT_RATIO_MIN
+
+
+def test_analyzer_typescript_promotion_gate_requires_no_corroboration(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The typescript promotion gate alone must promote a pair statement-ratio corroboration
+    would withhold, and an explicit ``semantic_threshold`` must turn that gate back off."""
+    source = dedent(
+        """
+        export function collectTotal(value: number): number {
+            const total = value + 1;
+            return total;
+        }
+
+        export function measureSum(value: number): number {
+            const total = value + 1;
+            const doubled = total * 2;
+            const tripled = doubled + total;
+            const scaled = tripled - 1;
+            return scaled;
+        }
+        """
+    ).strip()
+    project = create_project(tmp_path, source, module="mod.ts")
+
+    def paired(units: list[CodeUnit]) -> list[DuplicatePair]:
+        by_name = {unit.name: unit for unit in units}
+        return [
+            DuplicatePair(by_name["collectTotal"], by_name["measureSum"], 0.90, "semantic"),
+        ]
+
+    monkeypatch.setattr(
+        analyzer_module, "run_semantic_analysis", _make_semantic_runner(duplicate_factory=paired)
+    )
+
+    default_analyzer = CodeAnalyzer(
+        AnalyzerConfig(
+            run_traditional=True,
+            run_semantic=True,
+            run_unused=False,
+            min_semantic_statements=0,
+            filter_tiny_traditional=False,
+            model_name="gte-modernbert-base",
+        )
+    )
+    default_result = default_analyzer.analyze(project)
+
+    units_by_name = {unit.name: unit for unit in default_result.units}
+    # The lopsided statement counts (ratio 2/5 = 0.4) sit below the profile's
+    # 0.80 statement-ratio corroboration floor, so only the gate can promote this pair.
+    assert units_by_name["collectTotal"].statement_count == 2
+    assert units_by_name["measureSum"].statement_count == 5
+
+    [default_pair] = default_result.hybrid_duplicates
+    assert default_pair.tier == "semantic_high_confidence"
+
+    gated_off_analyzer = CodeAnalyzer(
+        AnalyzerConfig(
+            run_traditional=True,
+            run_semantic=True,
+            run_unused=False,
+            min_semantic_statements=0,
+            filter_tiny_traditional=False,
+            model_name="gte-modernbert-base",
+            semantic_threshold=0.80,
+        )
+    )
+    gated_off_result = gated_off_analyzer.analyze(project)
+
+    [gated_off_pair] = gated_off_result.hybrid_duplicates
+    assert gated_off_pair.tier == "semantic_review"
 
 
 def test_mixed_mode_semantic_failure_still_builds_hybrid_from_traditional(

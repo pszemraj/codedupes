@@ -7,8 +7,9 @@ tables otherwise. Errors and parser-unavailable remediation use stderr; Rich mod
 sends logs, cache warnings, sentence-transformers progress, and Hugging Face download
 progress there. A completed JSON report is a single parseable JSON document even when
 `check` exits `1` for findings. JSON mode disables progress and records non-fatal cache
-failures in `summary.embeddings.cache_warnings` instead of emitting them. Runtime
-failures restore stderr and do not produce a completed JSON report.
+failures in `summary.embeddings.cache_warnings` instead of emitting them. Direct
+backend output on stdout or stderr, including buffered C stdio, is captured during
+JSON runs and replayed to stderr only on runtime failure, without a completed JSON report.
 
 Terminal reports fit the available width. Below 120 columns, duplicate tables stack
 their metrics and both code locations into **Evidence** and **Code units** columns.
@@ -36,27 +37,34 @@ set -o pipefail
 codedupes check ./src --json | jq empty
 ```
 
-## JSON schema v2
+## JSON schema v3
 
-`check --json` and `search --json` emit schema version `2`. Units are nodes in a
-top-level `units` object keyed by `CodeUnit.uid`; findings refer to those keys instead
-of repeating a complete unit object for every pair endpoint. A UID is unique within one
-report and includes the source path and byte position, so use it to join data within
-that report rather than as a cross-machine finding identifier.
+`check --json` and `search --json` emit schema version `3`. Units are nodes in a top-level `units` object keyed by report-local ids (`u0`, `u1`, ...); findings refer to those ids instead of repeating a complete unit object for every pair endpoint. Ids are assigned in file-path then source-offset order over the referenced units only, so they renumber whenever the referenced set changes (for example with `--include-review`). Treat them as opaque within one report. Each unit record also carries the [in-run `CodeUnit.uid`](python-api.md#key-result-types).
 
 ### Check
 
 ```json
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "analysis_mode": "combined",
   "summary": {
     "total_units": 42,
     "units_by_language": {"python": 42},
-    "hybrid_duplicates": 1,
+    "hybrid_duplicates": 3,
+    "reported_duplicates": 1,
+    "omitted_review_duplicates": 2,
+    "truncated_duplicates": 0,
+    "max_duplicates": null,
+    "duplicates_by_tier": {
+      "exact": 0,
+      "traditional_near": 0,
+      "hybrid_confirmed": 1,
+      "semantic_high_confidence": 0,
+      "semantic_review": 2
+    },
     "potentially_unused": 1,
     "raw_traditional_duplicates": 1,
-    "raw_semantic_duplicates": 1,
+    "raw_semantic_duplicates": 3,
     "semantic_fallback": false,
     "semantic_fallback_reason": null,
     "extraction_diagnostics": 0,
@@ -85,24 +93,23 @@ that report rather than as a cross-machine finding identifier.
   },
   "duplicates": [
     {
-      "unit_a": "/repo/src/a.py::python::a.normalize::0",
-      "unit_b": "/repo/src/b.py::python::b.normalize::0",
+      "unit_a": "u0",
+      "unit_b": "u1",
       "tier": "hybrid_confirmed",
       "confidence": 0.94,
       "has_exact": false,
       "semantic_similarity": 0.96,
       "jaccard_similarity": 0.92,
-      "weak_identifier_jaccard": 0.7,
-      "statement_count_ratio": 1.0
+      "weak_identifier_jaccard": null,
+      "statement_count_ratio": null
     }
   ],
-  "potentially_unused": [
-    "/repo/src/unused.py::python::unused.helper::0"
-  ],
+  "potentially_unused": ["u2"],
   "extraction_diagnostics": [],
   "semantic_diagnostics": [],
   "units": {
-    "/repo/src/a.py::python::a.normalize::0": {
+    "u0": {
+      "uid": "/repo/src/a.py::python::a.normalize::0",
       "name": "normalize",
       "qualified_name": "a.normalize",
       "type": "function",
@@ -124,24 +131,29 @@ that report rather than as a cross-machine finding identifier.
 }
 ```
 
-The shortened example omits the other two referenced entries from `units`; real output
-includes every UID referenced by any finding list exactly once. Units with no finding
-are not emitted, so `summary.total_units` is the full extracted corpus count while
-`units` contains only units needed to resolve reported findings.
+The shortened example omits `u1` and `u2` from `units`; real output includes every id referenced by any emitted finding list exactly once. Units with no emitted finding are not present, so `summary.total_units` is the full extracted corpus count while `units` contains only units needed to resolve the report.
 
-In default combined mode, `duplicates` contains hybrid edges. With `--show-all`, `traditional_duplicates` and `semantic_duplicates` are added as raw edge lists with `unit_a`, `unit_b`, `similarity`, and `method`.
+`weak_identifier_jaccard` and `statement_count_ratio` are computed only for the two semantic-only tiers; they are `null` for exact, traditional-near, and hybrid-confirmed pairs.
 
-In `--semantic-only` or `--traditional-only` mode, `duplicates` directly contains the active raw edge list and the `--show-all` arrays are omitted. `analysis_mode` is always one of `combined`, `traditional`, `semantic`, or `none`.
+#### Report selection
+
+In default combined mode, `duplicates` contains hybrid edges of every tier except `semantic_review`; see [tier evidence](analysis-defaults.md#hybrid-synthesis-confidence-defaults). `--include-review` admits review pairs into the same [confidence ranking](analysis-defaults.md#confidence-scale). `--show-all` implies `--include-review` and also adds `traditional_duplicates` and `semantic_duplicates` as raw edge lists with `unit_a`, `unit_b`, `similarity`, and `method`.
+
+`summary.hybrid_duplicates` counts the complete synthesis, `summary.duplicates_by_tier` breaks that count down over all five tiers (always present, zero-filled), `summary.reported_duplicates` counts the edges actually emitted, `summary.omitted_review_duplicates` counts pairs withheld by the report policy, and `summary.truncated_duplicates` counts pairs cut by `--max-duplicates`. In combined mode, `reported_duplicates + omitted_review_duplicates + truncated_duplicates == hybrid_duplicates` regardless of report-selection flags.
+
+Nothing is truncated unless you ask: `--max-duplicates N` keeps the first `N` edges of the admitted list in the analyzer's confidence order (so the strongest evidence survives), records the cap as `summary.max_duplicates` (`null` when unset), and drops units referenced only by cut edges from `units`. The cap applies after the review filter, so `--include-review --max-duplicates N` ranks review pairs into the same budget; the raw `--show-all` lists are never capped. The exit code ignores the cap, see [exit codes](#exit-codes).
+
+In `--semantic-only` or `--traditional-only` mode, `duplicates` directly contains the active raw edge list ordered by descending similarity (exact pairs at 1.0 first, ties in analyzer order; `--max-duplicates` keeps that prefix), `duplicates_by_tier` is all zeros, and the `--show-all` arrays are omitted. `analysis_mode` is always one of `combined`, `traditional`, `semantic`, or `none`.
 
 See [hybrid confidence tiers](analysis-defaults.md#hybrid-synthesis-confidence-defaults) to interpret `tier` and `confidence`.
 
 ### Search
 
-Default search hits (`--result-level unit`) use `{"unit": "<uid>", "score": 0.95}`; their unit records have the same fields as check results. An empty index with `--no-cache` produces:
+Default search hits (`--result-level unit`) use `{"unit": "u0", "score": 0.95}`; their unit records have the same fields as check results. An empty index with `--no-cache` produces:
 
 ```json
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "query": "refund validation",
   "summary": {
     "indexed_units": 0,
@@ -183,13 +195,13 @@ Default search hits (`--result-level unit`) use `{"unit": "<uid>", "score": 0.95
   "score": 0.91,
   "matching_units": 2,
   "matches": [
-    {"unit": "/repo/src/parser.py::python::parser.parse::0", "score": 0.91},
-    {"unit": "/repo/src/parser.py::python::parser.decode::240", "score": 0.86}
+    {"unit": "u0", "score": 0.91},
+    {"unit": "u1", "score": 0.86}
   ]
 }
 ```
 
-The file's `score` is its highest unit score. `matching_units` counts all of that file's units above the search threshold; `matches` contains up to three strongest contributors. Their UIDs reference the top-level `units` map, which supplies names, types, and line ranges. Only these displayed contributors appear in `units`. Files are ranked before applying `--top-k`; `summary.results` counts returned files, while `summary.indexed_units` still counts indexed code units. Diagnostics and embedding telemetry keep the same shape. Unit-level output remains the default and does not add `result_level`.
+The file's `score` is its highest unit score. `matching_units` counts all of that file's units above the search threshold; `matches` contains up to three strongest contributors. Their ids reference the top-level `units` map, whose records carry `uid`, names, types, and line ranges. Only these displayed contributors appear in `units`. Files are ranked before applying `--top-k`; `summary.results` counts returned files, while `summary.indexed_units` still counts indexed code units. Diagnostics and embedding telemetry keep the same shape. Unit-level output remains the default and does not add `result_level`.
 
 ## Embedding telemetry
 
@@ -217,19 +229,19 @@ Move and deletion counts need a comparable [corpus baseline](caching.md#corpus-l
 
 ## Diagnostics
 
-`check` emits `extraction_diagnostics` and `semantic_diagnostics` arrays with matching counts in `summary`. `search` emits both diagnostic arrays, without summary counts, so recoverable extraction failures remain visible even when the search index is empty. Entries use `file`, `language`, `severity`, `code`, `message`, `line`, and `end_line`. Terminal checks print counts and up to ten entries per diagnostic category; terminal searches print semantic diagnostics.
+`check` emits `extraction_diagnostics` and `semantic_diagnostics` arrays with matching counts in `summary`. `search` emits both diagnostic arrays, without summary counts, so recoverable extraction failures remain visible even when the search index is empty. Entries use `file`, `language`, `severity`, `code`, `message`, `line`, and `end_line`. Both terminal commands print up to ten entries per diagnostic category; checks also print summary counts.
 
-`semantic-context-overflow` warns that a newly encoded unit exceeds the model's context window and will be truncated by the backend. It remains in results. These warnings also cover units re-encoded after incompatible cached vectors are discarded. They are produced during corpus inference, not replayed on reused cache hits; see [long-input behavior](analysis-defaults.md#semantic-candidate-defaults).
+For `semantic-context-overflow` warnings and their cache behavior, see [long-input handling](analysis-defaults.md#semantic-candidate-defaults).
 
 ## Exit codes
 
 `check --fail-on` controls findings only; runtime and usage failures retain their normal status:
 
-- `--fail-on actionable` (default): combined mode exits `1` for `exact`, `traditional_near`, or `hybrid_confirmed`. Pure-semantic `semantic_high_confidence` and `semantic_review` pairs remain visible but advisory because neither has deterministic structural/token corroboration. Non-strict unused guesses are also advisory, while `--strict-unused` makes them actionable. Raw single-method duplicates already passed the explicitly selected method thresholds and remain actionable.
-- `--fail-on all`: any reported duplicate or unused finding exits `1`.
+- `--fail-on actionable` (default): combined mode exits `1` for `exact`, `traditional_near`, or `hybrid_confirmed`. Pure-semantic `semantic_high_confidence` pairs are reported but advisory, and `semantic_review` pairs are withheld and advisory, because neither has deterministic structural/token corroboration. Non-strict unused guesses are also advisory, while `--strict-unused` makes them actionable. Raw single-method duplicates already passed the explicitly selected method thresholds and remain actionable.
+- `--fail-on all`: any duplicate or unused finding in the complete result exits `1`, including `semantic_review` pairs the report withheld.
 - `--fail-on none`: findings never change the successful exit code.
 
-The selected policy and computed result are always present as `summary.fail_on` and `summary.exit_code`. Terminal summaries show the same values as `Failure policy` and `Finding status` rows.
+The exit code is computed on the complete analysis result before report selection, so `--include-review`, `--show-all`, and `--max-duplicates` never change it. When every failing finding is hidden from the report, the terminal `Finding status` row says which hidden group fails and how to list it: withheld review pairs under `--fail-on all` point at `--include-review`, and pairs cut by `--max-duplicates` point at a higher cap (a strong pure-semantic pair can outrank a corroborated one, so a small cap can hide the only `hybrid_confirmed` pair that fails `actionable`). In JSON the same situations read as `exit_code: 1` with no failing edge in `duplicates` and a non-zero `omitted_review_duplicates` or `truncated_duplicates`. The selected policy and computed result are always present as `summary.fail_on` and `summary.exit_code`. Terminal summaries show the same values as `Failure policy` and `Finding status` rows.
 
 Command status conventions:
 
@@ -241,10 +253,10 @@ Default combined semantic failures are fatal. `--allow-semantic-fallback` contin
 
 ## Terminal duplicate panels
 
-Tables show up to 20 rows by default; `--full-table` removes that limit.
+Tables show up to 20 rows by default; their footers count additional selected rows and point to `--full-table`. The [report-level cap](#report-selection) applies before table rendering. When hidden findings fail the run, the status guidance also names `--full-table` if restoring the hidden pairs can exceed the terminal limit; raising `--max-duplicates` alone does not remove that limit.
 
 Locations use the shorter of working-directory-relative and absolute `<path>:<line>` spellings.
 
-- Combined: `Hybrid Duplicates`, plus raw traditional and semantic panels under `--show-all`.
+- Combined: `Hybrid Duplicates (N pairs, M review withheld, K truncated)`, followed by any raw panels requested through [report selection](#report-selection). When every hybrid pair is withheld, one dim line reports the withheld count instead of an empty table. The summary lists every tier's count; withheld and truncated totals appear when non-zero.
 - `--traditional-only`: `Traditional Duplicates (Structural/Token/Jaccard)`.
 - `--semantic-only`: `Semantic Duplicates (Embedding)`.

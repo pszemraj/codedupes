@@ -9,6 +9,7 @@ from click.testing import CliRunner
 
 from codedupes import cli
 from codedupes.models import AnalysisResult, CodeUnit, CodeUnitType, ExtractionDiagnostic
+from codedupes.report.json import unit_to_dict
 from tests.conftest import patch_cli_analyzer
 
 
@@ -114,7 +115,7 @@ def test_check_json_adds_language_ranges_and_diagnostics(
 
     # Unit records are additive in duplicate/unused/search output. Exercise the
     # serializer directly because an empty-finding run has no unit array.
-    unit_payload = cli._unit_to_dict(_rust_result(tmp_path).units[0])
+    unit_payload = unit_to_dict(_rust_result(tmp_path).units[0])
     assert unit_payload["language"] == "rust"
     assert unit_payload["dialect"] == "rust"
     assert unit_payload["native_kind"] == "function_item"

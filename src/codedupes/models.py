@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, get_args
 
 from codedupes.pairs import unordered_pair_key
 
@@ -165,6 +165,8 @@ HybridTier = Literal[
     "semantic_high_confidence",
     "semantic_review",
 ]
+# Runtime view of ``HybridTier`` in declaration order, for zero-filled tier counts.
+HYBRID_TIERS: tuple[HybridTier, ...] = get_args(HybridTier)
 
 AnalysisMode = Literal["combined", "traditional", "semantic", "none"]
 
@@ -201,14 +203,6 @@ class AnalysisResult:
     unused_supported_languages: tuple[str, ...] = ("python",)
     unused_excluded_units: int = 0
     embedding_stats: EmbeddingRunStats | None = None
-
-    @property
-    def exact_duplicates(self) -> list[DuplicatePair]:
-        """Backward-compatible alias for traditional duplicates.
-
-        :return: Traditional duplicate pairs.
-        """
-        return self.traditional_duplicates
 
     @property
     def all_duplicates(self) -> list[HybridDuplicate] | list[DuplicatePair]:

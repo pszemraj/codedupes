@@ -176,17 +176,27 @@ def test_cpp_presence_reports_skipped_headers(tmp_path: Path) -> None:
     assert "c-header-policy" in codes
 
 
-def test_explicit_unsupported_file_reports_diagnostic(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("filename", "source", "code"),
+    [
+        ("mytool", "#!/usr/bin/env python\ndef alpha():\n    return 1\n", "unsupported-file"),
+        ("types.d.ts", "export declare function alpha(v: number): number;\n", "declaration-file"),
+    ],
+    ids=["unsupported", "declaration"],
+)
+def test_explicit_skipped_file_reports_diagnostic(
+    tmp_path: Path, filename: str, source: str, code: str
+) -> None:
     root = tmp_path / "proj"
     root.mkdir()
-    script = root / "mytool"
-    script.write_text("#!/usr/bin/env python\ndef alpha():\n    return 1\n")
+    target = root / filename
+    target.write_text(source)
 
     extractor = CodeExtractor(root, include_private=True)
-    units = list(extractor.extract_from_file(script))
+    units = list(extractor.extract_from_file(target))
 
     assert units == []
-    assert [diagnostic.code for diagnostic in extractor.diagnostics] == ["unsupported-file"]
+    assert [diagnostic.code for diagnostic in extractor.diagnostics] == [code]
 
 
 def test_explicit_language_filtered_file_reports_diagnostic(tmp_path: Path) -> None:
@@ -202,19 +212,6 @@ def test_explicit_language_filtered_file_reports_diagnostic(tmp_path: Path) -> N
     diagnostic = extractor.diagnostics[0]
     assert diagnostic.code == "language-filter"
     assert diagnostic.language == "python"
-
-
-def test_explicit_declaration_file_reports_diagnostic(tmp_path: Path) -> None:
-    root = tmp_path / "proj"
-    root.mkdir()
-    decl = root / "types.d.ts"
-    decl.write_text("export declare function alpha(v: number): number;\n")
-
-    extractor = CodeExtractor(root, include_private=True)
-    units = list(extractor.extract_from_file(decl))
-
-    assert units == []
-    assert [diagnostic.code for diagnostic in extractor.diagnostics] == ["declaration-file"]
 
 
 def test_get_module_name_handles_stub_suffix(tmp_path: Path) -> None:

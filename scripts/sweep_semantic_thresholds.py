@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -26,7 +27,9 @@ from codedupes.constants import (
     DEFAULT_SEARCH_SEMANTIC_TASK,
     DEFAULT_TRADITIONAL_THRESHOLD,
 )
+from codedupes.models import HYBRID_TIERS, CodeUnit, HybridDuplicate
 from codedupes.pairs import ordered_pair_key
+from codedupes.report.selection import WITHHELD_TIERS
 from codedupes.semantic import (
     EMBEDDING_PIPELINE_SCHEMA,
     EmbeddingSpaceIdentity,
@@ -37,8 +40,10 @@ from codedupes.semantic import (
 from codedupes.semantic_profiles import (
     SemanticModelProfile,
     list_supported_models,
+    resolve_local_model_path,
     resolve_model_profile,
 )
+from codedupes.traditional import _block_kind, find_exact_pair_keys
 
 try:
     from .sweep_common import (
@@ -72,7 +77,9 @@ SEARCH_THRESHOLD_START = 0.20
 # recurrence.
 SEARCH_THRESHOLD_STOP = 0.90
 THRESHOLD_STEP = 0.02
-SEARCH_SWEEP_FLOOR = 0.01
+# Tiers the CLI reports by default; mirrors the report policy so ``visible``
+# metrics describe exactly what ``codedupes check`` shows without flags.
+VISIBLE_TIERS: tuple[str, ...] = tuple(tier for tier in HYBRID_TIERS if tier not in WITHHELD_TIERS)
 
 
 @dataclass(frozen=True)
@@ -87,6 +94,44 @@ class SweepRow:
     precision: float
     recall: float
     f1: float
+
+
+@dataclass(frozen=True)
+class TierCounts:
+    """Published pairs of one hybrid tier scored against the labeled positives.
+
+    ``precision`` is ``None`` rather than ``0.0`` for an empty tier: no
+    prediction is not the same as every prediction being wrong. ``positive_share``
+    is the tier's true positives over all labeled positives; tiers partition the
+    published set, so the shares of one row sum to that row's recall.
+    """
+
+    predicted: int
+    tp: int
+    fp: int
+    precision: float | None
+    positive_share: float
+
+
+@dataclass(frozen=True)
+class SubsetMetrics:
+    """Full precision/recall of one published subset (for example the visible tiers)."""
+
+    predicted: int
+    tp: int
+    fp: int
+    fn: int
+    precision: float
+    recall: float
+    f1: float
+
+
+@dataclass(frozen=True)
+class DuplicateSweepRow(SweepRow):
+    """Duplicate-threshold row with the per-tier split of its published pairs."""
+
+    tiers: dict[str, TierCounts]
+    visible: SubsetMetrics
 
 
 @dataclass(frozen=True)
@@ -109,6 +154,15 @@ def _threshold_grid(start: float, stop: float) -> list[float]:
     its rows with thresholds looser than any pair that was ever collected - and
     the loosest-tie ranking then selects exactly that mislabeled row.
     """
+    if not math.isfinite(start) or not math.isfinite(stop):
+        raise ValueError("threshold grid bounds must be finite")
+    if not 0.0 <= start <= 1.0 or not 0.0 <= stop <= 1.0:
+        raise ValueError("threshold grid bounds must be in [0.0, 1.0]")
+    if start > stop:
+        raise ValueError(
+            f"threshold grid start {start} must not exceed stop {stop}; the grid would be empty"
+        )
+
     values: list[float] = []
     steps = 0
     while True:
@@ -118,6 +172,80 @@ def _threshold_grid(start: float, stop: float) -> list[float]:
         values.append(current)
         steps += 1
     return values
+
+
+def _scoreable_semantic_pairs(
+    positive_pairs: set[tuple[str, str]],
+    semantic_units: list[CodeUnit],
+    *,
+    cross_language: bool,
+    exclude_pairs: set[tuple[str, str]],
+) -> set[tuple[str, str]]:
+    """Return labeled pairs the semantic scanner is eligible to compare.
+
+    :param positive_pairs: Labeled positive pair keys.
+    :param semantic_units: Units retained by the analyzer's candidate policy.
+    :param cross_language: Whether the scanner compares units across languages.
+    :param exclude_pairs: Pair keys deliberately suppressed from semantic output.
+    :return: Positive pair keys eligible for semantic comparison.
+    """
+    units_by_uid = {unit.uid: unit for unit in semantic_units}
+    scoreable: set[tuple[str, str]] = set()
+    for pair in positive_pairs:
+        unit_a = units_by_uid.get(pair[0])
+        unit_b = units_by_uid.get(pair[1])
+        if unit_a is None or unit_b is None or pair in exclude_pairs:
+            continue
+        if not cross_language and unit_a.language != unit_b.language:
+            continue
+        if _block_kind(unit_a.unit_type) != _block_kind(unit_b.unit_type):
+            continue
+        if unit_a.overlaps(unit_b):
+            continue
+        scoreable.add(pair)
+    return scoreable
+
+
+def _tier_breakdown(
+    hybrid: list[HybridDuplicate],
+    positive_pairs: set[tuple[str, str]],
+) -> tuple[dict[str, TierCounts], SubsetMetrics, set[tuple[str, str]]]:
+    """Split one published hybrid list by tier and score the default-visible subset.
+
+    :param list[HybridDuplicate] hybrid: Published pairs at one threshold.
+    :param set[tuple[str, str]] positive_pairs: Labeled positive pair keys.
+    :return tuple: Per-tier counts (every tier present), visible-subset metrics, and the visible pair keys.
+    """
+    pairs_by_tier: dict[str, set[tuple[str, str]]] = {tier: set() for tier in HYBRID_TIERS}
+    for item in hybrid:
+        pairs_by_tier[item.tier].add(ordered_pair_key(item.unit_a, item.unit_b))
+
+    tiers: dict[str, TierCounts] = {}
+    for tier, pairs in pairs_by_tier.items():
+        tp = len(pairs & positive_pairs)
+        fp = len(pairs) - tp
+        tiers[tier] = TierCounts(
+            predicted=len(pairs),
+            tp=tp,
+            fp=fp,
+            precision=tp / len(pairs) if pairs else None,
+            positive_share=tp / len(positive_pairs) if positive_pairs else 0.0,
+        )
+
+    visible_pairs: set[tuple[str, str]] = set()
+    for tier in VISIBLE_TIERS:
+        visible_pairs |= pairs_by_tier[tier]
+    tp, fp, fn, precision, recall, f1 = metrics(visible_pairs, positive_pairs)
+    visible = SubsetMetrics(
+        predicted=len(visible_pairs),
+        tp=tp,
+        fp=fp,
+        fn=fn,
+        precision=precision,
+        recall=recall,
+        f1=f1,
+    )
+    return tiers, visible, visible_pairs
 
 
 def _grid_edge(selected: float, grid: list[float]) -> str | None:
@@ -161,6 +289,14 @@ def _sha256_of_file(path: Path) -> str:
 
 def _require_immutable_revision(model_name: str, explicit_revision: str | None) -> str:
     """Resolve the pinned commit for calibration, refusing mutable identities."""
+    local_model_path = resolve_local_model_path(model_name)
+    if local_model_path is not None:
+        raise SystemExit(
+            f"Refusing to calibrate local model directory {str(local_model_path)!r} as an "
+            "immutable Hub commit. Local weights are identified by their content "
+            "fingerprint and ignore --model-revision; calibrate a Hub model ID instead."
+        )
+
     profile = resolve_model_profile(model_name)
     revision = explicit_revision or profile.default_revision
     is_commit = (
@@ -189,8 +325,10 @@ def _calibration_manifest(
     dimension: int,
     min_statements: int,
     batch_size: int,
+    languages: tuple[str, ...] | None,
     corpus_path: Path,
     labels_path: Path,
+    traditional_config: AnalyzerConfig | None = None,
 ) -> dict[str, Any]:
     """Assemble the reproducible identity under which one threshold was swept.
 
@@ -198,7 +336,9 @@ def _calibration_manifest(
     verbatim: it reflects the policy that produced the swept matrix (dtype and
     Metal math policy included) even when the requested accelerator fell back
     and the run restarted on CPU, so thresholds are never labeled with a device
-    or dtype that did not produce them.
+    or dtype that did not produce them. When traditional analysis contributes
+    candidates, ``traditional_config`` records the exact gate and tiny-pair
+    filter applied to those candidates.
     """
     code_plan = resolve_encode_plan(profile.canonical_name, "code", None, semantic_task)
     manifest: dict[str, Any] = {
@@ -219,6 +359,7 @@ def _calibration_manifest(
             "unit_types": list(DEFAULT_SEMANTIC_UNIT_TYPES),
             "min_recursive_statements": min_statements,
             "include_private": True,
+            "languages": list(languages) if languages is not None else None,
         },
         "batch_size": batch_size,
         "corpus_path": str(corpus_path),
@@ -231,6 +372,12 @@ def _calibration_manifest(
         manifest["encode_plan"]["query"] = {
             "route": query_plan.route,
             "prompt": query_plan.prompt,
+        }
+    if traditional_config is not None:
+        manifest["traditional_candidate_policy"] = {
+            "jaccard_threshold": traditional_config.jaccard_threshold,
+            "filter_tiny_traditional": traditional_config.filter_tiny_traditional,
+            "tiny_unit_statement_cutoff": traditional_config.tiny_unit_statement_cutoff,
         }
     return manifest
 
@@ -304,20 +451,20 @@ def _run_duplicate_sweep(
     duplicate_start: float = DUPLICATE_THRESHOLD_START,
     duplicate_stop: float = DUPLICATE_THRESHOLD_STOP,
 ) -> ModelSweep:
+    thresholds = _threshold_grid(duplicate_start, duplicate_stop)
     profile = resolve_model_profile(model_name)
-    analyzer = CodeAnalyzer(
-        _analyzer_config(
-            model_name=model_name,
-            revision=revision,
-            semantic_task=DEFAULT_CHECK_SEMANTIC_TASK,
-            semantic_threshold=duplicate_start,
-            min_statements=min_statements,
-            batch_size=batch_size,
-            device=device,
-            languages=languages,
-            run_traditional=True,
-        )
+    config = _analyzer_config(
+        model_name=model_name,
+        revision=revision,
+        semantic_task=DEFAULT_CHECK_SEMANTIC_TASK,
+        semantic_threshold=duplicate_start,
+        min_statements=min_statements,
+        batch_size=batch_size,
+        device=device,
+        languages=languages,
+        run_traditional=True,
     )
+    analyzer = CodeAnalyzer(config)
     result = analyzer.analyze(corpus_path)
     embeddings = analyzer._embeddings
     dimension = int(embeddings.shape[1]) if embeddings is not None and embeddings.size else 0
@@ -325,10 +472,18 @@ def _run_duplicate_sweep(
     assert identity is not None
 
     positive_pairs = build_positive_pairs(result.units, labels)
-    embedded_uids = {unit.uid for unit in analyzer._semantic_units or []}
-    scoreable_pairs = {
-        pair for pair in positive_pairs if pair[0] in embedded_uids and pair[1] in embedded_uids
+    semantic_units = analyzer._semantic_units or []
+    semantic_uids = {unit.uid for unit in semantic_units}
+    embedded_pairs = {
+        pair for pair in positive_pairs if pair[0] in semantic_uids and pair[1] in semantic_uids
     }
+    semantic_exclusions = find_exact_pair_keys(semantic_units) if config.run_traditional else set()
+    scoreable_pairs = _scoreable_semantic_pairs(
+        positive_pairs,
+        semantic_units,
+        cross_language=config.cross_language,
+        exclude_pairs=semantic_exclusions,
+    )
     traditional_pairs = {
         ordered_pair_key(duplicate.unit_a, duplicate.unit_b)
         for duplicate in result.traditional_duplicates
@@ -337,31 +492,43 @@ def _run_duplicate_sweep(
     excluded_pairs = len(positive_pairs) - len(scoreable_pairs)
     if excluded_pairs:
         print(
-            f"{excluded_pairs} labeled pairs sit outside the embedded candidate pool. "
+            f"{excluded_pairs} labeled pairs are not eligible for semantic comparison. "
             "They stay in the metric denominator and are threshold-invariant. "
-            "Candidate-policy exclusions (class-level or below-min-statement units) "
-            "can still be recovered by full-scope traditional analysis. Any exclusion "
-            "counts as a false negative unless the traditional tier matched it."
+            "Candidate-policy and pair-scan exclusions can still be recovered by "
+            "full-scope traditional analysis. Any exclusion counts as a false negative "
+            "unless the traditional tier matched it."
         )
-    thresholds = _threshold_grid(duplicate_start, duplicate_stop)
+    corpus_languages = sorted({unit.language for unit in result.units})
+    high_gates = {
+        language: gate
+        for language in corpus_languages
+        if (gate := profile.high_confidence_threshold_for_language(language)) is not None
+    }
     rows: list[SweepRow] = []
     predicted_by_threshold: dict[float, set[tuple[str, str]]] = {}
+    visible_by_threshold: dict[float, set[tuple[str, str]]] = {}
     for threshold in thresholds:
         gated_semantic = [
             duplicate
             for duplicate in result.semantic_duplicates
             if duplicate.similarity >= threshold
         ]
+        # Split the published set exactly as the analyzer would for this profile.
         hybrid = analyzer_module._synthesize_hybrid_duplicates(
             result.traditional_duplicates,
             gated_semantic,
             jaccard_threshold=DEFAULT_TRADITIONAL_THRESHOLD,
+            weak_identifier_jaccard_min=profile.hybrid_weak_identifier_jaccard_min,
+            statement_ratio_min=profile.hybrid_statement_ratio_min,
+            semantic_high_gates=high_gates,
         )
         predicted_pairs = {ordered_pair_key(item.unit_a, item.unit_b) for item in hybrid}
         predicted_by_threshold[threshold] = predicted_pairs
         tp, fp, fn, precision, recall, f1 = metrics(predicted_pairs, positive_pairs)
+        tiers, visible, visible_pairs = _tier_breakdown(hybrid, positive_pairs)
+        visible_by_threshold[threshold] = visible_pairs
         rows.append(
-            SweepRow(
+            DuplicateSweepRow(
                 threshold=threshold,
                 predicted=len(predicted_pairs),
                 tp=tp,
@@ -370,8 +537,12 @@ def _run_duplicate_sweep(
                 precision=precision,
                 recall=recall,
                 f1=f1,
+                tiers=tiers,
+                visible=visible,
             )
         )
+    # Selection still ranks the complete published set: the admission gate is
+    # recall-first by policy, and the tier split only decides default visibility.
     rank_sweep_rows(rows, extra_key=lambda row: (-row.threshold,))
     selected = rows[0]
 
@@ -385,32 +556,53 @@ def _run_duplicate_sweep(
         dimension=dimension,
         min_statements=min_statements,
         batch_size=batch_size,
+        languages=config.languages,
         corpus_path=corpus_path,
         labels_path=labels_path,
+        traditional_config=config,
     )
     manifest["output_policy"] = "hybrid_duplicates"
+    # The tier split, and therefore every ``tiers``/``visible`` field, depends on
+    # the corroboration constants in force when the sweep ran.
+    manifest["visible_policy"] = {
+        "excluded_tiers": sorted(WITHHELD_TIERS),
+        "metrics_field": "visible",
+    }
+    manifest["corroboration"] = {
+        "weak_identifier_jaccard_min": profile.hybrid_weak_identifier_jaccard_min,
+        "statement_ratio_min": profile.hybrid_statement_ratio_min,
+        "high_confidence_gates": {
+            language: profile.high_confidence_threshold_for_language(language)
+            for language in corpus_languages
+        },
+    }
     manifest["selected_at_grid_edge"] = _grid_edge(selected.threshold, thresholds)
-    # Every count shares one population: reachable = scoreable + traditional
-    # recoveries, unreachable = labeled - reachable, and the ceiling divides
-    # reachable by labeled. The old ``excluded_positive_pairs`` counted only
-    # embedding-pool exclusions, so a traditional recovery made the block read
-    # "1 of 1 excluded, ceiling 1.0".
+    # Every count shares one population: embedded measures endpoint coverage,
+    # scoreable applies the scanner's pair predicate, reachable adds traditional
+    # recoveries, and the ceiling divides reachable by labeled. This is a
+    # structural upper bound before cosine scores and thresholds are considered.
     manifest["candidate_coverage"] = {
         "labeled_positive_pairs": len(positive_pairs),
+        "embedded_positive_pairs": len(embedded_pairs),
         "scoreable_positive_pairs": len(scoreable_pairs),
         "traditional_recovered_pairs": len(reachable_pairs) - len(scoreable_pairs),
+        "reachable_positive_pairs": len(reachable_pairs),
         "unreachable_positive_pairs": len(positive_pairs) - len(reachable_pairs),
         "recall_ceiling": (len(reachable_pairs) / len(positive_pairs) if positive_pairs else 0.0),
     }
     selected_pairs = predicted_by_threshold[selected.threshold]
+    selected_visible = visible_by_threshold[selected.threshold]
     manifest["selected_category_recall"] = {}
     for category, groups in labels.get("categories", {}).items():
         category_pairs = build_positive_pairs(result.units, {"positive_groups": groups})
         detected = len(selected_pairs & category_pairs)
+        visible_detected = len(selected_visible & category_pairs)
         manifest["selected_category_recall"][category] = {
             "labeled": len(category_pairs),
             "detected": detected,
             "recall": detected / len(category_pairs) if category_pairs else 0.0,
+            "visible_detected": visible_detected,
+            "visible_recall": (visible_detected / len(category_pairs) if category_pairs else 0.0),
         }
 
     return ModelSweep(
@@ -436,13 +628,14 @@ def _run_search_sweep(
     search_start: float = SEARCH_THRESHOLD_START,
     search_stop: float = SEARCH_THRESHOLD_STOP,
 ) -> ModelSweep:
+    thresholds = _threshold_grid(search_start, search_stop)
     profile = resolve_model_profile(model_name)
     analyzer = CodeAnalyzer(
         _analyzer_config(
             model_name=model_name,
             revision=revision,
             semantic_task=DEFAULT_SEARCH_SEMANTIC_TASK,
-            semantic_threshold=SEARCH_SWEEP_FLOOR,
+            semantic_threshold=search_start,
             min_statements=min_statements,
             batch_size=batch_size,
             device=device,
@@ -469,7 +662,6 @@ def _run_search_sweep(
         for unit, score in analyzer.search(query, top_k=indexed):
             scored_pairs.append(((query_key, unit.uid), score))
 
-    thresholds = _threshold_grid(search_start, search_stop)
     rows = _evaluate_thresholds(scored_pairs, positive_pairs, thresholds=thresholds)
     selected = rows[0]
 
@@ -483,6 +675,7 @@ def _run_search_sweep(
         dimension=dimension,
         min_statements=min_statements,
         batch_size=batch_size,
+        languages=analyzer.config.languages,
         corpus_path=corpus_path,
         labels_path=probes_path,
     )
@@ -522,11 +715,18 @@ def _print_sweep(model_sweep: ModelSweep, top_n: int) -> None:
         )
     print("Top rows:")
     for idx, row in enumerate(model_sweep.rows[:top_n], start=1):
-        print(
+        line = (
             f"  {idx:02d}. threshold={row.threshold:g} f1={row.f1:.3f} "
             f"precision={row.precision:.3f} recall={row.recall:.3f} "
             f"tp={row.tp} fp={row.fp} fn={row.fn} pred={row.predicted}"
         )
+        if isinstance(row, DuplicateSweepRow):
+            review = row.tiers["semantic_review"]
+            line += (
+                f" | visible precision={row.visible.precision:.3f} "
+                f"recall={row.visible.recall:.3f} review tp={review.tp} fp={review.fp}"
+            )
+        print(line)
 
 
 def _report_payload(results: list[ModelSweep], grid: list[float]) -> dict[str, Any]:
@@ -560,7 +760,7 @@ def main() -> int:
     )
     parser.add_argument(
         "--models",
-        nargs="*",
+        nargs="+",
         default=[profile.key for profile in list_supported_models()],
         help="Model keys or IDs to sweep. Defaults to all built-in profiles.",
     )
@@ -598,7 +798,7 @@ def main() -> int:
         "--search-start",
         type=float,
         default=SEARCH_THRESHOLD_START,
-        help="Search-threshold grid floor.",
+        help="Search-threshold grid and score-collection floor.",
     )
     parser.add_argument(
         "--search-stop",
@@ -621,16 +821,14 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    if args.duplicate_start > args.duplicate_stop:
-        parser.error(
-            f"--duplicate-start {args.duplicate_start} must not exceed "
-            f"--duplicate-stop {args.duplicate_stop}; the sweep grid would be empty."
-        )
-    if args.search_start > args.search_stop:
-        parser.error(
-            f"--search-start {args.search_start} must not exceed "
-            f"--search-stop {args.search_stop}; the sweep grid would be empty."
-        )
+    for mode, start, stop in (
+        ("duplicate", args.duplicate_start, args.duplicate_stop),
+        ("search", args.search_start, args.search_stop),
+    ):
+        try:
+            _threshold_grid(start, stop)
+        except ValueError as exc:
+            parser.error(f"invalid --{mode}-start/--{mode}-stop: {exc}")
 
     labels = json.loads(args.labels_path.read_text())
     # Shape problems must abort here, in milliseconds: the per-category recall

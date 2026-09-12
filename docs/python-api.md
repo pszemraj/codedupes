@@ -87,7 +87,7 @@ print("non-Python units excluded from unused analysis:", result.unused_excluded_
 
 ## Semantic query search
 
-`CodeAnalyzer.search()` returns code-unit/score pairs. File grouping is available through the [CLI's `--result-level file`](cli.md#codedupes-search-path-query) report option.
+`CodeAnalyzer.search()` returns code-unit/score pairs. For file grouping, use [report helpers](#report-selection-and-json) or the [CLI's `--result-level file`](cli.md#codedupes-search-path-query) option.
 
 For code search, call `index()` once, then call `search()` as many times as needed on that analyzer. The default source-only index has a calibrated profile threshold, so the basic workflow needs no threshold tuning:
 
@@ -124,7 +124,7 @@ See [task defaults and calibration requirements](model-profiles.md#semantic-task
 
 `AnalyzerConfig.mode` declares which contract enforces that requirement. The default `mode="check"` rejects an uncalibrated context without `semantic_threshold` at construction, before any extraction or model load. `index()` and `search()` accept either mode. For a search-only workflow, use `mode="search"` to defer calibration validation to query time (`search()` raises if the resolved context has no calibrated search default and no explicit threshold). `analyze()` rejects `mode="search"` configs.
 
-`index()` extracts the corpus and computes (or loads from cache) its embeddings without the all-pairs duplicate scan, traditional analysis, or unused-code analysis that `analyze()` runs, so building a search corpus stays linear in corpus size. Prefer `index()` before search. `analyzer.extracted_unit_count` reports the pre-filter extraction count from the latest `index()` or `analyze()` run, which can be larger than the count returned by `index()` after semantic eligibility filtering. Eligible corpus units and queries are passed unchanged to the embedding backend, which applies its normal context-window truncation, including any prompt. A search after `analyze()` reuses the analysis task and therefore requires an explicit search threshold when that task changes the model's prompt or route, as it does for EmbeddingGemma.
+`index()` extracts the corpus and computes (or loads from cache) its embeddings without the all-pairs duplicate scan, traditional analysis, or unused-code analysis that `analyze()` runs, so building a search corpus stays linear in corpus size. `analyzer.extracted_unit_count` reports the pre-filter extraction count from the latest `index()` or `analyze()` run, which can be larger than the count returned by `index()` after semantic eligibility filtering. A search after `analyze()` reuses the analysis task and therefore requires an explicit search threshold when that task changes the model's prompt or route, as it does for EmbeddingGemma.
 
 The contextual-threshold requirement follows the indexed representation even if the config changes afterward. Its [cache behavior](caching.md#what-invalidates-what) follows the complete document input. `analyze()` always embeds bare source for duplicate detection regardless of this search-only setting.
 
@@ -138,7 +138,7 @@ Each `index()` or `analyze()` call replaces the analyzer's corpus-specific state
 
 `AnalyzerConfig.progress` accepts `"auto"` (default), `"always"`, or `"never"`; other values raise `ValueError` at configuration construction. Auto mode renders embedding progress only for more than 100 uncached inputs when stderr is a TTY. The same keyword is available on `compute_embeddings`, `compute_embeddings_with_identity`, `run_semantic_analysis`, and `run_semantic_analysis_with_identity`.
 
-The low-level functions accept an `EmbeddingRunStats` collector through `stats=` and fill it in place. `AnalysisResult.embedding_stats` contains that collector after successful semantic analysis; `CodeAnalyzer.embedding_stats` exposes it after `index()`. Both are `None` when semantic work did not run, failed, or fell back. Non-fatal persistent-cache failures observed during corpus or query embedding are appended to `cache_warnings`.
+The low-level functions accept an `EmbeddingRunStats` collector through `stats=` and fill it in place. `AnalysisResult.embedding_stats` contains that collector after successful semantic analysis; `CodeAnalyzer.embedding_stats` exposes it after `index()`. See [embedding telemetry](output.md#embedding-telemetry) for counter definitions, cache warnings, and unavailable statistics.
 
 ```python
 from pathlib import Path
@@ -157,7 +157,7 @@ embeddings = compute_embeddings(
 print(stats.cache_hit_rows, stats.encoded_inputs, stats.model_loaded)
 ```
 
-See [embedding telemetry](output.md#embedding-telemetry) for field definitions. Low-level `compute_embeddings*` calls require `cache_scope` for persistent reuse and do not publish corpus manifests; use `CodeAnalyzer` for move/deletion tracking.
+Low-level `compute_embeddings*` calls require `cache_scope` for persistent reuse and do not publish [corpus manifests](caching.md#corpus-lifecycle); use `CodeAnalyzer` for move/deletion tracking.
 
 ## Apple Silicon configuration
 
@@ -202,7 +202,7 @@ quiet_dependency_loggers()  # or quiet_dependency_loggers(logging.ERROR)
 ## Key result types
 
 - `AnalysisResult.units`: extracted functions, methods, and classes
-- `AnalysisResult.hybrid_duplicates`: synthesized duplicate candidates with [confidence tiers](analysis-defaults.md#hybrid-synthesis-confidence-defaults)
+- `AnalysisResult.hybrid_duplicates`: every synthesized duplicate candidate with its [confidence tier](analysis-defaults.md#hybrid-synthesis-confidence-defaults); the CLI applies [report selection](#report-selection-and-json) on top of this complete list
 - `AnalysisResult.traditional_duplicates`: raw traditional duplicates (diagnostics)
 - `AnalysisResult.semantic_duplicates`: raw semantic duplicates (diagnostics)
 - `AnalysisResult.potentially_unused`: Python-only heuristic unused candidates
@@ -218,6 +218,53 @@ quiet_dependency_loggers()  # or quiet_dependency_loggers(logging.ERROR)
 - `CodeUnit.language`, `dialect`, and `native_kind`: canonical language plus parser-specific syntax kind
 - `CodeUnit.start_byte`/`end_byte`: exact byte range used to slice the emitted source
 - `CodeUnit.structural_hash`, `identifiers`, and `statement_count`: backend-computed language-neutral features
+- `HYBRID_TIERS`: the five tier names in declaration order, for zero-filled counts; pairs sort by [confidence](analysis-defaults.md#confidence-scale)
+
+## Report selection and JSON
+
+The CLI's report policy and [JSON schema](output.md#json-schema-v3) are importable, so Python callers can produce the same document as `check --json`:
+
+```python
+from codedupes import (
+    ReportPolicy,
+    check_result_to_json,
+    run_should_fail,
+    select_findings,
+    to_json_text,
+)
+
+selection = select_findings(
+    result, ReportPolicy(include_review=False, show_all=False, max_duplicates=None)
+)
+exit_code = int(run_should_fail(result, policy="actionable", strict_unused=False))
+print(to_json_text(check_result_to_json(selection, fail_on="actionable", exit_code=exit_code)))
+```
+
+`select_findings` applies the visibility policy to a complete result and returns a `ReportSelection` with the emitted `duplicates`, the withheld `omitted_review` pairs, the `truncated` pairs cut by `max_duplicates` (a prefix of the analyzer's ranking survives), zero-filled `duplicates_by_tier` counts, and the referenced `units` in report-id order. `run_should_fail` always evaluates the complete result, so hidden pairs still count; `hidden_only_failure(selection, ...)` returns which hidden groups (`"review"`, `"truncated"`) fail when the primary duplicate list and unused findings pass. Raw diagnostic lists may still include those pairs, but omit the hybrid tiers used by the failure policy. Both failure helpers raise `ValueError` for a `policy` outside `"actionable"`, `"all"`, and `"none"`.
+
+`search_result_to_json` serializes unit hits or [file search results](output.md#file-search). For file reports, fetch every matching unit before grouping so a file's contributors cannot exhaust the unit limit and hide other files:
+
+```python
+from codedupes import AnalyzerConfig, CodeAnalyzer, search_result_to_json, to_json_text
+from codedupes.report import group_file_results
+
+analyzer = CodeAnalyzer(AnalyzerConfig(mode="search", progress="never"))
+indexed_units = analyzer.index("./src")
+query = "load csv data"
+hits = analyzer.search(query, top_k=indexed_units)
+payload = search_result_to_json(
+    query,
+    hits,
+    indexed_units,
+    analyzer.embedding_stats,
+    extraction_diagnostics=analyzer.extraction_diagnostics,
+    semantic_diagnostics=analyzer.semantic_diagnostics,
+    file_results=group_file_results(hits, top_k=5),
+)
+print(to_json_text(payload))
+```
+
+For a unit report, set `search(query, top_k=...)` to the desired unit count and omit `file_results` from the serializer call.
 
 ## Notes
 
@@ -226,6 +273,3 @@ quiet_dependency_loggers()  # or quiet_dependency_loggers(logging.ERROR)
   - traditional-only settings require `run_traditional=True`
   - `strict_unused=True` requires `run_unused=True`
 - `device`, `mps_fallback`, and `mps_memory_fraction` require `run_semantic=True`. `embedding_cache=False` is accepted when semantic analysis is disabled and has no effect.
-- [Analysis defaults](analysis-defaults.md) covers candidate scope and filtering.
-- [Embedding cache](caching.md) covers persistent cache behavior.
-- [Model profiles](model-profiles.md) covers aliases, thresholds, revisions, and task behavior.

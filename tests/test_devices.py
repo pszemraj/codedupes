@@ -235,13 +235,24 @@ def test_cpu_bf16_capability_defensive_on_probe_failure() -> None:
     assert devices.cpu_bf16_capability(BrokenTorch) is False
 
 
-def test_resolve_cpu_bf16_inference_requires_opt_in(monkeypatch) -> None:
+@pytest.mark.parametrize(
+    ("short_circuited", "reason"),
+    [
+        ("resolve_cpu_bf16_native", "the capability gate must not be consulted"),
+        ("_load_torch", "torch must not be imported"),
+    ],
+)
+def test_resolve_cpu_bf16_inference_short_circuits_without_opt_in(
+    monkeypatch, short_circuited: str, reason: str
+) -> None:
+    # The opt-in gate must answer before the live probe: a non-opted-in run
+    # must neither consult the capability gate nor import torch to decide CPU dtype.
     monkeypatch.delenv("CODEDUPES_CPU_BF16", raising=False)
 
-    def _fail_if_called() -> bool:
-        raise AssertionError("the capability gate must not be consulted without the opt-in")
+    def _fail_if_called() -> object:
+        raise AssertionError(f"{reason} without the opt-in")
 
-    monkeypatch.setattr(devices, "resolve_cpu_bf16_native", _fail_if_called)
+    monkeypatch.setattr(devices, short_circuited, _fail_if_called)
 
     assert devices.resolve_cpu_bf16_inference() is False
 
@@ -253,19 +264,6 @@ def test_resolve_cpu_bf16_inference_follows_gate_when_opted_in(monkeypatch) -> N
     assert devices.resolve_cpu_bf16_inference() is True
 
     monkeypatch.setattr(devices, "resolve_cpu_bf16_native", lambda: False)
-    assert devices.resolve_cpu_bf16_inference() is False
-
-
-def test_resolve_cpu_bf16_inference_skips_torch_import_without_opt_in(monkeypatch) -> None:
-    # The opt-in gate must short-circuit before the live probe: a non-opted-in
-    # run must never import torch just to decide CPU dtype.
-    monkeypatch.delenv("CODEDUPES_CPU_BF16", raising=False)
-
-    def _fail_if_called() -> object:
-        raise AssertionError("torch must not be imported without the opt-in")
-
-    monkeypatch.setattr(devices, "_load_torch", _fail_if_called)
-
     assert devices.resolve_cpu_bf16_inference() is False
 
 

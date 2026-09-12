@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import ctypes
 import logging
 import os
 import shutil
 import sys
 import tempfile
 from collections.abc import Callable, Iterator
-from contextlib import contextmanager, nullcontext, redirect_stderr
+from contextlib import contextmanager, nullcontext, redirect_stderr, redirect_stdout
 from typing import TypeVar
 
 import rich_click as click
@@ -20,6 +21,7 @@ from codedupes.logging_utils import quiet_dependency_loggers
 
 DEFAULT_OUTPUT_WIDTH = 160
 MIN_OUTPUT_WIDTH = 80
+DEFAULT_TABLE_ROWS = 20
 
 
 def _make_console(output_width: int = DEFAULT_OUTPUT_WIDTH, *, stderr: bool = False) -> Console:
@@ -70,7 +72,10 @@ def _set_console(output_width: int) -> None:
 
 
 def _suppress_logs_for_json() -> tuple[int, list[logging.Handler]]:
-    """Prevent log output from contaminating JSON responses."""
+    """Prevent log output from contaminating JSON responses.
+
+    :return: Prior root logger level and handlers for :func:`_restore_root_logger_state`.
+    """
     root_logger = logging.getLogger()
     prior_state = (root_logger.level, list(root_logger.handlers))
     for handler in list(root_logger.handlers):
@@ -105,24 +110,43 @@ def setup_logging(verbose: bool = False) -> None:
 
 
 @contextmanager
-def _capture_json_stderr() -> Iterator[None]:
-    """Spool Python/native stderr and replay it only if the CLI operation fails.
+def _capture_json_output() -> Iterator[None]:
+    """Spool backend output and replay it to stderr only if the CLI operation fails.
 
-    :return: Context manager restoring Python stderr and file descriptor 2 on exit.
+    :return: Context manager restoring Python stdout/stderr and file descriptors 1/2 on exit.
     """
     with tempfile.TemporaryFile(
         mode="w+", encoding="utf-8", errors="replace", buffering=1
     ) as captured:
+        # CPython uses the Universal CRT on Windows; POSIX exposes libc in the
+        # process handle. C buffers must be flushed while their fds still point
+        # at the stream where those bytes were written.
+        native_fflush = ctypes.CDLL("ucrtbase" if os.name == "nt" else None).fflush
+        native_fflush.argtypes = [ctypes.c_void_p]
+        native_fflush.restype = ctypes.c_int
+        sys.stdout.flush()
         sys.stderr.flush()
+        native_fflush(None)
+        stdout_fd = os.dup(1)
         stderr_fd = os.dup(2)
         try:
             try:
+                os.dup2(captured.fileno(), 1)
                 os.dup2(captured.fileno(), 2)
-                with redirect_stderr(captured):
+                with redirect_stdout(captured), redirect_stderr(captured):
                     yield
             finally:
-                os.dup2(stderr_fd, 2)
-                os.close(stderr_fd)
+                try:
+                    # The original Python streams may also have been retained
+                    # by a backend before redirect_stdout/redirect_stderr.
+                    sys.stdout.flush()
+                    sys.stderr.flush()
+                    native_fflush(None)
+                finally:
+                    os.dup2(stdout_fd, 1)
+                    os.close(stdout_fd)
+                    os.dup2(stderr_fd, 2)
+                    os.close(stderr_fd)
         except BaseException:
             captured.seek(0)
             shutil.copyfileobj(captured, sys.stderr)
@@ -144,7 +168,7 @@ def _configured_cli_output(
     :param output_width: Rich console width.
     :return: Context manager that restores the prior output configuration on exit.
     """
-    with _capture_json_stderr() if as_json else nullcontext():
+    with _capture_json_output() if as_json else nullcontext():
         _set_console(output_width)
         logging_state: tuple[int, list[logging.Handler]] | None = None
         restore_hub_progress: Callable[[], None] | None = None

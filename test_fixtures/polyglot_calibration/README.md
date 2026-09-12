@@ -2,7 +2,7 @@
 
 Labeled duplicate-detection corpora for C, Rust, JavaScript, TypeScript, and Python, each with 34-36 positive pairs and 15 negative pairs. They measure the built-in model profiles' similarity scales outside the Python production corpus. The Python corpus here is a control: its near clones are fully alpha-renamed, unlike [`crab_visibility`](../hybrid_tuning/crab_visibility), whose near pairs share identifier fragments.
 
-These measurements inform the [per-language duplicate gates](../../docs/analysis-defaults.md#semantic-duplicate-gate-defaults). Revisit those gates if a re-run changes the measured tradeoffs below.
+These measurements inform the [per-language duplicate gates](../../docs/analysis-defaults.md#semantic-duplicate-gate-defaults) and the [default-visible tier split](../../docs/analysis-defaults.md#hybrid-synthesis-confidence-defaults). Revisit both if a re-run changes the measured tradeoffs below; `tests/test_calibration_reports.py` and `tests/test_corroboration_reports.py` fail when the shipped values and the recorded reports disagree.
 
 ## Layout
 
@@ -53,9 +53,11 @@ Whole-tree status at shipped defaults (2026-08-14): 368 units across five langua
 
 The validator now enforces the zero-unlabeled-deterministic-pairs property per language rather than leaving it as a one-off observation: every exact/near pair the traditional tier reports must appear in `positive_groups` (14/14/15/16/14 pairs for c/rust/javascript/typescript/python).
 
-## Calibration results (2026-08-25, pinned profiles, cpu/fp32, production `--min-statements 3`)
+## Calibration results
 
-Sweeps ran per language over a 0.40-0.96 duplicate grid (`--duplicate-start 0.40`; the default 0.70 floor would hide most non-Python near clones) with both models; search sweeps used the per-language probes over the default 0.20-0.90 search grid. See [sweep metrics and calibration identity](../../docs/hybrid-tuning.md#semantic-threshold-sweep-model-profiles) for how output and candidate coverage are scored. Reports: `reports/<lang>_semantic_threshold_report.json`, `reports/<lang>_search_threshold_report.json`, `reports/similarity_distributions.json`.
+The 2026-08-25 sweep used pinned profiles, cpu/fp32, and production `--min-statements 3`.
+
+Sweeps ran per language over a 0.40-0.96 duplicate grid (`--duplicate-start 0.40`; the default 0.70 floor would hide most non-Python near clones) with both models; search sweeps used the per-language probes over the default 0.20-0.90 search grid. See [sweep metrics and calibration identity](../../docs/hybrid-tuning.md#semantic-threshold-sweep-model-profiles) for how output and candidate coverage are scored. Reports: `reports/<lang>_semantic_threshold_report.json`, `reports/<lang>_search_threshold_report.json`, `reports/similarity_distributions.json`, and `reports/corroboration_report.json` for the [default-visible split](#default-visible-results).
 
 Duplicate threshold, best final-output F1 row per language. Candidate coverage is the number of labeled pairs whose two units reach semantic embedding under the production policy; traditional detection can still recover an excluded deterministic pair.
 
@@ -63,7 +65,7 @@ Duplicate threshold, best final-output F1 row per language. Candidate coverage i
 | --- | --- | --- | --- |
 | c | 33 / 34 | 0.90 / 0.58 / 1.00 / 0.41 | 0.80 / 0.62 / 0.55 / 0.71 |
 | rust | 28 / 34 | 0.76 / 0.69 / 0.83 / 0.59 | 0.82 / 0.81 / 1.00 / 0.68 |
-| javascript | 26 / 35 | 0.72 / 0.69 / 0.81 / 0.60 | 0.82 / 0.74 / 0.95 / 0.60 |
+| javascript | 26 / 35 | 0.72 / 0.71 / 0.81 / 0.63 | 0.82 / 0.76 / 0.96 / 0.63 |
 | typescript | 29 / 36 | 0.70 / 0.79 / 0.84 / 0.75 | 0.80 / 0.79 / 0.84 / 0.75 |
 | python (control) | 29 / 34 | 0.82 / 0.59 / 0.63 / 0.56 | 0.74 / 0.76 / 0.78 / 0.74 |
 
@@ -85,17 +87,22 @@ Distribution highlights (`reports/similarity_distributions.json`):
 - C is the hardest language for both models: deceptive negative controls reach 0.86 (gte) / 0.91 (gemma), overlapping the near-clone band, which caps best final-output F1 at 0.58/0.62.
 - embeddinggemma-300m separates clones from negatives better than gte-modernbert-base on four languages and ties it on TypeScript here, with best-F1 duplicate thresholds clustered at 0.74-0.82.
 
-The 2026-08-21 regeneration under embedding pipeline schema 5 reproduced every metric row byte-identically: only the recorded schema and runtime fingerprint moved, confirming the context-length rejection policy touches no vector in these corpora. The 2026-08-25 regeneration widened the search grid from a 0.70 to a 0.90 ceiling after the old ceiling censored two boundary selections: every duplicate row and all previously swept search rows again reproduced byte-identically, javascript/gte moved from 0.70 to 0.72, and python/gte's boundary pick was confirmed interior.
+The 2026-08-21 regeneration under embedding pipeline schema 5 reproduced every metric row byte-identically: only the recorded schema and runtime fingerprint moved, confirming the context-length rejection policy touches no vector in these corpora. The 2026-08-25 regeneration widened the search grid from a 0.70 to a 0.90 ceiling after the old ceiling censored two boundary selections: every duplicate row and all previously swept search rows again reproduced byte-identically, javascript/gte moved from 0.70 to 0.72, and python/gte's boundary pick was confirmed interior. The 2026-09-11 regeneration (`--skip-search`; sentence-transformers 5.7.0) added the per-tier `tiers`/`visible` fields and the `corroboration` manifest block: every c, rust, typescript, and python row reproduced byte-identically, while every javascript row gained exactly one predicted true positive at every threshold because full-scope traditional matching (shipped after the previous regeneration) now recovers the one `renamed` pair that lay below the semantic candidate floor (`traditional_recovered_pairs` 0 -> 1, best-F1 rows 0.69 -> 0.71 gte and 0.74 -> 0.76 gemma); no selected threshold moved.
 
 Candidate policy, model threshold, and hybrid publication must be evaluated together. Apply the [gate selection policy](../../docs/analysis-defaults.md#semantic-duplicate-gate-defaults) to these production-policy grids. Search rows remain a single-domain synthetic guardrail; [model profiles](../../docs/model-profiles.md#built-in-profiles) describes the held-out evidence used for search defaults.
 
-## Re-running
+## Default-visible results
 
-Use the same repository root and `lang` value as above:
+The 2026-09-11 `reports/corroboration_report.json` records default-visible and admitted precision/recall at the shipped split. See [hybrid confidence defaults](../../docs/analysis-defaults.md#hybrid-synthesis-confidence-defaults) for the settings and the [tuning workflow](../../docs/hybrid-tuning.md) for selection.
 
-```bash
-python scripts/sweep_semantic_thresholds.py --corpus-path test_fixtures/polyglot_calibration/$lang --labels-path test_fixtures/polyglot_calibration/labels/$lang.json --search-probes-path test_fixtures/polyglot_calibration/search_probes/$lang.json --language "$lang" --duplicate-start 0.40 --json-out scratch/${lang}_semantic_threshold_report.json --search-json-out scratch/${lang}_search_threshold_report.json
-python scripts/report_calibration_distributions.py --languages "$lang" --json-out scratch/${lang}_similarity_distributions.json
-```
+| language | gte-modernbert-base visible vs admitted | embeddinggemma-300m visible vs admitted |
+| --- | --- | --- |
+| c | 0.74 / 0.41 vs 0.65 / 0.44 | 0.47 / 0.74 (unchanged) |
+| rust | 0.89 / 0.50 vs 0.74 / 0.59 | 0.61 / 0.79 (unchanged) |
+| javascript | 0.85 / 0.63 vs 0.73 / 0.63 | 0.57 / 0.77 (unchanged) |
+| typescript | 0.83 / 0.69 vs 0.76 / 0.78 | 0.70 / 0.78 (unchanged) |
+| python (control) | 0.64 / 0.62 vs 0.54 / 0.65 | 0.78 / 0.74 (unchanged) |
 
-Keep corpus and label changes explicit in review; if a grammar pin bump changes any recorded number above, understand the difference before changing a gate.
+Pooled gte moves from 0.68 / 0.62 to 0.78 / 0.57, withholding 9 labeled positives and 23 false positives.
+
+Re-run calibration through the [tuning workflow](../../docs/hybrid-tuning.md#semantic-threshold-sweep-model-profiles). Keep corpus and label changes explicit in review; if a grammar pin bump changes any recorded number above, understand the difference before changing a gate.

@@ -23,11 +23,14 @@ codedupes check ./src --json --threshold 0.82
 codedupes check ./src --semantic-only
 # Fast structural/token scan without semantic model inference.
 codedupes check ./src --traditional-only --no-unused
+codedupes check ./src --include-review
 codedupes check ./src --show-all
+codedupes check ./src --json --max-duplicates 50
 codedupes check ./src --fail-on all
 codedupes check ./src/module.py
 codedupes check ./src --semantic-threshold 0.84 --traditional-threshold 0.75
 codedupes check ./src --exclude "**/generated/**" --exclude "**/migrations/**"
+codedupes check tests --no-default-excludes --no-unused
 ```
 
 Options, in addition to the [shared options](#options-shared-by-check-and-search):
@@ -35,19 +38,22 @@ Options, in addition to the [shared options](#options-shared-by-check-and-search
 - `-t, --threshold <float>`: Shared threshold override for semantic and traditional checks (in single-method modes, it applies to the active method only)
 - `--traditional-threshold <float>`: Override the [traditional Jaccard threshold](analysis-defaults.md#traditional-duplicate-defaults) only
 - `--cross-language`: Also report semantic duplicate pairs across languages; see [comparison boundaries](polyglot-languages.md#fingerprints-and-comparison-boundaries)
-- `--semantic-task <name>`: Semantic task mode for duplicate detection embeddings (default `semantic-similarity`)
-- `--semantic-only`: Run semantic analysis only
-- `--traditional-only`: Run traditional analysis only
-- `--allow-semantic-fallback`: In default combined mode only, continue with full-scope traditional results if semantic backend loading/inference fails
+- `--semantic-task <name>`: Duplicate embedding task; see [task defaults and choices](model-profiles.md#semantic-task-defaults-and-choices)
+- `--semantic-only`: Use only semantic matching for duplicate detection
+- `--traditional-only`: Use only traditional matching for duplicate detection
+- `--allow-semantic-fallback`: Enable [combined-mode fallback](output.md#exit-codes)
 - `--no-unused`: Disable unused-code detection
-- `--strict-unused`: Include public non-method functions (module-level and nested) in unused checks
+- `--strict-unused`: Apply the [strict unused-code policy](analysis-defaults.md#potentially-unused-defaults)
 - `--suppress-test-semantic`: Suppress semantic duplicate matches involving `test_*` functions
 - `--no-tiny-filter`: Disable tiny code-unit filtering for traditional duplicates
-- `--tiny-cutoff <int>`: Tiny code-unit statement cutoff (exclusive) for traditional filtering (default `3`)
-- `--show-all`: Also print raw traditional + raw semantic duplicate lists in combined mode
+- `--tiny-cutoff <int>`: Override the [traditional tiny-filter cutoff](analysis-defaults.md#traditional-duplicate-defaults)
+- `--include-review`, `--show-all`: Expand the [reported findings](output.md#report-selection)
+- `--max-duplicates <int>`: Cap the [reported duplicate pairs](output.md#report-selection)
 - `--full-table`: Disable table row truncation and print all rows in terminal output
 - `--show-source`: Show truncated duplicate snippets
-- `--fail-on <actionable|all|none>`: Select which reported findings produce exit code `1` (default `actionable`; see [exit codes](output.md#exit-codes))
+- `--fail-on <actionable|all|none>`: Select the [finding exit policy](output.md#exit-codes)
+
+Single-method flags leave unused-code detection enabled; add `--no-unused` to disable it.
 
 ## `codedupes search <path> "<query>"`
 
@@ -73,8 +79,8 @@ Options, in addition to the [shared options](#options-shared-by-check-and-search
 - `--result-level <unit|file>`: Return individual code units (default `unit`) or group matches into files
 - `--top-k <int>`: Maximum results at the selected level: code units or distinct files (default `10`)
 - `--threshold <float>`: Shared semantic threshold override
-- `--semantic-task <name>`: Semantic task mode for query/document embeddings (default `code-retrieval`)
-- `--search-document <source|contextual>`: Choose the [search document representation](python-api.md#semantic-query-search), source only by default. Contextual search requires an explicit numeric threshold
+- `--semantic-task <name>`: Query/document embedding task; see [task defaults and choices](model-profiles.md#semantic-task-defaults-and-choices)
+- `--search-document <source|contextual>`: Choose the [search document representation](python-api.md#semantic-query-search)
 
 For file-level grouping and `--top-k` order, see [file search output](output.md#file-search).
 
@@ -91,8 +97,8 @@ codedupes search . "validate session token" --language js --language ts
 
 - `--language <name>`: Restrict extraction to a language; repeat for multiple languages, or omit to auto-detect. See [supported files](polyglot-languages.md#supported-files) for names, aliases, and C header selection.
 - `--no-private`: Exclude private units according to [language visibility rules](polyglot-languages.md#visibility-filtering)
-- `--exclude <name|glob>`: Add an exclusion (repeat for multiple patterns). On a directory target, these extend the default test exclusions; on a single-file target, supplied excludes still apply while the default test-file patterns do not. Bare names such as `examples` match at any depth and exclude whole directory subtrees; paths containing `/` are relative to the scan root. Quote globs to prevent shell expansion; see [extraction scope](analysis-defaults.md#extraction-scope-defaults)
-- `--no-default-excludes`: Disable the default test-file patterns for directory targets, allowing tests to be analyzed. Custom excludes and built-in artifact-directory exclusions beneath the scan root still apply
+- `--exclude <name|glob>`: Add a quoted exclusion pattern; repeat for multiple patterns. See [pattern matching and scope](analysis-defaults.md#extraction-scope-defaults)
+- `--no-default-excludes`: Disable [default test-file exclusions](analysis-defaults.md#extraction-scope-defaults)
 - `--include-stubs`: Include `.pyi` files when scanning a directory (single-file `.pyi` targets are analyzed as given)
 
 ### Semantic model
@@ -104,12 +110,12 @@ codedupes check ./src --instruction-prefix "Represent this code for duplicate de
 
 See [model profiles](model-profiles.md#semantic-task-defaults-and-choices) for task choices and when a custom configuration requires an explicit threshold.
 
-- `--semantic-threshold <float>`: Flat semantic gate for every language; without it, `check` uses the selected threshold profile's [per-language gates](analysis-defaults.md#semantic-duplicate-gate-defaults) and `search` uses its search default
-- `--threshold-profile <auto|generic|embeddinggemma-300m|gte-modernbert-base>`: Choose [threshold defaults](model-profiles.md#choosing-threshold-defaults) (default `auto`); numeric thresholds take precedence
-- `--semantic-unit-type <name>`: Semantic candidate unit type (`function`, `method`, `class`); repeat option to include multiple types (default `function, method`)
-- `--min-statements <int>`: Minimum statement count for semantic candidate code units (default `3`); these [candidate filters](analysis-defaults.md#semantic-candidate-defaults) do not narrow traditional matching
-- `--model <name>`: Embedding model alias, Hugging Face ID, or explicit path (absolute, `./`/`../`, or `~`) to a complete local `save_pretrained`/`hf download` directory (default `gte-modernbert-base`)
-- `--model-revision <rev>`: Model revision/commit hash (defaults to the profile's pinned calibration commit for built-in models, unpinned otherwise)
+- `--semantic-threshold <float>`: Override the [semantic gate](analysis-defaults.md#semantic-duplicate-gate-defaults) or [search floor](model-profiles.md#built-in-profiles)
+- `--threshold-profile <auto|generic|embeddinggemma-300m|gte-modernbert-base>`: Choose [threshold defaults](model-profiles.md#choosing-threshold-defaults)
+- `--semantic-unit-type <name>`: Semantic candidate unit type (`function`, `method`, `class`); repeat for multiple types. See [candidate defaults](analysis-defaults.md#semantic-candidate-defaults)
+- `--min-statements <int>`: Override the [semantic candidate statement minimum](analysis-defaults.md#semantic-candidate-defaults)
+- `--model <name>`: Select a [model alias, Hub ID, or explicit local path](model-profiles.md#alias-resolution-rules)
+- `--model-revision <rev>`: Override the [profile's model revision](model-profiles.md#built-in-profiles)
 - `--trust-remote-code` / `--no-trust-remote-code`: Allow or disallow model remote code execution
 - `--instruction-prefix <text>`: Replace the model prompt for code/query embeddings (encode route is preserved)
 - `--strict-revision-cache`: Use [strict Hub revision resolution](caching.md#hub-revisions) for cache identity
@@ -153,9 +159,9 @@ Clear all cached embeddings or only entries for one model. An empty or whitespac
 
 - Threshold values must be in `[0.0, 1.0]`
 - `--semantic-threshold` and `--traditional-threshold` override `--threshold` for their respective methods
-- `--batch-size` and `--top-k` must be greater than `0`
+- `--batch-size`, `--top-k`, and `--max-duplicates` must be greater than `0`
 - `--min-statements` and `--tiny-cutoff` must be greater than or equal to `0`
-- `--show-all` and `--allow-semantic-fallback` are only valid in default combined `check` mode (not with `--semantic-only` or `--traditional-only`)
+- `--include-review`, `--show-all`, and `--allow-semantic-fallback` are only valid in default combined `check` mode (not with `--semantic-only` or `--traditional-only`)
 - `--json` rejects rich-only display controls: `--show-source`, `--full-table`, `--verbose`, and explicit `--output-width`
 - `--semantic-only` and `--traditional-only` are mutually exclusive
 - `--no-unused` and `--strict-unused` are mutually exclusive

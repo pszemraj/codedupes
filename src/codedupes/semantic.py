@@ -3627,7 +3627,9 @@ def find_semantic_duplicates(
                         DuplicatePair(
                             unit_a=unit_a,
                             unit_b=unit_b,
-                            similarity=sim,
+                            # Float32 normalization and matmul can overshoot
+                            # cosine's upper bound by a few ulps.
+                            similarity=min(sim, 1.0),
                             method="semantic",
                         )
                     )
@@ -4115,11 +4117,17 @@ def _find_similar_to_query_unlocked(
                 )
 
     similarities = embeddings @ query_embedding
+    finite_scores = np.isfinite(similarities)
+    # Bound finite rounding overshoot before applying the caller's threshold;
+    # otherwise an antipodal vector can fall below even a -1 search floor.
+    np.clip(similarities, -1.0, 1.0, out=similarities, where=finite_scores)
     sorted_indices = np.argsort(similarities)[::-1]
     # Compare the returned Python-float scores: NumPy's scalar promotion can
     # round the threshold down to float32 and admit a score below that floor.
     filtered_indices = [
-        idx for idx in sorted_indices if float(similarities[idx]) >= resolved_threshold
+        idx
+        for idx in sorted_indices
+        if finite_scores[idx] and float(similarities[idx]) >= resolved_threshold
     ]
     top_indices = filtered_indices[:top_k]
 

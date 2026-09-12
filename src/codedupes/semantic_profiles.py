@@ -11,6 +11,8 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Literal
 
+from codedupes.constants import HYBRID_STATEMENT_RATIO_MIN, HYBRID_WEAK_JACCARD_MIN
+
 SemanticModelFamily = Literal["gte-modernbert", "embeddinggemma", "generic"]
 CalibratedModelFamily = Literal["gte-modernbert", "embeddinggemma"]
 ThresholdProfile = Literal["auto", "generic", "embeddinggemma-300m", "gte-modernbert-base"]
@@ -35,25 +37,51 @@ class SemanticModelProfile:
     default_semantic_threshold: float = DEFAULT_FALLBACK_SEMANTIC_THRESHOLD
     default_search_threshold: float = DEFAULT_FALLBACK_SEARCH_THRESHOLD
     language_semantic_thresholds: Mapping[str, float] = field(default_factory=dict)
+    # Tier split for semantic-only hybrid pairs: a pair is reported by default
+    # (``semantic_high_confidence``) when its identifier Jaccard and statement
+    # ratio clear both minimums, or when its similarity clears the language's
+    # promotion gate; otherwise it is a withheld ``semantic_review`` candidate.
+    # ``None`` (or an absent language) turns similarity promotion off.
+    hybrid_weak_identifier_jaccard_min: float = HYBRID_WEAK_JACCARD_MIN
+    hybrid_statement_ratio_min: float = HYBRID_STATEMENT_RATIO_MIN
+    language_high_confidence_thresholds: Mapping[str, float | None] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         """Validate and freeze the profile's calibrated thresholds."""
         thresholds = {
             "default_semantic_threshold": self.default_semantic_threshold,
             "default_search_threshold": self.default_search_threshold,
+            "hybrid_weak_identifier_jaccard_min": self.hybrid_weak_identifier_jaccard_min,
+            "hybrid_statement_ratio_min": self.hybrid_statement_ratio_min,
             **{
                 f"language_semantic_thresholds[{language!r}]": threshold
                 for language, threshold in self.language_semantic_thresholds.items()
+            },
+            **{
+                f"language_high_confidence_thresholds[{language!r}]": threshold
+                for language, threshold in self.language_high_confidence_thresholds.items()
+                if threshold is not None
             },
         }
         for name, threshold in thresholds.items():
             if not math.isfinite(threshold) or not 0.0 <= threshold <= 1.0:
                 raise ValueError(f"{name} must be finite and in [0.0, 1.0]")
+        for language, threshold in self.language_high_confidence_thresholds.items():
+            if threshold is not None and threshold < self.semantic_threshold_for_language(language):
+                raise ValueError(
+                    f"language_high_confidence_thresholds[{language!r}] must not sit below "
+                    "that language's duplicate gate"
+                )
 
         object.__setattr__(
             self,
             "language_semantic_thresholds",
             MappingProxyType(dict(self.language_semantic_thresholds)),
+        )
+        object.__setattr__(
+            self,
+            "language_high_confidence_thresholds",
+            MappingProxyType(dict(self.language_high_confidence_thresholds)),
         )
 
     def all_aliases(self) -> tuple[str, ...]:
@@ -75,6 +103,19 @@ class SemanticModelProfile:
             if calibrated is not None:
                 return calibrated
         return self.default_semantic_threshold
+
+    def high_confidence_threshold_for_language(self, language: str | None) -> float | None:
+        """Return the similarity that promotes an uncorroborated pair to high confidence.
+
+        Promotion widens the default view, so a language without a calibrated
+        gate gets none rather than borrowing another language's.
+
+        :param language: Canonical language name, or ``None`` when unknown.
+        :return: Calibrated per-language promotion gate, or ``None`` when promotion is off.
+        """
+        if language is None:
+            return None
+        return self.language_high_confidence_thresholds.get(language)
 
 
 # Every builtin profile pins the immutable calibration commit recorded in
@@ -100,6 +141,19 @@ class SemanticModelProfile:
 # beyond one step is not taken — the embeddinggemma typescript gate's earlier
 # 0.76 (two steps) doubled on-corpus false positives for no measured recall,
 # so it was tightened back to 0.78.
+#
+# The hybrid tier split (which admitted semantic-only pairs the CLI shows by
+# default) is swept separately at the shipped gates by
+# scripts/sweep_hybrid_gates.py and recorded in
+# test_fixtures/polyglot_calibration/reports/corroboration_report.json: the
+# corroboration constants are one pooled selection per model that must keep
+# >= 85% of published recall and not lower precision in every language, and
+# each language's promotion gate is selected the same way at those constants.
+# Identifier Jaccard drops out for both models because Python's extractor
+# excludes attribute names, so renamed Python clones score ~0 overlap; the
+# statement-ratio floor carries the split for gte-modernbert, while for
+# embeddinggemma no size split improves precision without cutting C or Rust
+# recall below the floor, so only absurd size mismatches are withheld.
 _BUILTIN_MODEL_PROFILES: tuple[SemanticModelProfile, ...] = (
     SemanticModelProfile(
         key="gte-modernbert-base",
@@ -119,6 +173,15 @@ _BUILTIN_MODEL_PROFILES: tuple[SemanticModelProfile, ...] = (
             "javascript": 0.70,
             "typescript": 0.68,
         },
+        hybrid_weak_identifier_jaccard_min=0.0,
+        hybrid_statement_ratio_min=0.80,
+        language_high_confidence_thresholds={
+            "python": None,
+            "c": None,
+            "rust": None,
+            "javascript": None,
+            "typescript": 0.88,
+        },
     ),
     SemanticModelProfile(
         key="embeddinggemma-300m",
@@ -137,6 +200,15 @@ _BUILTIN_MODEL_PROFILES: tuple[SemanticModelProfile, ...] = (
             "rust": 0.78,
             "javascript": 0.72,
             "typescript": 0.78,
+        },
+        hybrid_weak_identifier_jaccard_min=0.0,
+        hybrid_statement_ratio_min=0.20,
+        language_high_confidence_thresholds={
+            "python": None,
+            "c": None,
+            "rust": None,
+            "javascript": None,
+            "typescript": None,
         },
     ),
 )
@@ -318,9 +390,10 @@ def _build_dynamic_profile(
 ) -> SemanticModelProfile:
     """Build a family-aware profile for a non-builtin model.
 
-    Family thresholds are practical defaults for copies and fine-tunes, not
-    proof that their score distributions match the calibrated checkpoint.
-    The actual model identifier and unpinned revision are preserved.
+    Family thresholds and hybrid tier split are practical defaults for copies
+    and fine-tunes, not proof that their score distributions match the
+    calibrated checkpoint. The actual model identifier and unpinned revision
+    are preserved.
 
     :param model_name: Model name or local directory path.
     :param family: Built-in family whose loading/prompt behavior applies.
@@ -335,6 +408,9 @@ def _build_dynamic_profile(
         default_semantic_threshold=builtin.default_semantic_threshold,
         default_search_threshold=builtin.default_search_threshold,
         language_semantic_thresholds=builtin.language_semantic_thresholds,
+        hybrid_weak_identifier_jaccard_min=builtin.hybrid_weak_identifier_jaccard_min,
+        hybrid_statement_ratio_min=builtin.hybrid_statement_ratio_min,
+        language_high_confidence_thresholds=builtin.language_high_confidence_thresholds,
     )
 
 

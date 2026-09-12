@@ -8,17 +8,17 @@ These defaults apply to `codedupes check` and `AnalyzerConfig` in check mode. Se
 
 The semantic pass may load the selected embedding model and may download it on its first use. [CLI options](cli.md#codedupes-check-path) cover single-method and unused-analysis controls.
 
-Combined output ranks each pair by an evidence tier:
+Combined output assigns each pair an evidence tier and sorts by [confidence](#confidence-scale):
 
 | tier | evidence |
 | --- | --- |
 | `exact` | structural or token fingerprints agree |
 | `traditional_near` | identifier Jaccard match |
 | `hybrid_confirmed` | semantic and traditional-near match |
-| `semantic_high_confidence` | semantic match plus weak identifier and size corroboration |
+| `semantic_high_confidence` | semantic match plus size/identifier corroboration or a calibrated similarity margin |
 | `semantic_review` | semantic match only |
 
-[Exit codes](output.md#exit-codes) define which tiers and unused findings are actionable under each failure policy.
+See [report selection](output.md#report-selection) and [exit codes](output.md#exit-codes) for visibility and failure-policy behavior.
 
 ## Semantic duplicate gate defaults
 
@@ -34,7 +34,7 @@ Semantic duplicate detection is gated per language: each built-in model profile 
 
 Gate selection is recall-first. A shipped gate may sit below the sweep's F1-selected threshold wherever the sweep shows recall gains below it, however many grid steps down that is (gte `c` `0.82` against a selected `0.90`; embeddinggemma `javascript` `0.72` against `0.82` and `rust` `0.78` against `0.82`). Where recall is flat, a gate sits at most one grid step looser as an off-corpus generalization hedge, never further. Every shipped gate keeps recall at or above the selection's and F1 within 80% of it; `tests/test_calibration_reports.py` enforces both against the recorded sweep reports.
 
-Without an explicit numeric threshold, `--threshold-profile auto` selects the recognized model family's gates; recognized local copies and fine-tunes inherit their family's gates. `--threshold-profile generic` uses one `0.82` gate for every language, while a named profile selects that profile's gates. See [threshold-profile choices](model-profiles.md#choosing-threshold-defaults).
+See [threshold-profile choices](model-profiles.md#choosing-threshold-defaults) for profile selection.
 
 The profile fallback (`0.82` gte, `0.78` gemma) is the strictest calibrated gate and applies only to languages without their own entry. An explicit `--semantic-threshold`/`--threshold` (or `AnalyzerConfig.semantic_threshold`) replaces every per-language gate with one flat value. The pairwise embedding scan partitions candidates by language and scans each group at that language's own gate, so a loosely gated language never drags another language's scan down; the scalar floor handed to the scan covers only languages that arrive without a calibrated entry.
 
@@ -76,7 +76,7 @@ By default, these test-file globs apply:
 - `**/tests/**`
 - `**/__tests__/**`
 
-CLI `--exclude` options extend these patterns for directory scans. Use `--no-default-excludes` to scan tests while retaining custom exclusions. For Python callers, `AnalyzerConfig.exclude_patterns=None` uses the defaults; a supplied list replaces them, including `[]` to disable test-file exclusions. An explicitly named source file bypasses the default test-file patterns, but supplied `--exclude` options and `AnalyzerConfig.exclude_patterns` still apply relative to its parent directory. That parent becomes the scan root, so its own name and ancestor names do not exclude the file. Built-in artifact-directory exclusions beneath the scan root remain active.
+CLI `--exclude` options extend these patterns for directory scans. Scans do not read `.gitignore`; add explicit exclusions such as `--exclude scratch` for other local checkouts or generated sources. Use `--no-default-excludes` to scan tests while retaining custom exclusions. For Python callers, `AnalyzerConfig.exclude_patterns=None` uses the defaults; a supplied list replaces them, including `[]` to disable test-file exclusions. An explicitly named source file bypasses the default test-file patterns, but supplied `--exclude` options and `AnalyzerConfig.exclude_patterns` still apply relative to its parent directory. That parent becomes the scan root, so its own name and ancestor names do not exclude the file. Built-in artifact-directory exclusions beneath the scan root remain active.
 
 Directory scans log an INFO hint when default test patterns skip files or prune directories. The counts cover encountered source files and pruned directories; they do not enumerate files inside those directories. `--json` suppresses this informational log.
 
@@ -117,15 +117,22 @@ Use `--no-tiny-filter` / `--tiny-cutoff`, or `AnalyzerConfig.filter_tiny_traditi
 
 ## Hybrid synthesis confidence defaults
 
-- semantic evidence: the per-language duplicate gate above (applied before synthesis; there is no separate semantic-only minimum)
-- weak identifier jaccard minimum: `0.20`
-- statement ratio minimum: `0.35`
+A semantic-only pair has already passed its language's duplicate gate (applied before synthesis; there is no separate semantic-only minimum). Synthesis then splits it into `semantic_high_confidence` or `semantic_review`; the split affects ranking and default visibility, never admission. A pair is promoted when either path holds:
 
-A semantic-only pair has already passed its language's duplicate gate, so it remains visible in default output. Identifier overlap and a comparable statement count promote it to `semantic_high_confidence`; otherwise it is labeled `semantic_review`. These corroborators affect ranking and review priority, not admission. Tune them with the [hybrid gate workflow](hybrid-tuning.md).
+- corroboration: weak identifier Jaccard >= `hybrid_weak_identifier_jaccard_min` and statement-count ratio >= `hybrid_statement_ratio_min`, both on the model profile;
+- similarity promotion: cosine >= the language's `language_high_confidence_thresholds` entry on the profile (cross-language pairs must clear the stricter of the two gates; a language without a calibrated entry has promotion off).
+
+| profile | identifier Jaccard min | statement ratio min | promotion gates |
+| --- | --- | --- | --- |
+| `gte-modernbert-base` | `0.00` | `0.80` | typescript `0.88`; off elsewhere |
+| `embeddinggemma-300m` | `0.00` | `0.20` | off |
+| `generic` | `0.00` | `0.20` | off |
+
+The identifier minimum is `0.00` because the Python extractor collects bound and referenced names but not attribute names, while tree-sitter languages collect every identifier leaf; no positive floor was feasible across languages. The statement-ratio floor carries GTE's split; EmbeddingGemma's `0.20` floor withholds only extreme size mismatches. An explicit `--semantic-threshold` keeps the profile's corroboration constants but turns promotion off because the gates are calibrated relative to the shipped admission gates. See the [calibration results](../test_fixtures/polyglot_calibration/README.md#calibration-results) and [hybrid gate workflow](hybrid-tuning.md).
 
 ## Confidence scale
 
-Confidence combines similarity and corroborating evidence into a ranking score. Interpret it alongside the tier:
+Finite cosine scores are bounded to [-1, 1] before reporting, so float32 rounding cannot produce values above 1. Confidence combines similarity and corroborating evidence into a ranking score. Interpret it alongside the tier:
 
 | tier | confidence |
 | --- | --- |

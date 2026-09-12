@@ -13,10 +13,13 @@ from codedupes.models import CodeUnit
 from codedupes.pairs import ordered_pair_key
 
 
-def add_common_sweep_arguments(parser: argparse.ArgumentParser) -> None:
+def add_common_sweep_arguments(
+    parser: argparse.ArgumentParser, *, language_help: str | None = None
+) -> None:
     """Register the corpus/labels/extraction options shared by all sweep scripts.
 
     :param argparse.ArgumentParser parser: Sweep script argument parser.
+    :param str | None language_help: Optional command-specific language option help.
     :return None: ``None``.
     """
     parser.add_argument(
@@ -37,7 +40,11 @@ def add_common_sweep_arguments(parser: argparse.ArgumentParser) -> None:
         dest="language",
         default=None,
         metavar="LANGUAGE",
-        help="Restrict extraction to a language (repeat for multiple); omit to auto-detect.",
+        help=(
+            language_help
+            if language_help is not None
+            else "Restrict extraction to a language (repeat for multiple); omit to auto-detect."
+        ),
     )
     parser.add_argument(
         "--min-statements",
@@ -90,18 +97,20 @@ def rank_sweep_rows(
     rows.sort(key=sort_key, reverse=True)
 
 
-def parse_label_spec(spec: str) -> tuple[str, str]:
+def parse_label_spec(spec: object) -> tuple[str, str]:
     """Parse a label selector string.
 
-    :param str spec: Label selector in the form ``file.py::symbol_name``.
+    :param object spec: Label selector in the form ``file.py::symbol_name``.
     :raises ValueError: If the label selector format is invalid.
     :return tuple[str, str]: Parsed ``(filename, symbol_name)`` tuple.
     """
-    try:
-        filename, symbol = spec.split("::", 1)
-    except ValueError as exc:
+    if not isinstance(spec, str) or spec.count("::") != 1:
         msg = f"Invalid label spec {spec!r}; expected 'file.py::symbol_name'."
-        raise ValueError(msg) from exc
+        raise ValueError(msg)
+    filename, symbol = spec.split("::", 1)
+    if not filename.strip() or not symbol.strip():
+        msg = f"Invalid label spec {spec!r}; expected 'file.py::symbol_name'."
+        raise ValueError(msg)
     return filename, symbol
 
 
@@ -121,7 +130,7 @@ def resolve_label_unit(units: list[CodeUnit], spec: str) -> CodeUnit:
     return matches[0]
 
 
-def validate_labels_shape(labels: dict[str, Any]) -> None:
+def validate_labels_shape(labels: Any) -> None:
     """Fail fast on structurally malformed labels JSON, before any model work.
 
     Shape checks only - specs are not resolved against extracted units - so sweep
@@ -129,10 +138,14 @@ def validate_labels_shape(labels: dict[str, Any]) -> None:
     after the corpus embed, where an empty category list surfaced as
     ``build_positive_pairs``'s misleading top-level ``positive_groups`` error.
 
-    :param dict[str, Any] labels: Loaded labels JSON dictionary.
+    :param Any labels: Loaded labels JSON value.
     :raises ValueError: If ``positive_groups`` or any ``categories`` entry is malformed.
     :return None: ``None``.
     """
+    if not isinstance(labels, dict):
+        # Sweep entry points catch one shape-error type for loaded JSON.
+        raise ValueError("labels.json must contain a JSON object.")  # noqa: TRY004
+
     groups = labels.get("positive_groups")
     if not isinstance(groups, list) or not groups:
         msg = "labels.json must define a non-empty 'positive_groups' list."
@@ -141,6 +154,8 @@ def validate_labels_shape(labels: dict[str, Any]) -> None:
         if not isinstance(group, list) or len(group) < 2:
             msg = f"Invalid positive group {group!r}; expected a list with at least two specs."
             raise ValueError(msg)
+        for spec in group:
+            parse_label_spec(spec)
 
     categories = labels.get("categories")
     if categories is None:
@@ -161,6 +176,8 @@ def validate_labels_shape(labels: dict[str, Any]) -> None:
                     "expected a list with at least two specs."
                 )
                 raise ValueError(msg)
+            for spec in group:
+                parse_label_spec(spec)
 
 
 def corpus_files(root: Path) -> list[Path]:
@@ -187,7 +204,7 @@ def corpus_files(root: Path) -> list[Path]:
     return files
 
 
-def validate_probes_shape(payload: dict[str, Any]) -> list[dict[str, Any]]:
+def validate_probes_shape(payload: Any) -> list[dict[str, Any]]:
     """Fail fast on structurally malformed search-probes JSON, before any model work.
 
     Shape checks only, mirroring :func:`validate_labels_shape`: specs are not
@@ -196,10 +213,14 @@ def validate_probes_shape(payload: dict[str, Any]) -> list[dict[str, Any]]:
     scored 0.0, and the loosest-tie ranking selected the grid floor under a full
     calibration manifest.
 
-    :param dict[str, Any] payload: Loaded search-probes JSON dictionary.
+    :param Any payload: Loaded search-probes JSON value.
     :raises ValueError: If the payload or any probe entry is malformed.
     :return list[dict[str, Any]]: The validated probe list.
     """
+    if not isinstance(payload, dict):
+        # Sweep entry points catch one shape-error type for loaded JSON.
+        raise ValueError("search probes JSON must contain a JSON object.")  # noqa: TRY004
+
     probes = payload.get("probes")
     if not isinstance(probes, list) or not probes:
         msg = "search probes JSON must define a non-empty 'probes' list."
@@ -219,9 +240,11 @@ def validate_probes_shape(payload: dict[str, Any]) -> list[dict[str, Any]]:
             msg = f"probe {index} must define a non-empty 'expected' spec list."
             raise ValueError(msg)
         for spec in expected:
-            if not isinstance(spec, str) or not spec.strip():
+            try:
+                parse_label_spec(spec)
+            except ValueError as exc:
                 msg = f"probe {index} has an invalid expected spec: {spec!r}."
-                raise ValueError(msg)
+                raise ValueError(msg) from exc
     return probes
 
 

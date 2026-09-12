@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from codedupes.constants import HYBRID_STATEMENT_RATIO_MIN, HYBRID_WEAK_JACCARD_MIN
 from codedupes.languages import SUPPORTED_LANGUAGES
 from codedupes.semantic_profiles import (
     DEFAULT_FALLBACK_SEARCH_THRESHOLD,
@@ -109,6 +110,9 @@ def test_profile_copies_and_freezes_language_gates() -> None:
         ("default_semantic_threshold", float("nan")),
         ("default_search_threshold", float("inf")),
         ("language_semantic_thresholds", {"python": -0.01}),
+        ("hybrid_weak_identifier_jaccard_min", 1.5),
+        ("hybrid_statement_ratio_min", float("nan")),
+        ("language_high_confidence_thresholds", {"python": 1.01}),
     ],
 )
 def test_profile_rejects_invalid_thresholds(field_name: str, field_value: object) -> None:
@@ -122,6 +126,72 @@ def test_profile_rejects_invalid_thresholds(field_name: str, field_value: object
             family="generic",
             **kwargs,
         )
+
+
+def test_high_confidence_gate_lookup_is_off_unless_calibrated() -> None:
+    profile = SemanticModelProfile(
+        key="test",
+        canonical_name="test/model",
+        aliases=(),
+        family="generic",
+        language_semantic_thresholds={"python": 0.80, "rust": 0.74, "c": 0.82},
+        language_high_confidence_thresholds={"python": 0.90, "rust": 0.86, "c": None},
+    )
+
+    assert profile.high_confidence_threshold_for_language("python") == 0.90
+    assert profile.high_confidence_threshold_for_language("rust") == 0.86
+    # Explicitly off, uncalibrated, and unknown languages never borrow a gate:
+    # promotion widens the default view, so it needs its own evidence.
+    assert profile.high_confidence_threshold_for_language("c") is None
+    assert profile.high_confidence_threshold_for_language("go") is None
+    assert profile.high_confidence_threshold_for_language(None) is None
+    with pytest.raises(TypeError):
+        profile.language_high_confidence_thresholds["python"] = 0.5  # type: ignore[index]
+
+    bare = SemanticModelProfile(
+        key="bare", canonical_name="bare/model", aliases=(), family="generic"
+    )
+    assert bare.high_confidence_threshold_for_language("python") is None
+    assert bare.hybrid_weak_identifier_jaccard_min == HYBRID_WEAK_JACCARD_MIN
+    assert bare.hybrid_statement_ratio_min == HYBRID_STATEMENT_RATIO_MIN
+
+
+def test_high_confidence_gate_must_not_sit_below_the_duplicate_gate() -> None:
+    with pytest.raises(ValueError, match="must not sit below"):
+        SemanticModelProfile(
+            key="test",
+            canonical_name="test/model",
+            aliases=(),
+            family="generic",
+            language_semantic_thresholds={"python": 0.80},
+            language_high_confidence_thresholds={"python": 0.79},
+        )
+
+
+def test_builtin_hybrid_split_matches_the_recorded_corroboration_sweep() -> None:
+    """Pin the shipped tier split; the sweep policy itself is checked by test_corroboration_reports."""
+    gte = resolve_model_profile("gte-modernbert-base")
+    gemma = resolve_model_profile("embeddinggemma-300m")
+
+    assert (gte.hybrid_weak_identifier_jaccard_min, gte.hybrid_statement_ratio_min) == (0.0, 0.80)
+    assert dict(gte.language_high_confidence_thresholds) == {
+        "python": None,
+        "c": None,
+        "rust": None,
+        "javascript": None,
+        "typescript": 0.88,
+    }
+    assert (gemma.hybrid_weak_identifier_jaccard_min, gemma.hybrid_statement_ratio_min) == (
+        0.0,
+        0.20,
+    )
+    assert set(gemma.language_high_confidence_thresholds.values()) == {None}
+    for profile in list_supported_models():
+        # Every supported language has an explicit promotion decision, and a
+        # gate never sits below the language's admission gate.
+        assert set(profile.language_high_confidence_thresholds) == set(SUPPORTED_LANGUAGES)
+        for language, gate in profile.language_high_confidence_thresholds.items():
+            assert gate is None or gate >= profile.semantic_threshold_for_language(language)
 
 
 def test_language_gate_lookup_builtin_fallback_and_generic() -> None:
@@ -349,6 +419,33 @@ def test_dynamic_gte_modernbert_profile_inherits_family_thresholds_without_revis
     assert profile.language_semantic_thresholds == builtin.language_semantic_thresholds
     assert profile.default_semantic_threshold == builtin.default_semantic_threshold
     assert profile.default_search_threshold == 0.50
+
+
+@pytest.mark.parametrize(
+    ("dynamic_model_name", "builtin_alias", "is_local_path"),
+    [
+        ("gte-modernbert-base", "gte-modernbert-base", True),
+        ("someone/embeddinggemma-300m-code-ft", "embeddinggemma-300m", False),
+    ],
+)
+def test_dynamic_profile_inherits_the_family_hybrid_split(
+    tmp_path: Path, dynamic_model_name: str, builtin_alias: str, is_local_path: bool
+) -> None:
+    if is_local_path:
+        local_dir = tmp_path / dynamic_model_name
+        local_dir.mkdir()
+        profile = resolve_model_profile(str(local_dir))
+    else:
+        profile = resolve_model_profile(dynamic_model_name)
+    builtin = resolve_model_profile(builtin_alias)
+
+    assert profile.hybrid_weak_identifier_jaccard_min == builtin.hybrid_weak_identifier_jaccard_min
+    assert profile.hybrid_statement_ratio_min == builtin.hybrid_statement_ratio_min
+    assert dict(profile.language_high_confidence_thresholds) == dict(
+        builtin.language_high_confidence_thresholds
+    )
+    if builtin_alias == "gte-modernbert-base":
+        assert profile.high_confidence_threshold_for_language("typescript") == 0.88
 
 
 def test_resolving_family_copy_does_not_log_threshold_selection(tmp_path: Path, caplog) -> None:
