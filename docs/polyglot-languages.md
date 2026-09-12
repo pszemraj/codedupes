@@ -132,7 +132,7 @@ Semantic comparison follows the [per-language gates and cross-language policy](a
 
 ## Unused-code analysis
 
-The [unused-code heuristic](analysis-defaults.md#potentially-unused-defaults) evaluates Python only. Extending it requires translation-unit and preprocessor context for C, Cargo/module/trait resolution for Rust, and project-wide module resolution for JavaScript/TypeScript. Syntax extraction alone cannot establish those references.
+The [unused-code heuristic](analysis-defaults.md#potentially-unused-defaults) evaluates Python only, from a name-based reference graph built with the standard-library `ast`. Extending it requires translation-unit and preprocessor context for C, Cargo/module/trait resolution for Rust, and project-wide module resolution for JavaScript/TypeScript. Syntax extraction alone cannot establish those references.
 
 ## Parser readiness
 

@@ -43,7 +43,7 @@ Options, in addition to the [shared options](#options-shared-by-check-and-search
 - `--traditional-only`: Use only traditional matching for duplicate detection
 - `--allow-semantic-fallback`: Enable [combined-mode fallback](output.md#exit-codes)
 - `--no-unused`: Disable unused-code detection
-- `--strict-unused`: Apply the [strict unused-code policy](analysis-defaults.md#potentially-unused-defaults)
+- `--strict-unused`: Also report unreferenced public functions and public methods; see the [unused-code policy](analysis-defaults.md#potentially-unused-defaults)
 - `--suppress-test-semantic`: Suppress semantic duplicate matches involving `test_*` functions
 - `--no-tiny-filter`: Disable tiny code-unit filtering for traditional duplicates
 - `--tiny-cutoff <int>`: Override the [traditional tiny-filter cutoff](analysis-defaults.md#traditional-duplicate-defaults)

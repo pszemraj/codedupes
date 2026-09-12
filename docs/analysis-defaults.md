@@ -88,20 +88,31 @@ Custom exclusions apply to direct file extraction too, relative to the file's pa
 
 ## Potentially unused defaults
 
-Unused detection evaluates Python units only; non-Python units are excluded and surfaced as a count (`unused_excluded_units`). It runs by default and builds a conservative reference graph from direct calls in analyzed code, module-level import and assignment aliases, `if __name__ == "__main__"` blocks, and `[project.scripts]` or `[project.gui-scripts]` entries in `pyproject.toml`.
+Unused detection evaluates Python units only; non-Python units are excluded and surfaced as a count (`unused_excluded_units`). It runs by default. `--no-unused` (`run_unused=False`) disables it without changing duplicate findings; `--strict-unused` (`strict_unused=True`) also reports unreferenced public functions and public methods. Each analyzed file is parsed once with the standard-library `ast`; no model or grammar is loaded.
 
-The following units are not reported:
+A unit is referenced when module-level code or another definition uses its name through any of:
 
-- referenced units (any analyzed call resolving to the unit's name or a qualified-name suffix counts)
+- a loaded name: calls, decorators, base classes, default arguments, callbacks passed as values, and class-body aliases such as `visit_Name = _impl`
+- attribute access in any context, including stores through a property setter and bound-method callbacks such as `onerror=self._cleanup`
+- annotations on parameters, returns, and annotated assignments, including quoted forward references such as `"Node | None"`
+- module-level statements, `if __name__ == "__main__"` blocks included (module code runs on import)
+- module-level import and assignment aliases, which resolve to their targets
+- `[project.scripts]` and `[project.gui-scripts]` entries in `pyproject.toml`
+- framework dispatch: public methods of a class whose base does not resolve by name to a class in the analyzed tree (`object` excluded; subclasses of such a class inherit the rule), such as `ast.NodeVisitor` `visit_*` hooks or `logging.Filter.filter`
+
+Matching is name-based rather than scope-resolved: a reference to `helper` keeps every unit named `helper` (or whose qualified name ends in the referenced dotted path) out of the report, trading missed dead code for fewer false "unused" flags. Likewise an external base whose last segment matches a project class name resolves as project. A unit's own body does not count, so a self-recursive helper nobody calls is still reported; references inside a nested definition count for every enclosing definition. Dynamic registration, reflection, and string lookups such as `getattr(obj, "name")` stay outside the graph, so unused findings require review.
+
+Unreferenced units are still not reported when they are:
+
 - names exported through `__all__`, public classes, and dunder methods such as `__init__`
 - `get_*` and `set_*` definitions of any unit type (not only methods - a module-level `get_thing()` is suppressed too, even in strict mode)
 - definitions decorated with `@abstractmethod` or `@abc.abstractmethod`
 - `test_*` definitions and definitions in files whose names contain `_test`
 - units containing `# noqa: codedupes` or `# codedupes: ignore`
 
-Call matching is name-based rather than scope-resolved: a call to any same-named symbol keeps every candidate definition out of the report, trading missed dead code for fewer false "unused" flags. Default mode also skips public non-method functions. Strict mode (`--strict-unused` or `strict_unused=True`) removes only that suppression; the other API and runtime exclusions still apply. Only call expressions count as references: attribute access without a call, decorator usage, callbacks passed as arguments, and type annotations do not, so framework-dispatched methods (for example `ast.NodeVisitor` `visit_*` hooks) surface as candidates. Dynamic registration, reflection, and string-based lookups likewise remain outside the static reference graph, so unused findings require review.
+Default mode also skips public functions and public methods of public classes: unreferenced public surface is API, not a finding. Public methods of private classes and every private definition stay reportable. Strict mode removes only that suppression; the exclusions above still apply, and framework-dispatched methods stay referenced because that rule is a reference, not a policy.
 
-Unused findings are independent of duplicate detection: a potentially unused unit remains eligible for semantic and traditional duplicate reporting. `--no-unused` disables unused reporting without changing duplicate findings.
+Unused findings are independent of duplicate detection: a potentially unused unit remains eligible for semantic and traditional duplicate reporting.
 
 ## Traditional duplicate defaults
 

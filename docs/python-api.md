@@ -205,7 +205,7 @@ quiet_dependency_loggers()  # or quiet_dependency_loggers(logging.ERROR)
 - `AnalysisResult.hybrid_duplicates`: every synthesized duplicate candidate with its [confidence tier](analysis-defaults.md#hybrid-synthesis-confidence-defaults); the CLI applies [report selection](#report-selection-and-json) on top of this complete list
 - `AnalysisResult.traditional_duplicates`: raw traditional duplicates (diagnostics)
 - `AnalysisResult.semantic_duplicates`: raw semantic duplicates (diagnostics)
-- `AnalysisResult.potentially_unused`: Python-only heuristic unused candidates
+- `AnalysisResult.potentially_unused`: Python-only [unused candidates](analysis-defaults.md#potentially-unused-defaults) from a name-based reference graph
 - `AnalysisResult.extraction_diagnostics`: recoverable parser diagnostics and skipped-unit reasons
 - `CodeAnalyzer.extraction_diagnostics`: extraction diagnostics from the latest `index()` or `analyze()` run
 - `AnalysisResult.semantic_diagnostics`: semantic-stage diagnostics, mirroring `CodeAnalyzer.semantic_diagnostics` for that run

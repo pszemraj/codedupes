@@ -8,6 +8,7 @@
 - `--min-lines` / `min_semantic_lines` became `--min-statements` / `min_semantic_statements`. The redundant `--tiny-near-jaccard-min` exception and `--hybrid-semantic-threshold` sweep flag were removed.
 - Flat duplicate defaults were replaced by [per-language gates](analysis-defaults.md#semantic-duplicate-gate-defaults). Pass `--semantic-threshold` (or `AnalyzerConfig.semantic_threshold`) to retain a flat semantic policy.
 - `codedupes check` now [withholds `semantic_review` pairs by default](output.md#report-selection). Consumers that require every hybrid edge should add `--include-review`.
+- Default unused reporting now also [skips public methods of public classes](analysis-defaults.md#potentially-unused-defaults); pass `--strict-unused` to keep them. `build_reference_graph` and `find_potentially_unused` moved to `codedupes.unused`, and `run_traditional_analysis` returns `(exact, near)` only.
 - Search-only Python callers should use `AnalyzerConfig(mode="search")`; see the [search configuration](python-api.md#semantic-query-search). `analyze()` rejects that mode, while `index()` and `search()` support it.
 - The default [Hub revision policy](caching.md#hub-revisions) now uses labels; `--strict-revision-cache` retains the previous policy.
 - Runtime dependency minimums changed; use the [installation requirements](install.md). The C2LLM profile and DeepSpeed-only `gpu` extra were removed. Replace `semantic_profiles.resolve_model_name()` with `resolve_model_profile(...).canonical_name`.
@@ -16,6 +17,7 @@
 ## Detection and extraction
 
 - Added [C, Rust, JavaScript/JSX, and TypeScript/TSX extraction](polyglot-languages.md). Unused analysis remains Python-only.
+- Unused analysis now builds its [reference graph](analysis-defaults.md#potentially-unused-defaults) from every loaded name, attribute access, annotation, and module-level statement rather than call sites alone, and treats public methods of framework-derived classes (`ast.NodeVisitor`, `logging.Filter`) as referenced.
 - Improved language-specific extraction, traditional matching, and source-range handling; see [polyglot language support](polyglot-languages.md).
 - Added [polyglot calibration corpora](../test_fixtures/polyglot_calibration/README.md) and a runnable [Rust/WebAssembly clone fixture](../test_fixtures/cowsay_wasm/README.md).
 - The [hybrid confidence split](analysis-defaults.md#hybrid-synthesis-confidence-defaults) is calibrated per model profile. [Recorded calibration results](../test_fixtures/polyglot_calibration/README.md#calibration-results) support the shipped values.
