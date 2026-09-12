@@ -317,6 +317,73 @@ def test_descend_string_makes_interpolation_structural() -> None:
     )
 
 
+def _grouped_name(source: bytes, *, wrapped: bool) -> FakeNode:
+    """Model ``(a)`` versus ``a`` as an expression statement."""
+    name = _leaf(source, b"a", "identifier")
+    if not wrapped:
+        return FakeNode("expression_statement", 0, len(source), children=(name,))
+    group = FakeNode(
+        "parenthesized_expression",
+        0,
+        len(source),
+        children=(
+            FakeNode("(", 0, 1, is_named=False),
+            name,
+            FakeNode(")", len(source) - 1, len(source), is_named=False),
+        ),
+    )
+    return FakeNode("expression_statement", 0, len(source), children=(group,))
+
+
+def test_unwrap_hook_emits_only_the_named_children() -> None:
+    """An unwrapped node contributes neither its own wrapper nor its punctuation."""
+    plain = b"a"
+    wrapped = b"(a)"
+    policy = HashPolicy(unwrap=lambda node, parent: node.type == "parenthesized_expression")
+
+    def structural(tree: FakeNode, source: bytes, hook_policy: HashPolicy) -> str:
+        return _structural_hash(tree, source, "python", CodeUnitType.FUNCTION, policy=hook_policy)
+
+    assert structural(
+        _grouped_name(wrapped, wrapped=True), wrapped, DEFAULT_HASH_POLICY
+    ) != structural(_grouped_name(plain, wrapped=False), plain, DEFAULT_HASH_POLICY)
+    assert structural(_grouped_name(wrapped, wrapped=True), wrapped, policy) == structural(
+        _grouped_name(plain, wrapped=False), plain, policy
+    )
+    # The hook only removes what it claims: a tree it never fires on hashes as before.
+    assert structural(_grouped_name(plain, wrapped=False), plain, policy) == structural(
+        _grouped_name(plain, wrapped=False), plain, DEFAULT_HASH_POLICY
+    )
+    assert structural(_grouped_name(wrapped, wrapped=True), wrapped, HashPolicy()) == structural(
+        _grouped_name(wrapped, wrapped=True), wrapped, DEFAULT_HASH_POLICY
+    )
+
+
+def test_string_marker_hook_relabels_a_collapsed_string() -> None:
+    """Two literal shapes share a fingerprint only when the hook gives them one marker."""
+    joined = b'"ab"'
+    concatenated = b'"a" "b"'
+    single = FakeNode("string", 0, len(joined))
+    parts = FakeNode(
+        "concatenated_string",
+        0,
+        len(concatenated),
+        children=(FakeNode("string", 0, 3), FakeNode("string", 4, 7)),
+    )
+    policy = HashPolicy(
+        string_marker=lambda node, parent: "string" if node.type == "concatenated_string" else None
+    )
+
+    def structural(tree: FakeNode, source: bytes, hook_policy: HashPolicy) -> str:
+        return _structural_hash(tree, source, "python", CodeUnitType.FUNCTION, policy=hook_policy)
+
+    assert structural(parts, concatenated, DEFAULT_HASH_POLICY) != structural(
+        single, joined, DEFAULT_HASH_POLICY
+    )
+    assert structural(parts, concatenated, policy) == structural(single, joined, policy)
+    assert structural(single, joined, policy) == structural(single, joined, DEFAULT_HASH_POLICY)
+
+
 @pytest.mark.parametrize(
     ("relative", "language", "expected"),
     [

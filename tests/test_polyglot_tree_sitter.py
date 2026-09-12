@@ -88,7 +88,7 @@ def test_every_dialect_reproduces_unit_source_from_byte_ranges(
 @pytest.mark.parametrize(
     ("filename", "source", "expected_hash"),
     [
-        ("sample.py", "def add(a, b):\n    return a + b", "a142c968e159764c"),
+        ("sample.py", "def add(a, b):\n    return a + b", "d5e992360de8b5f7"),
         ("sample.c", "int add(int a, int b) { return a + b; }", "055dad2cb951cd16"),
         ("sample.rs", "pub fn add(a: i32, b: i32) -> i32 { a + b }", "f0e9ce5598395030"),
         ("sample.js", "function add(a, b) { return a + b; }", "06dc5b63c208ce88"),
@@ -1063,13 +1063,22 @@ def test_tsx_and_unicode_use_exact_byte_slices(tmp_path: Path) -> None:
     assert "<section>" in card.source
 
 
-def test_non_utf8_source_is_analyzed_but_reported(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("filename", "source", "language"),
+    [
+        ("legacy.js", "function greet() { return 'café'; }\n", "javascript"),
+        ("legacy.py", "def greet():\n    return 'café'\n", "python"),
+    ],
+)
+def test_non_utf8_source_is_analyzed_but_reported(
+    tmp_path: Path, filename: str, source: str, language: str
+) -> None:
     """Recall-first decoding keeps the unit, but replacement characters reach the
     fingerprints and embeddings, so the corruption must not stay silent."""
-    path = tmp_path / "legacy.js"
-    path.write_bytes("function greet() { return 'café'; }\n".encode("latin-1"))
+    path = tmp_path / filename
+    path.write_bytes(source.encode("latin-1"))
 
-    extractor = CodeExtractor(tmp_path, include_private=True, languages=("javascript",))
+    extractor = CodeExtractor(tmp_path, include_private=True, languages=(language,))
     units = list(extractor.extract_from_file(path))
 
     assert [unit.qualified_name for unit in units] == ["legacy.greet"]
@@ -1429,6 +1438,119 @@ def test_python_backslash_continuation_is_formatting(tmp_path: Path) -> None:
 
     assert continued.structural_hash == joined.structural_hash
     assert continued.token_hash == joined.token_hash
+
+
+@pytest.mark.parametrize(
+    ("formatted", "plain"),
+    [
+        pytest.param(
+            "def f():\n    x = 1; y = 2\n    return x + y\n",
+            "def f():\n    x = 1\n    y = 2\n    return x + y\n",
+            id="semicolon-separator",
+        ),
+        pytest.param(
+            "def f(a, b):\n    x = (\n        a + b\n    )\n    return x\n",
+            "def f(a, b):\n    x = a + b\n    return x\n",
+            id="grouping-parentheses",
+        ),
+        pytest.param(
+            'def f():\n    raise ValueError("long "\n        "continued")\n',
+            'def f():\n    raise ValueError("long continued")\n',
+            id="implicit-concatenation",
+        ),
+        pytest.param(
+            "def f(a, b):\n    return g(\n        a,\n        b,\n    )\n",
+            "def f(a, b):\n    return g(a, b)\n",
+            id="call-trailing-comma",
+        ),
+        pytest.param(
+            "def f(a, b):\n    return {\n        a,\n        b,\n    }\n",
+            "def f(a, b):\n    return {a, b}\n",
+            id="set-trailing-comma",
+        ),
+        pytest.param(
+            'def f():\n    ("doc")\n    return 1\n',
+            'def f():\n    "doc"\n    return 1\n',
+            id="parenthesized-docstring",
+        ),
+    ],
+)
+def test_python_formatting_only_rewrites_keep_the_structural_hash(
+    tmp_path: Path, formatted: str, plain: str
+) -> None:
+    """Separators, magic trailing commas, grouping parentheses, and split literals
+    are what a formatter adds; ``ast`` has no node for any of them."""
+    first = _python_unit(tmp_path, "formatted.py", formatted)
+    second = _python_unit(tmp_path, "plain.py", plain)
+
+    assert first.structural_hash == second.structural_hash
+    assert first.token_hash != second.token_hash
+    assert first.statement_count == second.statement_count
+
+
+def test_python_parenthesized_docstring_is_pruned(tmp_path: Path) -> None:
+    """``("doc")`` is ``Constant(str)`` to ``ast``, so it prunes like a bare docstring."""
+    wrapped = _python_unit(tmp_path, "wrapped.py", 'def f():\n    ("doc")\n    return 1\n')
+    bare = _python_unit(tmp_path, "bare.py", "def f():\n    return 1\n")
+
+    assert wrapped.structural_hash == bare.structural_hash
+    assert (wrapped.statement_count, bare.statement_count) == (1, 1)
+
+
+@pytest.mark.parametrize(
+    ("first", "second"),
+    [
+        pytest.param(
+            "def f(a, b, c):\n    return (a + b) * c\n",
+            "def f(a, b, c):\n    return a + b * c\n",
+            id="parentheses-change-precedence",
+        ),
+        pytest.param(
+            "def f(a):\n    return (a,)\n",
+            "def f(a):\n    return (a)\n",
+            id="tuple-versus-grouped-name",
+        ),
+        pytest.param(
+            'def f(x):\n    return "a" f"{x.y}"\n',
+            'def f(x):\n    return "a" f"{x}"\n',
+            id="concatenation-with-an-fstring-part",
+        ),
+    ],
+)
+def test_python_grouping_that_changes_the_tree_stays_structural(
+    tmp_path: Path, first: str, second: str
+) -> None:
+    """Dropping the parentheses node keeps the nesting it expressed, a one-tuple is
+    not a grouped name, and a concatenation with an interpolation is still walked."""
+    left = _python_unit(tmp_path, "first.py", first)
+    right = _python_unit(tmp_path, "second.py", second)
+
+    assert left.structural_hash != right.structural_hash
+
+
+def test_python_decorators_are_part_of_the_unit_fingerprints(tmp_path: Path) -> None:
+    """A decorated unit starts at its decorator, so the decorator reaches both
+    hashes and the identifier set."""
+    units = _python_units(
+        tmp_path,
+        """
+        import functools
+
+        @functools.lru_cache
+        def cached(a):
+            return a
+
+        def plain(a):
+            return a
+        """,
+    )
+    cached = units["sample.cached"]
+    plain = units["sample.plain"]
+
+    assert cached.structural_hash != plain.structural_hash
+    assert cached.token_hash != plain.token_hash
+    assert {"functools", "lru_cache"} <= cached.identifiers
+    assert not ({"functools", "lru_cache"} & plain.identifiers)
 
 
 def test_python_fstring_interpolation_is_structural(tmp_path: Path) -> None:

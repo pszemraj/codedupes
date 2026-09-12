@@ -438,6 +438,7 @@ def _leaf_nodes(node: Any) -> Iterable[Any]:
 
 
 NodePredicate = Callable[[Any, Any | None], bool]
+NodeRename = Callable[[Any, Any | None], str | None]
 
 
 def _never(node: Any, parent: Any | None) -> bool:
@@ -448,6 +449,16 @@ def _never(node: Any, parent: Any | None) -> bool:
     :return: Always ``False``.
     """
     return False
+
+
+def _keep_type(node: Any, parent: Any | None) -> str | None:
+    """Default marker answer: a collapsed string is labeled with its own node type.
+
+    :param node: String-like node being collapsed.
+    :param parent: Parent of ``node`` in the walk.
+    :return: Always ``None``.
+    """
+    return None
 
 
 @dataclass(frozen=True)
@@ -471,6 +482,10 @@ class HashPolicy:
     """Emit the node's full text as one token instead of flattening its leaves."""
     descend_string: NodePredicate = _never
     """Walk into a string-like node instead of collapsing it to ``<STR>``."""
+    unwrap: NodePredicate = _never
+    """Emit only the node's named children, dropping its wrapper and punctuation (grouping parentheses)."""
+    string_marker: NodeRename = _keep_type
+    """Label a collapsed string with another node type so equivalent literal shapes share a marker."""
 
 
 DEFAULT_HASH_POLICY = HashPolicy()
@@ -534,8 +549,10 @@ def _structural_hash(
             continue
         if policy.prune_structural(current, parent):
             continue
+        if policy.unwrap(current, parent):
+            stack.extend((child, current) for child in reversed(_named_children(current)))
+            continue
 
-        text = _node_text(source, current)
         lower_type = node_type.lower()
         children = _children(current)
 
@@ -544,7 +561,8 @@ def _structural_hash(
             and not ("template" in lower_type and children)
             and not policy.descend_string(current, parent)
         ):
-            pieces.append(f"<{node_type}:STR>")
+            marker_type = policy.string_marker(current, parent) or node_type
+            pieces.append(f"<{marker_type}:STR>")
             continue
 
         if node_type in _CLASS_DECLARATION_TYPES or (
@@ -554,6 +572,7 @@ def _structural_hash(
             _mark_declaration_name(current)
 
         if not children:
+            text = _node_text(source, current)
             if node_type in _IDENTIFIER_TYPES:
                 span = (
                     int(getattr(current, "start_byte", -1)),
@@ -954,6 +973,9 @@ def _python_is_docstring_statement(statement: Any) -> bool:
     if getattr(statement, "type", "") != "expression_statement":
         return False
     values = _named_children(statement)
+    # ``("doc")`` is a docstring to ``ast``: grouping parentheses are not a node there.
+    while len(values) == 1 and getattr(values[0], "type", "") == "parenthesized_expression":
+        values = _named_children(values[0])
     return len(values) == 1 and _python_is_plain_string(values[0])
 
 
@@ -972,18 +994,26 @@ def _python_docstring(body: Any) -> Any | None:
     return first
 
 
+# Punctuation that ``ast`` never represents: a formatter adds or removes it
+# without changing the tree, so it must not move the structural hash.
+_PYTHON_FORMATTING_TOKENS = frozenset({"line_continuation", ";", ","})
+
+
 def _python_prune_structural(node: Any, parent: Any | None) -> bool:
     """Drop formatting-only nodes and docstrings from the Python structural stream.
 
     Docstrings are stripped positionally for every definition inside the unit,
     nested ones included, mirroring how the ``ast`` hasher dropped ``body[0]``.
+    Statement separators, trailing commas, and backslash continuations are not
+    part of the ``ast`` either; a formatter's magic trailing comma or a
+    ``x = 1; y = 2`` split is a reformat, not a change.
 
     :param node: Node under consideration.
     :param parent: Parent of ``node`` in the walk.
-    :return: ``True`` for a line continuation or a definition's docstring statement.
+    :return: ``True`` for formatting punctuation or a definition's docstring statement.
     """
     node_type = getattr(node, "type", "")
-    if node_type == "line_continuation":
+    if node_type in _PYTHON_FORMATTING_TOKENS:
         return True
     if node_type != "expression_statement" or getattr(parent, "type", "") != "block":
         return False
@@ -1021,22 +1051,57 @@ def _python_opaque_token(node: Any, parent: Any | None) -> bool:
     return getattr(node, "type", "") == "string_content"
 
 
+def _python_has_interpolation(string: Any) -> bool:
+    """Report whether a ``string`` node carries f-string interpolations.
+
+    :param string: ``string`` node.
+    :return: ``True`` when any named child is an ``interpolation``.
+    """
+    return any(getattr(child, "type", "") == "interpolation" for child in _named_children(string))
+
+
 def _python_descend_string(node: Any, parent: Any | None) -> bool:
-    """Walk into f-strings and implicit concatenations instead of collapsing them.
+    """Walk into strings that contain code instead of collapsing them.
 
     An interpolation is code, so ``f"{x}"`` and ``f"{x.y}"`` must fingerprint
-    differently; the literal text around it still normalizes as ``<STR>``.
+    differently; the literal text around it still normalizes as ``<STR>``. An
+    implicit concatenation is walked only when one of its parts interpolates;
+    ``"a" "b"`` is one literal to ``ast`` and collapses like ``"ab"``.
 
     :param node: Node under consideration.
     :param parent: Parent of ``node`` in the walk.
-    :return: ``True`` for a ``concatenated_string`` or a ``string`` with interpolations.
+    :return: ``True`` for a ``string`` or ``concatenated_string`` with interpolations.
     """
     node_type = getattr(node, "type", "")
-    if node_type == "concatenated_string":
-        return True
-    return node_type == "string" and any(
-        getattr(child, "type", "") == "interpolation" for child in _named_children(node)
+    if node_type == "string":
+        return _python_has_interpolation(node)
+    return node_type == "concatenated_string" and any(
+        getattr(child, "type", "") == "string" and _python_has_interpolation(child)
+        for child in _named_children(node)
     )
+
+
+def _python_string_marker(node: Any, parent: Any | None) -> str | None:
+    """Label a plain implicit concatenation as a single ``string``.
+
+    :param node: String-like node being collapsed.
+    :param parent: Parent of ``node`` in the walk.
+    :return: ``"string"`` for a ``concatenated_string``, else ``None``.
+    """
+    return "string" if getattr(node, "type", "") == "concatenated_string" else None
+
+
+def _python_unwrap(node: Any, parent: Any | None) -> bool:
+    """Drop grouping parentheses from the structural stream.
+
+    ``ast`` has no node for ``(expr)``: precedence is already the nesting, so
+    the parentheses a formatter wraps long expressions in are formatting.
+
+    :param node: Node under consideration.
+    :param parent: Parent of ``node`` in the walk.
+    :return: ``True`` for a ``parenthesized_expression``.
+    """
+    return getattr(node, "type", "") == "parenthesized_expression"
 
 
 def _python_preserve_identifier(node: Any, parent: Any | None) -> bool:
@@ -1103,6 +1168,8 @@ class PythonBackend(TreeSitterBackend):
         preserve_identifier=_python_preserve_identifier,
         opaque_token=_python_opaque_token,
         descend_string=_python_descend_string,
+        unwrap=_python_unwrap,
+        string_marker=_python_string_marker,
     )
 
     def _include_spec(self, spec: UnitSpec) -> bool:

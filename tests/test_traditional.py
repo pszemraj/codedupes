@@ -86,12 +86,40 @@ def test_exact_duplicates_across_function_and_method(tmp_path: Path) -> None:
 
     # A function copied verbatim into a class body must stay visible to exact
     # detection: functions and methods share a blocking kind, matching semantic
-    # pairing. (A decorator would be part of the method's span and break the
-    # token match; the blocking kind is what this test is about.)
+    # pairing.
     pairs = {
         tuple(sorted((pair.unit_a.qualified_name, pair.unit_b.qualified_name))) for pair in exact
     }
     assert ("sample.Report.render_summary", "sample.render_summary") in pairs
+
+
+def test_decorated_method_is_not_an_exact_duplicate_of_the_plain_function(tmp_path: Path) -> None:
+    """A decorator is part of the unit, so it is code the fingerprints compare."""
+    source = dedent(
+        """
+        def render_summary(rows, limit, header):
+            lines = [header]
+            for row in rows[:limit]:
+                lines.append(str(row))
+            return "\\n".join(lines)
+
+        class Report:
+            @staticmethod
+            def render_summary(rows, limit, header):
+                lines = [header]
+                for row in rows[:limit]:
+                    lines.append(str(row))
+                return "\\n".join(lines)
+        """
+    ).strip()
+    units = extract_units(tmp_path, source, include_private=True)
+
+    exact, _near = run_traditional_analysis(units, jaccard_threshold=0.85)
+
+    pairs = {
+        tuple(sorted((pair.unit_a.qualified_name, pair.unit_b.qualified_name))) for pair in exact
+    }
+    assert ("sample.Report.render_summary", "sample.render_summary") not in pairs
 
 
 def test_near_duplicates_across_function_and_method(tmp_path: Path) -> None:
