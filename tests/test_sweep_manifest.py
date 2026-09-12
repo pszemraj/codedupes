@@ -1070,8 +1070,37 @@ def test_labels_shape_validation_rejects_an_empty_category() -> None:
         validate_labels_shape(labels)
 
 
+@pytest.mark.parametrize("payload", [[], ["alpha.py::first"], "labels"])
+def test_labels_shape_validation_requires_a_top_level_object(payload: object) -> None:
+    with pytest.raises(ValueError, match="must contain a JSON object"):
+        validate_labels_shape(payload)
+
+
+@pytest.mark.parametrize(
+    "spec",
+    [None, 4, "", "alpha.py", "::first", "alpha.py::", "alpha.py::first::extra"],
+)
+def test_labels_shape_validation_rejects_malformed_selectors(spec: object) -> None:
+    labels = {"positive_groups": [["alpha.py::first", spec]]}
+
+    with pytest.raises(ValueError, match="Invalid label spec"):
+        validate_labels_shape(labels)
+
+
+def test_labels_shape_validation_checks_category_selectors() -> None:
+    labels = {
+        "positive_groups": [["alpha.py::first", "alpha.py::second"]],
+        "categories": {"near": [["alpha.py::first", None]]},
+    }
+
+    with pytest.raises(ValueError, match="Invalid label spec"):
+        validate_labels_shape(labels)
+
+
 def test_probes_shape_validation_rejects_empty_and_malformed_probes() -> None:
     """Probes get the same fail-fast shape contract the labels already have."""
+    with pytest.raises(ValueError, match="must contain a JSON object"):
+        validate_probes_shape([])
     with pytest.raises(ValueError, match="non-empty 'probes' list"):
         validate_probes_shape({"probes": []})
     with pytest.raises(ValueError, match="non-empty 'probes' list"):
@@ -1082,6 +1111,8 @@ def test_probes_shape_validation_rejects_empty_and_malformed_probes() -> None:
         validate_probes_shape(
             {"probes": [{"query": "q", "expected": ["a.py::f"]}, {"query": "r", "expected": []}]}
         )
+    with pytest.raises(ValueError, match="probe 0 has an invalid expected spec"):
+        validate_probes_shape({"probes": [{"query": "q", "expected": ["a.py"]}]})
 
     probes = [{"query": "q", "expected": ["a.py::f", "b.py::g"]}]
     assert validate_probes_shape({"probes": probes}) == probes
