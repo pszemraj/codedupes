@@ -1486,8 +1486,8 @@ def test_unreportable_mutable_revision_never_mixes_cached_and_fresh_rows(tmp_pat
 
     class EpochModel(CountingModel):
         def __init__(self) -> None:
-            self.epoch = 0
             super().__init__(dim=2)
+            self.epoch = 0
 
         def encode(self, texts, **kwargs):
             text_list = self._record_encode_call(texts, **kwargs)
