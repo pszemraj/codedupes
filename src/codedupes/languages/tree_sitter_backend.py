@@ -2,7 +2,8 @@
 
 The parser packages are imported only when one of these languages is actually
 encountered.  No grammar is downloaded or compiled at analysis time: the
-project pins the official precompiled Python grammar wheels in ``pyproject``.
+project pins the official precompiled grammar wheels in ``pyproject``, and the
+Python grammar is pinned alongside them.
 """
 
 from __future__ import annotations
@@ -108,7 +109,9 @@ class GrammarProvider:
 
             module_name: str
             function_name: str
-            if grammar_key == "c":
+            if grammar_key == "python":
+                module_name, function_name = "tree_sitter_python", "language"
+            elif grammar_key == "c":
                 module_name, function_name = "tree_sitter_c", "language"
             elif grammar_key == "rust":
                 module_name, function_name = "tree_sitter_rust", "language"

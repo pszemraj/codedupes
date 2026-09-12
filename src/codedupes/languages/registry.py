@@ -64,6 +64,7 @@ class GrammarStatus:
 
 
 GRAMMAR_PACKAGES: Final[dict[str, tuple[str, str]]] = {
+    "python": ("tree-sitter-python", "0.25.0"),
     "c": ("tree-sitter-c", "0.24.2"),
     "rust": ("tree-sitter-rust", "0.24.2"),
     "javascript": ("tree-sitter-javascript", "0.25.0"),

@@ -223,6 +223,23 @@ def test_grammar_status_requires_exact_pins(monkeypatch: pytest.MonkeyPatch) -> 
     assert "tree-sitter-rust==0.24.2 is required" in (rust.error or "")
 
 
+def test_grammar_status_pins_the_python_grammar(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Python parses through a pinned grammar wheel like every other language."""
+    installed = {
+        TREE_SITTER_PACKAGE[0]: TREE_SITTER_PACKAGE[1],
+        **{package: version for package, version in GRAMMAR_PACKAGES.values()},
+    }
+    monkeypatch.setattr(metadata, "version", installed.__getitem__)
+    monkeypatch.setattr(registry, "_probe_dialect", lambda dialect: None)
+
+    statuses = {status.dialect: status for status in get_grammar_statuses()}
+
+    python = statuses["python"]
+    assert python.language == "python"
+    assert (python.package, python.pinned_version) == ("tree-sitter-python", "0.25.0")
+    assert python.available and python.error is None
+
+
 def test_grammar_status_reports_wheels_that_fail_parser_construction(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
