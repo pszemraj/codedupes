@@ -1184,7 +1184,7 @@ def test_explicit_semantic_threshold_applies_flat_across_languages(
 def test_unused_analysis_preserves_duplicate_findings(
     tmp_path: Path, monkeypatch, run_unused: bool, run_traditional: bool
 ) -> None:
-    """Keep duplicate evidence for callbacks the unused heuristic cannot resolve."""
+    """Keep duplicate evidence for units the unused heuristic reports."""
     source = dedent(
         """
         def _a(value):
@@ -1196,9 +1196,6 @@ def test_unused_analysis_preserves_duplicate_findings(
             y = value + 2
             y *= 3
             return y + 2
-
-        list(map(_a, [1, 2]))
-        list(map(_b, [1, 2]))
         """
     ).strip()
     project = create_project(tmp_path, source, module="pairs.py")

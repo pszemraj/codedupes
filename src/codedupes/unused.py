@@ -6,6 +6,7 @@ import ast
 import logging
 import tomllib
 from collections import defaultdict
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from codedupes.models import CodeUnit, CodeUnitType
@@ -13,75 +14,317 @@ from codedupes.models import CodeUnit, CodeUnitType
 logger = logging.getLogger(__name__)
 
 
-def _resolve_call_targets(call: str, aliases: dict[str, str]) -> set[str]:
-    """Resolve direct and alias-mapped call targets.
+@dataclass
+class DefinitionReferences:
+    """Names one ``def``/``class`` statement references, keyed to the unit it maps to."""
 
-    :param call: Raw call expression string.
-    :param aliases: Alias map from local symbols to full targets.
-    :return: Candidate call target names.
+    name: str
+    # (first decorator line, def line) or (def line,): a unit's ``lineno`` is one
+    # of the two depending on whether the extractor spans decorators.
+    linenos: tuple[int, ...]
+    references: set[str] = field(default_factory=set)
+
+
+@dataclass
+class ClassInfo:
+    """A class definition with its base expressions and public methods."""
+
+    definition: DefinitionReferences
+    bases: tuple[str, ...]
+    public_methods: list[DefinitionReferences] = field(default_factory=list)
+
+
+@dataclass
+class ModuleReferences:
+    """Everything one module parse contributes to the reference graph."""
+
+    aliases: dict[str, str] = field(default_factory=dict)
+    module_references: set[str] = field(default_factory=set)
+    definitions: list[DefinitionReferences] = field(default_factory=list)
+    classes: list[ClassInfo] = field(default_factory=list)
+
+
+def _definition_linenos(
+    node: ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef,
+) -> tuple[int, ...]:
+    """Return the line numbers a unit for this definition may start on.
+
+    :param node: Definition node.
+    :return: ``(first decorator line, def line)`` or ``(def line,)``.
     """
-    candidates = {call}
-    if call in aliases:
-        candidates.add(aliases[call])
-    if "." in call:
-        head, _, tail = call.partition(".")
-        if head in aliases:
-            candidates.add(f"{aliases[head]}.{tail}")
-    return candidates
+    if node.decorator_list:
+        return (node.decorator_list[0].lineno, node.lineno)
+    return (node.lineno,)
 
 
-def _extract_main_block_calls(file_path: Path) -> set[str]:
-    """Extract function names called from an if-``__main__`` block.
+def _dotted_name(node: ast.expr) -> str | None:
+    """Render a ``Name``/``Attribute`` chain as dotted text.
 
-    :param file_path: Path to inspect.
-    :return: Function names called from the module entry block.
+    :param node: Expression node.
+    :return: Dotted name, or ``None`` when the chain contains anything else.
+    """
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        head = _dotted_name(node.value)
+        return None if head is None else f"{head}.{node.attr}"
+    return None
+
+
+def _base_text(node: ast.expr) -> str:
+    """Render a class base expression as the name it resolves through.
+
+    :param node: Base expression.
+    :return: Dotted name of the base, or ``"<unknown>"`` for anything else.
+    """
+    if isinstance(node, ast.Subscript):
+        return _base_text(node.value)
+    if isinstance(node, ast.Call):
+        return _base_text(node.func)
+    return _dotted_name(node) or "<unknown>"
+
+
+class _ReferenceCollector(ast.NodeVisitor):
+    """Attribute every loaded name in a module to the definitions that contain it.
+
+    A name is recorded on every scope on the stack, so a class sees what its
+    methods use and an outer function sees what its nested functions use.
+    Names outside any definition belong to the module itself.
+    """
+
+    def __init__(self) -> None:
+        """Start with an empty module scope."""
+        self.module_references: set[str] = set()
+        self.definitions: list[DefinitionReferences] = []
+        self.classes: list[ClassInfo] = []
+        self._scopes: list[DefinitionReferences] = []
+        # Parallel to _scopes: the ClassInfo when that scope is a class body.
+        self._class_scopes: list[ClassInfo | None] = []
+        self._annotation_depth = 0
+
+    def _record(self, name: str) -> None:
+        """Attribute one referenced name to the enclosing scopes or the module.
+
+        :param name: Referenced name or dotted attribute path.
+        :return: ``None``.
+        """
+        if not self._scopes:
+            self.module_references.add(name)
+            return
+        for scope in self._scopes:
+            scope.references.add(name)
+
+    def _visit_annotation(self, node: ast.expr) -> None:
+        """Visit an annotation, unquoting string forward references on the way.
+
+        :param node: Annotation expression.
+        :return: ``None``.
+        """
+        self._annotation_depth += 1
+        try:
+            self.visit(node)
+        finally:
+            self._annotation_depth -= 1
+
+    def visit_Name(self, node: ast.Name) -> None:
+        """Record loaded names; stores and deletes are not uses."""
+        if isinstance(node.ctx, ast.Load):
+            self._record(node.id)
+
+    def visit_Attribute(self, node: ast.Attribute) -> None:
+        """Record attribute access in any context (a property setter is a use too)."""
+        self._record(node.attr)
+        if isinstance(node.value, ast.Name):
+            self._record(f"{node.value.id}.{node.attr}")
+        self.generic_visit(node)
+
+    def visit_Constant(self, node: ast.Constant) -> None:
+        """Parse quoted forward references inside annotations."""
+        if self._annotation_depth == 0 or not isinstance(node.value, str):
+            return
+        try:
+            tree = ast.parse(node.value, mode="eval")
+        except (SyntaxError, ValueError):
+            return
+        self.visit(tree)
+
+    def visit_arg(self, node: ast.arg) -> None:
+        """Visit a parameter annotation."""
+        if node.annotation is not None:
+            self._visit_annotation(node.annotation)
+
+    def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
+        """Visit an annotated assignment with the annotation unquoted."""
+        self._visit_annotation(node.annotation)
+        self.visit(node.target)
+        if node.value is not None:
+            self.visit(node.value)
+
+    def _enter(
+        self, node: ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef
+    ) -> DefinitionReferences:
+        """Register a definition and visit its scope-external parts.
+
+        Decorators, defaults, annotations, bases, and type parameters are
+        evaluated in the enclosing namespace, so they are attributed there.
+
+        :param node: Definition node.
+        :return: The registered definition.
+        """
+        definition = DefinitionReferences(name=node.name, linenos=_definition_linenos(node))
+        self.definitions.append(definition)
+        for decorator in node.decorator_list:
+            self.visit(decorator)
+        if isinstance(node, ast.ClassDef):
+            for base in node.bases:
+                self.visit(base)
+            for keyword in node.keywords:
+                self.visit(keyword)
+        else:
+            self.visit(node.args)
+            if node.returns is not None:
+                self._visit_annotation(node.returns)
+        for type_param in getattr(node, "type_params", ()):
+            self.visit(type_param)
+        return definition
+
+    def _visit_body(
+        self,
+        node: ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef,
+        definition: DefinitionReferences,
+        class_info: ClassInfo | None,
+    ) -> None:
+        """Visit a definition body inside its own scope.
+
+        :param node: Definition node.
+        :param definition: Scope to attribute body references to.
+        :param class_info: Class record when the scope is a class body.
+        :return: ``None``.
+        """
+        self._scopes.append(definition)
+        self._class_scopes.append(class_info)
+        try:
+            for statement in node.body:
+                self.visit(statement)
+        finally:
+            self._scopes.pop()
+            self._class_scopes.pop()
+
+    def _visit_function(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
+        """Register a function or method and collect its references.
+
+        :param node: Function definition node.
+        :return: ``None``.
+        """
+        definition = self._enter(node)
+        enclosing_class = self._class_scopes[-1] if self._class_scopes else None
+        if enclosing_class is not None and not node.name.startswith("_"):
+            enclosing_class.public_methods.append(definition)
+        self._visit_body(node, definition, None)
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        """Register a function or method and collect its references."""
+        self._visit_function(node)
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        """Register an async function exactly like a plain one."""
+        self._visit_function(node)
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        """Register a class, its bases, and collect its body references."""
+        definition = self._enter(node)
+        class_info = ClassInfo(
+            definition=definition,
+            bases=tuple(_base_text(base) for base in node.bases),
+        )
+        self.classes.append(class_info)
+        self._visit_body(node, definition, class_info)
+
+
+def _parse_module(file_path: Path) -> ast.Module | None:
+    """Parse one Python file, tolerating the same inputs the extractor tolerates.
+
+    :param file_path: Python source path.
+    :return: Parsed module, or ``None`` when the file cannot be read or parsed.
     """
     try:
         # utf-8-sig matches the BOM-tolerant extractor read: a file that
-        # extraction accepts must not silently lose its __main__ references.
+        # extraction accepts must not silently lose its references.
         # ValueError covers CPython 3.11's embedded-NUL report.
         source = file_path.read_text(encoding="utf-8-sig")
-        tree = ast.parse(source)
+        return ast.parse(source)
     except (OSError, SyntaxError, UnicodeDecodeError, ValueError):
-        return set()
+        return None
 
-    from codedupes.extractor import CallGraphVisitor
 
-    calls: set[str] = set()
-    visitor = CallGraphVisitor()
+def _extract_aliases(tree: ast.Module) -> dict[str, str]:
+    """Extract a conservative alias map from module-level imports and assignments.
+
+    :param tree: Parsed module.
+    :return: Alias map for name resolution.
+    """
+    aliases: dict[str, str] = {}
 
     for node in tree.body:
-        if not isinstance(node, ast.If):
-            continue
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                name = alias.name
+                asname = alias.asname or name.rsplit(".", 1)[-1]
+                aliases[asname] = name
+        elif isinstance(node, ast.ImportFrom):
+            base = node.module or ""
+            for alias in node.names:
+                imported = alias.name
+                asname = alias.asname or imported
+                aliases[asname] = f"{base}.{imported}" if base else imported
+        elif (
+            isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+        ):
+            target = node.targets[0].id
+            value = node.value
+            if isinstance(value, ast.Name):
+                aliases[target] = value.id
+            elif isinstance(value, ast.Attribute) and isinstance(value.value, ast.Name):
+                aliases[target] = f"{value.value.id}.{value.attr}"
+    return aliases
 
-        is_main = False
-        test = node.test
-        if isinstance(test, ast.Compare) and len(test.ops) == 1 and isinstance(test.ops[0], ast.Eq):
-            left = test.left
-            comparators = test.comparators
-            if len(comparators) == 1:
-                right = comparators[0]
-                if (
-                    isinstance(left, ast.Name)
-                    and left.id == "__name__"
-                    and isinstance(right, ast.Constant)
-                    and right.value == "__main__"
-                ) or (
-                    isinstance(left, ast.Constant)
-                    and left.value == "__main__"
-                    and isinstance(right, ast.Name)
-                    and right.id == "__name__"
-                ):
-                    is_main = True
 
-        if not is_main:
-            continue
+def collect_module_references(file_path: Path) -> ModuleReferences:
+    """Parse one module once and collect aliases plus per-scope references.
 
-        for stmt in node.body:
-            visitor.visit(stmt)
+    :param file_path: Python source path.
+    :return: Module references; empty when the file cannot be parsed.
+    """
+    tree = _parse_module(file_path)
+    if tree is None:
+        return ModuleReferences()
+    collector = _ReferenceCollector()
+    collector.visit(tree)
+    return ModuleReferences(
+        aliases=_extract_aliases(tree),
+        module_references=collector.module_references,
+        definitions=collector.definitions,
+        classes=collector.classes,
+    )
 
-    calls.update(visitor.calls)
-    return calls
+
+def _resolve_reference_targets(name: str, aliases: dict[str, str]) -> set[str]:
+    """Expand a referenced name through the module's import and assignment aliases.
+
+    :param name: Referenced name or dotted attribute path.
+    :param aliases: Alias map from local symbols to full targets.
+    :return: Candidate target names.
+    """
+    candidates = {name}
+    if name in aliases:
+        candidates.add(aliases[name])
+    if "." in name:
+        head, _, tail = name.partition(".")
+        if head in aliases:
+            candidates.add(f"{aliases[head]}.{tail}")
+    return candidates
 
 
 def _extract_pyproject_entry_points(project_root: Path) -> set[str]:
@@ -122,10 +365,14 @@ def _extract_pyproject_entry_points(project_root: Path) -> set[str]:
 
 
 def build_reference_graph(units: list[CodeUnit], project_root: Path | None = None) -> None:
-    """Populate references from direct calls, entrypoints, and ``__main__`` blocks.
+    """Populate ``unit.references`` from every name each Python module loads.
 
-    :param units: Collected code units.
-    :param project_root: Optional root for entry point resolution.
+    Matching is by name: a reference to ``helper`` marks every unit named
+    ``helper`` (or whose qualified name ends in the referenced dotted path),
+    except the referring unit itself.
+
+    :param units: Collected code units; non-Python units are ignored.
+    :param project_root: Optional root for pyproject entry-point resolution.
     :return: ``None``.
     """
     units = [unit for unit in units if unit.language == "python"]
@@ -133,37 +380,47 @@ def build_reference_graph(units: list[CodeUnit], project_root: Path | None = Non
         return
 
     by_name: dict[str, list[CodeUnit]] = defaultdict(list)
+    by_location: dict[tuple[Path, int, str], list[CodeUnit]] = defaultdict(list)
     for unit in units:
         by_name[unit.name].append(unit)
         parts = unit.qualified_name.split(".")
         for i in range(len(parts)):
             by_name[".".join(parts[i:])].append(unit)
+        by_location[(unit.file_path, unit.lineno, unit.name)].append(unit)
 
-    alias_map_by_file: dict[Path, dict[str, str]] = {}
-    for unit in units:
-        if unit.file_path not in alias_map_by_file:
-            alias_map_by_file[unit.file_path] = _extract_aliases(unit.file_path)
+    def mark(referrer_uid: str, names: set[str], aliases: dict[str, str]) -> None:
+        """Add one referrer to every unit a set of names resolves to.
 
-    # Populate references from call graph.
-    for unit in units:
-        file_aliases = alias_map_by_file.get(unit.file_path, {})
-        for call in unit.calls:
-            for target in _resolve_call_targets(call, file_aliases):
+        :param referrer_uid: Unit uid or synthetic scope id doing the referencing.
+        :param names: Referenced names.
+        :param aliases: Alias map of the referring module.
+        :return: ``None``.
+        """
+        for name in names:
+            for target in _resolve_reference_targets(name, aliases):
                 for candidate in by_name.get(target, []):
-                    if candidate.uid != unit.uid:
-                        candidate.references.add(unit.uid)
+                    if candidate.uid != referrer_uid:
+                        candidate.references.add(referrer_uid)
 
-    # Seed references from __main__ blocks.
-    main_block_calls_by_file: dict[Path, set[str]] = {}
-    for file_path in alias_map_by_file:
-        main_block_calls_by_file[file_path] = _extract_main_block_calls(file_path)
+    def units_for(file_path: Path, definition: DefinitionReferences) -> list[CodeUnit]:
+        """Find the units extracted for one definition.
 
-    for unit in units:
-        caller_uid = f"__main__::{unit.file_path}"
-        for call in main_block_calls_by_file.get(unit.file_path, set()):
-            for target in _resolve_call_targets(call, alias_map_by_file.get(unit.file_path, {})):
-                for candidate in by_name.get(target, []):
-                    candidate.references.add(caller_uid)
+        :param file_path: Module the definition lives in.
+        :param definition: Collected definition.
+        :return: Matching units (none when the extractor filtered the symbol).
+        """
+        return [
+            unit
+            for lineno in definition.linenos
+            for unit in by_location.get((file_path, lineno, definition.name), [])
+        ]
+
+    for file_path in sorted({unit.file_path for unit in units}):
+        module = collect_module_references(file_path)
+        mark(f"__module__::{file_path}", module.module_references, module.aliases)
+        for definition in module.definitions:
+            for unit in units_for(file_path, definition):
+                mark(unit.uid, definition.references, module.aliases)
 
     # Seed references from project entry points.
     if project_root is not None:
@@ -171,49 +428,6 @@ def build_reference_graph(units: list[CodeUnit], project_root: Path | None = Non
         for target in _extract_pyproject_entry_points(root):
             for candidate in by_name.get(target, []):
                 candidate.references.add("project.entrypoint")
-
-
-def _extract_aliases(file_path: Path) -> dict[str, str]:
-    """Extract a conservative alias map from module-level imports and assignments.
-
-    :param file_path: Python source path.
-    :return: Alias map for name resolution.
-    """
-    try:
-        # utf-8-sig matches the BOM-tolerant extractor read: a file that
-        # extraction accepts must not silently lose its alias map.
-        # ValueError covers CPython 3.11's embedded-NUL report.
-        source = file_path.read_text(encoding="utf-8-sig")
-        tree = ast.parse(source)
-    except (OSError, SyntaxError, UnicodeDecodeError, ValueError):
-        return {}
-
-    aliases: dict[str, str] = {}
-
-    for node in tree.body:
-        if isinstance(node, ast.Import):
-            for alias in node.names:
-                name = alias.name
-                asname = alias.asname or name.rsplit(".", 1)[-1]
-                aliases[asname] = name
-        elif isinstance(node, ast.ImportFrom):
-            base = node.module or ""
-            for alias in node.names:
-                imported = alias.name
-                asname = alias.asname or imported
-                aliases[asname] = f"{base}.{imported}" if base else imported
-        elif (
-            isinstance(node, ast.Assign)
-            and len(node.targets) == 1
-            and isinstance(node.targets[0], ast.Name)
-        ):
-            target = node.targets[0].id
-            value = node.value
-            if isinstance(value, ast.Name):
-                aliases[target] = value.id
-            elif isinstance(value, ast.Attribute) and isinstance(value.value, ast.Name):
-                aliases[target] = f"{value.value.id}.{value.attr}"
-    return aliases
 
 
 def find_potentially_unused(units: list[CodeUnit], strict_unused: bool = False) -> list[CodeUnit]:
