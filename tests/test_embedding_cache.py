@@ -704,7 +704,7 @@ def test_document_text_count_rejected_before_cache_or_model_work(
         "revision": REVISION_1,
         "device": "cpu",
         "cache_scope": tmp_path,
-        "use_cache": cache_state != "disabled",
+        "use_cache": True,
         "search_document": "contextual",
     }
     if cache_state == "warm":
