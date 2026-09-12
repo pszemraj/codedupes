@@ -171,7 +171,7 @@ def _hidden_failure_status(
     exit_code: int,
     max_items: int | None,
 ) -> str:
-    """Word a failing status whose every failing finding is hidden from the report.
+    """Word a failing status whose failing pairs are absent from the primary list.
 
     :param selection: Report selection that produced ``hidden``.
     :param hidden: Hidden groups that fail the policy while emitted findings pass.
@@ -195,7 +195,7 @@ def _hidden_failure_status(
         remedies.append("--full-table")
     return (
         f"fail (exit {exit_code}; only {' and '.join(culprits)} fail --fail-on {fail_on}, "
-        f"use {' and '.join(remedies)} to list them)"
+        f"use {' and '.join(remedies)} to list them in the primary report)"
     )
 
 

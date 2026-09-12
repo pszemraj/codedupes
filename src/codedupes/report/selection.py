@@ -24,7 +24,7 @@ from codedupes.models import (
 )
 
 FailOnPolicy = Literal["actionable", "all", "none"]
-# Groups of findings a report can hide while the exit code still counts them.
+# Groups omitted from the primary duplicate list that the exit code still counts.
 HiddenGroup = Literal["review", "truncated"]
 # Tiers with deterministic structural/token corroboration; the only ones that
 # fail the default ``actionable`` policy.
@@ -272,11 +272,12 @@ def hidden_only_failure(
     policy: FailOnPolicy,
     strict_unused: bool,
 ) -> frozenset[HiddenGroup]:
-    """Return which hidden finding groups fail when every emitted finding passes.
+    """Return which omitted groups fail when the primary list and unused findings pass.
 
     The exit code is decided on the complete result, so a run can fail over pairs
-    the report withheld (``review``) or cut with ``max_duplicates``
-    (``truncated``). Renderers use the answer to name what the reader cannot see.
+    the primary list withheld (``review``) or cut with ``max_duplicates``
+    (``truncated``). Raw diagnostic lists may still show their evidence, but in
+    combined mode only the primary list carries the tiers used by this policy.
 
     :param selection: Report selection derived from the complete result.
     :param policy: Selected finding policy.

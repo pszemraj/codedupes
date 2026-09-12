@@ -2569,8 +2569,11 @@ def test_cli_truncated_only_failure_is_named_in_the_status(monkeypatch, tmp_path
     # one hides the only pair that fails the default policy.
     result = AnalysisResult(
         units=[unit, other, third],
-        traditional_duplicates=[],
-        semantic_duplicates=[],
+        traditional_duplicates=[DuplicatePair(unit, other, 0.75, "jaccard")],
+        semantic_duplicates=[
+            DuplicatePair(unit, third, 0.95, "semantic"),
+            DuplicatePair(unit, other, 0.85, "semantic"),
+        ],
         hybrid_duplicates=[
             HybridDuplicate(
                 unit_a=unit,
@@ -2599,6 +2602,12 @@ def test_cli_truncated_only_failure_is_named_in_the_status(monkeypatch, tmp_path
     assert "only pairs truncated by --max-duplicates 1 fail --fail-on actionable" in capped.output
     assert "use a higher --max-duplicates to list them" in capped.output
     assert "other" not in capped.output.split("Hybrid Duplicates")[1]
+
+    raw = runner.invoke(cli.cli, ["check", str(path), "--max-duplicates", "1", "--show-all"])
+    assert raw.exit_code == 1
+    assert "to list them in the primary report" in " ".join(raw.output.split())
+    assert "hybrid_confirmed" not in raw.output.split("Hybrid Duplicates")[1]
+    assert "other" in raw.output.split("Traditional Duplicates")[1]
 
     listed = runner.invoke(cli.cli, ["check", str(path), "--max-duplicates", "2"])
     assert listed.exit_code == 1
