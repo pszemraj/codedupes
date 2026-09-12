@@ -649,6 +649,80 @@ def test_hybrid_gate_sweep_requires_one_language_before_model_work(
     )
 
 
+def test_hybrid_gate_sweep_normalizes_and_deduplicates_polyglot_languages(
+    tmp_path: Path, monkeypatch
+) -> None:
+    corpus_root = tmp_path / "polyglot"
+    (corpus_root / "python").mkdir(parents=True)
+    labels_path = corpus_root / "labels" / "python.json"
+    labels_path.parent.mkdir()
+    labels_path.write_text(
+        json.dumps({"positive_groups": [["alpha.py::first", "alpha.py::second"]]})
+    )
+    captured = []
+
+    def capture_sweep(model, corpora, args):
+        captured.extend(corpora)
+        return {"model_key": model}
+
+    monkeypatch.setattr(sweep_hybrid_gates, "_sweep_model", capture_sweep)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "sweep_hybrid_gates.py",
+            "--corpus-root",
+            str(corpus_root),
+            "--languages",
+            "py",
+            "Python",
+            "--models",
+            "gte-modernbert-base",
+        ],
+    )
+
+    assert _hybrid_gates_main() == 0
+    assert len(captured) == 1
+    assert captured[0].name == "python"
+    assert captured[0].language == "python"
+    assert captured[0].corpus_path == corpus_root / "python"
+    assert captured[0].labels_path == labels_path
+
+
+@pytest.mark.parametrize(
+    ("main", "argv"),
+    [
+        (
+            _hybrid_gates_main,
+            [
+                "sweep_hybrid_gates.py",
+                "--corpus-root",
+                "unused",
+                "--languages",
+                "--models",
+                "gte-modernbert-base",
+            ],
+        ),
+        (
+            _hybrid_gates_main,
+            ["sweep_hybrid_gates.py", "--language", "python", "--models"],
+        ),
+        (
+            _semantic_sweep_main,
+            ["sweep_semantic_thresholds.py", "--models", "--skip-search"],
+        ),
+    ],
+)
+def test_sweeps_reject_explicitly_empty_selectors_before_work(
+    monkeypatch, main, argv: list[str]
+) -> None:
+    monkeypatch.setattr("sys.argv", argv)
+
+    with pytest.raises(SystemExit) as exc:
+        main()
+
+    assert exc.value.code == 2
+
+
 @pytest.mark.parametrize("model_name", ["gte-modernbert-base", "embeddinggemma-300m"])
 @pytest.mark.parametrize("semantic_gate", [None, 0.90])
 @pytest.mark.parametrize("language", ["python", "py"])

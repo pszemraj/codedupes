@@ -684,7 +684,7 @@ def main() -> int:
     )
     parser.add_argument(
         "--languages",
-        nargs="*",
+        nargs="+",
         default=list(POLYGLOT_LANGUAGES),
         help="Languages to sweep under --corpus-root.",
     )
@@ -735,7 +735,7 @@ def main() -> int:
     )
     parser.add_argument(
         "--models",
-        nargs="*",
+        nargs="+",
         default=[profile.key for profile in list_supported_models()],
         help="Model keys or IDs to sweep. Defaults to all built-in profiles.",
     )
@@ -788,6 +788,11 @@ def main() -> int:
         parser.error("--semantic-gate must be finite and in [0.0, 1.0].")
 
     if args.corpus_root is not None:
+        try:
+            languages = normalize_languages(args.languages)
+        except ValueError as exc:
+            parser.error(str(exc))
+        assert languages is not None
         corpora = [
             CorpusSpec(
                 name=language,
@@ -795,7 +800,7 @@ def main() -> int:
                 labels_path=args.corpus_root / "labels" / f"{language}.json",
                 language=language,
             )
-            for language in args.languages
+            for language in languages
         ]
     else:
         if not args.language or len(args.language) != 1:

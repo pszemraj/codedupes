@@ -687,7 +687,7 @@ def main() -> int:
     )
     parser.add_argument(
         "--models",
-        nargs="*",
+        nargs="+",
         default=[profile.key for profile in list_supported_models()],
         help="Model keys or IDs to sweep. Defaults to all built-in profiles.",
     )
