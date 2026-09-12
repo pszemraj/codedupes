@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -75,7 +76,6 @@ SEARCH_THRESHOLD_START = 0.20
 # recurrence.
 SEARCH_THRESHOLD_STOP = 0.90
 THRESHOLD_STEP = 0.02
-SEARCH_SWEEP_FLOOR = 0.01
 # Tiers the CLI reports by default; mirrors the report policy so ``visible``
 # metrics describe exactly what ``codedupes check`` shows without flags.
 VISIBLE_TIERS: tuple[str, ...] = tuple(tier for tier in HYBRID_TIERS if tier not in WITHHELD_TIERS)
@@ -153,6 +153,15 @@ def _threshold_grid(start: float, stop: float) -> list[float]:
     its rows with thresholds looser than any pair that was ever collected - and
     the loosest-tie ranking then selects exactly that mislabeled row.
     """
+    if not math.isfinite(start) or not math.isfinite(stop):
+        raise ValueError("threshold grid bounds must be finite")
+    if not 0.0 <= start <= 1.0 or not 0.0 <= stop <= 1.0:
+        raise ValueError("threshold grid bounds must be in [0.0, 1.0]")
+    if start > stop:
+        raise ValueError(
+            f"threshold grid start {start} must not exceed stop {stop}; the grid would be empty"
+        )
+
     values: list[float] = []
     steps = 0
     while True:
@@ -431,6 +440,7 @@ def _run_duplicate_sweep(
     duplicate_start: float = DUPLICATE_THRESHOLD_START,
     duplicate_stop: float = DUPLICATE_THRESHOLD_STOP,
 ) -> ModelSweep:
+    thresholds = _threshold_grid(duplicate_start, duplicate_stop)
     profile = resolve_model_profile(model_name)
     config = _analyzer_config(
         model_name=model_name,
@@ -477,7 +487,6 @@ def _run_duplicate_sweep(
             "full-scope traditional analysis. Any exclusion counts as a false negative "
             "unless the traditional tier matched it."
         )
-    thresholds = _threshold_grid(duplicate_start, duplicate_stop)
     corpus_languages = sorted({unit.language for unit in result.units})
     high_gates = {
         language: gate
@@ -607,13 +616,14 @@ def _run_search_sweep(
     search_start: float = SEARCH_THRESHOLD_START,
     search_stop: float = SEARCH_THRESHOLD_STOP,
 ) -> ModelSweep:
+    thresholds = _threshold_grid(search_start, search_stop)
     profile = resolve_model_profile(model_name)
     analyzer = CodeAnalyzer(
         _analyzer_config(
             model_name=model_name,
             revision=revision,
             semantic_task=DEFAULT_SEARCH_SEMANTIC_TASK,
-            semantic_threshold=SEARCH_SWEEP_FLOOR,
+            semantic_threshold=search_start,
             min_statements=min_statements,
             batch_size=batch_size,
             device=device,
@@ -640,7 +650,6 @@ def _run_search_sweep(
         for unit, score in analyzer.search(query, top_k=indexed):
             scored_pairs.append(((query_key, unit.uid), score))
 
-    thresholds = _threshold_grid(search_start, search_stop)
     rows = _evaluate_thresholds(scored_pairs, positive_pairs, thresholds=thresholds)
     selected = rows[0]
 
@@ -776,7 +785,7 @@ def main() -> int:
         "--search-start",
         type=float,
         default=SEARCH_THRESHOLD_START,
-        help="Search-threshold grid floor.",
+        help="Search-threshold grid and score-collection floor.",
     )
     parser.add_argument(
         "--search-stop",
@@ -799,16 +808,14 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    if args.duplicate_start > args.duplicate_stop:
-        parser.error(
-            f"--duplicate-start {args.duplicate_start} must not exceed "
-            f"--duplicate-stop {args.duplicate_stop}; the sweep grid would be empty."
-        )
-    if args.search_start > args.search_stop:
-        parser.error(
-            f"--search-start {args.search_start} must not exceed "
-            f"--search-stop {args.search_stop}; the sweep grid would be empty."
-        )
+    for mode, start, stop in (
+        ("duplicate", args.duplicate_start, args.duplicate_stop),
+        ("search", args.search_start, args.search_stop),
+    ):
+        try:
+            _threshold_grid(start, stop)
+        except ValueError as exc:
+            parser.error(f"invalid --{mode}-start/--{mode}-stop: {exc}")
 
     labels = json.loads(args.labels_path.read_text())
     # Shape problems must abort here, in milliseconds: the per-category recall

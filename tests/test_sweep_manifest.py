@@ -41,6 +41,7 @@ from scripts.sweep_semantic_thresholds import (
     _grid_edge,
     _report_payload,
     _run_duplicate_sweep,
+    _run_search_sweep,
     _threshold_grid,
 )
 from scripts.sweep_semantic_thresholds import main as _semantic_sweep_main
@@ -949,6 +950,77 @@ def test_threshold_grid_default_bounds_are_unchanged() -> None:
     assert all(
         round(after - before, 9) == THRESHOLD_STEP for before, after in pairwise(duplicate_grid)
     )
+
+
+@pytest.mark.parametrize(
+    ("start", "stop", "message"),
+    [
+        (float("nan"), 0.9, "finite"),
+        (0.2, float("inf"), "finite"),
+        (-0.01, 0.9, r"\[0\.0, 1\.0\]"),
+        (0.2, 1.01, r"\[0\.0, 1\.0\]"),
+        (0.8, 0.4, "must not exceed"),
+    ],
+)
+def test_threshold_grid_rejects_invalid_bounds(start: float, stop: float, message: str) -> None:
+    """Invalid bounds must fail instead of hanging or bypassing analyzer validation."""
+    with pytest.raises(ValueError, match=message):
+        _threshold_grid(start, stop)
+
+
+def test_search_sweep_collects_at_its_chosen_grid_floor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A custom search floor must also be the analyzer's score-collection floor."""
+    corpus_path = tmp_path / "corpus"
+    corpus_path.mkdir()
+    unit_path = corpus_path / "alpha.py"
+    unit_path.write_text("def target():\n    return 1\n")
+    probes_path = tmp_path / "probes.json"
+    probes_path.write_text("{}")
+    unit = _unit("target", unit_path, 1)
+    identity = EmbeddingSpaceIdentity(
+        model_name=resolve_model_profile("gte-modernbert-base").canonical_name,
+        resolved_revision=PINNED_COMMIT,
+        runtime_variant="cpu-faithful",
+    )
+    captured_thresholds: list[float | None] = []
+
+    class FakeAnalyzer:
+        def __init__(self, config) -> None:
+            self.config = config
+            captured_thresholds.append(config.semantic_threshold)
+            self._embeddings = np.zeros((1, 4), dtype=np.float32)
+            self._embedding_space_identity = identity
+            self._semantic_units = [unit]
+            self._units = [unit]
+
+        def index(self, path: Path) -> int:
+            return 1
+
+        def search(self, query: str, top_k: int) -> list[tuple[CodeUnit, float]]:
+            return [(unit, 0.05)]
+
+    monkeypatch.setattr("scripts.sweep_semantic_thresholds.CodeAnalyzer", FakeAnalyzer)
+    monkeypatch.setattr(
+        "scripts.sweep_semantic_thresholds._calibration_manifest", lambda **kwargs: {}
+    )
+
+    sweep = _run_search_sweep(
+        model_name="gte-modernbert-base",
+        revision=PINNED_COMMIT,
+        corpus_path=corpus_path,
+        probes_path=probes_path,
+        probes=[{"query": "target", "expected": ["alpha.py::target"]}],
+        min_statements=0,
+        batch_size=4,
+        device="cpu",
+        search_start=0.04,
+        search_stop=0.08,
+    )
+
+    assert captured_thresholds == [0.04]
+    assert {row.threshold for row in sweep.rows} == {0.04, 0.06, 0.08}
 
 
 def test_grid_edge_labels_boundary_selections() -> None:
