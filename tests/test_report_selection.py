@@ -296,6 +296,36 @@ def test_max_duplicates_leaves_show_all_raw_lists_complete(tmp_path):
     assert selection.semantic_duplicates == result.semantic_duplicates
 
 
+def test_max_duplicates_ranks_traditional_only_mode_by_similarity(tmp_path):
+    # near_dupes come out of the analyzer sorted by index pair, not similarity,
+    # so the raw list must be re-ranked before the cap is applied.
+    a = _unit(tmp_path, "a", start_byte=0)
+    b = _unit(tmp_path, "b", start_byte=20)
+    c = _unit(tmp_path, "c", start_byte=40)
+    d = _unit(tmp_path, "d", start_byte=60)
+    e = _unit(tmp_path, "e", start_byte=80)
+    f = _unit(tmp_path, "f", start_byte=100)
+    exact = DuplicatePair(a, b, 1.0, "ast_hash")
+    near_086 = DuplicatePair(b, c, 0.86, "jaccard")
+    near_099 = DuplicatePair(c, d, 0.99, "jaccard")
+    near_090_first = DuplicatePair(d, e, 0.90, "jaccard")
+    near_090_second = DuplicatePair(e, f, 0.90, "jaccard")
+    result = _result(
+        tmp_path,
+        traditional_duplicates=[exact, near_086, near_099, near_090_first, near_090_second],
+        semantic_duplicates=[],
+        hybrid_duplicates=[],
+        analysis_mode="traditional",
+    )
+
+    capped = select_findings(result, ReportPolicy(max_duplicates=2))
+
+    assert capped.duplicates == [exact, near_099]
+    # Truncated holds the rest, still ranked by descending similarity, and the
+    # two 0.90 pairs keep their input order (stable sort over the tie).
+    assert capped.truncated == [near_090_first, near_090_second, near_086]
+
+
 def test_max_duplicates_applies_to_single_method_raw_lists(tmp_path):
     result = _result(tmp_path, analysis_mode="semantic", hybrid_duplicates=[])
 

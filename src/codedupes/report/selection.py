@@ -164,10 +164,18 @@ def select_findings(result: AnalysisResult, policy: ReportPolicy | None = None) 
             traditional = list(result.traditional_duplicates)
             semantic = list(result.semantic_duplicates)
     else:
-        duplicates = result.traditional_duplicates + result.semantic_duplicates
+        # Traditional near pairs come out of the analyzer sorted by index pair,
+        # not similarity, so the raw list is re-ranked here before capping;
+        # Python's stable sort keeps ties (exact pairs at 1.0, equal-similarity
+        # pairs) in analyzer order.
+        duplicates = sorted(
+            result.traditional_duplicates + result.semantic_duplicates,
+            key=lambda pair: -pair.similarity,
+        )
 
-    # The cap keeps a prefix of the analyzer's ranking; the raw ``--show-all``
-    # lists are diagnostic and stay complete.
+    # The cap keeps a prefix of the ranking established above: analyzer tier
+    # order for combined mode, descending similarity for the raw modes. The
+    # raw ``--show-all`` lists are diagnostic and stay complete.
     if policy.max_duplicates is not None:
         truncated = duplicates[policy.max_duplicates :]
         duplicates = duplicates[: policy.max_duplicates]

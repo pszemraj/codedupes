@@ -2379,6 +2379,45 @@ def _build_tiered_result(tmp_path: Path) -> AnalysisResult:
     )
 
 
+def test_cli_max_duplicates_ranks_traditional_only_by_similarity(monkeypatch, tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+    unit = _build_unit(tmp_path)
+    other = make_code_unit(tmp_path, name="other", source="def other():\n    return 2", lineno=5)
+    result = replace(
+        _build_tiered_result(tmp_path),
+        # analyzer order is index-pair order, not similarity: 0.86 precedes 0.99.
+        traditional_duplicates=[
+            DuplicatePair(unit_a=unit, unit_b=other, similarity=0.86, method="jaccard"),
+            DuplicatePair(unit_a=other, unit_b=unit, similarity=0.99, method="jaccard"),
+        ],
+        semantic_duplicates=[],
+        hybrid_duplicates=[],
+        analysis_mode="traditional",
+    )
+    patch_cli_analyzer(monkeypatch, cli, analyze_result=result)
+    runner = CliRunner()
+
+    as_json = runner.invoke(
+        cli.cli,
+        [
+            "check",
+            str(path),
+            "--traditional-only",
+            "--no-unused",
+            "--json",
+            "--max-duplicates",
+            "1",
+        ],
+    )
+
+    assert as_json.exit_code == 1
+    output = json.loads(as_json.output)
+    assert len(output["duplicates"]) == 1
+    assert output["duplicates"][0]["similarity"] == 0.99
+    assert output["summary"]["truncated_duplicates"] == 1
+
+
 def test_cli_withholds_semantic_review_by_default(monkeypatch, tmp_path):
     path = tmp_path / "sample.py"
     path.write_text("def entry():\n    return 1\n")

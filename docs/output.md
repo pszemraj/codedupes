@@ -136,7 +136,7 @@ In default combined mode, `duplicates` contains hybrid edges of every tier excep
 
 Nothing is truncated unless you ask: `--max-duplicates N` keeps the first `N` edges of the admitted list in the analyzer's confidence order (so the strongest evidence survives), records the cap as `summary.max_duplicates` (`null` when unset), and drops units referenced only by cut edges from `units`. The cap applies after the review filter, so `--include-review --max-duplicates N` ranks review pairs into the same budget; the raw `--show-all` lists are never capped. The exit code ignores the cap, see [exit codes](#exit-codes).
 
-In `--semantic-only` or `--traditional-only` mode, `duplicates` directly contains the active raw edge list (traditional pairs first, then semantic pairs by similarity; `--max-duplicates` keeps that prefix), `duplicates_by_tier` is all zeros, and the `--show-all` arrays are omitted. `analysis_mode` is always one of `combined`, `traditional`, `semantic`, or `none`.
+In `--semantic-only` or `--traditional-only` mode, `duplicates` directly contains the active raw edge list ordered by descending similarity (exact pairs at 1.0 first, ties in analyzer order; `--max-duplicates` keeps that prefix), `duplicates_by_tier` is all zeros, and the `--show-all` arrays are omitted. `analysis_mode` is always one of `combined`, `traditional`, `semantic`, or `none`.
 
 See [hybrid confidence tiers](analysis-defaults.md#hybrid-synthesis-confidence-defaults) to interpret `tier` and `confidence`.
 
