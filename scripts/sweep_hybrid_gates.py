@@ -464,6 +464,7 @@ def _run_corpus(
         dimension=dimension,
         min_statements=args.min_statements,
         batch_size=args.batch_size,
+        languages=config.languages,
         corpus_path=spec.corpus_path,
         labels_path=spec.labels_path,
         traditional_config=config,

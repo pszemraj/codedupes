@@ -146,6 +146,7 @@ def _analyze_language(
             dimension=int(embeddings.shape[1]) if embeddings.size else 0,
             min_statements=min_statements,
             batch_size=batch_size,
+            languages=config.languages,
             corpus_path=corpus_path,
             labels_path=labels_path,
         ),

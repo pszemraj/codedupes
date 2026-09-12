@@ -38,6 +38,7 @@ from scripts.sweep_hybrid_gates import main as _hybrid_gates_main
 from scripts.sweep_semantic_thresholds import (
     THRESHOLD_STEP,
     DuplicateSweepRow,
+    _analyzer_config,
     _calibration_manifest,
     _grid_edge,
     _report_payload,
@@ -91,6 +92,56 @@ def _patch_analyze(
         )
 
     monkeypatch.setattr(CodeAnalyzer, "analyze", fake_analyze)
+
+
+@pytest.mark.parametrize(
+    ("requested_languages", "recorded_languages"),
+    [(None, None), (("py", "python"), ["python"])],
+)
+def test_manifest_records_the_canonical_language_filter(
+    tmp_path: Path,
+    requested_languages: tuple[str, ...] | None,
+    recorded_languages: list[str] | None,
+) -> None:
+    """Auto-detection and normalized filters must have distinct provenance."""
+    corpus_path = tmp_path / "corpus"
+    corpus_path.mkdir()
+    (corpus_path / "alpha.py").write_text("def first():\n    return 1\n")
+    labels_path = tmp_path / "labels.json"
+    labels_path.write_text("{}")
+    profile = resolve_model_profile("gte-modernbert-base")
+    identity = EmbeddingSpaceIdentity(
+        model_name=profile.canonical_name,
+        resolved_revision=PINNED_COMMIT,
+        runtime_variant="cpu-faithful",
+    )
+    config = _analyzer_config(
+        model_name="gte-modernbert-base",
+        revision=PINNED_COMMIT,
+        semantic_task=DEFAULT_CHECK_SEMANTIC_TASK,
+        semantic_threshold=0.70,
+        min_statements=0,
+        batch_size=4,
+        device="cpu",
+        languages=requested_languages,
+    )
+
+    manifest = _calibration_manifest(
+        profile=profile,
+        resolved_revision=PINNED_COMMIT,
+        mode="duplicate",
+        semantic_task=DEFAULT_CHECK_SEMANTIC_TASK,
+        requested_device="cpu",
+        identity=identity,
+        dimension=4,
+        min_statements=0,
+        batch_size=4,
+        languages=config.languages,
+        corpus_path=corpus_path,
+        labels_path=labels_path,
+    )
+
+    assert manifest["candidate_policy"]["languages"] == recorded_languages
 
 
 def test_manifest_records_effective_embedding_space_not_the_request(
@@ -494,6 +545,7 @@ def test_distribution_report_carries_the_sweep_calibration_manifest(
     assert manifest["requested_device"] == "cpu"
     assert manifest["mode"] == "distribution"
     assert manifest["candidate_policy"]["min_recursive_statements"] == 0
+    assert manifest["candidate_policy"]["languages"] == ["python"]
     assert manifest["corpus_path"] == str(language_path)
     assert manifest["labels_path"] == str(labels_path)
     # The digests must cover this corpus, not the sweep's default fixture tree.
@@ -507,6 +559,7 @@ def test_distribution_report_carries_the_sweep_calibration_manifest(
         dimension=4,
         min_statements=0,
         batch_size=4,
+        languages=("python",),
         corpus_path=language_path,
         labels_path=labels_path,
     )
