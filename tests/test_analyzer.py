@@ -820,7 +820,7 @@ def test_class_static_initializers_follow_tiny_filter(
     filtered = CodeAnalyzer(AnalyzerConfig(run_semantic=False, run_unused=False)).analyze(project)
     assert len(filtered.units) == 2
     assert all(unit.unit_type == CodeUnitType.CLASS for unit in filtered.units)
-    assert len(filtered.exact_duplicates) == int(expected_duplicate)
+    assert len(filtered.traditional_duplicates) == int(expected_duplicate)
 
 
 @pytest.mark.parametrize("filter_tiny_traditional", [True, False])

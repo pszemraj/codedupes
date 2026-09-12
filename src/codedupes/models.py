@@ -205,14 +205,6 @@ class AnalysisResult:
     embedding_stats: EmbeddingRunStats | None = None
 
     @property
-    def exact_duplicates(self) -> list[DuplicatePair]:
-        """Backward-compatible alias for traditional duplicates.
-
-        :return: Traditional duplicate pairs.
-        """
-        return self.traditional_duplicates
-
-    @property
     def all_duplicates(self) -> list[HybridDuplicate] | list[DuplicatePair]:
         """Return the available duplicate list for this analysis mode.
 
