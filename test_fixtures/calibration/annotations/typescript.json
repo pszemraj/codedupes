@@ -161,7 +161,7 @@
             ]
         },
         {
-            "id": "partial-file-api-webhook-ingress",
+            "id": "related-ingress-adapters",
             "members": [
                 "harbor.ingress.csv",
                 "harbor.ingress.api",
@@ -319,8 +319,8 @@
             "difficulty": "hard",
             "scope": "whole_unit",
             "behavior_equivalent": true,
-            "equivalence_domain": "Corresponding raw-object and positional-manifest rows: both validate the same field precedence, reserve only accepted IDs, and produce the same ordered BookingReport.",
-            "contract": "Normalize four external fields, reject malformed or repeated IDs at the same row, and preserve accepted values and report order.",
+            "equivalence_domain": "Corresponding string-valued raw-object fields and positional manifest cells: both validate the same field precedence, reserve only accepted IDs, and produce the same ordered BookingReport.",
+            "contract": "Normalize four string-valued external fields, reject malformed or repeated IDs at the same row, and preserve accepted values and report order.",
             "rationale": "The legacy positional importer independently reimplements the current acceptance contract through a manifest ledger and should consolidate on the canonical workflow.",
             "evidence": [
                 "tests/harbor.test.ts::legacy manifest notices preserve the current booking acceptance contract"
@@ -339,8 +339,8 @@
             "difficulty": "hard",
             "scope": "whole_unit",
             "behavior_equivalent": true,
-            "equivalence_domain": "Corresponding raw-object and positional-manifest rows: both validate the same field precedence, reserve only accepted IDs, and produce the same ordered BookingReport.",
-            "contract": "Normalize four external fields, reject malformed or repeated IDs at the same row, and preserve accepted values and report order.",
+            "equivalence_domain": "Corresponding string-valued raw-object fields and positional manifest cells: both validate the same field precedence, reserve only accepted IDs, and produce the same ordered BookingReport.",
+            "contract": "Normalize four string-valued external fields, reject malformed or repeated IDs at the same row, and preserve accepted values and report order.",
             "rationale": "The modern helper-based importer and the legacy manifest ledger are separate implementations of one booking-admission operation.",
             "evidence": [
                 "tests/harbor.test.ts::legacy manifest notices preserve the current booking acceptance contract"
@@ -350,106 +350,61 @@
             "id": "ingress-csv--api",
             "a": "harbor.ingress.csv",
             "b": "harbor.ingress.api",
-            "judgment": "positive",
+            "judgment": "negative",
             "tags": [
-                "partial",
                 "adapter",
-                "medium"
+                "call_chain",
+                "nearby_negative"
             ],
-            "difficulty": "medium",
-            "scope": "partial",
+            "scope": "whole_unit",
             "behavior_equivalent": false,
-            "equivalence_domain": "Both delegate raw schedule rows to the shared booking acceptance contract.",
-            "contract": "Accepted IDs follow shared normalization; malformed data remains a rejected row while each transport provides its own context.",
-            "rationale": "CSV file ownership and API idempotency are different adapters around the same partial acceptance workflow.",
+            "equivalence_domain": "Raw schedule rows accepted through the shared booking workflow.",
+            "contract": "CSV owns file/header/line context; API owns batch identity and replay state.",
+            "rationale": "Both call the same extracted booking workflow. Their shared callee is not duplicated implementation in either adapter.",
             "evidence": [
                 "tests/harbor.test.ts::CSV, API, and webhook workflows share acceptance while retaining their own evidence"
             ],
-            "difference_witness": "CSV errors use physical file lines and API errors use item positions; repeating an API batch produces a replay result.",
-            "regions": [
-                {
-                    "unit": "harbor.ingress.csv",
-                    "start_line": 21,
-                    "end_line": 21,
-                    "sha256": "f0924d430bc6c9248bdd95c4ad0db910265df94108c706a168d1ce5d30fb3c1d"
-                },
-                {
-                    "unit": "harbor.ingress.api",
-                    "start_line": 38,
-                    "end_line": 38,
-                    "sha256": "f0924d430bc6c9248bdd95c4ad0db910265df94108c706a168d1ce5d30fb3c1d"
-                }
-            ]
+            "difference_witness": "CSV errors use physical file lines and API errors use item positions; repeating an API batch produces a replay result."
         },
         {
             "id": "ingress-csv--webhook",
             "a": "harbor.ingress.csv",
             "b": "harbor.ingress.webhook",
-            "judgment": "positive",
+            "judgment": "negative",
             "tags": [
-                "partial",
                 "adapter",
-                "medium"
+                "call_chain",
+                "nearby_negative"
             ],
-            "difficulty": "medium",
-            "scope": "partial",
+            "scope": "whole_unit",
             "behavior_equivalent": false,
-            "equivalence_domain": "Both delegate raw schedule rows to the shared booking acceptance contract.",
-            "contract": "Accepted IDs follow shared normalization; malformed data remains a rejected row while each transport provides its own context.",
-            "rationale": "File parsing and webhook acknowledgement differ around their shared booking-acceptance region.",
+            "equivalence_domain": "Raw schedule rows accepted through the shared booking workflow.",
+            "contract": "CSV owns file/header/line context; webhook owns event validation and acknowledgement.",
+            "rationale": "Both call the same extracted booking workflow. Their shared callee is not duplicated implementation in either adapter.",
             "evidence": [
                 "tests/harbor.test.ts::CSV, API, and webhook workflows share acceptance while retaining their own evidence"
             ],
-            "difference_witness": "CSV opens a path and rewrites errors as lines; the webhook validates an event ID and returns an acknowledgement.",
-            "regions": [
-                {
-                    "unit": "harbor.ingress.csv",
-                    "start_line": 21,
-                    "end_line": 21,
-                    "sha256": "f0924d430bc6c9248bdd95c4ad0db910265df94108c706a168d1ce5d30fb3c1d"
-                },
-                {
-                    "unit": "harbor.ingress.webhook",
-                    "start_line": 52,
-                    "end_line": 52,
-                    "sha256": "89340adf561a63dd8ecc5844ceae6292daa5082e5f8c96ea8a57773da4275cc9"
-                }
-            ]
+            "difference_witness": "CSV opens a path and rewrites errors as lines; the webhook validates an event ID and returns an acknowledgement."
         },
         {
             "id": "ingress-api--webhook",
             "a": "harbor.ingress.api",
             "b": "harbor.ingress.webhook",
-            "judgment": "positive",
+            "judgment": "negative",
             "tags": [
-                "partial",
                 "adapter",
-                "medium"
+                "call_chain",
+                "nearby_negative"
             ],
-            "difficulty": "medium",
-            "scope": "partial",
+            "scope": "whole_unit",
             "behavior_equivalent": false,
-            "equivalence_domain": "Both delegate raw schedule rows to the shared booking acceptance contract.",
-            "contract": "Accepted IDs follow shared normalization; malformed data remains a rejected row while each transport provides its own context.",
-            "rationale": "Batch replay control and event acknowledgement are distinct adapters around the same acceptance region.",
+            "equivalence_domain": "Raw schedule rows accepted through the shared booking workflow.",
+            "contract": "API owns batch identity and replay state; webhook owns event validation and acknowledgement.",
+            "rationale": "Both call the same extracted booking workflow. Their shared callee is not duplicated implementation in either adapter.",
             "evidence": [
                 "tests/harbor.test.ts::CSV, API, and webhook workflows share acceptance while retaining their own evidence"
             ],
-            "difference_witness": "API mutates the completed-batch registry; webhook emits an acknowledgement without an idempotency registry.",
-            "regions": [
-                {
-                    "unit": "harbor.ingress.api",
-                    "start_line": 38,
-                    "end_line": 38,
-                    "sha256": "f0924d430bc6c9248bdd95c4ad0db910265df94108c706a168d1ce5d30fb3c1d"
-                },
-                {
-                    "unit": "harbor.ingress.webhook",
-                    "start_line": 52,
-                    "end_line": 52,
-                    "sha256": "89340adf561a63dd8ecc5844ceae6292daa5082e5f8c96ea8a57773da4275cc9"
-                }
-            ]
+            "difference_witness": "API mutates the completed-batch registry; webhook emits an acknowledgement without an idempotency registry."
         },
         {
             "id": "negative-map--capacity",

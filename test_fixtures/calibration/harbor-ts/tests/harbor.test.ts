@@ -46,6 +46,11 @@ test("dispatch extensions equal the baseline when disabled and retain hold witne
     heldKg: 40,
     auditEvents: ["held:WEST:40"],
   });
+  assert.deepEqual(planDispatchesWithServiceFloors(summaries, { WEST: 100 }), {
+    instructions: [{ zone: "EAST", totalKg: 120, state: "queued" }, { zone: "WEST", totalKg: 40, state: "held" }],
+    heldKg: 40,
+    auditEvents: ["service-floor:WEST:100"],
+  });
 });
 
 test("inline and extracted booking decoders agree without reserving invalid IDs", () => {
@@ -59,10 +64,10 @@ test("inline and extracted booking decoders agree without reserving invalid IDs"
 
 test("legacy manifest notices preserve the current booking acceptance contract", () => {
   const notices = rows.map((row) => [
-    String(row.bookingId),
-    String(row.zone),
-    String(row.arrivalDate),
-    String(row.weightKg),
+    row.bookingId,
+    row.zone,
+    row.arrivalDate,
+    row.weightKg,
   ]);
   assert.deepEqual(admitManifestNotices(notices), acceptBookingsWithNormalizer(rows));
 });
