@@ -14,10 +14,10 @@ from codedupes.constants import DEFAULT_TOP_K, DEFAULT_TRADITIONAL_THRESHOLD
 from codedupes.semantic_profiles import resolve_model_profile
 
 try:
-    from .calibration_contract import Project, digest, pair_key, write_json
+    from .calibration_contract import Project, digest, evidence_identity, pair_key, write_json
     from .calibration_measurements import artifact_path, load_measurement
 except ImportError:
-    from calibration_contract import Project, digest, pair_key, write_json
+    from calibration_contract import Project, digest, evidence_identity, pair_key, write_json
     from calibration_measurements import artifact_path, load_measurement
 
 
@@ -414,6 +414,8 @@ def full_report(project: Project, measurement: dict[str, Any]) -> dict[str, Any]
     """Build a stateless report for one fixed policy measurement."""
     identity = measurement["metadata"]["identity"]
     profile = resolve_model_profile(identity["model"])
+    current_evidence = evidence_identity(project)
+    captured_evidence = measurement["metadata"]["evidence_sha256_at_capture"]
     return {
         "schema_version": 1,
         "project": project.id,
@@ -426,6 +428,11 @@ def full_report(project: Project, measurement: dict[str, Any]) -> dict[str, Any]
                 semantic._resolve_model_dtype(profile.family, identity["requested_device"])
             ),
             "task_identity": identity["tasks"],
+        },
+        "behavior_evidence": {
+            "captured_sha256": captured_evidence,
+            "current_sha256": current_evidence,
+            "valid": captured_evidence == current_evidence,
         },
         "replay_parity": replay_parity(measurement),
         "duplicate": duplicate_report(project, measurement),

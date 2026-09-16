@@ -10,6 +10,7 @@ import pytest
 from scripts.calibration_contract import (
     ProjectAnalyzer,
     analyzer_config,
+    eligibility_reason,
     extract_project,
     load_projects,
     pair_key,
@@ -223,6 +224,49 @@ def test_named_policies_use_real_candidate_selection(project):
     assert "Record" in {u.name for u in selected}
     tests = load_projects(project.manifest_path, policy="tests")[0]
     assert "test_behavior" in {u.name for u in extract_project(tests)[0]}
+
+
+def test_overlapping_units_are_ineligible_for_pair_comparison(project):
+    (project.root / "src/overlap.py").write_text(
+        "def outer(values):\n"
+        "    def inner(value):\n"
+        "        adjusted = value + 1\n"
+        "        scaled = adjusted * 2\n"
+        "        return scaled\n"
+        "    results = [inner(value) for value in values]\n"
+        "    total = sum(results)\n"
+        "    return total\n"
+    )
+    units, _ = extract_project(project, inventory=True)
+    outer = next(unit for unit in units if unit.name == "outer")
+    inner = next(unit for unit in units if unit.name == "inner")
+    assert eligibility_reason(outer, inner, {outer.uid, inner.uid}, set()) == "overlapping_units"
+
+
+def test_unreachable_search_target_requires_policy_explanation(project):
+    project.annotations["units"].append(
+        {
+            "id": "test-behavior",
+            "selector": {
+                "path": "tests/test_app.py",
+                "qualified_name": "test_app.test_behavior",
+                "kind": "function",
+            },
+        }
+    )
+    project.annotations["probes"] = [
+        {
+            "id": "test-only",
+            "kind": "exact_symbol",
+            "query": "test_behavior",
+            "expected": ["test-behavior"],
+            "relevance_complete": True,
+        }
+    ]
+    with pytest.raises(ValueError, match="unreachable targets"):
+        validate_project(project)
+    project.annotations["probes"][0]["policy_exclusion"] = "Default analysis excludes tests."
+    assert validate_project(project)["probes"] == 1
 
 
 def test_group_split_leak_is_rejected(project):

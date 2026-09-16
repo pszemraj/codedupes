@@ -47,6 +47,7 @@ def test_recorded_measurements_cover_both_models_and_real_devices(project):
         )
         report = full_report(project, measurement)
         assert report["selection"] is None
+        assert report["behavior_evidence"]["valid"] is True
         assert report["duplicate"]["complete_published"]["selection_eligible"] is True
 
     queue = review_queue(project, list(measurements.values()))
@@ -61,3 +62,12 @@ def test_recorded_measurements_cover_both_models_and_real_devices(project):
         assert comparison["duplicate_decision_changes"] == []
         assert comparison["search_threshold_decision_changes"] == []
         assert comparison["search_top_k_decision_changes"] == []
+
+
+def test_behavior_evidence_can_expire_without_staling_embeddings(monkeypatch):
+    project = load_projects(project_ids=["ledger"])[0]
+    measurement = load_all(project, DEFAULT_MEASUREMENTS, ["gte-modernbert-base"], ["cpu"])[
+        ("gte-modernbert-base", "cpu")
+    ]
+    monkeypatch.setattr("scripts.calibration_evaluation.evidence_identity", lambda ignored: "stale")
+    assert full_report(project, measurement)["behavior_evidence"]["valid"] is False

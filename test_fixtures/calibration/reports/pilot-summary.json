@@ -107,6 +107,11 @@
               }
             }
           },
+          "behavior_evidence": {
+            "captured_sha256": "ce53369d068ef341789a2f0e416e2e06438fce9de6359f4a6185be7e4e7f9093",
+            "current_sha256": "ce53369d068ef341789a2f0e416e2e06438fce9de6359f4a6185be7e4e7f9093",
+            "valid": true
+          },
           "replay_parity": {
             "default": true,
             "explicit_override": true
@@ -622,6 +627,11 @@
                 "document": "source"
               }
             }
+          },
+          "behavior_evidence": {
+            "captured_sha256": "ce53369d068ef341789a2f0e416e2e06438fce9de6359f4a6185be7e4e7f9093",
+            "current_sha256": "ce53369d068ef341789a2f0e416e2e06438fce9de6359f4a6185be7e4e7f9093",
+            "valid": true
           },
           "replay_parity": {
             "default": true,
@@ -1139,6 +1149,11 @@
               }
             }
           },
+          "behavior_evidence": {
+            "captured_sha256": "ce53369d068ef341789a2f0e416e2e06438fce9de6359f4a6185be7e4e7f9093",
+            "current_sha256": "ce53369d068ef341789a2f0e416e2e06438fce9de6359f4a6185be7e4e7f9093",
+            "valid": true
+          },
           "replay_parity": {
             "default": true,
             "explicit_override": true
@@ -1554,6 +1569,11 @@
                 "document": "source"
               }
             }
+          },
+          "behavior_evidence": {
+            "captured_sha256": "ce53369d068ef341789a2f0e416e2e06438fce9de6359f4a6185be7e4e7f9093",
+            "current_sha256": "ce53369d068ef341789a2f0e416e2e06438fce9de6359f4a6185be7e4e7f9093",
+            "valid": true
           },
           "replay_parity": {
             "default": true,
@@ -2459,6 +2479,11 @@
               }
             }
           },
+          "behavior_evidence": {
+            "captured_sha256": "01ed408f5b442a2b38b0f625247dfe9e9936f9d6cfd371f69a9e164d61ba5811",
+            "current_sha256": "01ed408f5b442a2b38b0f625247dfe9e9936f9d6cfd371f69a9e164d61ba5811",
+            "valid": true
+          },
           "replay_parity": {
             "default": true,
             "explicit_override": true
@@ -2850,6 +2875,11 @@
               }
             }
           },
+          "behavior_evidence": {
+            "captured_sha256": "01ed408f5b442a2b38b0f625247dfe9e9936f9d6cfd371f69a9e164d61ba5811",
+            "current_sha256": "01ed408f5b442a2b38b0f625247dfe9e9936f9d6cfd371f69a9e164d61ba5811",
+            "valid": true
+          },
           "replay_parity": {
             "default": true,
             "explicit_override": true
@@ -3240,6 +3270,11 @@
                 "document": "source"
               }
             }
+          },
+          "behavior_evidence": {
+            "captured_sha256": "01ed408f5b442a2b38b0f625247dfe9e9936f9d6cfd371f69a9e164d61ba5811",
+            "current_sha256": "01ed408f5b442a2b38b0f625247dfe9e9936f9d6cfd371f69a9e164d61ba5811",
+            "valid": true
           },
           "replay_parity": {
             "default": true,
@@ -3694,6 +3729,11 @@
                 "document": "source"
               }
             }
+          },
+          "behavior_evidence": {
+            "captured_sha256": "01ed408f5b442a2b38b0f625247dfe9e9936f9d6cfd371f69a9e164d61ba5811",
+            "current_sha256": "01ed408f5b442a2b38b0f625247dfe9e9936f9d6cfd371f69a9e164d61ba5811",
+            "valid": true
           },
           "replay_parity": {
             "default": true,
