@@ -1,7 +1,6 @@
 //! Cowsay implemented in Rust, with a small WebAssembly boundary.
 //!
-//! This crate is also a code-clone fixture. Several duplicated regions are
-//! intentional; see `fixtures/clone-ground-truth.json` before refactoring.
+//! The scanner and fold algorithms are both supported rendering paths.
 
 mod bubble;
 mod cow;
@@ -19,7 +18,7 @@ pub struct CowOptions {
     pub width: usize,
     /// Render a thought bubble and thought connector instead of speech.
     pub thinking: bool,
-    /// Select which intentionally duplicated wrapping implementation to use.
+    /// Select the wrapping implementation.
     pub wrap_algorithm: WrapAlgorithm,
 }
 
@@ -47,8 +46,7 @@ pub fn render(message: &str, options: CowOptions) -> String {
 
 /// Browser-facing WebAssembly API.
 ///
-/// `use_fold_wrapper` switches between the two semantically equivalent
-/// wrapping implementations planted in this fixture.
+/// `use_fold_wrapper` selects the fold implementation instead of the scanner.
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
 pub fn cowsay(message: &str, width: u32, thinking: bool, use_fold_wrapper: bool) -> String {
     let wrap_algorithm = if use_fold_wrapper {

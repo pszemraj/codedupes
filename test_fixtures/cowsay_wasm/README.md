@@ -1,8 +1,8 @@
 # Cowsay dupe fixture
 
-A working Rust application that targets both a native CLI and browser WebAssembly, with intentional code clones planted as detector ground truth. The application is small enough to inspect, but the clones sit on live paths: none of them are dead sample code.
+A working Rust application that targets both a native CLI and browser WebAssembly. Its independently supported rendering paths are reviewed through the shared calibration contract; none is dead sample code.
 
-## What is planted
+## Reviewed maintenance families
 
 | Fixture group | Kind | Live behavior |
 | --- | --- | --- |
@@ -10,11 +10,11 @@ A working Rust application that targets both a native CLI and browser WebAssembl
 | `bubble-renderers` | edit-distance / Type 3 | The speech and thought renderers retain the same construction skeleton, with changed control flow and delimiters. |
 | `word-wrappers` | semantic / Type 4 | A stateful scanner and an iterator/fold implementation produce the same wrapped lines. The browser and CLI can select either implementation. |
 
-Labels are stored in [`fixtures/clone-ground-truth.json`](fixtures/clone-ground-truth.json). Stable region markers are included in the Rust files, along with one-based line spans for tools that require coordinates. Prefer markers when source changes. The duplicated code is deliberate; do not deduplicate these implementations before evaluating a detector. `cargo test` checks that the exact clone remains exact and that the semantic implementations remain behaviorally equivalent.
+Labels, search relevance, contracts, and evidence references live in the shared [`calibration/annotations/cowsay.json`](../calibration/annotations/cowsay.json). The duplicated implementations remain supported application paths. `cargo test` checks that the exact pair remains exact and that the wrapping implementations remain behaviorally equivalent.
 
 ## Analyze the fixture
 
-To inspect the planted deterministic clone with codedupes, run this from the repository root:
+To inspect the deterministic clone with codedupes, run this from the repository root:
 
 ```sh
 codedupes check test_fixtures/cowsay_wasm --language rust --traditional-only --no-unused --fail-on none
@@ -52,10 +52,10 @@ The no-bundler browser path is deliberately plain: `wasm-pack` emits the ES modu
 
 ```sh
 cargo test --test fixture_integrity
-python scripts/verify_source_fixture.py
+conda run --name inf python ../../scripts/validate_calibration_corpus.py --project cowsay
 ```
 
-The Python check is dependency-free and validates the source markers, current line spans, exact-clone equality, and edit-clone similarity. The Rust tests add behavioral validation for the semantic clone.
+The shared validator checks selectors, judgments, evidence, search relevance, and detector eligibility. Rust tests validate exact-source relationships and behavior.
 
 ## Project layout
 
@@ -65,15 +65,12 @@ src/
   wrapping/        semantic clone group
   lib.rs           native API and wasm-bindgen exports
   main.rs          native CLI
-fixtures/
-  clone-ground-truth.json
 web/
   index.html
   app.js
   styles.css
 scripts/
   build-web.sh
-  verify_source_fixture.py
 ```
 
 The wrapping width counts Unicode scalar values rather than terminal display cells. That is intentional here: bringing in a display-width dependency would add noise to a fixture whose target is source-clone detection.

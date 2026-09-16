@@ -1,0 +1,514 @@
+{
+  "schema_version": 2,
+  "provenance": {
+    "origin": "issue-20 authored development pilot",
+    "split": "development",
+    "split_group": "cowsay-application"
+  },
+  "units": [
+    {
+      "id": "cow.render",
+      "selector": {
+        "path": "src/cow.rs",
+        "qualified_name": "cow.render",
+        "kind": "function"
+      }
+    },
+    {
+      "id": "lib.CowOptions.Default.default",
+      "selector": {
+        "path": "src/lib.rs",
+        "qualified_name": "lib.CowOptions.Default.default",
+        "kind": "method"
+      }
+    },
+    {
+      "id": "lib.render",
+      "selector": {
+        "path": "src/lib.rs",
+        "qualified_name": "lib.render",
+        "kind": "function"
+      }
+    },
+    {
+      "id": "lib.cowsay",
+      "selector": {
+        "path": "src/lib.rs",
+        "qualified_name": "lib.cowsay",
+        "kind": "function"
+      }
+    },
+    {
+      "id": "lib.fixture_version",
+      "selector": {
+        "path": "src/lib.rs",
+        "qualified_name": "lib.fixture_version",
+        "kind": "function"
+      }
+    },
+    {
+      "id": "main.main",
+      "selector": {
+        "path": "src/main.rs",
+        "qualified_name": "main.main",
+        "kind": "function"
+      }
+    },
+    {
+      "id": "main.run",
+      "selector": {
+        "path": "src/main.rs",
+        "qualified_name": "main.run",
+        "kind": "function"
+      }
+    },
+    {
+      "id": "main.print_usage",
+      "selector": {
+        "path": "src/main.rs",
+        "qualified_name": "main.print_usage",
+        "kind": "function"
+      }
+    },
+    {
+      "id": "bubble.render",
+      "selector": {
+        "path": "src/bubble/mod.rs",
+        "qualified_name": "bubble.render",
+        "kind": "function"
+      }
+    },
+    {
+      "id": "bubble.pad_line",
+      "selector": {
+        "path": "src/bubble/mod.rs",
+        "qualified_name": "bubble.pad_line",
+        "kind": "function"
+      }
+    },
+    {
+      "id": "bubble.speech.make_borders",
+      "selector": {
+        "path": "src/bubble/speech.rs",
+        "qualified_name": "bubble.speech.make_borders",
+        "kind": "function"
+      }
+    },
+    {
+      "id": "bubble.speech.render_bubble",
+      "selector": {
+        "path": "src/bubble/speech.rs",
+        "qualified_name": "bubble.speech.render_bubble",
+        "kind": "function"
+      }
+    },
+    {
+      "id": "bubble.thought.make_borders",
+      "selector": {
+        "path": "src/bubble/thought.rs",
+        "qualified_name": "bubble.thought.make_borders",
+        "kind": "function"
+      }
+    },
+    {
+      "id": "bubble.thought.render_bubble",
+      "selector": {
+        "path": "src/bubble/thought.rs",
+        "qualified_name": "bubble.thought.render_bubble",
+        "kind": "function"
+      }
+    },
+    {
+      "id": "wrapping.fold.wrap",
+      "selector": {
+        "path": "src/wrapping/fold.rs",
+        "qualified_name": "wrapping.fold.wrap",
+        "kind": "function"
+      }
+    },
+    {
+      "id": "wrapping.wrap",
+      "selector": {
+        "path": "src/wrapping/mod.rs",
+        "qualified_name": "wrapping.wrap",
+        "kind": "function"
+      }
+    },
+    {
+      "id": "wrapping.scanner.wrap",
+      "selector": {
+        "path": "src/wrapping/scanner.rs",
+        "qualified_name": "wrapping.scanner.wrap",
+        "kind": "function"
+      }
+    },
+    {
+      "id": "wrapping.shared.display_width",
+      "selector": {
+        "path": "src/wrapping/shared.rs",
+        "qualified_name": "wrapping.shared.display_width",
+        "kind": "function"
+      }
+    },
+    {
+      "id": "wrapping.shared.split_word",
+      "selector": {
+        "path": "src/wrapping/shared.rs",
+        "qualified_name": "wrapping.shared.split_word",
+        "kind": "function"
+      }
+    }
+  ],
+  "families": [
+    {
+      "id": "borders",
+      "members": [
+        "bubble.speech.make_borders",
+        "bubble.thought.make_borders"
+      ]
+    },
+    {
+      "id": "bubble-rendering",
+      "members": [
+        "bubble.speech.render_bubble",
+        "bubble.thought.render_bubble"
+      ]
+    },
+    {
+      "id": "word-wrapping",
+      "members": [
+        "wrapping.scanner.wrap",
+        "wrapping.fold.wrap"
+      ]
+    }
+  ],
+  "pairs": [
+    {
+      "id": "bubble.speech.make_borders--bubble.thought.make_borders",
+      "a": "bubble.speech.make_borders",
+      "b": "bubble.thought.make_borders",
+      "judgment": "positive",
+      "tags": [
+        "exact"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": true,
+      "equivalence_domain": "Equal width produces byte-identical top and bottom border strings.",
+      "contract": "Equal width produces byte-identical top and bottom border strings.",
+      "rationale": "Consolidate the common border construction used by both modes.",
+      "evidence": [
+        "tests/fixture_integrity.rs::exact_clone_is_still_byte_identical",
+        "tests/behavior.rs::renders_single_line_speech"
+      ]
+    },
+    {
+      "id": "bubble.speech.render_bubble--bubble.thought.render_bubble",
+      "a": "bubble.speech.render_bubble",
+      "b": "bubble.thought.render_bubble",
+      "judgment": "positive",
+      "tags": [
+        "edited"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "Speech and thought modes preserve content and widths but intentionally use different delimiters.",
+      "contract": "Speech and thought modes preserve content and widths but intentionally use different delimiters.",
+      "rationale": "Share the bubble framing and padded-line assembly while parameterizing mode-specific delimiters.",
+      "evidence": [
+        "tests/behavior.rs::renders_single_line_speech",
+        "tests/behavior.rs::renders_thought_mode"
+      ],
+      "difference_witness": "One line moo renders < moo > in speech and ( moo ) in thought."
+    },
+    {
+      "id": "wrapping.scanner.wrap--wrapping.fold.wrap",
+      "a": "wrapping.scanner.wrap",
+      "b": "wrapping.fold.wrap",
+      "judgment": "positive",
+      "tags": [
+        "translated"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": true,
+      "equivalence_domain": "Message strings passed through render, with its width clamp to 4..96; both bubble modes",
+      "contract": "Unicode scalar widths, whitespace collapsing, paragraph preservation and long-word splitting agree through the public renderer.",
+      "rationale": "Consolidate the two implementations of the public wrapping contract; neither caller requires separate performance behavior.",
+      "evidence": [
+        "tests/behavior.rs::both_semantic_wrappers_render_identically",
+        "tests/behavior.rs::public_width_clamps_and_unicode_scalar_boundaries"
+      ]
+    },
+    {
+      "id": "bubble.speech.make_borders--wrapping.shared.split_word",
+      "a": "bubble.speech.make_borders",
+      "b": "wrapping.shared.split_word",
+      "judgment": "negative",
+      "tags": [
+        "shared_vocabulary"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "Separate responsibilities in the text-rendering application.",
+      "contract": "Separate responsibilities in the text-rendering application.",
+      "rationale": "Border construction repeats fixed framing characters; splitting a long word partitions Unicode scalars without producing framing.",
+      "evidence": [
+        "tests/behavior.rs::both_semantic_wrappers_render_identically",
+        "tests/behavior.rs::public_width_clamps_and_unicode_scalar_boundaries",
+        "tests/behavior.rs::native_cli_reports_invalid_options_and_runs_both_wrappers"
+      ],
+      "difference_witness": "The public Unicode-width test requires both padding and wrapping; the invalid --wrapper trace is rejected by CLI parsing before any layout, and speech/thought mode changes artwork and framing separately."
+    },
+    {
+      "id": "bubble.thought.make_borders--main.run",
+      "a": "bubble.thought.make_borders",
+      "b": "main.run",
+      "judgment": "negative",
+      "tags": [
+        "shared_vocabulary"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "Separate responsibilities in the text-rendering application.",
+      "contract": "Separate responsibilities in the text-rendering application.",
+      "rationale": "CLI argument validation and input ownership do not duplicate border construction.",
+      "evidence": [
+        "tests/behavior.rs::both_semantic_wrappers_render_identically",
+        "tests/behavior.rs::public_width_clamps_and_unicode_scalar_boundaries",
+        "tests/behavior.rs::native_cli_reports_invalid_options_and_runs_both_wrappers"
+      ],
+      "difference_witness": "The public Unicode-width test requires both padding and wrapping; the invalid --wrapper trace is rejected by CLI parsing before any layout, and speech/thought mode changes artwork and framing separately."
+    },
+    {
+      "id": "bubble.speech.render_bubble--bubble.pad_line",
+      "a": "bubble.speech.render_bubble",
+      "b": "bubble.pad_line",
+      "judgment": "negative",
+      "tags": [
+        "shared_vocabulary"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "Separate responsibilities in the text-rendering application.",
+      "contract": "Separate responsibilities in the text-rendering application.",
+      "rationale": "Rendering calls the existing padding helper; it does not maintain an independent implementation of padding.",
+      "evidence": [
+        "tests/behavior.rs::both_semantic_wrappers_render_identically",
+        "tests/behavior.rs::public_width_clamps_and_unicode_scalar_boundaries",
+        "tests/behavior.rs::native_cli_reports_invalid_options_and_runs_both_wrappers"
+      ],
+      "difference_witness": "The public Unicode-width test requires both padding and wrapping; the invalid --wrapper trace is rejected by CLI parsing before any layout, and speech/thought mode changes artwork and framing separately."
+    },
+    {
+      "id": "bubble.thought.render_bubble--main.run",
+      "a": "bubble.thought.render_bubble",
+      "b": "main.run",
+      "judgment": "negative",
+      "tags": [
+        "shared_vocabulary"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "Separate responsibilities in the text-rendering application.",
+      "contract": "Separate responsibilities in the text-rendering application.",
+      "rationale": "CLI argument handling delegates rendering and contains no independent bubble construction.",
+      "evidence": [
+        "tests/behavior.rs::both_semantic_wrappers_render_identically",
+        "tests/behavior.rs::public_width_clamps_and_unicode_scalar_boundaries",
+        "tests/behavior.rs::native_cli_reports_invalid_options_and_runs_both_wrappers"
+      ],
+      "difference_witness": "The public Unicode-width test requires both padding and wrapping; the invalid --wrapper trace is rejected by CLI parsing before any layout, and speech/thought mode changes artwork and framing separately."
+    },
+    {
+      "id": "wrapping.scanner.wrap--bubble.pad_line",
+      "a": "wrapping.scanner.wrap",
+      "b": "bubble.pad_line",
+      "judgment": "negative",
+      "tags": [
+        "shared_vocabulary"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "Separate responsibilities in the text-rendering application.",
+      "contract": "Separate responsibilities in the text-rendering application.",
+      "rationale": "Word/paragraph layout decides line boundaries; padding preserves an existing line and fills its remaining width.",
+      "evidence": [
+        "tests/behavior.rs::both_semantic_wrappers_render_identically",
+        "tests/behavior.rs::public_width_clamps_and_unicode_scalar_boundaries",
+        "tests/behavior.rs::native_cli_reports_invalid_options_and_runs_both_wrappers"
+      ],
+      "difference_witness": "The public Unicode-width test requires both padding and wrapping; the invalid --wrapper trace is rejected by CLI parsing before any layout, and speech/thought mode changes artwork and framing separately."
+    },
+    {
+      "id": "wrapping.fold.wrap--main.run",
+      "a": "wrapping.fold.wrap",
+      "b": "main.run",
+      "judgment": "negative",
+      "tags": [
+        "shared_vocabulary"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "Separate responsibilities in the text-rendering application.",
+      "contract": "Separate responsibilities in the text-rendering application.",
+      "rationale": "CLI parsing selects a wrapping implementation but does not implement the wrapping state machine.",
+      "evidence": [
+        "tests/behavior.rs::both_semantic_wrappers_render_identically",
+        "tests/behavior.rs::public_width_clamps_and_unicode_scalar_boundaries",
+        "tests/behavior.rs::native_cli_reports_invalid_options_and_runs_both_wrappers"
+      ],
+      "difference_witness": "The public Unicode-width test requires both padding and wrapping; the invalid --wrapper trace is rejected by CLI parsing before any layout, and speech/thought mode changes artwork and framing separately."
+    },
+    {
+      "id": "cow.render--bubble.render",
+      "a": "cow.render",
+      "b": "bubble.render",
+      "judgment": "negative",
+      "tags": [
+        "shared_vocabulary"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "Separate responsibilities in the text-rendering application.",
+      "contract": "Separate responsibilities in the text-rendering application.",
+      "rationale": "Cow artwork and bubble-mode dispatch have unrelated construction responsibilities.",
+      "evidence": [
+        "tests/behavior.rs::both_semantic_wrappers_render_identically",
+        "tests/behavior.rs::public_width_clamps_and_unicode_scalar_boundaries",
+        "tests/behavior.rs::native_cli_reports_invalid_options_and_runs_both_wrappers"
+      ],
+      "difference_witness": "The public Unicode-width test requires both padding and wrapping; the invalid --wrapper trace is rejected by CLI parsing before any layout, and speech/thought mode changes artwork and framing separately."
+    },
+    {
+      "id": "bubble.render--wrapping.wrap",
+      "a": "bubble.render",
+      "b": "wrapping.wrap",
+      "judgment": "negative",
+      "tags": [
+        "shared_vocabulary"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "Separate responsibilities in the text-rendering application.",
+      "contract": "Separate responsibilities in the text-rendering application.",
+      "rationale": "These short dispatchers choose different operations and contain no substantial shared maintenance region.",
+      "evidence": [
+        "tests/behavior.rs::both_semantic_wrappers_render_identically",
+        "tests/behavior.rs::public_width_clamps_and_unicode_scalar_boundaries",
+        "tests/behavior.rs::native_cli_reports_invalid_options_and_runs_both_wrappers"
+      ],
+      "difference_witness": "The public Unicode-width test requires both padding and wrapping; the invalid --wrapper trace is rejected by CLI parsing before any layout, and speech/thought mode changes artwork and framing separately."
+    }
+  ],
+  "probes": [
+    {
+      "id": "word-layout",
+      "kind": "behavioral",
+      "query": "Wrap paragraphs into bounded-width lines, splitting words that are too long.",
+      "expected": [
+        "wrapping.scanner.wrap",
+        "wrapping.fold.wrap"
+      ],
+      "relevance_complete": true
+    },
+    {
+      "id": "bubble-modes",
+      "kind": "behavioral",
+      "query": "Build a text bubble around already wrapped lines for speech or thought.",
+      "expected": [
+        "bubble.speech.render_bubble",
+        "bubble.thought.render_bubble",
+        "bubble.render"
+      ],
+      "relevance_complete": true
+    },
+    {
+      "id": "borders",
+      "kind": "behavioral",
+      "query": "Construct the top and bottom horizontal borders for a message bubble.",
+      "expected": [
+        "bubble.speech.make_borders",
+        "bubble.thought.make_borders"
+      ],
+      "relevance_complete": true
+    },
+    {
+      "id": "padding",
+      "kind": "behavioral",
+      "query": "Fill a line with trailing spaces to its requested Unicode character width.",
+      "expected": [
+        "bubble.pad_line"
+      ],
+      "relevance_complete": true
+    },
+    {
+      "id": "long-word",
+      "kind": "behavioral",
+      "query": "Divide one long word into character-bounded pieces without losing Unicode characters.",
+      "expected": [
+        "wrapping.shared.split_word"
+      ],
+      "relevance_complete": true
+    },
+    {
+      "id": "cli-options",
+      "kind": "behavioral",
+      "query": "Parse command-line options, read a message from arguments or standard input, and reject unsupported options.",
+      "expected": [
+        "main.run"
+      ],
+      "relevance_complete": true
+    },
+    {
+      "id": "partial-bubble",
+      "kind": "partial_symbol",
+      "query": "render_bub",
+      "expected": [
+        "bubble.speech.render_bubble",
+        "bubble.thought.render_bubble"
+      ],
+      "relevance_complete": true
+    },
+    {
+      "id": "partial-split",
+      "kind": "partial_symbol",
+      "query": "split_wor",
+      "expected": [
+        "wrapping.shared.split_word"
+      ],
+      "relevance_complete": true
+    },
+    {
+      "id": "partial-border",
+      "kind": "partial_symbol",
+      "query": "make_bord",
+      "expected": [
+        "bubble.speech.make_borders",
+        "bubble.thought.make_borders"
+      ],
+      "relevance_complete": true
+    },
+    {
+      "id": "exact-pad",
+      "kind": "exact_symbol",
+      "query": "pad_line",
+      "expected": [
+        "bubble.pad_line"
+      ],
+      "relevance_complete": true
+    },
+    {
+      "id": "noise-sql",
+      "kind": "no_result",
+      "query": "Apply a database schema migration inside a SQL transaction.",
+      "expected": [],
+      "relevance_complete": true
+    },
+    {
+      "id": "noise-http",
+      "kind": "no_result",
+      "query": "Refresh an OAuth token by sending an HTTP POST request.",
+      "expected": [],
+      "relevance_complete": true
+    }
+  ]
+}

@@ -1,0 +1,51 @@
+{
+  "schema_version": 2,
+  "purpose": "Development pilot for issue #20; not held-out calibration evidence",
+  "policies": {
+    "default": {
+      "include_private": true,
+      "include_tests": false,
+      "min_semantic_statements": 3,
+      "semantic_unit_types": ["function", "method"],
+      "filter_tiny_traditional": true,
+      "tiny_unit_statement_cutoff": 3,
+      "suppress_test_semantic_matches": false
+    },
+    "public": {"include_private": false},
+    "classes": {"semantic_unit_types": ["function", "method", "class"]},
+    "tests": {"include_tests": true},
+    "include_tiny_traditional": {"filter_tiny_traditional": false}
+  },
+  "projects": [
+    {
+      "id": "ledger",
+      "root": "ledger",
+      "analysis_roots": ["src"],
+      "test_roots": ["tests"],
+      "support_files": ["README.md"],
+      "languages": ["python"],
+      "split": "development",
+      "split_group": "ledger-application",
+      "annotations": "annotations/ledger.json",
+      "behavior_tests": [
+        {"id": "unit-tests", "argv": ["{python}", "-m", "unittest", "discover", "-s", "tests", "-v"], "env": {"PYTHONPATH": "src"}},
+        {"id": "application", "argv": ["{python}", "-m", "ledger"], "env": {"PYTHONPATH": "src"}}
+      ]
+    },
+    {
+      "id": "cowsay",
+      "root": "../cowsay_wasm",
+      "analysis_roots": ["src"],
+      "test_roots": ["tests"],
+      "support_files": ["README.md", "Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "web/*"],
+      "languages": ["rust"],
+      "split": "development",
+      "split_group": "cowsay-application",
+      "annotations": "annotations/cowsay.json",
+      "behavior_tests": [
+        {"id": "rust-tests", "argv": ["cargo", "+stable", "test", "--locked"]},
+        {"id": "application", "argv": ["cargo", "+stable", "run", "--locked", "--", "--wrapper", "fold", "--width", "16", "Hello from the pilot"]}
+      ]
+    }
+  ]
+}

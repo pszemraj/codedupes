@@ -7,32 +7,16 @@ const FOLD: &str = include_str!("../src/wrapping/fold.rs");
 
 #[test]
 fn exact_clone_is_still_byte_identical() {
-    let speech = region(
-        SPEECH,
-        "// fixture:exact-border:start",
-        "// fixture:exact-border:end",
-    );
-    let thought = region(
-        THOUGHT,
-        "// fixture:exact-border:start",
-        "// fixture:exact-border:end",
-    );
+    let speech = function(SPEECH, "pub(crate) fn make_borders");
+    let thought = function(THOUGHT, "pub(crate) fn make_borders");
 
     assert_eq!(speech, thought, "the planted exact clone drifted");
 }
 
 #[test]
 fn edit_distance_clone_is_similar_but_not_exact() {
-    let speech = normalized(region(
-        SPEECH,
-        "// fixture:edit-bubble:start",
-        "// fixture:edit-bubble:end",
-    ));
-    let thought = normalized(region(
-        THOUGHT,
-        "// fixture:edit-bubble:start",
-        "// fixture:edit-bubble:end",
-    ));
+    let speech = normalized(function(SPEECH, "pub(crate) fn render_bubble"));
+    let thought = normalized(function(THOUGHT, "pub(crate) fn render_bubble"));
 
     assert_ne!(speech, thought, "the near clone became exact");
     let similarity = levenshtein_similarity(&speech, &thought);
@@ -44,16 +28,8 @@ fn edit_distance_clone_is_similar_but_not_exact() {
 
 #[test]
 fn semantic_clone_has_different_source_but_equal_behavior() {
-    let scanner_source = normalized(region(
-        SCANNER,
-        "// fixture:semantic-wrap:start",
-        "// fixture:semantic-wrap:end",
-    ));
-    let fold_source = normalized(region(
-        FOLD,
-        "// fixture:semantic-wrap:start",
-        "// fixture:semantic-wrap:end",
-    ));
+    let scanner_source = normalized(function(SCANNER, "pub(crate) fn wrap"));
+    let fold_source = normalized(function(FOLD, "pub(crate) fn wrap"));
     assert_ne!(scanner_source, fold_source);
 
     for message in [
@@ -84,13 +60,23 @@ fn semantic_clone_has_different_source_but_equal_behavior() {
     }
 }
 
-fn region<'a>(source: &'a str, start_marker: &str, end_marker: &str) -> &'a str {
-    let start = source.find(start_marker).expect("missing start marker");
-    let end_offset = source[start..]
-        .find(end_marker)
-        .expect("missing end marker");
-    let end = start + end_offset + end_marker.len();
-    &source[start..end]
+fn function<'a>(source: &'a str, signature: &str) -> &'a str {
+    let start = source.find(signature).expect("missing function signature");
+    let body = source[start..].find('{').expect("missing function body") + start;
+    let mut depth = 0;
+    for (offset, character) in source[body..].char_indices() {
+        match character {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return &source[start..body + offset + 1];
+                }
+            }
+            _ => {}
+        }
+    }
+    panic!("unterminated function body")
 }
 
 fn normalized(source: &str) -> String {

@@ -169,7 +169,7 @@ def test_high_confidence_gate_must_not_sit_below_the_duplicate_gate() -> None:
 
 
 def test_builtin_hybrid_split_matches_the_recorded_corroboration_sweep() -> None:
-    """Pin the shipped tier split; the sweep policy itself is checked by test_corroboration_reports."""
+    """Pin the shipped tier split while replacement calibration remains pending."""
     gte = resolve_model_profile("gte-modernbert-base")
     gemma = resolve_model_profile("embeddinggemma-300m")
 

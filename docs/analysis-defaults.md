@@ -22,7 +22,7 @@ See [report selection](output.md#report-selection) and [exit codes](output.md#ex
 
 ## Semantic duplicate gate defaults
 
-Semantic duplicate detection is gated per language: each built-in model profile carries a calibrated cosine gate for every supported language, measured against `test_fixtures/polyglot_calibration/`.
+Semantic duplicate detection is gated per language. Each built-in model profile carries a frozen cosine gate for every supported language. The former calibration corpus has been retired; the issue #20 development pilot records the current values in [`frozen_defaults.json`](../test_fixtures/calibration/frozen_defaults.json) and replays them without treating the pilot as selection evidence.
 
 | language | `gte-modernbert-base` | `embeddinggemma-300m` |
 | --- | --- | --- |
@@ -32,11 +32,11 @@ Semantic duplicate detection is gated per language: each built-in model profile 
 | javascript | `0.70` | `0.72` |
 | typescript | `0.68` | `0.78` |
 
-Gate selection is recall-first. A shipped gate may sit below the sweep's F1-selected threshold wherever the sweep shows recall gains below it, however many grid steps down that is (gte `c` `0.82` against a selected `0.90`; embeddinggemma `javascript` `0.72` against `0.82` and `rust` `0.78` against `0.82`). Where recall is flat, a gate sits at most one grid step looser as an off-corpus generalization hedge, never further. Every shipped gate keeps recall at or above the selection's and F1 within 80% of it; `tests/test_calibration_reports.py` enforces both against the recorded sweep reports.
+No current report justifies changing these gates. The replacement workflow captures reusable raw measurements and exposes decision plateaus, while later phases add five-language and held-out evidence before proposing recalibration. See [calibration measurements and replay](hybrid-tuning.md).
 
 See [threshold-profile choices](model-profiles.md#choosing-threshold-defaults) for profile selection.
 
-The profile fallback (`0.82` gte, `0.78` gemma) is the strictest calibrated gate and applies only to languages without their own entry. An explicit `--semantic-threshold`/`--threshold` (or `AnalyzerConfig.semantic_threshold`) replaces every per-language gate with one flat value. The pairwise embedding scan partitions candidates by language and scans each group at that language's own gate, so a loosely gated language never drags another language's scan down; the scalar floor handed to the scan covers only languages that arrive without a calibrated entry.
+The profile fallback (`0.82` gte, `0.78` gemma) applies only to languages without their own entry. An explicit `--semantic-threshold`/`--threshold` (or `AnalyzerConfig.semantic_threshold`) replaces every per-language gate with one flat value. The pairwise embedding scan partitions candidates by language and scans each group at that language's own gate, so a loosely gated language never drags another language's scan down; the scalar floor handed to the scan covers only languages that arrive without a profile entry.
 
 Semantic duplicate pairs are same-language by default. `--cross-language` (or `AnalyzerConfig(cross_language=True)`) also reports cross-language pairs; those claims are uncalibrated, so an opted-in mixed pair is held to `min(gate_a, gate_b)`, the looser of its two language gates.
 
@@ -139,7 +139,7 @@ A semantic-only pair has already passed its language's duplicate gate (applied b
 | `embeddinggemma-300m` | `0.00` | `0.20` | off |
 | `generic` | `0.00` | `0.20` | off |
 
-Both corroboration constants are one pooled selection per profile from the [corroboration sweep](hybrid-tuning.md#run-the-sweep) at the shipped admission gates. Identifier overlap is measured from the same identifier collection in every language (Python's includes attribute and keyword-argument names, see [fingerprints](polyglot-languages.md#fingerprints-and-comparison-boundaries)), so the identifier floor is a cross-language measurement, not an artifact of one extractor. It is `0.00` because the semantic-only positives in every corpus are alpha-renamed: at each profile's shipped statement-ratio floor no positive identifier floor is feasible in all five languages - even `0.05` drops Rust and Python below recall retention under both models, TypeScript below recall retention under `gte-modernbert-base` and below published precision under `embeddinggemma-300m`, and C below published precision under `embeddinggemma-300m`. The statement-ratio floor carries GTE's split; EmbeddingGemma's `0.20` floor withholds only extreme size mismatches. An explicit `--semantic-threshold` keeps the profile's corroboration constants but turns promotion off because the gates are calibrated relative to the shipped admission gates. See the [calibration results](../test_fixtures/polyglot_calibration/README.md#calibration-results) and [hybrid gate workflow](hybrid-tuning.md).
+The corroboration constants and promotion gates are frozen with the admission gates. The issue #20 pilot measures their decisions on the new development projects and reports identical-decision settings as indifferent; it does not select replacements. An explicit `--semantic-threshold` keeps the profile's corroboration constants but turns similarity promotion off because those promotion gates belong to the shipped profile policy. See [calibration measurements and replay](hybrid-tuning.md).
 
 ## Confidence scale
 

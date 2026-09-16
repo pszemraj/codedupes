@@ -27,8 +27,8 @@
 - Python `;` statement separators, optional trailing commas (magic trailing commas included), grouping parentheses, and plain implicit string concatenations are [formatting](polyglot-languages.md#fingerprints-and-comparison-boundaries): they no longer move the structural hash, while the token hash still sees them. Tuple-forming subscript commas remain structural, so `data[key]` and `data[key,]` do not match exactly. A `("doc")` docstring prunes like a bare one; a concatenation with an f-string part is still walked. Formatting policies for C, Rust, JavaScript, and TypeScript are unchanged.
 - Python `__all__` accepts bare tuples and module-level `if`/`try` bodies, a definition with no body yields no unit, a filtered private definition of any kind drops its nested definitions, and identifier sets keep the `site`-injected names (`exit`, `quit`, `help`) that are not language builtins.
 - Improved language-specific extraction, traditional matching, and source-range handling; function and method fingerprints now share a comparison domain so renamed copies can match structurally across those unit types. See [polyglot language support](polyglot-languages.md).
-- Added [polyglot calibration corpora](../test_fixtures/polyglot_calibration/README.md) and a runnable [Rust/WebAssembly clone fixture](../test_fixtures/cowsay_wasm/README.md).
-- The [hybrid confidence split](analysis-defaults.md#hybrid-synthesis-confidence-defaults) is calibrated per model profile. [Recorded calibration results](../test_fixtures/polyglot_calibration/README.md#calibration-results) support the shipped values.
+- Replaced the previous calibration data and compatibility paths with a [versioned manifest and explicit pair contract](../test_fixtures/calibration/README.md), a runnable Python ledger pilot, and the existing Rust/WebAssembly cowsay application.
+- Added reusable pre-threshold measurements, production-policy replay, independent search relevance, and CPU/MPS comparison for both built-in models. Shipped gates and hybrid constants remain frozen pending five-language and held-out evaluation.
 
 ## Semantic inference and caching
 
