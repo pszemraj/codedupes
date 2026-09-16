@@ -812,6 +812,106 @@
         "tests/behavior.rs::wraps_long_words_without_losing_characters"
       ],
       "difference_witness": "scanner::wrap preserves paragraph breaks and word spacing; split_word receives neither paragraphs nor whitespace context."
+    },
+    {
+      "id": "review-20-cowsay-037",
+      "a": "bubble.render",
+      "b": "composed.render",
+      "judgment": "negative",
+      "tags": [
+        "reviewed_high_score",
+        "pipeline_neighbor"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "All documented cowsay fixture inputs.",
+      "contract": "Bubble mode dispatch frames pre-wrapped lines; composed rendering owns the entire message-to-output pipeline.",
+      "rationale": "The composed renderer invokes bubble::render after separately clamping width, wrapping the message, and obtaining cow artwork. It does not duplicate bubble framing.",
+      "evidence": [
+        "tests/behavior.rs::both_render_assemblies_preserve_public_output",
+        "tests/behavior.rs::renders_thought_mode"
+      ],
+      "difference_witness": "bubble::render accepts wrapped lines and has no cow output, while composed::render accepts raw text and always appends cow artwork."
+    },
+    {
+      "id": "review-20-cowsay-038",
+      "a": "bubble.render",
+      "b": "lib.render_pipeline",
+      "judgment": "negative",
+      "tags": [
+        "reviewed_high_score",
+        "pipeline_neighbor"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "All documented cowsay fixture inputs.",
+      "contract": "Bubble mode dispatch frames pre-wrapped lines; the pipeline converts raw text and options into the complete cowsay response.",
+      "rationale": "render_pipeline delegates one stage to bubble::render and separately controls width, wrapping, cow artwork, and final assembly.",
+      "evidence": [
+        "tests/behavior.rs::both_render_assemblies_preserve_public_output",
+        "tests/behavior.rs::public_width_clamps_and_unicode_scalar_boundaries"
+      ],
+      "difference_witness": "bubble::render cannot clamp a width or append cow artwork; render_pipeline does both before returning its response."
+    },
+    {
+      "id": "review-20-cowsay-039",
+      "a": "wrapping.queue.wrap",
+      "b": "wrapping.shared.split_word",
+      "judgment": "negative",
+      "tags": [
+        "reviewed_high_score",
+        "helper_neighbor"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "All documented cowsay fixture inputs.",
+      "contract": "Queue wrapping owns paragraph and pending-word state; split_word partitions one Unicode token at a scalar boundary.",
+      "rationale": "The queue implementation uses the independently maintained fragments::segment helper for oversize words, while shared::split_word is a different helper used by the scanner and fold implementations.",
+      "evidence": [
+        "tests/behavior.rs::both_semantic_wrappers_render_identically",
+        "tests/behavior.rs::wraps_long_words_without_losing_characters"
+      ],
+      "difference_witness": "queue::wrap consumes complete paragraphs and preserves line boundaries; split_word receives a single token and cannot retain paragraph structure."
+    },
+    {
+      "id": "review-20-cowsay-040",
+      "a": "bubble.thought.render_bubble",
+      "b": "composed.render",
+      "judgment": "negative",
+      "tags": [
+        "reviewed_high_score",
+        "pipeline_neighbor"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "All documented cowsay fixture inputs.",
+      "contract": "Thought framing renders already-wrapped lines; composed rendering selects a mode after full text layout and appends artwork.",
+      "rationale": "The composed path calls generic bubble dispatch rather than maintaining the thought renderer, and it also supports speech output.",
+      "evidence": [
+        "tests/behavior.rs::both_render_assemblies_preserve_public_output",
+        "tests/behavior.rs::renders_thought_mode"
+      ],
+      "difference_witness": "thought::render_bubble always emits parenthesized thought framing; composed::render can render speech and includes a cow."
+    },
+    {
+      "id": "review-20-cowsay-041",
+      "a": "composed.render",
+      "b": "main.run",
+      "judgment": "negative",
+      "tags": [
+        "reviewed_high_score",
+        "cli_pipeline_neighbor"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "All documented cowsay fixture inputs.",
+      "contract": "Composed rendering assembles a typed rendering request; CLI execution parses argv or stdin and reports malformed options.",
+      "rationale": "main::run delegates to the public render dispatcher and owns command-line parsing, input selection, and error conversion; it does not reimplement final assembly.",
+      "evidence": [
+        "tests/behavior.rs::native_cli_reports_invalid_options_and_runs_both_wrappers",
+        "tests/behavior.rs::both_render_assemblies_preserve_public_output"
+      ],
+      "difference_witness": "An unknown --renderer exits from main::run with an error before a render algorithm is selected, while composed::render only receives valid CowOptions."
     }
   ],
   "probes": [
