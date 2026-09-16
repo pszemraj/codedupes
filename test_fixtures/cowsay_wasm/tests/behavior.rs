@@ -1,4 +1,4 @@
-use cowsay_dupe_fixture::{cowsay, render, CowOptions, WrapAlgorithm};
+use cowsay_dupe_fixture::{cowsay, render, CowOptions, RenderAlgorithm, WrapAlgorithm};
 
 #[test]
 fn renders_single_line_speech() {
@@ -47,6 +47,7 @@ fn both_semantic_wrappers_render_identically() {
                         width,
                         thinking,
                         wrap_algorithm: WrapAlgorithm::Scanner,
+                        render_algorithm: RenderAlgorithm::Pipeline,
                     },
                 );
                 let fold = render(
@@ -55,10 +56,21 @@ fn both_semantic_wrappers_render_identically() {
                         width,
                         thinking,
                         wrap_algorithm: WrapAlgorithm::Fold,
+                        render_algorithm: RenderAlgorithm::Pipeline,
+                    },
+                );
+                let queue = render(
+                    message,
+                    CowOptions {
+                        width,
+                        thinking,
+                        wrap_algorithm: WrapAlgorithm::Queue,
+                        render_algorithm: RenderAlgorithm::Pipeline,
                     },
                 );
 
                 assert_eq!(scanner, fold, "message={message:?}, width={width}");
+                assert_eq!(scanner, queue, "message={message:?}, width={width}");
             }
         }
     }
@@ -91,12 +103,41 @@ fn native_cli_reports_invalid_options_and_runs_both_wrappers() {
         .unwrap();
     assert_eq!(invalid.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&invalid.stderr).contains("unknown wrapper"));
-    for wrapper in ["scanner", "fold"] {
+    for wrapper in ["scanner", "fold", "queue"] {
         let output = Command::new(executable)
             .args(["--wrapper", wrapper, "--width", "4", "東京 café"])
             .output()
             .unwrap();
         assert!(output.status.success());
         assert!(String::from_utf8_lossy(&output.stdout).contains("café"));
+    }
+}
+
+#[test]
+fn both_render_assemblies_preserve_public_output() {
+    for message in ["moo", "one two three four five", "東京 café"] {
+        for width in [4, 9, 40] {
+            for thinking in [false, true] {
+                let pipeline = render(
+                    message,
+                    CowOptions {
+                        width,
+                        thinking,
+                        wrap_algorithm: WrapAlgorithm::Queue,
+                        render_algorithm: RenderAlgorithm::Pipeline,
+                    },
+                );
+                let composed = render(
+                    message,
+                    CowOptions {
+                        width,
+                        thinking,
+                        wrap_algorithm: WrapAlgorithm::Queue,
+                        render_algorithm: RenderAlgorithm::Composed,
+                    },
+                );
+                assert_eq!(pipeline, composed, "message={message:?}, width={width}");
+            }
+        }
     }
 }

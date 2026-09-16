@@ -5,7 +5,8 @@ const test = require("node:test");
 
 const { aggregateInvoices, buildInvoiceDigest, summarizeInvoiceAccounts } = require("../src/aggregation");
 const { importWebhookBatch, importWebhookLines, normalizeWebhookRecord } = require("../src/ingestion");
-const { dispatchReceipt, sendReceiptCallback, sendReceiptPromise } = require("../src/notifications");
+const { dispatchReceipt, sendReceiptCallback } = require("../src/notifications");
+const { publishConfirmation } = require("../src/outbox");
 const { planTransfers, planTransfersWithMinimum, schedulePayouts } = require("../src/settlement");
 
 const records = [
@@ -63,7 +64,7 @@ test("receipt adapters preserve delivery state across callback and promise style
     sendReceiptCallback(callbackMailbox, message, (error, delivery) => (error ? reject(error) : resolve(delivery)));
   });
   const promiseMailbox = { sent: [] };
-  const promised = await sendReceiptPromise(promiseMailbox, message);
+  const promised = await publishConfirmation(promiseMailbox, message);
   const transportMailbox = { sent: [] };
   const dispatched = await dispatchReceipt(transportMailbox, message);
   assert.deepEqual(callbackDelivery, promised);

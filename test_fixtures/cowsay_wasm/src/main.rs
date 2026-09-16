@@ -2,7 +2,7 @@ use std::env;
 use std::io::{self, Read};
 use std::process;
 
-use cowsay_dupe_fixture::{render, CowOptions, WrapAlgorithm};
+use cowsay_dupe_fixture::{render, CowOptions, RenderAlgorithm, WrapAlgorithm};
 
 fn main() {
     match run() {
@@ -34,11 +34,22 @@ fn run() -> Result<String, String> {
             "--wrapper" => {
                 let wrapper = args
                     .next()
-                    .ok_or_else(|| "--wrapper requires scanner or fold".to_owned())?;
+                    .ok_or_else(|| "--wrapper requires scanner, fold, or queue".to_owned())?;
                 options.wrap_algorithm = match wrapper.as_str() {
                     "scanner" => WrapAlgorithm::Scanner,
                     "fold" => WrapAlgorithm::Fold,
+                    "queue" => WrapAlgorithm::Queue,
                     _ => return Err(format!("unknown wrapper: {wrapper}")),
+                };
+            }
+            "--renderer" => {
+                let renderer = args
+                    .next()
+                    .ok_or_else(|| "--renderer requires pipeline or composed".to_owned())?;
+                options.render_algorithm = match renderer.as_str() {
+                    "pipeline" => RenderAlgorithm::Pipeline,
+                    "composed" => RenderAlgorithm::Composed,
+                    _ => return Err(format!("unknown renderer: {renderer}")),
                 };
             }
             "--help" | "-h" => {
@@ -75,7 +86,8 @@ fn print_usage() {
          Options:\n\
            -t, --think              use a thought bubble\n\
            -w, --width <COLUMNS>    wrap at 4..=96 columns (default: 40)\n\
-               --wrapper <NAME>     scanner or fold (default: scanner)\n\
+           --wrapper <NAME>     scanner, fold, or queue (default: scanner)\n\
+           --renderer <NAME>    pipeline or composed (default: pipeline)\n\
            -h, --help               show this help\n\n\
          With no MESSAGE, input is read from stdin."
     );

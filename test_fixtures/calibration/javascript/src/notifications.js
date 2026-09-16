@@ -23,27 +23,6 @@ function sendReceiptCallback(mailbox, message, done) {
   queueMicrotask(deliver);
 }
 
-function completeReceiptJob(job) {
-  try {
-    const receipt = normalizeReceipt(job.message);
-    const sent = { ...receipt, status: "sent", channel: "email" };
-    job.mailbox.sent.push(sent);
-    job.resolve(sent);
-  } catch (error) {
-    job.reject(error);
-  }
-}
-
-function sendReceiptPromise(mailbox, message) {
-  let settle;
-  const delivery = new Promise((resolve, reject) => {
-    settle = { resolve, reject };
-  });
-  const job = { mailbox, message, ...settle };
-  queueMicrotask(() => completeReceiptJob(job));
-  return delivery;
-}
-
 async function dispatchReceipt(mailbox, message, transport = "email") {
   const receipt = normalizeReceipt(message);
   if (transport !== "email") throw new Error("unsupported transport");
@@ -53,4 +32,4 @@ async function dispatchReceipt(mailbox, message, transport = "email") {
   return delivery;
 }
 
-module.exports = { dispatchReceipt, sendReceiptCallback, sendReceiptPromise };
+module.exports = { dispatchReceipt, normalizeReceipt, sendReceiptCallback };

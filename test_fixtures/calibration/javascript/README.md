@@ -25,5 +25,6 @@ record from being accepted. Batch and JSON-lines adapters deliberately report
 failures differently.
 
 Receipt adapters write one normalized delivery record to the supplied mailbox.
-The callback, Promise, and async transport forms have intentionally different
-calling conventions while preserving the same successful-delivery state.
+The callback, queued outbox Promise, and async transport forms have intentionally
+different ownership and calling conventions while preserving the same
+successful-delivery state.

@@ -9,7 +9,7 @@
     "tool": "semble find-related, source tree only, top 10",
     "easy": "aggregateInvoices retrieved summarizeInvoiceAccounts and buildInvoiceDigest as the first two source results (0.829 and 0.776).",
     "medium": "planTransfersWithMinimum retrieved the reducer scheduler first (0.798); the shorter baseline planner appeared seventh after support and test chunks (0.282).",
-    "hard": "No current JavaScript pair is labeled hard: fresh checks surfaced every previously hard-labeled relationship in the leading source results, so they are recorded as medium rather than overstating their retrieval difficulty."
+    "hard": "From outbox.prepareEntry, Semble did not return sendReceiptCallback in its top 10 despite their reviewed accepted-delivery region; the callback is only visible when the direction is reversed."
   },
   "units": [
     {"id": "js.aggregation.aggregateInvoices", "selector": {"path": "src/aggregation.js", "qualified_name": "aggregation.aggregateInvoices", "kind": "function"}},
@@ -22,14 +22,16 @@
     {"id": "js.ingestion.importWebhookBatch", "selector": {"path": "src/ingestion.js", "qualified_name": "ingestion.importWebhookBatch", "kind": "function"}},
     {"id": "js.ingestion.importWebhookLines", "selector": {"path": "src/ingestion.js", "qualified_name": "ingestion.importWebhookLines", "kind": "function"}},
     {"id": "js.notifications.sendReceiptCallback", "selector": {"path": "src/notifications.js", "qualified_name": "notifications.sendReceiptCallback", "kind": "function"}},
-    {"id": "js.notifications.sendReceiptPromise", "selector": {"path": "src/notifications.js", "qualified_name": "notifications.sendReceiptPromise", "kind": "function"}},
+    {"id": "js.outbox.publishConfirmation", "selector": {"path": "src/outbox.js", "qualified_name": "outbox.publishConfirmation", "kind": "function"}},
+    {"id": "js.outbox.prepareEntry", "selector": {"path": "src/outbox.js", "qualified_name": "outbox.prepareEntry", "kind": "function"}},
     {"id": "js.notifications.dispatchReceipt", "selector": {"path": "src/notifications.js", "qualified_name": "notifications.dispatchReceipt", "kind": "function"}}
   ],
   "families": [
     {"id": "translated-aggregation", "members": ["js.aggregation.aggregateInvoices", "js.aggregation.buildInvoiceDigest", "js.aggregation.summarizeInvoiceAccounts"]},
     {"id": "payout-minimum-extension", "members": ["js.settlement.planTransfers", "js.settlement.planTransfersWithMinimum", "js.settlement.schedulePayouts"]},
     {"id": "webhook-normalization", "members": ["js.ingestion.normalizeWebhookRecord", "js.ingestion.importWebhookBatch", "js.ingestion.importWebhookLines"]},
-    {"id": "receipt-adapters", "members": ["js.notifications.sendReceiptCallback", "js.notifications.sendReceiptPromise", "js.notifications.dispatchReceipt"]}
+    {"id": "receipt-adapters", "members": ["js.notifications.sendReceiptCallback", "js.outbox.prepareEntry", "js.notifications.dispatchReceipt"]},
+    {"id": "outbox-scheduling", "members": ["js.outbox.publishConfirmation"]}
   ],
   "pairs": [
     {
@@ -72,16 +74,18 @@
       "regions": [{"unit": "js.ingestion.importWebhookBatch", "start_line": 17, "end_line": 43, "sha256": "2a8727ffd9b59a7287b83d7f655f8814c6597918a4e31f8b30c9d5f741358722"}, {"unit": "js.ingestion.importWebhookLines", "start_line": 45, "end_line": 65, "sha256": "f2a6ba3b72103aa15363a607b7e6d6030d36d065a45f17e2f4d58f14c2267c21"}]
     },
     {
-      "id": "js.callback--promise-receipt", "a": "js.notifications.sendReceiptCallback", "b": "js.notifications.sendReceiptPromise", "judgment": "positive", "tags": ["adapter", "async", "medium"], "difficulty": "medium", "scope": "whole_unit", "behavior_equivalent": false,
-      "equivalence_domain": "Valid receipt messages and a mailbox with a mutable sent array.", "contract": "Normalize the receipt, append one sent email delivery, and surface validation failures asynchronously.", "rationale": "The two public async conventions duplicate the same email delivery workflow.", "evidence": ["test/calibration.test.js::receipt adapters"], "difference_witness": "The callback form supplies an error-first callback while the Promise form resolves or rejects."
+      "id": "js.callback--prepared-outbox-entry", "a": "js.notifications.sendReceiptCallback", "b": "js.outbox.prepareEntry", "judgment": "positive", "tags": ["adapter", "async", "partial", "hard"], "difficulty": "hard", "scope": "partial", "behavior_equivalent": false,
+      "equivalence_domain": "Accepted receipt messages after mapping callback completion to the entry returned by the queued outbox.", "contract": "Canonicalize the invoice identifier and email, retain the exact minor total, and construct one sent email entry.", "rationale": "The legacy callback delivery path and the queued outbox duplicate the accepted-delivery portion through distinct control flow and vocabulary.", "evidence": ["test/calibration.test.js::receipt adapters"], "difference_witness": "The callback path invokes an error-first continuation after a microtask; the outbox returns the entry to its queue runner.",
+      "regions": [{"unit": "js.notifications.sendReceiptCallback", "start_line": 14, "end_line": 18, "sha256": "ce716e40b4e316510580b89fe207b1b68e45cc57394f755a7e0f73d5edade789"}, {"unit": "js.outbox.prepareEntry", "start_line": 33, "end_line": 40, "sha256": "bca50b6de54ab2d6361534316e68fd1fff85492bc06f0d1a39925fa699573487"}]
     },
     {
       "id": "js.callback--async-transport-receipt", "a": "js.notifications.sendReceiptCallback", "b": "js.notifications.dispatchReceipt", "judgment": "positive", "tags": ["adapter", "async", "medium"], "difficulty": "medium", "scope": "whole_unit", "behavior_equivalent": false,
       "equivalence_domain": "Valid receipt messages with transport=email and a mailbox with a mutable sent array.", "contract": "Normalize the receipt and append one sent email delivery.", "rationale": "The transport adapter retains a policy check but repeats receipt construction and mailbox mutation.", "evidence": ["test/calibration.test.js::receipt adapters"], "difference_witness": "The transport adapter rejects sms before delivery; the callback form has no transport argument."
     },
     {
-      "id": "js.promise--async-transport-receipt", "a": "js.notifications.sendReceiptPromise", "b": "js.notifications.dispatchReceipt", "judgment": "positive", "tags": ["adapter", "async", "medium"], "difficulty": "medium", "scope": "whole_unit", "behavior_equivalent": false,
-      "equivalence_domain": "Valid receipt messages with transport=email and a mailbox with a mutable sent array.", "contract": "Normalize the receipt and append one sent email delivery.", "rationale": "Both Promise-shaped adapters construct the same delivery while one exposes an explicit transport boundary.", "evidence": ["test/calibration.test.js::receipt adapters"], "difference_witness": "The transport adapter rejects sms before delivery; the Promise form always uses email."
+      "id": "js.prepared-entry--async-transport-receipt", "a": "js.outbox.prepareEntry", "b": "js.notifications.dispatchReceipt", "judgment": "positive", "tags": ["adapter", "async", "partial", "medium"], "difficulty": "medium", "scope": "partial", "behavior_equivalent": false,
+      "equivalence_domain": "Valid receipt messages with transport=email and a mutable mailbox.", "contract": "Canonicalize a receipt and form one sent email entry before the asynchronous boundary.", "rationale": "The outbox builder and transport adapter each own different scheduling around the same delivery record construction.", "evidence": ["test/calibration.test.js::receipt adapters"], "difference_witness": "dispatchReceipt checks the requested transport and appends immediately after awaiting; the outbox returns the entry to its queue runner.",
+      "regions": [{"unit": "js.outbox.prepareEntry", "start_line": 33, "end_line": 40, "sha256": "bca50b6de54ab2d6361534316e68fd1fff85492bc06f0d1a39925fa699573487"}, {"unit": "js.notifications.dispatchReceipt", "start_line": 26, "end_line": 33, "sha256": "2bdb899ff4b419f4517d9946c54ed3c1c0949e7e9ae50278fedf8ead4a6f671c"}]
     },
     {
       "id": "js.aggregate--baseline-plan-negative", "a": "js.aggregation.aggregateInvoices", "b": "js.settlement.planTransfers", "judgment": "negative", "tags": ["shared-finance-vocabulary", "hard-negative"], "scope": "whole_unit", "behavior_equivalent": false,
@@ -92,7 +96,7 @@
       "equivalence_domain": "Separate financial grouping and idempotent boundary-adapter responsibilities.", "contract": "Grouping valid invoice records is distinct from accepting raw webhook data with replay handling.", "rationale": "Both loop over records, but their validation domains, state, and outputs have no mergeable maintenance region.", "evidence": ["test/calibration.test.js::translated aggregation", "test/calibration.test.js::webhook normalization"], "difference_witness": "Replaying a batch changes the adapter result but has no analogue in digest construction."
     },
     {
-      "id": "js.object-reduce--promise-receipt-negative", "a": "js.aggregation.summarizeInvoiceAccounts", "b": "js.notifications.sendReceiptPromise", "judgment": "negative", "tags": ["shared-fields", "hard-negative"], "scope": "whole_unit", "behavior_equivalent": false,
+      "id": "js.object-reduce--outbox-confirmation-negative", "a": "js.aggregation.summarizeInvoiceAccounts", "b": "js.outbox.publishConfirmation", "judgment": "negative", "tags": ["shared-fields", "hard-negative"], "scope": "whole_unit", "behavior_equivalent": false,
       "equivalence_domain": "Separate accounting and external-delivery responsibilities.", "contract": "A collection reduction cannot be merged with delivery of a single normalized receipt.", "rationale": "Invoice identifiers and totals are domain vocabulary, not shared computation.", "evidence": ["test/calibration.test.js::translated aggregation", "test/calibration.test.js::receipt adapters"], "difference_witness": "An empty record list produces an empty summary; a receipt operation requires one message."
     },
     {
@@ -116,7 +120,7 @@
       "equivalence_domain": "Separate idempotent input acceptance and transfer planning responsibilities.", "contract": "Batch identity and per-item errors are absent from the planner's summary contract.", "rationale": "This is a nearby workflow match that cannot be consolidated safely.", "evidence": ["test/calibration.test.js::webhook normalization", "test/calibration.test.js::payout extension"], "difference_witness": "A completed batch returns a replay marker; a plan has no replay state."
     },
     {
-      "id": "js.line-import--promise-receipt-negative", "a": "js.ingestion.importWebhookLines", "b": "js.notifications.sendReceiptPromise", "judgment": "negative", "tags": ["async-vs-input", "hard-negative"], "scope": "whole_unit", "behavior_equivalent": false,
+      "id": "js.line-import--outbox-confirmation-negative", "a": "js.ingestion.importWebhookLines", "b": "js.outbox.publishConfirmation", "judgment": "negative", "tags": ["async-vs-input", "hard-negative"], "scope": "whole_unit", "behavior_equivalent": false,
       "equivalence_domain": "Separate line parsing and asynchronous email delivery responsibilities.", "contract": "Line numbers and duplicate input IDs have no receipt-delivery equivalent.", "rationale": "Both accumulate result objects, but they own unrelated external boundaries.", "evidence": ["test/calibration.test.js::webhook normalization", "test/calibration.test.js::receipt adapters"], "difference_witness": "A syntax error is retained as a line rejection; receipt delivery rejects its returned Promise."
     },
     {
@@ -124,7 +128,7 @@
       "equivalence_domain": "Separate callback delivery and synchronous aggregation responsibilities.", "contract": "The callback completion contract cannot be folded into a sorted invoice digest.", "rationale": "The functions both normalize values before producing output but have unrelated state and calling conventions.", "evidence": ["test/calibration.test.js::receipt adapters", "test/calibration.test.js::translated aggregation"], "difference_witness": "The callback is invoked after a microtask; digest construction returns synchronously."
     },
     {
-      "id": "js.promise--minimum-plan-negative", "a": "js.notifications.sendReceiptPromise", "b": "js.settlement.planTransfersWithMinimum", "judgment": "negative", "tags": ["promise-vs-policy", "hard-negative"], "scope": "whole_unit", "behavior_equivalent": false,
+      "id": "js.outbox--minimum-plan-negative", "a": "js.outbox.publishConfirmation", "b": "js.settlement.planTransfersWithMinimum", "judgment": "negative", "tags": ["promise-vs-policy", "hard-negative"], "scope": "whole_unit", "behavior_equivalent": false,
       "equivalence_domain": "Separate asynchronous delivery and settlement policy responsibilities.", "contract": "Receipt promises do not select or defer financial transfers.", "rationale": "The shared receipt/total terminology does not support consolidation.", "evidence": ["test/calibration.test.js::receipt adapters", "test/calibration.test.js::payout extension"], "difference_witness": "An invalid receipt rejects asynchronously; an invalid minimum throws before planning."
     },
     {
@@ -138,11 +142,11 @@
     {"id": "js.behavioral.baseline-payout", "kind": "behavioral", "query": "create ready transfer and refund due settlement lines", "expected": ["js.settlement.planTransfers", "js.settlement.planTransfersWithMinimum", "js.settlement.schedulePayouts"], "relevance_complete": true},
     {"id": "js.behavioral.accept-webhook", "kind": "behavioral", "query": "accept an incoming webhook only after validating its identifier and email", "expected": ["js.ingestion.normalizeWebhookRecord", "js.ingestion.importWebhookBatch", "js.ingestion.importWebhookLines"], "relevance_complete": true},
     {"id": "js.behavioral.batch-replay", "kind": "behavioral", "query": "avoid processing an already completed webhook batch", "expected": ["js.ingestion.importWebhookBatch"], "relevance_complete": true},
-    {"id": "js.behavioral.email-receipt", "kind": "behavioral", "query": "deliver an invoice receipt by email and record it in the mailbox", "expected": ["js.notifications.sendReceiptCallback", "js.notifications.sendReceiptPromise", "js.notifications.dispatchReceipt"], "relevance_complete": true},
+    {"id": "js.behavioral.email-receipt", "kind": "behavioral", "query": "deliver an invoice receipt by email and record it in the mailbox", "expected": ["js.notifications.sendReceiptCallback", "js.outbox.publishConfirmation", "js.notifications.dispatchReceipt"], "relevance_complete": true},
     {"id": "js.partial-symbol.aggregate", "kind": "partial_symbol", "query": "aggregateInvo", "expected": ["js.aggregation.aggregateInvoices"], "relevance_complete": true},
     {"id": "js.partial-symbol.minimum", "kind": "partial_symbol", "query": "minimumPayout", "expected": ["js.settlement.planTransfersWithMinimum", "js.settlement.schedulePayouts"], "relevance_complete": true},
     {"id": "js.partial-symbol.webhook", "kind": "partial_symbol", "query": "importWebhook", "expected": ["js.ingestion.importWebhookBatch", "js.ingestion.importWebhookLines"], "relevance_complete": true},
-    {"id": "js.exact-symbol.promise-receipt", "kind": "exact_symbol", "query": "sendReceiptPromise", "expected": ["js.notifications.sendReceiptPromise"], "relevance_complete": true},
+    {"id": "js.exact-symbol.outbox-confirmation", "kind": "exact_symbol", "query": "publishConfirmation", "expected": ["js.outbox.publishConfirmation"], "relevance_complete": true},
     {"id": "js.no-result.signed-pdf", "kind": "no_result", "query": "archive a signed PDF to object storage", "expected": [], "relevance_complete": true},
     {"id": "js.no-result.kubernetes", "kind": "no_result", "query": "render a Kubernetes pod manifest", "expected": [], "relevance_complete": true}
   ]

@@ -2,7 +2,8 @@
 
 const { aggregateInvoices, buildInvoiceDigest, summarizeInvoiceAccounts } = require("./aggregation");
 const { importWebhookBatch, importWebhookLines } = require("./ingestion");
-const { dispatchReceipt, sendReceiptPromise } = require("./notifications");
+const { dispatchReceipt } = require("./notifications");
+const { publishConfirmation } = require("./outbox");
 const { planTransfers, planTransfersWithMinimum, schedulePayouts } = require("./settlement");
 
 async function main() {
@@ -16,7 +17,7 @@ async function main() {
   const batch = importWebhookBatch({ batchId: "demo", items: [{ id: "e1", email: "a@example.test", amountMinor: 100, voided: false }] }, completed);
   const lines = importWebhookLines([JSON.stringify({ id: "w2", email: "b@example.test", amountMinor: 20, voided: false })]);
   const mailbox = { sent: [] };
-  await sendReceiptPromise(mailbox, { invoiceId: "east-1", email: "a@example.test", totalMinor: 100 });
+  await publishConfirmation(mailbox, { invoiceId: "east-1", email: "a@example.test", totalMinor: 100 });
   await dispatchReceipt(mailbox, { invoiceId: "west-2", email: "b@example.test", totalMinor: -10 });
   return {
     aggregation: [summaries, buildInvoiceDigest(records), summarizeInvoiceAccounts(records)],
