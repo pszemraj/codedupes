@@ -13,6 +13,7 @@ import { importScheduleCsv, ingestScheduleBatch, prepareWebhookSchedule } from "
 import { auditArrivalWindow, auditZoneCapacity, auditZoneSpread } from "../src/audit.ts";
 import { acceptBookingsWithNormalizer, acceptInlineBookings } from "../src/bookings.ts";
 import { planDispatches, planDispatchesWithHoldback, planDispatchesWithServiceFloors } from "../src/dispatch.ts";
+import { admitManifestNotices } from "../src/legacy.ts";
 
 const loads = [
   { loadId: "L-2", zone: "west", weightKg: 40, status: "active" as const },
@@ -54,6 +55,16 @@ test("inline and extracted booking decoders agree without reserving invalid IDs"
   assert.deepEqual(extracted.reservedIds, ["B-1", "B-2"]);
   assert.match(extracted.errors[0], /duplicate bookingId/);
   assert.match(extracted.errors[1], /bookingId is required/);
+});
+
+test("legacy manifest notices preserve the current booking acceptance contract", () => {
+  const notices = rows.map((row) => [
+    String(row.bookingId),
+    String(row.zone),
+    String(row.arrivalDate),
+    String(row.weightKg),
+  ]);
+  assert.deepEqual(admitManifestNotices(notices), acceptBookingsWithNormalizer(rows));
 });
 
 test("CSV, API, and webhook workflows share acceptance while retaining their own evidence", () => {

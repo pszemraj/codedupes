@@ -23,8 +23,11 @@ their threshold is zero.
 
 On 2026-09-16, `semble find-related` returned the two translated aggregation
 variants at ranks 1 and 2 from `summarizeDockLoads`; the two dispatch extensions
-at ranks 1 and 2 from the baseline planner; the extracted booking workflow at
-rank 1 and its scalar normalizer at rank 5 from the inline workflow; and the API
-and webhook ingress variants at ranks 2 and 4 from CSV import. These observations
-are recorded as retrieval shape only: easy, medium, and hard labels describe
-maintenance scope and exercised behavior, not whether a local search ranks them.
+at ranks 1 and 2 from the baseline planner; and the API and webhook ingress
+variants at ranks 2 and 4 from CSV import. Those are easy or medium pairs. The
+direct helper extraction also ranked first, so it is medium. For the hard legacy
+manifest pair, `admitManifestNotices` was outside the top 10 when searched from
+the inline booking workflow (a type-only legacy header appeared at rank 9); the
+reverse search surfaced the extracted workflow at rank 4 and the inline body at
+rank 5. The behavior test proves the common admission result despite that
+asymmetric retrieval shape.
