@@ -33,13 +33,6 @@ POLICY_FIELDS = {
 }
 
 
-def digest(value: Any) -> str:
-    """Hash a portable JSON value deterministically."""
-    return hashlib.sha256(
-        json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
-    ).hexdigest()
-
-
 def text_digest(value: str) -> str:
     """Hash source text without whitespace normalization."""
     return hashlib.sha256(value.encode()).hexdigest()
@@ -289,6 +282,12 @@ def resolve_annotations(project: Project, units: list[CodeUnit]) -> dict[str, Co
         pairs.add(key)
         if pair.get("judgment") not in {"positive", "negative", "ambiguous"}:
             raise ValueError(f"{key}: missing explicit maintenance judgment")
+        if pair["judgment"] == "positive" and pair.get("difficulty") not in {
+            "easy",
+            "medium",
+            "hard",
+        }:
+            raise ValueError(f"{key}: positive pair requires easy/medium/hard difficulty")
         for field in ("rationale", "contract", "equivalence_domain"):
             if not isinstance(pair.get(field), str) or not pair[field].strip():
                 raise ValueError(f"{key}: missing {field}")
@@ -460,38 +459,23 @@ def validate_project(project: Project, *, require_adjudicated: bool = True) -> d
         excluded = [i for i in probe["expected"] if resolved[i].uid not in candidate_uids]
         if excluded and not probe.get("policy_exclusion"):
             raise ValueError(f"probe {probe['id']} has unreachable targets: {excluded}")
+    ineligible = [item for item in coverage if not item["embedded"] or not item["comparable"]]
     return {
         "project": project.id,
         "policy": project.policy_name,
         "units": len(result.units),
         "semantic_candidates": len(candidates),
-        "pairs": coverage,
+        "judgments": len(coverage),
+        "comparable_judgments": sum(item["comparable"] for item in coverage),
+        "traditional_judgments": sum(item["traditional_recovery"] for item in coverage),
+        "ineligible_judgments": ineligible,
         "pending_deterministic": missing,
         "probes": len(project.annotations["probes"]),
     }
 
 
-def evidence_identity(project: Project) -> str:
-    """Fingerprint tests/support separately from source embedding identity."""
-    paths = set()
-    for pattern in project.spec["test_roots"] + project.spec["support_files"]:
-        for path in project.root.glob(pattern):
-            if path.is_dir():
-                paths.update(
-                    p for p in path.rglob("*") if p.is_file() and "__pycache__" not in p.parts
-                )
-            elif path.is_file():
-                paths.add(path)
-    return digest(
-        {
-            p.relative_to(project.root).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
-            for p in sorted(paths)
-        }
-    )
-
-
 def run_behavior(project: Project) -> dict[str, Any]:
-    """Execute declared argument-vector commands, recording actual results and evidence identity."""
+    """Execute every declared fixture test and entry point."""
     runs = []
     for command in project.spec["behavior_tests"]:
         argv = [arg.replace("{python}", sys.executable) for arg in command["argv"]]
@@ -509,17 +493,14 @@ def run_behavior(project: Project) -> dict[str, Any]:
         runs.append(
             {
                 "id": command["id"],
-                "argv": command["argv"],
                 "returncode": result.returncode,
-                "stdout": result.stdout,
-                "stderr": result.stderr,
             }
         )
         if result.returncode:
             raise ValueError(
                 f"behavior command failed: {command['id']}\n{result.stdout}\n{result.stderr}"
             )
-    return {"project": project.id, "evidence_sha256": evidence_identity(project), "runs": runs}
+    return {"project": project.id, "runs": runs}
 
 
 def add_contract_arguments(parser: argparse.ArgumentParser) -> None:

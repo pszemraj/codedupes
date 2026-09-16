@@ -1,0 +1,264 @@
+"""Focused checks for the calibration corpus and threshold selection."""
+
+from __future__ import annotations
+
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+
+from scripts.calibration_contract import load_projects, validate_project, write_json
+from scripts.calibration_evaluation import replay, replay_parity
+from scripts.calibration_measurements import (
+    ARTIFACT_VERSION,
+    load_measurement,
+    measurement_fingerprint,
+)
+from scripts.sweep_hybrid_gates import _selection_map
+from scripts.sweep_semantic_thresholds import (
+    _search_records,
+    duplicate_rows,
+    search_rows,
+    threshold_grid,
+)
+
+pytestmark = pytest.mark.grammar
+
+
+def test_manifest_has_substantive_five_language_corpus():
+    projects = load_projects()
+    assert {project.spec["languages"][0] for project in projects} == {
+        "python",
+        "c",
+        "rust",
+        "javascript",
+        "typescript",
+    }
+    for project in projects:
+        report = validate_project(project)
+        positives = [
+            pair for pair in project.annotations["pairs"] if pair["judgment"] == "positive"
+        ]
+        negatives = [
+            pair for pair in project.annotations["pairs"] if pair["judgment"] == "negative"
+        ]
+        assert len(positives) >= 6, project.id
+        assert len(negatives) >= 10, project.id
+        assert {pair["difficulty"] for pair in positives} == {"easy", "medium", "hard"}
+        assert len(project.annotations["probes"]) >= 8
+        assert report["pending_deterministic"] == []
+
+
+def test_duplicate_sweep_uses_reviewed_comparable_pairs():
+    project = SimpleNamespace(
+        id="sample",
+        annotations={
+            "pairs": [
+                {"a": "a", "b": "b", "judgment": "positive"},
+                {"a": "a", "b": "c", "judgment": "positive"},
+                {"a": "a", "b": "d", "judgment": "negative"},
+            ]
+        },
+    )
+    measurement = {
+        "pairs": [
+            {"a": "a", "b": "b", "cosine": 0.91, "comparable": True},
+            {"a": "a", "b": "c", "cosine": 0.78, "comparable": True},
+            {"a": "a", "b": "d", "cosine": 0.74, "comparable": True},
+            {"a": "b", "b": "d", "cosine": 0.88, "comparable": True},
+            {"a": "c", "b": "d", "cosine": 0.99, "comparable": False},
+        ]
+    }
+    rows, detail = duplicate_rows(project, measurement, threshold_grid(0.70, 0.95, 0.01))
+    assert detail["selected"]["f1"] == 1.0
+    assert detail["selection_ready"] is False
+    assert 0.75 <= detail["selected"]["threshold"] <= 0.78
+    assert detail["unjudged_above_selected"] == [["b", "d", 0.88]]
+    assert rows
+
+
+def test_search_sweep_scores_complete_relevance_sets():
+    records = [
+        {"key": ("p", "q", "a"), "score": 0.82, "rank": 1, "expected": True},
+        {"key": ("p", "q", "b"), "score": 0.66, "rank": 2, "expected": True},
+        {"key": ("p", "q", "c"), "score": 0.40, "rank": 3, "expected": False},
+        {"key": ("p", "q", "d"), "score": 0.90, "rank": 11, "expected": False},
+    ]
+    rows = search_rows(records, [0.4, 0.6, 0.7])
+    assert rows[1]["f1"] == 1.0
+    assert rows[2]["fn"] == 1
+
+
+def test_replay_matches_production_tier_rules():
+    measurement = {
+        "metadata": {
+            "model": "gte-modernbert-base",
+            "captured_profile": {
+                "semantic_threshold": 0.80,
+                "weak_identifier_jaccard_min": 0.0,
+                "statement_ratio_min": 0.80,
+                "high_gate": None,
+            },
+        },
+        "units": [
+            {"id": "a", "language": "python"},
+            {"id": "b", "language": "python"},
+            {"id": "c", "language": "python"},
+        ],
+        "pairs": [
+            {
+                "a": "a",
+                "b": "b",
+                "cosine": 1.0,
+                "comparable": False,
+                "identifier_jaccard": 1.0,
+                "statement_ratio": 1.0,
+                "traditional": [{"method": "structural_hash", "similarity": 1.0}],
+            },
+            {
+                "a": "a",
+                "b": "c",
+                "cosine": 0.84,
+                "comparable": True,
+                "identifier_jaccard": 0.0,
+                "statement_ratio": 0.5,
+                "traditional": [],
+            },
+            {
+                "a": "b",
+                "b": "c",
+                "cosine": 0.70,
+                "comparable": True,
+                "identifier_jaccard": 0.0,
+                "statement_ratio": 1.0,
+                "traditional": [],
+            },
+        ],
+    }
+    findings = replay(measurement)
+    assert [item["tier"] for item in findings] == ["exact", "semantic_review"]
+    measurement["metadata"]["live_default"] = [
+        {"a": item["a"], "b": item["b"], "tier": item["tier"]} for item in findings
+    ]
+    assert replay_parity(measurement) is True
+
+
+def test_explicit_semantic_override_does_not_reuse_profile_promotion_gate():
+    measurement = {
+        "metadata": {"model": "gte-modernbert-base"},
+        "units": [
+            {"id": "a", "language": "typescript"},
+            {"id": "b", "language": "typescript"},
+        ],
+        "pairs": [
+            {
+                "a": "a",
+                "b": "b",
+                "cosine": 0.90,
+                "comparable": True,
+                "identifier_jaccard": 0.0,
+                "statement_ratio": 0.5,
+                "traditional": [],
+            }
+        ],
+    }
+    assert replay(measurement, semantic_threshold=0.80)[0]["tier"] == "semantic_review"
+    assert (
+        replay(measurement, semantic_threshold=0.80, high_gate=0.88)[0]["tier"]
+        == "semantic_high_confidence"
+    )
+
+
+def test_ambiguity_blocks_threshold_selection():
+    project = SimpleNamespace(
+        id="sample",
+        annotations={
+            "pairs": [
+                {"a": "a", "b": "b", "judgment": "positive", "difficulty": "easy"},
+                {"a": "a", "b": "c", "judgment": "ambiguous"},
+            ]
+        },
+    )
+    measurement = {
+        "pairs": [
+            {"a": "a", "b": "b", "cosine": 0.90, "comparable": True},
+            {"a": "a", "b": "c", "cosine": 0.89, "comparable": True},
+        ]
+    }
+    rows, detail = duplicate_rows(project, measurement, [0.80])
+    assert rows[0]["ambiguous_predictions"] == 1
+    assert rows[0]["unjudged_predictions"] == 0
+    assert detail["selection_ready"] is False
+
+
+def test_hybrid_selection_rejects_unready_semantic_admissions():
+    payload = {
+        "models": [
+            {
+                "model": "gte-modernbert-base",
+                "duplicate_by_language": [
+                    {
+                        "language": "python",
+                        "selected_threshold": 0.82,
+                        "selection_ready": False,
+                    }
+                ],
+            }
+        ]
+    }
+    with pytest.raises(ValueError, match="review unjudged admission findings"):
+        _selection_map(payload)
+
+
+def test_measurements_reject_changed_source_or_queries(tmp_path: Path):
+    project = load_projects(project_ids=["ledger"])[0]
+    path = tmp_path / "measurement.json"
+    write_json(
+        path,
+        {
+            "schema_version": ARTIFACT_VERSION,
+            "metadata": {
+                "project": project.id,
+                "model": "gte-modernbert-base",
+                "requested_device": "cpu",
+                "execution": {
+                    "duplicate": {"execution_device": "cpu", "cache_hit_rows": 0},
+                    "search": {"execution_device": "cpu", "cache_hit_rows": 0},
+                },
+                "input_fingerprint": measurement_fingerprint(project, "gte-modernbert-base"),
+            },
+        },
+    )
+    assert (
+        load_measurement(
+            path,
+            project,
+            expected_model="gte-modernbert-base",
+            expected_device="cpu",
+        )["metadata"]["project"]
+        == "ledger"
+    )
+    fingerprint = measurement_fingerprint(project, "gte-modernbert-base")
+    project.annotations["pairs"][0]["rationale"] += " label-only edit"
+    assert measurement_fingerprint(project, "gte-modernbert-base") == fingerprint
+    with pytest.raises(ValueError, match="another model"):
+        load_measurement(path, project, expected_model="embeddinggemma-300m")
+    with pytest.raises(ValueError, match="did not execute on mps"):
+        load_measurement(path, project, expected_device="mps")
+    project.annotations["probes"][0]["query"] += " changed"
+    with pytest.raises(ValueError, match="stale measurement"):
+        load_measurement(path, project)
+
+
+def test_search_selection_rejects_unembedded_expected_target():
+    project = SimpleNamespace(
+        id="sample",
+        annotations={
+            "probes": [{"id": "find", "expected": ["missing"]}],
+        },
+    )
+    measurement = {
+        "query_scores": [{"probe": "find", "unit": "missing", "cosine": None, "rank": None}]
+    }
+    with pytest.raises(ValueError, match="not embedded"):
+        _search_records(project, measurement)
