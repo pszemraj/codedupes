@@ -641,7 +641,7 @@ def test_search_profile_changes_reuse_corpus_and_query_vectors(tmp_path, monkeyp
     project.mkdir()
     (project / "arithmetic.py").write_text("def alpha(x):\n    return x + 1\n", encoding="utf-8")
 
-    model = _SimilarityModel("def alpha", 0.45)
+    model = _SimilarityModel("def alpha", 0.60)
     loads = _patch_get_model(monkeypatch, model)
     config = AnalyzerConfig(
         mode="search",
@@ -652,13 +652,13 @@ def test_search_profile_changes_reuse_corpus_and_query_vectors(tmp_path, monkeyp
     )
     analyzer = CodeAnalyzer(config)
     analyzer.index(project)
-    assert analyzer.search("addition") == []  # GTE search default is 0.50.
+    assert analyzer.search("addition") == []  # GTE search default is 0.68.
     config.threshold_profile = "embeddinggemma-300m"
     assert len(analyzer.search("addition")) == 1
     config.threshold_profile = "generic"
     analyzer.index(project)
     assert len(analyzer.search("addition")) == 1
-    assert analyzer.search("addition", threshold=0.6) == []
+    assert analyzer.search("addition", threshold=0.61) == []
     assert len(model.encode_calls) == 2
     assert loads["count"] == 2
     assert model.prompts_seen == [None, None]  # Threshold choices do not select Gemma prompts.

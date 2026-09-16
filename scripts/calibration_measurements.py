@@ -131,6 +131,9 @@ def capture(project: Project, model: str, device: str, output: Path, batch_size:
     profile = resolve_model_profile(model)
     if profile.default_revision is None or len(profile.default_revision) != 40:
         raise ValueError("calibration requires a pinned built-in model revision")
+    inference_dtype = str(semantic._resolve_model_dtype(profile.family, device)).removeprefix(
+        "torch."
+    )
 
     inventory, _ = extract_project(project, inventory=True)
     resolved = resolve_annotations(project, inventory)
@@ -243,6 +246,7 @@ def capture(project: Project, model: str, device: str, output: Path, batch_size:
             "canonical_model": profile.canonical_name,
             "revision": profile.default_revision,
             "requested_device": device,
+            "inference_dtype": inference_dtype,
             "input_fingerprint": measurement_fingerprint(project, profile.key),
             "captured_profile": {
                 "semantic_threshold": profile.semantic_threshold_for_language(

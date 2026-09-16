@@ -7,7 +7,14 @@ from types import SimpleNamespace
 
 import pytest
 
-from scripts.calibration_contract import load_projects, validate_project, write_json
+from codedupes.semantic_profiles import resolve_model_profile
+from scripts.calibration_contract import (
+    DEFAULT_MANIFEST,
+    load_projects,
+    read_json,
+    validate_project,
+    write_json,
+)
 from scripts.calibration_evaluation import replay, replay_parity
 from scripts.calibration_measurements import (
     ARTIFACT_VERSION,
@@ -79,14 +86,39 @@ def test_duplicate_sweep_uses_reviewed_comparable_pairs():
 
 def test_search_sweep_scores_complete_relevance_sets():
     records = [
-        {"key": ("p", "q", "a"), "score": 0.82, "rank": 1, "expected": True},
-        {"key": ("p", "q", "b"), "score": 0.66, "rank": 2, "expected": True},
-        {"key": ("p", "q", "c"), "score": 0.40, "rank": 3, "expected": False},
-        {"key": ("p", "q", "d"), "score": 0.90, "rank": 11, "expected": False},
+        {
+            "key": ("p", "q", "a"),
+            "score": 0.82,
+            "rank": 1,
+            "expected": True,
+            "no_result": False,
+        },
+        {
+            "key": ("p", "q", "b"),
+            "score": 0.66,
+            "rank": 2,
+            "expected": True,
+            "no_result": False,
+        },
+        {
+            "key": ("p", "q", "c"),
+            "score": 0.40,
+            "rank": 3,
+            "expected": False,
+            "no_result": False,
+        },
+        {
+            "key": ("p", "none", "d"),
+            "score": 0.90,
+            "rank": 11,
+            "expected": False,
+            "no_result": True,
+        },
     ]
     rows = search_rows(records, [0.4, 0.6, 0.7])
     assert rows[1]["f1"] == 1.0
     assert rows[2]["fn"] == 1
+    assert rows[0]["no_result_clean"] == 1
 
 
 def test_replay_matches_production_tier_rules():
@@ -262,3 +294,36 @@ def test_search_selection_rejects_unembedded_expected_target():
     }
     with pytest.raises(ValueError, match="not embedded"):
         _search_records(project, measurement)
+
+
+def test_checked_calibration_result_matches_shipped_profiles():
+    result = read_json(DEFAULT_MANIFEST.parent / "calibration-results.json")
+    threshold_models = {item["model"]: item for item in result["threshold_selection"]["models"]}
+    hybrid_models = {item["model"]: item for item in result["hybrid_selection"]["models"]}
+
+    for model, selection in threshold_models.items():
+        profile = resolve_model_profile(model)
+        assert selection["search"]["selected_threshold"] == profile.default_search_threshold
+        for language in selection["duplicate_by_language"]:
+            assert language["selection_ready"] is True
+            assert language["selected_threshold"] == profile.semantic_threshold_for_language(
+                language["language"]
+            )
+
+        hybrid = hybrid_models[model]
+        assert hybrid["selected"]["selection_ready"] is True
+        assert (
+            hybrid["selected"]["weak_identifier_jaccard_min"]
+            == profile.hybrid_weak_identifier_jaccard_min
+        )
+        assert hybrid["selected"]["statement_ratio_min"] == profile.hybrid_statement_ratio_min
+        assert {
+            item["language"]: item["selected_gate"] for item in hybrid["promotion_by_language"]
+        } == dict(profile.language_high_confidence_thresholds)
+
+    for project in result["projects"]:
+        assert all(report["replay_parity"] for report in project["reports"].values())
+        assert {report["inference_dtype"] for report in project["reports"].values()} == {"float32"}
+        for comparison in project["device_comparisons"].values():
+            assert comparison["duplicate_decision_changes"] == []
+            assert comparison["search_decision_changes"] == []

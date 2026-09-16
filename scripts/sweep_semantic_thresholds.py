@@ -174,12 +174,14 @@ def _search_records(project: Any, measurement: dict[str, Any]) -> list[dict[str,
         raise ValueError(
             f"{project.id}: expected search targets were not embedded: {sorted(missing)}"
         )
+    no_result = {probe["id"] for probe in project.annotations["probes"] if not probe["expected"]}
     return [
         {
             "key": (project.id, row["probe"], row["unit"]),
             "score": row["cosine"],
             "rank": row["rank"],
             "expected": (row["probe"], row["unit"]) in expected,
+            "no_result": row["probe"] in no_result,
         }
         for row in measurement["query_scores"]
         if row["cosine"] is not None
@@ -189,6 +191,7 @@ def _search_records(project: Any, measurement: dict[str, Any]) -> list[dict[str,
 def search_rows(records: list[dict[str, Any]], grid: list[float]) -> list[dict[str, Any]]:
     """Sweep one global search threshold at the production top-k limit."""
     expected = {row["key"] for row in records if row["expected"]}
+    no_result_queries = {(row["key"][0], row["key"][1]) for row in records if row["no_result"]}
     rows = []
     for threshold in grid:
         output = {
@@ -201,6 +204,7 @@ def search_rows(records: list[dict[str, Any]], grid: list[float]) -> list[dict[s
         fn = len(expected - output)
         precision = tp / (tp + fp) if tp + fp else 0.0
         recall = tp / (tp + fn) if tp + fn else 0.0
+        violated = {(project, probe) for project, probe, _ in output} & no_result_queries
         rows.append(
             {
                 "threshold": threshold,
@@ -210,6 +214,8 @@ def search_rows(records: list[dict[str, Any]], grid: list[float]) -> list[dict[s
                 "precision": precision,
                 "recall": recall,
                 "f1": 2 * precision * recall / (precision + recall) if precision + recall else 0.0,
+                "no_result_clean": len(no_result_queries) - len(violated),
+                "no_result_total": len(no_result_queries),
             }
         )
     return rows

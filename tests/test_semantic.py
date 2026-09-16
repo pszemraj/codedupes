@@ -508,9 +508,9 @@ def test_find_similar_to_query_default_threshold_is_search_default(
     tmp_path: Path, monkeypatch
 ) -> None:
     units = extract_arithmetic_units(tmp_path)
-    # First row scores 0.6: above the search default (0.50) but below every
+    # First row scores 0.7: above the search default (0.68) but below every
     # duplicate-detection gate; second row scores 0.3 and is dropped.
-    embeddings = np.array([[0.6, 0.8], [0.3, 0.9539392]], dtype=np.float32)
+    embeddings = np.array([[0.7, 0.71414284], [0.3, 0.9539392]], dtype=np.float32)
 
     class QueryModel:
         def encode(self, texts, **kwargs):
@@ -526,7 +526,7 @@ def test_find_similar_to_query_default_threshold_is_search_default(
     )
 
     assert [unit for unit, _score in results] == [units[0]]
-    assert results[0][1] == pytest.approx(0.6, abs=1e-6)
+    assert results[0][1] == pytest.approx(0.7, abs=1e-6)
 
 
 def test_find_semantic_duplicates_ignores_nan_similarity(tmp_path: Path) -> None:
@@ -2546,10 +2546,10 @@ def test_local_fingerprint_tracks_embedding_assets(tmp_path, relative) -> None:
 @pytest.mark.parametrize(
     ("choice", "expected"),
     [
-        ("auto", 0.40),
+        ("auto", 0.54),
         ("generic", 0.35),
-        ("embeddinggemma-300m", 0.40),
-        ("gte-modernbert-base", 0.50),
+        ("embeddinggemma-300m", 0.54),
+        ("gte-modernbert-base", 0.68),
     ],
 )
 def test_search_threshold_profile_defaults_and_numeric_precedence(choice, expected) -> None:

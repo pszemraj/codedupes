@@ -1082,7 +1082,7 @@ def test_per_language_gates_survive_the_whole_semantic_pipeline(
         ("auto", 0.70, True),
         ("generic", 0.75, False),
         ("gte-modernbert-base", 0.75, True),
-        ("embeddinggemma-300m", 0.73, True),
+        ("embeddinggemma-300m", 0.75, True),
     ],
 )
 def test_cross_language_pairs_require_opt_in_and_use_looser_gate(
@@ -1538,7 +1538,7 @@ def test_search_threshold_defaults_to_none_and_honors_explicit_config(
         def encode(self, texts, **kwargs):
             encoded.extend(texts)
             return np.array(
-                [[0.6, 0.8] if text == "entry" else [1.0, 0.0] for text in texts],
+                [[0.7, 0.71414284] if text == "entry" else [1.0, 0.0] for text in texts],
                 dtype=np.float32,
             )
 
@@ -1578,11 +1578,11 @@ def test_search_threshold_defaults_to_none_and_honors_explicit_config(
     analyzer.analyze(project)
     assert len(analyzer.search("entry")) == 1
 
-    explicit = CodeAnalyzer(AnalyzerConfig(semantic_threshold=0.7, **base_config))
+    explicit = CodeAnalyzer(AnalyzerConfig(semantic_threshold=0.71, **base_config))
     explicit.index(project)
     assert explicit.search("entry") == []
     assert len(explicit.search("entry", threshold=0.0)) == 1
-    assert explicit.config.semantic_threshold == 0.7
+    assert explicit.config.semantic_threshold == 0.71
 
 
 @pytest.mark.parametrize(
@@ -2182,12 +2182,12 @@ def test_hybrid_synthesis_cross_language_promotion_uses_the_stricter_gate(
 @pytest.mark.parametrize(
     ("model_name", "expected_tiers"),
     [
-        # gte: statement ratio 0.80 withholds the 3-vs-1 pair; identifier overlap is not required.
+        # GTE requires at least 0.20 identifier overlap for default visibility.
         (
             "gte-modernbert-base",
-            {"same_size": "semantic_high_confidence", "lopsided": "semantic_review"},
+            {"same_size": "semantic_review", "lopsided": "semantic_review"},
         ),
-        # embeddinggemma: only >5x size mismatches are withheld, so both are reported.
+        # Gemma's Python promotion gate reports both high-similarity pairs.
         (
             "embeddinggemma-300m",
             {"same_size": "semantic_high_confidence", "lopsided": "semantic_high_confidence"},
@@ -2266,7 +2266,7 @@ def test_resolve_hybrid_split_gates_off_with_explicit_semantic_threshold(tmp_pat
         )
     )
     weak_min, ratio_min, gates = default_analyzer._resolve_hybrid_split(units)
-    assert gates == {"typescript": 0.88}
+    assert gates == {}
     assert weak_min == profile.hybrid_weak_identifier_jaccard_min
     assert ratio_min == profile.hybrid_statement_ratio_min
 
@@ -2301,33 +2301,30 @@ def test_resolve_hybrid_split_gates_off_with_explicit_semantic_threshold(tmp_pat
     assert generic_ratio_min == HYBRID_STATEMENT_RATIO_MIN
 
 
-def test_analyzer_typescript_promotion_gate_requires_no_corroboration(
+def test_analyzer_gemma_python_promotion_gate_requires_no_corroboration(
     tmp_path: Path, monkeypatch
 ) -> None:
-    """The typescript promotion gate alone must promote a pair statement-ratio corroboration
-    would withhold, and an explicit ``semantic_threshold`` must turn that gate back off."""
+    """Gemma's Python promotion gate works without identifier corroboration."""
     source = dedent(
         """
-        export function collectTotal(value: number): number {
-            const total = value + 1;
-            return total;
-        }
+        def alpha(value):
+            incremented = value + 1
+            return incremented
 
-        export function measureSum(value: number): number {
-            const total = value + 1;
-            const doubled = total * 2;
-            const tripled = doubled + total;
-            const scaled = tripled - 1;
-            return scaled;
-        }
+        def omega(entry):
+            doubled = entry * 2
+            tripled = doubled + entry
+            scaled = tripled - 1
+            adjusted = scaled + 3
+            return adjusted
         """
     ).strip()
-    project = create_project(tmp_path, source, module="mod.ts")
+    project = create_project(tmp_path, source)
 
     def paired(units: list[CodeUnit]) -> list[DuplicatePair]:
         by_name = {unit.name: unit for unit in units}
         return [
-            DuplicatePair(by_name["collectTotal"], by_name["measureSum"], 0.90, "semantic"),
+            DuplicatePair(by_name["alpha"], by_name["omega"], 0.90, "semantic"),
         ]
 
     monkeypatch.setattr(
@@ -2341,18 +2338,13 @@ def test_analyzer_typescript_promotion_gate_requires_no_corroboration(
             run_unused=False,
             min_semantic_statements=0,
             filter_tiny_traditional=False,
-            model_name="gte-modernbert-base",
+            model_name="embeddinggemma-300m",
         )
     )
     default_result = default_analyzer.analyze(project)
 
-    units_by_name = {unit.name: unit for unit in default_result.units}
-    # The lopsided statement counts (ratio 2/5 = 0.4) sit below the profile's
-    # 0.80 statement-ratio corroboration floor, so only the gate can promote this pair.
-    assert units_by_name["collectTotal"].statement_count == 2
-    assert units_by_name["measureSum"].statement_count == 5
-
     [default_pair] = default_result.hybrid_duplicates
+    assert default_pair.weak_identifier_jaccard < 0.30
     assert default_pair.tier == "semantic_high_confidence"
 
     gated_off_analyzer = CodeAnalyzer(
@@ -2362,8 +2354,8 @@ def test_analyzer_typescript_promotion_gate_requires_no_corroboration(
             run_unused=False,
             min_semantic_statements=0,
             filter_tiny_traditional=False,
-            model_name="gte-modernbert-base",
-            semantic_threshold=0.80,
+            model_name="embeddinggemma-300m",
+            semantic_threshold=0.74,
         )
     )
     gated_off_result = gated_off_analyzer.analyze(project)

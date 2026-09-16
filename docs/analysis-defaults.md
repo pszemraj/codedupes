@@ -22,21 +22,21 @@ See [report selection](output.md#report-selection) and [exit codes](output.md#ex
 
 ## Semantic duplicate gate defaults
 
-Semantic duplicate detection is gated per language. Each built-in model profile carries a frozen cosine gate for every supported language. The former calibration corpus has been retired; the issue #20 development pilot records the current values in [`frozen_defaults.json`](../test_fixtures/calibration/frozen_defaults.json) and replays them without treating the pilot as selection evidence.
+Semantic duplicate detection is gated per language. Each built-in model profile carries a calibrated cosine gate for every supported language. Issue #20 replaced the former synthetic inputs with five runnable development applications; the checked [calibration result](../test_fixtures/calibration/calibration-results.json) records the reviewed CPU selection and independent MPS comparison.
 
 | language | `gte-modernbert-base` | `embeddinggemma-300m` |
 | --- | --- | --- |
 | python | `0.80` | `0.74` |
-| c | `0.82` | `0.78` |
-| rust | `0.74` | `0.78` |
-| javascript | `0.70` | `0.72` |
-| typescript | `0.68` | `0.78` |
+| c | `0.85` | `0.82` |
+| rust | `0.86` | `0.89` |
+| javascript | `0.72` | `0.80` |
+| typescript | `0.76` | `0.87` |
 
-No current report justifies changing these gates. The replacement workflow captures reusable raw measurements and exposes decision plateaus, while later phases add five-language and held-out evidence before proposing recalibration. See [calibration measurements and replay](hybrid-tuning.md).
+Python remains at `0.80`/`0.74`; the other gates moved to reduce reviewed false positives. The corpus is development evidence with an authored challenge mix, so these settings are practical defaults rather than an estimate of ecosystem-wide precision. See [calibration measurements and replay](hybrid-tuning.md).
 
 See [threshold-profile choices](model-profiles.md#choosing-threshold-defaults) for profile selection.
 
-The profile fallback (`0.82` gte, `0.78` gemma) applies only to languages without their own entry. An explicit `--semantic-threshold`/`--threshold` (or `AnalyzerConfig.semantic_threshold`) replaces every per-language gate with one flat value. The pairwise embedding scan partitions candidates by language and scans each group at that language's own gate, so a loosely gated language never drags another language's scan down; the scalar floor handed to the scan covers only languages that arrive without a profile entry.
+The profile fallback (`0.86` gte, `0.89` gemma) applies only to languages without their own entry. An explicit `--semantic-threshold`/`--threshold` (or `AnalyzerConfig.semantic_threshold`) replaces every per-language gate with one flat value. The pairwise embedding scan partitions candidates by language and scans each group at that language's own gate, so a loosely gated language never drags another language's scan down; the scalar floor handed to the scan covers only languages that arrive without a profile entry.
 
 Semantic duplicate pairs are same-language by default. `--cross-language` (or `AnalyzerConfig(cross_language=True)`) also reports cross-language pairs; those claims are uncalibrated, so an opted-in mixed pair is held to `min(gate_a, gate_b)`, the looser of its two language gates.
 
@@ -135,11 +135,11 @@ A semantic-only pair has already passed its language's duplicate gate (applied b
 
 | profile | identifier Jaccard min | statement ratio min | promotion gates |
 | --- | --- | --- | --- |
-| `gte-modernbert-base` | `0.00` | `0.80` | typescript `0.88`; off elsewhere |
-| `embeddinggemma-300m` | `0.00` | `0.20` | off |
+| `gte-modernbert-base` | `0.20` | `0.00` | off |
+| `embeddinggemma-300m` | `0.30` | `0.00` | python `0.80`; off elsewhere |
 | `generic` | `0.00` | `0.20` | off |
 
-The corroboration constants and promotion gates are frozen with the admission gates. The issue #20 pilot measures their decisions on the new development projects and reports identical-decision settings as indifferent; it does not select replacements. An explicit `--semantic-threshold` keeps the profile's corroboration constants but turns similarity promotion off because those promotion gates belong to the shipped profile policy. See [calibration measurements and replay](hybrid-tuning.md).
+The corroboration constants and promotion gates were selected after the admission gates on the same reviewed development corpus. An explicit `--semantic-threshold` keeps the profile's corroboration constants but turns similarity promotion off because those promotion gates belong to the shipped profile policy. See [calibration measurements and replay](hybrid-tuning.md).
 
 ## Confidence scale
 

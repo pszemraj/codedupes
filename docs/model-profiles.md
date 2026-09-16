@@ -8,12 +8,12 @@ Most users should leave model and task settings unset. `codedupes` uses the pinn
 
 | profile key | canonical model ID | family | search threshold | default revision | default trust mode |
 | --- | --- | --- | --- | --- | --- |
-| `gte-modernbert-base` | `Alibaba-NLP/gte-modernbert-base` | `gte-modernbert` | `0.50` | `e7f32e3c00f91d699e8c43b53106206bcc72bb22` | `False` |
-| `embeddinggemma-300m` | `unsloth/embeddinggemma-300m` | `embeddinggemma` | `0.40` | `bfa3c846ac738e62aa61806ef9112d34acb1dc5a` | `False` |
+| `gte-modernbert-base` | `Alibaba-NLP/gte-modernbert-base` | `gte-modernbert` | `0.68` | `e7f32e3c00f91d699e8c43b53106206bcc72bb22` | `False` |
+| `embeddinggemma-300m` | `unsloth/embeddinggemma-300m` | `embeddinggemma` | `0.54` | `bfa3c846ac738e62aa61806ef9112d34acb1dc5a` | `False` |
 
 - [Per-language duplicate gates and their selection policy](analysis-defaults.md#semantic-duplicate-gate-defaults) control `check` reporting. The table's search threshold is only the floor for query matches; query-to-code similarity is much lower than code-to-code duplicate similarity.
-- Every built-in default revision is a pinned immutable commit. [Calibration sweeps](hybrid-tuning.md#semantic-threshold-sweep-model-profiles) record the checkpoint, prompt plan, pipeline, and candidate policy behind each threshold.
-- Search defaults favor recall. Inspect scores on representative queries and raise `--semantic-threshold` (or the Python API's per-query `threshold`) if results are too broad; no fixed floor separates relevant and off-topic code on every repository. The multi-domain probes in `test_fixtures/search_probes/` check the built-in search floors; the single-domain [calibration sweeps](hybrid-tuning.md#semantic-threshold-sweep-model-profiles) are additional guardrails, not the source of those floors.
+- Every built-in default revision is a pinned immutable commit. The [calibration workflow](hybrid-tuning.md) records the checkpoint, task, pipeline, and candidate policy behind each threshold.
+- Search defaults balance precision and recall over the corpus's reviewed top-10 queries, including no-result cases. Inspect scores on representative queries and override the threshold when a repository needs a different tradeoff; no fixed floor separates relevant and off-topic code everywhere.
 
 ## Alias resolution rules
 

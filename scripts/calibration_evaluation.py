@@ -42,6 +42,7 @@ def metrics(
         "fp": fp,
         "fn": fn,
         "precision": precision,
+        "judged_only_precision": precision,
         "recall": recall,
         "f1": f1,
         "ambiguous_predictions": len(predicted & ambiguities),
@@ -177,9 +178,28 @@ def duplicate_report(
     visible = {
         pair_key(item["a"], item["b"]) for item in findings if item["tier"] != "semantic_review"
     }
+    deterministic = {
+        pair_key(row["a"], row["b"]) for row in measurement["pairs"] if row["traditional"]
+    }
+    comparable = {
+        pair_key(row["a"], row["b"])
+        for row in measurement["pairs"]
+        if row["comparable"] and not row["traditional"]
+    }
+    semantic_predictions = {
+        pair_key(item["a"], item["b"])
+        for item in findings
+        if item["semantic_similarity"] is not None
+        and pair_key(item["a"], item["b"]) not in deterministic
+    }
     return {
         "published": metrics(published, labels),
         "visible": metrics(visible, labels),
+        "deterministic": metrics(deterministic, labels),
+        "semantic_eligible": metrics(
+            semantic_predictions,
+            {key: label for key, label in labels.items() if key in comparable},
+        ),
         "tiers": dict(sorted(Counter(item["tier"] for item in findings).items())),
     }
 
@@ -203,6 +223,10 @@ def search_report(
     fn = len(expected - output)
     precision = tp / (tp + fp) if tp + fp else 0.0
     recall = tp / (tp + fn) if tp + fn else 0.0
+    no_result = {probe["id"] for probe in project.annotations["probes"] if not probe["expected"]}
+    violated = sorted(
+        probe for probe in no_result if any(output_probe == probe for output_probe, _ in output)
+    )
     return {
         "threshold": gate,
         "tp": tp,
@@ -211,6 +235,11 @@ def search_report(
         "precision": precision,
         "recall": recall,
         "f1": 2 * precision * recall / (precision + recall) if precision + recall else 0.0,
+        "no_result": {
+            "clean": len(no_result) - len(violated),
+            "total": len(no_result),
+            "violations": violated,
+        },
     }
 
 
@@ -285,6 +314,7 @@ def full_report(project: Project, measurement: dict[str, Any]) -> dict[str, Any]
         "project": project.id,
         "model": measurement["metadata"]["model"],
         "device": measurement["metadata"]["requested_device"],
+        "inference_dtype": measurement["metadata"]["inference_dtype"],
         "timing_seconds": measurement["metadata"]["timing_seconds"],
         "execution": execution,
         "replay_parity": replay_parity(measurement),

@@ -118,11 +118,10 @@ class SemanticModelProfile:
         return self.language_high_confidence_thresholds.get(language)
 
 
-# Built-in checkpoints and all thresholds remain frozen while issue #20 builds
-# replacement evidence. The development pilot records raw scores and replays
-# these exact settings, but it does not select replacements or claim held-out
-# accuracy. Recognized copies inherit the family defaults without claiming
-# checkpoint equivalence.
+# Built-in checkpoints use the issue #20 development-corpus calibration. These
+# settings optimize reviewed application fixtures; they do not claim held-out or
+# ecosystem-wide accuracy. Recognized copies inherit the family defaults without
+# claiming checkpoint equivalence.
 _BUILTIN_MODEL_PROFILES: tuple[SemanticModelProfile, ...] = (
     SemanticModelProfile(
         key="gte-modernbert-base",
@@ -133,23 +132,23 @@ _BUILTIN_MODEL_PROFILES: tuple[SemanticModelProfile, ...] = (
         ),
         family="gte-modernbert",
         default_revision="e7f32e3c00f91d699e8c43b53106206bcc72bb22",
-        default_semantic_threshold=0.82,
-        default_search_threshold=0.50,
+        default_semantic_threshold=0.86,
+        default_search_threshold=0.68,
         language_semantic_thresholds={
             "python": 0.80,
-            "c": 0.82,
-            "rust": 0.74,
-            "javascript": 0.70,
-            "typescript": 0.68,
+            "c": 0.85,
+            "rust": 0.86,
+            "javascript": 0.72,
+            "typescript": 0.76,
         },
-        hybrid_weak_identifier_jaccard_min=0.0,
-        hybrid_statement_ratio_min=0.80,
+        hybrid_weak_identifier_jaccard_min=0.20,
+        hybrid_statement_ratio_min=0.0,
         language_high_confidence_thresholds={
             "python": None,
             "c": None,
             "rust": None,
             "javascript": None,
-            "typescript": 0.88,
+            "typescript": None,
         },
     ),
     SemanticModelProfile(
@@ -161,19 +160,19 @@ _BUILTIN_MODEL_PROFILES: tuple[SemanticModelProfile, ...] = (
         ),
         family="embeddinggemma",
         default_revision="bfa3c846ac738e62aa61806ef9112d34acb1dc5a",
-        default_semantic_threshold=0.78,
-        default_search_threshold=0.40,
+        default_semantic_threshold=0.89,
+        default_search_threshold=0.54,
         language_semantic_thresholds={
             "python": 0.74,
-            "c": 0.78,
-            "rust": 0.78,
-            "javascript": 0.72,
-            "typescript": 0.78,
+            "c": 0.82,
+            "rust": 0.89,
+            "javascript": 0.80,
+            "typescript": 0.87,
         },
-        hybrid_weak_identifier_jaccard_min=0.0,
-        hybrid_statement_ratio_min=0.20,
+        hybrid_weak_identifier_jaccard_min=0.30,
+        hybrid_statement_ratio_min=0.0,
         language_high_confidence_thresholds={
-            "python": None,
+            "python": 0.80,
             "c": None,
             "rust": None,
             "javascript": None,

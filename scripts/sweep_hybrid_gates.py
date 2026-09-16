@@ -213,6 +213,7 @@ def main() -> int:
         ratio = corroboration["statement_ratio_min"]
 
         promotion = []
+        selected_gates: dict[str, float | None] = {}
         for project in projects:
             language = project.spec["languages"][0]
             measurement = measurements[project.id]
@@ -228,6 +229,7 @@ def main() -> int:
                 )
                 rows.append({"high_gate": high_gate, **metrics(predicted, labels)})
             selected = _best(rows, prefer_off=True)
+            selected_gates[language] = selected["high_gate"]
             promotion.append(
                 {
                     "language": language,
@@ -252,6 +254,14 @@ def main() -> int:
                 for language in admissions
             },
         )
+        final_metrics = _pooled_metrics(
+            projects,
+            measurements,
+            admissions,
+            weak,
+            ratio,
+            selected_gates,
+        )
         payload["models"].append(
             {
                 "model": profile.key,
@@ -265,10 +275,11 @@ def main() -> int:
                 "selected": {
                     "weak_identifier_jaccard_min": weak,
                     "statement_ratio_min": ratio,
-                    "metrics": corroboration,
+                    "metrics": final_metrics,
+                    "corroboration_only_metrics": corroboration,
                     "selection_ready": (
-                        corroboration["ambiguous_predictions"] == 0
-                        and corroboration["unjudged_predictions"] == 0
+                        final_metrics["ambiguous_predictions"] == 0
+                        and final_metrics["unjudged_predictions"] == 0
                     ),
                 },
                 "promotion_by_language": promotion,
