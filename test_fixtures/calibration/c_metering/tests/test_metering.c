@@ -61,6 +61,8 @@ static void test_payout_floor_and_policy(void) {
     SettlementPlan floor_zero;
     SettlementPlan policy_zero;
     SettlementPlan deferred;
+    SettlementPlan policy_deferred;
+    SettlementPlan policy_transferred;
     CHECK(plan_payouts(totals, 3, &baseline) == METERING_OK);
     CHECK(plan_payouts_with_floor(totals, 3, 0, &floor_zero) == METERING_OK);
     CHECK(plan_payouts_with_policy(totals, 3, (PayoutPolicy){0, 1}, &policy_zero) == METERING_OK);
@@ -70,6 +72,12 @@ static void test_payout_floor_and_policy(void) {
     CHECK(strcmp(deferred.lines[0].state, "deferred") == 0);
     CHECK(deferred.lines[0].transfer_amount == 0 && deferred.lines[0].deferred_amount == 7);
     CHECK(deferred.transfer_count == 0 && deferred.audit_events == 1 && deferred.deferred_total == 7);
+    CHECK(plan_payouts_with_policy(totals, 3, (PayoutPolicy){10, 1}, &policy_deferred) == METERING_OK);
+    CHECK(memcmp(&deferred, &policy_deferred, sizeof(deferred)) == 0);
+    CHECK(plan_payouts_with_policy(totals, 3, (PayoutPolicy){10, 0}, &policy_transferred) == METERING_OK);
+    CHECK(strcmp(policy_transferred.lines[0].state, "ready") == 0);
+    CHECK(policy_transferred.lines[0].transfer_amount == 7);
+    CHECK(policy_transferred.transfer_count == 1 && policy_transferred.audit_events == 0);
 }
 
 static void test_helper_extraction_differential(void) {
@@ -95,22 +103,29 @@ static void test_csv_api_and_idempotency(void) {
     const ApiReading valid[] = {{"METER_A", "7"}, {"METER-2", "03"}};
     const ApiReading invalid[] = {{"METER_A", "7"}, {"METER_B", "-3"}};
     FILE *input = tmpfile();
+    FILE *overlong = tmpfile();
     ImportReport csv_report;
     ImportReport api_report;
     ImportReport idempotent_report;
     char seen_batch[32] = "";
-    CHECK(input != NULL);
+    CHECK(input != NULL && overlong != NULL);
     CHECK(fputs("METER_A:7\nbad key:4\nMETER-2:03\n", input) >= 0);
     rewind(input);
     CHECK(import_csv_stream(input, &csv_report) == METERING_OK);
     CHECK(import_api_batch(items, 3, &api_report) == METERING_OK);
     check_same_report(&csv_report, &api_report);
+    CHECK(fputs("METER_A:123456789012345678901234567890123456789012345678901234567890123456789\nMETER-2:03\n", overlong) >= 0);
+    rewind(overlong);
+    CHECK(import_csv_stream(overlong, &csv_report) == METERING_OK);
+    CHECK(csv_report.rejected_count == 1 && csv_report.first_rejected_row == 1);
+    CHECK(csv_report.accepted_count == 1 && strcmp(csv_report.accepted[0].device, "METER-2") == 0);
     CHECK(import_idempotent_batch("batch-7", valid, 2, seen_batch, &idempotent_report) == METERING_OK);
     CHECK(idempotent_report.accepted_count == 2 && strcmp(seen_batch, "batch-7") == 0);
     CHECK(import_idempotent_batch("batch-7", valid, 2, seen_batch, &idempotent_report) == METERING_DUPLICATE);
     CHECK(import_idempotent_batch("batch-8", invalid, 2, seen_batch, &idempotent_report) == METERING_INVALID);
     CHECK(idempotent_report.first_rejected_row == 2 && strcmp(seen_batch, "batch-7") == 0);
     fclose(input);
+    fclose(overlong);
 }
 
 int main(void) {
