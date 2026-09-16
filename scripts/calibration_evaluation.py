@@ -9,6 +9,7 @@ from typing import Any
 
 import numpy as np
 
+from codedupes import semantic
 from codedupes.constants import DEFAULT_TOP_K, DEFAULT_TRADITIONAL_THRESHOLD
 from codedupes.semantic_profiles import resolve_model_profile
 
@@ -310,8 +311,16 @@ def review_queue(
             if row["traditional"]:
                 deterministic.add(key)
         published.update(pair_key(item["a"], item["b"]) for item in replay(measurement))
-    candidates = sorted(all_pairs - authored - deterministic - published)
-    sample = sorted(random.Random(seed).sample(candidates, min(sample_size, len(candidates))))
+    frozen_sample = project.annotations.get("review_sample")
+    if frozen_sample is None:
+        candidates = sorted(all_pairs - authored - deterministic - published)
+        sample = sorted(random.Random(seed).sample(candidates, min(sample_size, len(candidates))))
+    else:
+        if frozen_sample.get("seed") != seed:
+            raise ValueError("frozen review sample seed does not match report seed")
+        sample = sorted(pair_key(*pair) for pair in frozen_sample.get("pairs", []))
+        if len(sample) != len(set(sample)) or set(sample) - all_pairs:
+            raise ValueError("frozen review sample contains duplicate or unknown pairs")
     required = authored | deterministic | published | set(sample)
     labels = judgments(project)
     return {
@@ -352,21 +361,72 @@ def compare_devices(cpu: dict[str, Any], mps: dict[str, Any], project: Project) 
     mps_output = {pair_key(item["a"], item["b"]) for item in replay(mps)}
     cpu_search = search_report(project, cpu)
     mps_search = search_report(project, mps)
+
+    def drift_summary(values: list[float]) -> dict[str, Any]:
+        """Summarize absolute score drift without hiding the compared population."""
+        return {
+            "count": len(values),
+            "median": float(np.median(values)) if values else None,
+            "p95": float(np.quantile(values, 0.95)) if values else None,
+            "max": max(values, default=None),
+        }
+
+    threshold = resolve_model_profile(cpu["metadata"]["identity"]["model"]).default_search_threshold
+
+    def search_decisions(measurement: dict[str, Any], *, top_k: bool) -> set[tuple[str, str]]:
+        return {
+            (row["probe"], row["unit"])
+            for row in measurement["query_scores"]
+            if row["cosine"] is not None
+            and row["cosine"] >= threshold
+            and (not top_k or row["rank"] <= DEFAULT_TOP_K)
+        }
+
+    cpu_threshold = search_decisions(cpu, top_k=False)
+    mps_threshold = search_decisions(mps, top_k=False)
+    cpu_top_k = search_decisions(cpu, top_k=True)
+    mps_top_k = search_decisions(mps, top_k=True)
     return {
-        "pair_score_max_abs_drift": max(pair_drifts, default=0.0),
-        "query_score_max_abs_drift": max(query_drifts, default=0.0),
+        "effective_devices": {
+            "cpu": sorted(
+                {entry["execution_device"] for entry in cpu["metadata"]["execution"].values()}
+            ),
+            "mps": sorted(
+                {entry["execution_device"] for entry in mps["metadata"]["execution"].values()}
+            ),
+        },
+        "timing_seconds": {
+            "cpu": cpu["metadata"]["timing_seconds"],
+            "mps": mps["metadata"]["timing_seconds"],
+        },
+        "pair_score_abs_drift": drift_summary(pair_drifts),
+        "query_score_abs_drift": drift_summary(query_drifts),
         "duplicate_decision_changes": [list(key) for key in sorted(cpu_output ^ mps_output)],
+        "search_threshold_decision_changes": [
+            list(key) for key in sorted(cpu_threshold ^ mps_threshold)
+        ],
+        "search_top_k_decision_changes": [list(key) for key in sorted(cpu_top_k ^ mps_top_k)],
         "search_top_k_metrics_changed": cpu_search["top_k"] != mps_search["top_k"],
     }
 
 
 def full_report(project: Project, measurement: dict[str, Any]) -> dict[str, Any]:
     """Build a stateless report for one fixed policy measurement."""
+    identity = measurement["metadata"]["identity"]
+    profile = resolve_model_profile(identity["model"])
     return {
         "schema_version": 1,
         "project": project.id,
         "measurement_id": measurement["metadata"]["measurement_id"],
         "annotation_sha256": digest(project.annotations),
+        "measurement": {
+            "timing_seconds": measurement["metadata"]["timing_seconds"],
+            "execution": measurement["metadata"]["execution"],
+            "resolved_dtype_policy": str(
+                semantic._resolve_model_dtype(profile.family, identity["requested_device"])
+            ),
+            "task_identity": identity["tasks"],
+        },
         "replay_parity": replay_parity(measurement),
         "duplicate": duplicate_report(project, measurement),
         "search": search_report(project, measurement),

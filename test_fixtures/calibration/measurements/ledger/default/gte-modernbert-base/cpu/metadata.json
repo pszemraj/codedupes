@@ -1,0 +1,359 @@
+{
+  "schema_version": 1,
+  "identity": {
+    "source": {
+      "project": "ledger",
+      "source_files": {
+        "src/ledger/__init__.py": "05e14a2abe2af0409c1df824690d2797d3e2f1972f7dcc669d8902c27c0f866b",
+        "src/ledger/__main__.py": "04bf184bdcea73888506910429e926fc75398c09013aeae2cfaa133cfef5f522",
+        "src/ledger/adapters.py": "6b26ed0bc3bb970d9e0f18231644d2783708521770736704b494cfc11cfb1ba5",
+        "src/ledger/audit.py": "ebe49b44576723e05da9b68d801f66dd8b05ea98d01ff79d6048f469037d1f71",
+        "src/ledger/imports.py": "00ce5c1f08896577127f36ba5652ceef887d722045f0188dbd783718b1286cdf",
+        "src/ledger/models.py": "a37f3e2213ab390258d4a6814d6f3bcbaf1f003c1d6bf56cda78fadd998696ad",
+        "src/ledger/planning.py": "18b98be96bc4993c80f953b1aefe6a2f9329096c5b36934add3a9ad374560e7b",
+        "src/ledger/settlement.py": "08d6e075cba2972d1e0283cc95bbe5240cb33884b7f2ec47a818c4bc314cf9b7"
+      },
+      "analysis_roots": [
+        "src"
+      ],
+      "languages": [
+        "python"
+      ],
+      "policy": {
+        "include_private": true,
+        "include_tests": false,
+        "min_semantic_statements": 3,
+        "semantic_unit_types": [
+          "function",
+          "method"
+        ],
+        "filter_tiny_traditional": true,
+        "tiny_unit_statement_cutoff": 3,
+        "suppress_test_semantic_matches": false
+      },
+      "pipeline_sha256": "b1111ef3a8fc31c2daa9af71e729d0e8b6e4ec38c7c8279b386baf9987d75e9b",
+      "runtime_versions": {
+        "python": "3.12.13",
+        "torch": "2.13.0",
+        "transformers": "5.14.1",
+        "sentence-transformers": "5.7.0"
+      }
+    },
+    "queries": {
+      "invoice-totals": "Group active payments by invoice and return ordered totals and transaction counts.",
+      "small-payouts": "Keep small positive balances for later payment and record why they were deferred.",
+      "csv-import": "Read a local comma-separated transaction file and attach line numbers to rejected records.",
+      "batch-replay": "Accept an identified batch of transaction items once and recognize a repeated batch.",
+      "date-audit": "Find accepted invoice events that move backwards in calendar time.",
+      "decode-one": "Decode a single raw transaction and reject its first invalid identifier, amount, currency or date.",
+      "partial-invoice": "build_invoice",
+      "partial-plan": "plan_batch",
+      "partial-audit": "audit_currency",
+      "exact-import": "prepare_import",
+      "noise-crypto": "Generate an RSA key pair and sign an X.509 certificate.",
+      "noise-images": "Resize a JPEG image using bicubic interpolation."
+    },
+    "model": "Alibaba-NLP/gte-modernbert-base",
+    "revision": "e7f32e3c00f91d699e8c43b53106206bcc72bb22",
+    "requested_device": "cpu",
+    "tasks": {
+      "duplicate": {
+        "task": "semantic-similarity",
+        "embedding_space": {
+          "model_name": "Alibaba-NLP/gte-modernbert-base",
+          "resolved_revision": "e7f32e3c00f91d699e8c43b53106206bcc72bb22",
+          "runtime_variant": "route=symmetric\u0000prompt_set=0\u0000prompt=\u0000\u0000\u0000263d5c868bf6f139a43a\u0000trc=0",
+          "source_commit": null,
+          "search_document": "source"
+        },
+        "encode_plan": {
+          "route": "symmetric",
+          "prompt": null
+        }
+      },
+      "search": {
+        "task": "code-retrieval",
+        "embedding_space": {
+          "model_name": "Alibaba-NLP/gte-modernbert-base",
+          "resolved_revision": "e7f32e3c00f91d699e8c43b53106206bcc72bb22",
+          "runtime_variant": "route=symmetric\u0000prompt_set=0\u0000prompt=\u0000\u0000\u0000263d5c868bf6f139a43a\u0000trc=0",
+          "source_commit": null,
+          "search_document": "source"
+        },
+        "code_plan": {
+          "route": "symmetric",
+          "prompt": null
+        },
+        "query_plan": {
+          "route": "symmetric",
+          "prompt": null
+        },
+        "document": "source"
+      }
+    },
+    "batch_size": 4
+  },
+  "measurement_id": "fe7a70dfda411644294c20807326c8ead888a5de144f466bdc55eddc6a8c2cd2",
+  "annotation_sha256_at_capture": "baaa882f06198b6e5c6a56e5979a6e77c41506150af0787b17d021a41e016ecf",
+  "evidence_sha256_at_capture": "ce53369d068ef341789a2f0e416e2e06438fce9de6359f4a6185be7e4e7f9093",
+  "timing_seconds": {
+    "duplicate": 9.273912040982395,
+    "explicit_override": 1.7577091250568628,
+    "search": 2.1398302499437705
+  },
+  "execution": {
+    "duplicate": {
+      "requested_rows": 14,
+      "unique_inputs": 14,
+      "cache_hit_rows": 0,
+      "duplicate_rows_reused": 0,
+      "encoded_inputs": 14,
+      "model_loaded": true,
+      "cache_enabled": false,
+      "cache_warnings": [],
+      "cache_revision": null,
+      "execution_device": "cpu",
+      "moved_units_reused": 0,
+      "deleted_units": 0,
+      "orphan_rows_retained": 0,
+      "orphan_rows_collected": 0,
+      "manifest_generation": null
+    },
+    "explicit_override": {
+      "requested_rows": 14,
+      "unique_inputs": 14,
+      "cache_hit_rows": 0,
+      "duplicate_rows_reused": 0,
+      "encoded_inputs": 14,
+      "model_loaded": true,
+      "cache_enabled": false,
+      "cache_warnings": [],
+      "cache_revision": null,
+      "execution_device": "cpu",
+      "moved_units_reused": 0,
+      "deleted_units": 0,
+      "orphan_rows_retained": 0,
+      "orphan_rows_collected": 0,
+      "manifest_generation": null
+    },
+    "search": {
+      "requested_rows": 14,
+      "unique_inputs": 14,
+      "cache_hit_rows": 0,
+      "duplicate_rows_reused": 0,
+      "encoded_inputs": 14,
+      "model_loaded": true,
+      "cache_enabled": false,
+      "cache_warnings": [],
+      "cache_revision": null,
+      "execution_device": "cpu",
+      "moved_units_reused": 0,
+      "deleted_units": 0,
+      "orphan_rows_retained": 0,
+      "orphan_rows_collected": 0,
+      "manifest_generation": null
+    }
+  },
+  "live_default": [
+    {
+      "a": "ledger.settlement.summarize_import",
+      "b": "ledger.settlement.build_invoice_report",
+      "tier": "semantic_high_confidence"
+    },
+    {
+      "a": "ledger.adapters.import_csv_file",
+      "b": "ledger.imports.ingest_rows",
+      "tier": "semantic_high_confidence"
+    },
+    {
+      "a": "ledger.planning.plan_settlements",
+      "b": "ledger.settlement.build_invoice_report",
+      "tier": "semantic_high_confidence"
+    },
+    {
+      "a": "ledger.audit.audit_reference_usage",
+      "b": "ledger.audit.audit_chronology",
+      "tier": "semantic_high_confidence"
+    },
+    {
+      "a": "ledger.imports.prepare_import",
+      "b": "ledger.settlement.summarize_import",
+      "tier": "semantic_high_confidence"
+    },
+    {
+      "a": "ledger.audit.assess_credit_risk",
+      "b": "ledger.audit.audit_currency_limits",
+      "tier": "semantic_high_confidence"
+    },
+    {
+      "a": "ledger.planning.plan_settlements",
+      "b": "ledger.settlement.summarize_import",
+      "tier": "semantic_high_confidence"
+    },
+    {
+      "a": "ledger.imports.prepare_import",
+      "b": "ledger.planning.plan_settlements",
+      "tier": "semantic_high_confidence"
+    },
+    {
+      "a": "ledger.adapters.ingest_api_batch",
+      "b": "ledger.imports.ingest_rows",
+      "tier": "semantic_high_confidence"
+    },
+    {
+      "a": "ledger.imports.ingest_rows",
+      "b": "ledger.imports.prepare_import",
+      "tier": "semantic_review"
+    },
+    {
+      "a": "ledger.planning.plan_settlements",
+      "b": "ledger.planning.plan_batch_with_deferrals",
+      "tier": "semantic_review"
+    },
+    {
+      "a": "ledger.audit.audit_reference_usage",
+      "b": "ledger.settlement.summarize_import",
+      "tier": "semantic_review"
+    },
+    {
+      "a": "ledger.audit.audit_reference_usage",
+      "b": "ledger.settlement.build_invoice_report",
+      "tier": "semantic_review"
+    },
+    {
+      "a": "ledger.imports.normalize_transaction",
+      "b": "ledger.imports.ingest_rows",
+      "tier": "semantic_review"
+    },
+    {
+      "a": "ledger.audit.audit_chronology",
+      "b": "ledger.imports.prepare_import",
+      "tier": "semantic_review"
+    },
+    {
+      "a": "ledger.adapters.import_csv_file",
+      "b": "ledger.imports.prepare_import",
+      "tier": "semantic_review"
+    },
+    {
+      "a": "ledger.audit.audit_chronology",
+      "b": "ledger.settlement.build_invoice_report",
+      "tier": "semantic_review"
+    },
+    {
+      "a": "ledger.audit.audit_chronology",
+      "b": "ledger.settlement.summarize_import",
+      "tier": "semantic_review"
+    },
+    {
+      "a": "ledger.audit.assess_credit_risk",
+      "b": "ledger.audit.audit_reference_usage",
+      "tier": "semantic_review"
+    },
+    {
+      "a": "ledger.adapters.import_csv_file",
+      "b": "ledger.imports.normalize_transaction",
+      "tier": "semantic_review"
+    },
+    {
+      "a": "ledger.__main__.main",
+      "b": "ledger.imports.prepare_import",
+      "tier": "semantic_review"
+    },
+    {
+      "a": "ledger.imports.ingest_rows",
+      "b": "ledger.settlement.summarize_import",
+      "tier": "semantic_review"
+    },
+    {
+      "a": "ledger.audit.audit_chronology",
+      "b": "ledger.audit.audit_currency_limits",
+      "tier": "semantic_review"
+    },
+    {
+      "a": "ledger.adapters.ingest_api_batch",
+      "b": "ledger.imports.prepare_import",
+      "tier": "semantic_review"
+    }
+  ],
+  "live_explicit_override": {
+    "threshold": 0.82,
+    "findings": [
+      {
+        "a": "ledger.settlement.summarize_import",
+        "b": "ledger.settlement.build_invoice_report",
+        "tier": "semantic_high_confidence"
+      },
+      {
+        "a": "ledger.adapters.import_csv_file",
+        "b": "ledger.imports.ingest_rows",
+        "tier": "semantic_high_confidence"
+      },
+      {
+        "a": "ledger.planning.plan_settlements",
+        "b": "ledger.settlement.build_invoice_report",
+        "tier": "semantic_high_confidence"
+      },
+      {
+        "a": "ledger.audit.audit_reference_usage",
+        "b": "ledger.audit.audit_chronology",
+        "tier": "semantic_high_confidence"
+      },
+      {
+        "a": "ledger.imports.prepare_import",
+        "b": "ledger.settlement.summarize_import",
+        "tier": "semantic_high_confidence"
+      },
+      {
+        "a": "ledger.audit.assess_credit_risk",
+        "b": "ledger.audit.audit_currency_limits",
+        "tier": "semantic_high_confidence"
+      },
+      {
+        "a": "ledger.planning.plan_settlements",
+        "b": "ledger.settlement.summarize_import",
+        "tier": "semantic_high_confidence"
+      },
+      {
+        "a": "ledger.imports.ingest_rows",
+        "b": "ledger.imports.prepare_import",
+        "tier": "semantic_review"
+      },
+      {
+        "a": "ledger.planning.plan_settlements",
+        "b": "ledger.planning.plan_batch_with_deferrals",
+        "tier": "semantic_review"
+      },
+      {
+        "a": "ledger.audit.audit_reference_usage",
+        "b": "ledger.settlement.summarize_import",
+        "tier": "semantic_review"
+      },
+      {
+        "a": "ledger.audit.audit_reference_usage",
+        "b": "ledger.settlement.build_invoice_report",
+        "tier": "semantic_review"
+      },
+      {
+        "a": "ledger.imports.normalize_transaction",
+        "b": "ledger.imports.ingest_rows",
+        "tier": "semantic_review"
+      },
+      {
+        "a": "ledger.audit.audit_chronology",
+        "b": "ledger.imports.prepare_import",
+        "tier": "semantic_review"
+      },
+      {
+        "a": "ledger.adapters.import_csv_file",
+        "b": "ledger.imports.prepare_import",
+        "tier": "semantic_review"
+      }
+    ]
+  },
+  "tables": {
+    "units.jsonl": "11db700f96fe9d2e414d82c49053028b15c76d2fe829595aad9d73bcaba58e67",
+    "pairs.jsonl": "02e730e85d0108f89194ab5abc1a17faeb0446259d55fd4b66761e48ce1ced8f",
+    "query_scores.jsonl": "13f21bd1d3fee1dc1eef7e02d5271b8b1c36b14034d0d3bc428b23463290f492"
+  }
+}
