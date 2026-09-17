@@ -10,7 +10,7 @@ variants of one workflow just to increase the pair count.
 
 | project | language | positives | negatives | probes |
 | --- | --- | ---: | ---: | ---: |
-| ledger | Python | 17 | 37 | 12 |
+| ledger | Python | 15 | 34 | 12 |
 | cowsay | Rust | 13 | 29 | 12 |
 | c_metering | C | 20 | 31 | 12 |
 | javascript | JavaScript | 20 | 53 | 12 |

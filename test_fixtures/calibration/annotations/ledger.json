@@ -175,14 +175,6 @@
       }
     },
     {
-      "id": "ledger.planning.plan_settlements_indexed",
-      "selector": {
-        "path": "src/ledger/planning.py",
-        "qualified_name": "ledger.planning.plan_settlements_indexed",
-        "kind": "function"
-      }
-    },
-    {
       "id": "ledger.settlement.summarize_import",
       "selector": {
         "path": "src/ledger/settlement.py",
@@ -316,26 +308,6 @@
         "tests/test_workflows.py::test_validation_empty_and_thresholds"
       ],
       "difference_witness": "For A=75 and minimum=100, the extension defers A, emits an event and no transfer; baseline creates the transfer.",
-      "difficulty": "medium"
-    },
-    {
-      "id": "ledger.planning.plan_settlements--ledger.planning.plan_settlements_indexed",
-      "a": "ledger.planning.plan_settlements",
-      "b": "ledger.planning.plan_settlements_indexed",
-      "judgment": "positive",
-      "tags": [
-        "near_clone",
-        "indexed_traversal"
-      ],
-      "scope": "whole_unit",
-      "behavior_equivalent": true,
-      "equivalence_domain": "Valid or invalid invoice summaries under the baseline zero-deferral policy.",
-      "contract": "Validate the complete batch, reject duplicate invoice IDs, order by ID, and return identical settlement lines and transfers.",
-      "rationale": "Both functions repeat the same validation and planning branches; one merely indexes the sequences explicitly.",
-      "evidence": [
-        "tests/test_workflows.py::test_baseline_and_active_extension",
-        "tests/test_workflows.py::test_validation_empty_and_thresholds"
-      ],
       "difficulty": "easy"
     },
     {
@@ -360,47 +332,6 @@
       "difficulty": "medium"
     },
     {
-      "id": "ledger.planning.plan_batch_with_deferrals--ledger.planning.plan_settlements_indexed",
-      "a": "ledger.planning.plan_batch_with_deferrals",
-      "b": "ledger.planning.plan_settlements_indexed",
-      "judgment": "positive",
-      "tags": [
-        "extended",
-        "indexed_traversal"
-      ],
-      "scope": "whole_unit",
-      "behavior_equivalent": false,
-      "equivalence_domain": "minimum_payout_minor=0; identical valid summaries and validation errors.",
-      "contract": "Validate the complete batch, reject duplicate invoice IDs, order by ID, and produce settlement lines and transfers.",
-      "rationale": "The configurable planner contains the indexed baseline planning responsibility plus its deferral branch.",
-      "evidence": [
-        "tests/test_workflows.py::test_baseline_and_active_extension",
-        "tests/test_workflows.py::test_validation_empty_and_thresholds"
-      ],
-      "difference_witness": "For A=75 and minimum=100, the extension defers A while the indexed baseline creates a transfer.",
-      "difficulty": "medium"
-    },
-    {
-      "id": "ledger.planning.plan_settlements_indexed--ledger.settlement.build_invoice_report",
-      "a": "ledger.planning.plan_settlements_indexed",
-      "b": "ledger.settlement.build_invoice_report",
-      "judgment": "negative",
-      "tags": [
-        "nearby-negative",
-        "invoice-workflow"
-      ],
-      "scope": "whole_unit",
-      "behavior_equivalent": false,
-      "equivalence_domain": "Validated invoice summaries and raw imported transactions in their separate workflow stages.",
-      "contract": "Reporting aggregates transactions into InvoiceSummary values; planning consumes those summaries and emits settlement instructions.",
-      "rationale": "Shared invoice vocabulary and sorting connect adjacent workflow stages but do not duplicate a maintainable operation.",
-      "evidence": [
-        "tests/test_settlement.py::test_documented_result",
-        "tests/test_workflows.py::test_baseline_and_active_extension"
-      ],
-      "difference_witness": "The report returns InvoiceSummary values from Transaction rows; the planner requires summaries and returns a SettlementPlan."
-    },
-    {
       "id": "ledger.planning.plan_settlements--ledger.settlement.summarize_import_indexed",
       "a": "ledger.planning.plan_settlements",
       "b": "ledger.settlement.summarize_import_indexed",
@@ -421,26 +352,6 @@
       "difference_witness": "Summarization groups Transaction rows; planning never reads transactions and instead emits transfer instructions."
     },
     {
-      "id": "ledger.planning.plan_settlements_indexed--ledger.settlement.summarize_import_indexed",
-      "a": "ledger.planning.plan_settlements_indexed",
-      "b": "ledger.settlement.summarize_import_indexed",
-      "judgment": "negative",
-      "tags": [
-        "nearby-negative",
-        "indexed-control-flow"
-      ],
-      "scope": "whole_unit",
-      "behavior_equivalent": false,
-      "equivalence_domain": "Validated invoice summaries and raw imported transactions in their separate workflow stages.",
-      "contract": "Import summarization aggregates transactions; indexed planning consumes completed summaries and constructs settlement state.",
-      "rationale": "Their explicit index loops are incidental structure around different workflow responsibilities.",
-      "evidence": [
-        "tests/test_settlement.py::test_documented_result",
-        "tests/test_workflows.py::test_baseline_and_active_extension"
-      ],
-      "difference_witness": "The summarizer returns totals and counts; the planner returns lines, transfers, deferred totals, and events."
-    },
-    {
       "id": "ledger.audit.audit_reference_usage--ledger.settlement.summarize_import_indexed",
       "a": "ledger.audit.audit_reference_usage",
       "b": "ledger.settlement.summarize_import_indexed",
@@ -459,26 +370,6 @@
         "tests/test_settlement.py::test_documented_result"
       ],
       "difference_witness": "An invoice with two external IDs yields an audit finding even when its monetary summary is otherwise ordinary."
-    },
-    {
-      "id": "ledger.planning.plan_settlements_indexed--ledger.settlement.summarize_import",
-      "a": "ledger.planning.plan_settlements_indexed",
-      "b": "ledger.settlement.summarize_import",
-      "judgment": "negative",
-      "tags": [
-        "nearby-negative",
-        "invoice-workflow"
-      ],
-      "scope": "whole_unit",
-      "behavior_equivalent": false,
-      "equivalence_domain": "Validated invoice summaries and raw imported transactions in their separate workflow stages.",
-      "contract": "Summarization produces invoice totals and counts; planning consumes those totals and decides settlement actions.",
-      "rationale": "The planner follows the summarizer in the fixture workflow but does not repeat its transaction aggregation.",
-      "evidence": [
-        "tests/test_settlement.py::test_documented_result",
-        "tests/test_workflows.py::test_baseline_and_active_extension"
-      ],
-      "difference_witness": "The summarizer accepts Transaction rows; the planner accepts InvoiceSummary values and produces transfers."
     },
     {
       "id": "ledger.imports.prepare_import--ledger.settlement.summarize_import_indexed",
@@ -537,7 +428,7 @@
         "tests/test_workflows.py::test_duplicate_acceptance_and_date_bounds",
         "tests/test_workflows.py::test_field_boundaries_and_first_error"
       ],
-      "difficulty": "hard"
+      "difficulty": "medium"
     },
     {
       "id": "ledger.imports.ingest_rows--ledger.imports.normalize_transaction",
@@ -1277,7 +1168,7 @@
         "tests/test_inventory.py::test_non_partial_policy_leaves_unfilled_quantity_available",
         "tests/test_inventory.py::test_invalid_later_order_rolls_back_the_stateful_book"
       ],
-      "difficulty": "hard"
+      "difficulty": "medium"
     },
     {
       "id": "ledger.inventory.allocate_orders--ledger.inventory.audit_stock_levels",

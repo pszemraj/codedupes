@@ -18,11 +18,7 @@ from ledger.audit import (
 )
 from ledger.imports import ingest_rows, normalize_transaction, prepare_import
 from ledger.models import InvoiceSummary
-from ledger.planning import (
-    plan_batch_with_deferrals,
-    plan_settlements,
-    plan_settlements_indexed,
-)
+from ledger.planning import plan_batch_with_deferrals, plan_settlements
 
 
 def record(**changes):
@@ -47,7 +43,6 @@ class PlanningTests(unittest.TestCase):
         ]
         before = tuple(rows)
         base = plan_settlements(rows)
-        self.assertEqual(base, plan_settlements_indexed(rows))
         self.assertEqual(base, plan_batch_with_deferrals(rows, 0))
         self.assertEqual(base.transfers, (("A", 75), ("B", 100)))
         extended = plan_batch_with_deferrals(rows, 100)
@@ -79,7 +74,6 @@ class PlanningTests(unittest.TestCase):
         ]
         for implementation in [
             plan_settlements,
-            plan_settlements_indexed,
             plan_batch_with_deferrals,
         ]:
             for item in invalid:

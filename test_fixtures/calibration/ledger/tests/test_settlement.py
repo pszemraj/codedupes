@@ -85,8 +85,10 @@ class SettlementTests(unittest.TestCase):
             before = tuple(rows)
             left = summarize_import(rows)
             right = build_invoice_report(rows)
+            indexed = summarize_import_indexed(rows)
             with self.subTest(case=case):
                 self.assertEqual(left, right)
+                self.assertEqual(left, indexed)
                 self.assertEqual(tuple(rows), before)
                 self.assertEqual(
                     sum(item.total_minor for item in left),
