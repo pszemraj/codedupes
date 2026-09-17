@@ -273,6 +273,8 @@ def test_measurements_reject_changed_source_queries_or_runtime(tmp_path: Path, m
     fingerprint = measurement_fingerprint(project, "gte-modernbert-base")
     project.annotations["pairs"][0]["rationale"] += " label-only edit"
     assert measurement_fingerprint(project, "gte-modernbert-base") == fingerprint
+    project.annotations["units"].reverse()
+    assert measurement_fingerprint(project, "gte-modernbert-base") == fingerprint
     with pytest.raises(ValueError, match="another model"):
         load_measurement(path, project, expected_model="embeddinggemma-300m")
     with pytest.raises(ValueError, match="did not execute on mps"):
@@ -293,6 +295,33 @@ def test_measurements_reject_changed_source_queries_or_runtime(tmp_path: Path, m
             "sentence-transformers": "9.9.9",
         },
     )
+    with pytest.raises(ValueError, match="stale measurement"):
+        load_measurement(path, project)
+
+
+@pytest.mark.parametrize("change", ["rename", "retarget", "remove"])
+def test_measurements_reject_changed_annotation_identities(tmp_path: Path, change: str):
+    project = load_projects(project_ids=["ledger"])[0]
+    path = tmp_path / "measurement.json"
+    write_json(
+        path,
+        {
+            "schema_version": ARTIFACT_VERSION,
+            "metadata": {
+                "project": project.id,
+                "model": "gte-modernbert-base",
+                "input_fingerprint": measurement_fingerprint(project, "gte-modernbert-base"),
+            },
+        },
+    )
+    load_measurement(path, project)
+    units = project.annotations["units"]
+    if change == "rename":
+        units[0]["id"] += "-renamed"
+    elif change == "retarget":
+        units[0]["selector"], units[1]["selector"] = units[1]["selector"], units[0]["selector"]
+    else:
+        units.pop()
     with pytest.raises(ValueError, match="stale measurement"):
         load_measurement(path, project)
 

@@ -52,7 +52,7 @@ DEFAULT_MEASUREMENTS = REPO / "scratch/calibration"
 
 
 def measurement_fingerprint(project: Project, model: str) -> str:
-    """Fingerprint source, queries, model, and the embedding/extraction pipeline."""
+    """Fingerprint source, unit identities, queries, model, and the measurement pipeline."""
     profile = resolve_model_profile(model)
     source_files = {}
     roots = list(project.spec["analysis_roots"])
@@ -76,6 +76,7 @@ def measurement_fingerprint(project: Project, model: str) -> str:
     ]
     identity = {
         "source": source_files,
+        "units": {unit["id"]: unit["selector"] for unit in project.annotations["units"]},
         "queries": {probe["id"]: probe["query"] for probe in project.annotations["probes"]},
         "policy": project.policy,
         "model": profile.canonical_name,
