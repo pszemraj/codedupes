@@ -73,6 +73,15 @@ def main() -> int:
                 "device_comparisons": comparisons,
             }
         )
+    reports = [report for project in payload["projects"] for report in project["reports"].values()]
+    torch_versions = {report["runtime_versions"]["torch"] for report in reports}
+    if len(torch_versions) != 1:
+        raise ValueError("runtime summary requires one PyTorch version across all reports")
+    devices = " and ".join(sorted({report["device"].upper() for report in reports}))
+    payload["measurement_runtime"] = {
+        "torch": torch_versions.pop(),
+        "scope": f"all checked {devices} reports",
+    }
     if args.json_out:
         write_json(args.json_out, payload)
     else:

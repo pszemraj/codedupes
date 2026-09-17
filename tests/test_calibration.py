@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from codedupes.semantic_profiles import resolve_model_profile
+from scripts import report_calibration_distributions
 from scripts.calibration_contract import (
     DEFAULT_MANIFEST,
     load_projects,
@@ -338,6 +340,58 @@ def test_search_selection_rejects_unembedded_expected_target():
     }
     with pytest.raises(ValueError, match="not embedded"):
         _search_records(project, measurement)
+
+
+@pytest.mark.parametrize("second_version", ["2.14.0", "2.13.0"])
+def test_report_writer_derives_measurement_runtime(tmp_path: Path, monkeypatch, second_version):
+    checked = read_json(DEFAULT_MANIFEST.parent / "calibration-results.json")
+    project = load_projects(project_ids=["ledger"])[0]
+    # Reuse recorded CPU reports to exercise serialization without model inference.
+    reports = {
+        (report["model"], "cpu"): report
+        for report in checked["projects"][0]["reports"].values()
+        if report["device"] == "cpu"
+    }
+    for report, version in zip(reports.values(), ["2.14.0", second_version], strict=True):
+        report["runtime_versions"] = {"torch": version}
+    monkeypatch.setattr(report_calibration_distributions, "load_all", lambda *args: reports)
+    monkeypatch.setattr(report_calibration_distributions, "full_report", lambda p, report: report)
+    monkeypatch.setattr(report_calibration_distributions, "load_projects", lambda *args: [project])
+    threshold_path = tmp_path / "threshold-selection.json"
+    hybrid_path = tmp_path / "hybrid-selection.json"
+    output = tmp_path / "report.json"
+    write_json(threshold_path, checked["threshold_selection"])
+    write_json(hybrid_path, checked["hybrid_selection"])
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "report_calibration_distributions.py",
+            "--devices",
+            "cpu",
+            "--threshold-selection",
+            str(threshold_path),
+            "--hybrid-selection",
+            str(hybrid_path),
+            "--json-out",
+            str(output),
+        ],
+    )
+    if second_version != "2.14.0":
+        with pytest.raises(ValueError, match="one PyTorch version"):
+            report_calibration_distributions.main()
+        assert not output.exists()
+        return
+    assert report_calibration_distributions.main() == 0
+    result = read_json(output)
+    assert result["measurement_runtime"] == {
+        "torch": "2.14.0",
+        "scope": "all checked CPU reports",
+    }
+    assert all(
+        report["runtime_versions"]["torch"] == result["measurement_runtime"]["torch"]
+        for report in result["projects"][0]["reports"].values()
+    )
 
 
 def test_checked_calibration_result_matches_shipped_profiles():
