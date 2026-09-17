@@ -307,7 +307,7 @@
       "a": "c_metering.record.scan",
       "b": "c_metering.record.fields",
       "judgment": "positive",
-      "difficulty": "medium",
+      "difficulty": "hard",
       "tags": [
         "translated",
         "bounded-parser",
@@ -447,7 +447,7 @@
       "a": "c_metering.rows.inline",
       "b": "c_metering.rows.parser",
       "judgment": "positive",
-      "difficulty": "medium",
+      "difficulty": "easy",
       "tags": [
         "helper-extraction",
         "validation"
@@ -466,7 +466,7 @@
       "a": "c_metering.rows.inline",
       "b": "c_metering.rows.two_phase",
       "judgment": "positive",
-      "difficulty": "medium",
+      "difficulty": "hard",
       "tags": [
         "restructured",
         "two-phase"
@@ -485,7 +485,7 @@
       "a": "c_metering.rows.parser",
       "b": "c_metering.rows.two_phase",
       "judgment": "positive",
-      "difficulty": "medium",
+      "difficulty": "hard",
       "tags": [
         "helper-extraction",
         "restructured"
