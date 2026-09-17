@@ -308,8 +308,8 @@ def compare_devices(cpu: dict[str, Any], mps: dict[str, Any], project: Project) 
             "max": max(values, default=None),
         }
 
-    cpu_output = {pair_key(item["a"], item["b"]) for item in replay(cpu)}
-    mps_output = {pair_key(item["a"], item["b"]) for item in replay(mps)}
+    cpu_output = {pair_key(item["a"], item["b"]): item["tier"] for item in replay(cpu)}
+    mps_output = {pair_key(item["a"], item["b"]): item["tier"] for item in replay(mps)}
     search_gate = resolve_model_profile(cpu["metadata"]["model"]).default_search_threshold
 
     def search_decisions(measurement: dict[str, Any]) -> set[tuple[str, str]]:
@@ -326,7 +326,11 @@ def compare_devices(cpu: dict[str, Any], mps: dict[str, Any], project: Project) 
     return {
         "pair_score_abs_drift": summary(pair_drifts),
         "query_score_abs_drift": summary(query_drifts),
-        "duplicate_decision_changes": [list(key) for key in sorted(cpu_output ^ mps_output)],
+        "duplicate_decision_changes": [
+            list(key)
+            for key in sorted(cpu_output.keys() | mps_output.keys())
+            if cpu_output.get(key) != mps_output.get(key)
+        ],
         "search_decision_changes": [list(key) for key in sorted(cpu_search ^ mps_search)],
     }
 

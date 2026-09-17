@@ -95,6 +95,8 @@ conda run --name inf python scripts/report_calibration_distributions.py \
 ```
 
 The summary records timings, effective devices, replay parity, score drift, and
-duplicate/search decision changes. Its `measurement_runtime` summary derives
+duplicate/search decision changes. Duplicate comparisons include tier changes,
+so a promotion or default-visibility difference cannot pass as an unchanged pair.
+Its `measurement_runtime` summary derives
 the PyTorch version and device scope from the included reports; mixed PyTorch
 versions are rejected. Raw score matrices and model caches stay out of Git.
