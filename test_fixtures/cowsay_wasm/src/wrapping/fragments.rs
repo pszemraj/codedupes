@@ -15,3 +15,17 @@ pub(crate) fn segment(token: &str, chunk_length: usize) -> Vec<String> {
         },
     )
 }
+
+/// Partition a token by slicing a collected scalar buffer at indexed boundaries.
+pub(crate) fn segment_indexed(token: &str, chunk_length: usize) -> Vec<String> {
+    let chunk_length = chunk_length.max(1);
+    let characters: Vec<char> = token.chars().collect();
+    let mut fragments = Vec::new();
+    let mut start = 0;
+    while start < characters.len() {
+        let end = (start + chunk_length).min(characters.len());
+        fragments.push(characters[start..end].iter().collect());
+        start = end;
+    }
+    fragments
+}

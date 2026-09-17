@@ -1,4 +1,4 @@
-use super::{fragments::segment, shared::display_width};
+use super::{fragments::segment_indexed, shared::display_width};
 
 /// Wrap paragraphs through indexed token and character cursors.
 pub(crate) fn wrap(message: &str, width: usize) -> Vec<String> {
@@ -14,7 +14,7 @@ pub(crate) fn wrap(message: &str, width: usize) -> Vec<String> {
         let mut line = String::new();
         let mut word_index = 0;
         while word_index < words.len() {
-            let fragments = segment(words[word_index], width);
+            let fragments = segment_indexed(words[word_index], width);
             let mut fragment_index = 0;
             while fragment_index < fragments.len() {
                 let fragment = &fragments[fragment_index];

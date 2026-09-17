@@ -182,6 +182,14 @@
       }
     },
     {
+      "id": "wrapping.fragments.segment_indexed",
+      "selector": {
+        "path": "src/wrapping/fragments.rs",
+        "qualified_name": "wrapping.fragments.segment_indexed",
+        "kind": "function"
+      }
+    },
+    {
       "id": "wrapping.queue.wrap",
       "selector": {
         "path": "src/wrapping/queue.rs",
@@ -250,7 +258,8 @@
       "id": "word-fragmenting",
       "members": [
         "wrapping.shared.split_word",
-        "wrapping.fragments.segment"
+        "wrapping.fragments.segment",
+        "wrapping.fragments.segment_indexed"
       ]
     },
     {
@@ -445,6 +454,46 @@
         "tests/behavior.rs::both_semantic_wrappers_render_identically",
         "tests/behavior.rs::wraps_long_words_without_losing_characters",
         "tests/fixture_integrity.rs::semantic_clone_has_different_source_but_equal_behavior"
+      ]
+    },
+    {
+      "id": "wrapping.shared.split_word--wrapping.fragments.segment_indexed",
+      "a": "wrapping.shared.split_word",
+      "b": "wrapping.fragments.segment_indexed",
+      "judgment": "positive",
+      "tags": [
+        "translated",
+        "scalar-buffer"
+      ],
+      "difficulty": "medium",
+      "scope": "whole_unit",
+      "behavior_equivalent": true,
+      "equivalence_domain": "Nonempty Unicode tokens and a positive scalar boundary.",
+      "contract": "Partition a token into ordered chunks no wider than the supplied scalar boundary without losing or reordering characters.",
+      "rationale": "Direct character accumulation and indexed scalar-buffer slicing implement the same small token operation; the sparse Rust candidate pool surfaces their relationship in one query direction.",
+      "evidence": [
+        "tests/behavior.rs::wraps_long_words_without_losing_characters",
+        "tests/behavior.rs::both_semantic_wrappers_render_identically"
+      ]
+    },
+    {
+      "id": "wrapping.fragments.segment--wrapping.fragments.segment_indexed",
+      "a": "wrapping.fragments.segment",
+      "b": "wrapping.fragments.segment_indexed",
+      "judgment": "positive",
+      "tags": [
+        "translated",
+        "indexed-loop"
+      ],
+      "difficulty": "easy",
+      "scope": "whole_unit",
+      "behavior_equivalent": true,
+      "equivalence_domain": "Nonempty Unicode tokens and a positive scalar boundary.",
+      "contract": "Partition a token into ordered chunks no wider than the supplied scalar boundary without losing or reordering characters.",
+      "rationale": "Both implementations collect Unicode scalars and append chunks in boundary order; only the iteration mechanism differs.",
+      "evidence": [
+        "tests/behavior.rs::wraps_long_words_without_losing_characters",
+        "tests/behavior.rs::both_semantic_wrappers_render_identically"
       ]
     },
     {
@@ -1117,7 +1166,8 @@
       "query": "Divide one long word into character-bounded pieces without losing Unicode characters.",
       "expected": [
         "wrapping.shared.split_word",
-        "wrapping.fragments.segment"
+        "wrapping.fragments.segment",
+        "wrapping.fragments.segment_indexed"
       ],
       "relevance_complete": true
     },
