@@ -896,14 +896,14 @@ def test_analyzer_resolves_per_language_semantic_gate(tmp_path: Path, monkeypatc
 @pytest.mark.parametrize(
     ("model_kind", "choice", "numeric", "expected"),
     [
-        ("local", "auto", None, 0.74),
-        ("builtin", "auto", None, 0.74),
-        ("default", "auto", None, 0.80),
-        ("hub", "auto", None, 0.74),
+        ("local", "auto", None, 0.76),
+        ("builtin", "auto", None, 0.76),
+        ("default", "auto", None, 0.87),
+        ("hub", "auto", None, 0.76),
         # Explicit profiles override the model family; test each choice once.
         ("builtin", "generic", None, 0.82),
-        ("default", "embeddinggemma-300m", None, 0.74),
-        ("builtin", "gte-modernbert-base", None, 0.80),
+        ("default", "embeddinggemma-300m", None, 0.76),
+        ("builtin", "gte-modernbert-base", None, 0.87),
         # Numeric gates bypass profile resolution for every profile choice.
         ("local", "auto", 0.91, 0.91),
         ("hub", "generic", 0.91, 0.91),
@@ -1082,7 +1082,7 @@ def test_per_language_gates_survive_the_whole_semantic_pipeline(
         ("auto", 0.70, True),
         ("generic", 0.75, False),
         ("gte-modernbert-base", 0.75, True),
-        ("embeddinggemma-300m", 0.75, True),
+        ("embeddinggemma-300m", 0.77, True),
     ],
 )
 def test_cross_language_pairs_require_opt_in_and_use_looser_gate(
@@ -1127,7 +1127,7 @@ def test_cross_language_pairs_require_opt_in_and_use_looser_gate(
     }
     assert (frozenset({"alpha_one", "betaOne"}) in pairs) is accepted
     numeric_result = CodeAnalyzer(
-        AnalyzerConfig(cross_language=True, semantic_threshold=0.76, **base_config)
+        AnalyzerConfig(cross_language=True, semantic_threshold=0.78, **base_config)
     ).analyze(project)
     assert frozenset({"alpha_one", "betaOne"}) not in {
         frozenset({duplicate.unit_a.name, duplicate.unit_b.name})
