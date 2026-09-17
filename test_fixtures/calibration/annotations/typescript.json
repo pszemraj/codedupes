@@ -702,20 +702,36 @@
             "id": "review-20-ts-inline--normalizer",
             "a": "harbor.booking.inline",
             "b": "harbor.booking.normalizer",
-            "judgment": "negative",
+            "judgment": "positive",
             "tags": [
-                "reviewed_high_score",
+                "partial",
                 "helper_extraction"
             ],
-            "scope": "whole_unit",
+            "difficulty": "medium",
+            "scope": "partial",
             "behavior_equivalent": false,
-            "equivalence_domain": "Ordered raw booking rows.",
-            "contract": "Inline acceptance owns ordering, duplicate-ID reservation, and row evidence; normalizeBooking decodes one record.",
-            "rationale": "The inline implementation contains analogous field decoding as part of its intentionally substantive enclosing workflow, but the one-record normalizer is not a replaceable duplicate of that workflow.",
+            "equivalence_domain": "Single raw booking records: normalize the ID and zone, validate the calendar date before the positive integer weight, and preserve first-error precedence.",
+            "contract": "The copied decoder produces the same Booking fields and validation errors; batch ordering, duplicate-ID reservation, and row evidence remain outside the shared region.",
+            "rationale": "Extract the independently copied single-record validation into normalizeBooking while retaining reservation and reporting in the batch workflow, as acceptBookingsWithNormalizer already demonstrates.",
             "evidence": [
-                "tests/harbor.test.ts::inline and extracted booking decoders agree without reserving invalid IDs"
+                "tests/harbor.test.ts::inline and extracted booking decoders agree without reserving invalid IDs",
+                "tests/harbor.test.ts::inline booking validation duplicates the scalar decoder within the batch workflow"
             ],
-            "difference_witness": "acceptInlineBookings returns an ordered BookingReport with duplicate-ID outcomes, whereas normalizeBooking receives one row and cannot detect a repeated ID."
+            "difference_witness": "acceptInlineBookings returns an ordered BookingReport with duplicate-ID outcomes, whereas normalizeBooking receives one row and cannot detect a repeated ID.",
+            "regions": [
+                {
+                    "unit": "harbor.booking.inline",
+                    "start_line": 41,
+                    "end_line": 46,
+                    "sha256": "982d6e892b427cf6b72a6d6fdd74706d1f106fd431e2c2c50436c111fc31a4fc"
+                },
+                {
+                    "unit": "harbor.booking.normalizer",
+                    "start_line": 25,
+                    "end_line": 30,
+                    "sha256": "37ece6912d26fc57aa0896c038c69710682f88962618b78d3e6ac4ebb320a0db"
+                }
+            ]
         },
         {
             "id": "review-20-ts-inline--api",

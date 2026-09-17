@@ -2,9 +2,11 @@
 
 This development corpus supplies practical threshold evidence for the five
 languages supported by codedupes. It replaces the earlier synthetic fixtures.
-Each project is a runnable application with reviewed positive and nearby
-negative pairs plus search queries whose relevance is independent of the pair
-labels.
+Each language has runnable code with reviewed positive and nearby negative pairs
+plus search queries whose relevance is independent of the pair labels. New
+fixtures can be small modules with behavior tests; a demo application is not
+required. Add independent behaviors and language idioms, rather than more
+variants of one workflow just to increase the pair count.
 
 | project | language | positives | negatives | probes |
 | --- | --- | ---: | ---: | ---: |
@@ -12,13 +14,15 @@ labels.
 | cowsay | Rust | 8 | 29 | 12 |
 | c_metering | C | 20 | 31 | 12 |
 | javascript | JavaScript | 17 | 53 | 12 |
-| harbor-ts | TypeScript | 11 | 32 | 12 |
+| harbor-ts | TypeScript | 12 | 31 | 12 |
 
 Positive pairs cover easy, medium, and hard cases. Easy pairs retain obvious
 structure, medium pairs introduce meaningful control-flow or API differences,
-and hard pairs use rewrites or partial overlap that local Semble checks place
-well down the result list or omit in the annotated direction. Difficulty is a
-fixture descriptor; model scores never change the labels.
+and hard pairs use substantial algorithmic rewrites or distributed overlap.
+Difficulty describes the source transformation; retrieval rank is a measurement,
+not a labeling rule. Keep behavior and judgments fixed when tuning thresholds.
+An extractable copied region is a partial positive even when its enclosing
+functions have different outputs. Calling a shared helper is not a second copy.
 
 [`manifest.json`](manifest.json) is the single project and policy index. Its
 annotation files use stable project-relative selectors and explicit pair

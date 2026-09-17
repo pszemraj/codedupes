@@ -11,7 +11,7 @@ import {
 } from "../src/aggregation.ts";
 import { importScheduleCsv, ingestScheduleBatch, prepareWebhookSchedule } from "../src/adapters.ts";
 import { auditArrivalWindow, auditZoneCapacity, auditZoneSpread } from "../src/audit.ts";
-import { acceptBookingsWithNormalizer, acceptInlineBookings } from "../src/bookings.ts";
+import { acceptBookingsWithNormalizer, acceptInlineBookings, normalizeBooking } from "../src/bookings.ts";
 import { planDispatches, planDispatchesWithHoldback, planDispatchesWithServiceFloors } from "../src/dispatch.ts";
 import { admitManifestNotices } from "../src/legacy.ts";
 
@@ -60,6 +60,27 @@ test("inline and extracted booking decoders agree without reserving invalid IDs"
   assert.deepEqual(extracted.reservedIds, ["B-1", "B-2"]);
   assert.match(extracted.errors[0], /duplicate bookingId/);
   assert.match(extracted.errors[1], /bookingId is required/);
+});
+
+test("inline booking validation duplicates the scalar decoder within the batch workflow", () => {
+  const valid = rows[0];
+  const expected = { bookingId: "B-1", zone: "EAST", arrivalDate: "2026-10-04", weightKg: 120 };
+  assert.deepEqual(normalizeBooking(valid), expected);
+  assert.deepEqual(acceptInlineBookings([valid]).accepted, [expected]);
+
+  const invalid = [
+    [{ ...valid, bookingId: "", zone: "", arrivalDate: "bad", weightKg: "0" }, "bookingId is required"],
+    [{ ...valid, zone: " ", arrivalDate: "bad", weightKg: "0" }, "zone is required"],
+    [{ ...valid, arrivalDate: "bad", weightKg: "0" }, "arrivalDate must use YYYY-MM-DD"],
+    [{ ...valid, arrivalDate: "2026-02-30", weightKg: "0" }, "arrivalDate is not a calendar day"],
+    [{ ...valid, weightKg: "0" }, "weightKg must be a positive integer string"],
+  ] as const;
+  for (const [raw, message] of invalid) {
+    assert.throws(() => normalizeBooking(raw), { message });
+    assert.deepEqual(acceptInlineBookings([raw]), {
+      accepted: [], errors: [`row 0: ${message}`], reservedIds: [],
+    });
+  }
 });
 
 test("legacy manifest notices preserve the current booking acceptance contract", () => {
