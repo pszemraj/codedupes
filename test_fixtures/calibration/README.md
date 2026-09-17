@@ -12,12 +12,13 @@ variants of one workflow just to increase the pair count.
 | --- | --- | ---: | ---: | ---: |
 | ledger | Python | 17 | 37 | 12 |
 | cowsay | Rust | 13 | 29 | 12 |
-| c_metering | C | 22 | 31 | 12 |
-| javascript | JavaScript | 23 | 53 | 12 |
+| c_metering | C | 20 | 31 | 12 |
+| javascript | JavaScript | 20 | 53 | 12 |
 | harbor-ts | TypeScript | 15 | 31 | 12 |
 
-Each language keeps at least five reviewed easy pairs and five reviewed medium
-pairs. Existing coverage is not reduced merely to balance the buckets. Easy
+Each language keeps at least five comparable reviewed easy pairs and five
+comparable reviewed medium pairs. Existing coverage is not reduced merely to
+balance the buckets. Easy
 pairs retain obvious structure, while medium pairs introduce meaningful
 control-flow or API differences. Hard pairs use substantial algorithmic rewrites
 or distributed overlap and are optional: a plausible hard pair should usually
@@ -34,11 +35,13 @@ judgments. Positive transitivity is never inferred. Partial pairs name checked
 source spans and fingerprints. Every within-family pair and every deterministic
 finding must have a judgment. Old annotation formats are rejected.
 
-All projects and related variants are development data. The corpus is intended
-to set useful defaults, while its size and authored challenge mix do not support
-claims about ecosystem-wide precision. Raw CPU and MPS measurements are local
-scratch artifacts; the compact checked result records the selected settings and
-device comparison.
+The current projects and related variants are development data. Selection uses
+only projects in the development split; held-out evaluation projects are scored
+and labeled separately in reports. The corpus is intended to set useful defaults,
+while its size and authored challenge mix do not support claims about
+ecosystem-wide precision. Raw CPU and MPS measurements are local scratch
+artifacts; the compact checked result records the selected settings and device
+comparison.
 
 From the repository root, validate every contract, behavior suite, and entry
 point with:

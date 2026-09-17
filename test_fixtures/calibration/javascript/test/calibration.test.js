@@ -13,7 +13,6 @@ const { importWebhookBatch, importWebhookLines, normalizeWebhookRecord } = requi
 const { dispatchReceipt, sendReceiptCallback } = require("../src/notifications");
 const { publishConfirmation } = require("../src/outbox");
 const {
-  compileTransfers,
   planTransfers,
   planTransfersWithMinimum,
   schedulePayouts,
@@ -49,13 +48,11 @@ test("payout extension preserves zero minimum and records deferral boundary", ()
   const baseline = planTransfers(summaries);
   assert.deepEqual(planTransfersWithMinimum(summaries), baseline);
   assert.deepEqual(schedulePayouts(summaries), baseline);
-  assert.deepEqual(compileTransfers(summaries), baseline);
   const deferred = planTransfersWithMinimum(summaries, 100);
   assert.deepEqual(deferred.transfers, []);
   assert.deepEqual(deferred.events, [["a", "below_minimum", 100], ["b", "below_minimum", 100]]);
   assert.equal(deferred.deferredTotal, 100);
   assert.deepEqual(schedulePayouts(summaries, { minimumPayoutMinor: 100 }), deferred);
-  assert.deepEqual(compileTransfers(summaries, 100), deferred);
 });
 
 test("webhook normalization keeps acceptance and adapter failures distinct", () => {

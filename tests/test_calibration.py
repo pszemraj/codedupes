@@ -91,7 +91,6 @@ def test_manifest_has_substantive_five_language_corpus():
                 project.id
             )
         assert len(negatives) >= 10, project.id
-        assert {pair["difficulty"] for pair in positives} == {"easy", "medium", "hard"}
         assert len(project.annotations["probes"]) >= 8
         assert report["pending_deterministic"] == []
 

@@ -10,7 +10,6 @@ const { importWebhookBatch, importWebhookLines } = require("./ingestion");
 const { dispatchReceipt } = require("./notifications");
 const { publishConfirmation } = require("./outbox");
 const {
-  compileTransfers,
   planTransfers,
   planTransfersWithMinimum,
   schedulePayouts,
@@ -46,7 +45,6 @@ async function main() {
       planTransfers(summaries),
       planTransfersWithMinimum(summaries, 100),
       schedulePayouts(summaries),
-      compileTransfers(summaries, 100),
     ],
     ingestion: [batch, lines],
     deliveries: mailbox.sent,

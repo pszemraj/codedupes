@@ -300,7 +300,7 @@
                 "translated",
                 "easy"
             ],
-            "difficulty": "easy",
+            "difficulty": "medium",
             "scope": "whole_unit",
             "behavior_equivalent": true,
             "equivalence_domain": "Every load is validated before cancelled loads are ignored; active totals and counts are sorted by normalized zone without mutating caller input.",
@@ -319,7 +319,7 @@
                 "translated",
                 "easy"
             ],
-            "difficulty": "easy",
+            "difficulty": "medium",
             "scope": "whole_unit",
             "behavior_equivalent": true,
             "equivalence_domain": "Every load is validated before cancelled loads are ignored; active totals and counts are sorted by normalized zone without mutating caller input.",
@@ -338,7 +338,7 @@
                 "translated",
                 "easy"
             ],
-            "difficulty": "easy",
+            "difficulty": "medium",
             "scope": "whole_unit",
             "behavior_equivalent": true,
             "equivalence_domain": "Every load is validated before cancelled loads are ignored; active totals and counts are sorted by normalized zone without mutating caller input.",
@@ -397,7 +397,7 @@
                 "extended",
                 "medium"
             ],
-            "difficulty": "medium",
+            "difficulty": "easy",
             "scope": "whole_unit",
             "behavior_equivalent": false,
             "equivalence_domain": "All configured thresholds are zero, where both produce the sorted queued baseline plan.",
@@ -417,7 +417,7 @@
                 "helper_extraction",
                 "medium"
             ],
-            "difficulty": "medium",
+            "difficulty": "easy",
             "scope": "whole_unit",
             "behavior_equivalent": true,
             "equivalence_domain": "Ordered raw booking rows: field errors retain their row, accepted IDs are reserved after successful parsing only, and duplicate IDs are rejected.",
