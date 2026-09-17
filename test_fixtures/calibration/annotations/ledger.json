@@ -275,7 +275,7 @@
         "tests/test_settlement.py::test_invalid_voided_row_is_still_rejected",
         "tests/test_settlement.py::test_seeded_differential_and_aggregate_invariants"
       ],
-      "difficulty": "hard"
+      "difficulty": "medium"
     },
     {
       "id": "ledger.settlement.summarize_import--ledger.settlement.summarize_import_indexed",
@@ -496,7 +496,7 @@
         "tests/test_workflows.py::test_csv_api_shared_region_and_distinct_reports"
       ],
       "difference_witness": "A bad amount is a zero-based row rejection in prepare_import; CSV reports a physical line, and API reports an item status.",
-      "difficulty": "hard",
+      "difficulty": "medium",
       "regions": [
         {
           "unit": "ledger.imports.prepare_import",
@@ -531,7 +531,7 @@
         "tests/test_workflows.py::test_csv_api_shared_region_and_distinct_reports"
       ],
       "difference_witness": "A bad amount is a zero-based row rejection in prepare_import; CSV reports a physical line, and API reports an item status.",
-      "difficulty": "hard",
+      "difficulty": "medium",
       "regions": [
         {
           "unit": "ledger.imports.prepare_import",
