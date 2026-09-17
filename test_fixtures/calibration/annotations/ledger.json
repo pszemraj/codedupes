@@ -481,6 +481,46 @@
       "difference_witness": "The summarizer accepts Transaction rows; the planner accepts InvoiceSummary values and produces transfers."
     },
     {
+      "id": "ledger.imports.prepare_import--ledger.settlement.summarize_import_indexed",
+      "a": "ledger.imports.prepare_import",
+      "b": "ledger.settlement.summarize_import_indexed",
+      "judgment": "negative",
+      "tags": [
+        "nearby-negative",
+        "batch-processing"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "Raw import mappings and typed settlement transactions in their separate ingestion stages.",
+      "contract": "Import preparation validates mappings, rejects duplicates, and records row outcomes; settlement summarization groups already typed transactions into invoice totals.",
+      "rationale": "Both iterate financial records, but normalization and acceptance accounting are distinct from invoice aggregation.",
+      "evidence": [
+        "tests/test_workflows.py::test_duplicate_acceptance_and_date_bounds",
+        "tests/test_settlement.py::test_documented_result"
+      ],
+      "difference_witness": "A duplicate external ID becomes a prepare_import rejection, while the summarizer has no external-ID acceptance policy."
+    },
+    {
+      "id": "ledger.audit.audit_chronology--ledger.settlement.summarize_import_indexed",
+      "a": "ledger.audit.audit_chronology",
+      "b": "ledger.settlement.summarize_import_indexed",
+      "judgment": "negative",
+      "tags": [
+        "nearby-negative",
+        "ordered-record-scan"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "Accepted imported records under their chronology and settlement contracts.",
+      "contract": "Chronology auditing reports per-invoice date regressions; settlement summarization computes monetary totals and counts.",
+      "rationale": "Their invoice-keyed scans serve unrelated temporal-audit and aggregation responsibilities.",
+      "evidence": [
+        "tests/test_workflows.py::test_audit_witnesses",
+        "tests/test_settlement.py::test_documented_result"
+      ],
+      "difference_witness": "Reordering two dated records can create a chronology violation without changing the settlement total."
+    },
+    {
       "id": "ledger.imports.ingest_rows--ledger.imports.prepare_import",
       "a": "ledger.imports.ingest_rows",
       "b": "ledger.imports.prepare_import",
