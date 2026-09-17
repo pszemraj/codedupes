@@ -242,7 +242,7 @@ def test_hybrid_selection_rejects_unready_semantic_admissions():
         _selection_map(payload)
 
 
-def test_measurements_reject_changed_source_or_queries(tmp_path: Path):
+def test_measurements_reject_changed_source_queries_or_runtime(tmp_path: Path, monkeypatch):
     project = load_projects(project_ids=["ledger"])[0]
     path = tmp_path / "measurement.json"
     write_json(
@@ -281,6 +281,21 @@ def test_measurements_reject_changed_source_or_queries(tmp_path: Path):
     with pytest.raises(ValueError, match="stale measurement"):
         load_measurement(path, project)
 
+    project.annotations["probes"][0]["query"] = project.annotations["probes"][0][
+        "query"
+    ].removesuffix(" changed")
+    monkeypatch.setattr(
+        "scripts.calibration_measurements.semantic.get_semantic_runtime_versions",
+        lambda: {
+            "python": "3.15.0",
+            "torch": "9.9.9",
+            "transformers": "9.9.9",
+            "sentence-transformers": "9.9.9",
+        },
+    )
+    with pytest.raises(ValueError, match="stale measurement"):
+        load_measurement(path, project)
+
 
 def test_search_selection_rejects_unembedded_expected_target():
     project = SimpleNamespace(
@@ -298,6 +313,10 @@ def test_search_selection_rejects_unembedded_expected_target():
 
 def test_checked_calibration_result_matches_shipped_profiles():
     result = read_json(DEFAULT_MANIFEST.parent / "calibration-results.json")
+    assert result["measurement_runtime"] == {
+        "torch": "2.13.0",
+        "scope": "all checked CPU and MPS reports",
+    }
     threshold_models = {item["model"]: item for item in result["threshold_selection"]["models"]}
     hybrid_models = {item["model"]: item for item in result["hybrid_selection"]["models"]}
 

@@ -47,7 +47,7 @@ except ImportError:
         write_json,
     )
 
-ARTIFACT_VERSION = 2
+ARTIFACT_VERSION = 3
 DEFAULT_MEASUREMENTS = REPO / "scratch/calibration"
 
 
@@ -83,6 +83,7 @@ def measurement_fingerprint(project: Project, model: str) -> str:
         "family": profile.family,
         "trust_remote_code": profile.default_trust_remote_code,
         "tasks": [DEFAULT_CHECK_SEMANTIC_TASK, DEFAULT_SEARCH_SEMANTIC_TASK],
+        "runtime_versions": semantic.get_semantic_runtime_versions(),
         "pipeline": {
             path.relative_to(REPO).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
             for path in pipeline_paths
@@ -247,6 +248,7 @@ def capture(project: Project, model: str, device: str, output: Path, batch_size:
             "revision": profile.default_revision,
             "requested_device": device,
             "inference_dtype": inference_dtype,
+            "runtime_versions": semantic.get_semantic_runtime_versions(),
             "input_fingerprint": measurement_fingerprint(project, profile.key),
             "captured_profile": {
                 "semantic_threshold": profile.semantic_threshold_for_language(

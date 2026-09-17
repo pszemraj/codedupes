@@ -1,5 +1,9 @@
 {
   "schema_version": 3,
+  "measurement_runtime": {
+    "torch": "2.13.0",
+    "scope": "all checked CPU and MPS reports"
+  },
   "threshold_selection": {
     "schema_version": 3,
     "models": [

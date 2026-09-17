@@ -315,6 +315,7 @@ def full_report(project: Project, measurement: dict[str, Any]) -> dict[str, Any]
         "model": measurement["metadata"]["model"],
         "device": measurement["metadata"]["requested_device"],
         "inference_dtype": measurement["metadata"]["inference_dtype"],
+        "runtime_versions": measurement["metadata"]["runtime_versions"],
         "timing_seconds": measurement["metadata"]["timing_seconds"],
         "execution": execution,
         "replay_parity": replay_parity(measurement),

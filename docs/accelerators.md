@@ -80,6 +80,37 @@ Model loads pin an explicit dtype instead of inheriting the checkpoint's configu
 | Other CUDA devices and MPS | float32 |
 | CPU | float32, unless the experimental policy below is enabled |
 
+### MPS bfloat16 evidence
+
+MPS autocast defaults to float16; these measurements explicitly requested
+`torch.bfloat16`. They used an Apple M5 on macOS 26.6.2, batch size 4, the
+Python ledger fixture, and three fresh uncached processes per model and mode.
+Each time is the median combined duplicate and search measurement. The
+within-version comparisons are meaningful; absolute times across versions came
+from separate sessions.
+
+| PyTorch | Model | MPS fp32 | bf16 autocast | Speed change | Maximum pair/query drift | Changed shipped results |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| 2.13.0 | gte-modernbert-base | 5.760 s | 6.658 s | 15.6% slower | 0.0825 / 0.0561 | 13 duplicate, 2 search |
+| 2.13.0 | embeddinggemma-300m | 7.119 s | 7.372 s | 3.5% slower | 0.0529 / 0.0405 | 5 duplicate, 0 search |
+| 2.14.0 | gte-modernbert-base | 6.723 s | 5.167 s | 23.2% faster | 0.0830 / 0.0562 | 13 duplicate, 2 search |
+| 2.14.0 | embeddinggemma-300m | 6.561 s | 6.521 s | 0.6% faster | 0.0531 / 0.0385 | 5 duplicate, 0 search |
+
+PyTorch 2.14 materially improves bf16-autocast speed for GTE ModernBERT on this
+workload, consistent with the release's [new MPS attention
+path](https://pytorch.org/blog/pytorch-2-14-release-blog/#mps-prefill-attention-acceleration),
+but does not reduce score drift or decision changes. EmbeddingGemma remains
+effectively speed-neutral. codedupes therefore keeps MPS inference in float32.
+The earlier whole-model bf16 measurement—about 13% faster with half the
+parameter memory and pair-score drift around `1e-2`—used PyTorch 2.13.0 and is
+distinct from autocast.
+
+For fp32, the same ledger comparison across PyTorch 2.13.0 and 2.14.0 found a
+maximum pair-score change of `5.37e-7`, a maximum query-score change of
+`3.58e-7`, and no duplicate or search decision changes. This supports the
+existing fp32 policy for this fixture; the checked five-project calibration
+artifact remains explicitly identified as a PyTorch 2.13.0 measurement.
+
 `CODEDUPES_CPU_BF16=1` enables experimental CPU bfloat16 only when the machine has both a native bf16 ISA (`bf16` on ARM, `amx_bf16`/`avx512_bf16` on x86) and an available mkldnn GEMM backend. The capability check runs at most once per process and persists nothing. `codedupes info --verbose` reports the hardware checks and effective policy.
 
 The CPU capability gate does not establish accuracy at the built-in duplicate and search thresholds. Automatic enablement awaits speed and decision-parity validation on supported hardware. TODO before promotion: measure agreement between CPU and CUDA bfloat16 vectors, which currently share a cache namespace, and split their identities if needed.

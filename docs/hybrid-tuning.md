@@ -23,9 +23,11 @@ conda run --name inf python scripts/measure_calibration.py \
 
 Repeat for `ledger`, `cowsay`, `c_metering`, `javascript`, and `harbor-ts`, and
 for `gte-modernbert-base` and `embeddinggemma-300m`. CPU fp32 is the reference;
-MPS is an independent real-device comparison. A source, model, extraction, task,
-prompt, or dtype-policy change makes an artifact stale. Label and threshold
-edits reuse its raw scores.
+MPS is an independent real-device comparison. Raw artifacts record the Python,
+PyTorch, Transformers, and Sentence Transformers versions and include them in
+their measurement identity. A source, model, extraction, task, prompt, runtime,
+or dtype-policy change makes an artifact stale. Label and threshold edits reuse
+its raw scores.
 
 Keeping CPU as the calibration reference is a reproducibility convention, not a
 separate runtime threshold policy. The checked Issue #20 comparison found a
