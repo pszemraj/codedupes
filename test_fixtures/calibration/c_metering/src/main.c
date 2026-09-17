@@ -16,5 +16,11 @@ int main(void) {
     for (size_t index = 0; index < total_count; index++) {
         printf("%s=%d (%zu readings)\n", totals[index].device, totals[index].total_usage, totals[index].reading_count);
     }
+    const unsigned char record_text[] = "17,-12\n";
+    MeterRecord record;
+    if (record_parse_fields(record_text, sizeof(record_text) - 1U, &record) != METER_RECORD_OK) {
+        return 1;
+    }
+    printf("sensor=%u delta=%d\n", record.sensor_id, record.delta);
     return 0;
 }

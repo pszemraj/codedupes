@@ -1,5 +1,6 @@
 #include "metering.h"
 
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -128,12 +129,90 @@ static void test_csv_api_and_idempotency(void) {
     fclose(overlong);
 }
 
+static void compare_record_parsers(const unsigned char *data, size_t length) {
+    MeterRecord scanned;
+    MeterRecord sliced;
+    unsigned char before[sizeof(MeterRecord)];
+    memset(&scanned, 0x5A, sizeof(scanned));
+    memset(&sliced, 0x5A, sizeof(sliced));
+    memcpy(before, &scanned, sizeof(before));
+    MeterRecordStatus scan_status = record_parse_scan(data, length, &scanned);
+    MeterRecordStatus field_status = record_parse_fields(data, length, &sliced);
+    CHECK(scan_status == field_status);
+    if (scan_status == METER_RECORD_OK) {
+        CHECK(scanned.sensor_id == sliced.sensor_id);
+        CHECK(scanned.delta == sliced.delta);
+    } else {
+        CHECK(memcmp(before, &scanned, sizeof(before)) == 0);
+        CHECK(memcmp(before, &sliced, sizeof(before)) == 0);
+    }
+}
+
+static void test_bounded_record_parsers(void) {
+    const char *invalid[] = {
+        "", "1,0", "0,1\n", "10000,1\n", "1,32768\n", "1,-32769\n",
+        "1,+1\n", "1,--1\n", "1,1-\n", "1,\n", ",1\n", "1,1\r\n",
+        "1,1\nx", "1,1,2\n", " 1,2\n", "1, 2\n", "00001,2\n", "1,000001\n",
+    };
+    MeterRecord value = {9U, 9};
+    for (size_t index = 0U; index < sizeof(invalid) / sizeof(invalid[0]); ++index) {
+        const unsigned char *bytes = (const unsigned char *)invalid[index];
+        size_t length = strlen(invalid[index]);
+        CHECK(record_parse_scan(bytes, length, &value) == METER_RECORD_INVALID);
+        CHECK(record_parse_fields(bytes, length, &value) == METER_RECORD_INVALID);
+        compare_record_parsers(bytes, length);
+    }
+    const char *edge[] = {"1,-32768\n", "9999,32767\n", "0001,-0\n"};
+    const unsigned int expected_id[] = {1U, 9999U, 1U};
+    const int expected_delta[] = {-32768, 32767, 0};
+    for (size_t index = 0U; index < sizeof(edge) / sizeof(edge[0]); ++index) {
+        const unsigned char *bytes = (const unsigned char *)edge[index];
+        size_t length = strlen(edge[index]);
+        CHECK(record_parse_scan(bytes, length, &value) == METER_RECORD_OK);
+        CHECK(value.sensor_id == expected_id[index] && value.delta == expected_delta[index]);
+        CHECK(record_parse_fields(bytes, length, &value) == METER_RECORD_OK);
+        CHECK(value.sensor_id == expected_id[index] && value.delta == expected_delta[index]);
+    }
+    CHECK(record_parse_scan(NULL, 0U, &value) == METER_RECORD_BAD_ARGUMENT);
+    CHECK(record_parse_fields(NULL, 0U, &value) == METER_RECORD_BAD_ARGUMENT);
+    CHECK(record_parse_scan((const unsigned char *)"1,1\n", 4U, NULL) == METER_RECORD_BAD_ARGUMENT);
+    CHECK(record_parse_fields((const unsigned char *)"1,1\n", 4U, NULL) == METER_RECORD_BAD_ARGUMENT);
+    const unsigned char nul[] = {'1', ',', '1', 0U, '\n'};
+    CHECK(record_parse_scan(nul, sizeof(nul), &value) == METER_RECORD_INVALID);
+    CHECK(record_parse_fields(nul, sizeof(nul), &value) == METER_RECORD_INVALID);
+    for (unsigned int sensor = 1U; sensor <= 32U; ++sensor) {
+        for (int delta = -32; delta <= 32; ++delta) {
+            char text[32];
+            int written = snprintf(text, sizeof(text), "%u,%d\n", sensor, delta);
+            CHECK(written > 0 && (size_t)written < sizeof(text));
+            compare_record_parsers((const unsigned char *)text, (size_t)written);
+            CHECK(record_parse_scan((const unsigned char *)text, (size_t)written, &value) == METER_RECORD_OK);
+            CHECK(value.sensor_id == sensor && value.delta == delta);
+        }
+    }
+    uint32_t state = UINT32_C(20);
+    for (size_t trial = 0U; trial < 20000U; ++trial) {
+        unsigned char data[32];
+        unsigned char before[32];
+        state = state * UINT32_C(1664525) + UINT32_C(1013904223);
+        size_t length = (size_t)(state % UINT32_C(32));
+        for (size_t index = 0U; index < length; ++index) {
+            state = state * UINT32_C(1664525) + UINT32_C(1013904223);
+            data[index] = (unsigned char)(state >> 24U);
+        }
+        memcpy(before, data, length);
+        compare_record_parsers(data, length);
+        CHECK(memcmp(before, data, length) == 0);
+    }
+}
+
 int main(void) {
     test_aggregation_differential();
     test_invalid_discarded_reading_is_rejected();
     test_payout_floor_and_policy();
     test_helper_extraction_differential();
     test_csv_api_and_idempotency();
+    test_bounded_record_parsers();
     puts("c_metering: all tests passed");
     return 0;
 }

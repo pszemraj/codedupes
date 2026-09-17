@@ -5,6 +5,7 @@
 pub(crate) mod bubble;
 pub(crate) mod composed;
 pub(crate) mod cow;
+pub mod scheduler;
 pub(crate) mod wrapping;
 
 #[cfg(target_arch = "wasm32")]

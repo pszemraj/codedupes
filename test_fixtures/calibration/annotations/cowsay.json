@@ -9,7 +9,8 @@
     "tool": "semble find-related, source tree only, top 10",
     "easy": "scanner::wrap and fold::wrap are each the first source result for the other (about 0.923).",
     "medium": "queue::wrap is the second source result when querying scanner::wrap (0.786); its queue-based paragraph state is a distinct but visible implementation.",
-    "hard": "shared::split_word reaches fragments::segment only seventh (0.400), despite both partitioning a nonempty Unicode token at a positive scalar boundary. Queue behavior tests exercise segment through public rendering."
+    "hard": "shared::split_word reaches fragments::segment only seventh (0.400), despite both partitioning a nonempty Unicode token at a positive scalar boundary. Queue behavior tests exercise segment through public rendering.",
+    "scheduler": "The source-level job-selection and bounded-heap searches return their counterpart only after several type, test, and local-control-flow chunks. The algorithms share the scheduler contract but use distinct working representations."
   },
   "units": [
     {
@@ -65,6 +66,22 @@
       "selector": {
         "path": "src/lib.rs",
         "qualified_name": "lib.fixture_version",
+        "kind": "function"
+      }
+    },
+    {
+      "id": "scheduler.select_for_worker",
+      "selector": {
+        "path": "src/scheduler.rs",
+        "qualified_name": "scheduler.select_for_worker",
+        "kind": "function"
+      }
+    },
+    {
+      "id": "scheduler.reserve_candidates",
+      "selector": {
+        "path": "src/scheduler.rs",
+        "qualified_name": "scheduler.reserve_candidates",
         "kind": "function"
       }
     },
@@ -233,6 +250,13 @@
         "lib.render_pipeline",
         "composed.render"
       ]
+    },
+    {
+      "id": "worker-selection",
+      "members": [
+        "scheduler.select_for_worker",
+        "scheduler.reserve_candidates"
+      ]
     }
   ],
   "pairs": [
@@ -373,6 +397,27 @@
       "evidence": [
         "tests/behavior.rs::both_render_assemblies_preserve_public_output",
         "tests/behavior.rs::native_cli_reports_invalid_options_and_runs_both_wrappers"
+      ]
+    },
+    {
+      "id": "scheduler.select_for_worker--scheduler.reserve_candidates",
+      "a": "scheduler.select_for_worker",
+      "b": "scheduler.reserve_candidates",
+      "judgment": "positive",
+      "tags": [
+        "translated",
+        "algorithmic_rewrite"
+      ],
+      "difficulty": "medium",
+      "scope": "whole_unit",
+      "behavior_equivalent": true,
+      "equivalence_domain": "All job slices, clocks, and limits under the scheduler contract, including invalid records that must be rejected before eligibility filtering.",
+      "contract": "Return the eligible job IDs in descending priority, then ascending creation time and ID; reject duplicate IDs and invalid expiry windows without changing the input.",
+      "rationale": "Sorting every eligible job and retaining bounded heap ranks are two maintainable implementations of one worker-selection policy. Consolidation can keep one selection engine without changing the caller contract.",
+      "evidence": [
+        "tests/scheduler.rs::ranking_and_ties_have_a_concrete_oracle",
+        "tests/scheduler.rs::validation_precedes_policy_filtering",
+        "tests/scheduler.rs::generated_sets_preserve_inputs_and_match_expected_prefixes"
       ]
     },
     {
@@ -912,6 +957,46 @@
         "tests/behavior.rs::both_render_assemblies_preserve_public_output"
       ],
       "difference_witness": "An unknown --renderer exits from main::run with an error before a render algorithm is selected, while composed::render only receives valid CowOptions."
+    },
+    {
+      "id": "scheduler.select_for_worker--wrapping.queue.wrap",
+      "a": "scheduler.select_for_worker",
+      "b": "wrapping.queue.wrap",
+      "judgment": "negative",
+      "tags": [
+        "cross_domain_nearby",
+        "queue_state"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "Documented scheduler and cowsay inputs.",
+      "contract": "Worker selection validates and ranks job records; queue wrapping preserves paragraph text while fitting words into Unicode-scalar-width lines.",
+      "rationale": "Both functions consume ordered collections with state, but their validation, working data, output type, and maintenance responsibilities do not overlap in a consolidatable region.",
+      "evidence": [
+        "tests/scheduler.rs::state_and_expiry_boundaries",
+        "tests/behavior.rs::both_semantic_wrappers_render_identically"
+      ],
+      "difference_witness": "A ready Job produces its numeric ID through selection, while queue wrapping receives a string and returns formatted text lines."
+    },
+    {
+      "id": "scheduler.reserve_candidates--composed.render",
+      "a": "scheduler.reserve_candidates",
+      "b": "composed.render",
+      "judgment": "negative",
+      "tags": [
+        "cross_domain_nearby",
+        "accumulator_state"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "Documented scheduler and cowsay inputs.",
+      "contract": "The bounded heap retains ranked job IDs; the composed renderer prepares wrapped text, frames it, and appends cow artwork.",
+      "rationale": "Their collection-building control flow is incidental. One maintains a priority frontier and the other assembles a response string, so no substantial shared maintenance work exists.",
+      "evidence": [
+        "tests/scheduler.rs::generated_sets_preserve_inputs_and_match_expected_prefixes",
+        "tests/behavior.rs::both_render_assemblies_preserve_public_output"
+      ],
+      "difference_witness": "A limit of one can evict lower-priority jobs from the scheduler heap; composed rendering has no job ranking or eviction path and returns a cow response."
     }
   ],
   "probes": [
@@ -948,11 +1033,12 @@
       "relevance_complete": true
     },
     {
-      "id": "padding",
+      "id": "job-selection",
       "kind": "behavioral",
-      "query": "Fill a line with trailing spaces to its requested Unicode character width.",
+      "query": "Select ready jobs by priority, creation time, and identifier while rejecting invalid records.",
       "expected": [
-        "bubble.pad_line"
+        "scheduler.select_for_worker",
+        "scheduler.reserve_candidates"
       ],
       "relevance_complete": true
     },

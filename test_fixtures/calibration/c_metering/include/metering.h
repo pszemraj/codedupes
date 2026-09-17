@@ -22,6 +22,17 @@ typedef struct {
 } Reading;
 
 typedef struct {
+    unsigned int sensor_id;
+    int delta;
+} MeterRecord;
+
+typedef enum {
+    METER_RECORD_OK = 0,
+    METER_RECORD_INVALID = 1,
+    METER_RECORD_BAD_ARGUMENT = 2,
+} MeterRecordStatus;
+
+typedef struct {
     char device[METERING_KEY_SIZE];
     int total_usage;
     size_t reading_count;
@@ -108,6 +119,17 @@ int import_idempotent_batch(
     size_t count,
     char seen_batch[32],
     ImportReport *report
+);
+
+MeterRecordStatus record_parse_scan(
+    const unsigned char *data,
+    size_t length,
+    MeterRecord *output
+);
+MeterRecordStatus record_parse_fields(
+    const unsigned char *data,
+    size_t length,
+    MeterRecord *output
 );
 
 #endif

@@ -1,6 +1,6 @@
 CC ?= cc
 CFLAGS ?= -std=c11 -Wall -Wextra -Werror -pedantic -Iinclude
-SOURCES := src/aggregate.c src/payouts.c src/rows.c src/adapters.c
+SOURCES := src/aggregate.c src/payouts.c src/rows.c src/adapters.c src/record.c
 
 .PHONY: test run clean
 

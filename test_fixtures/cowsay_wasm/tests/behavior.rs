@@ -114,6 +114,22 @@ fn native_cli_reports_invalid_options_and_runs_both_wrappers() {
 }
 
 #[test]
+fn native_cli_runs_the_scheduler_selection_path() {
+    use std::process::Command;
+
+    let executable = env!("CARGO_BIN_EXE_cowsay-fixture");
+    let output = Command::new(executable)
+        .arg("--scheduler-demo")
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).trim(),
+        "Selected job ids: [2]"
+    );
+}
+
+#[test]
 fn both_render_assemblies_preserve_public_output() {
     for message in ["moo", "one two three four five", "東京 café"] {
         for width in [4, 9, 40] {

@@ -31,6 +31,22 @@
       }
     },
     {
+      "id": "c_metering.record.scan",
+      "selector": {
+        "path": "src/record.c",
+        "qualified_name": "record.record_parse_scan",
+        "kind": "function"
+      }
+    },
+    {
+      "id": "c_metering.record.fields",
+      "selector": {
+        "path": "src/record.c",
+        "qualified_name": "record.record_parse_fields",
+        "kind": "function"
+      }
+    },
+    {
       "id": "c_metering.payouts.baseline",
       "selector": {
         "path": "src/payouts.c",
@@ -169,6 +185,13 @@
       ]
     },
     {
+      "id": "bounded-record-parser",
+      "members": [
+        "c_metering.record.scan",
+        "c_metering.record.fields"
+      ]
+    },
+    {
       "id": "payout-deferral-extension",
       "members": [
         "c_metering.payouts.baseline",
@@ -279,6 +302,26 @@
     ]
   },
   "pairs": [
+    {
+      "id": "record-scan--fields",
+      "a": "c_metering.record.scan",
+      "b": "c_metering.record.fields",
+      "judgment": "positive",
+      "difficulty": "medium",
+      "tags": [
+        "translated",
+        "bounded-parser",
+        "state-scan-versus-field-slicing"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": true,
+      "equivalence_domain": "Readable byte spans containing a complete 1–4 digit sensor ID, comma, optionally negative 1–5 digit delta, and final LF.",
+      "contract": "Accept sensor IDs 1..9999 and deltas -32768..32767; reject malformed, non-terminated, and out-of-range spans without modifying the caller output.",
+      "rationale": "The state-machine scan and bounded field-slicing implementation maintain one wire decoder and neither needs to remain independently maintained.",
+      "evidence": [
+        "tests/test_metering.c::test_bounded_record_parsers"
+      ]
+    },
     {
       "id": "aggregate-linear--sorted",
       "a": "c_metering.aggregate.linear",
@@ -1376,6 +1419,48 @@
         "tests/test_metering.c::test_payout_floor_and_policy"
       ],
       "difference_witness": "PayoutPolicy{10, 1} defers a 7-unit total and records an audit event, while validate_totals neither receives the policy nor changes a plan."
+    },
+    {
+      "id": "negative-record-scan--row-parser",
+      "a": "c_metering.record.scan",
+      "b": "c_metering/src/rows.c::rows.parse_row::function::20",
+      "judgment": "negative",
+      "difficulty": "medium",
+      "tags": [
+        "nearby-parser",
+        "different-wire-contract"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "One textual input record supplied to each parser.",
+      "contract": "The bounded sensor parser accepts byte spans with a signed comma-delimited delta; the metering row parser consumes NUL-terminated DEVICE:USAGE text and only accepts nonnegative usage.",
+      "rationale": "Both perform local text decoding, but their syntax, numeric domain, output type, and caller memory contracts leave no substantive maintenance region to consolidate.",
+      "evidence": [
+        "tests/test_metering.c::test_bounded_record_parsers",
+        "tests/test_metering.c::test_helper_extraction_differential"
+      ],
+      "difference_witness": "The byte span 17,-12\\n produces a MeterRecord with a negative delta, while the row parser requires ':' and cannot construct a Reading from it."
+    },
+    {
+      "id": "negative-record-fields--csv-normalizer",
+      "a": "c_metering.record.fields",
+      "b": "c_metering/src/adapters.c::adapters.normalize_csv_line::function::25",
+      "judgment": "negative",
+      "difficulty": "medium",
+      "tags": [
+        "nearby-parser",
+        "different-output-contract"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "One independently supplied textual record at each parser boundary.",
+      "contract": "Field slicing validates bounded sensor and signed-delta spans without a terminator; CSV normalization mutates a newline-free DEVICE:USAGE string into a nonnegative Reading.",
+      "rationale": "The pair shares delimiter validation vocabulary but has incompatible record grammars and ownership rules, so a shared parser would not replace either implementation.",
+      "evidence": [
+        "tests/test_metering.c::test_bounded_record_parsers",
+        "tests/test_metering.c::test_csv_api_and_idempotency"
+      ],
+      "difference_witness": "A non-NUL byte span 0001,-0\\n is accepted as a MeterRecord; normalize_csv_line requires an in-place colon-delimited C string and would reject that wire form."
     }
   ],
   "probes": [
@@ -1391,13 +1476,12 @@
       "relevance_complete": true
     },
     {
-      "id": "discarded-validation",
+      "id": "bounded-sensor-record",
       "kind": "behavioral",
-      "query": "Reject malformed metering records before ignoring records marked discarded.",
+      "query": "Parse a bounded sensor record with a signed decimal delta and preserve the output value when the byte span is invalid.",
       "expected": [
-        "c_metering.aggregate.linear",
-        "c_metering.aggregate.sorted",
-        "c_metering.aggregate.index"
+        "c_metering.record.scan",
+        "c_metering.record.fields"
       ],
       "relevance_complete": true
     },

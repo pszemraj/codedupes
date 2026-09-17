@@ -10,6 +10,7 @@ A working Rust application that targets both a native CLI and browser WebAssembl
 | `bubble-renderers` | edit-distance / Type 3 | The speech and thought renderers retain the same construction skeleton, with changed control flow and delimiters. |
 | `word-wrappers` | semantic / Type 4 | Scanner, iterator/fold, and FIFO queue implementations produce the same wrapped lines. The native CLI can select any implementation. |
 | `render-assembly` | translated pipeline | Format-based and mutable-buffer assembly produce the same bubble-plus-cow result. The native CLI can select either renderer. |
+| `worker-selection` | translated algorithm | Sorting eligible jobs and retaining a bounded priority heap produce the same ranked selection. The native CLI exercises the heap path. |
 
 Labels, search relevance, contracts, and evidence references live in the shared [`calibration/annotations/cowsay.json`](../calibration/annotations/cowsay.json). The duplicated implementations remain supported application paths. `cargo test` checks that the exact pair remains exact and that the wrapping implementations remain behaviorally equivalent.
 
@@ -31,12 +32,14 @@ With Rust installed, run these commands from `test_fixtures/cowsay_wasm/` in the
 cargo test
 cargo run -- "Rust cows are memory safe."
 cargo run -- --think --width 24 --wrapper queue --renderer composed "I am considering ownership."
+cargo run -- --scheduler-demo
 printf 'stdin works too\n' | cargo run -- --width 16
 ```
 
-The CLI supports `--think`, `--width`, `--wrapper scanner|fold|queue`, and
-`--renderer pipeline|composed`. The browser-facing API retains its two wrapper
-choices because its boolean argument is part of the simple WebAssembly demo.
+The CLI supports `--think`, `--width`, `--wrapper scanner|fold|queue`,
+`--renderer pipeline|composed`, and `--scheduler-demo`. The browser-facing API
+retains its two wrapper choices because its boolean argument is part of the
+simple WebAssembly demo.
 
 ## Browser/WebAssembly use
 
@@ -66,6 +69,7 @@ The shared validator checks selectors, judgments, evidence, search relevance, an
 src/
   bubble/          exact and edit-distance clone groups
   wrapping/        semantic clone group
+  scheduler.rs      independently implemented worker selection paths
   lib.rs           native API and wasm-bindgen exports
   main.rs          native CLI
 web/
