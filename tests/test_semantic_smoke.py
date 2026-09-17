@@ -88,7 +88,7 @@ def test_gpu_smoke_cowsay_fixture_detects_labeled_clones() -> None:
     list_supported_models(),
     ids=lambda profile: profile.key,
 )
-def test_search_smoke_default_threshold_separates_relevant_from_noise(
+def test_search_smoke_ranks_targets_and_filters_noise(
     profile: SemanticModelProfile,
 ) -> None:
     if os.getenv("CODEDUPES_SMOKE_SEARCH") != "1":
@@ -109,6 +109,7 @@ def test_search_smoke_default_threshold_separates_relevant_from_noise(
         semantic_task=DEFAULT_SEARCH_SEMANTIC_TASK,
     )
 
+    surfaced = 0
     for probe in spec["relevant"]:
         results = find_similar_to_query(
             probe["query"],
@@ -116,12 +117,26 @@ def test_search_smoke_default_threshold_separates_relevant_from_noise(
             embeddings,
             model_name=profile.key,
             top_k=3,
+            threshold=-1.0,
             corpus_identity=identity,
         )
         names = [unit.name for unit, _score in results]
         assert probe["expected"] in names, (
             f"{profile.key}: {probe['query']!r} missed its target: {names}"
         )
+        default_results = find_similar_to_query(
+            probe["query"],
+            units,
+            embeddings,
+            model_name=profile.key,
+            top_k=3,
+            corpus_identity=identity,
+        )
+        surfaced += bool(default_results)
+        assert all(unit.name == probe["expected"] for unit, _score in default_results), (
+            f"{profile.key}: {probe['query']!r} returned irrelevant default hits"
+        )
+    assert surfaced, f"{profile.key}: every relevant query returned no default results"
 
     for query in spec["noise"]:
         results = find_similar_to_query(

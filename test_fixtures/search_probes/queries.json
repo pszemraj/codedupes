@@ -1,5 +1,5 @@
 {
-  "comment": "Query spec for the search smoke test. Relevant queries must surface their expected function within top-3 at the default search threshold; noise queries must return no results at all.",
+  "comment": "Query spec for the search smoke test. Relevant queries must rank their expected function within top-3 without a score floor. Default results must be relevant, and noise queries must return no results.",
   "relevant": [
     { "query": "parse rows from a csv file", "expected": "parse_csv_rows" },
     { "query": "retry a failing call with exponential backoff", "expected": "retry_with_backoff" },

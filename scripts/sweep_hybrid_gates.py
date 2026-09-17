@@ -19,9 +19,12 @@ try:
         write_json,
     )
     from .calibration_evaluation import (
+        F1_RECALL_TOLERANCE,
         judgments,
         load_all,
         metrics,
+        near_best_f1,
+        recall_preference,
         replay,
         selection_context,
         selection_digest,
@@ -38,9 +41,12 @@ except ImportError:
         write_json,
     )
     from calibration_evaluation import (
+        F1_RECALL_TOLERANCE,
         judgments,
         load_all,
         metrics,
+        near_best_f1,
+        recall_preference,
         replay,
         selection_context,
         selection_digest,
@@ -208,17 +214,6 @@ def _combined_metrics(options: tuple[dict[str, Any], ...]) -> dict[str, Any]:
     }
 
 
-def _selection_key(row: dict[str, Any]) -> tuple[float, int, int, float, float]:
-    """Return the existing F1-first policy key for one selection row."""
-    return (
-        row["f1"],
-        -row["ambiguous_predictions"],
-        -row["unjudged_predictions"],
-        row["recall"],
-        row["precision"],
-    )
-
-
 def _joint_tiebreak(row: dict[str, Any], languages: list[str]) -> tuple[Any, ...]:
     """Choose a stable, simple setting among exactly equal pooled outcomes."""
     return (
@@ -241,12 +236,11 @@ def _select_joint(
     Promotion and corroboration interact: a similarity gate can make a strict
     corroboration setting recover pairs that a promotion-disabled sweep misses.
     Search the complete product of distinct per-language outcomes for each
-    corroboration row, retaining the existing F1/unresolved/recall/precision
-    priorities.
+    corroboration row, preferring recall only within the shared F1-loss bound.
     """
     languages = sorted(admissions)
-    selected: dict[str, Any] | None = None
-    selected_options: dict[str, dict[str, Any]] | None = None
+    # Retain the best representative at each F1 before applying the global bound.
+    by_f1: dict[float, tuple[dict[str, Any], dict[str, dict[str, Any]]]] = {}
     for weak in WEAK_GRID:
         for ratio in RATIO_GRID:
             options_by_language = _promotion_options(
@@ -263,20 +257,27 @@ def _select_joint(
                     "high_gates": high_gates,
                     **_combined_metrics(combination),
                 }
+                previous = by_f1.get(row["f1"])
+                selected = previous[0] if previous is not None else None
                 if (
                     selected is None
-                    or _selection_key(row) > _selection_key(selected)
+                    or recall_preference(row) > recall_preference(selected)
                     or (
-                        _selection_key(row) == _selection_key(selected)
+                        recall_preference(row) == recall_preference(selected)
                         and _joint_tiebreak(row, languages) < _joint_tiebreak(selected, languages)
                     )
                 ):
-                    selected = row
-                    selected_options = {
-                        language: option for language, option in zip(languages, combination)
-                    }
-    assert selected is not None and selected_options is not None
-    return selected, selected_options
+                    by_f1[row["f1"]] = (
+                        row,
+                        {language: option for language, option in zip(languages, combination)},
+                    )
+    eligible = near_best_f1([row for row, _ in by_f1.values()])
+    preference = max(recall_preference(row) for row in eligible)
+    selected = min(
+        (row for row in eligible if recall_preference(row) == preference),
+        key=lambda row: _joint_tiebreak(row, languages),
+    )
+    return selected, by_f1[selected["f1"]][1]
 
 
 def main() -> int:
@@ -298,6 +299,7 @@ def main() -> int:
     selected_admissions = _selection_map(threshold_selection)
     payload: dict[str, Any] = {
         "schema_version": 3,
+        "objective": {"primary": "f1", "recall_preference_max_f1_loss": F1_RECALL_TOLERANCE},
         "input_context": selection_context(projects, args.models),
         "threshold_selection_digest": selection_digest(threshold_selection),
         "models": [],

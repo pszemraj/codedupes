@@ -69,8 +69,11 @@ conda run --name inf python scripts/sweep_hybrid_gates.py \
   --json-out scratch/calibration/hybrid-selection.json
 ```
 
-The selectors maximize judged F1, then prefer fewer unresolved predictions,
-higher recall, and higher precision. Hybrid selection jointly searches the
+Search, duplicate admission, and hybrid visibility share one policy: first find
+the best judged F1, then prefer higher recall only among settings within `0.005`
+(half a percentage point) of it. Within that bound, fewer unresolved predictions
+take precedence, followed by recall and precision. A large recall gain cannot
+justify an F1 collapse. Hybrid selection jointly searches the
 corroboration constants and per-language promotion gates using pooled metrics;
 promotion candidates span each admission gate through `1.0`. It does not lock
 corroboration before considering promotion. Duplicate/search
@@ -79,19 +82,18 @@ floors, then disabled promotion, then lower promotion gates. Reports
 keep reviewed ambiguities and unjudged findings separate from judged-only
 precision, and break positive recall out by authored difficulty.
 
-Before promoting a search recommendation, run the existing multi-domain smoke
-test against the candidate default:
+Run the multi-domain search smoke test against the selected default:
 
 ```bash
 CODEDUPES_SMOKE_SEARCH=1 conda run --name inf pytest tests/test_semantic_smoke.py -k search
 ```
 
-Keep these independent queries unchanged. The current Gemma recommendation of
-`0.56` fails four of six relevant queries, so its shipped floor remains `0.40`;
-GTE ships its passing `0.68` recommendation. The result records both the
-development optimum (`selected_threshold`) and the shipped setting and its
-metrics (`current_threshold`, `current_metrics`). A development optimum alone
-does not justify replacing a working search default.
+Keep these queries unchanged. Check that each target ranks in the top three
+without a score floor, that emitted default hits are relevant, and that no-result
+queries stay empty. Do not lower the default merely to return every known target:
+precision and recall are jointly evaluated by the corpus F1 policy. The shipped
+search floors are `0.68` for GTE and `0.56` for Gemma. The result records both the
+selected settings and their current shipped metrics.
 
 After applying accepted profile values, rerun both selection commands above so
 the recorded current metrics and policy identity match the shipped defaults.

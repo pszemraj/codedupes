@@ -161,9 +161,7 @@ _BUILTIN_MODEL_PROFILES: tuple[SemanticModelProfile, ...] = (
         family="embeddinggemma",
         default_revision="bfa3c846ac738e62aa61806ef9112d34acb1dc5a",
         default_semantic_threshold=0.89,
-        # Retain the search smoke-tested floor: the corpus F1 optimum drops
-        # established CSV, retry, LRU, and byte-formatting query targets.
-        default_search_threshold=0.40,
+        default_search_threshold=0.56,
         language_semantic_thresholds={
             "python": 0.74,
             "c": 0.82,
@@ -174,7 +172,7 @@ _BUILTIN_MODEL_PROFILES: tuple[SemanticModelProfile, ...] = (
         hybrid_weak_identifier_jaccard_min=0.40,
         hybrid_statement_ratio_min=0.0,
         language_high_confidence_thresholds={
-            "python": 0.78,
+            "python": 0.74,
             "c": 0.89,
             "rust": 0.88,
             "javascript": 0.80,

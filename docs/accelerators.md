@@ -164,7 +164,7 @@ The optional CUDA smoke command also exercises the default model and labeled Rus
 CODEDUPES_SMOKE_GPU=1 pytest tests/test_semantic_cuda.py tests/test_semantic_smoke.py -m gpu
 ```
 
-A companion opt-in smoke test validates every built-in profile against the multi-domain probe corpus in `test_fixtures/search_probes/`: every relevant query must surface its expected function at that profile's default search threshold and every off-topic query must return nothing:
+A companion opt-in smoke test validates every built-in profile against the multi-domain probe corpus in `test_fixtures/search_probes/`: every relevant query must rank its expected function in the top three without a score floor, emitted default hits must be relevant, and every off-topic query must return nothing. The default floor is calibrated for F1; the smoke test does not force every target to clear it:
 
 ```bash
 CODEDUPES_SMOKE_SEARCH=1 pytest tests/test_semantic_smoke.py

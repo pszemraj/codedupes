@@ -13,11 +13,27 @@ from codedupes.semantic_profiles import list_supported_models, resolve_model_pro
 
 try:
     from .calibration_contract import add_contract_arguments, load_projects, pair_key, write_json
-    from .calibration_evaluation import judgments, load_all, metrics, selection_context
+    from .calibration_evaluation import (
+        F1_RECALL_TOLERANCE,
+        judgments,
+        load_all,
+        metrics,
+        near_best_f1,
+        recall_preference,
+        selection_context,
+    )
     from .calibration_measurements import DEFAULT_MEASUREMENTS
 except ImportError:
     from calibration_contract import add_contract_arguments, load_projects, pair_key, write_json
-    from calibration_evaluation import judgments, load_all, metrics, selection_context
+    from calibration_evaluation import (
+        F1_RECALL_TOLERANCE,
+        judgments,
+        load_all,
+        metrics,
+        near_best_f1,
+        recall_preference,
+        selection_context,
+    )
     from calibration_measurements import DEFAULT_MEASUREMENTS
 
 
@@ -36,29 +52,10 @@ def threshold_grid(start: float, stop: float, step: float) -> list[float]:
 
 
 def _select(rows: list[dict[str, Any]]) -> dict[str, Any]:
-    """Maximize F1, then recall and precision; use the center of an exact tie plateau."""
-    best_key = max(
-        (
-            row["f1"],
-            -row.get("ambiguous_predictions", 0),
-            -row.get("unjudged_predictions", 0),
-            row["recall"],
-            row["precision"],
-        )
-        for row in rows
-    )
-    tied = [
-        row
-        for row in rows
-        if (
-            row["f1"],
-            -row.get("ambiguous_predictions", 0),
-            -row.get("unjudged_predictions", 0),
-            row["recall"],
-            row["precision"],
-        )
-        == best_key
-    ]
+    """Favor recall within the F1 bound, then use the center of an exact tie plateau."""
+    eligible = near_best_f1(rows)
+    best_key = max(recall_preference(row) for row in eligible)
+    tied = [row for row in eligible if recall_preference(row) == best_key]
     return tied[len(tied) // 2]
 
 
@@ -236,6 +233,7 @@ def main() -> int:
     search_grid = threshold_grid(args.search_start, args.search_stop, args.step)
     payload: dict[str, Any] = {
         "schema_version": 3,
+        "objective": {"primary": "f1", "recall_preference_max_f1_loss": F1_RECALL_TOLERANCE},
         "input_context": selection_context(projects, args.models),
         "grids": {"duplicate": duplicate_grid, "search": search_grid},
         "models": [],

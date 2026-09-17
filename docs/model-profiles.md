@@ -9,17 +9,16 @@ Most users should leave model and task settings unset. `codedupes` uses the pinn
 | profile key | canonical model ID | family | search threshold | default revision | default trust mode |
 | --- | --- | --- | --- | --- | --- |
 | `gte-modernbert-base` | `Alibaba-NLP/gte-modernbert-base` | `gte-modernbert` | `0.68` | `e7f32e3c00f91d699e8c43b53106206bcc72bb22` | `False` |
-| `embeddinggemma-300m` | `unsloth/embeddinggemma-300m` | `embeddinggemma` | `0.40` | `bfa3c846ac738e62aa61806ef9112d34acb1dc5a` | `False` |
+| `embeddinggemma-300m` | `unsloth/embeddinggemma-300m` | `embeddinggemma` | `0.56` | `bfa3c846ac738e62aa61806ef9112d34acb1dc5a` | `False` |
 
 - [Per-language duplicate gates and their selection policy](analysis-defaults.md#semantic-duplicate-gate-defaults) control `check` reporting. The table's search threshold is only the floor for query matches; query-to-code similarity is much lower than code-to-code duplicate similarity.
 - Every built-in default revision is a pinned immutable commit. The [calibration workflow](hybrid-tuning.md) records the checkpoint, task, pipeline, and candidate policy behind each threshold.
-- Search calibration reports the development corpus's top-10 F1 optimum, including no-result cases. A default must also pass the independent multi-domain search smoke test. EmbeddingGemma retains `0.40`: the corpus recommendation of `0.56` drops four of six established relevant queries (CSV parsing, retry, LRU eviction, and byte formatting). GTE's `0.68` recommendation passes. Inspect scores on representative queries and override the threshold when a repository needs a different tradeoff; no fixed floor separates relevant and off-topic code everywhere.
+- Search and duplicate defaults optimize measured F1, with higher recall preferred only within `0.005` of the best F1. Returning every known target is not a requirement for the default search floor. The separate smoke test checks target ranking without a floor and relevance of emitted default results.
 
-The retained Gemma floor favors recall at a substantial precision cost on the
-application corpus: `0.40` gives 96% recall and 25% precision, versus 63% and 83%
-at `0.56`. Its ranking is unchanged; more low-scoring results clear the floor.
-The checked result records this tradeoff rather than treating the smoke test as
-evidence of broadly high search precision.
+Gemma's `0.56` search floor gives 83% precision and 63% recall on the development
+corpus, compared with 25% precision and 96% recall at the former `0.40` floor.
+The selected floor keeps F1 primary. Override it for a repository with a different
+tradeoff; these authored fixtures do not establish ecosystem-wide accuracy.
 
 ## Alias resolution rules
 

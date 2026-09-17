@@ -23,6 +23,7 @@ from scripts.calibration_contract import (
     write_json,
 )
 from scripts.calibration_evaluation import (
+    F1_RECALL_TOLERANCE,
     replay,
     replay_parity,
     selection_context,
@@ -37,12 +38,31 @@ from scripts.calibration_measurements import (
 from scripts.sweep_hybrid_gates import _selection_map
 from scripts.sweep_semantic_thresholds import (
     _search_records,
+    _select,
     duplicate_rows,
     search_rows,
     threshold_grid,
 )
 
 pytestmark = pytest.mark.grammar
+
+
+def test_recall_preference_cannot_trade_away_f1():
+    rows = []
+    for threshold, tp, fp in [(0.80, 70, 5), (0.79, 72, 9), (0.40, 95, 70)]:
+        precision, recall = tp / (tp + fp), tp / 100
+        rows.append(
+            {
+                "threshold": threshold,
+                "precision": precision,
+                "recall": recall,
+                "f1": 2 * precision * recall / (precision + recall),
+            }
+        )
+    selected = _select(rows)
+    assert selected["threshold"] == 0.79
+    assert max(row["f1"] for row in rows) - selected["f1"] <= F1_RECALL_TOLERANCE
+    assert _select([rows[0], rows[2]])["threshold"] == 0.80
 
 
 def test_manifest_has_substantive_five_language_corpus():
@@ -586,6 +606,7 @@ def test_checked_calibration_result_matches_shipped_profiles():
 
     for model, selection in threshold_models.items():
         profile = resolve_model_profile(model)
+        assert selection["search"]["selected_threshold"] == profile.default_search_threshold
         assert selection["search"]["current_threshold"] == profile.default_search_threshold
         assert (
             selection["search"]["current_metrics"]["threshold"] == profile.default_search_threshold

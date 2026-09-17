@@ -2,8 +2,12 @@
   "schema_version": 3,
   "threshold_selection": {
     "schema_version": 3,
+    "objective": {
+      "primary": "f1",
+      "recall_preference_max_f1_loss": 0.005
+    },
     "input_context": {
-      "selection_policy": "682b14c752b6e9edb7fd15d5ae1d3d5c1e3ec1d32343bbc397b146303ee36d9c",
+      "selection_policy": "21eb0d9e0fd145268aec21b2aa85c2192941b63ca93ebe3b59a3c8f50ae65bdb",
       "projects": {
         "ledger": {
           "annotations": "b6b158393315146bfdab421c91cb0c8dda3717d3f8d0527f07fde66bf1755604",
@@ -1097,16 +1101,16 @@
           }
         ],
         "search": {
-          "current_threshold": 0.4,
+          "current_threshold": 0.56,
           "current_metrics": {
-            "threshold": 0.4,
-            "tp": 87,
-            "fp": 267,
-            "fn": 4,
-            "precision": 0.2457627118644068,
-            "recall": 0.9560439560439561,
-            "f1": 0.3910112359550562,
-            "no_result_clean": 8,
+            "threshold": 0.56,
+            "tp": 57,
+            "fp": 12,
+            "fn": 34,
+            "precision": 0.8260869565217391,
+            "recall": 0.6263736263736264,
+            "f1": 0.7125,
+            "no_result_clean": 10,
             "no_result_total": 10
           },
           "selected_threshold": 0.56,
@@ -1127,8 +1131,12 @@
   },
   "hybrid_selection": {
     "schema_version": 3,
+    "objective": {
+      "primary": "f1",
+      "recall_preference_max_f1_loss": 0.005
+    },
     "input_context": {
-      "selection_policy": "682b14c752b6e9edb7fd15d5ae1d3d5c1e3ec1d32343bbc397b146303ee36d9c",
+      "selection_policy": "21eb0d9e0fd145268aec21b2aa85c2192941b63ca93ebe3b59a3c8f50ae65bdb",
       "projects": {
         "ledger": {
           "annotations": "b6b158393315146bfdab421c91cb0c8dda3717d3f8d0527f07fde66bf1755604",
@@ -1177,7 +1185,7 @@
         }
       }
     },
-    "threshold_selection_digest": "9f276f8ab0f1a8119a886590bd67922f5ea0a7f417f74a5ef661010cc5a91108",
+    "threshold_selection_digest": "817e7126ecbf30558fba1192774aa06a3ee90975b9834da671c53fb29251610f",
     "models": [
       {
         "model": "gte-modernbert-base",
@@ -1347,13 +1355,13 @@
           "weak_identifier_jaccard_min": 0.4,
           "statement_ratio_min": 0.0,
           "metrics": {
-            "tp": 52,
-            "fp": 2,
-            "fn": 17,
-            "precision": 0.9629629629629629,
-            "judged_only_precision": 0.9629629629629629,
-            "recall": 0.7536231884057971,
-            "f1": 0.8455284552845528,
+            "tp": 54,
+            "fp": 5,
+            "fn": 15,
+            "precision": 0.9152542372881356,
+            "judged_only_precision": 0.9152542372881356,
+            "recall": 0.782608695652174,
+            "f1": 0.8437499999999999,
             "ambiguous_predictions": 0,
             "unjudged_predictions": 0
           }
@@ -1362,13 +1370,13 @@
           "weak_identifier_jaccard_min": 0.4,
           "statement_ratio_min": 0.0,
           "metrics": {
-            "tp": 52,
-            "fp": 2,
-            "fn": 17,
-            "precision": 0.9629629629629629,
-            "judged_only_precision": 0.9629629629629629,
-            "recall": 0.7536231884057971,
-            "f1": 0.8455284552845528,
+            "tp": 54,
+            "fp": 5,
+            "fn": 15,
+            "precision": 0.9152542372881356,
+            "judged_only_precision": 0.9152542372881356,
+            "recall": 0.782608695652174,
+            "f1": 0.8437499999999999,
             "ambiguous_predictions": 0,
             "unjudged_predictions": 0
           },
@@ -1390,16 +1398,16 @@
         "promotion_by_language": [
           {
             "language": "python",
-            "current_gate": 0.78,
-            "selected_gate": 0.78,
+            "current_gate": 0.74,
+            "selected_gate": 0.74,
             "selected_metrics": {
-              "tp": 8,
-              "fp": 1,
-              "fn": 5,
-              "precision": 0.8888888888888888,
-              "judged_only_precision": 0.8888888888888888,
-              "recall": 0.6153846153846154,
-              "f1": 0.7272727272727274,
+              "tp": 10,
+              "fp": 4,
+              "fn": 3,
+              "precision": 0.7142857142857143,
+              "judged_only_precision": 0.7142857142857143,
+              "recall": 0.7692307692307693,
+              "f1": 0.7407407407407408,
               "ambiguous_predictions": 0,
               "unjudged_predictions": 0
             },
@@ -1715,13 +1723,13 @@
               "unjudged_predictions": 0
             },
             "visible": {
-              "tp": 8,
-              "fp": 1,
-              "fn": 5,
-              "precision": 0.8888888888888888,
-              "judged_only_precision": 0.8888888888888888,
-              "recall": 0.6153846153846154,
-              "f1": 0.7272727272727274,
+              "tp": 10,
+              "fp": 4,
+              "fn": 3,
+              "precision": 0.7142857142857143,
+              "judged_only_precision": 0.7142857142857143,
+              "recall": 0.7692307692307693,
+              "f1": 0.7407407407407408,
               "ambiguous_predictions": 0,
               "unjudged_predictions": 0
             },
@@ -1748,18 +1756,17 @@
               "unjudged_predictions": 0
             },
             "tiers": {
-              "semantic_high_confidence": 9,
-              "semantic_review": 5
+              "semantic_high_confidence": 14
             }
           },
           "search": {
-            "threshold": 0.4,
-            "tp": 11,
-            "fp": 51,
-            "fn": 0,
-            "precision": 0.1774193548387097,
-            "recall": 1.0,
-            "f1": 0.3013698630136986,
+            "threshold": 0.56,
+            "tp": 7,
+            "fp": 1,
+            "fn": 4,
+            "precision": 0.875,
+            "recall": 0.6363636363636364,
+            "f1": 0.7368421052631579,
             "no_result": {
               "clean": 2,
               "total": 2,
@@ -1808,13 +1815,13 @@
               "unjudged_predictions": 0
             },
             "visible": {
-              "tp": 8,
-              "fp": 1,
-              "fn": 5,
-              "precision": 0.8888888888888888,
-              "judged_only_precision": 0.8888888888888888,
-              "recall": 0.6153846153846154,
-              "f1": 0.7272727272727274,
+              "tp": 10,
+              "fp": 4,
+              "fn": 3,
+              "precision": 0.7142857142857143,
+              "judged_only_precision": 0.7142857142857143,
+              "recall": 0.7692307692307693,
+              "f1": 0.7407407407407408,
               "ambiguous_predictions": 0,
               "unjudged_predictions": 0
             },
@@ -1841,18 +1848,17 @@
               "unjudged_predictions": 0
             },
             "tiers": {
-              "semantic_high_confidence": 9,
-              "semantic_review": 5
+              "semantic_high_confidence": 14
             }
           },
           "search": {
-            "threshold": 0.4,
-            "tp": 11,
-            "fp": 51,
-            "fn": 0,
-            "precision": 0.1774193548387097,
-            "recall": 1.0,
-            "f1": 0.3013698630136986,
+            "threshold": 0.56,
+            "tp": 7,
+            "fp": 1,
+            "fn": 4,
+            "precision": 0.875,
+            "recall": 0.6363636363636364,
+            "f1": 0.7368421052631579,
             "no_result": {
               "clean": 2,
               "total": 2,
@@ -2167,13 +2173,13 @@
             }
           },
           "search": {
-            "threshold": 0.4,
-            "tp": 19,
-            "fp": 57,
-            "fn": 0,
-            "precision": 0.25,
-            "recall": 1.0,
-            "f1": 0.4,
+            "threshold": 0.56,
+            "tp": 15,
+            "fp": 3,
+            "fn": 4,
+            "precision": 0.8333333333333334,
+            "recall": 0.7894736842105263,
+            "f1": 0.8108108108108109,
             "no_result": {
               "clean": 2,
               "total": 2,
@@ -2260,13 +2266,13 @@
             }
           },
           "search": {
-            "threshold": 0.4,
-            "tp": 19,
-            "fp": 57,
-            "fn": 0,
-            "precision": 0.25,
-            "recall": 1.0,
-            "f1": 0.4,
+            "threshold": 0.56,
+            "tp": 15,
+            "fp": 3,
+            "fn": 4,
+            "precision": 0.8333333333333334,
+            "recall": 0.7894736842105263,
+            "f1": 0.8108108108108109,
             "no_result": {
               "clean": 2,
               "total": 2,
@@ -2579,13 +2585,13 @@
             }
           },
           "search": {
-            "threshold": 0.4,
-            "tp": 22,
-            "fp": 56,
-            "fn": 0,
-            "precision": 0.28205128205128205,
-            "recall": 1.0,
-            "f1": 0.44000000000000006,
+            "threshold": 0.56,
+            "tp": 14,
+            "fp": 5,
+            "fn": 8,
+            "precision": 0.7368421052631579,
+            "recall": 0.6363636363636364,
+            "f1": 0.6829268292682926,
             "no_result": {
               "clean": 2,
               "total": 2,
@@ -2672,13 +2678,13 @@
             }
           },
           "search": {
-            "threshold": 0.4,
-            "tp": 22,
-            "fp": 56,
-            "fn": 0,
-            "precision": 0.28205128205128205,
-            "recall": 1.0,
-            "f1": 0.44000000000000006,
+            "threshold": 0.56,
+            "tp": 14,
+            "fp": 5,
+            "fn": 8,
+            "precision": 0.7368421052631579,
+            "recall": 0.6363636363636364,
+            "f1": 0.6829268292682926,
             "no_result": {
               "clean": 2,
               "total": 2,
@@ -2990,19 +2996,17 @@
             }
           },
           "search": {
-            "threshold": 0.4,
-            "tp": 19,
-            "fp": 45,
-            "fn": 1,
-            "precision": 0.296875,
-            "recall": 0.95,
-            "f1": 0.45238095238095244,
+            "threshold": 0.56,
+            "tp": 12,
+            "fp": 2,
+            "fn": 8,
+            "precision": 0.8571428571428571,
+            "recall": 0.6,
+            "f1": 0.7058823529411764,
             "no_result": {
-              "clean": 1,
+              "clean": 2,
               "total": 2,
-              "violations": [
-                "js.no-result.signed-pdf"
-              ]
+              "violations": []
             }
           }
         },
@@ -3084,19 +3088,17 @@
             }
           },
           "search": {
-            "threshold": 0.4,
-            "tp": 19,
-            "fp": 45,
-            "fn": 1,
-            "precision": 0.296875,
-            "recall": 0.95,
-            "f1": 0.45238095238095244,
+            "threshold": 0.56,
+            "tp": 12,
+            "fp": 2,
+            "fn": 8,
+            "precision": 0.8571428571428571,
+            "recall": 0.6,
+            "f1": 0.7058823529411764,
             "no_result": {
-              "clean": 1,
+              "clean": 2,
               "total": 2,
-              "violations": [
-                "js.no-result.signed-pdf"
-              ]
+              "violations": []
             }
           }
         }
@@ -3407,19 +3409,17 @@
             }
           },
           "search": {
-            "threshold": 0.4,
-            "tp": 16,
-            "fp": 58,
-            "fn": 3,
-            "precision": 0.21621621621621623,
-            "recall": 0.8421052631578947,
-            "f1": 0.34408602150537637,
+            "threshold": 0.56,
+            "tp": 9,
+            "fp": 1,
+            "fn": 10,
+            "precision": 0.9,
+            "recall": 0.47368421052631576,
+            "f1": 0.6206896551724138,
             "no_result": {
-              "clean": 1,
+              "clean": 2,
               "total": 2,
-              "violations": [
-                "no-result-berth-invoice"
-              ]
+              "violations": []
             }
           }
         },
@@ -3502,19 +3502,17 @@
             }
           },
           "search": {
-            "threshold": 0.4,
-            "tp": 16,
-            "fp": 58,
-            "fn": 3,
-            "precision": 0.21621621621621623,
-            "recall": 0.8421052631578947,
-            "f1": 0.34408602150537637,
+            "threshold": 0.56,
+            "tp": 9,
+            "fp": 1,
+            "fn": 10,
+            "precision": 0.9,
+            "recall": 0.47368421052631576,
+            "f1": 0.6206896551724138,
             "no_result": {
-              "clean": 1,
+              "clean": 2,
               "total": 2,
-              "violations": [
-                "no-result-berth-invoice"
-              ]
+              "violations": []
             }
           }
         }
