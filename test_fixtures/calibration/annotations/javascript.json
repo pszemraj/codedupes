@@ -9,13 +9,12 @@
     "tool": "semble find-related, source tree only, top 10",
     "easy": "aggregateInvoices retrieved summarizeInvoiceAccounts and buildInvoiceDigest as the first two source results (0.829 and 0.776).",
     "medium": "planTransfersWithMinimum retrieved the reducer scheduler first (0.798); the shorter baseline planner appeared seventh after support and test chunks (0.282).",
-    "hard": "From outbox.prepareEntry, Semble did not return sendReceiptCallback in its top 10 despite their reviewed accepted-delivery region; the callback is only visible when the direction is reversed."
+    "hard": "No JavaScript positive remains labeled hard; the sparse fixture is retained for easy and medium calibration rather than manufacturing a hard case."
   },
   "units": [
     {"id": "js.aggregation.aggregateInvoices", "selector": {"path": "src/aggregation.js", "qualified_name": "aggregation.aggregateInvoices", "kind": "function"}},
     {"id": "js.aggregation.buildInvoiceDigest", "selector": {"path": "src/aggregation.js", "qualified_name": "aggregation.buildInvoiceDigest", "kind": "function"}},
     {"id": "js.aggregation.summarizeInvoiceAccounts", "selector": {"path": "src/aggregation.js", "qualified_name": "aggregation.summarizeInvoiceAccounts", "kind": "function"}},
-    {"id": "js.aggregation.reduceInvoiceTotals", "selector": {"path": "src/aggregation.js", "qualified_name": "aggregation.reduceInvoiceTotals", "kind": "function"}},
     {"id": "js.settlement.planTransfers", "selector": {"path": "src/settlement.js", "qualified_name": "settlement.planTransfers", "kind": "function"}},
     {"id": "js.settlement.planTransfersWithMinimum", "selector": {"path": "src/settlement.js", "qualified_name": "settlement.planTransfersWithMinimum", "kind": "function"}},
     {"id": "js.settlement.schedulePayouts", "selector": {"path": "src/settlement.js", "qualified_name": "settlement.schedulePayouts", "kind": "function"}},
@@ -27,7 +26,7 @@
     {"id": "js.outbox.prepareEntry", "selector": {"path": "src/outbox.js", "qualified_name": "outbox.prepareEntry", "kind": "function"}},
     {"id": "js.notifications.dispatchReceipt", "selector": {"path": "src/notifications.js", "qualified_name": "notifications.dispatchReceipt", "kind": "function"}},
     {"id": "javascript/src/aggregation.js::aggregation.assertInvoiceRecord::function::3", "selector": {"path": "src/aggregation.js", "qualified_name": "aggregation.assertInvoiceRecord", "kind": "function", "start_line": 3}},
-    {"id": "javascript/src/cli.js::cli.main::function::19", "selector": {"path": "src/cli.js", "qualified_name": "cli.main", "kind": "function", "start_line": 18}},
+    {"id": "javascript/src/cli.js::cli.main::function::19", "selector": {"path": "src/cli.js", "qualified_name": "cli.main", "kind": "function", "start_line": 17}},
     {"id": "javascript/src/notifications.js::notifications.normalizeReceipt::function::3", "selector": {"path": "src/notifications.js", "qualified_name": "notifications.normalizeReceipt", "kind": "function", "start_line": 3}},
     {"id": "javascript/src/notifications.js::notifications.sendReceiptCallback.deliver::function::13", "selector": {"path": "src/notifications.js", "qualified_name": "notifications.sendReceiptCallback.deliver", "kind": "function", "start_line": 13}},
     {"id": "javascript/src/outbox.js::outbox.createFuture::function::5", "selector": {"path": "src/outbox.js", "qualified_name": "outbox.createFuture", "kind": "function", "start_line": 5}},
@@ -38,10 +37,11 @@
     {"id": "javascript/src/pagination.mjs::pagination.readSnapshot.visit::function::53", "selector": {"path": "src/pagination.mjs", "qualified_name": "pagination.readSnapshot.visit", "kind": "function", "start_line": 53}}
   ],
   "families": [
-    {"id": "translated-aggregation", "members": ["js.aggregation.aggregateInvoices", "js.aggregation.buildInvoiceDigest", "js.aggregation.summarizeInvoiceAccounts", "js.aggregation.reduceInvoiceTotals"]},
+    {"id": "translated-aggregation", "members": ["js.aggregation.aggregateInvoices", "js.aggregation.buildInvoiceDigest", "js.aggregation.summarizeInvoiceAccounts"]},
     {"id": "payout-minimum-extension", "members": ["js.settlement.planTransfers", "js.settlement.planTransfersWithMinimum", "js.settlement.schedulePayouts"]},
     {"id": "webhook-normalization", "members": ["js.ingestion.normalizeWebhookRecord", "js.ingestion.importWebhookBatch", "js.ingestion.importWebhookLines"]},
     {"id": "receipt-adapters", "members": ["js.notifications.sendReceiptCallback", "js.outbox.prepareEntry", "js.notifications.dispatchReceipt"]},
+    {"id": "receipt-delivery-workers", "members": ["js.notifications.sendReceiptCallback", "javascript/src/outbox.js::outbox.releaseNext::function::20", "js.notifications.dispatchReceipt"]},
     {"id": "outbox-scheduling", "members": ["js.outbox.publishConfirmation"]},
     {"id": "cursor-pagination", "members": ["js.pagination.fetchRecords", "js.pagination.readSnapshot"]}
   ],
@@ -51,24 +51,12 @@
       "equivalence_domain": "All record arrays with valid row shapes, including invalid voided rows.", "contract": "Validate before void filtering, preserve input, and return invoice-sorted totals and counts.", "rationale": "The map accumulator and sorted-group implementation are alternate forms of one invoice aggregation operation.", "evidence": ["test/calibration.test.js::translated aggregation"]
     },
     {
-      "id": "js.aggregate-map--object-reduce", "a": "js.aggregation.aggregateInvoices", "b": "js.aggregation.summarizeInvoiceAccounts", "judgment": "positive", "tags": ["translated", "medium"], "difficulty": "medium", "scope": "whole_unit", "behavior_equivalent": true,
+      "id": "js.aggregate-map--object-reduce", "a": "js.aggregation.aggregateInvoices", "b": "js.aggregation.summarizeInvoiceAccounts", "judgment": "positive", "tags": ["translated", "easy"], "difficulty": "easy", "scope": "whole_unit", "behavior_equivalent": true,
       "equivalence_domain": "All record arrays with valid row shapes, including invalid voided rows.", "contract": "Validate before void filtering, preserve input, and return invoice-sorted totals and counts.", "rationale": "Both construct the same invoice totals and counts through different accumulator representations.", "evidence": ["test/calibration.test.js::translated aggregation"]
     },
     {
       "id": "js.sort-group--object-reduce", "a": "js.aggregation.buildInvoiceDigest", "b": "js.aggregation.summarizeInvoiceAccounts", "judgment": "positive", "tags": ["translated", "medium"], "difficulty": "medium", "scope": "whole_unit", "behavior_equivalent": true,
       "equivalence_domain": "All record arrays with valid row shapes, including invalid voided rows.", "contract": "Validate before void filtering, preserve input, and return invoice-sorted totals and counts.", "rationale": "The grouping and object-reduction forms duplicate the same aggregation responsibility.", "evidence": ["test/calibration.test.js::translated aggregation"]
-    },
-    {
-      "id": "js.aggregate-map--map-reduce", "a": "js.aggregation.aggregateInvoices", "b": "js.aggregation.reduceInvoiceTotals", "judgment": "positive", "tags": ["near-clone", "map-accumulator"], "difficulty": "easy", "scope": "whole_unit", "behavior_equivalent": true,
-      "equivalence_domain": "All record arrays with valid row shapes, including invalid voided rows.", "contract": "Validate before void filtering, preserve input, and return invoice-sorted totals and counts.", "rationale": "Both implementations use the shared validator and a Map accumulator; only the outer iteration form changes.", "evidence": ["test/calibration.test.js::translated aggregation"]
-    },
-    {
-      "id": "js.sort-group--map-reduce", "a": "js.aggregation.buildInvoiceDigest", "b": "js.aggregation.reduceInvoiceTotals", "judgment": "positive", "tags": ["translated", "grouping-versus-reduce"], "difficulty": "medium", "scope": "whole_unit", "behavior_equivalent": true,
-      "equivalence_domain": "All record arrays with valid row shapes, including invalid voided rows.", "contract": "Validate before void filtering, preserve input, and return invoice-sorted totals and counts.", "rationale": "Sorted contiguous grouping and Map reduction implement the same invoice aggregation contract through distinct collection strategies.", "evidence": ["test/calibration.test.js::translated aggregation"]
-    },
-    {
-      "id": "js.object-reduce--map-reduce", "a": "js.aggregation.summarizeInvoiceAccounts", "b": "js.aggregation.reduceInvoiceTotals", "judgment": "positive", "tags": ["translated", "reducer"], "difficulty": "medium", "scope": "whole_unit", "behavior_equivalent": true,
-      "equivalence_domain": "All record arrays with valid row shapes, including invalid voided rows.", "contract": "Validate before void filtering, preserve input, and return invoice-sorted totals and counts.", "rationale": "The object and Map reducers retain the same per-invoice accumulator and final sorted projection.", "evidence": ["test/calibration.test.js::translated aggregation"]
     },
     {
       "id": "js.baseline-plan--minimum-plan", "a": "js.settlement.planTransfers", "b": "js.settlement.planTransfersWithMinimum", "judgment": "positive", "tags": ["extended", "medium"], "difficulty": "medium", "scope": "whole_unit", "behavior_equivalent": false,
@@ -98,13 +86,21 @@
       "regions": [{"unit": "js.ingestion.importWebhookBatch", "start_line": 17, "end_line": 43, "sha256": "2a8727ffd9b59a7287b83d7f655f8814c6597918a4e31f8b30c9d5f741358722"}, {"unit": "js.ingestion.importWebhookLines", "start_line": 45, "end_line": 65, "sha256": "f2a6ba3b72103aa15363a607b7e6d6030d36d065a45f17e2f4d58f14c2267c21"}]
     },
     {
-      "id": "js.callback--prepared-outbox-entry", "a": "js.notifications.sendReceiptCallback", "b": "js.outbox.prepareEntry", "judgment": "positive", "tags": ["adapter", "async", "partial", "hard"], "difficulty": "hard", "scope": "partial", "behavior_equivalent": false,
+      "id": "js.callback--prepared-outbox-entry", "a": "js.notifications.sendReceiptCallback", "b": "js.outbox.prepareEntry", "judgment": "positive", "tags": ["adapter", "async", "partial", "medium"], "difficulty": "medium", "scope": "partial", "behavior_equivalent": false,
       "equivalence_domain": "Accepted receipt messages after mapping callback completion to the entry returned by the queued outbox.", "contract": "Canonicalize the invoice identifier and email, retain the exact minor total, and construct one sent email entry.", "rationale": "The legacy callback delivery path and the queued outbox duplicate the accepted-delivery portion through distinct control flow and vocabulary.", "evidence": ["test/calibration.test.js::receipt adapters"], "difference_witness": "The callback path invokes an error-first continuation after a microtask; the outbox returns the entry to its queue runner.",
       "regions": [{"unit": "js.notifications.sendReceiptCallback", "start_line": 14, "end_line": 18, "sha256": "ce716e40b4e316510580b89fe207b1b68e45cc57394f755a7e0f73d5edade789"}, {"unit": "js.outbox.prepareEntry", "start_line": 33, "end_line": 40, "sha256": "bca50b6de54ab2d6361534316e68fd1fff85492bc06f0d1a39925fa699573487"}]
     },
     {
       "id": "js.callback--async-transport-receipt", "a": "js.notifications.sendReceiptCallback", "b": "js.notifications.dispatchReceipt", "judgment": "positive", "tags": ["adapter", "async", "medium"], "difficulty": "medium", "scope": "whole_unit", "behavior_equivalent": false,
       "equivalence_domain": "Valid receipt messages with transport=email and a mailbox with a mutable sent array.", "contract": "Normalize the receipt and append one sent email delivery.", "rationale": "The transport adapter retains a policy check but repeats receipt construction and mailbox mutation.", "evidence": ["test/calibration.test.js::receipt adapters"], "difference_witness": "The transport adapter rejects sms before delivery; the callback form has no transport argument."
+    },
+    {
+      "id": "js.callback--queued-outbox-worker", "a": "js.notifications.sendReceiptCallback", "b": "javascript/src/outbox.js::outbox.releaseNext::function::20", "judgment": "positive", "tags": ["adapter", "async", "queue", "medium"], "difficulty": "medium", "scope": "whole_unit", "behavior_equivalent": false,
+      "equivalence_domain": "One valid queued receipt and a mailbox with a mutable sent array, comparing callback completion with the outbox worker's promise settlement.", "contract": "Canonicalize a receipt, append one sent email delivery, and settle the caller's asynchronous completion.", "rationale": "The callback worker and queue worker independently own the accepted delivery path behind different scheduling and completion protocols.", "evidence": ["test/calibration.test.js::receipt adapters"], "difference_witness": "The callback schedules a microtask and invokes done; the queue worker removes an envelope, settles a promise capability, and starts the next queued delivery."
+    },
+    {
+      "id": "js.queued-outbox-worker--async-transport-receipt", "a": "javascript/src/outbox.js::outbox.releaseNext::function::20", "b": "js.notifications.dispatchReceipt", "judgment": "positive", "tags": ["adapter", "async", "queue", "medium"], "difficulty": "medium", "scope": "whole_unit", "behavior_equivalent": false,
+      "equivalence_domain": "One valid email receipt and a mailbox with a mutable sent array, after the queued worker receives its envelope.", "contract": "Canonicalize a receipt, append one sent email delivery, and resolve with that delivery.", "rationale": "The queue worker and transport adapter independently execute the same successful delivery responsibility around different ownership and scheduling machinery.", "evidence": ["test/calibration.test.js::receipt adapters"], "difference_witness": "The queue worker drains shared FIFO state and chains the next envelope; dispatchReceipt validates a transport argument and handles one call directly."
     },
     {
       "id": "js.prepared-entry--async-transport-receipt", "a": "js.outbox.prepareEntry", "b": "js.notifications.dispatchReceipt", "judgment": "positive", "tags": ["adapter", "async", "partial", "medium"], "difficulty": "medium", "scope": "partial", "behavior_equivalent": false,
@@ -266,10 +262,6 @@
       "equivalence_domain": "Summary validation and the extended planner that calls it.", "contract": "The planner delegates sorting and validation then adds minimum-payout deferral policy.", "rationale": "The helper is intentionally shared rather than independently reimplemented.", "evidence": ["test/calibration.test.js::payout extension"], "difference_witness": "Only planTransfersWithMinimum accepts a payout threshold and records deferred events."
     },
     {
-      "id": "js.release-next--callback-wrapper-negative", "a": "javascript/src/outbox.js::outbox.releaseNext::function::20", "b": "js.notifications.sendReceiptCallback", "judgment": "negative", "tags": ["async-control-flow", "false-positive"], "scope": "whole_unit", "behavior_equivalent": false,
-      "equivalence_domain": "Queued delivery draining and callback delivery setup.", "contract": "The queue runner owns stored promise settlement; the wrapper owns microtask scheduling for a supplied continuation.", "rationale": "Both schedule asynchronous work but have different queue state and API contracts.", "evidence": ["test/calibration.test.js::receipt adapters"], "difference_witness": "releaseNext consumes global waiting state; sendReceiptCallback receives a done callback."
-    },
-    {
       "id": "js.receipt-normalizer--sort-aggregate-negative", "a": "javascript/src/notifications.js::notifications.normalizeReceipt::function::3", "b": "js.aggregation.buildInvoiceDigest", "judgment": "negative", "tags": ["field-cleanup", "false-positive"], "scope": "whole_unit", "behavior_equivalent": false,
       "equivalence_domain": "One receipt object and a collection of invoice records.", "contract": "Receipt normalization cleans a single delivery message; digest construction validates, filters, sorts, and groups many rows.", "rationale": "Input sanitation alone is not a shared aggregation responsibility.", "evidence": ["test/calibration.test.js::receipt adapters", "test/calibration.test.js::translated aggregation"], "difference_witness": "A voided invoice is filtered from the digest; receipt normalization has no voided field."
     },
@@ -348,7 +340,7 @@
     }
   ],
   "probes": [
-    {"id": "js.behavioral.invoice-totals", "kind": "behavioral", "query": "calculate sorted invoice totals while skipping voided records", "expected": ["js.aggregation.aggregateInvoices", "js.aggregation.buildInvoiceDigest", "js.aggregation.summarizeInvoiceAccounts", "js.aggregation.reduceInvoiceTotals"], "relevance_complete": true},
+    {"id": "js.behavioral.invoice-totals", "kind": "behavioral", "query": "calculate sorted invoice totals while skipping voided records", "expected": ["js.aggregation.aggregateInvoices", "js.aggregation.buildInvoiceDigest", "js.aggregation.summarizeInvoiceAccounts"], "relevance_complete": true},
     {"id": "js.behavioral.payout-deferral", "kind": "behavioral", "query": "defer small positive payouts and record a below minimum event", "expected": ["js.settlement.planTransfersWithMinimum", "js.settlement.schedulePayouts"], "relevance_complete": true},
     {"id": "js.behavioral.cursor-pagination", "kind": "behavioral", "query": "follow asynchronous cursor pages, reject cycles, and keep the first record for each identifier", "expected": ["js.pagination.fetchRecords", "js.pagination.readSnapshot"], "relevance_complete": true},
     {"id": "js.behavioral.accept-webhook", "kind": "behavioral", "query": "accept an incoming webhook only after validating its identifier and email", "expected": ["js.ingestion.normalizeWebhookRecord", "js.ingestion.importWebhookBatch", "js.ingestion.importWebhookLines"], "relevance_complete": true},

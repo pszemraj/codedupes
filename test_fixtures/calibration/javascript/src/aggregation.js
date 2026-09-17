@@ -68,26 +68,8 @@ function summarizeInvoiceAccounts(records) {
     .map((invoiceId) => ({ invoiceId, ...accounts[invoiceId] }));
 }
 
-function reduceInvoiceTotals(records) {
-  const totals = records.reduce((byInvoice, record, index) => {
-    assertInvoiceRecord(record, index);
-    if (record.voided) return byInvoice;
-    const invoiceId = record.invoiceId.trim();
-    const current = byInvoice.get(invoiceId) ?? { totalMinor: 0, count: 0 };
-    byInvoice.set(invoiceId, {
-      totalMinor: current.totalMinor + record.amountMinor,
-      count: current.count + 1,
-    });
-    return byInvoice;
-  }, new Map());
-  return [...totals.entries()]
-    .sort(([left], [right]) => left.localeCompare(right))
-    .map(([invoiceId, values]) => ({ invoiceId, ...values }));
-}
-
 module.exports = {
   aggregateInvoices,
   buildInvoiceDigest,
-  reduceInvoiceTotals,
   summarizeInvoiceAccounts,
 };

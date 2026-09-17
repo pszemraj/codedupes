@@ -6,7 +6,6 @@ const test = require("node:test");
 const {
   aggregateInvoices,
   buildInvoiceDigest,
-  reduceInvoiceTotals,
   summarizeInvoiceAccounts,
 } = require("../src/aggregation");
 const { importWebhookBatch, importWebhookLines, normalizeWebhookRecord } = require("../src/ingestion");
@@ -34,13 +33,11 @@ test("translated aggregation agrees and validates before void filtering", () => 
   assert.deepEqual(aggregateInvoices(records), expected);
   assert.deepEqual(buildInvoiceDigest(records), expected);
   assert.deepEqual(summarizeInvoiceAccounts(records), expected);
-  assert.deepEqual(reduceInvoiceTotals(records), expected);
   assert.deepEqual(records, original);
   const invalidVoided = [{ invoiceId: "discard", amountMinor: 1.5, voided: true }];
   assert.throws(() => aggregateInvoices(invalidVoided), /safe integer/);
   assert.throws(() => buildInvoiceDigest(invalidVoided), /safe integer/);
   assert.throws(() => summarizeInvoiceAccounts(invalidVoided), /safe integer/);
-  assert.throws(() => reduceInvoiceTotals(invalidVoided), /safe integer/);
 });
 
 test("payout extension preserves zero minimum and records deferral boundary", () => {

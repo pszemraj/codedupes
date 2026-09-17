@@ -3,7 +3,6 @@
 const {
   aggregateInvoices,
   buildInvoiceDigest,
-  reduceInvoiceTotals,
   summarizeInvoiceAccounts,
 } = require("./aggregation");
 const { importWebhookBatch, importWebhookLines } = require("./ingestion");
@@ -39,7 +38,6 @@ async function main() {
       summaries,
       buildInvoiceDigest(records),
       summarizeInvoiceAccounts(records),
-      reduceInvoiceTotals(records),
     ],
     plans: [
       planTransfers(summaries),
