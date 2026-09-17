@@ -6,7 +6,7 @@ import argparse
 import json
 from pathlib import Path
 
-from codedupes.semantic_profiles import list_supported_models
+from codedupes.semantic_profiles import list_supported_models, resolve_model_profile
 
 try:
     from .calibration_contract import add_contract_arguments, load_projects, read_json, write_json
@@ -49,6 +49,7 @@ def main() -> int:
     )
     parser.add_argument("--json-out", type=Path)
     args = parser.parse_args()
+    args.models = [resolve_model_profile(model).key for model in args.models]
     projects = load_projects(args.manifest, args.projects, args.policy)
     payload = {
         "schema_version": 3,

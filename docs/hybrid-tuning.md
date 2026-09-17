@@ -42,7 +42,8 @@ the independent CPU/MPS comparison when source, model, extraction, task, prompt,
 or dtype policy changes.
 
 Select per-language duplicate gates and a candidate global top-10 search gate
-from the CPU measurements:
+from the CPU measurements. The sweep and report `--models` options accept
+built-in profile keys, canonical model names, or recognized aliases:
 
 ```bash
 conda run --name inf python scripts/sweep_semantic_thresholds.py \
