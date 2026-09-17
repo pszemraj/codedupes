@@ -7,7 +7,7 @@
       "recall_preference_max_f1_loss": 0.005
     },
     "input_context": {
-      "selection_policy": "bcad64e9c3c675ee67f5eda322cc32ed3cdb570461eecd5fd98b00c060fbf4c2",
+      "selection_policy": "6c31303a2814d80951621da72565c88ef48b2fcc520b8e566165c6463b35a085",
       "projects": {
         "ledger": {
           "annotations": "6f3ae14deb18a33fb4213408c8cde411538384f67b5c704da30943808eacd1ab",
@@ -1136,7 +1136,7 @@
       "recall_preference_max_f1_loss": 0.005
     },
     "input_context": {
-      "selection_policy": "bcad64e9c3c675ee67f5eda322cc32ed3cdb570461eecd5fd98b00c060fbf4c2",
+      "selection_policy": "6c31303a2814d80951621da72565c88ef48b2fcc520b8e566165c6463b35a085",
       "projects": {
         "ledger": {
           "annotations": "6f3ae14deb18a33fb4213408c8cde411538384f67b5c704da30943808eacd1ab",
@@ -1185,7 +1185,7 @@
         }
       }
     },
-    "threshold_selection_digest": "bef9284cd9be6d271c5baa52e06207b96fc39332aa0ea0408d2a8eeb0144e9fa",
+    "threshold_selection_digest": "ee3ce4f566f10535b21af3c7378cdcbbe8e4218ab00ea149ed143afc2af32600",
     "models": [
       {
         "model": "gte-modernbert-base",
@@ -1488,6 +1488,7 @@
   "projects": [
     {
       "project": "ledger",
+      "split": "development",
       "language": "python",
       "corpus": {
         "annotated_units": 26,
@@ -1902,6 +1903,7 @@
     },
     {
       "project": "cowsay",
+      "split": "development",
       "language": "rust",
       "corpus": {
         "annotated_units": 27,
@@ -2316,6 +2318,7 @@
     },
     {
       "project": "c_metering",
+      "split": "development",
       "language": "c",
       "corpus": {
         "annotated_units": 22,
@@ -2732,6 +2735,7 @@
     },
     {
       "project": "javascript",
+      "split": "development",
       "language": "javascript",
       "corpus": {
         "annotated_units": 25,
@@ -3144,6 +3148,7 @@
     },
     {
       "project": "harbor-ts",
+      "split": "development",
       "language": "typescript",
       "corpus": {
         "annotated_units": 23,

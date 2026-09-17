@@ -24,6 +24,7 @@ from scripts.calibration_contract import (
 )
 from scripts.calibration_evaluation import (
     F1_RECALL_TOLERANCE,
+    development_projects,
     replay,
     replay_parity,
     selection_context,
@@ -93,6 +94,14 @@ def test_manifest_has_substantive_five_language_corpus():
         assert {pair["difficulty"] for pair in positives} == {"easy", "medium", "hard"}
         assert len(project.annotations["probes"]) >= 8
         assert report["pending_deterministic"] == []
+
+
+def test_selection_uses_only_development_projects():
+    development = SimpleNamespace(spec={"split": "development"})
+    evaluation = SimpleNamespace(spec={"split": "evaluation"})
+    assert development_projects([evaluation, development]) == [development]
+    with pytest.raises(ValueError, match="at least one development project"):
+        development_projects([evaluation])
 
 
 def test_duplicate_sweep_uses_reviewed_comparable_pairs():
@@ -168,7 +177,7 @@ def test_threshold_grid_includes_a_stop_between_steps():
 def test_coarse_sweep_measures_shipped_thresholds_exactly(tmp_path: Path, monkeypatch):
     project = SimpleNamespace(
         id="sample",
-        spec={"languages": ["python"]},
+        spec={"languages": ["python"], "split": "development"},
         annotations={
             "pairs": [{"a": "a", "b": "b", "judgment": "positive", "difficulty": "easy"}],
             "probes": [{"id": "q", "expected": ["a"]}],
@@ -580,6 +589,7 @@ def test_report_writer_derives_measurement_runtime(tmp_path: Path, monkeypatch, 
         "torch": "2.14.0",
         "scope": "all checked CPU reports",
     }
+    assert result["projects"][0]["split"] == "development"
     assert all(
         report["runtime_versions"]["torch"] == result["measurement_runtime"]["torch"]
         for report in result["projects"][0]["reports"].values()

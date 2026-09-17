@@ -12,9 +12,15 @@ from codedupes.constants import DEFAULT_TOP_K
 from codedupes.semantic_profiles import list_supported_models, resolve_model_profile
 
 try:
-    from .calibration_contract import add_contract_arguments, load_projects, pair_key, write_json
+    from .calibration_contract import (
+        add_contract_arguments,
+        load_projects,
+        pair_key,
+        write_json,
+    )
     from .calibration_evaluation import (
         F1_RECALL_TOLERANCE,
+        development_projects,
         judgments,
         load_all,
         metrics,
@@ -24,9 +30,15 @@ try:
     )
     from .calibration_measurements import DEFAULT_MEASUREMENTS
 except ImportError:
-    from calibration_contract import add_contract_arguments, load_projects, pair_key, write_json
+    from calibration_contract import (
+        add_contract_arguments,
+        load_projects,
+        pair_key,
+        write_json,
+    )
     from calibration_evaluation import (
         F1_RECALL_TOLERANCE,
+        development_projects,
         judgments,
         load_all,
         metrics,
@@ -228,7 +240,7 @@ def main() -> int:
     parser.add_argument("--step", type=float, default=0.01)
     parser.add_argument("--json-out", type=Path)
     args = parser.parse_args()
-    projects = load_projects(args.manifest, args.projects, args.policy)
+    projects = development_projects(load_projects(args.manifest, args.projects, args.policy))
     duplicate_grid = threshold_grid(args.duplicate_start, args.duplicate_stop, args.step)
     search_grid = threshold_grid(args.search_start, args.search_stop, args.step)
     payload: dict[str, Any] = {

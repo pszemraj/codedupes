@@ -20,6 +20,7 @@ try:
     )
     from .calibration_evaluation import (
         F1_RECALL_TOLERANCE,
+        development_projects,
         judgments,
         load_all,
         metrics,
@@ -42,6 +43,7 @@ except ImportError:
     )
     from calibration_evaluation import (
         F1_RECALL_TOLERANCE,
+        development_projects,
         judgments,
         load_all,
         metrics,
@@ -293,7 +295,7 @@ def main() -> int:
     parser.add_argument("--models", nargs="+", default=[p.key for p in list_supported_models()])
     parser.add_argument("--json-out", type=Path)
     args = parser.parse_args()
-    projects = load_projects(args.manifest, args.projects, args.policy)
+    projects = development_projects(load_projects(args.manifest, args.projects, args.policy))
     threshold_selection = read_json(args.threshold_selection)
     validate_selection_context(threshold_selection, projects, args.models)
     selected_admissions = _selection_map(threshold_selection)

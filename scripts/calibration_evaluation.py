@@ -45,6 +45,14 @@ def selection_digest(payload: Any) -> str:
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
 
 
+def development_projects(projects: list[Project]) -> list[Project]:
+    """Return the reviewed development split used to select shipped defaults."""
+    selected = [project for project in projects if project.spec["split"] == "development"]
+    if not selected:
+        raise ValueError("calibration selection requires at least one development project")
+    return selected
+
+
 def selection_context(projects: list[Project], models: list[str]) -> dict[str, Any]:
     """Bind selections to their policy, corpus scope, judgments, and measured inputs."""
     return {

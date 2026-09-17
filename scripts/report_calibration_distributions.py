@@ -9,9 +9,15 @@ from pathlib import Path
 from codedupes.semantic_profiles import list_supported_models, resolve_model_profile
 
 try:
-    from .calibration_contract import add_contract_arguments, load_projects, read_json, write_json
+    from .calibration_contract import (
+        add_contract_arguments,
+        load_projects,
+        read_json,
+        write_json,
+    )
     from .calibration_evaluation import (
         compare_devices,
+        development_projects,
         full_report,
         load_all,
         selection_digest,
@@ -19,9 +25,15 @@ try:
     )
     from .calibration_measurements import DEFAULT_MEASUREMENTS
 except ImportError:
-    from calibration_contract import add_contract_arguments, load_projects, read_json, write_json
+    from calibration_contract import (
+        add_contract_arguments,
+        load_projects,
+        read_json,
+        write_json,
+    )
     from calibration_evaluation import (
         compare_devices,
+        development_projects,
         full_report,
         load_all,
         selection_digest,
@@ -51,6 +63,7 @@ def main() -> int:
     args = parser.parse_args()
     args.models = [resolve_model_profile(model).key for model in args.models]
     projects = load_projects(args.manifest, args.projects, args.policy)
+    selection_projects = development_projects(projects)
     payload = {
         "schema_version": 3,
         "threshold_selection": read_json(args.threshold_selection),
@@ -58,7 +71,7 @@ def main() -> int:
         "projects": [],
     }
     for field in ("threshold_selection", "hybrid_selection"):
-        validate_selection_context(payload[field], projects, args.models)
+        validate_selection_context(payload[field], selection_projects, args.models)
     if payload["hybrid_selection"].get("threshold_selection_digest") != selection_digest(
         payload["threshold_selection"]
     ):
@@ -80,6 +93,7 @@ def main() -> int:
         payload["projects"].append(
             {
                 "project": project.id,
+                "split": project.spec["split"],
                 "language": project.spec["languages"][0],
                 "corpus": {
                     "annotated_units": len(project.annotations["units"]),
