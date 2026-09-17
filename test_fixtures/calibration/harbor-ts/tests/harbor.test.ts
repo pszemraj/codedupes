@@ -7,6 +7,7 @@ import test from "node:test";
 import {
   buildManifestTotals,
   collectZoneWeightTotals,
+  reduceDockLoadTotals,
   summarizeDockLoads,
 } from "../src/aggregation.ts";
 import { importScheduleCsv, ingestScheduleBatch, prepareWebhookSchedule } from "../src/adapters.ts";
@@ -30,11 +31,16 @@ const rows = [
 
 test("aggregation variants preserve validation, ordering, and caller input", () => {
   const expected = [{ zone: "EAST", totalKg: 120, loadCount: 1 }, { zone: "WEST", totalKg: 40, loadCount: 1 }];
-  assert.deepEqual(summarizeDockLoads(loads), expected);
-  assert.deepEqual(buildManifestTotals(loads), expected);
-  assert.deepEqual(collectZoneWeightTotals(loads), expected);
+  for (const aggregate of [
+    summarizeDockLoads,
+    buildManifestTotals,
+    collectZoneWeightTotals,
+    reduceDockLoadTotals,
+  ]) {
+    assert.deepEqual(aggregate(loads), expected);
+    assert.throws(() => aggregate([{ ...loads[2], weightKg: 0 }]), /positive integer/);
+  }
   assert.equal(loads[1].zone, " east ");
-  assert.throws(() => summarizeDockLoads([{ ...loads[2], weightKg: 0 }]), /positive integer/);
 });
 
 test("dispatch extensions equal the baseline when disabled and retain hold witnesses", () => {

@@ -31,6 +31,14 @@
             }
         },
         {
+            "id": "harbor.aggregate.reduce",
+            "selector": {
+                "path": "src/aggregation.ts",
+                "qualified_name": "aggregation.reduceDockLoadTotals",
+                "kind": "function"
+            }
+        },
+        {
             "id": "harbor-ts/src/aggregation.ts::aggregation.checkedLoad::function::3",
             "selector": {
                 "path": "src/aggregation.ts",
@@ -189,7 +197,8 @@
             "members": [
                 "harbor.aggregate.map",
                 "harbor.aggregate.sorted",
-                "harbor.aggregate.immutable"
+                "harbor.aggregate.immutable",
+                "harbor.aggregate.reduce"
             ]
         },
         {
@@ -278,6 +287,63 @@
             "equivalence_domain": "Every load is validated before cancelled loads are ignored; active totals and counts are sorted by normalized zone without mutating caller input.",
             "contract": "Return sorted active zone totals and counts after strict load validation.",
             "rationale": "Sorting contiguous groups and building immutable records are alternate implementations of one aggregation operation.",
+            "evidence": [
+                "tests/harbor.test.ts::aggregation variants preserve validation, ordering, and caller input"
+            ]
+        },
+        {
+            "id": "aggregate-map--reduce",
+            "a": "harbor.aggregate.map",
+            "b": "harbor.aggregate.reduce",
+            "judgment": "positive",
+            "tags": [
+                "translated",
+                "easy"
+            ],
+            "difficulty": "easy",
+            "scope": "whole_unit",
+            "behavior_equivalent": true,
+            "equivalence_domain": "Every load is validated before cancelled loads are ignored; active totals and counts are sorted by normalized zone without mutating caller input.",
+            "contract": "Return sorted active zone totals and counts after strict load validation.",
+            "rationale": "The Map loop and reduce-based record accumulator independently implement the same small zone-aggregation operation.",
+            "evidence": [
+                "tests/harbor.test.ts::aggregation variants preserve validation, ordering, and caller input"
+            ]
+        },
+        {
+            "id": "aggregate-sorted--reduce",
+            "a": "harbor.aggregate.sorted",
+            "b": "harbor.aggregate.reduce",
+            "judgment": "positive",
+            "tags": [
+                "translated",
+                "easy"
+            ],
+            "difficulty": "easy",
+            "scope": "whole_unit",
+            "behavior_equivalent": true,
+            "equivalence_domain": "Every load is validated before cancelled loads are ignored; active totals and counts are sorted by normalized zone without mutating caller input.",
+            "contract": "Return sorted active zone totals and counts after strict load validation.",
+            "rationale": "The sorted contiguous grouping and reduce-based record accumulator duplicate the same aggregation contract.",
+            "evidence": [
+                "tests/harbor.test.ts::aggregation variants preserve validation, ordering, and caller input"
+            ]
+        },
+        {
+            "id": "aggregate-immutable--reduce",
+            "a": "harbor.aggregate.immutable",
+            "b": "harbor.aggregate.reduce",
+            "judgment": "positive",
+            "tags": [
+                "translated",
+                "easy"
+            ],
+            "difficulty": "easy",
+            "scope": "whole_unit",
+            "behavior_equivalent": true,
+            "equivalence_domain": "Every load is validated before cancelled loads are ignored; active totals and counts are sorted by normalized zone without mutating caller input.",
+            "contract": "Return sorted active zone totals and counts after strict load validation.",
+            "rationale": "Both record accumulators preserve the same validation, normalization, cancellation, and sorted-summary behavior through different iteration forms.",
             "evidence": [
                 "tests/harbor.test.ts::aggregation variants preserve validation, ordering, and caller input"
             ]
