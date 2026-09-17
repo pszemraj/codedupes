@@ -61,7 +61,7 @@ cargo test --test fixture_integrity
 conda run --name inf python ../../scripts/validate_calibration_corpus.py --project cowsay
 ```
 
-The shared validator checks selectors, judgments, evidence, search relevance, and detector eligibility. Rust tests validate exact-source relationships and behavior.
+The shared validator checks selectors, judgments, evidence, search relevance, and detector eligibility. Rust tests preserve the exact/non-exact distinction and validate behavior; they do not require fixture source to hit a similarity range.
 
 ## Project layout
 
