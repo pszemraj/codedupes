@@ -1,5 +1,5 @@
 use cowsay_dupe_fixture::scheduler::{
-    reserve_candidates, select_by_scan, select_for_worker, Job, SelectionError, State,
+    reserve_candidates, select_for_worker, Job, SelectionError, State,
 };
 
 fn job(id: u64, priority: u8, created_at: u64) -> Job {
@@ -17,7 +17,6 @@ fn ranking_and_ties_have_a_concrete_oracle() {
     let jobs = vec![job(4, 9, 2), job(3, 9, 1), job(2, 9, 1), job(1, 2, 0)];
     assert_eq!(select_for_worker(&jobs, 10, 3), Ok(vec![2, 3, 4]));
     assert_eq!(reserve_candidates(&jobs, 10, 3), Ok(vec![2, 3, 4]));
-    assert_eq!(select_by_scan(&jobs, 10, 3), Ok(vec![2, 3, 4]));
 }
 
 #[test]
@@ -28,25 +27,20 @@ fn state_and_expiry_boundaries() {
     jobs[3].expires_at = 10;
     assert_eq!(select_for_worker(&jobs, 10, 10), Ok(vec![3, 1]));
     assert_eq!(reserve_candidates(&jobs, 10, 10), Ok(vec![3, 1]));
-    assert_eq!(select_by_scan(&jobs, 10, 10), Ok(vec![3, 1]));
     jobs[2].state = State::Cooldown { ready_at: 11 };
     assert_eq!(select_for_worker(&jobs, 10, 10), Ok(vec![1]));
     assert_eq!(reserve_candidates(&jobs, 10, 10), Ok(vec![1]));
-    assert_eq!(select_by_scan(&jobs, 10, 10), Ok(vec![1]));
 }
 
 #[test]
 fn empty_zero_limit_and_future_work() {
     assert_eq!(select_for_worker(&[], 0, 4), Ok(vec![]));
     assert_eq!(reserve_candidates(&[], 0, 4), Ok(vec![]));
-    assert_eq!(select_by_scan(&[], 0, 4), Ok(vec![]));
     let jobs = vec![job(1, 5, 0), job(2, 9, 11)];
     assert_eq!(select_for_worker(&jobs, 10, 0), Ok(vec![]));
     assert_eq!(reserve_candidates(&jobs, 10, 0), Ok(vec![]));
-    assert_eq!(select_by_scan(&jobs, 10, 0), Ok(vec![]));
     assert_eq!(select_for_worker(&jobs, 10, 10), Ok(vec![1]));
     assert_eq!(reserve_candidates(&jobs, 10, 10), Ok(vec![1]));
-    assert_eq!(select_by_scan(&jobs, 10, 10), Ok(vec![1]));
 }
 
 #[test]
@@ -61,10 +55,6 @@ fn validation_precedes_policy_filtering() {
             reserve_candidates(&repeated, 200, limit),
             Err(SelectionError::DuplicateId(7))
         );
-        assert_eq!(
-            select_by_scan(&repeated, 200, limit),
-            Err(SelectionError::DuplicateId(7))
-        );
     }
     let mut bad = job(8, 1, 0);
     bad.expires_at = 0;
@@ -73,11 +63,7 @@ fn validation_precedes_policy_filtering() {
         Err(SelectionError::InvalidWindow(8))
     );
     assert_eq!(
-        reserve_candidates(std::slice::from_ref(&bad), 200, 0),
-        Err(SelectionError::InvalidWindow(8))
-    );
-    assert_eq!(
-        select_by_scan(std::slice::from_ref(&bad), 200, 0),
+        reserve_candidates(&[bad], 200, 0),
         Err(SelectionError::InvalidWindow(8))
     );
 }
@@ -106,9 +92,7 @@ fn generated_sets_preserve_inputs_and_match_expected_prefixes() {
             assert_eq!(select_for_worker(&jobs, 10, limit), Ok(prefix.clone()));
             assert_eq!(reserve_candidates(&jobs, 10, limit), Ok(prefix.clone()));
             let reversed: Vec<Job> = jobs.iter().rev().cloned().collect();
-            assert_eq!(reserve_candidates(&reversed, 10, limit), Ok(prefix.clone()));
-            assert_eq!(select_by_scan(&jobs, 10, limit), Ok(prefix.clone()));
-            assert_eq!(select_by_scan(&reversed, 10, limit), Ok(prefix));
+            assert_eq!(reserve_candidates(&reversed, 10, limit), Ok(prefix));
             assert_eq!(jobs, snapshot);
         }
     }

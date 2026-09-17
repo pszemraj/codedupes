@@ -98,40 +98,6 @@ pub fn reserve_candidates(
     Ok(result)
 }
 
-/// Maintain a ranked prefix through direct insertion while scanning eligible jobs.
-pub fn select_by_scan(jobs: &[Job], now: u64, limit: usize) -> Result<Vec<u64>, SelectionError> {
-    let mut known_ids = HashSet::new();
-    let mut selected: Vec<&Job> = Vec::new();
-    for job in jobs {
-        if !known_ids.insert(job.id) {
-            return Err(SelectionError::DuplicateId(job.id));
-        }
-        if job.expires_at <= job.created_at {
-            return Err(SelectionError::InvalidWindow(job.id));
-        }
-        let available = match job.state {
-            State::Ready => true,
-            State::Running => false,
-            State::Cooldown { ready_at } => ready_at <= now,
-        };
-        if !available || job.created_at > now || job.expires_at <= now || limit == 0 {
-            continue;
-        }
-        let position = selected.partition_point(|current| {
-            current.priority > job.priority
-                || (current.priority == job.priority && current.created_at < job.created_at)
-                || (current.priority == job.priority
-                    && current.created_at == job.created_at
-                    && current.id < job.id)
-        });
-        selected.insert(position, job);
-        if selected.len() > limit {
-            let _ = selected.pop();
-        }
-    }
-    Ok(selected.into_iter().map(|job| job.id).collect())
-}
-
 /// Run the small scheduler path exposed by the native fixture CLI.
 pub fn demo_selection() -> Result<Vec<u64>, SelectionError> {
     let jobs = [
