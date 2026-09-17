@@ -29,6 +29,7 @@ try:
         eligibility_reason,
         extract_project,
         read_json,
+        relative_file,
         resolve_annotations,
         unit_ids,
         write_json,
@@ -42,6 +43,7 @@ except ImportError:
         eligibility_reason,
         extract_project,
         read_json,
+        relative_file,
         resolve_annotations,
         unit_ids,
         write_json,
@@ -54,22 +56,24 @@ DEFAULT_MEASUREMENTS = REPO / "scratch/calibration"
 def measurement_fingerprint(project: Project, model: str) -> str:
     """Fingerprint source, unit identities, queries, model, and the measurement pipeline."""
     profile = resolve_model_profile(model)
-    source_files = {}
-    roots = list(project.spec["analysis_roots"])
-    if project.policy.get("include_tests", False):
-        roots.extend(project.spec["test_roots"])
-    for relative in roots:
-        root = project.root / relative
-        for path in sorted(root.rglob("*") if root.is_dir() else [root]):
-            if path.is_file():
-                source_files[path.relative_to(project.root).as_posix()] = hashlib.sha256(
-                    path.read_bytes()
-                ).hexdigest()
+    source_units, _ = extract_project(project)
+    source_paths = {unit.file_path for unit in source_units} | {
+        relative_file(project.root, unit["selector"]["path"])
+        for unit in project.annotations["units"]
+    }
+    source_files = {
+        path.relative_to(project.root).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in sorted(source_paths)
+    }
     pipeline_paths = [
+        Path(__file__),
+        REPO / "scripts/calibration_contract.py",
         REPO / "src/codedupes/analyzer.py",
+        REPO / "src/codedupes/constants.py",
         REPO / "src/codedupes/devices.py",
         REPO / "src/codedupes/extractor.py",
         REPO / "src/codedupes/models.py",
+        REPO / "src/codedupes/pairs.py",
         REPO / "src/codedupes/semantic.py",
         REPO / "src/codedupes/traditional.py",
         *sorted((REPO / "src/codedupes/languages").glob("*.py")),
