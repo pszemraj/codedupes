@@ -51,3 +51,14 @@ multiple external IDs; chronological auditing finds out-of-order accepted
 records; currency auditing validates per-currency net exposure against budgets.
 Different output alone is not a negative label: the annotations explain why
 these operations lack a substantial shared maintenance region with their peers.
+
+Inventory allocation is represented twice. `allocate_orders` is pure: it copies
+the supplied stock mapping, validates the complete order batch, and returns the
+new stock together with FIFO allocation and shortage records. `InventoryBook`
+stores the same stock and partial-allocation policy, independently validates and
+allocates a batch, then commits the result to its state. Their equivalence maps
+the pure return stock to the book's post-call snapshot. Positive quantities are
+required; missing stock has zero availability. Invalid later orders leave the
+book unchanged. `restock` and `audit_stock_levels` are intentionally nearby but
+separate responsibilities: one records deliveries and the other reports minimum
+stock breaches without allocating orders.

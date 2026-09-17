@@ -87,6 +87,38 @@
       }
     },
     {
+      "id": "ledger.inventory.allocate_orders",
+      "selector": {
+        "path": "src/ledger/inventory.py",
+        "qualified_name": "ledger.inventory.allocate_orders",
+        "kind": "function"
+      }
+    },
+    {
+      "id": "ledger.inventory.InventoryBook.reserve",
+      "selector": {
+        "path": "src/ledger/inventory.py",
+        "qualified_name": "ledger.inventory.InventoryBook.reserve",
+        "kind": "method"
+      }
+    },
+    {
+      "id": "ledger.inventory.InventoryBook.restock",
+      "selector": {
+        "path": "src/ledger/inventory.py",
+        "qualified_name": "ledger.inventory.InventoryBook.restock",
+        "kind": "method"
+      }
+    },
+    {
+      "id": "ledger.inventory.audit_stock_levels",
+      "selector": {
+        "path": "src/ledger/inventory.py",
+        "qualified_name": "ledger.inventory.audit_stock_levels",
+        "kind": "function"
+      }
+    },
+    {
       "id": "ledger.models.Transaction",
       "selector": {
         "path": "src/ledger/models.py",
@@ -189,6 +221,13 @@
       "members": [
         "ledger.adapters.import_csv_file",
         "ledger.adapters.ingest_api_batch"
+      ]
+    },
+    {
+      "id": "inventory-allocation",
+      "members": [
+        "ledger.inventory.allocate_orders",
+        "ledger.inventory.InventoryBook.reserve"
       ]
     }
   ],
@@ -970,6 +1009,67 @@
         "tests/test_workflows.py::test_baseline_and_active_extension"
       ],
       "difference_witness": "Aggregation has void filtering and amount summation; planning has ready, refund_due, and balanced state construction."
+    },
+    {
+      "id": "ledger.inventory.allocate_orders--ledger.inventory.InventoryBook.reserve",
+      "a": "ledger.inventory.allocate_orders",
+      "b": "ledger.inventory.InventoryBook.reserve",
+      "judgment": "positive",
+      "tags": [
+        "fn_vs_method",
+        "restructured"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": true,
+      "equivalence_domain": "The same initial stock, ordered valid tuple orders, and partial-allocation policy; compare returned pure stock with the book post-call snapshot.",
+      "contract": "Validate the complete order batch before allocation; process FIFO; preserve pure caller input; report filled quantities and shortages; commit only the stateful result.",
+      "rationale": "Consolidate the duplicated FIFO allocation and shortage policy into one pure engine with a small state-commit adapter.",
+      "evidence": [
+        "tests/test_inventory.py::test_pure_and_stateful_paths_share_the_explicit_state_mapping",
+        "tests/test_inventory.py::test_non_partial_policy_leaves_unfilled_quantity_available",
+        "tests/test_inventory.py::test_invalid_later_order_rolls_back_the_stateful_book"
+      ],
+      "difficulty": "hard"
+    },
+    {
+      "id": "ledger.inventory.allocate_orders--ledger.inventory.audit_stock_levels",
+      "a": "ledger.inventory.allocate_orders",
+      "b": "ledger.inventory.audit_stock_levels",
+      "judgment": "negative",
+      "tags": [
+        "nearby_negative",
+        "inventory_policy"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "Inventory mapping inputs under their documented allocation and minimum-level policies.",
+      "contract": "Allocation consumes ordered demand and returns a new stock state; auditing only reports whether independently configured stock minima are breached.",
+      "rationale": "Both inspect stock quantities, but the audit intentionally has no FIFO demand, partial-fulfillment, shortage, or state-transition responsibility.",
+      "evidence": [
+        "tests/test_inventory.py::test_inventory_audit_is_a_non_allocating_neighbor",
+        "tests/test_inventory.py::test_pure_and_stateful_paths_share_the_explicit_state_mapping"
+      ],
+      "difference_witness": "An A=1 inventory with minimum A=3 yields an audit breach, while allocation requires an order and returns allocations, shortages, and updated stock."
+    },
+    {
+      "id": "ledger.inventory.InventoryBook.reserve--ledger.inventory.InventoryBook.restock",
+      "a": "ledger.inventory.InventoryBook.reserve",
+      "b": "ledger.inventory.InventoryBook.restock",
+      "judgment": "negative",
+      "tags": [
+        "nearby_negative",
+        "state_mutation"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "One InventoryBook instance under valid deliveries and reservation orders.",
+      "contract": "Reservation subtracts fillable ordered demand and reports shortages; restocking adds confirmed deliveries and returns a stock snapshot.",
+      "rationale": "These stateful methods share inventory vocabulary and validation shape but apply opposite business transitions and have no substantial common allocation region.",
+      "evidence": [
+        "tests/test_inventory.py::test_multiple_calls_commit_only_valid_reservations",
+        "tests/test_inventory.py::test_non_partial_policy_leaves_unfilled_quantity_available"
+      ],
+      "difference_witness": "Restocking A by two increases available stock without a shortage record; reserving A consumes availability and can produce a shortage."
     }
   ],
   "probes": [
