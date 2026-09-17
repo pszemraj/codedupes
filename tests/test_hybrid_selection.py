@@ -128,3 +128,24 @@ def test_joint_selection_uses_pooled_f1_instead_of_language_f1(monkeypatch: pyte
     selected, _options = sweep_hybrid_gates._select_joint(projects, measurements, admissions)
     assert selected["high_gates"] == {"c": None, "python": None}
     assert selected["f1"] == pytest.approx(14 / 19)
+
+
+@pytest.mark.parametrize("admission", [0.99, 1.0])
+def test_promotion_sweep_accepts_admissions_through_one(admission: float):
+    project, measurement = _project_and_measurement("python", "python", [("positive", 1.0, 0.1)])
+    options = sweep_hybrid_gates._promotion_options(
+        [project], {"python": measurement}, {"python": admission}, 0.4, 0.0
+    )["python"]
+    promoted = next(option for option in options if option["tp"] == 1)
+    assert promoted["high_gate"] == admission
+
+
+def test_promotion_sweep_can_separate_pairs_above_point_98():
+    project, measurement = _project_and_measurement(
+        "python", "python", [("positive", 0.995, 0.1), ("negative", 0.985, 0.1)]
+    )
+    options = sweep_hybrid_gates._promotion_options(
+        [project], {"python": measurement}, {"python": 0.98}, 0.4, 0.0
+    )["python"]
+    best = max(options, key=lambda option: option["f1"])
+    assert (best["high_gate"], best["tp"], best["fp"]) == (0.99, 1, 0)

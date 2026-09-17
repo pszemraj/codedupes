@@ -163,7 +163,7 @@ def _promotion_options(
             for key, value in _semantic_labels(project, measurements[project.id]).items()
         }
         outcomes: dict[tuple[int, int, int, int], dict[str, Any]] = {}
-        for high_gate in [None, *threshold_grid(admissions[language], 0.98, 0.01)]:
+        for high_gate in [None, *threshold_grid(admissions[language], 1.0, 0.01)]:
             predicted = {
                 (project.id, *key)
                 for project in language_projects

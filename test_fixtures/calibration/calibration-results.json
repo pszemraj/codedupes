@@ -3,7 +3,7 @@
   "threshold_selection": {
     "schema_version": 3,
     "input_context": {
-      "selection_policy": "8590fbcd42d36b7349d9a143d5121f74cac6e806eea119fe701529982d787641",
+      "selection_policy": "682b14c752b6e9edb7fd15d5ae1d3d5c1e3ec1d32343bbc397b146303ee36d9c",
       "projects": {
         "ledger": {
           "annotations": "b6b158393315146bfdab421c91cb0c8dda3717d3f8d0527f07fde66bf1755604",
@@ -1128,7 +1128,7 @@
   "hybrid_selection": {
     "schema_version": 3,
     "input_context": {
-      "selection_policy": "8590fbcd42d36b7349d9a143d5121f74cac6e806eea119fe701529982d787641",
+      "selection_policy": "682b14c752b6e9edb7fd15d5ae1d3d5c1e3ec1d32343bbc397b146303ee36d9c",
       "projects": {
         "ledger": {
           "annotations": "b6b158393315146bfdab421c91cb0c8dda3717d3f8d0527f07fde66bf1755604",
@@ -1177,7 +1177,7 @@
         }
       }
     },
-    "threshold_selection_digest": "aacd21250183dad77dbaeb2cac850846f8d60ddcf5f145f0d7813bd4eb04c01b",
+    "threshold_selection_digest": "9f276f8ab0f1a8119a886590bd67922f5ea0a7f417f74a5ef661010cc5a91108",
     "models": [
       {
         "model": "gte-modernbert-base",

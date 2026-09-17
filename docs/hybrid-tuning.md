@@ -72,7 +72,8 @@ conda run --name inf python scripts/sweep_hybrid_gates.py \
 The selectors maximize judged F1, then prefer fewer unresolved predictions,
 higher recall, and higher precision. Hybrid selection jointly searches the
 corroboration constants and per-language promotion gates using pooled metrics;
-it does not lock corroboration before considering promotion. Duplicate/search
+promotion candidates span each admission gate through `1.0`. It does not lock
+corroboration before considering promotion. Duplicate/search
 threshold ties use a stable midpoint; hybrid ties prefer lower corroboration
 floors, then disabled promotion, then lower promotion gates. Reports
 keep reviewed ambiguities and unjudged findings separate from judged-only
