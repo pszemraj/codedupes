@@ -886,16 +886,16 @@
           }
         ],
         "search": {
-          "current_threshold": 0.56,
+          "current_threshold": 0.4,
           "current_metrics": {
-            "threshold": 0.56,
-            "tp": 57,
-            "fp": 12,
-            "fn": 34,
-            "precision": 0.8260869565217391,
-            "recall": 0.6263736263736264,
-            "f1": 0.7125,
-            "no_result_clean": 10,
+            "threshold": 0.4,
+            "tp": 87,
+            "fp": 267,
+            "fn": 4,
+            "precision": 0.2457627118644068,
+            "recall": 0.9560439560439561,
+            "f1": 0.3910112359550562,
+            "no_result_clean": 8,
             "no_result_total": 10
           },
           "selected_threshold": 0.56,
@@ -963,7 +963,7 @@
         }
       }
     },
-    "threshold_selection_digest": "decd6099657c40541f2e729548ca5ad759b88ea7286aa1f95e9cf87aab70b97c",
+    "threshold_selection_digest": "393e3812e4b3cdeb21cbd22b7fff3553e99ec1e30443fab4bb4b2ff5d325a084",
     "models": [
       {
         "model": "gte-modernbert-base",
@@ -1539,13 +1539,13 @@
             }
           },
           "search": {
-            "threshold": 0.56,
-            "tp": 7,
-            "fp": 1,
-            "fn": 4,
-            "precision": 0.875,
-            "recall": 0.6363636363636364,
-            "f1": 0.7368421052631579,
+            "threshold": 0.4,
+            "tp": 11,
+            "fp": 51,
+            "fn": 0,
+            "precision": 0.1774193548387097,
+            "recall": 1.0,
+            "f1": 0.3013698630136986,
             "no_result": {
               "clean": 2,
               "total": 2,
@@ -1632,13 +1632,13 @@
             }
           },
           "search": {
-            "threshold": 0.56,
-            "tp": 7,
-            "fp": 1,
-            "fn": 4,
-            "precision": 0.875,
-            "recall": 0.6363636363636364,
-            "f1": 0.7368421052631579,
+            "threshold": 0.4,
+            "tp": 11,
+            "fp": 51,
+            "fn": 0,
+            "precision": 0.1774193548387097,
+            "recall": 1.0,
+            "f1": 0.3013698630136986,
             "no_result": {
               "clean": 2,
               "total": 2,
@@ -1953,13 +1953,13 @@
             }
           },
           "search": {
-            "threshold": 0.56,
-            "tp": 15,
-            "fp": 3,
-            "fn": 4,
-            "precision": 0.8333333333333334,
-            "recall": 0.7894736842105263,
-            "f1": 0.8108108108108109,
+            "threshold": 0.4,
+            "tp": 19,
+            "fp": 57,
+            "fn": 0,
+            "precision": 0.25,
+            "recall": 1.0,
+            "f1": 0.4,
             "no_result": {
               "clean": 2,
               "total": 2,
@@ -2046,13 +2046,13 @@
             }
           },
           "search": {
-            "threshold": 0.56,
-            "tp": 15,
-            "fp": 3,
-            "fn": 4,
-            "precision": 0.8333333333333334,
-            "recall": 0.7894736842105263,
-            "f1": 0.8108108108108109,
+            "threshold": 0.4,
+            "tp": 19,
+            "fp": 57,
+            "fn": 0,
+            "precision": 0.25,
+            "recall": 1.0,
+            "f1": 0.4,
             "no_result": {
               "clean": 2,
               "total": 2,
@@ -2365,13 +2365,13 @@
             }
           },
           "search": {
-            "threshold": 0.56,
-            "tp": 14,
-            "fp": 5,
-            "fn": 8,
-            "precision": 0.7368421052631579,
-            "recall": 0.6363636363636364,
-            "f1": 0.6829268292682926,
+            "threshold": 0.4,
+            "tp": 22,
+            "fp": 56,
+            "fn": 0,
+            "precision": 0.28205128205128205,
+            "recall": 1.0,
+            "f1": 0.44000000000000006,
             "no_result": {
               "clean": 2,
               "total": 2,
@@ -2458,13 +2458,13 @@
             }
           },
           "search": {
-            "threshold": 0.56,
-            "tp": 14,
-            "fp": 5,
-            "fn": 8,
-            "precision": 0.7368421052631579,
-            "recall": 0.6363636363636364,
-            "f1": 0.6829268292682926,
+            "threshold": 0.4,
+            "tp": 22,
+            "fp": 56,
+            "fn": 0,
+            "precision": 0.28205128205128205,
+            "recall": 1.0,
+            "f1": 0.44000000000000006,
             "no_result": {
               "clean": 2,
               "total": 2,
@@ -2776,17 +2776,19 @@
             }
           },
           "search": {
-            "threshold": 0.56,
-            "tp": 12,
-            "fp": 2,
-            "fn": 8,
-            "precision": 0.8571428571428571,
-            "recall": 0.6,
-            "f1": 0.7058823529411764,
+            "threshold": 0.4,
+            "tp": 19,
+            "fp": 45,
+            "fn": 1,
+            "precision": 0.296875,
+            "recall": 0.95,
+            "f1": 0.45238095238095244,
             "no_result": {
-              "clean": 2,
+              "clean": 1,
               "total": 2,
-              "violations": []
+              "violations": [
+                "js.no-result.signed-pdf"
+              ]
             }
           }
         },
@@ -2868,17 +2870,19 @@
             }
           },
           "search": {
-            "threshold": 0.56,
-            "tp": 12,
-            "fp": 2,
-            "fn": 8,
-            "precision": 0.8571428571428571,
-            "recall": 0.6,
-            "f1": 0.7058823529411764,
+            "threshold": 0.4,
+            "tp": 19,
+            "fp": 45,
+            "fn": 1,
+            "precision": 0.296875,
+            "recall": 0.95,
+            "f1": 0.45238095238095244,
             "no_result": {
-              "clean": 2,
+              "clean": 1,
               "total": 2,
-              "violations": []
+              "violations": [
+                "js.no-result.signed-pdf"
+              ]
             }
           }
         }
@@ -3189,17 +3193,19 @@
             }
           },
           "search": {
-            "threshold": 0.56,
-            "tp": 9,
-            "fp": 1,
-            "fn": 10,
-            "precision": 0.9,
-            "recall": 0.47368421052631576,
-            "f1": 0.6206896551724138,
+            "threshold": 0.4,
+            "tp": 16,
+            "fp": 58,
+            "fn": 3,
+            "precision": 0.21621621621621623,
+            "recall": 0.8421052631578947,
+            "f1": 0.34408602150537637,
             "no_result": {
-              "clean": 2,
+              "clean": 1,
               "total": 2,
-              "violations": []
+              "violations": [
+                "no-result-berth-invoice"
+              ]
             }
           }
         },
@@ -3282,17 +3288,19 @@
             }
           },
           "search": {
-            "threshold": 0.56,
-            "tp": 9,
-            "fp": 1,
-            "fn": 10,
-            "precision": 0.9,
-            "recall": 0.47368421052631576,
-            "f1": 0.6206896551724138,
+            "threshold": 0.4,
+            "tp": 16,
+            "fp": 58,
+            "fn": 3,
+            "precision": 0.21621621621621623,
+            "recall": 0.8421052631578947,
+            "f1": 0.34408602150537637,
             "no_result": {
-              "clean": 2,
+              "clean": 1,
               "total": 2,
-              "violations": []
+              "violations": [
+                "no-result-berth-invoice"
+              ]
             }
           }
         }

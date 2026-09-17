@@ -41,8 +41,8 @@ macOS development so Apple silicon selects the faster MPS path. Continue to run
 the independent CPU/MPS comparison when source, model, extraction, task, prompt,
 or dtype policy changes.
 
-Select per-language duplicate gates and the global top-10 search gate from the
-CPU measurements:
+Select per-language duplicate gates and a candidate global top-10 search gate
+from the CPU measurements:
 
 ```bash
 conda run --name inf python scripts/sweep_semantic_thresholds.py \
@@ -72,7 +72,21 @@ floors, then disabled promotion, then lower promotion gates. Reports
 keep reviewed ambiguities and unjudged findings separate from judged-only
 precision, and break positive recall out by authored difficulty.
 
-After applying the selected profile values, capture fresh MPS results and write
+Before promoting a search recommendation, run the existing multi-domain smoke
+test against the candidate default:
+
+```bash
+CODEDUPES_SMOKE_SEARCH=1 conda run --name inf pytest tests/test_semantic_smoke.py -k search
+```
+
+Keep these independent queries unchanged. The current Gemma recommendation of
+`0.56` fails four of six relevant queries, so its shipped floor remains `0.40`;
+GTE ships its passing `0.68` recommendation. The result records both the
+development optimum (`selected_threshold`) and the shipped setting and its
+metrics (`current_threshold`, `current_metrics`). A development optimum alone
+does not justify replacing a working search default.
+
+After applying accepted profile values, capture fresh MPS results and write
 the compact checked summary:
 
 ```bash

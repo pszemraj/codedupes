@@ -499,7 +499,10 @@ def test_checked_calibration_result_matches_shipped_profiles():
 
     for model, selection in threshold_models.items():
         profile = resolve_model_profile(model)
-        assert selection["search"]["selected_threshold"] == profile.default_search_threshold
+        assert selection["search"]["current_threshold"] == profile.default_search_threshold
+        assert (
+            selection["search"]["current_metrics"]["threshold"] == profile.default_search_threshold
+        )
         for language in selection["duplicate_by_language"]:
             assert language["selection_ready"] is True
             assert language["selected_threshold"] == profile.semantic_threshold_for_language(
