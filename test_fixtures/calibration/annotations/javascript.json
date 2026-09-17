@@ -33,7 +33,8 @@
     {"id": "javascript/src/outbox.js::outbox.releaseNext::function::20", "selector": {"path": "src/outbox.js", "qualified_name": "outbox.releaseNext", "kind": "function", "start_line": 20}},
     {"id": "javascript/src/settlement.js::settlement.checkedSummaries::function::3", "selector": {"path": "src/settlement.js", "qualified_name": "settlement.checkedSummaries", "kind": "function", "start_line": 3}},
     {"id": "js.pagination.fetchRecords", "selector": {"path": "src/pagination.mjs", "qualified_name": "pagination.fetchRecords", "kind": "function"}},
-    {"id": "js.pagination.readSnapshot", "selector": {"path": "src/pagination.mjs", "qualified_name": "pagination.readSnapshot", "kind": "function"}}
+    {"id": "js.pagination.readSnapshot", "selector": {"path": "src/pagination.mjs", "qualified_name": "pagination.readSnapshot", "kind": "function"}},
+    {"id": "javascript/src/pagination.mjs::pagination.readSnapshot.visit::function::53", "selector": {"path": "src/pagination.mjs", "qualified_name": "pagination.readSnapshot.visit", "kind": "function", "start_line": 53}}
   ],
   "families": [
     {"id": "translated-aggregation", "members": ["js.aggregation.aggregateInvoices", "js.aggregation.buildInvoiceDigest", "js.aggregation.summarizeInvoiceAccounts"]},
@@ -327,6 +328,10 @@
     {
       "id": "js.pagination-recursion--outbox-negative", "a": "js.pagination.readSnapshot", "b": "js.outbox.publishConfirmation", "judgment": "negative", "tags": ["async-control-flow", "nearby-negative"], "scope": "whole_unit", "behavior_equivalent": false,
       "equivalence_domain": "Asynchronous snapshot traversal and queued receipt publication.", "contract": "readSnapshot recursively fetches and validates a cursor chain; publishConfirmation queues one receipt and resolves after mailbox delivery.", "rationale": "Promise chaining is incidental control flow around unrelated state machines and data contracts.", "evidence": ["test/pagination.test.mjs::synchronous transport throws become rejections", "test/calibration.test.js::receipt adapters preserve delivery state across callback and promise styles"], "difference_witness": "The snapshot reader returns records and a page count; publication appends one email entry to a mailbox."
+    },
+    {
+      "id": "js.pagination-loop--nested-recursion", "a": "js.pagination.fetchRecords", "b": "javascript/src/pagination.mjs::pagination.readSnapshot.visit::function::53", "judgment": "positive", "tags": ["translated", "async", "nested", "medium"], "difficulty": "medium", "scope": "whole_unit", "behavior_equivalent": true,
+      "equivalence_domain": "A freshly initialized recursive traversal called with a null token, mapped to the loop's initial state under valid maxPages options.", "contract": "Check cancellation around transport calls, reject cursor cycles before exhausted budgets, validate page/cursor/row shapes, retain first-seen IDs in order, count pages, and preserve transport failures.", "rationale": "The nested Promise recursion is the independently written traversal core corresponding to the public async loop, rather than a helper shared by the two implementations.", "evidence": ["test/pagination.test.mjs::generated page chains agree with an independently assembled oracle and request order", "test/pagination.test.mjs::cursor cycle wins over exhausted budget"]
     }
   ],
   "probes": [

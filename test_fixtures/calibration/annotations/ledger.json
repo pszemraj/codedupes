@@ -189,6 +189,15 @@
         "qualified_name": "ledger.settlement.build_invoice_report",
         "kind": "function"
       }
+    },
+    {
+      "id": "ledger/src/ledger/inventory.py::ledger.inventory.InventoryBook._pending_orders::method::65",
+      "selector": {
+        "path": "src/ledger/inventory.py",
+        "qualified_name": "ledger.inventory.InventoryBook._pending_orders",
+        "kind": "method",
+        "start_line": 65
+      }
     }
   ],
   "families": [
@@ -1070,6 +1079,140 @@
         "tests/test_inventory.py::test_non_partial_policy_leaves_unfilled_quantity_available"
       ],
       "difference_witness": "Restocking A by two increases available stock without a shortage record; reserving A consumes availability and can produce a shortage."
+    },
+    {
+      "id": "inventory-allocate--pending-orders",
+      "a": "ledger.inventory.allocate_orders",
+      "b": "ledger/src/ledger/inventory.py::ledger.inventory.InventoryBook._pending_orders::method::65",
+      "judgment": "positive",
+      "tags": [
+        "partial",
+        "helper_extraction",
+        "restructured"
+      ],
+      "difficulty": "medium",
+      "scope": "partial",
+      "behavior_equivalent": false,
+      "equivalence_domain": "Ordered tuple entries containing a nonblank SKU and positive non-boolean integer demand.",
+      "contract": "Decode and validate the complete ordered request before any allocation or stored-state change.",
+      "rationale": "The pure path inlines the order decoder while the stateful path extracts an independent try-unpack validator; one shared decoder removes duplicated validation without merging allocation and state commit orchestration.",
+      "evidence": [
+        "tests/test_inventory.py::test_invalid_later_order_rolls_back_the_stateful_book",
+        "tests/test_inventory.py::test_pure_and_stateful_paths_share_the_explicit_state_mapping"
+      ],
+      "difference_witness": "A two-item list can be unpacked by the helper but the pure entry point requires a tuple, and only allocate_orders returns updated stock, allocations, and shortages.",
+      "regions": [
+        {
+          "unit": "ledger.inventory.allocate_orders",
+          "start_line": 22,
+          "end_line": 31,
+          "sha256": "71f4f15c7ba4cda3c1cc9877f865617977af892b7c70f94ff513a3dab12ab226"
+        },
+        {
+          "unit": "ledger/src/ledger/inventory.py::ledger.inventory.InventoryBook._pending_orders::method::65",
+          "start_line": 65,
+          "end_line": 78,
+          "sha256": "685c01334a17cdecd7fff459aaf98a30da52cd41ce2239ea3d1b9a5a0907c08d"
+        }
+      ]
+    },
+    {
+      "id": "inventory-reserve--pending-orders-negative",
+      "a": "ledger.inventory.InventoryBook.reserve",
+      "b": "ledger/src/ledger/inventory.py::ledger.inventory.InventoryBook._pending_orders::method::65",
+      "judgment": "negative",
+      "tags": [
+        "helper_caller",
+        "direct_reuse"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "Reservation batches passed to one InventoryBook.",
+      "contract": "The helper decodes requests; reserve calls it before applying partial-fill policy and committing a candidate stock map.",
+      "rationale": "This is direct helper reuse inside reserve, not an independently maintained copy of request validation.",
+      "evidence": [
+        "tests/test_inventory.py::test_invalid_later_order_rolls_back_the_stateful_book"
+      ],
+      "difference_witness": "The helper returns checked requests without changing stock; reserve commits stock and returns allocations and shortages."
+    },
+    {
+      "id": "inventory-restock--pending-orders-negative",
+      "a": "ledger.inventory.InventoryBook.restock",
+      "b": "ledger/src/ledger/inventory.py::ledger.inventory.InventoryBook._pending_orders::method::65",
+      "judgment": "negative",
+      "tags": [
+        "tuple_validation",
+        "nearby_negative"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "Delivery tuples and reservation tuples under their distinct inventory policies.",
+      "contract": "Restock validates confirmed positive deliveries and adds stock; the helper validates positive requested demand without mutating stock.",
+      "rationale": "Their pair-shaped loops enforce different business transitions and error contracts, leaving no substantial shared operation beyond generic tuple checking.",
+      "evidence": [
+        "tests/test_inventory.py::test_multiple_calls_commit_only_valid_reservations"
+      ],
+      "difference_witness": "Restocking A by two raises stored availability; decoding an order for A never changes inventory."
+    },
+    {
+      "id": "inventory-restock--audit-negative",
+      "a": "ledger.inventory.InventoryBook.restock",
+      "b": "ledger.inventory.audit_stock_levels",
+      "judgment": "negative",
+      "tags": [
+        "inventory_policy",
+        "nearby_negative"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "Inventory mappings under delivery and minimum-level policies.",
+      "contract": "Restock commits additive deliveries; auditing reads stock and returns sorted minimum-level breaches.",
+      "rationale": "One is a state transition and the other a read-only policy report, despite shared stock vocabulary.",
+      "evidence": [
+        "tests/test_inventory.py::test_multiple_calls_commit_only_valid_reservations",
+        "tests/test_inventory.py::test_inventory_audit_is_a_non_allocating_neighbor"
+      ],
+      "difference_witness": "A delivery can change stock without an audit finding, while an audit can report a breach without changing stock."
+    },
+    {
+      "id": "ledger-main--ingest-rows-negative",
+      "a": "ledger.__main__.main",
+      "b": "ledger.imports.ingest_rows",
+      "judgment": "negative",
+      "tags": [
+        "orchestration",
+        "direct_reuse"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "The fixture demonstration and raw ledger imports.",
+      "contract": "main calls ingest_rows before driving CSV/API, settlement, inventory, and audit examples; ingest_rows owns row normalization and rejection accounting.",
+      "rationale": "The application entry point directly calls the importer and contains no copied import algorithm.",
+      "evidence": [
+        "src/ledger/__main__.py::ingest_rows(rows)",
+        "tests/test_workflows.py::test_duplicate_acceptance_and_date_bounds"
+      ],
+      "difference_witness": "main prints results from several application domains; ingest_rows returns only one ImportReport."
+    },
+    {
+      "id": "inventory-restock--allocate-negative",
+      "a": "ledger.inventory.InventoryBook.restock",
+      "b": "ledger.inventory.allocate_orders",
+      "judgment": "negative",
+      "tags": [
+        "tuple_validation",
+        "opposite_state_transition"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "Positive delivery tuples and demand tuples against inventory quantities.",
+      "contract": "Restock adds confirmed deliveries to stored state; allocation consumes FIFO demand under partial-fill policy and reports shortages from a copied map.",
+      "rationale": "Generic two-item validation does not outweigh opposite transitions, distinct policies, and distinct outputs.",
+      "evidence": [
+        "tests/test_inventory.py::test_multiple_calls_commit_only_valid_reservations",
+        "tests/test_inventory.py::test_pure_and_stateful_paths_share_the_explicit_state_mapping"
+      ],
+      "difference_witness": "A delivery increases A, whereas an order can decrease A and emit a shortage record."
     }
   ],
   "probes": [
