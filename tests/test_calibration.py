@@ -10,7 +10,11 @@ from types import SimpleNamespace
 import pytest
 
 from codedupes.semantic_profiles import resolve_model_profile
-from scripts import report_calibration_distributions, sweep_semantic_thresholds
+from scripts import (
+    calibration_evaluation,
+    report_calibration_distributions,
+    sweep_semantic_thresholds,
+)
 from scripts.calibration_contract import (
     DEFAULT_MANIFEST,
     load_projects,
@@ -439,6 +443,40 @@ def test_selections_reject_changed_review_or_scope(change: str):
         validate_selection_context(payload, projects, models)
 
 
+@pytest.mark.parametrize(
+    "changed_file",
+    [
+        "scripts/sweep_semantic_thresholds.py",
+        "scripts/sweep_hybrid_gates.py",
+        "scripts/calibration_evaluation.py",
+        "src/codedupes/semantic_profiles.py",
+    ],
+)
+def test_selection_policy_edits_reuse_measurements_but_reject_selections(
+    tmp_path: Path, monkeypatch, changed_file: str
+):
+    # Isolate policy files without editing the real extraction/measurement inputs.
+    for relative in (
+        "scripts/sweep_semantic_thresholds.py",
+        "scripts/sweep_hybrid_gates.py",
+        "scripts/calibration_evaluation.py",
+        "src/codedupes/semantic_profiles.py",
+    ):
+        target = tmp_path / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text((calibration_evaluation.REPO / relative).read_text())
+    monkeypatch.setattr(calibration_evaluation, "REPO", tmp_path)
+    projects, models = load_projects(project_ids=["ledger"]), ["gte-modernbert-base"]
+    original = selection_context(projects, models)
+    policy_file = tmp_path / changed_file
+    policy_file.write_text(policy_file.read_text() + "\n# changed selection policy\n")
+    updated = selection_context(projects, models)
+    assert updated["projects"] == original["projects"]
+    assert updated["selection_policy"] != original["selection_policy"]
+    with pytest.raises(ValueError, match="stale or mismatched selection"):
+        validate_selection_context({"input_context": original}, projects, models)
+
+
 def test_report_rejects_hybrid_from_another_threshold_selection(tmp_path: Path, monkeypatch):
     project = load_projects(project_ids=["ledger"])[0]
     context = selection_context([project], ["gte-modernbert-base", "embeddinggemma-300m"])
@@ -531,9 +569,12 @@ def test_checked_calibration_result_matches_shipped_profiles():
     )
     for project in load_projects():
         # Runtime identity is machine-specific; checked labels and scope are not.
-        assert context[project.id]["annotations"] == selection_digest(project.annotations)
-        assert context[project.id]["project"] == selection_digest(project.spec)
-        assert context[project.id]["policy"] == project.policy_name
+        assert context["projects"][project.id]["annotations"] == selection_digest(
+            project.annotations
+        )
+        assert context["projects"][project.id]["project"] == selection_digest(project.spec)
+        assert context["projects"][project.id]["policy"] == project.policy_name
+    assert context["selection_policy"] == selection_context([], [])["selection_policy"]
     assert result["measurement_runtime"]["scope"] == "all checked CPU and MPS reports"
     assert {
         report["runtime_versions"]["torch"]

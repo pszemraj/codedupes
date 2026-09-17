@@ -3,49 +3,52 @@
   "threshold_selection": {
     "schema_version": 3,
     "input_context": {
-      "ledger": {
-        "annotations": "b6b158393315146bfdab421c91cb0c8dda3717d3f8d0527f07fde66bf1755604",
-        "project": "0d3adeb2a1b1fc7ff7b2a3d7659a73265ed443233daa3df8af9c34df97a53a06",
-        "policy": "default",
-        "measurements": {
-          "gte-modernbert-base": "6896d38cf31fa5526e72723b46a6ecab61daa8a8bc7be2437c9b5808d3bb6d70",
-          "embeddinggemma-300m": "dbce2b7280fe9c3610f92d4d61f69f5568e02bae6ea774e832fd38d823d41dca"
-        }
-      },
-      "cowsay": {
-        "annotations": "72cc6dbd941e8380eabc702dee945d716ebc6c4ee6be08aa76ade59ec2465e26",
-        "project": "6f9ff2c4c2fc0ff4bbc158d8b761d81e8e0e3bda08a06378790cf3485ec08e60",
-        "policy": "default",
-        "measurements": {
-          "gte-modernbert-base": "18f27c59248fcd1d60b488ee1b3197aa8891c23890501487fa7e43a3c426eb00",
-          "embeddinggemma-300m": "83c3c6a0fc2563e6c79a74b076de5930d7bb60294d9275016607c9a0b5ddf0a5"
-        }
-      },
-      "c_metering": {
-        "annotations": "bd693151ca84ce93e305be8335b2a1f759b5b9a101a00bf31757f3280e35f833",
-        "project": "8fc6af9d9df5409d6542fe1484c65dc74b510f617d4eed8bcef78093c196a7c9",
-        "policy": "default",
-        "measurements": {
-          "gte-modernbert-base": "66c4c2c09720e08246527e626e1455cfb66b99109e9b5877adf59b628a208b5d",
-          "embeddinggemma-300m": "25be5fe50ac3a0ffe08da6816054e01192575aa46ad21b46995d53708b1c2d24"
-        }
-      },
-      "javascript": {
-        "annotations": "87f361705012a0909578f8a88be8272e759d90ab091fd8ef59eea41a6bc5aa75",
-        "project": "30641293e6b0bea19f5da920d28437f3c7f206693b3349a92542ab12115c8f9f",
-        "policy": "default",
-        "measurements": {
-          "gte-modernbert-base": "191065faea2e603b8475cc79d38fdd1368e2f588bdc332e0f172ff9d47f4476b",
-          "embeddinggemma-300m": "89b461a9f00447e2f7bf597b3870a64ee6d5cb935a70379d8c90262e67f8e795"
-        }
-      },
-      "harbor-ts": {
-        "annotations": "e9e5ca1252fb08c8978810532b8cfd942b73595ca8c654ff899a7ad58927400f",
-        "project": "bffc6270179b31d999c4d0166c88d9358c2fe58e90e9cc7207a5b28a6563fa6c",
-        "policy": "default",
-        "measurements": {
-          "gte-modernbert-base": "1bb5a86f92cfbbf91006e5f7b0e558ceecbaad9cc5b45cda1bae418a2a0e8b60",
-          "embeddinggemma-300m": "0e4fb68acc3628dd99a90b0d7ec5e426988a048b9db1165554cb05ab4414c18b"
+      "selection_policy": "8590fbcd42d36b7349d9a143d5121f74cac6e806eea119fe701529982d787641",
+      "projects": {
+        "ledger": {
+          "annotations": "b6b158393315146bfdab421c91cb0c8dda3717d3f8d0527f07fde66bf1755604",
+          "project": "0d3adeb2a1b1fc7ff7b2a3d7659a73265ed443233daa3df8af9c34df97a53a06",
+          "policy": "default",
+          "measurements": {
+            "gte-modernbert-base": "6896d38cf31fa5526e72723b46a6ecab61daa8a8bc7be2437c9b5808d3bb6d70",
+            "embeddinggemma-300m": "dbce2b7280fe9c3610f92d4d61f69f5568e02bae6ea774e832fd38d823d41dca"
+          }
+        },
+        "cowsay": {
+          "annotations": "72cc6dbd941e8380eabc702dee945d716ebc6c4ee6be08aa76ade59ec2465e26",
+          "project": "6f9ff2c4c2fc0ff4bbc158d8b761d81e8e0e3bda08a06378790cf3485ec08e60",
+          "policy": "default",
+          "measurements": {
+            "gte-modernbert-base": "18f27c59248fcd1d60b488ee1b3197aa8891c23890501487fa7e43a3c426eb00",
+            "embeddinggemma-300m": "83c3c6a0fc2563e6c79a74b076de5930d7bb60294d9275016607c9a0b5ddf0a5"
+          }
+        },
+        "c_metering": {
+          "annotations": "bd693151ca84ce93e305be8335b2a1f759b5b9a101a00bf31757f3280e35f833",
+          "project": "8fc6af9d9df5409d6542fe1484c65dc74b510f617d4eed8bcef78093c196a7c9",
+          "policy": "default",
+          "measurements": {
+            "gte-modernbert-base": "66c4c2c09720e08246527e626e1455cfb66b99109e9b5877adf59b628a208b5d",
+            "embeddinggemma-300m": "25be5fe50ac3a0ffe08da6816054e01192575aa46ad21b46995d53708b1c2d24"
+          }
+        },
+        "javascript": {
+          "annotations": "87f361705012a0909578f8a88be8272e759d90ab091fd8ef59eea41a6bc5aa75",
+          "project": "30641293e6b0bea19f5da920d28437f3c7f206693b3349a92542ab12115c8f9f",
+          "policy": "default",
+          "measurements": {
+            "gte-modernbert-base": "191065faea2e603b8475cc79d38fdd1368e2f588bdc332e0f172ff9d47f4476b",
+            "embeddinggemma-300m": "89b461a9f00447e2f7bf597b3870a64ee6d5cb935a70379d8c90262e67f8e795"
+          }
+        },
+        "harbor-ts": {
+          "annotations": "e9e5ca1252fb08c8978810532b8cfd942b73595ca8c654ff899a7ad58927400f",
+          "project": "bffc6270179b31d999c4d0166c88d9358c2fe58e90e9cc7207a5b28a6563fa6c",
+          "policy": "default",
+          "measurements": {
+            "gte-modernbert-base": "1bb5a86f92cfbbf91006e5f7b0e558ceecbaad9cc5b45cda1bae418a2a0e8b60",
+            "embeddinggemma-300m": "0e4fb68acc3628dd99a90b0d7ec5e426988a048b9db1165554cb05ab4414c18b"
+          }
         }
       }
     },
@@ -1125,53 +1128,56 @@
   "hybrid_selection": {
     "schema_version": 3,
     "input_context": {
-      "ledger": {
-        "annotations": "b6b158393315146bfdab421c91cb0c8dda3717d3f8d0527f07fde66bf1755604",
-        "project": "0d3adeb2a1b1fc7ff7b2a3d7659a73265ed443233daa3df8af9c34df97a53a06",
-        "policy": "default",
-        "measurements": {
-          "gte-modernbert-base": "6896d38cf31fa5526e72723b46a6ecab61daa8a8bc7be2437c9b5808d3bb6d70",
-          "embeddinggemma-300m": "dbce2b7280fe9c3610f92d4d61f69f5568e02bae6ea774e832fd38d823d41dca"
-        }
-      },
-      "cowsay": {
-        "annotations": "72cc6dbd941e8380eabc702dee945d716ebc6c4ee6be08aa76ade59ec2465e26",
-        "project": "6f9ff2c4c2fc0ff4bbc158d8b761d81e8e0e3bda08a06378790cf3485ec08e60",
-        "policy": "default",
-        "measurements": {
-          "gte-modernbert-base": "18f27c59248fcd1d60b488ee1b3197aa8891c23890501487fa7e43a3c426eb00",
-          "embeddinggemma-300m": "83c3c6a0fc2563e6c79a74b076de5930d7bb60294d9275016607c9a0b5ddf0a5"
-        }
-      },
-      "c_metering": {
-        "annotations": "bd693151ca84ce93e305be8335b2a1f759b5b9a101a00bf31757f3280e35f833",
-        "project": "8fc6af9d9df5409d6542fe1484c65dc74b510f617d4eed8bcef78093c196a7c9",
-        "policy": "default",
-        "measurements": {
-          "gte-modernbert-base": "66c4c2c09720e08246527e626e1455cfb66b99109e9b5877adf59b628a208b5d",
-          "embeddinggemma-300m": "25be5fe50ac3a0ffe08da6816054e01192575aa46ad21b46995d53708b1c2d24"
-        }
-      },
-      "javascript": {
-        "annotations": "87f361705012a0909578f8a88be8272e759d90ab091fd8ef59eea41a6bc5aa75",
-        "project": "30641293e6b0bea19f5da920d28437f3c7f206693b3349a92542ab12115c8f9f",
-        "policy": "default",
-        "measurements": {
-          "gte-modernbert-base": "191065faea2e603b8475cc79d38fdd1368e2f588bdc332e0f172ff9d47f4476b",
-          "embeddinggemma-300m": "89b461a9f00447e2f7bf597b3870a64ee6d5cb935a70379d8c90262e67f8e795"
-        }
-      },
-      "harbor-ts": {
-        "annotations": "e9e5ca1252fb08c8978810532b8cfd942b73595ca8c654ff899a7ad58927400f",
-        "project": "bffc6270179b31d999c4d0166c88d9358c2fe58e90e9cc7207a5b28a6563fa6c",
-        "policy": "default",
-        "measurements": {
-          "gte-modernbert-base": "1bb5a86f92cfbbf91006e5f7b0e558ceecbaad9cc5b45cda1bae418a2a0e8b60",
-          "embeddinggemma-300m": "0e4fb68acc3628dd99a90b0d7ec5e426988a048b9db1165554cb05ab4414c18b"
+      "selection_policy": "8590fbcd42d36b7349d9a143d5121f74cac6e806eea119fe701529982d787641",
+      "projects": {
+        "ledger": {
+          "annotations": "b6b158393315146bfdab421c91cb0c8dda3717d3f8d0527f07fde66bf1755604",
+          "project": "0d3adeb2a1b1fc7ff7b2a3d7659a73265ed443233daa3df8af9c34df97a53a06",
+          "policy": "default",
+          "measurements": {
+            "gte-modernbert-base": "6896d38cf31fa5526e72723b46a6ecab61daa8a8bc7be2437c9b5808d3bb6d70",
+            "embeddinggemma-300m": "dbce2b7280fe9c3610f92d4d61f69f5568e02bae6ea774e832fd38d823d41dca"
+          }
+        },
+        "cowsay": {
+          "annotations": "72cc6dbd941e8380eabc702dee945d716ebc6c4ee6be08aa76ade59ec2465e26",
+          "project": "6f9ff2c4c2fc0ff4bbc158d8b761d81e8e0e3bda08a06378790cf3485ec08e60",
+          "policy": "default",
+          "measurements": {
+            "gte-modernbert-base": "18f27c59248fcd1d60b488ee1b3197aa8891c23890501487fa7e43a3c426eb00",
+            "embeddinggemma-300m": "83c3c6a0fc2563e6c79a74b076de5930d7bb60294d9275016607c9a0b5ddf0a5"
+          }
+        },
+        "c_metering": {
+          "annotations": "bd693151ca84ce93e305be8335b2a1f759b5b9a101a00bf31757f3280e35f833",
+          "project": "8fc6af9d9df5409d6542fe1484c65dc74b510f617d4eed8bcef78093c196a7c9",
+          "policy": "default",
+          "measurements": {
+            "gte-modernbert-base": "66c4c2c09720e08246527e626e1455cfb66b99109e9b5877adf59b628a208b5d",
+            "embeddinggemma-300m": "25be5fe50ac3a0ffe08da6816054e01192575aa46ad21b46995d53708b1c2d24"
+          }
+        },
+        "javascript": {
+          "annotations": "87f361705012a0909578f8a88be8272e759d90ab091fd8ef59eea41a6bc5aa75",
+          "project": "30641293e6b0bea19f5da920d28437f3c7f206693b3349a92542ab12115c8f9f",
+          "policy": "default",
+          "measurements": {
+            "gte-modernbert-base": "191065faea2e603b8475cc79d38fdd1368e2f588bdc332e0f172ff9d47f4476b",
+            "embeddinggemma-300m": "89b461a9f00447e2f7bf597b3870a64ee6d5cb935a70379d8c90262e67f8e795"
+          }
+        },
+        "harbor-ts": {
+          "annotations": "e9e5ca1252fb08c8978810532b8cfd942b73595ca8c654ff899a7ad58927400f",
+          "project": "bffc6270179b31d999c4d0166c88d9358c2fe58e90e9cc7207a5b28a6563fa6c",
+          "policy": "default",
+          "measurements": {
+            "gte-modernbert-base": "1bb5a86f92cfbbf91006e5f7b0e558ceecbaad9cc5b45cda1bae418a2a0e8b60",
+            "embeddinggemma-300m": "0e4fb68acc3628dd99a90b0d7ec5e426988a048b9db1165554cb05ab4414c18b"
+          }
         }
       }
     },
-    "threshold_selection_digest": "c3739784ce51fd9b19757894e806dfb480c3bf48dda4460fff40800b2f9512dc",
+    "threshold_selection_digest": "aacd21250183dad77dbaeb2cac850846f8d60ddcf5f145f0d7813bd4eb04c01b",
     "models": [
       {
         "model": "gte-modernbert-base",

@@ -55,7 +55,8 @@ metrics are evaluated at the exact shipped thresholds independently of that grid
 
 If the output reports unjudged or ambiguous predictions, review those source
 pairs and rerun the sweep. Derived selections record their source, model, policy,
-project scope, and annotation identities. Label or relevance corrections reuse
+project scope, annotation, selection-code, and profile-policy identities. Label,
+relevance, selection-code, or profile-default corrections reuse
 raw scores but require new selections; the hybrid sweep and report reject stale
 inputs, and the report checks which admission selection the hybrid sweep used.
 Once every admission selection is ready, select the
@@ -90,8 +91,9 @@ development optimum (`selected_threshold`) and the shipped setting and its
 metrics (`current_threshold`, `current_metrics`). A development optimum alone
 does not justify replacing a working search default.
 
-After applying accepted profile values, capture fresh MPS results and write
-the compact checked summary:
+After applying accepted profile values, rerun both selection commands above so
+the recorded current metrics and policy identity match the shipped defaults.
+Capture fresh MPS results, then write the compact checked summary:
 
 ```bash
 conda run --name inf python scripts/report_calibration_distributions.py \

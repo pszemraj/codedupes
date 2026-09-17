@@ -14,10 +14,10 @@ from codedupes.constants import DEFAULT_TOP_K, DEFAULT_TRADITIONAL_THRESHOLD
 from codedupes.semantic_profiles import resolve_model_profile
 
 try:
-    from .calibration_contract import Project, pair_key, write_json
+    from .calibration_contract import REPO, Project, pair_key, write_json
     from .calibration_measurements import artifact_path, load_measurement, measurement_fingerprint
 except ImportError:
-    from calibration_contract import Project, pair_key, write_json
+    from calibration_contract import REPO, Project, pair_key, write_json
     from calibration_measurements import artifact_path, load_measurement, measurement_fingerprint
 
 
@@ -27,18 +27,31 @@ def selection_digest(payload: Any) -> str:
 
 
 def selection_context(projects: list[Project], models: list[str]) -> dict[str, Any]:
-    """Bind derived selections to their corpus scope, judgments, and measured inputs."""
+    """Bind selections to their policy, corpus scope, judgments, and measured inputs."""
     return {
-        project.id: {
-            "annotations": selection_digest(project.annotations),
-            "project": selection_digest(project.spec),
-            "policy": project.policy_name,
-            "measurements": {
-                resolve_model_profile(model).key: measurement_fingerprint(project, model)
-                for model in models
-            },
-        }
-        for project in projects
+        "selection_policy": selection_digest(
+            {
+                path: (REPO / path).read_text()
+                for path in (
+                    "scripts/calibration_evaluation.py",
+                    "scripts/sweep_semantic_thresholds.py",
+                    "scripts/sweep_hybrid_gates.py",
+                    "src/codedupes/semantic_profiles.py",
+                )
+            }
+        ),
+        "projects": {
+            project.id: {
+                "annotations": selection_digest(project.annotations),
+                "project": selection_digest(project.spec),
+                "policy": project.policy_name,
+                "measurements": {
+                    resolve_model_profile(model).key: measurement_fingerprint(project, model)
+                    for model in models
+                },
+            }
+            for project in projects
+        },
     }
 
 
