@@ -175,7 +175,7 @@ def test_coarse_sweep_measures_shipped_thresholds_exactly(tmp_path: Path, monkey
         },
     )
     measurement = {
-        "pairs": [{"a": "a", "b": "b", "cosine": 0.85, "comparable": True}],
+        "pairs": [{"a": "a", "b": "b", "cosine": 0.90, "comparable": True}],
         "query_scores": [
             {"probe": "q", "unit": "a", "cosine": 0.69, "rank": 1},
             {"probe": "q", "unit": "b", "cosine": 0.65, "rank": 2},
@@ -197,7 +197,7 @@ def test_coarse_sweep_measures_shipped_thresholds_exactly(tmp_path: Path, monkey
     assert sweep_semantic_thresholds.main() == 0
     result = read_json(output)
     duplicate = result["models"][0]["duplicate_by_language"][0]
-    assert duplicate["current_threshold"] == duplicate["current_metrics"]["threshold"] == 0.80
+    assert duplicate["current_threshold"] == duplicate["current_metrics"]["threshold"] == 0.87
     assert duplicate["current_metrics"]["tp"] == 1
     assert duplicate["current_difficulty_recall"]["easy"]["detected"] == 1
     search = result["models"][0]["search"]
@@ -211,7 +211,7 @@ def test_replay_matches_production_tier_rules():
         "metadata": {
             "model": "gte-modernbert-base",
             "captured_profile": {
-                "semantic_threshold": 0.80,
+                "semantic_threshold": 0.87,
                 "weak_identifier_jaccard_min": 0.0,
                 "statement_ratio_min": 0.80,
                 "high_gate": None,
@@ -235,7 +235,7 @@ def test_replay_matches_production_tier_rules():
             {
                 "a": "a",
                 "b": "c",
-                "cosine": 0.84,
+                "cosine": 0.875,
                 "comparable": True,
                 "identifier_jaccard": 0.0,
                 "statement_ratio": 0.5,

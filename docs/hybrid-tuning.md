@@ -92,7 +92,7 @@ Keep these queries unchanged. Check that each target ranks in the top three
 without a score floor, that emitted default hits are relevant, and that no-result
 queries stay empty. Do not lower the default merely to return every known target:
 precision and recall are jointly evaluated by the corpus F1 policy. The shipped
-search floors are `0.68` for GTE and `0.56` for Gemma. The result records both the
+search floors are `0.68` for GTE and `0.53` for Gemma. The result records both the
 selected settings and their current shipped metrics.
 
 After applying accepted profile values, rerun both selection commands above so

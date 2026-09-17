@@ -26,17 +26,17 @@ Semantic duplicate detection is gated per language. Each built-in model profile 
 
 | language | `gte-modernbert-base` | `embeddinggemma-300m` |
 | --- | --- | --- |
-| python | `0.80` | `0.74` |
+| python | `0.87` | `0.76` |
 | c | `0.85` | `0.82` |
 | rust | `0.84` | `0.88` |
-| javascript | `0.70` | `0.80` |
+| javascript | `0.69` | `0.80` |
 | typescript | `0.76` | `0.83` |
 
-Python remains at `0.80`/`0.74`. The added source-backed families support slightly lower Rust, JavaScript, and TypeScript gates where they recover reviewed positives with the selected tradeoff. TypeScript includes the copied booking decoder as a partial positive, consistent with the other languages. The corpus is development evidence with an authored challenge mix, so these settings are practical defaults rather than an estimate of ecosystem-wide precision. See [calibration measurements and replay](hybrid-tuning.md).
+The expanded source-backed corpus moves the Python gates to `0.87`/`0.76`, where the measured F1 objective rejects more false positives. GTE JavaScript moves slightly to `0.69`; the C, Rust, and TypeScript gates remain unchanged. The corpus is development evidence with an authored challenge mix, so these settings are practical defaults rather than an estimate of ecosystem-wide precision. See [calibration measurements and replay](hybrid-tuning.md).
 
 See [threshold-profile choices](model-profiles.md#choosing-threshold-defaults) for profile selection.
 
-The profile fallback (`0.86` gte, `0.89` gemma) applies only to languages without their own entry. An explicit `--semantic-threshold`/`--threshold` (or `AnalyzerConfig.semantic_threshold`) replaces every per-language gate with one flat value. The pairwise embedding scan partitions candidates by language and scans each group at that language's own gate, so a loosely gated language never drags another language's scan down; the scalar floor handed to the scan covers only languages that arrive without a profile entry.
+The profile fallback (`0.87` gte, `0.89` gemma) applies only to languages without their own entry. An explicit `--semantic-threshold`/`--threshold` (or `AnalyzerConfig.semantic_threshold`) replaces every per-language gate with one flat value. The pairwise embedding scan partitions candidates by language and scans each group at that language's own gate, so a loosely gated language never drags another language's scan down; the scalar floor handed to the scan covers only languages that arrive without a profile entry.
 
 Semantic duplicate pairs are same-language by default. `--cross-language` (or `AnalyzerConfig(cross_language=True)`) also reports cross-language pairs; those claims are uncalibrated, so an opted-in mixed pair is held to `min(gate_a, gate_b)`, the looser of its two language gates.
 
@@ -136,7 +136,7 @@ A semantic-only pair has already passed its language's duplicate gate (applied b
 | profile | identifier Jaccard min | statement ratio min | promotion gates |
 | --- | --- | --- | --- |
 | `gte-modernbert-base` | `0.40` | `0.00` | python `0.88`, c `0.85`, rust `0.84`, javascript `0.70`; typescript off |
-| `embeddinggemma-300m` | `0.40` | `0.00` | python `0.74`, c `0.89`, rust `0.88`, javascript `0.80`; typescript off |
+| `embeddinggemma-300m` | `0.40` | `0.00` | python `0.78`, c `0.89`, rust `0.88`, javascript `0.80`; typescript off |
 | `generic` | `0.00` | `0.20` | off |
 
 The corroboration constants and promotion gates were selected jointly after fixing the admission gates on the same reviewed development corpus. Both stages prefer recall only within half a percentage point of the best measured F1. An explicit `--semantic-threshold` keeps the profile's corroboration constants but turns similarity promotion off because those promotion gates belong to the shipped profile policy. See [calibration measurements and replay](hybrid-tuning.md).
