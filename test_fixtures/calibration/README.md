@@ -10,17 +10,21 @@ variants of one workflow just to increase the pair count.
 
 | project | language | positives | negatives | probes |
 | --- | --- | ---: | ---: | ---: |
-| ledger | Python | 13 | 30 | 12 |
-| cowsay | Rust | 8 | 29 | 12 |
-| c_metering | C | 20 | 31 | 12 |
-| javascript | JavaScript | 17 | 53 | 12 |
-| harbor-ts | TypeScript | 12 | 31 | 12 |
+| ledger | Python | 15 | 30 | 12 |
+| cowsay | Rust | 11 | 29 | 12 |
+| c_metering | C | 21 | 31 | 12 |
+| javascript | JavaScript | 23 | 53 | 12 |
+| harbor-ts | TypeScript | 15 | 31 | 12 |
 
-Positive pairs cover easy, medium, and hard cases. Easy pairs retain obvious
-structure, medium pairs introduce meaningful control-flow or API differences,
-and hard pairs use substantial algorithmic rewrites or distributed overlap.
-Difficulty describes the source transformation; retrieval rank is a measurement,
-not a labeling rule. Keep behavior and judgments fixed when tuning thresholds.
+Each language keeps at least five reviewed easy pairs and five reviewed medium
+pairs. Existing coverage is not reduced merely to balance the buckets. Easy
+pairs retain obvious structure, while medium pairs introduce meaningful
+control-flow or API differences. Hard pairs use substantial algorithmic rewrites
+or distributed overlap and are optional: a plausible hard pair should usually
+avoid the leading results in a repo-wide `semble find-related` query. Interpret
+that retrieval evidence against the available same-language candidate pool;
+sparse fixtures can place a genuinely hard mate near the top. Keep behavior and
+judgments fixed when tuning thresholds.
 An extractable copied region is a partial positive even when its enclosing
 functions have different outputs. Calling a shared helper is not a second copy.
 

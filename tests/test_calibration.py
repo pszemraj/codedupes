@@ -82,7 +82,8 @@ def test_manifest_has_substantive_five_language_corpus():
         negatives = [
             pair for pair in project.annotations["pairs"] if pair["judgment"] == "negative"
         ]
-        assert len(positives) >= 6, project.id
+        for difficulty in ("easy", "medium"):
+            assert sum(pair["difficulty"] == difficulty for pair in positives) >= 5, project.id
         assert len(negatives) >= 10, project.id
         assert {pair["difficulty"] for pair in positives} == {"easy", "medium", "hard"}
         assert len(project.annotations["probes"]) >= 8
