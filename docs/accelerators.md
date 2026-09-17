@@ -22,6 +22,17 @@ codedupes search ./src "normalize request payload" --device mps
 
 An explicit unavailable accelerator is an error, including on warm-cache and empty scans. Combined mode can retain traditional results with `--allow-semantic-fallback`; see [exit codes](output.md#exit-codes). Automatic CPU transitions during inference follow the recovery rules below.
 
+For the current built-in profiles, codedupes treats CPU float32 and MPS float32
+as decision-equivalent. The five-project Issue #20 comparison ran both models in
+fresh, uncached CPU and MPS processes. Its maximum absolute pair or query score
+drift was `7.75e-7`, with no duplicate or search threshold decisions changed.
+Across the ten model/project runs, aggregate measured time was 79.7 seconds on
+CPU and 63.9 seconds on MPS. On Apple silicon, leave `--device` at `auto` so
+codedupes uses MPS for the faster path. Pin `cpu` only when reproducing the CPU
+calibration reference or investigating CPU-specific behavior. See the checked
+[calibration results](../test_fixtures/calibration/calibration-results.json) for
+the per-project measurements.
+
 ## Unsupported MPS operators
 
 PyTorch controls unsupported-operator fallback through `PYTORCH_ENABLE_MPS_FALLBACK`.

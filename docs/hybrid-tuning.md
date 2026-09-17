@@ -27,6 +27,15 @@ MPS is an independent real-device comparison. A source, model, extraction, task,
 prompt, or dtype-policy change makes an artifact stale. Label and threshold
 edits reuse its raw scores.
 
+Keeping CPU as the calibration reference is a reproducibility convention, not a
+separate runtime threshold policy. The checked Issue #20 comparison found a
+maximum CPU/MPS score drift of `7.75e-7` and no duplicate or search decision
+changes for either built-in model. Treat CPU fp32 and MPS fp32 as functionally
+equivalent for these profiles, and use the default `device=auto` during normal
+macOS development so Apple silicon selects the faster MPS path. Continue to run
+the independent CPU/MPS comparison when source, model, extraction, task, prompt,
+or dtype policy changes.
+
 Select per-language duplicate gates and the global top-10 search gate from the
 CPU measurements:
 
