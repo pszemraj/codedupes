@@ -8,11 +8,11 @@ labels.
 
 | project | language | positives | negatives | probes |
 | --- | --- | ---: | ---: | ---: |
-| ledger | Python | 11 | 23 | 12 |
+| ledger | Python | 12 | 25 | 12 |
 | cowsay | Rust | 8 | 29 | 12 |
-| c_metering | C | 19 | 29 | 12 |
-| javascript | JavaScript | 15 | 51 | 12 |
-| harbor-ts | TypeScript | 10 | 30 | 12 |
+| c_metering | C | 20 | 31 | 12 |
+| javascript | JavaScript | 16 | 53 | 12 |
+| harbor-ts | TypeScript | 11 | 32 | 12 |
 
 Positive pairs cover easy, medium, and hard cases. Easy pairs retain obvious
 structure, medium pairs introduce meaningful control-flow or API differences,

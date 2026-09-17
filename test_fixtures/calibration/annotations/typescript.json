@@ -165,6 +165,22 @@
                 "qualified_name": "audit.auditZoneSpread",
                 "kind": "function"
             }
+        },
+        {
+            "id": "harbor.signup.branch",
+            "selector": {
+                "path": "src/signup.ts",
+                "qualified_name": "signup.validateSignup",
+                "kind": "function"
+            }
+        },
+        {
+            "id": "harbor.signup.rules",
+            "selector": {
+                "path": "src/signup.ts",
+                "qualified_name": "signup.evaluateRegistration",
+                "kind": "function"
+            }
         }
     ],
     "families": [
@@ -198,6 +214,13 @@
                 "harbor.ingress.csv",
                 "harbor.ingress.api",
                 "harbor.ingress.webhook"
+            ]
+        },
+        {
+            "id": "typed-registration-validation",
+            "members": [
+                "harbor.signup.branch",
+                "harbor.signup.rules"
             ]
         }
     ],
@@ -680,7 +703,10 @@
             "a": "harbor.booking.inline",
             "b": "harbor.booking.normalizer",
             "judgment": "negative",
-            "tags": ["reviewed_high_score", "helper_extraction"],
+            "tags": [
+                "reviewed_high_score",
+                "helper_extraction"
+            ],
             "scope": "whole_unit",
             "behavior_equivalent": false,
             "equivalence_domain": "Ordered raw booking rows.",
@@ -696,7 +722,10 @@
             "a": "harbor.booking.inline",
             "b": "harbor.ingress.api",
             "judgment": "negative",
-            "tags": ["reviewed_high_score", "call_chain"],
+            "tags": [
+                "reviewed_high_score",
+                "call_chain"
+            ],
             "scope": "whole_unit",
             "behavior_equivalent": false,
             "equivalence_domain": "Raw booking data submitted through a schedule batch.",
@@ -713,7 +742,10 @@
             "a": "harbor.booking.extracted",
             "b": "harbor.booking.normalizer",
             "judgment": "negative",
-            "tags": ["reviewed_high_score", "helper_caller"],
+            "tags": [
+                "reviewed_high_score",
+                "helper_caller"
+            ],
             "scope": "whole_unit",
             "behavior_equivalent": false,
             "equivalence_domain": "Ordered raw booking rows.",
@@ -729,7 +761,11 @@
             "a": "harbor-ts/src/legacy.ts::legacy.readManifestNotice::function::13",
             "b": "harbor.booking.normalizer",
             "judgment": "positive",
-            "tags": ["translated", "legacy_schema", "failure_protocol"],
+            "tags": [
+                "translated",
+                "legacy_schema",
+                "failure_protocol"
+            ],
             "difficulty": "hard",
             "scope": "whole_unit",
             "behavior_equivalent": false,
@@ -746,7 +782,10 @@
             "a": "harbor.booking.extracted",
             "b": "harbor.ingress.csv",
             "judgment": "negative",
-            "tags": ["reviewed_high_score", "call_chain"],
+            "tags": [
+                "reviewed_high_score",
+                "call_chain"
+            ],
             "scope": "whole_unit",
             "behavior_equivalent": false,
             "equivalence_domain": "Schedule rows read from a CSV file.",
@@ -762,7 +801,10 @@
             "a": "harbor-ts/src/aggregation.ts::aggregation.checkedLoad::function::3",
             "b": "harbor-ts/src/dispatch.ts::dispatch.validateSummaries::function::3",
             "judgment": "negative",
-            "tags": ["reviewed_high_score", "validation_neighbor"],
+            "tags": [
+                "reviewed_high_score",
+                "validation_neighbor"
+            ],
             "scope": "whole_unit",
             "behavior_equivalent": false,
             "equivalence_domain": "Harbor records passed to their respective pipeline stages.",
@@ -779,7 +821,10 @@
             "a": "harbor-ts/src/adapters.ts::adapters.csvRows::function::7",
             "b": "harbor.booking.normalizer",
             "judgment": "negative",
-            "tags": ["reviewed_high_score", "pipeline_neighbor"],
+            "tags": [
+                "reviewed_high_score",
+                "pipeline_neighbor"
+            ],
             "scope": "whole_unit",
             "behavior_equivalent": false,
             "equivalence_domain": "CSV text containing booking columns.",
@@ -795,7 +840,10 @@
             "a": "harbor.booking.extracted",
             "b": "harbor.ingress.webhook",
             "judgment": "negative",
-            "tags": ["reviewed_high_score", "call_chain"],
+            "tags": [
+                "reviewed_high_score",
+                "call_chain"
+            ],
             "scope": "whole_unit",
             "behavior_equivalent": false,
             "equivalence_domain": "Booking rows carried in a webhook envelope.",
@@ -811,7 +859,10 @@
             "a": "harbor.booking.inline",
             "b": "harbor.ingress.webhook",
             "judgment": "negative",
-            "tags": ["reviewed_high_score", "call_chain"],
+            "tags": [
+                "reviewed_high_score",
+                "call_chain"
+            ],
             "scope": "whole_unit",
             "behavior_equivalent": false,
             "equivalence_domain": "Booking rows carried in a webhook envelope.",
@@ -828,7 +879,10 @@
             "a": "harbor-ts/src/dispatch.ts::dispatch.validateSummaries::function::3",
             "b": "harbor.audit.capacity",
             "judgment": "negative",
-            "tags": ["reviewed_high_score", "shared_zone_summary"],
+            "tags": [
+                "reviewed_high_score",
+                "shared_zone_summary"
+            ],
             "scope": "whole_unit",
             "behavior_equivalent": false,
             "equivalence_domain": "Zone summaries.",
@@ -845,7 +899,10 @@
             "a": "harbor-ts/src/legacy.ts::legacy.readManifestNotice::function::13",
             "b": "harbor.booking.legacy",
             "judgment": "negative",
-            "tags": ["reviewed_high_score", "helper_caller"],
+            "tags": [
+                "reviewed_high_score",
+                "helper_caller"
+            ],
             "scope": "whole_unit",
             "behavior_equivalent": false,
             "equivalence_domain": "Positional legacy manifest notices.",
@@ -861,7 +918,10 @@
             "a": "harbor-ts/src/adapters.ts::adapters.csvRows::function::7",
             "b": "harbor.ingress.csv",
             "judgment": "negative",
-            "tags": ["reviewed_high_score", "helper_caller"],
+            "tags": [
+                "reviewed_high_score",
+                "helper_caller"
+            ],
             "scope": "whole_unit",
             "behavior_equivalent": false,
             "equivalence_domain": "Schedule CSV text and file paths.",
@@ -877,7 +937,10 @@
             "a": "harbor.aggregate.immutable",
             "b": "harbor.audit.capacity",
             "judgment": "negative",
-            "tags": ["reviewed_high_score", "shared_zone_summary"],
+            "tags": [
+                "reviewed_high_score",
+                "shared_zone_summary"
+            ],
             "scope": "whole_unit",
             "behavior_equivalent": false,
             "equivalence_domain": "Harbor load and zone-summary data.",
@@ -894,7 +957,10 @@
             "a": "harbor-ts/src/aggregation.ts::aggregation.checkedLoad::function::3",
             "b": "harbor.aggregate.immutable",
             "judgment": "negative",
-            "tags": ["reviewed_high_score", "helper_caller"],
+            "tags": [
+                "reviewed_high_score",
+                "helper_caller"
+            ],
             "scope": "whole_unit",
             "behavior_equivalent": false,
             "equivalence_domain": "Raw dock-load collections.",
@@ -910,7 +976,10 @@
             "a": "harbor.audit.arrival",
             "b": "harbor.booking.extracted",
             "judgment": "negative",
-            "tags": ["reviewed_high_score", "shared_booking_collection"],
+            "tags": [
+                "reviewed_high_score",
+                "shared_booking_collection"
+            ],
             "scope": "whole_unit",
             "behavior_equivalent": false,
             "equivalence_domain": "Booking-related data.",
@@ -927,7 +996,10 @@
             "a": "harbor-ts/src/dispatch.ts::dispatch.validateSummaries::function::3",
             "b": "harbor.dispatch.baseline",
             "judgment": "negative",
-            "tags": ["reviewed_high_score", "helper_caller"],
+            "tags": [
+                "reviewed_high_score",
+                "helper_caller"
+            ],
             "scope": "whole_unit",
             "behavior_equivalent": false,
             "equivalence_domain": "Zone summary collections.",
@@ -937,6 +1009,66 @@
                 "tests/harbor.test.ts::dispatch extensions equal the baseline when disabled and retain hold witnesses"
             ],
             "difference_witness": "validateSummaries returns undefined after validation, whereas planDispatches returns queued instructions, heldKg, and auditEvents."
+        },
+        {
+            "id": "signup-branch--rules",
+            "a": "harbor.signup.branch",
+            "b": "harbor.signup.rules",
+            "judgment": "positive",
+            "tags": [
+                "translated",
+                "typed-rules",
+                "medium"
+            ],
+            "difficulty": "medium",
+            "scope": "whole_unit",
+            "behavior_equivalent": true,
+            "equivalence_domain": "Person and business submissions admitted by the exported discriminated union.",
+            "contract": "Normalize and validate email, person age and marketing consent, business company name, and conditional GB VAT rules while returning issues in stable field order.",
+            "rationale": "The narrowed branch implementation and typed predicate table independently own the same registration-validation policy and can be consolidated behind one maintained rule set.",
+            "evidence": [
+                "tests/signup.test.ts::signup contract: passed"
+            ]
+        },
+        {
+            "id": "signup-branch--booking-normalizer-negative",
+            "a": "harbor.signup.branch",
+            "b": "harbor.booking.normalizer",
+            "judgment": "negative",
+            "tags": [
+                "validation",
+                "nearby-negative"
+            ],
+            "scope": "whole_unit",
+            "behavior_equivalent": false,
+            "equivalence_domain": "Registration form validation and one harbor booking-row normalization step.",
+            "contract": "Registration accumulates independent typed field issues; booking normalization returns one accepted booking or one error under booking-specific date, zone, and weight rules.",
+            "rationale": "Both validate external form-shaped data, but their fields, error accumulation, outputs, and policy ownership provide no substantial shared implementation to maintain.",
+            "evidence": [
+                "tests/signup.test.ts::signup contract: passed",
+                "tests/harbor.test.ts::inline and extracted booking decoders agree without reserving invalid IDs"
+            ],
+            "difference_witness": "A malformed registration can return three issues, whereas normalizeBooking stops at one booking error and may construct a Booking value."
+        },
+        {
+            "id": "signup-rules--capacity-audit-negative",
+            "a": "harbor.signup.rules",
+            "b": "harbor.audit.capacity",
+            "judgment": "negative",
+            "tags": [
+                "rule-evaluation",
+                "nearby-negative"
+            ],
+            "scope": "whole_unit",
+            "behavior_equivalent": false,
+            "equivalence_domain": "Single-submission validation and cross-booking zone-capacity auditing.",
+            "contract": "Registration evaluates typed predicates for one union value; capacity auditing aggregates accepted bookings by zone against service limits.",
+            "rationale": "Their issue-list shape and condition checks are generic similarities around distinct state, data, and maintenance policies.",
+            "evidence": [
+                "tests/signup.test.ts::signup contract: passed",
+                "tests/harbor.test.ts::audit endpoints share harbor vocabulary but enforce independent policies"
+            ],
+            "difference_witness": "A valid registration has no zone or weight, while a capacity violation requires totals across multiple bookings."
         }
     ],
     "probes": [
@@ -962,11 +1094,12 @@
             "relevance_complete": true
         },
         {
-            "id": "behavior-plan-baseline-dispatch",
+            "id": "behavior-validate-registration",
             "kind": "behavioral",
-            "query": "create queued dispatch instructions for every valid zone summary",
+            "query": "validate a typed person or business registration and return ordered field issues",
             "expected": [
-                "harbor.dispatch.baseline"
+                "harbor.signup.branch",
+                "harbor.signup.rules"
             ],
             "relevance_complete": true
         },

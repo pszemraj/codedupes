@@ -7,6 +7,7 @@ const { publishConfirmation } = require("./outbox");
 const { planTransfers, planTransfersWithMinimum, schedulePayouts } = require("./settlement");
 
 async function main() {
+  const { fetchRecords, readSnapshot } = await import("./pagination.mjs");
   const records = [
     { invoiceId: "  east-1", amountMinor: 75, voided: false },
     { invoiceId: "east-1", amountMinor: 25, voided: false },
@@ -19,11 +20,17 @@ async function main() {
   const mailbox = { sent: [] };
   await publishConfirmation(mailbox, { invoiceId: "east-1", email: "a@example.test", totalMinor: 100 });
   await dispatchReceipt(mailbox, { invoiceId: "west-2", email: "b@example.test", totalMinor: -10 });
+  const pages = new Map([
+    [null, { rows: [{ id: "first", value: 1 }], next: "more" }],
+    ["more", { rows: [{ id: "second", value: 2 }], next: null }],
+  ]);
+  const fetchPage = async (cursor) => pages.get(cursor);
   return {
     aggregation: [summaries, buildInvoiceDigest(records), summarizeInvoiceAccounts(records)],
     plans: [planTransfers(summaries), planTransfersWithMinimum(summaries, 100), schedulePayouts(summaries)],
     ingestion: [batch, lines],
     deliveries: mailbox.sent,
+    pagination: [await fetchRecords(fetchPage), await readSnapshot(fetchPage)],
   };
 }
 

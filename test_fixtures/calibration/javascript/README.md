@@ -3,9 +3,9 @@
 This small Node.js application accepts invoice rows from a webhook, prepares
 payout instructions, and delivers receipt messages. It deliberately retains
 several independently written implementations of the same maintenance work:
-invoice aggregation, payout planning, webhook normalization, and asynchronous
-receipt delivery. The annotations explain which regions are candidates for
-consolidation and which similar-looking operations are not.
+invoice aggregation, payout planning, webhook normalization, asynchronous
+receipt delivery, and cursor pagination. The annotations explain which regions
+are candidates for consolidation and which similar-looking operations are not.
 
 Run `npm test` and `npm start` from this directory. Both commands use only the
 Node.js standard library. The entry point invokes every implementation family.
@@ -28,3 +28,9 @@ Receipt adapters write one normalized delivery record to the supplied mailbox.
 The callback, queued outbox Promise, and async transport forms have intentionally
 different ownership and calling conventions while preserving the same
 successful-delivery state.
+
+Pagination uses an injected asynchronous transport. The loop/Set and recursive
+Promise/Map implementations both validate page and row shapes, retain the first
+record for each ID, reject cursor cycles before page-budget exhaustion, and
+discard responses observed after cancellation. Transport errors retain their
+original identity.

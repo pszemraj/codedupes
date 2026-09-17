@@ -31,14 +31,17 @@
     {"id": "javascript/src/notifications.js::notifications.sendReceiptCallback.deliver::function::13", "selector": {"path": "src/notifications.js", "qualified_name": "notifications.sendReceiptCallback.deliver", "kind": "function", "start_line": 13}},
     {"id": "javascript/src/outbox.js::outbox.createFuture::function::5", "selector": {"path": "src/outbox.js", "qualified_name": "outbox.createFuture", "kind": "function", "start_line": 5}},
     {"id": "javascript/src/outbox.js::outbox.releaseNext::function::20", "selector": {"path": "src/outbox.js", "qualified_name": "outbox.releaseNext", "kind": "function", "start_line": 20}},
-    {"id": "javascript/src/settlement.js::settlement.checkedSummaries::function::3", "selector": {"path": "src/settlement.js", "qualified_name": "settlement.checkedSummaries", "kind": "function", "start_line": 3}}
+    {"id": "javascript/src/settlement.js::settlement.checkedSummaries::function::3", "selector": {"path": "src/settlement.js", "qualified_name": "settlement.checkedSummaries", "kind": "function", "start_line": 3}},
+    {"id": "js.pagination.fetchRecords", "selector": {"path": "src/pagination.mjs", "qualified_name": "pagination.fetchRecords", "kind": "function"}},
+    {"id": "js.pagination.readSnapshot", "selector": {"path": "src/pagination.mjs", "qualified_name": "pagination.readSnapshot", "kind": "function"}}
   ],
   "families": [
     {"id": "translated-aggregation", "members": ["js.aggregation.aggregateInvoices", "js.aggregation.buildInvoiceDigest", "js.aggregation.summarizeInvoiceAccounts"]},
     {"id": "payout-minimum-extension", "members": ["js.settlement.planTransfers", "js.settlement.planTransfersWithMinimum", "js.settlement.schedulePayouts"]},
     {"id": "webhook-normalization", "members": ["js.ingestion.normalizeWebhookRecord", "js.ingestion.importWebhookBatch", "js.ingestion.importWebhookLines"]},
     {"id": "receipt-adapters", "members": ["js.notifications.sendReceiptCallback", "js.outbox.prepareEntry", "js.notifications.dispatchReceipt"]},
-    {"id": "outbox-scheduling", "members": ["js.outbox.publishConfirmation"]}
+    {"id": "outbox-scheduling", "members": ["js.outbox.publishConfirmation"]},
+    {"id": "cursor-pagination", "members": ["js.pagination.fetchRecords", "js.pagination.readSnapshot"]}
   ],
   "pairs": [
     {
@@ -312,12 +315,24 @@
     {
       "id": "js.summary-validator--schedule-negative", "a": "javascript/src/settlement.js::settlement.checkedSummaries::function::3", "b": "js.settlement.schedulePayouts", "judgment": "negative", "tags": ["helper-caller", "false-positive"], "scope": "whole_unit", "behavior_equivalent": false,
       "equivalence_domain": "Summary validation and reducer-based scheduling.", "contract": "schedulePayouts calls checkedSummaries before reducing outcomes and deferral events.", "rationale": "The caller intentionally centralizes validation in its helper, so there is no alternate implementation.", "evidence": ["test/calibration.test.js::payout extension"], "difference_witness": "Only schedulePayouts accepts options and returns transfers, events, and deferred totals."
+    },
+    {
+      "id": "js.pagination-loop--promise-recursion", "a": "js.pagination.fetchRecords", "b": "js.pagination.readSnapshot", "judgment": "positive", "tags": ["translated", "async", "medium"], "difficulty": "medium", "scope": "whole_unit", "behavior_equivalent": true,
+      "equivalence_domain": "Injected page transports under the declared page, cursor, row, cancellation, and error contracts.", "contract": "Follow cursor pages in order, reject cycles and invalid data, preserve first-seen records by ID, honor cancellation and page limits, and preserve transport failures.", "rationale": "The async loop with Sets and the recursive Promise traversal with a Map independently implement the same pagination client and can share one maintained traversal contract.", "evidence": ["test/pagination.test.mjs::generated page chains agree with an independently assembled oracle and request order"]
+    },
+    {
+      "id": "js.pagination-loop--webhook-batch-negative", "a": "js.pagination.fetchRecords", "b": "js.ingestion.importWebhookBatch", "judgment": "negative", "tags": ["record-deduplication", "nearby-negative"], "scope": "whole_unit", "behavior_equivalent": false,
+      "equivalence_domain": "Cursor-based retrieval and one-shot webhook-batch admission.", "contract": "Pagination owns transport sequencing, cursor cycles, cancellation, and page limits; batch ingestion owns envelope idempotency and indexed validation rejections.", "rationale": "Both retain a first record per ID, but that small policy does not create a shared workflow or consolidation target.", "evidence": ["test/pagination.test.mjs::stable first-occurrence results and trace", "test/calibration.test.js::webhook normalization keeps acceptance and adapter failures distinct"], "difference_witness": "A repeated cursor rejects pagination, whereas a repeated completed batch returns a replay result without transport calls."
+    },
+    {
+      "id": "js.pagination-recursion--outbox-negative", "a": "js.pagination.readSnapshot", "b": "js.outbox.publishConfirmation", "judgment": "negative", "tags": ["async-control-flow", "nearby-negative"], "scope": "whole_unit", "behavior_equivalent": false,
+      "equivalence_domain": "Asynchronous snapshot traversal and queued receipt publication.", "contract": "readSnapshot recursively fetches and validates a cursor chain; publishConfirmation queues one receipt and resolves after mailbox delivery.", "rationale": "Promise chaining is incidental control flow around unrelated state machines and data contracts.", "evidence": ["test/pagination.test.mjs::synchronous transport throws become rejections", "test/calibration.test.js::receipt adapters preserve delivery state across callback and promise styles"], "difference_witness": "The snapshot reader returns records and a page count; publication appends one email entry to a mailbox."
     }
   ],
   "probes": [
     {"id": "js.behavioral.invoice-totals", "kind": "behavioral", "query": "calculate sorted invoice totals while skipping voided records", "expected": ["js.aggregation.aggregateInvoices", "js.aggregation.buildInvoiceDigest", "js.aggregation.summarizeInvoiceAccounts"], "relevance_complete": true},
     {"id": "js.behavioral.payout-deferral", "kind": "behavioral", "query": "defer small positive payouts and record a below minimum event", "expected": ["js.settlement.planTransfersWithMinimum", "js.settlement.schedulePayouts"], "relevance_complete": true},
-    {"id": "js.behavioral.baseline-payout", "kind": "behavioral", "query": "create ready transfer and refund due settlement lines", "expected": ["js.settlement.planTransfers", "js.settlement.planTransfersWithMinimum", "js.settlement.schedulePayouts"], "relevance_complete": true},
+    {"id": "js.behavioral.cursor-pagination", "kind": "behavioral", "query": "follow asynchronous cursor pages, reject cycles, and keep the first record for each identifier", "expected": ["js.pagination.fetchRecords", "js.pagination.readSnapshot"], "relevance_complete": true},
     {"id": "js.behavioral.accept-webhook", "kind": "behavioral", "query": "accept an incoming webhook only after validating its identifier and email", "expected": ["js.ingestion.normalizeWebhookRecord", "js.ingestion.importWebhookBatch", "js.ingestion.importWebhookLines"], "relevance_complete": true},
     {"id": "js.behavioral.batch-replay", "kind": "behavioral", "query": "avoid processing an already completed webhook batch", "expected": ["js.ingestion.importWebhookBatch"], "relevance_complete": true},
     {"id": "js.behavioral.email-receipt", "kind": "behavioral", "query": "deliver an invoice receipt by email and record it in the mailbox", "expected": ["js.notifications.sendReceiptCallback", "js.outbox.publishConfirmation", "js.notifications.dispatchReceipt"], "relevance_complete": true},

@@ -84,7 +84,7 @@
       "split_group": "harbor-typescript-application",
       "annotations": "annotations/typescript.json",
       "behavior_tests": [
-        {"id": "node-tests", "argv": ["node", "--experimental-strip-types", "--test", "tests/harbor.test.ts"]},
+        {"id": "node-tests", "argv": ["node", "--experimental-strip-types", "--test", "tests/harbor.test.ts", "tests/signup.test.ts"]},
         {"id": "application", "argv": ["node", "--experimental-strip-types", "src/main.ts"]}
       ]
     }
