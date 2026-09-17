@@ -9,7 +9,7 @@ labels.
 | project | language | positives | negatives | probes |
 | --- | --- | ---: | ---: | ---: |
 | ledger | Python | 11 | 23 | 12 |
-| cowsay | Rust | 7 | 27 | 12 |
+| cowsay | Rust | 8 | 29 | 12 |
 | c_metering | C | 19 | 29 | 12 |
 | javascript | JavaScript | 15 | 51 | 12 |
 | harbor-ts | TypeScript | 10 | 30 | 12 |
