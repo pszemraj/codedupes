@@ -29,10 +29,10 @@ Semantic duplicate detection is gated per language. Each built-in model profile 
 | python | `0.87` | `0.76` |
 | c | `0.85` | `0.82` |
 | rust | `0.84` | `0.88` |
-| javascript | `0.69` | `0.80` |
+| javascript | `0.70` | `0.80` |
 | typescript | `0.76` | `0.83` |
 
-The expanded source-backed corpus moves the Python gates to `0.87`/`0.76`, where the measured F1 objective rejects more false positives. GTE JavaScript moves slightly to `0.69`; the C, Rust, and TypeScript gates remain unchanged. The corpus is development evidence with an authored challenge mix, so these settings are practical defaults rather than an estimate of ecosystem-wide precision. See [calibration measurements and replay](hybrid-tuning.md).
+The expanded source-backed corpus moves the Python gates to `0.87`/`0.76`, where the measured F1 objective rejects more false positives. GTE JavaScript moves slightly to `0.70`; the C, Rust, and TypeScript gates remain unchanged. The corpus is development evidence with an authored challenge mix, so these settings are practical defaults rather than an estimate of ecosystem-wide precision. See [calibration measurements and replay](hybrid-tuning.md).
 
 See [threshold-profile choices](model-profiles.md#choosing-threshold-defaults) for profile selection.
 

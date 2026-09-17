@@ -9,13 +9,13 @@ Most users should leave model and task settings unset. `codedupes` uses the pinn
 | profile key | canonical model ID | family | search threshold | default revision | default trust mode |
 | --- | --- | --- | --- | --- | --- |
 | `gte-modernbert-base` | `Alibaba-NLP/gte-modernbert-base` | `gte-modernbert` | `0.68` | `e7f32e3c00f91d699e8c43b53106206bcc72bb22` | `False` |
-| `embeddinggemma-300m` | `unsloth/embeddinggemma-300m` | `embeddinggemma` | `0.53` | `bfa3c846ac738e62aa61806ef9112d34acb1dc5a` | `False` |
+| `embeddinggemma-300m` | `unsloth/embeddinggemma-300m` | `embeddinggemma` | `0.56` | `bfa3c846ac738e62aa61806ef9112d34acb1dc5a` | `False` |
 
 - [Per-language duplicate gates and their selection policy](analysis-defaults.md#semantic-duplicate-gate-defaults) control `check` reporting. The table's search threshold is only the floor for query matches; query-to-code similarity is much lower than code-to-code duplicate similarity.
 - Every built-in default revision is a pinned immutable commit. The [calibration workflow](hybrid-tuning.md) records the checkpoint, task, pipeline, and candidate policy behind each threshold.
 - Search and duplicate defaults optimize measured F1, with higher recall preferred only within `0.005` of the best F1. Returning every known target is not a requirement for the default search floor. The separate smoke test checks target ranking without a floor and relevance of emitted default results.
 
-Gemma's `0.53` search floor gives 66% precision and 73% recall on the development
+Gemma's `0.56` search floor gives 80% precision and 64% recall on the development
 corpus. The selected floor keeps F1 primary and favors recall only within half a
 percentage point of the best measured F1. Override it for a repository with a
 different tradeoff; these authored fixtures do not establish ecosystem-wide accuracy.
