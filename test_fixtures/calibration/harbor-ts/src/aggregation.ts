@@ -65,20 +65,3 @@ export function collectZoneWeightTotals(loads: readonly DockLoad[]): ZoneSummary
   });
   return Object.values(totals).sort((left, right) => left.zone.localeCompare(right.zone));
 }
-
-/** Aggregate the same contract with a reduce-based record accumulator. */
-export function reduceDockLoadTotals(loads: readonly DockLoad[]): ZoneSummary[] {
-  const totals = loads.reduce<Record<string, ZoneSummary>>((current, load) => {
-    checkedLoad(load);
-    if (load.status === "cancelled") return current;
-    const zone = load.zone.trim().toUpperCase();
-    const known = current[zone] ?? { zone, totalKg: 0, loadCount: 0 };
-    current[zone] = {
-      zone,
-      totalKg: known.totalKg + load.weightKg,
-      loadCount: known.loadCount + 1,
-    };
-    return current;
-  }, {});
-  return Object.values(totals).sort((left, right) => left.zone.localeCompare(right.zone));
-}

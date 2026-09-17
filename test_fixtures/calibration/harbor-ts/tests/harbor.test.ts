@@ -7,7 +7,6 @@ import test from "node:test";
 import {
   buildManifestTotals,
   collectZoneWeightTotals,
-  reduceDockLoadTotals,
   summarizeDockLoads,
 } from "../src/aggregation.ts";
 import { importScheduleCsv, ingestScheduleBatch, prepareWebhookSchedule } from "../src/adapters.ts";
@@ -35,7 +34,6 @@ test("aggregation variants preserve validation, ordering, and caller input", () 
     summarizeDockLoads,
     buildManifestTotals,
     collectZoneWeightTotals,
-    reduceDockLoadTotals,
   ]) {
     assert.deepEqual(aggregate(loads), expected);
     assert.throws(() => aggregate([{ ...loads[2], weightKg: 0 }]), /positive integer/);

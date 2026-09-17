@@ -14,7 +14,7 @@ variants of one workflow just to increase the pair count.
 | cowsay | Rust | 13 | 29 | 12 |
 | c_metering | C | 20 | 31 | 12 |
 | javascript | JavaScript | 20 | 53 | 12 |
-| harbor-ts | TypeScript | 15 | 31 | 12 |
+| harbor-ts | TypeScript | 12 | 31 | 12 |
 
 Each language keeps at least five comparable reviewed easy pairs and five
 comparable reviewed medium pairs. Existing coverage is not reduced merely to
