@@ -46,6 +46,14 @@ static int parse_row(const char *text, Reading *reading) {
     return METERING_OK;
 }
 
+static void note_inline_rejection(ImportReport *report, size_t row) {
+    size_t rejected_before = report->rejected_count;
+    report->rejected_count = rejected_before + 1;
+    if (rejected_before == 0) {
+        report->first_rejected_row = row;
+    }
+}
+
 int import_rows_inline(const char *const *rows, size_t count, ImportReport *report) {
     if (rows == NULL || report == NULL || count > METERING_MAX_DEVICES) {
         return METERING_INVALID;
@@ -69,7 +77,7 @@ int import_rows_inline(const char *const *rows, size_t count, ImportReport *repo
             valid = 0;
         }
         if (!valid) {
-            reject_row(report, row + 1);
+            note_inline_rejection(report, row + 1);
             continue;
         }
         Reading *accepted = &report->accepted[report->accepted_count++];

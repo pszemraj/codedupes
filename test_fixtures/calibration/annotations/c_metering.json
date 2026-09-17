@@ -151,6 +151,14 @@
       }
     },
     {
+      "id": "c_metering/src/rows.c::rows.note_inline_rejection::function::49",
+      "selector": {
+        "path": "src/rows.c",
+        "qualified_name": "rows.note_inline_rejection",
+        "kind": "function"
+      }
+    },
+    {
       "id": "c_metering/src/rows.c::rows.parse_row::function::20",
       "selector": {
         "path": "src/rows.c",
@@ -307,7 +315,7 @@
       "a": "c_metering.record.scan",
       "b": "c_metering.record.fields",
       "judgment": "positive",
-      "difficulty": "hard",
+      "difficulty": "medium",
       "tags": [
         "translated",
         "bounded-parser",
@@ -447,7 +455,7 @@
       "a": "c_metering.rows.inline",
       "b": "c_metering.rows.parser",
       "judgment": "positive",
-      "difficulty": "easy",
+      "difficulty": "medium",
       "tags": [
         "helper-extraction",
         "validation"
@@ -466,7 +474,7 @@
       "a": "c_metering.rows.inline",
       "b": "c_metering.rows.two_phase",
       "judgment": "positive",
-      "difficulty": "hard",
+      "difficulty": "medium",
       "tags": [
         "restructured",
         "two-phase"
@@ -485,7 +493,7 @@
       "a": "c_metering.rows.parser",
       "b": "c_metering.rows.two_phase",
       "judgment": "positive",
-      "difficulty": "hard",
+      "difficulty": "medium",
       "tags": [
         "helper-extraction",
         "restructured"
@@ -895,6 +903,26 @@
       ]
     },
     {
+      "id": "review-note-rejection--inline",
+      "a": "c_metering/src/adapters.c::adapters.note_rejection::function::13",
+      "b": "c_metering/src/rows.c::rows.note_inline_rejection::function::49",
+      "judgment": "positive",
+      "difficulty": "easy",
+      "tags": [
+        "translated-helper",
+        "rejection-reporting"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": true,
+      "equivalence_domain": "An initialized ImportReport and a positive one-based rejected row number.",
+      "contract": "Increment rejected_count and retain the first rejected row while leaving a prior first-rejected value unchanged.",
+      "rationale": "The CSV/API and inline row importers independently retain the same rejection-report mutation and can share one helper without changing their parsing policies.",
+      "evidence": [
+        "tests/test_metering.c::test_helper_extraction_differential",
+        "tests/test_metering.c::test_csv_api_and_idempotency"
+      ]
+    },
+    {
       "id": "review-normalize-csv--normalize-api",
       "a": "c_metering/src/adapters.c::adapters.normalize_csv_line::function::25",
       "b": "c_metering/src/adapters.c::adapters.normalize_api_item::function::61",
@@ -1027,9 +1055,9 @@
       "regions": [
         {
           "unit": "c_metering.rows.inline",
-          "start_line": 55,
-          "end_line": 79,
-          "sha256": "f2ab5f0ae519ae75c2704c5bbb4c5d3333c3d2269a2deacc1c3e5f6f44244d61"
+          "start_line": 63,
+          "end_line": 87,
+          "sha256": "0eece96f7d49c20439638d4c2f1e9d0d3b782739471091acc6756dd94e9e4c3e"
         },
         {
           "unit": "c_metering/src/rows.c::rows.parse_row::function::20",
@@ -1062,9 +1090,9 @@
       "regions": [
         {
           "unit": "c_metering.rows.inline",
-          "start_line": 55,
-          "end_line": 79,
-          "sha256": "f2ab5f0ae519ae75c2704c5bbb4c5d3333c3d2269a2deacc1c3e5f6f44244d61"
+          "start_line": 63,
+          "end_line": 87,
+          "sha256": "0eece96f7d49c20439638d4c2f1e9d0d3b782739471091acc6756dd94e9e4c3e"
         },
         {
           "unit": "c_metering/src/adapters.c::adapters.normalize_csv_line::function::25",
@@ -1285,9 +1313,9 @@
       "regions": [
         {
           "unit": "c_metering.rows.inline",
-          "start_line": 55,
-          "end_line": 79,
-          "sha256": "f2ab5f0ae519ae75c2704c5bbb4c5d3333c3d2269a2deacc1c3e5f6f44244d61"
+          "start_line": 63,
+          "end_line": 87,
+          "sha256": "0eece96f7d49c20439638d4c2f1e9d0d3b782739471091acc6756dd94e9e4c3e"
         },
         {
           "unit": "c_metering/src/adapters.c::adapters.normalize_api_item::function::61",
