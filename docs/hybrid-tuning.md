@@ -49,6 +49,10 @@ conda run --name inf python scripts/sweep_semantic_thresholds.py \
   --json-out scratch/calibration/threshold-selection.json
 ```
 
+Custom sweep ranges include both endpoints, even when the step does not land
+on the stop value. The result records the candidate grids; shipped-setting
+metrics are evaluated at the exact shipped thresholds independently of that grid.
+
 If the output reports unjudged or ambiguous predictions, review those source
 pairs and rerun the sweep. Derived selections record their source, model, policy,
 project scope, and annotation identities. Label or relevance corrections reuse

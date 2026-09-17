@@ -10,7 +10,7 @@ from types import SimpleNamespace
 import pytest
 
 from codedupes.semantic_profiles import resolve_model_profile
-from scripts import report_calibration_distributions
+from scripts import report_calibration_distributions, sweep_semantic_thresholds
 from scripts.calibration_contract import (
     DEFAULT_MANIFEST,
     load_projects,
@@ -128,6 +128,52 @@ def test_search_sweep_scores_complete_relevance_sets():
     assert rows[1]["f1"] == 1.0
     assert rows[2]["fn"] == 1
     assert rows[0]["no_result_clean"] == 1
+
+
+def test_threshold_grid_includes_a_stop_between_steps():
+    assert threshold_grid(0.70, 0.85, 0.10) == [0.70, 0.80, 0.85]
+    assert threshold_grid(0.70, 0.70, 0.10) == [0.70]
+
+
+def test_coarse_sweep_measures_shipped_thresholds_exactly(tmp_path: Path, monkeypatch):
+    project = SimpleNamespace(
+        id="sample",
+        spec={"languages": ["python"]},
+        annotations={
+            "pairs": [{"a": "a", "b": "b", "judgment": "positive", "difficulty": "easy"}],
+            "probes": [{"id": "q", "expected": ["a"]}],
+        },
+    )
+    measurement = {
+        "pairs": [{"a": "a", "b": "b", "cosine": 0.85, "comparable": True}],
+        "query_scores": [
+            {"probe": "q", "unit": "a", "cosine": 0.69, "rank": 1},
+            {"probe": "q", "unit": "b", "cosine": 0.65, "rank": 2},
+        ],
+    }
+    monkeypatch.setattr(sweep_semantic_thresholds, "load_projects", lambda *args: [project])
+    monkeypatch.setattr(sweep_semantic_thresholds, "selection_context", lambda *args: {})
+    monkeypatch.setattr(
+        sweep_semantic_thresholds,
+        "load_all",
+        lambda *args: {("gte-modernbert-base", "cpu"): measurement},
+    )
+    output = tmp_path / "selection.json"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["sweep", "--models", "gte-modernbert-base", "--step", "0.3", "--json-out", str(output)],
+    )
+    assert sweep_semantic_thresholds.main() == 0
+    result = read_json(output)
+    duplicate = result["models"][0]["duplicate_by_language"][0]
+    assert duplicate["current_threshold"] == duplicate["current_metrics"]["threshold"] == 0.80
+    assert duplicate["current_metrics"]["tp"] == 1
+    assert duplicate["current_difficulty_recall"]["easy"]["detected"] == 1
+    search = result["models"][0]["search"]
+    assert search["current_threshold"] == search["current_metrics"]["threshold"] == 0.68
+    assert (search["current_metrics"]["tp"], search["current_metrics"]["fp"]) == (1, 0)
+    assert result["grids"]["search"] == [0.0, 0.3, 0.6, 0.9, 1.0]
 
 
 def test_replay_matches_production_tier_rules():

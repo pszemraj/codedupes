@@ -30,6 +30,8 @@ def threshold_grid(start: float, stop: float, step: float) -> list[float]:
     while value <= stop + 1e-12:
         values.append(round(value, 6))
         value += step
+    if values[-1] != round(stop, 6):
+        values.append(round(stop, 6))
     return values
 
 
@@ -58,11 +60,6 @@ def _select(rows: list[dict[str, Any]]) -> dict[str, Any]:
         == best_key
     ]
     return tied[len(tied) // 2]
-
-
-def _at_threshold(rows: list[dict[str, Any]], threshold: float) -> dict[str, Any]:
-    """Return the grid row nearest a production threshold."""
-    return min(rows, key=lambda row: abs(row["threshold"] - threshold))
 
 
 def _score_summary(values: list[float]) -> dict[str, float | int | None]:
@@ -240,6 +237,7 @@ def main() -> int:
     payload: dict[str, Any] = {
         "schema_version": 3,
         "input_context": selection_context(projects, args.models),
+        "grids": {"duplicate": duplicate_grid, "search": search_grid},
         "models": [],
     }
 
@@ -259,9 +257,9 @@ def main() -> int:
             measurement = load_all(project, args.measurements, [model], ["cpu"])[
                 (profile.key, "cpu")
             ]
-            rows, detail = duplicate_rows(project, measurement, duplicate_grid)
+            _, detail = duplicate_rows(project, measurement, duplicate_grid)
             current = profile.semantic_threshold_for_language(language)
-            current_metrics = _at_threshold(rows, current)
+            current_metrics = duplicate_rows(project, measurement, [current])[0][0]
             model_result["duplicate_by_language"].append(
                 {
                     "language": language,
@@ -285,7 +283,7 @@ def main() -> int:
         selected_search = _select(search)
         model_result["search"] = {
             "current_threshold": profile.default_search_threshold,
-            "current_metrics": _at_threshold(search, profile.default_search_threshold),
+            "current_metrics": search_rows(search_records, [profile.default_search_threshold])[0],
             "selected_threshold": selected_search["threshold"],
             "selected_metrics": selected_search,
         }
