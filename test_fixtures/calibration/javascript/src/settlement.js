@@ -82,4 +82,30 @@ function schedulePayouts(summaries, options = {}) {
   );
 }
 
-module.exports = { planTransfers, planTransfersWithMinimum, schedulePayouts };
+function compileTransfers(summaries, minimumPayoutMinor = 0) {
+  if (!Number.isSafeInteger(minimumPayoutMinor) || minimumPayoutMinor < 0) {
+    throw new TypeError("minimumPayoutMinor must be a nonnegative integer");
+  }
+  const plan = { lines: [], transfers: [], deferredTotal: 0, events: [] };
+  const ordered = checkedSummaries(summaries);
+  let index = 0;
+  while (index < ordered.length) {
+    const summary = ordered[index];
+    if (summary.totalMinor > 0 && summary.totalMinor < minimumPayoutMinor) {
+      plan.lines.push([summary.invoiceId, "deferred", summary.totalMinor]);
+      plan.deferredTotal += summary.totalMinor;
+      plan.events.push([summary.invoiceId, "below_minimum", minimumPayoutMinor]);
+    } else if (summary.totalMinor > 0) {
+      plan.lines.push([summary.invoiceId, "ready", summary.totalMinor]);
+      plan.transfers.push([summary.invoiceId, summary.totalMinor]);
+    } else if (summary.totalMinor < 0) {
+      plan.lines.push([summary.invoiceId, "refund_due", summary.totalMinor]);
+    } else {
+      plan.lines.push([summary.invoiceId, "balanced", 0]);
+    }
+    index += 1;
+  }
+  return plan;
+}
+
+module.exports = { compileTransfers, planTransfers, planTransfersWithMinimum, schedulePayouts };

@@ -3,11 +3,21 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
 
-const { aggregateInvoices, buildInvoiceDigest, summarizeInvoiceAccounts } = require("../src/aggregation");
+const {
+  aggregateInvoices,
+  buildInvoiceDigest,
+  reduceInvoiceTotals,
+  summarizeInvoiceAccounts,
+} = require("../src/aggregation");
 const { importWebhookBatch, importWebhookLines, normalizeWebhookRecord } = require("../src/ingestion");
 const { dispatchReceipt, sendReceiptCallback } = require("../src/notifications");
 const { publishConfirmation } = require("../src/outbox");
-const { planTransfers, planTransfersWithMinimum, schedulePayouts } = require("../src/settlement");
+const {
+  compileTransfers,
+  planTransfers,
+  planTransfersWithMinimum,
+  schedulePayouts,
+} = require("../src/settlement");
 
 const records = [
   { invoiceId: " b", amountMinor: 50, voided: false },
@@ -25,11 +35,13 @@ test("translated aggregation agrees and validates before void filtering", () => 
   assert.deepEqual(aggregateInvoices(records), expected);
   assert.deepEqual(buildInvoiceDigest(records), expected);
   assert.deepEqual(summarizeInvoiceAccounts(records), expected);
+  assert.deepEqual(reduceInvoiceTotals(records), expected);
   assert.deepEqual(records, original);
   const invalidVoided = [{ invoiceId: "discard", amountMinor: 1.5, voided: true }];
   assert.throws(() => aggregateInvoices(invalidVoided), /safe integer/);
   assert.throws(() => buildInvoiceDigest(invalidVoided), /safe integer/);
   assert.throws(() => summarizeInvoiceAccounts(invalidVoided), /safe integer/);
+  assert.throws(() => reduceInvoiceTotals(invalidVoided), /safe integer/);
 });
 
 test("payout extension preserves zero minimum and records deferral boundary", () => {
@@ -37,11 +49,13 @@ test("payout extension preserves zero minimum and records deferral boundary", ()
   const baseline = planTransfers(summaries);
   assert.deepEqual(planTransfersWithMinimum(summaries), baseline);
   assert.deepEqual(schedulePayouts(summaries), baseline);
+  assert.deepEqual(compileTransfers(summaries), baseline);
   const deferred = planTransfersWithMinimum(summaries, 100);
   assert.deepEqual(deferred.transfers, []);
   assert.deepEqual(deferred.events, [["a", "below_minimum", 100], ["b", "below_minimum", 100]]);
   assert.equal(deferred.deferredTotal, 100);
   assert.deepEqual(schedulePayouts(summaries, { minimumPayoutMinor: 100 }), deferred);
+  assert.deepEqual(compileTransfers(summaries, 100), deferred);
 });
 
 test("webhook normalization keeps acceptance and adapter failures distinct", () => {

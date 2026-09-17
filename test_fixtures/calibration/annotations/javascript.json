@@ -15,9 +15,11 @@
     {"id": "js.aggregation.aggregateInvoices", "selector": {"path": "src/aggregation.js", "qualified_name": "aggregation.aggregateInvoices", "kind": "function"}},
     {"id": "js.aggregation.buildInvoiceDigest", "selector": {"path": "src/aggregation.js", "qualified_name": "aggregation.buildInvoiceDigest", "kind": "function"}},
     {"id": "js.aggregation.summarizeInvoiceAccounts", "selector": {"path": "src/aggregation.js", "qualified_name": "aggregation.summarizeInvoiceAccounts", "kind": "function"}},
+    {"id": "js.aggregation.reduceInvoiceTotals", "selector": {"path": "src/aggregation.js", "qualified_name": "aggregation.reduceInvoiceTotals", "kind": "function"}},
     {"id": "js.settlement.planTransfers", "selector": {"path": "src/settlement.js", "qualified_name": "settlement.planTransfers", "kind": "function"}},
     {"id": "js.settlement.planTransfersWithMinimum", "selector": {"path": "src/settlement.js", "qualified_name": "settlement.planTransfersWithMinimum", "kind": "function"}},
     {"id": "js.settlement.schedulePayouts", "selector": {"path": "src/settlement.js", "qualified_name": "settlement.schedulePayouts", "kind": "function"}},
+    {"id": "js.settlement.compileTransfers", "selector": {"path": "src/settlement.js", "qualified_name": "settlement.compileTransfers", "kind": "function"}},
     {"id": "js.ingestion.normalizeWebhookRecord", "selector": {"path": "src/ingestion.js", "qualified_name": "ingestion.normalizeWebhookRecord", "kind": "function"}},
     {"id": "js.ingestion.importWebhookBatch", "selector": {"path": "src/ingestion.js", "qualified_name": "ingestion.importWebhookBatch", "kind": "function"}},
     {"id": "js.ingestion.importWebhookLines", "selector": {"path": "src/ingestion.js", "qualified_name": "ingestion.importWebhookLines", "kind": "function"}},
@@ -26,7 +28,7 @@
     {"id": "js.outbox.prepareEntry", "selector": {"path": "src/outbox.js", "qualified_name": "outbox.prepareEntry", "kind": "function"}},
     {"id": "js.notifications.dispatchReceipt", "selector": {"path": "src/notifications.js", "qualified_name": "notifications.dispatchReceipt", "kind": "function"}},
     {"id": "javascript/src/aggregation.js::aggregation.assertInvoiceRecord::function::3", "selector": {"path": "src/aggregation.js", "qualified_name": "aggregation.assertInvoiceRecord", "kind": "function", "start_line": 3}},
-    {"id": "javascript/src/cli.js::cli.main::function::9", "selector": {"path": "src/cli.js", "qualified_name": "cli.main", "kind": "function", "start_line": 9}},
+    {"id": "javascript/src/cli.js::cli.main::function::19", "selector": {"path": "src/cli.js", "qualified_name": "cli.main", "kind": "function", "start_line": 19}},
     {"id": "javascript/src/notifications.js::notifications.normalizeReceipt::function::3", "selector": {"path": "src/notifications.js", "qualified_name": "notifications.normalizeReceipt", "kind": "function", "start_line": 3}},
     {"id": "javascript/src/notifications.js::notifications.sendReceiptCallback.deliver::function::13", "selector": {"path": "src/notifications.js", "qualified_name": "notifications.sendReceiptCallback.deliver", "kind": "function", "start_line": 13}},
     {"id": "javascript/src/outbox.js::outbox.createFuture::function::5", "selector": {"path": "src/outbox.js", "qualified_name": "outbox.createFuture", "kind": "function", "start_line": 5}},
@@ -37,8 +39,8 @@
     {"id": "javascript/src/pagination.mjs::pagination.readSnapshot.visit::function::53", "selector": {"path": "src/pagination.mjs", "qualified_name": "pagination.readSnapshot.visit", "kind": "function", "start_line": 53}}
   ],
   "families": [
-    {"id": "translated-aggregation", "members": ["js.aggregation.aggregateInvoices", "js.aggregation.buildInvoiceDigest", "js.aggregation.summarizeInvoiceAccounts"]},
-    {"id": "payout-minimum-extension", "members": ["js.settlement.planTransfers", "js.settlement.planTransfersWithMinimum", "js.settlement.schedulePayouts"]},
+    {"id": "translated-aggregation", "members": ["js.aggregation.aggregateInvoices", "js.aggregation.buildInvoiceDigest", "js.aggregation.summarizeInvoiceAccounts", "js.aggregation.reduceInvoiceTotals"]},
+    {"id": "payout-minimum-extension", "members": ["js.settlement.planTransfers", "js.settlement.planTransfersWithMinimum", "js.settlement.schedulePayouts", "js.settlement.compileTransfers"]},
     {"id": "webhook-normalization", "members": ["js.ingestion.normalizeWebhookRecord", "js.ingestion.importWebhookBatch", "js.ingestion.importWebhookLines"]},
     {"id": "receipt-adapters", "members": ["js.notifications.sendReceiptCallback", "js.outbox.prepareEntry", "js.notifications.dispatchReceipt"]},
     {"id": "outbox-scheduling", "members": ["js.outbox.publishConfirmation"]},
@@ -58,6 +60,18 @@
       "equivalence_domain": "All record arrays with valid row shapes, including invalid voided rows.", "contract": "Validate before void filtering, preserve input, and return invoice-sorted totals and counts.", "rationale": "The grouping and object-reduction forms duplicate the same aggregation responsibility.", "evidence": ["test/calibration.test.js::translated aggregation"]
     },
     {
+      "id": "js.aggregate-map--map-reduce", "a": "js.aggregation.aggregateInvoices", "b": "js.aggregation.reduceInvoiceTotals", "judgment": "positive", "tags": ["near-clone", "map-accumulator"], "difficulty": "easy", "scope": "whole_unit", "behavior_equivalent": true,
+      "equivalence_domain": "All record arrays with valid row shapes, including invalid voided rows.", "contract": "Validate before void filtering, preserve input, and return invoice-sorted totals and counts.", "rationale": "Both implementations use the shared validator and a Map accumulator; only the outer iteration form changes.", "evidence": ["test/calibration.test.js::translated aggregation"]
+    },
+    {
+      "id": "js.sort-group--map-reduce", "a": "js.aggregation.buildInvoiceDigest", "b": "js.aggregation.reduceInvoiceTotals", "judgment": "positive", "tags": ["translated", "grouping-versus-reduce"], "difficulty": "medium", "scope": "whole_unit", "behavior_equivalent": true,
+      "equivalence_domain": "All record arrays with valid row shapes, including invalid voided rows.", "contract": "Validate before void filtering, preserve input, and return invoice-sorted totals and counts.", "rationale": "Sorted contiguous grouping and Map reduction implement the same invoice aggregation contract through distinct collection strategies.", "evidence": ["test/calibration.test.js::translated aggregation"]
+    },
+    {
+      "id": "js.object-reduce--map-reduce", "a": "js.aggregation.summarizeInvoiceAccounts", "b": "js.aggregation.reduceInvoiceTotals", "judgment": "positive", "tags": ["near-clone", "reducer"], "difficulty": "easy", "scope": "whole_unit", "behavior_equivalent": true,
+      "equivalence_domain": "All record arrays with valid row shapes, including invalid voided rows.", "contract": "Validate before void filtering, preserve input, and return invoice-sorted totals and counts.", "rationale": "The object and Map reducers retain the same per-invoice accumulator and final sorted projection.", "evidence": ["test/calibration.test.js::translated aggregation"]
+    },
+    {
       "id": "js.baseline-plan--minimum-plan", "a": "js.settlement.planTransfers", "b": "js.settlement.planTransfersWithMinimum", "judgment": "positive", "tags": ["extended", "medium"], "difficulty": "medium", "scope": "whole_unit", "behavior_equivalent": false,
       "equivalence_domain": "minimumPayoutMinor=0 produces the complete baseline plan and its validation errors.", "contract": "Validate all summaries, then construct sorted ready, refund, or balanced lines and transfers.", "rationale": "The extension duplicates baseline planning and adds an explicit minimum-payout branch.", "evidence": ["test/calibration.test.js::payout extension"], "difference_witness": "For a positive total of 70 and minimum 100, the extension defers the invoice and emits no transfer."
     },
@@ -68,6 +82,18 @@
     {
       "id": "js.minimum-plan--schedule-options", "a": "js.settlement.planTransfersWithMinimum", "b": "js.settlement.schedulePayouts", "judgment": "positive", "tags": ["translated", "medium"], "difficulty": "medium", "scope": "whole_unit", "behavior_equivalent": true,
       "equivalence_domain": "Pair integer minimumPayoutMinor with the identically valued options field.", "contract": "Defer strictly positive totals below the minimum, retain the deferred total, and emit an audit event.", "rationale": "One loop and one reducer encode the same configurable payout policy.", "evidence": ["test/calibration.test.js::payout extension"]
+    },
+    {
+      "id": "js.baseline-plan--compiled-plan", "a": "js.settlement.planTransfers", "b": "js.settlement.compileTransfers", "judgment": "positive", "tags": ["extended", "indexed"], "difficulty": "medium", "scope": "whole_unit", "behavior_equivalent": false,
+      "equivalence_domain": "minimumPayoutMinor=0; identical valid summaries and validation errors.", "contract": "Whole plan includes lines, transfers, deferred total, and audit events.", "rationale": "The indexed compiler contains the baseline planner plus an explicit minimum-payout policy.", "evidence": ["test/calibration.test.js::payout extension"], "difference_witness": "With a positive minimum, compileTransfers defers small balances while planTransfers always marks them ready."
+    },
+    {
+      "id": "js.minimum-plan--compiled-plan", "a": "js.settlement.planTransfersWithMinimum", "b": "js.settlement.compileTransfers", "judgment": "positive", "tags": ["near-clone", "indexed"], "difficulty": "easy", "scope": "whole_unit", "behavior_equivalent": true,
+      "equivalence_domain": "The same positional minimum and valid or invalid summaries.", "contract": "Whole plan includes lines, transfers, deferred total, and audit events.", "rationale": "Both planners repeat the same validation and payout branches with for-of traversal replaced by an index cursor.", "evidence": ["test/calibration.test.js::payout extension"]
+    },
+    {
+      "id": "js.schedule-options--compiled-plan", "a": "js.settlement.schedulePayouts", "b": "js.settlement.compileTransfers", "judgment": "positive", "tags": ["near-clone", "reducer-versus-indexed"], "difficulty": "easy", "scope": "whole_unit", "behavior_equivalent": true,
+      "equivalence_domain": "The options minimum equals the positional minimum; identical valid summaries and validation errors.", "contract": "Whole plan includes lines, transfers, deferred total, and audit events.", "rationale": "Reducer and indexed accumulation preserve the same branch order, outputs, and minimum-payout policy.", "evidence": ["test/calibration.test.js::payout extension"]
     },
     {
       "id": "js.scalar-normalizer--batch-adapter", "a": "js.ingestion.normalizeWebhookRecord", "b": "js.ingestion.importWebhookBatch", "judgment": "positive", "tags": ["partial", "extracted", "medium"], "difficulty": "medium", "scope": "partial", "behavior_equivalent": false,
@@ -197,7 +223,7 @@
       "equivalence_domain": "Separate inbound webhook and outbound email entry contracts.", "contract": "Webhook records preserve voided and id; entries create receipt delivery metadata.", "rationale": "Their email cleanup is a shared primitive, not a mergeable application responsibility.", "evidence": ["test/calibration.test.js::webhook normalization", "test/calibration.test.js::receipt adapters"], "difference_witness": "Webhook output includes voided; prepared entries include status and channel."
     },
     {
-      "id": "js.demo-main--batch-import-negative", "a": "javascript/src/cli.js::cli.main::function::9", "b": "js.ingestion.importWebhookBatch", "judgment": "negative", "tags": ["orchestration", "false-positive"], "scope": "whole_unit", "behavior_equivalent": false,
+      "id": "js.demo-main--batch-import-negative", "a": "javascript/src/cli.js::cli.main::function::19", "b": "js.ingestion.importWebhookBatch", "judgment": "negative", "tags": ["orchestration", "false-positive"], "scope": "whole_unit", "behavior_equivalent": false,
       "equivalence_domain": "Demo orchestration and production webhook ingestion.", "contract": "main supplies a sample envelope and displays results; the importer validates and records batch state.", "rationale": "A call site is not a duplicate of the business operation it exercises.", "evidence": ["src/cli.js::main", "test/calibration.test.js::webhook normalization"], "difference_witness": "main has fixed demo data; importWebhookBatch accepts arbitrary envelopes and replay state."
     },
     {
@@ -209,11 +235,11 @@
       "equivalence_domain": "Raw invoice aggregation and planning from completed summaries.", "contract": "Aggregation forms totals and counts; planning chooses transfer, refund, or balanced outcomes.", "rationale": "The two stages intentionally compose and should not be consolidated.", "evidence": ["test/calibration.test.js::translated aggregation", "test/calibration.test.js::payout extension"], "difference_witness": "Voided raw rows affect aggregation; plans have no voided-row input."
     },
     {
-      "id": "js.demo-main--sort-aggregate-negative", "a": "javascript/src/cli.js::cli.main::function::9", "b": "js.aggregation.buildInvoiceDigest", "judgment": "negative", "tags": ["orchestration", "false-positive"], "scope": "whole_unit", "behavior_equivalent": false,
+      "id": "js.demo-main--sort-aggregate-negative", "a": "javascript/src/cli.js::cli.main::function::19", "b": "js.aggregation.buildInvoiceDigest", "judgment": "negative", "tags": ["orchestration", "false-positive"], "scope": "whole_unit", "behavior_equivalent": false,
       "equivalence_domain": "Demo orchestration and invoice grouping.", "contract": "main invokes the digest with fixture records; the digest validates, sorts, and groups its input.", "rationale": "Supplying one sample call does not duplicate collection processing.", "evidence": ["src/cli.js::main", "test/calibration.test.js::translated aggregation"], "difference_witness": "main returns a combined demo object; buildInvoiceDigest returns invoice summaries only."
     },
     {
-      "id": "js.demo-main--map-aggregate-negative", "a": "javascript/src/cli.js::cli.main::function::9", "b": "js.aggregation.aggregateInvoices", "judgment": "negative", "tags": ["orchestration", "false-positive"], "scope": "whole_unit", "behavior_equivalent": false,
+      "id": "js.demo-main--map-aggregate-negative", "a": "javascript/src/cli.js::cli.main::function::19", "b": "js.aggregation.aggregateInvoices", "judgment": "negative", "tags": ["orchestration", "false-positive"], "scope": "whole_unit", "behavior_equivalent": false,
       "equivalence_domain": "Demo orchestration and invoice aggregation.", "contract": "main wires fixed examples together; aggregation reduces caller-provided invoice rows.", "rationale": "The sample entry point shares terms and calls the aggregator, but has no duplicate maintenance region.", "evidence": ["src/cli.js::main", "test/calibration.test.js::translated aggregation"], "difference_witness": "main also sends receipts and imports webhooks; aggregateInvoices never performs either action."
     },
     {
@@ -241,11 +267,11 @@
       "equivalence_domain": "A receipt canonicalizer and its transport caller.", "contract": "dispatchReceipt delegates normalization then applies transport policy and mutable mailbox delivery.", "rationale": "This is a direct helper/caller relationship, not duplicate code.", "evidence": ["test/calibration.test.js::receipt adapters"], "difference_witness": "normalizeReceipt has no transport argument or mailbox side effect."
     },
     {
-      "id": "js.demo-main--object-aggregate-negative", "a": "javascript/src/cli.js::cli.main::function::9", "b": "js.aggregation.summarizeInvoiceAccounts", "judgment": "negative", "tags": ["orchestration", "false-positive"], "scope": "whole_unit", "behavior_equivalent": false,
+      "id": "js.demo-main--object-aggregate-negative", "a": "javascript/src/cli.js::cli.main::function::19", "b": "js.aggregation.summarizeInvoiceAccounts", "judgment": "negative", "tags": ["orchestration", "false-positive"], "scope": "whole_unit", "behavior_equivalent": false,
       "equivalence_domain": "Demo orchestration and invoice-account reduction.", "contract": "main invokes account reduction for fixed records; the reducer owns validation and account totals.", "rationale": "The entry point is an integration caller rather than a second implementation.", "evidence": ["src/cli.js::main", "test/calibration.test.js::translated aggregation"], "difference_witness": "main returns multiple application domains; summarizeInvoiceAccounts returns only account summaries."
     },
     {
-      "id": "js.demo-main--baseline-plan-negative", "a": "javascript/src/cli.js::cli.main::function::9", "b": "js.settlement.planTransfers", "judgment": "negative", "tags": ["orchestration", "false-positive"], "scope": "whole_unit", "behavior_equivalent": false,
+      "id": "js.demo-main--baseline-plan-negative", "a": "javascript/src/cli.js::cli.main::function::19", "b": "js.settlement.planTransfers", "judgment": "negative", "tags": ["orchestration", "false-positive"], "scope": "whole_unit", "behavior_equivalent": false,
       "equivalence_domain": "Application demonstration and settlement planning.", "contract": "main invokes planning on aggregation output; the planner maps summaries to settlement instructions.", "rationale": "Calling a function within an integration path is not duplicated planning behavior.", "evidence": ["src/cli.js::main", "test/calibration.test.js::payout extension"], "difference_witness": "main performs ingress and receipt operations in addition to planning."
     },
     {
@@ -310,7 +336,7 @@
       "equivalence_domain": "One receipt message and a raw invoice collection.", "contract": "Receipt normalization canonicalizes delivery fields; account aggregation computes invoice totals and counts.", "rationale": "Their text cleanup does not define a shared business operation.", "evidence": ["test/calibration.test.js::receipt adapters", "test/calibration.test.js::translated aggregation"], "difference_witness": "A receipt has email; aggregate input has voided rows and no delivery field."
     },
     {
-      "id": "js.demo-main--minimum-plan-negative", "a": "javascript/src/cli.js::cli.main::function::9", "b": "js.settlement.planTransfersWithMinimum", "judgment": "negative", "tags": ["orchestration", "false-positive"], "scope": "whole_unit", "behavior_equivalent": false,
+      "id": "js.demo-main--minimum-plan-negative", "a": "javascript/src/cli.js::cli.main::function::19", "b": "js.settlement.planTransfersWithMinimum", "judgment": "negative", "tags": ["orchestration", "false-positive"], "scope": "whole_unit", "behavior_equivalent": false,
       "equivalence_domain": "Demo orchestration and minimum-payout planning.", "contract": "main invokes a fixed minimum example; the planner validates arbitrary thresholds and records deferral events.", "rationale": "A demonstration call has no duplicate policy implementation.", "evidence": ["src/cli.js::main", "test/calibration.test.js::payout extension"], "difference_witness": "main also drives unrelated aggregation and receipt paths."
     },
     {
@@ -335,14 +361,14 @@
     }
   ],
   "probes": [
-    {"id": "js.behavioral.invoice-totals", "kind": "behavioral", "query": "calculate sorted invoice totals while skipping voided records", "expected": ["js.aggregation.aggregateInvoices", "js.aggregation.buildInvoiceDigest", "js.aggregation.summarizeInvoiceAccounts"], "relevance_complete": true},
-    {"id": "js.behavioral.payout-deferral", "kind": "behavioral", "query": "defer small positive payouts and record a below minimum event", "expected": ["js.settlement.planTransfersWithMinimum", "js.settlement.schedulePayouts"], "relevance_complete": true},
+    {"id": "js.behavioral.invoice-totals", "kind": "behavioral", "query": "calculate sorted invoice totals while skipping voided records", "expected": ["js.aggregation.aggregateInvoices", "js.aggregation.buildInvoiceDigest", "js.aggregation.summarizeInvoiceAccounts", "js.aggregation.reduceInvoiceTotals"], "relevance_complete": true},
+    {"id": "js.behavioral.payout-deferral", "kind": "behavioral", "query": "defer small positive payouts and record a below minimum event", "expected": ["js.settlement.planTransfersWithMinimum", "js.settlement.schedulePayouts", "js.settlement.compileTransfers"], "relevance_complete": true},
     {"id": "js.behavioral.cursor-pagination", "kind": "behavioral", "query": "follow asynchronous cursor pages, reject cycles, and keep the first record for each identifier", "expected": ["js.pagination.fetchRecords", "js.pagination.readSnapshot"], "relevance_complete": true},
     {"id": "js.behavioral.accept-webhook", "kind": "behavioral", "query": "accept an incoming webhook only after validating its identifier and email", "expected": ["js.ingestion.normalizeWebhookRecord", "js.ingestion.importWebhookBatch", "js.ingestion.importWebhookLines"], "relevance_complete": true},
     {"id": "js.behavioral.batch-replay", "kind": "behavioral", "query": "avoid processing an already completed webhook batch", "expected": ["js.ingestion.importWebhookBatch"], "relevance_complete": true},
     {"id": "js.behavioral.email-receipt", "kind": "behavioral", "query": "deliver an invoice receipt by email and record it in the mailbox", "expected": ["js.notifications.sendReceiptCallback", "js.outbox.publishConfirmation", "js.notifications.dispatchReceipt"], "relevance_complete": true},
     {"id": "js.partial-symbol.aggregate", "kind": "partial_symbol", "query": "aggregateInvo", "expected": ["js.aggregation.aggregateInvoices"], "relevance_complete": true},
-    {"id": "js.partial-symbol.minimum", "kind": "partial_symbol", "query": "minimumPayout", "expected": ["js.settlement.planTransfersWithMinimum", "js.settlement.schedulePayouts"], "relevance_complete": true},
+    {"id": "js.partial-symbol.minimum", "kind": "partial_symbol", "query": "minimumPayout", "expected": ["js.settlement.planTransfersWithMinimum", "js.settlement.schedulePayouts", "js.settlement.compileTransfers"], "relevance_complete": true},
     {"id": "js.partial-symbol.webhook", "kind": "partial_symbol", "query": "importWebhook", "expected": ["js.ingestion.importWebhookBatch", "js.ingestion.importWebhookLines"], "relevance_complete": true},
     {"id": "js.exact-symbol.outbox-confirmation", "kind": "exact_symbol", "query": "publishConfirmation", "expected": ["js.outbox.publishConfirmation"], "relevance_complete": true},
     {"id": "js.no-result.signed-pdf", "kind": "no_result", "query": "archive a signed PDF to object storage", "expected": [], "relevance_complete": true},

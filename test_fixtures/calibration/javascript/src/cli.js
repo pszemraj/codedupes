@@ -1,10 +1,20 @@
 "use strict";
 
-const { aggregateInvoices, buildInvoiceDigest, summarizeInvoiceAccounts } = require("./aggregation");
+const {
+  aggregateInvoices,
+  buildInvoiceDigest,
+  reduceInvoiceTotals,
+  summarizeInvoiceAccounts,
+} = require("./aggregation");
 const { importWebhookBatch, importWebhookLines } = require("./ingestion");
 const { dispatchReceipt } = require("./notifications");
 const { publishConfirmation } = require("./outbox");
-const { planTransfers, planTransfersWithMinimum, schedulePayouts } = require("./settlement");
+const {
+  compileTransfers,
+  planTransfers,
+  planTransfersWithMinimum,
+  schedulePayouts,
+} = require("./settlement");
 
 async function main() {
   const { fetchRecords, readSnapshot } = await import("./pagination.mjs");
@@ -26,8 +36,18 @@ async function main() {
   ]);
   const fetchPage = async (cursor) => pages.get(cursor);
   return {
-    aggregation: [summaries, buildInvoiceDigest(records), summarizeInvoiceAccounts(records)],
-    plans: [planTransfers(summaries), planTransfersWithMinimum(summaries, 100), schedulePayouts(summaries)],
+    aggregation: [
+      summaries,
+      buildInvoiceDigest(records),
+      summarizeInvoiceAccounts(records),
+      reduceInvoiceTotals(records),
+    ],
+    plans: [
+      planTransfers(summaries),
+      planTransfersWithMinimum(summaries, 100),
+      schedulePayouts(summaries),
+      compileTransfers(summaries, 100),
+    ],
     ingestion: [batch, lines],
     deliveries: mailbox.sent,
     pagination: [await fetchRecords(fetchPage), await readSnapshot(fetchPage)],
