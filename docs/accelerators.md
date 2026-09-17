@@ -89,6 +89,16 @@ Each time is the median combined duplicate and search measurement. The
 within-version comparisons are meaningful; absolute times across versions came
 from separate sessions.
 
+The autocast setup follows the PyTorch 2.14 inference contract:
+`torch.amp.autocast(device_type="mps", dtype=torch.bfloat16)` surrounds the
+unmodified fp32 model and inputs. `torch.autocast` is the same implementation.
+Forward hooks inside both actual Sentence Transformers encoders confirmed that
+autocast remained enabled through their nested `torch.inference_mode()` calls.
+The first eligible linear layer received fp32 activations and weights and
+emitted bf16; GTE's observed LayerNorm remained fp32. Sentence Transformers'
+`precision="float32"` default controls optional output quantization and does not
+disable operation autocasting.
+
 | PyTorch | Model | MPS fp32 | bf16 autocast | Speed change | Maximum pair/query drift | Changed shipped results |
 | --- | --- | ---: | ---: | ---: | ---: | ---: |
 | 2.13.0 | gte-modernbert-base | 5.760 s | 6.658 s | 15.6% slower | 0.0825 / 0.0561 | 13 duplicate, 2 search |
