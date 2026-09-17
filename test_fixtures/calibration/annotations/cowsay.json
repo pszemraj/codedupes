@@ -86,6 +86,14 @@
       }
     },
     {
+      "id": "scheduler.select_by_scan",
+      "selector": {
+        "path": "src/scheduler.rs",
+        "qualified_name": "scheduler.select_by_scan",
+        "kind": "function"
+      }
+    },
+    {
       "id": "main.main",
       "selector": {
         "path": "src/main.rs",
@@ -166,10 +174,34 @@
       }
     },
     {
+      "id": "wrapping.cursor.wrap",
+      "selector": {
+        "path": "src/wrapping/cursor.rs",
+        "qualified_name": "wrapping.cursor.wrap",
+        "kind": "function"
+      }
+    },
+    {
       "id": "wrapping.fragments.segment",
       "selector": {
         "path": "src/wrapping/fragments.rs",
         "qualified_name": "wrapping.fragments.segment",
+        "kind": "function"
+      }
+    },
+    {
+      "id": "wrapping.fragments.segment_indexed",
+      "selector": {
+        "path": "src/wrapping/fragments.rs",
+        "qualified_name": "wrapping.fragments.segment_indexed",
+        "kind": "function"
+      }
+    },
+    {
+      "id": "wrapping.fragments.segment_recursive",
+      "selector": {
+        "path": "src/wrapping/fragments.rs",
+        "qualified_name": "wrapping.fragments.segment_recursive",
         "kind": "function"
       }
     },
@@ -234,14 +266,17 @@
       "members": [
         "wrapping.scanner.wrap",
         "wrapping.fold.wrap",
-        "wrapping.queue.wrap"
+        "wrapping.queue.wrap",
+        "wrapping.cursor.wrap"
       ]
     },
     {
       "id": "word-fragmenting",
       "members": [
         "wrapping.shared.split_word",
-        "wrapping.fragments.segment"
+        "wrapping.fragments.segment",
+        "wrapping.fragments.segment_indexed",
+        "wrapping.fragments.segment_recursive"
       ]
     },
     {
@@ -255,7 +290,8 @@
       "id": "worker-selection",
       "members": [
         "scheduler.select_for_worker",
-        "scheduler.reserve_candidates"
+        "scheduler.reserve_candidates",
+        "scheduler.select_by_scan"
       ]
     }
   ],
@@ -359,6 +395,65 @@
       ]
     },
     {
+      "id": "wrapping.scanner.wrap--wrapping.cursor.wrap",
+      "a": "wrapping.scanner.wrap",
+      "b": "wrapping.cursor.wrap",
+      "judgment": "positive",
+      "tags": [
+        "translated",
+        "indexed-loop"
+      ],
+      "difficulty": "easy",
+      "scope": "whole_unit",
+      "behavior_equivalent": true,
+      "equivalence_domain": "Message strings passed through render, with its width clamp to 4..96; both bubble modes.",
+      "contract": "Unicode scalar widths, whitespace collapsing, paragraph preservation, and long-word splitting agree through the public renderer.",
+      "rationale": "Both wrappers maintain an active output line through nested imperative loops; one replaces iterators with explicit cursors.",
+      "evidence": [
+        "tests/behavior.rs::both_semantic_wrappers_render_identically",
+        "tests/fixture_integrity.rs::semantic_clone_has_different_source_but_equal_behavior"
+      ]
+    },
+    {
+      "id": "wrapping.fold.wrap--wrapping.cursor.wrap",
+      "a": "wrapping.fold.wrap",
+      "b": "wrapping.cursor.wrap",
+      "judgment": "positive",
+      "tags": [
+        "iterator-versus-indexed",
+        "algorithmic-rewrite"
+      ],
+      "difficulty": "hard",
+      "scope": "whole_unit",
+      "behavior_equivalent": true,
+      "equivalence_domain": "Message strings passed through render, with its width clamp to 4..96; both bubble modes.",
+      "contract": "Unicode scalar widths, whitespace collapsing, paragraph preservation, and long-word splitting agree through the public renderer.",
+      "rationale": "Iterator flattening and tuple-fold state obscure the same behavior expressed by explicit word and fragment cursors.",
+      "evidence": [
+        "tests/behavior.rs::both_semantic_wrappers_render_identically",
+        "tests/fixture_integrity.rs::semantic_clone_has_different_source_but_equal_behavior"
+      ]
+    },
+    {
+      "id": "wrapping.queue.wrap--wrapping.cursor.wrap",
+      "a": "wrapping.queue.wrap",
+      "b": "wrapping.cursor.wrap",
+      "judgment": "positive",
+      "tags": [
+        "queue-versus-indexed"
+      ],
+      "difficulty": "medium",
+      "scope": "whole_unit",
+      "behavior_equivalent": true,
+      "equivalence_domain": "Message strings passed through render, with its width clamp to 4..96; both bubble modes.",
+      "contract": "Unicode scalar widths, whitespace collapsing, paragraph preservation, and long-word splitting agree through the public renderer.",
+      "rationale": "FIFO fragment consumption and indexed traversal retain the same active-line and paragraph state under different collection mechanics.",
+      "evidence": [
+        "tests/behavior.rs::both_semantic_wrappers_render_identically",
+        "tests/fixture_integrity.rs::semantic_clone_has_different_source_but_equal_behavior"
+      ]
+    },
+    {
       "id": "wrapping.shared.split_word--wrapping.fragments.segment",
       "a": "wrapping.shared.split_word",
       "b": "wrapping.fragments.segment",
@@ -377,6 +472,100 @@
         "tests/behavior.rs::both_semantic_wrappers_render_identically",
         "tests/behavior.rs::wraps_long_words_without_losing_characters",
         "tests/fixture_integrity.rs::semantic_clone_has_different_source_but_equal_behavior"
+      ]
+    },
+    {
+      "id": "wrapping.shared.split_word--wrapping.fragments.segment_indexed",
+      "a": "wrapping.shared.split_word",
+      "b": "wrapping.fragments.segment_indexed",
+      "judgment": "positive",
+      "tags": [
+        "translated",
+        "scalar-buffer"
+      ],
+      "difficulty": "hard",
+      "scope": "whole_unit",
+      "behavior_equivalent": true,
+      "equivalence_domain": "Nonempty Unicode tokens and a positive scalar boundary.",
+      "contract": "Partition a token into ordered chunks no wider than the supplied scalar boundary without losing or reordering characters.",
+      "rationale": "The direct character loop and indexed scalar-buffer slicing implement the same long-token operation through substantially different state representations.",
+      "evidence": [
+        "src/wrapping/fragments.rs::segment_variants_preserve_unicode_scalar_boundaries"
+      ]
+    },
+    {
+      "id": "wrapping.fragments.segment--wrapping.fragments.segment_indexed",
+      "a": "wrapping.fragments.segment",
+      "b": "wrapping.fragments.segment_indexed",
+      "judgment": "positive",
+      "tags": [
+        "translated",
+        "indexed-loop"
+      ],
+      "difficulty": "easy",
+      "scope": "whole_unit",
+      "behavior_equivalent": true,
+      "equivalence_domain": "Nonempty Unicode tokens and a positive scalar boundary.",
+      "contract": "Partition a token into ordered chunks no wider than the supplied scalar boundary without losing or reordering characters.",
+      "rationale": "Both implementations collect Unicode scalars and append chunks in boundary order; only the iteration mechanism differs.",
+      "evidence": [
+        "src/wrapping/fragments.rs::segment_variants_preserve_unicode_scalar_boundaries"
+      ]
+    },
+    {
+      "id": "wrapping.shared.split_word--wrapping.fragments.segment_recursive",
+      "a": "wrapping.shared.split_word",
+      "b": "wrapping.fragments.segment_recursive",
+      "judgment": "positive",
+      "tags": [
+        "translated",
+        "recursive"
+      ],
+      "difficulty": "hard",
+      "scope": "whole_unit",
+      "behavior_equivalent": true,
+      "equivalence_domain": "Nonempty Unicode tokens and a positive scalar boundary.",
+      "contract": "Partition a token into ordered chunks no wider than the supplied scalar boundary without losing or reordering characters.",
+      "rationale": "The iterative active-fragment builder and recursive slice consumer are independently structured forms of the same operation.",
+      "evidence": [
+        "src/wrapping/fragments.rs::segment_variants_preserve_unicode_scalar_boundaries"
+      ]
+    },
+    {
+      "id": "wrapping.fragments.segment--wrapping.fragments.segment_recursive",
+      "a": "wrapping.fragments.segment",
+      "b": "wrapping.fragments.segment_recursive",
+      "judgment": "positive",
+      "tags": [
+        "fold-versus-recursion",
+        "algorithmic-rewrite"
+      ],
+      "difficulty": "hard",
+      "scope": "whole_unit",
+      "behavior_equivalent": true,
+      "equivalence_domain": "Nonempty Unicode tokens and a positive scalar boundary.",
+      "contract": "Partition a token into ordered chunks no wider than the supplied scalar boundary without losing or reordering characters.",
+      "rationale": "Iterator-fold mutation and recursive slice consumption obscure their shared character-boundary contract.",
+      "evidence": [
+        "src/wrapping/fragments.rs::segment_variants_preserve_unicode_scalar_boundaries"
+      ]
+    },
+    {
+      "id": "wrapping.fragments.segment_indexed--wrapping.fragments.segment_recursive",
+      "a": "wrapping.fragments.segment_indexed",
+      "b": "wrapping.fragments.segment_recursive",
+      "judgment": "positive",
+      "tags": [
+        "indexed-versus-recursive"
+      ],
+      "difficulty": "medium",
+      "scope": "whole_unit",
+      "behavior_equivalent": true,
+      "equivalence_domain": "Nonempty Unicode tokens and a positive scalar boundary.",
+      "contract": "Partition a token into ordered chunks no wider than the supplied scalar boundary without losing or reordering characters.",
+      "rationale": "Both slice a collected scalar buffer at identical boundaries, with loop state replaced by recursive remainder state.",
+      "evidence": [
+        "src/wrapping/fragments.rs::segment_variants_preserve_unicode_scalar_boundaries"
       ]
     },
     {
@@ -414,6 +603,48 @@
       "equivalence_domain": "All job slices, clocks, and limits under the scheduler contract, including invalid records that must be rejected before eligibility filtering.",
       "contract": "Return the eligible job IDs in descending priority, then ascending creation time and ID; reject duplicate IDs and invalid expiry windows without changing the input.",
       "rationale": "Sorting every eligible job and retaining bounded heap ranks are two maintainable implementations of one worker-selection policy. Consolidation can keep one selection engine without changing the caller contract.",
+      "evidence": [
+        "tests/scheduler.rs::ranking_and_ties_have_a_concrete_oracle",
+        "tests/scheduler.rs::validation_precedes_policy_filtering",
+        "tests/scheduler.rs::generated_sets_preserve_inputs_and_match_expected_prefixes"
+      ]
+    },
+    {
+      "id": "scheduler.select_for_worker--scheduler.select_by_scan",
+      "a": "scheduler.select_for_worker",
+      "b": "scheduler.select_by_scan",
+      "judgment": "positive",
+      "tags": [
+        "translated",
+        "incremental-ranking"
+      ],
+      "difficulty": "medium",
+      "scope": "whole_unit",
+      "behavior_equivalent": true,
+      "equivalence_domain": "All job slices, clocks, and limits under the scheduler contract, including invalid records that must be rejected before eligibility filtering.",
+      "contract": "Return the eligible job IDs in descending priority, then ascending creation time and ID; reject duplicate IDs and invalid expiry windows without changing the input.",
+      "rationale": "Full sorting and ordered prefix insertion implement the same validation, eligibility, and rank policy with different collection mechanics.",
+      "evidence": [
+        "tests/scheduler.rs::ranking_and_ties_have_a_concrete_oracle",
+        "tests/scheduler.rs::validation_precedes_policy_filtering",
+        "tests/scheduler.rs::generated_sets_preserve_inputs_and_match_expected_prefixes"
+      ]
+    },
+    {
+      "id": "scheduler.reserve_candidates--scheduler.select_by_scan",
+      "a": "scheduler.reserve_candidates",
+      "b": "scheduler.select_by_scan",
+      "judgment": "positive",
+      "tags": [
+        "heap-versus-insertion",
+        "algorithmic-rewrite"
+      ],
+      "difficulty": "hard",
+      "scope": "whole_unit",
+      "behavior_equivalent": true,
+      "equivalence_domain": "All job slices, clocks, and limits under the scheduler contract, including invalid records that must be rejected before eligibility filtering.",
+      "contract": "Return the eligible job IDs in descending priority, then ascending creation time and ID; reject duplicate IDs and invalid expiry windows without changing the input.",
+      "rationale": "A reversed bounded heap and ordered prefix insertion encode the same ranking policy through unrelated state transitions.",
       "evidence": [
         "tests/scheduler.rs::ranking_and_ties_have_a_concrete_oracle",
         "tests/scheduler.rs::validation_precedes_policy_filtering",
@@ -1007,7 +1238,8 @@
       "expected": [
         "wrapping.scanner.wrap",
         "wrapping.fold.wrap",
-        "wrapping.queue.wrap"
+        "wrapping.queue.wrap",
+        "wrapping.cursor.wrap"
       ],
       "relevance_complete": true
     },
@@ -1038,7 +1270,8 @@
       "query": "Select ready jobs by priority, creation time, and identifier while rejecting invalid records.",
       "expected": [
         "scheduler.select_for_worker",
-        "scheduler.reserve_candidates"
+        "scheduler.reserve_candidates",
+        "scheduler.select_by_scan"
       ],
       "relevance_complete": true
     },
@@ -1048,7 +1281,9 @@
       "query": "Divide one long word into character-bounded pieces without losing Unicode characters.",
       "expected": [
         "wrapping.shared.split_word",
-        "wrapping.fragments.segment"
+        "wrapping.fragments.segment",
+        "wrapping.fragments.segment_indexed",
+        "wrapping.fragments.segment_recursive"
       ],
       "relevance_complete": true
     },

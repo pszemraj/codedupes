@@ -42,13 +42,14 @@ fn run() -> Result<String, String> {
                     .map_err(|_| format!("invalid width: {raw_width}"))?;
             }
             "--wrapper" => {
-                let wrapper = args
-                    .next()
-                    .ok_or_else(|| "--wrapper requires scanner, fold, or queue".to_owned())?;
+                let wrapper = args.next().ok_or_else(|| {
+                    "--wrapper requires scanner, fold, queue, or cursor".to_owned()
+                })?;
                 options.wrap_algorithm = match wrapper.as_str() {
                     "scanner" => WrapAlgorithm::Scanner,
                     "fold" => WrapAlgorithm::Fold,
                     "queue" => WrapAlgorithm::Queue,
+                    "cursor" => WrapAlgorithm::Cursor,
                     _ => return Err(format!("unknown wrapper: {wrapper}")),
                 };
             }
@@ -96,7 +97,7 @@ fn print_usage() {
          Options:\n\
            -t, --think              use a thought bubble\n\
            -w, --width <COLUMNS>    wrap at 4..=96 columns (default: 40)\n\
-           --wrapper <NAME>     scanner, fold, or queue (default: scanner)\n\
+           --wrapper <NAME>     scanner, fold, queue, or cursor (default: scanner)\n\
            --renderer <NAME>    pipeline or composed (default: pipeline)\n\
            --scheduler-demo      run the offline scheduler selection example\n\
            -h, --help               show this help\n\n\

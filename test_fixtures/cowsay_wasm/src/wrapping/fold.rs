@@ -1,4 +1,4 @@
-use super::shared::{display_width, split_word};
+use super::{fragments::segment_recursive, shared::display_width};
 
 pub(crate) fn wrap(message: &str, width: usize) -> Vec<String> {
     let width = width.max(1);
@@ -8,7 +8,7 @@ pub(crate) fn wrap(message: &str, width: usize) -> Vec<String> {
             let paragraph = raw_paragraph.strip_suffix('\r').unwrap_or(raw_paragraph);
             let pieces: Vec<String> = paragraph
                 .split_whitespace()
-                .flat_map(|word| split_word(word, width))
+                .flat_map(|word| segment_recursive(word, width))
                 .collect();
 
             if pieces.is_empty() {

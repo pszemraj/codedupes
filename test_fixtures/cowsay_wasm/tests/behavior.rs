@@ -68,9 +68,19 @@ fn both_semantic_wrappers_render_identically() {
                         render_algorithm: RenderAlgorithm::Pipeline,
                     },
                 );
+                let cursor = render(
+                    message,
+                    CowOptions {
+                        width,
+                        thinking,
+                        wrap_algorithm: WrapAlgorithm::Cursor,
+                        render_algorithm: RenderAlgorithm::Pipeline,
+                    },
+                );
 
                 assert_eq!(scanner, fold, "message={message:?}, width={width}");
                 assert_eq!(scanner, queue, "message={message:?}, width={width}");
+                assert_eq!(scanner, cursor, "message={message:?}, width={width}");
             }
         }
     }
@@ -103,7 +113,7 @@ fn native_cli_reports_invalid_options_and_runs_both_wrappers() {
         .unwrap();
     assert_eq!(invalid.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&invalid.stderr).contains("unknown wrapper"));
-    for wrapper in ["scanner", "fold", "queue"] {
+    for wrapper in ["scanner", "fold", "queue", "cursor"] {
         let output = Command::new(executable)
             .args(["--wrapper", wrapper, "--width", "4", "東京 café"])
             .output()

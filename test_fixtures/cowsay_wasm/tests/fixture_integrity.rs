@@ -3,6 +3,7 @@ use cowsay_dupe_fixture::{render, CowOptions, WrapAlgorithm};
 const SPEECH: &str = include_str!("../src/bubble/speech.rs");
 const THOUGHT: &str = include_str!("../src/bubble/thought.rs");
 const SCANNER: &str = include_str!("../src/wrapping/scanner.rs");
+const CURSOR: &str = include_str!("../src/wrapping/cursor.rs");
 const FOLD: &str = include_str!("../src/wrapping/fold.rs");
 const FRAGMENTS: &str = include_str!("../src/wrapping/fragments.rs");
 const QUEUE: &str = include_str!("../src/wrapping/queue.rs");
@@ -29,11 +30,15 @@ fn semantic_clone_has_different_source_but_equal_behavior() {
     let scanner_source = normalized(function(SCANNER, "pub(crate) fn wrap"));
     let fold_source = normalized(function(FOLD, "pub(crate) fn wrap"));
     let queue_source = normalized(function(QUEUE, "pub(crate) fn wrap"));
+    let cursor_source = normalized(function(CURSOR, "pub(crate) fn wrap"));
     let shared_splitter = normalized(function(SHARED, "pub(crate) fn split_word"));
     let queue_fragmenter = normalized(function(FRAGMENTS, "pub(crate) fn segment"));
     assert_ne!(scanner_source, fold_source);
     assert_ne!(scanner_source, queue_source);
     assert_ne!(fold_source, queue_source);
+    assert_ne!(scanner_source, cursor_source);
+    assert_ne!(fold_source, cursor_source);
+    assert_ne!(queue_source, cursor_source);
     assert_ne!(shared_splitter, queue_fragmenter);
 
     for message in [

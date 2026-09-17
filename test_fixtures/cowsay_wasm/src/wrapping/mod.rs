@@ -1,3 +1,4 @@
+mod cursor;
 mod fold;
 mod fragments;
 mod queue;
@@ -15,6 +16,7 @@ pub enum WrapAlgorithm {
     Scanner,
     Fold,
     Queue,
+    Cursor,
 }
 
 pub(crate) fn wrap(message: &str, width: usize, algorithm: WrapAlgorithm) -> Vec<String> {
@@ -22,5 +24,6 @@ pub(crate) fn wrap(message: &str, width: usize, algorithm: WrapAlgorithm) -> Vec
         WrapAlgorithm::Scanner => scanner::wrap(message, width),
         WrapAlgorithm::Fold => fold::wrap(message, width),
         WrapAlgorithm::Queue => queue::wrap(message, width),
+        WrapAlgorithm::Cursor => cursor::wrap(message, width),
     }
 }
