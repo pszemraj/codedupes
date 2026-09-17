@@ -13,11 +13,11 @@ from codedupes.semantic_profiles import list_supported_models, resolve_model_pro
 
 try:
     from .calibration_contract import add_contract_arguments, load_projects, pair_key, write_json
-    from .calibration_evaluation import judgments, load_all, metrics
+    from .calibration_evaluation import judgments, load_all, metrics, selection_context
     from .calibration_measurements import DEFAULT_MEASUREMENTS
 except ImportError:
     from calibration_contract import add_contract_arguments, load_projects, pair_key, write_json
-    from calibration_evaluation import judgments, load_all, metrics
+    from calibration_evaluation import judgments, load_all, metrics, selection_context
     from calibration_measurements import DEFAULT_MEASUREMENTS
 
 
@@ -237,7 +237,11 @@ def main() -> int:
     projects = load_projects(args.manifest, args.projects, args.policy)
     duplicate_grid = threshold_grid(args.duplicate_start, args.duplicate_stop, args.step)
     search_grid = threshold_grid(args.search_start, args.search_stop, args.step)
-    payload: dict[str, Any] = {"schema_version": 3, "models": []}
+    payload: dict[str, Any] = {
+        "schema_version": 3,
+        "input_context": selection_context(projects, args.models),
+        "models": [],
+    }
 
     for model in args.models:
         profile = resolve_model_profile(model)

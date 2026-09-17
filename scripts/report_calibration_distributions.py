@@ -10,11 +10,23 @@ from codedupes.semantic_profiles import list_supported_models
 
 try:
     from .calibration_contract import add_contract_arguments, load_projects, read_json, write_json
-    from .calibration_evaluation import compare_devices, full_report, load_all
+    from .calibration_evaluation import (
+        compare_devices,
+        full_report,
+        load_all,
+        selection_digest,
+        validate_selection_context,
+    )
     from .calibration_measurements import DEFAULT_MEASUREMENTS
 except ImportError:
     from calibration_contract import add_contract_arguments, load_projects, read_json, write_json
-    from calibration_evaluation import compare_devices, full_report, load_all
+    from calibration_evaluation import (
+        compare_devices,
+        full_report,
+        load_all,
+        selection_digest,
+        validate_selection_context,
+    )
     from calibration_measurements import DEFAULT_MEASUREMENTS
 
 
@@ -37,13 +49,22 @@ def main() -> int:
     )
     parser.add_argument("--json-out", type=Path)
     args = parser.parse_args()
+    projects = load_projects(args.manifest, args.projects, args.policy)
     payload = {
         "schema_version": 3,
         "threshold_selection": read_json(args.threshold_selection),
         "hybrid_selection": read_json(args.hybrid_selection),
         "projects": [],
     }
-    for project in load_projects(args.manifest, args.projects, args.policy):
+    for field in ("threshold_selection", "hybrid_selection"):
+        validate_selection_context(payload[field], projects, args.models)
+    if payload["hybrid_selection"].get("threshold_selection_digest") != selection_digest(
+        payload["threshold_selection"]
+    ):
+        raise ValueError(
+            "hybrid selection used another threshold selection; rerun the hybrid sweep"
+        )
+    for project in projects:
         loaded = load_all(project, args.measurements, args.models, args.devices)
         reports = {
             f"{model}/{device}": full_report(project, measurement)

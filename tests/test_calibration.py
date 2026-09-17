@@ -18,7 +18,13 @@ from scripts.calibration_contract import (
     validate_project,
     write_json,
 )
-from scripts.calibration_evaluation import replay, replay_parity
+from scripts.calibration_evaluation import (
+    replay,
+    replay_parity,
+    selection_context,
+    selection_digest,
+    validate_selection_context,
+)
 from scripts.calibration_measurements import (
     ARTIFACT_VERSION,
     load_measurement,
@@ -367,6 +373,51 @@ def test_search_selection_rejects_unembedded_expected_target():
         _search_records(project, measurement)
 
 
+@pytest.mark.parametrize("change", ["judgment", "relevance", "policy", "model", "scope"])
+def test_selections_reject_changed_review_or_scope(change: str):
+    projects = load_projects()
+    models = ["gte-modernbert-base"]
+    payload = {"input_context": selection_context(projects, models)}
+    validate_selection_context(payload, projects, models)
+    if change == "judgment":
+        projects[0].annotations["pairs"][0]["judgment"] = "ambiguous"
+    elif change == "relevance":
+        projects[0].annotations["probes"][0]["expected"] = []
+    elif change == "policy":
+        projects[0].policy = projects[0].policy | {"min_semantic_statements": 4}
+    elif change == "model":
+        models = ["embeddinggemma-300m"]
+    else:
+        projects = projects[:1]
+    with pytest.raises(ValueError, match="stale or mismatched selection"):
+        validate_selection_context(payload, projects, models)
+
+
+def test_report_rejects_hybrid_from_another_threshold_selection(tmp_path: Path, monkeypatch):
+    project = load_projects(project_ids=["ledger"])[0]
+    context = selection_context([project], ["gte-modernbert-base", "embeddinggemma-300m"])
+    threshold = {"input_context": context, "models": []}
+    hybrid = {"input_context": context, "threshold_selection_digest": selection_digest(threshold)}
+    threshold["models"].append({"model": "changed selection"})
+    threshold_path, hybrid_path = tmp_path / "threshold.json", tmp_path / "hybrid.json"
+    write_json(threshold_path, threshold)
+    write_json(hybrid_path, hybrid)
+    monkeypatch.setattr(report_calibration_distributions, "load_projects", lambda *args: [project])
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "report",
+            "--threshold-selection",
+            str(threshold_path),
+            "--hybrid-selection",
+            str(hybrid_path),
+        ],
+    )
+    with pytest.raises(ValueError, match="another threshold selection"):
+        report_calibration_distributions.main()
+
+
 @pytest.mark.parametrize("second_version", ["2.14.0", "2.13.0"])
 def test_report_writer_derives_measurement_runtime(tmp_path: Path, monkeypatch, second_version):
     checked = read_json(DEFAULT_MANIFEST.parent / "calibration-results.json")
@@ -385,6 +436,12 @@ def test_report_writer_derives_measurement_runtime(tmp_path: Path, monkeypatch, 
     threshold_path = tmp_path / "threshold-selection.json"
     hybrid_path = tmp_path / "hybrid-selection.json"
     output = tmp_path / "report.json"
+    context = selection_context([project], ["gte-modernbert-base", "embeddinggemma-300m"])
+    checked["threshold_selection"]["input_context"] = context
+    checked["hybrid_selection"]["input_context"] = context
+    checked["hybrid_selection"]["threshold_selection_digest"] = selection_digest(
+        checked["threshold_selection"]
+    )
     write_json(threshold_path, checked["threshold_selection"])
     write_json(hybrid_path, checked["hybrid_selection"])
     monkeypatch.setattr(
@@ -421,6 +478,16 @@ def test_report_writer_derives_measurement_runtime(tmp_path: Path, monkeypatch, 
 
 def test_checked_calibration_result_matches_shipped_profiles():
     result = read_json(DEFAULT_MANIFEST.parent / "calibration-results.json")
+    context = result["threshold_selection"]["input_context"]
+    assert result["hybrid_selection"]["input_context"] == context
+    assert result["hybrid_selection"]["threshold_selection_digest"] == selection_digest(
+        result["threshold_selection"]
+    )
+    for project in load_projects():
+        # Runtime identity is machine-specific; checked labels and scope are not.
+        assert context[project.id]["annotations"] == selection_digest(project.annotations)
+        assert context[project.id]["project"] == selection_digest(project.spec)
+        assert context[project.id]["policy"] == project.policy_name
     assert result["measurement_runtime"]["scope"] == "all checked CPU and MPS reports"
     assert {
         report["runtime_versions"]["torch"]

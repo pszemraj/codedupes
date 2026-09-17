@@ -135,11 +135,11 @@ A semantic-only pair has already passed its language's duplicate gate (applied b
 
 | profile | identifier Jaccard min | statement ratio min | promotion gates |
 | --- | --- | --- | --- |
-| `gte-modernbert-base` | `0.20` | `0.00` | off |
-| `embeddinggemma-300m` | `0.30` | `0.00` | python `0.74`; off elsewhere |
+| `gte-modernbert-base` | `0.40` | `0.00` | python `0.88`, c `0.85`, rust `0.84`, javascript `0.70`; typescript off |
+| `embeddinggemma-300m` | `0.40` | `0.00` | python `0.78`, c `0.89`, rust `0.88`, javascript `0.80`; typescript off |
 | `generic` | `0.00` | `0.20` | off |
 
-The corroboration constants and promotion gates were selected after the admission gates on the same reviewed development corpus. An explicit `--semantic-threshold` keeps the profile's corroboration constants but turns similarity promotion off because those promotion gates belong to the shipped profile policy. See [calibration measurements and replay](hybrid-tuning.md).
+The corroboration constants and promotion gates were selected jointly after fixing the admission gates on the same reviewed development corpus. An explicit `--semantic-threshold` keeps the profile's corroboration constants but turns similarity promotion off because those promotion gates belong to the shipped profile policy. See [calibration measurements and replay](hybrid-tuning.md).
 
 ## Confidence scale
 

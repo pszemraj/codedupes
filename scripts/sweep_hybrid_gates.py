@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from itertools import product
 from pathlib import Path
 from typing import Any
 
@@ -17,7 +18,15 @@ try:
         read_json,
         write_json,
     )
-    from .calibration_evaluation import judgments, load_all, metrics, replay
+    from .calibration_evaluation import (
+        judgments,
+        load_all,
+        metrics,
+        replay,
+        selection_context,
+        selection_digest,
+        validate_selection_context,
+    )
     from .calibration_measurements import DEFAULT_MEASUREMENTS
     from .sweep_semantic_thresholds import threshold_grid
 except ImportError:
@@ -28,50 +37,20 @@ except ImportError:
         read_json,
         write_json,
     )
-    from calibration_evaluation import judgments, load_all, metrics, replay
+    from calibration_evaluation import (
+        judgments,
+        load_all,
+        metrics,
+        replay,
+        selection_context,
+        selection_digest,
+        validate_selection_context,
+    )
     from calibration_measurements import DEFAULT_MEASUREMENTS
     from sweep_semantic_thresholds import threshold_grid
 
 WEAK_GRID = (0.0, 0.05, 0.10, 0.15, 0.20, 0.30, 0.40)
 RATIO_GRID = (0.0, 0.20, 0.35, 0.50, 0.65, 0.80)
-
-
-def _best(rows: list[dict[str, Any]], *, prefer_off: bool = False) -> dict[str, Any]:
-    """Maximize visible F1, recall, and precision with a stable simple tie break."""
-    key = max(
-        (
-            row["f1"],
-            -row.get("ambiguous_predictions", 0),
-            -row.get("unjudged_predictions", 0),
-            row["recall"],
-            row["precision"],
-        )
-        for row in rows
-    )
-    tied = [
-        row
-        for row in rows
-        if (
-            row["f1"],
-            -row.get("ambiguous_predictions", 0),
-            -row.get("unjudged_predictions", 0),
-            row["recall"],
-            row["precision"],
-        )
-        == key
-    ]
-    if prefer_off:
-        off = next((row for row in tied if row.get("high_gate") is None), None)
-        if off is not None:
-            return off
-    return min(
-        tied,
-        key=lambda row: (
-            row.get("weak_identifier_jaccard_min", 0),
-            row.get("statement_ratio_min", 0),
-            row.get("high_gate") or 0,
-        ),
-    )
 
 
 def _selection_map(payload: dict[str, Any]) -> dict[tuple[str, str], float]:
@@ -159,6 +138,147 @@ def _pooled_metrics(
     return metrics(predicted, labels)
 
 
+def _promotion_options(
+    projects: list[Any],
+    measurements: dict[str, dict[str, Any]],
+    admissions: dict[str, float],
+    weak: float,
+    ratio: float,
+) -> dict[str, list[dict[str, Any]]]:
+    """Return distinct promotion outcomes for every language at one corroboration setting.
+
+    Metric totals are sufficient for pooling because each project/language
+    namespace is disjoint. Keeping one representative gate for equal totals
+    makes the later Cartesian product small without changing its objective.
+    """
+    by_language: dict[str, list[Any]] = {}
+    for project in projects:
+        by_language.setdefault(project.spec["languages"][0], []).append(project)
+
+    options: dict[str, list[dict[str, Any]]] = {}
+    for language, language_projects in by_language.items():
+        labels = {
+            (project.id, *key): value
+            for project in language_projects
+            for key, value in _semantic_labels(project, measurements[project.id]).items()
+        }
+        outcomes: dict[tuple[int, int, int, int], dict[str, Any]] = {}
+        for high_gate in [None, *threshold_grid(admissions[language], 0.98, 0.01)]:
+            predicted = {
+                (project.id, *key)
+                for project in language_projects
+                for key in _visible_semantic(
+                    measurements[project.id], admissions[language], weak, ratio, high_gate
+                )
+            }
+            outcome = {"high_gate": high_gate, **metrics(predicted, labels)}
+            signature = (
+                outcome["tp"],
+                outcome["fp"],
+                outcome["ambiguous_predictions"],
+                outcome["unjudged_predictions"],
+            )
+            previous = outcomes.get(signature)
+            if previous is None or (high_gate is not None, high_gate or 0.0) < (
+                previous["high_gate"] is not None,
+                previous["high_gate"] or 0.0,
+            ):
+                outcomes[signature] = outcome
+        options[language] = list(outcomes.values())
+    return options
+
+
+def _combined_metrics(options: tuple[dict[str, Any], ...]) -> dict[str, Any]:
+    """Pool independent promotion outcomes without materializing their pair sets."""
+    tp = sum(option["tp"] for option in options)
+    fp = sum(option["fp"] for option in options)
+    fn = sum(option["fn"] for option in options)
+    precision = tp / (tp + fp) if tp + fp else 0.0
+    recall = tp / (tp + fn) if tp + fn else 0.0
+    return {
+        "tp": tp,
+        "fp": fp,
+        "fn": fn,
+        "precision": precision,
+        "judged_only_precision": precision,
+        "recall": recall,
+        "f1": 2 * precision * recall / (precision + recall) if precision + recall else 0.0,
+        "ambiguous_predictions": sum(option["ambiguous_predictions"] for option in options),
+        "unjudged_predictions": sum(option["unjudged_predictions"] for option in options),
+    }
+
+
+def _selection_key(row: dict[str, Any]) -> tuple[float, int, int, float, float]:
+    """Return the existing F1-first policy key for one selection row."""
+    return (
+        row["f1"],
+        -row["ambiguous_predictions"],
+        -row["unjudged_predictions"],
+        row["recall"],
+        row["precision"],
+    )
+
+
+def _joint_tiebreak(row: dict[str, Any], languages: list[str]) -> tuple[Any, ...]:
+    """Choose a stable, simple setting among exactly equal pooled outcomes."""
+    return (
+        row["weak_identifier_jaccard_min"],
+        row["statement_ratio_min"],
+        tuple(
+            (row["high_gates"][language] is not None, row["high_gates"][language] or 0.0)
+            for language in languages
+        ),
+    )
+
+
+def _select_joint(
+    projects: list[Any],
+    measurements: dict[str, dict[str, Any]],
+    admissions: dict[str, float],
+) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
+    """Jointly select corroboration and promotion gates by pooled judged F1.
+
+    Promotion and corroboration interact: a similarity gate can make a strict
+    corroboration setting recover pairs that a promotion-disabled sweep misses.
+    Search the complete product of distinct per-language outcomes for each
+    corroboration row, retaining the existing F1/unresolved/recall/precision
+    priorities.
+    """
+    languages = sorted(admissions)
+    selected: dict[str, Any] | None = None
+    selected_options: dict[str, dict[str, Any]] | None = None
+    for weak in WEAK_GRID:
+        for ratio in RATIO_GRID:
+            options_by_language = _promotion_options(
+                projects, measurements, admissions, weak, ratio
+            )
+            for combination in product(*(options_by_language[language] for language in languages)):
+                high_gates = {
+                    language: option["high_gate"]
+                    for language, option in zip(languages, combination)
+                }
+                row = {
+                    "weak_identifier_jaccard_min": weak,
+                    "statement_ratio_min": ratio,
+                    "high_gates": high_gates,
+                    **_combined_metrics(combination),
+                }
+                if (
+                    selected is None
+                    or _selection_key(row) > _selection_key(selected)
+                    or (
+                        _selection_key(row) == _selection_key(selected)
+                        and _joint_tiebreak(row, languages) < _joint_tiebreak(selected, languages)
+                    )
+                ):
+                    selected = row
+                    selected_options = {
+                        language: option for language, option in zip(languages, combination)
+                    }
+    assert selected is not None and selected_options is not None
+    return selected, selected_options
+
+
 def main() -> int:
     """Select global corroboration and per-language promotion gates."""
     parser = argparse.ArgumentParser(description=__doc__)
@@ -173,8 +293,15 @@ def main() -> int:
     parser.add_argument("--json-out", type=Path)
     args = parser.parse_args()
     projects = load_projects(args.manifest, args.projects, args.policy)
-    selected_admissions = _selection_map(read_json(args.threshold_selection))
-    payload: dict[str, Any] = {"schema_version": 3, "models": []}
+    threshold_selection = read_json(args.threshold_selection)
+    validate_selection_context(threshold_selection, projects, args.models)
+    selected_admissions = _selection_map(threshold_selection)
+    payload: dict[str, Any] = {
+        "schema_version": 3,
+        "input_context": selection_context(projects, args.models),
+        "threshold_selection_digest": selection_digest(threshold_selection),
+        "models": [],
+    }
 
     for model in args.models:
         profile = resolve_model_profile(model)
@@ -191,54 +318,36 @@ def main() -> int:
         shipped_admissions = {
             language: profile.semantic_threshold_for_language(language) for language in admissions
         }
-        stage1 = []
-        for weak in WEAK_GRID:
-            for ratio in RATIO_GRID:
-                stage1.append(
-                    {
-                        "weak_identifier_jaccard_min": weak,
-                        "statement_ratio_min": ratio,
-                        **_pooled_metrics(
-                            projects,
-                            measurements,
-                            admissions,
-                            weak,
-                            ratio,
-                            {language: None for language in admissions},
-                        ),
-                    }
-                )
-        corroboration = _best(stage1)
-        weak = corroboration["weak_identifier_jaccard_min"]
-        ratio = corroboration["statement_ratio_min"]
+        selected, selected_options = _select_joint(projects, measurements, admissions)
+        weak = selected["weak_identifier_jaccard_min"]
+        ratio = selected["statement_ratio_min"]
+        selected_gates = selected["high_gates"]
+        corroboration = {
+            "weak_identifier_jaccard_min": weak,
+            "statement_ratio_min": ratio,
+            **_pooled_metrics(
+                projects,
+                measurements,
+                admissions,
+                weak,
+                ratio,
+                {language: None for language in admissions},
+            ),
+        }
 
         promotion = []
-        selected_gates: dict[str, float | None] = {}
-        for project in projects:
-            language = project.spec["languages"][0]
-            measurement = measurements[project.id]
-            labels = _semantic_labels(project, measurement)
-            candidates: list[float | None] = [
-                None,
-                *threshold_grid(admissions[language], 0.98, 0.01),
-            ]
-            rows = []
-            for high_gate in candidates:
-                predicted = _visible_semantic(
-                    measurement, admissions[language], weak, ratio, high_gate
-                )
-                rows.append({"high_gate": high_gate, **metrics(predicted, labels)})
-            selected = _best(rows, prefer_off=True)
-            selected_gates[language] = selected["high_gate"]
+        for language in dict.fromkeys(project.spec["languages"][0] for project in projects):
+            option = selected_options[language]
             promotion.append(
                 {
                     "language": language,
                     "current_gate": profile.high_confidence_threshold_for_language(language),
-                    "selected_gate": selected["high_gate"],
-                    "selected_metrics": selected,
+                    "selected_gate": option["high_gate"],
+                    "selected_metrics": {
+                        key: value for key, value in option.items() if key != "high_gate"
+                    },
                     "selection_ready": (
-                        selected["ambiguous_predictions"] == 0
-                        and selected["unjudged_predictions"] == 0
+                        option["ambiguous_predictions"] == 0 and option["unjudged_predictions"] == 0
                     ),
                 }
             )

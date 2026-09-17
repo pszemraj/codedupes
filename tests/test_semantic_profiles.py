@@ -174,23 +174,23 @@ def test_builtin_hybrid_split_matches_the_recorded_corroboration_sweep() -> None
     gte = resolve_model_profile("gte-modernbert-base")
     gemma = resolve_model_profile("embeddinggemma-300m")
 
-    assert (gte.hybrid_weak_identifier_jaccard_min, gte.hybrid_statement_ratio_min) == (0.20, 0.0)
+    assert (gte.hybrid_weak_identifier_jaccard_min, gte.hybrid_statement_ratio_min) == (0.40, 0.0)
     assert dict(gte.language_high_confidence_thresholds) == {
-        "python": None,
-        "c": None,
-        "rust": None,
-        "javascript": None,
+        "python": 0.88,
+        "c": 0.85,
+        "rust": 0.84,
+        "javascript": 0.70,
         "typescript": None,
     }
     assert (gemma.hybrid_weak_identifier_jaccard_min, gemma.hybrid_statement_ratio_min) == (
-        0.30,
+        0.40,
         0.0,
     )
     assert dict(gemma.language_high_confidence_thresholds) == {
-        "python": 0.74,
-        "c": None,
-        "rust": None,
-        "javascript": None,
+        "python": 0.78,
+        "c": 0.89,
+        "rust": 0.88,
+        "javascript": 0.80,
         "typescript": None,
     }
     for profile in list_supported_models():

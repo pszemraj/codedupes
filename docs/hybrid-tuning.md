@@ -50,7 +50,11 @@ conda run --name inf python scripts/sweep_semantic_thresholds.py \
 ```
 
 If the output reports unjudged or ambiguous predictions, review those source
-pairs and rerun the sweep. Once every admission selection is ready, select the
+pairs and rerun the sweep. Derived selections record their source, model, policy,
+project scope, and annotation identities. Label or relevance corrections reuse
+raw scores but require new selections; the hybrid sweep and report reject stale
+inputs, and the report checks which admission selection the hybrid sweep used.
+Once every admission selection is ready, select the
 hybrid visibility constants and per-language promotion gates:
 
 ```bash
@@ -60,7 +64,11 @@ conda run --name inf python scripts/sweep_hybrid_gates.py \
 ```
 
 The selectors maximize judged F1, then prefer fewer unresolved predictions,
-higher recall, and higher precision. Exact ties use a stable midpoint. Reports
+higher recall, and higher precision. Hybrid selection jointly searches the
+corroboration constants and per-language promotion gates using pooled metrics;
+it does not lock corroboration before considering promotion. Duplicate/search
+threshold ties use a stable midpoint; hybrid ties prefer lower corroboration
+floors, then disabled promotion, then lower promotion gates. Reports
 keep reviewed ambiguities and unjudged findings separate from judged-only
 precision, and break positive recall out by authored difficulty.
 

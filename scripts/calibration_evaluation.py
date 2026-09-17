@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from collections import Counter
 from pathlib import Path
 from typing import Any
@@ -13,10 +15,39 @@ from codedupes.semantic_profiles import resolve_model_profile
 
 try:
     from .calibration_contract import Project, pair_key, write_json
-    from .calibration_measurements import artifact_path, load_measurement
+    from .calibration_measurements import artifact_path, load_measurement, measurement_fingerprint
 except ImportError:
     from calibration_contract import Project, pair_key, write_json
-    from calibration_measurements import artifact_path, load_measurement
+    from calibration_measurements import artifact_path, load_measurement, measurement_fingerprint
+
+
+def selection_digest(payload: Any) -> str:
+    """Identify a derived selection or its annotation inputs."""
+    return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+
+
+def selection_context(projects: list[Project], models: list[str]) -> dict[str, Any]:
+    """Bind derived selections to their corpus scope, judgments, and measured inputs."""
+    return {
+        project.id: {
+            "annotations": selection_digest(project.annotations),
+            "project": selection_digest(project.spec),
+            "policy": project.policy_name,
+            "measurements": {
+                resolve_model_profile(model).key: measurement_fingerprint(project, model)
+                for model in models
+            },
+        }
+        for project in projects
+    }
+
+
+def validate_selection_context(
+    payload: dict[str, Any], projects: list[Project], models: list[str]
+) -> None:
+    """Reject selections from another source, review state, model, or corpus scope."""
+    if payload.get("input_context") != selection_context(projects, models):
+        raise ValueError("stale or mismatched selection inputs; rerun the selection sweeps")
 
 
 def judgments(project: Project) -> dict[tuple[str, str], dict[str, Any]]:
