@@ -923,6 +923,25 @@
       ]
     },
     {
+      "id": "review-reject-row--inline",
+      "a": "c_metering/src/rows.c::rows.reject_row::function::13",
+      "b": "c_metering/src/rows.c::rows.note_inline_rejection::function::49",
+      "judgment": "positive",
+      "difficulty": "easy",
+      "tags": [
+        "near-clone",
+        "rejection-reporting"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": true,
+      "equivalence_domain": "An initialized ImportReport and a positive one-based rejected row number.",
+      "contract": "Increment rejected_count and retain the first rejected row while leaving a prior first-rejected value unchanged.",
+      "rationale": "The two row import paths spell the same rejection-report update with direct versus saved-count mutation.",
+      "evidence": [
+        "tests/test_metering.c::test_helper_extraction_differential"
+      ]
+    },
+    {
       "id": "review-normalize-csv--normalize-api",
       "a": "c_metering/src/adapters.c::adapters.normalize_csv_line::function::25",
       "b": "c_metering/src/adapters.c::adapters.normalize_api_item::function::61",
