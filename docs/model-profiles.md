@@ -9,7 +9,7 @@ Most users should leave model and task settings unset. `codedupes` uses the pinn
 | profile key | canonical model ID | family | search threshold | default revision | default trust mode |
 | --- | --- | --- | --- | --- | --- |
 | `gte-modernbert-base` | `Alibaba-NLP/gte-modernbert-base` | `gte-modernbert` | `0.68` | `e7f32e3c00f91d699e8c43b53106206bcc72bb22` | `False` |
-| `embeddinggemma-300m` | `unsloth/embeddinggemma-300m` | `embeddinggemma` | `0.54` | `bfa3c846ac738e62aa61806ef9112d34acb1dc5a` | `False` |
+| `embeddinggemma-300m` | `unsloth/embeddinggemma-300m` | `embeddinggemma` | `0.56` | `bfa3c846ac738e62aa61806ef9112d34acb1dc5a` | `False` |
 
 - [Per-language duplicate gates and their selection policy](analysis-defaults.md#semantic-duplicate-gate-defaults) control `check` reporting. The table's search threshold is only the floor for query matches; query-to-code similarity is much lower than code-to-code duplicate similarity.
 - Every built-in default revision is a pinned immutable commit. The [calibration workflow](hybrid-tuning.md) records the checkpoint, task, pipeline, and candidate policy behind each threshold.

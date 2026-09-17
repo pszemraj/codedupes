@@ -28,11 +28,11 @@ Semantic duplicate detection is gated per language. Each built-in model profile 
 | --- | --- | --- |
 | python | `0.80` | `0.74` |
 | c | `0.85` | `0.82` |
-| rust | `0.86` | `0.89` |
-| javascript | `0.72` | `0.80` |
-| typescript | `0.76` | `0.87` |
+| rust | `0.84` | `0.88` |
+| javascript | `0.70` | `0.80` |
+| typescript | `0.76` | `0.86` |
 
-Python remains at `0.80`/`0.74`; the other gates moved to reduce reviewed false positives. The corpus is development evidence with an authored challenge mix, so these settings are practical defaults rather than an estimate of ecosystem-wide precision. See [calibration measurements and replay](hybrid-tuning.md).
+Python remains at `0.80`/`0.74`. The added source-backed families support slightly lower Rust, JavaScript, and TypeScript gates where they recover reviewed positives with the selected tradeoff. The corpus is development evidence with an authored challenge mix, so these settings are practical defaults rather than an estimate of ecosystem-wide precision. See [calibration measurements and replay](hybrid-tuning.md).
 
 See [threshold-profile choices](model-profiles.md#choosing-threshold-defaults) for profile selection.
 
@@ -136,7 +136,7 @@ A semantic-only pair has already passed its language's duplicate gate (applied b
 | profile | identifier Jaccard min | statement ratio min | promotion gates |
 | --- | --- | --- | --- |
 | `gte-modernbert-base` | `0.20` | `0.00` | off |
-| `embeddinggemma-300m` | `0.30` | `0.00` | python `0.80`; off elsewhere |
+| `embeddinggemma-300m` | `0.30` | `0.00` | python `0.74`; off elsewhere |
 | `generic` | `0.00` | `0.20` | off |
 
 The corroboration constants and promotion gates were selected after the admission gates on the same reviewed development corpus. An explicit `--semantic-threshold` keeps the profile's corroboration constants but turns similarity promotion off because those promotion gates belong to the shipped profile policy. See [calibration measurements and replay](hybrid-tuning.md).
