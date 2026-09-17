@@ -24,11 +24,11 @@ An explicit unavailable accelerator is an error, including on warm-cache and emp
 
 For the current built-in profiles, codedupes treats CPU float32 and MPS float32
 as decision-equivalent. The five-project Issue #20 comparison ran both models in
-fresh, uncached CPU and MPS processes. Its maximum absolute pair or query score
-drift was `7.75e-7`, with no duplicate or search threshold decisions changed.
-Across the ten model/project runs, aggregate measured time was 79.7 seconds on
-CPU and 63.9 seconds on MPS. On Apple silicon, leave `--device` at `auto` so
-codedupes uses MPS for the faster path. Pin `cpu` only when reproducing the CPU
+fresh, uncached CPU and MPS processes with PyTorch 2.14.0. Its maximum absolute
+pair or query score drift was `7.15e-7`, with no duplicate or search threshold
+decisions changed. Across the ten model/project runs, aggregate measured time
+was 77.8 seconds on CPU and 60.4 seconds on MPS. On Apple silicon, leave `--device`
+at `auto` so codedupes uses MPS for the faster path. Pin `cpu` only when reproducing the CPU
 calibration reference or investigating CPU-specific behavior. See the checked
 [calibration results](../test_fixtures/calibration/calibration-results.json) for
 the per-project measurements.
@@ -118,8 +118,9 @@ distinct from autocast.
 For fp32, the same ledger comparison across PyTorch 2.13.0 and 2.14.0 found a
 maximum pair-score change of `5.37e-7`, a maximum query-score change of
 `3.58e-7`, and no duplicate or search decision changes. This supports the
-existing fp32 policy for this fixture; the checked five-project calibration
-artifact remains explicitly identified as a PyTorch 2.13.0 measurement.
+existing fp32 policy for this fixture. The checked five-project calibration
+artifact has since been regenerated with PyTorch 2.14.0, retaining CPU/MPS
+decision parity across both models and all five languages.
 
 `CODEDUPES_CPU_BF16=1` enables experimental CPU bfloat16 only when the machine has both a native bf16 ISA (`bf16` on ARM, `amx_bf16`/`avx512_bf16` on x86) and an available mkldnn GEMM backend. The capability check runs at most once per process and persists nothing. `codedupes info --verbose` reports the hardware checks and effective policy.
 

@@ -206,7 +206,7 @@ def test_language_gate_lookup_builtin_fallback_and_generic() -> None:
     assert get_semantic_threshold_for_language("gte-modernbert-base", "python") == 0.80
     assert get_semantic_threshold_for_language("embeddinggemma-300m", "python") == 0.74
     assert get_semantic_threshold_for_language("embeddinggemma-300m", "javascript") == 0.80
-    assert get_semantic_threshold_for_language("embeddinggemma-300m", "typescript") == 0.86
+    assert get_semantic_threshold_for_language("embeddinggemma-300m", "typescript") == 0.83
     gte_fallback = resolve_model_profile("gte-modernbert-base").default_semantic_threshold
     assert get_semantic_threshold_for_language("gte-modernbert-base", "go") == gte_fallback
     assert get_semantic_threshold_for_language("gte-modernbert-base", None) == gte_fallback

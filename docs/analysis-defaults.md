@@ -30,9 +30,9 @@ Semantic duplicate detection is gated per language. Each built-in model profile 
 | c | `0.85` | `0.82` |
 | rust | `0.84` | `0.88` |
 | javascript | `0.70` | `0.80` |
-| typescript | `0.76` | `0.86` |
+| typescript | `0.76` | `0.83` |
 
-Python remains at `0.80`/`0.74`. The added source-backed families support slightly lower Rust, JavaScript, and TypeScript gates where they recover reviewed positives with the selected tradeoff. The corpus is development evidence with an authored challenge mix, so these settings are practical defaults rather than an estimate of ecosystem-wide precision. See [calibration measurements and replay](hybrid-tuning.md).
+Python remains at `0.80`/`0.74`. The added source-backed families support slightly lower Rust, JavaScript, and TypeScript gates where they recover reviewed positives with the selected tradeoff. TypeScript includes the copied booking decoder as a partial positive, consistent with the other languages. The corpus is development evidence with an authored challenge mix, so these settings are practical defaults rather than an estimate of ecosystem-wide precision. See [calibration measurements and replay](hybrid-tuning.md).
 
 See [threshold-profile choices](model-profiles.md#choosing-threshold-defaults) for profile selection.
 

@@ -167,7 +167,7 @@ _BUILTIN_MODEL_PROFILES: tuple[SemanticModelProfile, ...] = (
             "c": 0.82,
             "rust": 0.88,
             "javascript": 0.80,
-            "typescript": 0.86,
+            "typescript": 0.83,
         },
         hybrid_weak_identifier_jaccard_min=0.30,
         hybrid_statement_ratio_min=0.0,

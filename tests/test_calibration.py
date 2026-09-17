@@ -396,10 +396,12 @@ def test_report_writer_derives_measurement_runtime(tmp_path: Path, monkeypatch, 
 
 def test_checked_calibration_result_matches_shipped_profiles():
     result = read_json(DEFAULT_MANIFEST.parent / "calibration-results.json")
-    assert result["measurement_runtime"] == {
-        "torch": "2.13.0",
-        "scope": "all checked CPU and MPS reports",
-    }
+    assert result["measurement_runtime"]["scope"] == "all checked CPU and MPS reports"
+    assert {
+        report["runtime_versions"]["torch"]
+        for project in result["projects"]
+        for report in project["reports"].values()
+    } == {result["measurement_runtime"]["torch"]}
     threshold_models = {item["model"]: item for item in result["threshold_selection"]["models"]}
     hybrid_models = {item["model"]: item for item in result["hybrid_selection"]["models"]}
 

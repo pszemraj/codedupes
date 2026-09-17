@@ -32,7 +32,7 @@ reordering annotation units also preserves measurement identity.
 
 Keeping CPU as the calibration reference is a reproducibility convention, not a
 separate runtime threshold policy. The checked Issue #20 comparison found a
-maximum CPU/MPS score drift of `7.75e-7` and no duplicate or search decision
+maximum CPU/MPS score drift of `7.15e-7` and no duplicate or search decision
 changes for either built-in model. Treat CPU fp32 and MPS fp32 as functionally
 equivalent for these profiles, and use the default `device=auto` during normal
 macOS development so Apple silicon selects the faster MPS path. Continue to run
