@@ -57,6 +57,15 @@ fn semantic_clone_has_different_source_but_equal_behavior() {
                     render_algorithm: cowsay_dupe_fixture::RenderAlgorithm::Pipeline,
                 },
             );
+            let cursor = render(
+                message,
+                CowOptions {
+                    width,
+                    thinking: false,
+                    wrap_algorithm: WrapAlgorithm::Cursor,
+                    render_algorithm: cowsay_dupe_fixture::RenderAlgorithm::Pipeline,
+                },
+            );
             let fold = render(
                 message,
                 CowOptions {
@@ -75,6 +84,7 @@ fn semantic_clone_has_different_source_but_equal_behavior() {
                     render_algorithm: cowsay_dupe_fixture::RenderAlgorithm::Pipeline,
                 },
             );
+            assert_eq!(scanner, cursor, "message={message:?}, width={width}");
             assert_eq!(scanner, fold, "message={message:?}, width={width}");
             assert_eq!(scanner, queue, "message={message:?}, width={width}");
         }
