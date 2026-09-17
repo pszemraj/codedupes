@@ -69,3 +69,34 @@ def plan_batch_with_deferrals(
         else:
             lines.append((item.invoice_id, "balanced", 0))
     return SettlementPlan(tuple(lines), tuple(transfers), deferred_total, tuple(events))
+
+
+def plan_settlements_indexed(summaries: Sequence[InvoiceSummary]) -> SettlementPlan:
+    """Prepare the baseline settlement plan with explicit index traversal."""
+    seen = set()
+    for position in range(len(summaries)):
+        summary = summaries[position]
+        if not isinstance(summary, InvoiceSummary):
+            raise TypeError("expected InvoiceSummary")
+        if not isinstance(summary.invoice_id, str) or not summary.invoice_id.strip():
+            raise ValueError("invoice_id")
+        if summary.invoice_id in seen:
+            raise ValueError("duplicate invoice_id")
+        if type(summary.total_minor) is not int:
+            raise ValueError("total_minor")
+        if type(summary.transaction_count) is not int or summary.transaction_count <= 0:
+            raise ValueError("transaction_count")
+        seen.add(summary.invoice_id)
+    lines = []
+    transfers = []
+    ordered = sorted(summaries, key=lambda entry: entry.invoice_id)
+    for position in range(len(ordered)):
+        summary = ordered[position]
+        if summary.total_minor > 0:
+            lines.append((summary.invoice_id, "ready", summary.total_minor))
+            transfers.append((summary.invoice_id, summary.total_minor))
+        elif summary.total_minor < 0:
+            lines.append((summary.invoice_id, "refund_due", summary.total_minor))
+        else:
+            lines.append((summary.invoice_id, "balanced", 0))
+    return SettlementPlan(tuple(lines), tuple(transfers), 0, ())

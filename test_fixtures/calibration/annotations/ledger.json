@@ -175,6 +175,14 @@
       }
     },
     {
+      "id": "ledger.planning.plan_settlements_indexed",
+      "selector": {
+        "path": "src/ledger/planning.py",
+        "qualified_name": "ledger.planning.plan_settlements_indexed",
+        "kind": "function"
+      }
+    },
+    {
       "id": "ledger.settlement.summarize_import",
       "selector": {
         "path": "src/ledger/settlement.py",
@@ -187,6 +195,14 @@
       "selector": {
         "path": "src/ledger/settlement.py",
         "qualified_name": "ledger.settlement.build_invoice_report",
+        "kind": "function"
+      }
+    },
+    {
+      "id": "ledger.settlement.summarize_import_indexed",
+      "selector": {
+        "path": "src/ledger/settlement.py",
+        "qualified_name": "ledger.settlement.summarize_import_indexed",
         "kind": "function"
       }
     },
@@ -259,7 +275,28 @@
         "tests/test_settlement.py::test_invalid_voided_row_is_still_rejected",
         "tests/test_settlement.py::test_seeded_differential_and_aggregate_invariants"
       ],
-      "difficulty": "medium"
+      "difficulty": "hard"
+    },
+    {
+      "id": "ledger.settlement.summarize_import--ledger.settlement.summarize_import_indexed",
+      "a": "ledger.settlement.summarize_import",
+      "b": "ledger.settlement.summarize_import_indexed",
+      "judgment": "positive",
+      "tags": [
+        "near_clone",
+        "indexed_traversal"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": true,
+      "equivalence_domain": "Validate before ignoring voided records; trim case-sensitive Unicode IDs; preserve input; return sorted immutable totals and counts.",
+      "contract": "Validate before ignoring voided records; trim case-sensitive Unicode IDs; preserve input; return sorted immutable totals and counts.",
+      "rationale": "The indexed traversal repeats the baseline validation and accumulation policy with only local collection-shape changes.",
+      "evidence": [
+        "tests/test_settlement.py::test_documented_result",
+        "tests/test_settlement.py::test_invalid_voided_row_is_still_rejected",
+        "tests/test_settlement.py::test_seeded_differential_and_aggregate_invariants"
+      ],
+      "difficulty": "easy"
     },
     {
       "id": "ledger.planning.plan_settlements--ledger.planning.plan_batch_with_deferrals",
@@ -280,6 +317,26 @@
       ],
       "difference_witness": "For A=75 and minimum=100, the extension defers A, emits an event and no transfer; baseline creates the transfer.",
       "difficulty": "medium"
+    },
+    {
+      "id": "ledger.planning.plan_settlements--ledger.planning.plan_settlements_indexed",
+      "a": "ledger.planning.plan_settlements",
+      "b": "ledger.planning.plan_settlements_indexed",
+      "judgment": "positive",
+      "tags": [
+        "near_clone",
+        "indexed_traversal"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": true,
+      "equivalence_domain": "Valid or invalid invoice summaries under the baseline zero-deferral policy.",
+      "contract": "Validate the complete batch, reject duplicate invoice IDs, order by ID, and return identical settlement lines and transfers.",
+      "rationale": "Both functions repeat the same validation and planning branches; one merely indexes the sequences explicitly.",
+      "evidence": [
+        "tests/test_workflows.py::test_baseline_and_active_extension",
+        "tests/test_workflows.py::test_validation_empty_and_thresholds"
+      ],
+      "difficulty": "easy"
     },
     {
       "id": "ledger.imports.ingest_rows--ledger.imports.prepare_import",
@@ -439,7 +496,7 @@
         "tests/test_workflows.py::test_csv_api_shared_region_and_distinct_reports"
       ],
       "difference_witness": "A bad amount is a zero-based row rejection in prepare_import; CSV reports a physical line, and API reports an item status.",
-      "difficulty": "medium",
+      "difficulty": "hard",
       "regions": [
         {
           "unit": "ledger.imports.prepare_import",
@@ -474,7 +531,7 @@
         "tests/test_workflows.py::test_csv_api_shared_region_and_distinct_reports"
       ],
       "difference_witness": "A bad amount is a zero-based row rejection in prepare_import; CSV reports a physical line, and API reports an item status.",
-      "difficulty": "medium",
+      "difficulty": "hard",
       "regions": [
         {
           "unit": "ledger.imports.prepare_import",
@@ -1222,7 +1279,8 @@
       "query": "Group active payments by invoice and return ordered totals and transaction counts.",
       "expected": [
         "ledger.settlement.summarize_import",
-        "ledger.settlement.build_invoice_report"
+        "ledger.settlement.build_invoice_report",
+        "ledger.settlement.summarize_import_indexed"
       ],
       "relevance_complete": true
     },

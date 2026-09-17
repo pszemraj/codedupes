@@ -57,3 +57,28 @@ def build_invoice_report(rows: Sequence[Transaction]) -> tuple[InvoiceSummary, .
         amounts = [entry[1] for entry in members]
         summaries.append(InvoiceSummary(name, sum(amounts), len(amounts)))
     return tuple(summaries)
+
+
+def summarize_import_indexed(rows: Sequence[Transaction]) -> tuple[InvoiceSummary, ...]:
+    """Build invoice totals with the same direct indexed accumulation contract."""
+    totals: dict[str, tuple[int, int]] = {}
+    for position in range(len(rows)):
+        transaction = rows[position]
+        if not isinstance(transaction, Transaction):
+            raise TypeError(f"row {position}: expected Transaction")
+        invoice = transaction.invoice_id
+        if not isinstance(invoice, str) or not invoice.strip():
+            raise ValueError(f"row {position}: invoice_id must be nonblank text")
+        if type(transaction.amount_minor) is not int:
+            raise ValueError(f"row {position}: amount_minor must be an integer")
+        if type(transaction.voided) is not bool:
+            raise ValueError(f"row {position}: voided must be a boolean")
+        if transaction.voided:
+            continue
+        invoice = invoice.strip()
+        total, count = totals.get(invoice, (0, 0))
+        totals[invoice] = (total + transaction.amount_minor, count + 1)
+    return tuple(
+        InvoiceSummary(invoice, totals[invoice][0], totals[invoice][1])
+        for invoice in sorted(totals)
+    )
