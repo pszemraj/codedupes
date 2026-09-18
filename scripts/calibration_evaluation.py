@@ -10,6 +10,7 @@ from typing import Any
 
 import numpy as np
 
+from codedupes import semantic
 from codedupes.constants import DEFAULT_TOP_K, DEFAULT_TRADITIONAL_THRESHOLD
 from codedupes.semantic_profiles import resolve_model_profile
 
@@ -53,9 +54,9 @@ def selection_digest(payload: Any) -> str:
 
 
 def support_files_digest(project: Project) -> str:
-    """Fingerprint declared non-source files that support corpus behavior evidence."""
+    """Fingerprint declared support files and behavior-test trees."""
     files: dict[str, str] = {}
-    for pattern in project.spec["support_files"]:
+    for pattern in [*project.spec["support_files"], *project.spec["test_roots"]]:
         relative = Path(pattern)
         if not pattern or relative.is_absolute() or ".." in relative.parts:
             raise ValueError(f"{project.id}: invalid support file pattern {pattern!r}")
@@ -65,6 +66,9 @@ def support_files_digest(project: Project) -> str:
             for match in matches
             for file in ([match] if match.is_file() else sorted(match.rglob("*")))
             if file.is_file()
+            and not ({"__pycache__", "node_modules", "target"} & set(file.parts))
+            and file.name != ".DS_Store"
+            and file.suffix not in {".pyc", ".pyo"}
         ]
         if not matched_files:
             raise ValueError(f"{project.id}: support file pattern matched nothing: {pattern}")
@@ -125,6 +129,49 @@ def validate_measurement_digests(
     actual = measurement_digests(measurements)
     if not isinstance(expected, dict) or not expected or expected != actual:
         raise ValueError("selection used different raw measurements; rerun the selection sweeps")
+
+
+def validate_measurement_provenance(project: Project, measurement: dict[str, Any]) -> None:
+    """Verify report metadata against the current model, runtime, and fresh-run policy."""
+    metadata = measurement["metadata"]
+    profile = resolve_model_profile(metadata["model"])
+    device = metadata["requested_device"]
+    expected_dtype = str(semantic._resolve_model_dtype(profile.family, device)).removeprefix(
+        "torch."
+    )
+    expected_profile = {
+        "semantic_threshold": profile.semantic_threshold_for_language(project.spec["languages"][0]),
+        "weak_identifier_jaccard_min": profile.hybrid_weak_identifier_jaccard_min,
+        "statement_ratio_min": profile.hybrid_statement_ratio_min,
+        "high_gate": profile.high_confidence_threshold_for_language(project.spec["languages"][0]),
+    }
+    if (
+        metadata["canonical_model"] != profile.canonical_name
+        or metadata["revision"] != profile.default_revision
+        or metadata["runtime_versions"] != semantic.get_semantic_runtime_versions()
+        or metadata["inference_dtype"] != expected_dtype
+        or metadata["captured_profile"] != expected_profile
+    ):
+        raise ValueError(f"{project.id}: measurement provenance does not match current policy")
+    if set(metadata["timing_seconds"]) != {"duplicate", "search"} or any(
+        not isinstance(value, int | float) or not np.isfinite(value) or value < 0
+        for value in metadata["timing_seconds"].values()
+    ):
+        raise ValueError(f"{project.id}: invalid measurement timing provenance")
+    encoded_inputs = sum(unit["embedded"] for unit in measurement["units"])
+    if set(metadata["execution"]) != {"duplicate", "search"}:
+        raise ValueError(f"{project.id}: incomplete measurement execution provenance")
+    for task, stats in metadata["execution"].items():
+        if (
+            stats["execution_device"] != device
+            or stats["cache_hit_rows"] != 0
+            or stats["cache_enabled"] is not False
+            or stats["model_loaded"] is not True
+            or stats["requested_rows"] != encoded_inputs
+            or not 0 < stats["unique_inputs"] <= encoded_inputs
+            or stats["encoded_inputs"] != encoded_inputs
+        ):
+            raise ValueError(f"{project.id}: invalid {task} execution provenance")
 
 
 def development_projects(projects: list[Project]) -> list[Project]:
@@ -491,7 +538,7 @@ def load_all(
     project: Project, root: Path, models: list[str], devices: list[str]
 ) -> dict[tuple[str, str], dict[str, Any]]:
     """Load requested raw measurements."""
-    return {
+    measurements = {
         (resolve_model_profile(model).key, device): load_measurement(
             artifact_path(root, project, model, device),
             project,
@@ -501,6 +548,9 @@ def load_all(
         for model in models
         for device in devices
     }
+    for measurement in measurements.values():
+        validate_measurement_provenance(project, measurement)
+    return measurements
 
 
 def write_full_report(path: Path, report: dict[str, Any]) -> None:

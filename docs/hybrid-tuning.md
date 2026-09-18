@@ -106,8 +106,10 @@ for `gte-modernbert-base` and `embeddinggemma-300m`. CPU fp32 is the reference;
 MPS is an independent real-device comparison. Raw artifacts record the Python,
 PyTorch, Transformers, and Sentence Transformers versions and include them in
 their measurement identity, along with the inference batch size. Derived
-selections also record digests of the complete score matrices, so replacing or
-truncating a raw artifact forces reselection. A source, annotation unit ID or selector, model,
+selections also record digests of the complete CPU score matrices, while the
+checked report records every CPU and MPS measurement digest and validates its
+runtime, dtype, batch, and fresh-execution provenance. Replacing or truncating a
+raw artifact therefore forces regeneration. A source, annotation unit ID or selector, model,
 extraction, task, prompt, runtime, or dtype-policy change makes an artifact stale.
 Pair judgments, search relevance, and threshold edits reuse its raw scores;
 reordering annotation units also preserves measurement identity.
@@ -144,8 +146,9 @@ pairs and rerun the sweep. Derived selections record their source, model, policy
 project scope, annotation, selection-code, and profile-policy identities. Label,
 relevance, selection-code, or profile-default corrections reuse
 raw scores but require new selections; the hybrid sweep and report reject stale
-inputs, recompute every stored decision from the bound score matrices, and check
-which admission selection the hybrid sweep used.
+inputs, recompute every stored decision from the bound score matrices, check
+which admission selection the hybrid sweep used, and require the reported
+selections to equal the shipped model-profile defaults.
 Once every admission selection is ready, select the
 hybrid visibility constants and per-language promotion gates:
 

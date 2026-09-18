@@ -40,6 +40,7 @@ from scripts.calibration_evaluation import (
     selection_digest,
     support_files_digest,
     validate_measurement_digests,
+    validate_measurement_provenance,
     validate_selection_context,
 )
 from scripts.calibration_measurements import (
@@ -522,6 +523,41 @@ def test_device_comparison_rejects_score_coverage_mismatch():
         compare_devices(cpu, mps, SimpleNamespace(id="sample"))
 
 
+def test_measurement_provenance_rejects_forged_runtime():
+    project = load_projects(project_ids=["ledger"])[0]
+    measurement = _empty_measurement(project)
+    profile = resolve_model_profile("gte-modernbert-base")
+    measurement["metadata"].update(
+        {
+            "captured_profile": {
+                "semantic_threshold": profile.semantic_threshold_for_language("python"),
+                "weak_identifier_jaccard_min": profile.hybrid_weak_identifier_jaccard_min,
+                "statement_ratio_min": profile.hybrid_statement_ratio_min,
+                "high_gate": profile.high_confidence_threshold_for_language("python"),
+            },
+            "timing_seconds": {"duplicate": 1.0, "search": 1.0},
+        }
+    )
+    measurement["units"][0]["embedded"] = True
+    execution = {
+        "execution_device": "cpu",
+        "cache_hit_rows": 0,
+        "cache_enabled": False,
+        "model_loaded": True,
+        "requested_rows": 1,
+        "unique_inputs": 1,
+        "encoded_inputs": 1,
+    }
+    measurement["metadata"]["execution"] = {
+        "duplicate": execution.copy(),
+        "search": execution.copy(),
+    }
+    validate_measurement_provenance(project, measurement)
+    measurement["metadata"]["runtime_versions"]["torch"] = "forged"
+    with pytest.raises(ValueError, match="provenance does not match"):
+        validate_measurement_provenance(project, measurement)
+
+
 def test_measurement_identity_ignores_generated_files_but_tracks_source(tmp_path: Path):
     project = load_projects(project_ids=["ledger"])[0]
     source = tmp_path / "src"
@@ -599,10 +635,25 @@ def test_selections_reject_changed_review_or_scope(change: str):
 
 def test_support_file_identity_tracks_declared_behavior_evidence(tmp_path: Path):
     readme = tmp_path / "README.md"
+    tests = tmp_path / "tests"
+    tests.mkdir()
+    behavior = tests / "test_behavior.txt"
     readme.write_text("behavior contract v1\n")
-    project = SimpleNamespace(id="sample", root=tmp_path, spec={"support_files": ["README.md"]})
+    behavior.write_text("behavior v1\n")
+    project = SimpleNamespace(
+        id="sample",
+        root=tmp_path,
+        spec={"support_files": ["README.md"], "test_roots": ["tests"]},
+    )
     original = support_files_digest(project)
+    cache = tests / "__pycache__"
+    cache.mkdir()
+    (cache / "test_behavior.cpython-312.pyc").write_bytes(b"generated")
+    assert support_files_digest(project) == original
     readme.write_text("behavior contract v2\n")
+    assert support_files_digest(project) != original
+    readme.write_text("behavior contract v1\n")
+    behavior.write_text("behavior v2\n")
     assert support_files_digest(project) != original
     project.spec["support_files"] = ["missing.*"]
     with pytest.raises(ValueError, match="matched nothing"):
@@ -668,6 +719,19 @@ def test_report_rejects_hybrid_from_another_threshold_selection(tmp_path: Path, 
         report_calibration_distributions.main()
 
 
+def test_report_rejects_selection_that_is_not_shipped():
+    checked = read_json(DEFAULT_MANIFEST.parent / "calibration-results.json")
+    models = [item["model"] for item in checked["threshold_selection"]["models"]]
+    report_calibration_distributions._validate_shipped_selections(
+        checked["threshold_selection"], checked["hybrid_selection"], models
+    )
+    checked["threshold_selection"]["models"][0]["search"]["selected_threshold"] = 0.64
+    with pytest.raises(ValueError, match="do not match shipped defaults"):
+        report_calibration_distributions._validate_shipped_selections(
+            checked["threshold_selection"], checked["hybrid_selection"], models
+        )
+
+
 @pytest.mark.parametrize("second_version", ["2.14.0", "2.13.0"])
 def test_report_writer_derives_measurement_runtime(tmp_path: Path, monkeypatch, second_version):
     checked = read_json(DEFAULT_MANIFEST.parent / "calibration-results.json")
@@ -691,6 +755,7 @@ def test_report_writer_derives_measurement_runtime(tmp_path: Path, monkeypatch, 
     monkeypatch.setattr(
         report_calibration_distributions, "validate_hybrid_selection", lambda *args: None
     )
+    monkeypatch.setattr(report_calibration_distributions, "measurement_digests", lambda *args: {})
     monkeypatch.setattr(report_calibration_distributions, "load_projects", lambda *args: [project])
     threshold_path = tmp_path / "threshold-selection.json"
     hybrid_path = tmp_path / "hybrid-selection.json"
@@ -738,6 +803,8 @@ def test_report_writer_derives_measurement_runtime(tmp_path: Path, monkeypatch, 
 
 def test_checked_calibration_result_matches_shipped_profiles(monkeypatch):
     result = read_json(DEFAULT_MANIFEST.parent / "calibration-results.json")
+    assert len(result["measurement_digests"]) == 20
+    assert all(key.endswith(("/cpu", "/mps")) for key in result["measurement_digests"])
     context = result["threshold_selection"]["input_context"]
     assert result["hybrid_selection"]["input_context"] == context
     assert result["hybrid_selection"]["threshold_selection_digest"] == selection_digest(
@@ -751,6 +818,7 @@ def test_checked_calibration_result_matches_shipped_profiles(monkeypatch):
         )
         assert context["projects"][project.id]["project"] == selection_digest(project.spec)
         assert context["projects"][project.id]["policy"] == project.policy_name
+        assert context["projects"][project.id]["support_files"] == support_files_digest(project)
     assert context["selection_policy"] == selection_context([], [])["selection_policy"]
     recorded_runtimes = {
         tuple(sorted(report["runtime_versions"].items()))
