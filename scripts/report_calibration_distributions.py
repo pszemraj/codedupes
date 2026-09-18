@@ -21,6 +21,7 @@ try:
         full_report,
         load_all,
         selection_digest,
+        validate_measurement_digests,
         validate_selection_context,
     )
     from .calibration_measurements import DEFAULT_MEASUREMENTS
@@ -37,6 +38,7 @@ except ImportError:
         full_report,
         load_all,
         selection_digest,
+        validate_measurement_digests,
         validate_selection_context,
     )
     from calibration_measurements import DEFAULT_MEASUREMENTS
@@ -65,11 +67,12 @@ def main() -> int:
     projects = load_projects(args.manifest, args.projects, args.policy)
     selection_projects = development_projects(projects)
     payload = {
-        "schema_version": 3,
+        "schema_version": 4,
         "threshold_selection": read_json(args.threshold_selection),
         "hybrid_selection": read_json(args.hybrid_selection),
         "projects": [],
     }
+    cpu_measurements = []
     for field in ("threshold_selection", "hybrid_selection"):
         validate_selection_context(payload[field], selection_projects, args.models)
     if payload["hybrid_selection"].get("threshold_selection_digest") != selection_digest(
@@ -80,6 +83,11 @@ def main() -> int:
         )
     for project in projects:
         loaded = load_all(project, args.measurements, args.models, args.devices)
+        cpu_measurements.extend(
+            measurement
+            for (_model, device), measurement in loaded.items()
+            if device == "cpu" and project.spec["split"] == "development"
+        )
         reports = {
             f"{model}/{device}": full_report(project, measurement)
             for (model, device), measurement in loaded.items()
@@ -109,6 +117,8 @@ def main() -> int:
                 "device_comparisons": comparisons,
             }
         )
+    for field in ("threshold_selection", "hybrid_selection"):
+        validate_measurement_digests(payload[field], cpu_measurements)
     reports = [report for project in payload["projects"] for report in project["reports"].values()]
     torch_versions = {report["runtime_versions"]["torch"] for report in reports}
     if len(torch_versions) != 1:

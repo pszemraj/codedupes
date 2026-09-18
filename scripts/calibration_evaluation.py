@@ -52,6 +52,58 @@ def selection_digest(payload: Any) -> str:
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
 
 
+def measurement_digest(measurement: dict[str, Any]) -> str:
+    """Bind derived selections to the score payload and its inference provenance."""
+    metadata = measurement["metadata"]
+    return selection_digest(
+        {
+            "schema_version": measurement["schema_version"],
+            "metadata": {
+                key: metadata[key]
+                for key in (
+                    "project",
+                    "model",
+                    "canonical_model",
+                    "revision",
+                    "requested_device",
+                    "batch_size",
+                    "inference_dtype",
+                    "runtime_versions",
+                    "input_fingerprint",
+                    "captured_profile",
+                )
+            },
+            "units": measurement["units"],
+            "pairs": measurement["pairs"],
+            "query_scores": measurement["query_scores"],
+        }
+    )
+
+
+def measurement_digests(measurements: list[dict[str, Any]]) -> dict[str, str]:
+    """Index stable raw-score digests by project, model, and device."""
+    return {
+        "/".join(
+            (
+                measurement["metadata"]["project"],
+                measurement["metadata"]["model"],
+                measurement["metadata"]["requested_device"],
+            )
+        ): measurement_digest(measurement)
+        for measurement in measurements
+    }
+
+
+def validate_measurement_digests(
+    payload: dict[str, Any], measurements: list[dict[str, Any]]
+) -> None:
+    """Reject a derived selection produced from different raw score payloads."""
+    expected = payload.get("measurement_digests")
+    actual = measurement_digests(measurements)
+    if not isinstance(expected, dict) or not expected or expected != actual:
+        raise ValueError("selection used different raw measurements; rerun the selection sweeps")
+
+
 def development_projects(projects: list[Project]) -> list[Project]:
     """Return the reviewed development split used to select shipped defaults."""
     selected = [project for project in projects if project.spec["split"] == "development"]
@@ -333,6 +385,8 @@ def compare_devices(cpu: dict[str, Any], mps: dict[str, Any], project: Project) 
         for row in mps["pairs"]
         if row["cosine"] is not None
     }
+    if cpu_pairs.keys() != mps_pairs.keys():
+        raise ValueError(f"{project.id}: CPU/MPS pair score coverage differs")
     pair_drifts = [abs(cpu_pairs[key] - mps_pairs[key]) for key in cpu_pairs.keys() & mps_pairs]
     cpu_queries = {
         (row["probe"], row["unit"]): row["cosine"]
@@ -344,6 +398,8 @@ def compare_devices(cpu: dict[str, Any], mps: dict[str, Any], project: Project) 
         for row in mps["query_scores"]
         if row["cosine"] is not None
     }
+    if cpu_queries.keys() != mps_queries.keys():
+        raise ValueError(f"{project.id}: CPU/MPS query score coverage differs")
     query_drifts = [
         abs(cpu_queries[key] - mps_queries[key]) for key in cpu_queries.keys() & mps_queries
     ]
@@ -396,6 +452,7 @@ def full_report(project: Project, measurement: dict[str, Any]) -> dict[str, Any]
         "project": project.id,
         "model": measurement["metadata"]["model"],
         "device": measurement["metadata"]["requested_device"],
+        "batch_size": measurement["metadata"]["batch_size"],
         "inference_dtype": measurement["metadata"]["inference_dtype"],
         "runtime_versions": measurement["metadata"]["runtime_versions"],
         "timing_seconds": measurement["metadata"]["timing_seconds"],

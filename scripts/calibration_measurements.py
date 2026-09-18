@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import time
 from dataclasses import asdict
-from itertools import combinations
+from itertools import combinations, pairwise
 from pathlib import Path
 from typing import Any
 
@@ -49,7 +50,7 @@ except ImportError:
         write_json,
     )
 
-ARTIFACT_VERSION = 3
+ARTIFACT_VERSION = 4
 DEFAULT_MEASUREMENTS = REPO / "scratch/calibration"
 
 
@@ -252,6 +253,7 @@ def capture(project: Project, model: str, device: str, output: Path, batch_size:
             "canonical_model": profile.canonical_name,
             "revision": profile.default_revision,
             "requested_device": device,
+            "batch_size": batch_size,
             "inference_dtype": inference_dtype,
             "runtime_versions": semantic.get_semantic_runtime_versions(),
             "input_fingerprint": measurement_fingerprint(project, profile.key),
@@ -282,6 +284,81 @@ def capture(project: Project, model: str, device: str, output: Path, batch_size:
     return path
 
 
+def _validate_measurement_payload(measurement: dict[str, Any], project: Project) -> None:
+    """Reject incomplete, duplicated, or internally inconsistent score payloads."""
+    inventory, _ = extract_project(project, inventory=True)
+    resolved = resolve_annotations(project, inventory)
+    source_units, _ = extract_project(project)
+    measured_units = list({unit.uid: unit for unit in [*source_units, *resolved.values()]}.values())
+    ids = unit_ids(project, measured_units, resolved)
+    expected_ids = {ids[unit.uid] for unit in measured_units}
+
+    units = measurement.get("units")
+    if not isinstance(units, list) or any(not isinstance(unit, dict) for unit in units):
+        raise ValueError("measurement units must be a list of objects")
+    actual_ids = [unit.get("id") for unit in units]
+    if len(actual_ids) != len(set(actual_ids)) or set(actual_ids) != expected_ids:
+        raise ValueError(f"{project.id}: incomplete or duplicate measurement units")
+    embedded = {}
+    for unit in units:
+        if type(unit.get("embedded")) is not bool:
+            raise ValueError(f"{project.id}: measurement unit has invalid embedded state")
+        embedded[unit["id"]] = unit["embedded"]
+
+    pairs = measurement.get("pairs")
+    if not isinstance(pairs, list) or any(not isinstance(row, dict) for row in pairs):
+        raise ValueError("measurement pairs must be a list of objects")
+    pair_rows: dict[tuple[str, str], dict[str, Any]] = {}
+    for row in pairs:
+        a, b = row.get("a"), row.get("b")
+        if a not in expected_ids or b not in expected_ids or a == b:
+            raise ValueError(f"{project.id}: invalid measurement pair endpoints")
+        key = tuple(sorted((a, b)))
+        if key in pair_rows:
+            raise ValueError(f"{project.id}: duplicate measurement pair {key}")
+        pair_rows[key] = row
+        score = row.get("cosine")
+        should_be_scored = embedded[a] and embedded[b]
+        if should_be_scored != (isinstance(score, int | float) and math.isfinite(score)):
+            raise ValueError(f"{project.id}: inconsistent score state for pair {key}")
+    expected_pairs = {tuple(sorted(pair)) for pair in combinations(expected_ids, 2)}
+    if pair_rows.keys() != expected_pairs:
+        raise ValueError(f"{project.id}: incomplete measurement pair matrix")
+
+    probes = {probe["id"] for probe in project.annotations["probes"]}
+    query_scores = measurement.get("query_scores")
+    if not isinstance(query_scores, list) or any(not isinstance(row, dict) for row in query_scores):
+        raise ValueError("measurement query_scores must be a list of objects")
+    query_rows: dict[tuple[str, str], dict[str, Any]] = {}
+    for row in query_scores:
+        probe, unit = row.get("probe"), row.get("unit")
+        key = (probe, unit)
+        if probe not in probes or unit not in expected_ids:
+            raise ValueError(f"{project.id}: invalid measurement query row {key}")
+        if key in query_rows:
+            raise ValueError(f"{project.id}: duplicate measurement query row {key}")
+        query_rows[key] = row
+        score, rank = row.get("cosine"), row.get("rank")
+        scored = isinstance(score, int | float) and math.isfinite(score)
+        ranked = type(rank) is int and rank > 0
+        if embedded[unit] != scored or scored != ranked:
+            raise ValueError(f"{project.id}: inconsistent score state for query row {key}")
+    expected_queries = {(probe, unit) for probe in probes for unit in expected_ids}
+    if query_rows.keys() != expected_queries:
+        raise ValueError(f"{project.id}: incomplete measurement query matrix")
+    expected_ranks = set(range(1, sum(embedded.values()) + 1))
+    for probe in probes:
+        ranked_rows = [row for (row_probe, _), row in query_rows.items() if row_probe == probe]
+        ranks = {row["rank"] for row in ranked_rows if row["rank"] is not None}
+        if ranks != expected_ranks:
+            raise ValueError(f"{project.id}: incomplete query ranking for {probe}")
+        ordered = sorted(
+            (row["rank"], row["cosine"]) for row in ranked_rows if row["rank"] is not None
+        )
+        if any(left[1] < right[1] for left, right in pairwise(ordered)):
+            raise ValueError(f"{project.id}: query scores disagree with ranks for {probe}")
+
+
 def load_measurement(
     path: Path,
     project: Project | None = None,
@@ -296,6 +373,8 @@ def load_measurement(
     if project is not None and measurement["metadata"]["project"] != project.id:
         raise ValueError(f"measurement belongs to another project: {path}")
     metadata = measurement["metadata"]
+    if type(metadata.get("batch_size")) is not int or metadata["batch_size"] <= 0:
+        raise ValueError(f"measurement has invalid batch size: {path}")
     if (
         expected_model is not None
         and metadata["model"] != resolve_model_profile(expected_model).key
@@ -313,4 +392,6 @@ def load_measurement(
         "input_fingerprint"
     ] != measurement_fingerprint(project, measurement["metadata"]["model"]):
         raise ValueError(f"stale measurement: {path}")
+    if project is not None:
+        _validate_measurement_payload(measurement, project)
     return measurement

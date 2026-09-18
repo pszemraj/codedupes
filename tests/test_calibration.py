@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sys
 from dataclasses import replace
+from itertools import combinations
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -18,19 +19,26 @@ from scripts import (
 )
 from scripts.calibration_contract import (
     DEFAULT_MANIFEST,
+    extract_project,
     load_projects,
     read_json,
+    resolve_annotations,
+    unit_ids,
     validate_project,
     write_json,
 )
 from scripts.calibration_evaluation import (
     F1_RECALL_TOLERANCE,
     MINIMUM_SELECTION_PRECISION,
+    compare_devices,
     development_projects,
+    measurement_digest,
+    measurement_digests,
     replay,
     replay_parity,
     selection_context,
     selection_digest,
+    validate_measurement_digests,
     validate_selection_context,
 )
 from scripts.calibration_measurements import (
@@ -42,12 +50,49 @@ from scripts.sweep_hybrid_gates import _selection_map
 from scripts.sweep_semantic_thresholds import (
     _search_records,
     _select,
+    _select_search,
     duplicate_rows,
     search_rows,
     threshold_grid,
 )
 
 pytestmark = pytest.mark.grammar
+
+
+def _empty_measurement(project, model: str = "gte-modernbert-base") -> dict:
+    """Build a structurally complete score payload for identity-focused tests."""
+    inventory, _ = extract_project(project, inventory=True)
+    resolved = resolve_annotations(project, inventory)
+    source, _ = extract_project(project)
+    measured = list({unit.uid: unit for unit in [*source, *resolved.values()]}.values())
+    ids = sorted(unit_ids(project, measured, resolved).values())
+    probes = [probe["id"] for probe in project.annotations["probes"]]
+    return {
+        "schema_version": ARTIFACT_VERSION,
+        "metadata": {
+            "project": project.id,
+            "model": model,
+            "canonical_model": resolve_model_profile(model).canonical_name,
+            "revision": resolve_model_profile(model).default_revision,
+            "requested_device": "cpu",
+            "batch_size": 4,
+            "inference_dtype": "float32",
+            "runtime_versions": semantic.get_semantic_runtime_versions(),
+            "captured_profile": {},
+            "execution": {
+                "duplicate": {"execution_device": "cpu", "cache_hit_rows": 0},
+                "search": {"execution_device": "cpu", "cache_hit_rows": 0},
+            },
+            "input_fingerprint": measurement_fingerprint(project, model),
+        },
+        "units": [{"id": identifier, "embedded": False} for identifier in ids],
+        "pairs": [{"a": a, "b": b, "cosine": None} for a, b in combinations(ids, 2)],
+        "query_scores": [
+            {"probe": probe, "unit": unit, "cosine": None, "rank": None}
+            for probe in probes
+            for unit in ids
+        ],
+    }
 
 
 def test_recall_preference_stays_within_f1_bound_and_safe_precision():
@@ -127,7 +172,13 @@ def test_duplicate_sweep_uses_reviewed_comparable_pairs():
     )
     measurement = {
         "pairs": [
-            {"a": "a", "b": "b", "cosine": 0.91, "comparable": True},
+            {
+                "a": "a",
+                "b": "b",
+                "cosine": 0.91,
+                "comparable": True,
+                "traditional": [{"method": "jaccard", "similarity": 0.9}],
+            },
             {"a": "a", "b": "c", "cosine": 0.78, "comparable": True},
             {"a": "a", "b": "d", "cosine": 0.74, "comparable": True},
             {"a": "b", "b": "d", "cosine": 0.88, "comparable": True},
@@ -136,6 +187,8 @@ def test_duplicate_sweep_uses_reviewed_comparable_pairs():
     }
     rows, detail = duplicate_rows(project, measurement, threshold_grid(0.70, 0.95, 0.01))
     assert detail["selected"]["f1"] == 1.0
+    assert detail["selected"]["tp"] == 1
+    assert detail["positive_scores"]["count"] == 1
     assert detail["selection_ready"] is False
     assert 0.75 <= detail["selected"]["threshold"] <= 0.78
     assert detail["unjudged_above_selected"] == [["b", "d", 0.88]]
@@ -179,6 +232,37 @@ def test_search_sweep_scores_complete_relevance_sets():
     assert rows[0]["no_result_clean"] == 1
 
 
+def test_search_selection_requires_all_no_result_probes_to_stay_empty():
+    records = [
+        {
+            "key": ("p", "query", "a"),
+            "score": 0.82,
+            "rank": 1,
+            "expected": True,
+            "no_result": False,
+        },
+        {
+            "key": ("p", "query", "b"),
+            "score": 0.60,
+            "rank": 2,
+            "expected": True,
+            "no_result": False,
+        },
+        {
+            "key": ("p", "none", "c"),
+            "score": 0.65,
+            "rank": 1,
+            "expected": False,
+            "no_result": True,
+        },
+    ]
+    rows = search_rows(records, [0.60, 0.70])
+    assert _select(rows)["threshold"] == 0.60
+    assert _select_search(rows)["threshold"] == 0.70
+    with pytest.raises(ValueError, match="keeps all no-result probes empty"):
+        _select_search(rows[:1])
+
+
 def test_threshold_grid_includes_a_stop_between_steps():
     assert threshold_grid(0.70, 0.85, 0.10) == [0.70, 0.80, 0.85]
     assert threshold_grid(0.70, 0.70, 0.10) == [0.70]
@@ -202,6 +286,7 @@ def test_coarse_sweep_measures_shipped_thresholds_exactly(tmp_path: Path, monkey
     }
     monkeypatch.setattr(sweep_semantic_thresholds, "load_projects", lambda *args: [project])
     monkeypatch.setattr(sweep_semantic_thresholds, "selection_context", lambda *args: {})
+    monkeypatch.setattr(sweep_semantic_thresholds, "measurement_digests", lambda *args: {})
     monkeypatch.setattr(
         sweep_semantic_thresholds,
         "load_all",
@@ -351,22 +436,7 @@ def test_hybrid_selection_rejects_unready_semantic_admissions():
 def test_measurements_reject_changed_source_queries_or_runtime(tmp_path: Path, monkeypatch):
     project = load_projects(project_ids=["ledger"])[0]
     path = tmp_path / "measurement.json"
-    write_json(
-        path,
-        {
-            "schema_version": ARTIFACT_VERSION,
-            "metadata": {
-                "project": project.id,
-                "model": "gte-modernbert-base",
-                "requested_device": "cpu",
-                "execution": {
-                    "duplicate": {"execution_device": "cpu", "cache_hit_rows": 0},
-                    "search": {"execution_device": "cpu", "cache_hit_rows": 0},
-                },
-                "input_fingerprint": measurement_fingerprint(project, "gte-modernbert-base"),
-            },
-        },
-    )
+    write_json(path, _empty_measurement(project))
     assert (
         load_measurement(
             path,
@@ -388,7 +458,6 @@ def test_measurements_reject_changed_source_queries_or_runtime(tmp_path: Path, m
     project.annotations["probes"][0]["query"] += " changed"
     with pytest.raises(ValueError, match="stale measurement"):
         load_measurement(path, project)
-
     project.annotations["probes"][0]["query"] = project.annotations["probes"][0][
         "query"
     ].removesuffix(" changed")
@@ -403,6 +472,47 @@ def test_measurements_reject_changed_source_queries_or_runtime(tmp_path: Path, m
     )
     with pytest.raises(ValueError, match="stale measurement"):
         load_measurement(path, project)
+
+
+@pytest.mark.parametrize("mutation", ["missing_pair", "duplicate_query", "bad_rank"])
+def test_measurements_reject_incomplete_or_duplicate_score_matrices(tmp_path: Path, mutation: str):
+    project = load_projects(project_ids=["ledger"])[0]
+    measurement = _empty_measurement(project)
+    if mutation == "missing_pair":
+        measurement["pairs"].pop()
+        message = "incomplete measurement pair matrix"
+    elif mutation == "duplicate_query":
+        measurement["query_scores"].append(measurement["query_scores"][0].copy())
+        message = "duplicate measurement query row"
+    else:
+        measurement["query_scores"][0]["rank"] = 1
+        message = "inconsistent score state"
+    path = tmp_path / "measurement.json"
+    write_json(path, measurement)
+    with pytest.raises(ValueError, match=message):
+        load_measurement(path, project)
+
+
+def test_derived_selections_bind_exact_raw_scores():
+    project = load_projects(project_ids=["ledger"])[0]
+    measurement = _empty_measurement(project)
+    payload = {"measurement_digests": measurement_digests([measurement])}
+    validate_measurement_digests(payload, [measurement])
+    measurement["pairs"][0]["cosine"] = 0.5
+    assert payload["measurement_digests"] != measurement_digests([measurement])
+    with pytest.raises(ValueError, match="different raw measurements"):
+        validate_measurement_digests(payload, [measurement])
+    assert measurement_digest(measurement)
+
+
+def test_device_comparison_rejects_score_coverage_mismatch():
+    cpu = {
+        "pairs": [{"a": "a", "b": "b", "cosine": 0.5}],
+        "query_scores": [],
+    }
+    mps = {"pairs": [], "query_scores": []}
+    with pytest.raises(ValueError, match="pair score coverage differs"):
+        compare_devices(cpu, mps, SimpleNamespace(id="sample"))
 
 
 def test_measurement_identity_ignores_generated_files_but_tracks_source(tmp_path: Path):
@@ -433,17 +543,7 @@ def test_measurement_identity_ignores_generated_files_but_tracks_source(tmp_path
 def test_measurements_reject_changed_annotation_identities(tmp_path: Path, change: str):
     project = load_projects(project_ids=["ledger"])[0]
     path = tmp_path / "measurement.json"
-    write_json(
-        path,
-        {
-            "schema_version": ARTIFACT_VERSION,
-            "metadata": {
-                "project": project.id,
-                "model": "gte-modernbert-base",
-                "input_fingerprint": measurement_fingerprint(project, "gte-modernbert-base"),
-            },
-        },
-    )
+    write_json(path, _empty_measurement(project))
     load_measurement(path, project)
     units = project.annotations["units"]
     if change == "rename":
@@ -563,6 +663,9 @@ def test_report_writer_derives_measurement_runtime(tmp_path: Path, monkeypatch, 
         report["runtime_versions"] = {"torch": version}
     monkeypatch.setattr(report_calibration_distributions, "load_all", lambda *args: reports)
     monkeypatch.setattr(report_calibration_distributions, "full_report", lambda p, report: report)
+    monkeypatch.setattr(
+        report_calibration_distributions, "validate_measurement_digests", lambda *args: None
+    )
     monkeypatch.setattr(report_calibration_distributions, "load_projects", lambda *args: [project])
     threshold_path = tmp_path / "threshold-selection.json"
     hybrid_path = tmp_path / "hybrid-selection.json"
@@ -608,7 +711,7 @@ def test_report_writer_derives_measurement_runtime(tmp_path: Path, monkeypatch, 
     )
 
 
-def test_checked_calibration_result_matches_shipped_profiles():
+def test_checked_calibration_result_matches_shipped_profiles(monkeypatch):
     result = read_json(DEFAULT_MANIFEST.parent / "calibration-results.json")
     context = result["threshold_selection"]["input_context"]
     assert result["hybrid_selection"]["input_context"] == context
@@ -629,17 +732,22 @@ def test_checked_calibration_result_matches_shipped_profiles():
         for project in result["projects"]
         for report in project["reports"].values()
     }
-    current_runtime = tuple(sorted(semantic.get_semantic_runtime_versions().items()))
-    if recorded_runtimes == {current_runtime}:
-        models = [item["model"] for item in result["threshold_selection"]["models"]]
-        expected = selection_context(projects, models)
-        assert {
-            project_id: project_context["measurements"]
-            for project_id, project_context in context["projects"].items()
-        } == {
-            project_id: project_context["measurements"]
-            for project_id, project_context in expected["projects"].items()
-        }
+    assert len(recorded_runtimes) == 1
+    recorded_runtime = dict(next(iter(recorded_runtimes)))
+    monkeypatch.setattr(semantic, "get_semantic_runtime_versions", lambda: recorded_runtime)
+    monkeypatch.setattr(
+        "scripts.calibration_measurements.semantic.get_semantic_runtime_versions",
+        lambda: recorded_runtime,
+    )
+    models = [item["model"] for item in result["threshold_selection"]["models"]]
+    expected = selection_context(projects, models)
+    assert {
+        project_id: project_context["measurements"]
+        for project_id, project_context in context["projects"].items()
+    } == {
+        project_id: project_context["measurements"]
+        for project_id, project_context in expected["projects"].items()
+    }
     assert result["measurement_runtime"]["scope"] == "all checked CPU and MPS reports"
     assert {
         report["runtime_versions"]["torch"]

@@ -109,7 +109,7 @@ def test_search_smoke_ranks_targets_and_filters_noise(
         semantic_task=DEFAULT_SEARCH_SEMANTIC_TASK,
     )
 
-    surfaced = 0
+    surfaced = set()
     for probe in spec["relevant"]:
         results = find_similar_to_query(
             probe["query"],
@@ -121,8 +121,8 @@ def test_search_smoke_ranks_targets_and_filters_noise(
             corpus_identity=identity,
         )
         names = [unit.name for unit, _score in results]
-        assert probe["expected"] in names, (
-            f"{profile.key}: {probe['query']!r} missed its target: {names}"
+        assert names[0] == probe["expected"], (
+            f"{profile.key}: {probe['query']!r} did not rank its target first: {names}"
         )
         default_results = find_similar_to_query(
             probe["query"],
@@ -132,14 +132,18 @@ def test_search_smoke_ranks_targets_and_filters_noise(
             top_k=3,
             corpus_identity=identity,
         )
-        surfaced += bool(default_results)
+        if default_results:
+            surfaced.add(probe["expected"])
         assert all(unit.name == probe["expected"] for unit, _score in default_results), (
             f"{profile.key}: {probe['query']!r} returned irrelevant default hits"
         )
-    minimum_surfaced = {"gte-modernbert-base": 6, "embeddinggemma-300m": 2}[profile.key]
-    assert surfaced >= minimum_surfaced, (
-        f"{profile.key}: only {surfaced}/{len(spec['relevant'])} relevant queries "
-        f"cleared the default floor; expected at least {minimum_surfaced}"
+    expected_surfaced = {
+        "gte-modernbert-base": {probe["expected"] for probe in spec["relevant"]},
+        "embeddinggemma-300m": {"find_insertion_index", "take_rate_limit_token"},
+    }[profile.key]
+    assert surfaced == expected_surfaced, (
+        f"{profile.key}: default floor surfaced {sorted(surfaced)}; "
+        f"expected {sorted(expected_surfaced)}"
     )
 
     for query in spec["noise"]:

@@ -146,6 +146,7 @@ int import_idempotent_batch(
     ImportReport *report
 ) {
     size_t id_length;
+    size_t seen_length;
     Reading staged[METERING_MAX_DEVICES];
     if (batch_id == NULL || items == NULL || seen_batch == NULL || report == NULL || count > METERING_MAX_DEVICES) {
         return METERING_INVALID;
@@ -154,7 +155,11 @@ int import_idempotent_batch(
     if (id_length == 0 || id_length == 32) {
         return METERING_INVALID;
     }
-    if (strcmp(batch_id, seen_batch) == 0) {
+    seen_length = bounded_length(seen_batch, 32);
+    if (seen_length == 32) {
+        return METERING_INVALID;
+    }
+    if (id_length == seen_length && memcmp(batch_id, seen_batch, id_length) == 0) {
         return METERING_DUPLICATE;
     }
     begin_import(report);

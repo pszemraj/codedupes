@@ -24,6 +24,7 @@ try:
         development_projects,
         judgments,
         load_all,
+        measurement_digests,
         metrics,
         near_best_f1,
         recall_preference,
@@ -43,6 +44,7 @@ except ImportError:
         development_projects,
         judgments,
         load_all,
+        measurement_digests,
         metrics,
         near_best_f1,
         recall_preference,
@@ -73,6 +75,14 @@ def _select(rows: list[dict[str, Any]]) -> dict[str, Any]:
     return tied[len(tied) // 2]
 
 
+def _select_search(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Select only among thresholds that keep every no-result probe empty."""
+    clean = [row for row in rows if row["no_result_clean"] == row["no_result_total"]]
+    if not clean:
+        raise ValueError("no search candidate keeps all no-result probes empty")
+    return _select(clean)
+
+
 def _score_summary(values: list[float]) -> dict[str, float | int | None]:
     """Summarize one labeled score population."""
     ordered = sorted(values)
@@ -100,7 +110,7 @@ def _difficulty_recall(
     measured = {
         pair_key(row["a"], row["b"]): row
         for row in measurement["pairs"]
-        if row["comparable"] and row["cosine"] is not None
+        if row["comparable"] and not row.get("traditional") and row["cosine"] is not None
     }
     result = {}
     for difficulty in ("easy", "medium", "hard"):
@@ -128,7 +138,7 @@ def duplicate_rows(
     measured = {
         pair_key(row["a"], row["b"]): row
         for row in measurement["pairs"]
-        if row["comparable"] and row["cosine"] is not None
+        if row["comparable"] and not row.get("traditional") and row["cosine"] is not None
     }
     eligible_labels = {
         key: label
@@ -254,7 +264,7 @@ def main() -> int:
     duplicate_grid = threshold_grid(args.duplicate_start, args.duplicate_stop, args.step)
     search_grid = threshold_grid(args.search_start, args.search_stop, args.step)
     payload: dict[str, Any] = {
-        "schema_version": 3,
+        "schema_version": 4,
         "objective": {
             "primary": "f1",
             "minimum_precision": MINIMUM_SELECTION_PRECISION,
@@ -264,6 +274,7 @@ def main() -> int:
         "grids": {"duplicate": duplicate_grid, "search": search_grid},
         "models": [],
     }
+    raw_measurements = []
 
     for model in args.models:
         profile = resolve_model_profile(model)
@@ -281,6 +292,7 @@ def main() -> int:
             measurement = load_all(project, args.measurements, [model], ["cpu"])[
                 (profile.key, "cpu")
             ]
+            raw_measurements.append(measurement)
             _, detail = duplicate_rows(project, measurement, duplicate_grid)
             current = profile.semantic_threshold_for_language(language)
             current_metrics = duplicate_rows(project, measurement, [current])[0][0]
@@ -304,7 +316,7 @@ def main() -> int:
             )
             search_records.extend(_search_records(project, measurement))
         search = search_rows(search_records, search_grid)
-        selected_search = _select(search)
+        selected_search = _select_search(search)
         model_result["search"] = {
             "current_threshold": profile.default_search_threshold,
             "current_metrics": search_rows(search_records, [profile.default_search_threshold])[0],
@@ -313,6 +325,8 @@ def main() -> int:
             "selection_window": _selection_window(search, selected_search),
         }
         payload["models"].append(model_result)
+
+    payload["measurement_digests"] = measurement_digests(raw_measurements)
 
     if args.json_out:
         write_json(args.json_out, payload)

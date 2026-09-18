@@ -113,6 +113,7 @@ int import_rows_two_phase(const char *const *rows, size_t count, ImportReport *r
 
 int import_csv_stream(FILE *input, ImportReport *report);
 int import_api_batch(const ApiReading *items, size_t count, ImportReport *report);
+/* seen_batch must contain an empty or previously stored NUL-terminated batch ID. */
 int import_idempotent_batch(
     const char *batch_id,
     const ApiReading *items,

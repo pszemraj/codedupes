@@ -582,8 +582,8 @@
         },
         {
           "unit": "c_metering.adapters.idempotent",
-          "start_line": 160,
-          "end_line": 168,
+          "start_line": 165,
+          "end_line": 173,
           "sha256": "eb5fe3eef52669436c7abca21f4f96c705a02a635280e26c539c02273577f00d"
         }
       ]

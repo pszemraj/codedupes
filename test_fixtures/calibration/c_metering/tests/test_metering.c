@@ -109,6 +109,7 @@ static void test_csv_api_and_idempotency(void) {
     ImportReport api_report;
     ImportReport idempotent_report;
     char seen_batch[32] = "";
+    char invalid_seen_batch[32];
     CHECK(input != NULL && overlong != NULL);
     CHECK(fputs("METER_A:7\nbad key:4\nMETER-2:03\n", input) >= 0);
     rewind(input);
@@ -125,6 +126,8 @@ static void test_csv_api_and_idempotency(void) {
     CHECK(import_idempotent_batch("batch-7", valid, 2, seen_batch, &idempotent_report) == METERING_DUPLICATE);
     CHECK(import_idempotent_batch("batch-8", invalid, 2, seen_batch, &idempotent_report) == METERING_INVALID);
     CHECK(idempotent_report.first_rejected_row == 2 && strcmp(seen_batch, "batch-7") == 0);
+    memset(invalid_seen_batch, 'x', sizeof(invalid_seen_batch));
+    CHECK(import_idempotent_batch("batch-9", valid, 2, invalid_seen_batch, &idempotent_report) == METERING_INVALID);
     fclose(input);
     fclose(overlong);
 }

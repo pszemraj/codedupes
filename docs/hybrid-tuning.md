@@ -9,8 +9,8 @@ relevance for Python, C, Rust, JavaScript, and TypeScript.
 ## Checked development-corpus result
 
 The checked [calibration result](../test_fixtures/calibration/calibration-results.json)
-contains 118 explicitly annotated units, 79 positive judgments, 177 reviewed
-negative judgments, and 60 search probes. Of the positives, 78 are comparable
+contains 118 explicitly annotated units, 78 positive judgments, 178 reviewed
+negative judgments, and 60 search probes. Of the positives, 77 are comparable
 semantic pairs; one exact Rust pair is retained as a deterministic fixture but
 excluded from semantic calibration. Every language has at least five comparable
 easy pairs and five comparable medium pairs. This is authored development data,
@@ -105,7 +105,9 @@ Repeat for `ledger`, `cowsay`, `c_metering`, `javascript`, and `harbor-ts`, and
 for `gte-modernbert-base` and `embeddinggemma-300m`. CPU fp32 is the reference;
 MPS is an independent real-device comparison. Raw artifacts record the Python,
 PyTorch, Transformers, and Sentence Transformers versions and include them in
-their measurement identity. A source, annotation unit ID or selector, model,
+their measurement identity, along with the inference batch size. Derived
+selections also record digests of the complete score matrices, so replacing or
+truncating a raw artifact forces reselection. A source, annotation unit ID or selector, model,
 extraction, task, prompt, runtime, or dtype-policy change makes an artifact stale.
 Pair judgments, search relevance, and threshold edits reuse its raw scores;
 reordering annotation units also preserves measurement identity.
@@ -162,6 +164,9 @@ threshold ties use a stable midpoint; hybrid ties prefer lower corroboration
 floors, then disabled promotion, then lower promotion gates. Reports
 keep reviewed ambiguities and unjudged findings separate from judged-only
 precision, and break positive recall out by authored difficulty.
+Search selection additionally requires every explicit no-result probe to stay
+empty. Duplicate admission excludes pairs already recovered by a traditional
+method because their publication does not depend on the semantic gate.
 
 Run the multi-domain search smoke test against the selected default:
 

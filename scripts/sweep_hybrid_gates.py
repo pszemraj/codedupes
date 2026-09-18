@@ -24,12 +24,14 @@ try:
         development_projects,
         judgments,
         load_all,
+        measurement_digests,
         metrics,
         near_best_f1,
         recall_preference,
         replay,
         selection_context,
         selection_digest,
+        validate_measurement_digests,
         validate_selection_context,
     )
     from .calibration_measurements import DEFAULT_MEASUREMENTS
@@ -48,12 +50,14 @@ except ImportError:
         development_projects,
         judgments,
         load_all,
+        measurement_digests,
         metrics,
         near_best_f1,
         recall_preference,
         replay,
         selection_context,
         selection_digest,
+        validate_measurement_digests,
         validate_selection_context,
     )
     from calibration_measurements import DEFAULT_MEASUREMENTS
@@ -312,7 +316,7 @@ def main() -> int:
     validate_selection_context(threshold_selection, projects, args.models)
     selected_admissions = _selection_map(threshold_selection)
     payload: dict[str, Any] = {
-        "schema_version": 3,
+        "schema_version": 4,
         "objective": {
             "primary": "f1",
             "minimum_precision": MINIMUM_SELECTION_PRECISION,
@@ -322,6 +326,7 @@ def main() -> int:
         "threshold_selection_digest": selection_digest(threshold_selection),
         "models": [],
     }
+    raw_measurements = []
 
     for model in args.models:
         profile = resolve_model_profile(model)
@@ -329,6 +334,7 @@ def main() -> int:
             project.id: load_all(project, args.measurements, [model], ["cpu"])[(profile.key, "cpu")]
             for project in projects
         }
+        raw_measurements.extend(measurements.values())
         admissions = {
             project.spec["languages"][0]: selected_admissions[
                 (profile.key, project.spec["languages"][0])
@@ -414,6 +420,9 @@ def main() -> int:
                 "promotion_by_language": promotion,
             }
         )
+
+    validate_measurement_digests(threshold_selection, raw_measurements)
+    payload["measurement_digests"] = measurement_digests(raw_measurements)
 
     if args.json_out:
         write_json(args.json_out, payload)
