@@ -22,7 +22,7 @@ See [report selection](output.md#report-selection) and [exit codes](output.md#ex
 
 ## Semantic duplicate gate defaults
 
-Semantic duplicate detection is gated per language. Each built-in model profile carries a calibrated cosine gate for every supported language. Issue #20 replaced the former synthetic inputs with five runnable development applications; the checked [calibration result](../test_fixtures/calibration/calibration-results.json) records the reviewed CPU selection and independent MPS comparison.
+Semantic duplicate detection is gated per language. Each built-in model profile carries a calibrated cosine gate for every supported language. The first implementation phase for Issue #20 replaced the former synthetic inputs with five runnable development applications; the checked [calibration result](../test_fixtures/calibration/calibration-results.json) records the reviewed CPU selection and independent MPS comparison. It is development evidence, not held-out or ecosystem-wide validation.
 
 | language | `gte-modernbert-base` | `embeddinggemma-300m` |
 | --- | --- | --- |

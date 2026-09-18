@@ -23,7 +23,7 @@ codedupes search ./src "normalize request payload" --device mps
 An explicit unavailable accelerator is an error, including on warm-cache and empty scans. Combined mode can retain traditional results with `--allow-semantic-fallback`; see [exit codes](output.md#exit-codes). Automatic CPU transitions during inference follow the recovery rules below.
 
 For the current built-in profiles, codedupes treats CPU float32 and MPS float32
-as decision-equivalent. The five-project Issue #20 comparison ran both models in
+as decision-equivalent. The five-project development-corpus comparison ran both models in
 fresh, uncached CPU and MPS processes with PyTorch 2.14.0. Its maximum absolute
 pair or query score drift was `7.15e-7`, with no duplicate or search threshold
 decisions changed. Across the ten model/project runs, aggregate measured time
