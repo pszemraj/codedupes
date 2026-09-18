@@ -87,11 +87,12 @@ this report deliberately does not hide the failure with a repository-specific
 filter or an unmeasured threshold change.
 
 Validate source selectors, pair coverage, tests, and entry points first. The
-pytest regression suite runs these behavior commands automatically; it requires
-a stable Rust toolchain, a C compiler and Make, and Node.js/npm with
-type-stripping support:
+toolchain-marked pytest integration target and the validator command below run
+these behavior commands; they require a stable Rust toolchain, a C compiler and
+Make, and Node.js/npm with type-stripping support:
 
 ```bash
+conda run --name inf pytest -m toolchain
 conda run --name inf python scripts/validate_calibration_corpus.py --run-behavior
 ```
 

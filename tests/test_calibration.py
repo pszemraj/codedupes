@@ -17,6 +17,7 @@ from codedupes.pairs import ordered_pair_key
 from codedupes.semantic_profiles import resolve_model_profile
 from codedupes.traditional import find_exact_pair_keys, jaccard_similarity
 from scripts import (
+    calibration_contract,
     calibration_evaluation,
     report_calibration_distributions,
     sweep_semantic_thresholds,
@@ -229,6 +230,7 @@ def test_manifest_has_substantive_five_language_corpus():
         assert report["pending_deterministic"] == []
 
 
+@pytest.mark.toolchain
 def test_manifest_behavior_contracts_execute():
     for project in load_projects():
         report = run_behavior(project)
@@ -237,6 +239,31 @@ def test_manifest_behavior_contracts_execute():
             command["id"] for command in project.spec["behavior_tests"]
         ]
         assert all(run["returncode"] == 0 for run in report["runs"])
+
+
+@pytest.mark.parametrize(
+    ("failure", "message"),
+    [
+        (FileNotFoundError("missing"), "executable not found: missing-tool"),
+        (
+            calibration_contract.subprocess.TimeoutExpired(["missing-tool"], 300),
+            "timed out after 300 seconds",
+        ),
+    ],
+)
+def test_behavior_launch_failures_are_validation_errors(monkeypatch, tmp_path, failure, message):
+    project = SimpleNamespace(
+        id="sample",
+        root=tmp_path,
+        spec={"behavior_tests": [{"id": "smoke", "argv": ["missing-tool"]}]},
+    )
+
+    def fail_run(*args, **kwargs):
+        raise failure
+
+    monkeypatch.setattr(calibration_contract.subprocess, "run", fail_run)
+    with pytest.raises(ValueError, match=message):
+        run_behavior(project)
 
 
 def test_selection_uses_only_development_projects():

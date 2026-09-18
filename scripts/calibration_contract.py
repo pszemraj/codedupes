@@ -492,15 +492,24 @@ def run_behavior(project: Project) -> dict[str, Any]:
         argv = [arg.replace("{python}", sys.executable) for arg in command["argv"]]
         env = os.environ.copy()
         env.update(command.get("env", {}))
-        result = subprocess.run(
-            argv,
-            cwd=project.root,
-            env=env,
-            capture_output=True,
-            text=True,
-            timeout=300,
-            check=False,
-        )
+        try:
+            result = subprocess.run(
+                argv,
+                cwd=project.root,
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=300,
+                check=False,
+            )
+        except FileNotFoundError as exc:
+            raise ValueError(
+                f"{project.id}: behavior command {command['id']!r} executable not found: {argv[0]}"
+            ) from exc
+        except subprocess.TimeoutExpired as exc:
+            raise ValueError(
+                f"{project.id}: behavior command {command['id']!r} timed out after 300 seconds"
+            ) from exc
         runs.append(
             {
                 "id": command["id"],
@@ -509,7 +518,8 @@ def run_behavior(project: Project) -> dict[str, Any]:
         )
         if result.returncode:
             raise ValueError(
-                f"behavior command failed: {command['id']}\n{result.stdout}\n{result.stderr}"
+                f"{project.id}: behavior command failed: {command['id']}\n"
+                f"{result.stdout}\n{result.stderr}"
             )
     return {"project": project.id, "runs": runs}
 

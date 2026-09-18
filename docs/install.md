@@ -29,12 +29,23 @@ pip install -e ".[dev]"
 Run the ordinary test suite without live accelerator or network tests, then check formatting and lint:
 
 ```bash
-pytest -m "not gpu and not mps and not network"
+pytest -m "not gpu and not mps and not network and not toolchain"
 ruff check src tests scripts
 ruff format --check src tests scripts
 ```
 
-An unfiltered `pytest` also runs the real CUDA or MPS tests when that hardware is available. Those tests load actual models and exercise memory exhaustion and recovery; they are not substitutes for the ordinary suite and may need downloaded model assets. Network smoke tests are opt-in:
+The calibration fixture integration tests additionally require a stable Rust toolchain,
+a C compiler and Make, and Node.js/npm with type-stripping support. Run them explicitly
+after installing those external tools:
+
+```bash
+pytest -m toolchain
+```
+
+An unfiltered `pytest` runs the toolchain tests and also runs the real CUDA or MPS tests
+when that hardware is available. The accelerator tests load actual models and exercise
+memory exhaustion and recovery; they are not substitutes for the ordinary suite and may
+need downloaded model assets. Network smoke tests are opt-in:
 
 ```bash
 CODEDUPES_SMOKE_NETWORK=1 pytest tests/test_semantic_smoke.py -k network_smoke
