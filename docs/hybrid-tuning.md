@@ -16,12 +16,14 @@ excluded from semantic calibration. Every language has at least five comparable
 easy pairs and five comparable medium pairs. This is authored development data,
 not a held-out estimate of accuracy in arbitrary repositories.
 
-This result does not complete Issue #20's statistical and ecosystem-validation
-work. Follow-up calibration still needs larger per-language samples, held-out or
-leave-one-domain-out evaluation with uncertainty estimates, cross-language
-ground truth, and hand-reviewed samples from real repositories. Until then,
-these settings are useful development defaults rather than a complete estimate
-of performance in the wild.
+This result does not complete Issue #20. The remaining phase is a compact,
+hand-reviewed real-code check in every supported language, followed by only the
+targeted corpus additions and recalibration that those checks justify. Larger
+quotas, ecosystem-level statistical claims, cross-language calibration, and
+unrelated analyzer work are outside the issue unless that evidence exposes a
+specific need. Until the real-code checks pass, these settings are development
+defaults rather than evidence that arbitrary repositories will have clean top
+results.
 
 Duplicate recall at the selected per-language admission gates is shown as
 detected / labeled comparable positive pairs:
@@ -58,6 +60,30 @@ visibility jointly selects corroboration and per-language promotion gates after
 the admission gates are fixed. CPU fp32 supplies the reference scores; independent
 uncached MPS fp32 runs produce no duplicate, visibility-tier, or search decision
 changes. Maximum observed pair or query score drift is `7.15e-7`.
+
+## Real-repository smoke check
+
+As the first phase-two check, both profiles were run uncached on live MPS over
+this repository's production and maintenance Python (`src/` and `scripts/`).
+Tests, calibration fixtures, local scratch data, generated distributions, and
+tool metadata were excluded. The scan found no exact, structurally similar,
+traditional-near, or hybrid-confirmed pair. Manual review of the leading
+semantic-only results found wrappers, caller/callee pairs, sibling operations,
+and parallel parser backends rather than code that should be consolidated.
+
+| profile | merge-base semantic admissions | phase-one semantic admissions | merge-base default-visible | phase-one default-visible |
+| --- | ---: | ---: | ---: | ---: |
+| GTE | 529 | 83 | 139 | 64 |
+| Gemma | 245 | 245 | 218 | 145 |
+
+The phase-one policy materially reduces noise, especially for GTE, but does not
+meet Issue #20's real-code precision bar. Similarity-only threshold increases do
+not cleanly separate the reviewed fixture positives from these related-but-
+distinct functions. Treating every semantic candidate as review-only removes
+useful recall as well. The follow-up should add a compact representative negative
+slice, then recalibrate and repeat the same check across all five languages;
+this report deliberately does not hide the failure with a repository-specific
+filter or an unmeasured threshold change.
 
 Validate source selectors, pair coverage, tests, and entry points first:
 
