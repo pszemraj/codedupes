@@ -11,7 +11,10 @@ from types import SimpleNamespace
 import pytest
 
 from codedupes import semantic
+from codedupes.analyzer import _statement_count_ratio
+from codedupes.pairs import ordered_pair_key
 from codedupes.semantic_profiles import resolve_model_profile
+from codedupes.traditional import find_exact_pair_keys, jaccard_similarity
 from scripts import (
     calibration_evaluation,
     report_calibration_distributions,
@@ -19,6 +22,9 @@ from scripts import (
 )
 from scripts.calibration_contract import (
     DEFAULT_MANIFEST,
+    ProjectAnalyzer,
+    analyzer_config,
+    eligibility_reason,
     extract_project,
     load_projects,
     read_json,
@@ -63,12 +69,31 @@ pytestmark = pytest.mark.grammar
 
 
 def _empty_measurement(project, model: str = "gte-modernbert-base") -> dict:
-    """Build a structurally complete score payload for identity-focused tests."""
+    """Build a complete payload whose non-model evidence matches the corpus."""
     inventory, _ = extract_project(project, inventory=True)
     resolved = resolve_annotations(project, inventory)
     source, _ = extract_project(project)
     measured = list({unit.uid: unit for unit in [*source, *resolved.values()]}.values())
-    ids = sorted(unit_ids(project, measured, resolved).values())
+    ids = unit_ids(project, measured, resolved)
+    ordered = sorted(measured, key=lambda unit: ids[unit.uid])
+    candidates = ProjectAnalyzer(project, analyzer_config(project))._select_semantic_candidates(
+        source
+    )
+    candidate_uids = {unit.uid for unit in candidates}
+    exact = find_exact_pair_keys(candidates)
+    traditional_result = ProjectAnalyzer(project, analyzer_config(project, semantic=False)).analyze(
+        project.root
+    )
+    traditional = {}
+    for duplicate in traditional_result.traditional_duplicates:
+        traditional.setdefault(ordered_pair_key(duplicate.unit_a, duplicate.unit_b), []).append(
+            {"method": duplicate.method, "similarity": duplicate.similarity}
+        )
+    unit_ids_by_name = [ids[unit.uid] for unit in ordered]
+    rank_by_id = {
+        identifier: rank
+        for rank, identifier in enumerate(sorted(ids[unit.uid] for unit in candidates), start=1)
+    }
     probes = [probe["id"] for probe in project.annotations["probes"]]
     return {
         "schema_version": ARTIFACT_VERSION,
@@ -88,12 +113,53 @@ def _empty_measurement(project, model: str = "gte-modernbert-base") -> dict:
             },
             "input_fingerprint": measurement_fingerprint(project, model),
         },
-        "units": [{"id": identifier, "embedded": False} for identifier in ids],
-        "pairs": [{"a": a, "b": b, "cosine": None} for a, b in combinations(ids, 2)],
+        "units": [
+            {
+                "id": ids[unit.uid],
+                "language": unit.language,
+                "kind": unit.unit_type.name.lower(),
+                "statement_count": semantic.get_code_unit_statement_count(unit),
+                "embedded": unit.uid in candidate_uids,
+            }
+            for unit in ordered
+        ],
+        "pairs": [
+            {
+                "a": ids[a.uid],
+                "b": ids[b.uid],
+                "cosine": 0.1 if a.uid in candidate_uids and b.uid in candidate_uids else None,
+                "comparable": (
+                    eligibility_reason(
+                        a,
+                        b,
+                        candidate_uids,
+                        exact,
+                        suppress_tests=project.policy.get("suppress_test_semantic_matches", False),
+                    )
+                    is None
+                ),
+                "exclusion_reason": eligibility_reason(
+                    a,
+                    b,
+                    candidate_uids,
+                    exact,
+                    suppress_tests=project.policy.get("suppress_test_semantic_matches", False),
+                ),
+                "identifier_jaccard": jaccard_similarity(a.identifiers, b.identifiers),
+                "statement_ratio": _statement_count_ratio(a, b),
+                "traditional": traditional.get(ordered_pair_key(a, b), []),
+            }
+            for a, b in combinations(ordered, 2)
+        ],
         "query_scores": [
-            {"probe": probe, "unit": unit, "cosine": None, "rank": None}
+            {
+                "probe": probe,
+                "unit": unit,
+                "cosine": 1 - rank_by_id[unit] / 1000 if unit in rank_by_id else None,
+                "rank": rank_by_id.get(unit),
+            }
             for probe in probes
-            for unit in ids
+            for unit in unit_ids_by_name
         ],
     }
 
@@ -493,11 +559,39 @@ def test_measurements_reject_incomplete_or_duplicate_score_matrices(tmp_path: Pa
         measurement["query_scores"].append(measurement["query_scores"][0].copy())
         message = "duplicate measurement query row"
     else:
-        measurement["query_scores"][0]["rank"] = 1
+        measurement["query_scores"][0]["rank"] = 0
         message = "inconsistent score state"
     path = tmp_path / "measurement.json"
     write_json(path, measurement)
     with pytest.raises(ValueError, match=message):
+        load_measurement(path, project)
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "comparable",
+        "exclusion_reason",
+        "traditional",
+        "identifier_jaccard",
+        "statement_ratio",
+    ],
+)
+def test_measurements_reject_tampered_corpus_evidence(tmp_path: Path, field: str):
+    project = load_projects(project_ids=["ledger"])[0]
+    measurement = _empty_measurement(project)
+    pair = measurement["pairs"][0]
+    if field == "comparable":
+        pair[field] = not pair[field]
+    elif field == "exclusion_reason":
+        pair[field] = "forged"
+    elif field == "traditional":
+        pair[field] = [*pair[field], {"method": "jaccard", "similarity": 1.0}]
+    else:
+        pair[field] = 0.0 if pair[field] != 0.0 else 1.0
+    path = tmp_path / "measurement.json"
+    write_json(path, measurement)
+    with pytest.raises(ValueError, match="corpus evidence"):
         load_measurement(path, project)
 
 
@@ -538,15 +632,15 @@ def test_measurement_provenance_rejects_forged_runtime():
             "timing_seconds": {"duplicate": 1.0, "search": 1.0},
         }
     )
-    measurement["units"][0]["embedded"] = True
+    encoded_inputs = sum(unit["embedded"] for unit in measurement["units"])
     execution = {
         "execution_device": "cpu",
         "cache_hit_rows": 0,
         "cache_enabled": False,
         "model_loaded": True,
-        "requested_rows": 1,
-        "unique_inputs": 1,
-        "encoded_inputs": 1,
+        "requested_rows": encoded_inputs,
+        "unique_inputs": encoded_inputs,
+        "encoded_inputs": encoded_inputs,
     }
     measurement["metadata"]["execution"] = {
         "duplicate": execution.copy(),

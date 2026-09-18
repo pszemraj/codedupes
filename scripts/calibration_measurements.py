@@ -285,13 +285,50 @@ def capture(project: Project, model: str, device: str, output: Path, batch_size:
 
 
 def _validate_measurement_payload(measurement: dict[str, Any], project: Project) -> None:
-    """Reject incomplete, duplicated, or internally inconsistent score payloads."""
+    """Reject score payloads that differ from the current non-model corpus evidence."""
     inventory, _ = extract_project(project, inventory=True)
     resolved = resolve_annotations(project, inventory)
     source_units, _ = extract_project(project)
     measured_units = list({unit.uid: unit for unit in [*source_units, *resolved.values()]}.values())
     ids = unit_ids(project, measured_units, resolved)
     expected_ids = {ids[unit.uid] for unit in measured_units}
+    units_by_id = {ids[unit.uid]: unit for unit in measured_units}
+
+    # These fields route scores into the admission and hybrid sweeps, so they
+    # cannot be trusted merely because a raw artifact has the right matrix shape.
+    # Recompute them without loading an embedding model.
+    selection_config = analyzer_config(project)
+    selector = ProjectAnalyzer(project, selection_config)
+    candidates = selector._select_semantic_candidates(source_units)
+    candidate_uids = {unit.uid for unit in candidates}
+    exact = find_exact_pair_keys(candidates)
+    traditional_result = ProjectAnalyzer(project, analyzer_config(project, semantic=False)).analyze(
+        project.root
+    )
+    traditional: dict[tuple[str, str], list[tuple[str, float]]] = {}
+    for duplicate in traditional_result.traditional_duplicates:
+        key = tuple(sorted((ids[duplicate.unit_a.uid], ids[duplicate.unit_b.uid])))
+        traditional.setdefault(key, []).append((duplicate.method, duplicate.similarity))
+    for evidence in traditional.values():
+        evidence.sort()
+
+    def traditional_signature(value: Any, key: tuple[str, str]) -> list[tuple[str, float]]:
+        if not isinstance(value, list):
+            raise ValueError(  # noqa: TRY004 -- malformed artifact is one validation failure type
+                f"{project.id}: invalid traditional evidence for pair {key}"
+            )
+        signature = []
+        for item in value:
+            if (
+                not isinstance(item, dict)
+                or not isinstance(item.get("method"), str)
+                or not isinstance(item.get("similarity"), int | float)
+                or isinstance(item["similarity"], bool)
+                or not math.isfinite(item["similarity"])
+            ):
+                raise ValueError(f"{project.id}: invalid traditional evidence for pair {key}")
+            signature.append((item["method"], item["similarity"]))
+        return sorted(signature)
 
     units = measurement.get("units")
     if not isinstance(units, list) or any(not isinstance(unit, dict) for unit in units):
@@ -303,6 +340,14 @@ def _validate_measurement_payload(measurement: dict[str, Any], project: Project)
     for unit in units:
         if type(unit.get("embedded")) is not bool:
             raise ValueError(f"{project.id}: measurement unit has invalid embedded state")
+        canonical = units_by_id[unit["id"]]
+        if (
+            unit.get("language") != canonical.language
+            or unit.get("kind") != canonical.unit_type.name.lower()
+            or unit.get("statement_count") != semantic.get_code_unit_statement_count(canonical)
+            or unit["embedded"] != (canonical.uid in candidate_uids)
+        ):
+            raise ValueError(f"{project.id}: measurement unit differs from corpus evidence")
         embedded[unit["id"]] = unit["embedded"]
 
     pairs = measurement.get("pairs")
@@ -321,6 +366,32 @@ def _validate_measurement_payload(measurement: dict[str, Any], project: Project)
         should_be_scored = embedded[a] and embedded[b]
         if should_be_scored != (isinstance(score, int | float) and math.isfinite(score)):
             raise ValueError(f"{project.id}: inconsistent score state for pair {key}")
+        unit_a, unit_b = units_by_id[a], units_by_id[b]
+        reason = eligibility_reason(
+            unit_a,
+            unit_b,
+            candidate_uids,
+            exact,
+            suppress_tests=selection_config.suppress_test_semantic_matches,
+        )
+        if row.get("comparable") is not (reason is None) or row.get("exclusion_reason") != reason:
+            raise ValueError(
+                f"{project.id}: pair eligibility differs from corpus evidence for {key}"
+            )
+        expected_identifier_jaccard = jaccard_similarity(unit_a.identifiers, unit_b.identifiers)
+        expected_statement_ratio = _statement_count_ratio(unit_a, unit_b)
+        if (
+            not isinstance(row.get("identifier_jaccard"), int | float)
+            or isinstance(row["identifier_jaccard"], bool)
+            or not math.isfinite(row["identifier_jaccard"])
+            or row["identifier_jaccard"] != expected_identifier_jaccard
+            or not isinstance(row.get("statement_ratio"), int | float)
+            or isinstance(row["statement_ratio"], bool)
+            or not math.isfinite(row["statement_ratio"])
+            or row["statement_ratio"] != expected_statement_ratio
+            or traditional_signature(row.get("traditional"), key) != traditional.get(key, [])
+        ):
+            raise ValueError(f"{project.id}: pair evidence differs from corpus evidence for {key}")
     expected_pairs = {tuple(sorted(pair)) for pair in combinations(expected_ids, 2)}
     if pair_rows.keys() != expected_pairs:
         raise ValueError(f"{project.id}: incomplete measurement pair matrix")

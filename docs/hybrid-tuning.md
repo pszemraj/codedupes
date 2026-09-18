@@ -109,8 +109,12 @@ their measurement identity, along with the inference batch size. Derived
 selections also record digests of the complete CPU score matrices, while the
 checked report records every CPU and MPS measurement digest and validates its
 runtime, dtype, batch, and fresh-execution provenance. Replacing or truncating a
-raw artifact therefore forces regeneration. A source, annotation unit ID or selector, model,
-extraction, task, prompt, runtime, or dtype-policy change makes an artifact stale.
+raw artifact therefore forces regeneration. Before a raw artifact is used, the
+loader also recomputes semantic-candidate inclusion, pair eligibility and
+exclusion, traditional evidence, identifier overlap, and statement ratio from
+the corpus; serialized routing fields cannot alter a sweep. A source,
+annotation unit ID or selector, model, extraction, task, prompt, runtime, or
+dtype-policy change makes an artifact stale.
 Pair judgments, search relevance, and threshold edits reuse its raw scores;
 reordering annotation units also preserves measurement identity.
 Source identity follows production extraction and explicitly annotated source
