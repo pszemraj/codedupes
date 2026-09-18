@@ -450,6 +450,43 @@ def test_uncalibrated_search_context_requires_explicit_threshold(
         ) == len(units)
 
 
+def test_empty_search_still_rejects_uncalibrated_default() -> None:
+    with pytest.raises(ValueError, match="explicit threshold"):
+        find_similar_to_query(
+            "anything",
+            [],
+            np.empty((0, 0), dtype=np.float32),
+            model_name="gte-modernbert-base",
+            revision="f" * 40,
+            use_cache=False,
+        )
+    assert (
+        find_similar_to_query(
+            "anything",
+            [],
+            np.empty((0, 0), dtype=np.float32),
+            model_name="gte-modernbert-base",
+            revision="f" * 40,
+            threshold=0.0,
+            use_cache=False,
+        )
+        == []
+    )
+
+
+@pytest.mark.parametrize("top_k", [0, -1, 1.5, True])
+def test_search_requires_positive_integer_top_k(top_k) -> None:
+    with pytest.raises(ValueError, match="top_k must be a positive integer"):
+        find_similar_to_query(
+            "anything",
+            [],
+            np.empty((0, 0), dtype=np.float32),
+            top_k=top_k,
+            threshold=0.0,
+            use_cache=False,
+        )
+
+
 @pytest.mark.parametrize(
     "threshold",
     [

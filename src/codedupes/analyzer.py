@@ -1266,9 +1266,9 @@ class CodeAnalyzer:
         :param threshold: Finite minimum cosine similarity for this call only;
             negative floors are allowed.
         :return: List of code units and cosine scores.
-        :raises ValueError: If ``threshold`` is non-finite, or the corpus has no
-            calibrated search default and neither ``threshold`` nor
-            ``config.semantic_threshold`` is supplied.
+        :raises ValueError: If ``top_k`` is not a positive integer, ``threshold``
+            is non-finite, or the corpus has no calibrated search default and
+            neither ``threshold`` nor ``config.semantic_threshold`` is supplied.
         """
         if self._units is None or self._embeddings is None:
             raise RuntimeError(

@@ -3734,8 +3734,9 @@ def _find_similar_to_query_unlocked(
         used to build ``corpus_identity``.
     :return: Up to ``top_k`` ``(unit, similarity)`` pairs at or above the threshold,
         sorted by descending similarity.
-    :raises ValueError: If ``threshold`` is non-finite, an uncalibrated corpus uses
-        the default threshold, or a prompt-sensitive corpus omits its identity.
+    :raises ValueError: If ``top_k`` is not a positive integer, ``threshold`` is
+        non-finite, an uncalibrated corpus uses the default threshold, or a
+        prompt-sensitive corpus omits its identity.
     :raises SemanticBackendError: If an explicitly requested device is unavailable,
         even when the query embedding is already cached.
     :raises RuntimeError: If the query checkpoint cannot be verified against the
@@ -3743,6 +3744,8 @@ def _find_similar_to_query_unlocked(
     """
     validate_explicit_device_request(device, mps_fallback=mps_fallback)
 
+    if type(top_k) is not int or top_k <= 0:
+        raise ValueError("top_k must be a positive integer")
     if threshold is not None and not np.isfinite(threshold):
         raise ValueError("threshold must be finite")
 
@@ -3757,11 +3760,6 @@ def _find_similar_to_query_unlocked(
             "Pass CodeAnalyzer.search(threshold=...), find_similar_to_query(threshold=...), "
             "or --semantic-threshold."
         )
-
-    # After the input contracts above: an empty corpus can match
-    # nothing, so return before embedding the query (or loading the model).
-    if not units:
-        return []
 
     profile = resolve_model_profile(model_name)
     resolved_task = normalize_semantic_task(
@@ -3809,6 +3807,11 @@ def _find_similar_to_query_unlocked(
     logger.debug(f"Search threshold: {resolved_threshold} ({selection})")
     if threshold is None and threshold_profile == "auto":
         log_family_threshold_notice(profile)
+
+    # After every caller-visible contract: an empty corpus can match nothing,
+    # so return before embedding the query (or loading the model).
+    if not units:
+        return []
 
     encode_plan = _resolve_encode_plan(profile, "query", resolved_task, instruction_prefix)
     query_text = _prepare_embedding_text(query)
@@ -4160,8 +4163,9 @@ def find_similar_to_query(
         used to build ``corpus_identity``.
     :return: Up to ``top_k`` ``(unit, similarity)`` pairs at or above the threshold,
         sorted by descending similarity.
-    :raises ValueError: If ``threshold`` is non-finite, an uncalibrated corpus uses
-        the default threshold, or a prompt-sensitive corpus omits its identity.
+    :raises ValueError: If ``top_k`` is not a positive integer, ``threshold`` is
+        non-finite, an uncalibrated corpus uses the default threshold, or a
+        prompt-sensitive corpus omits its identity.
     """
     # Same contract as compute_embeddings_with_identity: configure
     # import-sensitive runtime variables before anything can import torch.
