@@ -35,11 +35,11 @@ judgments. Positive transitivity is never inferred. Partial pairs name checked
 source spans and fingerprints. Every within-family pair and every deterministic
 finding must have a judgment. Old annotation formats are rejected.
 
-The current projects and related variants are development data. Selection uses
-only projects in the development split; held-out evaluation projects are scored
-and labeled separately in reports. The corpus is intended to set useful defaults,
-while its size and authored challenge mix do not support claims about
-ecosystem-wide precision. Raw CPU and MPS measurements are local scratch
+The current corpus is development data and has no held-out split. Selection uses
+only projects in the development split; if evaluation projects are added, reports
+score them without using them to select defaults. The corpus is intended to set
+useful defaults, while its size and authored challenge mix do not support claims
+about ecosystem-wide precision. Raw CPU and MPS measurements are local scratch
 artifacts; the compact checked result records the selected settings and device
 comparison.
 
