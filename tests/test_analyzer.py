@@ -3125,7 +3125,7 @@ def test_cowsay_fixture_reports_planted_rust_exact_clone() -> None:
     ).analyze(fixture)
 
     assert result.extraction_diagnostics == []
-    assert result.units
+    assert len(result.units) == 28
     assert {unit.language for unit in result.units} == {"rust"}
     duplicate_names = {
         frozenset((duplicate.unit_a.qualified_name, duplicate.unit_b.qualified_name))

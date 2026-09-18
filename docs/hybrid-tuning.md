@@ -46,16 +46,16 @@ after semantic admission.
 
 | output | model | TP / FP / FN | precision | recall | F1 |
 | --- | --- | ---: | ---: | ---: | ---: |
-| duplicate admission | GTE | 50 / 6 / 28 | 89.3% | 64.1% | 74.6% |
-| duplicate admission | Gemma | 61 / 12 / 17 | 83.6% | 78.2% | 80.8% |
-| default-visible duplicates | GTE | 50 / 1 / 28 | 98.0% | 64.1% | 77.5% |
-| default-visible duplicates | Gemma | 58 / 2 / 20 | 96.7% | 74.4% | 84.1% |
+| duplicate admission | GTE | 50 / 6 / 27 | 89.3% | 64.9% | 75.2% |
+| duplicate admission | Gemma | 61 / 12 / 16 | 83.6% | 79.2% | 81.3% |
+| default-visible duplicates | GTE | 50 / 1 / 27 | 98.0% | 64.9% | 78.1% |
+| default-visible duplicates | Gemma | 58 / 2 / 19 | 96.7% | 75.3% | 84.7% |
 | search | GTE | 72 / 20 / 22 | 78.3% | 76.6% | 77.4% |
-| search | Gemma | 60 / 13 / 34 | 82.2% | 63.8% | 71.9% |
+| search | Gemma | 70 / 32 / 24 | 68.6% | 74.5% | 71.4% |
 
 Both search profiles keep all 10 no-result probes clean. Selection discards
-settings below 50% judged precision, maximizes F1, and uses recall only to break
-exact F1 ties. Duplicate and search plateaus use their stable midpoint. Hybrid
+settings below 50% judged precision, maximizes F1, and prefers recall within
+`0.005` F1 of the optimum. Duplicate and search plateaus use their stable midpoint. Hybrid
 visibility jointly selects corroboration and per-language promotion gates after
 the admission gates are fixed. CPU fp32 supplies the reference scores; independent
 uncached MPS fp32 runs produce no duplicate, visibility-tier, or search decision
@@ -131,8 +131,9 @@ conda run --name inf python scripts/sweep_semantic_thresholds.py \
 ```
 
 Custom sweep ranges include both endpoints, even when the step does not land
-on the stop value. The result records the candidate grids; shipped-setting
-metrics are evaluated at the exact shipped thresholds independently of that grid.
+on the stop value. The result records the candidate grids and an 11-point search
+window centered on each selected floor; shipped-setting metrics are evaluated
+at the exact shipped thresholds independently of that grid.
 
 If the output reports unjudged or ambiguous predictions, review those source
 pairs and rerun the sweep. Derived selections record their source, model, policy,
@@ -151,9 +152,10 @@ conda run --name inf python scripts/sweep_hybrid_gates.py \
 
 Search, duplicate admission, and hybrid visibility share one policy: discard
 settings below 50% judged precision, maximize judged F1, then prefer higher
-recall only across exact F1 ties. Fewer unresolved predictions take precedence,
-followed by recall and precision. Hybrid selection jointly searches the
-corroboration constants and per-language promotion gates using pooled metrics;
+recall among settings within `0.005` F1 of the optimum. Fewer unresolved
+predictions take precedence, followed by recall and precision. Hybrid selection
+requires the precision floor in every language and in the pooled result, then
+jointly searches the corroboration constants and per-language promotion gates;
 promotion candidates span each admission gate through `1.0`. It does not lock
 corroboration before considering promotion. Duplicate/search
 threshold ties use a stable midpoint; hybrid ties prefer lower corroboration
@@ -169,10 +171,12 @@ CODEDUPES_SMOKE_SEARCH=1 conda run --name inf pytest tests/test_semantic_smoke.p
 
 Keep these queries unchanged. Check that each target ranks in the top three
 without a score floor, that emitted default hits are relevant, and that no-result
-queries stay empty. Do not lower the default merely to return every known target:
-precision and recall are jointly evaluated by the corpus F1 policy. The shipped
-search floors are `0.68` for GTE and `0.56` for Gemma. The result records both the
-selected settings and their current shipped metrics.
+queries stay empty. The smoke pins six surfaced targets for GTE and two for Gemma;
+Gemma's other four targets remain correctly ranked first but below its floor.
+Do not lower the default merely to return every known target: precision and recall
+are jointly evaluated by the corpus F1 policy. The shipped search floors are
+`0.68` for GTE and `0.53` for Gemma. The result records the selected settings,
+nearby search curve, and current shipped metrics.
 
 After applying accepted profile values, rerun both selection commands above so
 the recorded current metrics and policy identity match the shipped defaults.

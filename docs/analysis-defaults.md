@@ -32,11 +32,11 @@ Semantic duplicate detection is gated per language. Each built-in model profile 
 | javascript | `0.69` | `0.80` |
 | typescript | `0.76` | `0.83` |
 
-The reviewed source-backed corpus selects Python gates of `0.87`/`0.74` and a GTE JavaScript gate of `0.69`; the C, Rust, and TypeScript gates remain unchanged. The 50% precision eligibility rule prevents a recall tie from admitting majority-false candidates before F1 selection. The corpus is development evidence with an authored challenge mix, so these settings are practical defaults rather than an estimate of ecosystem-wide precision. See [calibration measurements and replay](hybrid-tuning.md).
+The reviewed source-backed corpus selects all ten gates shown in the table. The 50% precision eligibility rule prevents a recall preference from admitting majority-false candidates before F1 selection. The corpus is development evidence with an authored challenge mix, so these settings are practical defaults rather than an estimate of ecosystem-wide precision. See [calibration measurements and replay](hybrid-tuning.md).
 
 See [threshold-profile choices](model-profiles.md#choosing-threshold-defaults) for profile selection.
 
-The profile fallback (`0.87` gte, `0.89` gemma) applies only to languages without their own entry. An explicit `--semantic-threshold`/`--threshold` (or `AnalyzerConfig.semantic_threshold`) replaces every per-language gate with one flat value. The pairwise embedding scan partitions candidates by language and scans each group at that language's own gate, so a loosely gated language never drags another language's scan down; the scalar floor handed to the scan covers only languages that arrive without a profile entry.
+The profile fallback (`0.87` gte, `0.88` gemma) applies only to languages without their own entry and equals that profile's strictest calibrated gate. An explicit `--semantic-threshold`/`--threshold` (or `AnalyzerConfig.semantic_threshold`) replaces every per-language gate with one flat value. The pairwise embedding scan partitions candidates by language and scans each group at that language's own gate, so a loosely gated language never drags another language's scan down; the scalar floor handed to the scan covers only languages that arrive without a profile entry.
 
 Semantic duplicate pairs are same-language by default. `--cross-language` (or `AnalyzerConfig(cross_language=True)`) also reports cross-language pairs; those claims are uncalibrated, so an opted-in mixed pair is held to `min(gate_a, gate_b)`, the looser of its two language gates.
 
@@ -139,7 +139,7 @@ A semantic-only pair has already passed its language's duplicate gate (applied b
 | `embeddinggemma-300m` | `0.40` | `0.00` | python `0.78`, c `0.89`, rust `0.88`, javascript `0.80`; typescript off |
 | `generic` | `0.00` | `0.20` | off |
 
-The corroboration constants and promotion gates were selected jointly after fixing the admission gates on the same reviewed development corpus. Both stages require at least 50% judged precision, maximize measured F1, and prefer recall only across exact F1 ties. An explicit `--semantic-threshold` keeps the profile's corroboration constants but turns similarity promotion off because those promotion gates belong to the shipped profile policy. See [calibration measurements and replay](hybrid-tuning.md).
+The corroboration constants and promotion gates were selected jointly after fixing the admission gates on the same reviewed development corpus. Every language-specific promotion outcome and the pooled result must reach 50% judged precision; selection then maximizes measured F1 and prefers recall within `0.005` F1 of the optimum. When a promotion gate equals its admission gate, the review band is empty and every admitted semantic-only pair is default-visible; that applies to GTE C/Rust and Gemma Rust/JavaScript. An explicit `--semantic-threshold` keeps the profile's corroboration constants but turns similarity promotion off because those promotion gates belong to the shipped profile policy. See [calibration measurements and replay](hybrid-tuning.md).
 
 ## Confidence scale
 

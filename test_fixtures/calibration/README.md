@@ -12,7 +12,7 @@ variants of one workflow just to increase the pair count.
 | --- | --- | ---: | ---: | ---: |
 | ledger | Python | 15 | 34 | 12 |
 | cowsay | Rust | 13 | 29 | 12 |
-| c_metering | C | 20 | 31 | 12 |
+| c_metering | C | 19 | 32 | 12 |
 | javascript | JavaScript | 19 | 52 | 12 |
 | harbor-ts | TypeScript | 12 | 31 | 12 |
 

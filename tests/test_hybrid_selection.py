@@ -151,7 +151,7 @@ def test_promotion_sweep_can_separate_pairs_above_point_98():
     assert (best["high_gate"], best["tp"], best["fp"]) == (0.99, 1, 0)
 
 
-def test_joint_selection_favors_recall_only_at_best_f1(monkeypatch: pytest.MonkeyPatch):
+def test_joint_selection_favors_recall_only_near_best_f1(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(sweep_hybrid_gates, "WEAK_GRID", (0.4,))
     monkeypatch.setattr(sweep_hybrid_gates, "RATIO_GRID", (0.0,))
     project, measurement = _project_and_measurement(
@@ -168,8 +168,8 @@ def test_joint_selection_favors_recall_only_at_best_f1(monkeypatch: pytest.Monke
     selected, _ = sweep_hybrid_gates._select_joint(
         [project], {"python": measurement}, {"python": 0.80}
     )
-    assert (selected["tp"], selected["fp"]) == (70, 5)
-    assert selected["f1"] == 0.80
+    assert (selected["tp"], selected["fp"]) == (72, 9)
+    assert selected["f1"] >= 0.80 - sweep_hybrid_gates.F1_RECALL_TOLERANCE
 
 
 def test_joint_selection_filters_unsafe_rows_before_equal_f1_recall_tie(
@@ -183,6 +183,7 @@ def test_joint_selection_filters_unsafe_rows_before_equal_f1_recall_tie(
         "tp": 2,
         "fp": 3,
         "fn": 0,
+        "precision": 2 / 5,
         "ambiguous_predictions": 0,
         "unjudged_predictions": 0,
     }
@@ -191,6 +192,7 @@ def test_joint_selection_filters_unsafe_rows_before_equal_f1_recall_tie(
         "tp": 2,
         "fp": 1,
         "fn": 2,
+        "precision": 2 / 3,
         "ambiguous_predictions": 0,
         "unjudged_predictions": 0,
     }
@@ -206,3 +208,50 @@ def test_joint_selection_filters_unsafe_rows_before_equal_f1_recall_tie(
     assert selected["precision"] == pytest.approx(2 / 3)
     assert selected["high_gates"] == {"python": None}
     assert options["python"] is safe
+
+
+def test_joint_selection_requires_safe_precision_in_every_language(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """A large language must not hide an unsafe promotion option in a small one."""
+    monkeypatch.setattr(sweep_hybrid_gates, "WEAK_GRID", (0.4,))
+    monkeypatch.setattr(sweep_hybrid_gates, "RATIO_GRID", (0.0,))
+    anchor = {
+        "high_gate": None,
+        "tp": 100,
+        "fp": 90,
+        "fn": 20,
+        "precision": 100 / 190,
+        "ambiguous_predictions": 0,
+        "unjudged_predictions": 0,
+    }
+    unsafe_small = {
+        "high_gate": 0.8,
+        "tp": 3,
+        "fp": 4,
+        "fn": 0,
+        "precision": 3 / 7,
+        "ambiguous_predictions": 0,
+        "unjudged_predictions": 0,
+    }
+    safe_small = {
+        "high_gate": None,
+        "tp": 1,
+        "fp": 0,
+        "fn": 2,
+        "precision": 1.0,
+        "ambiguous_predictions": 0,
+        "unjudged_predictions": 0,
+    }
+    monkeypatch.setattr(
+        sweep_hybrid_gates,
+        "_promotion_options",
+        lambda *_args: {"anchor": (anchor,), "small": (unsafe_small, safe_small)},
+    )
+
+    unsafe_pooled = sweep_hybrid_gates._combined_metrics((anchor, unsafe_small))
+    selected, options = sweep_hybrid_gates._select_joint([], {}, {"anchor": 0.8, "small": 0.8})
+
+    assert unsafe_pooled["precision"] >= sweep_hybrid_gates.MINIMUM_SELECTION_PRECISION
+    assert selected["high_gates"]["small"] is None
+    assert options["small"] is safe_small

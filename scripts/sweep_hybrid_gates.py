@@ -240,7 +240,8 @@ def _select_joint(
     Promotion and corroboration interact: a similarity gate can make a strict
     corroboration setting recover pairs that a promotion-disabled sweep misses.
     Search the complete product of distinct per-language outcomes for each
-    corroboration row, preferring recall only among precision-safe F1 ties.
+    corroboration row, requiring every language and the pooled result to clear
+    the precision floor before applying the shared recall/F1 policy.
     """
     languages = sorted(admissions)
     # Retain the best representative at each F1 before applying the global bound.
@@ -251,6 +252,8 @@ def _select_joint(
                 projects, measurements, admissions, weak, ratio
             )
             for combination in product(*(options_by_language[language] for language in languages)):
+                if any(option["precision"] < MINIMUM_SELECTION_PRECISION for option in combination):
+                    continue
                 high_gates = {
                     language: option["high_gate"]
                     for language, option in zip(languages, combination)
@@ -277,6 +280,11 @@ def _select_joint(
                         row,
                         {language: option for language, option in zip(languages, combination)},
                     )
+    if not by_f1:
+        raise ValueError(
+            "no joint calibration candidate satisfies the minimum precision "
+            f"{MINIMUM_SELECTION_PRECISION:.2f} in every language"
+        )
     eligible = near_best_f1([row for row, _ in by_f1.values()])
     preference = max(recall_preference(row) for row in eligible)
     selected = min(

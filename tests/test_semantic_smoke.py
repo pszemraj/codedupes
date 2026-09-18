@@ -136,7 +136,11 @@ def test_search_smoke_ranks_targets_and_filters_noise(
         assert all(unit.name == probe["expected"] for unit, _score in default_results), (
             f"{profile.key}: {probe['query']!r} returned irrelevant default hits"
         )
-    assert surfaced, f"{profile.key}: every relevant query returned no default results"
+    minimum_surfaced = {"gte-modernbert-base": 6, "embeddinggemma-300m": 2}[profile.key]
+    assert surfaced >= minimum_surfaced, (
+        f"{profile.key}: only {surfaced}/{len(spec['relevant'])} relevant queries "
+        f"cleared the default floor; expected at least {minimum_surfaced}"
+    )
 
     for query in spec["noise"]:
         results = find_similar_to_query(

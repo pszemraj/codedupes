@@ -73,7 +73,7 @@ def test_search_threshold_is_looser_than_duplicate_threshold() -> None:
         gates = profile.language_semantic_thresholds.values()
         assert 0 < profile.default_search_threshold < min(gates)
     assert get_default_search_threshold("gte-modernbert-base") == 0.68
-    assert get_default_search_threshold("embeddinggemma-300m") == 0.56
+    assert get_default_search_threshold("embeddinggemma-300m") == 0.53
     assert get_default_search_threshold("unknown/model-id") == DEFAULT_FALLBACK_SEARCH_THRESHOLD
 
 
@@ -82,10 +82,8 @@ def test_builtin_language_gates_cover_all_supported_languages() -> None:
         gates = profile.language_semantic_thresholds
         assert set(gates) == set(SUPPORTED_LANGUAGES)
         assert all(0.0 < gate <= 1.0 for gate in gates.values())
-        # An uncalibrated future language must not start looser than the
-        # strictest measured language; its fallback need not move when a
-        # supported-language gate is recalibrated.
-        assert profile.default_semantic_threshold >= max(gates.values())
+        # An uncalibrated future language uses the strictest measured gate.
+        assert profile.default_semantic_threshold == max(gates.values())
 
 
 def test_profile_copies_and_freezes_language_gates() -> None:
@@ -199,6 +197,19 @@ def test_builtin_hybrid_split_matches_the_recorded_corroboration_sweep() -> None
         assert set(profile.language_high_confidence_thresholds) == set(SUPPORTED_LANGUAGES)
         for language, gate in profile.language_high_confidence_thresholds.items():
             assert gate is None or gate >= profile.semantic_threshold_for_language(language)
+
+    empty_review_bands = {
+        (profile.key, language)
+        for profile in list_supported_models()
+        for language, gate in profile.language_high_confidence_thresholds.items()
+        if gate is not None and gate == profile.semantic_threshold_for_language(language)
+    }
+    assert empty_review_bands == {
+        ("gte-modernbert-base", "c"),
+        ("gte-modernbert-base", "rust"),
+        ("embeddinggemma-300m", "javascript"),
+        ("embeddinggemma-300m", "rust"),
+    }
 
 
 def test_language_gate_lookup_builtin_fallback_and_generic() -> None:
@@ -340,8 +351,8 @@ def test_arbitrary_local_directory_infers_embeddinggemma_from_config(tmp_path: P
     profile = resolve_model_profile(str(model_dir))
 
     assert profile.family == "embeddinggemma"
-    assert profile.default_semantic_threshold == 0.89
-    assert profile.default_search_threshold == 0.56
+    assert profile.default_semantic_threshold == 0.88
+    assert profile.default_search_threshold == 0.53
     assert profile.semantic_threshold_for_language("python") == 0.74
     assert profile.canonical_name == str(model_dir)
     assert profile.default_revision is None
@@ -372,7 +383,7 @@ def test_plain_modernbert_configuration_does_not_imply_gte(tmp_path) -> None:
     [
         ("auto", 0.82, 0.35),
         ("generic", 0.82, 0.35),
-        ("embeddinggemma-300m", 0.74, 0.56),
+        ("embeddinggemma-300m", 0.74, 0.53),
         ("gte-modernbert-base", 0.87, 0.68),
     ],
 )

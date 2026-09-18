@@ -537,35 +537,21 @@
       "id": "adapters-csv--idempotent",
       "a": "c_metering.adapters.csv",
       "b": "c_metering.adapters.idempotent",
-      "judgment": "positive",
-      "difficulty": "hard",
+      "judgment": "negative",
       "tags": [
-        "partial",
+        "shared-helper",
+        "different-control-flow",
         "idempotency"
       ],
-      "scope": "partial",
+      "scope": "whole_unit",
       "behavior_equivalent": false,
       "equivalence_domain": "Accepted DEVICE:USAGE values transported by their respective workflows.",
-      "contract": "Use strict device and nonnegative-integer normalization before creating accepted Reading values.",
-      "rationale": "The shared normalization is extractable, but stream lifetime and external batch reservation remain adapter-owned behavior.",
+      "contract": "Physical-line ingestion and atomic batch validation remain independently maintained workflows.",
+      "rationale": "The functions call shared normalization helpers but do not contain a second copy of that implementation; CSV commits accepted rows in one pass, while the idempotent endpoint validates a complete staged batch before reserving its ID.",
       "evidence": [
         "tests/test_metering.c::test_csv_api_and_idempotency"
       ],
-      "difference_witness": "An invalid idempotent batch does not reserve its batch ID, whereas a CSV import has no delivery-ID state.",
-      "regions": [
-        {
-          "unit": "c_metering.adapters.csv",
-          "start_line": 112,
-          "end_line": 119,
-          "sha256": "cc25480b1623c6d320b51c4efdabea4be74f5882b3b1ff4defcba4308db29741"
-        },
-        {
-          "unit": "c_metering.adapters.idempotent",
-          "start_line": 160,
-          "end_line": 168,
-          "sha256": "eb5fe3eef52669436c7abca21f4f96c705a02a635280e26c539c02273577f00d"
-        }
-      ]
+      "difference_witness": "An invalid idempotent batch commits no readings and leaves its batch ID unreserved; CSV import retains valid rows around rejected physical lines and has no delivery-ID state."
     },
     {
       "id": "adapters-api--idempotent",

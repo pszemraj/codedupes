@@ -50,7 +50,7 @@ from scripts.sweep_semantic_thresholds import (
 pytestmark = pytest.mark.grammar
 
 
-def test_recall_preference_requires_best_f1_and_safe_precision():
+def test_recall_preference_stays_within_f1_bound_and_safe_precision():
     rows = []
     for threshold, tp, fp in [(0.80, 70, 5), (0.79, 72, 9), (0.40, 95, 70)]:
         precision, recall = tp / (tp + fp), tp / 100
@@ -63,8 +63,8 @@ def test_recall_preference_requires_best_f1_and_safe_precision():
             }
         )
     selected = _select(rows)
-    assert selected["threshold"] == 0.80
-    assert max(row["f1"] for row in rows) - selected["f1"] == F1_RECALL_TOLERANCE
+    assert selected["threshold"] == 0.79
+    assert max(row["f1"] for row in rows) - selected["f1"] <= F1_RECALL_TOLERANCE
     assert _select([rows[0], rows[2]])["threshold"] == 0.80
 
     tied = [
@@ -222,6 +222,8 @@ def test_coarse_sweep_measures_shipped_thresholds_exactly(tmp_path: Path, monkey
     search = result["models"][0]["search"]
     assert search["current_threshold"] == search["current_metrics"]["threshold"] == 0.68
     assert (search["current_metrics"]["tp"], search["current_metrics"]["fp"]) == (1, 0)
+    assert [row["threshold"] for row in search["selection_window"]] == result["grids"]["search"]
+    assert search["selected_metrics"] in search["selection_window"]
     assert result["grids"]["search"] == [0.0, 0.3, 0.6, 0.9, 1.0]
 
 
@@ -670,6 +672,10 @@ def test_checked_calibration_result_matches_shipped_profiles():
         assert {
             item["language"]: item["selected_gate"] for item in hybrid["promotion_by_language"]
         } == dict(profile.language_high_confidence_thresholds)
+        assert all(
+            item["selected_metrics"]["precision"] >= MINIMUM_SELECTION_PRECISION
+            for item in hybrid["promotion_by_language"]
+        )
 
     for project in result["projects"]:
         assert all(report["replay_parity"] for report in project["reports"].values())

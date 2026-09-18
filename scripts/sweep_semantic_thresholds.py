@@ -66,7 +66,7 @@ def threshold_grid(start: float, stop: float, step: float) -> list[float]:
 
 
 def _select(rows: list[dict[str, Any]]) -> dict[str, Any]:
-    """Maximize precision-safe F1, then recall, centering exact tie plateaus."""
+    """Favor recall within the precision-safe F1 bound, centering exact tie plateaus."""
     eligible = near_best_f1(rows)
     best_key = max(recall_preference(row) for row in eligible)
     tied = [row for row in eligible if recall_preference(row) == best_key]
@@ -82,6 +82,14 @@ def _score_summary(values: list[float]) -> dict[str, float | int | None]:
         "median": median(ordered) if ordered else None,
         "max": ordered[-1] if ordered else None,
     }
+
+
+def _selection_window(
+    rows: list[dict[str, Any]], selected: dict[str, Any], radius: int = 5
+) -> list[dict[str, Any]]:
+    """Return nearby sweep rows so a checked selection remains auditable."""
+    selected_index = rows.index(selected)
+    return rows[max(0, selected_index - radius) : selected_index + radius + 1]
 
 
 def _difficulty_recall(
@@ -302,6 +310,7 @@ def main() -> int:
             "current_metrics": search_rows(search_records, [profile.default_search_threshold])[0],
             "selected_threshold": selected_search["threshold"],
             "selected_metrics": selected_search,
+            "selection_window": _selection_window(search, selected_search),
         }
         payload["models"].append(model_result)
 
