@@ -1778,7 +1778,7 @@ def test_cli_info_verbose_exit_zero(flag):
     assert "Family" in result.output and "gte-modernbert" in result.output
     assert "Search threshold" in result.output and "0.68" in result.output
     assert (
-        "python=0.87, c=0.85, rust=0.84, "
+        "python=0.87, c=0.84, rust=0.84, "
         "javascript=0.69, typescript=0.76 (fallback=0.87)" in result.output
     )
     default_revision = cli.resolve_model_profile(cli.DEFAULT_MODEL).default_revision

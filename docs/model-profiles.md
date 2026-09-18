@@ -9,17 +9,16 @@ Most users should leave model and task settings unset. `codedupes` uses the pinn
 | profile key | canonical model ID | family | search threshold | default revision | default trust mode |
 | --- | --- | --- | --- | --- | --- |
 | `gte-modernbert-base` | `Alibaba-NLP/gte-modernbert-base` | `gte-modernbert` | `0.68` | `e7f32e3c00f91d699e8c43b53106206bcc72bb22` | `False` |
-| `embeddinggemma-300m` | `unsloth/embeddinggemma-300m` | `embeddinggemma` | `0.53` | `bfa3c846ac738e62aa61806ef9112d34acb1dc5a` | `False` |
+| `embeddinggemma-300m` | `unsloth/embeddinggemma-300m` | `embeddinggemma` | `0.55` | `bfa3c846ac738e62aa61806ef9112d34acb1dc5a` | `False` |
 
 - [Per-language duplicate gates and their selection policy](analysis-defaults.md#semantic-duplicate-gate-defaults) control `check` reporting. The table's search threshold is only the floor for query matches; query-to-code similarity is much lower than code-to-code duplicate similarity.
 - Every built-in default revision is a pinned immutable commit. The [calibration workflow](hybrid-tuning.md) records the checkpoint, task, pipeline, and candidate policy behind each threshold.
 - Search and duplicate defaults require at least 50% judged precision, optimize measured F1, and prefer higher recall among candidates within `0.005` F1 of the optimum. Returning every known target is not a requirement for the default search floor. The separate smoke test checks target ranking without a floor, relevance of emitted default results, and a profile-specific minimum surfaced count.
 
-Gemma's selected `0.53` search floor gives 69% precision and 74% recall on the
-development corpus. It trades 0.0043 F1 from the `0.56` optimum for 10.6
-percentage points of recall. Independent multi-domain probes expose a remaining
+Gemma's selected `0.55` search floor gives 78% precision and 66% recall on the
+development corpus. Independent multi-domain probes expose a remaining
 limitation: only 2 of 6 clear either floor; CSV parsing, retry, LRU eviction, and
-byte-formatting targets rank first but remain below `0.53`. GTE's `0.68` floor
+byte-formatting targets rank first but remain below `0.55`. GTE's `0.68` floor
 surfaces all 6 independent targets. Override the floor for a repository with a
 different tradeoff; these authored fixtures do not establish ecosystem-wide accuracy.
 

@@ -32,10 +32,10 @@ detected / labeled comparable positive pairs:
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | Python | 3/5 | 3/10 | — | 4/5 | 8/10 | — |
 | Rust | 5/5 | 5/6 | 0/1 | 5/5 | 5/6 | 0/1 |
-| C | 4/5 | 8/14 | 0/1 | 5/5 | 13/14 | 0/1 |
+| C | 4/5 | 8/14 | — | 5/5 | 13/14 | — |
 | JavaScript | 5/5 | 8/14 | — | 4/5 | 8/14 | — |
 | TypeScript | 5/5 | 4/6 | 0/1 | 5/5 | 4/6 | 0/1 |
-| **overall** | **22/25** | **28/50** | **0/3** | **23/25** | **38/50** | **0/3** |
+| **overall** | **22/25** | **28/50** | **0/2** | **23/25** | **38/50** | **0/2** |
 | **recall** | **88.0%** | **56.0%** | **0.0%** | **92.0%** | **76.0%** | **0.0%** |
 
 A dash means that language has no labeled hard pair. Difficulty belongs to
@@ -46,12 +46,12 @@ after semantic admission.
 
 | output | model | TP / FP / FN | precision | recall | F1 |
 | --- | --- | ---: | ---: | ---: | ---: |
-| duplicate admission | GTE | 50 / 6 / 27 | 89.3% | 64.9% | 75.2% |
-| duplicate admission | Gemma | 61 / 12 / 16 | 83.6% | 79.2% | 81.3% |
-| default-visible duplicates | GTE | 50 / 1 / 27 | 98.0% | 64.9% | 78.1% |
-| default-visible duplicates | Gemma | 58 / 2 / 19 | 96.7% | 75.3% | 84.7% |
+| duplicate admission | GTE | 51 / 6 / 27 | 89.5% | 65.4% | 75.6% |
+| duplicate admission | Gemma | 62 / 12 / 16 | 83.8% | 79.5% | 81.6% |
+| default-visible duplicates | GTE | 51 / 1 / 27 | 98.1% | 65.4% | 78.5% |
+| default-visible duplicates | Gemma | 59 / 2 / 19 | 96.7% | 75.6% | 84.9% |
 | search | GTE | 72 / 20 / 22 | 78.3% | 76.6% | 77.4% |
-| search | Gemma | 70 / 32 / 24 | 68.6% | 74.5% | 71.4% |
+| search | Gemma | 62 / 18 / 32 | 77.5% | 66.0% | 71.3% |
 
 Both search profiles keep all 10 no-result probes clean. Selection discards
 settings below 50% judged precision, maximizes F1, and prefers recall within
@@ -59,7 +59,7 @@ settings below 50% judged precision, maximizes F1, and prefers recall within
 visibility jointly selects corroboration and per-language promotion gates after
 the admission gates are fixed. CPU fp32 supplies the reference scores; independent
 uncached MPS fp32 runs produce no duplicate, visibility-tier, or search decision
-changes. Maximum observed pair or query score drift is `7.15e-7`.
+changes. Maximum observed pair or query score drift is `7.45e-7`.
 
 ## Real-repository smoke check
 
@@ -124,7 +124,7 @@ context: changing behavior evidence requires reselection, but not new embeddings
 
 Keeping CPU as the calibration reference is a reproducibility convention, not a
 separate runtime threshold policy. The checked development-corpus comparison found a
-maximum CPU/MPS score drift of `7.15e-7` and no duplicate or search decision
+maximum CPU/MPS score drift of `7.45e-7` and no duplicate or search decision
 changes for either built-in model. Treat CPU fp32 and MPS fp32 as functionally
 equivalent for these profiles, and use the default `device=auto` during normal
 macOS development so Apple silicon selects the faster MPS path. Continue to run
@@ -190,7 +190,7 @@ queries stay empty. The smoke pins six surfaced targets for GTE and two for Gemm
 Gemma's other four targets remain correctly ranked first but below its floor.
 Do not lower the default merely to return every known target: precision and recall
 are jointly evaluated by the corpus F1 policy. The shipped search floors are
-`0.68` for GTE and `0.53` for Gemma. The result records the selected settings,
+`0.68` for GTE and `0.55` for Gemma. The result records the selected settings,
 nearby search curve, and current shipped metrics.
 
 After applying accepted profile values, rerun both selection commands above so

@@ -2595,9 +2595,9 @@ def test_local_fingerprint_tracks_embedding_assets(tmp_path, relative) -> None:
 @pytest.mark.parametrize(
     ("choice", "expected"),
     [
-        ("auto", 0.53),
+        ("auto", 0.55),
         ("generic", 0.35),
-        ("embeddinggemma-300m", 0.53),
+        ("embeddinggemma-300m", 0.55),
         ("gte-modernbert-base", 0.68),
     ],
 )

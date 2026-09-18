@@ -27,7 +27,7 @@ Semantic duplicate detection is gated per language. Each built-in model profile 
 | language | `gte-modernbert-base` | `embeddinggemma-300m` |
 | --- | --- | --- |
 | python | `0.87` | `0.74` |
-| c | `0.85` | `0.82` |
+| c | `0.84` | `0.82` |
 | rust | `0.84` | `0.88` |
 | javascript | `0.69` | `0.80` |
 | typescript | `0.76` | `0.83` |
@@ -135,7 +135,7 @@ A semantic-only pair has already passed its language's duplicate gate (applied b
 
 | profile | identifier Jaccard min | statement ratio min | promotion gates |
 | --- | --- | --- | --- |
-| `gte-modernbert-base` | `0.40` | `0.00` | python `0.88`, c `0.85`, rust `0.84`, javascript `0.70`; typescript off |
+| `gte-modernbert-base` | `0.40` | `0.00` | python `0.88`, c `0.84`, rust `0.84`, javascript `0.70`; typescript off |
 | `embeddinggemma-300m` | `0.40` | `0.00` | python `0.78`, c `0.89`, rust `0.88`, javascript `0.80`; typescript off |
 | `generic` | `0.00` | `0.20` | off |
 

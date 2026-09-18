@@ -136,7 +136,7 @@ _BUILTIN_MODEL_PROFILES: tuple[SemanticModelProfile, ...] = (
         default_search_threshold=0.68,
         language_semantic_thresholds={
             "python": 0.87,
-            "c": 0.85,
+            "c": 0.84,
             "rust": 0.84,
             "javascript": 0.69,
             "typescript": 0.76,
@@ -145,7 +145,7 @@ _BUILTIN_MODEL_PROFILES: tuple[SemanticModelProfile, ...] = (
         hybrid_statement_ratio_min=0.0,
         language_high_confidence_thresholds={
             "python": 0.88,
-            "c": 0.85,
+            "c": 0.84,
             "rust": 0.84,
             "javascript": 0.70,
             "typescript": None,
@@ -161,7 +161,7 @@ _BUILTIN_MODEL_PROFILES: tuple[SemanticModelProfile, ...] = (
         family="embeddinggemma",
         default_revision="bfa3c846ac738e62aa61806ef9112d34acb1dc5a",
         default_semantic_threshold=0.88,
-        default_search_threshold=0.53,
+        default_search_threshold=0.55,
         language_semantic_thresholds={
             "python": 0.74,
             "c": 0.82,
