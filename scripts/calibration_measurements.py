@@ -51,6 +51,7 @@ except ImportError:
     )
 
 ARTIFACT_VERSION = 4
+CALIBRATION_BATCH_SIZE = 4
 DEFAULT_MEASUREMENTS = REPO / "scratch/calibration"
 
 
@@ -128,7 +129,13 @@ def _execution(analyzer: ProjectAnalyzer, requested: str) -> dict[str, Any]:
     return asdict(stats)
 
 
-def capture(project: Project, model: str, device: str, output: Path, batch_size: int = 4) -> Path:
+def capture(
+    project: Project,
+    model: str,
+    device: str,
+    output: Path,
+    batch_size: int = CALIBRATION_BATCH_SIZE,
+) -> Path:
     """Capture duplicate-pair and search scores in two uncached model passes."""
     if device not in {"cpu", "mps"}:
         raise ValueError("device must be cpu or mps")

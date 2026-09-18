@@ -41,15 +41,16 @@ detected / labeled comparable positive pairs:
 A dash means that language has no labeled hard pair. Difficulty belongs to
 positive examples, so false positives and therefore precision and F1 do not have
 a difficulty bucket. The pooled metrics below use every comparable reviewed pair.
-Default-visible duplicates apply the jointly selected hybrid visibility policy
-after semantic admission.
+Semantic-only default-visible duplicates apply the jointly selected hybrid
+visibility policy after semantic admission; deterministic findings are reported
+separately and are intentionally excluded from both duplicate rows.
 
 | output | model | TP / FP / FN | precision | recall | F1 |
 | --- | --- | ---: | ---: | ---: | ---: |
 | duplicate admission | GTE | 49 / 5 / 28 | 90.7% | 63.6% | 74.8% |
 | duplicate admission | Gemma | 62 / 13 / 15 | 82.7% | 80.5% | 81.6% |
-| default-visible duplicates | GTE | 49 / 1 / 28 | 98.0% | 63.6% | 77.2% |
-| default-visible duplicates | Gemma | 59 / 4 / 18 | 93.7% | 76.6% | 84.3% |
+| semantic-only default-visible | GTE | 49 / 1 / 28 | 98.0% | 63.6% | 77.2% |
+| semantic-only default-visible | Gemma | 59 / 4 / 18 | 93.7% | 76.6% | 84.3% |
 | search | GTE | 72 / 20 / 22 | 78.3% | 76.6% | 77.4% |
 | search | Gemma | 69 / 32 / 25 | 68.3% | 73.4% | 70.8% |
 

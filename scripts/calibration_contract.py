@@ -156,6 +156,17 @@ def load_projects(
             raise ValueError(f"{spec['id']}: annotations must use schema_version=2")
         if "positive_groups" in annotations or "negative_controls" in annotations:
             raise ValueError("legacy group labels are unsupported")
+        provenance = annotations.get("provenance")
+        if (
+            not isinstance(provenance, dict)
+            or not isinstance(provenance.get("origin"), str)
+            or not provenance["origin"].strip()
+            or provenance.get("split") != spec["split"]
+            or provenance.get("split_group") != spec["split_group"]
+        ):
+            raise ValueError(
+                f"{spec['id']}: annotation provenance must match manifest split and group"
+            )
         if not root.is_dir():
             raise ValueError(f"missing project root: {root}")
         if not project_ids or spec["id"] in project_ids:

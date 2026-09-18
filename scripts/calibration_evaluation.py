@@ -18,11 +18,41 @@ from codedupes.constants import DEFAULT_TOP_K, DEFAULT_TRADITIONAL_THRESHOLD
 from codedupes.semantic_profiles import resolve_model_profile
 
 try:
-    from .calibration_contract import REPO, Project, pair_key, write_json
-    from .calibration_measurements import artifact_path, load_measurement, measurement_fingerprint
+    from .calibration_contract import (
+        REPO,
+        Project,
+        ProjectAnalyzer,
+        analyzer_config,
+        extract_project,
+        pair_key,
+        resolve_annotations,
+        unit_ids,
+        write_json,
+    )
+    from .calibration_measurements import (
+        CALIBRATION_BATCH_SIZE,
+        artifact_path,
+        load_measurement,
+        measurement_fingerprint,
+    )
 except ImportError:
-    from calibration_contract import REPO, Project, pair_key, write_json
-    from calibration_measurements import artifact_path, load_measurement, measurement_fingerprint
+    from calibration_contract import (
+        REPO,
+        Project,
+        ProjectAnalyzer,
+        analyzer_config,
+        extract_project,
+        pair_key,
+        resolve_annotations,
+        unit_ids,
+        write_json,
+    )
+    from calibration_measurements import (
+        CALIBRATION_BATCH_SIZE,
+        artifact_path,
+        load_measurement,
+        measurement_fingerprint,
+    )
 
 
 F1_RECALL_TOLERANCE = 0.005
@@ -511,6 +541,7 @@ def validate_measurement_provenance(project: Project, measurement: dict[str, Any
     if (
         metadata["canonical_model"] != profile.canonical_name
         or metadata["revision"] != profile.default_revision
+        or metadata["batch_size"] != CALIBRATION_BATCH_SIZE
         or metadata["runtime_versions"] != semantic.get_semantic_runtime_versions()
         or metadata["inference_dtype"] != expected_dtype
         or metadata["captured_profile"] != expected_profile
@@ -547,6 +578,7 @@ def development_projects(projects: list[Project]) -> list[Project]:
 def selection_context(projects: list[Project], models: list[str]) -> dict[str, Any]:
     """Bind selections to their policy, corpus scope, judgments, and measured inputs."""
     return {
+        "batch_size": CALIBRATION_BATCH_SIZE,
         "selection_policy": selection_digest(
             {
                 path: (REPO / path).read_text()
@@ -1328,6 +1360,27 @@ def validate_checked_report(
     report_devices: set[str] = set()
     for project_id, project in project_by_id.items():
         record = records_by_id[project_id]
+        inventory, _ = extract_project(project, inventory=True)
+        resolved_annotations = resolve_annotations(project, inventory)
+        source_units, _ = extract_project(project)
+        measured_units = list(
+            {unit.uid: unit for unit in [*source_units, *resolved_annotations.values()]}.values()
+        )
+        corpus_unit_ids = set(unit_ids(project, measured_units, resolved_annotations).values())
+        expected_encoded_inputs = len(
+            ProjectAnalyzer(project, analyzer_config(project))._select_semantic_candidates(
+                source_units
+            )
+        )
+        probes = {probe["id"]: probe for probe in project.annotations["probes"]}
+        expected_search_pairs = {
+            (probe_id, unit_id)
+            for probe_id, probe in probes.items()
+            for unit_id in probe["expected"]
+        }
+        no_result_probe_ids = {
+            probe_id for probe_id, probe in probes.items() if not probe["expected"]
+        }
         expected_corpus = {
             "annotated_units": len(project.annotations["units"]),
             "positive_pairs": sum(
@@ -1383,7 +1436,7 @@ def validate_checked_report(
                     or report.get("model") != model
                     or report.get("device") != device
                     or type(report.get("batch_size")) is not int
-                    or report["batch_size"] <= 0
+                    or report["batch_size"] != CALIBRATION_BATCH_SIZE
                     or report.get("inference_dtype") != expected_dtype
                     or report.get("replay_parity") is not True
                     or not isinstance(report.get("duplicate"), dict)
@@ -1435,7 +1488,7 @@ def validate_checked_report(
                         or set(stats) != {"device", "encoded_inputs", "cache_hit_rows"}
                         or stats["device"] != device
                         or type(stats["encoded_inputs"]) is not int
-                        or stats["encoded_inputs"] <= 0
+                        or stats["encoded_inputs"] != expected_encoded_inputs
                         or type(stats["cache_hit_rows"]) is not int
                         or stats["cache_hit_rows"] != 0
                     ):
@@ -1493,21 +1546,84 @@ def validate_checked_report(
                     or len(set(serialized)) != len(serialized)
                 ):
                     raise ValueError(f"{project_id}: invalid checked {model} {field}")
+            duplicate_changes = {tuple(item) for item in comparison["duplicate_decision_changes"]}
+            if any(
+                a not in corpus_unit_ids
+                or b not in corpus_unit_ids
+                or a == b
+                or (a, b) != pair_key(a, b)
+                for a, b in duplicate_changes
+            ):
+                raise ValueError(
+                    f"{project_id}: checked {model} duplicate changes reference another corpus"
+                )
+            search_changes = {tuple(item) for item in comparison["search_decision_changes"]}
+            if any(
+                probe_id not in probes or unit_id not in corpus_unit_ids
+                for probe_id, unit_id in search_changes
+            ):
+                raise ValueError(
+                    f"{project_id}: checked {model} search changes reference another corpus"
+                )
             cpu_report = reports[f"{model}/cpu"]
             mps_report = reports[f"{model}/mps"]
+            duplicate_change_count = len(duplicate_changes)
+            if cpu_report["duplicate"]["deterministic"] != mps_report["duplicate"]["deterministic"]:
+                raise ValueError(f"{project_id}: {model} deterministic evidence differs by device")
+            for metric_name in ("published", "visible", "semantic_eligible"):
+                cpu_metrics = cpu_report["duplicate"][metric_name]
+                mps_metrics = mps_report["duplicate"][metric_name]
+                if any(
+                    abs(cpu_metrics[field] - mps_metrics[field]) > duplicate_change_count
+                    for field in (
+                        "tp",
+                        "fp",
+                        "fn",
+                        "ambiguous_predictions",
+                        "unjudged_predictions",
+                    )
+                ):
+                    raise ValueError(
+                        f"{project_id}: checked {model} duplicate changes cannot explain reports"
+                    )
+            cpu_tiers = cpu_report["duplicate"]["tiers"]
+            mps_tiers = mps_report["duplicate"]["tiers"]
             if (
-                not comparison["duplicate_decision_changes"]
-                and cpu_report["duplicate"] != mps_report["duplicate"]
-            ):
-                raise ValueError(
-                    f"{project_id}: empty {model} duplicate decision changes contradict reports"
+                sum(
+                    abs(cpu_tiers.get(tier, 0) - mps_tiers.get(tier, 0))
+                    for tier in cpu_tiers.keys() | mps_tiers.keys()
                 )
-            if (
-                not comparison["search_decision_changes"]
-                and cpu_report["search"] != mps_report["search"]
+                > 2 * duplicate_change_count
             ):
                 raise ValueError(
-                    f"{project_id}: empty {model} search decision changes contradict reports"
+                    f"{project_id}: checked {model} duplicate changes cannot explain tiers"
+                )
+
+            cpu_search = cpu_report["search"]
+            mps_search = mps_report["search"]
+            relevant_changes = len(search_changes & expected_search_pairs)
+            irrelevant_changes = len(search_changes) - relevant_changes
+            tp_delta = cpu_search["tp"] - mps_search["tp"]
+            fp_delta = cpu_search["fp"] - mps_search["fp"]
+            if (
+                abs(tp_delta) > relevant_changes
+                or (relevant_changes - abs(tp_delta)) % 2
+                or abs(fp_delta) > irrelevant_changes
+                or (irrelevant_changes - abs(fp_delta)) % 2
+            ):
+                raise ValueError(
+                    f"{project_id}: checked {model} search changes cannot explain reports"
+                )
+            cpu_violations = set(cpu_search["no_result"]["violations"])
+            mps_violations = set(mps_search["no_result"]["violations"])
+            if (
+                not cpu_violations <= no_result_probe_ids
+                or not mps_violations <= no_result_probe_ids
+                or not (cpu_violations ^ mps_violations)
+                <= {probe_id for probe_id, _unit_id in search_changes}
+            ):
+                raise ValueError(
+                    f"{project_id}: checked {model} no-result changes cannot explain reports"
                 )
 
     _validate_checked_selection_outcomes(
@@ -1519,6 +1635,8 @@ def validate_checked_report(
 
     if not report_runtimes or any(runtime != report_runtimes[0] for runtime in report_runtimes[1:]):
         raise ValueError("checked calibration report has mixed runtime provenance")
+    if report_runtimes[0] != semantic.get_semantic_runtime_versions():
+        raise ValueError("checked calibration report does not match the current runtime")
     runtime_summary = payload.get("measurement_runtime")
     expected_scope = (
         f"all checked {' and '.join(sorted(device.upper() for device in report_devices))} reports"

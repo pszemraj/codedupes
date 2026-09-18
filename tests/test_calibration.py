@@ -234,6 +234,25 @@ def test_selection_uses_only_development_projects():
         development_projects([evaluation])
 
 
+def test_annotation_provenance_must_match_manifest_split(tmp_path: Path):
+    manifest = read_json(DEFAULT_MANIFEST)
+    for spec in manifest["projects"]:
+        spec["root"] = str((DEFAULT_MANIFEST.parent / spec["root"]).resolve())
+        spec["annotations"] = str((DEFAULT_MANIFEST.parent / spec["annotations"]).resolve())
+
+    annotation = read_json(Path(manifest["projects"][0]["annotations"]))
+    annotation["provenance"]["split"] = "evaluation"
+    annotation["provenance"]["split_group"] = "foreign-evaluation"
+    annotation_path = tmp_path / "forged-annotation.json"
+    write_json(annotation_path, annotation)
+    manifest["projects"][0]["annotations"] = str(annotation_path)
+    manifest_path = tmp_path / "manifest.json"
+    write_json(manifest_path, manifest)
+
+    with pytest.raises(ValueError, match="annotation provenance must match"):
+        load_projects(manifest_path)
+
+
 def test_duplicate_sweep_uses_reviewed_comparable_pairs():
     project = SimpleNamespace(
         id="sample",
@@ -1202,7 +1221,18 @@ def test_checked_calibration_result_rejects_tampered_embedded_selections(tamper:
 
 
 @pytest.mark.parametrize(
-    "tamper", ["digest", "selection_digest", "timing", "execution", "identity", "dtype"]
+    "tamper",
+    [
+        "digest",
+        "selection_digest",
+        "timing",
+        "execution",
+        "identity",
+        "dtype",
+        "runtime",
+        "batch",
+        "encoded_inputs",
+    ],
 )
 def test_checked_calibration_result_rejects_tampered_provenance(tamper: str):
     result = read_json(DEFAULT_MANIFEST.parent / "calibration-results.json")
@@ -1225,14 +1255,34 @@ def test_checked_calibration_result_rejects_tampered_provenance(tamper: str):
         first_report["execution"]["duplicate"]["cache_hit_rows"] = 1
     elif tamper == "identity":
         first_report["device"] = "mps"
-    else:
+    elif tamper == "dtype":
         first_report["inference_dtype"] = "float16"
+    elif tamper == "runtime":
+        for project in result["projects"]:
+            for report in project["reports"].values():
+                report["runtime_versions"] = {
+                    "python": "forged-python",
+                    "torch": "0.0.0-forged",
+                }
+        result["measurement_runtime"]["torch"] = "0.0.0-forged"
+    elif tamper == "batch":
+        first_report["batch_size"] = 999_999
+    else:
+        first_report["execution"]["duplicate"]["encoded_inputs"] = 1
     with pytest.raises(ValueError, match="checked"):
         validate_checked_report(result, projects, models)
 
 
 @pytest.mark.parametrize(
-    "tamper", ["schema", "arithmetic", "denominator", "no_result", "decision_changes"]
+    "tamper",
+    [
+        "schema",
+        "arithmetic",
+        "denominator",
+        "no_result",
+        "decision_changes",
+        "foreign_decision_change",
+    ],
 )
 def test_checked_calibration_result_rejects_forged_report_metrics(tamper: str):
     result = read_json(DEFAULT_MANIFEST.parent / "calibration-results.json")
@@ -1258,9 +1308,17 @@ def test_checked_calibration_result_rejects_forged_report_metrics(tamper: str):
             "total": 0,
             "violations": [],
         }
-    else:
+    elif tamper == "decision_changes":
         search = result["projects"][0]["reports"]["gte-modernbert-base/mps"]["search"]
         search.update({"tp": 0, "fn": 12, "precision": 0.0, "recall": 0.0, "f1": 0.0})
+        project = load_projects(project_ids=["ledger"])[0]
+        result["projects"][0]["device_comparisons"]["gte-modernbert-base"][
+            "search_decision_changes"
+        ] = [[project.annotations["probes"][0]["id"], project.annotations["units"][0]["id"]]]
+    else:
+        result["projects"][0]["device_comparisons"]["gte-modernbert-base"][
+            "search_decision_changes"
+        ] = [["not-a-probe", "not-a-unit"]]
 
     with pytest.raises(
         ValueError, match="checked|duplicate|metrics|corpus|search evidence|contradict"
