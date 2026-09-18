@@ -79,9 +79,12 @@ score floor, emitted default hits must be relevant, and no-result queries must
 stay empty. The checked result records the current floors, search curve, and
 metrics.
 
-After applying accepted profile values, rerun both selection commands above so
-the recorded current metrics and policy identity match the shipped defaults.
-Capture fresh MPS results, then write the compact checked summary:
+Apply accepted values in [the profile definitions](../src/codedupes/semantic_profiles.py)
+and [profile tables](model-profiles.md#built-in-profiles) as one change, then run
+`conda run --name inf pytest tests/test_semantic_profiles.py tests/test_calibration.py`.
+Rerun both
+selection commands above so the recorded metrics and policy identity match the
+shipped defaults. Capture fresh MPS results, then write the compact checked summary:
 
 ```bash
 conda run --name inf python scripts/report_calibration_distributions.py \

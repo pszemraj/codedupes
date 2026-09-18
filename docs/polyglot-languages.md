@@ -70,6 +70,8 @@ The declarator walker handles nested pointer, parenthesized, attributed, and fun
 
 Body-bearing `function_item` nodes are emitted. Free and nested functions are `FUNCTION` units. Functions inside `impl` or trait bodies are `METHOD` units. Trait methods with default bodies are included; required signatures without bodies are skipped.
 
+Statement counts recurse through nested control flow. A semicolon-free tail expression counts as one statement.
+
 Inline test code is excluded by default: functions under a `#[cfg(test)]` (including `#[cfg(all(..., test, ...))]` regardless of predicate order) module or attribute, and free `#[test]` functions, are skipped. File-glob test exclusion cannot catch these because Rust inline test modules share source files with production code. `#[cfg(not(test))]` and `#[cfg(any(test, ...))]` gate real production configurations and stay extracted.
 
 Lexical qualification includes modules, enclosing functions, implementation targets, and traits where available. Structs, enums, traits, and `impl` blocks are not flattened into fake classes. Their methods remain independently analyzable.

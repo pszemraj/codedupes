@@ -9,11 +9,11 @@ rather than variants of one workflow just to increase the pair count.
 
 | project | language | positives | negatives | probes |
 | --- | --- | ---: | ---: | ---: |
-| ledger | Python | 15 | 34 | 12 |
-| cowsay | Rust | 13 | 29 | 12 |
-| c_metering | C | 19 | 32 | 12 |
-| javascript | JavaScript | 19 | 52 | 12 |
-| harbor-ts | TypeScript | 12 | 31 | 12 |
+| [ledger](ledger/README.md) | Python | 15 | 34 | 12 |
+| [cowsay](../cowsay_wasm/README.md) | Rust | 13 | 29 | 12 |
+| [c_metering](c_metering/README.md) | C | 19 | 32 | 12 |
+| [javascript](javascript/README.md) | JavaScript | 19 | 52 | 12 |
+| [harbor-ts](harbor-ts/README.md) | TypeScript | 12 | 31 | 12 |
 
 Each language keeps at least five comparable reviewed easy pairs and five
 comparable reviewed medium pairs. Existing coverage is not reduced merely to

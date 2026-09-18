@@ -36,8 +36,7 @@ Default semantic candidate selection:
 
 - unit types: `function`, `method`
 - class units are excluded by default from semantic embedding
-- minimum statement count: `3` (via `min_semantic_statements`)
-- statements are counted recursively through control-flow bodies, so a large function implemented inside one outer block is not measured as a single statement; nested function/class definitions count as one declaration each. Each grammar defines its statement and nested-scope node kinds: Python follows `ast.stmt` semantics (`elif` counts, a `with` statement counts once plus its body, only `else`/`except`/`finally`/`case` clauses are transparent, a leading docstring is not counted; see [Python units](polyglot-languages.md#python)), and Rust's semicolon-free tail expression counts as one statement. Every backend sets the count at extraction.
+- minimum statement count: `3` (via `min_semantic_statements`); each backend computes recursive counts from its grammar, so a function implemented inside one outer control-flow block is not treated as one statement. See [language extraction details](polyglot-languages.md#what-becomes-a-code-unit).
 - each semantic input is one complete logical definition - the unit's exact source span of decorators (a decorated Python definition starts at its first decorator), signature, docstring, and body; functions are not split into arbitrary text chunks
 - eligible definitions and search queries are passed to the embedding backend unchanged. The backend applies its normal tokenization and context-window truncation, including any encode prompt.
 

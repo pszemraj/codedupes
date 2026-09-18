@@ -88,9 +88,11 @@ An earlier whole-model bfloat16 run was about 13% faster but still shifted pair
 scores at threshold scale. MPS inference therefore stays float32. Any future
 dtype change requires the full [calibration workflow](hybrid-tuning.md).
 
+### CPU bfloat16 policy
+
 `CODEDUPES_CPU_BF16=1` enables experimental CPU bfloat16 only when the machine has both a native bf16 ISA (`bf16` on ARM, `amx_bf16`/`avx512_bf16` on x86) and an available mkldnn GEMM backend. The capability check runs at most once per process and persists nothing. `codedupes info --verbose` reports the hardware checks and effective policy.
 
-The CPU capability gate does not establish accuracy at the built-in duplicate and search thresholds. Automatic enablement awaits speed and decision-parity validation on supported hardware. TODO before promotion: measure agreement between CPU and CUDA bfloat16 vectors, which currently share a cache namespace, and split their identities if needed.
+The CPU capability gate does not establish accuracy at the built-in duplicate and search thresholds. Automatic enablement remains off until gate-passing hardware establishes latency, memory use, row-cosine agreement, pair-score drift, and duplicate/search threshold-flip counts for both built-in models. CPU and CUDA bfloat16 currently share a cache namespace; promotion must confirm their agreement or split their runtime identities.
 
 Both load-time and inference-time CPU fallback reapply this dtype policy. A bfloat16 accelerator model becomes float32 unless the CPU opt-in and capability gate both pass.
 
@@ -134,11 +136,7 @@ The optional CUDA smoke command also exercises the default model and labeled Rus
 CODEDUPES_SMOKE_GPU=1 pytest tests/test_semantic_cuda.py tests/test_semantic_smoke.py -m gpu
 ```
 
-A companion opt-in smoke test validates every built-in profile against the multi-domain probe corpus in `test_fixtures/search_probes/`: every relevant query must rank its expected function in the top three without a score floor, emitted default hits must be relevant, and every off-topic query must return nothing. The default floor is calibrated for F1; the smoke test does not force every target to clear it:
-
-```bash
-CODEDUPES_SMOKE_SEARCH=1 pytest tests/test_semantic_smoke.py
-```
+The opt-in multi-domain search smoke command and acceptance criteria are part of the [calibration workflow](hybrid-tuning.md#reproduce-the-result).
 
 ## Upstream references
 
