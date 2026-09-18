@@ -6,7 +6,7 @@ function strictWeight(value: unknown): number {
   if (typeof value !== "string" || !/^[1-9]\d*$/.test(value)) {
     throw new Error("weightKg must be a positive integer string");
   }
-  return parseSafeWeight(value);
+  const weightKg = Number(value); if (!Number.isSafeInteger(weightKg)) throw new Error("weightKg must be a positive integer string"); return weightKg;
 }
 
 function strictDate(value: unknown): string {
@@ -70,12 +70,4 @@ export function acceptBookingsWithNormalizer(rows: readonly RawBooking[]): Booki
     }
   }
   return { accepted, errors, reservedIds: [...reserved].sort() };
-}
-
-function parseSafeWeight(value: string): number {
-  const weightKg = Number(value);
-  if (!Number.isSafeInteger(weightKg)) {
-    throw new Error("weightKg must be a positive integer string");
-  }
-  return weightKg;
 }

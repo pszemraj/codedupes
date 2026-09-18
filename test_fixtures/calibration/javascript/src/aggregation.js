@@ -15,13 +15,7 @@ function assertInvoiceRecord(record, index) {
   }
 }
 
-function addMinorUnits(totalMinor, amountMinor) {
-  const nextTotal = totalMinor + amountMinor;
-  if (!Number.isSafeInteger(nextTotal)) {
-    throw new RangeError("invoice total must be a safe integer");
-  }
-  return nextTotal;
-}
+const { addSafeInteger } = require("./safe-integers.js");
 
 function aggregateInvoices(records) {
   const byInvoice = new Map();
@@ -31,7 +25,7 @@ function aggregateInvoices(records) {
     const invoiceId = record.invoiceId.trim();
     const previous = byInvoice.get(invoiceId) ?? { totalMinor: 0, count: 0 };
     byInvoice.set(invoiceId, {
-      totalMinor: addMinorUnits(previous.totalMinor, record.amountMinor),
+      totalMinor: addSafeInteger(previous.totalMinor, record.amountMinor, "invoice total"),
       count: previous.count + 1,
     });
   }
@@ -51,7 +45,7 @@ function buildInvoiceDigest(records) {
   for (const [invoiceId, amountMinor] of accepted) {
     const tail = digest.at(-1);
     if (tail?.invoiceId === invoiceId) {
-      tail.totalMinor = addMinorUnits(tail.totalMinor, amountMinor);
+      tail.totalMinor = addSafeInteger(tail.totalMinor, amountMinor, "invoice total");
       tail.count += 1;
     } else {
       digest.push({ invoiceId, totalMinor: amountMinor, count: 1 });
@@ -68,7 +62,7 @@ function summarizeInvoiceAccounts(records) {
     if (record.voided) continue;
     const key = record.invoiceId.trim();
     accounts[key] ??= { totalMinor: 0, count: 0 };
-    accounts[key].totalMinor = addMinorUnits(accounts[key].totalMinor, record.amountMinor);
+    accounts[key].totalMinor = addSafeInteger(accounts[key].totalMinor, record.amountMinor, "invoice total");
     accounts[key].count += 1;
   }
   return Object.keys(accounts)

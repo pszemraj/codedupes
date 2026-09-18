@@ -1,4 +1,5 @@
 import type { DockLoad, ZoneSummary } from "./models.ts";
+import { addSafeInteger } from "./safe-integers.ts";
 
 function checkedLoad(load: DockLoad): void {
   if (!load.loadId.trim()) throw new Error("loadId is required");
@@ -11,14 +12,6 @@ function checkedLoad(load: DockLoad): void {
   }
 }
 
-function addWeight(totalKg: number, weightKg: number): number {
-  const nextTotal = totalKg + weightKg;
-  if (!Number.isSafeInteger(nextTotal)) {
-    throw new Error("totalKg must be a safe integer");
-  }
-  return nextTotal;
-}
-
 /** Aggregate active loads by zone with a Map-based implementation. */
 export function summarizeDockLoads(loads: readonly DockLoad[]): ZoneSummary[] {
   const totals = new Map<string, { totalKg: number; loadCount: number }>();
@@ -27,7 +20,7 @@ export function summarizeDockLoads(loads: readonly DockLoad[]): ZoneSummary[] {
     if (load.status === "cancelled") continue;
     const zone = load.zone.trim().toUpperCase();
     const current = totals.get(zone) ?? { totalKg: 0, loadCount: 0 };
-    current.totalKg = addWeight(current.totalKg, load.weightKg);
+    current.totalKg = addSafeInteger(current.totalKg, load.weightKg, "totalKg");
     current.loadCount += 1;
     totals.set(zone, current);
   }
@@ -48,7 +41,7 @@ export function buildManifestTotals(loads: readonly DockLoad[]): ZoneSummary[] {
   for (const load of active) {
     const previous = summaries.at(-1);
     if (previous?.zone === load.zone) {
-      previous.totalKg = addWeight(previous.totalKg, load.weightKg);
+      previous.totalKg = addSafeInteger(previous.totalKg, load.weightKg, "totalKg");
       previous.loadCount += 1;
     } else {
       summaries.push({ zone: load.zone, totalKg: load.weightKg, loadCount: 1 });
@@ -67,7 +60,7 @@ export function collectZoneWeightTotals(loads: readonly DockLoad[]): ZoneSummary
     const known = totals[zone] ?? { zone, totalKg: 0, loadCount: 0 };
     totals[zone] = {
       zone,
-      totalKg: addWeight(known.totalKg, load.weightKg),
+      totalKg: addSafeInteger(known.totalKg, load.weightKg, "totalKg"),
       loadCount: known.loadCount + 1,
     };
   });

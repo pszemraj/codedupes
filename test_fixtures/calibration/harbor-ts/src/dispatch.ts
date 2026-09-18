@@ -1,4 +1,5 @@
 import type { DispatchPlan, ZoneSummary } from "./models.ts";
+import { addSafeInteger } from "./safe-integers.ts";
 
 function validateSummaries(summaries: readonly ZoneSummary[]): void {
   for (const summary of summaries) {
@@ -10,13 +11,6 @@ function validateSummaries(summaries: readonly ZoneSummary[]): void {
       throw new Error("loadCount must be a positive integer");
     }
   }
-}
-
-function addHeldKg(heldKg: number, totalKg: number): number {
-  if (totalKg > Number.MAX_SAFE_INTEGER - heldKg) {
-    throw new Error("heldKg must be a safe integer");
-  }
-  return heldKg + totalKg;
 }
 
 /** Build the baseline queue: every valid zone receives one dispatch instruction. */
@@ -45,7 +39,7 @@ export function planDispatchesWithHoldback(
   let heldKg = 0;
   for (const summary of [...summaries].sort((left, right) => left.zone.localeCompare(right.zone))) {
     if (minimumDispatchKg > 0 && summary.totalKg < minimumDispatchKg) {
-      heldKg = addHeldKg(heldKg, summary.totalKg);
+      heldKg = addSafeInteger(heldKg, summary.totalKg, "heldKg");
       instructions.push({ zone: summary.zone, totalKg: summary.totalKg, state: "held" });
       auditEvents.push(`held:${summary.zone}:${summary.totalKg}`);
     } else {
@@ -70,7 +64,7 @@ export function planDispatchesWithServiceFloors(
       throw new Error("service floor must be a non-negative safe integer");
     }
     if (floor > 0 && summary.totalKg < floor) {
-      heldKg = addHeldKg(heldKg, summary.totalKg);
+      heldKg = addSafeInteger(heldKg, summary.totalKg, "heldKg");
       instructions.push({ zone: summary.zone, totalKg: summary.totalKg, state: "held" });
       auditEvents.push(`service-floor:${summary.zone}:${floor}`);
     } else {

@@ -16,12 +16,7 @@ function checkedSummaries(summaries) {
   return [...summaries].sort((left, right) => left.invoiceId.localeCompare(right.invoiceId));
 }
 
-function addDeferredTotal(totalMinor, amountMinor) {
-  if (amountMinor > Number.MAX_SAFE_INTEGER - totalMinor) {
-    throw new RangeError("deferredTotal must be a safe integer");
-  }
-  return totalMinor + amountMinor;
-}
+const { addSafeInteger } = require("./safe-integers.js");
 
 function planTransfers(summaries) {
   const lines = [];
@@ -50,7 +45,7 @@ function planTransfersWithMinimum(summaries, minimumPayoutMinor = 0) {
   for (const summary of checkedSummaries(summaries)) {
     if (summary.totalMinor > 0 && summary.totalMinor < minimumPayoutMinor) {
       lines.push([summary.invoiceId, "deferred", summary.totalMinor]);
-      deferredTotal = addDeferredTotal(deferredTotal, summary.totalMinor);
+      deferredTotal = addSafeInteger(deferredTotal, summary.totalMinor, "deferredTotal");
       events.push([summary.invoiceId, "below_minimum", minimumPayoutMinor]);
     } else if (summary.totalMinor > 0) {
       lines.push([summary.invoiceId, "ready", summary.totalMinor]);
@@ -73,7 +68,7 @@ function schedulePayouts(summaries, options = {}) {
     (plan, summary) => {
       if (summary.totalMinor > 0 && summary.totalMinor < minimum) {
         plan.lines.push([summary.invoiceId, "deferred", summary.totalMinor]);
-        plan.deferredTotal = addDeferredTotal(plan.deferredTotal, summary.totalMinor);
+        plan.deferredTotal = addSafeInteger(plan.deferredTotal, summary.totalMinor, "deferredTotal");
         plan.events.push([summary.invoiceId, "below_minimum", minimum]);
       } else if (summary.totalMinor > 0) {
         plan.lines.push([summary.invoiceId, "ready", summary.totalMinor]);
