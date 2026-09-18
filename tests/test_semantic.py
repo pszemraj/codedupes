@@ -722,6 +722,70 @@ def test_find_similar_to_query_default_threshold_is_search_default(
     assert results[0][1] == pytest.approx(0.7, abs=1e-6)
 
 
+@pytest.mark.parametrize(
+    ("cached_vector", "expected_encode_calls"),
+    [
+        (np.array([0.1, 0.0], dtype=np.float32), 0),
+        (np.array([0.0, 0.0], dtype=np.float32), 1),
+    ],
+    ids=["renormalize", "zero-row-miss"],
+)
+def test_query_cache_hits_enforce_cosine_vector_invariants(
+    tmp_path: Path,
+    monkeypatch,
+    cached_vector: np.ndarray,
+    expected_encode_calls: int,
+) -> None:
+    units = extract_arithmetic_units(tmp_path)
+    embeddings = np.array([[1.0, 0.0], [0.0, 1.0]], dtype=np.float32)
+    model = _RecordingModel()
+    monkeypatch.setattr(semantic, "get_model", lambda *args, **kwargs: model)
+    profile = semantic.resolve_model_profile("gte-modernbert-base")
+    plan = semantic.resolve_encode_plan("gte-modernbert-base", mode="query")
+    cache, cache_revision, cache_variant, cache_namespace = semantic._prepare_cache_context(
+        "query",
+        profile,
+        "gte-modernbert-base",
+        _FULL_REVISION,
+        "cpu",
+        plan,
+        mps_fallback=None,
+        trust_remote_code=False,
+        use_cache=True,
+        cache_scope=tmp_path,
+    )
+    assert cache is not None
+    assert cache_revision is not None
+    query = "find addition"
+    cache_key = semantic.compute_cache_key(
+        profile.canonical_name,
+        cache_revision,
+        semantic._prepare_embedding_text(query),
+        mode="query",
+        variant=cache_variant,
+    )
+    cache.put_many(
+        tmp_path,
+        profile.canonical_name,
+        cache_revision,
+        [(cache_key, cached_vector)],
+        namespace=cache_namespace,
+    )
+
+    results = find_similar_to_query(
+        query,
+        units,
+        embeddings,
+        model_name="gte-modernbert-base",
+        revision=_FULL_REVISION,
+        threshold=0.9,
+        cache_scope=tmp_path,
+    )
+
+    assert results == [(units[0], 1.0)]
+    assert len(model.encoded) == expected_encode_calls
+
+
 def test_semantic_pair_scores_bound_float32_cosine_overshoot(tmp_path: Path) -> None:
     units = extract_arithmetic_units(tmp_path)
     vector = [-1.2083186, -0.004454133, 0.65647495]

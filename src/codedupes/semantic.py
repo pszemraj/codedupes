@@ -3903,21 +3903,28 @@ def _find_similar_to_query_unlocked(
     )
 
     def _validated_query_hit(candidate: np.ndarray | None) -> np.ndarray | None:
-        """Reject a cached query vector whose dimensionality cannot match the corpus.
+        """Canonicalize a cached query vector before cosine similarity.
 
         :param candidate: Cached query embedding, or ``None`` on a miss.
-        :return: The candidate when usable, else ``None`` to force a fresh encode.
+        :return: A finite unit vector when usable, else ``None`` to force a fresh encode.
         """
         if candidate is None:
             return None
-        if embeddings.size and candidate.shape[-1] != embeddings.shape[1]:
+        try:
+            if candidate.ndim != 1:
+                raise InvalidEmbeddingError(
+                    f"Expected a cached embedding row, got shape {candidate.shape!r}"
+                )
+            return canonicalize_embeddings(
+                candidate[np.newaxis, :],
+                expected_rows=1,
+                expected_dim=embeddings.shape[1],
+            )[0]
+        except InvalidEmbeddingError as exc:
             logger.warning(
-                "Discarding a cached query embedding whose dimensionality "
-                f"({candidate.shape[-1]}) does not match the corpus matrix "
-                f"({embeddings.shape[1]}); re-encoding the query."
+                f"Discarding an invalid cached query embedding ({exc}); re-encoding the query."
             )
             return None
-        return candidate
 
     corpus_source_commit = corpus_identity.source_commit if corpus_identity is not None else None
 
