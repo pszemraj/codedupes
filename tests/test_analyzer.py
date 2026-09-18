@@ -896,13 +896,13 @@ def test_analyzer_resolves_per_language_semantic_gate(tmp_path: Path, monkeypatc
 @pytest.mark.parametrize(
     ("model_kind", "choice", "numeric", "expected"),
     [
-        ("local", "auto", None, 0.76),
-        ("builtin", "auto", None, 0.76),
+        ("local", "auto", None, 0.74),
+        ("builtin", "auto", None, 0.74),
         ("default", "auto", None, 0.87),
-        ("hub", "auto", None, 0.76),
+        ("hub", "auto", None, 0.74),
         # Explicit profiles override the model family; test each choice once.
         ("builtin", "generic", None, 0.82),
-        ("default", "embeddinggemma-300m", None, 0.76),
+        ("default", "embeddinggemma-300m", None, 0.74),
         ("builtin", "gte-modernbert-base", None, 0.87),
         # Numeric gates bypass profile resolution for every profile choice.
         ("local", "auto", 0.91, 0.91),
