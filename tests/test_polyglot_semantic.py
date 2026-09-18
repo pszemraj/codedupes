@@ -129,12 +129,12 @@ def test_cross_language_pairs_use_the_looser_of_both_language_gates() -> None:
 
 def test_single_language_scan_reuses_the_embedding_matrix(monkeypatch) -> None:
     fancy_indexes: list[object] = []
-    canonicalize = semantic.canonicalize_embeddings
+    validate = semantic._validate_precomputed_embeddings
 
-    def traced_canonicalize(*args, **kwargs):
-        return _tracing_matrix(canonicalize(*args, **kwargs), fancy_indexes)
+    def traced_validate(*args, **kwargs):
+        return _tracing_matrix(validate(*args, **kwargs), fancy_indexes)
 
-    monkeypatch.setattr(semantic, "canonicalize_embeddings", traced_canonicalize)
+    monkeypatch.setattr(semantic, "_validate_precomputed_embeddings", traced_validate)
     same_language = [_unit("a.py", "a", "python"), _unit("b.py", "b", "python")]
     find_semantic_duplicates(
         same_language,

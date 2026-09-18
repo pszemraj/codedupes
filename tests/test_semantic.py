@@ -563,6 +563,29 @@ def test_direct_embeddings_are_normalized_before_duplicate_scoring(tmp_path: Pat
     assert find_semantic_duplicates(units, embeddings, threshold=0.95) == []
 
 
+def test_canonical_precomputed_embeddings_reuse_storage_with_bounded_validation(
+    tmp_path: Path, monkeypatch
+) -> None:
+    units = extract_arithmetic_units(tmp_path)
+    units = [units[index % len(units)] for index in range(2050)]
+    embeddings = np.zeros((len(units), 2), dtype=np.float32)
+    embeddings[:, 0] = 1.0
+    observed_rows = []
+    original = semantic.canonicalize_embeddings
+
+    def traced_canonicalize(values, *, expected_rows, expected_dim=None):
+        observed_rows.append(expected_rows)
+        return original(values, expected_rows=expected_rows, expected_dim=expected_dim)
+
+    monkeypatch.setattr(semantic, "canonicalize_embeddings", traced_canonicalize)
+
+    validated = semantic._validate_precomputed_embeddings(units, embeddings)
+
+    assert validated is embeddings
+    assert observed_rows
+    assert max(observed_rows) <= semantic._PRECOMPUTED_VALIDATION_BLOCK_ROWS
+
+
 def test_near_unit_direct_embeddings_are_still_normalized_before_scoring(tmp_path: Path) -> None:
     units = extract_arithmetic_units(tmp_path)
     second_component = math.sqrt(1.0 - 0.9**2)
@@ -630,6 +653,7 @@ def test_direct_embeddings_are_normalized_before_query_scoring(tmp_path: Path, m
         "find addition",
         units,
         embeddings,
+        top_k=np.int64(1),
         threshold=0.95,
         device="cpu",
         use_cache=False,

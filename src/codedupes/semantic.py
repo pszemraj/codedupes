@@ -13,6 +13,7 @@ import threading
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from importlib import metadata as importlib_metadata
+from numbers import Integral
 from pathlib import Path
 from typing import Any, Literal, TypeVar, cast
 
@@ -73,6 +74,7 @@ logger = logging.getLogger(__name__)
 ProgressMode = Literal["auto", "always", "never"]
 SearchDocumentMode = Literal["source", "contextual"]
 PROGRESS_BAR_MIN_INPUTS = 100
+_PRECOMPUTED_VALIDATION_BLOCK_ROWS = 1024
 
 
 def _should_show_progress(mode: ProgressMode, input_count: int) -> bool:
@@ -495,7 +497,31 @@ def _validate_precomputed_embeddings(units: Sequence[CodeUnit], embeddings: obje
             f"got {matrix.shape[0]} rows for {len(units)} units"
         )
     try:
-        return canonicalize_embeddings(matrix, expected_rows=len(units))
+        # Analyzer-produced corpora are already contiguous canonical float32.
+        # Validate those exact fixed points in bounded blocks so repeated search
+        # does not allocate corpus-sized float64 normalization temporaries. An
+        # approximate norm shortcut is deliberately unsafe here: even a tiny
+        # residual scale can change a score at an exact caller threshold.
+        if type(matrix) is np.ndarray and matrix.dtype == np.float32 and matrix.flags.c_contiguous:
+            for start in range(0, len(matrix), _PRECOMPUTED_VALIDATION_BLOCK_ROWS):
+                block = matrix[start : start + _PRECOMPUTED_VALIDATION_BLOCK_ROWS]
+                canonical = canonicalize_embeddings(block, expected_rows=len(block))
+                if not np.array_equal(block, canonical):
+                    break
+            else:
+                return matrix
+
+        # Direct callers may supply scaled, noncontiguous, or non-float32 rows.
+        # Preserve the normalizing API contract while bounding the temporary
+        # float64 working set independently of corpus size.
+        canonical = np.empty(matrix.shape, dtype=np.float32, order="C")
+        for start in range(0, len(matrix), _PRECOMPUTED_VALIDATION_BLOCK_ROWS):
+            block = matrix[start : start + _PRECOMPUTED_VALIDATION_BLOCK_ROWS]
+            canonical[start : start + len(block)] = canonicalize_embeddings(
+                block,
+                expected_rows=len(block),
+            )
+        return canonical
     except InvalidEmbeddingError as exc:
         raise ValueError(f"embeddings must contain finite, nonzero rows: {exc}") from exc
 
@@ -3731,7 +3757,7 @@ def _find_similar_to_query_unlocked(
     embeddings: np.ndarray,
     model_name: str = DEFAULT_MODEL,
     instruction_prefix: str | None = None,
-    top_k: int = DEFAULT_TOP_K,
+    top_k: Integral = DEFAULT_TOP_K,
     revision: str | None = None,
     trust_remote_code: bool | None = None,
     threshold: float | None = None,
@@ -3797,8 +3823,9 @@ def _find_similar_to_query_unlocked(
 
     validate_explicit_device_request(device, mps_fallback=mps_fallback)
 
-    if type(top_k) is not int or top_k <= 0:
+    if isinstance(top_k, bool) or not isinstance(top_k, Integral) or top_k <= 0:
         raise ValueError("top_k must be a positive integer")
+    top_k = int(top_k)
     if threshold is not None and not np.isfinite(threshold):
         raise ValueError("threshold must be finite")
 
@@ -4180,7 +4207,7 @@ def find_similar_to_query(
     embeddings: np.ndarray,
     model_name: str = DEFAULT_MODEL,
     instruction_prefix: str | None = None,
-    top_k: int = DEFAULT_TOP_K,
+    top_k: Integral = DEFAULT_TOP_K,
     revision: str | None = None,
     trust_remote_code: bool | None = None,
     threshold: float | None = None,
