@@ -278,7 +278,7 @@ from codedupes.report import group_file_results
 analyzer = CodeAnalyzer(AnalyzerConfig(mode="search", progress="never"))
 indexed_units = analyzer.index("./src")
 query = "load csv data"
-hits = analyzer.search(query, top_k=indexed_units)
+hits = analyzer.search(query, top_k=max(indexed_units, 1))
 payload = search_result_to_json(
     query,
     hits,
