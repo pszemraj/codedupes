@@ -261,6 +261,8 @@ def _select_joint(
                     "high_gates": high_gates,
                     **_combined_metrics(combination),
                 }
+                if row["precision"] < MINIMUM_SELECTION_PRECISION:
+                    continue
                 previous = by_f1.get(row["f1"])
                 selected = previous[0] if previous is not None else None
                 if (

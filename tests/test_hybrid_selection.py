@@ -170,3 +170,39 @@ def test_joint_selection_favors_recall_only_at_best_f1(monkeypatch: pytest.Monke
     )
     assert (selected["tp"], selected["fp"]) == (70, 5)
     assert selected["f1"] == 0.80
+
+
+def test_joint_selection_filters_unsafe_rows_before_equal_f1_recall_tie(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """An unsafe recall winner must not evict a precision-safe F1 tie."""
+    monkeypatch.setattr(sweep_hybrid_gates, "WEAK_GRID", (0.4,))
+    monkeypatch.setattr(sweep_hybrid_gates, "RATIO_GRID", (0.0,))
+    unsafe = {
+        "high_gate": 0.8,
+        "tp": 2,
+        "fp": 3,
+        "fn": 0,
+        "ambiguous_predictions": 0,
+        "unjudged_predictions": 0,
+    }
+    safe = {
+        "high_gate": None,
+        "tp": 2,
+        "fp": 1,
+        "fn": 2,
+        "ambiguous_predictions": 0,
+        "unjudged_predictions": 0,
+    }
+    monkeypatch.setattr(
+        sweep_hybrid_gates,
+        "_promotion_options",
+        lambda *_args: {"python": (unsafe, safe)},
+    )
+
+    selected, options = sweep_hybrid_gates._select_joint([], {}, {"python": 0.8})
+
+    assert selected["f1"] == pytest.approx(4 / 7)
+    assert selected["precision"] == pytest.approx(2 / 3)
+    assert selected["high_gates"] == {"python": None}
+    assert options["python"] is safe
