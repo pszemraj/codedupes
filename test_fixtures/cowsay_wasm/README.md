@@ -10,7 +10,7 @@ and pair judgments follow the shared [calibration corpus contract](../calibratio
 | --- | --- | --- |
 | `exact-border-builder` | exact / Type 1 | Both speech and thought bubbles call byte-identical border-pair builders in separate modules. |
 | `bubble-renderers` | edit-distance / Type 3 | The speech and thought renderers retain the same construction skeleton, with changed control flow and delimiters. |
-| `word-wrappers` | semantic / Type 4 | Scanner, iterator/fold, and FIFO queue implementations produce the same wrapped lines. The native CLI can select any implementation. |
+| `word-wrappers` | semantic / Type 4 | Scanner, iterator/fold, FIFO queue, and cursor implementations produce the same wrapped lines. The native CLI can select any implementation. |
 | `render-assembly` | translated pipeline | Format-based and mutable-buffer assembly produce the same bubble-plus-cow result. The native CLI can select either renderer. |
 | `worker-selection` | translated algorithm | Sorting eligible jobs and retaining a bounded priority heap produce the same ranked selection. The native CLI exercises the heap path. |
 

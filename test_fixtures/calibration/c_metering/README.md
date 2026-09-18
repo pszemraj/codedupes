@@ -1,7 +1,7 @@
 # C metering calibration fixture
 
 This is a small C11 meter-reconciliation application. It keeps intentionally
-independent implementations of four real maintenance shapes:
+independent implementations of five real maintenance shapes:
 
 - three aggregation algorithms that validate every reading before discarding it;
 - a baseline payout planner and two minimum-payout extensions;

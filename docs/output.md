@@ -81,7 +81,7 @@ codedupes check ./src --json | jq empty
       "cache_enabled": true,
       "cache_warnings": [],
       "cache_revision": "0123456789abcdef",
-      "execution_device": "cuda:0",
+      "execution_device": "cuda",
       "moved_units_reused": 0,
       "deleted_units": 0,
       "orphan_rows_retained": 2,
@@ -220,7 +220,7 @@ The file's `score` is its highest unit score. `matching_units` counts all of tha
 | `cache_enabled` | Whether persistent reuse was enabled for the call; writes can still fail. |
 | `cache_warnings` | Non-fatal cache read/write, manifest, and query-cache failures observed during the run. |
 | `cache_revision` | Revision label, commit, or local fingerprint used for cache identity, otherwise `null`. |
-| `execution_device` | Effective inference device, or `null` when no model execution was needed. |
+| `execution_device` | Effective `cpu`, `cuda`, or `mps` inference device, or `null` when no model execution was needed. |
 | `moved_units_reused` | New UIDs matched to departed UIDs with the same content after retaining same-file symbols whose byte offsets changed. |
 | `deleted_units` | Departed UIDs left after matching retained symbols and moves, independent of vector sharing. |
 | `orphan_rows_retained` | Tracked orphan rows still stored, including rows protected by another active selection. |

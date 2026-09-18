@@ -20,11 +20,10 @@ comparable reviewed medium pairs. Existing coverage is not reduced merely to
 balance the buckets. Easy
 pairs retain obvious structure, while medium pairs introduce meaningful
 control-flow or API differences. Hard pairs use substantial algorithmic rewrites
-or distributed overlap and are optional: a plausible hard pair should usually
-avoid the leading results in a repo-wide `semble find-related` query. Interpret
-that retrieval evidence against the available same-language candidate pool;
-sparse fixtures can place a genuinely hard mate near the top. Keep behavior and
-judgments fixed when tuning thresholds.
+or distributed overlap and are optional. Related-code search can provide
+qualitative review evidence, but it is not a corpus criterion; sparse fixtures
+can place a genuinely hard mate near the top of a same-language candidate pool.
+Keep behavior and judgments fixed when tuning thresholds.
 An extractable copied region is a partial positive even when its enclosing
 functions have different outputs. Calling a shared helper is not a second copy.
 

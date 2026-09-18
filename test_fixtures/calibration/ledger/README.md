@@ -5,10 +5,10 @@ plans settlements, and produces independent audit reports. Multiple supported
 implementations are intentional; labels and pair judgments follow the shared
 [calibration corpus contract](../README.md).
 
-Run `PYTHONPATH=src python -m unittest discover -s tests` and
-`PYTHONPATH=src python -m ledger` from this directory (using the repository's
-`inf` environment). The entry point exercises both summary and planning paths,
-both row import paths, the file/API adapters, and the audit reports.
+Run `PYTHONPATH=src conda run --name inf python -m unittest discover -s tests`
+and `PYTHONPATH=src conda run --name inf python -m ledger` from this directory.
+The entry point exercises both summary and planning paths, both row import paths,
+the file/API adapters, and the audit reports.
 
 ## Contracts
 

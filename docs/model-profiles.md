@@ -13,11 +13,11 @@ Most users should leave model and task settings unset. `codedupes` uses the pinn
 
 - The table's search threshold is only the floor for query matches; query-to-code similarity is much lower than code-to-code duplicate similarity.
 - Every built-in default revision is a pinned immutable commit. The [calibration workflow](hybrid-tuning.md) records the checkpoint, task, pipeline, and candidate policy behind each threshold.
-- Search and duplicate defaults require at least 50% judged precision, optimize measured F1, and prefer higher recall among candidates within `0.005` F1 of the optimum. Returning every known target is not a requirement for the default search floor. The separate smoke test checks target ranking without a floor, relevance of emitted default results, and a profile-specific minimum surfaced count.
+- Search and duplicate defaults require at least 50% judged precision, optimize measured F1, and prefer higher recall among candidates within `0.005` F1 of the optimum. Returning every known target is not a requirement for the default search floor. The separate smoke test checks target ranking without a floor, relevance of emitted default results, and an exact profile-specific default result set.
 
 Gemma's selected `0.53` search floor gives 68% precision and 73% recall on the
 development corpus. Independent multi-domain probes expose a remaining
-limitation: only 2 of 6 clear either floor; CSV parsing, retry, LRU eviction, and
+limitation: only 2 of 6 clear EmbeddingGemma's `0.53` floor; CSV parsing, retry, LRU eviction, and
 byte-formatting targets rank first but remain below `0.53`. GTE's `0.68` floor
 surfaces all 6 independent targets. Override the floor for a repository with a
 different tradeoff; these authored fixtures do not establish ecosystem-wide accuracy.
