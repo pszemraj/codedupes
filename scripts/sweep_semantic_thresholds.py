@@ -20,6 +20,7 @@ try:
     )
     from .calibration_evaluation import (
         F1_RECALL_TOLERANCE,
+        MINIMUM_SELECTION_PRECISION,
         development_projects,
         judgments,
         load_all,
@@ -38,6 +39,7 @@ except ImportError:
     )
     from calibration_evaluation import (
         F1_RECALL_TOLERANCE,
+        MINIMUM_SELECTION_PRECISION,
         development_projects,
         judgments,
         load_all,
@@ -64,7 +66,7 @@ def threshold_grid(start: float, stop: float, step: float) -> list[float]:
 
 
 def _select(rows: list[dict[str, Any]]) -> dict[str, Any]:
-    """Favor recall within the F1 bound, then use the center of an exact tie plateau."""
+    """Maximize precision-safe F1, then recall, centering exact tie plateaus."""
     eligible = near_best_f1(rows)
     best_key = max(recall_preference(row) for row in eligible)
     tied = [row for row in eligible if recall_preference(row) == best_key]
@@ -245,7 +247,11 @@ def main() -> int:
     search_grid = threshold_grid(args.search_start, args.search_stop, args.step)
     payload: dict[str, Any] = {
         "schema_version": 3,
-        "objective": {"primary": "f1", "recall_preference_max_f1_loss": F1_RECALL_TOLERANCE},
+        "objective": {
+            "primary": "f1",
+            "minimum_precision": MINIMUM_SELECTION_PRECISION,
+            "recall_preference_max_f1_loss": F1_RECALL_TOLERANCE,
+        },
         "input_context": selection_context(projects, args.models),
         "grids": {"duplicate": duplicate_grid, "search": search_grid},
         "models": [],

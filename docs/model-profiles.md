@@ -13,11 +13,11 @@ Most users should leave model and task settings unset. `codedupes` uses the pinn
 
 - [Per-language duplicate gates and their selection policy](analysis-defaults.md#semantic-duplicate-gate-defaults) control `check` reporting. The table's search threshold is only the floor for query matches; query-to-code similarity is much lower than code-to-code duplicate similarity.
 - Every built-in default revision is a pinned immutable commit. The [calibration workflow](hybrid-tuning.md) records the checkpoint, task, pipeline, and candidate policy behind each threshold.
-- Search and duplicate defaults optimize measured F1, with higher recall preferred only within `0.005` of the best F1. Returning every known target is not a requirement for the default search floor. The separate smoke test checks target ranking without a floor and relevance of emitted default results.
+- Search and duplicate defaults require at least 50% judged precision, optimize measured F1, and prefer higher recall only across exact F1 ties. Returning every known target is not a requirement for the default search floor. The separate smoke test checks target ranking without a floor and relevance of emitted default results.
 
 Gemma's `0.56` search floor gives 80% precision and 64% recall on the development
-corpus. The selected floor keeps F1 primary and favors recall only within half a
-percentage point of the best measured F1. Override it for a repository with a
+corpus. The selected floor keeps F1 primary and uses recall only to break exact
+F1 ties. Override it for a repository with a
 different tradeoff; these authored fixtures do not establish ecosystem-wide accuracy.
 
 ## Alias resolution rules

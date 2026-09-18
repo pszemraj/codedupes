@@ -151,7 +151,7 @@ def test_promotion_sweep_can_separate_pairs_above_point_98():
     assert (best["high_gate"], best["tp"], best["fp"]) == (0.99, 1, 0)
 
 
-def test_joint_selection_favors_recall_only_near_best_f1(monkeypatch: pytest.MonkeyPatch):
+def test_joint_selection_favors_recall_only_at_best_f1(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(sweep_hybrid_gates, "WEAK_GRID", (0.4,))
     monkeypatch.setattr(sweep_hybrid_gates, "RATIO_GRID", (0.0,))
     project, measurement = _project_and_measurement(
@@ -168,5 +168,5 @@ def test_joint_selection_favors_recall_only_near_best_f1(monkeypatch: pytest.Mon
     selected, _ = sweep_hybrid_gates._select_joint(
         [project], {"python": measurement}, {"python": 0.80}
     )
-    assert (selected["tp"], selected["fp"]) == (72, 9)
-    assert selected["f1"] >= 0.80 - sweep_hybrid_gates.F1_RECALL_TOLERANCE
+    assert (selected["tp"], selected["fp"]) == (70, 5)
+    assert selected["f1"] == 0.80

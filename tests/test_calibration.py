@@ -24,6 +24,7 @@ from scripts.calibration_contract import (
 )
 from scripts.calibration_evaluation import (
     F1_RECALL_TOLERANCE,
+    MINIMUM_SELECTION_PRECISION,
     development_projects,
     replay,
     replay_parity,
@@ -48,7 +49,7 @@ from scripts.sweep_semantic_thresholds import (
 pytestmark = pytest.mark.grammar
 
 
-def test_recall_preference_cannot_trade_away_f1():
+def test_recall_preference_requires_best_f1_and_safe_precision():
     rows = []
     for threshold, tp, fp in [(0.80, 70, 5), (0.79, 72, 9), (0.40, 95, 70)]:
         precision, recall = tp / (tp + fp), tp / 100
@@ -61,9 +62,18 @@ def test_recall_preference_cannot_trade_away_f1():
             }
         )
     selected = _select(rows)
-    assert selected["threshold"] == 0.79
-    assert max(row["f1"] for row in rows) - selected["f1"] <= F1_RECALL_TOLERANCE
+    assert selected["threshold"] == 0.80
+    assert max(row["f1"] for row in rows) - selected["f1"] == F1_RECALL_TOLERANCE
     assert _select([rows[0], rows[2]])["threshold"] == 0.80
+
+    tied = [
+        {"threshold": 0.82, "precision": 3 / 7, "recall": 0.6, "f1": 0.5},
+        {"threshold": 0.87, "precision": 2 / 3, "recall": 0.4, "f1": 0.5},
+        {"threshold": 0.89, "precision": 1.0, "recall": 1 / 3, "f1": 0.5},
+    ]
+    assert _select(tied)["threshold"] == 0.87
+    with pytest.raises(ValueError, match="minimum precision"):
+        _select([{**tied[0], "precision": MINIMUM_SELECTION_PRECISION - 0.01}])
 
 
 def test_manifest_has_substantive_five_language_corpus():

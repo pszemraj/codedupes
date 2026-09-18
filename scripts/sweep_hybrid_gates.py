@@ -20,6 +20,7 @@ try:
     )
     from .calibration_evaluation import (
         F1_RECALL_TOLERANCE,
+        MINIMUM_SELECTION_PRECISION,
         development_projects,
         judgments,
         load_all,
@@ -43,6 +44,7 @@ except ImportError:
     )
     from calibration_evaluation import (
         F1_RECALL_TOLERANCE,
+        MINIMUM_SELECTION_PRECISION,
         development_projects,
         judgments,
         load_all,
@@ -238,7 +240,7 @@ def _select_joint(
     Promotion and corroboration interact: a similarity gate can make a strict
     corroboration setting recover pairs that a promotion-disabled sweep misses.
     Search the complete product of distinct per-language outcomes for each
-    corroboration row, preferring recall only within the shared F1-loss bound.
+    corroboration row, preferring recall only among precision-safe F1 ties.
     """
     languages = sorted(admissions)
     # Retain the best representative at each F1 before applying the global bound.
@@ -301,7 +303,11 @@ def main() -> int:
     selected_admissions = _selection_map(threshold_selection)
     payload: dict[str, Any] = {
         "schema_version": 3,
-        "objective": {"primary": "f1", "recall_preference_max_f1_loss": F1_RECALL_TOLERANCE},
+        "objective": {
+            "primary": "f1",
+            "minimum_precision": MINIMUM_SELECTION_PRECISION,
+            "recall_preference_max_f1_loss": F1_RECALL_TOLERANCE,
+        },
         "input_context": selection_context(projects, args.models),
         "threshold_selection_digest": selection_digest(threshold_selection),
         "models": [],

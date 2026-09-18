@@ -21,17 +21,24 @@ except ImportError:
     from calibration_measurements import artifact_path, load_measurement, measurement_fingerprint
 
 
-F1_RECALL_TOLERANCE = 0.005
+F1_RECALL_TOLERANCE = 0.0
+MINIMUM_SELECTION_PRECISION = 0.5
 
 
 def near_best_f1(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Allow at most half a percentage point of F1 loss to favor recall."""
-    floor = max(row["f1"] for row in rows) - F1_RECALL_TOLERANCE
-    return [row for row in rows if row["f1"] >= floor - 1e-12]
+    """Return precision-safe rows at the best F1 for recall tie-breaking."""
+    safe = [row for row in rows if row["precision"] >= MINIMUM_SELECTION_PRECISION]
+    if not safe:
+        raise ValueError(
+            "no calibration candidate satisfies the minimum precision "
+            f"{MINIMUM_SELECTION_PRECISION:.2f}"
+        )
+    floor = max(row["f1"] for row in safe) - F1_RECALL_TOLERANCE
+    return [row for row in safe if row["f1"] >= floor - 1e-12]
 
 
 def recall_preference(row: dict[str, Any]) -> tuple[int, int, float, float]:
-    """Prefer resolved judgments, then recall and precision within the F1 bound."""
+    """Prefer resolved judgments, then recall and precision at the best F1."""
     return (
         -row.get("ambiguous_predictions", 0),
         -row.get("unjudged_predictions", 0),

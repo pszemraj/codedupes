@@ -69,11 +69,10 @@ conda run --name inf python scripts/sweep_hybrid_gates.py \
   --json-out scratch/calibration/hybrid-selection.json
 ```
 
-Search, duplicate admission, and hybrid visibility share one policy: first find
-the best judged F1, then prefer higher recall only among settings within `0.005`
-(half a percentage point) of it. Within that bound, fewer unresolved predictions
-take precedence, followed by recall and precision. A large recall gain cannot
-justify an F1 collapse. Hybrid selection jointly searches the
+Search, duplicate admission, and hybrid visibility share one policy: discard
+settings below 50% judged precision, maximize judged F1, then prefer higher
+recall only across exact F1 ties. Fewer unresolved predictions take precedence,
+followed by recall and precision. Hybrid selection jointly searches the
 corroboration constants and per-language promotion gates using pooled metrics;
 promotion candidates span each admission gate through `1.0`. It does not lock
 corroboration before considering promotion. Duplicate/search
