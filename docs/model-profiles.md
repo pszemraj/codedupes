@@ -21,6 +21,11 @@ limitation: only 2 of 6 clear EmbeddingGemma's `0.53` floor; CSV parsing, retry,
 byte-formatting targets rank first but remain below `0.53`. GTE's `0.68` floor
 surfaces all 6 independent targets. Override the floor for a repository with a
 different tradeoff; these authored fixtures do not establish ecosystem-wide accuracy.
+The Gemma floor is the higher-recall choice just inside the allowed F1-loss band
+relative to `0.55`, while the retry probe lands just below the current floor. A
+justified recalibration may therefore move both the floor and the surfaced smoke
+set; the [checked result](../test_fixtures/calibration/calibration-results.json)
+contains the exact selection rows.
 
 ### Duplicate and search gates
 
@@ -45,6 +50,9 @@ These values promote admitted semantic pairs to `semantic_high_confidence`; othe
 | `gte-modernbert-base` | `0.40` | `0.00` | python `0.88`, c `0.84`, rust `0.84`, javascript `0.70`; typescript off |
 | `embeddinggemma-300m` | `0.40` | `0.00` | python `0.78`, c `0.89`, rust `0.88`, javascript `0.80`, typescript `0.82` |
 | `generic` | `0.00` | `0.20` | off |
+
+Where a promotion gate equals its admission gate, same-language similarity alone
+leaves no `semantic_review` band: every admitted pair clears the promotion gate.
 
 See [hybrid synthesis behavior](analysis-defaults.md#hybrid-synthesis-confidence-defaults) for how the gates affect reporting.
 

@@ -45,10 +45,13 @@ after installing those external tools:
 pytest -m toolchain
 ```
 
-An unfiltered `pytest` runs the toolchain tests and also runs the real CUDA or MPS tests
-when that hardware is available. The accelerator tests load actual models and exercise
-memory exhaustion and recovery; they are not substitutes for the ordinary suite and may
-need downloaded model assets. Network smoke tests are opt-in:
+An unfiltered `pytest` runs the toolchain tests when all required executables and
+command capabilities are available; otherwise that integration group skips. The
+explicit corpus validator remains fail-loud when a requested behavior requirement
+is missing. An unfiltered run also executes
+the real CUDA or MPS tests when that hardware is available. The accelerator tests load
+actual models and exercise memory exhaustion and recovery; they are not substitutes for
+the ordinary suite and may need downloaded model assets. Network smoke tests are opt-in:
 
 ```bash
 CODEDUPES_SMOKE_NETWORK=1 pytest tests/test_semantic_smoke.py -k network_smoke

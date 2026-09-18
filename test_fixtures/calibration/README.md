@@ -32,6 +32,10 @@ annotation files use stable project-relative selectors and explicit pair
 judgments. Positive transitivity is never inferred. Partial pairs name checked
 source spans and fingerprints. Every within-family pair and every deterministic
 finding must have a judgment. Old annotation formats are rejected.
+The unit registry names judgment and probe endpoints; measurement still embeds
+every source candidate. An unregistered pair above a selected gate is counted as
+unjudged and blocks selection readiness, so an incidental helper cannot bypass
+review merely because it has no registry entry.
 
 The current corpus is development data and has no held-out split. Selection uses
 only projects in the development split; if evaluation projects are added, reports
