@@ -472,6 +472,42 @@ def test_empty_search_still_rejects_uncalibrated_default() -> None:
         )
         == []
     )
+    assert find_semantic_duplicates([], np.empty((0, 0), dtype=np.float32), threshold=0.0) == []
+
+
+@pytest.mark.parametrize(
+    "embeddings",
+    [
+        pytest.param(np.ones((1, 2), dtype=np.float32), id="short"),
+        pytest.param(np.ones((3, 2), dtype=np.float32), id="long"),
+        pytest.param(np.ones(2, dtype=np.float32), id="non-2d"),
+    ],
+)
+def test_precomputed_embeddings_require_2d_row_alignment(
+    tmp_path: Path, monkeypatch, embeddings: np.ndarray
+) -> None:
+    units = extract_arithmetic_units(tmp_path)
+
+    def fail_if_called(*_args, **_kwargs):
+        raise AssertionError("invalid precomputed embeddings must fail before model loading")
+
+    monkeypatch.setattr(semantic, "get_model", fail_if_called)
+
+    with pytest.raises(
+        ValueError, match=r"embeddings must (be a 2D matrix|contain one row per unit)"
+    ):
+        find_semantic_duplicates(units, embeddings, threshold=0.0)
+    with pytest.raises(
+        ValueError, match=r"embeddings must (be a 2D matrix|contain one row per unit)"
+    ):
+        find_similar_to_query(
+            "find addition",
+            units,
+            embeddings,
+            threshold=0.0,
+            device="cpu",
+            use_cache=False,
+        )
 
 
 @pytest.mark.parametrize("top_k", [0, -1, 1.5, True])

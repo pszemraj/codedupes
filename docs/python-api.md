@@ -130,6 +130,8 @@ The contextual-threshold requirement follows the indexed representation even if 
 
 For direct embedding/query calls, pass the identity returned by `compute_embeddings_with_identity(...)` as `find_similar_to_query(corpus_identity=...)`. It is required for contextual documents and prompt- or route-sensitive models, and preserves calibration and checkpoint checks on both cold and warm cache paths. Use `search_document="contextual"` with aligned `document_texts` when supplying contextual inputs.
 
+Direct `find_similar_to_query()` and `find_semantic_duplicates()` calls require a two-dimensional embedding matrix with exactly one row per supplied unit. Short, long, or one-dimensional matrices raise `ValueError` before cache or model work; a `(0, dimensions)` matrix remains valid for an empty unit list.
+
 Direct `compute_embeddings()` and `compute_embeddings_with_identity()` calls require one `document_texts` entry per input unit when supplied. Mismatched lengths raise `ValueError` before revision resolution, cache lookup, or model loading, including for an empty corpus.
 
 Each `index()` or `analyze()` call replaces the analyzer's corpus-specific state before extraction. `search()` therefore targets only the most recent run and requires it to have semantic embeddings. A later empty or nonsemantic analysis cannot reuse an older corpus accidentally. The analyzer binds the matrix to its model, revision, and vector-affecting runtime configuration. If any of those changes before a query, `search()` requires a fresh `index()`/`analyze()`. Set `AnalyzerConfig(strict_revision_cache=True)` for [strict revision resolution](caching.md#what-invalidates-what).

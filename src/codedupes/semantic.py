@@ -458,6 +458,31 @@ def canonicalize_embeddings(
     return np.ascontiguousarray(matrix / norms, dtype=np.float32)
 
 
+def _validate_precomputed_embeddings(units: Sequence[CodeUnit], embeddings: object) -> np.ndarray:
+    """Validate the shape contract for caller-supplied corpus embeddings.
+
+    Fresh model output is checked by :func:`canonicalize_embeddings`, but direct
+    duplicate and query APIs accept an already-built matrix. Those APIs must
+    reject a malformed matrix before it can silently omit corpus rows or reach
+    NumPy's less actionable indexing errors.
+
+    :param units: Corpus units expected to have one embedding row each.
+    :param embeddings: Caller-supplied embedding matrix or array-like value.
+    :return: A two-dimensional matrix aligned with ``units``.
+    :raises ValueError: If the matrix is not two-dimensional or has a different
+        number of rows than ``units``.
+    """
+    matrix = embeddings if isinstance(embeddings, np.ndarray) else np.asarray(embeddings)
+    if matrix.ndim != 2:
+        raise ValueError(f"embeddings must be a 2D matrix; got shape {matrix.shape!r}")
+    if matrix.shape[0] != len(units):
+        raise ValueError(
+            "embeddings must contain one row per unit; "
+            f"got {matrix.shape[0]} rows for {len(units)} units"
+        )
+    return matrix
+
+
 def _configure_semantic_runtime_env(
     device: str | None = DEFAULT_SEMANTIC_DEVICE,
     *,
@@ -2967,6 +2992,11 @@ def _compute_embeddings_unlocked(
         ),
     )
     if not units:
+        if mps_memory_fraction is None:
+            # This early return also skips _prepare_semantic_device, which is
+            # normally responsible for restoring a process-global cap left by
+            # an earlier MPS run.
+            restore_mps_memory_fraction_if_managed()
         _record_embedding_run_stats(
             stats,
             prepared_texts=[],
@@ -3487,7 +3517,10 @@ def find_semantic_duplicates(
     :param language_thresholds: Per-language duplicate gates; ``None`` applies
         ``threshold`` flat to every language.
     :return: Similar pairs sorted by confidence.
+    :raises ValueError: If ``embeddings`` is not a two-dimensional matrix with
+        one row per unit, or a threshold is invalid.
     """
+    embeddings = _validate_precomputed_embeddings(units, embeddings)
     exclude_exact = exclude_exact or set()
     if not np.isfinite(threshold) or not 0.0 <= threshold <= 1.0:
         raise ValueError("threshold must be finite and in [0.0, 1.0]")
@@ -3818,6 +3851,11 @@ def _find_similar_to_query_unlocked(
     # After every caller-visible contract: an empty corpus can match nothing,
     # so return before embedding the query (or loading the model).
     if not units:
+        if mps_memory_fraction is None:
+            # See the corresponding empty-corpus return in
+            # _compute_embeddings_unlocked: a query that needs no model work
+            # still represents a new allocator-policy run.
+            restore_mps_memory_fraction_if_managed()
         return []
 
     encode_plan = _resolve_encode_plan(profile, "query", resolved_task, instruction_prefix)
@@ -4171,9 +4209,11 @@ def find_similar_to_query(
     :return: Up to ``top_k`` ``(unit, similarity)`` pairs at or above the threshold,
         sorted by descending similarity.
     :raises ValueError: If ``query`` is blank, ``top_k`` is not a positive integer,
+        ``embeddings`` is not a two-dimensional matrix with one row per unit,
         ``threshold`` is non-finite, an uncalibrated corpus uses the default
         threshold, or a prompt-sensitive corpus omits its identity.
     """
+    embeddings = _validate_precomputed_embeddings(units, embeddings)
     # Same contract as compute_embeddings_with_identity: configure
     # import-sensitive runtime variables before anything can import torch.
     _configure_semantic_runtime_env(device, mps_fallback=mps_fallback)
