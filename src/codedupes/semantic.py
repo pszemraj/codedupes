@@ -433,7 +433,7 @@ def canonicalize_embeddings(
     :raises InvalidEmbeddingError: If shape, row count, dimensionality, finiteness,
         or norm invariants are violated.
     """
-    matrix = np.asarray(values, dtype=np.float32)
+    matrix = np.asarray(values, dtype=np.float64)
 
     if matrix.ndim != 2:
         raise InvalidEmbeddingError(f"Expected a 2D embedding matrix, got shape {matrix.shape!r}")
@@ -447,15 +447,26 @@ def canonicalize_embeddings(
             "Embedding matrix contains NaN or infinity",
             retryable=True,
         )
+    if matrix.shape[0] == 0:
+        return np.ascontiguousarray(matrix, dtype=np.float32)
 
-    norms = np.linalg.norm(matrix, axis=1, keepdims=True)
-    if not np.isfinite(norms).all() or np.any(norms <= 1e-12):
+    # Scale before the norm so finite float32 extremes retain their direction:
+    # direct squaring can overflow at ~1e38 or underflow for subnormal rows.
+    scales = np.max(np.abs(matrix), axis=1, keepdims=True)
+    if not np.isfinite(scales).all() or np.any(scales == 0):
+        raise InvalidEmbeddingError(
+            "Embedding matrix contains a zero or invalid vector",
+            retryable=True,
+        )
+    scaled = matrix / scales
+    norms = np.linalg.norm(scaled, axis=1, keepdims=True)
+    if not np.isfinite(norms).all() or np.any(norms == 0):
         raise InvalidEmbeddingError(
             "Embedding matrix contains a zero or invalid vector",
             retryable=True,
         )
 
-    return np.ascontiguousarray(matrix / norms, dtype=np.float32)
+    return np.ascontiguousarray(scaled / norms, dtype=np.float32)
 
 
 def _validate_precomputed_embeddings(units: Sequence[CodeUnit], embeddings: object) -> np.ndarray:
@@ -2996,11 +3007,10 @@ def _compute_embeddings_unlocked(
         ),
     )
     if not units:
-        if mps_memory_fraction is None:
-            # This early return also skips _prepare_semantic_device, which is
-            # normally responsible for restoring a process-global cap left by
-            # an earlier MPS run.
-            restore_mps_memory_fraction_if_managed()
+        # This early return skips _prepare_semantic_device. No allocator work is
+        # needed, so restore any prior process-global cap even when this no-op
+        # call supplied a fraction that would be ignored on CPU/CUDA.
+        restore_mps_memory_fraction_if_managed()
         _record_embedding_run_stats(
             stats,
             prepared_texts=[],
@@ -3061,13 +3071,10 @@ def _compute_embeddings_unlocked(
     # Duplicate code units share one cache key, so compare against the covered
     # keys rather than the unique-hit count: len(hits) undercounts coverage.
     if cache_keys is not None and all(key in hits for key in cache_keys):
-        if mps_memory_fraction is None:
-            # This warm return skips _prepare_semantic_device, the only other
-            # path that restores the process-global allocator baseline, but the
-            # documented contract still applies: a run whose configuration
-            # leaves the fraction unset must not inherit an earlier managed cap
-            # (no-op unless one is currently managed).
-            restore_mps_memory_fraction_if_managed()
+        # A complete warm hit skips _prepare_semantic_device and performs no
+        # allocator work, so no requested fraction should leave a previous run's
+        # process-global cap active.
+        restore_mps_memory_fraction_if_managed()
         # The hits all came from one shard snapshot, so its recorded commit is
         # the provenance of every matrix row this warm return assembles.
         _record_embedding_run_stats(
@@ -3855,11 +3862,10 @@ def _find_similar_to_query_unlocked(
     # After every caller-visible contract: an empty corpus can match nothing,
     # so return before embedding the query (or loading the model).
     if not units:
-        if mps_memory_fraction is None:
-            # See the corresponding empty-corpus return in
-            # _compute_embeddings_unlocked: a query that needs no model work
-            # still represents a new allocator-policy run.
-            restore_mps_memory_fraction_if_managed()
+        # See the corresponding empty-corpus return in
+        # _compute_embeddings_unlocked: no allocator work is needed, so a no-op
+        # search must not preserve a cap from an earlier run.
+        restore_mps_memory_fraction_if_managed()
         return []
 
     encode_plan = _resolve_encode_plan(profile, "query", resolved_task, instruction_prefix)
@@ -3956,10 +3962,10 @@ def _find_similar_to_query_unlocked(
             )
             query_embedding = None
 
-    if query_embedding is not None and (mps_memory_fraction is None or embedding_device == "cpu"):
+    if query_embedding is not None:
         # A warm query hit skips _prepare_semantic_device; same allocator
-        # contract as the warm corpus return: an effectively unset fraction
-        # must not inherit an earlier managed cap.
+        # contract as the warm corpus return: it performs no allocator work and
+        # must not inherit a managed cap from an earlier run.
         restore_mps_memory_fraction_if_managed()
 
     if query_embedding is None:

@@ -86,13 +86,18 @@ def test_configure_mps_memory_fraction_applies_and_warns_above_recommended(caplo
 
 
 @pytest.mark.parametrize("empty_call", ["compute", "search"])
-def test_empty_semantic_calls_restore_a_managed_mps_memory_cap(empty_call: str) -> None:
+@pytest.mark.parametrize("fraction", [None, 0.9], ids=["unset", "ignored-cpu-fraction"])
+def test_empty_semantic_calls_restore_a_managed_mps_memory_cap(
+    empty_call: str, fraction: float | None
+) -> None:
     """An empty run still resets process-global MPS allocator policy."""
     devices.configure_mps_memory_fraction("mps", 0.5)
     assert devices._mps_memory_fraction_managed is True
 
     if empty_call == "compute":
-        embeddings = semantic.compute_embeddings([], device="cpu", use_cache=False)
+        embeddings = semantic.compute_embeddings(
+            [], device="cpu", mps_memory_fraction=fraction, use_cache=False
+        )
         assert embeddings.shape == (0, 0)
     else:
         results = semantic.find_similar_to_query(
@@ -101,6 +106,7 @@ def test_empty_semantic_calls_restore_a_managed_mps_memory_cap(empty_call: str) 
             np.empty((0, 0), dtype=np.float32),
             threshold=0.0,
             device="cpu",
+            mps_memory_fraction=fraction,
             use_cache=False,
         )
         assert results == []

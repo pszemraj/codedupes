@@ -572,6 +572,25 @@ def test_near_unit_direct_embeddings_are_still_normalized_before_scoring(tmp_pat
     assert find_semantic_duplicates(units, embeddings, threshold=0.9000003) == []
 
 
+@pytest.mark.parametrize(
+    "scale",
+    [
+        pytest.param(np.float32(3e38), id="near-float32-maximum"),
+        pytest.param(np.nextafter(np.float32(0), np.float32(1)), id="float32-subnormal"),
+    ],
+)
+def test_direct_embeddings_stably_normalize_finite_float32_extremes(
+    tmp_path: Path, scale: np.float32
+) -> None:
+    units = extract_arithmetic_units(tmp_path)
+    embeddings = np.array([[scale, scale], [scale, 0.0]], dtype=np.float32)
+
+    duplicates = find_semantic_duplicates(units, embeddings, threshold=0.7)
+
+    assert len(duplicates) == 1
+    assert duplicates[0].similarity == pytest.approx(1 / math.sqrt(2), abs=1e-6)
+
+
 def test_direct_embedding_apis_return_to_base_ndarray_semantics(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -2215,7 +2234,7 @@ def test_find_similar_to_query_warm_cache_raises_for_explicit_unavailable_device
         )
 
 
-def test_warm_cache_returns_with_unset_fraction_restore_managed_mps_cap(
+def test_warm_cache_returns_restore_managed_mps_cap_without_allocator_work(
     tmp_path: Path, monkeypatch
 ) -> None:
     units = _warm_corpus_cache(tmp_path, monkeypatch)
@@ -2265,8 +2284,8 @@ def test_warm_cache_returns_with_unset_fraction_restore_managed_mps_cap(
     )
     assert restore_calls == [True]
 
-    # A run that requests its own fraction is not "unset": the warm corpus
-    # return must leave cap management to the next real device preparation.
+    # A CPU run's supplied fraction is ignored. Because the warm return performs
+    # no allocator work, it must still restore a cap left by an earlier run.
     restore_calls.clear()
     compute_embeddings(
         units,
@@ -2276,7 +2295,21 @@ def test_warm_cache_returns_with_unset_fraction_restore_managed_mps_cap(
         mps_memory_fraction=0.9,
         cache_scope=tmp_path,
     )
-    assert restore_calls == []
+    assert restore_calls == [True]
+
+    restore_calls.clear()
+    find_similar_to_query(
+        "find addition",
+        units,
+        embeddings,
+        model_name="gte-modernbert-base",
+        revision=_FULL_REVISION,
+        device="cpu",
+        mps_memory_fraction=0.9,
+        threshold=0.0,
+        cache_scope=tmp_path,
+    )
+    assert restore_calls == [True]
 
 
 def test_query_embedding_cache_put_is_fifo_capped(tmp_path: Path, monkeypatch) -> None:
