@@ -459,18 +459,19 @@ def canonicalize_embeddings(
 
 
 def _validate_precomputed_embeddings(units: Sequence[CodeUnit], embeddings: object) -> np.ndarray:
-    """Validate the shape contract for caller-supplied corpus embeddings.
+    """Validate and canonicalize caller-supplied corpus embeddings.
 
     Fresh model output is checked by :func:`canonicalize_embeddings`, but direct
-    duplicate and query APIs accept an already-built matrix. Those APIs must
-    reject a malformed matrix before it can silently omit corpus rows or reach
-    NumPy's less actionable indexing errors.
+    duplicate and query APIs also accept an already-built matrix. Those APIs
+    must apply the same finite, nonzero, unit-vector invariant before treating a
+    dot product as cosine similarity. Shape validation stays explicit so callers
+    receive a useful alignment error before any model or cache work.
 
     :param units: Corpus units expected to have one embedding row each.
     :param embeddings: Caller-supplied embedding matrix or array-like value.
-    :return: A two-dimensional matrix aligned with ``units``.
-    :raises ValueError: If the matrix is not two-dimensional or has a different
-        number of rows than ``units``.
+    :return: A contiguous float32 unit-normalized matrix aligned with ``units``.
+    :raises ValueError: If the matrix is not two-dimensional, has a different
+        number of rows than ``units``, or contains a non-finite or zero row.
     """
     matrix = embeddings if isinstance(embeddings, np.ndarray) else np.asarray(embeddings)
     if matrix.ndim != 2:
@@ -480,7 +481,23 @@ def _validate_precomputed_embeddings(units: Sequence[CodeUnit], embeddings: obje
             "embeddings must contain one row per unit; "
             f"got {matrix.shape[0]} rows for {len(units)} units"
         )
-    return matrix
+    try:
+        canonical = canonicalize_embeddings(matrix, expected_rows=len(units))
+    except InvalidEmbeddingError as exc:
+        raise ValueError(f"embeddings must contain finite, nonzero rows: {exc}") from exc
+    # Fresh embeddings already arrive as contiguous float32 unit vectors. Keep
+    # that matrix (and ndarray subclasses used by callers) when normalization
+    # would be a no-op apart from float32 rounding; otherwise use the shared
+    # canonicalization path so raw backend vectors cannot turn dot products
+    # into scale-dependent pseudo-cosines.
+    norms = np.linalg.norm(np.asarray(matrix, dtype=np.float32), axis=1)
+    if (
+        matrix.dtype == np.float32
+        and matrix.flags.c_contiguous
+        and np.allclose(norms, 1.0, rtol=0.0, atol=1e-6)
+    ):
+        return matrix
+    return canonical
 
 
 def _configure_semantic_runtime_env(

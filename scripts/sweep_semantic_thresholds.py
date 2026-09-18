@@ -19,8 +19,7 @@ try:
         write_json,
     )
     from .calibration_evaluation import (
-        F1_RECALL_TOLERANCE,
-        MINIMUM_SELECTION_PRECISION,
+        SELECTION_SCHEMA_VERSION,
         development_projects,
         judgments,
         load_all,
@@ -29,6 +28,8 @@ try:
         near_best_f1,
         recall_preference,
         selection_context,
+        selection_objective,
+        validate_selection_contract,
     )
     from .calibration_measurements import DEFAULT_MEASUREMENTS
 except ImportError:
@@ -39,8 +40,7 @@ except ImportError:
         write_json,
     )
     from calibration_evaluation import (
-        F1_RECALL_TOLERANCE,
-        MINIMUM_SELECTION_PRECISION,
+        SELECTION_SCHEMA_VERSION,
         development_projects,
         judgments,
         load_all,
@@ -49,6 +49,8 @@ except ImportError:
         near_best_f1,
         recall_preference,
         selection_context,
+        selection_objective,
+        validate_selection_contract,
     )
     from calibration_measurements import DEFAULT_MEASUREMENTS
 
@@ -312,6 +314,7 @@ def validate_threshold_selection(
     measurements: dict[tuple[str, str], dict[str, Any]],
 ) -> None:
     """Reject threshold decisions not reproducible from their bound measurements."""
+    validate_selection_contract(payload)
     expected = _selection_models(
         projects,
         models,
@@ -340,12 +343,8 @@ def main() -> int:
     duplicate_grid = threshold_grid(args.duplicate_start, args.duplicate_stop, args.step)
     search_grid = threshold_grid(args.search_start, args.search_stop, args.step)
     payload: dict[str, Any] = {
-        "schema_version": 4,
-        "objective": {
-            "primary": "f1",
-            "minimum_precision": MINIMUM_SELECTION_PRECISION,
-            "recall_preference_max_f1_loss": F1_RECALL_TOLERANCE,
-        },
+        "schema_version": SELECTION_SCHEMA_VERSION,
+        "objective": selection_objective(),
         "input_context": selection_context(projects, args.models),
         "grids": {"duplicate": duplicate_grid, "search": search_grid},
         "models": [],

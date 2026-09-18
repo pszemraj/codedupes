@@ -152,7 +152,10 @@ relevance, selection-code, or profile-default corrections reuse
 raw scores but require new selections; the hybrid sweep and report reject stale
 inputs, recompute every stored decision from the bound score matrices, check
 which admission selection the hybrid sweep used, and require the reported
-selections to equal the shipped model-profile defaults.
+selections to equal the shipped model-profile defaults. Both selection files
+must also carry the current schema and exact F1/precision/recall-preference
+objective before a report accepts them, so a linked hybrid file cannot relabel
+the policy used to derive its gates.
 Once every admission selection is ready, select the
 hybrid visibility constants and per-language promotion gates:
 

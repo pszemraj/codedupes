@@ -7,6 +7,11 @@ from types import SimpleNamespace
 import pytest
 
 from scripts import sweep_hybrid_gates
+from scripts.calibration_evaluation import (
+    F1_RECALL_TOLERANCE,
+    SELECTION_SCHEMA_VERSION,
+    selection_objective,
+)
 
 
 def _project_and_measurement(
@@ -169,7 +174,7 @@ def test_joint_selection_favors_recall_only_near_best_f1(monkeypatch: pytest.Mon
         [project], {"python": measurement}, {"python": 0.80}
     )
     assert (selected["tp"], selected["fp"]) == (72, 9)
-    assert selected["f1"] >= 0.80 - sweep_hybrid_gates.F1_RECALL_TOLERANCE
+    assert selected["f1"] >= 0.80 - F1_RECALL_TOLERANCE
 
 
 def test_joint_selection_filters_unsafe_rows_before_equal_f1_recall_tie(
@@ -264,6 +269,8 @@ def test_hybrid_selection_rejects_tampered_derived_gates():
         [("positive", 0.90, 0.5), ("negative", 0.85, 0.1)],
     )
     threshold_selection = {
+        "schema_version": SELECTION_SCHEMA_VERSION,
+        "objective": selection_objective(),
         "models": [
             {
                 "model": "gte-modernbert-base",
@@ -275,16 +282,18 @@ def test_hybrid_selection_rejects_tampered_derived_gates():
                     }
                 ],
             }
-        ]
+        ],
     }
     measurements = {("python", "gte-modernbert-base"): measurement}
     payload = {
+        "schema_version": SELECTION_SCHEMA_VERSION,
+        "objective": selection_objective(),
         "models": sweep_hybrid_gates._hybrid_models(
             [project],
             ["gte-modernbert-base"],
             measurements,
             {("gte-modernbert-base", "python"): 0.80},
-        )
+        ),
     }
     sweep_hybrid_gates.validate_hybrid_selection(
         payload,

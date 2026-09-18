@@ -897,21 +897,35 @@ def test_cli_search_reports_runtime_failures(monkeypatch, tmp_path, phase, as_js
     assert not isinstance(result.exception, FileNotFoundError)
 
 
-@pytest.mark.parametrize("command", ["check", "search"])
 @pytest.mark.parametrize("value", ["nan", "inf", "-inf", "-0.1", "1.1"])
-def test_cli_rejects_invalid_active_threshold_before_analysis(
-    monkeypatch, tmp_path, command, value
+def test_cli_check_rejects_invalid_duplicate_threshold_before_analysis(
+    monkeypatch, tmp_path, value
 ):
     def unexpected(*args, **kwargs):
         pytest.fail("Invalid threshold reached analysis")
 
     monkeypatch.setattr(cli, "CodeAnalyzer", unexpected)
-    args = [command, str(tmp_path)] + (["entry"] if command == "search" else [])
-    result = CliRunner().invoke(cli.cli, [*args, "--threshold", value, "--json"])
+    result = CliRunner().invoke(cli.cli, ["check", str(tmp_path), "--threshold", value, "--json"])
 
     assert result.exit_code == 2
     assert result.stdout == ""
     assert "[0.0, 1.0]" in result.stderr
+
+
+@pytest.mark.parametrize("value", ["nan", "inf", "-inf"])
+def test_cli_search_rejects_nonfinite_threshold_before_analysis(monkeypatch, tmp_path, value):
+    def unexpected(*args, **kwargs):
+        pytest.fail("Non-finite threshold reached analysis")
+
+    monkeypatch.setattr(cli, "CodeAnalyzer", unexpected)
+    result = CliRunner().invoke(
+        cli.cli,
+        ["search", str(tmp_path), "entry", "--threshold", value, "--json"],
+    )
+
+    assert result.exit_code == 2
+    assert result.stdout == ""
+    assert "semantic_threshold must be finite" in result.stderr
 
 
 def test_cli_json_v3_raw_mode_uses_edge_list(monkeypatch, tmp_path):
@@ -1070,13 +1084,14 @@ def test_cli_search_builds_search_mode_config(monkeypatch, tmp_path):
             "--instruction-prefix",
             "custom: ",
             "--threshold",
-            "0.0",
+            "-0.5",
         ],
     )
 
     assert result.exit_code == 0
     assert captured[0].mode == "search"
     assert captured[0].instruction_prefix == "custom: "
+    assert captured[0].semantic_threshold == -0.5
 
 
 def test_cli_allow_semantic_fallback_pass_through(monkeypatch, tmp_path):

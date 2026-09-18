@@ -130,7 +130,9 @@ The contextual-threshold requirement follows the indexed representation even if 
 
 For direct embedding/query calls, pass the identity returned by `compute_embeddings_with_identity(...)` as `find_similar_to_query(corpus_identity=...)`. It is required for contextual documents and prompt- or route-sensitive models, and preserves calibration and checkpoint checks on both cold and warm cache paths. Use `search_document="contextual"` with aligned `document_texts` when supplying contextual inputs.
 
-Direct `find_similar_to_query()` and `find_semantic_duplicates()` calls require a two-dimensional embedding matrix with exactly one row per supplied unit. Short, long, or one-dimensional matrices raise `ValueError` before cache or model work; a `(0, dimensions)` matrix remains valid for an empty unit list.
+Direct `find_similar_to_query()` and `find_semantic_duplicates()` calls require a two-dimensional embedding matrix with exactly one row per supplied unit. Inputs are converted to float32 and unit-normalized before cosine comparison; non-finite or zero rows, and short, long, or one-dimensional matrices raise `ValueError` before cache or model work. A `(0, dimensions)` matrix remains valid for an empty unit list.
+
+In `AnalyzerConfig(mode="search")`, `semantic_threshold` is any finite search floor, including a negative value when every ranked result is needed. Check-mode duplicate gates remain restricted to `[0, 1]`.
 
 Direct `compute_embeddings()` and `compute_embeddings_with_identity()` calls require one `document_texts` entry per input unit when supplied. Mismatched lengths raise `ValueError` before revision resolution, cache lookup, or model loading, including for an empty corpus.
 

@@ -92,7 +92,7 @@ def _make_semantic_runner(
 
         duplicates = duplicate_factory(units) if duplicate_factory is not None else []
         return (
-            np.zeros((len(units), 2), dtype=np.float32),
+            np.tile(np.array([[1.0, 0.0]], dtype=np.float32), (len(units), 1)),
             duplicates,
             _embedding_identity_from_kwargs(kwargs),
         )
@@ -1655,6 +1655,26 @@ def test_search_mode_requires_semantic() -> None:
         AnalyzerConfig(mode="search", run_semantic=False)
 
 
+def test_search_mode_accepts_negative_floor_but_check_mode_keeps_duplicate_bounds() -> None:
+    search_config = AnalyzerConfig(
+        mode="search",
+        run_traditional=False,
+        run_unused=False,
+        semantic_threshold=-0.5,
+    )
+
+    assert search_config.semantic_threshold == -0.5
+    with pytest.raises(ValueError, match=r"semantic_threshold must be in \[0.0, 1.0\]"):
+        AnalyzerConfig(semantic_threshold=-0.5)
+    with pytest.raises(ValueError, match="semantic_threshold must be finite"):
+        AnalyzerConfig(
+            mode="search",
+            run_traditional=False,
+            run_unused=False,
+            semantic_threshold=float("nan"),
+        )
+
+
 def test_index_embeds_corpus_without_mining_duplicates(tmp_path: Path, monkeypatch) -> None:
     source = "def entry(x):\n    return x + 1\n"
     project = create_project(tmp_path, source)
@@ -1744,7 +1764,7 @@ def test_search_requires_reindex_when_local_model_contents_change(
         analyzer_module,
         "compute_embeddings",
         lambda units, **kwargs: (
-            np.zeros((len(units), 2), dtype=np.float32),
+            np.tile(np.array([[1.0, 0.0]], dtype=np.float32), (len(units), 1)),
             _embedding_identity_from_kwargs(kwargs),
         ),
     )
@@ -1773,7 +1793,7 @@ def test_search_requires_reindex_when_embedding_runtime_variant_changes(
         analyzer_module,
         "compute_embeddings",
         lambda units, **kwargs: (
-            np.zeros((len(units), 2), dtype=np.float32),
+            np.tile(np.array([[1.0, 0.0]], dtype=np.float32), (len(units), 1)),
             _embedding_identity_from_kwargs(kwargs),
         ),
     )

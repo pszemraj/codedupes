@@ -26,6 +26,7 @@ except ImportError:
 
 F1_RECALL_TOLERANCE = 0.005
 MINIMUM_SELECTION_PRECISION = 0.5
+SELECTION_SCHEMA_VERSION = 4
 CHECKED_REPORT_SCHEMA_VERSION = 4
 _SHA256_HEX = re.compile(r"[0-9a-f]{64}")
 
@@ -60,6 +61,25 @@ def recall_preference(row: dict[str, Any]) -> tuple[int, int, float, float]:
 def selection_digest(payload: Any) -> str:
     """Identify a derived selection or its annotation inputs."""
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+
+
+def selection_objective() -> dict[str, float | str]:
+    """Return the exact, versioned objective used by both selection sweeps."""
+    return {
+        "primary": "f1",
+        "minimum_precision": MINIMUM_SELECTION_PRECISION,
+        "recall_preference_max_f1_loss": F1_RECALL_TOLERANCE,
+    }
+
+
+def validate_selection_contract(payload: dict[str, Any]) -> None:
+    """Reject a derived selection with a foreign schema or objective contract."""
+    if not isinstance(payload, dict):
+        raise ValueError("selection must be a JSON object")  # noqa: TRY004
+    if payload.get("schema_version") != SELECTION_SCHEMA_VERSION:
+        raise ValueError("selection has an unsupported schema version")
+    if payload.get("objective") != selection_objective():
+        raise ValueError("selection has a mismatched objective contract")
 
 
 def support_files_digest(project: Project) -> str:
@@ -226,6 +246,101 @@ def validate_selection_context(
     """Reject selections from another source, review state, model, or corpus scope."""
     if payload.get("input_context") != selection_context(projects, models):
         raise ValueError("stale or mismatched selection inputs; rerun the selection sweeps")
+
+
+def _selection_models(payload: dict[str, Any], label: str) -> dict[str, dict[str, Any]]:
+    """Index one selection's model entries while rejecting malformed duplicates."""
+    entries = payload.get("models")
+    if not isinstance(entries, list) or any(not isinstance(entry, dict) for entry in entries):
+        raise ValueError(f"{label} selection models must be objects")
+    mapped = {entry.get("model"): entry for entry in entries}
+    if len(mapped) != len(entries) or any(not isinstance(model, str) for model in mapped):
+        raise ValueError(f"{label} selection has invalid model entries")
+    return mapped
+
+
+def _selection_gate_map(entries: Any, field: str, label: str) -> dict[str, float | None]:
+    """Index per-language selected gates with one unambiguous value per language."""
+    if not isinstance(entries, list) or any(not isinstance(entry, dict) for entry in entries):
+        raise ValueError(f"{label} selection gates must be objects")
+    gates = {entry.get("language"): entry.get(field) for entry in entries}
+    if len(gates) != len(entries) or any(not isinstance(language, str) for language in gates):
+        raise ValueError(f"{label} selection has invalid language gates")
+    return gates
+
+
+def _same_gate(actual: Any, expected: float | None) -> bool:
+    """Compare optional gate values without accepting boolean JSON scalars."""
+    return actual is None if expected is None else _is_finite_number(actual) and actual == expected
+
+
+def validate_shipped_selection_profiles(
+    threshold_selection: dict[str, Any],
+    hybrid_selection: dict[str, Any],
+    models: list[str],
+    languages: set[str],
+) -> None:
+    """Require checked threshold and hybrid selections to match shipped profile gates."""
+    validate_selection_contract(threshold_selection)
+    validate_selection_contract(hybrid_selection)
+    expected_models = {resolve_model_profile(model).key for model in models}
+    thresholds = _selection_models(threshold_selection, "threshold")
+    hybrids = _selection_models(hybrid_selection, "hybrid")
+    if thresholds.keys() != expected_models or hybrids.keys() != expected_models:
+        raise ValueError("calibration selections do not cover the requested shipped profiles")
+
+    for model in expected_models:
+        profile = resolve_model_profile(model)
+        threshold = thresholds[model]
+        duplicate_entries = threshold.get("duplicate_by_language")
+        duplicate_gates = _selection_gate_map(duplicate_entries, "selected_threshold", "threshold")
+        expected_duplicate_gates = {
+            language: profile.semantic_threshold_for_language(language) for language in languages
+        }
+        if (
+            duplicate_gates.keys() != languages
+            or any(
+                not _same_gate(duplicate_gates[language], expected)
+                for language, expected in expected_duplicate_gates.items()
+            )
+            or any(item.get("selection_ready") is not True for item in duplicate_entries)
+        ):
+            raise ValueError(f"{model}: selected calibration gates do not match shipped defaults")
+
+        search = threshold.get("search")
+        if not isinstance(search, dict) or not _same_gate(
+            search.get("selected_threshold"), profile.default_search_threshold
+        ):
+            raise ValueError(f"{model}: selected calibration gates do not match shipped defaults")
+
+        hybrid = hybrids[model]
+        admissions = hybrid.get("admission_thresholds")
+        selected = hybrid.get("selected")
+        promotion_entries = hybrid.get("promotion_by_language")
+        promotion_gates = _selection_gate_map(promotion_entries, "selected_gate", "hybrid")
+        expected_promotion_gates = {
+            language: profile.high_confidence_threshold_for_language(language)
+            for language in languages
+        }
+        if (
+            admissions != expected_duplicate_gates
+            or not isinstance(selected, dict)
+            or not _same_gate(
+                selected.get("weak_identifier_jaccard_min"),
+                profile.hybrid_weak_identifier_jaccard_min,
+            )
+            or not _same_gate(
+                selected.get("statement_ratio_min"), profile.hybrid_statement_ratio_min
+            )
+            or selected.get("selection_ready") is not True
+            or promotion_gates.keys() != languages
+            or any(
+                not _same_gate(promotion_gates[language], expected)
+                for language, expected in expected_promotion_gates.items()
+            )
+            or any(item.get("selection_ready") is not True for item in promotion_entries)
+        ):
+            raise ValueError(f"{model}: selected calibration gates do not match shipped defaults")
 
 
 def judgments(project: Project) -> dict[tuple[str, str], dict[str, Any]]:
@@ -548,10 +663,11 @@ def validate_checked_report(
     """Validate the committed report shape and provenance invariants without raw scores.
 
     Raw score matrices are intentionally local-only, so this verifies every
-    invariant available in the checked summary: its report inventory, raw
-    digest references, report identities, execution provenance, and shared
-    runtime summary. It cannot establish that a syntactically valid digest
-    names a particular uncommitted raw artifact.
+    invariant available in the checked summary: its selection schema, objective,
+    context, linkage, and shipped gates; its report inventory; raw digest
+    references; report identities; execution provenance; and shared runtime
+    summary. It cannot establish that a syntactically valid digest names a
+    particular uncommitted raw artifact.
 
     :param dict payload: Parsed committed calibration report.
     :param list projects: Manifest projects expected in the report.
@@ -566,6 +682,26 @@ def validate_checked_report(
     project_by_id = {project.id: project for project in projects}
     if len(project_by_id) != len(projects):
         raise ValueError("checked calibration report has duplicate expected projects")
+    selection_projects = list(project_by_id.values())
+    selection_languages = {project.spec["languages"][0] for project in selection_projects}
+    threshold_selection = payload.get("threshold_selection")
+    hybrid_selection = payload.get("hybrid_selection")
+    if not isinstance(threshold_selection, dict) or not isinstance(hybrid_selection, dict):
+        raise ValueError(  # noqa: TRY004 -- checked JSON is one validation failure type
+            "checked calibration report selections must be objects"
+        )
+    validate_selection_contract(threshold_selection)
+    validate_selection_contract(hybrid_selection)
+    validate_selection_context(threshold_selection, selection_projects, list(profile_keys))
+    validate_selection_context(hybrid_selection, selection_projects, list(profile_keys))
+    if hybrid_selection.get("threshold_selection_digest") != selection_digest(threshold_selection):
+        raise ValueError("checked calibration report hybrid selection has another threshold input")
+    validate_shipped_selection_profiles(
+        threshold_selection,
+        hybrid_selection,
+        list(profile_keys),
+        selection_languages,
+    )
     expected_report_keys = {
         f"{model}/{device}" for model in profile_keys for device in ("cpu", "mps")
     }

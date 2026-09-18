@@ -36,6 +36,7 @@ from scripts.calibration_contract import (
 from scripts.calibration_evaluation import (
     F1_RECALL_TOLERANCE,
     MINIMUM_SELECTION_PRECISION,
+    SELECTION_SCHEMA_VERSION,
     compare_devices,
     development_projects,
     measurement_digest,
@@ -44,6 +45,7 @@ from scripts.calibration_evaluation import (
     replay_parity,
     selection_context,
     selection_digest,
+    selection_objective,
     support_files_digest,
     validate_checked_report,
     validate_measurement_digests,
@@ -840,8 +842,18 @@ def test_selection_policy_edits_reuse_measurements_but_reject_selections(
 def test_report_rejects_hybrid_from_another_threshold_selection(tmp_path: Path, monkeypatch):
     project = load_projects(project_ids=["ledger"])[0]
     context = selection_context([project], ["gte-modernbert-base", "embeddinggemma-300m"])
-    threshold = {"input_context": context, "models": []}
-    hybrid = {"input_context": context, "threshold_selection_digest": selection_digest(threshold)}
+    threshold = {
+        "schema_version": SELECTION_SCHEMA_VERSION,
+        "objective": selection_objective(),
+        "input_context": context,
+        "models": [],
+    }
+    hybrid = {
+        "schema_version": SELECTION_SCHEMA_VERSION,
+        "objective": selection_objective(),
+        "input_context": context,
+        "threshold_selection_digest": selection_digest(threshold),
+    }
     threshold["models"].append({"model": "changed selection"})
     threshold_path, hybrid_path = tmp_path / "threshold.json", tmp_path / "hybrid.json"
     write_json(threshold_path, threshold)
@@ -859,6 +871,62 @@ def test_report_rejects_hybrid_from_another_threshold_selection(tmp_path: Path, 
         ],
     )
     with pytest.raises(ValueError, match="another threshold selection"):
+        report_calibration_distributions.main()
+
+
+@pytest.mark.parametrize(
+    ("tamper", "message"),
+    [
+        ("schema", "unsupported schema version"),
+        ("objective", "mismatched objective contract"),
+    ],
+)
+def test_report_rejects_tampered_selection_contract_before_loading_raw(
+    tmp_path: Path, monkeypatch, tamper: str, message: str
+):
+    """A linked hybrid file cannot legitimize forged selection provenance."""
+    project = load_projects(project_ids=["ledger"])[0]
+    models = ["gte-modernbert-base", "embeddinggemma-300m"]
+    context = selection_context([project], models)
+    threshold = {
+        "schema_version": SELECTION_SCHEMA_VERSION,
+        "objective": selection_objective(),
+        "input_context": context,
+        "models": [],
+    }
+    hybrid = {
+        "schema_version": SELECTION_SCHEMA_VERSION,
+        "objective": selection_objective(),
+        "input_context": context,
+        "models": [],
+    }
+    if tamper == "schema":
+        threshold["schema_version"] = hybrid["schema_version"] = 999
+    else:
+        threshold["objective"]["minimum_precision"] = 0.0
+        hybrid["objective"]["minimum_precision"] = 0.0
+    hybrid["threshold_selection_digest"] = selection_digest(threshold)
+    threshold_path, hybrid_path = tmp_path / "threshold.json", tmp_path / "hybrid.json"
+    write_json(threshold_path, threshold)
+    write_json(hybrid_path, hybrid)
+    monkeypatch.setattr(report_calibration_distributions, "load_projects", lambda *args: [project])
+    monkeypatch.setattr(
+        report_calibration_distributions,
+        "load_all",
+        lambda *args: pytest.fail("report loaded raw measurements before validating selections"),
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "report",
+            "--threshold-selection",
+            str(threshold_path),
+            "--hybrid-selection",
+            str(hybrid_path),
+        ],
+    )
+    with pytest.raises(ValueError, match=message):
         report_calibration_distributions.main()
 
 
@@ -1034,6 +1102,31 @@ def test_checked_calibration_report_schema_accepts_committed_result():
     result = read_json(DEFAULT_MANIFEST.parent / "calibration-results.json")
     models = [item["model"] for item in result["threshold_selection"]["models"]]
     validate_checked_report(result, load_projects(), models)
+
+
+@pytest.mark.parametrize(
+    ("tamper", "message"),
+    [
+        ("schema", "unsupported schema version"),
+        ("objective", "mismatched objective contract"),
+        ("gate", "selected calibration gates do not match shipped defaults"),
+    ],
+)
+def test_checked_calibration_result_rejects_tampered_embedded_selections(tamper: str, message: str):
+    result = read_json(DEFAULT_MANIFEST.parent / "calibration-results.json")
+    threshold = result["threshold_selection"]
+    hybrid = result["hybrid_selection"]
+    if tamper == "schema":
+        threshold["schema_version"] = hybrid["schema_version"] = 999
+    elif tamper == "objective":
+        threshold["objective"]["minimum_precision"] = 0.0
+        hybrid["objective"]["minimum_precision"] = 0.0
+    else:
+        threshold["models"][0]["duplicate_by_language"][0]["selected_threshold"] = 0.0
+    hybrid["threshold_selection_digest"] = selection_digest(threshold)
+    models = [item["model"] for item in threshold["models"]]
+    with pytest.raises(ValueError, match=message):
+        validate_checked_report(result, load_projects(), models)
 
 
 @pytest.mark.parametrize("tamper", ["digest", "timing", "execution", "identity"])

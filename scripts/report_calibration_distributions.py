@@ -24,6 +24,8 @@ try:
         selection_digest,
         validate_measurement_digests,
         validate_selection_context,
+        validate_selection_contract,
+        validate_shipped_selection_profiles,
     )
     from .calibration_measurements import DEFAULT_MEASUREMENTS
     from .sweep_hybrid_gates import validate_hybrid_selection
@@ -44,6 +46,8 @@ except ImportError:
         selection_digest,
         validate_measurement_digests,
         validate_selection_context,
+        validate_selection_contract,
+        validate_shipped_selection_profiles,
     )
     from calibration_measurements import DEFAULT_MEASUREMENTS
     from sweep_hybrid_gates import validate_hybrid_selection
@@ -54,40 +58,18 @@ def _validate_shipped_selections(
     threshold_selection: dict, hybrid_selection: dict, models: list[str]
 ) -> None:
     """Require the checked report's selected gates to equal the shipped profiles."""
-    thresholds = {item["model"]: item for item in threshold_selection["models"]}
-    hybrids = {item["model"]: item for item in hybrid_selection["models"]}
-    expected_models = {resolve_model_profile(model).key for model in models}
-    if thresholds.keys() != expected_models or hybrids.keys() != expected_models:
-        raise ValueError("calibration selections do not cover the requested shipped profiles")
-    for model in expected_models:
-        profile = resolve_model_profile(model)
-        threshold = thresholds[model]
-        duplicate_gates = {
-            item["language"]: item["selected_threshold"]
-            for item in threshold["duplicate_by_language"]
-        }
-        expected_duplicate_gates = {
-            language: profile.semantic_threshold_for_language(language)
-            for language in duplicate_gates
-        }
-        hybrid = hybrids[model]
-        promotion_gates = {
-            item["language"]: item["selected_gate"] for item in hybrid["promotion_by_language"]
-        }
-        expected_promotion_gates = {
-            language: profile.high_confidence_threshold_for_language(language)
-            for language in promotion_gates
-        }
-        if (
-            duplicate_gates != expected_duplicate_gates
-            or threshold["search"]["selected_threshold"] != profile.default_search_threshold
-            or hybrid["admission_thresholds"] != expected_duplicate_gates
-            or hybrid["selected"]["weak_identifier_jaccard_min"]
-            != profile.hybrid_weak_identifier_jaccard_min
-            or hybrid["selected"]["statement_ratio_min"] != profile.hybrid_statement_ratio_min
-            or promotion_gates != expected_promotion_gates
-        ):
-            raise ValueError(f"{model}: selected calibration gates do not match shipped defaults")
+    entries = threshold_selection.get("models")
+    if not isinstance(entries, list) or any(not isinstance(entry, dict) for entry in entries):
+        raise ValueError("threshold selection models must be objects")
+    languages = {
+        item.get("language")
+        for entry in entries
+        for item in entry.get("duplicate_by_language", [])
+        if isinstance(item, dict)
+    }
+    if not languages or any(not isinstance(language, str) for language in languages):
+        raise ValueError("threshold selection has invalid language gates")
+    validate_shipped_selection_profiles(threshold_selection, hybrid_selection, models, languages)
 
 
 def main() -> int:
@@ -122,6 +104,7 @@ def main() -> int:
     all_measurements = []
     development_cpu = {}
     for field in ("threshold_selection", "hybrid_selection"):
+        validate_selection_contract(payload[field])
         validate_selection_context(payload[field], selection_projects, args.models)
     if payload["hybrid_selection"].get("threshold_selection_digest") != selection_digest(
         payload["threshold_selection"]

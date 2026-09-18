@@ -510,6 +510,80 @@ def test_precomputed_embeddings_require_2d_row_alignment(
         )
 
 
+@pytest.mark.parametrize(
+    ("embeddings", "message"),
+    [
+        pytest.param(
+            np.array([[np.nan, 0.0], [1.0, 0.0]], dtype=np.float32),
+            "NaN or infinity",
+            id="nan",
+        ),
+        pytest.param(
+            np.array([[np.inf, 0.0], [1.0, 0.0]], dtype=np.float32),
+            "NaN or infinity",
+            id="infinity",
+        ),
+        pytest.param(
+            np.array([[0.0, 0.0], [1.0, 0.0]], dtype=np.float32),
+            "zero or invalid vector",
+            id="zero-row",
+        ),
+    ],
+)
+def test_precomputed_embeddings_reject_invalid_rows_before_similarity_or_model_loading(
+    tmp_path: Path, monkeypatch, embeddings: np.ndarray, message: str
+) -> None:
+    units = extract_arithmetic_units(tmp_path)
+
+    def fail_if_called(*_args, **_kwargs):
+        raise AssertionError("invalid precomputed embeddings must fail before model loading")
+
+    monkeypatch.setattr(semantic, "get_model", fail_if_called)
+
+    with pytest.raises(ValueError, match=message):
+        find_semantic_duplicates(units, embeddings, threshold=0.0)
+    with pytest.raises(ValueError, match=message):
+        find_similar_to_query(
+            "find addition",
+            units,
+            embeddings,
+            threshold=0.0,
+            device="cpu",
+            use_cache=False,
+        )
+
+
+def test_direct_embeddings_are_normalized_before_duplicate_scoring(tmp_path: Path) -> None:
+    units = extract_arithmetic_units(tmp_path)
+    embeddings = np.array([[5.0, 0.0], [1.0, 0.5]], dtype=np.float32)
+
+    # The raw dot product is 5.0, but the true cosine is ~0.894. The pair must
+    # not clear a 0.95 duplicate gate merely because a caller supplied scaled rows.
+    assert find_semantic_duplicates(units, embeddings, threshold=0.95) == []
+
+
+def test_direct_embeddings_are_normalized_before_query_scoring(tmp_path: Path, monkeypatch) -> None:
+    units = extract_arithmetic_units(tmp_path)
+    embeddings = np.array([[5.0, 0.0], [1.0, 0.5]], dtype=np.float32)
+
+    class QueryModel:
+        def encode(self, texts, **kwargs):
+            return np.array([[1.0, 0.0]], dtype=np.float32)
+
+    monkeypatch.setattr(semantic, "get_model", lambda *args, **kwargs: QueryModel())
+
+    results = find_similar_to_query(
+        "find addition",
+        units,
+        embeddings,
+        threshold=0.95,
+        device="cpu",
+        use_cache=False,
+    )
+
+    assert results == [(units[0], 1.0)]
+
+
 @pytest.mark.parametrize("top_k", [0, -1, 1.5, True])
 def test_search_requires_positive_integer_top_k(top_k) -> None:
     with pytest.raises(ValueError, match="top_k must be a positive integer"):
@@ -614,21 +688,6 @@ def test_find_similar_to_query_default_threshold_is_search_default(
     assert results[0][1] == pytest.approx(0.7, abs=1e-6)
 
 
-def test_find_semantic_duplicates_ignores_nan_similarity(tmp_path: Path) -> None:
-    units = extract_arithmetic_units(tmp_path)
-    embeddings = np.array(
-        [
-            [np.nan, 0.0],
-            [1.0, 0.0],
-        ],
-        dtype=np.float32,
-    )
-
-    duplicates = find_semantic_duplicates(units, embeddings, threshold=0.5)
-
-    assert duplicates == []
-
-
 def test_semantic_pair_scores_bound_float32_cosine_overshoot(tmp_path: Path) -> None:
     units = extract_arithmetic_units(tmp_path)
     vector = [-1.2083186, -0.004454133, 0.65647495]
@@ -655,47 +714,6 @@ def test_query_scores_bound_cosine_overshoot_before_thresholding(tmp_path: Path,
     assert results == [(units[0], 1.0), (units[1], -1.0)]
 
 
-def test_find_semantic_duplicates_rejects_nan_and_inf_but_keeps_finite_pair(
-    tmp_path: Path,
-) -> None:
-    # Rounds out the isfinite guard's coverage (see the comment above the
-    # pair loop in find_semantic_duplicates): both a NaN similarity and a
-    # +inf similarity must be dropped, and neither should suppress a genuine
-    # finite above-threshold pair computed in the same run.
-    units = extract_units(
-        tmp_path,
-        """
-        def first(x):
-            return x + 1
-
-        def second(x):
-            return x + 2
-
-        def third(x):
-            return x + 3
-
-        def fourth(x):
-            return x + 4
-        """,
-    )
-    embeddings = np.array(
-        [
-            [np.nan, 0.0],  # first: every pair involving this row is NaN.
-            [1.0, 0.0],  # second
-            [1.0, 0.0],  # third: (second, third) is a legitimate finite pair.
-            [np.inf, 0.0],  # fourth: every pair involving this row is +inf.
-        ],
-        dtype=np.float32,
-    )
-
-    duplicates = find_semantic_duplicates(units, embeddings, threshold=0.9)
-
-    assert len(duplicates) == 1
-    kept = duplicates[0]
-    assert {kept.unit_a.name, kept.unit_b.name} == {"second", "third"}
-    assert kept.similarity == pytest.approx(1.0)
-
-
 @pytest.mark.parametrize("threshold", [0.82, 0.78, 0.70, 0.90])
 def test_find_semantic_duplicates_rechecks_threshold_after_numpy_prefilter(
     tmp_path: Path, threshold: float
@@ -703,7 +721,10 @@ def test_find_semantic_duplicates_rechecks_threshold_after_numpy_prefilter(
     units = extract_arithmetic_units(tmp_path)
     rounded_down = np.float32(threshold)
     assert float(rounded_down) < threshold
-    embeddings = np.array([[1.0, 0.0], [rounded_down, 0.0]], dtype=np.float32)
+    embeddings = np.array(
+        [[1.0, 0.0], [rounded_down, math.sqrt(1.0 - rounded_down**2)]],
+        dtype=np.float32,
+    )
 
     duplicates = find_semantic_duplicates(units, embeddings, threshold=threshold)
 
@@ -3052,11 +3073,9 @@ def _scan_fixture() -> tuple[list[CodeUnit], np.ndarray]:
         rng.integers(0, 2, size=(count, dimensions)).astype(np.float32) * 2.0 - 1.0
     ) * 0.25
 
-    # Non-finite rows. Row 0 is all-positive so its product with the +inf row is
-    # +inf rather than NaN, exercising the finite guard behind the gate mask.
+    # A deterministic all-positive row exercises the dense positive-score
+    # branch without violating the direct-embedding finite-row contract.
     embeddings[0] = 0.25
-    embeddings[1] = np.inf
-    embeddings[4] = np.nan
 
     # Perfect-similarity rows for the three post-gate filters: an overlapping
     # same-file pair, a surviving cross-file twin, and a class/function pair.
@@ -3226,7 +3245,6 @@ def test_vectorized_pair_scan_matches_naive_reference() -> None:
     assert ordered_pair_key(units[8], units[9]) not in reported_keys
     assert ordered_pair_key(units[16], units[17]) not in reported_keys
     assert ordered_pair_key(units[0], units[1]) not in reported_keys
-    assert all(units[4].uid not in key for key in reported_keys)
 
     cross = find_semantic_duplicates(
         units, embeddings, threshold=0.9, cross_language=True, language_thresholds=gates

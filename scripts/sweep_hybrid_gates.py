@@ -19,8 +19,8 @@ try:
         write_json,
     )
     from .calibration_evaluation import (
-        F1_RECALL_TOLERANCE,
         MINIMUM_SELECTION_PRECISION,
+        SELECTION_SCHEMA_VERSION,
         development_projects,
         judgments,
         load_all,
@@ -31,8 +31,10 @@ try:
         replay,
         selection_context,
         selection_digest,
+        selection_objective,
         validate_measurement_digests,
         validate_selection_context,
+        validate_selection_contract,
     )
     from .calibration_measurements import DEFAULT_MEASUREMENTS
     from .sweep_semantic_thresholds import threshold_grid, validate_threshold_selection
@@ -45,8 +47,8 @@ except ImportError:
         write_json,
     )
     from calibration_evaluation import (
-        F1_RECALL_TOLERANCE,
         MINIMUM_SELECTION_PRECISION,
+        SELECTION_SCHEMA_VERSION,
         development_projects,
         judgments,
         load_all,
@@ -57,8 +59,10 @@ except ImportError:
         replay,
         selection_context,
         selection_digest,
+        selection_objective,
         validate_measurement_digests,
         validate_selection_context,
+        validate_selection_contract,
     )
     from calibration_measurements import DEFAULT_MEASUREMENTS
     from sweep_semantic_thresholds import threshold_grid, validate_threshold_selection
@@ -407,6 +411,8 @@ def validate_hybrid_selection(
     measurements: dict[tuple[str, str], dict[str, Any]],
 ) -> None:
     """Reject hybrid decisions not reproducible from bound admissions and scores."""
+    validate_selection_contract(threshold_selection)
+    validate_selection_contract(payload)
     expected = _hybrid_models(projects, models, measurements, _selection_map(threshold_selection))
     if payload.get("models") != expected:
         raise ValueError("hybrid selection does not match its threshold selection and raw data")
@@ -440,12 +446,8 @@ def main() -> int:
     validate_threshold_selection(threshold_selection, projects, args.models, measurements)
     selected_admissions = _selection_map(threshold_selection)
     payload: dict[str, Any] = {
-        "schema_version": 4,
-        "objective": {
-            "primary": "f1",
-            "minimum_precision": MINIMUM_SELECTION_PRECISION,
-            "recall_preference_max_f1_loss": F1_RECALL_TOLERANCE,
-        },
+        "schema_version": SELECTION_SCHEMA_VERSION,
+        "objective": selection_objective(),
         "input_context": selection_context(projects, args.models),
         "threshold_selection_digest": selection_digest(threshold_selection),
         "models": _hybrid_models(projects, args.models, measurements, selected_admissions),
