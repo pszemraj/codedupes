@@ -4,7 +4,7 @@ test:
 	cargo test
 
 fixture:
-	python3 scripts/verify_source_fixture.py
+	conda run --name inf python ../../scripts/validate_calibration_corpus.py --project cowsay
 
 cli:
 	cargo run -- "Rust cows are memory safe."
