@@ -35,7 +35,7 @@
           "annotations": "d1f2d17b5e5d61e7a2a7c46571b2286ec682072c530160453d08987785b1e455",
           "project": "8fc6af9d9df5409d6542fe1484c65dc74b510f617d4eed8bcef78093c196a7c9",
           "policy": "default",
-          "support_files": "6212b223a7a545c0c96a157ec6ae543a5d2fef490db6942286efb5a42e202378",
+          "support_files": "206f15040979c6b7b38b976b0ac76b49979e2b8bb529176b750e0f06dc0c6fc6",
           "measurements": {
             "gte-modernbert-base": "6788f690fc498359c1b664be67f15af5fb14d2300e5214fef24014f6077d71da",
             "embeddinggemma-300m": "ea37b95d62c74f696358751d69a20461ebbb1bfc8346634505b45394e9f11e37"
@@ -55,7 +55,7 @@
           "annotations": "21668b7b45f1c157644b7d3eb7ae4731ab96450ded270ad2c2d224cb4160c470",
           "project": "bffc6270179b31d999c4d0166c88d9358c2fe58e90e9cc7207a5b28a6563fa6c",
           "policy": "default",
-          "support_files": "51af91763f70ffce6a510b54cfa006e3b74ae802936a46782fabf529b5b316e2",
+          "support_files": "6cb90eff504426bf97053e82ad429a98fa1b1fa0bc329595c62933242a664a4a",
           "measurements": {
             "gte-modernbert-base": "575d044c1eea0da484b10e84d05426c6c429deebb01f3624c308c342f95029af",
             "embeddinggemma-300m": "05a03168846c3ca54ca115c9a503f8e79d96bbe4690d589e06e354f7eb18a3b9"
@@ -1429,7 +1429,7 @@
           "annotations": "d1f2d17b5e5d61e7a2a7c46571b2286ec682072c530160453d08987785b1e455",
           "project": "8fc6af9d9df5409d6542fe1484c65dc74b510f617d4eed8bcef78093c196a7c9",
           "policy": "default",
-          "support_files": "6212b223a7a545c0c96a157ec6ae543a5d2fef490db6942286efb5a42e202378",
+          "support_files": "206f15040979c6b7b38b976b0ac76b49979e2b8bb529176b750e0f06dc0c6fc6",
           "measurements": {
             "gte-modernbert-base": "6788f690fc498359c1b664be67f15af5fb14d2300e5214fef24014f6077d71da",
             "embeddinggemma-300m": "ea37b95d62c74f696358751d69a20461ebbb1bfc8346634505b45394e9f11e37"
@@ -1449,7 +1449,7 @@
           "annotations": "21668b7b45f1c157644b7d3eb7ae4731ab96450ded270ad2c2d224cb4160c470",
           "project": "bffc6270179b31d999c4d0166c88d9358c2fe58e90e9cc7207a5b28a6563fa6c",
           "policy": "default",
-          "support_files": "51af91763f70ffce6a510b54cfa006e3b74ae802936a46782fabf529b5b316e2",
+          "support_files": "6cb90eff504426bf97053e82ad429a98fa1b1fa0bc329595c62933242a664a4a",
           "measurements": {
             "gte-modernbert-base": "575d044c1eea0da484b10e84d05426c6c429deebb01f3624c308c342f95029af",
             "embeddinggemma-300m": "05a03168846c3ca54ca115c9a503f8e79d96bbe4690d589e06e354f7eb18a3b9"
@@ -1457,7 +1457,7 @@
         }
       }
     },
-    "threshold_selection_digest": "e33b3d76ee8603bffbf3566595cb8dcfce02b45c50a99405a350ccd03bc2ef4d",
+    "threshold_selection_digest": "3c8905f0087a81674565ac655344ec58b9020647cff9df510df53091fdc867a4",
     "models": [
       {
         "model": "gte-modernbert-base",

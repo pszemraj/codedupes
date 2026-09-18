@@ -5,6 +5,8 @@ maintenance candidates for load aggregation, dispatch planning, booking
 normalization, and typed registration validation, plus related CSV/API/webhook
 adapters that serve as hard non-duplicate controls.
 
+Labels and pair judgments follow the shared [calibration corpus contract](../README.md).
+
 Run its behavior checks with:
 
 ```sh

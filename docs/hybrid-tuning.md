@@ -74,7 +74,7 @@ Run the multi-domain search smoke test against the selected default:
 CODEDUPES_SMOKE_SEARCH=1 conda run --name inf pytest tests/test_semantic_smoke.py -k search
 ```
 
-Keep these queries unchanged. Each target must rank in the top three without a
+Keep these queries unchanged. Each target must rank first without a
 score floor, emitted default hits must be relevant, and no-result queries must
 stay empty. The checked result records the current floors, search curve, and
 metrics.

@@ -11,6 +11,8 @@ independent implementations of five real maintenance shapes:
 - bounded byte-span record parsers that use a state scan or field slicing and
   standard conversion while preserving caller output on failure.
 
+Labels and pair judgments follow the shared [calibration corpus contract](../README.md).
+
 The project uses value structs, pointer-based output parameters, and a public
 header so extraction sees ordinary C application boundaries. `make test` runs
 the behavioral/differential suite and `make run` executes the demo.
