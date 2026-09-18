@@ -13,6 +13,7 @@ enum {
     METERING_INVALID = -1,
     METERING_CAPACITY = -2,
     METERING_DUPLICATE = -3,
+    METERING_OVERFLOW = -4,
 };
 
 typedef struct {

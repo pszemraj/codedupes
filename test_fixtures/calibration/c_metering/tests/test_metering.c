@@ -1,5 +1,6 @@
 #include "metering.h"
 
+#include <limits.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -57,6 +58,17 @@ static void test_invalid_discarded_reading_is_rejected(void) {
     CHECK(aggregate_usage_by_index(&unterminated, 1, totals, METERING_MAX_DEVICES, &count) == METERING_INVALID);
 }
 
+static void test_aggregation_overflow_is_rejected(void) {
+    const Reading readings[] = {{"METER_A", INT_MAX, 0}, {"METER_A", 1, 0}};
+    DeviceTotal totals[METERING_MAX_DEVICES] = {0};
+    size_t count = 0;
+    CHECK(aggregate_usage_linear(readings, 2, totals, METERING_MAX_DEVICES, &count) == METERING_OVERFLOW);
+    memset(totals, 0, sizeof(totals));
+    CHECK(aggregate_usage_sorted(readings, 2, totals, METERING_MAX_DEVICES, &count) == METERING_OVERFLOW);
+    memset(totals, 0, sizeof(totals));
+    CHECK(aggregate_usage_by_index(readings, 2, totals, METERING_MAX_DEVICES, &count) == METERING_OVERFLOW);
+}
+
 static void test_payout_floor_and_policy(void) {
     const DeviceTotal totals[] = {
         {"METER_A", 7, 1},
@@ -84,6 +96,28 @@ static void test_payout_floor_and_policy(void) {
     CHECK(strcmp(policy_transferred.lines[0].state, "ready") == 0);
     CHECK(policy_transferred.lines[0].transfer_amount == 7);
     CHECK(policy_transferred.transfer_count == 1 && policy_transferred.audit_events == 0);
+}
+
+static void test_payout_input_and_deferred_overflow_are_rejected(void) {
+    DeviceTotal unterminated = {0};
+    const DeviceTotal deferred[] = {
+        {"METER_A", INT_MAX - 1, 1},
+        {"METER_B", INT_MAX - 1, 1},
+    };
+    SettlementPlan plan;
+    memset(unterminated.device, 'x', sizeof(unterminated.device));
+    unterminated.reading_count = 1;
+    CHECK(plan_payouts(&unterminated, 1, &plan) == METERING_INVALID);
+    CHECK(plan_payouts_with_floor(&unterminated, 1, 1, &plan) == METERING_INVALID);
+    CHECK(
+        plan_payouts_with_policy(&unterminated, 1, (PayoutPolicy){1, 1}, &plan)
+        == METERING_INVALID
+    );
+    CHECK(plan_payouts_with_floor(deferred, 2, INT_MAX, &plan) == METERING_OVERFLOW);
+    CHECK(
+        plan_payouts_with_policy(deferred, 2, (PayoutPolicy){INT_MAX, 1}, &plan)
+        == METERING_OVERFLOW
+    );
 }
 
 static void test_helper_extraction_differential(void) {
@@ -217,7 +251,9 @@ static void test_bounded_record_parsers(void) {
 int main(void) {
     test_aggregation_differential();
     test_invalid_discarded_reading_is_rejected();
+    test_aggregation_overflow_is_rejected();
     test_payout_floor_and_policy();
+    test_payout_input_and_deferred_overflow_are_rejected();
     test_helper_extraction_differential();
     test_csv_api_and_idempotency();
     test_bounded_record_parsers();

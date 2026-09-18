@@ -1,5 +1,6 @@
 #include "metering.h"
 
+#include <limits.h>
 #include <string.h>
 
 static int compare_totals(const DeviceTotal *left, const DeviceTotal *right) {
@@ -22,6 +23,14 @@ static int validate_reading(const Reading *reading) {
     return reading != NULL && reading->device[0] != '\0'
         && memchr(reading->device, '\0', sizeof(reading->device)) != NULL
         && reading->usage >= 0;
+}
+
+static int add_usage(DeviceTotal *total, int usage) {
+    if (total->total_usage > INT_MAX - usage) {
+        return METERING_OVERFLOW;
+    }
+    total->total_usage += usage;
+    return METERING_OK;
 }
 
 int aggregate_usage_linear(
@@ -56,7 +65,9 @@ int aggregate_usage_linear(
             out[slot].reading_count = 0;
             (*out_count)++;
         }
-        out[slot].total_usage += reading->usage;
+        if (add_usage(&out[slot], reading->usage) != METERING_OK) {
+            return METERING_OVERFLOW;
+        }
         out[slot].reading_count++;
     }
     sort_totals(out, *out_count);
@@ -101,7 +112,9 @@ int aggregate_usage_sorted(
             out[*out_count].reading_count = 0;
             (*out_count)++;
         }
-        out[*out_count - 1].total_usage += reading->usage;
+        if (add_usage(&out[*out_count - 1], reading->usage) != METERING_OK) {
+            return METERING_OVERFLOW;
+        }
         out[*out_count - 1].reading_count++;
     }
     return METERING_OK;
@@ -142,7 +155,9 @@ int aggregate_usage_by_index(
             strcpy(out[found].device, current.device);
             (*out_count)++;
         }
-        out[found].total_usage = out[found].total_usage + current.usage;
+        if (add_usage(&out[found], current.usage) != METERING_OK) {
+            return METERING_OVERFLOW;
+        }
         out[found].reading_count = out[found].reading_count + 1;
     }
     sort_totals(out, *out_count);

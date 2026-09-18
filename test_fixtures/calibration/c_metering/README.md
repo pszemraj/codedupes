@@ -14,3 +14,7 @@ independent implementations of four real maintenance shapes:
 The project uses value structs, pointer-based output parameters, and a public
 header so extraction sees ordinary C application boundaries. `make test` runs
 the behavioral/differential suite and `make run` executes the demo.
+
+Aggregate and deferred-payout totals return `METERING_OVERFLOW` rather than
+overflowing `int`; payout planners also reject device fields without an in-array
+NUL terminator.

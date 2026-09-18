@@ -1,5 +1,6 @@
 #include "metering.h"
 
+#include <limits.h>
 #include <string.h>
 
 static int validate_totals(const DeviceTotal *totals, size_t count, SettlementPlan *plan) {
@@ -7,10 +8,22 @@ static int validate_totals(const DeviceTotal *totals, size_t count, SettlementPl
         return METERING_INVALID;
     }
     for (size_t index = 0; index < count; index++) {
-        if (totals[index].device[0] == '\0' || totals[index].reading_count == 0) {
+        if (
+            totals[index].device[0] == '\0'
+            || memchr(totals[index].device, '\0', sizeof(totals[index].device)) == NULL
+            || totals[index].reading_count == 0
+        ) {
             return METERING_INVALID;
         }
     }
+    return METERING_OK;
+}
+
+static int add_deferred_total(SettlementPlan *plan, int amount) {
+    if (plan->deferred_total > INT_MAX - amount) {
+        return METERING_OVERFLOW;
+    }
+    plan->deferred_total += amount;
     return METERING_OK;
 }
 
@@ -54,9 +67,11 @@ int plan_payouts_with_floor(
         strcpy(line.device, totals[index].device);
         line.amount = amount;
         if (amount > 0 && amount < minimum_payout) {
+            if (add_deferred_total(plan, amount) != METERING_OK) {
+                return METERING_OVERFLOW;
+            }
             strcpy(line.state, "deferred");
             line.deferred_amount = amount;
-            plan->deferred_total += amount;
             plan->audit_events++;
         } else if (amount > 0) {
             strcpy(line.state, "ready");
@@ -90,9 +105,11 @@ int plan_payouts_with_policy(
         if (amount <= 0) {
             strcpy(line->state, amount == 0 ? "balanced" : "refund_due");
         } else if (policy.defer_small_positive && amount < policy.minimum_payout) {
+            if (add_deferred_total(plan, amount) != METERING_OK) {
+                return METERING_OVERFLOW;
+            }
             strcpy(line->state, "deferred");
             line->deferred_amount = amount;
-            plan->deferred_total += amount;
             plan->audit_events += 1;
         } else {
             strcpy(line->state, "ready");
