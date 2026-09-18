@@ -1,12 +1,11 @@
 # Calibration corpus
 
 This development corpus supplies practical threshold evidence for the five
-languages supported by codedupes. It replaces the earlier synthetic fixtures.
-Each language has runnable code with reviewed positive and nearby negative pairs
-plus search queries whose relevance is independent of the pair labels. New
-fixtures can be small modules with behavior tests; a demo application is not
-required. Add independent behaviors and language idioms, rather than more
-variants of one workflow just to increase the pair count.
+languages supported by codedupes. It replaces the earlier synthetic fixtures:
+each project has runnable code, reviewed positive and nearby negative pairs, and
+search queries whose relevance is independent of pair labels. New fixtures can be
+small modules with behavior tests; add independent behaviors and language idioms
+rather than variants of one workflow just to increase the pair count.
 
 | project | language | positives | negatives | probes |
 | --- | --- | ---: | ---: | ---: |
@@ -37,11 +36,9 @@ finding must have a judgment. Old annotation formats are rejected.
 
 The current corpus is development data and has no held-out split. Selection uses
 only projects in the development split; if evaluation projects are added, reports
-score them without using them to select defaults. The corpus is intended to set
-useful defaults, while its size and authored challenge mix do not support claims
-about ecosystem-wide precision. Raw CPU and MPS measurements are local scratch
-artifacts; the compact checked result records the selected settings and device
-comparison.
+score them without using them to select defaults. Its size and authored challenge
+mix do not support claims about ecosystem-wide precision. The calibration workflow
+and checked result are documented in [hybrid tuning](../../docs/hybrid-tuning.md).
 
 From the repository root, validate every contract, behavior suite, and entry
 point with:
@@ -49,6 +46,3 @@ point with:
 ```bash
 conda run --name inf python scripts/validate_calibration_corpus.py --run-behavior
 ```
-
-See [the calibration workflow](../../docs/hybrid-tuning.md) for measurement and
-selection commands.

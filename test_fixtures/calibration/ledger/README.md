@@ -2,8 +2,8 @@
 
 This development application imports transaction records, summarizes invoices,
 plans settlements, and produces independent audit reports. Multiple supported
-implementations are intentional. Their maintenance judgments live in the corpus
-annotations, outside analyzed source.
+implementations are intentional; labels and pair judgments follow the shared
+[calibration corpus contract](../README.md).
 
 Run `PYTHONPATH=src python -m unittest discover -s tests` and
 `PYTHONPATH=src python -m ledger` from this directory (using the repository's
@@ -49,9 +49,6 @@ Audit responsibilities are separate: credit risk classifies exposure using a
 credit limit; reference auditing identifies invoice identifiers occurring under
 multiple external IDs; chronological auditing finds out-of-order accepted
 records; currency auditing validates per-currency net exposure against budgets.
-Different output alone is not a negative label: the annotations explain why
-these operations lack a substantial shared maintenance region with their peers.
-
 Inventory allocation is represented twice. `allocate_orders` is pure: it copies
 the supplied stock mapping, validates the complete order batch, and returns the
 new stock together with FIFO allocation and shortage records. `InventoryBook`

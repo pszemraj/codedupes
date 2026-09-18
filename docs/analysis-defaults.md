@@ -22,21 +22,9 @@ See [report selection](output.md#report-selection) and [exit codes](output.md#ex
 
 ## Semantic duplicate gate defaults
 
-Semantic duplicate detection is gated per language. Each built-in model profile carries a calibrated cosine gate for every supported language. The first implementation phase for Issue #20 replaced the former synthetic inputs with five runnable development applications; the checked [calibration result](../test_fixtures/calibration/calibration-results.json) records the reviewed CPU selection and independent MPS comparison. It is development evidence, not held-out or ecosystem-wide validation.
+Semantic duplicate detection is gated per language. [Built-in duplicate and search gates](model-profiles.md#duplicate-and-search-gates) are profile policy; the [calibration workflow](hybrid-tuning.md) records their development evidence.
 
-| language | `gte-modernbert-base` | `embeddinggemma-300m` |
-| --- | --- | --- |
-| python | `0.87` | `0.74` |
-| c | `0.84` | `0.82` |
-| rust | `0.84` | `0.88` |
-| javascript | `0.70` | `0.80` |
-| typescript | `0.76` | `0.82` |
-
-The reviewed source-backed corpus selects all ten gates shown in the table. The 50% precision eligibility rule prevents a recall preference from admitting majority-false candidates before F1 selection. The corpus is development evidence with an authored challenge mix, so these settings are practical defaults rather than an estimate of ecosystem-wide precision. See [calibration measurements and replay](hybrid-tuning.md).
-
-See [threshold-profile choices](model-profiles.md#choosing-threshold-defaults) for profile selection.
-
-The profile fallback (`0.87` gte, `0.88` gemma) applies only to languages without their own entry and equals that profile's strictest calibrated gate. An explicit `--semantic-threshold`/`--threshold` (or `AnalyzerConfig.semantic_threshold`) replaces every per-language gate with one flat value. The pairwise embedding scan partitions candidates by language and scans each group at that language's own gate, so a loosely gated language never drags another language's scan down; the scalar floor handed to the scan covers only languages that arrive without a profile entry.
+An explicit `--semantic-threshold`/`--threshold` (or `AnalyzerConfig.semantic_threshold`) replaces every per-language gate with one flat value. The pairwise embedding scan partitions candidates by language, so a loosely gated language never drags another language's scan down.
 
 Semantic duplicate pairs are same-language by default. `--cross-language` (or `AnalyzerConfig(cross_language=True)`) also reports cross-language pairs; those claims are uncalibrated, so an opted-in mixed pair is held to `min(gate_a, gate_b)`, the looser of its two language gates.
 
@@ -128,18 +116,12 @@ Use `--no-tiny-filter` / `--tiny-cutoff`, or `AnalyzerConfig.filter_tiny_traditi
 
 ## Hybrid synthesis confidence defaults
 
-A semantic-only pair has already passed its language's duplicate gate (applied before synthesis; there is no separate semantic-only minimum). Synthesis then splits it into `semantic_high_confidence` or `semantic_review`; the split affects ranking and default visibility, never admission. A pair is promoted when either path holds:
+A semantic-only pair has already passed its language's duplicate gate (applied before synthesis; there is no separate semantic-only minimum). Synthesis then splits it into `semantic_high_confidence` or `semantic_review`; the split affects ranking and default visibility, never admission. A pair is promoted by corroboration or a similarity gate:
 
-- corroboration: weak identifier Jaccard >= `hybrid_weak_identifier_jaccard_min` and statement-count ratio >= `hybrid_statement_ratio_min`, both on the model profile;
-- similarity promotion: cosine >= the language's `language_high_confidence_thresholds` entry on the profile (cross-language pairs must clear the stricter of the two gates; a language without a calibrated entry has promotion off).
+- corroboration requires both the profile's weak identifier Jaccard and statement-count ratio;
+- similarity promotion requires the profile's language gate (cross-language pairs must clear the stricter gate; a language without a calibrated entry has promotion off).
 
-| profile | identifier Jaccard min | statement ratio min | promotion gates |
-| --- | --- | --- | --- |
-| `gte-modernbert-base` | `0.40` | `0.00` | python `0.88`, c `0.84`, rust `0.84`, javascript `0.70`; typescript off |
-| `embeddinggemma-300m` | `0.40` | `0.00` | python `0.78`, c `0.89`, rust `0.88`, javascript `0.80`, typescript `0.82` |
-| `generic` | `0.00` | `0.20` | off |
-
-The corroboration constants and promotion gates were selected jointly after fixing the admission gates on the same reviewed development corpus. Every language-specific promotion outcome and the pooled result must reach 50% judged precision; selection then maximizes measured F1 and prefers recall within `0.005` F1 of the optimum. When a promotion gate equals its admission gate, the review band is empty and every admitted semantic-only pair is default-visible; that applies to GTE C/Rust/JavaScript and Gemma Rust/JavaScript/TypeScript. An explicit `--semantic-threshold` keeps the profile's corroboration constants but turns similarity promotion off because those promotion gates belong to the shipped profile policy. See [calibration measurements and replay](hybrid-tuning.md).
+The [hybrid confidence gates](model-profiles.md#hybrid-confidence-gates) define the shipped values. An explicit `--semantic-threshold` keeps the profile's corroboration constants but turns similarity promotion off because those promotion gates belong to the shipped profile policy.
 
 ## Confidence scale
 

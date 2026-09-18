@@ -22,16 +22,7 @@ codedupes search ./src "normalize request payload" --device mps
 
 An explicit unavailable accelerator is an error, including on warm-cache and empty scans. Combined mode can retain traditional results with `--allow-semantic-fallback`; see [exit codes](output.md#exit-codes). Automatic CPU transitions during inference follow the recovery rules below.
 
-For the current built-in profiles, codedupes treats CPU float32 and MPS float32
-as decision-equivalent. The five-project development-corpus comparison ran both models in
-fresh, uncached CPU and MPS processes with PyTorch 2.14.0. Its maximum absolute
-pair or query score drift was `7.75e-7`, with no duplicate or search threshold
-decisions changed. Across the ten model/project runs, aggregate measured time
-was 77.0 seconds on CPU and 56.3 seconds on MPS. On Apple silicon, leave `--device`
-at `auto` so codedupes uses MPS for the faster path. Pin `cpu` only when reproducing the CPU
-calibration reference or investigating CPU-specific behavior. See the checked
-[calibration results](../test_fixtures/calibration/calibration-results.json) for
-the per-project measurements.
+For the built-in profiles, CPU float32 and MPS float32 are decision-equivalent in the reviewed development corpus. On Apple silicon, leave `--device` at `auto` for MPS; pin `cpu` only when reproducing the CPU calibration reference or investigating CPU-specific behavior. See the checked [calibration results](../test_fixtures/calibration/calibration-results.json) and [calibration workflow](hybrid-tuning.md) for measurements and replay.
 
 ## Unsupported MPS operators
 
@@ -82,45 +73,20 @@ Model loads pin an explicit dtype instead of inheriting the checkpoint's configu
 
 ### MPS bfloat16 evidence
 
-MPS autocast defaults to float16; these measurements explicitly requested
-`torch.bfloat16`. They used an Apple M5 on macOS 26.6.2, batch size 4, the
-Python ledger fixture, and three fresh uncached processes per model and mode.
-Each time is the median combined duplicate and search measurement. The
-within-version comparisons are meaningful; absolute times across versions came
-from separate sessions.
+MPS autocast is not the shipped policy. On an Apple M5 with PyTorch 2.14, batch
+size 4, the ledger fixture, and three fresh uncached processes per model and
+mode, explicit bfloat16 autocast produced these median combined duplicate and
+search measurements:
 
-The autocast setup follows the PyTorch 2.14 inference contract:
-`torch.amp.autocast(device_type="mps", dtype=torch.bfloat16)` surrounds the
-unmodified fp32 model and inputs. `torch.autocast` is the same implementation.
-Forward hooks inside both actual Sentence Transformers encoders confirmed that
-autocast remained enabled through their nested `torch.inference_mode()` calls.
-The first eligible linear layer received fp32 activations and weights and
-emitted bf16; GTE's observed LayerNorm remained fp32. Sentence Transformers'
-`precision="float32"` default controls optional output quantization and does not
-disable operation autocasting.
+| Model | MPS fp32 | bf16 autocast | Maximum pair/query drift | Changed shipped results |
+| --- | ---: | ---: | ---: | ---: |
+| GTE ModernBERT | 6.723 s | 5.167 s | 0.0830 / 0.0562 | 13 duplicate, 2 search |
+| EmbeddingGemma | 6.561 s | 6.521 s | 0.0531 / 0.0385 | 5 duplicate, 0 search |
 
-| PyTorch | Model | MPS fp32 | bf16 autocast | Speed change | Maximum pair/query drift | Changed shipped results |
-| --- | --- | ---: | ---: | ---: | ---: | ---: |
-| 2.13.0 | gte-modernbert-base | 5.760 s | 6.658 s | 15.6% slower | 0.0825 / 0.0561 | 13 duplicate, 2 search |
-| 2.13.0 | embeddinggemma-300m | 7.119 s | 7.372 s | 3.5% slower | 0.0529 / 0.0405 | 5 duplicate, 0 search |
-| 2.14.0 | gte-modernbert-base | 6.723 s | 5.167 s | 23.2% faster | 0.0830 / 0.0562 | 13 duplicate, 2 search |
-| 2.14.0 | embeddinggemma-300m | 6.561 s | 6.521 s | 0.6% faster | 0.0531 / 0.0385 | 5 duplicate, 0 search |
-
-PyTorch 2.14 materially improves bf16-autocast speed for GTE ModernBERT on this
-workload, consistent with the release's [new MPS attention
-path](https://pytorch.org/blog/pytorch-2-14-release-blog/#mps-prefill-attention-acceleration),
-but does not reduce score drift or decision changes. EmbeddingGemma remains
-effectively speed-neutral. codedupes therefore keeps MPS inference in float32.
-The earlier whole-model bf16 measurement—about 13% faster with half the
-parameter memory and pair-score drift around `1e-2`—used PyTorch 2.13.0 and is
-distinct from autocast.
-
-For fp32, the same ledger comparison across PyTorch 2.13.0 and 2.14.0 found a
-maximum pair-score change of `5.37e-7`, a maximum query-score change of
-`3.58e-7`, and no duplicate or search decision changes. This supports the
-existing fp32 policy for this fixture. The checked five-project calibration
-artifact has since been regenerated with PyTorch 2.14.0, retaining CPU/MPS
-decision parity across both models and all five languages.
+Autocast changed calibrated decisions, while its speed benefit varied by model.
+An earlier whole-model bfloat16 run was about 13% faster but still shifted pair
+scores at threshold scale. MPS inference therefore stays float32. Any future
+dtype change requires the full [calibration workflow](hybrid-tuning.md).
 
 `CODEDUPES_CPU_BF16=1` enables experimental CPU bfloat16 only when the machine has both a native bf16 ISA (`bf16` on ARM, `amx_bf16`/`avx512_bf16` on x86) and an available mkldnn GEMM backend. The capability check runs at most once per process and persists nothing. `codedupes info --verbose` reports the hardware checks and effective policy.
 

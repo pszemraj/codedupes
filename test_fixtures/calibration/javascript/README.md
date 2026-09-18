@@ -4,8 +4,8 @@ This small Node.js application accepts invoice rows from a webhook, prepares
 payout instructions, and delivers receipt messages. It deliberately retains
 several independently written implementations of the same maintenance work:
 invoice aggregation, payout planning, webhook normalization, asynchronous
-receipt delivery, and cursor pagination. The annotations explain which regions
-are candidates for consolidation and which similar-looking operations are not.
+receipt delivery, and cursor pagination. Labels and pair judgments follow the
+shared [calibration corpus contract](../README.md).
 
 Run `npm test` and `npm start` from this directory. Both commands use only the
 Node.js standard library. The entry point invokes every implementation family.
