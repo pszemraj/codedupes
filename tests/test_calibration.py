@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+from copy import deepcopy
 from dataclasses import replace
 from itertools import combinations
 from pathlib import Path
@@ -110,10 +111,12 @@ def _empty_measurement(project, model: str = "gte-modernbert-base") -> dict:
             "inference_dtype": "float32",
             "runtime_versions": semantic.get_semantic_runtime_versions(),
             "captured_profile": {},
+            "timing_seconds": {"duplicate": 0.0, "search": 0.0},
             "execution": {
                 "duplicate": {"execution_device": "cpu", "cache_hit_rows": 0},
                 "search": {"execution_device": "cpu", "cache_hit_rows": 0},
             },
+            "live_default": [],
             "input_fingerprint": measurement_fingerprint(project, model),
         },
         "units": [
@@ -625,6 +628,21 @@ def test_derived_selections_bind_exact_raw_scores():
     assert measurement_digest(measurement)
 
 
+@pytest.mark.parametrize("field", ["execution", "live_default", "timing_seconds"])
+def test_derived_selections_bind_claimed_execution_provenance(field: str):
+    project = load_projects(project_ids=["ledger"])[0]
+    measurement = _empty_measurement(project)
+    original = measurement_digest(measurement)
+    if field == "execution":
+        measurement["metadata"][field]["duplicate"]["cache_hit_rows"] = 17
+    elif field == "live_default":
+        measurement["metadata"][field].append({"a": "forged", "b": "pair", "tier": "exact"})
+    else:
+        measurement["metadata"][field]["duplicate"] = 99.0
+
+    assert measurement_digest(measurement) != original
+
+
 def test_device_comparison_rejects_score_coverage_mismatch():
     cpu = {
         "pairs": [{"a": "a", "b": "b", "cosine": 0.5}],
@@ -1104,6 +1122,38 @@ def test_checked_calibration_report_schema_accepts_committed_result():
     validate_checked_report(result, load_projects(), models)
 
 
+def test_checked_selection_validation_scopes_context_to_development_projects(monkeypatch):
+    result = read_json(DEFAULT_MANIFEST.parent / "calibration-results.json")
+    projects = load_projects()
+    projects[-1] = replace(projects[-1], spec=projects[-1].spec | {"split": "evaluation"})
+    models = [item["model"] for item in result["threshold_selection"]["models"]]
+
+    def assert_development_scope(_payload, scoped_projects, _models):
+        assert scoped_projects == development_projects(projects)
+        raise RuntimeError("development scope verified")
+
+    monkeypatch.setattr(
+        calibration_evaluation, "validate_selection_context", assert_development_scope
+    )
+    with pytest.raises(RuntimeError, match="development scope verified"):
+        validate_checked_report(result, projects, models)
+
+
+def test_checked_selection_metrics_ignore_evaluation_report_records():
+    result = read_json(DEFAULT_MANIFEST.parent / "calibration-results.json")
+    records = {record["project"]: record for record in result["projects"]}
+    evaluation = deepcopy(result["projects"][0])
+    evaluation["project"] = "held-out-evaluation"
+    evaluation["split"] = "evaluation"
+    evaluation["reports"]["gte-modernbert-base/cpu"]["search"]["tp"] = 999
+    records[evaluation["project"]] = evaluation
+    models = tuple(item["model"] for item in result["threshold_selection"]["models"])
+
+    calibration_evaluation._validate_checked_selection_outcomes(
+        result["threshold_selection"], result["hybrid_selection"], records, models
+    )
+
+
 @pytest.mark.parametrize(
     ("tamper", "message"),
     [
@@ -1111,6 +1161,11 @@ def test_checked_calibration_report_schema_accepts_committed_result():
         ("objective", "mismatched objective contract"),
         ("gate", "selected calibration gates do not match shipped defaults"),
         ("metric", "inconsistent derived metrics"),
+        ("readiness", "selection evidence is inconsistent"),
+        ("grids", "candidate grids"),
+        ("scores", "score summary"),
+        ("difficulty", "difficulty schema"),
+        ("unjudged", "invalid unresolved pair"),
     ],
 )
 def test_checked_calibration_result_rejects_tampered_embedded_selections(tamper: str, message: str):
@@ -1124,8 +1179,22 @@ def test_checked_calibration_result_rejects_tampered_embedded_selections(tamper:
         hybrid["objective"]["minimum_precision"] = 0.0
     elif tamper == "gate":
         threshold["models"][0]["duplicate_by_language"][0]["selected_threshold"] = 0.0
-    else:
+    elif tamper == "metric":
         threshold["models"][0]["duplicate_by_language"][0]["selected_metrics"]["precision"] = 0.0
+    elif tamper == "readiness":
+        metrics = threshold["models"][0]["duplicate_by_language"][0]["selected_metrics"]
+        metrics["unjudged_predictions"] = 1
+        metrics["predicted"] += 1
+    elif tamper == "grids":
+        threshold["grids"] = "forged"
+    elif tamper == "scores":
+        threshold["models"][0]["duplicate_by_language"][0]["positive_scores"] = "forged"
+    elif tamper == "difficulty":
+        threshold["models"][0]["duplicate_by_language"][0]["selected_difficulty_recall"] = "forged"
+    else:
+        threshold["models"][0]["duplicate_by_language"][0]["unjudged_above_selected"] = [
+            ["a", "b", 2.0]
+        ]
     hybrid["threshold_selection_digest"] = selection_digest(threshold)
     models = [item["model"] for item in threshold["models"]]
     with pytest.raises(ValueError, match=message):
@@ -1162,15 +1231,38 @@ def test_checked_calibration_result_rejects_tampered_provenance(tamper: str):
         validate_checked_report(result, projects, models)
 
 
-@pytest.mark.parametrize("tamper", ["schema", "arithmetic"])
+@pytest.mark.parametrize(
+    "tamper", ["schema", "arithmetic", "denominator", "no_result", "decision_changes"]
+)
 def test_checked_calibration_result_rejects_forged_report_metrics(tamper: str):
     result = read_json(DEFAULT_MANIFEST.parent / "calibration-results.json")
     models = [item["model"] for item in result["threshold_selection"]["models"]]
     duplicate = result["projects"][0]["reports"]["gte-modernbert-base/cpu"]["duplicate"]
     if tamper == "schema":
         result["projects"][0]["reports"]["gte-modernbert-base/cpu"]["duplicate"] = {"forged": True}
-    else:
+    elif tamper == "arithmetic":
         duplicate["published"]["precision"] = 0.0
+    elif tamper == "denominator":
+        metrics = duplicate["published"]
+        metrics["fn"] = 999
+        metrics["recall"] = metrics["tp"] / (metrics["tp"] + metrics["fn"])
+        metrics["f1"] = (
+            2
+            * metrics["precision"]
+            * metrics["recall"]
+            / (metrics["precision"] + metrics["recall"])
+        )
+    elif tamper == "no_result":
+        result["projects"][0]["reports"]["gte-modernbert-base/mps"]["search"]["no_result"] = {
+            "clean": 0,
+            "total": 0,
+            "violations": [],
+        }
+    else:
+        search = result["projects"][0]["reports"]["gte-modernbert-base/mps"]["search"]
+        search.update({"tp": 0, "fn": 12, "precision": 0.0, "recall": 0.0, "f1": 0.0})
 
-    with pytest.raises(ValueError, match="checked|duplicate|metrics"):
+    with pytest.raises(
+        ValueError, match="checked|duplicate|metrics|corpus|search evidence|contradict"
+    ):
         validate_checked_report(result, load_projects(), models)

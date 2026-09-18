@@ -482,12 +482,9 @@ def _validate_precomputed_embeddings(units: Sequence[CodeUnit], embeddings: obje
             f"got {matrix.shape[0]} rows for {len(units)} units"
         )
     try:
-        canonical = canonicalize_embeddings(matrix, expected_rows=len(units))
+        return canonicalize_embeddings(matrix, expected_rows=len(units))
     except InvalidEmbeddingError as exc:
         raise ValueError(f"embeddings must contain finite, nonzero rows: {exc}") from exc
-    if type(matrix) is not np.ndarray:
-        return canonical.view(type(matrix))
-    return canonical
 
 
 def _configure_semantic_runtime_env(

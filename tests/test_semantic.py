@@ -572,6 +572,30 @@ def test_near_unit_direct_embeddings_are_still_normalized_before_scoring(tmp_pat
     assert find_semantic_duplicates(units, embeddings, threshold=0.9000003) == []
 
 
+def test_direct_embedding_apis_return_to_base_ndarray_semantics(
+    tmp_path: Path, monkeypatch
+) -> None:
+    units = extract_arithmetic_units(tmp_path)
+    embeddings = np.array([[1.0, 0.0], [1.0, 0.0]], dtype=np.float32).view(np.matrix)
+
+    assert len(find_semantic_duplicates(units, embeddings, threshold=0.9)) == 1
+
+    class QueryModel:
+        def encode(self, texts, **kwargs):
+            return np.array([[1.0, 0.0]], dtype=np.float32)
+
+    monkeypatch.setattr(semantic, "get_model", lambda *args, **kwargs: QueryModel())
+    results = find_similar_to_query(
+        "find addition",
+        units,
+        embeddings,
+        threshold=-1.0,
+        device="cpu",
+        use_cache=False,
+    )
+    assert {unit.uid for unit, _score in results} == {unit.uid for unit in units}
+
+
 def test_direct_embeddings_are_normalized_before_query_scoring(tmp_path: Path, monkeypatch) -> None:
     units = extract_arithmetic_units(tmp_path)
     embeddings = np.array([[5.0, 0.0], [1.0, 0.5]], dtype=np.float32)
@@ -3293,19 +3317,9 @@ def test_vectorized_pair_scan_preserves_full_width_float32_scores_and_order() ->
     expected.sort(key=lambda entry: entry[1], reverse=True)
     assert len(expected) == 190
 
-    matmul_shapes: list[tuple[tuple[int, ...], tuple[int, ...]]] = []
-
-    class MatmulTracingArray(np.ndarray):
-        def __matmul__(self, other):
-            matmul_shapes.append((self.shape, other.shape))
-            return np.ndarray.__matmul__(self, other)
-
-    reported = find_semantic_duplicates(
-        units, embeddings.view(MatmulTracingArray), threshold=threshold
-    )
+    reported = find_semantic_duplicates(units, embeddings, threshold=threshold)
 
     assert _pair_view(reported) == expected
-    assert matmul_shapes == [((500, 768), (768, 520)), ((20, 768), (768, 520))]
 
 
 def test_vectorized_pair_scan_bounds_candidate_extraction_and_masks_lower_triangle(
