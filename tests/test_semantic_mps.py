@@ -85,6 +85,35 @@ def test_configure_mps_memory_fraction_applies_and_warns_above_recommended(caplo
     assert "exceeds the device recommended working-set size" not in caplog.text
 
 
+@pytest.mark.parametrize("empty_call", ["compute", "search"])
+@pytest.mark.parametrize("fraction", [None, 0.9], ids=["unset", "ignored-cpu-fraction"])
+def test_empty_semantic_calls_restore_a_managed_mps_memory_cap(
+    empty_call: str, fraction: float | None
+) -> None:
+    """An empty run still resets process-global MPS allocator policy."""
+    devices.configure_mps_memory_fraction("mps", 0.5)
+    assert devices._mps_memory_fraction_managed is True
+
+    if empty_call == "compute":
+        embeddings = semantic.compute_embeddings(
+            [], device="cpu", mps_memory_fraction=fraction, use_cache=False
+        )
+        assert embeddings.shape == (0, 0)
+    else:
+        results = semantic.find_similar_to_query(
+            "anything",
+            [],
+            np.empty((0, 0), dtype=np.float32),
+            threshold=0.0,
+            device="cpu",
+            mps_memory_fraction=fraction,
+            use_cache=False,
+        )
+        assert results == []
+
+    assert devices._mps_memory_fraction_managed is False
+
+
 def test_clear_device_cache_synchronizes_then_collects_then_empties(monkeypatch) -> None:
     events: list[str] = []
     real_synchronize = torch.mps.synchronize

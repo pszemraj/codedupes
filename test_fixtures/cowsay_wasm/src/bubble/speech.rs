@@ -1,6 +1,5 @@
 use super::pad_line;
 
-// fixture:exact-border:start
 pub(crate) fn make_borders(width: usize) -> (String, String) {
     let horizontal_span = width + 2;
     let capacity = horizontal_span + 1;
@@ -15,9 +14,7 @@ pub(crate) fn make_borders(width: usize) -> (String, String) {
 
     (top, bottom)
 }
-// fixture:exact-border:end
 
-// fixture:edit-bubble:start
 pub(crate) fn render_bubble(lines: &[String], width: usize) -> String {
     let (top_border, bottom_border) = make_borders(width);
     let mut output = String::new();
@@ -44,4 +41,3 @@ pub(crate) fn render_bubble(lines: &[String], width: usize) -> String {
     output.push_str(&bottom_border);
     output
 }
-// fixture:edit-bubble:end

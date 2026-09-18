@@ -118,50 +118,10 @@ class SemanticModelProfile:
         return self.language_high_confidence_thresholds.get(language)
 
 
-# Every builtin profile pins the immutable calibration commit recorded in
-# test_fixtures/polyglot_calibration/reports/. Recognized copies also use these
-# thresholds as family defaults, without claiming checkpoint equivalence.
-# Each per-language duplicate gate
-# is the loosest sweep threshold whose F1 stays near that language's best while
-# final combined-output precision remains workable (recall-first selection); the profile
-# fallback is the strictest calibrated gate and applies only to languages
-# without their own calibration entry.
-#
-# Concretely: a shipped gate is allowed to sit below the sweep's F1-selected
-# threshold under two conditions, both bounded by the tested invariant that the
-# gate's recall is >= the selection's and its F1 stays within 80% of it
-# (tests/test_calibration_reports.py). First, where the sweep shows real recall
-# below the F1 pick, the gate follows the recall however many grid steps down
-# that is (gte c 0.82 vs 0.90, embeddinggemma javascript 0.72 vs 0.82 and rust
-# 0.78 vs 0.82 — each buys measured on-corpus recall). Second, where recall is
-# flat, the gate still sits one step loose as an off-corpus generalization
-# hedge: the corpora are small, so "no recall gain here" is weak evidence that
-# the next repository's near-duplicates sit above the selected threshold, and a
-# missed duplicate costs more than an extra review row. Flat-recall loosening
-# beyond one step is not taken — the embeddinggemma typescript gate's earlier
-# 0.76 (two steps) doubled on-corpus false positives for no measured recall,
-# so it was tightened back to 0.78.
-#
-# The hybrid tier split (which admitted semantic-only pairs the CLI shows by
-# default) is swept separately at the shipped gates by
-# scripts/sweep_hybrid_gates.py and recorded in
-# test_fixtures/polyglot_calibration/reports/corroboration_report.json: the
-# corroboration constants are one pooled selection per model that must keep
-# >= 85% of published recall and not lower precision in every language, and
-# each language's promotion gate is selected the same way at those constants.
-# Identifier overlap comes from the same tree-sitter identifier collection in
-# every language (Python's includes attribute and keyword-argument names), so
-# the identifier floor is a cross-language measurement rather than an artifact
-# of one extractor; re-run the sweep after any extraction change and copy every
-# regenerated report together. In the recorded sweep, at each profile's shipped
-# statement-ratio floor no positive identifier floor is feasible in all five
-# languages (the semantic-only positives are alpha-renamed: 0.05 already cuts
-# Rust and Python below recall retention under both models, TypeScript below
-# recall retention under gte-modernbert and below published precision under
-# embeddinggemma, and C below published precision under embeddinggemma); the
-# statement-ratio floor carries the split for gte-modernbert, while for
-# embeddinggemma no size split improves precision without cutting C or Rust
-# recall below the floor, so only absurd size mismatches are withheld.
+# Built-in checkpoints use the issue #20 development-corpus calibration. These
+# settings optimize reviewed application fixtures; they do not claim held-out or
+# ecosystem-wide accuracy. Recognized copies inherit the family defaults without
+# claiming checkpoint equivalence.
 _BUILTIN_MODEL_PROFILES: tuple[SemanticModelProfile, ...] = (
     SemanticModelProfile(
         key="gte-modernbert-base",
@@ -172,23 +132,23 @@ _BUILTIN_MODEL_PROFILES: tuple[SemanticModelProfile, ...] = (
         ),
         family="gte-modernbert",
         default_revision="e7f32e3c00f91d699e8c43b53106206bcc72bb22",
-        default_semantic_threshold=0.82,
-        default_search_threshold=0.50,
+        default_semantic_threshold=0.87,
+        default_search_threshold=0.68,
         language_semantic_thresholds={
-            "python": 0.80,
-            "c": 0.82,
-            "rust": 0.74,
+            "python": 0.87,
+            "c": 0.84,
+            "rust": 0.84,
             "javascript": 0.70,
-            "typescript": 0.68,
+            "typescript": 0.76,
         },
-        hybrid_weak_identifier_jaccard_min=0.0,
-        hybrid_statement_ratio_min=0.80,
+        hybrid_weak_identifier_jaccard_min=0.40,
+        hybrid_statement_ratio_min=0.0,
         language_high_confidence_thresholds={
-            "python": None,
-            "c": None,
-            "rust": None,
-            "javascript": None,
-            "typescript": 0.88,
+            "python": 0.88,
+            "c": 0.84,
+            "rust": 0.84,
+            "javascript": 0.70,
+            "typescript": None,
         },
     ),
     SemanticModelProfile(
@@ -200,23 +160,23 @@ _BUILTIN_MODEL_PROFILES: tuple[SemanticModelProfile, ...] = (
         ),
         family="embeddinggemma",
         default_revision="bfa3c846ac738e62aa61806ef9112d34acb1dc5a",
-        default_semantic_threshold=0.78,
-        default_search_threshold=0.40,
+        default_semantic_threshold=0.88,
+        default_search_threshold=0.53,
         language_semantic_thresholds={
             "python": 0.74,
-            "c": 0.78,
-            "rust": 0.78,
-            "javascript": 0.72,
-            "typescript": 0.78,
+            "c": 0.82,
+            "rust": 0.88,
+            "javascript": 0.80,
+            "typescript": 0.82,
         },
-        hybrid_weak_identifier_jaccard_min=0.0,
-        hybrid_statement_ratio_min=0.20,
+        hybrid_weak_identifier_jaccard_min=0.40,
+        hybrid_statement_ratio_min=0.0,
         language_high_confidence_thresholds={
-            "python": None,
-            "c": None,
-            "rust": None,
-            "javascript": None,
-            "typescript": None,
+            "python": 0.78,
+            "c": 0.89,
+            "rust": 0.88,
+            "javascript": 0.80,
+            "typescript": 0.82,
         },
     ),
 )

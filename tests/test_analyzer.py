@@ -92,7 +92,7 @@ def _make_semantic_runner(
 
         duplicates = duplicate_factory(units) if duplicate_factory is not None else []
         return (
-            np.zeros((len(units), 2), dtype=np.float32),
+            np.tile(np.array([[1.0, 0.0]], dtype=np.float32), (len(units), 1)),
             duplicates,
             _embedding_identity_from_kwargs(kwargs),
         )
@@ -898,12 +898,12 @@ def test_analyzer_resolves_per_language_semantic_gate(tmp_path: Path, monkeypatc
     [
         ("local", "auto", None, 0.74),
         ("builtin", "auto", None, 0.74),
-        ("default", "auto", None, 0.80),
+        ("default", "auto", None, 0.87),
         ("hub", "auto", None, 0.74),
         # Explicit profiles override the model family; test each choice once.
         ("builtin", "generic", None, 0.82),
         ("default", "embeddinggemma-300m", None, 0.74),
-        ("builtin", "gte-modernbert-base", None, 0.80),
+        ("builtin", "gte-modernbert-base", None, 0.87),
         # Numeric gates bypass profile resolution for every profile choice.
         ("local", "auto", 0.91, 0.91),
         ("hub", "generic", 0.91, 0.91),
@@ -1082,7 +1082,7 @@ def test_per_language_gates_survive_the_whole_semantic_pipeline(
         ("auto", 0.70, True),
         ("generic", 0.75, False),
         ("gte-modernbert-base", 0.75, True),
-        ("embeddinggemma-300m", 0.73, True),
+        ("embeddinggemma-300m", 0.77, True),
     ],
 )
 def test_cross_language_pairs_require_opt_in_and_use_looser_gate(
@@ -1127,7 +1127,7 @@ def test_cross_language_pairs_require_opt_in_and_use_looser_gate(
     }
     assert (frozenset({"alpha_one", "betaOne"}) in pairs) is accepted
     numeric_result = CodeAnalyzer(
-        AnalyzerConfig(cross_language=True, semantic_threshold=0.76, **base_config)
+        AnalyzerConfig(cross_language=True, semantic_threshold=0.78, **base_config)
     ).analyze(project)
     assert frozenset({"alpha_one", "betaOne"}) not in {
         frozenset({duplicate.unit_a.name, duplicate.unit_b.name})
@@ -1538,7 +1538,7 @@ def test_search_threshold_defaults_to_none_and_honors_explicit_config(
         def encode(self, texts, **kwargs):
             encoded.extend(texts)
             return np.array(
-                [[0.6, 0.8] if text == "entry" else [1.0, 0.0] for text in texts],
+                [[0.7, 0.71414284] if text == "entry" else [1.0, 0.0] for text in texts],
                 dtype=np.float32,
             )
 
@@ -1578,11 +1578,11 @@ def test_search_threshold_defaults_to_none_and_honors_explicit_config(
     analyzer.analyze(project)
     assert len(analyzer.search("entry")) == 1
 
-    explicit = CodeAnalyzer(AnalyzerConfig(semantic_threshold=0.7, **base_config))
+    explicit = CodeAnalyzer(AnalyzerConfig(semantic_threshold=0.71, **base_config))
     explicit.index(project)
     assert explicit.search("entry") == []
     assert len(explicit.search("entry", threshold=0.0)) == 1
-    assert explicit.config.semantic_threshold == 0.7
+    assert explicit.config.semantic_threshold == 0.71
 
 
 @pytest.mark.parametrize(
@@ -1653,6 +1653,26 @@ def test_invalid_mode_rejected() -> None:
 def test_search_mode_requires_semantic() -> None:
     with pytest.raises(ValueError, match="requires run_semantic=True"):
         AnalyzerConfig(mode="search", run_semantic=False)
+
+
+def test_search_mode_accepts_negative_floor_but_check_mode_keeps_duplicate_bounds() -> None:
+    search_config = AnalyzerConfig(
+        mode="search",
+        run_traditional=False,
+        run_unused=False,
+        semantic_threshold=-0.5,
+    )
+
+    assert search_config.semantic_threshold == -0.5
+    with pytest.raises(ValueError, match=r"semantic_threshold must be in \[0.0, 1.0\]"):
+        AnalyzerConfig(semantic_threshold=-0.5)
+    with pytest.raises(ValueError, match="semantic_threshold must be finite"):
+        AnalyzerConfig(
+            mode="search",
+            run_traditional=False,
+            run_unused=False,
+            semantic_threshold=float("nan"),
+        )
 
 
 def test_index_embeds_corpus_without_mining_duplicates(tmp_path: Path, monkeypatch) -> None:
@@ -1744,7 +1764,7 @@ def test_search_requires_reindex_when_local_model_contents_change(
         analyzer_module,
         "compute_embeddings",
         lambda units, **kwargs: (
-            np.zeros((len(units), 2), dtype=np.float32),
+            np.tile(np.array([[1.0, 0.0]], dtype=np.float32), (len(units), 1)),
             _embedding_identity_from_kwargs(kwargs),
         ),
     )
@@ -1773,7 +1793,7 @@ def test_search_requires_reindex_when_embedding_runtime_variant_changes(
         analyzer_module,
         "compute_embeddings",
         lambda units, **kwargs: (
-            np.zeros((len(units), 2), dtype=np.float32),
+            np.tile(np.array([[1.0, 0.0]], dtype=np.float32), (len(units), 1)),
             _embedding_identity_from_kwargs(kwargs),
         ),
     )
@@ -2182,12 +2202,12 @@ def test_hybrid_synthesis_cross_language_promotion_uses_the_stricter_gate(
 @pytest.mark.parametrize(
     ("model_name", "expected_tiers"),
     [
-        # gte: statement ratio 0.80 withholds the 3-vs-1 pair; identifier overlap is not required.
+        # Below GTE's 0.88 Python promotion gate, identifier corroboration is required.
         (
             "gte-modernbert-base",
-            {"same_size": "semantic_high_confidence", "lopsided": "semantic_review"},
+            {"same_size": "semantic_review", "lopsided": "semantic_review"},
         ),
-        # embeddinggemma: only >5x size mismatches are withheld, so both are reported.
+        # Gemma's Python promotion gate reports both high-similarity pairs.
         (
             "embeddinggemma-300m",
             {"same_size": "semantic_high_confidence", "lopsided": "semantic_high_confidence"},
@@ -2219,8 +2239,8 @@ def test_analyzer_applies_the_profile_hybrid_split(
     def paired(units: list[CodeUnit]) -> list[DuplicatePair]:
         by_name = {unit.name: unit for unit in units}
         return [
-            DuplicatePair(by_name["collect_total"], by_name["measure_sum"], 0.91, "semantic"),
-            DuplicatePair(by_name["collect_total"], by_name["tiny"], 0.91, "semantic"),
+            DuplicatePair(by_name["collect_total"], by_name["measure_sum"], 0.86, "semantic"),
+            DuplicatePair(by_name["collect_total"], by_name["tiny"], 0.86, "semantic"),
         ]
 
     monkeypatch.setattr(
@@ -2266,7 +2286,7 @@ def test_resolve_hybrid_split_gates_off_with_explicit_semantic_threshold(tmp_pat
         )
     )
     weak_min, ratio_min, gates = default_analyzer._resolve_hybrid_split(units)
-    assert gates == {"typescript": 0.88}
+    assert gates == {"python": 0.88}
     assert weak_min == profile.hybrid_weak_identifier_jaccard_min
     assert ratio_min == profile.hybrid_statement_ratio_min
 
@@ -2301,33 +2321,30 @@ def test_resolve_hybrid_split_gates_off_with_explicit_semantic_threshold(tmp_pat
     assert generic_ratio_min == HYBRID_STATEMENT_RATIO_MIN
 
 
-def test_analyzer_typescript_promotion_gate_requires_no_corroboration(
+def test_analyzer_gemma_python_promotion_gate_requires_no_corroboration(
     tmp_path: Path, monkeypatch
 ) -> None:
-    """The typescript promotion gate alone must promote a pair statement-ratio corroboration
-    would withhold, and an explicit ``semantic_threshold`` must turn that gate back off."""
+    """Gemma's Python promotion gate works without identifier corroboration."""
     source = dedent(
         """
-        export function collectTotal(value: number): number {
-            const total = value + 1;
-            return total;
-        }
+        def alpha(value):
+            incremented = value + 1
+            return incremented
 
-        export function measureSum(value: number): number {
-            const total = value + 1;
-            const doubled = total * 2;
-            const tripled = doubled + total;
-            const scaled = tripled - 1;
-            return scaled;
-        }
+        def omega(entry):
+            doubled = entry * 2
+            tripled = doubled + entry
+            scaled = tripled - 1
+            adjusted = scaled + 3
+            return adjusted
         """
     ).strip()
-    project = create_project(tmp_path, source, module="mod.ts")
+    project = create_project(tmp_path, source)
 
     def paired(units: list[CodeUnit]) -> list[DuplicatePair]:
         by_name = {unit.name: unit for unit in units}
         return [
-            DuplicatePair(by_name["collectTotal"], by_name["measureSum"], 0.90, "semantic"),
+            DuplicatePair(by_name["alpha"], by_name["omega"], 0.90, "semantic"),
         ]
 
     monkeypatch.setattr(
@@ -2341,18 +2358,13 @@ def test_analyzer_typescript_promotion_gate_requires_no_corroboration(
             run_unused=False,
             min_semantic_statements=0,
             filter_tiny_traditional=False,
-            model_name="gte-modernbert-base",
+            model_name="embeddinggemma-300m",
         )
     )
     default_result = default_analyzer.analyze(project)
 
-    units_by_name = {unit.name: unit for unit in default_result.units}
-    # The lopsided statement counts (ratio 2/5 = 0.4) sit below the profile's
-    # 0.80 statement-ratio corroboration floor, so only the gate can promote this pair.
-    assert units_by_name["collectTotal"].statement_count == 2
-    assert units_by_name["measureSum"].statement_count == 5
-
     [default_pair] = default_result.hybrid_duplicates
+    assert default_pair.weak_identifier_jaccard < 0.30
     assert default_pair.tier == "semantic_high_confidence"
 
     gated_off_analyzer = CodeAnalyzer(
@@ -2362,8 +2374,8 @@ def test_analyzer_typescript_promotion_gate_requires_no_corroboration(
             run_unused=False,
             min_semantic_statements=0,
             filter_tiny_traditional=False,
-            model_name="gte-modernbert-base",
-            semantic_threshold=0.80,
+            model_name="embeddinggemma-300m",
+            semantic_threshold=0.74,
         )
     )
     gated_off_result = gated_off_analyzer.analyze(project)
@@ -3133,7 +3145,7 @@ def test_cowsay_fixture_reports_planted_rust_exact_clone() -> None:
     ).analyze(fixture)
 
     assert result.extraction_diagnostics == []
-    assert len(result.units) == 19
+    assert len(result.units) == 28
     assert {unit.language for unit in result.units} == {"rust"}
     duplicate_names = {
         frozenset((duplicate.unit_a.qualified_name, duplicate.unit_b.qualified_name))

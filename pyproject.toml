@@ -80,4 +80,5 @@ markers = [
     "gpu: tests that require CUDA and GPU execution",
     "mps: tests that require Apple Silicon MPS execution",
     "grammar: tests that require the pinned Tree-sitter grammar wheels",
+    "toolchain: integration tests that require external language build toolchains",
 ]

@@ -1,0 +1,1570 @@
+{
+  "schema_version": 2,
+  "provenance": {
+    "origin": "issue-20 authored C development fixture",
+    "split": "development",
+    "split_group": "c-metering-application"
+  },
+  "units": [
+    {
+      "id": "c_metering.aggregate.linear",
+      "selector": {
+        "path": "src/aggregate.c",
+        "qualified_name": "aggregate.aggregate_usage_linear",
+        "kind": "function"
+      }
+    },
+    {
+      "id": "c_metering.aggregate.sorted",
+      "selector": {
+        "path": "src/aggregate.c",
+        "qualified_name": "aggregate.aggregate_usage_sorted",
+        "kind": "function"
+      }
+    },
+    {
+      "id": "c_metering.aggregate.index",
+      "selector": {
+        "path": "src/aggregate.c",
+        "qualified_name": "aggregate.aggregate_usage_by_index",
+        "kind": "function"
+      }
+    },
+    {
+      "id": "c_metering.record.scan",
+      "selector": {
+        "path": "src/record.c",
+        "qualified_name": "record.record_parse_scan",
+        "kind": "function"
+      }
+    },
+    {
+      "id": "c_metering.record.fields",
+      "selector": {
+        "path": "src/record.c",
+        "qualified_name": "record.record_parse_fields",
+        "kind": "function"
+      }
+    },
+    {
+      "id": "c_metering.payouts.baseline",
+      "selector": {
+        "path": "src/payouts.c",
+        "qualified_name": "payouts.plan_payouts",
+        "kind": "function"
+      }
+    },
+    {
+      "id": "c_metering.payouts.floor",
+      "selector": {
+        "path": "src/payouts.c",
+        "qualified_name": "payouts.plan_payouts_with_floor",
+        "kind": "function"
+      }
+    },
+    {
+      "id": "c_metering.payouts.policy",
+      "selector": {
+        "path": "src/payouts.c",
+        "qualified_name": "payouts.plan_payouts_with_policy",
+        "kind": "function"
+      }
+    },
+    {
+      "id": "c_metering.rows.inline",
+      "selector": {
+        "path": "src/rows.c",
+        "qualified_name": "rows.import_rows_inline",
+        "kind": "function"
+      }
+    },
+    {
+      "id": "c_metering.rows.parser",
+      "selector": {
+        "path": "src/rows.c",
+        "qualified_name": "rows.import_rows_with_parser",
+        "kind": "function"
+      }
+    },
+    {
+      "id": "c_metering.rows.two_phase",
+      "selector": {
+        "path": "src/rows.c",
+        "qualified_name": "rows.import_rows_two_phase",
+        "kind": "function"
+      }
+    },
+    {
+      "id": "c_metering.adapters.csv",
+      "selector": {
+        "path": "src/adapters.c",
+        "qualified_name": "adapters.import_csv_stream",
+        "kind": "function"
+      }
+    },
+    {
+      "id": "c_metering.adapters.api",
+      "selector": {
+        "path": "src/adapters.c",
+        "qualified_name": "adapters.import_api_batch",
+        "kind": "function"
+      }
+    },
+    {
+      "id": "c_metering.adapters.idempotent",
+      "selector": {
+        "path": "src/adapters.c",
+        "qualified_name": "adapters.import_idempotent_batch",
+        "kind": "function"
+      }
+    },
+    {
+      "id": "c_metering/src/adapters.c::adapters.note_rejection::function::13",
+      "selector": {
+        "path": "src/adapters.c",
+        "qualified_name": "adapters.note_rejection",
+        "kind": "function"
+      }
+    },
+    {
+      "id": "c_metering/src/adapters.c::adapters.normalize_csv_line::function::25",
+      "selector": {
+        "path": "src/adapters.c",
+        "qualified_name": "adapters.normalize_csv_line",
+        "kind": "function"
+      }
+    },
+    {
+      "id": "c_metering/src/adapters.c::adapters.normalize_api_item::function::61",
+      "selector": {
+        "path": "src/adapters.c",
+        "qualified_name": "adapters.normalize_api_item",
+        "kind": "function"
+      }
+    },
+    {
+      "id": "c_metering/src/rows.c::rows.reject_row::function::13",
+      "selector": {
+        "path": "src/rows.c",
+        "qualified_name": "rows.reject_row",
+        "kind": "function"
+      }
+    },
+    {
+      "id": "c_metering/src/rows.c::rows.parse_row::function::20",
+      "selector": {
+        "path": "src/rows.c",
+        "qualified_name": "rows.parse_row",
+        "kind": "function"
+      }
+    },
+    {
+      "id": "c_metering/src/payouts.c::payouts.validate_totals::function::5",
+      "selector": {
+        "path": "src/payouts.c",
+        "qualified_name": "payouts.validate_totals",
+        "kind": "function"
+      }
+    },
+    {
+      "id": "c_metering/src/main.c::main.main::function::5",
+      "selector": {
+        "path": "src/main.c",
+        "qualified_name": "main.main",
+        "kind": "function"
+      }
+    }
+  ],
+  "families": [
+    {
+      "id": "translated-aggregation",
+      "members": [
+        "c_metering.aggregate.linear",
+        "c_metering.aggregate.sorted",
+        "c_metering.aggregate.index"
+      ]
+    },
+    {
+      "id": "bounded-record-parser",
+      "members": [
+        "c_metering.record.scan",
+        "c_metering.record.fields"
+      ]
+    },
+    {
+      "id": "payout-deferral-extension",
+      "members": [
+        "c_metering.payouts.baseline",
+        "c_metering.payouts.floor",
+        "c_metering.payouts.policy"
+      ]
+    },
+    {
+      "id": "helper-extraction",
+      "members": [
+        "c_metering.rows.inline",
+        "c_metering.rows.parser",
+        "c_metering.rows.two_phase"
+      ]
+    },
+    {
+      "id": "csv-api-ingestion",
+      "members": [
+        "c_metering.adapters.csv",
+        "c_metering.adapters.api",
+        "c_metering.adapters.idempotent"
+      ]
+    }
+  ],
+  "review_sample": {
+    "seed": 20,
+    "pairs": [
+      [
+        "c_metering.aggregate.linear",
+        "c_metering.aggregate.sorted"
+      ],
+      [
+        "c_metering.aggregate.linear",
+        "c_metering.aggregate.index"
+      ],
+      [
+        "c_metering.aggregate.sorted",
+        "c_metering.aggregate.index"
+      ],
+      [
+        "c_metering.payouts.baseline",
+        "c_metering.payouts.floor"
+      ],
+      [
+        "c_metering.payouts.baseline",
+        "c_metering.payouts.policy"
+      ],
+      [
+        "c_metering.payouts.floor",
+        "c_metering.payouts.policy"
+      ],
+      [
+        "c_metering.rows.inline",
+        "c_metering.rows.parser"
+      ],
+      [
+        "c_metering.rows.inline",
+        "c_metering.rows.two_phase"
+      ],
+      [
+        "c_metering.rows.parser",
+        "c_metering.rows.two_phase"
+      ],
+      [
+        "c_metering.adapters.csv",
+        "c_metering.adapters.api"
+      ],
+      [
+        "c_metering.adapters.csv",
+        "c_metering.adapters.idempotent"
+      ],
+      [
+        "c_metering.adapters.api",
+        "c_metering.adapters.idempotent"
+      ],
+      [
+        "c_metering.aggregate.linear",
+        "c_metering.payouts.baseline"
+      ],
+      [
+        "c_metering.aggregate.sorted",
+        "c_metering.rows.inline"
+      ],
+      [
+        "c_metering.aggregate.index",
+        "c_metering.adapters.csv"
+      ],
+      [
+        "c_metering.payouts.baseline",
+        "c_metering.rows.parser"
+      ],
+      [
+        "c_metering.payouts.floor",
+        "c_metering.adapters.api"
+      ],
+      [
+        "c_metering.payouts.policy",
+        "c_metering.adapters.idempotent"
+      ],
+      [
+        "c_metering.rows.inline",
+        "c_metering.adapters.csv"
+      ],
+      [
+        "c_metering.rows.parser",
+        "c_metering.adapters.api"
+      ]
+    ]
+  },
+  "pairs": [
+    {
+      "id": "record-scan--fields",
+      "a": "c_metering.record.scan",
+      "b": "c_metering.record.fields",
+      "judgment": "positive",
+      "difficulty": "medium",
+      "tags": [
+        "translated",
+        "bounded-parser",
+        "state-scan-versus-field-slicing"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": true,
+      "equivalence_domain": "Readable byte spans containing a complete 1–4 digit sensor ID, comma, optionally negative 1–5 digit delta, and final LF.",
+      "contract": "Accept sensor IDs 1..9999 and deltas -32768..32767; reject malformed, non-terminated, and out-of-range spans without modifying the caller output.",
+      "rationale": "The state-machine scan and bounded field-slicing implementation maintain one wire decoder and neither needs to remain independently maintained.",
+      "evidence": [
+        "tests/test_metering.c::test_bounded_record_parsers"
+      ]
+    },
+    {
+      "id": "aggregate-linear--sorted",
+      "a": "c_metering.aggregate.linear",
+      "b": "c_metering.aggregate.sorted",
+      "judgment": "positive",
+      "difficulty": "easy",
+      "tags": [
+        "translated",
+        "dictionary-versus-sort"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": true,
+      "equivalence_domain": "Reading arrays with count <= METERING_MAX_DEVICES, including invalid discarded readings and capacity-limited output buffers.",
+      "contract": "Validate every reading before discard filtering; preserve input; group live readings by case-sensitive device key and return lexicographically sorted totals and counts.",
+      "rationale": "The accumulator and ordered-index implementations supply one aggregation contract and neither has a caller-specific responsibility.",
+      "evidence": [
+        "tests/test_metering.c::test_aggregation_differential",
+        "tests/test_metering.c::test_invalid_discarded_reading_is_rejected"
+      ]
+    },
+    {
+      "id": "aggregate-linear--index",
+      "a": "c_metering.aggregate.linear",
+      "b": "c_metering.aggregate.index",
+      "judgment": "positive",
+      "difficulty": "medium",
+      "tags": [
+        "translated",
+        "pointer-output"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": true,
+      "equivalence_domain": "Reading arrays with count <= METERING_MAX_DEVICES, including invalid discarded readings and capacity-limited output buffers.",
+      "contract": "Validate every reading before discard filtering; preserve input; group live readings by case-sensitive device key and return lexicographically sorted totals and counts.",
+      "rationale": "The copied-value index implementation is a maintainable alternate expression of the same meter aggregation algorithm.",
+      "evidence": [
+        "tests/test_metering.c::test_aggregation_differential",
+        "tests/test_metering.c::test_invalid_discarded_reading_is_rejected"
+      ]
+    },
+    {
+      "id": "aggregate-sorted--index",
+      "a": "c_metering.aggregate.sorted",
+      "b": "c_metering.aggregate.index",
+      "judgment": "positive",
+      "difficulty": "medium",
+      "tags": [
+        "translated",
+        "sort-versus-scan"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": true,
+      "equivalence_domain": "Reading arrays with count <= METERING_MAX_DEVICES, including invalid discarded readings and capacity-limited output buffers.",
+      "contract": "Validate every reading before discard filtering; preserve input; group live readings by case-sensitive device key and return lexicographically sorted totals and counts.",
+      "rationale": "Both routines should be consolidated around a single aggregation implementation despite their different local control flow.",
+      "evidence": [
+        "tests/test_metering.c::test_aggregation_differential",
+        "tests/test_metering.c::test_invalid_discarded_reading_is_rejected"
+      ]
+    },
+    {
+      "id": "payout-baseline--floor",
+      "a": "c_metering.payouts.baseline",
+      "b": "c_metering.payouts.floor",
+      "judgment": "positive",
+      "difficulty": "easy",
+      "tags": [
+        "extended",
+        "feature-flag-default"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "minimum_payout=0 for valid total arrays.",
+      "contract": "Build one payout line per total with ready, balanced, or refund_due states; the extended form may additionally defer small positive balances.",
+      "rationale": "The floor-aware planner extends the baseline transfer construction and can share the common plan assembly.",
+      "evidence": [
+        "tests/test_metering.c::test_payout_floor_and_policy"
+      ],
+      "difference_witness": "A total of 7 with minimum_payout=10 produces a deferred line, zero transfer count, and one audit event; the baseline transfers 7."
+    },
+    {
+      "id": "payout-baseline--policy",
+      "a": "c_metering.payouts.baseline",
+      "b": "c_metering.payouts.policy",
+      "judgment": "positive",
+      "difficulty": "medium",
+      "tags": [
+        "extended",
+        "policy-object"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "PayoutPolicy{minimum_payout=0, defer_small_positive=1} for valid total arrays.",
+      "contract": "Build one payout line per total with ready, balanced, or refund_due states; policy may enable deferred small positive balances.",
+      "rationale": "The policy object only exposes the established deferral decision; its planner retains the same baseline settlement responsibilities.",
+      "evidence": [
+        "tests/test_metering.c::test_payout_floor_and_policy"
+      ],
+      "difference_witness": "PayoutPolicy{minimum_payout=10, defer_small_positive=1} defers a 7-unit balance while the baseline emits a transfer."
+    },
+    {
+      "id": "payout-floor--policy",
+      "a": "c_metering.payouts.floor",
+      "b": "c_metering.payouts.policy",
+      "judgment": "positive",
+      "difficulty": "medium",
+      "tags": [
+        "extended",
+        "configuration-representation"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "PayoutPolicy{minimum_payout=n, defer_small_positive=1} compared with minimum_payout=n.",
+      "contract": "A positive amount below the active floor is deferred, suppresses transfer creation, and produces an audit event.",
+      "rationale": "The functions duplicate the floor-aware planning algorithm; the policy representation should parameterize one implementation.",
+      "evidence": [
+        "tests/test_metering.c::test_payout_floor_and_policy"
+      ],
+      "difference_witness": "With a floor of 10 and defer_small_positive=0, the policy form transfers 7 while the explicit-floor form defers it."
+    },
+    {
+      "id": "rows-inline--parser",
+      "a": "c_metering.rows.inline",
+      "b": "c_metering.rows.parser",
+      "judgment": "positive",
+      "difficulty": "easy",
+      "tags": [
+        "helper-extraction",
+        "validation"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": true,
+      "equivalence_domain": "All bounded arrays of DEVICE:USAGE row strings.",
+      "contract": "Accept uppercase, digit, underscore, and hyphen device keys with nonnegative decimal usage; keep accepted order and record the first rejected one-based row.",
+      "rationale": "The parser helper extracts strict row normalization from otherwise equivalent import orchestration.",
+      "evidence": [
+        "tests/test_metering.c::test_helper_extraction_differential"
+      ]
+    },
+    {
+      "id": "rows-inline--two-phase",
+      "a": "c_metering.rows.inline",
+      "b": "c_metering.rows.two_phase",
+      "judgment": "positive",
+      "difficulty": "medium",
+      "tags": [
+        "restructured",
+        "two-phase"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": true,
+      "equivalence_domain": "All bounded arrays of DEVICE:USAGE row strings.",
+      "contract": "Accept uppercase, digit, underscore, and hyphen device keys with nonnegative decimal usage; keep accepted order and record the first rejected one-based row.",
+      "rationale": "The two-phase staging form preserves the same import result while separating validation from accepted-row emission.",
+      "evidence": [
+        "tests/test_metering.c::test_helper_extraction_differential"
+      ]
+    },
+    {
+      "id": "rows-parser--two-phase",
+      "a": "c_metering.rows.parser",
+      "b": "c_metering.rows.two_phase",
+      "judgment": "positive",
+      "difficulty": "medium",
+      "tags": [
+        "helper-extraction",
+        "restructured"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": true,
+      "equivalence_domain": "All bounded arrays of DEVICE:USAGE row strings.",
+      "contract": "Accept uppercase, digit, underscore, and hyphen device keys with nonnegative decimal usage; keep accepted order and record the first rejected one-based row.",
+      "rationale": "The staged and immediate parser workflows duplicate the user-visible import behavior despite different lifetime management for normalized rows.",
+      "evidence": [
+        "tests/test_metering.c::test_helper_extraction_differential"
+      ]
+    },
+    {
+      "id": "adapters-csv--api",
+      "a": "c_metering.adapters.csv",
+      "b": "c_metering.adapters.api",
+      "judgment": "positive",
+      "difficulty": "medium",
+      "tags": [
+        "partial",
+        "file-versus-api"
+      ],
+      "scope": "partial",
+      "behavior_equivalent": false,
+      "equivalence_domain": "A newline-delimited DEVICE:USAGE file and equal ApiReading sequence with the same records.",
+      "contract": "Normalize the same device and usage domain, preserve valid input order, and report invalid physical row positions.",
+      "rationale": "The adapters should share normalizing and accepted-record handling while retaining file ownership and API batch boundaries.",
+      "evidence": [
+        "tests/test_metering.c::test_csv_api_and_idempotency"
+      ],
+      "difference_witness": "A line longer than the file buffer is a CSV physical-row rejection; an API item has no line-buffer or stream-error behavior.",
+      "regions": [
+        {
+          "unit": "c_metering.adapters.csv",
+          "start_line": 112,
+          "end_line": 119,
+          "sha256": "cc25480b1623c6d320b51c4efdabea4be74f5882b3b1ff4defcba4308db29741"
+        },
+        {
+          "unit": "c_metering.adapters.api",
+          "start_line": 131,
+          "end_line": 136,
+          "sha256": "6e859e52c748d7487d955284cf4d4cf1baef974ecc48199b5554333b14b08e87"
+        }
+      ]
+    },
+    {
+      "id": "adapters-csv--idempotent",
+      "a": "c_metering.adapters.csv",
+      "b": "c_metering.adapters.idempotent",
+      "judgment": "negative",
+      "tags": [
+        "shared-helper",
+        "different-control-flow",
+        "idempotency"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "Accepted DEVICE:USAGE values transported by their respective workflows.",
+      "contract": "Physical-line ingestion and atomic batch validation remain independently maintained workflows.",
+      "rationale": "The functions call shared normalization helpers but do not contain a second copy of that implementation; CSV commits accepted rows in one pass, while the idempotent endpoint validates a complete staged batch before reserving its ID.",
+      "evidence": [
+        "tests/test_metering.c::test_csv_api_and_idempotency"
+      ],
+      "difference_witness": "An invalid idempotent batch commits no readings and leaves its batch ID unreserved; CSV import retains valid rows around rejected physical lines and has no delivery-ID state."
+    },
+    {
+      "id": "adapters-api--idempotent",
+      "a": "c_metering.adapters.api",
+      "b": "c_metering.adapters.idempotent",
+      "judgment": "positive",
+      "difficulty": "medium",
+      "tags": [
+        "partial",
+        "idempotency",
+        "two-phase"
+      ],
+      "scope": "partial",
+      "behavior_equivalent": false,
+      "equivalence_domain": "A new batch ID and an API sequence with entirely valid items.",
+      "contract": "Normalize ApiReading fields into accepted Reading values in input order.",
+      "rationale": "The idempotent endpoint adds batch acceptance and staging around the same item-normalization responsibility.",
+      "evidence": [
+        "tests/test_metering.c::test_csv_api_and_idempotency"
+      ],
+      "difference_witness": "A repeated batch ID returns METERING_DUPLICATE before importing items; ordinary API ingestion has no duplicate-delivery check.",
+      "regions": [
+        {
+          "unit": "c_metering.adapters.api",
+          "start_line": 131,
+          "end_line": 136,
+          "sha256": "6e859e52c748d7487d955284cf4d4cf1baef974ecc48199b5554333b14b08e87"
+        },
+        {
+          "unit": "c_metering.adapters.idempotent",
+          "start_line": 165,
+          "end_line": 173,
+          "sha256": "eb5fe3eef52669436c7abca21f4f96c705a02a635280e26c539c02273577f00d"
+        }
+      ]
+    },
+    {
+      "id": "negative-aggregate-linear--payout-baseline",
+      "a": "c_metering.aggregate.linear",
+      "b": "c_metering.payouts.baseline",
+      "judgment": "negative",
+      "difficulty": "hard",
+      "tags": [
+        "pipeline-neighbors",
+        "shared-vocabulary"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "Metering application input and output values.",
+      "contract": "Aggregation and payout construction remain distinct maintenance responsibilities.",
+      "rationale": "One reduces readings to device totals; the other turns already aggregated balances into transfer states.",
+      "evidence": [
+        "tests/test_metering.c::test_aggregation_differential",
+        "tests/test_metering.c::test_payout_floor_and_policy"
+      ],
+      "difference_witness": "A discarded malformed reading is rejected during aggregation, while payout planning never examines a Reading."
+    },
+    {
+      "id": "negative-aggregate-sorted--rows-inline",
+      "a": "c_metering.aggregate.sorted",
+      "b": "c_metering.rows.inline",
+      "judgment": "negative",
+      "difficulty": "hard",
+      "tags": [
+        "shared-vocabulary",
+        "different-stage"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "Metering application input and output values.",
+      "contract": "Text import validation and typed-reading aggregation are separate operations.",
+      "rationale": "The functions share device and usage terms but operate on raw text versus typed event arrays.",
+      "evidence": [
+        "tests/test_metering.c::test_aggregation_differential",
+        "tests/test_metering.c::test_helper_extraction_differential"
+      ],
+      "difference_witness": "The row importer records bad source row two; aggregation instead requires valid Reading structs."
+    },
+    {
+      "id": "negative-aggregate-index--adapters-csv",
+      "a": "c_metering.aggregate.index",
+      "b": "c_metering.adapters.csv",
+      "judgment": "negative",
+      "difficulty": "hard",
+      "tags": [
+        "shared-vocabulary",
+        "file-boundary"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "Metering application input and output values.",
+      "contract": "Stream ownership and total aggregation are independently changeable responsibilities.",
+      "rationale": "CSV ingestion owns buffered I/O and rejection positions; aggregation owns grouping and sorted totals.",
+      "evidence": [
+        "tests/test_metering.c::test_aggregation_differential",
+        "tests/test_metering.c::test_csv_api_and_idempotency"
+      ],
+      "difference_witness": "A long physical CSV line is rejected by the adapter but has no representation in the aggregation function."
+    },
+    {
+      "id": "negative-payout-baseline--rows-parser",
+      "a": "c_metering.payouts.baseline",
+      "b": "c_metering.rows.parser",
+      "judgment": "negative",
+      "difficulty": "hard",
+      "tags": [
+        "shared-vocabulary",
+        "different-stage"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "Metering application input and output values.",
+      "contract": "Payout decisions and raw string parsing cannot be consolidated.",
+      "rationale": "Planning assigns transfer states; the parser-importer constructs accepted readings and source error information.",
+      "evidence": [
+        "tests/test_metering.c::test_payout_floor_and_policy",
+        "tests/test_metering.c::test_helper_extraction_differential"
+      ],
+      "difference_witness": "A zero total produces a balanced payout line while a row value of 0 is an accepted import."
+    },
+    {
+      "id": "negative-payout-floor--adapters-api",
+      "a": "c_metering.payouts.floor",
+      "b": "c_metering.adapters.api",
+      "judgment": "negative",
+      "difficulty": "hard",
+      "tags": [
+        "numeric-domain",
+        "different-stage"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "Metering application input and output values.",
+      "contract": "Input normalization and minimum-transfer policy are separate maintenance units.",
+      "rationale": "Both handle numbers but one validates external text and one applies a payout floor to totals.",
+      "evidence": [
+        "tests/test_metering.c::test_payout_floor_and_policy",
+        "tests/test_metering.c::test_csv_api_and_idempotency"
+      ],
+      "difference_witness": "A malformed API usage is rejected before planning; a 7-unit valid total can be deferred by a floor of 10."
+    },
+    {
+      "id": "negative-payout-policy--adapters-idempotent",
+      "a": "c_metering.payouts.policy",
+      "b": "c_metering.adapters.idempotent",
+      "judgment": "negative",
+      "difficulty": "hard",
+      "tags": [
+        "policy",
+        "idempotency"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "Metering application input and output values.",
+      "contract": "Transfer policy and delivery reservation have unrelated behavior.",
+      "rationale": "The policy planner uses PayoutPolicy on totals; the endpoint reserves a new external batch ID only after item acceptance.",
+      "evidence": [
+        "tests/test_metering.c::test_payout_floor_and_policy",
+        "tests/test_metering.c::test_csv_api_and_idempotency"
+      ],
+      "difference_witness": "Repeating batch-7 produces METERING_DUPLICATE; no payout-policy input has any batch identity."
+    },
+    {
+      "id": "negative-rows-inline--adapters-csv",
+      "a": "c_metering.rows.inline",
+      "b": "c_metering.adapters.csv",
+      "judgment": "negative",
+      "difficulty": "medium",
+      "tags": [
+        "similar-validation",
+        "ownership"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "Equivalent record strings where no stream failure occurs.",
+      "contract": "The reusable normalizer is partial; a caller-supplied row array and owned FILE stream remain different units.",
+      "rationale": "The apparent similarity belongs to a smaller normalization region, while the whole functions have distinct input lifetime and overflow behavior.",
+      "evidence": [
+        "tests/test_metering.c::test_helper_extraction_differential",
+        "tests/test_metering.c::test_csv_api_and_idempotency"
+      ],
+      "difference_witness": "A line beyond the CSV buffer becomes one rejected physical row, a state that an in-memory row array does not model."
+    },
+    {
+      "id": "negative-rows-parser--adapters-api",
+      "a": "c_metering.rows.parser",
+      "b": "c_metering.adapters.api",
+      "judgment": "negative",
+      "difficulty": "medium",
+      "tags": [
+        "similar-validation",
+        "transport-boundary"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "Equivalent device and usage data expressed in each input representation.",
+      "contract": "Shared field semantics do not make text-row and typed-API adapters merge candidates.",
+      "rationale": "The row parser splits one encoded string; the API adapter validates separately transported device and usage fields.",
+      "evidence": [
+        "tests/test_metering.c::test_helper_extraction_differential",
+        "tests/test_metering.c::test_csv_api_and_idempotency"
+      ],
+      "difference_witness": "A row without ':' is invalid for the parser, whereas ApiReading carries no separator to inspect."
+    },
+    {
+      "id": "negative-rows-two-phase--adapters-idempotent",
+      "a": "c_metering.rows.two_phase",
+      "b": "c_metering.adapters.idempotent",
+      "judgment": "negative",
+      "difficulty": "hard",
+      "tags": [
+        "two-phase",
+        "different-transaction-boundary"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "Metering import scenarios.",
+      "contract": "Staging rows for ordered output and atomic batch-ID reservation solve different problems.",
+      "rationale": "The two-phase row importer retains valid rows around individual failures; the idempotent endpoint rejects the entire batch before reserving its ID.",
+      "evidence": [
+        "tests/test_metering.c::test_helper_extraction_differential",
+        "tests/test_metering.c::test_csv_api_and_idempotency"
+      ],
+      "difference_witness": "The row workflow accepts METER_A and METER-2 around invalid rows; an invalid idempotent batch returns METERING_INVALID and keeps its ID unreserved."
+    },
+    {
+      "id": "negative-aggregate-linear--adapters-api",
+      "a": "c_metering.aggregate.linear",
+      "b": "c_metering.adapters.api",
+      "judgment": "negative",
+      "difficulty": "hard",
+      "tags": [
+        "shared-fields",
+        "different-stage"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "Metering application input and output values.",
+      "contract": "Reading acceptance and grouped aggregation have different observable outputs.",
+      "rationale": "The API adapter outputs one accepted record per valid item; aggregation combines many accepted readings by key.",
+      "evidence": [
+        "tests/test_metering.c::test_aggregation_differential",
+        "tests/test_metering.c::test_csv_api_and_idempotency"
+      ],
+      "difference_witness": "Two METER_A API items yield two accepted readings; aggregation reduces them to one total."
+    },
+    {
+      "id": "negative-payout-floor--rows-two-phase",
+      "a": "c_metering.payouts.floor",
+      "b": "c_metering.rows.two_phase",
+      "judgment": "negative",
+      "difficulty": "hard",
+      "tags": [
+        "control-flow",
+        "different-responsibility"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "Metering application input and output values.",
+      "contract": "Deferred payout handling and staged lexical validation cannot be merged.",
+      "rationale": "Both have two-phase-looking control flow, but their data, invariants, and resulting effects are unrelated.",
+      "evidence": [
+        "tests/test_metering.c::test_payout_floor_and_policy",
+        "tests/test_metering.c::test_helper_extraction_differential"
+      ],
+      "difference_witness": "A 7-unit total becomes deferred under a 10-unit floor; valid 7 text is simply accepted by the row importer."
+    },
+    {
+      "id": "negative-aggregate-sorted--payout-policy",
+      "a": "c_metering.aggregate.sorted",
+      "b": "c_metering.payouts.policy",
+      "judgment": "negative",
+      "difficulty": "hard",
+      "tags": [
+        "ordered-records",
+        "pipeline-neighbors"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "Metering application input and output values.",
+      "contract": "Sorted grouping and policy-driven transfer decisions remain independently maintained stages.",
+      "rationale": "The shared use of keyed records and ordered arrays is structural context, not shared implementation.",
+      "evidence": [
+        "tests/test_metering.c::test_aggregation_differential",
+        "tests/test_metering.c::test_payout_floor_and_policy"
+      ],
+      "difference_witness": "Aggregation validates discarded input and emits sorted totals; policy planning consumes totals and may emit audit events."
+    },
+    {
+      "id": "review-note-rejection--reject-row",
+      "a": "c_metering/src/adapters.c::adapters.note_rejection::function::13",
+      "b": "c_metering/src/rows.c::rows.reject_row::function::13",
+      "judgment": "positive",
+      "difficulty": "easy",
+      "tags": [
+        "translated-helper",
+        "rejection-reporting"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": true,
+      "equivalence_domain": "An initialized ImportReport and a positive one-based rejected row number.",
+      "contract": "Increment rejected_count and retain the first rejected row while leaving a prior first-rejected value unchanged.",
+      "rationale": "Both private helpers implement the same report mutation and can be consolidated without changing either caller's parsing policy.",
+      "evidence": [
+        "tests/test_metering.c::test_helper_extraction_differential",
+        "tests/test_metering.c::test_csv_api_and_idempotency"
+      ]
+    },
+    {
+      "id": "review-normalize-csv--parse-row",
+      "a": "c_metering/src/adapters.c::adapters.normalize_csv_line::function::25",
+      "b": "c_metering/src/rows.c::rows.parse_row::function::20",
+      "judgment": "positive",
+      "difficulty": "easy",
+      "tags": [
+        "translated-helper",
+        "strict-row-normalization"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": true,
+      "equivalence_domain": "NUL-terminated DEVICE:USAGE strings after the CSV caller has removed its trailing newline.",
+      "contract": "Reject malformed keys and nonnegative-integer text, otherwise initialize a Reading with the parsed device and usage.",
+      "rationale": "These private helpers have the same normalization responsibility and differ only in local helper spelling and mutable versus const input typing.",
+      "evidence": [
+        "tests/test_metering.c::test_helper_extraction_differential",
+        "tests/test_metering.c::test_csv_api_and_idempotency"
+      ]
+    },
+    {
+      "id": "review-normalize-csv--normalize-api",
+      "a": "c_metering/src/adapters.c::adapters.normalize_csv_line::function::25",
+      "b": "c_metering/src/adapters.c::adapters.normalize_api_item::function::61",
+      "judgment": "positive",
+      "difficulty": "medium",
+      "tags": [
+        "partial",
+        "transport-normalization"
+      ],
+      "scope": "partial",
+      "behavior_equivalent": false,
+      "equivalence_domain": "Valid device and usage fields transported either as DEVICE:USAGE text or as an ApiReading.",
+      "contract": "Validate an uppercase/digit/underscore/hyphen device and strict nonnegative decimal usage before constructing a Reading.",
+      "rationale": "The two adapters independently implement the field-validation and Reading-construction core; stream-line splitting and API bounded-field handling remain transport-specific.",
+      "evidence": [
+        "tests/test_metering.c::test_csv_api_and_idempotency"
+      ],
+      "difference_witness": "A CSV line without ':' is rejected by its delimiter parser, while an ApiReading has separate device and usage_text fields.",
+      "regions": [
+        {
+          "unit": "c_metering/src/adapters.c::adapters.normalize_csv_line::function::25",
+          "start_line": 33,
+          "end_line": 50,
+          "sha256": "297802591b2cd6c2b2c1f162a1dd0bdb0dbd3c47baccfed4a358672a6dc4b94d"
+        },
+        {
+          "unit": "c_metering/src/adapters.c::adapters.normalize_api_item::function::61",
+          "start_line": 69,
+          "end_line": 87,
+          "sha256": "4972a6602b747a1968a6aff987317f94513d69428bd2bc79e6aeab3a71a73167"
+        }
+      ]
+    },
+    {
+      "id": "review-adapters-csv--rows-parser",
+      "a": "c_metering.adapters.csv",
+      "b": "c_metering.rows.parser",
+      "judgment": "negative",
+      "difficulty": "hard",
+      "tags": [
+        "shared-normalization",
+        "stream-ownership"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "Equivalent record strings where the stream has no I/O error.",
+      "contract": "A FILE-owned physical-line importer and a caller-owned row-array importer remain separate maintenance units.",
+      "rationale": "Their common field parser is smaller than either enclosing workflow; only the CSV entry point owns buffering, overlong-line draining, and stream errors.",
+      "evidence": [
+        "tests/test_metering.c::test_helper_extraction_differential",
+        "tests/test_metering.c::test_csv_api_and_idempotency"
+      ],
+      "difference_witness": "A line longer than the CSV buffer is rejected as one physical row; a supplied row array has neither buffer draining nor FILE error state."
+    },
+    {
+      "id": "review-adapters-api--rows-two-phase",
+      "a": "c_metering.adapters.api",
+      "b": "c_metering.rows.two_phase",
+      "judgment": "negative",
+      "difficulty": "hard",
+      "tags": [
+        "shared-normalization",
+        "different-staging"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "Metering inputs expressed through the respective API and row-array boundaries.",
+      "contract": "Typed API item acceptance and text-row staging are separate caller responsibilities.",
+      "rationale": "The API function records accepted items immediately, while the two-phase row importer keeps a per-row acceptance bitmap and only emits after all parsing completes.",
+      "evidence": [
+        "tests/test_metering.c::test_helper_extraction_differential",
+        "tests/test_metering.c::test_csv_api_and_idempotency"
+      ],
+      "difference_witness": "The two-phase importer delays all accepted writes until its second loop; API ingestion writes each accepted item in its only loop."
+    },
+    {
+      "id": "review-normalize-api--parse-row",
+      "a": "c_metering/src/adapters.c::adapters.normalize_api_item::function::61",
+      "b": "c_metering/src/rows.c::rows.parse_row::function::20",
+      "judgment": "positive",
+      "difficulty": "medium",
+      "tags": [
+        "partial",
+        "transport-normalization"
+      ],
+      "scope": "partial",
+      "behavior_equivalent": false,
+      "equivalence_domain": "Valid device and usage fields represented by an ApiReading or decoded from a DEVICE:USAGE row.",
+      "contract": "Validate the device alphabet and strict nonnegative decimal usage before initializing a Reading.",
+      "rationale": "Both helpers independently perform the same accepted-field validation and output initialization, which could be factored below their distinct transport decoders.",
+      "evidence": [
+        "tests/test_metering.c::test_helper_extraction_differential",
+        "tests/test_metering.c::test_csv_api_and_idempotency"
+      ],
+      "difference_witness": "parse_row must locate ':', whereas normalize_api_item validates already-separated fields and their bounded lengths.",
+      "regions": [
+        {
+          "unit": "c_metering/src/adapters.c::adapters.normalize_api_item::function::61",
+          "start_line": 69,
+          "end_line": 87,
+          "sha256": "4972a6602b747a1968a6aff987317f94513d69428bd2bc79e6aeab3a71a73167"
+        },
+        {
+          "unit": "c_metering/src/rows.c::rows.parse_row::function::20",
+          "start_line": 28,
+          "end_line": 46,
+          "sha256": "9c8238e1990fe557a42c744149813031701665e836ca6d411900b8844cc73510"
+        }
+      ]
+    },
+    {
+      "id": "review-rows-inline--parse-row",
+      "a": "c_metering.rows.inline",
+      "b": "c_metering/src/rows.c::rows.parse_row::function::20",
+      "judgment": "positive",
+      "difficulty": "medium",
+      "tags": [
+        "partial",
+        "helper-extraction"
+      ],
+      "scope": "partial",
+      "behavior_equivalent": false,
+      "equivalence_domain": "Each valid or invalid DEVICE:USAGE value visited by the inline importer.",
+      "contract": "Decode one row using the shared device and strict nonnegative-integer rules; row-loop reporting remains caller-specific.",
+      "rationale": "The inline importer contains the parsing responsibility that parse_row extracted for the sibling workflow, even though only the former owns report iteration.",
+      "evidence": [
+        "tests/test_metering.c::test_helper_extraction_differential"
+      ],
+      "difference_witness": "The enclosing importer increments rejected_count and continues to later rows; parse_row only returns one status and Reading.",
+      "regions": [
+        {
+          "unit": "c_metering.rows.inline",
+          "start_line": 55,
+          "end_line": 79,
+          "sha256": "f2ab5f0ae519ae75c2704c5bbb4c5d3333c3d2269a2deacc1c3e5f6f44244d61"
+        },
+        {
+          "unit": "c_metering/src/rows.c::rows.parse_row::function::20",
+          "start_line": 20,
+          "end_line": 46,
+          "sha256": "252523a10d0b98d5c7d678e367c82d17743deecb15accf95b5e34190c30105d9"
+        }
+      ]
+    },
+    {
+      "id": "review-rows-inline--normalize-csv",
+      "a": "c_metering.rows.inline",
+      "b": "c_metering/src/adapters.c::adapters.normalize_csv_line::function::25",
+      "judgment": "positive",
+      "difficulty": "medium",
+      "tags": [
+        "partial",
+        "inline-normalization"
+      ],
+      "scope": "partial",
+      "behavior_equivalent": false,
+      "equivalence_domain": "Newline-free DEVICE:USAGE records passed to either importer.",
+      "contract": "Validate one encoded reading and initialize its device and nonnegative usage while preserving enclosing workflow behavior.",
+      "rationale": "The same parse-and-normalize core appears inline in one importer and as a CSV helper in the other; report ownership and stream handling are outside the marked regions.",
+      "evidence": [
+        "tests/test_metering.c::test_helper_extraction_differential",
+        "tests/test_metering.c::test_csv_api_and_idempotency"
+      ],
+      "difference_witness": "The CSV helper receives a line after newline removal, while the outer inline importer additionally chooses whether to continue after rejection.",
+      "regions": [
+        {
+          "unit": "c_metering.rows.inline",
+          "start_line": 55,
+          "end_line": 79,
+          "sha256": "f2ab5f0ae519ae75c2704c5bbb4c5d3333c3d2269a2deacc1c3e5f6f44244d61"
+        },
+        {
+          "unit": "c_metering/src/adapters.c::adapters.normalize_csv_line::function::25",
+          "start_line": 25,
+          "end_line": 50,
+          "sha256": "7722d148219c04b7afe44cf99c13b0635df8134634579bd5ec5abc4ef778dc09"
+        }
+      ]
+    },
+    {
+      "id": "review-adapters-csv--rows-two-phase",
+      "a": "c_metering.adapters.csv",
+      "b": "c_metering.rows.two_phase",
+      "judgment": "negative",
+      "difficulty": "hard",
+      "tags": [
+        "shared-normalization",
+        "stream-versus-staging"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "Metering imports expressed through their respective file and row-array interfaces.",
+      "contract": "Physical-line file import and batch-wide text-row staging cannot be consolidated as one function.",
+      "rationale": "The CSV workflow owns buffered reads and overflow draining; the row workflow owns an acceptance bitmap and a second emission pass.",
+      "evidence": [
+        "tests/test_metering.c::test_helper_extraction_differential",
+        "tests/test_metering.c::test_csv_api_and_idempotency"
+      ],
+      "difference_witness": "An overlong CSV physical row is drained and rejected before the next read, while the row-array function performs no stream operation."
+    },
+    {
+      "id": "review-adapters-api--rows-inline",
+      "a": "c_metering.adapters.api",
+      "b": "c_metering.rows.inline",
+      "judgment": "negative",
+      "difficulty": "hard",
+      "tags": [
+        "shared-normalization",
+        "typed-versus-encoded-input"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "Equivalent device and usage values transported through their distinct interfaces.",
+      "contract": "The typed API batch loop and encoded row-array loop have distinct maintenance boundaries.",
+      "rationale": "The API endpoint consumes separate bounded fields; the inline importer owns delimiter parsing and row-error reporting. Their common core is smaller than either enclosing function.",
+      "evidence": [
+        "tests/test_metering.c::test_helper_extraction_differential",
+        "tests/test_metering.c::test_csv_api_and_idempotency"
+      ],
+      "difference_witness": "An ApiReading has no ':' delimiter to reject, whereas an inline row without ':' increments the rejected-row report."
+    },
+    {
+      "id": "review-aggregate-linear--normalize-api",
+      "a": "c_metering.aggregate.linear",
+      "b": "c_metering/src/adapters.c::adapters.normalize_api_item::function::61",
+      "judgment": "negative",
+      "difficulty": "hard",
+      "tags": [
+        "shared-fields",
+        "different-pipeline-stage"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "Metering readings before and after API acceptance.",
+      "contract": "Reading construction and aggregation of accepted readings remain separate responsibilities.",
+      "rationale": "The normalizer creates one Reading from external fields, while aggregation combines many valid readings into sorted device totals.",
+      "evidence": [
+        "tests/test_metering.c::test_aggregation_differential",
+        "tests/test_metering.c::test_csv_api_and_idempotency"
+      ],
+      "difference_witness": "Two valid API items produce two Readings; aggregation reduces same-device readings to one DeviceTotal."
+    },
+    {
+      "id": "review-adapters-idempotent--rows-parser",
+      "a": "c_metering.adapters.idempotent",
+      "b": "c_metering.rows.parser",
+      "judgment": "negative",
+      "difficulty": "hard",
+      "tags": [
+        "shared-normalization",
+        "transaction-boundary"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "Metering inputs reaching their respective batch and row interfaces.",
+      "contract": "Atomic batch-ID reservation and a non-atomic row-array import cannot be merged.",
+      "rationale": "The idempotent endpoint rejects its complete batch before reserving the ID; the row parser workflow retains valid rows around rejected ones.",
+      "evidence": [
+        "tests/test_metering.c::test_helper_extraction_differential",
+        "tests/test_metering.c::test_csv_api_and_idempotency"
+      ],
+      "difference_witness": "An invalid idempotent batch returns METERING_INVALID and leaves batch-8 unreserved; the parser importer keeps its valid rows."
+    },
+    {
+      "id": "review-aggregate-sorted--main",
+      "a": "c_metering.aggregate.sorted",
+      "b": "c_metering/src/main.c::main.main::function::5",
+      "judgment": "negative",
+      "difficulty": "medium",
+      "tags": [
+        "caller-callee",
+        "demonstration-entrypoint"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "The executable's fixed sample and arbitrary aggregation inputs.",
+      "contract": "The application entry point demonstrates aggregation; it is not an alternate aggregation implementation.",
+      "rationale": "main prepares one fixed sample, calls the sorted implementation, and prints results, so it duplicates none of the grouping algorithm.",
+      "evidence": [
+        "tests/test_metering.c::test_aggregation_differential",
+        "src/main.c::main"
+      ],
+      "difference_witness": "Changing the input readings changes aggregate_usage_sorted output, while main always constructs its three built-in sample readings."
+    },
+    {
+      "id": "review-aggregate-linear--validate-totals",
+      "a": "c_metering.aggregate.linear",
+      "b": "c_metering/src/payouts.c::payouts.validate_totals::function::5",
+      "judgment": "negative",
+      "difficulty": "hard",
+      "tags": [
+        "validation-vocabulary",
+        "different-data-model"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "Metering aggregation and payout-planning inputs.",
+      "contract": "Validation of a Reading and validation of payout totals have unrelated output responsibilities.",
+      "rationale": "Aggregation verifies readings then groups them; the payout precondition only rejects malformed DeviceTotal arrays before settlement planning.",
+      "evidence": [
+        "tests/test_metering.c::test_aggregation_differential",
+        "tests/test_metering.c::test_payout_floor_and_policy"
+      ],
+      "difference_witness": "A discarded malformed Reading is invalid before aggregation, while validate_totals has no discarded field and examines reading_count instead."
+    },
+    {
+      "id": "review-adapters-csv--normalize-csv",
+      "a": "c_metering.adapters.csv",
+      "b": "c_metering/src/adapters.c::adapters.normalize_csv_line::function::25",
+      "judgment": "negative",
+      "difficulty": "medium",
+      "tags": [
+        "caller-callee",
+        "file-boundary"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "One buffered CSV line versus an entire FILE stream.",
+      "contract": "The stream importer delegates field parsing to its helper and also owns read, overflow, capacity, and ferror behavior.",
+      "rationale": "A caller using a helper is not a duplicate of that helper; the high score conflates the parser with its enclosing workflow.",
+      "evidence": [
+        "tests/test_metering.c::test_csv_api_and_idempotency"
+      ],
+      "difference_witness": "An overlong physical line triggers draining in import_csv_stream, a behavior normalize_csv_line cannot observe."
+    },
+    {
+      "id": "review-aggregate-index--main",
+      "a": "c_metering.aggregate.index",
+      "b": "c_metering/src/main.c::main.main::function::5",
+      "judgment": "negative",
+      "difficulty": "medium",
+      "tags": [
+        "entrypoint",
+        "different-implementation"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "The executable's fixed example and arbitrary aggregation inputs.",
+      "contract": "The executable invokes aggregate_usage_sorted and contains no index-based grouping implementation.",
+      "rationale": "Similarity in DeviceTotal and Reading vocabulary does not make the sample program a duplicate of the alternate index algorithm.",
+      "evidence": [
+        "tests/test_metering.c::test_aggregation_differential",
+        "src/main.c::main"
+      ],
+      "difference_witness": "main never calls aggregate_usage_by_index and has no output-capacity parameter or per-device lookup loop."
+    },
+    {
+      "id": "review-aggregate-index--normalize-api",
+      "a": "c_metering.aggregate.index",
+      "b": "c_metering/src/adapters.c::adapters.normalize_api_item::function::61",
+      "judgment": "negative",
+      "difficulty": "hard",
+      "tags": [
+        "shared-fields",
+        "different-pipeline-stage"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "Metering readings before and after API acceptance.",
+      "contract": "API field normalization and grouped total construction remain independently maintained functions.",
+      "rationale": "The normalizer validates one external record; the index algorithm compares accepted device names across an output array and accumulates totals.",
+      "evidence": [
+        "tests/test_metering.c::test_aggregation_differential",
+        "tests/test_metering.c::test_csv_api_and_idempotency"
+      ],
+      "difference_witness": "The normalizer has one ApiReading input and produces one Reading; the aggregator has no text parsing and can combine repeated device keys."
+    },
+    {
+      "id": "review-rows-inline--normalize-api",
+      "a": "c_metering.rows.inline",
+      "b": "c_metering/src/adapters.c::adapters.normalize_api_item::function::61",
+      "judgment": "positive",
+      "difficulty": "medium",
+      "tags": [
+        "partial",
+        "transport-normalization"
+      ],
+      "scope": "partial",
+      "behavior_equivalent": false,
+      "equivalence_domain": "Single valid or invalid device and usage values at the row and API boundaries.",
+      "contract": "Apply the same device alphabet and strict nonnegative-integer semantics before constructing a Reading, while leaving transport decoding and batch/reporting behavior separate.",
+      "rationale": "The inline path repeats the same field-normalization core embedded in the API helper, but their outer input representations deliberately remain different.",
+      "evidence": [
+        "tests/test_metering.c::test_helper_extraction_differential",
+        "tests/test_metering.c::test_csv_api_and_idempotency"
+      ],
+      "difference_witness": "The row path must decode one ':'-separated string and update ImportReport; the API helper receives already-separated bounded fields.",
+      "regions": [
+        {
+          "unit": "c_metering.rows.inline",
+          "start_line": 55,
+          "end_line": 79,
+          "sha256": "f2ab5f0ae519ae75c2704c5bbb4c5d3333c3d2269a2deacc1c3e5f6f44244d61"
+        },
+        {
+          "unit": "c_metering/src/adapters.c::adapters.normalize_api_item::function::61",
+          "start_line": 61,
+          "end_line": 87,
+          "sha256": "2fd0185d49bd81b12a7338cdc89433c18361a07df61668daff68ee71f9b24ed2"
+        }
+      ]
+    },
+    {
+      "id": "review-aggregate-index--validate-totals",
+      "a": "c_metering.aggregate.index",
+      "b": "c_metering/src/payouts.c::payouts.validate_totals::function::5",
+      "judgment": "negative",
+      "difficulty": "hard",
+      "tags": [
+        "validation-vocabulary",
+        "different-data-model"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "Metering aggregation and settlement-plan inputs.",
+      "contract": "Validation of one Reading sequence and validation of DeviceTotal settlement preconditions are separate operations.",
+      "rationale": "The index implementation validates then aggregates every reading; validate_totals only guards plan construction and contains no accumulation behavior.",
+      "evidence": [
+        "tests/test_metering.c::test_aggregation_differential",
+        "tests/test_metering.c::test_payout_floor_and_policy"
+      ],
+      "difference_witness": "aggregate_usage_by_index checks Reading.discarded and emits totals; validate_totals checks DeviceTotal.reading_count and returns only a status."
+    },
+    {
+      "id": "review-aggregate-linear--main",
+      "a": "c_metering.aggregate.linear",
+      "b": "c_metering/src/main.c::main.main::function::5",
+      "judgment": "negative",
+      "difficulty": "medium",
+      "tags": [
+        "entrypoint",
+        "different-implementation"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "The fixed application sample and arbitrary aggregation calls.",
+      "contract": "The executable demonstrates the sorted variant and is not a linear grouping implementation.",
+      "rationale": "The overlapping Reading and DeviceTotal names come from main's call site; main has no accumulator search or result grouping logic.",
+      "evidence": [
+        "tests/test_metering.c::test_aggregation_differential",
+        "src/main.c::main"
+      ],
+      "difference_witness": "The linear function accepts capacity and iterates arbitrary readings; main hardcodes three readings and calls aggregate_usage_sorted."
+    },
+    {
+      "id": "review-payout-baseline--validate-totals",
+      "a": "c_metering.payouts.baseline",
+      "b": "c_metering/src/payouts.c::payouts.validate_totals::function::5",
+      "judgment": "negative",
+      "difficulty": "medium",
+      "tags": [
+        "caller-callee",
+        "settlement-boundary"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "Valid and invalid payout total arrays.",
+      "contract": "The baseline planner delegates its precondition and additionally constructs payout lines, transfer counts, and states.",
+      "rationale": "The high score reflects direct invocation and settlement vocabulary; validate_totals is a precondition helper, not an alternate planner.",
+      "evidence": [
+        "tests/test_metering.c::test_payout_floor_and_policy"
+      ],
+      "difference_witness": "For a valid positive total, plan_payouts emits a ready PayoutLine and increments transfer_count; validate_totals only returns METERING_OK."
+    },
+    {
+      "id": "review-aggregate-sorted--normalize-api",
+      "a": "c_metering.aggregate.sorted",
+      "b": "c_metering/src/adapters.c::adapters.normalize_api_item::function::61",
+      "judgment": "negative",
+      "difficulty": "hard",
+      "tags": [
+        "shared-fields",
+        "different-pipeline-stage"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "Metering API input and aggregation output values.",
+      "contract": "The API normalizer creates accepted Readings; the sorted algorithm orders and groups already accepted readings.",
+      "rationale": "Both mention devices and usage, but their algorithms and outputs serve different adjacent stages.",
+      "evidence": [
+        "tests/test_metering.c::test_aggregation_differential",
+        "tests/test_metering.c::test_csv_api_and_idempotency"
+      ],
+      "difference_witness": "normalize_api_item parses one usage string, while aggregate_usage_sorted never parses text and sorts multiple device keys."
+    },
+    {
+      "id": "review-payout-floor--validate-totals",
+      "a": "c_metering.payouts.floor",
+      "b": "c_metering/src/payouts.c::payouts.validate_totals::function::5",
+      "judgment": "negative",
+      "difficulty": "medium",
+      "tags": [
+        "caller-callee",
+        "settlement-boundary"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "Valid and invalid payout total arrays under any nonnegative floor.",
+      "contract": "The floor planner uses validation before deciding ready, deferred, balanced, or refund_due states; the helper only guards the input.",
+      "rationale": "Sharing a precondition and data types does not make a planner duplicate its validation helper.",
+      "evidence": [
+        "tests/test_metering.c::test_payout_floor_and_policy"
+      ],
+      "difference_witness": "With a 10-unit floor, plan_payouts_with_floor defers a 7-unit total and records an audit event; validate_totals only returns METERING_OK."
+    },
+    {
+      "id": "review-payout-policy--validate-totals",
+      "a": "c_metering.payouts.policy",
+      "b": "c_metering/src/payouts.c::payouts.validate_totals::function::5",
+      "judgment": "negative",
+      "difficulty": "medium",
+      "tags": [
+        "caller-callee",
+        "policy-boundary"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "Valid and invalid payout total arrays under any PayoutPolicy.",
+      "contract": "Policy-aware settlement extends validation with deferral and transfer decisions; validation itself is not a policy implementation.",
+      "rationale": "The policy function calls the helper but adds all observable PayoutPolicy behavior, so the pair is a caller/callee false positive.",
+      "evidence": [
+        "tests/test_metering.c::test_payout_floor_and_policy"
+      ],
+      "difference_witness": "PayoutPolicy{10, 1} defers a 7-unit total and records an audit event, while validate_totals neither receives the policy nor changes a plan."
+    },
+    {
+      "id": "negative-record-scan--row-parser",
+      "a": "c_metering.record.scan",
+      "b": "c_metering/src/rows.c::rows.parse_row::function::20",
+      "judgment": "negative",
+      "difficulty": "medium",
+      "tags": [
+        "nearby-parser",
+        "different-wire-contract"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "One textual input record supplied to each parser.",
+      "contract": "The bounded sensor parser accepts byte spans with a signed comma-delimited delta; the metering row parser consumes NUL-terminated DEVICE:USAGE text and only accepts nonnegative usage.",
+      "rationale": "Both perform local text decoding, but their syntax, numeric domain, output type, and caller memory contracts leave no substantive maintenance region to consolidate.",
+      "evidence": [
+        "tests/test_metering.c::test_bounded_record_parsers",
+        "tests/test_metering.c::test_helper_extraction_differential"
+      ],
+      "difference_witness": "The byte span 17,-12\\n produces a MeterRecord with a negative delta, while the row parser requires ':' and cannot construct a Reading from it."
+    },
+    {
+      "id": "negative-record-fields--csv-normalizer",
+      "a": "c_metering.record.fields",
+      "b": "c_metering/src/adapters.c::adapters.normalize_csv_line::function::25",
+      "judgment": "negative",
+      "difficulty": "medium",
+      "tags": [
+        "nearby-parser",
+        "different-output-contract"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "One independently supplied textual record at each parser boundary.",
+      "contract": "Field slicing validates bounded sensor and signed-delta spans without a terminator; CSV normalization mutates a newline-free DEVICE:USAGE string into a nonnegative Reading.",
+      "rationale": "The pair shares delimiter validation vocabulary but has incompatible record grammars and ownership rules, so a shared parser would not replace either implementation.",
+      "evidence": [
+        "tests/test_metering.c::test_bounded_record_parsers",
+        "tests/test_metering.c::test_csv_api_and_idempotency"
+      ],
+      "difference_witness": "A non-NUL byte span 0001,-0\\n is accepted as a MeterRecord; normalize_csv_line requires an in-place colon-delimited C string and would reject that wire form."
+    }
+  ],
+  "probes": [
+    {
+      "id": "usage-totals",
+      "kind": "behavioral",
+      "query": "Group valid active meter readings by device and return sorted total usage with reading counts.",
+      "expected": [
+        "c_metering.aggregate.linear",
+        "c_metering.aggregate.sorted",
+        "c_metering.aggregate.index"
+      ],
+      "relevance_complete": true
+    },
+    {
+      "id": "bounded-sensor-record",
+      "kind": "behavioral",
+      "query": "Parse a bounded sensor record with a signed decimal delta and preserve the output value when the byte span is invalid.",
+      "expected": [
+        "c_metering.record.scan",
+        "c_metering.record.fields"
+      ],
+      "relevance_complete": true
+    },
+    {
+      "id": "defer-payout",
+      "kind": "behavioral",
+      "query": "Defer a small positive device balance, suppress its transfer, and record an audit event.",
+      "expected": [
+        "c_metering.payouts.floor",
+        "c_metering.payouts.policy"
+      ],
+      "relevance_complete": true
+    },
+    {
+      "id": "parse-reading-row",
+      "kind": "behavioral",
+      "query": "Import DEVICE:USAGE text rows and retain the first rejected row number.",
+      "expected": [
+        "c_metering.rows.inline",
+        "c_metering.rows.parser",
+        "c_metering.rows.two_phase"
+      ],
+      "relevance_complete": true
+    },
+    {
+      "id": "csv-file-import",
+      "kind": "behavioral",
+      "query": "Read a meter upload from a C FILE stream and reject a line that is too long.",
+      "expected": [
+        "c_metering.adapters.csv"
+      ],
+      "relevance_complete": true
+    },
+    {
+      "id": "batch-idempotency",
+      "kind": "behavioral",
+      "query": "Accept an API meter batch once and leave its delivery identifier unreserved after an invalid item.",
+      "expected": [
+        "c_metering.adapters.idempotent"
+      ],
+      "relevance_complete": true
+    },
+    {
+      "id": "partial-aggregate",
+      "kind": "partial_symbol",
+      "query": "aggregate_usage",
+      "expected": [
+        "c_metering.aggregate.linear",
+        "c_metering.aggregate.sorted",
+        "c_metering.aggregate.index"
+      ],
+      "relevance_complete": true
+    },
+    {
+      "id": "partial-payout",
+      "kind": "partial_symbol",
+      "query": "plan_payouts",
+      "expected": [
+        "c_metering.payouts.baseline",
+        "c_metering.payouts.floor",
+        "c_metering.payouts.policy"
+      ],
+      "relevance_complete": true
+    },
+    {
+      "id": "partial-import",
+      "kind": "partial_symbol",
+      "query": "import_rows",
+      "expected": [
+        "c_metering.rows.inline",
+        "c_metering.rows.parser",
+        "c_metering.rows.two_phase"
+      ],
+      "relevance_complete": true
+    },
+    {
+      "id": "exact-idempotent",
+      "kind": "exact_symbol",
+      "query": "import_idempotent_batch",
+      "expected": [
+        "c_metering.adapters.idempotent"
+      ],
+      "relevance_complete": true
+    },
+    {
+      "id": "no-crypto",
+      "kind": "no_result",
+      "query": "Generate an RSA certificate signing request and rotate its private key.",
+      "expected": [],
+      "relevance_complete": true
+    },
+    {
+      "id": "no-image",
+      "kind": "no_result",
+      "query": "Resize a JPEG image using bicubic interpolation and preserve EXIF orientation.",
+      "expected": [],
+      "relevance_complete": true
+    }
+  ]
+}

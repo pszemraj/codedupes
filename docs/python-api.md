@@ -130,6 +130,33 @@ The contextual-threshold requirement follows the indexed representation even if 
 
 For direct embedding/query calls, pass the identity returned by `compute_embeddings_with_identity(...)` as `find_similar_to_query(corpus_identity=...)`. It is required for contextual documents and prompt- or route-sensitive models, and preserves calibration and checkpoint checks on both cold and warm cache paths. Use `search_document="contextual"` with aligned `document_texts` when supplying contextual inputs.
 
+```python
+from pathlib import Path
+
+from codedupes.constants import DEFAULT_SEARCH_SEMANTIC_TASK
+from codedupes.extractor import CodeExtractor
+from codedupes.semantic import compute_embeddings_with_identity, find_similar_to_query
+
+repo_root = Path("./src").resolve()
+units = CodeExtractor(repo_root).extract_all()
+embeddings, identity = compute_embeddings_with_identity(
+    units,
+    semantic_task=DEFAULT_SEARCH_SEMANTIC_TASK,
+    cache_scope=repo_root,
+)
+hits = find_similar_to_query(
+    "load csv data",
+    units,
+    embeddings,
+    corpus_identity=identity,
+    cache_scope=repo_root,
+)
+```
+
+Direct `find_similar_to_query()` and `find_semantic_duplicates()` calls require a two-dimensional embedding matrix with exactly one row per supplied unit. Inputs are converted to float32 and unit-normalized before cosine comparison; non-finite or zero rows, and short, long, or one-dimensional matrices raise `ValueError` before cache or model work. A `(0, dimensions)` matrix remains valid for an empty unit list.
+
+In `AnalyzerConfig(mode="search")`, `semantic_threshold` is any finite search floor, including a negative value when every ranked result is needed. Check-mode duplicate gates remain restricted to `[0, 1]`.
+
 Direct `compute_embeddings()` and `compute_embeddings_with_identity()` calls require one `document_texts` entry per input unit when supplied. Mismatched lengths raise `ValueError` before revision resolution, cache lookup, or model loading, including for an empty corpus.
 
 Each `index()` or `analyze()` call replaces the analyzer's corpus-specific state before extraction. `search()` therefore targets only the most recent run and requires it to have semantic embeddings. A later empty or nonsemantic analysis cannot reuse an older corpus accidentally. The analyzer binds the matrix to its model, revision, and vector-affecting runtime configuration. If any of those changes before a query, `search()` requires a fresh `index()`/`analyze()`. Set `AnalyzerConfig(strict_revision_cache=True)` for [strict revision resolution](caching.md#what-invalidates-what).
@@ -187,7 +214,7 @@ clear_model_cache()
 
 ## Logging
 
-Python query calls log the effective search threshold at DEBUG; human-readable CLI output reports it once per command. [Family-threshold notices](model-profiles.md#alias-resolution-rules) are emitted once per model per process when automatic defaults are selected for a recognized copy or non-builtin Hub model.
+Python query calls log the effective search threshold at DEBUG. The human-readable CLI reports the resolved threshold during configuration; verbose DEBUG output also shows query-time resolution. [Family-threshold notices](model-profiles.md#alias-resolution-rules) are emitted once per model per process when automatic defaults are selected for a recognized copy or non-builtin Hub model.
 
 Model loading quiets known-noisy dependency loggers (httpx request lines, transformers/sentence-transformers chatter) automatically, but only ones still inheriting the root level - any logger you configure explicitly is left alone. To pin them yourself, or to a different level:
 
@@ -251,7 +278,7 @@ from codedupes.report import group_file_results
 analyzer = CodeAnalyzer(AnalyzerConfig(mode="search", progress="never"))
 indexed_units = analyzer.index("./src")
 query = "load csv data"
-hits = analyzer.search(query, top_k=indexed_units)
+hits = analyzer.search(query, top_k=max(indexed_units, 1))
 payload = search_result_to_json(
     query,
     hits,

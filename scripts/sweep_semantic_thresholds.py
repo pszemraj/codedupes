@@ -1,920 +1,374 @@
-"""Sweep duplicate and search thresholds for built-in semantic model profiles.
-
-Every sweep records a full calibration manifest (pinned model commit, embedding
-pipeline schema and runtime identity, encode plan, the effective embedding-space
-identity the analyzer actually produced (covering dtype and Metal math policy
-even when an accelerator request fell back to CPU mid-run), dimension, candidate
-policy, and corpus/label digests) so a selected threshold is always tied to a
-reproducible model and pipeline identity. Calibration refuses to run when the
-model cannot be pinned to an immutable 40-character commit.
-"""
+"""Select duplicate and search thresholds from reviewed calibration scores."""
 
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
-import math
-from dataclasses import asdict, dataclass
 from pathlib import Path
+from statistics import median
 from typing import Any
 
-import codedupes.analyzer as analyzer_module
-from codedupes import __version__
-from codedupes.analyzer import DEFAULT_SEMANTIC_UNIT_TYPES, AnalyzerConfig, CodeAnalyzer
-from codedupes.constants import (
-    DEFAULT_CHECK_SEMANTIC_TASK,
-    DEFAULT_SEARCH_SEMANTIC_TASK,
-    DEFAULT_TRADITIONAL_THRESHOLD,
-)
-from codedupes.models import HYBRID_TIERS, CodeUnit, HybridDuplicate
-from codedupes.pairs import ordered_pair_key
-from codedupes.report.selection import WITHHELD_TIERS
-from codedupes.semantic import (
-    EMBEDDING_PIPELINE_SCHEMA,
-    EmbeddingSpaceIdentity,
-    _embedding_runtime_fingerprint,
-    get_semantic_runtime_versions,
-    resolve_encode_plan,
-)
-from codedupes.semantic_profiles import (
-    SemanticModelProfile,
-    list_supported_models,
-    resolve_local_model_path,
-    resolve_model_profile,
-)
-from codedupes.traditional import _block_kind, find_exact_pair_keys
+from codedupes.constants import DEFAULT_TOP_K
+from codedupes.semantic_profiles import list_supported_models, resolve_model_profile
 
 try:
-    from .sweep_common import (
-        add_common_sweep_arguments,
-        build_positive_pairs,
-        corpus_files,
-        metrics,
-        rank_sweep_rows,
-        resolve_label_unit,
-        validate_labels_shape,
-        validate_probes_shape,
+    from .calibration_contract import (
+        add_contract_arguments,
+        load_projects,
+        pair_key,
+        write_json,
     )
+    from .calibration_evaluation import (
+        SEARCH_SELECTION_WINDOW_RADIUS,
+        SELECTION_SCHEMA_VERSION,
+        development_projects,
+        judgments,
+        load_all,
+        measurement_digests,
+        metrics,
+        near_best_f1,
+        recall_preference,
+        selection_context,
+        selection_objective,
+        validate_selection_contract,
+    )
+    from .calibration_measurements import DEFAULT_MEASUREMENTS
 except ImportError:
-    from sweep_common import (
-        add_common_sweep_arguments,
-        build_positive_pairs,
-        corpus_files,
-        metrics,
-        rank_sweep_rows,
-        resolve_label_unit,
-        validate_labels_shape,
-        validate_probes_shape,
+    from calibration_contract import (
+        add_contract_arguments,
+        load_projects,
+        pair_key,
+        write_json,
     )
-
-DUPLICATE_THRESHOLD_START = 0.70
-DUPLICATE_THRESHOLD_STOP = 0.96
-SEARCH_THRESHOLD_START = 0.20
-# 0.90 ceiling: under the old 0.70 ceiling the 2026-08 polyglot search sweeps
-# selected boundary rows with F1 still rising (javascript and python under
-# gte), i.e. the optimum was censored. ``selected_at_grid_edge`` flags any
-# recurrence.
-SEARCH_THRESHOLD_STOP = 0.90
-THRESHOLD_STEP = 0.02
-# Tiers the CLI reports by default; mirrors the report policy so ``visible``
-# metrics describe exactly what ``codedupes check`` shows without flags.
-VISIBLE_TIERS: tuple[str, ...] = tuple(tier for tier in HYBRID_TIERS if tier not in WITHHELD_TIERS)
-
-
-@dataclass(frozen=True)
-class SweepRow:
-    """Single threshold evaluation row."""
-
-    threshold: float
-    predicted: int
-    tp: int
-    fp: int
-    fn: int
-    precision: float
-    recall: float
-    f1: float
+    from calibration_evaluation import (
+        SEARCH_SELECTION_WINDOW_RADIUS,
+        SELECTION_SCHEMA_VERSION,
+        development_projects,
+        judgments,
+        load_all,
+        measurement_digests,
+        metrics,
+        near_best_f1,
+        recall_preference,
+        selection_context,
+        selection_objective,
+        validate_selection_contract,
+    )
+    from calibration_measurements import DEFAULT_MEASUREMENTS
 
 
-@dataclass(frozen=True)
-class TierCounts:
-    """Published pairs of one hybrid tier scored against the labeled positives.
-
-    ``precision`` is ``None`` rather than ``0.0`` for an empty tier: no
-    prediction is not the same as every prediction being wrong. ``positive_share``
-    is the tier's true positives over all labeled positives; tiers partition the
-    published set, so the shares of one row sum to that row's recall.
-    """
-
-    predicted: int
-    tp: int
-    fp: int
-    precision: float | None
-    positive_share: float
-
-
-@dataclass(frozen=True)
-class SubsetMetrics:
-    """Full precision/recall of one published subset (for example the visible tiers)."""
-
-    predicted: int
-    tp: int
-    fp: int
-    fn: int
-    precision: float
-    recall: float
-    f1: float
-
-
-@dataclass(frozen=True)
-class DuplicateSweepRow(SweepRow):
-    """Duplicate-threshold row with the per-tier split of its published pairs."""
-
-    tiers: dict[str, TierCounts]
-    visible: SubsetMetrics
-
-
-@dataclass(frozen=True)
-class ModelSweep:
-    """Sweep results and calibration identity for one model."""
-
-    model_key: str
-    canonical_name: str
-    selected_threshold: float
-    manifest: dict[str, Any]
-    rows: list[SweepRow]
-
-
-def _threshold_grid(start: float, stop: float) -> list[float]:
-    """Uniform ``THRESHOLD_STEP`` grid whose values are the exact gates evaluated.
-
-    Values are ``start + k * THRESHOLD_STEP`` with only float noise rounded away,
-    never coarsened to two decimals: the first row must equal the analyzer's
-    collection floor, or an off-grid ``--duplicate-start`` (e.g. 0.705) labels
-    its rows with thresholds looser than any pair that was ever collected - and
-    the loosest-tie ranking then selects exactly that mislabeled row.
-    """
-    if not math.isfinite(start) or not math.isfinite(stop):
-        raise ValueError("threshold grid bounds must be finite")
-    if not 0.0 <= start <= 1.0 or not 0.0 <= stop <= 1.0:
-        raise ValueError("threshold grid bounds must be in [0.0, 1.0]")
-    if start > stop:
-        raise ValueError(
-            f"threshold grid start {start} must not exceed stop {stop}; the grid would be empty"
-        )
-
-    values: list[float] = []
-    steps = 0
-    while True:
-        current = round(start + steps * THRESHOLD_STEP, 9)
-        if current > stop + 1e-9:
-            break
-        values.append(current)
-        steps += 1
+def threshold_grid(start: float, stop: float, step: float) -> list[float]:
+    """Build an inclusive threshold grid."""
+    if not 0 <= start <= stop <= 1 or step <= 0:
+        raise ValueError("threshold grid must satisfy 0 <= start <= stop <= 1 and step > 0")
+    values = []
+    value = start
+    while value <= stop + 1e-12:
+        values.append(round(value, 6))
+        value += step
+    if values[-1] != round(stop, 6):
+        values.append(round(stop, 6))
     return values
 
 
-def _scoreable_semantic_pairs(
-    positive_pairs: set[tuple[str, str]],
-    semantic_units: list[CodeUnit],
-    *,
-    cross_language: bool,
-    exclude_pairs: set[tuple[str, str]],
-) -> set[tuple[str, str]]:
-    """Return labeled pairs the semantic scanner is eligible to compare.
-
-    :param positive_pairs: Labeled positive pair keys.
-    :param semantic_units: Units retained by the analyzer's candidate policy.
-    :param cross_language: Whether the scanner compares units across languages.
-    :param exclude_pairs: Pair keys deliberately suppressed from semantic output.
-    :return: Positive pair keys eligible for semantic comparison.
-    """
-    units_by_uid = {unit.uid: unit for unit in semantic_units}
-    scoreable: set[tuple[str, str]] = set()
-    for pair in positive_pairs:
-        unit_a = units_by_uid.get(pair[0])
-        unit_b = units_by_uid.get(pair[1])
-        if unit_a is None or unit_b is None or pair in exclude_pairs:
-            continue
-        if not cross_language and unit_a.language != unit_b.language:
-            continue
-        if _block_kind(unit_a.unit_type) != _block_kind(unit_b.unit_type):
-            continue
-        if unit_a.overlaps(unit_b):
-            continue
-        scoreable.add(pair)
-    return scoreable
+def _select(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Favor recall within the precision-safe F1 bound, centering exact tie plateaus."""
+    eligible = near_best_f1(rows)
+    best_key = max(recall_preference(row) for row in eligible)
+    tied = [row for row in eligible if recall_preference(row) == best_key]
+    return tied[len(tied) // 2]
 
 
-def _tier_breakdown(
-    hybrid: list[HybridDuplicate],
-    positive_pairs: set[tuple[str, str]],
-) -> tuple[dict[str, TierCounts], SubsetMetrics, set[tuple[str, str]]]:
-    """Split one published hybrid list by tier and score the default-visible subset.
-
-    :param list[HybridDuplicate] hybrid: Published pairs at one threshold.
-    :param set[tuple[str, str]] positive_pairs: Labeled positive pair keys.
-    :return tuple: Per-tier counts (every tier present), visible-subset metrics, and the visible pair keys.
-    """
-    pairs_by_tier: dict[str, set[tuple[str, str]]] = {tier: set() for tier in HYBRID_TIERS}
-    for item in hybrid:
-        pairs_by_tier[item.tier].add(ordered_pair_key(item.unit_a, item.unit_b))
-
-    tiers: dict[str, TierCounts] = {}
-    for tier, pairs in pairs_by_tier.items():
-        tp = len(pairs & positive_pairs)
-        fp = len(pairs) - tp
-        tiers[tier] = TierCounts(
-            predicted=len(pairs),
-            tp=tp,
-            fp=fp,
-            precision=tp / len(pairs) if pairs else None,
-            positive_share=tp / len(positive_pairs) if positive_pairs else 0.0,
-        )
-
-    visible_pairs: set[tuple[str, str]] = set()
-    for tier in VISIBLE_TIERS:
-        visible_pairs |= pairs_by_tier[tier]
-    tp, fp, fn, precision, recall, f1 = metrics(visible_pairs, positive_pairs)
-    visible = SubsetMetrics(
-        predicted=len(visible_pairs),
-        tp=tp,
-        fp=fp,
-        fn=fn,
-        precision=precision,
-        recall=recall,
-        f1=f1,
-    )
-    return tiers, visible, visible_pairs
+def _select_search(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Select only among thresholds that keep every no-result probe empty."""
+    clean = [row for row in rows if row["no_result_clean"] == row["no_result_total"]]
+    if not clean:
+        raise ValueError("no search candidate keeps all no-result probes empty")
+    return _select(clean)
 
 
-def _grid_edge(selected: float, grid: list[float]) -> str | None:
-    """Name the grid edge a selected threshold sits on, if any.
-
-    A boundary selection is censored evidence - the true optimum may lie
-    outside the swept range - so reports must record it instead of presenting
-    the edge row as an interior optimum.
-
-    :param float selected: Selected threshold.
-    :param list[float] grid: Swept threshold grid, ascending.
-    :return str | None: ``"start"``, ``"stop"``, or ``None`` when interior.
-    """
-    if selected == grid[0]:
-        return "start"
-    if selected == grid[-1]:
-        return "stop"
-    return None
-
-
-def _sha256_of_tree(root: Path) -> str:
-    """Digest a fixture tree by sorted relative path and file contents.
-
-    Every regular source file participates so non-Python corpora do not digest
-    identically; the shared corpus walk excludes caches and hidden files. For
-    the historical all-Python corpus this matches the previous ``*.py``-only
-    digest.
-    """
-    digest = hashlib.sha256()
-    for file_path in corpus_files(root):
-        digest.update(file_path.relative_to(root).as_posix().encode())
-        digest.update(b"\x00")
-        digest.update(file_path.read_bytes())
-        digest.update(b"\x00")
-    return digest.hexdigest()
-
-
-def _sha256_of_file(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
-
-
-def _require_immutable_revision(model_name: str, explicit_revision: str | None) -> str:
-    """Resolve the pinned commit for calibration, refusing mutable identities."""
-    local_model_path = resolve_local_model_path(model_name)
-    if local_model_path is not None:
-        raise SystemExit(
-            f"Refusing to calibrate local model directory {str(local_model_path)!r} as an "
-            "immutable Hub commit. Local weights are identified by their content "
-            "fingerprint and ignore --model-revision; calibrate a Hub model ID instead."
-        )
-
-    profile = resolve_model_profile(model_name)
-    revision = explicit_revision or profile.default_revision
-    is_commit = (
-        revision is not None
-        and len(revision) == 40
-        and all(character in "0123456789abcdefABCDEF" for character in revision)
-    )
-    if not is_commit:
-        raise SystemExit(
-            f"Refusing to calibrate {model_name!r}: no immutable 40-character commit. "
-            "Pass --model-revision <commit> or pin the profile's default_revision. "
-            f"(resolved revision: {revision!r})"
-        )
-    assert revision is not None
-    return revision
-
-
-def _calibration_manifest(
-    *,
-    profile: SemanticModelProfile,
-    resolved_revision: str,
-    mode: str,
-    semantic_task: str,
-    requested_device: str,
-    identity: EmbeddingSpaceIdentity,
-    dimension: int,
-    min_statements: int,
-    batch_size: int,
-    languages: tuple[str, ...] | None,
-    corpus_path: Path,
-    labels_path: Path,
-    traditional_config: AnalyzerConfig | None = None,
-) -> dict[str, Any]:
-    """Assemble the reproducible identity under which one threshold was swept.
-
-    ``identity`` is the analyzer's effective embedding-space identity, recorded
-    verbatim: it reflects the policy that produced the swept matrix (dtype and
-    Metal math policy included) even when the requested accelerator fell back
-    and the run restarted on CPU, so thresholds are never labeled with a device
-    or dtype that did not produce them. When traditional analysis contributes
-    candidates, ``traditional_config`` records the exact gate and tiny-pair
-    filter applied to those candidates.
-    """
-    code_plan = resolve_encode_plan(profile.canonical_name, "code", None, semantic_task)
-    manifest: dict[str, Any] = {
-        "model": profile.canonical_name,
-        "resolved_revision": resolved_revision,
-        "embedding_pipeline_schema": EMBEDDING_PIPELINE_SCHEMA,
-        "embedding_runtime_identity": _embedding_runtime_fingerprint(),
-        "runtime_versions": get_semantic_runtime_versions(),
-        "codedupes_version": __version__,
-        "mode": mode,
-        "semantic_task": semantic_task,
-        "encode_plan": {"code": {"route": code_plan.route, "prompt": code_plan.prompt}},
-        "requested_device": requested_device,
-        "embedding_space": asdict(identity),
-        "dimension": dimension,
-        "normalized": True,
-        "candidate_policy": {
-            "unit_types": list(DEFAULT_SEMANTIC_UNIT_TYPES),
-            "min_recursive_statements": min_statements,
-            "include_private": True,
-            "languages": list(languages) if languages is not None else None,
-        },
-        "batch_size": batch_size,
-        "corpus_path": str(corpus_path),
-        "corpus_sha256": _sha256_of_tree(corpus_path),
-        "labels_path": str(labels_path),
-        "labels_sha256": _sha256_of_file(labels_path),
+def _score_summary(values: list[float]) -> dict[str, float | int | None]:
+    """Summarize one labeled score population."""
+    ordered = sorted(values)
+    return {
+        "count": len(ordered),
+        "min": ordered[0] if ordered else None,
+        "median": median(ordered) if ordered else None,
+        "max": ordered[-1] if ordered else None,
     }
-    if mode == "search":
-        query_plan = resolve_encode_plan(profile.canonical_name, "query", None, semantic_task)
-        manifest["encode_plan"]["query"] = {
-            "route": query_plan.route,
-            "prompt": query_plan.prompt,
-        }
-    if traditional_config is not None:
-        manifest["traditional_candidate_policy"] = {
-            "jaccard_threshold": traditional_config.jaccard_threshold,
-            "filter_tiny_traditional": traditional_config.filter_tiny_traditional,
-            "tiny_unit_statement_cutoff": traditional_config.tiny_unit_statement_cutoff,
-        }
-    return manifest
 
 
-def _evaluate_thresholds(
-    scored_pairs: list[tuple[tuple[str, str], float]],
-    positive_pairs: set[tuple[str, str]],
-    *,
-    thresholds: list[float],
-) -> list[SweepRow]:
-    rows: list[SweepRow] = []
-    for threshold in thresholds:
-        predicted_pairs = {pair for pair, score in scored_pairs if score >= threshold}
-        tp, fp, fn, precision, recall, f1 = metrics(predicted_pairs, positive_pairs)
+def _selection_window(rows: list[dict[str, Any]], selected: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return nearby sweep rows so a checked selection remains auditable."""
+    selected_index = rows.index(selected)
+    start = max(0, selected_index - SEARCH_SELECTION_WINDOW_RADIUS)
+    stop = selected_index + SEARCH_SELECTION_WINDOW_RADIUS + 1
+    return rows[start:stop]
+
+
+def _difficulty_recall(
+    project: Any, measurement: dict[str, Any], threshold: float
+) -> dict[str, dict[str, float | int]]:
+    """Report positive recall by authored challenge level."""
+    labels = judgments(project)
+    measured = {
+        pair_key(row["a"], row["b"]): row
+        for row in measurement["pairs"]
+        if row["comparable"] and not row.get("traditional") and row["cosine"] is not None
+    }
+    result = {}
+    for difficulty in ("easy", "medium", "hard"):
+        keys = {
+            key
+            for key, label in labels.items()
+            if key in measured
+            and label["judgment"] == "positive"
+            and label.get("difficulty") == difficulty
+        }
+        detected = sum(measured[key]["cosine"] >= threshold for key in keys)
+        result[difficulty] = {
+            "detected": detected,
+            "total": len(keys),
+            "recall": detected / len(keys) if keys else 0.0,
+        }
+    return result
+
+
+def duplicate_rows(
+    project: Any, measurement: dict[str, Any], grid: list[float]
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Sweep the semantic admission gate over comparable reviewed pairs."""
+    labels = judgments(project)
+    measured = {
+        pair_key(row["a"], row["b"]): row
+        for row in measurement["pairs"]
+        if row["comparable"] and not row.get("traditional") and row["cosine"] is not None
+    }
+    eligible_labels = {
+        key: label
+        for key, label in labels.items()
+        if key in measured and label["judgment"] in {"positive", "negative", "ambiguous"}
+    }
+    if not any(label["judgment"] == "positive" for label in eligible_labels.values()):
+        raise ValueError(f"{project.id}: no comparable positive labels")
+    rows = []
+    for threshold in grid:
+        predicted = {key for key, row in measured.items() if row["cosine"] >= threshold}
         rows.append(
-            SweepRow(
-                threshold=threshold,
-                predicted=len(predicted_pairs),
-                tp=tp,
-                fp=fp,
-                fn=fn,
-                precision=precision,
-                recall=recall,
-                f1=f1,
-            )
+            {
+                "threshold": threshold,
+                "predicted": len(predicted),
+                **metrics(predicted, eligible_labels),
+            }
         )
-    # Ties prefer the looser threshold: recall over precision at equal F1.
-    rank_sweep_rows(rows, extra_key=lambda row: (-row.threshold,))
+    selected = _select(rows)
+    positive_scores = [
+        measured[key]["cosine"]
+        for key, label in eligible_labels.items()
+        if label["judgment"] == "positive"
+    ]
+    negative_scores = [
+        measured[key]["cosine"]
+        for key, label in eligible_labels.items()
+        if label["judgment"] == "negative"
+    ]
+    predicted = {key for key, row in measured.items() if row["cosine"] >= selected["threshold"]}
+    detail = {
+        "selected": selected,
+        "selection_ready": (
+            selected["ambiguous_predictions"] == 0 and selected["unjudged_predictions"] == 0
+        ),
+        "selected_difficulty_recall": _difficulty_recall(
+            project, measurement, selected["threshold"]
+        ),
+        "positive_scores": _score_summary(positive_scores),
+        "negative_scores": _score_summary(negative_scores),
+        "unjudged_above_selected": [
+            [*key, measured[key]["cosine"]]
+            for key in sorted(predicted - labels.keys(), key=lambda key: -measured[key]["cosine"])
+        ],
+    }
+    return rows, detail
+
+
+def _search_records(project: Any, measurement: dict[str, Any]) -> list[dict[str, Any]]:
+    expected = {
+        (probe["id"], unit) for probe in project.annotations["probes"] for unit in probe["expected"]
+    }
+    scored = {
+        (row["probe"], row["unit"])
+        for row in measurement["query_scores"]
+        if row["cosine"] is not None
+    }
+    if missing := expected - scored:
+        raise ValueError(
+            f"{project.id}: expected search targets were not embedded: {sorted(missing)}"
+        )
+    no_result = {probe["id"] for probe in project.annotations["probes"] if not probe["expected"]}
+    return [
+        {
+            "key": (project.id, row["probe"], row["unit"]),
+            "score": row["cosine"],
+            "rank": row["rank"],
+            "expected": (row["probe"], row["unit"]) in expected,
+            "no_result": row["probe"] in no_result,
+        }
+        for row in measurement["query_scores"]
+        if row["cosine"] is not None
+    ]
+
+
+def search_rows(records: list[dict[str, Any]], grid: list[float]) -> list[dict[str, Any]]:
+    """Sweep one global search threshold at the production top-k limit."""
+    expected = {row["key"] for row in records if row["expected"]}
+    no_result_queries = {(row["key"][0], row["key"][1]) for row in records if row["no_result"]}
+    rows = []
+    for threshold in grid:
+        output = {
+            row["key"]
+            for row in records
+            if row["score"] >= threshold and row["rank"] <= DEFAULT_TOP_K
+        }
+        tp = len(output & expected)
+        fp = len(output - expected)
+        fn = len(expected - output)
+        precision = tp / (tp + fp) if tp + fp else 0.0
+        recall = tp / (tp + fn) if tp + fn else 0.0
+        violated = {(project, probe) for project, probe, _ in output} & no_result_queries
+        rows.append(
+            {
+                "threshold": threshold,
+                "tp": tp,
+                "fp": fp,
+                "fn": fn,
+                "precision": precision,
+                "recall": recall,
+                "f1": 2 * precision * recall / (precision + recall) if precision + recall else 0.0,
+                "no_result_clean": len(no_result_queries) - len(violated),
+                "no_result_total": len(no_result_queries),
+            }
+        )
     return rows
 
 
-def _analyzer_config(
-    *,
-    model_name: str,
-    revision: str,
-    semantic_task: str,
-    semantic_threshold: float,
-    min_statements: int,
-    batch_size: int,
-    device: str,
-    languages: tuple[str, ...] | None = None,
-    run_traditional: bool = False,
-) -> AnalyzerConfig:
-    return AnalyzerConfig(
-        run_traditional=run_traditional,
-        run_semantic=True,
-        run_unused=False,
-        include_private=True,
-        languages=languages,
-        model_name=model_name,
-        model_revision=revision,
-        semantic_task=semantic_task,
-        semantic_threshold=semantic_threshold,
-        min_semantic_statements=min_statements,
-        batch_size=batch_size,
-        device=device,
-    )
-
-
-def _run_duplicate_sweep(
-    *,
-    model_name: str,
-    revision: str,
-    languages: tuple[str, ...] | None = None,
-    corpus_path: Path,
-    labels_path: Path,
-    labels: dict[str, Any],
-    min_statements: int,
-    batch_size: int,
-    device: str,
-    duplicate_start: float = DUPLICATE_THRESHOLD_START,
-    duplicate_stop: float = DUPLICATE_THRESHOLD_STOP,
-) -> ModelSweep:
-    thresholds = _threshold_grid(duplicate_start, duplicate_stop)
-    profile = resolve_model_profile(model_name)
-    config = _analyzer_config(
-        model_name=model_name,
-        revision=revision,
-        semantic_task=DEFAULT_CHECK_SEMANTIC_TASK,
-        semantic_threshold=duplicate_start,
-        min_statements=min_statements,
-        batch_size=batch_size,
-        device=device,
-        languages=languages,
-        run_traditional=True,
-    )
-    analyzer = CodeAnalyzer(config)
-    result = analyzer.analyze(corpus_path)
-    embeddings = analyzer._embeddings
-    dimension = int(embeddings.shape[1]) if embeddings is not None and embeddings.size else 0
-    identity = analyzer._embedding_space_identity
-    assert identity is not None
-
-    positive_pairs = build_positive_pairs(result.units, labels)
-    semantic_units = analyzer._semantic_units or []
-    semantic_uids = {unit.uid for unit in semantic_units}
-    embedded_pairs = {
-        pair for pair in positive_pairs if pair[0] in semantic_uids and pair[1] in semantic_uids
-    }
-    semantic_exclusions = find_exact_pair_keys(semantic_units) if config.run_traditional else set()
-    scoreable_pairs = _scoreable_semantic_pairs(
-        positive_pairs,
-        semantic_units,
-        cross_language=config.cross_language,
-        exclude_pairs=semantic_exclusions,
-    )
-    traditional_pairs = {
-        ordered_pair_key(duplicate.unit_a, duplicate.unit_b)
-        for duplicate in result.traditional_duplicates
-    }
-    reachable_pairs = scoreable_pairs | (positive_pairs & traditional_pairs)
-    excluded_pairs = len(positive_pairs) - len(scoreable_pairs)
-    if excluded_pairs:
-        print(
-            f"{excluded_pairs} labeled pairs are not eligible for semantic comparison. "
-            "They stay in the metric denominator and are threshold-invariant. "
-            "Candidate-policy and pair-scan exclusions can still be recovered by "
-            "full-scope traditional analysis. Any exclusion counts as a false negative "
-            "unless the traditional tier matched it."
-        )
-    corpus_languages = sorted({unit.language for unit in result.units})
-    high_gates = {
-        language: gate
-        for language in corpus_languages
-        if (gate := profile.high_confidence_threshold_for_language(language)) is not None
-    }
-    rows: list[SweepRow] = []
-    predicted_by_threshold: dict[float, set[tuple[str, str]]] = {}
-    visible_by_threshold: dict[float, set[tuple[str, str]]] = {}
-    for threshold in thresholds:
-        gated_semantic = [
-            duplicate
-            for duplicate in result.semantic_duplicates
-            if duplicate.similarity >= threshold
-        ]
-        # Split the published set exactly as the analyzer would for this profile.
-        hybrid = analyzer_module._synthesize_hybrid_duplicates(
-            result.traditional_duplicates,
-            gated_semantic,
-            jaccard_threshold=DEFAULT_TRADITIONAL_THRESHOLD,
-            weak_identifier_jaccard_min=profile.hybrid_weak_identifier_jaccard_min,
-            statement_ratio_min=profile.hybrid_statement_ratio_min,
-            semantic_high_gates=high_gates,
-        )
-        predicted_pairs = {ordered_pair_key(item.unit_a, item.unit_b) for item in hybrid}
-        predicted_by_threshold[threshold] = predicted_pairs
-        tp, fp, fn, precision, recall, f1 = metrics(predicted_pairs, positive_pairs)
-        tiers, visible, visible_pairs = _tier_breakdown(hybrid, positive_pairs)
-        visible_by_threshold[threshold] = visible_pairs
-        rows.append(
-            DuplicateSweepRow(
-                threshold=threshold,
-                predicted=len(predicted_pairs),
-                tp=tp,
-                fp=fp,
-                fn=fn,
-                precision=precision,
-                recall=recall,
-                f1=f1,
-                tiers=tiers,
-                visible=visible,
-            )
-        )
-    # Selection still ranks the complete published set: the admission gate is
-    # recall-first by policy, and the tier split only decides default visibility.
-    rank_sweep_rows(rows, extra_key=lambda row: (-row.threshold,))
-    selected = rows[0]
-
-    manifest = _calibration_manifest(
-        profile=profile,
-        resolved_revision=revision,
-        mode="duplicate",
-        semantic_task=DEFAULT_CHECK_SEMANTIC_TASK,
-        requested_device=device,
-        identity=identity,
-        dimension=dimension,
-        min_statements=min_statements,
-        batch_size=batch_size,
-        languages=config.languages,
-        corpus_path=corpus_path,
-        labels_path=labels_path,
-        traditional_config=config,
-    )
-    manifest["output_policy"] = "hybrid_duplicates"
-    # The tier split, and therefore every ``tiers``/``visible`` field, depends on
-    # the corroboration constants in force when the sweep ran.
-    manifest["visible_policy"] = {
-        "excluded_tiers": sorted(WITHHELD_TIERS),
-        "metrics_field": "visible",
-    }
-    manifest["corroboration"] = {
-        "weak_identifier_jaccard_min": profile.hybrid_weak_identifier_jaccard_min,
-        "statement_ratio_min": profile.hybrid_statement_ratio_min,
-        "high_confidence_gates": {
-            language: profile.high_confidence_threshold_for_language(language)
-            for language in corpus_languages
-        },
-    }
-    manifest["selected_at_grid_edge"] = _grid_edge(selected.threshold, thresholds)
-    # Every count shares one population: embedded measures endpoint coverage,
-    # scoreable applies the scanner's pair predicate, reachable adds traditional
-    # recoveries, and the ceiling divides reachable by labeled. This is a
-    # structural upper bound before cosine scores and thresholds are considered.
-    manifest["candidate_coverage"] = {
-        "labeled_positive_pairs": len(positive_pairs),
-        "embedded_positive_pairs": len(embedded_pairs),
-        "scoreable_positive_pairs": len(scoreable_pairs),
-        "traditional_recovered_pairs": len(reachable_pairs) - len(scoreable_pairs),
-        "reachable_positive_pairs": len(reachable_pairs),
-        "unreachable_positive_pairs": len(positive_pairs) - len(reachable_pairs),
-        "recall_ceiling": (len(reachable_pairs) / len(positive_pairs) if positive_pairs else 0.0),
-    }
-    selected_pairs = predicted_by_threshold[selected.threshold]
-    selected_visible = visible_by_threshold[selected.threshold]
-    manifest["selected_category_recall"] = {}
-    for category, groups in labels.get("categories", {}).items():
-        category_pairs = build_positive_pairs(result.units, {"positive_groups": groups})
-        detected = len(selected_pairs & category_pairs)
-        visible_detected = len(selected_visible & category_pairs)
-        manifest["selected_category_recall"][category] = {
-            "labeled": len(category_pairs),
-            "detected": detected,
-            "recall": detected / len(category_pairs) if category_pairs else 0.0,
-            "visible_detected": visible_detected,
-            "visible_recall": (visible_detected / len(category_pairs) if category_pairs else 0.0),
+def _selection_models(
+    projects: list[Any],
+    models: list[str],
+    measurements: dict[tuple[str, str], dict[str, Any]],
+    duplicate_grid: list[float],
+    search_grid: list[float],
+) -> list[dict[str, Any]]:
+    """Derive all threshold decisions from already validated CPU measurements."""
+    results = []
+    for model in models:
+        profile = resolve_model_profile(model)
+        model_result: dict[str, Any] = {
+            "model": profile.key,
+            "duplicate_by_language": [],
         }
-
-    return ModelSweep(
-        model_key=model_name,
-        canonical_name=profile.canonical_name,
-        selected_threshold=selected.threshold,
-        manifest=manifest,
-        rows=rows,
-    )
-
-
-def _run_search_sweep(
-    *,
-    model_name: str,
-    revision: str,
-    languages: tuple[str, ...] | None = None,
-    corpus_path: Path,
-    probes_path: Path,
-    probes: list[dict[str, Any]],
-    min_statements: int,
-    batch_size: int,
-    device: str,
-    search_start: float = SEARCH_THRESHOLD_START,
-    search_stop: float = SEARCH_THRESHOLD_STOP,
-) -> ModelSweep:
-    thresholds = _threshold_grid(search_start, search_stop)
-    profile = resolve_model_profile(model_name)
-    analyzer = CodeAnalyzer(
-        _analyzer_config(
-            model_name=model_name,
-            revision=revision,
-            semantic_task=DEFAULT_SEARCH_SEMANTIC_TASK,
-            semantic_threshold=search_start,
-            min_statements=min_statements,
-            batch_size=batch_size,
-            device=device,
-            languages=languages,
-        )
-    )
-    indexed = analyzer.index(corpus_path)
-    embeddings = analyzer._embeddings
-    dimension = int(embeddings.shape[1]) if embeddings is not None and embeddings.size else 0
-    identity = analyzer._embedding_space_identity
-    assert identity is not None
-    assert analyzer._semantic_units is not None
-    assert analyzer._units is not None
-
-    scored_pairs: list[tuple[tuple[str, str], float]] = []
-    positive_pairs: set[tuple[str, str]] = set()
-    for probe_index, probe in enumerate(probes):
-        query = probe["query"]
-        query_key = f"probe-{probe_index}"
-        expected_units = {
-            resolve_label_unit(analyzer._units, spec).uid for spec in probe["expected"]
-        }
-        positive_pairs.update((query_key, uid) for uid in expected_units)
-        for unit, score in analyzer.search(query, top_k=indexed):
-            scored_pairs.append(((query_key, unit.uid), score))
-
-    rows = _evaluate_thresholds(scored_pairs, positive_pairs, thresholds=thresholds)
-    selected = rows[0]
-
-    manifest = _calibration_manifest(
-        profile=profile,
-        resolved_revision=revision,
-        mode="search",
-        semantic_task=DEFAULT_SEARCH_SEMANTIC_TASK,
-        requested_device=device,
-        identity=identity,
-        dimension=dimension,
-        min_statements=min_statements,
-        batch_size=batch_size,
-        languages=analyzer.config.languages,
-        corpus_path=corpus_path,
-        labels_path=probes_path,
-    )
-    manifest["probe_count"] = len(probes)
-    manifest["selected_at_grid_edge"] = _grid_edge(selected.threshold, thresholds)
-    embedded_uids = {unit.uid for unit in analyzer._semantic_units}
-    scoreable_targets = {pair for pair in positive_pairs if pair[1] in embedded_uids}
-    manifest["candidate_coverage"] = {
-        "labeled_positive_targets": len(positive_pairs),
-        "scoreable_positive_targets": len(scoreable_targets),
-        "excluded_positive_targets": len(positive_pairs) - len(scoreable_targets),
-        "recall_ceiling": (len(scoreable_targets) / len(positive_pairs) if positive_pairs else 0.0),
-    }
-
-    return ModelSweep(
-        model_key=model_name,
-        canonical_name=profile.canonical_name,
-        selected_threshold=selected.threshold,
-        manifest=manifest,
-        rows=rows,
-    )
-
-
-def _print_sweep(model_sweep: ModelSweep, top_n: int) -> None:
-    print(f"\nModel: {model_sweep.model_key} ({model_sweep.manifest['mode']})")
-    print(f"Revision: {model_sweep.manifest['resolved_revision']}")
-    # ``:g``, not ``:.2f``: an off-grid --duplicate-start yields 3-decimal gates,
-    # and truncating them in the printout would recreate the mislabeling the
-    # grid itself no longer performs.
-    print(f"Selected threshold: {model_sweep.selected_threshold:g}")
-    edge = model_sweep.manifest.get("selected_at_grid_edge")
-    if edge is not None:
-        print(
-            f"WARNING: selected threshold sits at the grid {edge}; the optimum may lie "
-            "outside the swept range - widen it (--duplicate-start/--duplicate-stop or "
-            "--search-start/--search-stop) to confirm."
-        )
-    print("Top rows:")
-    for idx, row in enumerate(model_sweep.rows[:top_n], start=1):
-        line = (
-            f"  {idx:02d}. threshold={row.threshold:g} f1={row.f1:.3f} "
-            f"precision={row.precision:.3f} recall={row.recall:.3f} "
-            f"tp={row.tp} fp={row.fp} fn={row.fn} pred={row.predicted}"
-        )
-        if isinstance(row, DuplicateSweepRow):
-            review = row.tiers["semantic_review"]
-            line += (
-                f" | visible precision={row.visible.precision:.3f} "
-                f"recall={row.visible.recall:.3f} review tp={review.tp} fp={review.fp}"
+        search_records = []
+        seen_languages = set()
+        for project in projects:
+            language = project.spec["languages"][0]
+            if language in seen_languages:
+                raise ValueError(f"multiple projects for {language}; pooling is not yet explicit")
+            seen_languages.add(language)
+            measurement = measurements[(project.id, profile.key)]
+            duplicate, detail = duplicate_rows(project, measurement, duplicate_grid)
+            current = profile.semantic_threshold_for_language(language)
+            current_metrics = duplicate_rows(project, measurement, [current])[0][0]
+            model_result["duplicate_by_language"].append(
+                {
+                    "language": language,
+                    "project": project.id,
+                    "current_threshold": current,
+                    "current_metrics": current_metrics,
+                    "current_difficulty_recall": _difficulty_recall(
+                        project, measurement, current_metrics["threshold"]
+                    ),
+                    "selected_threshold": detail["selected"]["threshold"],
+                    "selected_metrics": detail["selected"],
+                    "selection_window": _selection_window(duplicate, detail["selected"]),
+                    "selection_ready": detail["selection_ready"],
+                    "selected_difficulty_recall": detail["selected_difficulty_recall"],
+                    "positive_scores": detail["positive_scores"],
+                    "negative_scores": detail["negative_scores"],
+                    "unjudged_above_selected": detail["unjudged_above_selected"],
+                }
             )
-        print(line)
+            search_records.extend(_search_records(project, measurement))
+        search = search_rows(search_records, search_grid)
+        selected_search = _select_search(search)
+        model_result["search"] = {
+            "current_threshold": profile.default_search_threshold,
+            "current_metrics": search_rows(search_records, [profile.default_search_threshold])[0],
+            "selected_threshold": selected_search["threshold"],
+            "selected_metrics": selected_search,
+            "selection_window": _selection_window(search, selected_search),
+        }
+        results.append(model_result)
+    return results
 
 
-def _report_payload(results: list[ModelSweep], grid: list[float]) -> dict[str, Any]:
-    return {
-        "grid": grid,
-        "models": [
-            {
-                "model_key": item.model_key,
-                "canonical_name": item.canonical_name,
-                "selected_threshold": item.selected_threshold,
-                "selected_metrics": asdict(item.rows[0]),
-                "calibration": item.manifest,
-                "rows": [asdict(row) for row in item.rows],
-            }
-            for item in results
-        ],
-    }
+def validate_threshold_selection(
+    payload: dict[str, Any],
+    projects: list[Any],
+    models: list[str],
+    measurements: dict[tuple[str, str], dict[str, Any]],
+) -> None:
+    """Reject threshold decisions not reproducible from their bound measurements."""
+    validate_selection_contract(payload)
+    expected = _selection_models(
+        projects,
+        models,
+        measurements,
+        payload["grids"]["duplicate"],
+        payload["grids"]["search"],
+    )
+    if payload.get("models") != expected:
+        raise ValueError("threshold selection does not match its raw measurements")
 
 
 def main() -> int:
-    """Entry point."""
-    parser = argparse.ArgumentParser(
-        description="Sweep duplicate and search thresholds across built-in model profiles."
-    )
-    add_common_sweep_arguments(parser)
-    parser.add_argument(
-        "--search-probes-path",
-        type=Path,
-        default=Path("test_fixtures/hybrid_tuning/search_probes.json"),
-        help="Path to search_probes.json with labeled query probes.",
-    )
-    parser.add_argument(
-        "--models",
-        nargs="+",
-        default=[profile.key for profile in list_supported_models()],
-        help="Model keys or IDs to sweep. Defaults to all built-in profiles.",
-    )
-    parser.add_argument(
-        "--model-revision",
-        default=None,
-        help="Immutable 40-character commit to calibrate against. Defaults to the "
-        "profile's pinned default_revision; calibration refuses to run without one.",
-    )
-    parser.add_argument(
-        "--device",
-        default="cpu",
-        help="Embedding device for the sweep. Defaults to cpu for reproducible float32.",
-    )
-    parser.add_argument(
-        "--skip-search",
-        action="store_true",
-        help="Only sweep duplicate thresholds.",
-    )
-    parser.add_argument(
-        "--duplicate-start",
-        type=float,
-        default=DUPLICATE_THRESHOLD_START,
-        help="Duplicate-threshold grid floor; also the analyzer floor, so pairs "
-        "below it are never scored. Lower it for corpora whose positive pairs "
-        f"sit below the default {DUPLICATE_THRESHOLD_START:.2f}.",
-    )
-    parser.add_argument(
-        "--duplicate-stop",
-        type=float,
-        default=DUPLICATE_THRESHOLD_STOP,
-        help="Duplicate-threshold grid ceiling.",
-    )
-    parser.add_argument(
-        "--search-start",
-        type=float,
-        default=SEARCH_THRESHOLD_START,
-        help="Search-threshold grid and score-collection floor.",
-    )
-    parser.add_argument(
-        "--search-stop",
-        type=float,
-        default=SEARCH_THRESHOLD_STOP,
-        help="Search-threshold grid ceiling. Widen the range when a sweep "
-        "reports a boundary selection.",
-    )
-    parser.add_argument(
-        "--json-out",
-        type=Path,
-        default=Path("test_fixtures/hybrid_tuning/semantic_threshold_report.json"),
-        help="Path to write the duplicate-threshold sweep report JSON.",
-    )
-    parser.add_argument(
-        "--search-json-out",
-        type=Path,
-        default=Path("test_fixtures/hybrid_tuning/search_threshold_report.json"),
-        help="Path to write the search-threshold sweep report JSON.",
-    )
+    """Select CPU-reference admission and search thresholds for both model profiles."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    add_contract_arguments(parser)
+    parser.add_argument("--measurements", type=Path, default=DEFAULT_MEASUREMENTS)
+    parser.add_argument("--models", nargs="+", default=[p.key for p in list_supported_models()])
+    parser.add_argument("--duplicate-start", type=float, default=0.0)
+    parser.add_argument("--duplicate-stop", type=float, default=1.0)
+    parser.add_argument("--search-start", type=float, default=0.0)
+    parser.add_argument("--search-stop", type=float, default=1.0)
+    parser.add_argument("--step", type=float, default=0.01)
+    parser.add_argument("--json-out", type=Path)
     args = parser.parse_args()
-
-    for mode, start, stop in (
-        ("duplicate", args.duplicate_start, args.duplicate_stop),
-        ("search", args.search_start, args.search_stop),
-    ):
-        try:
-            _threshold_grid(start, stop)
-        except ValueError as exc:
-            parser.error(f"invalid --{mode}-start/--{mode}-stop: {exc}")
-
-    labels = json.loads(args.labels_path.read_text())
-    # Shape problems must abort here, in milliseconds: the per-category recall
-    # loop otherwise discovers an empty category only after the full corpus embed.
-    try:
-        validate_labels_shape(labels)
-    except ValueError as exc:
-        parser.error(str(exc))
-    probes: list[dict[str, Any]] = []
-    if not args.skip_search:
-        # Same fail-fast contract as the labels: a malformed probes file must
-        # abort before the corpus embed, not write a zero-probe search report
-        # whose selected threshold is just the grid floor.
-        try:
-            probes = validate_probes_shape(json.loads(args.search_probes_path.read_text()))
-        except ValueError as exc:
-            parser.error(str(exc))
-
-    duplicate_results: list[ModelSweep] = []
-    search_results: list[ModelSweep] = []
-    for model_name in args.models:
-        revision = _require_immutable_revision(model_name, args.model_revision)
-        duplicate_results.append(
-            _run_duplicate_sweep(
-                model_name=model_name,
-                revision=revision,
-                languages=tuple(args.language) if args.language else None,
-                corpus_path=args.corpus_path,
-                labels_path=args.labels_path,
-                labels=labels,
-                min_statements=args.min_statements,
-                batch_size=args.batch_size,
-                device=args.device,
-                duplicate_start=args.duplicate_start,
-                duplicate_stop=args.duplicate_stop,
-            )
-        )
-        if not args.skip_search:
-            search_results.append(
-                _run_search_sweep(
-                    model_name=model_name,
-                    revision=revision,
-                    languages=tuple(args.language) if args.language else None,
-                    corpus_path=args.corpus_path,
-                    probes_path=args.search_probes_path,
-                    probes=probes,
-                    min_statements=args.min_statements,
-                    batch_size=args.batch_size,
-                    device=args.device,
-                    search_start=args.search_start,
-                    search_stop=args.search_stop,
-                )
-            )
-
-    print("Semantic threshold sweep (synthetic corpus guardrail)")
-    print(f"Corpus: {args.corpus_path}")
-    print(f"Labels: {args.labels_path}")
-
-    for item in duplicate_results + search_results:
-        _print_sweep(item, top_n=args.top_n)
-
-    args.json_out.parent.mkdir(parents=True, exist_ok=True)
-    args.json_out.write_text(
-        json.dumps(
-            _report_payload(
-                duplicate_results,
-                _threshold_grid(args.duplicate_start, args.duplicate_stop),
-            ),
-            indent=2,
-        )
+    projects = development_projects(load_projects(args.manifest, args.projects, args.policy))
+    duplicate_grid = threshold_grid(args.duplicate_start, args.duplicate_stop, args.step)
+    search_grid = threshold_grid(args.search_start, args.search_stop, args.step)
+    payload: dict[str, Any] = {
+        "schema_version": SELECTION_SCHEMA_VERSION,
+        "objective": selection_objective(),
+        "input_context": selection_context(projects, args.models),
+        "grids": {"duplicate": duplicate_grid, "search": search_grid},
+        "models": [],
+    }
+    measurements = {
+        (project.id, resolve_model_profile(model).key): load_all(
+            project, args.measurements, [model], ["cpu"]
+        )[(resolve_model_profile(model).key, "cpu")]
+        for model in args.models
+        for project in projects
+    }
+    raw_measurements = list(measurements.values())
+    payload["models"] = _selection_models(
+        projects, args.models, measurements, duplicate_grid, search_grid
     )
-    print(f"\nWrote duplicate sweep report: {args.json_out}")
+    payload["measurement_digests"] = measurement_digests(raw_measurements)
 
-    if not args.skip_search:
-        args.search_json_out.parent.mkdir(parents=True, exist_ok=True)
-        args.search_json_out.write_text(
-            json.dumps(
-                _report_payload(
-                    search_results,
-                    _threshold_grid(args.search_start, args.search_stop),
-                ),
-                indent=2,
-            )
-        )
-        print(f"Wrote search sweep report: {args.search_json_out}")
-
+    if args.json_out:
+        write_json(args.json_out, payload)
+    else:
+        print(json.dumps(payload, indent=2))
     return 0
 
 

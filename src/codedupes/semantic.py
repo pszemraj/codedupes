@@ -13,6 +13,7 @@ import threading
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from importlib import metadata as importlib_metadata
+from numbers import Integral
 from pathlib import Path
 from typing import Any, Literal, TypeVar, cast
 
@@ -73,6 +74,7 @@ logger = logging.getLogger(__name__)
 ProgressMode = Literal["auto", "always", "never"]
 SearchDocumentMode = Literal["source", "contextual"]
 PROGRESS_BAR_MIN_INPUTS = 100
+_PRECOMPUTED_VALIDATION_BLOCK_ROWS = 1024
 
 
 def _should_show_progress(mode: ProgressMode, input_count: int) -> bool:
@@ -433,7 +435,7 @@ def canonicalize_embeddings(
     :raises InvalidEmbeddingError: If shape, row count, dimensionality, finiteness,
         or norm invariants are violated.
     """
-    matrix = np.asarray(values, dtype=np.float32)
+    matrix = np.asarray(values, dtype=np.float64)
 
     if matrix.ndim != 2:
         raise InvalidEmbeddingError(f"Expected a 2D embedding matrix, got shape {matrix.shape!r}")
@@ -441,21 +443,87 @@ def canonicalize_embeddings(
         raise InvalidEmbeddingError(f"Expected {expected_rows} rows, got {matrix.shape[0]}")
     if expected_dim is not None and matrix.shape[1] != expected_dim:
         raise InvalidEmbeddingError(f"Expected dimension {expected_dim}, got {matrix.shape[1]}")
+    if matrix.shape[0] and matrix.shape[1] == 0:
+        raise InvalidEmbeddingError("Embedding matrix has zero columns")
 
     if not np.isfinite(matrix).all():
         raise InvalidEmbeddingError(
             "Embedding matrix contains NaN or infinity",
             retryable=True,
         )
+    if matrix.shape[0] == 0:
+        return np.ascontiguousarray(matrix, dtype=np.float32)
 
-    norms = np.linalg.norm(matrix, axis=1, keepdims=True)
-    if not np.isfinite(norms).all() or np.any(norms <= 1e-12):
+    # Scale before the norm so finite float32 extremes retain their direction:
+    # direct squaring can overflow at ~1e38 or underflow for subnormal rows.
+    scales = np.max(np.abs(matrix), axis=1, keepdims=True)
+    if not np.isfinite(scales).all() or np.any(scales == 0):
+        raise InvalidEmbeddingError(
+            "Embedding matrix contains a zero or invalid vector",
+            retryable=True,
+        )
+    scaled = matrix / scales
+    norms = np.linalg.norm(scaled, axis=1, keepdims=True)
+    if not np.isfinite(norms).all() or np.any(norms == 0):
         raise InvalidEmbeddingError(
             "Embedding matrix contains a zero or invalid vector",
             retryable=True,
         )
 
-    return np.ascontiguousarray(matrix / norms, dtype=np.float32)
+    return np.ascontiguousarray(scaled / norms, dtype=np.float32)
+
+
+def _validate_precomputed_embeddings(units: Sequence[CodeUnit], embeddings: object) -> np.ndarray:
+    """Validate and canonicalize caller-supplied corpus embeddings.
+
+    Fresh model output is checked by :func:`canonicalize_embeddings`, but direct
+    duplicate and query APIs also accept an already-built matrix. Those APIs
+    must apply the same finite, nonzero, unit-vector invariant before treating a
+    dot product as cosine similarity. Shape validation stays explicit so callers
+    receive a useful alignment error before any model or cache work.
+
+    :param units: Corpus units expected to have one embedding row each.
+    :param embeddings: Caller-supplied embedding matrix or array-like value.
+    :return: A contiguous float32 unit-normalized matrix aligned with ``units``.
+    :raises ValueError: If the matrix is not two-dimensional, has a different
+        number of rows than ``units``, or contains a non-finite or zero row.
+    """
+    matrix = embeddings if isinstance(embeddings, np.ndarray) else np.asarray(embeddings)
+    if matrix.ndim != 2:
+        raise ValueError(f"embeddings must be a 2D matrix; got shape {matrix.shape!r}")
+    if matrix.shape[0] != len(units):
+        raise ValueError(
+            "embeddings must contain one row per unit; "
+            f"got {matrix.shape[0]} rows for {len(units)} units"
+        )
+    try:
+        # Analyzer-produced corpora are already contiguous canonical float32.
+        # Validate those exact fixed points in bounded blocks so repeated search
+        # does not allocate corpus-sized float64 normalization temporaries. An
+        # approximate norm shortcut is deliberately unsafe here: even a tiny
+        # residual scale can change a score at an exact caller threshold.
+        if type(matrix) is np.ndarray and matrix.dtype == np.float32 and matrix.flags.c_contiguous:
+            for start in range(0, len(matrix), _PRECOMPUTED_VALIDATION_BLOCK_ROWS):
+                block = matrix[start : start + _PRECOMPUTED_VALIDATION_BLOCK_ROWS]
+                canonical = canonicalize_embeddings(block, expected_rows=len(block))
+                if not np.array_equal(block, canonical):
+                    break
+            else:
+                return matrix
+
+        # Direct callers may supply scaled, noncontiguous, or non-float32 rows.
+        # Preserve the normalizing API contract while bounding the temporary
+        # float64 working set independently of corpus size.
+        canonical = np.empty(matrix.shape, dtype=np.float32, order="C")
+        for start in range(0, len(matrix), _PRECOMPUTED_VALIDATION_BLOCK_ROWS):
+            block = matrix[start : start + _PRECOMPUTED_VALIDATION_BLOCK_ROWS]
+            canonical[start : start + len(block)] = canonicalize_embeddings(
+                block,
+                expected_rows=len(block),
+            )
+        return canonical
+    except InvalidEmbeddingError as exc:
+        raise ValueError(f"embeddings must contain finite, nonzero rows: {exc}") from exc
 
 
 def _configure_semantic_runtime_env(
@@ -2967,6 +3035,10 @@ def _compute_embeddings_unlocked(
         ),
     )
     if not units:
+        # This early return skips _prepare_semantic_device. No allocator work is
+        # needed, so restore any prior process-global cap even when this no-op
+        # call supplied a fraction that would be ignored on CPU/CUDA.
+        restore_mps_memory_fraction_if_managed()
         _record_embedding_run_stats(
             stats,
             prepared_texts=[],
@@ -3027,13 +3099,10 @@ def _compute_embeddings_unlocked(
     # Duplicate code units share one cache key, so compare against the covered
     # keys rather than the unique-hit count: len(hits) undercounts coverage.
     if cache_keys is not None and all(key in hits for key in cache_keys):
-        if mps_memory_fraction is None:
-            # This warm return skips _prepare_semantic_device, the only other
-            # path that restores the process-global allocator baseline, but the
-            # documented contract still applies: a run whose configuration
-            # leaves the fraction unset must not inherit an earlier managed cap
-            # (no-op unless one is currently managed).
-            restore_mps_memory_fraction_if_managed()
+        # A complete warm hit skips _prepare_semantic_device and performs no
+        # allocator work, so no requested fraction should leave a previous run's
+        # process-global cap active.
+        restore_mps_memory_fraction_if_managed()
         # The hits all came from one shard snapshot, so its recorded commit is
         # the provenance of every matrix row this warm return assembles.
         _record_embedding_run_stats(
@@ -3487,7 +3556,10 @@ def find_semantic_duplicates(
     :param language_thresholds: Per-language duplicate gates; ``None`` applies
         ``threshold`` flat to every language.
     :return: Similar pairs sorted by confidence.
+    :raises ValueError: If ``embeddings`` is not a two-dimensional matrix with
+        one row per unit, or a threshold is invalid.
     """
+    embeddings = _validate_precomputed_embeddings(units, embeddings)
     exclude_exact = exclude_exact or set()
     if not np.isfinite(threshold) or not 0.0 <= threshold <= 1.0:
         raise ValueError("threshold must be finite and in [0.0, 1.0]")
@@ -3640,8 +3712,12 @@ def resolve_search_threshold(
     :param semantic_task: Task used to embed corpus and query.
     :param threshold_profile: Threshold defaults to select; numeric gates take precedence.
     :return: Explicit gate or the applicable profile default.
-    :raises ValueError: If the search context requires an explicit threshold override.
+    :raises ValueError: If an explicit threshold is non-finite or the search context
+        requires an explicit threshold override.
     """
+    if threshold is not None and not np.isfinite(threshold):
+        raise ValueError("threshold must be finite")
+
     profile = resolve_model_profile(model_name)
     selected_profile = resolve_threshold_profile(profile, threshold_profile)
     semantic_task = normalize_semantic_task(
@@ -3681,7 +3757,7 @@ def _find_similar_to_query_unlocked(
     embeddings: np.ndarray,
     model_name: str = DEFAULT_MODEL,
     instruction_prefix: str | None = None,
-    top_k: int = DEFAULT_TOP_K,
+    top_k: Integral = DEFAULT_TOP_K,
     revision: str | None = None,
     trust_remote_code: bool | None = None,
     threshold: float | None = None,
@@ -3734,15 +3810,22 @@ def _find_similar_to_query_unlocked(
         used to build ``corpus_identity``.
     :return: Up to ``top_k`` ``(unit, similarity)`` pairs at or above the threshold,
         sorted by descending similarity.
-    :raises ValueError: If ``threshold`` is non-finite, an uncalibrated corpus uses
-        the default threshold, or a prompt-sensitive corpus omits its identity.
+    :raises ValueError: If ``top_k`` is not a positive integer, ``threshold`` is
+        non-finite, an uncalibrated corpus uses the default threshold, or a
+        prompt-sensitive corpus omits its identity.
     :raises SemanticBackendError: If an explicitly requested device is unavailable,
         even when the query embedding is already cached.
     :raises RuntimeError: If the query checkpoint cannot be verified against the
         indexed corpus, or its embedding execution policy changed.
     """
+    if not isinstance(query, str) or not query.strip():
+        raise ValueError("query must be a non-empty string")
+
     validate_explicit_device_request(device, mps_fallback=mps_fallback)
 
+    if isinstance(top_k, bool) or not isinstance(top_k, Integral) or top_k <= 0:
+        raise ValueError("top_k must be a positive integer")
+    top_k = int(top_k)
     if threshold is not None and not np.isfinite(threshold):
         raise ValueError("threshold must be finite")
 
@@ -3757,11 +3840,6 @@ def _find_similar_to_query_unlocked(
             "Pass CodeAnalyzer.search(threshold=...), find_similar_to_query(threshold=...), "
             "or --semantic-threshold."
         )
-
-    # After the input contracts above: an empty corpus can match
-    # nothing, so return before embedding the query (or loading the model).
-    if not units:
-        return []
 
     profile = resolve_model_profile(model_name)
     resolved_task = normalize_semantic_task(
@@ -3810,6 +3888,15 @@ def _find_similar_to_query_unlocked(
     if threshold is None and threshold_profile == "auto":
         log_family_threshold_notice(profile)
 
+    # After every caller-visible contract: an empty corpus can match nothing,
+    # so return before embedding the query (or loading the model).
+    if not units:
+        # See the corresponding empty-corpus return in
+        # _compute_embeddings_unlocked: no allocator work is needed, so a no-op
+        # search must not preserve a cap from an earlier run.
+        restore_mps_memory_fraction_if_managed()
+        return []
+
     encode_plan = _resolve_encode_plan(profile, "query", resolved_task, instruction_prefix)
     query_text = _prepare_embedding_text(query)
 
@@ -3851,21 +3938,28 @@ def _find_similar_to_query_unlocked(
     )
 
     def _validated_query_hit(candidate: np.ndarray | None) -> np.ndarray | None:
-        """Reject a cached query vector whose dimensionality cannot match the corpus.
+        """Canonicalize a cached query vector before cosine similarity.
 
         :param candidate: Cached query embedding, or ``None`` on a miss.
-        :return: The candidate when usable, else ``None`` to force a fresh encode.
+        :return: A finite unit vector when usable, else ``None`` to force a fresh encode.
         """
         if candidate is None:
             return None
-        if embeddings.size and candidate.shape[-1] != embeddings.shape[1]:
+        try:
+            if candidate.ndim != 1:
+                raise InvalidEmbeddingError(
+                    f"Expected a cached embedding row, got shape {candidate.shape!r}"
+                )
+            return canonicalize_embeddings(
+                candidate[np.newaxis, :],
+                expected_rows=1,
+                expected_dim=embeddings.shape[1],
+            )[0]
+        except InvalidEmbeddingError as exc:
             logger.warning(
-                "Discarding a cached query embedding whose dimensionality "
-                f"({candidate.shape[-1]}) does not match the corpus matrix "
-                f"({embeddings.shape[1]}); re-encoding the query."
+                f"Discarding an invalid cached query embedding ({exc}); re-encoding the query."
             )
             return None
-        return candidate
 
     corpus_source_commit = corpus_identity.source_commit if corpus_identity is not None else None
 
@@ -3897,10 +3991,10 @@ def _find_similar_to_query_unlocked(
             )
             query_embedding = None
 
-    if query_embedding is not None and (mps_memory_fraction is None or embedding_device == "cpu"):
+    if query_embedding is not None:
         # A warm query hit skips _prepare_semantic_device; same allocator
-        # contract as the warm corpus return: an effectively unset fraction
-        # must not inherit an earlier managed cap.
+        # contract as the warm corpus return: it performs no allocator work and
+        # must not inherit a managed cap from an earlier run.
         restore_mps_memory_fraction_if_managed()
 
     if query_embedding is None:
@@ -4113,7 +4207,7 @@ def find_similar_to_query(
     embeddings: np.ndarray,
     model_name: str = DEFAULT_MODEL,
     instruction_prefix: str | None = None,
-    top_k: int = DEFAULT_TOP_K,
+    top_k: Integral = DEFAULT_TOP_K,
     revision: str | None = None,
     trust_remote_code: bool | None = None,
     threshold: float | None = None,
@@ -4160,9 +4254,12 @@ def find_similar_to_query(
         used to build ``corpus_identity``.
     :return: Up to ``top_k`` ``(unit, similarity)`` pairs at or above the threshold,
         sorted by descending similarity.
-    :raises ValueError: If ``threshold`` is non-finite, an uncalibrated corpus uses
-        the default threshold, or a prompt-sensitive corpus omits its identity.
+    :raises ValueError: If ``query`` is blank, ``top_k`` is not a positive integer,
+        ``embeddings`` is not a two-dimensional matrix with one row per unit,
+        ``threshold`` is non-finite, an uncalibrated corpus uses the default
+        threshold, or a prompt-sensitive corpus omits its identity.
     """
+    embeddings = _validate_precomputed_embeddings(units, embeddings)
     # Same contract as compute_embeddings_with_identity: configure
     # import-sensitive runtime variables before anything can import torch.
     _configure_semantic_runtime_env(device, mps_fallback=mps_fallback)

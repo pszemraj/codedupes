@@ -1,0 +1,356 @@
+{
+  "schema_version": 2,
+  "provenance": {
+    "origin": "issue-20 authored JavaScript development fixture",
+    "split": "development",
+    "split_group": "javascript-fulfillment-application"
+  },
+  "retrieval_observations": {
+    "tool": "semble find-related, source tree only, top 10",
+    "easy": "aggregateInvoices retrieved summarizeInvoiceAccounts and buildInvoiceDigest as the first two source results (0.829 and 0.776).",
+    "medium": "planTransfersWithMinimum retrieved the reducer scheduler first (0.798); the shorter baseline planner appeared seventh after support and test chunks (0.282).",
+    "hard": "No JavaScript positive remains labeled hard; the sparse fixture is retained for easy and medium calibration rather than manufacturing a hard case."
+  },
+  "units": [
+    {"id": "js.aggregation.aggregateInvoices", "selector": {"path": "src/aggregation.js", "qualified_name": "aggregation.aggregateInvoices", "kind": "function"}},
+    {"id": "js.aggregation.buildInvoiceDigest", "selector": {"path": "src/aggregation.js", "qualified_name": "aggregation.buildInvoiceDigest", "kind": "function"}},
+    {"id": "js.aggregation.summarizeInvoiceAccounts", "selector": {"path": "src/aggregation.js", "qualified_name": "aggregation.summarizeInvoiceAccounts", "kind": "function"}},
+    {"id": "js.settlement.planTransfers", "selector": {"path": "src/settlement.js", "qualified_name": "settlement.planTransfers", "kind": "function"}},
+    {"id": "js.settlement.planTransfersWithMinimum", "selector": {"path": "src/settlement.js", "qualified_name": "settlement.planTransfersWithMinimum", "kind": "function"}},
+    {"id": "js.settlement.schedulePayouts", "selector": {"path": "src/settlement.js", "qualified_name": "settlement.schedulePayouts", "kind": "function"}},
+    {"id": "js.ingestion.normalizeWebhookRecord", "selector": {"path": "src/ingestion.js", "qualified_name": "ingestion.normalizeWebhookRecord", "kind": "function"}},
+    {"id": "js.ingestion.importWebhookBatch", "selector": {"path": "src/ingestion.js", "qualified_name": "ingestion.importWebhookBatch", "kind": "function"}},
+    {"id": "js.ingestion.importWebhookLines", "selector": {"path": "src/ingestion.js", "qualified_name": "ingestion.importWebhookLines", "kind": "function"}},
+    {"id": "js.notifications.sendReceiptCallback", "selector": {"path": "src/notifications.js", "qualified_name": "notifications.sendReceiptCallback", "kind": "function"}},
+    {"id": "js.outbox.publishConfirmation", "selector": {"path": "src/outbox.js", "qualified_name": "outbox.publishConfirmation", "kind": "function"}},
+    {"id": "js.outbox.prepareEntry", "selector": {"path": "src/outbox.js", "qualified_name": "outbox.prepareEntry", "kind": "function"}},
+    {"id": "js.notifications.dispatchReceipt", "selector": {"path": "src/notifications.js", "qualified_name": "notifications.dispatchReceipt", "kind": "function"}},
+    {"id": "javascript/src/aggregation.js::aggregation.assertInvoiceRecord::function::3", "selector": {"path": "src/aggregation.js", "qualified_name": "aggregation.assertInvoiceRecord", "kind": "function", "start_line": 3}},
+    {"id": "javascript/src/cli.js::cli.main::function::19", "selector": {"path": "src/cli.js", "qualified_name": "cli.main", "kind": "function", "start_line": 17}},
+    {"id": "javascript/src/notifications.js::notifications.normalizeReceipt::function::3", "selector": {"path": "src/notifications.js", "qualified_name": "notifications.normalizeReceipt", "kind": "function", "start_line": 3}},
+    {"id": "javascript/src/notifications.js::notifications.sendReceiptCallback.deliver::function::13", "selector": {"path": "src/notifications.js", "qualified_name": "notifications.sendReceiptCallback.deliver", "kind": "function", "start_line": 13}},
+    {"id": "javascript/src/outbox.js::outbox.createFuture::function::5", "selector": {"path": "src/outbox.js", "qualified_name": "outbox.createFuture", "kind": "function", "start_line": 5}},
+    {"id": "javascript/src/outbox.js::outbox.releaseNext::function::20", "selector": {"path": "src/outbox.js", "qualified_name": "outbox.releaseNext", "kind": "function", "start_line": 20}},
+    {"id": "javascript/src/settlement.js::settlement.checkedSummaries::function::3", "selector": {"path": "src/settlement.js", "qualified_name": "settlement.checkedSummaries", "kind": "function", "start_line": 3}},
+    {"id": "js.pagination.fetchRecords", "selector": {"path": "src/pagination.mjs", "qualified_name": "pagination.fetchRecords", "kind": "function"}},
+    {"id": "js.pagination.readSnapshot", "selector": {"path": "src/pagination.mjs", "qualified_name": "pagination.readSnapshot", "kind": "function"}},
+    {"id": "javascript/src/pagination.mjs::pagination.readSnapshot.visit::function::53", "selector": {"path": "src/pagination.mjs", "qualified_name": "pagination.readSnapshot.visit", "kind": "function", "start_line": 53}}
+  ],
+  "families": [
+    {"id": "translated-aggregation", "members": ["js.aggregation.aggregateInvoices", "js.aggregation.buildInvoiceDigest", "js.aggregation.summarizeInvoiceAccounts"]},
+    {"id": "payout-minimum-extension", "members": ["js.settlement.planTransfers", "js.settlement.planTransfersWithMinimum", "js.settlement.schedulePayouts"]},
+    {"id": "webhook-normalization", "members": ["js.ingestion.normalizeWebhookRecord", "js.ingestion.importWebhookBatch", "js.ingestion.importWebhookLines"]},
+    {"id": "receipt-adapters", "members": ["js.notifications.sendReceiptCallback", "js.outbox.prepareEntry", "js.notifications.dispatchReceipt"]},
+    {"id": "receipt-delivery-workers", "members": ["js.notifications.sendReceiptCallback", "javascript/src/outbox.js::outbox.releaseNext::function::20", "js.notifications.dispatchReceipt"]},
+    {"id": "outbox-scheduling", "members": ["js.outbox.publishConfirmation"]},
+    {"id": "cursor-pagination", "members": ["js.pagination.fetchRecords", "js.pagination.readSnapshot"]}
+  ],
+  "pairs": [
+    {
+      "id": "js.aggregate-map--sort-group", "a": "js.aggregation.aggregateInvoices", "b": "js.aggregation.buildInvoiceDigest", "judgment": "positive", "tags": ["translated", "easy"], "difficulty": "easy", "scope": "whole_unit", "behavior_equivalent": true,
+      "equivalence_domain": "All record arrays with valid row shapes, including invalid voided rows.", "contract": "Validate before void filtering, preserve input, and return invoice-sorted totals and counts.", "rationale": "The map accumulator and sorted-group implementation are alternate forms of one invoice aggregation operation.", "evidence": ["test/calibration.test.js::translated aggregation"]
+    },
+    {
+      "id": "js.aggregate-map--object-reduce", "a": "js.aggregation.aggregateInvoices", "b": "js.aggregation.summarizeInvoiceAccounts", "judgment": "positive", "tags": ["translated", "easy"], "difficulty": "easy", "scope": "whole_unit", "behavior_equivalent": true,
+      "equivalence_domain": "All record arrays with valid row shapes, including invalid voided rows.", "contract": "Validate before void filtering, preserve input, and return invoice-sorted totals and counts.", "rationale": "Both construct the same invoice totals and counts through different accumulator representations.", "evidence": ["test/calibration.test.js::translated aggregation"]
+    },
+    {
+      "id": "js.sort-group--object-reduce", "a": "js.aggregation.buildInvoiceDigest", "b": "js.aggregation.summarizeInvoiceAccounts", "judgment": "positive", "tags": ["translated", "medium"], "difficulty": "medium", "scope": "whole_unit", "behavior_equivalent": true,
+      "equivalence_domain": "All record arrays with valid row shapes, including invalid voided rows.", "contract": "Validate before void filtering, preserve input, and return invoice-sorted totals and counts.", "rationale": "The grouping and object-reduction forms duplicate the same aggregation responsibility.", "evidence": ["test/calibration.test.js::translated aggregation"]
+    },
+    {
+      "id": "js.baseline-plan--minimum-plan", "a": "js.settlement.planTransfers", "b": "js.settlement.planTransfersWithMinimum", "judgment": "positive", "tags": ["extended", "medium"], "difficulty": "medium", "scope": "whole_unit", "behavior_equivalent": false,
+      "equivalence_domain": "minimumPayoutMinor=0 produces the complete baseline plan and its validation errors.", "contract": "Validate all summaries, then construct sorted ready, refund, or balanced lines and transfers.", "rationale": "The extension duplicates baseline planning and adds an explicit minimum-payout branch.", "evidence": ["test/calibration.test.js::payout extension"], "difference_witness": "For a positive total of 70 and minimum 100, the extension defers the invoice and emits no transfer."
+    },
+    {
+      "id": "js.baseline-plan--schedule-options", "a": "js.settlement.planTransfers", "b": "js.settlement.schedulePayouts", "judgment": "positive", "tags": ["extended", "medium"], "difficulty": "medium", "scope": "whole_unit", "behavior_equivalent": false,
+      "equivalence_domain": "An omitted minimumPayoutMinor option produces the complete baseline plan and its validation errors.", "contract": "Validate all summaries, then construct sorted ready, refund, or balanced lines and transfers.", "rationale": "The reducer-based scheduler maintains the same planning operation behind an options object.", "evidence": ["test/calibration.test.js::payout extension"], "difference_witness": "With minimumPayoutMinor=100, the scheduler emits deferred lines and audit events that the baseline lacks."
+    },
+    {
+      "id": "js.minimum-plan--schedule-options", "a": "js.settlement.planTransfersWithMinimum", "b": "js.settlement.schedulePayouts", "judgment": "positive", "tags": ["translated", "easy"], "difficulty": "easy", "scope": "whole_unit", "behavior_equivalent": true,
+      "equivalence_domain": "Pair integer minimumPayoutMinor with the identically valued options field.", "contract": "Defer strictly positive totals below the minimum, retain the deferred total, and emit an audit event.", "rationale": "One loop and one reducer encode the same configurable payout policy.", "evidence": ["test/calibration.test.js::payout extension"]
+    },
+    {
+      "id": "js.scalar-normalizer--batch-adapter", "a": "js.ingestion.normalizeWebhookRecord", "b": "js.ingestion.importWebhookBatch", "judgment": "positive", "tags": ["partial", "extracted", "medium"], "difficulty": "medium", "scope": "partial", "behavior_equivalent": false,
+      "equivalence_domain": "Shared per-record validation and canonical ID/email/value construction.", "contract": "Validate id, email, amount, and voided in that order; only reserve IDs after a record is accepted.", "rationale": "The batch adapter retains batch replay and positional errors around an inline copy of scalar normalization.", "evidence": ["test/calibration.test.js::webhook normalization"], "difference_witness": "The scalar operation throws for an invalid email, while the batch reports an indexed rejection.",
+      "regions": [{"unit": "js.ingestion.normalizeWebhookRecord", "start_line": 3, "end_line": 15, "sha256": "9619d6f332b988eaa8d583c4fc5ef52fa0ccf1e7bb642b3d8055566f6318e3ff"}, {"unit": "js.ingestion.importWebhookBatch", "start_line": 17, "end_line": 43, "sha256": "2a8727ffd9b59a7287b83d7f655f8814c6597918a4e31f8b30c9d5f741358722"}]
+    },
+    {
+      "id": "js.scalar-normalizer--line-adapter", "a": "js.ingestion.normalizeWebhookRecord", "b": "js.ingestion.importWebhookLines", "judgment": "positive", "tags": ["partial", "extracted", "medium"], "difficulty": "medium", "scope": "partial", "behavior_equivalent": false,
+      "equivalence_domain": "Shared per-record validation and canonical ID/email/value construction.", "contract": "Validate id, email, amount, and voided in that order; only reserve IDs after a record is accepted.", "rationale": "The JSON-lines adapter owns parsing, line numbers, and persistent duplicate IDs around its inline normalizer.", "evidence": ["test/calibration.test.js::webhook normalization"], "difference_witness": "Malformed JSON is a line-specific rejection; the scalar normalizer never parses source text.",
+      "regions": [{"unit": "js.ingestion.normalizeWebhookRecord", "start_line": 3, "end_line": 15, "sha256": "9619d6f332b988eaa8d583c4fc5ef52fa0ccf1e7bb642b3d8055566f6318e3ff"}, {"unit": "js.ingestion.importWebhookLines", "start_line": 45, "end_line": 65, "sha256": "f2a6ba3b72103aa15363a607b7e6d6030d36d065a45f17e2f4d58f14c2267c21"}]
+    },
+    {
+      "id": "js.batch-adapter--line-adapter", "a": "js.ingestion.importWebhookBatch", "b": "js.ingestion.importWebhookLines", "judgment": "positive", "tags": ["partial", "restructured", "easy"], "difficulty": "easy", "scope": "partial", "behavior_equivalent": false,
+      "equivalence_domain": "Shared per-record validation, canonical construction, and post-acceptance duplicate reservation.", "contract": "Validate id, email, amount, and voided in that order; only reserve IDs after a record is accepted.", "rationale": "Two externally different ingestion workflows retain the same inline record acceptance operation.", "evidence": ["test/calibration.test.js::webhook normalization"], "difference_witness": "A completed batch is replayed as a batch result, while line imports process each supplied line.",
+      "regions": [{"unit": "js.ingestion.importWebhookBatch", "start_line": 17, "end_line": 43, "sha256": "2a8727ffd9b59a7287b83d7f655f8814c6597918a4e31f8b30c9d5f741358722"}, {"unit": "js.ingestion.importWebhookLines", "start_line": 45, "end_line": 65, "sha256": "f2a6ba3b72103aa15363a607b7e6d6030d36d065a45f17e2f4d58f14c2267c21"}]
+    },
+    {
+      "id": "js.callback--prepared-outbox-entry", "a": "js.notifications.sendReceiptCallback", "b": "js.outbox.prepareEntry", "judgment": "positive", "tags": ["adapter", "async", "partial", "medium"], "difficulty": "medium", "scope": "partial", "behavior_equivalent": false,
+      "equivalence_domain": "Accepted receipt messages after mapping callback completion to the entry returned by the queued outbox.", "contract": "Canonicalize the invoice identifier and email, retain the exact minor total, and construct one sent email entry.", "rationale": "The legacy callback delivery path and the queued outbox duplicate the accepted-delivery portion through distinct control flow and vocabulary.", "evidence": ["test/calibration.test.js::receipt adapters"], "difference_witness": "The callback path invokes an error-first continuation after a microtask; the outbox returns the entry to its queue runner.",
+      "regions": [{"unit": "js.notifications.sendReceiptCallback", "start_line": 14, "end_line": 18, "sha256": "ce716e40b4e316510580b89fe207b1b68e45cc57394f755a7e0f73d5edade789"}, {"unit": "js.outbox.prepareEntry", "start_line": 33, "end_line": 40, "sha256": "bca50b6de54ab2d6361534316e68fd1fff85492bc06f0d1a39925fa699573487"}]
+    },
+    {
+      "id": "js.callback--async-transport-receipt", "a": "js.notifications.sendReceiptCallback", "b": "js.notifications.dispatchReceipt", "judgment": "positive", "tags": ["adapter", "async", "medium"], "difficulty": "medium", "scope": "whole_unit", "behavior_equivalent": false,
+      "equivalence_domain": "Valid receipt messages with transport=email and a mailbox with a mutable sent array.", "contract": "Normalize the receipt and append one sent email delivery.", "rationale": "The transport adapter retains a policy check but repeats receipt construction and mailbox mutation.", "evidence": ["test/calibration.test.js::receipt adapters"], "difference_witness": "The transport adapter rejects sms before delivery; the callback form has no transport argument."
+    },
+    {
+      "id": "js.callback--queued-outbox-worker", "a": "js.notifications.sendReceiptCallback", "b": "javascript/src/outbox.js::outbox.releaseNext::function::20", "judgment": "positive", "tags": ["adapter", "async", "queue", "medium"], "difficulty": "medium", "scope": "whole_unit", "behavior_equivalent": false,
+      "equivalence_domain": "One valid queued receipt and a mailbox with a mutable sent array, comparing callback completion with the outbox worker's promise settlement.", "contract": "Canonicalize a receipt, append one sent email delivery, and settle the caller's asynchronous completion.", "rationale": "The callback worker and queue worker independently own the accepted delivery path behind different scheduling and completion protocols.", "evidence": ["test/calibration.test.js::receipt adapters"], "difference_witness": "The callback schedules a microtask and invokes done; the queue worker removes an envelope, settles a promise capability, and starts the next queued delivery."
+    },
+    {
+      "id": "js.queued-outbox-worker--async-transport-receipt", "a": "javascript/src/outbox.js::outbox.releaseNext::function::20", "b": "js.notifications.dispatchReceipt", "judgment": "positive", "tags": ["adapter", "async", "queue", "medium"], "difficulty": "medium", "scope": "whole_unit", "behavior_equivalent": false,
+      "equivalence_domain": "One valid email receipt and a mailbox with a mutable sent array, after the queued worker receives its envelope.", "contract": "Canonicalize a receipt, append one sent email delivery, and resolve with that delivery.", "rationale": "The queue worker and transport adapter independently execute the same successful delivery responsibility around different ownership and scheduling machinery.", "evidence": ["test/calibration.test.js::receipt adapters"], "difference_witness": "The queue worker drains shared FIFO state and chains the next envelope; dispatchReceipt validates a transport argument and handles one call directly."
+    },
+    {
+      "id": "js.prepared-entry--async-transport-receipt", "a": "js.outbox.prepareEntry", "b": "js.notifications.dispatchReceipt", "judgment": "positive", "tags": ["adapter", "async", "partial", "medium"], "difficulty": "medium", "scope": "partial", "behavior_equivalent": false,
+      "equivalence_domain": "Valid receipt messages with transport=email and a mutable mailbox.", "contract": "Canonicalize a receipt and form one sent email entry before the asynchronous boundary.", "rationale": "The outbox builder and transport adapter each own different scheduling around the same delivery record construction.", "evidence": ["test/calibration.test.js::receipt adapters"], "difference_witness": "dispatchReceipt checks the requested transport and appends immediately after awaiting; the outbox returns the entry to its queue runner.",
+      "regions": [{"unit": "js.outbox.prepareEntry", "start_line": 33, "end_line": 40, "sha256": "bca50b6de54ab2d6361534316e68fd1fff85492bc06f0d1a39925fa699573487"}, {"unit": "js.notifications.dispatchReceipt", "start_line": 26, "end_line": 33, "sha256": "2bdb899ff4b419f4517d9946c54ed3c1c0949e7e9ae50278fedf8ead4a6f671c"}]
+    },
+    {
+      "id": "js.aggregate--baseline-plan-negative", "a": "js.aggregation.aggregateInvoices", "b": "js.settlement.planTransfers", "judgment": "negative", "tags": ["shared-finance-vocabulary", "hard-negative"], "scope": "whole_unit", "behavior_equivalent": false,
+      "equivalence_domain": "Separate aggregation and transfer-planning responsibilities.", "contract": "One reduces raw rows; the other maps already-computed summaries to settlement instructions.", "rationale": "Shared invoice and total vocabulary does not create a maintainable duplicate region.", "evidence": ["test/calibration.test.js::translated aggregation", "test/calibration.test.js::payout extension"], "difference_witness": "A voided raw row is meaningful to aggregation but cannot be passed to the planner."
+    },
+    {
+      "id": "js.sort-group--batch-import-negative", "a": "js.aggregation.buildInvoiceDigest", "b": "js.ingestion.importWebhookBatch", "judgment": "negative", "tags": ["record-loop", "hard-negative"], "scope": "whole_unit", "behavior_equivalent": false,
+      "equivalence_domain": "Separate financial grouping and idempotent boundary-adapter responsibilities.", "contract": "Grouping valid invoice records is distinct from accepting raw webhook data with replay handling.", "rationale": "Both loop over records, but their validation domains, state, and outputs have no mergeable maintenance region.", "evidence": ["test/calibration.test.js::translated aggregation", "test/calibration.test.js::webhook normalization"], "difference_witness": "Replaying a batch changes the adapter result but has no analogue in digest construction."
+    },
+    {
+      "id": "js.object-reduce--outbox-confirmation-negative", "a": "js.aggregation.summarizeInvoiceAccounts", "b": "js.outbox.publishConfirmation", "judgment": "negative", "tags": ["shared-fields", "hard-negative"], "scope": "whole_unit", "behavior_equivalent": false,
+      "equivalence_domain": "Separate accounting and external-delivery responsibilities.", "contract": "A collection reduction cannot be merged with delivery of a single normalized receipt.", "rationale": "Invoice identifiers and totals are domain vocabulary, not shared computation.", "evidence": ["test/calibration.test.js::translated aggregation", "test/calibration.test.js::receipt adapters"], "difference_witness": "An empty record list produces an empty summary; a receipt operation requires one message."
+    },
+    {
+      "id": "js.baseline-plan--line-import-negative", "a": "js.settlement.planTransfers", "b": "js.ingestion.importWebhookLines", "judgment": "negative", "tags": ["error-handling", "hard-negative"], "scope": "whole_unit", "behavior_equivalent": false,
+      "equivalence_domain": "Separate planning and source parsing responsibilities.", "contract": "The planner validates complete summaries atomically; the adapter records independent line failures.", "rationale": "Similar branches over monetary data should remain separate because error ownership differs.", "evidence": ["test/calibration.test.js::payout extension", "test/calibration.test.js::webhook normalization"], "difference_witness": "A malformed JSON line becomes a rejection; an invalid summary aborts the planner."
+    },
+    {
+      "id": "js.minimum-plan--callback-receipt-negative", "a": "js.settlement.planTransfersWithMinimum", "b": "js.notifications.sendReceiptCallback", "judgment": "negative", "tags": ["branching", "hard-negative"], "scope": "whole_unit", "behavior_equivalent": false,
+      "equivalence_domain": "Separate payout-policy and asynchronous delivery responsibilities.", "contract": "Payout boundaries are unrelated to email receipt delivery.", "rationale": "The functions have policy branches and completion signals for unrelated operational work.", "evidence": ["test/calibration.test.js::payout extension", "test/calibration.test.js::receipt adapters"], "difference_witness": "A minimum payout defers a transfer; callback delivery has no payout threshold."
+    },
+    {
+      "id": "js.schedule--aggregate-negative", "a": "js.settlement.schedulePayouts", "b": "js.aggregation.aggregateInvoices", "judgment": "negative", "tags": ["shared-finance-vocabulary", "hard-negative"], "scope": "whole_unit", "behavior_equivalent": false,
+      "equivalence_domain": "Separate row aggregation and summary scheduling responsibilities.", "contract": "The scheduler requires one summary per invoice; aggregation accepts repeated raw records.", "rationale": "Both mention totals, but they operate at distinct layers of the application.", "evidence": ["test/calibration.test.js::translated aggregation", "test/calibration.test.js::payout extension"], "difference_witness": "Two rows for one invoice are legal aggregation input and invalid duplicated scheduler input."
+    },
+    {
+      "id": "js.scalar-normalizer--transport-negative", "a": "js.ingestion.normalizeWebhookRecord", "b": "js.notifications.dispatchReceipt", "judgment": "negative", "tags": ["normalization", "hard-negative"], "scope": "whole_unit", "behavior_equivalent": false,
+      "equivalence_domain": "Separate inbound-record and outbound-message normalization responsibilities.", "contract": "Webhook acceptance and receipt transport policy have different failure behavior and state effects.", "rationale": "Both normalize identifiers and emails, but their data contracts and ownership differ.", "evidence": ["test/calibration.test.js::webhook normalization", "test/calibration.test.js::receipt adapters"], "difference_witness": "Webhook normalization returns a record without side effects; dispatch appends a mailbox delivery."
+    },
+    {
+      "id": "js.batch-import--baseline-plan-negative", "a": "js.ingestion.importWebhookBatch", "b": "js.settlement.planTransfers", "judgment": "negative", "tags": ["stateful-workflow", "hard-negative"], "scope": "whole_unit", "behavior_equivalent": false,
+      "equivalence_domain": "Separate idempotent input acceptance and transfer planning responsibilities.", "contract": "Batch identity and per-item errors are absent from the planner's summary contract.", "rationale": "This is a nearby workflow match that cannot be consolidated safely.", "evidence": ["test/calibration.test.js::webhook normalization", "test/calibration.test.js::payout extension"], "difference_witness": "A completed batch returns a replay marker; a plan has no replay state."
+    },
+    {
+      "id": "js.line-import--outbox-confirmation-negative", "a": "js.ingestion.importWebhookLines", "b": "js.outbox.publishConfirmation", "judgment": "negative", "tags": ["async-vs-input", "hard-negative"], "scope": "whole_unit", "behavior_equivalent": false,
+      "equivalence_domain": "Separate line parsing and asynchronous email delivery responsibilities.", "contract": "Line numbers and duplicate input IDs have no receipt-delivery equivalent.", "rationale": "Both accumulate result objects, but they own unrelated external boundaries.", "evidence": ["test/calibration.test.js::webhook normalization", "test/calibration.test.js::receipt adapters"], "difference_witness": "A syntax error is retained as a line rejection; receipt delivery rejects its returned Promise."
+    },
+    {
+      "id": "js.callback--sort-group-negative", "a": "js.notifications.sendReceiptCallback", "b": "js.aggregation.buildInvoiceDigest", "judgment": "negative", "tags": ["callback-vs-collection", "hard-negative"], "scope": "whole_unit", "behavior_equivalent": false,
+      "equivalence_domain": "Separate callback delivery and synchronous aggregation responsibilities.", "contract": "The callback completion contract cannot be folded into a sorted invoice digest.", "rationale": "The functions both normalize values before producing output but have unrelated state and calling conventions.", "evidence": ["test/calibration.test.js::receipt adapters", "test/calibration.test.js::translated aggregation"], "difference_witness": "The callback is invoked after a microtask; digest construction returns synchronously."
+    },
+    {
+      "id": "js.outbox--minimum-plan-negative", "a": "js.outbox.publishConfirmation", "b": "js.settlement.planTransfersWithMinimum", "judgment": "negative", "tags": ["promise-vs-policy", "hard-negative"], "scope": "whole_unit", "behavior_equivalent": false,
+      "equivalence_domain": "Separate asynchronous delivery and settlement policy responsibilities.", "contract": "Receipt promises do not select or defer financial transfers.", "rationale": "The shared receipt/total terminology does not support consolidation.", "evidence": ["test/calibration.test.js::receipt adapters", "test/calibration.test.js::payout extension"], "difference_witness": "An invalid receipt rejects asynchronously; an invalid minimum throws before planning."
+    },
+    {
+      "id": "js.transport--object-reduce-negative", "a": "js.notifications.dispatchReceipt", "b": "js.aggregation.summarizeInvoiceAccounts", "judgment": "negative", "tags": ["normalization", "hard-negative"], "scope": "whole_unit", "behavior_equivalent": false,
+      "equivalence_domain": "Separate outbound transport and invoice-account reduction responsibilities.", "contract": "Transport choice is unrelated to grouping raw invoice records.", "rationale": "This nearby result-construction pair must remain distinct because one owns delivery state and the other computes accounting totals.", "evidence": ["test/calibration.test.js::receipt adapters", "test/calibration.test.js::translated aggregation"], "difference_witness": "sms is rejected only by dispatchReceipt; invoice reduction never receives a transport field."
+    },
+    {
+      "id": "js.callback-deliver--transport-receipt", "a": "javascript/src/notifications.js::notifications.sendReceiptCallback.deliver::function::13", "b": "js.notifications.dispatchReceipt", "judgment": "positive", "tags": ["nested", "partial", "medium"], "difficulty": "medium", "scope": "partial", "behavior_equivalent": false,
+      "equivalence_domain": "Valid email receipt messages and a mailbox with a mutable sent array.", "contract": "Canonicalize the receipt, form one sent email delivery, and append it to the mailbox.", "rationale": "The callback's nested delivery body and the promise transport independently construct and record the same accepted receipt.", "evidence": ["test/calibration.test.js::receipt adapters"], "difference_witness": "The nested callback reports through done while dispatchReceipt rejects unsupported transports.",
+      "regions": [{"unit": "javascript/src/notifications.js::notifications.sendReceiptCallback.deliver::function::13", "start_line": 15, "end_line": 17, "sha256": "48f8343704b24b5a87635d1b74958f81b14ab1a5a81396b252a7d926ae3cb30c"}, {"unit": "js.notifications.dispatchReceipt", "start_line": 26, "end_line": 33, "sha256": "2bdb899ff4b419f4517d9946c54ed3c1c0949e7e9ae50278fedf8ead4a6f671c"}]
+    },
+    {
+      "id": "js.receipt-normalizer--prepared-entry", "a": "javascript/src/notifications.js::notifications.normalizeReceipt::function::3", "b": "js.outbox.prepareEntry", "judgment": "positive", "tags": ["partial", "refactored", "easy"], "difficulty": "easy", "scope": "partial", "behavior_equivalent": false,
+      "equivalence_domain": "Valid receipt-shaped objects with invoiceId, email, and totalMinor fields.", "contract": "Reject malformed fields, trim the invoice and email, lowercase the email, and retain the integer total.", "rationale": "The receipt normalizer and the outbox builder independently own the canonical receipt-field policy, with the latter adding delivery fields.", "evidence": ["test/calibration.test.js::receipt adapters"], "difference_witness": "prepareEntry returns sent-email metadata while normalizeReceipt returns only canonical receipt fields.",
+      "regions": [{"unit": "javascript/src/notifications.js::notifications.normalizeReceipt::function::3", "start_line": 3, "end_line": 9, "sha256": "3fcd213eaefaa1efa78afb00484127ac3bfa732f35a08eb19755ea5c5cf3e7c2"}, {"unit": "js.outbox.prepareEntry", "start_line": 33, "end_line": 40, "sha256": "bca50b6de54ab2d6361534316e68fd1fff85492bc06f0d1a39925fa699573487"}]
+    },
+    {
+      "id": "js.receipt-normalizer--webhook-normalizer-negative", "a": "javascript/src/notifications.js::notifications.normalizeReceipt::function::3", "b": "js.ingestion.normalizeWebhookRecord", "judgment": "negative", "tags": ["shared-validation", "false-positive"], "scope": "whole_unit", "behavior_equivalent": false,
+      "equivalence_domain": "Separate outbound receipt and inbound webhook contracts.", "contract": "Receipt normalization has invoice totals; webhook normalization requires a replay identity and voided flag.", "rationale": "Both check text, email, and an integer, but policy changes belong to separate message boundaries.", "evidence": ["test/calibration.test.js::receipt adapters", "test/calibration.test.js::webhook normalization"], "difference_witness": "A webhook result contains id and voided; a receipt result contains invoiceId and no replay field."
+    },
+    {
+      "id": "js.invoice-validator--receipt-normalizer-negative", "a": "javascript/src/aggregation.js::aggregation.assertInvoiceRecord::function::3", "b": "javascript/src/notifications.js::notifications.normalizeReceipt::function::3", "judgment": "negative", "tags": ["shared-validation", "false-positive"], "scope": "whole_unit", "behavior_equivalent": false,
+      "equivalence_domain": "Separate invoice-row and delivery-message validation.", "contract": "Invoice rows require voided status and are only asserted; receipt messages are canonicalized for delivery.", "rationale": "The overlap is generic field checking, with different objects, output behavior, and owners.", "evidence": ["test/calibration.test.js::translated aggregation", "test/calibration.test.js::receipt adapters"], "difference_witness": "A valid voided invoice row is accepted by the assertion but cannot be normalized as a receipt."
+    },
+    {
+      "id": "js.release-next--publish-confirmation-negative", "a": "javascript/src/outbox.js::outbox.releaseNext::function::20", "b": "js.outbox.publishConfirmation", "judgment": "negative", "tags": ["producer-consumer", "false-positive"], "scope": "whole_unit", "behavior_equivalent": false,
+      "equivalence_domain": "Complementary queue submission and queue-draining operations.", "contract": "One enqueues a draft and returns a promise; the other consumes an envelope and settles it.", "rationale": "These functions form opposite ends of one queue and should evolve together through their interface, not be merged.", "evidence": ["test/calibration.test.js::receipt adapters"], "difference_witness": "publishConfirmation adds an item and returns immediately; releaseNext removes an item and delivers it."
+    },
+    {
+      "id": "js.summary-validator--aggregate-negative", "a": "javascript/src/settlement.js::settlement.checkedSummaries::function::3", "b": "js.aggregation.aggregateInvoices", "judgment": "negative", "tags": ["collection-loop", "false-positive"], "scope": "whole_unit", "behavior_equivalent": false,
+      "equivalence_domain": "Separate validated-summary preparation and raw-invoice aggregation.", "contract": "The planner rejects duplicate summary IDs; aggregation combines repeated raw invoice rows.", "rationale": "Similar loops over invoice data serve adjacent pipeline stages with incompatible inputs.", "evidence": ["test/calibration.test.js::translated aggregation", "test/calibration.test.js::payout extension"], "difference_witness": "Repeated invoice IDs are combined by aggregation and rejected by checkedSummaries."
+    },
+    {
+      "id": "js.invoice-validator--webhook-normalizer-negative", "a": "javascript/src/aggregation.js::aggregation.assertInvoiceRecord::function::3", "b": "js.ingestion.normalizeWebhookRecord", "judgment": "negative", "tags": ["shared-validation", "false-positive"], "scope": "whole_unit", "behavior_equivalent": false,
+      "equivalence_domain": "Separate accounting-row and webhook-acceptance validation.", "contract": "An invoice row has invoiceId; a webhook record has id, email, and a canonical returned value.", "rationale": "Their type-checking vocabulary does not identify a shared maintenance responsibility.", "evidence": ["test/calibration.test.js::translated aggregation", "test/calibration.test.js::webhook normalization"], "difference_witness": "Webhook normalization lowercases an email and returns a value; invoice assertion does neither."
+    },
+    {
+      "id": "js.summary-validator--object-aggregate-negative", "a": "javascript/src/settlement.js::settlement.checkedSummaries::function::3", "b": "js.aggregation.summarizeInvoiceAccounts", "judgment": "negative", "tags": ["collection-loop", "false-positive"], "scope": "whole_unit", "behavior_equivalent": false,
+      "equivalence_domain": "Separate summary validation and raw-record reduction.", "contract": "Checked summaries sort unique inputs; account reduction creates totals and counts from raw records.", "rationale": "They share invoice terms but ownership of duplicate IDs is intentionally opposite.", "evidence": ["test/calibration.test.js::translated aggregation", "test/calibration.test.js::payout extension"], "difference_witness": "A duplicate summary throws while two raw rows increase one account count."
+    },
+    {
+      "id": "js.future-factory--publish-confirmation-negative", "a": "javascript/src/outbox.js::outbox.createFuture::function::5", "b": "js.outbox.publishConfirmation", "judgment": "negative", "tags": ["helper-caller", "false-positive"], "scope": "whole_unit", "behavior_equivalent": false,
+      "equivalence_domain": "A promise capability factory and its queue caller.", "contract": "createFuture creates settlement handles; publishConfirmation assigns one to a delivery envelope.", "rationale": "The caller reuses the helper rather than duplicating it, so no extraction or merge is warranted.", "evidence": ["test/calibration.test.js::receipt adapters"], "difference_witness": "The factory never queues or sends a receipt; publishConfirmation does both queue setup actions."
+    },
+    {
+      "id": "js.summary-validator--sort-aggregate-negative", "a": "javascript/src/settlement.js::settlement.checkedSummaries::function::3", "b": "js.aggregation.buildInvoiceDigest", "judgment": "negative", "tags": ["sorting", "false-positive"], "scope": "whole_unit", "behavior_equivalent": false,
+      "equivalence_domain": "Separate summary validation and digest construction.", "contract": "The validator ensures unique finished summaries; the digest groups accepted raw records after sorting.", "rationale": "Sorting invoice identifiers is incidental to two incompatible stages of the workflow.", "evidence": ["test/calibration.test.js::translated aggregation", "test/calibration.test.js::payout extension"], "difference_witness": "The digest can combine repeated invoice IDs; checkedSummaries rejects them."
+    },
+    {
+      "id": "js.invoice-validator--prepared-entry-negative", "a": "javascript/src/aggregation.js::aggregation.assertInvoiceRecord::function::3", "b": "js.outbox.prepareEntry", "judgment": "negative", "tags": ["shared-fields", "false-positive"], "scope": "whole_unit", "behavior_equivalent": false,
+      "equivalence_domain": "Separate invoice validation and receipt-entry construction.", "contract": "Invoice records carry voided status; prepared entries require deliverable email and sent-channel fields.", "rationale": "The apparent field overlap does not create a common change site.", "evidence": ["test/calibration.test.js::translated aggregation", "test/calibration.test.js::receipt adapters"], "difference_witness": "A row with no email is valid for aggregation and invalid for an outbox entry."
+    },
+    {
+      "id": "js.webhook-normalizer--prepared-entry-negative", "a": "js.ingestion.normalizeWebhookRecord", "b": "js.outbox.prepareEntry", "judgment": "negative", "tags": ["normalization", "false-positive"], "scope": "whole_unit", "behavior_equivalent": false,
+      "equivalence_domain": "Separate inbound webhook and outbound email entry contracts.", "contract": "Webhook records preserve voided and id; entries create receipt delivery metadata.", "rationale": "Their email cleanup is a shared primitive, not a mergeable application responsibility.", "evidence": ["test/calibration.test.js::webhook normalization", "test/calibration.test.js::receipt adapters"], "difference_witness": "Webhook output includes voided; prepared entries include status and channel."
+    },
+    {
+      "id": "js.demo-main--batch-import-negative", "a": "javascript/src/cli.js::cli.main::function::19", "b": "js.ingestion.importWebhookBatch", "judgment": "negative", "tags": ["orchestration", "false-positive"], "scope": "whole_unit", "behavior_equivalent": false,
+      "equivalence_domain": "Demo orchestration and production webhook ingestion.", "contract": "main supplies a sample envelope and displays results; the importer validates and records batch state.", "rationale": "A call site is not a duplicate of the business operation it exercises.", "evidence": ["src/cli.js::main", "test/calibration.test.js::webhook normalization"], "difference_witness": "main has fixed demo data; importWebhookBatch accepts arbitrary envelopes and replay state."
+    },
+    {
+      "id": "js.receipt-normalizer--callback-wrapper-negative", "a": "javascript/src/notifications.js::notifications.normalizeReceipt::function::3", "b": "js.notifications.sendReceiptCallback", "judgment": "negative", "tags": ["helper-caller", "false-positive"], "scope": "whole_unit", "behavior_equivalent": false,
+      "equivalence_domain": "A receipt canonicalizer and its asynchronous callback wrapper.", "contract": "The wrapper delegates normalization then controls microtask delivery and error-first completion.", "rationale": "The wrapper calls the helper directly; it does not contain a competing implementation.", "evidence": ["test/calibration.test.js::receipt adapters"], "difference_witness": "normalizeReceipt returns synchronously; sendReceiptCallback schedules callback completion."
+    },
+    {
+      "id": "js.object-aggregate--baseline-plan-negative", "a": "js.aggregation.summarizeInvoiceAccounts", "b": "js.settlement.planTransfers", "judgment": "negative", "tags": ["pipeline-adjacent", "false-positive"], "scope": "whole_unit", "behavior_equivalent": false,
+      "equivalence_domain": "Raw invoice aggregation and planning from completed summaries.", "contract": "Aggregation forms totals and counts; planning chooses transfer, refund, or balanced outcomes.", "rationale": "The two stages intentionally compose and should not be consolidated.", "evidence": ["test/calibration.test.js::translated aggregation", "test/calibration.test.js::payout extension"], "difference_witness": "Voided raw rows affect aggregation; plans have no voided-row input."
+    },
+    {
+      "id": "js.demo-main--sort-aggregate-negative", "a": "javascript/src/cli.js::cli.main::function::19", "b": "js.aggregation.buildInvoiceDigest", "judgment": "negative", "tags": ["orchestration", "false-positive"], "scope": "whole_unit", "behavior_equivalent": false,
+      "equivalence_domain": "Demo orchestration and invoice grouping.", "contract": "main invokes the digest with fixture records; the digest validates, sorts, and groups its input.", "rationale": "Supplying one sample call does not duplicate collection processing.", "evidence": ["src/cli.js::main", "test/calibration.test.js::translated aggregation"], "difference_witness": "main returns a combined demo object; buildInvoiceDigest returns invoice summaries only."
+    },
+    {
+      "id": "js.demo-main--map-aggregate-negative", "a": "javascript/src/cli.js::cli.main::function::19", "b": "js.aggregation.aggregateInvoices", "judgment": "negative", "tags": ["orchestration", "false-positive"], "scope": "whole_unit", "behavior_equivalent": false,
+      "equivalence_domain": "Demo orchestration and invoice aggregation.", "contract": "main wires fixed examples together; aggregation reduces caller-provided invoice rows.", "rationale": "The sample entry point shares terms and calls the aggregator, but has no duplicate maintenance region.", "evidence": ["src/cli.js::main", "test/calibration.test.js::translated aggregation"], "difference_witness": "main also sends receipts and imports webhooks; aggregateInvoices never performs either action."
+    },
+    {
+      "id": "js.invoice-validator--summary-validator-negative", "a": "javascript/src/aggregation.js::aggregation.assertInvoiceRecord::function::3", "b": "javascript/src/settlement.js::settlement.checkedSummaries::function::3", "judgment": "negative", "tags": ["validation", "false-positive"], "scope": "whole_unit", "behavior_equivalent": false,
+      "equivalence_domain": "Distinct raw-row and completed-summary validation.", "contract": "Invoice validation accepts a single row; summary validation enforces collection uniqueness and sorted copies.", "rationale": "Both reject malformed finance data but preserve deliberately different boundary rules.", "evidence": ["test/calibration.test.js::translated aggregation", "test/calibration.test.js::payout extension"], "difference_witness": "checkedSummaries rejects duplicate IDs across a collection; assertInvoiceRecord has no collection state."
+    },
+    {
+      "id": "js.receipt-normalizer--summary-validator-negative", "a": "javascript/src/notifications.js::notifications.normalizeReceipt::function::3", "b": "javascript/src/settlement.js::settlement.checkedSummaries::function::3", "judgment": "negative", "tags": ["validation", "false-positive"], "scope": "whole_unit", "behavior_equivalent": false,
+      "equivalence_domain": "Outbound receipt canonicalization and settlement-input validation.", "contract": "Receipt cleanup requires email; summary checking requires counts and collection-level uniqueness.", "rationale": "They only converge on generic text and integer guards.", "evidence": ["test/calibration.test.js::receipt adapters", "test/calibration.test.js::payout extension"], "difference_witness": "A valid receipt has email and no count; a valid summary has count and no email."
+    },
+    {
+      "id": "js.callback-deliver--release-next-negative", "a": "javascript/src/notifications.js::notifications.sendReceiptCallback.deliver::function::13", "b": "javascript/src/outbox.js::outbox.releaseNext::function::20", "judgment": "negative", "tags": ["async-control-flow", "false-positive"], "scope": "whole_unit", "behavior_equivalent": false,
+      "equivalence_domain": "Callback delivery and queued-envelope consumption.", "contract": "The callback body reports one supplied message; the queue runner shifts, resolves or rejects, and schedules more work.", "rationale": "Both are asynchronous delivery code but their queue ownership and completion mechanisms differ.", "evidence": ["test/calibration.test.js::receipt adapters"], "difference_witness": "releaseNext settles a stored Promise and may schedule another job; the callback body invokes done once."
+    },
+    {
+      "id": "js.sort-aggregate--baseline-plan-negative", "a": "js.aggregation.buildInvoiceDigest", "b": "js.settlement.planTransfers", "judgment": "negative", "tags": ["pipeline-adjacent", "false-positive"], "scope": "whole_unit", "behavior_equivalent": false,
+      "equivalence_domain": "Raw invoice grouping and settlement planning.", "contract": "The digest groups valid records; the planner assigns status and transfer actions to summaries.", "rationale": "Sorted invoice vocabulary reflects a pipeline boundary, not redundant implementation.", "evidence": ["test/calibration.test.js::translated aggregation", "test/calibration.test.js::payout extension"], "difference_witness": "The digest accepts multiple rows per invoice; the planner rejects duplicate summary invoice IDs."
+    },
+    {
+      "id": "js.receipt-normalizer--line-import-negative", "a": "javascript/src/notifications.js::notifications.normalizeReceipt::function::3", "b": "js.ingestion.importWebhookLines", "judgment": "negative", "tags": ["normalization", "false-positive"], "scope": "whole_unit", "behavior_equivalent": false,
+      "equivalence_domain": "Receipt-message normalization and JSON-lines ingestion.", "contract": "The line adapter owns parsing, line-number errors, and reserved IDs around a webhook-specific record.", "rationale": "Email cleanup does not make a source-text ingestion workflow a duplicate of receipt normalization.", "evidence": ["test/calibration.test.js::receipt adapters", "test/calibration.test.js::webhook normalization"], "difference_witness": "Malformed JSON yields a line rejection; normalizeReceipt never parses text."
+    },
+    {
+      "id": "js.receipt-normalizer--transport-negative", "a": "javascript/src/notifications.js::notifications.normalizeReceipt::function::3", "b": "js.notifications.dispatchReceipt", "judgment": "negative", "tags": ["helper-caller", "false-positive"], "scope": "whole_unit", "behavior_equivalent": false,
+      "equivalence_domain": "A receipt canonicalizer and its transport caller.", "contract": "dispatchReceipt delegates normalization then applies transport policy and mutable mailbox delivery.", "rationale": "This is a direct helper/caller relationship, not duplicate code.", "evidence": ["test/calibration.test.js::receipt adapters"], "difference_witness": "normalizeReceipt has no transport argument or mailbox side effect."
+    },
+    {
+      "id": "js.demo-main--object-aggregate-negative", "a": "javascript/src/cli.js::cli.main::function::19", "b": "js.aggregation.summarizeInvoiceAccounts", "judgment": "negative", "tags": ["orchestration", "false-positive"], "scope": "whole_unit", "behavior_equivalent": false,
+      "equivalence_domain": "Demo orchestration and invoice-account reduction.", "contract": "main invokes account reduction for fixed records; the reducer owns validation and account totals.", "rationale": "The entry point is an integration caller rather than a second implementation.", "evidence": ["src/cli.js::main", "test/calibration.test.js::translated aggregation"], "difference_witness": "main returns multiple application domains; summarizeInvoiceAccounts returns only account summaries."
+    },
+    {
+      "id": "js.demo-main--baseline-plan-negative", "a": "javascript/src/cli.js::cli.main::function::19", "b": "js.settlement.planTransfers", "judgment": "negative", "tags": ["orchestration", "false-positive"], "scope": "whole_unit", "behavior_equivalent": false,
+      "equivalence_domain": "Application demonstration and settlement planning.", "contract": "main invokes planning on aggregation output; the planner maps summaries to settlement instructions.", "rationale": "Calling a function within an integration path is not duplicated planning behavior.", "evidence": ["src/cli.js::main", "test/calibration.test.js::payout extension"], "difference_witness": "main performs ingress and receipt operations in addition to planning."
+    },
+    {
+      "id": "js.summary-validator--minimum-plan-negative", "a": "javascript/src/settlement.js::settlement.checkedSummaries::function::3", "b": "js.settlement.planTransfersWithMinimum", "judgment": "negative", "tags": ["helper-caller", "false-positive"], "scope": "whole_unit", "behavior_equivalent": false,
+      "equivalence_domain": "Summary validation and the extended planner that calls it.", "contract": "The planner delegates sorting and validation then adds minimum-payout deferral policy.", "rationale": "The helper is intentionally shared rather than independently reimplemented.", "evidence": ["test/calibration.test.js::payout extension"], "difference_witness": "Only planTransfersWithMinimum accepts a payout threshold and records deferred events."
+    },
+    {
+      "id": "js.receipt-normalizer--sort-aggregate-negative", "a": "javascript/src/notifications.js::notifications.normalizeReceipt::function::3", "b": "js.aggregation.buildInvoiceDigest", "judgment": "negative", "tags": ["field-cleanup", "false-positive"], "scope": "whole_unit", "behavior_equivalent": false,
+      "equivalence_domain": "One receipt object and a collection of invoice records.", "contract": "Receipt normalization cleans a single delivery message; digest construction validates, filters, sorts, and groups many rows.", "rationale": "Input sanitation alone is not a shared aggregation responsibility.", "evidence": ["test/calibration.test.js::receipt adapters", "test/calibration.test.js::translated aggregation"], "difference_witness": "A voided invoice is filtered from the digest; receipt normalization has no voided field."
+    },
+    {
+      "id": "js.object-aggregate--minimum-plan-negative", "a": "js.aggregation.summarizeInvoiceAccounts", "b": "js.settlement.planTransfersWithMinimum", "judgment": "negative", "tags": ["pipeline-adjacent", "false-positive"], "scope": "whole_unit", "behavior_equivalent": false,
+      "equivalence_domain": "Raw-record reduction and policy-based settlement planning.", "contract": "The reducer computes account totals; the planner defers positive totals below an explicit minimum.", "rationale": "Their data flow is sequential and their policy owners are distinct.", "evidence": ["test/calibration.test.js::translated aggregation", "test/calibration.test.js::payout extension"], "difference_witness": "Changing the payout minimum cannot affect aggregation totals or counts."
+    },
+    {
+      "id": "js.future-factory--release-next-negative", "a": "javascript/src/outbox.js::outbox.createFuture::function::5", "b": "javascript/src/outbox.js::outbox.releaseNext::function::20", "judgment": "negative", "tags": ["helper-consumer", "false-positive"], "scope": "whole_unit", "behavior_equivalent": false,
+      "equivalence_domain": "Promise capability creation and queued capability settlement.", "contract": "createFuture creates resolve/reject handles; releaseNext uses handles previously stored in an envelope.", "rationale": "The two functions are complementary pieces of a queue protocol, not duplicate implementations.", "evidence": ["test/calibration.test.js::receipt adapters"], "difference_witness": "The factory does not inspect queue state or call prepareEntry."
+    },
+    {
+      "id": "js.invoice-validator--map-aggregate-negative", "a": "javascript/src/aggregation.js::aggregation.assertInvoiceRecord::function::3", "b": "js.aggregation.aggregateInvoices", "judgment": "negative", "tags": ["helper-caller", "false-positive"], "scope": "whole_unit", "behavior_equivalent": false,
+      "equivalence_domain": "A row assertion and the aggregation loop that calls it.", "contract": "aggregateInvoices delegates row validation, then filters voided rows and accumulates sorted totals.", "rationale": "The helper is reused directly, so the relationship is containment rather than duplication.", "evidence": ["test/calibration.test.js::translated aggregation"], "difference_witness": "assertInvoiceRecord does not produce an aggregate or preserve an input collection."
+    },
+    {
+      "id": "js.summary-validator--baseline-plan-negative", "a": "javascript/src/settlement.js::settlement.checkedSummaries::function::3", "b": "js.settlement.planTransfers", "judgment": "negative", "tags": ["helper-caller", "false-positive"], "scope": "whole_unit", "behavior_equivalent": false,
+      "equivalence_domain": "Summary validation and baseline planning.", "contract": "planTransfers delegates summary checking before applying ready, refund, and balanced outcomes.", "rationale": "The validator is a direct shared helper, not an alternate planner.", "evidence": ["test/calibration.test.js::payout extension"], "difference_witness": "Only planTransfers produces transfers and status lines."
+    },
+    {
+      "id": "js.receipt-normalizer--callback-deliver-negative", "a": "javascript/src/notifications.js::notifications.normalizeReceipt::function::3", "b": "javascript/src/notifications.js::notifications.sendReceiptCallback.deliver::function::13", "judgment": "negative", "tags": ["helper-caller", "false-positive"], "scope": "whole_unit", "behavior_equivalent": false,
+      "equivalence_domain": "Receipt canonicalization and its nested callback consumer.", "contract": "The delivery body calls normalizeReceipt and adds mailbox and callback effects.", "rationale": "The shared code is an explicit call, rather than a second copy of canonicalization.", "evidence": ["test/calibration.test.js::receipt adapters"], "difference_witness": "The delivery body catches errors and invokes done; normalizeReceipt does neither."
+    },
+    {
+      "id": "js.invoice-validator--sort-aggregate-negative", "a": "javascript/src/aggregation.js::aggregation.assertInvoiceRecord::function::3", "b": "js.aggregation.buildInvoiceDigest", "judgment": "negative", "tags": ["helper-caller", "false-positive"], "scope": "whole_unit", "behavior_equivalent": false,
+      "equivalence_domain": "A row assertion and the grouping loop that calls it.", "contract": "buildInvoiceDigest delegates validation, then filters, sorts, and folds records into digest entries.", "rationale": "This is intentional helper reuse, not competing implementations.", "evidence": ["test/calibration.test.js::translated aggregation"], "difference_witness": "The assertion does not sort records or create digest entries."
+    },
+    {
+      "id": "js.sort-aggregate--minimum-plan-negative", "a": "js.aggregation.buildInvoiceDigest", "b": "js.settlement.planTransfersWithMinimum", "judgment": "negative", "tags": ["pipeline-adjacent", "false-positive"], "scope": "whole_unit", "behavior_equivalent": false,
+      "equivalence_domain": "Invoice digest construction and extended transfer planning.", "contract": "The digest builds invoice totals; the planner applies a minimum payout policy to already-built summaries.", "rationale": "They share finance terms through data flow but have no maintainable duplicate region.", "evidence": ["test/calibration.test.js::translated aggregation", "test/calibration.test.js::payout extension"], "difference_witness": "A payout threshold affects only the planner's deferred events."
+    },
+    {
+      "id": "js.callback-deliver--prepared-entry", "a": "javascript/src/notifications.js::notifications.sendReceiptCallback.deliver::function::13", "b": "js.outbox.prepareEntry", "judgment": "positive", "tags": ["nested", "partial", "medium"], "difficulty": "medium", "scope": "partial", "behavior_equivalent": false,
+      "equivalence_domain": "Accepted receipt-shaped messages that result in one sent email entry.", "contract": "Canonicalize invoice and email, retain totalMinor, and construct a sent email delivery record.", "rationale": "The nested legacy delivery body and queued outbox builder independently encode the accepted-delivery transformation through different helpers.", "evidence": ["test/calibration.test.js::receipt adapters"], "difference_witness": "The callback body appends and calls done; prepareEntry only returns an entry to the queue runner.",
+      "regions": [{"unit": "javascript/src/notifications.js::notifications.sendReceiptCallback.deliver::function::13", "start_line": 15, "end_line": 17, "sha256": "48f8343704b24b5a87635d1b74958f81b14ab1a5a81396b252a7d926ae3cb30c"}, {"unit": "js.outbox.prepareEntry", "start_line": 33, "end_line": 40, "sha256": "bca50b6de54ab2d6361534316e68fd1fff85492bc06f0d1a39925fa699573487"}]
+    },
+    {
+      "id": "js.invoice-validator--object-aggregate-negative", "a": "javascript/src/aggregation.js::aggregation.assertInvoiceRecord::function::3", "b": "js.aggregation.summarizeInvoiceAccounts", "judgment": "negative", "tags": ["helper-caller", "false-positive"], "scope": "whole_unit", "behavior_equivalent": false,
+      "equivalence_domain": "A row assertion and object-based aggregation.", "contract": "summarizeInvoiceAccounts calls the assertion before filtering and reducing raw records.", "rationale": "Direct helper reuse is not a duplicate pair for maintenance purposes.", "evidence": ["test/calibration.test.js::translated aggregation"], "difference_witness": "The assertion has no account map, sorting, or aggregate result."
+    },
+    {
+      "id": "js.receipt-normalizer--batch-import-negative", "a": "javascript/src/notifications.js::notifications.normalizeReceipt::function::3", "b": "js.ingestion.importWebhookBatch", "judgment": "negative", "tags": ["normalization", "false-positive"], "scope": "whole_unit", "behavior_equivalent": false,
+      "equivalence_domain": "A single receipt message and an idempotent webhook batch.", "contract": "The batch importer owns envelope validation, per-item errors, and completed-batch tracking.", "rationale": "Generic email normalization is insufficient to merge these distinct boundary workflows.", "evidence": ["test/calibration.test.js::receipt adapters", "test/calibration.test.js::webhook normalization"], "difference_witness": "A repeated batch returns replayed=true; normalizeReceipt has no batch state."
+    },
+    {
+      "id": "js.invoice-validator--line-import-negative", "a": "javascript/src/aggregation.js::aggregation.assertInvoiceRecord::function::3", "b": "js.ingestion.importWebhookLines", "judgment": "negative", "tags": ["validation", "false-positive"], "scope": "whole_unit", "behavior_equivalent": false,
+      "equivalence_domain": "A single invoice row and text-based webhook import.", "contract": "Line import owns JSON parsing, rejection collection, and persistent ID reservation.", "rationale": "The functions share simple checks but are maintained at different I/O boundaries.", "evidence": ["test/calibration.test.js::translated aggregation", "test/calibration.test.js::webhook normalization"], "difference_witness": "Malformed input is a line-numbered rejection only in the importer."
+    },
+    {
+      "id": "js.receipt-normalizer--object-aggregate-negative", "a": "javascript/src/notifications.js::notifications.normalizeReceipt::function::3", "b": "js.aggregation.summarizeInvoiceAccounts", "judgment": "negative", "tags": ["field-cleanup", "false-positive"], "scope": "whole_unit", "behavior_equivalent": false,
+      "equivalence_domain": "One receipt message and a raw invoice collection.", "contract": "Receipt normalization canonicalizes delivery fields; account aggregation computes invoice totals and counts.", "rationale": "Their text cleanup does not define a shared business operation.", "evidence": ["test/calibration.test.js::receipt adapters", "test/calibration.test.js::translated aggregation"], "difference_witness": "A receipt has email; aggregate input has voided rows and no delivery field."
+    },
+    {
+      "id": "js.demo-main--minimum-plan-negative", "a": "javascript/src/cli.js::cli.main::function::19", "b": "js.settlement.planTransfersWithMinimum", "judgment": "negative", "tags": ["orchestration", "false-positive"], "scope": "whole_unit", "behavior_equivalent": false,
+      "equivalence_domain": "Demo orchestration and minimum-payout planning.", "contract": "main invokes a fixed minimum example; the planner validates arbitrary thresholds and records deferral events.", "rationale": "A demonstration call has no duplicate policy implementation.", "evidence": ["src/cli.js::main", "test/calibration.test.js::payout extension"], "difference_witness": "main also drives unrelated aggregation and receipt paths."
+    },
+    {
+      "id": "js.summary-validator--schedule-negative", "a": "javascript/src/settlement.js::settlement.checkedSummaries::function::3", "b": "js.settlement.schedulePayouts", "judgment": "negative", "tags": ["helper-caller", "false-positive"], "scope": "whole_unit", "behavior_equivalent": false,
+      "equivalence_domain": "Summary validation and reducer-based scheduling.", "contract": "schedulePayouts calls checkedSummaries before reducing outcomes and deferral events.", "rationale": "The caller intentionally centralizes validation in its helper, so there is no alternate implementation.", "evidence": ["test/calibration.test.js::payout extension"], "difference_witness": "Only schedulePayouts accepts options and returns transfers, events, and deferred totals."
+    },
+    {
+      "id": "js.pagination-loop--promise-recursion", "a": "js.pagination.fetchRecords", "b": "js.pagination.readSnapshot", "judgment": "positive", "tags": ["translated", "async", "medium"], "difficulty": "medium", "scope": "whole_unit", "behavior_equivalent": true,
+      "equivalence_domain": "Injected page transports under the declared page, cursor, row, cancellation, and error contracts.", "contract": "Follow cursor pages in order, reject cycles and invalid data, preserve first-seen records by ID, honor cancellation and page limits, and preserve transport failures.", "rationale": "The async loop with Sets and the recursive Promise traversal with a Map independently implement the same pagination client and can share one maintained traversal contract.", "evidence": ["test/pagination.test.mjs::generated page chains agree with an independently assembled oracle and request order"]
+    },
+    {
+      "id": "js.pagination-loop--webhook-batch-negative", "a": "js.pagination.fetchRecords", "b": "js.ingestion.importWebhookBatch", "judgment": "negative", "tags": ["record-deduplication", "nearby-negative"], "scope": "whole_unit", "behavior_equivalent": false,
+      "equivalence_domain": "Cursor-based retrieval and one-shot webhook-batch admission.", "contract": "Pagination owns transport sequencing, cursor cycles, cancellation, and page limits; batch ingestion owns envelope idempotency and indexed validation rejections.", "rationale": "Both retain a first record per ID, but that small policy does not create a shared workflow or consolidation target.", "evidence": ["test/pagination.test.mjs::stable first-occurrence results and trace", "test/calibration.test.js::webhook normalization keeps acceptance and adapter failures distinct"], "difference_witness": "A repeated cursor rejects pagination, whereas a repeated completed batch returns a replay result without transport calls."
+    },
+    {
+      "id": "js.pagination-recursion--outbox-negative", "a": "js.pagination.readSnapshot", "b": "js.outbox.publishConfirmation", "judgment": "negative", "tags": ["async-control-flow", "nearby-negative"], "scope": "whole_unit", "behavior_equivalent": false,
+      "equivalence_domain": "Asynchronous snapshot traversal and queued receipt publication.", "contract": "readSnapshot recursively fetches and validates a cursor chain; publishConfirmation queues one receipt and resolves after mailbox delivery.", "rationale": "Promise chaining is incidental control flow around unrelated state machines and data contracts.", "evidence": ["test/pagination.test.mjs::synchronous transport throws become rejections", "test/calibration.test.js::receipt adapters preserve delivery state across callback and promise styles"], "difference_witness": "The snapshot reader returns records and a page count; publication appends one email entry to a mailbox."
+    },
+    {
+      "id": "js.pagination-loop--nested-recursion", "a": "js.pagination.fetchRecords", "b": "javascript/src/pagination.mjs::pagination.readSnapshot.visit::function::53", "judgment": "positive", "tags": ["translated", "async", "nested", "medium"], "difficulty": "medium", "scope": "whole_unit", "behavior_equivalent": true,
+      "equivalence_domain": "A freshly initialized recursive traversal called with a null token, mapped to the loop's initial state under valid maxPages options.", "contract": "Check cancellation around transport calls, reject cursor cycles before exhausted budgets, validate page/cursor/row shapes, retain first-seen IDs in order, count pages, and preserve transport failures.", "rationale": "The nested Promise recursion is the independently written traversal core corresponding to the public async loop, rather than a helper shared by the two implementations.", "evidence": ["test/pagination.test.mjs::generated page chains agree with an independently assembled oracle and request order", "test/pagination.test.mjs::cursor cycle wins over exhausted budget"]
+    }
+  ],
+  "probes": [
+    {"id": "js.behavioral.invoice-totals", "kind": "behavioral", "query": "calculate sorted invoice totals while skipping voided records", "expected": ["js.aggregation.aggregateInvoices", "js.aggregation.buildInvoiceDigest", "js.aggregation.summarizeInvoiceAccounts"], "relevance_complete": true},
+    {"id": "js.behavioral.payout-deferral", "kind": "behavioral", "query": "defer small positive payouts and record a below minimum event", "expected": ["js.settlement.planTransfersWithMinimum", "js.settlement.schedulePayouts"], "relevance_complete": true},
+    {"id": "js.behavioral.cursor-pagination", "kind": "behavioral", "query": "follow asynchronous cursor pages, reject cycles, and keep the first record for each identifier", "expected": ["js.pagination.fetchRecords", "js.pagination.readSnapshot"], "relevance_complete": true},
+    {"id": "js.behavioral.accept-webhook", "kind": "behavioral", "query": "accept an incoming webhook only after validating its identifier and email", "expected": ["js.ingestion.normalizeWebhookRecord", "js.ingestion.importWebhookBatch", "js.ingestion.importWebhookLines"], "relevance_complete": true},
+    {"id": "js.behavioral.batch-replay", "kind": "behavioral", "query": "avoid processing an already completed webhook batch", "expected": ["js.ingestion.importWebhookBatch"], "relevance_complete": true},
+    {"id": "js.behavioral.email-receipt", "kind": "behavioral", "query": "deliver an invoice receipt by email and record it in the mailbox", "expected": ["js.notifications.sendReceiptCallback", "js.outbox.publishConfirmation", "js.notifications.dispatchReceipt"], "relevance_complete": true},
+    {"id": "js.partial-symbol.aggregate", "kind": "partial_symbol", "query": "aggregateInvo", "expected": ["js.aggregation.aggregateInvoices"], "relevance_complete": true},
+    {"id": "js.partial-symbol.minimum", "kind": "partial_symbol", "query": "minimumPayout", "expected": ["js.settlement.planTransfersWithMinimum", "js.settlement.schedulePayouts"], "relevance_complete": true},
+    {"id": "js.partial-symbol.webhook", "kind": "partial_symbol", "query": "importWebhook", "expected": ["js.ingestion.importWebhookBatch", "js.ingestion.importWebhookLines"], "relevance_complete": true},
+    {"id": "js.exact-symbol.outbox-confirmation", "kind": "exact_symbol", "query": "publishConfirmation", "expected": ["js.outbox.publishConfirmation"], "relevance_complete": true},
+    {"id": "js.no-result.signed-pdf", "kind": "no_result", "query": "archive a signed PDF to object storage", "expected": [], "relevance_complete": true},
+    {"id": "js.no-result.kubernetes", "kind": "no_result", "query": "render a Kubernetes pod manifest", "expected": [], "relevance_complete": true}
+  ]
+}

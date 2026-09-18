@@ -5,8 +5,10 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import math
 from collections.abc import Mapping
 from dataclasses import dataclass
+from numbers import Integral
 from pathlib import Path
 
 import numpy as np
@@ -506,8 +508,11 @@ class AnalyzerConfig:
         if not 0.0 <= self.jaccard_threshold <= 1.0:
             raise ValueError("jaccard_threshold must be in [0.0, 1.0]")
 
-        if self.semantic_threshold is not None and not 0.0 <= self.semantic_threshold <= 1.0:
-            raise ValueError("semantic_threshold must be in [0.0, 1.0]")
+        if self.semantic_threshold is not None:
+            if not math.isfinite(self.semantic_threshold):
+                raise ValueError("semantic_threshold must be finite")
+            if self.mode == "check" and not 0.0 <= self.semantic_threshold <= 1.0:
+                raise ValueError("semantic_threshold must be in [0.0, 1.0]")
         if self.threshold_profile not in THRESHOLD_PROFILE_CHOICES:
             raise ValueError(
                 f"threshold_profile must be one of {', '.join(THRESHOLD_PROFILE_CHOICES)}"
@@ -1240,7 +1245,7 @@ class CodeAnalyzer:
     def search(
         self,
         query: str,
-        top_k: int = 10,
+        top_k: Integral = 10,
         threshold: float | None = None,
     ) -> list[tuple[CodeUnit, float]]:
         """
@@ -1266,9 +1271,9 @@ class CodeAnalyzer:
         :param threshold: Finite minimum cosine similarity for this call only;
             negative floors are allowed.
         :return: List of code units and cosine scores.
-        :raises ValueError: If ``threshold`` is non-finite, or the corpus has no
-            calibrated search default and neither ``threshold`` nor
-            ``config.semantic_threshold`` is supplied.
+        :raises ValueError: If ``top_k`` is not a positive integer, ``threshold``
+            is non-finite, or the corpus has no calibrated search default and
+            neither ``threshold`` nor ``config.semantic_threshold`` is supplied.
         """
         if self._units is None or self._embeddings is None:
             raise RuntimeError(

@@ -22,6 +22,8 @@ codedupes search ./src "normalize request payload" --device mps
 
 An explicit unavailable accelerator is an error, including on warm-cache and empty scans. Combined mode can retain traditional results with `--allow-semantic-fallback`; see [exit codes](output.md#exit-codes). Automatic CPU transitions during inference follow the recovery rules below.
 
+For the built-in profiles, CPU float32 and MPS float32 are decision-equivalent in the reviewed development corpus. On Apple silicon, leave `--device` at `auto` for MPS; pin `cpu` only when reproducing the CPU calibration reference or investigating CPU-specific behavior. See the checked [calibration results](../test_fixtures/calibration/calibration-results.json) and [calibration workflow](hybrid-tuning.md) for measurements and replay.
+
 ## Unsupported MPS operators
 
 PyTorch controls unsupported-operator fallback through `PYTORCH_ENABLE_MPS_FALLBACK`.
@@ -43,7 +45,7 @@ No MPS allocator cap is imposed by default. On memory-constrained systems, start
 codedupes check ./src --device mps --mps-memory-fraction 0.9
 ```
 
-The option calls `torch.mps.set_per_process_memory_fraction()` and accepts `(0, 2]`. `codedupes` rejects `0` because PyTorch defines it as unlimited allocation, which can permit a system-wide OOM. Values above `1` are accepted for parity with PyTorch but emit a warning because they exceed the device-recommended working-set size. A cap can cause an earlier, controlled OOM; it is not a performance setting. The setting is process-global: after codedupes applies a custom cap, the next run whose configuration leaves the option unset restores the allocator baseline captured from `PYTORCH_MPS_HIGH_WATERMARK_RATIO`, or PyTorch's `1.7` default when the environment is unset - including fully cache-covered runs and warm query hits, which never prepare a device. `clear_model_cache()` releases weights but does not itself change allocator policy.
+The option calls `torch.mps.set_per_process_memory_fraction()` and accepts `(0, 2]`. `codedupes` rejects `0` because PyTorch defines it as unlimited allocation, which can permit a system-wide OOM. Values above `1` are accepted for parity with PyTorch but emit a warning because they exceed the device-recommended working-set size. A cap can cause an earlier, controlled OOM; it is not a performance setting. The setting is process-global: after codedupes applies a custom cap, allocator-free warm or empty returns restore the allocator baseline captured from `PYTORCH_MPS_HIGH_WATERMARK_RATIO`, or PyTorch's `1.7` default when the environment is unset, even when the caller supplied a fraction. A requested cap applies only when MPS inference is actually prepared. `clear_model_cache()` releases weights but does not itself change allocator policy.
 
 CUDA and MPS inference use the same deterministic OOM recovery ladder. An MPS `Invalid buffer size` failure - a single tensor above Metal's per-buffer cap, raised without any "out of memory" phrase - also enters that ladder:
 
@@ -53,7 +55,7 @@ CUDA and MPS inference use the same deterministic OOM recovery ladder. An MPS `I
 4. Halve the embedding batch size until it reaches one.
 5. If an accelerator still OOMs at batch size one, move the cached model to CPU once and retry from the originally requested batch size capped at 32 (`CPU_FALLBACK_MAX_BATCH_SIZE`); host memory has different limits, but host OOM can arrive as an uncatchable OOM-killer kill rather than a Python exception, so an accelerator-sized request (say 512) never carries over. A catchable CPU OOM re-enters the halving ladder above before aborting. The move reapplies the [CPU dtype policy](#precision-and-metal-environment-variables).
 
-A model-loading accelerator OOM has no batch to shrink, so it clears that device's cache and retries loading once on CPU. After an accelerator-to-CPU OOM fallback, the CPU model remains sticky for that model in a long-lived process. Call `codedupes.semantic.clear_model_cache()` to force a fresh accelerator load.
+A model-loading accelerator OOM has no batch to shrink, so it clears that device's cache and retries loading once on CPU. After an accelerator-to-CPU OOM fallback, the CPU model remains sticky for equivalent subsequent load identity and policy in a long-lived process. Call `codedupes.semantic.clear_model_cache()` to force a fresh accelerator load.
 
 Successful batches do not clear the allocator cache. Embeddings are converted to normalized NumPy arrays immediately, so pairwise similarity runs on CPU and no large embedding tensor remains resident in Metal memory.
 
@@ -69,9 +71,28 @@ Model loads pin an explicit dtype instead of inheriting the checkpoint's configu
 | Other CUDA devices and MPS | float32 |
 | CPU | float32, unless the experimental policy below is enabled |
 
+### MPS bfloat16 evidence
+
+MPS autocast is not the shipped policy. On an Apple M5 with PyTorch 2.14, batch
+size 4, the ledger fixture, and three fresh uncached processes per model and
+mode, explicit bfloat16 autocast produced these median combined duplicate and
+search measurements:
+
+| Model | MPS fp32 | bf16 autocast | Maximum pair/query drift | Changed shipped results |
+| --- | ---: | ---: | ---: | ---: |
+| GTE ModernBERT | 6.723 s | 5.167 s | 0.0830 / 0.0562 | 13 duplicate, 2 search |
+| EmbeddingGemma | 6.561 s | 6.521 s | 0.0531 / 0.0385 | 5 duplicate, 0 search |
+
+Autocast changed calibrated decisions, while its speed benefit varied by model.
+An earlier whole-model bfloat16 run was about 13% faster but still shifted pair
+scores at threshold scale. MPS inference therefore stays float32. Any future
+dtype change requires the full [calibration workflow](hybrid-tuning.md).
+
+### CPU bfloat16 policy
+
 `CODEDUPES_CPU_BF16=1` enables experimental CPU bfloat16 only when the machine has both a native bf16 ISA (`bf16` on ARM, `amx_bf16`/`avx512_bf16` on x86) and an available mkldnn GEMM backend. The capability check runs at most once per process and persists nothing. `codedupes info --verbose` reports the hardware checks and effective policy.
 
-The CPU capability gate does not establish accuracy at the built-in duplicate and search thresholds. Automatic enablement awaits speed and decision-parity validation on supported hardware. TODO before promotion: measure agreement between CPU and CUDA bfloat16 vectors, which currently share a cache namespace, and split their identities if needed.
+The CPU capability gate does not establish accuracy at the built-in duplicate and search thresholds. Automatic enablement remains off until gate-passing hardware establishes latency, memory use, row-cosine agreement, pair-score drift, and duplicate/search threshold-flip counts for both built-in models. CPU and CUDA bfloat16 currently share a cache namespace; promotion must confirm their agreement or split their runtime identities.
 
 Both load-time and inference-time CPU fallback reapply this dtype policy. A bfloat16 accelerator model becomes float32 unless the CPU opt-in and capability gate both pass.
 
@@ -80,6 +101,10 @@ A run keyed under a non-default (bfloat16) dtype variant whose live execution ca
 The restarted corpus records its faithful CPU identity and stays directly searchable: queries follow that recorded policy even while the analyzer still requests the accelerator. Conversely, a query whose own encode falls back and casts to float32 against a corpus still keyed bfloat16 aborts before the similarity comparison - the correctness boundary is the dot product, not just the cache key.
 
 `codedupes` deliberately does not set `PYTORCH_MPS_FAST_MATH` or `PYTORCH_MPS_PREFER_METAL`. Fast math may change floating-point results around tuned similarity thresholds, while forcing a particular matmul implementation is workload-specific. You can experiment with those variables externally, but re-run the hybrid tuning guardrail and a representative repository before adopting altered thresholds. Changing fast math re-embeds MPS-capable requests; if execution then leaves MPS, the corpus restarts under the effective CPU policy and an incompatible standalone query aborts before comparison. `PYTORCH_MPS_PREFER_METAL` selects among faithful float32 implementations and shares their identity. See [cache runtime identity](caching.md#runtime-identity) for key composition and reuse boundaries.
+
+The checked calibration workflow is stricter: it rejects
+`PYTORCH_MPS_FAST_MATH` so the CPU/MPS comparison always measures the shipped
+faithful-float32 policy.
 
 For a native macOS installation, use the default `gte-modernbert-base` profile first; evaluate `embeddinggemma-300m` only after the default path is stable.
 
@@ -111,11 +136,7 @@ The optional CUDA smoke command also exercises the default model and labeled Rus
 CODEDUPES_SMOKE_GPU=1 pytest tests/test_semantic_cuda.py tests/test_semantic_smoke.py -m gpu
 ```
 
-A companion opt-in smoke test validates every built-in profile against the multi-domain probe corpus in `test_fixtures/search_probes/`: every relevant query must surface its expected function at that profile's default search threshold and every off-topic query must return nothing:
-
-```bash
-CODEDUPES_SMOKE_SEARCH=1 pytest tests/test_semantic_smoke.py
-```
+The opt-in multi-domain search smoke command and acceptance criteria are part of the [calibration workflow](hybrid-tuning.md#reproduce-the-result).
 
 ## Upstream references
 

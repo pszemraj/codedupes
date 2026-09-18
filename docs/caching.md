@@ -111,8 +111,6 @@ Keys cover the canonical model, revision, complete prepared input, encode route/
 
 [Accelerator precision and fallback](accelerators.md#precision-and-metal-environment-variables) define which execution policies share an identity and when a corpus must restart.
 
-A warm CPU run, or `auto` on macOS, can avoid importing PyTorch. The experimental CPU bfloat16 opt-in requires a live capability probe. `auto` elsewhere imports PyTorch for device/dtype resolution; explicit accelerator requests validate availability even when no inference is needed.
-
 ### Filesystem permissions
 
 The configured root is resolved to an absolute physical path, so equivalent spellings share locks. It may be a symlink, but managed shard, `repos`, `local-models`, and `locks` directories reject pre-existing symlinks. New cache directories use `0700`; files use `0600`. Existing root permissions are retained. Advisory locks coordinate cooperating processes; they do not secure an attacker-writable parent directory.

@@ -1,0 +1,10 @@
+{
+  "name": "calibration-fulfillment-pilot",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Offline Node.js workflows used as development calibration fixtures.",
+  "scripts": {
+    "test": "node --test",
+    "start": "node src/cli.js"
+  }
+}

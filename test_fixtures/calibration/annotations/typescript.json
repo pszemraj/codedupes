@@ -1,0 +1,1205 @@
+{
+    "schema_version": 2,
+    "provenance": {
+        "origin": "issue-20 authored TypeScript development fixture",
+        "split": "development",
+        "split_group": "harbor-typescript-application"
+    },
+    "units": [
+        {
+            "id": "harbor.aggregate.map",
+            "selector": {
+                "path": "src/aggregation.ts",
+                "qualified_name": "aggregation.summarizeDockLoads",
+                "kind": "function"
+            }
+        },
+        {
+            "id": "harbor.aggregate.sorted",
+            "selector": {
+                "path": "src/aggregation.ts",
+                "qualified_name": "aggregation.buildManifestTotals",
+                "kind": "function"
+            }
+        },
+        {
+            "id": "harbor.aggregate.immutable",
+            "selector": {
+                "path": "src/aggregation.ts",
+                "qualified_name": "aggregation.collectZoneWeightTotals",
+                "kind": "function"
+            }
+        },
+        {
+            "id": "harbor-ts/src/aggregation.ts::aggregation.checkedLoad::function::3",
+            "selector": {
+                "path": "src/aggregation.ts",
+                "qualified_name": "aggregation.checkedLoad",
+                "kind": "function"
+            }
+        },
+        {
+            "id": "harbor.dispatch.baseline",
+            "selector": {
+                "path": "src/dispatch.ts",
+                "qualified_name": "dispatch.planDispatches",
+                "kind": "function"
+            }
+        },
+        {
+            "id": "harbor.dispatch.holdback",
+            "selector": {
+                "path": "src/dispatch.ts",
+                "qualified_name": "dispatch.planDispatchesWithHoldback",
+                "kind": "function"
+            }
+        },
+        {
+            "id": "harbor.dispatch.floors",
+            "selector": {
+                "path": "src/dispatch.ts",
+                "qualified_name": "dispatch.planDispatchesWithServiceFloors",
+                "kind": "function"
+            }
+        },
+        {
+            "id": "harbor-ts/src/dispatch.ts::dispatch.validateSummaries::function::3",
+            "selector": {
+                "path": "src/dispatch.ts",
+                "qualified_name": "dispatch.validateSummaries",
+                "kind": "function"
+            }
+        },
+        {
+            "id": "harbor.booking.inline",
+            "selector": {
+                "path": "src/bookings.ts",
+                "qualified_name": "bookings.acceptInlineBookings",
+                "kind": "function"
+            }
+        },
+        {
+            "id": "harbor.booking.extracted",
+            "selector": {
+                "path": "src/bookings.ts",
+                "qualified_name": "bookings.acceptBookingsWithNormalizer",
+                "kind": "function"
+            }
+        },
+        {
+            "id": "harbor.booking.normalizer",
+            "selector": {
+                "path": "src/bookings.ts",
+                "qualified_name": "bookings.normalizeBooking",
+                "kind": "function"
+            }
+        },
+        {
+            "id": "harbor.booking.legacy",
+            "selector": {
+                "path": "src/legacy.ts",
+                "qualified_name": "legacy.admitManifestNotices",
+                "kind": "function"
+            }
+        },
+        {
+            "id": "harbor-ts/src/legacy.ts::legacy.readManifestNotice::function::13",
+            "selector": {
+                "path": "src/legacy.ts",
+                "qualified_name": "legacy.readManifestNotice",
+                "kind": "function"
+            }
+        },
+        {
+            "id": "harbor.ingress.csv",
+            "selector": {
+                "path": "src/adapters.ts",
+                "qualified_name": "adapters.importScheduleCsv",
+                "kind": "function"
+            }
+        },
+        {
+            "id": "harbor.ingress.api",
+            "selector": {
+                "path": "src/adapters.ts",
+                "qualified_name": "adapters.ingestScheduleBatch",
+                "kind": "function"
+            }
+        },
+        {
+            "id": "harbor.ingress.webhook",
+            "selector": {
+                "path": "src/adapters.ts",
+                "qualified_name": "adapters.prepareWebhookSchedule",
+                "kind": "function"
+            }
+        },
+        {
+            "id": "harbor-ts/src/adapters.ts::adapters.csvRows::function::7",
+            "selector": {
+                "path": "src/adapters.ts",
+                "qualified_name": "adapters.csvRows",
+                "kind": "function"
+            }
+        },
+        {
+            "id": "harbor.audit.capacity",
+            "selector": {
+                "path": "src/audit.ts",
+                "qualified_name": "audit.auditZoneCapacity",
+                "kind": "function"
+            }
+        },
+        {
+            "id": "harbor.audit.arrival",
+            "selector": {
+                "path": "src/audit.ts",
+                "qualified_name": "audit.auditArrivalWindow",
+                "kind": "function"
+            }
+        },
+        {
+            "id": "harbor.audit.spread",
+            "selector": {
+                "path": "src/audit.ts",
+                "qualified_name": "audit.auditZoneSpread",
+                "kind": "function"
+            }
+        },
+        {
+            "id": "harbor.signup.branch",
+            "selector": {
+                "path": "src/signup.ts",
+                "qualified_name": "signup.validateSignup",
+                "kind": "function"
+            }
+        },
+        {
+            "id": "harbor.signup.rules",
+            "selector": {
+                "path": "src/signup.ts",
+                "qualified_name": "signup.evaluateRegistration",
+                "kind": "function"
+            }
+        }
+    ],
+    "families": [
+        {
+            "id": "translated-load-aggregation",
+            "members": [
+                "harbor.aggregate.map",
+                "harbor.aggregate.sorted",
+                "harbor.aggregate.immutable"
+            ]
+        },
+        {
+            "id": "extended-dispatch-planning",
+            "members": [
+                "harbor.dispatch.baseline",
+                "harbor.dispatch.holdback",
+                "harbor.dispatch.floors"
+            ]
+        },
+        {
+            "id": "inline-normalization-extraction",
+            "members": [
+                "harbor.booking.inline",
+                "harbor.booking.extracted",
+                "harbor.booking.legacy"
+            ]
+        },
+        {
+            "id": "related-ingress-adapters",
+            "members": [
+                "harbor.ingress.csv",
+                "harbor.ingress.api",
+                "harbor.ingress.webhook"
+            ]
+        },
+        {
+            "id": "typed-registration-validation",
+            "members": [
+                "harbor.signup.branch",
+                "harbor.signup.rules"
+            ]
+        }
+    ],
+    "pairs": [
+        {
+            "id": "aggregate-map--sorted",
+            "a": "harbor.aggregate.map",
+            "b": "harbor.aggregate.sorted",
+            "judgment": "positive",
+            "tags": [
+                "translated",
+                "easy"
+            ],
+            "difficulty": "easy",
+            "scope": "whole_unit",
+            "behavior_equivalent": true,
+            "equivalence_domain": "Every load is validated before cancelled loads are ignored; active totals and counts are sorted by normalized zone without mutating caller input.",
+            "contract": "Return sorted active zone totals and counts after strict load validation.",
+            "rationale": "The Map implementation and sorted contiguous grouping implement the same aggregation contract and one should replace the other during maintenance.",
+            "evidence": [
+                "tests/harbor.test.ts::aggregation variants preserve validation, ordering, and caller input"
+            ]
+        },
+        {
+            "id": "aggregate-map--immutable",
+            "a": "harbor.aggregate.map",
+            "b": "harbor.aggregate.immutable",
+            "judgment": "positive",
+            "tags": [
+                "translated",
+                "easy"
+            ],
+            "difficulty": "easy",
+            "scope": "whole_unit",
+            "behavior_equivalent": true,
+            "equivalence_domain": "Every load is validated before cancelled loads are ignored; active totals and counts are sorted by normalized zone without mutating caller input.",
+            "contract": "Return sorted active zone totals and counts after strict load validation.",
+            "rationale": "The Map and immutable record accumulators duplicate the same zone aggregation responsibility.",
+            "evidence": [
+                "tests/harbor.test.ts::aggregation variants preserve validation, ordering, and caller input"
+            ]
+        },
+        {
+            "id": "aggregate-sorted--immutable",
+            "a": "harbor.aggregate.sorted",
+            "b": "harbor.aggregate.immutable",
+            "judgment": "positive",
+            "tags": [
+                "translated",
+                "easy"
+            ],
+            "difficulty": "easy",
+            "scope": "whole_unit",
+            "behavior_equivalent": true,
+            "equivalence_domain": "Every load is validated before cancelled loads are ignored; active totals and counts are sorted by normalized zone without mutating caller input.",
+            "contract": "Return sorted active zone totals and counts after strict load validation.",
+            "rationale": "Sorting contiguous groups and building immutable records are alternate implementations of one aggregation operation.",
+            "evidence": [
+                "tests/harbor.test.ts::aggregation variants preserve validation, ordering, and caller input"
+            ]
+        },
+        {
+            "id": "dispatch-baseline--holdback",
+            "a": "harbor.dispatch.baseline",
+            "b": "harbor.dispatch.holdback",
+            "judgment": "positive",
+            "tags": [
+                "extended",
+                "medium"
+            ],
+            "difficulty": "medium",
+            "scope": "whole_unit",
+            "behavior_equivalent": false,
+            "equivalence_domain": "minimumDispatchKg=0, where both produce the sorted queued baseline plan.",
+            "contract": "Plan sorted dispatch instructions from valid zone summaries and make policy suppression observable through state, held kilograms, and audit events.",
+            "rationale": "The holdback version is a policy extension of the baseline planner, not an independent business operation.",
+            "evidence": [
+                "tests/harbor.test.ts::dispatch extensions equal the baseline when disabled and retain hold witnesses"
+            ],
+            "difference_witness": "With WEST at 40kg and a 100kg minimum, holdback marks WEST held and emits held:WEST:40 while baseline queues it."
+        },
+        {
+            "id": "dispatch-baseline--floors",
+            "a": "harbor.dispatch.baseline",
+            "b": "harbor.dispatch.floors",
+            "judgment": "positive",
+            "tags": [
+                "extended",
+                "medium"
+            ],
+            "difficulty": "medium",
+            "scope": "whole_unit",
+            "behavior_equivalent": false,
+            "equivalence_domain": "An empty floor mapping, where both produce the sorted queued baseline plan.",
+            "contract": "Plan sorted dispatch instructions from valid zone summaries and make policy suppression observable through state, held kilograms, and audit events.",
+            "rationale": "The service-floor planner adds an opt-in policy to the same dispatch construction workflow.",
+            "evidence": [
+                "tests/harbor.test.ts::dispatch extensions equal the baseline when disabled and retain hold witnesses"
+            ],
+            "difference_witness": "A floor above a zone total holds that zone and records a service-floor event; baseline never holds a valid summary."
+        },
+        {
+            "id": "dispatch-holdback--floors",
+            "a": "harbor.dispatch.holdback",
+            "b": "harbor.dispatch.floors",
+            "judgment": "positive",
+            "tags": [
+                "extended",
+                "medium"
+            ],
+            "difficulty": "easy",
+            "scope": "whole_unit",
+            "behavior_equivalent": false,
+            "equivalence_domain": "All configured thresholds are zero, where both produce the sorted queued baseline plan.",
+            "contract": "Plan sorted dispatch instructions from valid zone summaries and make policy suppression observable through state, held kilograms, and audit events.",
+            "rationale": "Global and per-zone thresholds differ only in how the same dispatch policy is configured.",
+            "evidence": [
+                "tests/harbor.test.ts::dispatch extensions equal the baseline when disabled and retain hold witnesses"
+            ],
+            "difference_witness": "A 100kg global threshold can hold WEST while an empty service-floor map leaves it queued."
+        },
+        {
+            "id": "booking-inline--extracted",
+            "a": "harbor.booking.inline",
+            "b": "harbor.booking.extracted",
+            "judgment": "positive",
+            "tags": [
+                "helper_extraction",
+                "medium"
+            ],
+            "difficulty": "easy",
+            "scope": "whole_unit",
+            "behavior_equivalent": true,
+            "equivalence_domain": "Ordered raw booking rows: field errors retain their row, accepted IDs are reserved after successful parsing only, and duplicate IDs are rejected.",
+            "contract": "Validate booking ID, zone, ISO calendar date, and integer weight in that order before reserving the ID and building the report.",
+            "rationale": "These remain substantive upload orchestrators with the same observable behavior; one carries the decoder inline and the other invokes the extracted helper.",
+            "evidence": [
+                "tests/harbor.test.ts::inline and extracted booking decoders agree without reserving invalid IDs"
+            ]
+        },
+        {
+            "id": "booking-inline--legacy",
+            "a": "harbor.booking.inline",
+            "b": "harbor.booking.legacy",
+            "judgment": "positive",
+            "tags": [
+                "translated",
+                "legacy_schema",
+                "medium"
+            ],
+            "difficulty": "medium",
+            "scope": "whole_unit",
+            "behavior_equivalent": true,
+            "equivalence_domain": "Corresponding string-valued raw-object fields and positional manifest cells: both validate the same field precedence, reserve only accepted IDs, and produce the same ordered BookingReport.",
+            "contract": "Normalize four string-valued external fields, reject malformed or repeated IDs at the same row, and preserve accepted values and report order.",
+            "rationale": "The legacy positional importer independently reimplements the current acceptance contract through a manifest ledger and should consolidate on the canonical workflow.",
+            "evidence": [
+                "tests/harbor.test.ts::legacy manifest notices preserve the current booking acceptance contract"
+            ]
+        },
+        {
+            "id": "booking-extracted--legacy",
+            "a": "harbor.booking.extracted",
+            "b": "harbor.booking.legacy",
+            "judgment": "positive",
+            "tags": [
+                "translated",
+                "legacy_schema",
+                "hard"
+            ],
+            "difficulty": "hard",
+            "scope": "whole_unit",
+            "behavior_equivalent": true,
+            "equivalence_domain": "Corresponding string-valued raw-object fields and positional manifest cells: both validate the same field precedence, reserve only accepted IDs, and produce the same ordered BookingReport.",
+            "contract": "Normalize four string-valued external fields, reject malformed or repeated IDs at the same row, and preserve accepted values and report order.",
+            "rationale": "The modern helper-based importer and the legacy manifest ledger are separate implementations of one booking-admission operation.",
+            "evidence": [
+                "tests/harbor.test.ts::legacy manifest notices preserve the current booking acceptance contract"
+            ]
+        },
+        {
+            "id": "ingress-csv--api",
+            "a": "harbor.ingress.csv",
+            "b": "harbor.ingress.api",
+            "judgment": "negative",
+            "tags": [
+                "adapter",
+                "call_chain",
+                "nearby_negative"
+            ],
+            "scope": "whole_unit",
+            "behavior_equivalent": false,
+            "equivalence_domain": "Raw schedule rows accepted through the shared booking workflow.",
+            "contract": "CSV owns file/header/line context; API owns batch identity and replay state.",
+            "rationale": "Both call the same extracted booking workflow. Their shared callee is not duplicated implementation in either adapter.",
+            "evidence": [
+                "tests/harbor.test.ts::CSV, API, and webhook workflows share acceptance while retaining their own evidence"
+            ],
+            "difference_witness": "CSV errors use physical file lines and API errors use item positions; repeating an API batch produces a replay result."
+        },
+        {
+            "id": "ingress-csv--webhook",
+            "a": "harbor.ingress.csv",
+            "b": "harbor.ingress.webhook",
+            "judgment": "negative",
+            "tags": [
+                "adapter",
+                "call_chain",
+                "nearby_negative"
+            ],
+            "scope": "whole_unit",
+            "behavior_equivalent": false,
+            "equivalence_domain": "Raw schedule rows accepted through the shared booking workflow.",
+            "contract": "CSV owns file/header/line context; webhook owns event validation and acknowledgement.",
+            "rationale": "Both call the same extracted booking workflow. Their shared callee is not duplicated implementation in either adapter.",
+            "evidence": [
+                "tests/harbor.test.ts::CSV, API, and webhook workflows share acceptance while retaining their own evidence"
+            ],
+            "difference_witness": "CSV opens a path and rewrites errors as lines; the webhook validates an event ID and returns an acknowledgement."
+        },
+        {
+            "id": "ingress-api--webhook",
+            "a": "harbor.ingress.api",
+            "b": "harbor.ingress.webhook",
+            "judgment": "negative",
+            "tags": [
+                "adapter",
+                "call_chain",
+                "nearby_negative"
+            ],
+            "scope": "whole_unit",
+            "behavior_equivalent": false,
+            "equivalence_domain": "Raw schedule rows accepted through the shared booking workflow.",
+            "contract": "API owns batch identity and replay state; webhook owns event validation and acknowledgement.",
+            "rationale": "Both call the same extracted booking workflow. Their shared callee is not duplicated implementation in either adapter.",
+            "evidence": [
+                "tests/harbor.test.ts::CSV, API, and webhook workflows share acceptance while retaining their own evidence"
+            ],
+            "difference_witness": "API mutates the completed-batch registry; webhook emits an acknowledgement without an idempotency registry."
+        },
+        {
+            "id": "negative-map--capacity",
+            "a": "harbor.aggregate.map",
+            "b": "harbor.audit.capacity",
+            "judgment": "negative",
+            "tags": [
+                "nearby_negative",
+                "shared_zone_summary"
+            ],
+            "scope": "whole_unit",
+            "behavior_equivalent": false,
+            "equivalence_domain": "Harbor zone data.",
+            "contract": "Aggregation constructs all zone totals; capacity audit selects only totals already beyond a policy threshold.",
+            "rationale": "Both iterate zone-oriented records but their output and responsibility are distinct.",
+            "evidence": [
+                "tests/harbor.test.ts::aggregation variants preserve validation, ordering, and caller input",
+                "tests/harbor.test.ts::audit endpoints share harbor vocabulary but enforce independent policies"
+            ],
+            "difference_witness": "Aggregation returns EAST and WEST totals; capacity audit returns only capacity:EAST:120."
+        },
+        {
+            "id": "negative-sorted--capacity",
+            "a": "harbor.aggregate.sorted",
+            "b": "harbor.audit.capacity",
+            "judgment": "negative",
+            "tags": [
+                "nearby_negative",
+                "shared_zone_summary"
+            ],
+            "scope": "whole_unit",
+            "behavior_equivalent": false,
+            "equivalence_domain": "Harbor zone data.",
+            "contract": "Aggregation constructs all zone totals; capacity audit selects only totals already beyond a policy threshold.",
+            "rationale": "The sorted grouping algorithm is not a duplicate of a threshold policy over existing summaries.",
+            "evidence": [
+                "tests/harbor.test.ts::aggregation variants preserve validation, ordering, and caller input",
+                "tests/harbor.test.ts::audit endpoints share harbor vocabulary but enforce independent policies"
+            ],
+            "difference_witness": "Capacity audit receives a precomputed summary and cannot validate raw cancelled loads."
+        },
+        {
+            "id": "negative-immutable--baseline",
+            "a": "harbor.aggregate.immutable",
+            "b": "harbor.dispatch.baseline",
+            "judgment": "negative",
+            "tags": [
+                "nearby_negative",
+                "pipeline_neighbor"
+            ],
+            "scope": "whole_unit",
+            "behavior_equivalent": false,
+            "equivalence_domain": "Valid load and summary data.",
+            "contract": "Aggregation derives ZoneSummary records from loads; baseline dispatch converts already-valid summaries into queue instructions.",
+            "rationale": "Adjacent pipeline stages share types and ordering but do not duplicate a maintenance operation.",
+            "evidence": [
+                "tests/harbor.test.ts::aggregation variants preserve validation, ordering, and caller input",
+                "tests/harbor.test.ts::dispatch extensions equal the baseline when disabled and retain hold witnesses"
+            ],
+            "difference_witness": "A cancelled load is handled by aggregation; dispatch has no load status path."
+        },
+        {
+            "id": "negative-baseline--capacity",
+            "a": "harbor.dispatch.baseline",
+            "b": "harbor.audit.capacity",
+            "judgment": "negative",
+            "tags": [
+                "nearby_negative",
+                "shared_zone_summary"
+            ],
+            "scope": "whole_unit",
+            "behavior_equivalent": false,
+            "equivalence_domain": "Valid zone summaries.",
+            "contract": "Dispatch queues every valid summary; capacity audit emits only policy violations.",
+            "rationale": "Their shared summary loop does not make creation of dispatch instructions duplicate threshold auditing.",
+            "evidence": [
+                "tests/harbor.test.ts::dispatch extensions equal the baseline when disabled and retain hold witnesses",
+                "tests/harbor.test.ts::audit endpoints share harbor vocabulary but enforce independent policies"
+            ],
+            "difference_witness": "A 40kg WEST summary is queued by dispatch but absent from a 100kg capacity audit."
+        },
+        {
+            "id": "negative-holdback--capacity",
+            "a": "harbor.dispatch.holdback",
+            "b": "harbor.audit.capacity",
+            "judgment": "negative",
+            "tags": [
+                "nearby_negative",
+                "threshold_policy"
+            ],
+            "scope": "whole_unit",
+            "behavior_equivalent": false,
+            "equivalence_domain": "Valid zone summaries and thresholds.",
+            "contract": "Holdback changes dispatch state below a threshold; capacity audit reports totals above a threshold.",
+            "rationale": "Opposite-looking threshold checks serve unrelated operational policies and outputs.",
+            "evidence": [
+                "tests/harbor.test.ts::dispatch extensions equal the baseline when disabled and retain hold witnesses",
+                "tests/harbor.test.ts::audit endpoints share harbor vocabulary but enforce independent policies"
+            ],
+            "difference_witness": "WEST is held below 100kg, while EAST is reported above 100kg by capacity audit."
+        },
+        {
+            "id": "negative-floors--capacity",
+            "a": "harbor.dispatch.floors",
+            "b": "harbor.audit.capacity",
+            "judgment": "negative",
+            "tags": [
+                "nearby_negative",
+                "threshold_policy"
+            ],
+            "scope": "whole_unit",
+            "behavior_equivalent": false,
+            "equivalence_domain": "Valid zone summaries and thresholds.",
+            "contract": "Service floors choose queued or held instruction state; capacity audit returns violation strings.",
+            "rationale": "Per-zone dispatch policy and capacity reporting share vocabulary but no mergeable responsibility.",
+            "evidence": [
+                "tests/harbor.test.ts::dispatch extensions equal the baseline when disabled and retain hold witnesses",
+                "tests/harbor.test.ts::audit endpoints share harbor vocabulary but enforce independent policies"
+            ],
+            "difference_witness": "A service floor can hold EAST; capacity audit never returns an instruction state."
+        },
+        {
+            "id": "negative-inline--csv",
+            "a": "harbor.booking.inline",
+            "b": "harbor.ingress.csv",
+            "judgment": "negative",
+            "tags": [
+                "call_chain",
+                "nearby_negative"
+            ],
+            "scope": "whole_unit",
+            "behavior_equivalent": false,
+            "equivalence_domain": "Raw booking data.",
+            "contract": "Inline booking acceptance owns row decoding; CSV ingress owns disk access, headers, and physical line context.",
+            "rationale": "The adapter calls a sibling acceptance workflow rather than duplicating its complete behavior.",
+            "evidence": [
+                "tests/harbor.test.ts::inline and extracted booking decoders agree without reserving invalid IDs",
+                "tests/harbor.test.ts::CSV, API, and webhook workflows share acceptance while retaining their own evidence"
+            ],
+            "difference_witness": "CSV can reject an unexpected header before any booking row exists; inline acceptance cannot open a path."
+        },
+        {
+            "id": "negative-extracted--api",
+            "a": "harbor.booking.extracted",
+            "b": "harbor.ingress.api",
+            "judgment": "negative",
+            "tags": [
+                "call_chain",
+                "nearby_negative"
+            ],
+            "scope": "whole_unit",
+            "behavior_equivalent": false,
+            "equivalence_domain": "Raw booking data.",
+            "contract": "Booking acceptance owns ordered row outcomes; API ingress owns batch identity and replay state.",
+            "rationale": "The API adapter uses the workflow as a dependency, not as a duplicate implementation.",
+            "evidence": [
+                "tests/harbor.test.ts::inline and extracted booking decoders agree without reserving invalid IDs",
+                "tests/harbor.test.ts::CSV, API, and webhook workflows share acceptance while retaining their own evidence"
+            ],
+            "difference_witness": "Repeating a batch returns replayed=true without calling the booking acceptance workflow."
+        },
+        {
+            "id": "negative-normalizer--webhook",
+            "a": "harbor.booking.normalizer",
+            "b": "harbor.ingress.webhook",
+            "judgment": "negative",
+            "tags": [
+                "call_chain",
+                "nearby_negative"
+            ],
+            "scope": "whole_unit",
+            "behavior_equivalent": false,
+            "equivalence_domain": "Raw booking data.",
+            "contract": "The normalizer decodes one record; webhook ingress validates an envelope and acknowledges a batch.",
+            "rationale": "A scalar decoder is intentionally reused by a transport workflow and should not be merged with it.",
+            "evidence": [
+                "tests/harbor.test.ts::inline and extracted booking decoders agree without reserving invalid IDs",
+                "tests/harbor.test.ts::CSV, API, and webhook workflows share acceptance while retaining their own evidence"
+            ],
+            "difference_witness": "The webhook returns accepted:evt-1:2; the normalizer never receives an event ID or returns an acknowledgement."
+        },
+        {
+            "id": "negative-arrival--spread",
+            "a": "harbor.audit.arrival",
+            "b": "harbor.audit.spread",
+            "judgment": "negative",
+            "tags": [
+                "nearby_negative",
+                "shared_booking_collection"
+            ],
+            "scope": "whole_unit",
+            "behavior_equivalent": false,
+            "equivalence_domain": "Accepted bookings.",
+            "contract": "Arrival audit tests each date against a lower bound; spread audit counts distinct dates per zone.",
+            "rationale": "Both scan Booking collections but enforce independent temporal policies.",
+            "evidence": [
+                "tests/harbor.test.ts::audit endpoints share harbor vocabulary but enforce independent policies"
+            ],
+            "difference_witness": "One early booking produces an arrival finding without necessarily exceeding the spread limit."
+        },
+        {
+            "id": "negative-capacity--arrival",
+            "a": "harbor.audit.capacity",
+            "b": "harbor.audit.arrival",
+            "judgment": "negative",
+            "tags": [
+                "nearby_negative",
+                "audit_prefix"
+            ],
+            "scope": "whole_unit",
+            "behavior_equivalent": false,
+            "equivalence_domain": "Harbor audit input.",
+            "contract": "Capacity consumes ZoneSummary totals; arrival consumes Booking dates.",
+            "rationale": "Matching audit naming and return shape should not conflate distinct input domains.",
+            "evidence": [
+                "tests/harbor.test.ts::audit endpoints share harbor vocabulary but enforce independent policies"
+            ],
+            "difference_witness": "Capacity requires totalKg; arrival requires arrivalDate and bookingId."
+        },
+        {
+            "id": "negative-capacity--spread",
+            "a": "harbor.audit.capacity",
+            "b": "harbor.audit.spread",
+            "judgment": "negative",
+            "tags": [
+                "nearby_negative",
+                "audit_prefix"
+            ],
+            "scope": "whole_unit",
+            "behavior_equivalent": false,
+            "equivalence_domain": "Harbor audit input.",
+            "contract": "Capacity audits zone totals; spread audits distinct booking dates by zone.",
+            "rationale": "Both return sorted strings about zones, but their policy calculations are not duplicates.",
+            "evidence": [
+                "tests/harbor.test.ts::audit endpoints share harbor vocabulary but enforce independent policies"
+            ],
+            "difference_witness": "A zone can exceed its capacity with one booking date and therefore have no spread finding."
+        },
+        {
+            "id": "review-20-ts-inline--normalizer",
+            "a": "harbor.booking.inline",
+            "b": "harbor.booking.normalizer",
+            "judgment": "positive",
+            "tags": [
+                "partial",
+                "helper_extraction"
+            ],
+            "difficulty": "medium",
+            "scope": "partial",
+            "behavior_equivalent": false,
+            "equivalence_domain": "Single raw booking records: normalize the ID and zone, validate the calendar date before the positive integer weight, and preserve first-error precedence.",
+            "contract": "The copied decoder produces the same Booking fields and validation errors; batch ordering, duplicate-ID reservation, and row evidence remain outside the shared region.",
+            "rationale": "Extract the independently copied single-record validation into normalizeBooking while retaining reservation and reporting in the batch workflow, as acceptBookingsWithNormalizer already demonstrates.",
+            "evidence": [
+                "tests/harbor.test.ts::inline and extracted booking decoders agree without reserving invalid IDs",
+                "tests/harbor.test.ts::inline booking validation duplicates the scalar decoder within the batch workflow"
+            ],
+            "difference_witness": "acceptInlineBookings returns an ordered BookingReport with duplicate-ID outcomes, whereas normalizeBooking receives one row and cannot detect a repeated ID.",
+            "regions": [
+                {
+                    "unit": "harbor.booking.inline",
+                    "start_line": 45,
+                    "end_line": 50,
+                    "sha256": "982d6e892b427cf6b72a6d6fdd74706d1f106fd431e2c2c50436c111fc31a4fc"
+                },
+                {
+                    "unit": "harbor.booking.normalizer",
+                    "start_line": 29,
+                    "end_line": 34,
+                    "sha256": "37ece6912d26fc57aa0896c038c69710682f88962618b78d3e6ac4ebb320a0db"
+                }
+            ]
+        },
+        {
+            "id": "review-20-ts-inline--api",
+            "a": "harbor.booking.inline",
+            "b": "harbor.ingress.api",
+            "judgment": "negative",
+            "tags": [
+                "reviewed_high_score",
+                "call_chain"
+            ],
+            "scope": "whole_unit",
+            "behavior_equivalent": false,
+            "equivalence_domain": "Raw booking data submitted through a schedule batch.",
+            "contract": "Inline acceptance owns row outcomes; API ingress owns batch identity, replay state, and item-oriented reporting.",
+            "rationale": "The API adapter calls the extracted booking workflow and adds idempotency behavior; it does not duplicate the inline workflow.",
+            "evidence": [
+                "tests/harbor.test.ts::inline and extracted booking decoders agree without reserving invalid IDs",
+                "tests/harbor.test.ts::CSV, API, and webhook workflows share acceptance while retaining their own evidence"
+            ],
+            "difference_witness": "Repeating a completed API batch returns replayed=true with no accepted rows; inline acceptance has neither batch IDs nor replay state."
+        },
+        {
+            "id": "review-20-ts-extracted--normalizer",
+            "a": "harbor.booking.extracted",
+            "b": "harbor.booking.normalizer",
+            "judgment": "negative",
+            "tags": [
+                "reviewed_high_score",
+                "helper_caller"
+            ],
+            "scope": "whole_unit",
+            "behavior_equivalent": false,
+            "equivalence_domain": "Ordered raw booking rows.",
+            "contract": "The extracted workflow accumulates an ordered report and reserves accepted IDs; its helper decodes one record.",
+            "rationale": "acceptBookingsWithNormalizer delegates field decoding to normalizeBooking, so this is a caller/helper relationship rather than two maintained implementations.",
+            "evidence": [
+                "tests/harbor.test.ts::inline and extracted booking decoders agree without reserving invalid IDs"
+            ],
+            "difference_witness": "The workflow rejects a duplicate booking ID after a successful decode; normalizeBooking has no reservation set and cannot produce that error."
+        },
+        {
+            "id": "review-20-ts-legacy-normalizer--normalizer",
+            "a": "harbor-ts/src/legacy.ts::legacy.readManifestNotice::function::13",
+            "b": "harbor.booking.normalizer",
+            "judgment": "positive",
+            "tags": [
+                "translated",
+                "legacy_schema",
+                "failure_protocol"
+            ],
+            "difficulty": "medium",
+            "scope": "whole_unit",
+            "behavior_equivalent": false,
+            "equivalence_domain": "Corresponding four string-valued booking fields, excluding duplicate-ID accounting: both trim and normalize the ID and zone, validate the ISO calendar day before the positive integer weight, and preserve the same field-error precedence.",
+            "contract": "Normalize one four-field external booking record with strict ID, zone, date, and positive-integer validation in that order.",
+            "rationale": "The positional-manifest reader independently implements the booking normalizer under legacy names and a result-object failure protocol. Consolidating it on the canonical normalizer would remove a real maintenance duplicate.",
+            "evidence": [
+                "tests/harbor.test.ts::legacy manifest notices preserve the current booking acceptance contract"
+            ],
+            "difference_witness": "normalizeBooking throws on a malformed record and returns Booking fields, while readManifestNotice returns a problem object or legacy-named fields."
+        },
+        {
+            "id": "review-20-ts-extracted--csv",
+            "a": "harbor.booking.extracted",
+            "b": "harbor.ingress.csv",
+            "judgment": "negative",
+            "tags": [
+                "reviewed_high_score",
+                "call_chain"
+            ],
+            "scope": "whole_unit",
+            "behavior_equivalent": false,
+            "equivalence_domain": "Schedule rows read from a CSV file.",
+            "contract": "Booking acceptance owns ordered row decoding; CSV ingress owns file access, header validation, and physical-line evidence.",
+            "rationale": "The CSV adapter delegates to the extracted workflow and rewrites error locations. Shared acceptance is a dependency, not a duplicate implementation.",
+            "evidence": [
+                "tests/harbor.test.ts::CSV, API, and webhook workflows share acceptance while retaining their own evidence"
+            ],
+            "difference_witness": "An unexpected CSV header fails before any booking is decoded, while acceptBookingsWithNormalizer has no file or header input."
+        },
+        {
+            "id": "review-20-ts-checked-load--validate-summaries",
+            "a": "harbor-ts/src/aggregation.ts::aggregation.checkedLoad::function::3",
+            "b": "harbor-ts/src/dispatch.ts::dispatch.validateSummaries::function::3",
+            "judgment": "negative",
+            "tags": [
+                "reviewed_high_score",
+                "validation_neighbor"
+            ],
+            "scope": "whole_unit",
+            "behavior_equivalent": false,
+            "equivalence_domain": "Harbor records passed to their respective pipeline stages.",
+            "contract": "Load validation checks load IDs, status, and raw weights; summary validation checks precomputed totals and counts before dispatch.",
+            "rationale": "Both functions use guard clauses for positive integer fields, but they validate different domain objects and protect different operations.",
+            "evidence": [
+                "tests/harbor.test.ts::aggregation variants preserve validation, ordering, and caller input",
+                "tests/harbor.test.ts::dispatch extensions equal the baseline when disabled and retain hold witnesses"
+            ],
+            "difference_witness": "A cancelled DockLoad is valid aggregation input, whereas validateSummaries has no status field and instead requires a positive loadCount."
+        },
+        {
+            "id": "review-20-ts-csv-rows--normalizer",
+            "a": "harbor-ts/src/adapters.ts::adapters.csvRows::function::7",
+            "b": "harbor.booking.normalizer",
+            "judgment": "negative",
+            "tags": [
+                "reviewed_high_score",
+                "pipeline_neighbor"
+            ],
+            "scope": "whole_unit",
+            "behavior_equivalent": false,
+            "equivalence_domain": "CSV text containing booking columns.",
+            "contract": "CSV parsing checks the physical header and splits lines; record normalization validates one already-shaped raw booking.",
+            "rationale": "csvRows maps transport text to raw fields and deliberately leaves field validation to normalizeBooking. Their adjacent field names do not form duplicate maintenance logic.",
+            "evidence": [
+                "tests/harbor.test.ts::CSV, API, and webhook workflows share acceptance while retaining their own evidence"
+            ],
+            "difference_witness": "csvRows can reject an unexpected header, while normalizeBooking cannot inspect a header or split file lines."
+        },
+        {
+            "id": "review-20-ts-extracted--webhook",
+            "a": "harbor.booking.extracted",
+            "b": "harbor.ingress.webhook",
+            "judgment": "negative",
+            "tags": [
+                "reviewed_high_score",
+                "call_chain"
+            ],
+            "scope": "whole_unit",
+            "behavior_equivalent": false,
+            "equivalence_domain": "Booking rows carried in a webhook envelope.",
+            "contract": "Booking acceptance returns ordered row outcomes; webhook ingress checks an event envelope and returns an acknowledgement.",
+            "rationale": "The webhook delegates booking acceptance to the extracted workflow and owns event validation and acknowledgement formatting.",
+            "evidence": [
+                "tests/harbor.test.ts::CSV, API, and webhook workflows share acceptance while retaining their own evidence"
+            ],
+            "difference_witness": "A missing event ID is rejected by the webhook before acceptance, while acceptBookingsWithNormalizer does not receive event metadata."
+        },
+        {
+            "id": "review-20-ts-inline--webhook",
+            "a": "harbor.booking.inline",
+            "b": "harbor.ingress.webhook",
+            "judgment": "negative",
+            "tags": [
+                "reviewed_high_score",
+                "call_chain"
+            ],
+            "scope": "whole_unit",
+            "behavior_equivalent": false,
+            "equivalence_domain": "Booking rows carried in a webhook envelope.",
+            "contract": "Inline acceptance owns booking admission; webhook ingress owns envelope validation and acknowledgement output.",
+            "rationale": "The webhook uses the extracted acceptance path rather than reimplementing the inline one, and its transport behavior has a distinct maintenance boundary.",
+            "evidence": [
+                "tests/harbor.test.ts::inline and extracted booking decoders agree without reserving invalid IDs",
+                "tests/harbor.test.ts::CSV, API, and webhook workflows share acceptance while retaining their own evidence"
+            ],
+            "difference_witness": "Webhook success includes accepted:evt-1:2, whereas inline acceptance returns only accepted rows, errors, and reserved IDs."
+        },
+        {
+            "id": "review-20-ts-validate-summaries--capacity",
+            "a": "harbor-ts/src/dispatch.ts::dispatch.validateSummaries::function::3",
+            "b": "harbor.audit.capacity",
+            "judgment": "negative",
+            "tags": [
+                "reviewed_high_score",
+                "shared_zone_summary"
+            ],
+            "scope": "whole_unit",
+            "behavior_equivalent": false,
+            "equivalence_domain": "Zone summaries.",
+            "contract": "Dispatch validation rejects malformed summaries; capacity audit selects valid-looking totals above a supplied policy threshold.",
+            "rationale": "Both read zone totals, but one is an input precondition and the other is a reporting policy with different output and ownership.",
+            "evidence": [
+                "tests/harbor.test.ts::dispatch extensions equal the baseline when disabled and retain hold witnesses",
+                "tests/harbor.test.ts::audit endpoints share harbor vocabulary but enforce independent policies"
+            ],
+            "difference_witness": "validateSummaries returns no findings for a valid 40kg summary, while capacity audit can return capacity:EAST:120 for a threshold breach."
+        },
+        {
+            "id": "review-20-ts-legacy-normalizer--legacy",
+            "a": "harbor-ts/src/legacy.ts::legacy.readManifestNotice::function::13",
+            "b": "harbor.booking.legacy",
+            "judgment": "negative",
+            "tags": [
+                "reviewed_high_score",
+                "helper_caller"
+            ],
+            "scope": "whole_unit",
+            "behavior_equivalent": false,
+            "equivalence_domain": "Positional legacy manifest notices.",
+            "contract": "The helper decodes one notice; the legacy importer owns position reporting and cross-row ticket reservation.",
+            "rationale": "admitManifestNotices calls readManifestNotice as its record decoder and adds loop, duplicate, and report responsibilities, so the endpoints are not duplicate implementations.",
+            "evidence": [
+                "tests/harbor.test.ts::legacy manifest notices preserve the current booking acceptance contract"
+            ],
+            "difference_witness": "The importer reports duplicate booking IDs across notices; readManifestNotice has no ticket set or row position."
+        },
+        {
+            "id": "review-20-ts-csv-rows--csv",
+            "a": "harbor-ts/src/adapters.ts::adapters.csvRows::function::7",
+            "b": "harbor.ingress.csv",
+            "judgment": "negative",
+            "tags": [
+                "reviewed_high_score",
+                "helper_caller"
+            ],
+            "scope": "whole_unit",
+            "behavior_equivalent": false,
+            "equivalence_domain": "Schedule CSV text and file paths.",
+            "contract": "The helper parses CSV text; the importer owns file reads, booking acceptance, and physical-line error translation.",
+            "rationale": "importScheduleCsv calls csvRows as one preparation step and has independent file and report responsibilities.",
+            "evidence": [
+                "tests/harbor.test.ts::CSV, API, and webhook workflows share acceptance while retaining their own evidence"
+            ],
+            "difference_witness": "csvRows cannot read a path or produce line-numbered booking errors; importScheduleCsv does both."
+        },
+        {
+            "id": "review-20-ts-immutable--capacity",
+            "a": "harbor.aggregate.immutable",
+            "b": "harbor.audit.capacity",
+            "judgment": "negative",
+            "tags": [
+                "reviewed_high_score",
+                "shared_zone_summary"
+            ],
+            "scope": "whole_unit",
+            "behavior_equivalent": false,
+            "equivalence_domain": "Harbor load and zone-summary data.",
+            "contract": "Immutable aggregation derives every zone total from raw loads; capacity auditing flags a subset of existing summaries over a threshold.",
+            "rationale": "The endpoints share a ZoneSummary vocabulary but have distinct inputs, outputs, and maintenance purposes.",
+            "evidence": [
+                "tests/harbor.test.ts::aggregation variants preserve validation, ordering, and caller input",
+                "tests/harbor.test.ts::audit endpoints share harbor vocabulary but enforce independent policies"
+            ],
+            "difference_witness": "Aggregation handles cancelled loads and produces EAST and WEST; capacity audit cannot inspect a load status and returns only policy findings."
+        },
+        {
+            "id": "review-20-ts-checked-load--immutable",
+            "a": "harbor-ts/src/aggregation.ts::aggregation.checkedLoad::function::3",
+            "b": "harbor.aggregate.immutable",
+            "judgment": "negative",
+            "tags": [
+                "reviewed_high_score",
+                "helper_caller"
+            ],
+            "scope": "whole_unit",
+            "behavior_equivalent": false,
+            "equivalence_domain": "Raw dock-load collections.",
+            "contract": "checkedLoad validates one raw load; the immutable aggregator owns collection traversal, cancellation filtering, normalization, totals, and sort order.",
+            "rationale": "collectZoneWeightTotals calls checkedLoad as its input guard; no second implementation of aggregation exists in the helper.",
+            "evidence": [
+                "tests/harbor.test.ts::aggregation variants preserve validation, ordering, and caller input"
+            ],
+            "difference_witness": "checkedLoad returns no ZoneSummary and cannot filter a cancelled collection, while collectZoneWeightTotals does both."
+        },
+        {
+            "id": "review-20-ts-arrival--extracted",
+            "a": "harbor.audit.arrival",
+            "b": "harbor.booking.extracted",
+            "judgment": "negative",
+            "tags": [
+                "reviewed_high_score",
+                "shared_booking_collection"
+            ],
+            "scope": "whole_unit",
+            "behavior_equivalent": false,
+            "equivalence_domain": "Booking-related data.",
+            "contract": "Arrival auditing filters accepted Booking values by date; extracted acceptance converts raw rows into a BookingReport with validation and ID reservation.",
+            "rationale": "Both mention booking dates but operate on opposite sides of admission and have unrelated output contracts.",
+            "evidence": [
+                "tests/harbor.test.ts::inline and extracted booking decoders agree without reserving invalid IDs",
+                "tests/harbor.test.ts::audit endpoints share harbor vocabulary but enforce independent policies"
+            ],
+            "difference_witness": "A malformed arrival date produces an acceptance error, whereas auditArrivalWindow only receives already accepted Booking dates and returns audit strings."
+        },
+        {
+            "id": "review-20-ts-validate-summaries--baseline",
+            "a": "harbor-ts/src/dispatch.ts::dispatch.validateSummaries::function::3",
+            "b": "harbor.dispatch.baseline",
+            "judgment": "negative",
+            "tags": [
+                "reviewed_high_score",
+                "helper_caller"
+            ],
+            "scope": "whole_unit",
+            "behavior_equivalent": false,
+            "equivalence_domain": "Zone summary collections.",
+            "contract": "The helper validates a collection; baseline dispatch sorts it and creates queued instructions.",
+            "rationale": "planDispatches calls validateSummaries before its distinct instruction-construction loop, so the overlap is intentional caller/helper composition.",
+            "evidence": [
+                "tests/harbor.test.ts::dispatch extensions equal the baseline when disabled and retain hold witnesses"
+            ],
+            "difference_witness": "validateSummaries returns undefined after validation, whereas planDispatches returns queued instructions, heldKg, and auditEvents."
+        },
+        {
+            "id": "signup-branch--rules",
+            "a": "harbor.signup.branch",
+            "b": "harbor.signup.rules",
+            "judgment": "positive",
+            "tags": [
+                "translated",
+                "typed-rules",
+                "medium"
+            ],
+            "difficulty": "medium",
+            "scope": "whole_unit",
+            "behavior_equivalent": true,
+            "equivalence_domain": "Person and business submissions admitted by the exported discriminated union.",
+            "contract": "Normalize and validate email, person age and marketing consent, business company name, and conditional GB VAT rules while returning issues in stable field order.",
+            "rationale": "The narrowed branch implementation and typed predicate table independently own the same registration-validation policy and can be consolidated behind one maintained rule set.",
+            "evidence": [
+                "tests/signup.test.ts::signup contract: passed"
+            ]
+        },
+        {
+            "id": "signup-branch--booking-normalizer-negative",
+            "a": "harbor.signup.branch",
+            "b": "harbor.booking.normalizer",
+            "judgment": "negative",
+            "tags": [
+                "validation",
+                "nearby-negative"
+            ],
+            "scope": "whole_unit",
+            "behavior_equivalent": false,
+            "equivalence_domain": "Registration form validation and one harbor booking-row normalization step.",
+            "contract": "Registration accumulates independent typed field issues; booking normalization returns one accepted booking or one error under booking-specific date, zone, and weight rules.",
+            "rationale": "Both validate external form-shaped data, but their fields, error accumulation, outputs, and policy ownership provide no substantial shared implementation to maintain.",
+            "evidence": [
+                "tests/signup.test.ts::signup contract: passed",
+                "tests/harbor.test.ts::inline and extracted booking decoders agree without reserving invalid IDs"
+            ],
+            "difference_witness": "A malformed registration can return three issues, whereas normalizeBooking stops at one booking error and may construct a Booking value."
+        },
+        {
+            "id": "signup-rules--capacity-audit-negative",
+            "a": "harbor.signup.rules",
+            "b": "harbor.audit.capacity",
+            "judgment": "negative",
+            "tags": [
+                "rule-evaluation",
+                "nearby-negative"
+            ],
+            "scope": "whole_unit",
+            "behavior_equivalent": false,
+            "equivalence_domain": "Single-submission validation and cross-booking zone-capacity auditing.",
+            "contract": "Registration evaluates typed predicates for one union value; capacity auditing aggregates accepted bookings by zone against service limits.",
+            "rationale": "Their issue-list shape and condition checks are generic similarities around distinct state, data, and maintenance policies.",
+            "evidence": [
+                "tests/signup.test.ts::signup contract: passed",
+                "tests/harbor.test.ts::audit endpoints share harbor vocabulary but enforce independent policies"
+            ],
+            "difference_witness": "A valid registration has no zone or weight, while a capacity violation requires totals across multiple bookings."
+        }
+    ],
+    "probes": [
+        {
+            "id": "behavior-aggregate-active-loads",
+            "kind": "behavioral",
+            "query": "aggregate active dock loads into sorted zone totals",
+            "expected": [
+                "harbor.aggregate.map",
+                "harbor.aggregate.sorted",
+                "harbor.aggregate.immutable"
+            ],
+            "relevance_complete": true
+        },
+        {
+            "id": "behavior-hold-small-dispatch",
+            "kind": "behavioral",
+            "query": "defer a dock dispatch below its minimum weight and record an audit event",
+            "expected": [
+                "harbor.dispatch.holdback",
+                "harbor.dispatch.floors"
+            ],
+            "relevance_complete": true
+        },
+        {
+            "id": "behavior-validate-registration",
+            "kind": "behavioral",
+            "query": "validate a typed person or business registration and return ordered field issues",
+            "expected": [
+                "harbor.signup.branch",
+                "harbor.signup.rules"
+            ],
+            "relevance_complete": true
+        },
+        {
+            "id": "behavior-reserve-booking-id",
+            "kind": "behavioral",
+            "query": "reserve an external booking ID only after valid fields are accepted",
+            "expected": [
+                "harbor.booking.inline",
+                "harbor.booking.extracted",
+                "harbor.booking.legacy"
+            ],
+            "relevance_complete": true
+        },
+        {
+            "id": "behavior-csv-lines",
+            "kind": "behavioral",
+            "query": "import a scheduling CSV while preserving physical line error context",
+            "expected": [
+                "harbor.ingress.csv"
+            ],
+            "relevance_complete": true
+        },
+        {
+            "id": "behavior-api-replay",
+            "kind": "behavioral",
+            "query": "reject duplicate API schedule batch processing with an idempotent replay result",
+            "expected": [
+                "harbor.ingress.api"
+            ],
+            "relevance_complete": true
+        },
+        {
+            "id": "partial-symbol-aggregate",
+            "kind": "partial_symbol",
+            "query": "ZoneWeightTotals",
+            "expected": [
+                "harbor.aggregate.map",
+                "harbor.aggregate.sorted",
+                "harbor.aggregate.immutable"
+            ],
+            "relevance_complete": true
+        },
+        {
+            "id": "partial-symbol-dispatch",
+            "kind": "partial_symbol",
+            "query": "DispatchesWith",
+            "expected": [
+                "harbor.dispatch.holdback",
+                "harbor.dispatch.floors"
+            ],
+            "relevance_complete": true
+        },
+        {
+            "id": "partial-symbol-booking",
+            "kind": "partial_symbol",
+            "query": "BookingsWith",
+            "expected": [
+                "harbor.booking.extracted"
+            ],
+            "relevance_complete": true
+        },
+        {
+            "id": "exact-symbol-normalizer",
+            "kind": "exact_symbol",
+            "query": "normalizeBooking",
+            "expected": [
+                "harbor.booking.normalizer"
+            ],
+            "relevance_complete": true
+        },
+        {
+            "id": "no-result-berth-invoice",
+            "kind": "no_result",
+            "query": "reconcile berth invoices into customer credits",
+            "expected": [],
+            "relevance_complete": true
+        },
+        {
+            "id": "no-result-weather-sensor",
+            "kind": "no_result",
+            "query": "calibrate weather sensor buoy readings",
+            "expected": [],
+            "relevance_complete": true
+        }
+    ]
+}

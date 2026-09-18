@@ -96,6 +96,9 @@ def search_command(ctx: click.Context, path: Path, query: str, **params: Any) ->
     :param params: Parsed command options.
     :return: ``None``.
     """
+    if not query.strip():
+        raise click.UsageError("query must be a non-empty string")
+
     opts = SearchOptions.from_params(ctx, params)
     with _configured_cli_output(
         as_json=opts.as_json,
@@ -121,7 +124,8 @@ def search_command(ctx: click.Context, path: Path, query: str, **params: Any) ->
         )
         results = _run_cli_action(
             lambda: analyzer.search(
-                query, top_k=indexed_units if opts.result_level == "file" else opts.top_k
+                query,
+                top_k=max(indexed_units, 1) if opts.result_level == "file" else opts.top_k,
             ),
             error_label="search",
             verbose=opts.verbose,
