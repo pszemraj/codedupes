@@ -46,10 +46,10 @@ after semantic admission.
 
 | output | model | TP / FP / FN | precision | recall | F1 |
 | --- | --- | ---: | ---: | ---: | ---: |
-| duplicate admission | GTE | 50 / 5 / 28 | 90.9% | 64.1% | 75.2% |
-| duplicate admission | Gemma | 63 / 13 / 15 | 82.9% | 80.8% | 81.8% |
-| default-visible duplicates | GTE | 50 / 1 / 28 | 98.0% | 64.1% | 77.5% |
-| default-visible duplicates | Gemma | 60 / 4 / 18 | 93.8% | 76.9% | 84.5% |
+| duplicate admission | GTE | 49 / 5 / 28 | 90.7% | 63.6% | 74.8% |
+| duplicate admission | Gemma | 62 / 13 / 15 | 82.7% | 80.5% | 81.6% |
+| default-visible duplicates | GTE | 49 / 1 / 28 | 98.0% | 63.6% | 77.2% |
+| default-visible duplicates | Gemma | 59 / 4 / 18 | 93.7% | 76.6% | 84.3% |
 | search | GTE | 72 / 20 / 22 | 78.3% | 76.6% | 77.4% |
 | search | Gemma | 69 / 32 / 25 | 68.3% | 73.4% | 70.8% |
 
