@@ -31,12 +31,12 @@ With Rust installed, run these commands from `test_fixtures/cowsay_wasm/` in the
 ```sh
 cargo test
 cargo run -- "Rust cows are memory safe."
-cargo run -- --think --width 24 --wrapper queue --renderer composed "I am considering ownership."
+cargo run -- --think --width 24 --wrapper cursor --renderer composed "I am considering ownership."
 cargo run -- --scheduler-demo
 printf 'stdin works too\n' | cargo run -- --width 16
 ```
 
-The CLI supports `--think`, `--width`, `--wrapper scanner|fold|queue`,
+The CLI supports `--think`, `--width`, `--wrapper scanner|fold|queue|cursor`,
 `--renderer pipeline|composed`, and `--scheduler-demo`. The browser-facing API
 retains its two wrapper choices because its boolean argument is part of the
 simple WebAssembly demo.

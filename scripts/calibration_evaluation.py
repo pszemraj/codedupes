@@ -837,6 +837,7 @@ def validate_shipped_selection_profiles(
             selected.get("corroboration_only_metrics"),
             f"{model} corroboration-only hybrid metrics",
             extra_keys={"weak_identifier_jaccard_min", "statement_ratio_min"},
+            expected_positives=selected["metrics"]["tp"] + selected["metrics"]["fn"],
         )
         corroboration = selected["corroboration_only_metrics"]
         if not _same_gate(
@@ -1126,11 +1127,13 @@ def compare_devices(cpu: dict[str, Any], mps: dict[str, Any], project: Project) 
         abs(cpu_queries[key] - mps_queries[key]) for key in cpu_queries.keys() & mps_queries
     ]
 
-    def summary(values: list[float]) -> dict[str, float | int | None]:
+    def summary(values: list[float]) -> dict[str, Any]:
+        histogram = [[value, count] for value, count in sorted(Counter(values).items())]
         return {
             "count": len(values),
             "p95": float(np.quantile(values, 0.95)) if values else None,
             "max": max(values, default=None),
+            "histogram": histogram,
         }
 
     cpu_output = {pair_key(item["a"], item["b"]): item["tier"] for item in replay(cpu)}
@@ -1248,6 +1251,60 @@ def _validate_checked_selection_outcomes(
             or hybrid["selected"]["metrics"] != expected_visible
         ):
             raise ValueError(f"{model}: hybrid metrics differ from checked CPU reports")
+        corroboration = hybrid["selected"]["corroboration_only_metrics"]
+        if (
+            corroboration["tp"] > expected_visible["tp"]
+            or corroboration["fp"] > expected_visible["fp"]
+            or corroboration["fn"] < expected_visible["fn"]
+        ):
+            raise ValueError(
+                f"{model}: corroboration-only metrics are not a subset of selected outcomes"
+            )
+
+
+def _validate_checked_drift_summary(
+    payload: Any,
+    label: str,
+    expected_count: int,
+) -> None:
+    """Recompute one drift summary from its compact exact-value histogram."""
+    if not isinstance(payload, dict) or set(payload) != {"count", "p95", "max", "histogram"}:
+        raise ValueError(f"{label} has an invalid drift schema")
+    histogram = payload["histogram"]
+    if (
+        type(payload["count"]) is not int
+        or payload["count"] != expected_count
+        or not isinstance(histogram, list)
+        or any(
+            not isinstance(bucket, list)
+            or len(bucket) != 2
+            or not _is_finite_number(bucket[0])
+            or bucket[0] < 0
+            or type(bucket[1]) is not int
+            or bucket[1] <= 0
+            for bucket in histogram
+        )
+    ):
+        raise ValueError(f"{label} has invalid drift evidence")
+    values = [float(bucket[0]) for bucket in histogram]
+    if values != sorted(set(values)) or sum(bucket[1] for bucket in histogram) != expected_count:
+        raise ValueError(f"{label} has inconsistent drift evidence")
+    if expected_count == 0:
+        if histogram or payload["p95"] is not None or payload["max"] is not None:
+            raise ValueError(f"{label} has inconsistent empty drift evidence")
+        return
+    expanded = np.repeat(
+        np.asarray(values, dtype=np.float64),
+        np.asarray([bucket[1] for bucket in histogram], dtype=np.int64),
+    )
+    expected_p95 = float(np.quantile(expanded, 0.95))
+    expected_max = float(expanded[-1])
+    if any(
+        not _is_finite_number(payload[field])
+        or not math.isclose(payload[field], expected, rel_tol=0.0, abs_tol=1e-15)
+        for field, expected in (("p95", expected_p95), ("max", expected_max))
+    ):
+        raise ValueError(f"{label} summary differs from its drift evidence")
 
 
 def validate_checked_report(
@@ -1513,26 +1570,16 @@ def validate_checked_report(
                 or not isinstance(comparison["search_decision_changes"], list)
             ):
                 raise ValueError(f"{project_id}: invalid checked {model} device comparison")
-            for field in ("pair_score_abs_drift", "query_score_abs_drift"):
-                summary = comparison[field]
-                if (
-                    not isinstance(summary, dict)
-                    or set(summary) != {"count", "p95", "max"}
-                    or type(summary["count"]) is not int
-                    or summary["count"] < 0
-                    or any(
-                        value is not None and (not _is_finite_number(value) or value < 0)
-                        for value in (summary["p95"], summary["max"])
-                    )
-                    or (summary["count"] == 0) != (summary["p95"] is None)
-                    or (summary["count"] == 0) != (summary["max"] is None)
-                    or (
-                        summary["p95"] is not None
-                        and summary["max"] is not None
-                        and summary["p95"] > summary["max"]
-                    )
-                ):
-                    raise ValueError(f"{project_id}: invalid checked {model} {field}")
+            _validate_checked_drift_summary(
+                comparison["pair_score_abs_drift"],
+                f"{project_id}: checked {model} pair-score drift",
+                math.comb(expected_encoded_inputs, 2),
+            )
+            _validate_checked_drift_summary(
+                comparison["query_score_abs_drift"],
+                f"{project_id}: checked {model} query-score drift",
+                expected_encoded_inputs * len(probes),
+            )
             for field in ("duplicate_decision_changes", "search_decision_changes"):
                 changes = comparison[field]
                 serialized = [tuple(item) for item in changes if isinstance(item, list)]

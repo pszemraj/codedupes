@@ -9,7 +9,7 @@
     },
     "input_context": {
       "batch_size": 4,
-      "selection_policy": "401fc22cb8f3169416fd7d61cae97db5e2ef604168789554a4567d57a6ec873e",
+      "selection_policy": "ad6db05b214cd9e3279eec67af45da3c78772d2a756e72c2ed1ac4bb7d68d2ae",
       "projects": {
         "ledger": {
           "annotations": "2a60e4c34f79ae63502a09798fca17d63ff33558304f37cdb158ffb763fc94d3",
@@ -17,18 +17,18 @@
           "policy": "default",
           "support_files": "d0834a20b1c118a375551359459a6c2a9d47baef2462c4d5bc800a4f8b2d3faf",
           "measurements": {
-            "gte-modernbert-base": "00dccbe91a9ef068256afdc6f33e7e539b3026bc2207ae891d5587d65d6d051f",
-            "embeddinggemma-300m": "199d4218956ea44389ce28e9de2fa9b63eeda65bc43496659c45216aeb929a22"
+            "gte-modernbert-base": "c30757e0914625a3d49a8e10a8d981451a978ab72ba347583eee45fff48a435d",
+            "embeddinggemma-300m": "39eb1073f6631e63d230d2a31c83c3a112b677bc0d552ed035672cb5cfb9dc76"
           }
         },
         "cowsay": {
           "annotations": "ac2779d3ff4fab4ce862c548d0eb7910b5e32dc721c092d560d43542b55211f7",
           "project": "6f9ff2c4c2fc0ff4bbc158d8b761d81e8e0e3bda08a06378790cf3485ec08e60",
           "policy": "default",
-          "support_files": "19df8256d0548a151657ce5ebdc5ef4f9c1c0b4f94f0f91a43b8db67519adc29",
+          "support_files": "691e9e0a798bf57ea126b25cee73885ac7c8ad0e38a2353c98229075a77ecd87",
           "measurements": {
-            "gte-modernbert-base": "496dd7cbde0eed6970926ce43d41b37280dbfa597244e8db569827acde0499dc",
-            "embeddinggemma-300m": "b1baf030b25a410956804b6652fbade24e8e4a4e86d35e63f391f70d447adbc1"
+            "gte-modernbert-base": "9af0534c3ef6afeb2f17fba0ede76f71ceaa7dc331c0df707e09e29c599a3506",
+            "embeddinggemma-300m": "fb90a1e63498bfdff8b406edb1867c98eccf16998ce64ba8c78a738301020262"
           }
         },
         "c_metering": {
@@ -37,8 +37,8 @@
           "policy": "default",
           "support_files": "4ecbeac0ca71c6d5edd6d79b2d34d5806a069dea55c2f8b63bc602004fef2041",
           "measurements": {
-            "gte-modernbert-base": "104b05e51a4c1a706ea971b48a05f4751c17edd5019a0869c647dea4be2fe0fd",
-            "embeddinggemma-300m": "2c879be20ac46c16440d4bd302de54fc20be298dfe2faa19a34016f1130385a2"
+            "gte-modernbert-base": "0d821d5d3e3b3d23d0d8c6fd6d44064a16faec344062c216a6ba30de569520b8",
+            "embeddinggemma-300m": "d33e58c01a1439108576c2a4ea3bab56de2f04869cfb966bc7e0fac64339cdf5"
           }
         },
         "javascript": {
@@ -47,8 +47,8 @@
           "policy": "default",
           "support_files": "138e206a91e16c42e848a2218dbd7238662eec0fa0d0ab6593f155e95244d182",
           "measurements": {
-            "gte-modernbert-base": "06633a8a0a46e1b421959bb9f743def6881b8c9bef92f6dac4f0b8317ed65ea0",
-            "embeddinggemma-300m": "9084ca253c5a45a7b25d9944010787a294f0d05c2b5f9615f711620ab77b8fcc"
+            "gte-modernbert-base": "0354c64f4b22a2f24e7a1394004b7eda635e475f9b093d8bbcf7ba1c548a6468",
+            "embeddinggemma-300m": "6b3aa75bf9eb5edff3cacd0382948f8c45ae807f2b62f2e99fbb802b30298ba0"
           }
         },
         "harbor-ts": {
@@ -57,8 +57,8 @@
           "policy": "default",
           "support_files": "51af91763f70ffce6a510b54cfa006e3b74ae802936a46782fabf529b5b316e2",
           "measurements": {
-            "gte-modernbert-base": "f11cdd94230a3cfc754c73babb56e122c948782edc16cd686ee51fceb8781402",
-            "embeddinggemma-300m": "a810983e5d5af16519d40160955474305a46c13516ffba0beb3bdc369049c197"
+            "gte-modernbert-base": "723993efe863d198517a5b0660fe86373b90bed0ede4dbe49a9ff4914dde0dda",
+            "embeddinggemma-300m": "fcf6e8886be42e0d159a299ef987bf219ebbb501bab324e0a74ccfe504d44b25"
           }
         }
       }
@@ -349,9 +349,9 @@
             },
             "negative_scores": {
               "count": 34,
-              "min": 0.6564137935638428,
-              "median": 0.8095333278179169,
-              "max": 0.8770608901977539
+              "min": 0.6564139127731323,
+              "median": 0.8095332384109497,
+              "max": 0.8770607709884644
             },
             "unjudged_above_selected": []
           },
@@ -423,15 +423,15 @@
             },
             "positive_scores": {
               "count": 12,
-              "min": 0.650543749332428,
-              "median": 0.9558163583278656,
-              "max": 0.9814899563789368
+              "min": 0.6505436301231384,
+              "median": 0.955816239118576,
+              "max": 0.981489896774292
             },
             "negative_scores": {
               "count": 24,
-              "min": 0.42298734188079834,
+              "min": 0.4229873716831207,
               "median": 0.7276684641838074,
-              "max": 0.8193467855453491
+              "max": 0.8193466663360596
             },
             "unjudged_above_selected": []
           },
@@ -510,8 +510,8 @@
             "negative_scores": {
               "count": 32,
               "min": 0.5297646522521973,
-              "median": 0.7258251905441284,
-              "max": 0.8291019797325134
+              "median": 0.725825160741806,
+              "max": 0.8291018605232239
             },
             "unjudged_above_selected": []
           },
@@ -663,15 +663,15 @@
             },
             "positive_scores": {
               "count": 12,
-              "min": 0.610063374042511,
-              "median": 0.808576911687851,
+              "min": 0.6100633144378662,
+              "median": 0.8085768818855286,
               "max": 0.9175465106964111
             },
             "negative_scores": {
               "count": 31,
               "min": 0.4639841318130493,
               "median": 0.6999330520629883,
-              "max": 0.8223808407783508
+              "max": 0.8223809003829956
             },
             "unjudged_above_selected": []
           }
@@ -897,14 +897,14 @@
             },
             "positive_scores": {
               "count": 15,
-              "min": 0.6899466514587402,
+              "min": 0.6899465322494507,
               "median": 0.7944787740707397,
-              "max": 0.9538261890411377
+              "max": 0.9538260698318481
             },
             "negative_scores": {
               "count": 34,
               "min": 0.5254530906677246,
-              "median": 0.6962981820106506,
+              "median": 0.6962981224060059,
               "max": 0.7928617000579834
             },
             "unjudged_above_selected": []
@@ -977,15 +977,15 @@
             },
             "positive_scores": {
               "count": 12,
-              "min": 0.7744255661964417,
+              "min": 0.7744255065917969,
               "median": 0.9387708604335785,
               "max": 0.9641671180725098
             },
             "negative_scores": {
               "count": 24,
               "min": 0.49181997776031494,
-              "median": 0.8024895489215851,
-              "max": 0.8401504755020142
+              "median": 0.8024894297122955,
+              "max": 0.8401504158973694
             },
             "unjudged_above_selected": []
           },
@@ -1065,7 +1065,7 @@
               "count": 32,
               "min": 0.6242232322692871,
               "median": 0.7785128951072693,
-              "max": 0.8884024620056152
+              "max": 0.8884023427963257
             },
             "unjudged_above_selected": []
           },
@@ -1143,8 +1143,8 @@
             },
             "negative_scores": {
               "count": 52,
-              "min": 0.4432789087295532,
-              "median": 0.7005594074726105,
+              "min": 0.44327884912490845,
+              "median": 0.7005593776702881,
               "max": 0.831784725189209
             },
             "unjudged_above_selected": []
@@ -1218,13 +1218,13 @@
             "positive_scores": {
               "count": 12,
               "min": 0.7475849986076355,
-              "median": 0.882964551448822,
+              "median": 0.8829644620418549,
               "max": 0.9521240592002869
             },
             "negative_scores": {
               "count": 31,
-              "min": 0.5567752718925476,
-              "median": 0.757559061050415,
+              "min": 0.5567752122879028,
+              "median": 0.7575589418411255,
               "max": 0.8444172739982605
             },
             "unjudged_above_selected": []
@@ -1382,16 +1382,16 @@
       }
     ],
     "measurement_digests": {
-      "ledger/gte-modernbert-base/cpu": "63193b29d6b09adab4ce162853693e3cab8e1cad2fecf1a78e1318243479ef52",
-      "cowsay/gte-modernbert-base/cpu": "fdd5873facdf437be574906abd4160bf2a8da290753182836cd59f4bd34fc019",
-      "c_metering/gte-modernbert-base/cpu": "aeb96237cb90c321747b30518d4ad5b3f2b4644fe54f9dccdedf13ebf059afa2",
-      "javascript/gte-modernbert-base/cpu": "6809673fafbe6747ccf060d91052ecb172223aa6de09e4bb3b1291e8741cbe98",
-      "harbor-ts/gte-modernbert-base/cpu": "7b81d02f8544539993eaa24eb9f267e1379a77730f62e44cb3299366f739f68a",
-      "ledger/embeddinggemma-300m/cpu": "9876373285cc50a55ea2ceb0a9188c665b6eb80bbb16f53a9f40f3ca1cf13bfd",
-      "cowsay/embeddinggemma-300m/cpu": "fd2de733a414d3535b2c6f3c61478800374f7997590d2dc1dd3f0fd611613755",
-      "c_metering/embeddinggemma-300m/cpu": "5f3def0c46459b44021c5c8d5de94e67a95972af2ca1b6008ae3e41ffbf900a9",
-      "javascript/embeddinggemma-300m/cpu": "ef0bb2bff71a067ff19db085c0e6e7aa7f9389d141b4d0dbad62507ea75aea75",
-      "harbor-ts/embeddinggemma-300m/cpu": "37a919495fcda502ad3959ff4437b6a18954e3c8dedb2fbad76dee00b2a4a5de"
+      "ledger/gte-modernbert-base/cpu": "1ecd8a45393d34219c3ca244f53e8e60dadfea09e9fb552129546f7b97f338f8",
+      "cowsay/gte-modernbert-base/cpu": "c9a83c1c93534080f4f7932a3e722b57a6bacdd0193d7c26cf63485c4c6ee2c7",
+      "c_metering/gte-modernbert-base/cpu": "afb1111b261eaca186e5949f3c9df364514e96f94671c400b1dbc75ec0b4718d",
+      "javascript/gte-modernbert-base/cpu": "e48ecbaf098a0cb851dacd75fec7ff36838a60c87ea24941822e812765f2d696",
+      "harbor-ts/gte-modernbert-base/cpu": "94a9ff141328bceff9ae319c45db16c788798eb7f0bb2aa9eb5da26f58cb3785",
+      "ledger/embeddinggemma-300m/cpu": "323281556edaada5f7eb290f0c6eca4e67fe220df380cd1f175588eec50eee5f",
+      "cowsay/embeddinggemma-300m/cpu": "6b3332c61c007e7939138e0c944d7e032d86f98ebfefdf6fbc4ba7651db8581e",
+      "c_metering/embeddinggemma-300m/cpu": "25de4d2de60c5e770640869b967ff5c0b2223fcc6985d70799322041b7efaaa3",
+      "javascript/embeddinggemma-300m/cpu": "99e4b7300ebc0c36327aaf09c6aa5bc6397e593def020c98bd44924b421ce016",
+      "harbor-ts/embeddinggemma-300m/cpu": "3071069dcae886cd2e9b28b24ce80714b6040c911178c9dd4e08e2a424a9b3d3"
     }
   },
   "hybrid_selection": {
@@ -1403,7 +1403,7 @@
     },
     "input_context": {
       "batch_size": 4,
-      "selection_policy": "401fc22cb8f3169416fd7d61cae97db5e2ef604168789554a4567d57a6ec873e",
+      "selection_policy": "ad6db05b214cd9e3279eec67af45da3c78772d2a756e72c2ed1ac4bb7d68d2ae",
       "projects": {
         "ledger": {
           "annotations": "2a60e4c34f79ae63502a09798fca17d63ff33558304f37cdb158ffb763fc94d3",
@@ -1411,18 +1411,18 @@
           "policy": "default",
           "support_files": "d0834a20b1c118a375551359459a6c2a9d47baef2462c4d5bc800a4f8b2d3faf",
           "measurements": {
-            "gte-modernbert-base": "00dccbe91a9ef068256afdc6f33e7e539b3026bc2207ae891d5587d65d6d051f",
-            "embeddinggemma-300m": "199d4218956ea44389ce28e9de2fa9b63eeda65bc43496659c45216aeb929a22"
+            "gte-modernbert-base": "c30757e0914625a3d49a8e10a8d981451a978ab72ba347583eee45fff48a435d",
+            "embeddinggemma-300m": "39eb1073f6631e63d230d2a31c83c3a112b677bc0d552ed035672cb5cfb9dc76"
           }
         },
         "cowsay": {
           "annotations": "ac2779d3ff4fab4ce862c548d0eb7910b5e32dc721c092d560d43542b55211f7",
           "project": "6f9ff2c4c2fc0ff4bbc158d8b761d81e8e0e3bda08a06378790cf3485ec08e60",
           "policy": "default",
-          "support_files": "19df8256d0548a151657ce5ebdc5ef4f9c1c0b4f94f0f91a43b8db67519adc29",
+          "support_files": "691e9e0a798bf57ea126b25cee73885ac7c8ad0e38a2353c98229075a77ecd87",
           "measurements": {
-            "gte-modernbert-base": "496dd7cbde0eed6970926ce43d41b37280dbfa597244e8db569827acde0499dc",
-            "embeddinggemma-300m": "b1baf030b25a410956804b6652fbade24e8e4a4e86d35e63f391f70d447adbc1"
+            "gte-modernbert-base": "9af0534c3ef6afeb2f17fba0ede76f71ceaa7dc331c0df707e09e29c599a3506",
+            "embeddinggemma-300m": "fb90a1e63498bfdff8b406edb1867c98eccf16998ce64ba8c78a738301020262"
           }
         },
         "c_metering": {
@@ -1431,8 +1431,8 @@
           "policy": "default",
           "support_files": "4ecbeac0ca71c6d5edd6d79b2d34d5806a069dea55c2f8b63bc602004fef2041",
           "measurements": {
-            "gte-modernbert-base": "104b05e51a4c1a706ea971b48a05f4751c17edd5019a0869c647dea4be2fe0fd",
-            "embeddinggemma-300m": "2c879be20ac46c16440d4bd302de54fc20be298dfe2faa19a34016f1130385a2"
+            "gte-modernbert-base": "0d821d5d3e3b3d23d0d8c6fd6d44064a16faec344062c216a6ba30de569520b8",
+            "embeddinggemma-300m": "d33e58c01a1439108576c2a4ea3bab56de2f04869cfb966bc7e0fac64339cdf5"
           }
         },
         "javascript": {
@@ -1441,8 +1441,8 @@
           "policy": "default",
           "support_files": "138e206a91e16c42e848a2218dbd7238662eec0fa0d0ab6593f155e95244d182",
           "measurements": {
-            "gte-modernbert-base": "06633a8a0a46e1b421959bb9f743def6881b8c9bef92f6dac4f0b8317ed65ea0",
-            "embeddinggemma-300m": "9084ca253c5a45a7b25d9944010787a294f0d05c2b5f9615f711620ab77b8fcc"
+            "gte-modernbert-base": "0354c64f4b22a2f24e7a1394004b7eda635e475f9b093d8bbcf7ba1c548a6468",
+            "embeddinggemma-300m": "6b3aa75bf9eb5edff3cacd0382948f8c45ae807f2b62f2e99fbb802b30298ba0"
           }
         },
         "harbor-ts": {
@@ -1451,13 +1451,13 @@
           "policy": "default",
           "support_files": "51af91763f70ffce6a510b54cfa006e3b74ae802936a46782fabf529b5b316e2",
           "measurements": {
-            "gte-modernbert-base": "f11cdd94230a3cfc754c73babb56e122c948782edc16cd686ee51fceb8781402",
-            "embeddinggemma-300m": "a810983e5d5af16519d40160955474305a46c13516ffba0beb3bdc369049c197"
+            "gte-modernbert-base": "723993efe863d198517a5b0660fe86373b90bed0ede4dbe49a9ff4914dde0dda",
+            "embeddinggemma-300m": "fcf6e8886be42e0d159a299ef987bf219ebbb501bab324e0a74ccfe504d44b25"
           }
         }
       }
     },
-    "threshold_selection_digest": "771977151d3f53a99f62ab8bc1aa257c9923c3d752850fe1c14bcc28a71f0b83",
+    "threshold_selection_digest": "4a982250cf3bd902bc2cbd55d83384febfb602b3d9bbecb8f633ec55ea46354c",
     "models": [
       {
         "model": "gte-modernbert-base",
@@ -1757,16 +1757,16 @@
       }
     ],
     "measurement_digests": {
-      "ledger/gte-modernbert-base/cpu": "63193b29d6b09adab4ce162853693e3cab8e1cad2fecf1a78e1318243479ef52",
-      "cowsay/gte-modernbert-base/cpu": "fdd5873facdf437be574906abd4160bf2a8da290753182836cd59f4bd34fc019",
-      "c_metering/gte-modernbert-base/cpu": "aeb96237cb90c321747b30518d4ad5b3f2b4644fe54f9dccdedf13ebf059afa2",
-      "javascript/gte-modernbert-base/cpu": "6809673fafbe6747ccf060d91052ecb172223aa6de09e4bb3b1291e8741cbe98",
-      "harbor-ts/gte-modernbert-base/cpu": "7b81d02f8544539993eaa24eb9f267e1379a77730f62e44cb3299366f739f68a",
-      "ledger/embeddinggemma-300m/cpu": "9876373285cc50a55ea2ceb0a9188c665b6eb80bbb16f53a9f40f3ca1cf13bfd",
-      "cowsay/embeddinggemma-300m/cpu": "fd2de733a414d3535b2c6f3c61478800374f7997590d2dc1dd3f0fd611613755",
-      "c_metering/embeddinggemma-300m/cpu": "5f3def0c46459b44021c5c8d5de94e67a95972af2ca1b6008ae3e41ffbf900a9",
-      "javascript/embeddinggemma-300m/cpu": "ef0bb2bff71a067ff19db085c0e6e7aa7f9389d141b4d0dbad62507ea75aea75",
-      "harbor-ts/embeddinggemma-300m/cpu": "37a919495fcda502ad3959ff4437b6a18954e3c8dedb2fbad76dee00b2a4a5de"
+      "ledger/gte-modernbert-base/cpu": "1ecd8a45393d34219c3ca244f53e8e60dadfea09e9fb552129546f7b97f338f8",
+      "cowsay/gte-modernbert-base/cpu": "c9a83c1c93534080f4f7932a3e722b57a6bacdd0193d7c26cf63485c4c6ee2c7",
+      "c_metering/gte-modernbert-base/cpu": "afb1111b261eaca186e5949f3c9df364514e96f94671c400b1dbc75ec0b4718d",
+      "javascript/gte-modernbert-base/cpu": "e48ecbaf098a0cb851dacd75fec7ff36838a60c87ea24941822e812765f2d696",
+      "harbor-ts/gte-modernbert-base/cpu": "94a9ff141328bceff9ae319c45db16c788798eb7f0bb2aa9eb5da26f58cb3785",
+      "ledger/embeddinggemma-300m/cpu": "323281556edaada5f7eb290f0c6eca4e67fe220df380cd1f175588eec50eee5f",
+      "cowsay/embeddinggemma-300m/cpu": "6b3332c61c007e7939138e0c944d7e032d86f98ebfefdf6fbc4ba7651db8581e",
+      "c_metering/embeddinggemma-300m/cpu": "25de4d2de60c5e770640869b967ff5c0b2223fcc6985d70799322041b7efaaa3",
+      "javascript/embeddinggemma-300m/cpu": "99e4b7300ebc0c36327aaf09c6aa5bc6397e593def020c98bd44924b421ce016",
+      "harbor-ts/embeddinggemma-300m/cpu": "3071069dcae886cd2e9b28b24ce80714b6040c911178c9dd4e08e2a424a9b3d3"
     }
   },
   "projects": [
@@ -1794,8 +1794,8 @@
             "sentence-transformers": "5.7.0"
           },
           "timing_seconds": {
-            "duplicate": 5.398002665999229,
-            "search": 2.715022374992259
+            "duplicate": 5.449666916989372,
+            "search": 2.6623128339997493
           },
           "execution": {
             "duplicate": {
@@ -1888,8 +1888,8 @@
             "sentence-transformers": "5.7.0"
           },
           "timing_seconds": {
-            "duplicate": 4.312084917008178,
-            "search": 1.0806067919911584
+            "duplicate": 4.265189666009974,
+            "search": 1.0685958329995628
           },
           "execution": {
             "duplicate": {
@@ -1982,8 +1982,8 @@
             "sentence-transformers": "5.7.0"
           },
           "timing_seconds": {
-            "duplicate": 6.0891887079924345,
-            "search": 3.072062958992319
+            "duplicate": 5.6899478749983246,
+            "search": 2.8459436660050415
           },
           "execution": {
             "duplicate": {
@@ -2076,8 +2076,8 @@
             "sentence-transformers": "5.7.0"
           },
           "timing_seconds": {
-            "duplicate": 5.141628583005513,
-            "search": 1.5519559579988709
+            "duplicate": 5.009373542008689,
+            "search": 1.548587375000352
           },
           "execution": {
             "duplicate": {
@@ -2163,12 +2163,140 @@
           "pair_score_abs_drift": {
             "count": 210,
             "p95": 4.76837158203125e-07,
-            "max": 7.152557373046875e-07
+            "max": 7.748603820800781e-07,
+            "histogram": [
+              [
+                0.0,
+                18
+              ],
+              [
+                5.960464477539063e-08,
+                45
+              ],
+              [
+                1.1920928955078125e-07,
+                36
+              ],
+              [
+                1.7881393432617188e-07,
+                32
+              ],
+              [
+                2.384185791015625e-07,
+                28
+              ],
+              [
+                2.980232238769531e-07,
+                17
+              ],
+              [
+                3.5762786865234375e-07,
+                10
+              ],
+              [
+                4.172325134277344e-07,
+                9
+              ],
+              [
+                4.76837158203125e-07,
+                7
+              ],
+              [
+                5.364418029785156e-07,
+                2
+              ],
+              [
+                5.960464477539062e-07,
+                2
+              ],
+              [
+                6.556510925292969e-07,
+                1
+              ],
+              [
+                7.152557373046875e-07,
+                2
+              ],
+              [
+                7.748603820800781e-07,
+                1
+              ]
+            ]
           },
           "query_score_abs_drift": {
             "count": 252,
             "p95": 3.5762786865234375e-07,
-            "max": 5.364418029785156e-07
+            "max": 4.76837158203125e-07,
+            "histogram": [
+              [
+                0.0,
+                36
+              ],
+              [
+                2.9802322387695312e-08,
+                8
+              ],
+              [
+                5.960464477539063e-08,
+                50
+              ],
+              [
+                8.940696716308594e-08,
+                8
+              ],
+              [
+                1.1920928955078125e-07,
+                63
+              ],
+              [
+                1.4901161193847656e-07,
+                8
+              ],
+              [
+                1.7881393432617188e-07,
+                30
+              ],
+              [
+                2.086162567138672e-07,
+                4
+              ],
+              [
+                2.384185791015625e-07,
+                17
+              ],
+              [
+                2.682209014892578e-07,
+                1
+              ],
+              [
+                2.980232238769531e-07,
+                5
+              ],
+              [
+                3.2782554626464844e-07,
+                2
+              ],
+              [
+                3.5762786865234375e-07,
+                11
+              ],
+              [
+                3.8743019104003906e-07,
+                1
+              ],
+              [
+                4.172325134277344e-07,
+                4
+              ],
+              [
+                4.470348358154297e-07,
+                1
+              ],
+              [
+                4.76837158203125e-07,
+                3
+              ]
+            ]
           },
           "duplicate_decision_changes": [],
           "search_decision_changes": []
@@ -2176,13 +2304,129 @@
         "embeddinggemma-300m": {
           "pair_score_abs_drift": {
             "count": 210,
-            "p95": 3.1441450119018504e-07,
-            "max": 5.364418029785156e-07
+            "p95": 2.980232238769531e-07,
+            "max": 5.364418029785156e-07,
+            "histogram": [
+              [
+                0.0,
+                39
+              ],
+              [
+                2.9802322387695312e-08,
+                8
+              ],
+              [
+                5.960464477539063e-08,
+                56
+              ],
+              [
+                8.940696716308594e-08,
+                11
+              ],
+              [
+                1.1920928955078125e-07,
+                28
+              ],
+              [
+                1.4901161193847656e-07,
+                4
+              ],
+              [
+                1.7881393432617188e-07,
+                23
+              ],
+              [
+                2.086162567138672e-07,
+                3
+              ],
+              [
+                2.384185791015625e-07,
+                18
+              ],
+              [
+                2.980232238769531e-07,
+                10
+              ],
+              [
+                3.5762786865234375e-07,
+                7
+              ],
+              [
+                4.172325134277344e-07,
+                1
+              ],
+              [
+                4.76837158203125e-07,
+                1
+              ],
+              [
+                5.364418029785156e-07,
+                1
+              ]
+            ]
           },
           "query_score_abs_drift": {
             "count": 252,
             "p95": 1.7881393432617188e-07,
-            "max": 2.384185791015625e-07
+            "max": 2.384185791015625e-07,
+            "histogram": [
+              [
+                0.0,
+                30
+              ],
+              [
+                1.4901161193847656e-08,
+                8
+              ],
+              [
+                2.9802322387695312e-08,
+                36
+              ],
+              [
+                4.470348358154297e-08,
+                3
+              ],
+              [
+                5.960464477539063e-08,
+                63
+              ],
+              [
+                7.450580596923828e-08,
+                7
+              ],
+              [
+                8.940696716308594e-08,
+                32
+              ],
+              [
+                1.043081283569336e-07,
+                4
+              ],
+              [
+                1.1920928955078125e-07,
+                36
+              ],
+              [
+                1.341104507446289e-07,
+                1
+              ],
+              [
+                1.4901161193847656e-07,
+                12
+              ],
+              [
+                1.7881393432617188e-07,
+                13
+              ],
+              [
+                2.086162567138672e-07,
+                3
+              ],
+              [
+                2.384185791015625e-07,
+                4
+              ]
+            ]
           },
           "duplicate_decision_changes": [],
           "search_decision_changes": []
@@ -2213,8 +2457,8 @@
             "sentence-transformers": "5.7.0"
           },
           "timing_seconds": {
-            "duplicate": 4.902281000002404,
-            "search": 2.1029297089989996
+            "duplicate": 4.966926916997181,
+            "search": 2.027599624998402
           },
           "execution": {
             "duplicate": {
@@ -2307,8 +2551,8 @@
             "sentence-transformers": "5.7.0"
           },
           "timing_seconds": {
-            "duplicate": 4.268537166004535,
-            "search": 0.8230748330097413
+            "duplicate": 4.1086937920044875,
+            "search": 0.8218433750007534
           },
           "execution": {
             "duplicate": {
@@ -2401,8 +2645,8 @@
             "sentence-transformers": "5.7.0"
           },
           "timing_seconds": {
-            "duplicate": 5.208931041008327,
-            "search": 2.503796542005148
+            "duplicate": 5.191603832994588,
+            "search": 2.389723040992976
           },
           "execution": {
             "duplicate": {
@@ -2495,8 +2739,8 @@
             "sentence-transformers": "5.7.0"
           },
           "timing_seconds": {
-            "duplicate": 4.6822110829962185,
-            "search": 1.293166540999664
+            "duplicate": 4.6503065830038395,
+            "search": 1.2979510000004666
           },
           "execution": {
             "duplicate": {
@@ -2581,13 +2825,153 @@
         "gte-modernbert-base": {
           "pair_score_abs_drift": {
             "count": 171,
-            "p95": 4.172325134277344e-07,
-            "max": 6.556510925292969e-07
+            "p95": 3.8743019104003906e-07,
+            "max": 7.152557373046875e-07,
+            "histogram": [
+              [
+                0.0,
+                22
+              ],
+              [
+                2.9802322387695312e-08,
+                6
+              ],
+              [
+                5.960464477539063e-08,
+                27
+              ],
+              [
+                8.940696716308594e-08,
+                8
+              ],
+              [
+                1.1920928955078125e-07,
+                33
+              ],
+              [
+                1.4901161193847656e-07,
+                2
+              ],
+              [
+                1.7881393432617188e-07,
+                21
+              ],
+              [
+                2.086162567138672e-07,
+                2
+              ],
+              [
+                2.384185791015625e-07,
+                19
+              ],
+              [
+                2.682209014892578e-07,
+                6
+              ],
+              [
+                2.980232238769531e-07,
+                9
+              ],
+              [
+                3.2782554626464844e-07,
+                1
+              ],
+              [
+                3.5762786865234375e-07,
+                6
+              ],
+              [
+                4.172325134277344e-07,
+                3
+              ],
+              [
+                4.76837158203125e-07,
+                2
+              ],
+              [
+                5.066394805908203e-07,
+                1
+              ],
+              [
+                6.556510925292969e-07,
+                2
+              ],
+              [
+                7.152557373046875e-07,
+                1
+              ]
+            ]
           },
           "query_score_abs_drift": {
             "count": 228,
             "p95": 2.980232238769531e-07,
-            "max": 4.917383193969727e-07
+            "max": 5.21540641784668e-07,
+            "histogram": [
+              [
+                0.0,
+                31
+              ],
+              [
+                2.9802322387695312e-08,
+                17
+              ],
+              [
+                4.470348358154297e-08,
+                1
+              ],
+              [
+                5.960464477539063e-08,
+                44
+              ],
+              [
+                8.940696716308594e-08,
+                18
+              ],
+              [
+                1.1920928955078125e-07,
+                37
+              ],
+              [
+                1.4901161193847656e-07,
+                14
+              ],
+              [
+                1.7881393432617188e-07,
+                21
+              ],
+              [
+                2.086162567138672e-07,
+                8
+              ],
+              [
+                2.384185791015625e-07,
+                16
+              ],
+              [
+                2.682209014892578e-07,
+                5
+              ],
+              [
+                2.980232238769531e-07,
+                10
+              ],
+              [
+                3.5762786865234375e-07,
+                2
+              ],
+              [
+                3.8743019104003906e-07,
+                1
+              ],
+              [
+                4.172325134277344e-07,
+                2
+              ],
+              [
+                5.21540641784668e-07,
+                1
+              ]
+            ]
           },
           "duplicate_decision_changes": [],
           "search_decision_changes": []
@@ -2595,13 +2979,165 @@
         "embeddinggemma-300m": {
           "pair_score_abs_drift": {
             "count": 171,
-            "p95": 3.5762786865234375e-07,
-            "max": 7.152557373046875e-07
+            "p95": 2.980232238769531e-07,
+            "max": 5.364418029785156e-07,
+            "histogram": [
+              [
+                0.0,
+                29
+              ],
+              [
+                2.9802322387695312e-08,
+                5
+              ],
+              [
+                5.960464477539063e-08,
+                56
+              ],
+              [
+                8.940696716308594e-08,
+                4
+              ],
+              [
+                1.1920928955078125e-07,
+                34
+              ],
+              [
+                1.4901161193847656e-07,
+                1
+              ],
+              [
+                1.7881393432617188e-07,
+                20
+              ],
+              [
+                2.384185791015625e-07,
+                6
+              ],
+              [
+                2.682209014892578e-07,
+                2
+              ],
+              [
+                2.980232238769531e-07,
+                6
+              ],
+              [
+                3.5762786865234375e-07,
+                5
+              ],
+              [
+                4.172325134277344e-07,
+                2
+              ],
+              [
+                5.364418029785156e-07,
+                1
+              ]
+            ]
           },
           "query_score_abs_drift": {
             "count": 228,
             "p95": 2.980232238769531e-07,
-            "max": 7.152557373046875e-07
+            "max": 7.152557373046875e-07,
+            "histogram": [
+              [
+                0.0,
+                32
+              ],
+              [
+                1.4901161193847656e-08,
+                4
+              ],
+              [
+                2.9802322387695312e-08,
+                29
+              ],
+              [
+                4.470348358154297e-08,
+                3
+              ],
+              [
+                5.960464477539063e-08,
+                42
+              ],
+              [
+                7.450580596923828e-08,
+                5
+              ],
+              [
+                8.940696716308594e-08,
+                21
+              ],
+              [
+                1.043081283569336e-07,
+                5
+              ],
+              [
+                1.1920928955078125e-07,
+                28
+              ],
+              [
+                1.341104507446289e-07,
+                2
+              ],
+              [
+                1.4901161193847656e-07,
+                15
+              ],
+              [
+                1.7881393432617188e-07,
+                11
+              ],
+              [
+                2.086162567138672e-07,
+                7
+              ],
+              [
+                2.2351741790771484e-07,
+                2
+              ],
+              [
+                2.384185791015625e-07,
+                9
+              ],
+              [
+                2.980232238769531e-07,
+                3
+              ],
+              [
+                3.2782554626464844e-07,
+                1
+              ],
+              [
+                3.8743019104003906e-07,
+                1
+              ],
+              [
+                4.76837158203125e-07,
+                2
+              ],
+              [
+                5.364418029785156e-07,
+                1
+              ],
+              [
+                5.662441253662109e-07,
+                2
+              ],
+              [
+                5.960464477539062e-07,
+                1
+              ],
+              [
+                6.258487701416016e-07,
+                1
+              ],
+              [
+                7.152557373046875e-07,
+                1
+              ]
+            ]
           },
           "duplicate_decision_changes": [],
           "search_decision_changes": []
@@ -2632,8 +3168,8 @@
             "sentence-transformers": "5.7.0"
           },
           "timing_seconds": {
-            "duplicate": 5.483048667010735,
-            "search": 2.59933829199872
+            "duplicate": 5.475499916996341,
+            "search": 2.6274371659965254
           },
           "execution": {
             "duplicate": {
@@ -2725,8 +3261,8 @@
             "sentence-transformers": "5.7.0"
           },
           "timing_seconds": {
-            "duplicate": 4.3597914169949945,
-            "search": 1.0177977919956902
+            "duplicate": 4.352332666996517,
+            "search": 1.0084946249990026
           },
           "execution": {
             "duplicate": {
@@ -2818,8 +3354,8 @@
             "sentence-transformers": "5.7.0"
           },
           "timing_seconds": {
-            "duplicate": 5.921315874991706,
-            "search": 3.1755133749975357
+            "duplicate": 6.00611120800022,
+            "search": 3.1958991660067113
           },
           "execution": {
             "duplicate": {
@@ -2912,8 +3448,8 @@
             "sentence-transformers": "5.7.0"
           },
           "timing_seconds": {
-            "duplicate": 5.1054951249971054,
-            "search": 1.6593871669902
+            "duplicate": 5.030530082993209,
+            "search": 1.6640561670064926
           },
           "execution": {
             "duplicate": {
@@ -2998,13 +3534,165 @@
         "gte-modernbert-base": {
           "pair_score_abs_drift": {
             "count": 300,
-            "p95": 4.172325134277344e-07,
-            "max": 7.450580596923828e-07
+            "p95": 3.5762786865234375e-07,
+            "max": 7.152557373046875e-07,
+            "histogram": [
+              [
+                0.0,
+                40
+              ],
+              [
+                2.9802322387695312e-08,
+                9
+              ],
+              [
+                5.960464477539063e-08,
+                68
+              ],
+              [
+                8.940696716308594e-08,
+                8
+              ],
+              [
+                1.1920928955078125e-07,
+                46
+              ],
+              [
+                1.4901161193847656e-07,
+                8
+              ],
+              [
+                1.7881393432617188e-07,
+                34
+              ],
+              [
+                2.086162567138672e-07,
+                4
+              ],
+              [
+                2.384185791015625e-07,
+                28
+              ],
+              [
+                2.682209014892578e-07,
+                4
+              ],
+              [
+                2.980232238769531e-07,
+                21
+              ],
+              [
+                3.2782554626464844e-07,
+                1
+              ],
+              [
+                3.5762786865234375e-07,
+                15
+              ],
+              [
+                3.8743019104003906e-07,
+                1
+              ],
+              [
+                4.172325134277344e-07,
+                6
+              ],
+              [
+                4.76837158203125e-07,
+                2
+              ],
+              [
+                5.364418029785156e-07,
+                3
+              ],
+              [
+                5.960464477539062e-07,
+                1
+              ],
+              [
+                7.152557373046875e-07,
+                1
+              ]
+            ]
           },
           "query_score_abs_drift": {
             "count": 300,
             "p95": 2.682209014892578e-07,
-            "max": 5.960464477539062e-07
+            "max": 5.364418029785156e-07,
+            "histogram": [
+              [
+                0.0,
+                46
+              ],
+              [
+                2.9802322387695312e-08,
+                18
+              ],
+              [
+                5.960464477539063e-08,
+                64
+              ],
+              [
+                8.940696716308594e-08,
+                21
+              ],
+              [
+                1.1920928955078125e-07,
+                60
+              ],
+              [
+                1.4901161193847656e-07,
+                10
+              ],
+              [
+                1.7881393432617188e-07,
+                32
+              ],
+              [
+                2.086162567138672e-07,
+                12
+              ],
+              [
+                2.384185791015625e-07,
+                16
+              ],
+              [
+                2.682209014892578e-07,
+                8
+              ],
+              [
+                2.980232238769531e-07,
+                3
+              ],
+              [
+                3.2782554626464844e-07,
+                1
+              ],
+              [
+                3.5762786865234375e-07,
+                4
+              ],
+              [
+                3.8743019104003906e-07,
+                1
+              ],
+              [
+                4.172325134277344e-07,
+                1
+              ],
+              [
+                4.76837158203125e-07,
+                1
+              ],
+              [
+                5.066394805908203e-07,
+                1
+              ],
+              [
+                5.364418029785156e-07,
+                1
+              ]
+            ]
           },
           "duplicate_decision_changes": [],
           "search_decision_changes": []
@@ -3013,12 +3701,136 @@
           "pair_score_abs_drift": {
             "count": 300,
             "p95": 2.980232238769531e-07,
-            "max": 5.364418029785156e-07
+            "max": 5.364418029785156e-07,
+            "histogram": [
+              [
+                0.0,
+                60
+              ],
+              [
+                2.9802322387695312e-08,
+                9
+              ],
+              [
+                5.960464477539063e-08,
+                88
+              ],
+              [
+                8.940696716308594e-08,
+                5
+              ],
+              [
+                1.1920928955078125e-07,
+                49
+              ],
+              [
+                1.4901161193847656e-07,
+                2
+              ],
+              [
+                1.7881393432617188e-07,
+                35
+              ],
+              [
+                2.086162567138672e-07,
+                2
+              ],
+              [
+                2.384185791015625e-07,
+                33
+              ],
+              [
+                2.980232238769531e-07,
+                8
+              ],
+              [
+                3.5762786865234375e-07,
+                6
+              ],
+              [
+                4.172325134277344e-07,
+                2
+              ],
+              [
+                5.364418029785156e-07,
+                1
+              ]
+            ]
           },
           "query_score_abs_drift": {
             "count": 300,
             "p95": 1.7955899238586443e-07,
-            "max": 2.980232238769531e-07
+            "max": 2.980232238769531e-07,
+            "histogram": [
+              [
+                0.0,
+                37
+              ],
+              [
+                1.4901161193847656e-08,
+                5
+              ],
+              [
+                2.9802322387695312e-08,
+                57
+              ],
+              [
+                4.470348358154297e-08,
+                6
+              ],
+              [
+                5.960464477539063e-08,
+                55
+              ],
+              [
+                7.450580596923828e-08,
+                2
+              ],
+              [
+                8.940696716308594e-08,
+                39
+              ],
+              [
+                1.043081283569336e-07,
+                4
+              ],
+              [
+                1.1920928955078125e-07,
+                46
+              ],
+              [
+                1.341104507446289e-07,
+                3
+              ],
+              [
+                1.4901161193847656e-07,
+                21
+              ],
+              [
+                1.6391277313232422e-07,
+                2
+              ],
+              [
+                1.7881393432617188e-07,
+                8
+              ],
+              [
+                1.9371509552001953e-07,
+                1
+              ],
+              [
+                2.086162567138672e-07,
+                4
+              ],
+              [
+                2.384185791015625e-07,
+                9
+              ],
+              [
+                2.980232238769531e-07,
+                1
+              ]
+            ]
           },
           "duplicate_decision_changes": [],
           "search_decision_changes": []
@@ -3049,8 +3861,8 @@
             "sentence-transformers": "5.7.0"
           },
           "timing_seconds": {
-            "duplicate": 4.969285291997949,
-            "search": 2.1488070839986904
+            "duplicate": 4.941512833000161,
+            "search": 2.1609195830096724
           },
           "execution": {
             "duplicate": {
@@ -3142,8 +3954,8 @@
             "sentence-transformers": "5.7.0"
           },
           "timing_seconds": {
-            "duplicate": 4.141037334004068,
-            "search": 0.834691791998921
+            "duplicate": 4.221204583009239,
+            "search": 0.8446218750032131
           },
           "execution": {
             "duplicate": {
@@ -3235,8 +4047,8 @@
             "sentence-transformers": "5.7.0"
           },
           "timing_seconds": {
-            "duplicate": 5.478182666003704,
-            "search": 2.7480859579954995
+            "duplicate": 5.358973459005938,
+            "search": 2.6368993340001907
           },
           "execution": {
             "duplicate": {
@@ -3328,8 +4140,8 @@
             "sentence-transformers": "5.7.0"
           },
           "timing_seconds": {
-            "duplicate": 4.775913457997376,
-            "search": 1.3481823330075713
+            "duplicate": 4.7145937500026776,
+            "search": 1.3482759580074344
           },
           "execution": {
             "duplicate": {
@@ -3414,12 +4226,128 @@
           "pair_score_abs_drift": {
             "count": 300,
             "p95": 2.980232238769531e-07,
-            "max": 4.76837158203125e-07
+            "max": 4.172325134277344e-07,
+            "histogram": [
+              [
+                0.0,
+                27
+              ],
+              [
+                2.9802322387695312e-08,
+                20
+              ],
+              [
+                5.960464477539063e-08,
+                59
+              ],
+              [
+                8.940696716308594e-08,
+                25
+              ],
+              [
+                1.1920928955078125e-07,
+                65
+              ],
+              [
+                1.4901161193847656e-07,
+                15
+              ],
+              [
+                1.7881393432617188e-07,
+                36
+              ],
+              [
+                2.086162567138672e-07,
+                7
+              ],
+              [
+                2.384185791015625e-07,
+                19
+              ],
+              [
+                2.682209014892578e-07,
+                5
+              ],
+              [
+                2.980232238769531e-07,
+                12
+              ],
+              [
+                3.2782554626464844e-07,
+                1
+              ],
+              [
+                3.5762786865234375e-07,
+                5
+              ],
+              [
+                3.8743019104003906e-07,
+                2
+              ],
+              [
+                4.172325134277344e-07,
+                2
+              ]
+            ]
           },
           "query_score_abs_drift": {
             "count": 300,
             "p95": 2.384185791015625e-07,
-            "max": 3.8743019104003906e-07
+            "max": 3.8743019104003906e-07,
+            "histogram": [
+              [
+                0.0,
+                39
+              ],
+              [
+                2.9802322387695312e-08,
+                23
+              ],
+              [
+                5.960464477539063e-08,
+                60
+              ],
+              [
+                8.940696716308594e-08,
+                26
+              ],
+              [
+                1.1920928955078125e-07,
+                62
+              ],
+              [
+                1.4901161193847656e-07,
+                16
+              ],
+              [
+                1.7881393432617188e-07,
+                24
+              ],
+              [
+                2.086162567138672e-07,
+                12
+              ],
+              [
+                2.384185791015625e-07,
+                27
+              ],
+              [
+                2.682209014892578e-07,
+                2
+              ],
+              [
+                2.980232238769531e-07,
+                7
+              ],
+              [
+                3.2782554626464844e-07,
+                1
+              ],
+              [
+                3.8743019104003906e-07,
+                1
+              ]
+            ]
           },
           "duplicate_decision_changes": [],
           "search_decision_changes": []
@@ -3428,12 +4356,152 @@
           "pair_score_abs_drift": {
             "count": 300,
             "p95": 2.980232238769531e-07,
-            "max": 5.960464477539062e-07
+            "max": 5.364418029785156e-07,
+            "histogram": [
+              [
+                0.0,
+                44
+              ],
+              [
+                2.9802322387695312e-08,
+                10
+              ],
+              [
+                5.960464477539063e-08,
+                82
+              ],
+              [
+                8.940696716308594e-08,
+                8
+              ],
+              [
+                1.1920928955078125e-07,
+                56
+              ],
+              [
+                1.4901161193847656e-07,
+                3
+              ],
+              [
+                1.7881393432617188e-07,
+                49
+              ],
+              [
+                2.384185791015625e-07,
+                24
+              ],
+              [
+                2.682209014892578e-07,
+                3
+              ],
+              [
+                2.980232238769531e-07,
+                12
+              ],
+              [
+                3.5762786865234375e-07,
+                5
+              ],
+              [
+                4.172325134277344e-07,
+                1
+              ],
+              [
+                4.76837158203125e-07,
+                1
+              ],
+              [
+                5.364418029785156e-07,
+                2
+              ]
+            ]
           },
           "query_score_abs_drift": {
             "count": 300,
-            "p95": 2.086162567138672e-07,
-            "max": 2.682209014892578e-07
+            "p95": 2.384185791015625e-07,
+            "max": 3.2782554626464844e-07,
+            "histogram": [
+              [
+                0.0,
+                29
+              ],
+              [
+                1.4901161193847656e-08,
+                7
+              ],
+              [
+                2.9802322387695312e-08,
+                46
+              ],
+              [
+                4.470348358154297e-08,
+                4
+              ],
+              [
+                5.960464477539063e-08,
+                46
+              ],
+              [
+                7.450580596923828e-08,
+                3
+              ],
+              [
+                8.940696716308594e-08,
+                42
+              ],
+              [
+                1.043081283569336e-07,
+                2
+              ],
+              [
+                1.1920928955078125e-07,
+                38
+              ],
+              [
+                1.341104507446289e-07,
+                1
+              ],
+              [
+                1.4901161193847656e-07,
+                24
+              ],
+              [
+                1.6391277313232422e-07,
+                1
+              ],
+              [
+                1.7881393432617188e-07,
+                21
+              ],
+              [
+                1.9371509552001953e-07,
+                1
+              ],
+              [
+                2.086162567138672e-07,
+                14
+              ],
+              [
+                2.2351741790771484e-07,
+                1
+              ],
+              [
+                2.384185791015625e-07,
+                14
+              ],
+              [
+                2.682209014892578e-07,
+                2
+              ],
+              [
+                2.980232238769531e-07,
+                2
+              ],
+              [
+                3.2782554626464844e-07,
+                2
+              ]
+            ]
           },
           "duplicate_decision_changes": [],
           "search_decision_changes": []
@@ -3464,8 +4532,8 @@
             "sentence-transformers": "5.7.0"
           },
           "timing_seconds": {
-            "duplicate": 4.527555959008168,
-            "search": 1.740415624997695
+            "duplicate": 4.693407375001698,
+            "search": 1.7672494589933194
           },
           "execution": {
             "duplicate": {
@@ -3558,8 +4626,8 @@
             "sentence-transformers": "5.7.0"
           },
           "timing_seconds": {
-            "duplicate": 4.124792249989696,
-            "search": 0.7232501250109635
+            "duplicate": 3.986315749993082,
+            "search": 0.7180388750130078
           },
           "execution": {
             "duplicate": {
@@ -3652,8 +4720,8 @@
             "sentence-transformers": "5.7.0"
           },
           "timing_seconds": {
-            "duplicate": 5.102413333996083,
-            "search": 2.3721608339983504
+            "duplicate": 5.074216499997419,
+            "search": 2.2058607079961803
           },
           "execution": {
             "duplicate": {
@@ -3745,8 +4813,8 @@
             "sentence-transformers": "5.7.0"
           },
           "timing_seconds": {
-            "duplicate": 4.594481499996618,
-            "search": 1.1756012080004439
+            "duplicate": 4.542307790994528,
+            "search": 1.1721997909917263
           },
           "execution": {
             "duplicate": {
@@ -3830,13 +4898,137 @@
         "gte-modernbert-base": {
           "pair_score_abs_drift": {
             "count": 300,
-            "p95": 4.172325134277344e-07,
-            "max": 5.960464477539062e-07
+            "p95": 3.5762786865234375e-07,
+            "max": 5.662441253662109e-07,
+            "histogram": [
+              [
+                0.0,
+                35
+              ],
+              [
+                2.9802322387695312e-08,
+                19
+              ],
+              [
+                5.960464477539063e-08,
+                58
+              ],
+              [
+                8.940696716308594e-08,
+                17
+              ],
+              [
+                1.1920928955078125e-07,
+                60
+              ],
+              [
+                1.4901161193847656e-07,
+                10
+              ],
+              [
+                1.7881393432617188e-07,
+                35
+              ],
+              [
+                2.086162567138672e-07,
+                11
+              ],
+              [
+                2.384185791015625e-07,
+                17
+              ],
+              [
+                2.682209014892578e-07,
+                6
+              ],
+              [
+                2.980232238769531e-07,
+                11
+              ],
+              [
+                3.5762786865234375e-07,
+                10
+              ],
+              [
+                4.172325134277344e-07,
+                7
+              ],
+              [
+                4.76837158203125e-07,
+                3
+              ],
+              [
+                5.662441253662109e-07,
+                1
+              ]
+            ]
           },
           "query_score_abs_drift": {
             "count": 300,
-            "p95": 2.384185791015625e-07,
-            "max": 4.172325134277344e-07
+            "p95": 2.682209014892578e-07,
+            "max": 4.76837158203125e-07,
+            "histogram": [
+              [
+                0.0,
+                45
+              ],
+              [
+                2.9802322387695312e-08,
+                19
+              ],
+              [
+                5.960464477539063e-08,
+                61
+              ],
+              [
+                8.940696716308594e-08,
+                15
+              ],
+              [
+                1.1920928955078125e-07,
+                67
+              ],
+              [
+                1.4901161193847656e-07,
+                18
+              ],
+              [
+                1.7881393432617188e-07,
+                33
+              ],
+              [
+                2.086162567138672e-07,
+                10
+              ],
+              [
+                2.384185791015625e-07,
+                15
+              ],
+              [
+                2.682209014892578e-07,
+                4
+              ],
+              [
+                2.980232238769531e-07,
+                8
+              ],
+              [
+                3.2782554626464844e-07,
+                2
+              ],
+              [
+                3.5762786865234375e-07,
+                1
+              ],
+              [
+                3.8743019104003906e-07,
+                1
+              ],
+              [
+                4.76837158203125e-07,
+                1
+              ]
+            ]
           },
           "duplicate_decision_changes": [],
           "search_decision_changes": []
@@ -3844,13 +5036,145 @@
         "embeddinggemma-300m": {
           "pair_score_abs_drift": {
             "count": 300,
-            "p95": 2.384185791015625e-07,
-            "max": 5.364418029785156e-07
+            "p95": 2.980232238769531e-07,
+            "max": 5.960464477539062e-07,
+            "histogram": [
+              [
+                0.0,
+                51
+              ],
+              [
+                2.9802322387695312e-08,
+                3
+              ],
+              [
+                5.960464477539063e-08,
+                94
+              ],
+              [
+                8.940696716308594e-08,
+                1
+              ],
+              [
+                1.1920928955078125e-07,
+                67
+              ],
+              [
+                1.4901161193847656e-07,
+                3
+              ],
+              [
+                1.7881393432617188e-07,
+                34
+              ],
+              [
+                2.086162567138672e-07,
+                1
+              ],
+              [
+                2.384185791015625e-07,
+                26
+              ],
+              [
+                2.682209014892578e-07,
+                1
+              ],
+              [
+                2.980232238769531e-07,
+                9
+              ],
+              [
+                3.5762786865234375e-07,
+                7
+              ],
+              [
+                4.172325134277344e-07,
+                1
+              ],
+              [
+                4.76837158203125e-07,
+                1
+              ],
+              [
+                5.960464477539062e-07,
+                1
+              ]
+            ]
           },
           "query_score_abs_drift": {
             "count": 300,
-            "p95": 1.7881393432617188e-07,
-            "max": 3.2782554626464844e-07
+            "p95": 2.086162567138672e-07,
+            "max": 3.2782554626464844e-07,
+            "histogram": [
+              [
+                0.0,
+                32
+              ],
+              [
+                1.4901161193847656e-08,
+                4
+              ],
+              [
+                2.9802322387695312e-08,
+                64
+              ],
+              [
+                4.470348358154297e-08,
+                3
+              ],
+              [
+                5.960464477539063e-08,
+                47
+              ],
+              [
+                7.450580596923828e-08,
+                3
+              ],
+              [
+                8.940696716308594e-08,
+                51
+              ],
+              [
+                1.043081283569336e-07,
+                1
+              ],
+              [
+                1.1920928955078125e-07,
+                40
+              ],
+              [
+                1.4901161193847656e-07,
+                16
+              ],
+              [
+                1.7881393432617188e-07,
+                17
+              ],
+              [
+                1.9371509552001953e-07,
+                1
+              ],
+              [
+                2.086162567138672e-07,
+                12
+              ],
+              [
+                2.384185791015625e-07,
+                6
+              ],
+              [
+                2.682209014892578e-07,
+                1
+              ],
+              [
+                2.980232238769531e-07,
+                1
+              ],
+              [
+                3.2782554626464844e-07,
+                1
+              ]
+            ]
           },
           "duplicate_decision_changes": [],
           "search_decision_changes": []
@@ -3859,26 +5183,26 @@
     }
   ],
   "measurement_digests": {
-    "ledger/gte-modernbert-base/cpu": "63193b29d6b09adab4ce162853693e3cab8e1cad2fecf1a78e1318243479ef52",
-    "ledger/gte-modernbert-base/mps": "b372a412fc02efb468e3d8b8c54ec8c17b605234edb36b128e876ff51979968f",
-    "ledger/embeddinggemma-300m/cpu": "9876373285cc50a55ea2ceb0a9188c665b6eb80bbb16f53a9f40f3ca1cf13bfd",
-    "ledger/embeddinggemma-300m/mps": "355efbb9148a5264e57d7278728f9cff5a81bfe8adedfea2692f4e627a8bcbb0",
-    "cowsay/gte-modernbert-base/cpu": "fdd5873facdf437be574906abd4160bf2a8da290753182836cd59f4bd34fc019",
-    "cowsay/gte-modernbert-base/mps": "6591b3c0f7f46dec26d33331a6c68c80abb260244233cf78f317568b3def109f",
-    "cowsay/embeddinggemma-300m/cpu": "fd2de733a414d3535b2c6f3c61478800374f7997590d2dc1dd3f0fd611613755",
-    "cowsay/embeddinggemma-300m/mps": "b762592134e9f964d4d536f0bb5faf0b4e047f7ceb4837c1f922d1c059f224a7",
-    "c_metering/gte-modernbert-base/cpu": "aeb96237cb90c321747b30518d4ad5b3f2b4644fe54f9dccdedf13ebf059afa2",
-    "c_metering/gte-modernbert-base/mps": "86b5d4cb1f549009bc1ef94f9698912246becb597e8c155597fc5ebfd5946d14",
-    "c_metering/embeddinggemma-300m/cpu": "5f3def0c46459b44021c5c8d5de94e67a95972af2ca1b6008ae3e41ffbf900a9",
-    "c_metering/embeddinggemma-300m/mps": "49cba986375fcf74ea67d19b969071fe1dab02a11272092297708ba8ce6233d6",
-    "javascript/gte-modernbert-base/cpu": "6809673fafbe6747ccf060d91052ecb172223aa6de09e4bb3b1291e8741cbe98",
-    "javascript/gte-modernbert-base/mps": "96187a54037a8f49a790625209b00f5df218a9059e4ae0fe19394e50acd56cab",
-    "javascript/embeddinggemma-300m/cpu": "ef0bb2bff71a067ff19db085c0e6e7aa7f9389d141b4d0dbad62507ea75aea75",
-    "javascript/embeddinggemma-300m/mps": "71a44df6d7a9adfad7fd0e4ee40a500d7b1622522041df9157ff5b8b67c11432",
-    "harbor-ts/gte-modernbert-base/cpu": "7b81d02f8544539993eaa24eb9f267e1379a77730f62e44cb3299366f739f68a",
-    "harbor-ts/gte-modernbert-base/mps": "7384edaf3ebf1a08230d58e8b255f91b8b52e3c5048ade2905f925021e14027e",
-    "harbor-ts/embeddinggemma-300m/cpu": "37a919495fcda502ad3959ff4437b6a18954e3c8dedb2fbad76dee00b2a4a5de",
-    "harbor-ts/embeddinggemma-300m/mps": "4f31757ae6257c73493765a763201a96457b23df0d4aa36f031815f66ce39100"
+    "ledger/gte-modernbert-base/cpu": "1ecd8a45393d34219c3ca244f53e8e60dadfea09e9fb552129546f7b97f338f8",
+    "ledger/gte-modernbert-base/mps": "6668353b0d74645d848645f38ea362c1e4e97fddc38912ef514358dbeaa877de",
+    "ledger/embeddinggemma-300m/cpu": "323281556edaada5f7eb290f0c6eca4e67fe220df380cd1f175588eec50eee5f",
+    "ledger/embeddinggemma-300m/mps": "85ba2a7d499ea192e608105cf2fae993d3ae5cd404b1b67334c9eb0822e3f0b5",
+    "cowsay/gte-modernbert-base/cpu": "c9a83c1c93534080f4f7932a3e722b57a6bacdd0193d7c26cf63485c4c6ee2c7",
+    "cowsay/gte-modernbert-base/mps": "1e015107788888bcc09354cb0fc558d75ae2410bcb49404f054ae99352d928c1",
+    "cowsay/embeddinggemma-300m/cpu": "6b3332c61c007e7939138e0c944d7e032d86f98ebfefdf6fbc4ba7651db8581e",
+    "cowsay/embeddinggemma-300m/mps": "b3577efa6ef55162b892c45c3eeb087e1621a3d1e01e35f0bc10f0fe00a18a25",
+    "c_metering/gte-modernbert-base/cpu": "afb1111b261eaca186e5949f3c9df364514e96f94671c400b1dbc75ec0b4718d",
+    "c_metering/gte-modernbert-base/mps": "16eb57854deb6b2e57e5c328df05aee954c820bef54969eae4fe839aaf055c98",
+    "c_metering/embeddinggemma-300m/cpu": "25de4d2de60c5e770640869b967ff5c0b2223fcc6985d70799322041b7efaaa3",
+    "c_metering/embeddinggemma-300m/mps": "fa60e5181f76231be14bd844946a2823dce97c94bc1dc551506d37b5472436b4",
+    "javascript/gte-modernbert-base/cpu": "e48ecbaf098a0cb851dacd75fec7ff36838a60c87ea24941822e812765f2d696",
+    "javascript/gte-modernbert-base/mps": "05d4bc4ac60f7ba73574cb157fbf643e1f251e9b91066c7ff3818aff53ad9482",
+    "javascript/embeddinggemma-300m/cpu": "99e4b7300ebc0c36327aaf09c6aa5bc6397e593def020c98bd44924b421ce016",
+    "javascript/embeddinggemma-300m/mps": "4a4abe8fb2759d169b8984573ece4d8f94d39b7453700c1b04a7eb94491c5e82",
+    "harbor-ts/gte-modernbert-base/cpu": "94a9ff141328bceff9ae319c45db16c788798eb7f0bb2aa9eb5da26f58cb3785",
+    "harbor-ts/gte-modernbert-base/mps": "f2ab412730b4f3a255248cd3e962181cdeaf5167bdb5e01718122bef18f4185e",
+    "harbor-ts/embeddinggemma-300m/cpu": "3071069dcae886cd2e9b28b24ce80714b6040c911178c9dd4e08e2a424a9b3d3",
+    "harbor-ts/embeddinggemma-300m/mps": "f898fab483f0565656891009db8a94a7a8b1e204d463ef49bbd49bee69d49eb6"
   },
   "measurement_runtime": {
     "torch": "2.14.0",

@@ -60,7 +60,7 @@ settings below 50% judged precision, maximizes F1, and prefers recall within
 visibility jointly selects corroboration and per-language promotion gates after
 the admission gates are fixed. CPU fp32 supplies the reference scores; independent
 uncached MPS fp32 runs produce no duplicate, visibility-tier, or search decision
-changes. Maximum observed pair or query score drift is `7.45e-7`.
+changes. Maximum observed pair or query score drift is `7.75e-7`.
 
 ## Real-repository smoke check
 
@@ -86,7 +86,10 @@ slice, then recalibrate and repeat the same check across all five languages;
 this report deliberately does not hide the failure with a repository-specific
 filter or an unmeasured threshold change.
 
-Validate source selectors, pair coverage, tests, and entry points first:
+Validate source selectors, pair coverage, tests, and entry points first. The
+pytest regression suite runs these behavior commands automatically; it requires
+a stable Rust toolchain, a C compiler and Make, and Node.js/npm with
+type-stripping support:
 
 ```bash
 conda run --name inf python scripts/validate_calibration_corpus.py --run-behavior
@@ -125,7 +128,7 @@ context: changing behavior evidence requires reselection, but not new embeddings
 
 Keeping CPU as the calibration reference is a reproducibility convention, not a
 separate runtime threshold policy. The checked development-corpus comparison found a
-maximum CPU/MPS score drift of `7.45e-7` and no duplicate or search decision
+maximum CPU/MPS score drift of `7.75e-7` and no duplicate or search decision
 changes for either built-in model. Treat CPU fp32 and MPS fp32 as functionally
 equivalent for these profiles, and use the default `device=auto` during normal
 macOS development so Apple silicon selects the faster MPS path. Continue to run
@@ -207,8 +210,11 @@ conda run --name inf python scripts/report_calibration_distributions.py \
 ```
 
 The summary records timings, effective devices, replay parity, score drift, and
-duplicate/search decision changes. Duplicate comparisons include tier changes,
-so a promotion or default-visibility difference cannot pass as an unchanged pair.
+duplicate/search decision changes. Its compact exact-value drift histograms let
+the checked validator recompute each population count, p95, and maximum without
+committing the raw CPU/MPS score matrices. Duplicate comparisons include tier
+changes, so a promotion or default-visibility difference cannot pass as an
+unchanged pair.
 Its `measurement_runtime` summary derives
 the PyTorch version and device scope from the included reports; mixed PyTorch
 versions are rejected. Raw score matrices and model caches stay out of Git.

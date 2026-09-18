@@ -30,6 +30,7 @@ from scripts.calibration_contract import (
     load_projects,
     read_json,
     resolve_annotations,
+    run_behavior,
     unit_ids,
     validate_project,
     write_json,
@@ -224,6 +225,16 @@ def test_manifest_has_substantive_five_language_corpus():
         assert len(negatives) >= 10, project.id
         assert len(project.annotations["probes"]) >= 8
         assert report["pending_deterministic"] == []
+
+
+def test_manifest_behavior_contracts_execute():
+    for project in load_projects():
+        report = run_behavior(project)
+        assert report["project"] == project.id
+        assert [run["id"] for run in report["runs"]] == [
+            command["id"] for command in project.spec["behavior_tests"]
+        ]
+        assert all(run["returncode"] == 0 for run in report["runs"])
 
 
 def test_selection_uses_only_development_projects():
@@ -1185,6 +1196,7 @@ def test_checked_selection_metrics_ignore_evaluation_report_records():
         ("scores", "score summary"),
         ("difficulty", "difficulty schema"),
         ("unjudged", "invalid unresolved pair"),
+        ("corroboration", "positive-pair denominator"),
     ],
 )
 def test_checked_calibration_result_rejects_tampered_embedded_selections(tamper: str, message: str):
@@ -1210,10 +1222,25 @@ def test_checked_calibration_result_rejects_tampered_embedded_selections(tamper:
         threshold["models"][0]["duplicate_by_language"][0]["positive_scores"] = "forged"
     elif tamper == "difficulty":
         threshold["models"][0]["duplicate_by_language"][0]["selected_difficulty_recall"] = "forged"
-    else:
+    elif tamper == "unjudged":
         threshold["models"][0]["duplicate_by_language"][0]["unjudged_above_selected"] = [
             ["a", "b", 2.0]
         ]
+    else:
+        corroboration = hybrid["models"][0]["selected"]["corroboration_only_metrics"]
+        corroboration.update(
+            {
+                "tp": 0,
+                "fp": 0,
+                "fn": 0,
+                "precision": 0.0,
+                "judged_only_precision": 0.0,
+                "recall": 0.0,
+                "f1": 0.0,
+                "ambiguous_predictions": 0,
+                "unjudged_predictions": 0,
+            }
+        )
     hybrid["threshold_selection_digest"] = selection_digest(threshold)
     models = [item["model"] for item in threshold["models"]]
     with pytest.raises(ValueError, match=message):
@@ -1280,6 +1307,7 @@ def test_checked_calibration_result_rejects_tampered_provenance(tamper: str):
         "arithmetic",
         "denominator",
         "no_result",
+        "drift",
         "decision_changes",
         "foreign_decision_change",
     ],
@@ -1308,6 +1336,11 @@ def test_checked_calibration_result_rejects_forged_report_metrics(tamper: str):
             "total": 0,
             "violations": [],
         }
+    elif tamper == "drift":
+        summary = result["projects"][0]["device_comparisons"]["gte-modernbert-base"][
+            "pair_score_abs_drift"
+        ]
+        summary["p95"] = summary["max"] = 0.0
     elif tamper == "decision_changes":
         search = result["projects"][0]["reports"]["gte-modernbert-base/mps"]["search"]
         search.update({"tp": 0, "fn": 12, "precision": 0.0, "recall": 0.0, "f1": 0.0})
