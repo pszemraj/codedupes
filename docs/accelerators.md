@@ -27,7 +27,7 @@ as decision-equivalent. The five-project development-corpus comparison ran both 
 fresh, uncached CPU and MPS processes with PyTorch 2.14.0. Its maximum absolute
 pair or query score drift was `7.45e-7`, with no duplicate or search threshold
 decisions changed. Across the ten model/project runs, aggregate measured time
-was 77.7 seconds on CPU and 56.9 seconds on MPS. On Apple silicon, leave `--device`
+was 77.9 seconds on CPU and 57.0 seconds on MPS. On Apple silicon, leave `--device`
 at `auto` so codedupes uses MPS for the faster path. Pin `cpu` only when reproducing the CPU
 calibration reference or investigating CPU-specific behavior. See the checked
 [calibration results](../test_fixtures/calibration/calibration-results.json) for

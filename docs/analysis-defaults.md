@@ -29,8 +29,8 @@ Semantic duplicate detection is gated per language. Each built-in model profile 
 | python | `0.87` | `0.74` |
 | c | `0.84` | `0.82` |
 | rust | `0.84` | `0.88` |
-| javascript | `0.69` | `0.80` |
-| typescript | `0.76` | `0.83` |
+| javascript | `0.70` | `0.80` |
+| typescript | `0.76` | `0.82` |
 
 The reviewed source-backed corpus selects all ten gates shown in the table. The 50% precision eligibility rule prevents a recall preference from admitting majority-false candidates before F1 selection. The corpus is development evidence with an authored challenge mix, so these settings are practical defaults rather than an estimate of ecosystem-wide precision. See [calibration measurements and replay](hybrid-tuning.md).
 
@@ -136,10 +136,10 @@ A semantic-only pair has already passed its language's duplicate gate (applied b
 | profile | identifier Jaccard min | statement ratio min | promotion gates |
 | --- | --- | --- | --- |
 | `gte-modernbert-base` | `0.40` | `0.00` | python `0.88`, c `0.84`, rust `0.84`, javascript `0.70`; typescript off |
-| `embeddinggemma-300m` | `0.40` | `0.00` | python `0.78`, c `0.89`, rust `0.88`, javascript `0.80`; typescript off |
+| `embeddinggemma-300m` | `0.40` | `0.00` | python `0.78`, c `0.89`, rust `0.88`, javascript `0.80`, typescript `0.82` |
 | `generic` | `0.00` | `0.20` | off |
 
-The corroboration constants and promotion gates were selected jointly after fixing the admission gates on the same reviewed development corpus. Every language-specific promotion outcome and the pooled result must reach 50% judged precision; selection then maximizes measured F1 and prefers recall within `0.005` F1 of the optimum. When a promotion gate equals its admission gate, the review band is empty and every admitted semantic-only pair is default-visible; that applies to GTE C/Rust and Gemma Rust/JavaScript. An explicit `--semantic-threshold` keeps the profile's corroboration constants but turns similarity promotion off because those promotion gates belong to the shipped profile policy. See [calibration measurements and replay](hybrid-tuning.md).
+The corroboration constants and promotion gates were selected jointly after fixing the admission gates on the same reviewed development corpus. Every language-specific promotion outcome and the pooled result must reach 50% judged precision; selection then maximizes measured F1 and prefers recall within `0.005` F1 of the optimum. When a promotion gate equals its admission gate, the review band is empty and every admitted semantic-only pair is default-visible; that applies to GTE C/Rust/JavaScript and Gemma Rust/JavaScript/TypeScript. An explicit `--semantic-threshold` keeps the profile's corroboration constants but turns similarity promotion off because those promotion gates belong to the shipped profile policy. See [calibration measurements and replay](hybrid-tuning.md).
 
 ## Confidence scale
 
