@@ -130,6 +130,29 @@ The contextual-threshold requirement follows the indexed representation even if 
 
 For direct embedding/query calls, pass the identity returned by `compute_embeddings_with_identity(...)` as `find_similar_to_query(corpus_identity=...)`. It is required for contextual documents and prompt- or route-sensitive models, and preserves calibration and checkpoint checks on both cold and warm cache paths. Use `search_document="contextual"` with aligned `document_texts` when supplying contextual inputs.
 
+```python
+from pathlib import Path
+
+from codedupes.constants import DEFAULT_SEARCH_SEMANTIC_TASK
+from codedupes.extractor import CodeExtractor
+from codedupes.semantic import compute_embeddings_with_identity, find_similar_to_query
+
+repo_root = Path("./src").resolve()
+units = CodeExtractor(repo_root).extract_all()
+embeddings, identity = compute_embeddings_with_identity(
+    units,
+    semantic_task=DEFAULT_SEARCH_SEMANTIC_TASK,
+    cache_scope=repo_root,
+)
+hits = find_similar_to_query(
+    "load csv data",
+    units,
+    embeddings,
+    corpus_identity=identity,
+    cache_scope=repo_root,
+)
+```
+
 Direct `find_similar_to_query()` and `find_semantic_duplicates()` calls require a two-dimensional embedding matrix with exactly one row per supplied unit. Inputs are converted to float32 and unit-normalized before cosine comparison; non-finite or zero rows, and short, long, or one-dimensional matrices raise `ValueError` before cache or model work. A `(0, dimensions)` matrix remains valid for an empty unit list.
 
 In `AnalyzerConfig(mode="search")`, `semantic_threshold` is any finite search floor, including a negative value when every ranked result is needed. Check-mode duplicate gates remain restricted to `[0, 1]`.

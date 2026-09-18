@@ -9,6 +9,8 @@ Other dependencies are declared in [pyproject.toml](../pyproject.toml) and insta
 
 A GPU is optional. On Apple Silicon, use macOS 14.0+ and a PyTorch wheel built with MPS support. [Accelerator behavior](accelerators.md) covers automatic device selection and diagnostics.
 
+The first semantic check or search may download the selected model. See [model profiles](model-profiles.md#local-model-directories-and-offline-use) when preparing an offline machine or using a local checkpoint.
+
 If `codedupes` is not found after installation, ensure your Python installation's scripts directory is on `PATH` and that you are using the same Python installation as the install command. If installation reports no matching PyTorch distribution, check Python/platform compatibility; inference fallback only applies after installation succeeds. Continue with the [README quick start](../README.md#quick-start).
 
 ## Polyglot parser dependencies
