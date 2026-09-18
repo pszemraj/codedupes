@@ -35,7 +35,7 @@ try:
         validate_selection_context,
     )
     from .calibration_measurements import DEFAULT_MEASUREMENTS
-    from .sweep_semantic_thresholds import threshold_grid
+    from .sweep_semantic_thresholds import threshold_grid, validate_threshold_selection
 except ImportError:
     from calibration_contract import (
         add_contract_arguments,
@@ -61,7 +61,7 @@ except ImportError:
         validate_selection_context,
     )
     from calibration_measurements import DEFAULT_MEASUREMENTS
-    from sweep_semantic_thresholds import threshold_grid
+    from sweep_semantic_thresholds import threshold_grid, validate_threshold_selection
 
 WEAK_GRID = (0.0, 0.05, 0.10, 0.15, 0.20, 0.30, 0.40)
 RATIO_GRID = (0.0, 0.20, 0.35, 0.50, 0.65, 0.80)
@@ -298,43 +298,19 @@ def _select_joint(
     return selected, by_f1[selected["f1"]][1]
 
 
-def main() -> int:
-    """Select global corroboration and per-language promotion gates."""
-    parser = argparse.ArgumentParser(description=__doc__)
-    add_contract_arguments(parser)
-    parser.add_argument("--measurements", type=Path, default=DEFAULT_MEASUREMENTS)
-    parser.add_argument(
-        "--threshold-selection",
-        type=Path,
-        default=DEFAULT_MEASUREMENTS / "threshold-selection.json",
-    )
-    parser.add_argument("--models", nargs="+", default=[p.key for p in list_supported_models()])
-    parser.add_argument("--json-out", type=Path)
-    args = parser.parse_args()
-    projects = development_projects(load_projects(args.manifest, args.projects, args.policy))
-    threshold_selection = read_json(args.threshold_selection)
-    validate_selection_context(threshold_selection, projects, args.models)
-    selected_admissions = _selection_map(threshold_selection)
-    payload: dict[str, Any] = {
-        "schema_version": 4,
-        "objective": {
-            "primary": "f1",
-            "minimum_precision": MINIMUM_SELECTION_PRECISION,
-            "recall_preference_max_f1_loss": F1_RECALL_TOLERANCE,
-        },
-        "input_context": selection_context(projects, args.models),
-        "threshold_selection_digest": selection_digest(threshold_selection),
-        "models": [],
-    }
-    raw_measurements = []
-
-    for model in args.models:
+def _hybrid_models(
+    projects: list[Any],
+    models: list[str],
+    all_measurements: dict[tuple[str, str], dict[str, Any]],
+    selected_admissions: dict[tuple[str, str], float],
+) -> list[dict[str, Any]]:
+    """Derive all hybrid decisions from validated admission gates and measurements."""
+    results = []
+    for model in models:
         profile = resolve_model_profile(model)
         measurements = {
-            project.id: load_all(project, args.measurements, [model], ["cpu"])[(profile.key, "cpu")]
-            for project in projects
+            project.id: all_measurements[(project.id, profile.key)] for project in projects
         }
-        raw_measurements.extend(measurements.values())
         admissions = {
             project.spec["languages"][0]: selected_admissions[
                 (profile.key, project.spec["languages"][0])
@@ -357,7 +333,7 @@ def main() -> int:
                 admissions,
                 weak,
                 ratio,
-                {language: None for language in admissions},
+                dict.fromkeys(admissions),
             ),
         }
 
@@ -397,7 +373,7 @@ def main() -> int:
             ratio,
             selected_gates,
         )
-        payload["models"].append(
+        results.append(
             {
                 "model": profile.key,
                 "admission_thresholds": admissions,
@@ -420,8 +396,60 @@ def main() -> int:
                 "promotion_by_language": promotion,
             }
         )
+    return results
 
+
+def validate_hybrid_selection(
+    payload: dict[str, Any],
+    threshold_selection: dict[str, Any],
+    projects: list[Any],
+    models: list[str],
+    measurements: dict[tuple[str, str], dict[str, Any]],
+) -> None:
+    """Reject hybrid decisions not reproducible from bound admissions and scores."""
+    expected = _hybrid_models(projects, models, measurements, _selection_map(threshold_selection))
+    if payload.get("models") != expected:
+        raise ValueError("hybrid selection does not match its threshold selection and raw data")
+
+
+def main() -> int:
+    """Select global corroboration and per-language promotion gates."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    add_contract_arguments(parser)
+    parser.add_argument("--measurements", type=Path, default=DEFAULT_MEASUREMENTS)
+    parser.add_argument(
+        "--threshold-selection",
+        type=Path,
+        default=DEFAULT_MEASUREMENTS / "threshold-selection.json",
+    )
+    parser.add_argument("--models", nargs="+", default=[p.key for p in list_supported_models()])
+    parser.add_argument("--json-out", type=Path)
+    args = parser.parse_args()
+    projects = development_projects(load_projects(args.manifest, args.projects, args.policy))
+    threshold_selection = read_json(args.threshold_selection)
+    validate_selection_context(threshold_selection, projects, args.models)
+    measurements = {
+        (project.id, resolve_model_profile(model).key): load_all(
+            project, args.measurements, [model], ["cpu"]
+        )[(resolve_model_profile(model).key, "cpu")]
+        for model in args.models
+        for project in projects
+    }
+    raw_measurements = list(measurements.values())
     validate_measurement_digests(threshold_selection, raw_measurements)
+    validate_threshold_selection(threshold_selection, projects, args.models, measurements)
+    selected_admissions = _selection_map(threshold_selection)
+    payload: dict[str, Any] = {
+        "schema_version": 4,
+        "objective": {
+            "primary": "f1",
+            "minimum_precision": MINIMUM_SELECTION_PRECISION,
+            "recall_preference_max_f1_loss": F1_RECALL_TOLERANCE,
+        },
+        "input_context": selection_context(projects, args.models),
+        "threshold_selection_digest": selection_digest(threshold_selection),
+        "models": _hybrid_models(projects, args.models, measurements, selected_admissions),
+    }
     payload["measurement_digests"] = measurement_digests(raw_measurements)
 
     if args.json_out:

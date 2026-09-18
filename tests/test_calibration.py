@@ -38,6 +38,7 @@ from scripts.calibration_evaluation import (
     replay_parity,
     selection_context,
     selection_digest,
+    support_files_digest,
     validate_measurement_digests,
     validate_selection_context,
 )
@@ -54,6 +55,7 @@ from scripts.sweep_semantic_thresholds import (
     duplicate_rows,
     search_rows,
     threshold_grid,
+    validate_threshold_selection,
 )
 
 pytestmark = pytest.mark.grammar
@@ -310,6 +312,11 @@ def test_coarse_sweep_measures_shipped_thresholds_exactly(tmp_path: Path, monkey
     assert [row["threshold"] for row in search["selection_window"]] == result["grids"]["search"]
     assert search["selected_metrics"] in search["selection_window"]
     assert result["grids"]["search"] == [0.0, 0.3, 0.6, 0.9, 1.0]
+    measurements = {("sample", "gte-modernbert-base"): measurement}
+    validate_threshold_selection(result, [project], ["gte-modernbert-base"], measurements)
+    result["models"][0]["duplicate_by_language"][0]["selected_threshold"] = 0.0
+    with pytest.raises(ValueError, match="does not match its raw measurements"):
+        validate_threshold_selection(result, [project], ["gte-modernbert-base"], measurements)
 
 
 def test_replay_matches_production_tier_rules():
@@ -590,6 +597,18 @@ def test_selections_reject_changed_review_or_scope(change: str):
         validate_selection_context(payload, projects, models)
 
 
+def test_support_file_identity_tracks_declared_behavior_evidence(tmp_path: Path):
+    readme = tmp_path / "README.md"
+    readme.write_text("behavior contract v1\n")
+    project = SimpleNamespace(id="sample", root=tmp_path, spec={"support_files": ["README.md"]})
+    original = support_files_digest(project)
+    readme.write_text("behavior contract v2\n")
+    assert support_files_digest(project) != original
+    project.spec["support_files"] = ["missing.*"]
+    with pytest.raises(ValueError, match="matched nothing"):
+        support_files_digest(project)
+
+
 @pytest.mark.parametrize(
     "changed_file",
     [
@@ -665,6 +684,12 @@ def test_report_writer_derives_measurement_runtime(tmp_path: Path, monkeypatch, 
     monkeypatch.setattr(report_calibration_distributions, "full_report", lambda p, report: report)
     monkeypatch.setattr(
         report_calibration_distributions, "validate_measurement_digests", lambda *args: None
+    )
+    monkeypatch.setattr(
+        report_calibration_distributions, "validate_threshold_selection", lambda *args: None
+    )
+    monkeypatch.setattr(
+        report_calibration_distributions, "validate_hybrid_selection", lambda *args: None
     )
     monkeypatch.setattr(report_calibration_distributions, "load_projects", lambda *args: [project])
     threshold_path = tmp_path / "threshold-selection.json"

@@ -247,36 +247,16 @@ def search_rows(records: list[dict[str, Any]], grid: list[float]) -> list[dict[s
     return rows
 
 
-def main() -> int:
-    """Select CPU-reference admission and search thresholds for both model profiles."""
-    parser = argparse.ArgumentParser(description=__doc__)
-    add_contract_arguments(parser)
-    parser.add_argument("--measurements", type=Path, default=DEFAULT_MEASUREMENTS)
-    parser.add_argument("--models", nargs="+", default=[p.key for p in list_supported_models()])
-    parser.add_argument("--duplicate-start", type=float, default=0.0)
-    parser.add_argument("--duplicate-stop", type=float, default=1.0)
-    parser.add_argument("--search-start", type=float, default=0.0)
-    parser.add_argument("--search-stop", type=float, default=1.0)
-    parser.add_argument("--step", type=float, default=0.01)
-    parser.add_argument("--json-out", type=Path)
-    args = parser.parse_args()
-    projects = development_projects(load_projects(args.manifest, args.projects, args.policy))
-    duplicate_grid = threshold_grid(args.duplicate_start, args.duplicate_stop, args.step)
-    search_grid = threshold_grid(args.search_start, args.search_stop, args.step)
-    payload: dict[str, Any] = {
-        "schema_version": 4,
-        "objective": {
-            "primary": "f1",
-            "minimum_precision": MINIMUM_SELECTION_PRECISION,
-            "recall_preference_max_f1_loss": F1_RECALL_TOLERANCE,
-        },
-        "input_context": selection_context(projects, args.models),
-        "grids": {"duplicate": duplicate_grid, "search": search_grid},
-        "models": [],
-    }
-    raw_measurements = []
-
-    for model in args.models:
+def _selection_models(
+    projects: list[Any],
+    models: list[str],
+    measurements: dict[tuple[str, str], dict[str, Any]],
+    duplicate_grid: list[float],
+    search_grid: list[float],
+) -> list[dict[str, Any]]:
+    """Derive all threshold decisions from already validated CPU measurements."""
+    results = []
+    for model in models:
         profile = resolve_model_profile(model)
         model_result: dict[str, Any] = {
             "model": profile.key,
@@ -289,10 +269,7 @@ def main() -> int:
             if language in seen_languages:
                 raise ValueError(f"multiple projects for {language}; pooling is not yet explicit")
             seen_languages.add(language)
-            measurement = load_all(project, args.measurements, [model], ["cpu"])[
-                (profile.key, "cpu")
-            ]
-            raw_measurements.append(measurement)
+            measurement = measurements[(project.id, profile.key)]
             _, detail = duplicate_rows(project, measurement, duplicate_grid)
             current = profile.semantic_threshold_for_language(language)
             current_metrics = duplicate_rows(project, measurement, [current])[0][0]
@@ -324,8 +301,66 @@ def main() -> int:
             "selected_metrics": selected_search,
             "selection_window": _selection_window(search, selected_search),
         }
-        payload["models"].append(model_result)
+        results.append(model_result)
+    return results
 
+
+def validate_threshold_selection(
+    payload: dict[str, Any],
+    projects: list[Any],
+    models: list[str],
+    measurements: dict[tuple[str, str], dict[str, Any]],
+) -> None:
+    """Reject threshold decisions not reproducible from their bound measurements."""
+    expected = _selection_models(
+        projects,
+        models,
+        measurements,
+        payload["grids"]["duplicate"],
+        payload["grids"]["search"],
+    )
+    if payload.get("models") != expected:
+        raise ValueError("threshold selection does not match its raw measurements")
+
+
+def main() -> int:
+    """Select CPU-reference admission and search thresholds for both model profiles."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    add_contract_arguments(parser)
+    parser.add_argument("--measurements", type=Path, default=DEFAULT_MEASUREMENTS)
+    parser.add_argument("--models", nargs="+", default=[p.key for p in list_supported_models()])
+    parser.add_argument("--duplicate-start", type=float, default=0.0)
+    parser.add_argument("--duplicate-stop", type=float, default=1.0)
+    parser.add_argument("--search-start", type=float, default=0.0)
+    parser.add_argument("--search-stop", type=float, default=1.0)
+    parser.add_argument("--step", type=float, default=0.01)
+    parser.add_argument("--json-out", type=Path)
+    args = parser.parse_args()
+    projects = development_projects(load_projects(args.manifest, args.projects, args.policy))
+    duplicate_grid = threshold_grid(args.duplicate_start, args.duplicate_stop, args.step)
+    search_grid = threshold_grid(args.search_start, args.search_stop, args.step)
+    payload: dict[str, Any] = {
+        "schema_version": 4,
+        "objective": {
+            "primary": "f1",
+            "minimum_precision": MINIMUM_SELECTION_PRECISION,
+            "recall_preference_max_f1_loss": F1_RECALL_TOLERANCE,
+        },
+        "input_context": selection_context(projects, args.models),
+        "grids": {"duplicate": duplicate_grid, "search": search_grid},
+        "models": [],
+    }
+    measurements = {
+        (project.id, resolve_model_profile(model).key): load_all(
+            project, args.measurements, [model], ["cpu"]
+        )[(resolve_model_profile(model).key, "cpu")]
+        for model in args.models
+        for project in projects
+    }
+    raw_measurements = list(measurements.values())
+    payload["models"] = _selection_models(
+        projects, args.models, measurements, duplicate_grid, search_grid
+    )
     payload["measurement_digests"] = measurement_digests(raw_measurements)
 
     if args.json_out:

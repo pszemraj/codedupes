@@ -45,11 +45,16 @@ static void test_aggregation_differential(void) {
 
 static void test_invalid_discarded_reading_is_rejected(void) {
     const Reading readings[] = {{"", 3, 1}};
+    Reading unterminated = {{0}, 3, 0};
     DeviceTotal totals[METERING_MAX_DEVICES] = {0};
     size_t count = 0;
+    memset(unterminated.device, 'x', sizeof(unterminated.device));
     CHECK(aggregate_usage_linear(readings, 1, totals, METERING_MAX_DEVICES, &count) == METERING_INVALID);
     CHECK(aggregate_usage_sorted(readings, 1, totals, METERING_MAX_DEVICES, &count) == METERING_INVALID);
     CHECK(aggregate_usage_by_index(readings, 1, totals, METERING_MAX_DEVICES, &count) == METERING_INVALID);
+    CHECK(aggregate_usage_linear(&unterminated, 1, totals, METERING_MAX_DEVICES, &count) == METERING_INVALID);
+    CHECK(aggregate_usage_sorted(&unterminated, 1, totals, METERING_MAX_DEVICES, &count) == METERING_INVALID);
+    CHECK(aggregate_usage_by_index(&unterminated, 1, totals, METERING_MAX_DEVICES, &count) == METERING_INVALID);
 }
 
 static void test_payout_floor_and_policy(void) {

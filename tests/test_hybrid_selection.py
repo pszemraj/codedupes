@@ -255,3 +255,50 @@ def test_joint_selection_requires_safe_precision_in_every_language(
     assert unsafe_pooled["precision"] >= sweep_hybrid_gates.MINIMUM_SELECTION_PRECISION
     assert selected["high_gates"]["small"] is None
     assert options["small"] is safe_small
+
+
+def test_hybrid_selection_rejects_tampered_derived_gates():
+    project, measurement = _project_and_measurement(
+        "python",
+        "python",
+        [("positive", 0.90, 0.5), ("negative", 0.85, 0.1)],
+    )
+    threshold_selection = {
+        "models": [
+            {
+                "model": "gte-modernbert-base",
+                "duplicate_by_language": [
+                    {
+                        "language": "python",
+                        "selected_threshold": 0.80,
+                        "selection_ready": True,
+                    }
+                ],
+            }
+        ]
+    }
+    measurements = {("python", "gte-modernbert-base"): measurement}
+    payload = {
+        "models": sweep_hybrid_gates._hybrid_models(
+            [project],
+            ["gte-modernbert-base"],
+            measurements,
+            {("gte-modernbert-base", "python"): 0.80},
+        )
+    }
+    sweep_hybrid_gates.validate_hybrid_selection(
+        payload,
+        threshold_selection,
+        [project],
+        ["gte-modernbert-base"],
+        measurements,
+    )
+    payload["models"][0]["selected"]["weak_identifier_jaccard_min"] = 0.0
+    with pytest.raises(ValueError, match="does not match its threshold selection"):
+        sweep_hybrid_gates.validate_hybrid_selection(
+            payload,
+            threshold_selection,
+            [project],
+            ["gte-modernbert-base"],
+            measurements,
+        )

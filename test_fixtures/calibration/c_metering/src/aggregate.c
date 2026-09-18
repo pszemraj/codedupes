@@ -19,7 +19,9 @@ static void sort_totals(DeviceTotal *totals, size_t count) {
 }
 
 static int validate_reading(const Reading *reading) {
-    return reading != NULL && reading->device[0] != '\0' && reading->usage >= 0;
+    return reading != NULL && reading->device[0] != '\0'
+        && memchr(reading->device, '\0', sizeof(reading->device)) != NULL
+        && reading->usage >= 0;
 }
 
 int aggregate_usage_linear(

@@ -52,6 +52,29 @@ def selection_digest(payload: Any) -> str:
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
 
 
+def support_files_digest(project: Project) -> str:
+    """Fingerprint declared non-source files that support corpus behavior evidence."""
+    files: dict[str, str] = {}
+    for pattern in project.spec["support_files"]:
+        relative = Path(pattern)
+        if not pattern or relative.is_absolute() or ".." in relative.parts:
+            raise ValueError(f"{project.id}: invalid support file pattern {pattern!r}")
+        matches = sorted(project.root.glob(pattern))
+        matched_files = [
+            file
+            for match in matches
+            for file in ([match] if match.is_file() else sorted(match.rglob("*")))
+            if file.is_file()
+        ]
+        if not matched_files:
+            raise ValueError(f"{project.id}: support file pattern matched nothing: {pattern}")
+        for file in matched_files:
+            files[file.relative_to(project.root).as_posix()] = hashlib.sha256(
+                file.read_bytes()
+            ).hexdigest()
+    return selection_digest(files)
+
+
 def measurement_digest(measurement: dict[str, Any]) -> str:
     """Bind derived selections to the score payload and its inference provenance."""
     metadata = measurement["metadata"]
@@ -131,6 +154,7 @@ def selection_context(projects: list[Project], models: list[str]) -> dict[str, A
                 "annotations": selection_digest(project.annotations),
                 "project": selection_digest(project.spec),
                 "policy": project.policy_name,
+                "support_files": support_files_digest(project),
                 "measurements": {
                     resolve_model_profile(model).key: measurement_fingerprint(project, model)
                     for model in models

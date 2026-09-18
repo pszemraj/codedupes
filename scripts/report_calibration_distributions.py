@@ -25,6 +25,8 @@ try:
         validate_selection_context,
     )
     from .calibration_measurements import DEFAULT_MEASUREMENTS
+    from .sweep_hybrid_gates import validate_hybrid_selection
+    from .sweep_semantic_thresholds import validate_threshold_selection
 except ImportError:
     from calibration_contract import (
         add_contract_arguments,
@@ -42,6 +44,8 @@ except ImportError:
         validate_selection_context,
     )
     from calibration_measurements import DEFAULT_MEASUREMENTS
+    from sweep_hybrid_gates import validate_hybrid_selection
+    from sweep_semantic_thresholds import validate_threshold_selection
 
 
 def main() -> int:
@@ -73,6 +77,7 @@ def main() -> int:
         "projects": [],
     }
     cpu_measurements = []
+    development_cpu = {}
     for field in ("threshold_selection", "hybrid_selection"):
         validate_selection_context(payload[field], selection_projects, args.models)
     if payload["hybrid_selection"].get("threshold_selection_digest") != selection_digest(
@@ -88,6 +93,14 @@ def main() -> int:
             for (_model, device), measurement in loaded.items()
             if device == "cpu" and project.spec["split"] == "development"
         )
+        if project.spec["split"] == "development":
+            development_cpu.update(
+                {
+                    (project.id, model): measurement
+                    for (model, device), measurement in loaded.items()
+                    if device == "cpu"
+                }
+            )
         reports = {
             f"{model}/{device}": full_report(project, measurement)
             for (model, device), measurement in loaded.items()
@@ -119,6 +132,16 @@ def main() -> int:
         )
     for field in ("threshold_selection", "hybrid_selection"):
         validate_measurement_digests(payload[field], cpu_measurements)
+    validate_threshold_selection(
+        payload["threshold_selection"], selection_projects, args.models, development_cpu
+    )
+    validate_hybrid_selection(
+        payload["hybrid_selection"],
+        payload["threshold_selection"],
+        selection_projects,
+        args.models,
+        development_cpu,
+    )
     reports = [report for project in payload["projects"] for report in project["reports"].values()]
     torch_versions = {report["runtime_versions"]["torch"] for report in reports}
     if len(torch_versions) != 1:
