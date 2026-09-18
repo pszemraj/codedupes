@@ -1110,6 +1110,7 @@ def test_checked_calibration_report_schema_accepts_committed_result():
         ("schema", "unsupported schema version"),
         ("objective", "mismatched objective contract"),
         ("gate", "selected calibration gates do not match shipped defaults"),
+        ("metric", "inconsistent derived metrics"),
     ],
 )
 def test_checked_calibration_result_rejects_tampered_embedded_selections(tamper: str, message: str):
@@ -1121,15 +1122,19 @@ def test_checked_calibration_result_rejects_tampered_embedded_selections(tamper:
     elif tamper == "objective":
         threshold["objective"]["minimum_precision"] = 0.0
         hybrid["objective"]["minimum_precision"] = 0.0
-    else:
+    elif tamper == "gate":
         threshold["models"][0]["duplicate_by_language"][0]["selected_threshold"] = 0.0
+    else:
+        threshold["models"][0]["duplicate_by_language"][0]["selected_metrics"]["precision"] = 0.0
     hybrid["threshold_selection_digest"] = selection_digest(threshold)
     models = [item["model"] for item in threshold["models"]]
     with pytest.raises(ValueError, match=message):
         validate_checked_report(result, load_projects(), models)
 
 
-@pytest.mark.parametrize("tamper", ["digest", "timing", "execution", "identity"])
+@pytest.mark.parametrize(
+    "tamper", ["digest", "selection_digest", "timing", "execution", "identity", "dtype"]
+)
 def test_checked_calibration_result_rejects_tampered_provenance(tamper: str):
     result = read_json(DEFAULT_MANIFEST.parent / "calibration-results.json")
     projects = load_projects()
@@ -1138,11 +1143,34 @@ def test_checked_calibration_result_rejects_tampered_provenance(tamper: str):
     first_report = first_project["reports"]["gte-modernbert-base/cpu"]
     if tamper == "digest":
         result["measurement_digests"]["ledger/gte-modernbert-base/cpu"] = "forged-digest"
+    elif tamper == "selection_digest":
+        result["threshold_selection"]["measurement_digests"]["ledger/gte-modernbert-base/cpu"] = (
+            "0" * 64
+        )
+        result["hybrid_selection"]["threshold_selection_digest"] = selection_digest(
+            result["threshold_selection"]
+        )
     elif tamper == "timing":
         first_report["timing_seconds"]["duplicate"] = True
     elif tamper == "execution":
         first_report["execution"]["duplicate"]["cache_hit_rows"] = 1
-    else:
+    elif tamper == "identity":
         first_report["device"] = "mps"
+    else:
+        first_report["inference_dtype"] = "float16"
     with pytest.raises(ValueError, match="checked"):
         validate_checked_report(result, projects, models)
+
+
+@pytest.mark.parametrize("tamper", ["schema", "arithmetic"])
+def test_checked_calibration_result_rejects_forged_report_metrics(tamper: str):
+    result = read_json(DEFAULT_MANIFEST.parent / "calibration-results.json")
+    models = [item["model"] for item in result["threshold_selection"]["models"]]
+    duplicate = result["projects"][0]["reports"]["gte-modernbert-base/cpu"]["duplicate"]
+    if tamper == "schema":
+        result["projects"][0]["reports"]["gte-modernbert-base/cpu"]["duplicate"] = {"forged": True}
+    else:
+        duplicate["published"]["precision"] = 0.0
+
+    with pytest.raises(ValueError, match="checked|duplicate|metrics"):
+        validate_checked_report(result, load_projects(), models)

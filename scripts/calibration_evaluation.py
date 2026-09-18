@@ -29,11 +29,240 @@ MINIMUM_SELECTION_PRECISION = 0.5
 SELECTION_SCHEMA_VERSION = 4
 CHECKED_REPORT_SCHEMA_VERSION = 4
 _SHA256_HEX = re.compile(r"[0-9a-f]{64}")
+_JUDGMENT_METRIC_KEYS = {
+    "tp",
+    "fp",
+    "fn",
+    "precision",
+    "judged_only_precision",
+    "recall",
+    "f1",
+    "ambiguous_predictions",
+    "unjudged_predictions",
+}
+_DUPLICATE_TIERS = {
+    "exact",
+    "traditional_near",
+    "hybrid_confirmed",
+    "semantic_high_confidence",
+    "semantic_review",
+}
 
 
 def _is_finite_number(value: Any) -> bool:
     """Return whether one JSON scalar is a finite non-boolean number."""
     return isinstance(value, int | float) and not isinstance(value, bool) and math.isfinite(value)
+
+
+def _score_ratios(tp: int, fp: int, fn: int) -> tuple[float, float, float]:
+    """Recompute precision, recall, and F1 from nonnegative confusion counts."""
+    precision = tp / (tp + fp) if tp + fp else 0.0
+    recall = tp / (tp + fn) if tp + fn else 0.0
+    f1 = 2 * precision * recall / (precision + recall) if precision + recall else 0.0
+    return precision, recall, f1
+
+
+def _validate_judgment_metrics(
+    payload: Any,
+    label: str,
+    *,
+    extra_keys: set[str] | None = None,
+) -> None:
+    """Validate one TP/FP/FN metric block and recompute every stored ratio."""
+    extras = extra_keys or set()
+    if not isinstance(payload, dict) or set(payload) != _JUDGMENT_METRIC_KEYS | extras:
+        raise ValueError(f"{label} has an invalid metric schema")
+    for field in ("tp", "fp", "fn", "ambiguous_predictions", "unjudged_predictions"):
+        if type(payload[field]) is not int or payload[field] < 0:
+            raise ValueError(f"{label} has invalid metric counts")
+    precision, recall, f1 = _score_ratios(payload["tp"], payload["fp"], payload["fn"])
+    expected = {
+        "precision": precision,
+        "judged_only_precision": precision,
+        "recall": recall,
+        "f1": f1,
+    }
+    if any(
+        not _is_finite_number(payload[field])
+        or not 0.0 <= payload[field] <= 1.0
+        or not math.isclose(payload[field], value, rel_tol=0.0, abs_tol=1e-12)
+        for field, value in expected.items()
+    ):
+        raise ValueError(f"{label} has inconsistent derived metrics")
+
+
+def _prediction_count(payload: dict[str, Any]) -> int:
+    """Return the number of predictions represented by one judgment metric block."""
+    return (
+        payload["tp"]
+        + payload["fp"]
+        + payload["ambiguous_predictions"]
+        + payload["unjudged_predictions"]
+    )
+
+
+def _validate_checked_duplicate_report(payload: Any, label: str) -> None:
+    """Validate the complete duplicate-report schema and tier accounting."""
+    metric_fields = {"published", "visible", "deterministic", "semantic_eligible"}
+    if not isinstance(payload, dict) or set(payload) != metric_fields | {"tiers"}:
+        raise ValueError(f"{label} has an invalid duplicate report schema")
+    for field in metric_fields:
+        _validate_judgment_metrics(payload[field], f"{label} {field}")
+
+    tiers = payload["tiers"]
+    if (
+        not isinstance(tiers, dict)
+        or not set(tiers) <= _DUPLICATE_TIERS
+        or any(type(count) is not int or count < 0 for count in tiers.values())
+    ):
+        raise ValueError(f"{label} has invalid duplicate tier counts")
+    if sum(tiers.values()) != _prediction_count(payload["published"]):
+        raise ValueError(f"{label} duplicate tiers do not match published findings")
+    if sum(
+        count for tier, count in tiers.items() if tier != "semantic_review"
+    ) != _prediction_count(payload["visible"]):
+        raise ValueError(f"{label} duplicate tiers do not match visible findings")
+    if tiers.get("semantic_high_confidence", 0) + tiers.get(
+        "semantic_review", 0
+    ) != _prediction_count(payload["semantic_eligible"]):
+        raise ValueError(f"{label} duplicate tiers do not match semantic findings")
+
+
+def _validate_checked_search_report(payload: Any, label: str, expected_threshold: float) -> None:
+    """Validate one checked search summary and recompute its derived ratios."""
+    expected_keys = {"threshold", "tp", "fp", "fn", "precision", "recall", "f1", "no_result"}
+    if not isinstance(payload, dict) or set(payload) != expected_keys:
+        raise ValueError(f"{label} has an invalid search report schema")
+    if (
+        not _is_finite_number(payload["threshold"])
+        or payload["threshold"] != expected_threshold
+        or any(
+            type(payload[field]) is not int or payload[field] < 0 for field in ("tp", "fp", "fn")
+        )
+    ):
+        raise ValueError(f"{label} has invalid search report values")
+    precision, recall, f1 = _score_ratios(payload["tp"], payload["fp"], payload["fn"])
+    if any(
+        not _is_finite_number(payload[field])
+        or not 0.0 <= payload[field] <= 1.0
+        or not math.isclose(payload[field], value, rel_tol=0.0, abs_tol=1e-12)
+        for field, value in {"precision": precision, "recall": recall, "f1": f1}.items()
+    ):
+        raise ValueError(f"{label} has inconsistent search metrics")
+
+    no_result = payload["no_result"]
+    if (
+        not isinstance(no_result, dict)
+        or set(no_result) != {"clean", "total", "violations"}
+        or type(no_result["clean"]) is not int
+        or type(no_result["total"]) is not int
+        or not 0 <= no_result["clean"] <= no_result["total"]
+        or not isinstance(no_result["violations"], list)
+        or any(not isinstance(item, str) or not item for item in no_result["violations"])
+        or len(set(no_result["violations"])) != len(no_result["violations"])
+        or no_result["total"] - no_result["clean"] != len(no_result["violations"])
+    ):
+        raise ValueError(f"{label} has invalid no-result search evidence")
+
+
+def _validate_search_selection_metrics(payload: Any, label: str) -> None:
+    """Validate a threshold sweep's compact search metric row."""
+    expected_keys = {
+        "threshold",
+        "tp",
+        "fp",
+        "fn",
+        "precision",
+        "recall",
+        "f1",
+        "no_result_clean",
+        "no_result_total",
+    }
+    if not isinstance(payload, dict) or set(payload) != expected_keys:
+        raise ValueError(f"{label} has an invalid search metric schema")
+    if (
+        not _is_finite_number(payload["threshold"])
+        or any(
+            type(payload[field]) is not int or payload[field] < 0 for field in ("tp", "fp", "fn")
+        )
+        or type(payload["no_result_clean"]) is not int
+        or type(payload["no_result_total"]) is not int
+        or not 0 <= payload["no_result_clean"] <= payload["no_result_total"]
+    ):
+        raise ValueError(f"{label} has invalid search metric values")
+    precision, recall, f1 = _score_ratios(payload["tp"], payload["fp"], payload["fn"])
+    if any(
+        not _is_finite_number(payload[field])
+        or not 0.0 <= payload[field] <= 1.0
+        or not math.isclose(payload[field], value, rel_tol=0.0, abs_tol=1e-12)
+        for field, value in {"precision": precision, "recall": recall, "f1": f1}.items()
+    ):
+        raise ValueError(f"{label} has inconsistent search metrics")
+
+
+def _judgment_metric_core(payload: dict[str, Any]) -> dict[str, Any]:
+    """Return the common judgment fields from a validated metric payload."""
+    return {key: payload[key] for key in _JUDGMENT_METRIC_KEYS}
+
+
+def _combine_judgment_metrics(payloads: list[dict[str, Any]]) -> dict[str, Any]:
+    """Aggregate validated judgment metrics and recompute their ratios."""
+    counts = {
+        field: sum(payload[field] for payload in payloads)
+        for field in ("tp", "fp", "fn", "ambiguous_predictions", "unjudged_predictions")
+    }
+    precision, recall, f1 = _score_ratios(counts["tp"], counts["fp"], counts["fn"])
+    return {
+        **counts,
+        "precision": precision,
+        "judged_only_precision": precision,
+        "recall": recall,
+        "f1": f1,
+    }
+
+
+def _semantic_visible_metrics(duplicate_report: dict[str, Any]) -> dict[str, Any]:
+    """Remove traditionally recovered predictions from a visible report block."""
+    visible = duplicate_report["visible"]
+    deterministic = duplicate_report["deterministic"]
+    counts = {
+        "tp": visible["tp"] - deterministic["tp"],
+        "fp": visible["fp"] - deterministic["fp"],
+        "fn": visible["fn"],
+        "ambiguous_predictions": visible["ambiguous_predictions"]
+        - deterministic["ambiguous_predictions"],
+        "unjudged_predictions": visible["unjudged_predictions"]
+        - deterministic["unjudged_predictions"],
+    }
+    if any(value < 0 for value in counts.values()):
+        raise ValueError("checked deterministic findings are not a subset of visible findings")
+    precision, recall, f1 = _score_ratios(counts["tp"], counts["fp"], counts["fn"])
+    return {
+        **counts,
+        "precision": precision,
+        "judged_only_precision": precision,
+        "recall": recall,
+        "f1": f1,
+    }
+
+
+def _combine_search_metrics(payloads: list[dict[str, Any]], threshold: float) -> dict[str, Any]:
+    """Aggregate validated checked search reports into a selection metric row."""
+    tp = sum(payload["tp"] for payload in payloads)
+    fp = sum(payload["fp"] for payload in payloads)
+    fn = sum(payload["fn"] for payload in payloads)
+    precision, recall, f1 = _score_ratios(tp, fp, fn)
+    return {
+        "threshold": threshold,
+        "tp": tp,
+        "fp": fp,
+        "fn": fn,
+        "precision": precision,
+        "recall": recall,
+        "f1": f1,
+        "no_result_clean": sum(payload["no_result"]["clean"] for payload in payloads),
+        "no_result_total": sum(payload["no_result"]["total"] for payload in payloads),
+    }
 
 
 def near_best_f1(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -292,6 +521,8 @@ def validate_shipped_selection_profiles(
     for model in expected_models:
         profile = resolve_model_profile(model)
         threshold = thresholds[model]
+        if set(threshold) != {"model", "duplicate_by_language", "search"}:
+            raise ValueError(f"{model}: threshold selection has an invalid schema")
         duplicate_entries = threshold.get("duplicate_by_language")
         duplicate_gates = _selection_gate_map(duplicate_entries, "selected_threshold", "threshold")
         expected_duplicate_gates = {
@@ -306,15 +537,76 @@ def validate_shipped_selection_profiles(
             or any(item.get("selection_ready") is not True for item in duplicate_entries)
         ):
             raise ValueError(f"{model}: selected calibration gates do not match shipped defaults")
+        for item in duplicate_entries:
+            language = item["language"]
+            expected_gate = expected_duplicate_gates[language]
+            if set(item) != {
+                "language",
+                "project",
+                "current_threshold",
+                "current_metrics",
+                "current_difficulty_recall",
+                "selected_threshold",
+                "selected_metrics",
+                "selection_ready",
+                "selected_difficulty_recall",
+                "positive_scores",
+                "negative_scores",
+                "unjudged_above_selected",
+            } or not _same_gate(item.get("current_threshold"), expected_gate):
+                raise ValueError(f"{model}: threshold selection has an invalid schema")
+            for field in ("current_metrics", "selected_metrics"):
+                metrics_payload = item.get(field)
+                _validate_judgment_metrics(
+                    metrics_payload,
+                    f"{model} {language} {field}",
+                    extra_keys={"threshold", "predicted"},
+                )
+                if (
+                    not _same_gate(metrics_payload["threshold"], expected_gate)
+                    or type(metrics_payload["predicted"]) is not int
+                    or metrics_payload["predicted"] != _prediction_count(metrics_payload)
+                ):
+                    raise ValueError(f"{model} {language} {field} is inconsistent")
 
         search = threshold.get("search")
-        if not isinstance(search, dict) or not _same_gate(
-            search.get("selected_threshold"), profile.default_search_threshold
+        if (
+            not isinstance(search, dict)
+            or set(search)
+            != {
+                "current_threshold",
+                "current_metrics",
+                "selected_threshold",
+                "selected_metrics",
+                "selection_window",
+            }
+            or not _same_gate(search.get("selected_threshold"), profile.default_search_threshold)
+            or not _same_gate(search.get("current_threshold"), profile.default_search_threshold)
         ):
             raise ValueError(f"{model}: selected calibration gates do not match shipped defaults")
+        for field in ("current_metrics", "selected_metrics"):
+            _validate_search_selection_metrics(search.get(field), f"{model} search {field}")
+            if search[field]["threshold"] != profile.default_search_threshold:
+                raise ValueError(f"{model}: search selection metrics use another threshold")
+        window = search.get("selection_window")
+        if not isinstance(window, list):
+            raise ValueError(  # noqa: TRY004 -- checked JSON is one validation failure type
+                f"{model}: search selection window must be a list"
+            )
+        for index, row in enumerate(window):
+            _validate_search_selection_metrics(row, f"{model} search window row {index}")
 
         hybrid = hybrids[model]
+        if set(hybrid) != {
+            "model",
+            "admission_thresholds",
+            "current",
+            "selected",
+            "promotion_by_language",
+        }:
+            raise ValueError(f"{model}: hybrid selection has an invalid schema")
         admissions = hybrid.get("admission_thresholds")
+        current = hybrid.get("current")
         selected = hybrid.get("selected")
         promotion_entries = hybrid.get("promotion_by_language")
         promotion_gates = _selection_gate_map(promotion_entries, "selected_gate", "hybrid")
@@ -324,7 +616,31 @@ def validate_shipped_selection_profiles(
         }
         if (
             admissions != expected_duplicate_gates
+            or not isinstance(current, dict)
+            or set(current)
+            != {
+                "admission_thresholds",
+                "weak_identifier_jaccard_min",
+                "statement_ratio_min",
+                "metrics",
+            }
+            or current.get("admission_thresholds") != expected_duplicate_gates
+            or not _same_gate(
+                current.get("weak_identifier_jaccard_min"),
+                profile.hybrid_weak_identifier_jaccard_min,
+            )
+            or not _same_gate(
+                current.get("statement_ratio_min"), profile.hybrid_statement_ratio_min
+            )
             or not isinstance(selected, dict)
+            or set(selected)
+            != {
+                "weak_identifier_jaccard_min",
+                "statement_ratio_min",
+                "metrics",
+                "corroboration_only_metrics",
+                "selection_ready",
+            }
             or not _same_gate(
                 selected.get("weak_identifier_jaccard_min"),
                 profile.hybrid_weak_identifier_jaccard_min,
@@ -341,6 +657,34 @@ def validate_shipped_selection_profiles(
             or any(item.get("selection_ready") is not True for item in promotion_entries)
         ):
             raise ValueError(f"{model}: selected calibration gates do not match shipped defaults")
+        _validate_judgment_metrics(current.get("metrics"), f"{model} current hybrid metrics")
+        _validate_judgment_metrics(selected.get("metrics"), f"{model} selected hybrid metrics")
+        _validate_judgment_metrics(
+            selected.get("corroboration_only_metrics"),
+            f"{model} corroboration-only hybrid metrics",
+            extra_keys={"weak_identifier_jaccard_min", "statement_ratio_min"},
+        )
+        corroboration = selected["corroboration_only_metrics"]
+        if not _same_gate(
+            corroboration["weak_identifier_jaccard_min"],
+            profile.hybrid_weak_identifier_jaccard_min,
+        ) or not _same_gate(
+            corroboration["statement_ratio_min"], profile.hybrid_statement_ratio_min
+        ):
+            raise ValueError(f"{model}: corroboration-only metrics use another hybrid policy")
+        for item in promotion_entries:
+            language = item["language"]
+            if set(item) != {
+                "language",
+                "current_gate",
+                "selected_gate",
+                "selected_metrics",
+                "selection_ready",
+            } or not _same_gate(item.get("current_gate"), expected_promotion_gates[language]):
+                raise ValueError(f"{model}: hybrid promotion selection has an invalid schema")
+            _validate_judgment_metrics(
+                item.get("selected_metrics"), f"{model} {language} promotion metrics"
+            )
 
 
 def judgments(project: Project) -> dict[tuple[str, str], dict[str, Any]]:
@@ -657,6 +1001,65 @@ def full_report(project: Project, measurement: dict[str, Any]) -> dict[str, Any]
     }
 
 
+def _validate_checked_selection_outcomes(
+    threshold_selection: dict[str, Any],
+    hybrid_selection: dict[str, Any],
+    records_by_id: dict[str, dict[str, Any]],
+    profile_keys: tuple[str, ...],
+) -> None:
+    """Bind embedded selection metrics to the checked CPU report summaries."""
+    threshold_models = _selection_models(threshold_selection, "threshold")
+    hybrid_models = _selection_models(hybrid_selection, "hybrid")
+    records_by_language: dict[str, list[dict[str, Any]]] = {}
+    for record in records_by_id.values():
+        records_by_language.setdefault(record["language"], []).append(record)
+
+    for model in profile_keys:
+        profile = resolve_model_profile(model)
+        threshold = threshold_models[model]
+        for entry in threshold["duplicate_by_language"]:
+            project_id = entry["project"]
+            record = records_by_id.get(project_id)
+            if record is None or record["language"] != entry["language"]:
+                raise ValueError(f"{model}: threshold selection names an unknown project")
+            expected = record["reports"][f"{model}/cpu"]["duplicate"]["semantic_eligible"]
+            for field in ("current_metrics", "selected_metrics"):
+                if _judgment_metric_core(entry[field]) != expected:
+                    raise ValueError(
+                        f"{model}: threshold selection metrics differ from checked CPU reports"
+                    )
+
+        search_reports = [
+            record["reports"][f"{model}/cpu"]["search"] for record in records_by_id.values()
+        ]
+        expected_search = _combine_search_metrics(search_reports, profile.default_search_threshold)
+        for field in ("current_metrics", "selected_metrics"):
+            if threshold["search"][field] != expected_search:
+                raise ValueError(
+                    f"{model}: search selection metrics differ from checked CPU reports"
+                )
+
+        hybrid = hybrid_models[model]
+        visible_by_language = {
+            language: _combine_judgment_metrics(
+                [
+                    _semantic_visible_metrics(record["reports"][f"{model}/cpu"]["duplicate"])
+                    for record in records
+                ]
+            )
+            for language, records in records_by_language.items()
+        }
+        for entry in hybrid["promotion_by_language"]:
+            if entry["selected_metrics"] != visible_by_language.get(entry["language"]):
+                raise ValueError(f"{model}: promotion metrics differ from checked CPU reports")
+        expected_visible = _combine_judgment_metrics(list(visible_by_language.values()))
+        if (
+            hybrid["current"]["metrics"] != expected_visible
+            or hybrid["selected"]["metrics"] != expected_visible
+        ):
+            raise ValueError(f"{model}: hybrid metrics differ from checked CPU reports")
+
+
 def validate_checked_report(
     payload: dict[str, Any], projects: list[Project], models: list[str]
 ) -> None:
@@ -690,6 +1093,22 @@ def validate_checked_report(
         raise ValueError(  # noqa: TRY004 -- checked JSON is one validation failure type
             "checked calibration report selections must be objects"
         )
+    if set(threshold_selection) != {
+        "schema_version",
+        "objective",
+        "input_context",
+        "grids",
+        "models",
+        "measurement_digests",
+    } or set(hybrid_selection) != {
+        "schema_version",
+        "objective",
+        "input_context",
+        "threshold_selection_digest",
+        "models",
+        "measurement_digests",
+    }:
+        raise ValueError("checked calibration report selections have an invalid schema")
     validate_selection_contract(threshold_selection)
     validate_selection_contract(hybrid_selection)
     validate_selection_context(threshold_selection, selection_projects, list(profile_keys))
@@ -722,6 +1141,15 @@ def validate_checked_report(
         )
     ):
         raise ValueError("checked calibration report has invalid measurement digests")
+    cpu_digests = {key: value for key, value in digests.items() if key.endswith("/cpu")}
+    for label, selection in (
+        ("threshold", threshold_selection),
+        ("hybrid", hybrid_selection),
+    ):
+        if selection.get("measurement_digests") != cpu_digests:
+            raise ValueError(
+                f"checked calibration report {label} selection has mismatched measurement digests"
+            )
 
     records = payload.get("projects")
     if not isinstance(records, list) or any(not isinstance(record, dict) for record in records):
@@ -761,8 +1189,12 @@ def validate_checked_report(
         if not isinstance(reports, dict) or set(reports) != expected_report_keys:
             raise ValueError(f"{project_id}: checked report inventory is incomplete")
         for model in profile_keys:
+            profile = resolve_model_profile(model)
             for device in ("cpu", "mps"):
                 report = reports[f"{model}/{device}"]
+                expected_dtype = str(
+                    semantic._resolve_model_dtype(profile.family, device)
+                ).removeprefix("torch.")
                 if not isinstance(report, dict):
                     raise ValueError(  # noqa: TRY004 -- checked JSON is one validation failure type
                         f"{project_id}: checked report entry is not an object"
@@ -787,13 +1219,20 @@ def validate_checked_report(
                     or report.get("device") != device
                     or type(report.get("batch_size")) is not int
                     or report["batch_size"] <= 0
-                    or not isinstance(report.get("inference_dtype"), str)
-                    or not report["inference_dtype"]
+                    or report.get("inference_dtype") != expected_dtype
                     or report.get("replay_parity") is not True
                     or not isinstance(report.get("duplicate"), dict)
                     or not isinstance(report.get("search"), dict)
                 ):
                     raise ValueError(f"{project_id}: checked report identity is invalid")
+                _validate_checked_duplicate_report(
+                    report["duplicate"], f"{project_id}/{model}/{device}"
+                )
+                _validate_checked_search_report(
+                    report["search"],
+                    f"{project_id}/{model}/{device}",
+                    profile.default_search_threshold,
+                )
 
                 runtime = report.get("runtime_versions")
                 if (
@@ -863,8 +1302,35 @@ def validate_checked_report(
                         value is not None and (not _is_finite_number(value) or value < 0)
                         for value in (summary["p95"], summary["max"])
                     )
+                    or (summary["count"] == 0) != (summary["p95"] is None)
+                    or (summary["count"] == 0) != (summary["max"] is None)
+                    or (
+                        summary["p95"] is not None
+                        and summary["max"] is not None
+                        and summary["p95"] > summary["max"]
+                    )
                 ):
                     raise ValueError(f"{project_id}: invalid checked {model} {field}")
+            for field in ("duplicate_decision_changes", "search_decision_changes"):
+                changes = comparison[field]
+                serialized = [tuple(item) for item in changes if isinstance(item, list)]
+                if (
+                    len(serialized) != len(changes)
+                    or any(
+                        len(item) != 2
+                        or any(not isinstance(value, str) or not value for value in item)
+                        for item in serialized
+                    )
+                    or len(set(serialized)) != len(serialized)
+                ):
+                    raise ValueError(f"{project_id}: invalid checked {model} {field}")
+
+    _validate_checked_selection_outcomes(
+        threshold_selection,
+        hybrid_selection,
+        records_by_id,
+        profile_keys,
+    )
 
     if not report_runtimes or any(runtime != report_runtimes[0] for runtime in report_runtimes[1:]):
         raise ValueError("checked calibration report has mixed runtime provenance")

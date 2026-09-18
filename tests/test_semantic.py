@@ -562,6 +562,16 @@ def test_direct_embeddings_are_normalized_before_duplicate_scoring(tmp_path: Pat
     assert find_semantic_duplicates(units, embeddings, threshold=0.95) == []
 
 
+def test_near_unit_direct_embeddings_are_still_normalized_before_scoring(tmp_path: Path) -> None:
+    units = extract_arithmetic_units(tmp_path)
+    second_component = math.sqrt(1.0 - 0.9**2)
+    embeddings = np.array([[1.0000005, 0.0], [0.9, second_component]], dtype=np.float32)
+
+    # A tolerance-based unit-vector shortcut would preserve the first row's
+    # scale and admit this pair just above the caller's exact decision boundary.
+    assert find_semantic_duplicates(units, embeddings, threshold=0.9000003) == []
+
+
 def test_direct_embeddings_are_normalized_before_query_scoring(tmp_path: Path, monkeypatch) -> None:
     units = extract_arithmetic_units(tmp_path)
     embeddings = np.array([[5.0, 0.0], [1.0, 0.5]], dtype=np.float32)
@@ -3271,7 +3281,8 @@ def test_vectorized_pair_scan_preserves_full_width_float32_scores_and_order() ->
     threshold = 0.97
 
     # This is the product shape used by the original scalar candidate walk.
-    full_width_scores = embeddings[500:] @ embeddings.T
+    canonical = semantic.canonicalize_embeddings(embeddings, expected_rows=len(units))
+    full_width_scores = canonical[500:] @ canonical.T
 
     expected: list[tuple[tuple[str, str], float]] = []
     for local_idx, group_i in enumerate(range(500, 520)):

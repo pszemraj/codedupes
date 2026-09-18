@@ -485,18 +485,8 @@ def _validate_precomputed_embeddings(units: Sequence[CodeUnit], embeddings: obje
         canonical = canonicalize_embeddings(matrix, expected_rows=len(units))
     except InvalidEmbeddingError as exc:
         raise ValueError(f"embeddings must contain finite, nonzero rows: {exc}") from exc
-    # Fresh embeddings already arrive as contiguous float32 unit vectors. Keep
-    # that matrix (and ndarray subclasses used by callers) when normalization
-    # would be a no-op apart from float32 rounding; otherwise use the shared
-    # canonicalization path so raw backend vectors cannot turn dot products
-    # into scale-dependent pseudo-cosines.
-    norms = np.linalg.norm(np.asarray(matrix, dtype=np.float32), axis=1)
-    if (
-        matrix.dtype == np.float32
-        and matrix.flags.c_contiguous
-        and np.allclose(norms, 1.0, rtol=0.0, atol=1e-6)
-    ):
-        return matrix
+    if type(matrix) is not np.ndarray:
+        return canonical.view(type(matrix))
     return canonical
 
 
