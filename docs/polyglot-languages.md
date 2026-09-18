@@ -148,7 +148,7 @@ Run `codedupes info --verbose` to inspect the required and installed package ver
 Treat every grammar update as a behavioral change:
 
 1. Change one exact package pin in `codedupes.languages.registry` and `pyproject.toml` (tests enforce that both match).
-2. Construct its parser and run every extraction fixture (`pytest -m grammar`), including the golden structural-hash values.
+2. Construct its parser and run every extraction fixture (`pytest -m "grammar and not toolchain"`), including the golden structural-hash values. The separately marked toolchain checks exercise calibration applications rather than parser extraction.
 3. Review changes in unit names, ranges, native kinds, statement counts, and fingerprints.
 4. Run parser-independent normalization tests.
 5. Run the [calibration validator and fresh measurements](hybrid-tuning.md) for both models on CPU and real MPS. Source or extraction changes make the existing measurement tables stale, so regenerate them and review score and decision drift before considering any [duplicate gate](analysis-defaults.md#semantic-duplicate-gate-defaults) change.

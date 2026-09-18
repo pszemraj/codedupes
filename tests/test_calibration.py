@@ -756,6 +756,18 @@ def test_measurement_provenance_rejects_forged_runtime_and_fast_math(monkeypatch
         "search": execution.copy(),
     }
     validate_measurement_provenance(project, measurement)
+
+    # Captured gates audit the analyzer run but do not affect the raw vectors or
+    # scores, so a threshold-only policy edit must not force model re-inference.
+    measurement["metadata"]["captured_profile"]["semantic_threshold"] = 0.86
+    validate_measurement_provenance(project, measurement)
+    measurement["metadata"]["captured_profile"]["semantic_threshold"] = 0.87
+
+    measurement["metadata"]["captured_profile"]["high_gate"] = 0.5
+    with pytest.raises(ValueError, match="invalid captured threshold profile"):
+        validate_measurement_provenance(project, measurement)
+    measurement["metadata"]["captured_profile"]["high_gate"] = 0.88
+
     recorded_runtime = measurement["metadata"]["runtime_versions"].copy()
     measurement["metadata"]["runtime_versions"]["torch"] = "forged"
     with pytest.raises(ValueError, match="provenance does not match"):
@@ -828,6 +840,21 @@ def test_measurement_identity_ignores_generated_files_but_tracks_source(tmp_path
     module.write_text("def example(value):\n    return value + 1\n")
     (source / "additional.py").write_text("def additional(value):\n    return value * 2\n")
     assert measurement_fingerprint(project, "gte-modernbert-base", "cpu") != fingerprint
+
+
+def test_measurement_identity_ignores_threshold_only_profile_edits(monkeypatch):
+    project = load_projects(project_ids=["ledger"])[0]
+    original = measurement_fingerprint(project, "gte-modernbert-base", "cpu")
+    profile = resolve_model_profile("gte-modernbert-base")
+    edited_profile = replace(
+        profile,
+        language_semantic_thresholds=profile.language_semantic_thresholds | {"python": 0.86},
+    )
+    monkeypatch.setattr(
+        "scripts.calibration_measurements.resolve_model_profile", lambda _model: edited_profile
+    )
+
+    assert measurement_fingerprint(project, "gte-modernbert-base", "cpu") == original
 
 
 @pytest.mark.parametrize("change", ["rename", "retarget", "remove"])
@@ -1251,6 +1278,7 @@ def test_checked_selection_metrics_ignore_evaluation_report_records():
         ("scores", "score summary"),
         ("difficulty", "difficulty schema"),
         ("unjudged", "invalid unresolved pair"),
+        ("window", "search selection window"),
         ("corroboration", "positive-pair denominator"),
     ],
 )
@@ -1281,6 +1309,8 @@ def test_checked_calibration_result_rejects_tampered_embedded_selections(tamper:
         threshold["models"][0]["duplicate_by_language"][0]["unjudged_above_selected"] = [
             ["a", "b", 2.0]
         ]
+    elif tamper == "window":
+        threshold["models"][0]["search"]["selection_window"] = []
     else:
         corroboration = hybrid["models"][0]["selected"]["corroboration_only_metrics"]
         corroboration.update(

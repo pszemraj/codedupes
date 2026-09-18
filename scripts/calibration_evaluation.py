@@ -59,6 +59,7 @@ F1_RECALL_TOLERANCE = 0.005
 MINIMUM_SELECTION_PRECISION = 0.5
 SELECTION_SCHEMA_VERSION = 4
 CHECKED_REPORT_SCHEMA_VERSION = 5
+SEARCH_SELECTION_WINDOW_RADIUS = 5
 _SHA256_HEX = re.compile(r"[0-9a-f]{64}")
 _JUDGMENT_METRIC_KEYS = {
     "tp",
@@ -533,12 +534,25 @@ def validate_measurement_provenance(project: Project, measurement: dict[str, Any
     expected_dtype = str(semantic._resolve_model_dtype(profile.family, device)).removeprefix(
         "torch."
     )
-    expected_profile = {
-        "semantic_threshold": profile.semantic_threshold_for_language(project.spec["languages"][0]),
-        "weak_identifier_jaccard_min": profile.hybrid_weak_identifier_jaccard_min,
-        "statement_ratio_min": profile.hybrid_statement_ratio_min,
-        "high_gate": profile.high_confidence_threshold_for_language(project.spec["languages"][0]),
+    captured_profile = metadata.get("captured_profile")
+    profile_fields = {
+        "semantic_threshold",
+        "weak_identifier_jaccard_min",
+        "statement_ratio_min",
+        "high_gate",
     }
+    if not isinstance(captured_profile, dict) or set(captured_profile) != profile_fields:
+        raise ValueError(f"{project.id}: invalid captured threshold profile")
+    for field in profile_fields - {"high_gate"}:
+        value = captured_profile[field]
+        if not _is_finite_number(value) or not 0.0 <= value <= 1.0:
+            raise ValueError(f"{project.id}: invalid captured threshold profile")
+    high_gate = captured_profile["high_gate"]
+    if high_gate is not None and (
+        not _is_finite_number(high_gate)
+        or not captured_profile["semantic_threshold"] <= high_gate <= 1.0
+    ):
+        raise ValueError(f"{project.id}: invalid captured threshold profile")
     expected_math_policy = semantic._mps_fast_math_variant(device) or "standard"
     if (
         metadata["canonical_model"] != profile.canonical_name
@@ -548,7 +562,6 @@ def validate_measurement_provenance(project: Project, measurement: dict[str, Any
         or expected_math_policy != "standard"
         or metadata["runtime_versions"] != semantic.get_semantic_runtime_versions()
         or metadata["inference_dtype"] != expected_dtype
-        or metadata["captured_profile"] != expected_profile
     ):
         raise ValueError(f"{project.id}: measurement provenance does not match current policy")
     if set(metadata["timing_seconds"]) != {"duplicate", "search"} or any(
@@ -771,8 +784,15 @@ def validate_shipped_selection_profiles(
             )
         for index, row in enumerate(window):
             _validate_search_selection_metrics(row, f"{model} search window row {index}")
-            if row["threshold"] not in grids["search"]:
-                raise ValueError(f"{model}: search window contains an out-of-grid threshold")
+        selected_index = grids["search"].index(search["selected_threshold"])
+        window_start = max(0, selected_index - SEARCH_SELECTION_WINDOW_RADIUS)
+        expected_thresholds = grids["search"][
+            window_start : selected_index + SEARCH_SELECTION_WINDOW_RADIUS + 1
+        ]
+        if [row["threshold"] for row in window] != expected_thresholds:
+            raise ValueError(f"{model}: search selection window does not match the grid")
+        if window[selected_index - window_start] != search["selected_metrics"]:
+            raise ValueError(f"{model}: search selection window omits the selected metrics")
 
         hybrid = hybrids[model]
         if set(hybrid) != {

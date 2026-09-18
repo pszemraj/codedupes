@@ -19,6 +19,7 @@ try:
         write_json,
     )
     from .calibration_evaluation import (
+        SEARCH_SELECTION_WINDOW_RADIUS,
         SELECTION_SCHEMA_VERSION,
         development_projects,
         judgments,
@@ -40,6 +41,7 @@ except ImportError:
         write_json,
     )
     from calibration_evaluation import (
+        SEARCH_SELECTION_WINDOW_RADIUS,
         SELECTION_SCHEMA_VERSION,
         development_projects,
         judgments,
@@ -96,12 +98,12 @@ def _score_summary(values: list[float]) -> dict[str, float | int | None]:
     }
 
 
-def _selection_window(
-    rows: list[dict[str, Any]], selected: dict[str, Any], radius: int = 5
-) -> list[dict[str, Any]]:
+def _selection_window(rows: list[dict[str, Any]], selected: dict[str, Any]) -> list[dict[str, Any]]:
     """Return nearby sweep rows so a checked selection remains auditable."""
     selected_index = rows.index(selected)
-    return rows[max(0, selected_index - radius) : selected_index + radius + 1]
+    start = max(0, selected_index - SEARCH_SELECTION_WINDOW_RADIUS)
+    stop = selected_index + SEARCH_SELECTION_WINDOW_RADIUS + 1
+    return rows[start:stop]
 
 
 def _difficulty_recall(
