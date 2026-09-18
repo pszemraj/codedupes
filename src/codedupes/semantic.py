@@ -441,6 +441,8 @@ def canonicalize_embeddings(
         raise InvalidEmbeddingError(f"Expected {expected_rows} rows, got {matrix.shape[0]}")
     if expected_dim is not None and matrix.shape[1] != expected_dim:
         raise InvalidEmbeddingError(f"Expected dimension {expected_dim}, got {matrix.shape[1]}")
+    if matrix.shape[0] and matrix.shape[1] == 0:
+        raise InvalidEmbeddingError("Embedding matrix has zero columns")
 
     if not np.isfinite(matrix).all():
         raise InvalidEmbeddingError(

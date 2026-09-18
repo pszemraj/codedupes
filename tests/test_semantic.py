@@ -528,6 +528,7 @@ def test_precomputed_embeddings_require_2d_row_alignment(
             "zero or invalid vector",
             id="zero-row",
         ),
+        pytest.param(np.empty((2, 0), dtype=np.float32), "zero columns", id="zero-width"),
     ],
 )
 def test_precomputed_embeddings_reject_invalid_rows_before_similarity_or_model_loading(
@@ -865,6 +866,11 @@ def test_find_semantic_duplicates_rechecks_threshold_after_numpy_prefilter(
             lambda _row_count: np.array([[1.0, 0.0]], dtype=np.float32),
             "rows",
             id="wrong-row-count",
+        ),
+        pytest.param(
+            lambda row_count: np.empty((row_count, 0), dtype=np.float32),
+            "zero columns",
+            id="zero-width",
         ),
     ],
 )
