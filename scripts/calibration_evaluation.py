@@ -19,7 +19,6 @@ from codedupes.semantic_profiles import resolve_model_profile
 
 try:
     from .calibration_contract import (
-        REPO,
         Project,
         ProjectAnalyzer,
         analyzer_config,
@@ -37,7 +36,6 @@ try:
     )
 except ImportError:
     from calibration_contract import (
-        REPO,
         Project,
         ProjectAnalyzer,
         analyzer_config,
@@ -57,9 +55,15 @@ except ImportError:
 
 F1_RECALL_TOLERANCE = 0.005
 MINIMUM_SELECTION_PRECISION = 0.5
-SELECTION_SCHEMA_VERSION = 4
-CHECKED_REPORT_SCHEMA_VERSION = 5
+# Selection code is intentionally versioned by behavior rather than by source
+# bytes. Bump this whenever selection or audit behavior changes.
+SELECTION_ALGORITHM_VERSION = 2
+SELECTION_SCHEMA_VERSION = 5
+CHECKED_REPORT_SCHEMA_VERSION = 6
 SEARCH_SELECTION_WINDOW_RADIUS = 5
+HYBRID_WEAK_GRID = (0.0, 0.05, 0.10, 0.15, 0.20, 0.30, 0.40)
+HYBRID_RATIO_GRID = (0.0, 0.20, 0.35, 0.50, 0.65, 0.80)
+HYBRID_PROMOTION_GATE_STEP = 0.01
 _SHA256_HEX = re.compile(r"[0-9a-f]{64}")
 _JUDGMENT_METRIC_KEYS = {
     "tp",
@@ -124,6 +128,21 @@ def _validate_judgment_metrics(
         for field, value in expected.items()
     ):
         raise ValueError(f"{label} has inconsistent derived metrics")
+
+
+def _validate_duplicate_selection_metrics(payload: Any, label: str) -> None:
+    """Validate one compact duplicate-admission sweep row."""
+    _validate_judgment_metrics(
+        payload,
+        label,
+        extra_keys={"threshold", "predicted"},
+    )
+    if (
+        not _is_finite_number(payload["threshold"])
+        or type(payload["predicted"]) is not int
+        or payload["predicted"] != _prediction_count(payload)
+    ):
+        raise ValueError(f"{label} is inconsistent")
 
 
 def _prediction_count(payload: dict[str, Any]) -> int:
@@ -425,12 +444,43 @@ def selection_digest(payload: Any) -> str:
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
 
 
+def _same_json_payload(actual: Any, expected: Any) -> bool:
+    """Compare JSON values without Python's bool-to-number equality coercion."""
+    try:
+        return selection_digest(actual) == selection_digest(expected)
+    except (TypeError, ValueError):
+        return False
+
+
 def selection_objective() -> dict[str, float | str]:
     """Return the exact, versioned objective used by both selection sweeps."""
     return {
         "primary": "f1",
         "minimum_precision": MINIMUM_SELECTION_PRECISION,
         "recall_preference_max_f1_loss": F1_RECALL_TOLERANCE,
+    }
+
+
+def hybrid_candidate_grids() -> dict[str, Any]:
+    """Return the value-level hybrid candidate policy used by the joint sweep."""
+    return {
+        "weak_identifier_jaccard_min": list(HYBRID_WEAK_GRID),
+        "statement_ratio_min": list(HYBRID_RATIO_GRID),
+        "promotion_gate": {
+            "start": "admission_threshold",
+            "stop": 1.0,
+            "step": HYBRID_PROMOTION_GATE_STEP,
+        },
+    }
+
+
+def selection_policy_identity() -> dict[str, Any]:
+    """Return stable selection values, excluding incidental implementation text."""
+    return {
+        "algorithm_version": SELECTION_ALGORITHM_VERSION,
+        "objective": selection_objective(),
+        "search_top_k": DEFAULT_TOP_K,
+        "hybrid_candidate_grids": hybrid_candidate_grids(),
     }
 
 
@@ -442,6 +492,12 @@ def validate_selection_contract(payload: dict[str, Any]) -> None:
         raise ValueError("selection has an unsupported schema version")
     if payload.get("objective") != selection_objective():
         raise ValueError("selection has a mismatched objective contract")
+
+
+def validate_hybrid_candidate_grids(payload: Any) -> None:
+    """Reject hybrid selections produced with a different candidate policy."""
+    if not _same_json_payload(payload, hybrid_candidate_grids()):
+        raise ValueError("hybrid selection has mismatched candidate grids")
 
 
 def support_files_digest(project: Project) -> str:
@@ -596,17 +652,7 @@ def selection_context(projects: list[Project], models: list[str]) -> dict[str, A
     """Bind selections to their policy, corpus scope, judgments, and measured inputs."""
     return {
         "batch_size": CALIBRATION_BATCH_SIZE,
-        "selection_policy": selection_digest(
-            {
-                path: (REPO / path).read_text()
-                for path in (
-                    "scripts/calibration_evaluation.py",
-                    "scripts/sweep_semantic_thresholds.py",
-                    "scripts/sweep_hybrid_gates.py",
-                    "src/codedupes/semantic_profiles.py",
-                )
-            }
-        ),
+        "selection_policy": selection_policy_identity(),
         "projects": {
             project.id: {
                 "annotations": selection_digest(project.annotations),
@@ -627,7 +673,7 @@ def validate_selection_context(
     payload: dict[str, Any], projects: list[Project], models: list[str]
 ) -> None:
     """Reject selections from another source, review state, model, or corpus scope."""
-    if payload.get("input_context") != selection_context(projects, models):
+    if not _same_json_payload(payload.get("input_context"), selection_context(projects, models)):
         raise ValueError("stale or mismatched selection inputs; rerun the selection sweeps")
 
 
@@ -657,6 +703,194 @@ def _same_gate(actual: Any, expected: float | None) -> bool:
     return actual is None if expected is None else _is_finite_number(actual) and actual == expected
 
 
+def _is_optional_gate(value: Any) -> bool:
+    """Return whether a compact candidate's optional promotion gate is valid."""
+    return value is None or (_is_finite_number(value) and 0.0 <= value <= 1.0)
+
+
+def _promotion_gate_grid(admission: float) -> set[float | None]:
+    """Return the exact promotion lattice used by the hybrid sweep."""
+    values: set[float | None] = {None}
+    value = admission
+    while value <= 1.0 + 1e-12:
+        values.add(round(value, 6))
+        value += HYBRID_PROMOTION_GATE_STEP
+    values.add(1.0)
+    return values
+
+
+def _validate_joint_audit_candidate(
+    payload: Any,
+    label: str,
+    languages: set[str],
+    admissions: dict[str, float],
+    positive_counts: dict[str, int],
+) -> dict[str, Any]:
+    """Validate one compact hybrid candidate and its per-language safety evidence."""
+    expected_keys = {
+        "weak_identifier_jaccard_min",
+        "statement_ratio_min",
+        "high_gates",
+        "metrics",
+        "per_language",
+    }
+    if not isinstance(payload, dict) or set(payload) != expected_keys:
+        raise ValueError(f"{label} has an invalid schema")
+    if (
+        not _is_finite_number(payload["weak_identifier_jaccard_min"])
+        or payload["weak_identifier_jaccard_min"] not in HYBRID_WEAK_GRID
+    ):
+        raise ValueError(f"{label} weak corroboration gate is outside the candidate grid")
+    if (
+        not _is_finite_number(payload["statement_ratio_min"])
+        or payload["statement_ratio_min"] not in HYBRID_RATIO_GRID
+    ):
+        raise ValueError(f"{label} ratio corroboration gate is outside the candidate grid")
+
+    high_gates = payload["high_gates"]
+    per_language = payload["per_language"]
+    if (
+        not isinstance(high_gates, dict)
+        or set(high_gates) != languages
+        or any(not _is_optional_gate(gate) for gate in high_gates.values())
+        or not isinstance(per_language, list)
+        or any(not isinstance(item, dict) for item in per_language)
+    ):
+        raise ValueError(f"{label} has invalid language gates")
+    if any(
+        gate not in _promotion_gate_grid(admissions[language])
+        for language, gate in high_gates.items()
+    ):
+        raise ValueError(f"{label} promotion gate is outside the candidate grid")
+    language_rows = {item.get("language"): item for item in per_language}
+    if len(language_rows) != len(per_language) or set(language_rows) != languages:
+        raise ValueError(f"{label} has invalid per-language evidence")
+
+    totals = {
+        field: 0 for field in ("tp", "fp", "fn", "ambiguous_predictions", "unjudged_predictions")
+    }
+    for language, item in language_rows.items():
+        if set(item) != {"language", "high_gate", "metrics"} or not _same_gate(
+            item["high_gate"], high_gates[language]
+        ):
+            raise ValueError(f"{label} has inconsistent language evidence")
+        _validate_judgment_metrics(
+            item["metrics"],
+            f"{label} {language} metrics",
+            expected_positives=positive_counts[language],
+        )
+        if item["metrics"]["precision"] < MINIMUM_SELECTION_PRECISION:
+            raise ValueError(f"{label} includes a precision-unsafe language")
+        for field in totals:
+            totals[field] += item["metrics"][field]
+
+    _validate_judgment_metrics(payload["metrics"], f"{label} metrics")
+    if any(payload["metrics"][field] != value for field, value in totals.items()):
+        raise ValueError(f"{label} metrics do not match its language evidence")
+    if payload["metrics"]["precision"] < MINIMUM_SELECTION_PRECISION:
+        raise ValueError(f"{label} is precision-unsafe")
+    return payload
+
+
+def _joint_audit_tiebreak(payload: dict[str, Any], languages: set[str]) -> tuple[Any, ...]:
+    """Return the documented stable tie-break key for a compact joint candidate."""
+    return (
+        payload["weak_identifier_jaccard_min"],
+        payload["statement_ratio_min"],
+        tuple(
+            (
+                payload["high_gates"][language] is not None,
+                payload["high_gates"][language] or 0.0,
+            )
+            for language in sorted(languages)
+        ),
+    )
+
+
+def _validate_hybrid_selection_audit(
+    payload: Any,
+    selected: dict[str, Any],
+    promotion_entries: list[dict[str, Any]],
+    languages: set[str],
+    admissions: dict[str, float],
+    label: str,
+) -> None:
+    """Validate compact audit claims that do not require the ignored raw matrices.
+
+    Raw-backed generation reproduces the complete sweep. A checked-only consumer
+    can verify candidate legality, arithmetic, safety, and claimed ordering, but
+    cannot prove that an omitted raw-derived candidate was not better.
+    """
+    if not isinstance(payload, dict) or set(payload) != {"best_f1_candidate", "runner_up"}:
+        raise ValueError(f"{label} has an invalid schema")
+    positive_counts = {
+        item["language"]: item["selected_metrics"]["tp"] + item["selected_metrics"]["fn"]
+        for item in promotion_entries
+    }
+    best = _validate_joint_audit_candidate(
+        payload["best_f1_candidate"],
+        f"{label} best F1",
+        languages,
+        admissions,
+        positive_counts,
+    )
+    runner_up = payload["runner_up"]
+    if runner_up is not None:
+        runner_up = _validate_joint_audit_candidate(
+            runner_up,
+            f"{label} runner-up",
+            languages,
+            admissions,
+            positive_counts,
+        )
+
+    selected_high_gates = {item["language"]: item["selected_gate"] for item in promotion_entries}
+    selected_totals = {
+        field: sum(item["selected_metrics"][field] for item in promotion_entries)
+        for field in ("tp", "fp", "fn", "ambiguous_predictions", "unjudged_predictions")
+    }
+    if any(selected["metrics"][field] != value for field, value in selected_totals.items()):
+        raise ValueError(f"{label} selected metrics do not match promotion evidence")
+    selected_candidate = {
+        "weak_identifier_jaccard_min": selected["weak_identifier_jaccard_min"],
+        "statement_ratio_min": selected["statement_ratio_min"],
+        "high_gates": selected_high_gates,
+        "metrics": selected["metrics"],
+    }
+    if best["metrics"]["f1"] + 1e-12 < selected_candidate["metrics"]["f1"] or (
+        best["metrics"]["f1"] - selected_candidate["metrics"]["f1"] > F1_RECALL_TOLERANCE + 1e-12
+    ):
+        raise ValueError(f"{label} does not justify the selected F1 tolerance")
+    selected_preference = recall_preference(selected_candidate["metrics"])
+    best_preference = recall_preference(best["metrics"])
+    if best_preference > selected_preference or (
+        best_preference == selected_preference
+        and _joint_audit_tiebreak(best, languages)
+        < _joint_audit_tiebreak(selected_candidate, languages)
+    ):
+        raise ValueError(f"{label} best-F1 candidate outranks the selected candidate")
+    if runner_up is None:
+        return
+    if runner_up["metrics"]["f1"] > best["metrics"]["f1"] + 1e-12 or (
+        best["metrics"]["f1"] - runner_up["metrics"]["f1"] > F1_RECALL_TOLERANCE + 1e-12
+    ):
+        raise ValueError(f"{label} runner-up is outside the F1 selection bound")
+    if _joint_audit_tiebreak(runner_up, languages) == _joint_audit_tiebreak(
+        selected_candidate, languages
+    ):
+        raise ValueError(f"{label} runner-up repeats the selected candidate")
+    # The best-F1 policy can legitimately be the final-order runner-up when a
+    # near-best policy wins the recall preference. Raw-backed generation checks
+    # the exact rank; checked-only validation must not reject that valid shape.
+    runner_preference = recall_preference(runner_up["metrics"])
+    if runner_preference > selected_preference or (
+        runner_preference == selected_preference
+        and _joint_audit_tiebreak(runner_up, languages)
+        < _joint_audit_tiebreak(selected_candidate, languages)
+    ):
+        raise ValueError(f"{label} runner-up outranks the selected candidate")
+
+
 def validate_shipped_selection_profiles(
     threshold_selection: dict[str, Any],
     hybrid_selection: dict[str, Any],
@@ -666,6 +900,7 @@ def validate_shipped_selection_profiles(
     """Require checked threshold and hybrid selections to match shipped profile gates."""
     validate_selection_contract(threshold_selection)
     validate_selection_contract(hybrid_selection)
+    validate_hybrid_candidate_grids(hybrid_selection.get("candidate_grids"))
     grids = _validate_selection_grids(threshold_selection.get("grids"))
     expected_models = {resolve_model_profile(model).key for model in models}
     thresholds = _selection_models(threshold_selection, "threshold")
@@ -704,6 +939,7 @@ def validate_shipped_selection_profiles(
                 "current_difficulty_recall",
                 "selected_threshold",
                 "selected_metrics",
+                "selection_window",
                 "selection_ready",
                 "selected_difficulty_recall",
                 "positive_scores",
@@ -713,17 +949,29 @@ def validate_shipped_selection_profiles(
                 raise ValueError(f"{model}: threshold selection has an invalid schema")
             for field in ("current_metrics", "selected_metrics"):
                 metrics_payload = item.get(field)
-                _validate_judgment_metrics(
-                    metrics_payload,
-                    f"{model} {language} {field}",
-                    extra_keys={"threshold", "predicted"},
+                _validate_duplicate_selection_metrics(
+                    metrics_payload, f"{model} {language} {field}"
                 )
-                if (
-                    not _same_gate(metrics_payload["threshold"], expected_gate)
-                    or type(metrics_payload["predicted"]) is not int
-                    or metrics_payload["predicted"] != _prediction_count(metrics_payload)
-                ):
+                if not _same_gate(metrics_payload["threshold"], expected_gate):
                     raise ValueError(f"{model} {language} {field} is inconsistent")
+            window = item.get("selection_window")
+            if not isinstance(window, list):
+                raise ValueError(  # noqa: TRY004 -- checked JSON is one validation failure type
+                    f"{model} {language} selection window must be a list"
+                )
+            for index, row in enumerate(window):
+                _validate_duplicate_selection_metrics(
+                    row, f"{model} {language} selection window row {index}"
+                )
+            selected_index = grids["duplicate"].index(item["selected_threshold"])
+            window_start = max(0, selected_index - SEARCH_SELECTION_WINDOW_RADIUS)
+            expected_thresholds = grids["duplicate"][
+                window_start : selected_index + SEARCH_SELECTION_WINDOW_RADIUS + 1
+            ]
+            if [row["threshold"] for row in window] != expected_thresholds:
+                raise ValueError(f"{model} {language} selection window does not match the grid")
+            if window[selected_index - window_start] != item["selected_metrics"]:
+                raise ValueError(f"{model} {language} selection window omits the selected metrics")
             _validate_score_summary(item.get("positive_scores"), f"{model} {language} positives")
             _validate_score_summary(item.get("negative_scores"), f"{model} {language} negatives")
             current_detected, current_total = _validate_difficulty_recall(
@@ -799,6 +1047,7 @@ def validate_shipped_selection_profiles(
             "model",
             "admission_thresholds",
             "current",
+            "selection_audit",
             "selected",
             "promotion_by_language",
         }:
@@ -806,6 +1055,7 @@ def validate_shipped_selection_profiles(
         admissions = hybrid.get("admission_thresholds")
         current = hybrid.get("current")
         selected = hybrid.get("selected")
+        selection_audit = hybrid.get("selection_audit")
         promotion_entries = hybrid.get("promotion_by_language")
         promotion_gates = _selection_gate_map(promotion_entries, "selected_gate", "hybrid")
         expected_promotion_gates = {
@@ -894,6 +1144,14 @@ def validate_shipped_selection_profiles(
                 or item["selected_metrics"]["unjudged_predictions"] != 0
             ):
                 raise ValueError(f"{model} {language} promotion has unresolved predictions")
+        _validate_hybrid_selection_audit(
+            selection_audit,
+            selected,
+            promotion_entries,
+            languages,
+            admissions,
+            f"{model} hybrid selection audit",
+        )
 
 
 def judgments(project: Project) -> dict[tuple[str, str], dict[str, Any]]:
@@ -1377,6 +1635,7 @@ def validate_checked_report(
         "schema_version",
         "objective",
         "input_context",
+        "candidate_grids",
         "threshold_selection_digest",
         "models",
         "measurement_digests",

@@ -23,6 +23,7 @@ try:
         load_all,
         measurement_digests,
         selection_digest,
+        validate_hybrid_candidate_grids,
         validate_measurement_digests,
         validate_selection_context,
         validate_selection_contract,
@@ -46,6 +47,7 @@ except ImportError:
         load_all,
         measurement_digests,
         selection_digest,
+        validate_hybrid_candidate_grids,
         validate_measurement_digests,
         validate_selection_context,
         validate_selection_contract,
@@ -108,6 +110,7 @@ def main() -> int:
     for field in ("threshold_selection", "hybrid_selection"):
         validate_selection_contract(payload[field])
         validate_selection_context(payload[field], selection_projects, args.models)
+    validate_hybrid_candidate_grids(payload["hybrid_selection"].get("candidate_grids"))
     if payload["hybrid_selection"].get("threshold_selection_digest") != selection_digest(
         payload["threshold_selection"]
     ):

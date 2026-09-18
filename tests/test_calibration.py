@@ -29,6 +29,7 @@ from scripts.calibration_contract import (
     eligibility_reason,
     extract_project,
     load_projects,
+    missing_behavior_executables,
     read_json,
     resolve_annotations,
     run_behavior,
@@ -42,6 +43,7 @@ from scripts.calibration_evaluation import (
     SELECTION_SCHEMA_VERSION,
     compare_devices,
     development_projects,
+    hybrid_candidate_grids,
     measurement_digest,
     measurement_digests,
     replay,
@@ -49,6 +51,7 @@ from scripts.calibration_evaluation import (
     selection_context,
     selection_digest,
     selection_objective,
+    selection_policy_identity,
     support_files_digest,
     validate_checked_report,
     validate_measurement_digests,
@@ -232,13 +235,129 @@ def test_manifest_has_substantive_five_language_corpus():
 
 @pytest.mark.toolchain
 def test_manifest_behavior_contracts_execute():
-    for project in load_projects():
+    projects = load_projects()
+    if missing := _missing_behavior_requirements(projects):
+        pytest.skip(f"missing external toolchain requirements: {', '.join(missing)}")
+    for project in projects:
         report = run_behavior(project)
         assert report["project"] == project.id
         assert [run["id"] for run in report["runs"]] == [
             command["id"] for command in project.spec["behavior_tests"]
         ]
         assert all(run["returncode"] == 0 for run in report["runs"])
+
+
+def _missing_behavior_requirements(projects) -> list[str]:
+    """Return absent executables or command capabilities needed by pytest."""
+    missing = set(missing_behavior_executables(projects))
+    checked: set[str] = set()
+    for project in projects:
+        for command in project.spec["behavior_tests"]:
+            argv = command["argv"]
+            executable = argv[0]
+            if executable in missing:
+                continue
+            if executable == "cargo" and len(argv) > 1 and argv[1].startswith("+"):
+                toolchain = argv[1][1:]
+                label = f"cargo +{toolchain}"
+                if label in checked:
+                    continue
+                checked.add(label)
+                rustup = calibration_contract.shutil.which("rustup")
+                if rustup is None:
+                    missing.add(label)
+                    continue
+                try:
+                    result = calibration_contract.subprocess.run(
+                        [rustup, "toolchain", "list"],
+                        capture_output=True,
+                        text=True,
+                        timeout=10,
+                        check=False,
+                    )
+                except (OSError, calibration_contract.subprocess.TimeoutExpired):
+                    missing.add(label)
+                    continue
+                installed = {line.split()[0] for line in result.stdout.splitlines() if line.split()}
+                if result.returncode or not any(
+                    name == toolchain or name.startswith(f"{toolchain}-") for name in installed
+                ):
+                    missing.add(label)
+            elif executable == "node":
+                flags = tuple(arg for arg in argv[1:] if arg.startswith("--experimental-"))
+                if not flags:
+                    continue
+                label = " ".join(("node", *flags))
+                if label in checked:
+                    continue
+                checked.add(label)
+                node = calibration_contract.shutil.which("node")
+                if node is None:
+                    missing.add(label)
+                    continue
+                try:
+                    result = calibration_contract.subprocess.run(
+                        [node, *flags, "--version"],
+                        capture_output=True,
+                        text=True,
+                        timeout=10,
+                        check=False,
+                    )
+                except (OSError, calibration_contract.subprocess.TimeoutExpired):
+                    missing.add(label)
+                    continue
+                if result.returncode:
+                    missing.add(label)
+    return sorted(missing)
+
+
+def test_behavior_executable_probe_reports_only_missing_tools(monkeypatch, tmp_path):
+    project = SimpleNamespace(
+        spec={
+            "behavior_tests": [
+                {"argv": ["present-tool"]},
+                {"argv": ["missing-tool"]},
+                {"argv": ["{python}"]},
+            ]
+        }
+    )
+    monkeypatch.setattr(
+        calibration_contract.shutil,
+        "which",
+        lambda executable: None if executable == "missing-tool" else str(tmp_path / "tool"),
+    )
+
+    assert missing_behavior_executables([project]) == ["missing-tool"]
+
+
+def test_behavior_requirement_probe_checks_toolchain_variants(monkeypatch, tmp_path):
+    projects = [
+        SimpleNamespace(
+            spec={
+                "behavior_tests": [
+                    {"argv": ["cargo", "+stable", "test"]},
+                    {"argv": ["node", "--experimental-strip-types", "script.ts"]},
+                ]
+            }
+        )
+    ]
+    monkeypatch.setattr(
+        calibration_contract.shutil,
+        "which",
+        lambda executable: str(tmp_path / executable),
+    )
+
+    def unavailable_variants(argv, **_kwargs):
+        if argv[0].endswith("rustup"):
+            return SimpleNamespace(returncode=0, stdout="nightly-aarch64-apple-darwin\n")
+        return SimpleNamespace(returncode=9, stdout="")
+
+    monkeypatch.setattr(calibration_contract.subprocess, "run", unavailable_variants)
+
+    assert _missing_behavior_requirements(projects) == [
+        "cargo +stable",
+        "node --experimental-strip-types",
+    ]
 
 
 @pytest.mark.parametrize(
@@ -438,6 +557,10 @@ def test_coarse_sweep_measures_shipped_thresholds_exactly(tmp_path: Path, monkey
     assert duplicate["current_threshold"] == duplicate["current_metrics"]["threshold"] == 0.87
     assert duplicate["current_metrics"]["tp"] == 1
     assert duplicate["current_difficulty_recall"]["easy"]["detected"] == 1
+    assert [row["threshold"] for row in duplicate["selection_window"]] == result["grids"][
+        "duplicate"
+    ]
+    assert duplicate["selected_metrics"] in duplicate["selection_window"]
     search = result["models"][0]["search"]
     assert search["current_threshold"] == search["current_metrics"]["threshold"] == 0.68
     assert (search["current_metrics"]["tp"], search["current_metrics"]["fp"]) == (1, 0)
@@ -935,36 +1058,40 @@ def test_support_file_identity_tracks_declared_behavior_evidence(tmp_path: Path)
         support_files_digest(project)
 
 
-@pytest.mark.parametrize(
-    "changed_file",
-    [
-        "scripts/sweep_semantic_thresholds.py",
-        "scripts/sweep_hybrid_gates.py",
-        "scripts/calibration_evaluation.py",
-        "src/codedupes/semantic_profiles.py",
-    ],
-)
-def test_selection_policy_edits_reuse_measurements_but_reject_selections(
-    tmp_path: Path, monkeypatch, changed_file: str
-):
-    # Isolate policy files without editing the real extraction/measurement inputs.
-    for relative in (
-        "scripts/sweep_semantic_thresholds.py",
-        "scripts/sweep_hybrid_gates.py",
-        "scripts/calibration_evaluation.py",
-        "src/codedupes/semantic_profiles.py",
-    ):
-        target = tmp_path / relative
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text((calibration_evaluation.REPO / relative).read_text())
-    monkeypatch.setattr(calibration_evaluation, "REPO", tmp_path)
+def test_selection_context_uses_structured_policy_identity(tmp_path: Path, monkeypatch):
+    """Selections bind policy values without hashing incidental source text."""
     projects, models = load_projects(project_ids=["ledger"]), ["gte-modernbert-base"]
     original = selection_context(projects, models)
-    policy_file = tmp_path / changed_file
-    policy_file.write_text(policy_file.read_text() + "\n# changed selection policy\n")
+    assert original["selection_policy"] == selection_policy_identity()
+    assert isinstance(original["selection_policy"], dict)
+    monkeypatch.setattr(calibration_evaluation, "REPO", tmp_path, raising=False)
     updated = selection_context(projects, models)
-    assert updated["projects"] == original["projects"]
-    assert updated["selection_policy"] != original["selection_policy"]
+    assert updated == original
+    validate_selection_context({"input_context": original}, projects, models)
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "F1_RECALL_TOLERANCE",
+        "SELECTION_ALGORITHM_VERSION",
+        "DEFAULT_TOP_K",
+        "HYBRID_WEAK_GRID",
+    ],
+)
+def test_selection_context_rejects_changed_policy_values(monkeypatch, field: str):
+    """Every recorded selection-policy value must invalidate stale selections."""
+    projects, models = load_projects(project_ids=["ledger"]), ["gte-modernbert-base"]
+    original = selection_context(projects, models)
+    current = getattr(calibration_evaluation, field)
+    replacement = {
+        "F1_RECALL_TOLERANCE": 0.006,
+        "SELECTION_ALGORITHM_VERSION": 3,
+        "DEFAULT_TOP_K": 11,
+        "HYBRID_WEAK_GRID": (0.0, 0.5),
+    }[field]
+    assert replacement != current
+    monkeypatch.setattr(calibration_evaluation, field, replacement)
     with pytest.raises(ValueError, match="stale or mismatched selection"):
         validate_selection_context({"input_context": original}, projects, models)
 
@@ -982,6 +1109,7 @@ def test_report_rejects_hybrid_from_another_threshold_selection(tmp_path: Path, 
         "schema_version": SELECTION_SCHEMA_VERSION,
         "objective": selection_objective(),
         "input_context": context,
+        "candidate_grids": hybrid_candidate_grids(),
         "threshold_selection_digest": selection_digest(threshold),
     }
     threshold["models"].append({"model": "changed selection"})
@@ -1028,6 +1156,7 @@ def test_report_rejects_tampered_selection_contract_before_loading_raw(
         "schema_version": SELECTION_SCHEMA_VERSION,
         "objective": selection_objective(),
         "input_context": context,
+        "candidate_grids": hybrid_candidate_grids(),
         "models": [],
     }
     if tamper == "schema":
@@ -1279,6 +1408,16 @@ def test_checked_selection_metrics_ignore_evaluation_report_records():
         ("difficulty", "difficulty schema"),
         ("unjudged", "invalid unresolved pair"),
         ("window", "search selection window"),
+        ("admission_window", "selection window"),
+        ("candidate_grids", "mismatched candidate grids"),
+        ("candidate_grids_bool", "mismatched candidate grids"),
+        ("hybrid_audit", "inconsistent derived metrics"),
+        ("hybrid_audit_bool", "outside the candidate grid"),
+        ("hybrid_audit_grid", "outside the candidate grid"),
+        ("hybrid_audit_promotion_grid", "outside the candidate grid"),
+        ("hybrid_audit_denominator", "positive-pair denominator"),
+        ("hybrid_audit_order", "outranks the selected candidate"),
+        ("hybrid_audit_repeated_selection", "repeats the selected candidate"),
         ("corroboration", "positive-pair denominator"),
     ],
 )
@@ -1296,9 +1435,17 @@ def test_checked_calibration_result_rejects_tampered_embedded_selections(tamper:
     elif tamper == "metric":
         threshold["models"][0]["duplicate_by_language"][0]["selected_metrics"]["precision"] = 0.0
     elif tamper == "readiness":
-        metrics = threshold["models"][0]["duplicate_by_language"][0]["selected_metrics"]
+        entry = threshold["models"][0]["duplicate_by_language"][0]
+        metrics = entry["selected_metrics"]
         metrics["unjudged_predictions"] = 1
         metrics["predicted"] += 1
+        selected_window_row = next(
+            row
+            for row in entry["selection_window"]
+            if row["threshold"] == entry["selected_threshold"]
+        )
+        selected_window_row["unjudged_predictions"] = 1
+        selected_window_row["predicted"] += 1
     elif tamper == "grids":
         threshold["grids"] = "forged"
     elif tamper == "scores":
@@ -1311,6 +1458,65 @@ def test_checked_calibration_result_rejects_tampered_embedded_selections(tamper:
         ]
     elif tamper == "window":
         threshold["models"][0]["search"]["selection_window"] = []
+    elif tamper == "admission_window":
+        threshold["models"][0]["duplicate_by_language"][0]["selection_window"] = []
+    elif tamper == "candidate_grids":
+        hybrid["candidate_grids"] = {}
+    elif tamper == "candidate_grids_bool":
+        hybrid["candidate_grids"]["weak_identifier_jaccard_min"][0] = False
+    elif tamper == "hybrid_audit":
+        hybrid["models"][0]["selection_audit"]["best_f1_candidate"]["metrics"]["precision"] = 0.0
+    elif tamper == "hybrid_audit_bool":
+        hybrid["models"][0]["selection_audit"]["best_f1_candidate"]["statement_ratio_min"] = False
+    elif tamper == "hybrid_audit_grid":
+        hybrid["models"][0]["selection_audit"]["best_f1_candidate"][
+            "weak_identifier_jaccard_min"
+        ] = 0.39
+    elif tamper == "hybrid_audit_promotion_grid":
+        hybrid["models"][0]["selection_audit"]["best_f1_candidate"]["high_gates"]["c"] = 0.845
+    elif tamper == "hybrid_audit_denominator":
+        rows = hybrid["models"][0]["selection_audit"]["best_f1_candidate"]["per_language"]
+        rows[0]["metrics"]["tp"] += 1
+        rows[1]["metrics"]["tp"] -= 1
+        for row in rows[:2]:
+            metrics = row["metrics"]
+            precision, recall, f1 = calibration_evaluation._score_ratios(
+                metrics["tp"], metrics["fp"], metrics["fn"]
+            )
+            metrics.update(
+                {
+                    "precision": precision,
+                    "judged_only_precision": precision,
+                    "recall": recall,
+                    "f1": f1,
+                }
+            )
+    elif tamper == "hybrid_audit_order":
+        hybrid["models"][0]["selection_audit"]["best_f1_candidate"][
+            "weak_identifier_jaccard_min"
+        ] = 0.0
+    elif tamper == "hybrid_audit_repeated_selection":
+        model = hybrid["models"][1]
+        candidate = {
+            "weak_identifier_jaccard_min": model["selected"]["weak_identifier_jaccard_min"],
+            "statement_ratio_min": model["selected"]["statement_ratio_min"],
+            "high_gates": {
+                item["language"]: item["selected_gate"] for item in model["promotion_by_language"]
+            },
+            "metrics": deepcopy(model["selected"]["metrics"]),
+            "per_language": [
+                {
+                    "language": item["language"],
+                    "high_gate": item["selected_gate"],
+                    "metrics": deepcopy(item["selected_metrics"]),
+                }
+                for item in model["promotion_by_language"]
+            ],
+        }
+        model["selection_audit"] = {
+            "best_f1_candidate": deepcopy(candidate),
+            "runner_up": candidate,
+        }
     else:
         corroboration = hybrid["models"][0]["selected"]["corroboration_only_metrics"]
         corroboration.update(

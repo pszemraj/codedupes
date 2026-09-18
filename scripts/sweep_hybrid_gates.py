@@ -11,6 +11,7 @@ from typing import Any
 from codedupes.semantic_profiles import list_supported_models, resolve_model_profile
 
 try:
+    from . import calibration_evaluation
     from .calibration_contract import (
         add_contract_arguments,
         load_projects,
@@ -22,6 +23,7 @@ try:
         MINIMUM_SELECTION_PRECISION,
         SELECTION_SCHEMA_VERSION,
         development_projects,
+        hybrid_candidate_grids,
         judgments,
         load_all,
         measurement_digests,
@@ -32,6 +34,7 @@ try:
         selection_context,
         selection_digest,
         selection_objective,
+        validate_hybrid_candidate_grids,
         validate_measurement_digests,
         validate_selection_context,
         validate_selection_contract,
@@ -39,6 +42,7 @@ try:
     from .calibration_measurements import DEFAULT_MEASUREMENTS
     from .sweep_semantic_thresholds import threshold_grid, validate_threshold_selection
 except ImportError:
+    import calibration_evaluation
     from calibration_contract import (
         add_contract_arguments,
         load_projects,
@@ -50,6 +54,7 @@ except ImportError:
         MINIMUM_SELECTION_PRECISION,
         SELECTION_SCHEMA_VERSION,
         development_projects,
+        hybrid_candidate_grids,
         judgments,
         load_all,
         measurement_digests,
@@ -60,15 +65,13 @@ except ImportError:
         selection_context,
         selection_digest,
         selection_objective,
+        validate_hybrid_candidate_grids,
         validate_measurement_digests,
         validate_selection_context,
         validate_selection_contract,
     )
     from calibration_measurements import DEFAULT_MEASUREMENTS
     from sweep_semantic_thresholds import threshold_grid, validate_threshold_selection
-
-WEAK_GRID = (0.0, 0.05, 0.10, 0.15, 0.20, 0.30, 0.40)
-RATIO_GRID = (0.0, 0.20, 0.35, 0.50, 0.65, 0.80)
 
 
 def _selection_map(payload: dict[str, Any]) -> dict[tuple[str, str], float]:
@@ -181,7 +184,12 @@ def _promotion_options(
             for key, value in _semantic_labels(project, measurements[project.id]).items()
         }
         outcomes: dict[tuple[int, int, int, int], dict[str, Any]] = {}
-        for high_gate in [None, *threshold_grid(admissions[language], 1.0, 0.01)]:
+        for high_gate in [
+            None,
+            *threshold_grid(
+                admissions[language], 1.0, calibration_evaluation.HYBRID_PROMOTION_GATE_STEP
+            ),
+        ]:
             predicted = {
                 (project.id, *key)
                 for project in language_projects
@@ -238,11 +246,53 @@ def _joint_tiebreak(row: dict[str, Any], languages: list[str]) -> tuple[Any, ...
     )
 
 
+_JOINT_METRIC_FIELDS = (
+    "tp",
+    "fp",
+    "fn",
+    "precision",
+    "judged_only_precision",
+    "recall",
+    "f1",
+    "ambiguous_predictions",
+    "unjudged_predictions",
+)
+
+
+def _compact_joint_candidate(
+    row: dict[str, Any], options: dict[str, dict[str, Any]], languages: list[str]
+) -> dict[str, Any]:
+    """Serialize one joint candidate with evidence for every precision constraint."""
+    return {
+        "weak_identifier_jaccard_min": row["weak_identifier_jaccard_min"],
+        "statement_ratio_min": row["statement_ratio_min"],
+        "high_gates": dict(row["high_gates"]),
+        "metrics": {field: row[field] for field in _JOINT_METRIC_FIELDS},
+        "per_language": [
+            {
+                "language": language,
+                "high_gate": options[language]["high_gate"],
+                "metrics": _combined_metrics((options[language],)),
+            }
+            for language in languages
+        ],
+    }
+
+
+def _rank_joint_candidates(
+    candidates: list[tuple[dict[str, Any], dict[str, dict[str, Any]]]], languages: list[str]
+) -> list[tuple[dict[str, Any], dict[str, dict[str, Any]]]]:
+    """Order F1-eligible candidates by the selection rule's final preferences."""
+    ranked = sorted(candidates, key=lambda candidate: _joint_tiebreak(candidate[0], languages))
+    ranked.sort(key=lambda candidate: recall_preference(candidate[0]), reverse=True)
+    return ranked
+
+
 def _select_joint(
     projects: list[Any],
     measurements: dict[str, dict[str, Any]],
     admissions: dict[str, float],
-) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
+) -> tuple[dict[str, Any], dict[str, dict[str, Any]], dict[str, Any]]:
     """Jointly select corroboration and promotion gates by pooled judged F1.
 
     Promotion and corroboration interact: a similarity gate can make a strict
@@ -252,10 +302,11 @@ def _select_joint(
     the precision floor before applying the shared recall/F1 policy.
     """
     languages = sorted(admissions)
-    # Retain the best representative at each F1 before applying the global bound.
-    by_f1: dict[float, tuple[dict[str, Any], dict[str, dict[str, Any]]]] = {}
-    for weak in WEAK_GRID:
-        for ratio in RATIO_GRID:
+    # Two representatives per F1 are sufficient to preserve the global winner
+    # and runner-up without retaining the full Cartesian product in memory.
+    by_f1: dict[float, list[tuple[dict[str, Any], dict[str, dict[str, Any]]]]] = {}
+    for weak in calibration_evaluation.HYBRID_WEAK_GRID:
+        for ratio in calibration_evaluation.HYBRID_RATIO_GRID:
             options_by_language = _promotion_options(
                 projects, measurements, admissions, weak, ratio
             )
@@ -274,32 +325,29 @@ def _select_joint(
                 }
                 if row["precision"] < MINIMUM_SELECTION_PRECISION:
                     continue
-                previous = by_f1.get(row["f1"])
-                selected = previous[0] if previous is not None else None
-                if (
-                    selected is None
-                    or recall_preference(row) > recall_preference(selected)
-                    or (
-                        recall_preference(row) == recall_preference(selected)
-                        and _joint_tiebreak(row, languages) < _joint_tiebreak(selected, languages)
-                    )
-                ):
-                    by_f1[row["f1"]] = (
-                        row,
-                        {language: option for language, option in zip(languages, combination)},
-                    )
+                candidate = (
+                    row,
+                    {language: option for language, option in zip(languages, combination)},
+                )
+                bucket = by_f1.setdefault(row["f1"], [])
+                bucket.append(candidate)
+                bucket[:] = _rank_joint_candidates(bucket, languages)[:2]
     if not by_f1:
         raise ValueError(
             "no joint calibration candidate satisfies the minimum precision "
             f"{MINIMUM_SELECTION_PRECISION:.2f} in every language"
         )
-    eligible = near_best_f1([row for row, _ in by_f1.values()])
-    preference = max(recall_preference(row) for row in eligible)
-    selected = min(
-        (row for row in eligible if recall_preference(row) == preference),
-        key=lambda row: _joint_tiebreak(row, languages),
-    )
-    return selected, by_f1[selected["f1"]][1]
+    representatives = [candidate for bucket in by_f1.values() for candidate in bucket]
+    eligible_rows = near_best_f1([row for row, _ in representatives])
+    eligible = [(row, options) for row, options in representatives if row in eligible_rows]
+    ranked = _rank_joint_candidates(eligible, languages)
+    selected, selected_options = ranked[0]
+    best_f1, best_f1_options = by_f1[max(by_f1)][0]
+    audit = {
+        "best_f1_candidate": _compact_joint_candidate(best_f1, best_f1_options, languages),
+        "runner_up": (_compact_joint_candidate(*ranked[1], languages) if len(ranked) > 1 else None),
+    }
+    return selected, selected_options, audit
 
 
 def _hybrid_models(
@@ -324,7 +372,9 @@ def _hybrid_models(
         shipped_admissions = {
             language: profile.semantic_threshold_for_language(language) for language in admissions
         }
-        selected, selected_options = _select_joint(projects, measurements, admissions)
+        selected, selected_options, selection_audit = _select_joint(
+            projects, measurements, admissions
+        )
         weak = selected["weak_identifier_jaccard_min"]
         ratio = selected["statement_ratio_min"]
         selected_gates = selected["high_gates"]
@@ -387,6 +437,7 @@ def _hybrid_models(
                     "statement_ratio_min": profile.hybrid_statement_ratio_min,
                     "metrics": current_metrics,
                 },
+                "selection_audit": selection_audit,
                 "selected": {
                     "weak_identifier_jaccard_min": weak,
                     "statement_ratio_min": ratio,
@@ -413,6 +464,7 @@ def validate_hybrid_selection(
     """Reject hybrid decisions not reproducible from bound admissions and scores."""
     validate_selection_contract(threshold_selection)
     validate_selection_contract(payload)
+    validate_hybrid_candidate_grids(payload.get("candidate_grids"))
     expected = _hybrid_models(projects, models, measurements, _selection_map(threshold_selection))
     if payload.get("models") != expected:
         raise ValueError("hybrid selection does not match its threshold selection and raw data")
@@ -449,6 +501,7 @@ def main() -> int:
         "schema_version": SELECTION_SCHEMA_VERSION,
         "objective": selection_objective(),
         "input_context": selection_context(projects, args.models),
+        "candidate_grids": hybrid_candidate_grids(),
         "threshold_selection_digest": selection_digest(threshold_selection),
         "models": _hybrid_models(projects, args.models, measurements, selected_admissions),
     }

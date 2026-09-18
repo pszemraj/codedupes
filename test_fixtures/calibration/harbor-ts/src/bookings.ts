@@ -6,7 +6,11 @@ function strictWeight(value: unknown): number {
   if (typeof value !== "string" || !/^[1-9]\d*$/.test(value)) {
     throw new Error("weightKg must be a positive integer string");
   }
-  const weightKg = Number(value); if (!Number.isSafeInteger(weightKg)) throw new Error("weightKg must be a positive integer string"); return weightKg;
+  const weightKg = Number(value);
+  if (!Number.isSafeInteger(weightKg)) {
+    throw new Error("weightKg must be a positive integer string");
+  }
+  return weightKg;
 }
 
 function strictDate(value: unknown): string {

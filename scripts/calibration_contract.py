@@ -6,6 +6,7 @@ import argparse
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -522,6 +523,24 @@ def run_behavior(project: Project) -> dict[str, Any]:
                 f"{result.stdout}\n{result.stderr}"
             )
     return {"project": project.id, "runs": runs}
+
+
+def missing_behavior_executables(projects: list[Project]) -> list[str]:
+    """Return unavailable executables required by fixture behavior commands.
+
+    The explicit corpus validator remains fail-loud through :func:`run_behavior`.
+    This probe lets the optional pytest integration group skip cleanly on a
+    machine that does not have every external language toolchain installed.
+
+    :param projects: Calibration projects whose behavior commands will run.
+    :return: Sorted unavailable executable names or paths.
+    """
+    required = {
+        sys.executable if command["argv"][0] == "{python}" else command["argv"][0]
+        for project in projects
+        for command in project.spec["behavior_tests"]
+    }
+    return sorted(executable for executable in required if shutil.which(executable) is None)
 
 
 def add_contract_arguments(parser: argparse.ArgumentParser) -> None:

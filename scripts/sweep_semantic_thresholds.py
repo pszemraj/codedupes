@@ -274,7 +274,7 @@ def _selection_models(
                 raise ValueError(f"multiple projects for {language}; pooling is not yet explicit")
             seen_languages.add(language)
             measurement = measurements[(project.id, profile.key)]
-            _, detail = duplicate_rows(project, measurement, duplicate_grid)
+            duplicate, detail = duplicate_rows(project, measurement, duplicate_grid)
             current = profile.semantic_threshold_for_language(language)
             current_metrics = duplicate_rows(project, measurement, [current])[0][0]
             model_result["duplicate_by_language"].append(
@@ -288,6 +288,7 @@ def _selection_models(
                     ),
                     "selected_threshold": detail["selected"]["threshold"],
                     "selected_metrics": detail["selected"],
+                    "selection_window": _selection_window(duplicate, detail["selected"]),
                     "selection_ready": detail["selection_ready"],
                     "selected_difficulty_recall": detail["selected_difficulty_recall"],
                     "positive_scores": detail["positive_scores"],

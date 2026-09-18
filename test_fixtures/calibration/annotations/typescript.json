@@ -721,14 +721,14 @@
             "regions": [
                 {
                     "unit": "harbor.booking.inline",
-                    "start_line": 41,
-                    "end_line": 46,
+                    "start_line": 45,
+                    "end_line": 50,
                     "sha256": "982d6e892b427cf6b72a6d6fdd74706d1f106fd431e2c2c50436c111fc31a4fc"
                 },
                 {
                     "unit": "harbor.booking.normalizer",
-                    "start_line": 25,
-                    "end_line": 30,
+                    "start_line": 29,
+                    "end_line": 34,
                     "sha256": "37ece6912d26fc57aa0896c038c69710682f88962618b78d3e6ac4ebb320a0db"
                 }
             ]
