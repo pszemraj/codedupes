@@ -116,7 +116,7 @@ def _pair_scores(embeddings: np.ndarray) -> dict[tuple[int, int], float]:
                 value = float(matrix[offset, column])
                 if not np.isfinite(value):
                     raise ValueError("nonfinite duplicate score")
-                scores[(start + offset, column)] = min(value, 1.0)
+                scores[(start + offset, column)] = max(-1.0, min(value, 1.0))
     return scores
 
 
@@ -236,7 +236,10 @@ def capture(project: Project, model: str, device: str, output: Path, batch_size:
     query_scores = []
     for probe in project.annotations["probes"]:
         hits = search.search(probe["query"], top_k=count, threshold=-1.0)
-        by_uid = {unit.uid: (float(score), rank) for rank, (unit, score) in enumerate(hits, 1)}
+        by_uid = {
+            unit.uid: (max(-1.0, min(float(score), 1.0)), rank)
+            for rank, (unit, score) in enumerate(hits, 1)
+        }
         for unit in ordered_units:
             score, rank = by_uid.get(unit.uid, (None, None))
             query_scores.append(
@@ -364,7 +367,12 @@ def _validate_measurement_payload(measurement: dict[str, Any], project: Project)
         pair_rows[key] = row
         score = row.get("cosine")
         should_be_scored = embedded[a] and embedded[b]
-        if should_be_scored != (isinstance(score, int | float) and math.isfinite(score)):
+        if should_be_scored != (
+            isinstance(score, int | float)
+            and not isinstance(score, bool)
+            and math.isfinite(score)
+            and -1.0 <= score <= 1.0
+        ):
             raise ValueError(f"{project.id}: inconsistent score state for pair {key}")
         unit_a, unit_b = units_by_id[a], units_by_id[b]
         reason = eligibility_reason(
@@ -410,7 +418,12 @@ def _validate_measurement_payload(measurement: dict[str, Any], project: Project)
             raise ValueError(f"{project.id}: duplicate measurement query row {key}")
         query_rows[key] = row
         score, rank = row.get("cosine"), row.get("rank")
-        scored = isinstance(score, int | float) and math.isfinite(score)
+        scored = (
+            isinstance(score, int | float)
+            and not isinstance(score, bool)
+            and math.isfinite(score)
+            and -1.0 <= score <= 1.0
+        )
         ranked = type(rank) is int and rank > 0
         if embedded[unit] != scored or scored != ranked:
             raise ValueError(f"{project.id}: inconsistent score state for query row {key}")

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
+import re
 from collections import Counter
 from pathlib import Path
 from typing import Any
@@ -24,6 +26,13 @@ except ImportError:
 
 F1_RECALL_TOLERANCE = 0.005
 MINIMUM_SELECTION_PRECISION = 0.5
+CHECKED_REPORT_SCHEMA_VERSION = 4
+_SHA256_HEX = re.compile(r"[0-9a-f]{64}")
+
+
+def _is_finite_number(value: Any) -> bool:
+    """Return whether one JSON scalar is a finite non-boolean number."""
+    return isinstance(value, int | float) and not isinstance(value, bool) and math.isfinite(value)
 
 
 def near_best_f1(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -154,8 +163,7 @@ def validate_measurement_provenance(project: Project, measurement: dict[str, Any
     ):
         raise ValueError(f"{project.id}: measurement provenance does not match current policy")
     if set(metadata["timing_seconds"]) != {"duplicate", "search"} or any(
-        not isinstance(value, int | float) or not np.isfinite(value) or value < 0
-        for value in metadata["timing_seconds"].values()
+        not _is_finite_number(value) or value < 0 for value in metadata["timing_seconds"].values()
     ):
         raise ValueError(f"{project.id}: invalid measurement timing provenance")
     encoded_inputs = sum(unit["embedded"] for unit in measurement["units"])
@@ -532,6 +540,209 @@ def full_report(project: Project, measurement: dict[str, Any]) -> dict[str, Any]
         "duplicate": duplicate_report(project, measurement),
         "search": search_report(project, measurement),
     }
+
+
+def validate_checked_report(
+    payload: dict[str, Any], projects: list[Project], models: list[str]
+) -> None:
+    """Validate the committed report shape and provenance invariants without raw scores.
+
+    Raw score matrices are intentionally local-only, so this verifies every
+    invariant available in the checked summary: its report inventory, raw
+    digest references, report identities, execution provenance, and shared
+    runtime summary. It cannot establish that a syntactically valid digest
+    names a particular uncommitted raw artifact.
+
+    :param dict payload: Parsed committed calibration report.
+    :param list projects: Manifest projects expected in the report.
+    :param list models: Built-in profiles expected for every project/device.
+    :raises ValueError: If the checked report is malformed or internally inconsistent.
+    :return: None
+    """
+    if payload.get("schema_version") != CHECKED_REPORT_SCHEMA_VERSION:
+        raise ValueError("checked calibration report has an unsupported schema")
+
+    profile_keys = tuple(dict.fromkeys(resolve_model_profile(model).key for model in models))
+    project_by_id = {project.id: project for project in projects}
+    if len(project_by_id) != len(projects):
+        raise ValueError("checked calibration report has duplicate expected projects")
+    expected_report_keys = {
+        f"{model}/{device}" for model in profile_keys for device in ("cpu", "mps")
+    }
+    expected_digest_keys = {
+        f"{project.id}/{model}/{device}"
+        for project in projects
+        for model in profile_keys
+        for device in ("cpu", "mps")
+    }
+
+    digests = payload.get("measurement_digests")
+    if (
+        not isinstance(digests, dict)
+        or set(digests) != expected_digest_keys
+        or any(
+            not isinstance(value, str) or _SHA256_HEX.fullmatch(value) is None
+            for value in digests.values()
+        )
+    ):
+        raise ValueError("checked calibration report has invalid measurement digests")
+
+    records = payload.get("projects")
+    if not isinstance(records, list) or any(not isinstance(record, dict) for record in records):
+        raise ValueError("checked calibration report projects must be objects")
+    record_ids = [record.get("project") for record in records]
+    if any(not isinstance(project_id, str) for project_id in record_ids):
+        raise ValueError("checked calibration report project IDs must be strings")
+    records_by_id = dict(zip(record_ids, records, strict=True))
+    if len(records_by_id) != len(records) or set(records_by_id) != set(project_by_id):
+        raise ValueError("checked calibration report project inventory differs from the manifest")
+
+    report_runtimes: list[dict[str, str]] = []
+    report_devices: set[str] = set()
+    for project_id, project in project_by_id.items():
+        record = records_by_id[project_id]
+        expected_corpus = {
+            "annotated_units": len(project.annotations["units"]),
+            "positive_pairs": sum(
+                pair["judgment"] == "positive" for pair in project.annotations["pairs"]
+            ),
+            "negative_pairs": sum(
+                pair["judgment"] == "negative" for pair in project.annotations["pairs"]
+            ),
+            "probes": len(project.annotations["probes"]),
+        }
+        if (
+            set(record)
+            != {"project", "split", "language", "corpus", "reports", "device_comparisons"}
+            or record.get("split") != project.spec["split"]
+            or record.get("language") != project.spec["languages"][0]
+            or record.get("corpus") != expected_corpus
+        ):
+            raise ValueError(
+                f"{project_id}: checked report project identity differs from the manifest"
+            )
+        reports = record.get("reports")
+        if not isinstance(reports, dict) or set(reports) != expected_report_keys:
+            raise ValueError(f"{project_id}: checked report inventory is incomplete")
+        for model in profile_keys:
+            for device in ("cpu", "mps"):
+                report = reports[f"{model}/{device}"]
+                if not isinstance(report, dict):
+                    raise ValueError(  # noqa: TRY004 -- checked JSON is one validation failure type
+                        f"{project_id}: checked report entry is not an object"
+                    )
+                if (
+                    set(report)
+                    != {
+                        "project",
+                        "model",
+                        "device",
+                        "batch_size",
+                        "inference_dtype",
+                        "runtime_versions",
+                        "timing_seconds",
+                        "execution",
+                        "replay_parity",
+                        "duplicate",
+                        "search",
+                    }
+                    or report.get("project") != project_id
+                    or report.get("model") != model
+                    or report.get("device") != device
+                    or type(report.get("batch_size")) is not int
+                    or report["batch_size"] <= 0
+                    or not isinstance(report.get("inference_dtype"), str)
+                    or not report["inference_dtype"]
+                    or report.get("replay_parity") is not True
+                    or not isinstance(report.get("duplicate"), dict)
+                    or not isinstance(report.get("search"), dict)
+                ):
+                    raise ValueError(f"{project_id}: checked report identity is invalid")
+
+                runtime = report.get("runtime_versions")
+                if (
+                    not isinstance(runtime, dict)
+                    or not runtime
+                    or any(
+                        not isinstance(key, str) or not isinstance(value, str) or not value
+                        for key, value in runtime.items()
+                    )
+                ):
+                    raise ValueError(f"{project_id}: checked report runtime provenance is invalid")
+                report_runtimes.append(runtime)
+                report_devices.add(device)
+
+                timings = report.get("timing_seconds")
+                if (
+                    not isinstance(timings, dict)
+                    or set(timings) != {"duplicate", "search"}
+                    or any(not _is_finite_number(value) or value < 0 for value in timings.values())
+                ):
+                    raise ValueError(f"{project_id}: checked report timings are invalid")
+
+                execution = report.get("execution")
+                if not isinstance(execution, dict) or set(execution) != {"duplicate", "search"}:
+                    raise ValueError(
+                        f"{project_id}: checked report execution provenance is incomplete"
+                    )
+                for task, stats in execution.items():
+                    if (
+                        not isinstance(stats, dict)
+                        or set(stats) != {"device", "encoded_inputs", "cache_hit_rows"}
+                        or stats["device"] != device
+                        or type(stats["encoded_inputs"]) is not int
+                        or stats["encoded_inputs"] <= 0
+                        or type(stats["cache_hit_rows"]) is not int
+                        or stats["cache_hit_rows"] != 0
+                    ):
+                        raise ValueError(
+                            f"{project_id}: invalid checked {task} execution provenance"
+                        )
+
+        comparisons = record["device_comparisons"]
+        if not isinstance(comparisons, dict) or set(comparisons) != set(profile_keys):
+            raise ValueError(f"{project_id}: checked report device comparisons are incomplete")
+        for model, comparison in comparisons.items():
+            if (
+                not isinstance(comparison, dict)
+                or set(comparison)
+                != {
+                    "pair_score_abs_drift",
+                    "query_score_abs_drift",
+                    "duplicate_decision_changes",
+                    "search_decision_changes",
+                }
+                or not isinstance(comparison["duplicate_decision_changes"], list)
+                or not isinstance(comparison["search_decision_changes"], list)
+            ):
+                raise ValueError(f"{project_id}: invalid checked {model} device comparison")
+            for field in ("pair_score_abs_drift", "query_score_abs_drift"):
+                summary = comparison[field]
+                if (
+                    not isinstance(summary, dict)
+                    or set(summary) != {"count", "p95", "max"}
+                    or type(summary["count"]) is not int
+                    or summary["count"] < 0
+                    or any(
+                        value is not None and (not _is_finite_number(value) or value < 0)
+                        for value in (summary["p95"], summary["max"])
+                    )
+                ):
+                    raise ValueError(f"{project_id}: invalid checked {model} {field}")
+
+    if not report_runtimes or any(runtime != report_runtimes[0] for runtime in report_runtimes[1:]):
+        raise ValueError("checked calibration report has mixed runtime provenance")
+    runtime_summary = payload.get("measurement_runtime")
+    expected_scope = (
+        f"all checked {' and '.join(sorted(device.upper() for device in report_devices))} reports"
+    )
+    if (
+        not isinstance(runtime_summary, dict)
+        or set(runtime_summary) != {"torch", "scope"}
+        or runtime_summary["torch"] != report_runtimes[0].get("torch")
+        or runtime_summary["scope"] != expected_scope
+    ):
+        raise ValueError("checked calibration report runtime summary is invalid")
 
 
 def load_all(

@@ -208,3 +208,6 @@ so a promotion or default-visibility difference cannot pass as an unchanged pair
 Its `measurement_runtime` summary derives
 the PyTorch version and device scope from the included reports; mixed PyTorch
 versions are rejected. Raw score matrices and model caches stay out of Git.
+The checked-fixture test validates the report inventory, digest syntax, and the
+recorded device, runtime, timing, and uncached-execution provenance before it
+accepts those committed summary claims.

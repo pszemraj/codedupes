@@ -45,6 +45,7 @@ from scripts.calibration_evaluation import (
     selection_context,
     selection_digest,
     support_files_digest,
+    validate_checked_report,
     validate_measurement_digests,
     validate_measurement_provenance,
     validate_selection_context,
@@ -567,6 +568,21 @@ def test_measurements_reject_incomplete_or_duplicate_score_matrices(tmp_path: Pa
         load_measurement(path, project)
 
 
+@pytest.mark.parametrize("field", ["pairs", "query_scores"])
+@pytest.mark.parametrize("score", [True, 1.1, -1.1])
+def test_measurements_reject_boolean_or_out_of_range_cosines(
+    tmp_path: Path, field: str, score: float | bool
+):
+    project = load_projects(project_ids=["ledger"])[0]
+    measurement = _empty_measurement(project)
+    row = next(row for row in measurement[field] if row["cosine"] is not None)
+    row["cosine"] = score
+    path = tmp_path / "measurement.json"
+    write_json(path, measurement)
+    with pytest.raises(ValueError, match="inconsistent score state"):
+        load_measurement(path, project)
+
+
 @pytest.mark.parametrize(
     "field",
     [
@@ -649,6 +665,39 @@ def test_measurement_provenance_rejects_forged_runtime():
     validate_measurement_provenance(project, measurement)
     measurement["metadata"]["runtime_versions"]["torch"] = "forged"
     with pytest.raises(ValueError, match="provenance does not match"):
+        validate_measurement_provenance(project, measurement)
+
+
+def test_measurement_provenance_rejects_boolean_timings():
+    project = load_projects(project_ids=["ledger"])[0]
+    measurement = _empty_measurement(project)
+    profile = resolve_model_profile("gte-modernbert-base")
+    measurement["metadata"].update(
+        {
+            "captured_profile": {
+                "semantic_threshold": profile.semantic_threshold_for_language("python"),
+                "weak_identifier_jaccard_min": profile.hybrid_weak_identifier_jaccard_min,
+                "statement_ratio_min": profile.hybrid_statement_ratio_min,
+                "high_gate": profile.high_confidence_threshold_for_language("python"),
+            },
+            "timing_seconds": {"duplicate": True, "search": True},
+        }
+    )
+    encoded_inputs = sum(unit["embedded"] for unit in measurement["units"])
+    execution = {
+        "execution_device": "cpu",
+        "cache_hit_rows": 0,
+        "cache_enabled": False,
+        "model_loaded": True,
+        "requested_rows": encoded_inputs,
+        "unique_inputs": encoded_inputs,
+        "encoded_inputs": encoded_inputs,
+    }
+    measurement["metadata"]["execution"] = {
+        "duplicate": execution.copy(),
+        "search": execution.copy(),
+    }
+    with pytest.raises(ValueError, match="invalid measurement timing provenance"):
         validate_measurement_provenance(project, measurement)
 
 
@@ -927,6 +976,7 @@ def test_checked_calibration_result_matches_shipped_profiles(monkeypatch):
         lambda: recorded_runtime,
     )
     models = [item["model"] for item in result["threshold_selection"]["models"]]
+    validate_checked_report(result, projects, models)
     expected = selection_context(projects, models)
     assert {
         project_id: project_context["measurements"]
@@ -978,3 +1028,28 @@ def test_checked_calibration_result_matches_shipped_profiles(monkeypatch):
         for comparison in project["device_comparisons"].values():
             assert comparison["duplicate_decision_changes"] == []
             assert comparison["search_decision_changes"] == []
+
+
+def test_checked_calibration_report_schema_accepts_committed_result():
+    result = read_json(DEFAULT_MANIFEST.parent / "calibration-results.json")
+    models = [item["model"] for item in result["threshold_selection"]["models"]]
+    validate_checked_report(result, load_projects(), models)
+
+
+@pytest.mark.parametrize("tamper", ["digest", "timing", "execution", "identity"])
+def test_checked_calibration_result_rejects_tampered_provenance(tamper: str):
+    result = read_json(DEFAULT_MANIFEST.parent / "calibration-results.json")
+    projects = load_projects()
+    models = [item["model"] for item in result["threshold_selection"]["models"]]
+    first_project = result["projects"][0]
+    first_report = first_project["reports"]["gte-modernbert-base/cpu"]
+    if tamper == "digest":
+        result["measurement_digests"]["ledger/gte-modernbert-base/cpu"] = "forged-digest"
+    elif tamper == "timing":
+        first_report["timing_seconds"]["duplicate"] = True
+    elif tamper == "execution":
+        first_report["execution"]["duplicate"]["cache_hit_rows"] = 1
+    else:
+        first_report["device"] = "mps"
+    with pytest.raises(ValueError, match="checked"):
+        validate_checked_report(result, projects, models)
