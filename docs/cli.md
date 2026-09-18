@@ -157,7 +157,8 @@ Clear all cached embeddings or only entries for one model. An empty or whitespac
 
 ## Validation and mode notes
 
-- Threshold values must be in `[0.0, 1.0]`
+- `check` threshold values must be in `[0.0, 1.0]`; `search --threshold`
+  accepts any finite value, including a negative similarity floor
 - `--semantic-threshold` and `--traditional-threshold` override `--threshold` for their respective methods
 - `--batch-size`, `--top-k`, and `--max-duplicates` must be greater than `0`
 - `--min-statements` and `--tiny-cutoff` must be greater than or equal to `0`
