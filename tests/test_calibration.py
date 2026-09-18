@@ -9,6 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from codedupes import semantic
 from codedupes.semantic_profiles import resolve_model_profile
 from scripts import (
     calibration_evaluation,
@@ -612,7 +613,8 @@ def test_checked_calibration_result_matches_shipped_profiles():
     assert result["hybrid_selection"]["threshold_selection_digest"] == selection_digest(
         result["threshold_selection"]
     )
-    for project in load_projects():
+    projects = load_projects()
+    for project in projects:
         # Runtime identity is machine-specific; checked labels and scope are not.
         assert context["projects"][project.id]["annotations"] == selection_digest(
             project.annotations
@@ -620,6 +622,22 @@ def test_checked_calibration_result_matches_shipped_profiles():
         assert context["projects"][project.id]["project"] == selection_digest(project.spec)
         assert context["projects"][project.id]["policy"] == project.policy_name
     assert context["selection_policy"] == selection_context([], [])["selection_policy"]
+    recorded_runtimes = {
+        tuple(sorted(report["runtime_versions"].items()))
+        for project in result["projects"]
+        for report in project["reports"].values()
+    }
+    current_runtime = tuple(sorted(semantic.get_semantic_runtime_versions().items()))
+    if recorded_runtimes == {current_runtime}:
+        models = [item["model"] for item in result["threshold_selection"]["models"]]
+        expected = selection_context(projects, models)
+        assert {
+            project_id: project_context["measurements"]
+            for project_id, project_context in context["projects"].items()
+        } == {
+            project_id: project_context["measurements"]
+            for project_id, project_context in expected["projects"].items()
+        }
     assert result["measurement_runtime"]["scope"] == "all checked CPU and MPS reports"
     assert {
         report["runtime_versions"]["torch"]
