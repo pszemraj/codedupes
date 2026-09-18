@@ -3640,8 +3640,12 @@ def resolve_search_threshold(
     :param semantic_task: Task used to embed corpus and query.
     :param threshold_profile: Threshold defaults to select; numeric gates take precedence.
     :return: Explicit gate or the applicable profile default.
-    :raises ValueError: If the search context requires an explicit threshold override.
+    :raises ValueError: If an explicit threshold is non-finite or the search context
+        requires an explicit threshold override.
     """
+    if threshold is not None and not np.isfinite(threshold):
+        raise ValueError("threshold must be finite")
+
     profile = resolve_model_profile(model_name)
     selected_profile = resolve_threshold_profile(profile, threshold_profile)
     semantic_task = normalize_semantic_task(
@@ -3742,6 +3746,9 @@ def _find_similar_to_query_unlocked(
     :raises RuntimeError: If the query checkpoint cannot be verified against the
         indexed corpus, or its embedding execution policy changed.
     """
+    if not isinstance(query, str) or not query.strip():
+        raise ValueError("query must be a non-empty string")
+
     validate_explicit_device_request(device, mps_fallback=mps_fallback)
 
     if type(top_k) is not int or top_k <= 0:
@@ -4163,9 +4170,9 @@ def find_similar_to_query(
         used to build ``corpus_identity``.
     :return: Up to ``top_k`` ``(unit, similarity)`` pairs at or above the threshold,
         sorted by descending similarity.
-    :raises ValueError: If ``top_k`` is not a positive integer, ``threshold`` is
-        non-finite, an uncalibrated corpus uses the default threshold, or a
-        prompt-sensitive corpus omits its identity.
+    :raises ValueError: If ``query`` is blank, ``top_k`` is not a positive integer,
+        ``threshold`` is non-finite, an uncalibrated corpus uses the default
+        threshold, or a prompt-sensitive corpus omits its identity.
     """
     # Same contract as compute_embeddings_with_identity: configure
     # import-sensitive runtime variables before anything can import torch.

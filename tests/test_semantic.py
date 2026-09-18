@@ -487,6 +487,18 @@ def test_search_requires_positive_integer_top_k(top_k) -> None:
         )
 
 
+@pytest.mark.parametrize("query", ["", " \t\n"])
+def test_search_requires_nonempty_query(query: str) -> None:
+    with pytest.raises(ValueError, match="query must be a non-empty string"):
+        find_similar_to_query(
+            query,
+            [],
+            np.empty((0, 0), dtype=np.float32),
+            threshold=0.0,
+            use_cache=False,
+        )
+
+
 @pytest.mark.parametrize(
     "threshold",
     [
@@ -2597,6 +2609,12 @@ def test_search_threshold_profile_defaults_and_numeric_precedence(choice, expect
     assert (
         semantic.resolve_search_threshold("embeddinggemma", 0.62, threshold_profile=choice) == 0.62
     )
+
+
+@pytest.mark.parametrize("threshold", [math.nan, math.inf, -math.inf])
+def test_resolve_search_threshold_rejects_nonfinite_override(threshold: float) -> None:
+    with pytest.raises(ValueError, match="threshold must be finite"):
+        semantic.resolve_search_threshold("embeddinggemma", threshold)
 
 
 def test_fingerprint_local_model_dir_handles_symlink_cycles(tmp_path: Path) -> None:

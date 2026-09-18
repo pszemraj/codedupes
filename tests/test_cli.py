@@ -729,6 +729,18 @@ def test_cli_search_rejects_unknown_result_level_before_indexing(monkeypatch, tm
     assert "Invalid value" in result.output
 
 
+@pytest.mark.parametrize("query", ["", " \t"])
+def test_cli_search_rejects_blank_query_before_indexing(monkeypatch, tmp_path, query):
+    def unexpected_analyzer(config):
+        raise AssertionError("Blank queries must fail before indexing")
+
+    monkeypatch.setattr(cli, "CodeAnalyzer", unexpected_analyzer)
+    result = CliRunner().invoke(cli.cli, ["search", str(tmp_path), query])
+
+    assert result.exit_code == 2
+    assert "query must be a non-empty string" in result.output
+
+
 def _patch_search_analyzer(
     monkeypatch,
     *,
