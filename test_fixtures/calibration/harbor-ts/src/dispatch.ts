@@ -3,13 +3,20 @@ import type { DispatchPlan, ZoneSummary } from "./models.ts";
 function validateSummaries(summaries: readonly ZoneSummary[]): void {
   for (const summary of summaries) {
     if (!summary.zone.trim()) throw new Error("zone is required");
-    if (!Number.isInteger(summary.totalKg) || summary.totalKg <= 0) {
+    if (!Number.isSafeInteger(summary.totalKg) || summary.totalKg <= 0) {
       throw new Error("totalKg must be a positive integer");
     }
-    if (!Number.isInteger(summary.loadCount) || summary.loadCount <= 0) {
+    if (!Number.isSafeInteger(summary.loadCount) || summary.loadCount <= 0) {
       throw new Error("loadCount must be a positive integer");
     }
   }
+}
+
+function addHeldKg(heldKg: number, totalKg: number): number {
+  if (totalKg > Number.MAX_SAFE_INTEGER - heldKg) {
+    throw new Error("heldKg must be a safe integer");
+  }
+  return heldKg + totalKg;
 }
 
 /** Build the baseline queue: every valid zone receives one dispatch instruction. */
@@ -30,15 +37,15 @@ export function planDispatchesWithHoldback(
   minimumDispatchKg: number,
 ): DispatchPlan {
   validateSummaries(summaries);
-  if (!Number.isInteger(minimumDispatchKg) || minimumDispatchKg < 0) {
-    throw new Error("minimumDispatchKg must be a non-negative integer");
+  if (!Number.isSafeInteger(minimumDispatchKg) || minimumDispatchKg < 0) {
+    throw new Error("minimumDispatchKg must be a non-negative safe integer");
   }
   const instructions = [] as DispatchPlan["instructions"];
   const auditEvents: string[] = [];
   let heldKg = 0;
   for (const summary of [...summaries].sort((left, right) => left.zone.localeCompare(right.zone))) {
     if (minimumDispatchKg > 0 && summary.totalKg < minimumDispatchKg) {
-      heldKg += summary.totalKg;
+      heldKg = addHeldKg(heldKg, summary.totalKg);
       instructions.push({ zone: summary.zone, totalKg: summary.totalKg, state: "held" });
       auditEvents.push(`held:${summary.zone}:${summary.totalKg}`);
     } else {
@@ -59,9 +66,11 @@ export function planDispatchesWithServiceFloors(
   let heldKg = 0;
   for (const summary of [...summaries].sort((left, right) => left.zone.localeCompare(right.zone))) {
     const floor = floors[summary.zone] ?? 0;
-    if (!Number.isInteger(floor) || floor < 0) throw new Error("service floor must be non-negative");
+    if (!Number.isSafeInteger(floor) || floor < 0) {
+      throw new Error("service floor must be a non-negative safe integer");
+    }
     if (floor > 0 && summary.totalKg < floor) {
-      heldKg += summary.totalKg;
+      heldKg = addHeldKg(heldKg, summary.totalKg);
       instructions.push({ zone: summary.zone, totalKg: summary.totalKg, state: "held" });
       auditEvents.push(`service-floor:${summary.zone}:${floor}`);
     } else {

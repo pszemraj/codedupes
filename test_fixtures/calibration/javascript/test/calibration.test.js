@@ -40,6 +40,20 @@ test("translated aggregation agrees and validates before void filtering", () => 
   assert.throws(() => summarizeInvoiceAccounts(invalidVoided), /safe integer/);
 });
 
+test("aggregation variants reject totals outside the safe-integer range", () => {
+  const overflowing = [
+    { invoiceId: "a", amountMinor: Number.MAX_SAFE_INTEGER, voided: false },
+    { invoiceId: "a", amountMinor: 1, voided: false },
+  ];
+  for (const aggregate of [
+    aggregateInvoices,
+    buildInvoiceDigest,
+    summarizeInvoiceAccounts,
+  ]) {
+    assert.throws(() => aggregate(overflowing), /invoice total must be a safe integer/);
+  }
+});
+
 test("payout extension preserves zero minimum and records deferral boundary", () => {
   const summaries = aggregateInvoices(records);
   const baseline = planTransfers(summaries);
@@ -50,6 +64,22 @@ test("payout extension preserves zero minimum and records deferral boundary", ()
   assert.deepEqual(deferred.events, [["a", "below_minimum", 100], ["b", "below_minimum", 100]]);
   assert.equal(deferred.deferredTotal, 100);
   assert.deepEqual(schedulePayouts(summaries, { minimumPayoutMinor: 100 }), deferred);
+});
+
+test("payout variants reject deferred totals outside the safe-integer range", () => {
+  const summaries = [
+    { invoiceId: "a", totalMinor: Number.MAX_SAFE_INTEGER - 1, count: 1 },
+    { invoiceId: "b", totalMinor: 1, count: 1 },
+    { invoiceId: "c", totalMinor: 1, count: 1 },
+  ];
+  assert.throws(
+    () => planTransfersWithMinimum(summaries, Number.MAX_SAFE_INTEGER),
+    /deferredTotal must be a safe integer/,
+  );
+  assert.throws(
+    () => schedulePayouts(summaries, { minimumPayoutMinor: Number.MAX_SAFE_INTEGER }),
+    /deferredTotal must be a safe integer/,
+  );
 });
 
 test("webhook normalization keeps acceptance and adapter failures distinct", () => {

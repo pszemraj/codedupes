@@ -20,7 +20,9 @@ function readManifestNotice(cells: ManifestNotice): ParsedNotice {
     return { problem: "arrivalDate is not a calendar day" };
   }
   if (!/^[1-9]\d*$/.test(kilograms)) return { problem: "weightKg must be a positive integer string" };
-  return { reference: reference.trim(), berth: berth.trim().toUpperCase(), gateDay, kilograms: Number(kilograms) };
+  const weightKg = Number(kilograms);
+  if (!Number.isSafeInteger(weightKg)) return { problem: "weightKg must be a positive integer string" };
+  return { reference: reference.trim(), berth: berth.trim().toUpperCase(), gateDay, kilograms: weightKg };
 }
 
 function renderBookingReport(ledger: ManifestLedger) {

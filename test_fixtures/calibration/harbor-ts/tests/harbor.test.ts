@@ -41,6 +41,29 @@ test("aggregation variants preserve validation, ordering, and caller input", () 
   assert.equal(loads[1].zone, " east ");
 });
 
+test("booking and aggregation paths reject unsafe integer weights", () => {
+  const unsafeWeight = "9007199254740993";
+  const raw = { bookingId: "B-safe", zone: "east", arrivalDate: "2026-10-04", weightKg: unsafeWeight };
+  assert.throws(() => normalizeBooking(raw), /weightKg must be a positive integer string/);
+  assert.deepEqual(acceptInlineBookings([raw]), {
+    accepted: [], errors: ["row 0: weightKg must be a positive integer string"], reservedIds: [],
+  });
+  assert.deepEqual(acceptBookingsWithNormalizer([raw]), {
+    accepted: [], errors: ["row 0: weightKg must be a positive integer string"], reservedIds: [],
+  });
+  assert.deepEqual(admitManifestNotices([[raw.bookingId, raw.zone, raw.arrivalDate, unsafeWeight]]), {
+    accepted: [], errors: ["row 0: weightKg must be a positive integer string"], reservedIds: [],
+  });
+
+  const overflowing = [
+    { loadId: "L-1", zone: "east", weightKg: Number.MAX_SAFE_INTEGER, status: "active" as const },
+    { loadId: "L-2", zone: "east", weightKg: 1, status: "active" as const },
+  ];
+  for (const aggregate of [summarizeDockLoads, buildManifestTotals, collectZoneWeightTotals]) {
+    assert.throws(() => aggregate(overflowing), /totalKg must be a safe integer/);
+  }
+});
+
 test("dispatch extensions equal the baseline when disabled and retain hold witnesses", () => {
   const summaries = summarizeDockLoads(loads);
   assert.deepEqual(planDispatchesWithHoldback(summaries, 0), planDispatches(summaries));
@@ -55,6 +78,30 @@ test("dispatch extensions equal the baseline when disabled and retain hold witne
     heldKg: 40,
     auditEvents: ["service-floor:WEST:100"],
   });
+});
+
+test("dispatch hold accumulators reject totals outside the safe-integer range", () => {
+  const summaries = [
+    { zone: "EAST", totalKg: Number.MAX_SAFE_INTEGER - 1, loadCount: 1 },
+    { zone: "NORTH", totalKg: 1, loadCount: 1 },
+    { zone: "WEST", totalKg: 1, loadCount: 1 },
+  ];
+  assert.throws(
+    () => planDispatchesWithHoldback(summaries, Number.MAX_SAFE_INTEGER),
+    /heldKg must be a safe integer/,
+  );
+  assert.throws(
+    () => planDispatchesWithServiceFloors(summaries, { EAST: Number.MAX_SAFE_INTEGER, NORTH: Number.MAX_SAFE_INTEGER, WEST: Number.MAX_SAFE_INTEGER }),
+    /heldKg must be a safe integer/,
+  );
+  assert.throws(
+    () => planDispatchesWithHoldback(summaries, Number.MAX_SAFE_INTEGER + 1),
+    /minimumDispatchKg must be a non-negative safe integer/,
+  );
+  assert.throws(
+    () => planDispatchesWithServiceFloors(summaries, { EAST: Number.MAX_SAFE_INTEGER + 1 }),
+    /service floor must be a non-negative safe integer/,
+  );
 });
 
 test("inline and extracted booking decoders agree without reserving invalid IDs", () => {

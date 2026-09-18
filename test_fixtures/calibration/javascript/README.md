@@ -18,11 +18,12 @@ validate the complete summary set before producing sorted transfer instructions.
 Positive balances strictly below an enabled minimum are deferred; a zero
 minimum is the baseline behavior.
 
-Webhook records require nonblank IDs, a normalizable email address, a finite
-integer amount, and a boolean `voided` flag. Batch processors only reserve IDs
-after acceptance, so a malformed first record never prevents a corrected later
-record from being accepted. Batch and JSON-lines adapters deliberately report
-failures differently.
+Webhook records require nonblank IDs, a normalizable email address, a safe
+integer amount, and a boolean `voided` flag. Invoice aggregation and deferred
+payout totals also reject additions that leave JavaScript's safe-integer range.
+Batch processors only reserve IDs after acceptance, so a malformed first record
+never prevents a corrected later record from being accepted. Batch and
+JSON-lines adapters deliberately report failures differently.
 
 Receipt adapters write one normalized delivery record to the supplied mailbox.
 The callback, queued outbox Promise, and async transport forms have intentionally
