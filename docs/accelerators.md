@@ -27,7 +27,7 @@ as decision-equivalent. The five-project development-corpus comparison ran both 
 fresh, uncached CPU and MPS processes with PyTorch 2.14.0. Its maximum absolute
 pair or query score drift was `7.75e-7`, with no duplicate or search threshold
 decisions changed. Across the ten model/project runs, aggregate measured time
-was 77.4 seconds on CPU and 56.4 seconds on MPS. On Apple silicon, leave `--device`
+was 76.8 seconds on CPU and 56.6 seconds on MPS. On Apple silicon, leave `--device`
 at `auto` so codedupes uses MPS for the faster path. Pin `cpu` only when reproducing the CPU
 calibration reference or investigating CPU-specific behavior. See the checked
 [calibration results](../test_fixtures/calibration/calibration-results.json) for
@@ -133,6 +133,10 @@ A run keyed under a non-default (bfloat16) dtype variant whose live execution ca
 The restarted corpus records its faithful CPU identity and stays directly searchable: queries follow that recorded policy even while the analyzer still requests the accelerator. Conversely, a query whose own encode falls back and casts to float32 against a corpus still keyed bfloat16 aborts before the similarity comparison - the correctness boundary is the dot product, not just the cache key.
 
 `codedupes` deliberately does not set `PYTORCH_MPS_FAST_MATH` or `PYTORCH_MPS_PREFER_METAL`. Fast math may change floating-point results around tuned similarity thresholds, while forcing a particular matmul implementation is workload-specific. You can experiment with those variables externally, but re-run the hybrid tuning guardrail and a representative repository before adopting altered thresholds. Changing fast math re-embeds MPS-capable requests; if execution then leaves MPS, the corpus restarts under the effective CPU policy and an incompatible standalone query aborts before comparison. `PYTORCH_MPS_PREFER_METAL` selects among faithful float32 implementations and shares their identity. See [cache runtime identity](caching.md#runtime-identity) for key composition and reuse boundaries.
+
+The checked calibration workflow is stricter: it rejects
+`PYTORCH_MPS_FAST_MATH` so the CPU/MPS comparison always measures the shipped
+faithful-float32 policy.
 
 For a native macOS installation, use the default `gte-modernbert-base` profile first; evaluate `embeddinggemma-300m` only after the default path is stable.
 

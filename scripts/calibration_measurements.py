@@ -50,13 +50,22 @@ except ImportError:
         write_json,
     )
 
-ARTIFACT_VERSION = 4
+ARTIFACT_VERSION = 5
 CALIBRATION_BATCH_SIZE = 4
 DEFAULT_MEASUREMENTS = REPO / "scratch/calibration"
 
 
-def measurement_fingerprint(project: Project, model: str) -> str:
-    """Fingerprint source, unit identities, queries, model, and the measurement pipeline."""
+def measurement_fingerprint(project: Project, model: str, device: str) -> str:
+    """Fingerprint source, unit identities, model policy, and the measurement pipeline.
+
+    :param project: Calibration project whose source and queries are measured.
+    :param model: Built-in semantic model key or alias.
+    :param device: Calibration reference device, either ``cpu`` or ``mps``.
+    :return: Stable SHA-256 identity for one raw measurement input.
+    :raises ValueError: If ``device`` is outside the calibration device set.
+    """
+    if device not in {"cpu", "mps"}:
+        raise ValueError("calibration fingerprint device must be cpu or mps")
     profile = resolve_model_profile(model)
     source_units, _ = extract_project(project)
     source_paths = {unit.file_path for unit in source_units} | {
@@ -86,6 +95,8 @@ def measurement_fingerprint(project: Project, model: str) -> str:
         "queries": {probe["id"]: probe["query"] for probe in project.annotations["probes"]},
         "policy": project.policy,
         "model": profile.canonical_name,
+        "device": device,
+        "math_policy": semantic._mps_fast_math_variant(device) or "standard",
         "revision": profile.default_revision,
         "family": profile.family,
         "trust_remote_code": profile.default_trust_remote_code,
@@ -141,6 +152,9 @@ def capture(
         raise ValueError("device must be cpu or mps")
     if os.getenv("CODEDUPES_CPU_BF16") == "1":
         raise ValueError("disable experimental CPU bf16 while calibrating")
+    math_policy = semantic._mps_fast_math_variant(device) or "standard"
+    if math_policy != "standard":
+        raise ValueError("disable PYTORCH_MPS_FAST_MATH while calibrating")
 
     profile = resolve_model_profile(model)
     if profile.default_revision is None or len(profile.default_revision) != 40:
@@ -265,8 +279,9 @@ def capture(
             "requested_device": device,
             "batch_size": batch_size,
             "inference_dtype": inference_dtype,
+            "math_policy": math_policy,
             "runtime_versions": semantic.get_semantic_runtime_versions(),
-            "input_fingerprint": measurement_fingerprint(project, profile.key),
+            "input_fingerprint": measurement_fingerprint(project, profile.key, device),
             "captured_profile": {
                 "semantic_threshold": profile.semantic_threshold_for_language(
                     project.spec["languages"][0]
@@ -466,6 +481,8 @@ def load_measurement(
     metadata = measurement["metadata"]
     if type(metadata.get("batch_size")) is not int or metadata["batch_size"] <= 0:
         raise ValueError(f"measurement has invalid batch size: {path}")
+    if metadata.get("math_policy") != "standard":
+        raise ValueError(f"measurement has invalid math policy: {path}")
     if (
         expected_model is not None
         and metadata["model"] != resolve_model_profile(expected_model).key
@@ -481,7 +498,11 @@ def load_measurement(
         raise ValueError(f"measurement did not execute on {expected_device}: {path}")
     if project is not None and measurement["metadata"][
         "input_fingerprint"
-    ] != measurement_fingerprint(project, measurement["metadata"]["model"]):
+    ] != measurement_fingerprint(
+        project,
+        measurement["metadata"]["model"],
+        measurement["metadata"]["requested_device"],
+    ):
         raise ValueError(f"stale measurement: {path}")
     if project is not None:
         _validate_measurement_payload(measurement, project)

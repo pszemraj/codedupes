@@ -16,6 +16,7 @@ try:
         write_json,
     )
     from .calibration_evaluation import (
+        CHECKED_REPORT_SCHEMA_VERSION,
         compare_devices,
         development_projects,
         full_report,
@@ -38,6 +39,7 @@ except ImportError:
         write_json,
     )
     from calibration_evaluation import (
+        CHECKED_REPORT_SCHEMA_VERSION,
         compare_devices,
         development_projects,
         full_report,
@@ -95,7 +97,7 @@ def main() -> int:
     projects = load_projects(args.manifest, args.projects, args.policy)
     selection_projects = development_projects(projects)
     payload = {
-        "schema_version": 4,
+        "schema_version": CHECKED_REPORT_SCHEMA_VERSION,
         "threshold_selection": read_json(args.threshold_selection),
         "hybrid_selection": read_json(args.hybrid_selection),
         "projects": [],

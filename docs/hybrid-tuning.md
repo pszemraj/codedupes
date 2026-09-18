@@ -109,7 +109,9 @@ Repeat for `ledger`, `cowsay`, `c_metering`, `javascript`, and `harbor-ts`, and
 for `gte-modernbert-base` and `embeddinggemma-300m`. CPU fp32 is the reference;
 MPS is an independent real-device comparison. Raw artifacts record the Python,
 PyTorch, Transformers, and Sentence Transformers versions and include them in
-their measurement identity, along with the inference batch size. Derived
+their device-specific measurement identity, along with the inference batch size
+and Metal math policy. Calibration requires faithful MPS math and rejects
+`PYTORCH_MPS_FAST_MATH`; altered Metal arithmetic is not comparable evidence. Derived
 selections also record digests of the complete CPU score matrices, while the
 checked report records every CPU and MPS measurement digest and validates its
 runtime, dtype, batch, and fresh-execution provenance. Replacing or truncating a
@@ -219,8 +221,8 @@ Its `measurement_runtime` summary derives
 the PyTorch version and device scope from the included reports; mixed PyTorch
 versions are rejected. Raw score matrices and model caches stay out of Git.
 The checked-fixture test validates the report inventory, digest syntax, and the
-recorded device, policy-derived dtype, runtime, timing, uncached-execution
-provenance, metric schemas and arithmetic, selection/report metric agreement,
+recorded device, policy-derived dtype, math policy, runtime, timing,
+uncached-execution provenance, metric schemas and arithmetic, selection/report metric agreement,
 and exact selection-to-measurement digest binding. Raw score matrices remain
 local-only, so the checked fixture cannot independently recompute a score from a
 digest; rerunning this report command against the bound raw artifacts is the

@@ -1,5 +1,5 @@
 {
-  "schema_version": 4,
+  "schema_version": 5,
   "threshold_selection": {
     "schema_version": 4,
     "objective": {
@@ -9,7 +9,7 @@
     },
     "input_context": {
       "batch_size": 4,
-      "selection_policy": "ad6db05b214cd9e3279eec67af45da3c78772d2a756e72c2ed1ac4bb7d68d2ae",
+      "selection_policy": "f2a4c2d192151e0d3152b0b4e34f4c7735a00eca7635499c7c88247e9a3c9a84",
       "projects": {
         "ledger": {
           "annotations": "2a60e4c34f79ae63502a09798fca17d63ff33558304f37cdb158ffb763fc94d3",
@@ -17,8 +17,8 @@
           "policy": "default",
           "support_files": "d0834a20b1c118a375551359459a6c2a9d47baef2462c4d5bc800a4f8b2d3faf",
           "measurements": {
-            "gte-modernbert-base": "c30757e0914625a3d49a8e10a8d981451a978ab72ba347583eee45fff48a435d",
-            "embeddinggemma-300m": "39eb1073f6631e63d230d2a31c83c3a112b677bc0d552ed035672cb5cfb9dc76"
+            "gte-modernbert-base": "438ba643f2efb5c65f8c739d332d6fe8403ebb8c164ed0844e3d7c55c5457fba",
+            "embeddinggemma-300m": "827a300175267143b9db8577f8a5013fb1c34e5d787711465a324753b40bffad"
           }
         },
         "cowsay": {
@@ -27,8 +27,8 @@
           "policy": "default",
           "support_files": "691e9e0a798bf57ea126b25cee73885ac7c8ad0e38a2353c98229075a77ecd87",
           "measurements": {
-            "gte-modernbert-base": "9af0534c3ef6afeb2f17fba0ede76f71ceaa7dc331c0df707e09e29c599a3506",
-            "embeddinggemma-300m": "fb90a1e63498bfdff8b406edb1867c98eccf16998ce64ba8c78a738301020262"
+            "gte-modernbert-base": "9b79a5ff20ba78ce0016e9d279e4ec6a20869a3759c4ced4ce6b1fd21cb19812",
+            "embeddinggemma-300m": "bf7d5155f27ab9373305fdd73b10ccc495b490ac52714697acff757885fb0402"
           }
         },
         "c_metering": {
@@ -37,8 +37,8 @@
           "policy": "default",
           "support_files": "4ecbeac0ca71c6d5edd6d79b2d34d5806a069dea55c2f8b63bc602004fef2041",
           "measurements": {
-            "gte-modernbert-base": "0d821d5d3e3b3d23d0d8c6fd6d44064a16faec344062c216a6ba30de569520b8",
-            "embeddinggemma-300m": "d33e58c01a1439108576c2a4ea3bab56de2f04869cfb966bc7e0fac64339cdf5"
+            "gte-modernbert-base": "5f710c608769e47c2bf3fe165da2e6f2af0f933b60d03869f1be95b8d43ba84e",
+            "embeddinggemma-300m": "e2a87b69baee78cd820ee1cf8a519fdcee8a421f7436287b265a35786871942f"
           }
         },
         "javascript": {
@@ -47,8 +47,8 @@
           "policy": "default",
           "support_files": "138e206a91e16c42e848a2218dbd7238662eec0fa0d0ab6593f155e95244d182",
           "measurements": {
-            "gte-modernbert-base": "0354c64f4b22a2f24e7a1394004b7eda635e475f9b093d8bbcf7ba1c548a6468",
-            "embeddinggemma-300m": "6b3aa75bf9eb5edff3cacd0382948f8c45ae807f2b62f2e99fbb802b30298ba0"
+            "gte-modernbert-base": "3c8666a16cc42443a04004d341b8625877c4f4b0cf8705870ef0c99807cd3998",
+            "embeddinggemma-300m": "a707f8202c6a0fdcc5feb81755286b7107c52939d1bf62a281c762a52c1b0273"
           }
         },
         "harbor-ts": {
@@ -57,8 +57,8 @@
           "policy": "default",
           "support_files": "51af91763f70ffce6a510b54cfa006e3b74ae802936a46782fabf529b5b316e2",
           "measurements": {
-            "gte-modernbert-base": "723993efe863d198517a5b0660fe86373b90bed0ede4dbe49a9ff4914dde0dda",
-            "embeddinggemma-300m": "fcf6e8886be42e0d159a299ef987bf219ebbb501bab324e0a74ccfe504d44b25"
+            "gte-modernbert-base": "d1e93e3718aaaf60725272c4421d94d521ada20d6588bdd55776af372c9fbe41",
+            "embeddinggemma-300m": "1b3921c4cbcd04214c6d24612089a71abb149418827153d80a9ad9f8cf4ad7fa"
           }
         }
       }
@@ -1382,16 +1382,16 @@
       }
     ],
     "measurement_digests": {
-      "ledger/gte-modernbert-base/cpu": "1ecd8a45393d34219c3ca244f53e8e60dadfea09e9fb552129546f7b97f338f8",
-      "cowsay/gte-modernbert-base/cpu": "c9a83c1c93534080f4f7932a3e722b57a6bacdd0193d7c26cf63485c4c6ee2c7",
-      "c_metering/gte-modernbert-base/cpu": "afb1111b261eaca186e5949f3c9df364514e96f94671c400b1dbc75ec0b4718d",
-      "javascript/gte-modernbert-base/cpu": "e48ecbaf098a0cb851dacd75fec7ff36838a60c87ea24941822e812765f2d696",
-      "harbor-ts/gte-modernbert-base/cpu": "94a9ff141328bceff9ae319c45db16c788798eb7f0bb2aa9eb5da26f58cb3785",
-      "ledger/embeddinggemma-300m/cpu": "323281556edaada5f7eb290f0c6eca4e67fe220df380cd1f175588eec50eee5f",
-      "cowsay/embeddinggemma-300m/cpu": "6b3332c61c007e7939138e0c944d7e032d86f98ebfefdf6fbc4ba7651db8581e",
-      "c_metering/embeddinggemma-300m/cpu": "25de4d2de60c5e770640869b967ff5c0b2223fcc6985d70799322041b7efaaa3",
-      "javascript/embeddinggemma-300m/cpu": "99e4b7300ebc0c36327aaf09c6aa5bc6397e593def020c98bd44924b421ce016",
-      "harbor-ts/embeddinggemma-300m/cpu": "3071069dcae886cd2e9b28b24ce80714b6040c911178c9dd4e08e2a424a9b3d3"
+      "ledger/gte-modernbert-base/cpu": "5a09ff10445c5e4a033d7b17d1fad186d8c0cfcdb9774d51158a853773042046",
+      "cowsay/gte-modernbert-base/cpu": "9f0b984d21f001ce1a13f94cde3bb2090d73cda54d90cb12519a4e54baa19419",
+      "c_metering/gte-modernbert-base/cpu": "a556cfdd26850ac83f5424e2d81500cfd7aef27ff018286abc52bf58e67920ba",
+      "javascript/gte-modernbert-base/cpu": "d218b62e94e1c19e8e0cae58f89f4a46c93cbe2e5e1d63c2660d4532cf1c7476",
+      "harbor-ts/gte-modernbert-base/cpu": "4d8584302da8de0fa9f4565f7a7046a393c9938b7f9cfdf19b86bd2c903d80a2",
+      "ledger/embeddinggemma-300m/cpu": "f2fea25955c5c649dfe5d32215efce151dc83d1e0904eb6e906baeb58c1885bf",
+      "cowsay/embeddinggemma-300m/cpu": "e12a0c0ee271e7d707ee63f5c020d5e9c5e183f984884f7618cc3f96204ac6cd",
+      "c_metering/embeddinggemma-300m/cpu": "74beca65f216585d24e69fc9761db43fcc541559766b0311c98a4f4ff4821be3",
+      "javascript/embeddinggemma-300m/cpu": "c3f7270e8f26656004c2d499288675003748928b591441029edf9896c02db2ff",
+      "harbor-ts/embeddinggemma-300m/cpu": "e95f74bc833a5277fb972c1072dfcd7a95f31ec96f3e2aff32b9c272788bb59b"
     }
   },
   "hybrid_selection": {
@@ -1403,7 +1403,7 @@
     },
     "input_context": {
       "batch_size": 4,
-      "selection_policy": "ad6db05b214cd9e3279eec67af45da3c78772d2a756e72c2ed1ac4bb7d68d2ae",
+      "selection_policy": "f2a4c2d192151e0d3152b0b4e34f4c7735a00eca7635499c7c88247e9a3c9a84",
       "projects": {
         "ledger": {
           "annotations": "2a60e4c34f79ae63502a09798fca17d63ff33558304f37cdb158ffb763fc94d3",
@@ -1411,8 +1411,8 @@
           "policy": "default",
           "support_files": "d0834a20b1c118a375551359459a6c2a9d47baef2462c4d5bc800a4f8b2d3faf",
           "measurements": {
-            "gte-modernbert-base": "c30757e0914625a3d49a8e10a8d981451a978ab72ba347583eee45fff48a435d",
-            "embeddinggemma-300m": "39eb1073f6631e63d230d2a31c83c3a112b677bc0d552ed035672cb5cfb9dc76"
+            "gte-modernbert-base": "438ba643f2efb5c65f8c739d332d6fe8403ebb8c164ed0844e3d7c55c5457fba",
+            "embeddinggemma-300m": "827a300175267143b9db8577f8a5013fb1c34e5d787711465a324753b40bffad"
           }
         },
         "cowsay": {
@@ -1421,8 +1421,8 @@
           "policy": "default",
           "support_files": "691e9e0a798bf57ea126b25cee73885ac7c8ad0e38a2353c98229075a77ecd87",
           "measurements": {
-            "gte-modernbert-base": "9af0534c3ef6afeb2f17fba0ede76f71ceaa7dc331c0df707e09e29c599a3506",
-            "embeddinggemma-300m": "fb90a1e63498bfdff8b406edb1867c98eccf16998ce64ba8c78a738301020262"
+            "gte-modernbert-base": "9b79a5ff20ba78ce0016e9d279e4ec6a20869a3759c4ced4ce6b1fd21cb19812",
+            "embeddinggemma-300m": "bf7d5155f27ab9373305fdd73b10ccc495b490ac52714697acff757885fb0402"
           }
         },
         "c_metering": {
@@ -1431,8 +1431,8 @@
           "policy": "default",
           "support_files": "4ecbeac0ca71c6d5edd6d79b2d34d5806a069dea55c2f8b63bc602004fef2041",
           "measurements": {
-            "gte-modernbert-base": "0d821d5d3e3b3d23d0d8c6fd6d44064a16faec344062c216a6ba30de569520b8",
-            "embeddinggemma-300m": "d33e58c01a1439108576c2a4ea3bab56de2f04869cfb966bc7e0fac64339cdf5"
+            "gte-modernbert-base": "5f710c608769e47c2bf3fe165da2e6f2af0f933b60d03869f1be95b8d43ba84e",
+            "embeddinggemma-300m": "e2a87b69baee78cd820ee1cf8a519fdcee8a421f7436287b265a35786871942f"
           }
         },
         "javascript": {
@@ -1441,8 +1441,8 @@
           "policy": "default",
           "support_files": "138e206a91e16c42e848a2218dbd7238662eec0fa0d0ab6593f155e95244d182",
           "measurements": {
-            "gte-modernbert-base": "0354c64f4b22a2f24e7a1394004b7eda635e475f9b093d8bbcf7ba1c548a6468",
-            "embeddinggemma-300m": "6b3aa75bf9eb5edff3cacd0382948f8c45ae807f2b62f2e99fbb802b30298ba0"
+            "gte-modernbert-base": "3c8666a16cc42443a04004d341b8625877c4f4b0cf8705870ef0c99807cd3998",
+            "embeddinggemma-300m": "a707f8202c6a0fdcc5feb81755286b7107c52939d1bf62a281c762a52c1b0273"
           }
         },
         "harbor-ts": {
@@ -1451,13 +1451,13 @@
           "policy": "default",
           "support_files": "51af91763f70ffce6a510b54cfa006e3b74ae802936a46782fabf529b5b316e2",
           "measurements": {
-            "gte-modernbert-base": "723993efe863d198517a5b0660fe86373b90bed0ede4dbe49a9ff4914dde0dda",
-            "embeddinggemma-300m": "fcf6e8886be42e0d159a299ef987bf219ebbb501bab324e0a74ccfe504d44b25"
+            "gte-modernbert-base": "d1e93e3718aaaf60725272c4421d94d521ada20d6588bdd55776af372c9fbe41",
+            "embeddinggemma-300m": "1b3921c4cbcd04214c6d24612089a71abb149418827153d80a9ad9f8cf4ad7fa"
           }
         }
       }
     },
-    "threshold_selection_digest": "4a982250cf3bd902bc2cbd55d83384febfb602b3d9bbecb8f633ec55ea46354c",
+    "threshold_selection_digest": "835000b1e4c0ba89bdfed6833a0c352c982cc8a06c36cfc454f0d77166eb0966",
     "models": [
       {
         "model": "gte-modernbert-base",
@@ -1757,16 +1757,16 @@
       }
     ],
     "measurement_digests": {
-      "ledger/gte-modernbert-base/cpu": "1ecd8a45393d34219c3ca244f53e8e60dadfea09e9fb552129546f7b97f338f8",
-      "cowsay/gte-modernbert-base/cpu": "c9a83c1c93534080f4f7932a3e722b57a6bacdd0193d7c26cf63485c4c6ee2c7",
-      "c_metering/gte-modernbert-base/cpu": "afb1111b261eaca186e5949f3c9df364514e96f94671c400b1dbc75ec0b4718d",
-      "javascript/gte-modernbert-base/cpu": "e48ecbaf098a0cb851dacd75fec7ff36838a60c87ea24941822e812765f2d696",
-      "harbor-ts/gte-modernbert-base/cpu": "94a9ff141328bceff9ae319c45db16c788798eb7f0bb2aa9eb5da26f58cb3785",
-      "ledger/embeddinggemma-300m/cpu": "323281556edaada5f7eb290f0c6eca4e67fe220df380cd1f175588eec50eee5f",
-      "cowsay/embeddinggemma-300m/cpu": "6b3332c61c007e7939138e0c944d7e032d86f98ebfefdf6fbc4ba7651db8581e",
-      "c_metering/embeddinggemma-300m/cpu": "25de4d2de60c5e770640869b967ff5c0b2223fcc6985d70799322041b7efaaa3",
-      "javascript/embeddinggemma-300m/cpu": "99e4b7300ebc0c36327aaf09c6aa5bc6397e593def020c98bd44924b421ce016",
-      "harbor-ts/embeddinggemma-300m/cpu": "3071069dcae886cd2e9b28b24ce80714b6040c911178c9dd4e08e2a424a9b3d3"
+      "ledger/gte-modernbert-base/cpu": "5a09ff10445c5e4a033d7b17d1fad186d8c0cfcdb9774d51158a853773042046",
+      "cowsay/gte-modernbert-base/cpu": "9f0b984d21f001ce1a13f94cde3bb2090d73cda54d90cb12519a4e54baa19419",
+      "c_metering/gte-modernbert-base/cpu": "a556cfdd26850ac83f5424e2d81500cfd7aef27ff018286abc52bf58e67920ba",
+      "javascript/gte-modernbert-base/cpu": "d218b62e94e1c19e8e0cae58f89f4a46c93cbe2e5e1d63c2660d4532cf1c7476",
+      "harbor-ts/gte-modernbert-base/cpu": "4d8584302da8de0fa9f4565f7a7046a393c9938b7f9cfdf19b86bd2c903d80a2",
+      "ledger/embeddinggemma-300m/cpu": "f2fea25955c5c649dfe5d32215efce151dc83d1e0904eb6e906baeb58c1885bf",
+      "cowsay/embeddinggemma-300m/cpu": "e12a0c0ee271e7d707ee63f5c020d5e9c5e183f984884f7618cc3f96204ac6cd",
+      "c_metering/embeddinggemma-300m/cpu": "74beca65f216585d24e69fc9761db43fcc541559766b0311c98a4f4ff4821be3",
+      "javascript/embeddinggemma-300m/cpu": "c3f7270e8f26656004c2d499288675003748928b591441029edf9896c02db2ff",
+      "harbor-ts/embeddinggemma-300m/cpu": "e95f74bc833a5277fb972c1072dfcd7a95f31ec96f3e2aff32b9c272788bb59b"
     }
   },
   "projects": [
@@ -1787,6 +1787,7 @@
           "device": "cpu",
           "batch_size": 4,
           "inference_dtype": "float32",
+          "math_policy": "standard",
           "runtime_versions": {
             "python": "3.12.13",
             "torch": "2.14.0",
@@ -1794,8 +1795,8 @@
             "sentence-transformers": "5.7.0"
           },
           "timing_seconds": {
-            "duplicate": 5.449666916989372,
-            "search": 2.6623128339997493
+            "duplicate": 5.427107291994616,
+            "search": 2.6113884999940637
           },
           "execution": {
             "duplicate": {
@@ -1881,6 +1882,7 @@
           "device": "mps",
           "batch_size": 4,
           "inference_dtype": "float32",
+          "math_policy": "standard",
           "runtime_versions": {
             "python": "3.12.13",
             "torch": "2.14.0",
@@ -1888,8 +1890,8 @@
             "sentence-transformers": "5.7.0"
           },
           "timing_seconds": {
-            "duplicate": 4.265189666009974,
-            "search": 1.0685958329995628
+            "duplicate": 4.298966583010042,
+            "search": 1.0721763330075191
           },
           "execution": {
             "duplicate": {
@@ -1975,6 +1977,7 @@
           "device": "cpu",
           "batch_size": 4,
           "inference_dtype": "float32",
+          "math_policy": "standard",
           "runtime_versions": {
             "python": "3.12.13",
             "torch": "2.14.0",
@@ -1982,8 +1985,8 @@
             "sentence-transformers": "5.7.0"
           },
           "timing_seconds": {
-            "duplicate": 5.6899478749983246,
-            "search": 2.8459436660050415
+            "duplicate": 5.7034497919958085,
+            "search": 2.7644357919925824
           },
           "execution": {
             "duplicate": {
@@ -2069,6 +2072,7 @@
           "device": "mps",
           "batch_size": 4,
           "inference_dtype": "float32",
+          "math_policy": "standard",
           "runtime_versions": {
             "python": "3.12.13",
             "torch": "2.14.0",
@@ -2076,8 +2080,8 @@
             "sentence-transformers": "5.7.0"
           },
           "timing_seconds": {
-            "duplicate": 5.009373542008689,
-            "search": 1.548587375000352
+            "duplicate": 5.069318959009252,
+            "search": 1.5527591249992838
           },
           "execution": {
             "duplicate": {
@@ -2450,6 +2454,7 @@
           "device": "cpu",
           "batch_size": 4,
           "inference_dtype": "float32",
+          "math_policy": "standard",
           "runtime_versions": {
             "python": "3.12.13",
             "torch": "2.14.0",
@@ -2457,8 +2462,8 @@
             "sentence-transformers": "5.7.0"
           },
           "timing_seconds": {
-            "duplicate": 4.966926916997181,
-            "search": 2.027599624998402
+            "duplicate": 4.883616792008979,
+            "search": 2.033869542006869
           },
           "execution": {
             "duplicate": {
@@ -2544,6 +2549,7 @@
           "device": "mps",
           "batch_size": 4,
           "inference_dtype": "float32",
+          "math_policy": "standard",
           "runtime_versions": {
             "python": "3.12.13",
             "torch": "2.14.0",
@@ -2551,8 +2557,8 @@
             "sentence-transformers": "5.7.0"
           },
           "timing_seconds": {
-            "duplicate": 4.1086937920044875,
-            "search": 0.8218433750007534
+            "duplicate": 4.0953007920034,
+            "search": 0.8233789170044474
           },
           "execution": {
             "duplicate": {
@@ -2638,6 +2644,7 @@
           "device": "cpu",
           "batch_size": 4,
           "inference_dtype": "float32",
+          "math_policy": "standard",
           "runtime_versions": {
             "python": "3.12.13",
             "torch": "2.14.0",
@@ -2645,8 +2652,8 @@
             "sentence-transformers": "5.7.0"
           },
           "timing_seconds": {
-            "duplicate": 5.191603832994588,
-            "search": 2.389723040992976
+            "duplicate": 5.222208042003331,
+            "search": 2.451023624991649
           },
           "execution": {
             "duplicate": {
@@ -2732,6 +2739,7 @@
           "device": "mps",
           "batch_size": 4,
           "inference_dtype": "float32",
+          "math_policy": "standard",
           "runtime_versions": {
             "python": "3.12.13",
             "torch": "2.14.0",
@@ -2739,8 +2747,8 @@
             "sentence-transformers": "5.7.0"
           },
           "timing_seconds": {
-            "duplicate": 4.6503065830038395,
-            "search": 1.2979510000004666
+            "duplicate": 4.86071524998988,
+            "search": 1.2989989999914542
           },
           "execution": {
             "duplicate": {
@@ -3161,6 +3169,7 @@
           "device": "cpu",
           "batch_size": 4,
           "inference_dtype": "float32",
+          "math_policy": "standard",
           "runtime_versions": {
             "python": "3.12.13",
             "torch": "2.14.0",
@@ -3168,8 +3177,8 @@
             "sentence-transformers": "5.7.0"
           },
           "timing_seconds": {
-            "duplicate": 5.475499916996341,
-            "search": 2.6274371659965254
+            "duplicate": 5.408981334010605,
+            "search": 2.523557249995065
           },
           "execution": {
             "duplicate": {
@@ -3254,6 +3263,7 @@
           "device": "mps",
           "batch_size": 4,
           "inference_dtype": "float32",
+          "math_policy": "standard",
           "runtime_versions": {
             "python": "3.12.13",
             "torch": "2.14.0",
@@ -3261,8 +3271,8 @@
             "sentence-transformers": "5.7.0"
           },
           "timing_seconds": {
-            "duplicate": 4.352332666996517,
-            "search": 1.0084946249990026
+            "duplicate": 4.25682604200847,
+            "search": 1.008418083001743
           },
           "execution": {
             "duplicate": {
@@ -3347,6 +3357,7 @@
           "device": "cpu",
           "batch_size": 4,
           "inference_dtype": "float32",
+          "math_policy": "standard",
           "runtime_versions": {
             "python": "3.12.13",
             "torch": "2.14.0",
@@ -3354,8 +3365,8 @@
             "sentence-transformers": "5.7.0"
           },
           "timing_seconds": {
-            "duplicate": 6.00611120800022,
-            "search": 3.1958991660067113
+            "duplicate": 5.90815937500156,
+            "search": 3.0774456660001306
           },
           "execution": {
             "duplicate": {
@@ -3441,6 +3452,7 @@
           "device": "mps",
           "batch_size": 4,
           "inference_dtype": "float32",
+          "math_policy": "standard",
           "runtime_versions": {
             "python": "3.12.13",
             "torch": "2.14.0",
@@ -3448,8 +3460,8 @@
             "sentence-transformers": "5.7.0"
           },
           "timing_seconds": {
-            "duplicate": 5.030530082993209,
-            "search": 1.6640561670064926
+            "duplicate": 5.0872273330023745,
+            "search": 1.661571874996298
           },
           "execution": {
             "duplicate": {
@@ -3854,6 +3866,7 @@
           "device": "cpu",
           "batch_size": 4,
           "inference_dtype": "float32",
+          "math_policy": "standard",
           "runtime_versions": {
             "python": "3.12.13",
             "torch": "2.14.0",
@@ -3861,8 +3874,8 @@
             "sentence-transformers": "5.7.0"
           },
           "timing_seconds": {
-            "duplicate": 4.941512833000161,
-            "search": 2.1609195830096724
+            "duplicate": 4.912548416992649,
+            "search": 2.1018272090004757
           },
           "execution": {
             "duplicate": {
@@ -3947,6 +3960,7 @@
           "device": "mps",
           "batch_size": 4,
           "inference_dtype": "float32",
+          "math_policy": "standard",
           "runtime_versions": {
             "python": "3.12.13",
             "torch": "2.14.0",
@@ -3954,8 +3968,8 @@
             "sentence-transformers": "5.7.0"
           },
           "timing_seconds": {
-            "duplicate": 4.221204583009239,
-            "search": 0.8446218750032131
+            "duplicate": 4.138449292004225,
+            "search": 0.845836665990646
           },
           "execution": {
             "duplicate": {
@@ -4040,6 +4054,7 @@
           "device": "cpu",
           "batch_size": 4,
           "inference_dtype": "float32",
+          "math_policy": "standard",
           "runtime_versions": {
             "python": "3.12.13",
             "torch": "2.14.0",
@@ -4047,8 +4062,8 @@
             "sentence-transformers": "5.7.0"
           },
           "timing_seconds": {
-            "duplicate": 5.358973459005938,
-            "search": 2.6368993340001907
+            "duplicate": 5.441147208010079,
+            "search": 2.6165635409997776
           },
           "execution": {
             "duplicate": {
@@ -4133,6 +4148,7 @@
           "device": "mps",
           "batch_size": 4,
           "inference_dtype": "float32",
+          "math_policy": "standard",
           "runtime_versions": {
             "python": "3.12.13",
             "torch": "2.14.0",
@@ -4140,8 +4156,8 @@
             "sentence-transformers": "5.7.0"
           },
           "timing_seconds": {
-            "duplicate": 4.7145937500026776,
-            "search": 1.3482759580074344
+            "duplicate": 4.715016292000655,
+            "search": 1.3480093749967637
           },
           "execution": {
             "duplicate": {
@@ -4525,6 +4541,7 @@
           "device": "cpu",
           "batch_size": 4,
           "inference_dtype": "float32",
+          "math_policy": "standard",
           "runtime_versions": {
             "python": "3.12.13",
             "torch": "2.14.0",
@@ -4532,8 +4549,8 @@
             "sentence-transformers": "5.7.0"
           },
           "timing_seconds": {
-            "duplicate": 4.693407375001698,
-            "search": 1.7672494589933194
+            "duplicate": 4.569063417002326,
+            "search": 1.6954798749939073
           },
           "execution": {
             "duplicate": {
@@ -4619,6 +4636,7 @@
           "device": "mps",
           "batch_size": 4,
           "inference_dtype": "float32",
+          "math_policy": "standard",
           "runtime_versions": {
             "python": "3.12.13",
             "torch": "2.14.0",
@@ -4626,8 +4644,8 @@
             "sentence-transformers": "5.7.0"
           },
           "timing_seconds": {
-            "duplicate": 3.986315749993082,
-            "search": 0.7180388750130078
+            "duplicate": 3.9955713329982245,
+            "search": 0.7216254590020981
           },
           "execution": {
             "duplicate": {
@@ -4713,6 +4731,7 @@
           "device": "cpu",
           "batch_size": 4,
           "inference_dtype": "float32",
+          "math_policy": "standard",
           "runtime_versions": {
             "python": "3.12.13",
             "torch": "2.14.0",
@@ -4720,8 +4739,8 @@
             "sentence-transformers": "5.7.0"
           },
           "timing_seconds": {
-            "duplicate": 5.074216499997419,
-            "search": 2.2058607079961803
+            "duplicate": 5.127831959005562,
+            "search": 2.2892265419941396
           },
           "execution": {
             "duplicate": {
@@ -4806,6 +4825,7 @@
           "device": "mps",
           "batch_size": 4,
           "inference_dtype": "float32",
+          "math_policy": "standard",
           "runtime_versions": {
             "python": "3.12.13",
             "torch": "2.14.0",
@@ -4813,8 +4833,8 @@
             "sentence-transformers": "5.7.0"
           },
           "timing_seconds": {
-            "duplicate": 4.542307790994528,
-            "search": 1.1721997909917263
+            "duplicate": 4.529158749995986,
+            "search": 1.1708439579961123
           },
           "execution": {
             "duplicate": {
@@ -5183,26 +5203,26 @@
     }
   ],
   "measurement_digests": {
-    "ledger/gte-modernbert-base/cpu": "1ecd8a45393d34219c3ca244f53e8e60dadfea09e9fb552129546f7b97f338f8",
-    "ledger/gte-modernbert-base/mps": "6668353b0d74645d848645f38ea362c1e4e97fddc38912ef514358dbeaa877de",
-    "ledger/embeddinggemma-300m/cpu": "323281556edaada5f7eb290f0c6eca4e67fe220df380cd1f175588eec50eee5f",
-    "ledger/embeddinggemma-300m/mps": "85ba2a7d499ea192e608105cf2fae993d3ae5cd404b1b67334c9eb0822e3f0b5",
-    "cowsay/gte-modernbert-base/cpu": "c9a83c1c93534080f4f7932a3e722b57a6bacdd0193d7c26cf63485c4c6ee2c7",
-    "cowsay/gte-modernbert-base/mps": "1e015107788888bcc09354cb0fc558d75ae2410bcb49404f054ae99352d928c1",
-    "cowsay/embeddinggemma-300m/cpu": "6b3332c61c007e7939138e0c944d7e032d86f98ebfefdf6fbc4ba7651db8581e",
-    "cowsay/embeddinggemma-300m/mps": "b3577efa6ef55162b892c45c3eeb087e1621a3d1e01e35f0bc10f0fe00a18a25",
-    "c_metering/gte-modernbert-base/cpu": "afb1111b261eaca186e5949f3c9df364514e96f94671c400b1dbc75ec0b4718d",
-    "c_metering/gte-modernbert-base/mps": "16eb57854deb6b2e57e5c328df05aee954c820bef54969eae4fe839aaf055c98",
-    "c_metering/embeddinggemma-300m/cpu": "25de4d2de60c5e770640869b967ff5c0b2223fcc6985d70799322041b7efaaa3",
-    "c_metering/embeddinggemma-300m/mps": "fa60e5181f76231be14bd844946a2823dce97c94bc1dc551506d37b5472436b4",
-    "javascript/gte-modernbert-base/cpu": "e48ecbaf098a0cb851dacd75fec7ff36838a60c87ea24941822e812765f2d696",
-    "javascript/gte-modernbert-base/mps": "05d4bc4ac60f7ba73574cb157fbf643e1f251e9b91066c7ff3818aff53ad9482",
-    "javascript/embeddinggemma-300m/cpu": "99e4b7300ebc0c36327aaf09c6aa5bc6397e593def020c98bd44924b421ce016",
-    "javascript/embeddinggemma-300m/mps": "4a4abe8fb2759d169b8984573ece4d8f94d39b7453700c1b04a7eb94491c5e82",
-    "harbor-ts/gte-modernbert-base/cpu": "94a9ff141328bceff9ae319c45db16c788798eb7f0bb2aa9eb5da26f58cb3785",
-    "harbor-ts/gte-modernbert-base/mps": "f2ab412730b4f3a255248cd3e962181cdeaf5167bdb5e01718122bef18f4185e",
-    "harbor-ts/embeddinggemma-300m/cpu": "3071069dcae886cd2e9b28b24ce80714b6040c911178c9dd4e08e2a424a9b3d3",
-    "harbor-ts/embeddinggemma-300m/mps": "f898fab483f0565656891009db8a94a7a8b1e204d463ef49bbd49bee69d49eb6"
+    "ledger/gte-modernbert-base/cpu": "5a09ff10445c5e4a033d7b17d1fad186d8c0cfcdb9774d51158a853773042046",
+    "ledger/gte-modernbert-base/mps": "eb1730b362d8645ac452dc3d3a4b993c103f5363340d9ee641b12357728bfac8",
+    "ledger/embeddinggemma-300m/cpu": "f2fea25955c5c649dfe5d32215efce151dc83d1e0904eb6e906baeb58c1885bf",
+    "ledger/embeddinggemma-300m/mps": "36aedbbeff690431522afa9f4587d1f9d77c45663692ccb2efd4489027522277",
+    "cowsay/gte-modernbert-base/cpu": "9f0b984d21f001ce1a13f94cde3bb2090d73cda54d90cb12519a4e54baa19419",
+    "cowsay/gte-modernbert-base/mps": "ae779d53ba4a13fbb6ee2a957ec4be75a85b47fd7e4eb6221a176d15b673426d",
+    "cowsay/embeddinggemma-300m/cpu": "e12a0c0ee271e7d707ee63f5c020d5e9c5e183f984884f7618cc3f96204ac6cd",
+    "cowsay/embeddinggemma-300m/mps": "8495d8316c9d6908c1cd4bda8911168682bb6c528970e3b913192079c68c4f50",
+    "c_metering/gte-modernbert-base/cpu": "a556cfdd26850ac83f5424e2d81500cfd7aef27ff018286abc52bf58e67920ba",
+    "c_metering/gte-modernbert-base/mps": "dd204513bcd88372d27346db0d4017a539d6601de5b24e7898a550b88dcb31e2",
+    "c_metering/embeddinggemma-300m/cpu": "74beca65f216585d24e69fc9761db43fcc541559766b0311c98a4f4ff4821be3",
+    "c_metering/embeddinggemma-300m/mps": "e8650ca90096225ffa630cd7886f7628044a158a87c975ebfff99d649cad8b78",
+    "javascript/gte-modernbert-base/cpu": "d218b62e94e1c19e8e0cae58f89f4a46c93cbe2e5e1d63c2660d4532cf1c7476",
+    "javascript/gte-modernbert-base/mps": "36f20306b851c2604e76eb2b1c92334207b782d5bb85cf0712a43b4ded3f13e7",
+    "javascript/embeddinggemma-300m/cpu": "c3f7270e8f26656004c2d499288675003748928b591441029edf9896c02db2ff",
+    "javascript/embeddinggemma-300m/mps": "896a4f888418373fa8b70ada6f65056aaee767195ca83ed140618afcbf3183c2",
+    "harbor-ts/gte-modernbert-base/cpu": "4d8584302da8de0fa9f4565f7a7046a393c9938b7f9cfdf19b86bd2c903d80a2",
+    "harbor-ts/gte-modernbert-base/mps": "3381e5340ded6a826955c5a6d7cd9092130be5b6f0562cef3babe758d8971013",
+    "harbor-ts/embeddinggemma-300m/cpu": "e95f74bc833a5277fb972c1072dfcd7a95f31ec96f3e2aff32b9c272788bb59b",
+    "harbor-ts/embeddinggemma-300m/mps": "902910974565ebe0d9cd798f10629ab5ca964928ffe6c86acd42492cb34f464c"
   },
   "measurement_runtime": {
     "torch": "2.14.0",

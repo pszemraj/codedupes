@@ -58,7 +58,7 @@ except ImportError:
 F1_RECALL_TOLERANCE = 0.005
 MINIMUM_SELECTION_PRECISION = 0.5
 SELECTION_SCHEMA_VERSION = 4
-CHECKED_REPORT_SCHEMA_VERSION = 4
+CHECKED_REPORT_SCHEMA_VERSION = 5
 _SHA256_HEX = re.compile(r"[0-9a-f]{64}")
 _JUDGMENT_METRIC_KEYS = {
     "tp",
@@ -485,6 +485,7 @@ def measurement_digest(measurement: dict[str, Any]) -> str:
                     "requested_device",
                     "batch_size",
                     "inference_dtype",
+                    "math_policy",
                     "runtime_versions",
                     "input_fingerprint",
                     "captured_profile",
@@ -538,10 +539,13 @@ def validate_measurement_provenance(project: Project, measurement: dict[str, Any
         "statement_ratio_min": profile.hybrid_statement_ratio_min,
         "high_gate": profile.high_confidence_threshold_for_language(project.spec["languages"][0]),
     }
+    expected_math_policy = semantic._mps_fast_math_variant(device) or "standard"
     if (
         metadata["canonical_model"] != profile.canonical_name
         or metadata["revision"] != profile.default_revision
         or metadata["batch_size"] != CALIBRATION_BATCH_SIZE
+        or metadata.get("math_policy") != "standard"
+        or expected_math_policy != "standard"
         or metadata["runtime_versions"] != semantic.get_semantic_runtime_versions()
         or metadata["inference_dtype"] != expected_dtype
         or metadata["captured_profile"] != expected_profile
@@ -597,7 +601,7 @@ def selection_context(projects: list[Project], models: list[str]) -> dict[str, A
                 "policy": project.policy_name,
                 "support_files": support_files_digest(project),
                 "measurements": {
-                    resolve_model_profile(model).key: measurement_fingerprint(project, model)
+                    resolve_model_profile(model).key: measurement_fingerprint(project, model, "cpu")
                     for model in models
                 },
             }
@@ -1179,6 +1183,7 @@ def full_report(project: Project, measurement: dict[str, Any]) -> dict[str, Any]
         "device": measurement["metadata"]["requested_device"],
         "batch_size": measurement["metadata"]["batch_size"],
         "inference_dtype": measurement["metadata"]["inference_dtype"],
+        "math_policy": measurement["metadata"]["math_policy"],
         "runtime_versions": measurement["metadata"]["runtime_versions"],
         "timing_seconds": measurement["metadata"]["timing_seconds"],
         "execution": execution,
@@ -1423,11 +1428,25 @@ def validate_checked_report(
         measured_units = list(
             {unit.uid: unit for unit in [*source_units, *resolved_annotations.values()]}.values()
         )
-        corpus_unit_ids = set(unit_ids(project, measured_units, resolved_annotations).values())
+        corpus_ids_by_uid = unit_ids(project, measured_units, resolved_annotations)
+        corpus_unit_ids = set(corpus_ids_by_uid.values())
         expected_encoded_inputs = len(
             ProjectAnalyzer(project, analyzer_config(project))._select_semantic_candidates(
                 source_units
             )
+        )
+        traditional_result = ProjectAnalyzer(
+            project, analyzer_config(project, semantic=False)
+        ).analyze(project.root)
+        expected_deterministic = metrics(
+            {
+                pair_key(
+                    corpus_ids_by_uid[duplicate.unit_a.uid],
+                    corpus_ids_by_uid[duplicate.unit_b.uid],
+                )
+                for duplicate in traditional_result.traditional_duplicates
+            },
+            judgments(project),
         )
         probes = {probe["id"]: probe for probe in project.annotations["probes"]}
         expected_search_pairs = {
@@ -1470,6 +1489,7 @@ def validate_checked_report(
                 expected_dtype = str(
                     semantic._resolve_model_dtype(profile.family, device)
                 ).removeprefix("torch.")
+                expected_math_policy = semantic._mps_fast_math_variant(device) or "standard"
                 if not isinstance(report, dict):
                     raise ValueError(  # noqa: TRY004 -- checked JSON is one validation failure type
                         f"{project_id}: checked report entry is not an object"
@@ -1482,6 +1502,7 @@ def validate_checked_report(
                         "device",
                         "batch_size",
                         "inference_dtype",
+                        "math_policy",
                         "runtime_versions",
                         "timing_seconds",
                         "execution",
@@ -1495,6 +1516,8 @@ def validate_checked_report(
                     or type(report.get("batch_size")) is not int
                     or report["batch_size"] != CALIBRATION_BATCH_SIZE
                     or report.get("inference_dtype") != expected_dtype
+                    or report.get("math_policy") != "standard"
+                    or expected_math_policy != "standard"
                     or report.get("replay_parity") is not True
                     or not isinstance(report.get("duplicate"), dict)
                     or not isinstance(report.get("search"), dict)
@@ -1505,6 +1528,10 @@ def validate_checked_report(
                     f"{project_id}/{model}/{device}",
                     expected_corpus["positive_pairs"],
                 )
+                if report["duplicate"]["deterministic"] != expected_deterministic:
+                    raise ValueError(
+                        f"{project_id}: checked deterministic evidence differs from the corpus"
+                    )
                 _validate_checked_search_report(
                     report["search"],
                     f"{project_id}/{model}/{device}",

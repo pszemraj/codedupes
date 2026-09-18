@@ -56,6 +56,7 @@ from scripts.calibration_evaluation import (
 )
 from scripts.calibration_measurements import (
     ARTIFACT_VERSION,
+    capture,
     load_measurement,
     measurement_fingerprint,
 )
@@ -110,6 +111,7 @@ def _empty_measurement(project, model: str = "gte-modernbert-base") -> dict:
             "requested_device": "cpu",
             "batch_size": 4,
             "inference_dtype": "float32",
+            "math_policy": "standard",
             "runtime_versions": semantic.get_semantic_runtime_versions(),
             "captured_profile": {},
             "timing_seconds": {"duplicate": 0.0, "search": 0.0},
@@ -118,7 +120,7 @@ def _empty_measurement(project, model: str = "gte-modernbert-base") -> dict:
                 "search": {"execution_device": "cpu", "cache_hit_rows": 0},
             },
             "live_default": [],
-            "input_fingerprint": measurement_fingerprint(project, model),
+            "input_fingerprint": measurement_fingerprint(project, model, "cpu"),
         },
         "units": [
             {
@@ -556,11 +558,11 @@ def test_measurements_reject_changed_source_queries_or_runtime(tmp_path: Path, m
         )["metadata"]["project"]
         == "ledger"
     )
-    fingerprint = measurement_fingerprint(project, "gte-modernbert-base")
+    fingerprint = measurement_fingerprint(project, "gte-modernbert-base", "cpu")
     project.annotations["pairs"][0]["rationale"] += " label-only edit"
-    assert measurement_fingerprint(project, "gte-modernbert-base") == fingerprint
+    assert measurement_fingerprint(project, "gte-modernbert-base", "cpu") == fingerprint
     project.annotations["units"].reverse()
-    assert measurement_fingerprint(project, "gte-modernbert-base") == fingerprint
+    assert measurement_fingerprint(project, "gte-modernbert-base", "cpu") == fingerprint
     with pytest.raises(ValueError, match="another model"):
         load_measurement(path, project, expected_model="embeddinggemma-300m")
     with pytest.raises(ValueError, match="did not execute on mps"):
@@ -582,6 +584,20 @@ def test_measurements_reject_changed_source_queries_or_runtime(tmp_path: Path, m
     )
     with pytest.raises(ValueError, match="stale measurement"):
         load_measurement(path, project)
+
+
+def test_calibration_identity_and_capture_reject_mps_fast_math(tmp_path: Path, monkeypatch):
+    project = load_projects(project_ids=["ledger"])[0]
+    monkeypatch.delenv("PYTORCH_MPS_FAST_MATH", raising=False)
+    faithful = measurement_fingerprint(project, "gte-modernbert-base", "mps")
+    cpu = measurement_fingerprint(project, "gte-modernbert-base", "cpu")
+
+    monkeypatch.setenv("PYTORCH_MPS_FAST_MATH", "1")
+
+    assert measurement_fingerprint(project, "gte-modernbert-base", "mps") != faithful
+    assert measurement_fingerprint(project, "gte-modernbert-base", "cpu") == cpu
+    with pytest.raises(ValueError, match="disable PYTORCH_MPS_FAST_MATH"):
+        capture(project, "gte-modernbert-base", "mps", tmp_path)
 
 
 @pytest.mark.parametrize("mutation", ["missing_pair", "duplicate_query", "bad_rank"])
@@ -683,7 +699,7 @@ def test_device_comparison_rejects_score_coverage_mismatch():
         compare_devices(cpu, mps, SimpleNamespace(id="sample"))
 
 
-def test_measurement_provenance_rejects_forged_runtime():
+def test_measurement_provenance_rejects_forged_runtime_and_fast_math(monkeypatch):
     project = load_projects(project_ids=["ledger"])[0]
     measurement = _empty_measurement(project)
     profile = resolve_model_profile("gte-modernbert-base")
@@ -713,7 +729,19 @@ def test_measurement_provenance_rejects_forged_runtime():
         "search": execution.copy(),
     }
     validate_measurement_provenance(project, measurement)
+    recorded_runtime = measurement["metadata"]["runtime_versions"].copy()
     measurement["metadata"]["runtime_versions"]["torch"] = "forged"
+    with pytest.raises(ValueError, match="provenance does not match"):
+        validate_measurement_provenance(project, measurement)
+
+    measurement["metadata"]["runtime_versions"] = recorded_runtime
+    measurement["metadata"]["requested_device"] = "mps"
+    measurement["metadata"]["input_fingerprint"] = measurement_fingerprint(
+        project, "gte-modernbert-base", "mps"
+    )
+    for stats in measurement["metadata"]["execution"].values():
+        stats["execution_device"] = "mps"
+    monkeypatch.setenv("PYTORCH_MPS_FAST_MATH", "1")
     with pytest.raises(ValueError, match="provenance does not match"):
         validate_measurement_provenance(project, measurement)
 
@@ -762,17 +790,17 @@ def test_measurement_identity_ignores_generated_files_but_tracks_source(tmp_path
         spec=project.spec | {"root": str(tmp_path)},
         annotations={"units": [], "probes": []},
     )
-    fingerprint = measurement_fingerprint(project, "gte-modernbert-base")
+    fingerprint = measurement_fingerprint(project, "gte-modernbert-base", "cpu")
     cache = source / "__pycache__"
     cache.mkdir()
     (cache / "example.cpython-312.pyc").write_bytes(b"generated bytecode")
     (source / ".DS_Store").write_bytes(b"finder metadata")
-    assert measurement_fingerprint(project, "gte-modernbert-base") == fingerprint
+    assert measurement_fingerprint(project, "gte-modernbert-base", "cpu") == fingerprint
     module.write_text("def example(value):\n    return value + 2\n")
-    assert measurement_fingerprint(project, "gte-modernbert-base") != fingerprint
+    assert measurement_fingerprint(project, "gte-modernbert-base", "cpu") != fingerprint
     module.write_text("def example(value):\n    return value + 1\n")
     (source / "additional.py").write_text("def additional(value):\n    return value * 2\n")
-    assert measurement_fingerprint(project, "gte-modernbert-base") != fingerprint
+    assert measurement_fingerprint(project, "gte-modernbert-base", "cpu") != fingerprint
 
 
 @pytest.mark.parametrize("change", ["rename", "retarget", "remove"])
@@ -1258,6 +1286,7 @@ def test_checked_calibration_result_rejects_tampered_embedded_selections(tamper:
         "dtype",
         "runtime",
         "batch",
+        "math",
         "encoded_inputs",
     ],
 )
@@ -1294,6 +1323,8 @@ def test_checked_calibration_result_rejects_tampered_provenance(tamper: str):
         result["measurement_runtime"]["torch"] = "0.0.0-forged"
     elif tamper == "batch":
         first_report["batch_size"] = 999_999
+    elif tamper == "math":
+        first_report["math_policy"] = "mpsfm=1"
     else:
         first_report["execution"]["duplicate"]["encoded_inputs"] = 1
     with pytest.raises(ValueError, match="checked"):
@@ -1307,6 +1338,7 @@ def test_checked_calibration_result_rejects_tampered_provenance(tamper: str):
         "arithmetic",
         "denominator",
         "no_result",
+        "deterministic",
         "drift",
         "decision_changes",
         "foreign_decision_change",
@@ -1336,6 +1368,24 @@ def test_checked_calibration_result_rejects_forged_report_metrics(tamper: str):
             "total": 0,
             "violations": [],
         }
+    elif tamper == "deterministic":
+        for device in ("cpu", "mps"):
+            report = result["projects"][0]["reports"][f"gte-modernbert-base/{device}"]
+            for field in ("published", "visible", "deterministic"):
+                metrics = report["duplicate"][field]
+                metrics["fp"] += 1
+                metrics["precision"] = metrics["judged_only_precision"] = metrics["tp"] / (
+                    metrics["tp"] + metrics["fp"]
+                )
+                metrics["f1"] = (
+                    2
+                    * metrics["precision"]
+                    * metrics["recall"]
+                    / (metrics["precision"] + metrics["recall"])
+                    if metrics["precision"] + metrics["recall"]
+                    else 0.0
+                )
+            report["duplicate"]["tiers"]["traditional_near"] = 1
     elif tamper == "drift":
         summary = result["projects"][0]["device_comparisons"]["gte-modernbert-base"][
             "pair_score_abs_drift"
