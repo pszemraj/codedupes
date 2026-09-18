@@ -5,6 +5,52 @@ applications. The [corpus contract](../test_fixtures/calibration/README.md)
 contains reviewed easy, medium, and hard duplicate pairs plus independent search
 relevance for Python, C, Rust, JavaScript, and TypeScript.
 
+## Checked Issue #20 result
+
+The checked [calibration result](../test_fixtures/calibration/calibration-results.json)
+contains 118 explicitly annotated units, 79 positive judgments, 177 reviewed
+negative judgments, and 60 search probes. Of the positives, 78 are comparable
+semantic pairs; one exact Rust pair is retained as a deterministic fixture but
+excluded from semantic calibration. Every language has at least five comparable
+easy pairs and five comparable medium pairs. This is authored development data,
+not a held-out estimate of accuracy in arbitrary repositories.
+
+Duplicate recall at the selected per-language admission gates is shown as
+detected / labeled comparable positive pairs:
+
+| language | GTE easy | GTE medium | GTE hard | Gemma easy | Gemma medium | Gemma hard |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Python | 3/5 | 3/10 | — | 4/5 | 8/10 | — |
+| Rust | 5/5 | 5/6 | 0/1 | 5/5 | 5/6 | 0/1 |
+| C | 4/5 | 8/14 | 0/1 | 5/5 | 13/14 | 0/1 |
+| JavaScript | 5/5 | 8/14 | — | 4/5 | 8/14 | — |
+| TypeScript | 5/5 | 4/6 | 0/1 | 5/5 | 4/6 | 0/1 |
+| **overall** | **22/25** | **28/50** | **0/3** | **23/25** | **38/50** | **0/3** |
+| **recall** | **88.0%** | **56.0%** | **0.0%** | **92.0%** | **76.0%** | **0.0%** |
+
+A dash means that language has no labeled hard pair. Difficulty belongs to
+positive examples, so false positives and therefore precision and F1 do not have
+a difficulty bucket. The pooled metrics below use every comparable reviewed pair.
+Default-visible duplicates apply the jointly selected hybrid visibility policy
+after semantic admission.
+
+| output | model | TP / FP / FN | precision | recall | F1 |
+| --- | --- | ---: | ---: | ---: | ---: |
+| duplicate admission | GTE | 50 / 6 / 28 | 89.3% | 64.1% | 74.6% |
+| duplicate admission | Gemma | 61 / 12 / 17 | 83.6% | 78.2% | 80.8% |
+| default-visible duplicates | GTE | 50 / 1 / 28 | 98.0% | 64.1% | 77.5% |
+| default-visible duplicates | Gemma | 58 / 2 / 20 | 96.7% | 74.4% | 84.1% |
+| search | GTE | 72 / 20 / 22 | 78.3% | 76.6% | 77.4% |
+| search | Gemma | 60 / 13 / 34 | 82.2% | 63.8% | 71.9% |
+
+Both search profiles keep all 10 no-result probes clean. Selection discards
+settings below 50% judged precision, maximizes F1, and uses recall only to break
+exact F1 ties. Duplicate and search plateaus use their stable midpoint. Hybrid
+visibility jointly selects corroboration and per-language promotion gates after
+the admission gates are fixed. CPU fp32 supplies the reference scores; independent
+uncached MPS fp32 runs produce no duplicate, visibility-tier, or search decision
+changes. Maximum observed pair or query score drift is `7.15e-7`.
+
 Validate source selectors, pair coverage, tests, and entry points first:
 
 ```bash

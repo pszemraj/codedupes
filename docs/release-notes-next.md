@@ -28,7 +28,7 @@
 - Python `__all__` accepts bare tuples and module-level `if`/`try` bodies, a definition with no body yields no unit, a filtered private definition of any kind drops its nested definitions, and identifier sets keep the `site`-injected names (`exit`, `quit`, `help`) that are not language builtins.
 - Improved language-specific extraction, traditional matching, and source-range handling; function and method fingerprints now share a comparison domain so renamed copies can match structurally across those unit types. See [polyglot language support](polyglot-languages.md).
 - Replaced the previous calibration data and compatibility paths with a [versioned manifest and explicit pair contract](../test_fixtures/calibration/README.md) covering runnable Python, C, Rust, JavaScript, and TypeScript applications. Positive pairs span easy, medium, and hard rewrites; nearby negatives and search relevance are reviewed independently.
-- Recalibrated both built-in profiles from uncached CPU fp32 measurements, then verified independent MPS fp32 runs. Per-language duplicate gates, search gates, and hybrid visibility constants now use the [checked issue #20 result](../test_fixtures/calibration/calibration-results.json); raw score matrices remain local scratch data.
+- Recalibrated both built-in profiles from uncached CPU fp32 measurements, then verified independent MPS fp32 runs. Per-language duplicate gates, search gates, and hybrid visibility constants now use the [checked issue #20 result](../test_fixtures/calibration/calibration-results.json); the [methodology and final metrics](hybrid-tuning.md#checked-issue-20-result) summarize the reviewable outcome, while raw score matrices remain local scratch data.
 
 ## Semantic inference and caching
 
