@@ -2,8 +2,7 @@
 
 ## Prerequisites
 
-Git-source installation requires **Python 3.11+**, Git, and PyTorch `>=2.13.0,<3`.
-Install the [PyTorch build for your platform](https://pytorch.org/get-started/locally/) before codedupes, then use the [README install command](../README.md#install).
+Git-source installation requires **Python 3.11+**, Git, and PyTorch `>=2.13.0,<3`. Install the [PyTorch build for your platform](https://pytorch.org/get-started/locally/) before codedupes, then use the [README install command](../README.md#install).
 
 Other dependencies are declared in [pyproject.toml](../pyproject.toml) and installed with the package. You do not need to clone this repository to analyze your own code.
 
@@ -37,21 +36,13 @@ ruff check src tests scripts
 ruff format --check src tests scripts
 ```
 
-The calibration fixture integration tests additionally require a stable Rust toolchain,
-a C compiler and Make, and Node.js/npm with type-stripping support. Run them explicitly
-after installing those external tools:
+The calibration fixture integration tests additionally require a stable Rust toolchain, a C compiler and Make, and Node.js/npm with type-stripping support. Run them explicitly after installing those external tools:
 
 ```bash
 pytest -m toolchain
 ```
 
-An unfiltered `pytest` runs the toolchain tests when all required executables and
-command capabilities are available; otherwise that integration group skips. The
-explicit corpus validator remains fail-loud when a requested behavior requirement
-is missing. An unfiltered run also executes
-the real CUDA or MPS tests when that hardware is available. The accelerator tests load
-actual models and exercise memory exhaustion and recovery; they are not substitutes for
-the ordinary suite and may need downloaded model assets. Network smoke tests are opt-in:
+An unfiltered `pytest` runs the toolchain tests when all required executables and command capabilities are available; otherwise that integration group skips. The explicit corpus validator remains fail-loud when a requested behavior requirement is missing. An unfiltered run also executes the real CUDA or MPS tests when that hardware is available. The accelerator tests load actual models and exercise memory exhaustion and recovery; they are not substitutes for the ordinary suite and may need downloaded model assets. Network smoke tests are opt-in:
 
 ```bash
 CODEDUPES_SMOKE_NETWORK=1 pytest tests/test_semantic_smoke.py -k network_smoke

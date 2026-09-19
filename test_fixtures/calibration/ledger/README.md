@@ -1,61 +1,17 @@
 # Offline ledger pilot
 
-This development application imports transaction records, summarizes invoices,
-plans settlements, and produces independent audit reports. Multiple supported
-implementations are intentional; labels and pair judgments follow the shared
-[calibration corpus contract](../README.md).
+This development application imports transaction records, summarizes invoices, plans settlements, and produces independent audit reports. Multiple supported implementations are intentional; labels and pair judgments follow the shared [calibration corpus contract](../README.md).
 
-Run `PYTHONPATH=src conda run --name inf python -m unittest discover -s tests`
-and `PYTHONPATH=src conda run --name inf python -m ledger` from this directory.
-The entry point exercises both summary and planning paths, both row import paths,
-the file/API adapters, and the audit reports.
+Run `PYTHONPATH=src conda run --name inf python -m unittest discover -s tests` and `PYTHONPATH=src conda run --name inf python -m ledger` from this directory. The entry point exercises both summary and planning paths, both row import paths, the file/API adapters, and the audit reports.
 
 ## Contracts
 
-Aggregation validates records in input order before ignoring voided records.
-Invoice identifiers are stripped, case-sensitive Unicode text; empty identifiers
-are invalid. Amounts are arbitrary-size Python integers, excluding booleans.
-Voided flags must be booleans. Results are immutable and sorted by invoice;
-active zero-total invoices remain present. Inputs are never modified.
+Aggregation validates records in input order before ignoring voided records. Invoice identifiers are stripped, case-sensitive Unicode text; empty identifiers are invalid. Amounts are arbitrary-size Python integers, excluding booleans. Voided flags must be booleans. Results are immutable and sorted by invoice; active zero-total invoices remain present. Inputs are never modified.
 
-Settlement summaries must have unique nonblank identifiers, integer totals, and
-positive integer counts. Validate the entire input before constructing output.
-Positive totals create transfers, negative totals are `refund_due`, and zero is
-`balanced`. Optional deferral applies only to positive totals strictly below a
-nonnegative integer minimum. Deferred invoices create no transfer and do create
-an audit event. Minimum zero gives the complete baseline result, including empty
-audit events and zero deferred total. Output is sorted by invoice.
+Settlement summaries must have unique nonblank identifiers, integer totals, and positive integer counts. Validate the entire input before constructing output. Positive totals create transfers, negative totals are `refund_due`, and zero is `balanced`. Optional deferral applies only to positive totals strictly below a nonnegative integer minimum. Deferred invoices create no transfer and do create an audit event. Minimum zero gives the complete baseline result, including empty audit events and zero deferred total. Output is sorted by invoice.
 
-Raw imports require `external_id`, `invoice_id`, `amount_minor`, `currency`,
-`posted_on`, and `voided`. Identifiers are stripped nonblank strings. Amount text
-is an optional minus followed by ASCII digits; plus signs, whitespace, decimals,
-exponents, and booleans are rejected. Currency is exactly `USD`, `EUR`, or `GBP`.
-Dates have strict `YYYY-MM-DD` syntax and must be real calendar dates. Voided
-accepts a boolean or the exact strings `true` and `false`. Validation precedence
-is external ID, invoice ID, amount, currency, date, voided. Invalid rows produce
-ordered field-code rejections rather than aborting the batch. Only an accepted
-row reserves its external ID. Reports preserve source order, include counters
-and accepted-date bounds, and leave inputs unchanged.
+Raw imports require `external_id`, `invoice_id`, `amount_minor`, `currency`, `posted_on`, and `voided`. Identifiers are stripped nonblank strings. Amount text is an optional minus followed by ASCII digits; plus signs, whitespace, decimals, exponents, and booleans are rejected. Currency is exactly `USD`, `EUR`, or `GBP`. Dates have strict `YYYY-MM-DD` syntax and must be real calendar dates. Voided accepts a boolean or the exact strings `true` and `false`. Validation precedence is external ID, invoice ID, amount, currency, date, voided. Invalid rows produce ordered field-code rejections rather than aborting the batch. Only an accepted row reserves its external ID. Reports preserve source order, include counters and accepted-date bounds, and leave inputs unchanged.
 
-CSV uses UTF-8, a context manager, and all six required headers (additional
-columns are allowed). Rejection positions are physical CSV ending-line numbers.
-Malformed headers abort and close the file. API envelopes require a nonblank
-batch ID and a list of items. A previously completed batch returns a replay
-result without processing items again. The supplied completed-batch set is
-updated only after processing the entire valid envelope. Item positions are
-zero-based. CSV and API reports deliberately have different shapes.
+CSV uses UTF-8, a context manager, and all six required headers (additional columns are allowed). Rejection positions are physical CSV ending-line numbers. Malformed headers abort and close the file. API envelopes require a nonblank batch ID and a list of items. A previously completed batch returns a replay result without processing items again. The supplied completed-batch set is updated only after processing the entire valid envelope. Item positions are zero-based. CSV and API reports deliberately have different shapes.
 
-Audit responsibilities are separate: credit risk classifies exposure using a
-credit limit; reference auditing identifies invoice identifiers occurring under
-multiple external IDs; chronological auditing finds out-of-order accepted
-records; currency auditing validates per-currency net exposure against budgets.
-Inventory allocation is represented twice. `allocate_orders` is pure: it copies
-the supplied stock mapping, validates the complete order batch, and returns the
-new stock together with FIFO allocation and shortage records. `InventoryBook`
-stores the same stock and partial-allocation policy, independently validates and
-allocates a batch, then commits the result to its state. Their equivalence maps
-the pure return stock to the book's post-call snapshot. Positive quantities are
-required; missing stock has zero availability. Invalid later orders leave the
-book unchanged. `restock` and `audit_stock_levels` are intentionally nearby but
-separate responsibilities: one records deliveries and the other reports minimum
-stock breaches without allocating orders.
+Audit responsibilities are separate: credit risk classifies exposure using a credit limit; reference auditing identifies invoice identifiers occurring under multiple external IDs; chronological auditing finds out-of-order accepted records; currency auditing validates per-currency net exposure against budgets. Inventory allocation is represented twice. `allocate_orders` is pure: it copies the supplied stock mapping, validates the complete order batch, and returns the new stock together with FIFO allocation and shortage records. `InventoryBook` stores the same stock and partial-allocation policy, independently validates and allocates a batch, then commits the result to its state. Their equivalence maps the pure return stock to the book's post-call snapshot. Positive quantities are required; missing stock has zero availability. Invalid later orders leave the book unchanged. `restock` and `audit_stock_levels` are intentionally nearby but separate responsibilities: one records deliveries and the other reports minimum stock breaches without allocating orders.

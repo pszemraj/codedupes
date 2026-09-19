@@ -1,22 +1,15 @@
 # C metering calibration fixture
 
-This is a small C11 meter-reconciliation application. It keeps intentionally
-independent implementations of five real maintenance shapes:
+This is a small C11 meter-reconciliation application. It keeps intentionally independent implementations of five real maintenance shapes:
 
 - three aggregation algorithms that validate every reading before discarding it;
 - a baseline payout planner and two minimum-payout extensions;
 - inline, extracted-parser, and two-phase row import workflows;
-- CSV, API, and idempotent-delivery adapters that share strict normalization but
-  differ in file ownership, reporting, and delivery acceptance.
-- bounded byte-span record parsers that use a state scan or field slicing and
-  standard conversion while preserving caller output on failure.
+- CSV, API, and idempotent-delivery adapters that share strict normalization but differ in file ownership, reporting, and delivery acceptance.
+- bounded byte-span record parsers that use a state scan or field slicing and standard conversion while preserving caller output on failure.
 
 Labels and pair judgments follow the shared [calibration corpus contract](../README.md).
 
-The project uses value structs, pointer-based output parameters, and a public
-header so extraction sees ordinary C application boundaries. `make test` runs
-the behavioral/differential suite and `make run` executes the demo.
+The project uses value structs, pointer-based output parameters, and a public header so extraction sees ordinary C application boundaries. `make test` runs the behavioral/differential suite and `make run` executes the demo.
 
-Aggregate and deferred-payout totals return `METERING_OVERFLOW` rather than
-overflowing `int`; payout planners also reject device fields without an in-array
-NUL terminator.
+Aggregate and deferred-payout totals return `METERING_OVERFLOW` rather than overflowing `int`; payout planners also reject device fields without an in-array NUL terminator.
