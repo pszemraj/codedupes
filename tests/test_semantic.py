@@ -7,6 +7,7 @@ import os
 import stat
 from dataclasses import replace
 from pathlib import Path
+from typing import get_type_hints
 
 import numpy as np
 import pytest
@@ -14,6 +15,7 @@ import sentence_transformers
 import torch
 
 from codedupes import devices, semantic
+from codedupes.analyzer import CodeAnalyzer
 from codedupes.constants import CPU_FALLBACK_MAX_BATCH_SIZE
 from codedupes.embedding_cache import EmbeddingCache, compute_cache_key
 from codedupes.models import CodeUnit, CodeUnitType
@@ -660,6 +662,16 @@ def test_direct_embeddings_are_normalized_before_query_scoring(tmp_path: Path, m
     )
 
     assert results == [(units[0], 1.0)]
+
+
+def test_search_top_k_annotations_are_int() -> None:
+    """Expose the conventional static type while accepting NumPy integers at runtime."""
+    for search in (
+        semantic._find_similar_to_query_unlocked,
+        find_similar_to_query,
+        CodeAnalyzer.search,
+    ):
+        assert get_type_hints(search)["top_k"] is int
 
 
 @pytest.mark.parametrize("top_k", [0, -1, 1.5, True])

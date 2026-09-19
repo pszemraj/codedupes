@@ -8,7 +8,6 @@ import logging
 import math
 from collections.abc import Mapping
 from dataclasses import dataclass
-from numbers import Integral
 from pathlib import Path
 
 import numpy as np
@@ -1245,7 +1244,7 @@ class CodeAnalyzer:
     def search(
         self,
         query: str,
-        top_k: Integral = 10,
+        top_k: int = 10,
         threshold: float | None = None,
     ) -> list[tuple[CodeUnit, float]]:
         """
