@@ -57,10 +57,13 @@ F1_RECALL_TOLERANCE = 0.005
 MINIMUM_SELECTION_PRECISION = 0.5
 # Selection code is intentionally versioned by behavior rather than by source
 # bytes. Bump this whenever selection or audit behavior changes.
-SELECTION_ALGORITHM_VERSION = 2
+SELECTION_ALGORITHM_VERSION = 3
 SELECTION_SCHEMA_VERSION = 5
 CHECKED_REPORT_SCHEMA_VERSION = 6
 SEARCH_SELECTION_WINDOW_RADIUS = 5
+THRESHOLD_GRID_START = 0.0
+THRESHOLD_GRID_STOP = 1.0
+THRESHOLD_GRID_STEP = 0.01
 HYBRID_WEAK_GRID = (0.0, 0.05, 0.10, 0.15, 0.20, 0.30, 0.40)
 HYBRID_RATIO_GRID = (0.0, 0.20, 0.35, 0.50, 0.65, 0.80)
 HYBRID_PROMOTION_GATE_STEP = 0.01
@@ -284,6 +287,8 @@ def _validate_selection_grids(payload: Any) -> dict[str, list[float]]:
             or any(left >= right for left, right in pairwise(values))
         ):
             raise ValueError(f"threshold selection has an invalid {label} candidate grid")
+    if not _same_json_payload(payload, threshold_candidate_grids()):
+        raise ValueError("threshold selection has mismatched candidate grids")
     return payload
 
 
@@ -472,6 +477,17 @@ def hybrid_candidate_grids() -> dict[str, Any]:
             "step": HYBRID_PROMOTION_GATE_STEP,
         },
     }
+
+
+def threshold_candidate_grids() -> dict[str, list[float]]:
+    """Return the duplicate and search threshold grids bound to shipped selections."""
+    values = [
+        round(THRESHOLD_GRID_START + index * THRESHOLD_GRID_STEP, 6)
+        for index in range(
+            round((THRESHOLD_GRID_STOP - THRESHOLD_GRID_START) / THRESHOLD_GRID_STEP) + 1
+        )
+    ]
+    return {"duplicate": values, "search": list(values)}
 
 
 def selection_policy_identity() -> dict[str, Any]:
@@ -807,6 +823,22 @@ def _joint_audit_tiebreak(payload: dict[str, Any], languages: set[str]) -> tuple
     )
 
 
+def _joint_audit_outcome(
+    per_language: list[dict[str, Any]], languages: set[str]
+) -> tuple[tuple[int, int, int, int], ...]:
+    """Identify a compact joint prediction outcome independently of its policy values."""
+    rows = {item["language"]: item["metrics"] for item in per_language}
+    return tuple(
+        (
+            rows[language]["tp"],
+            rows[language]["fp"],
+            rows[language]["ambiguous_predictions"],
+            rows[language]["unjudged_predictions"],
+        )
+        for language in sorted(languages)
+    )
+
+
 def _validate_hybrid_selection_audit(
     payload: Any,
     selected: dict[str, Any],
@@ -879,6 +911,14 @@ def _validate_hybrid_selection_audit(
         selected_candidate, languages
     ):
         raise ValueError(f"{label} runner-up repeats the selected candidate")
+    if _joint_audit_outcome(runner_up["per_language"], languages) == _joint_audit_outcome(
+        [
+            {"language": item["language"], "metrics": item["selected_metrics"]}
+            for item in promotion_entries
+        ],
+        languages,
+    ):
+        raise ValueError(f"{label} runner-up repeats the selected outcome")
     # The best-F1 policy can legitimately be the final-order runner-up when a
     # near-best policy wins the recall preference. Raw-backed generation checks
     # the exact rank; checked-only validation must not reject that valid shape.

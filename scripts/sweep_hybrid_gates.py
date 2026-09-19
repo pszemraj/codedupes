@@ -288,6 +288,21 @@ def _rank_joint_candidates(
     return ranked
 
 
+def _joint_outcome_signature(
+    options: dict[str, dict[str, Any]], languages: list[str]
+) -> tuple[tuple[int, int, int, int], ...]:
+    """Identify one joint prediction outcome independently of no-op policy variants."""
+    return tuple(
+        (
+            options[language]["tp"],
+            options[language]["fp"],
+            options[language]["ambiguous_predictions"],
+            options[language]["unjudged_predictions"],
+        )
+        for language in languages
+    )
+
+
 def _select_joint(
     projects: list[Any],
     measurements: dict[str, dict[str, Any]],
@@ -302,8 +317,8 @@ def _select_joint(
     the precision floor before applying the shared recall/F1 policy.
     """
     languages = sorted(admissions)
-    # Two representatives per F1 are sufficient to preserve the global winner
-    # and runner-up without retaining the full Cartesian product in memory.
+    # Two distinct outcomes per F1 are sufficient to preserve the global winner
+    # and an informative runner-up without retaining the full product in memory.
     by_f1: dict[float, list[tuple[dict[str, Any], dict[str, dict[str, Any]]]]] = {}
     for weak in calibration_evaluation.HYBRID_WEAK_GRID:
         for ratio in calibration_evaluation.HYBRID_RATIO_GRID:
@@ -330,6 +345,22 @@ def _select_joint(
                     {language: option for language, option in zip(languages, combination)},
                 )
                 bucket = by_f1.setdefault(row["f1"], [])
+                signature = _joint_outcome_signature(candidate[1], languages)
+                equivalent = next(
+                    (
+                        previous
+                        for previous in bucket
+                        if _joint_outcome_signature(previous[1], languages) == signature
+                    ),
+                    None,
+                )
+                if equivalent is not None:
+                    candidate = _rank_joint_candidates([equivalent, candidate], languages)[0]
+                bucket[:] = [
+                    previous
+                    for previous in bucket
+                    if _joint_outcome_signature(previous[1], languages) != signature
+                ]
                 bucket.append(candidate)
                 bucket[:] = _rank_joint_candidates(bucket, languages)[:2]
     if not by_f1:

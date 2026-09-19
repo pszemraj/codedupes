@@ -6,6 +6,7 @@ import argparse
 import hashlib
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -541,6 +542,93 @@ def missing_behavior_executables(projects: list[Project]) -> list[str]:
         for command in project.spec["behavior_tests"]
     }
     return sorted(executable for executable in required if shutil.which(executable) is None)
+
+
+def _configured_c_compiler() -> str:
+    """Return the executable selected by the C fixture's ``CC ?= cc`` rule."""
+    command = os.environ.get("CC") or "cc"
+    try:
+        argv = shlex.split(command)
+    except ValueError:
+        return command
+    return argv[0] if argv else command
+
+
+def missing_behavior_requirements(projects: list[Project]) -> list[str]:
+    """Return unavailable executables and capabilities needed by fixture behavior tests.
+
+    The explicit corpus validator remains fail-loud through :func:`run_behavior`.
+    This probe lets the optional pytest integration group skip cleanly when a
+    fixture's language toolchain or required capability is unavailable.
+
+    :param projects: Calibration projects whose behavior commands will run.
+    :return: Sorted unavailable executable names or capability labels.
+    """
+    missing = set(missing_behavior_executables(projects))
+    if any("c" in project.spec["languages"] for project in projects):
+        compiler = _configured_c_compiler()
+        if shutil.which(compiler) is None:
+            missing.add(compiler)
+
+    checked: set[str] = set()
+    for project in projects:
+        for command in project.spec["behavior_tests"]:
+            argv = command["argv"]
+            executable = argv[0]
+            if executable in missing:
+                continue
+            if executable == "cargo" and len(argv) > 1 and argv[1].startswith("+"):
+                toolchain = argv[1][1:]
+                label = f"cargo +{toolchain}"
+                if label in checked:
+                    continue
+                checked.add(label)
+                rustup = shutil.which("rustup")
+                if rustup is None:
+                    missing.add(label)
+                    continue
+                try:
+                    result = subprocess.run(
+                        [rustup, "toolchain", "list"],
+                        capture_output=True,
+                        text=True,
+                        timeout=10,
+                        check=False,
+                    )
+                except (OSError, subprocess.TimeoutExpired):
+                    missing.add(label)
+                    continue
+                installed = {line.split()[0] for line in result.stdout.splitlines() if line.split()}
+                if result.returncode or not any(
+                    name == toolchain or name.startswith(f"{toolchain}-") for name in installed
+                ):
+                    missing.add(label)
+            elif executable == "node":
+                flags = tuple(arg for arg in argv[1:] if arg.startswith("--experimental-"))
+                if not flags:
+                    continue
+                label = " ".join(("node", *flags))
+                if label in checked:
+                    continue
+                checked.add(label)
+                node = shutil.which("node")
+                if node is None:
+                    missing.add(label)
+                    continue
+                try:
+                    result = subprocess.run(
+                        [node, *flags, "--version"],
+                        capture_output=True,
+                        text=True,
+                        timeout=10,
+                        check=False,
+                    )
+                except (OSError, subprocess.TimeoutExpired):
+                    missing.add(label)
+                    continue
+                if result.returncode:
+                    missing.add(label)
+    return sorted(missing)
 
 
 def add_contract_arguments(parser: argparse.ArgumentParser) -> None:

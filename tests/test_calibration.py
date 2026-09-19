@@ -30,6 +30,7 @@ from scripts.calibration_contract import (
     extract_project,
     load_projects,
     missing_behavior_executables,
+    missing_behavior_requirements,
     read_json,
     resolve_annotations,
     run_behavior,
@@ -236,7 +237,7 @@ def test_manifest_has_substantive_five_language_corpus():
 @pytest.mark.toolchain
 def test_manifest_behavior_contracts_execute():
     projects = load_projects()
-    if missing := _missing_behavior_requirements(projects):
+    if missing := missing_behavior_requirements(projects):
         pytest.skip(f"missing external toolchain requirements: {', '.join(missing)}")
     for project in projects:
         report = run_behavior(project)
@@ -245,70 +246,6 @@ def test_manifest_behavior_contracts_execute():
             command["id"] for command in project.spec["behavior_tests"]
         ]
         assert all(run["returncode"] == 0 for run in report["runs"])
-
-
-def _missing_behavior_requirements(projects) -> list[str]:
-    """Return absent executables or command capabilities needed by pytest."""
-    missing = set(missing_behavior_executables(projects))
-    checked: set[str] = set()
-    for project in projects:
-        for command in project.spec["behavior_tests"]:
-            argv = command["argv"]
-            executable = argv[0]
-            if executable in missing:
-                continue
-            if executable == "cargo" and len(argv) > 1 and argv[1].startswith("+"):
-                toolchain = argv[1][1:]
-                label = f"cargo +{toolchain}"
-                if label in checked:
-                    continue
-                checked.add(label)
-                rustup = calibration_contract.shutil.which("rustup")
-                if rustup is None:
-                    missing.add(label)
-                    continue
-                try:
-                    result = calibration_contract.subprocess.run(
-                        [rustup, "toolchain", "list"],
-                        capture_output=True,
-                        text=True,
-                        timeout=10,
-                        check=False,
-                    )
-                except (OSError, calibration_contract.subprocess.TimeoutExpired):
-                    missing.add(label)
-                    continue
-                installed = {line.split()[0] for line in result.stdout.splitlines() if line.split()}
-                if result.returncode or not any(
-                    name == toolchain or name.startswith(f"{toolchain}-") for name in installed
-                ):
-                    missing.add(label)
-            elif executable == "node":
-                flags = tuple(arg for arg in argv[1:] if arg.startswith("--experimental-"))
-                if not flags:
-                    continue
-                label = " ".join(("node", *flags))
-                if label in checked:
-                    continue
-                checked.add(label)
-                node = calibration_contract.shutil.which("node")
-                if node is None:
-                    missing.add(label)
-                    continue
-                try:
-                    result = calibration_contract.subprocess.run(
-                        [node, *flags, "--version"],
-                        capture_output=True,
-                        text=True,
-                        timeout=10,
-                        check=False,
-                    )
-                except (OSError, calibration_contract.subprocess.TimeoutExpired):
-                    missing.add(label)
-                    continue
-                if result.returncode:
-                    missing.add(label)
-    return sorted(missing)
 
 
 def test_behavior_executable_probe_reports_only_missing_tools(monkeypatch, tmp_path):
@@ -330,14 +267,32 @@ def test_behavior_executable_probe_reports_only_missing_tools(monkeypatch, tmp_p
     assert missing_behavior_executables([project]) == ["missing-tool"]
 
 
+def test_behavior_requirement_probe_checks_c_compiler(monkeypatch, tmp_path):
+    project = SimpleNamespace(
+        spec={
+            "languages": ["c"],
+            "behavior_tests": [{"argv": ["make", "test"]}],
+        }
+    )
+    monkeypatch.setenv("CC", "missing-cc --target=wasm32")
+    monkeypatch.setattr(
+        calibration_contract.shutil,
+        "which",
+        lambda executable: None if executable == "missing-cc" else str(tmp_path / executable),
+    )
+
+    assert missing_behavior_requirements([project]) == ["missing-cc"]
+
+
 def test_behavior_requirement_probe_checks_toolchain_variants(monkeypatch, tmp_path):
     projects = [
         SimpleNamespace(
             spec={
+                "languages": ["rust", "typescript"],
                 "behavior_tests": [
                     {"argv": ["cargo", "+stable", "test"]},
                     {"argv": ["node", "--experimental-strip-types", "script.ts"]},
-                ]
+                ],
             }
         )
     ]
@@ -354,7 +309,7 @@ def test_behavior_requirement_probe_checks_toolchain_variants(monkeypatch, tmp_p
 
     monkeypatch.setattr(calibration_contract.subprocess, "run", unavailable_variants)
 
-    assert _missing_behavior_requirements(projects) == [
+    assert missing_behavior_requirements(projects) == [
         "cargo +stable",
         "node --experimental-strip-types",
     ]
@@ -1086,7 +1041,7 @@ def test_selection_context_rejects_changed_policy_values(monkeypatch, field: str
     current = getattr(calibration_evaluation, field)
     replacement = {
         "F1_RECALL_TOLERANCE": 0.006,
-        "SELECTION_ALGORITHM_VERSION": 3,
+        "SELECTION_ALGORITHM_VERSION": 4,
         "DEFAULT_TOP_K": 11,
         "HYBRID_WEAK_GRID": (0.0, 0.5),
     }[field]
@@ -1404,6 +1359,7 @@ def test_checked_selection_metrics_ignore_evaluation_report_records():
         ("metric", "inconsistent derived metrics"),
         ("readiness", "selection evidence is inconsistent"),
         ("grids", "candidate grids"),
+        ("grids_policy", "mismatched candidate grids"),
         ("scores", "score summary"),
         ("difficulty", "difficulty schema"),
         ("unjudged", "invalid unresolved pair"),
@@ -1417,6 +1373,7 @@ def test_checked_selection_metrics_ignore_evaluation_report_records():
         ("hybrid_audit_promotion_grid", "outside the candidate grid"),
         ("hybrid_audit_denominator", "positive-pair denominator"),
         ("hybrid_audit_order", "outranks the selected candidate"),
+        ("hybrid_audit_repeated_outcome", "repeats the selected outcome"),
         ("hybrid_audit_repeated_selection", "repeats the selected candidate"),
         ("corroboration", "positive-pair denominator"),
     ],
@@ -1448,6 +1405,8 @@ def test_checked_calibration_result_rejects_tampered_embedded_selections(tamper:
         selected_window_row["predicted"] += 1
     elif tamper == "grids":
         threshold["grids"] = "forged"
+    elif tamper == "grids_policy":
+        threshold["grids"]["duplicate"][1] = 0.005
     elif tamper == "scores":
         threshold["models"][0]["duplicate_by_language"][0]["positive_scores"] = "forged"
     elif tamper == "difficulty":
@@ -1495,7 +1454,7 @@ def test_checked_calibration_result_rejects_tampered_embedded_selections(tamper:
         hybrid["models"][0]["selection_audit"]["best_f1_candidate"][
             "weak_identifier_jaccard_min"
         ] = 0.0
-    elif tamper == "hybrid_audit_repeated_selection":
+    elif tamper in {"hybrid_audit_repeated_outcome", "hybrid_audit_repeated_selection"}:
         model = hybrid["models"][1]
         candidate = {
             "weak_identifier_jaccard_min": model["selected"]["weak_identifier_jaccard_min"],
@@ -1513,6 +1472,8 @@ def test_checked_calibration_result_rejects_tampered_embedded_selections(tamper:
                 for item in model["promotion_by_language"]
             ],
         }
+        if tamper == "hybrid_audit_repeated_outcome":
+            candidate["statement_ratio_min"] = 0.2
         model["selection_audit"] = {
             "best_f1_candidate": deepcopy(candidate),
             "runner_up": candidate,

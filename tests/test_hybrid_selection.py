@@ -187,30 +187,38 @@ def test_joint_selection_favors_recall_only_near_best_f1(monkeypatch: pytest.Mon
     assert runner_up["per_language"][0]["metrics"]["precision"] >= 0.5
 
 
-def test_joint_selection_preserves_equal_f1_runner_up(monkeypatch: pytest.MonkeyPatch):
-    """Distinct policies tied on F1 must survive long enough for audit ranking."""
-    monkeypatch.setattr(calibration_evaluation, "HYBRID_WEAK_GRID", (0.0, 0.4))
+def test_joint_selection_deduplicates_runner_up_outcomes(monkeypatch: pytest.MonkeyPatch):
+    """No-op policy variants must not hide the next distinct audit outcome."""
+    monkeypatch.setattr(calibration_evaluation, "HYBRID_WEAK_GRID", (0.0, 0.4, 0.8))
     monkeypatch.setattr(calibration_evaluation, "HYBRID_RATIO_GRID", (0.0,))
-    option = {
-        "high_gate": None,
-        "tp": 2,
-        "fp": 0,
-        "fn": 1,
-        "precision": 1.0,
-        "ambiguous_predictions": 0,
-        "unjudged_predictions": 0,
-    }
+
+    def promotion_options(_projects, _measurements, _admissions, weak, _ratio):
+        return {
+            "python": (
+                {
+                    "high_gate": None,
+                    "tp": 2,
+                    "fp": 0,
+                    "fn": 1,
+                    "precision": 1.0,
+                    "ambiguous_predictions": int(weak == 0.8),
+                    "unjudged_predictions": 0,
+                },
+            )
+        }
+
     monkeypatch.setattr(
         sweep_hybrid_gates,
         "_promotion_options",
-        lambda *_args: {"python": (option,)},
+        promotion_options,
     )
 
     selected, _options, audit = sweep_hybrid_gates._select_joint([], {}, {"python": 0.8})
 
     assert selected["weak_identifier_jaccard_min"] == 0.0
     assert audit["runner_up"] is not None
-    assert audit["runner_up"]["weak_identifier_jaccard_min"] == 0.4
+    assert audit["runner_up"]["weak_identifier_jaccard_min"] == 0.8
+    assert audit["runner_up"]["metrics"]["ambiguous_predictions"] == 1
     assert audit["runner_up"]["metrics"]["f1"] == selected["f1"]
 
 

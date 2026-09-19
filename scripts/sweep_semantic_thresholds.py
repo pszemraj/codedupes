@@ -21,6 +21,9 @@ try:
     from .calibration_evaluation import (
         SEARCH_SELECTION_WINDOW_RADIUS,
         SELECTION_SCHEMA_VERSION,
+        THRESHOLD_GRID_START,
+        THRESHOLD_GRID_STEP,
+        THRESHOLD_GRID_STOP,
         development_projects,
         judgments,
         load_all,
@@ -43,6 +46,9 @@ except ImportError:
     from calibration_evaluation import (
         SEARCH_SELECTION_WINDOW_RADIUS,
         SELECTION_SCHEMA_VERSION,
+        THRESHOLD_GRID_START,
+        THRESHOLD_GRID_STEP,
+        THRESHOLD_GRID_STOP,
         development_projects,
         judgments,
         load_all,
@@ -335,11 +341,11 @@ def main() -> int:
     add_contract_arguments(parser)
     parser.add_argument("--measurements", type=Path, default=DEFAULT_MEASUREMENTS)
     parser.add_argument("--models", nargs="+", default=[p.key for p in list_supported_models()])
-    parser.add_argument("--duplicate-start", type=float, default=0.0)
-    parser.add_argument("--duplicate-stop", type=float, default=1.0)
-    parser.add_argument("--search-start", type=float, default=0.0)
-    parser.add_argument("--search-stop", type=float, default=1.0)
-    parser.add_argument("--step", type=float, default=0.01)
+    parser.add_argument("--duplicate-start", type=float, default=THRESHOLD_GRID_START)
+    parser.add_argument("--duplicate-stop", type=float, default=THRESHOLD_GRID_STOP)
+    parser.add_argument("--search-start", type=float, default=THRESHOLD_GRID_START)
+    parser.add_argument("--search-stop", type=float, default=THRESHOLD_GRID_STOP)
+    parser.add_argument("--step", type=float, default=THRESHOLD_GRID_STEP)
     parser.add_argument("--json-out", type=Path)
     args = parser.parse_args()
     projects = development_projects(load_projects(args.manifest, args.projects, args.policy))
