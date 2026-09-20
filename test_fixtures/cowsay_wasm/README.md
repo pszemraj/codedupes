@@ -1,8 +1,6 @@
 # Cowsay dupe fixture
 
-A working Rust application that targets both a native CLI and browser WebAssembly.
-Its independently supported rendering paths are maintained behavior, and labels
-and pair judgments follow the shared [calibration corpus contract](../calibration/README.md).
+A working Rust application that targets both a native CLI and browser WebAssembly. Its independently supported rendering paths are maintained behavior, and labels and pair judgments follow the shared [calibration corpus contract](../calibration/README.md).
 
 ## Reviewed maintenance families
 
@@ -14,10 +12,7 @@ and pair judgments follow the shared [calibration corpus contract](../calibratio
 | `render-assembly` | translated pipeline | Format-based and mutable-buffer assembly produce the same bubble-plus-cow result. The native CLI can select either renderer. |
 | `worker-selection` | translated algorithm | Sorting eligible jobs and retaining a bounded priority heap produce the same ranked selection. The native CLI exercises the heap path. |
 
-The [`cowsay` annotations](../calibration/annotations/cowsay.json) hold fixture
-labels, search relevance, contracts, and evidence references. `cargo test` checks
-that the exact pair remains exact and the wrapping implementations remain
-behaviorally equivalent.
+The [`cowsay` annotations](../calibration/annotations/cowsay.json) hold fixture labels, search relevance, contracts, and evidence references. `cargo test` checks that the exact pair remains exact and the wrapping implementations remain behaviorally equivalent.
 
 ## Analyze the fixture
 
@@ -41,10 +36,7 @@ cargo run -- --scheduler-demo
 printf 'stdin works too\n' | cargo run -- --width 16
 ```
 
-The CLI supports `--think`, `--width`, `--wrapper scanner|fold|queue|cursor`,
-`--renderer pipeline|composed`, and `--scheduler-demo`. The browser-facing API
-retains its two wrapper choices because its boolean argument is part of the
-simple WebAssembly demo.
+The CLI supports `--think`, `--width`, `--wrapper scanner|fold|queue|cursor`, `--renderer pipeline|composed`, and `--scheduler-demo`. The browser-facing API retains its two wrapper choices because its boolean argument is part of the simple WebAssembly demo.
 
 ## Browser/WebAssembly use
 
@@ -66,9 +58,7 @@ cargo test --test fixture_integrity
 conda run --name inf python ../../scripts/validate_calibration_corpus.py --project cowsay
 ```
 
-The validator enforces the shared corpus contract. Rust tests preserve the
-exact/non-exact distinction and validate behavior; they do not require fixture
-source to hit a similarity range.
+The validator enforces the shared corpus contract. Rust tests preserve the exact/non-exact distinction and validate behavior; they do not require fixture source to hit a similarity range.
 
 ## Project layout
 

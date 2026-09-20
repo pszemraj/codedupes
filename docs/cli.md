@@ -1,8 +1,6 @@
 # CLI reference
 
-The supported command-line entry point is `codedupes`. Install it with the
-[installation guide](install.md), then run `codedupes info` to confirm parser and
-device readiness. Examples assume the command is available on `PATH`.
+The supported command-line entry point is `codedupes`. Install it with the [installation guide](install.md), then run `codedupes info` to confirm parser and device readiness. Examples assume the command is available on `PATH`.
 
 `codedupes --version` prints the installed version. Running `codedupes` without a subcommand prints help and exits `2`.
 

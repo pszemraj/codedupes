@@ -73,20 +73,14 @@ Model loads pin an explicit dtype instead of inheriting the checkpoint's configu
 
 ### MPS bfloat16 evidence
 
-MPS autocast is not the shipped policy. On an Apple M5 with PyTorch 2.14, batch
-size 4, the ledger fixture, and three fresh uncached processes per model and
-mode, explicit bfloat16 autocast produced these median combined duplicate and
-search measurements:
+MPS autocast is not the shipped policy. On an Apple M5 with PyTorch 2.14, batch size 4, the ledger fixture, and three fresh uncached processes per model and mode, explicit bfloat16 autocast produced these median combined duplicate and search measurements:
 
 | Model | MPS fp32 | bf16 autocast | Maximum pair/query drift | Changed shipped results |
 | --- | ---: | ---: | ---: | ---: |
 | GTE ModernBERT | 6.723 s | 5.167 s | 0.0830 / 0.0562 | 13 duplicate, 2 search |
 | EmbeddingGemma | 6.561 s | 6.521 s | 0.0531 / 0.0385 | 5 duplicate, 0 search |
 
-Autocast changed calibrated decisions, while its speed benefit varied by model.
-An earlier whole-model bfloat16 run was about 13% faster but still shifted pair
-scores at threshold scale. MPS inference therefore stays float32. Any future
-dtype change requires the full [calibration workflow](hybrid-tuning.md).
+Autocast changed calibrated decisions, while its speed benefit varied by model. An earlier whole-model bfloat16 run was about 13% faster but still shifted pair scores at threshold scale. MPS inference therefore stays float32. Any future dtype change requires the full [calibration workflow](hybrid-tuning.md).
 
 ### CPU bfloat16 policy
 
@@ -102,9 +96,7 @@ The restarted corpus records its faithful CPU identity and stays directly search
 
 `codedupes` deliberately does not set `PYTORCH_MPS_FAST_MATH` or `PYTORCH_MPS_PREFER_METAL`. Fast math may change floating-point results around tuned similarity thresholds, while forcing a particular matmul implementation is workload-specific. You can experiment with those variables externally, but re-run the hybrid tuning guardrail and a representative repository before adopting altered thresholds. Changing fast math re-embeds MPS-capable requests; if execution then leaves MPS, the corpus restarts under the effective CPU policy and an incompatible standalone query aborts before comparison. `PYTORCH_MPS_PREFER_METAL` selects among faithful float32 implementations and shares their identity. See [cache runtime identity](caching.md#runtime-identity) for key composition and reuse boundaries.
 
-The checked calibration workflow is stricter: it rejects
-`PYTORCH_MPS_FAST_MATH` so the CPU/MPS comparison always measures the shipped
-faithful-float32 policy.
+The checked calibration workflow is stricter: it rejects `PYTORCH_MPS_FAST_MATH` so the CPU/MPS comparison always measures the shipped faithful-float32 policy.
 
 For a native macOS installation, use the default `gte-modernbert-base` profile first; evaluate `embeddinggemma-300m` only after the default path is stable.
 
