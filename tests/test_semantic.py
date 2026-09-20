@@ -388,6 +388,40 @@ def test_prompt_sensitive_search_requires_corpus_identity(tmp_path: Path) -> Non
 
 
 @pytest.mark.parametrize(
+    "compute",
+    [semantic.compute_embeddings, semantic.compute_embeddings_with_identity],
+)
+def test_embedding_apis_reject_invalid_search_document_before_model_loading(
+    tmp_path: Path, monkeypatch, compute
+) -> None:
+    units = extract_arithmetic_units(tmp_path)
+
+    def fail_if_called(*_args, **_kwargs):
+        raise AssertionError("invalid search_document must fail before model loading")
+
+    monkeypatch.setattr(semantic, "get_model", fail_if_called)
+
+    with pytest.raises(ValueError, match="search_document must be 'source' or 'contextual'"):
+        compute(
+            units,
+            document_texts=[f"path: arithmetic.py\n{unit.source}" for unit in units],
+            search_document="contextual-typo",
+            device="cpu",
+            use_cache=False,
+        )
+
+
+def test_embedding_identity_rejects_invalid_search_document() -> None:
+    with pytest.raises(ValueError, match="search_document must be 'source' or 'contextual'"):
+        semantic.EmbeddingSpaceIdentity(
+            model_name="model",
+            resolved_revision="revision",
+            runtime_variant="variant",
+            search_document="contextual-typo",
+        )
+
+
+@pytest.mark.parametrize(
     "kwargs",
     [
         {"semantic_task": "classification"},

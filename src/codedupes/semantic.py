@@ -77,6 +77,18 @@ PROGRESS_BAR_MIN_INPUTS = 100
 _PRECOMPUTED_VALIDATION_BLOCK_ROWS = 1024
 
 
+def _validate_search_document_mode(value: object) -> SearchDocumentMode:
+    """Return a supported search-document mode or reject the runtime value.
+
+    :param value: Runtime value supplied through a public Python API.
+    :return: Validated search-document mode.
+    :raises ValueError: If the value is not ``source`` or ``contextual``.
+    """
+    if value not in {"source", "contextual"}:
+        raise ValueError("search_document must be 'source' or 'contextual'")
+    return cast(SearchDocumentMode, value)
+
+
 def _should_show_progress(mode: ProgressMode, input_count: int) -> bool:
     """Return whether embedding inference should render a progress bar.
 
@@ -283,6 +295,10 @@ class EmbeddingSpaceIdentity:
     source_commit: str | None = field(default=None, compare=False)
     search_document: SearchDocumentMode = field(default="source", compare=False)
 
+    def __post_init__(self) -> None:
+        """Reject malformed runtime-only representation annotations."""
+        _validate_search_document_mode(self.search_document)
+
 
 def embedding_cache_keys_for_units(
     units: list[CodeUnit],
@@ -300,7 +316,9 @@ def embedding_cache_keys_for_units(
     :param document_texts: Optional prepared texts aligned with ``units``.
     :param search_document: Search representation used for the texts.
     :return: Unit identifiers mapped to content-addressed cache keys.
+    :raises ValueError: If ``search_document`` is unsupported.
     """
+    search_document = _validate_search_document_mode(search_document)
     active_revision = revision or identity.resolved_revision
     if active_revision is None:
         return {}
@@ -2918,6 +2936,7 @@ def _compute_embeddings_unlocked(
     :raises SemanticBackendError: If an explicitly requested device is unavailable,
         even when the corpus is empty or every embedding is already cached.
     """
+    search_document = _validate_search_document_mode(search_document)
     _reset_embedding_run_stats(stats)
     if batch_size <= 0:
         raise ValueError("batch_size must be > 0")
@@ -3433,8 +3452,10 @@ def compute_embeddings_with_identity(
     :param document_texts: Optional prepared document text for each input unit.
     :param search_document: Search document mode represented by ``document_texts``.
     :return: Normalized embedding matrix and its effective vector-space identity.
-    :raises ValueError: If ``document_texts`` does not have the same length as ``units``.
+    :raises ValueError: If ``document_texts`` does not have the same length as ``units``
+        or ``search_document`` is unsupported.
     """
+    search_document = _validate_search_document_mode(search_document)
     # Import-sensitive runtime variables (MPS operator fallback above all) must
     # be set before any path below can import torch - cache-variant derivation
     # may probe CPU capabilities, which is already too late.
