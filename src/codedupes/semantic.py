@@ -544,16 +544,8 @@ def _validate_precomputed_embeddings(units: Sequence[CodeUnit], embeddings: obje
                 return matrix
 
         # Direct callers may supply scaled, noncontiguous, or non-float32 rows.
-        # Preserve the normalizing API contract while bounding the temporary
-        # float64 working set independently of corpus size.
-        canonical = np.empty(matrix.shape, dtype=np.float32, order="C")
-        for start in range(0, len(matrix), _PRECOMPUTED_VALIDATION_BLOCK_ROWS):
-            block = matrix[start : start + _PRECOMPUTED_VALIDATION_BLOCK_ROWS]
-            canonical[start : start + len(block)] = canonicalize_embeddings(
-                block,
-                expected_rows=len(block),
-            )
-        return canonical
+        # The shared canonicalizer already bounds its float64 working blocks.
+        return canonicalize_embeddings(matrix, expected_rows=len(matrix))
     except InvalidEmbeddingError as exc:
         raise ValueError(f"embeddings must contain finite, nonzero rows: {exc}") from exc
 
