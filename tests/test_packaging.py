@@ -47,6 +47,15 @@ def test_vcs_less_source_archives_have_a_build_version_fallback() -> None:
     assert hatch["version"]["fallback-version"] == "0.0.0+unknown"
 
 
+def test_cowsay_fixture_make_target_uses_configurable_python() -> None:
+    """Keep the fixture validator independent of a maintainer's Conda environment."""
+    makefile = (ROOT / "test_fixtures/cowsay_wasm/Makefile").read_text(encoding="utf-8")
+
+    assert "PYTHON ?= python" in makefile
+    assert "\t$(PYTHON) ../../scripts/validate_calibration_corpus.py --project cowsay" in makefile
+    assert "conda run" not in makefile
+
+
 def test_version_is_vcs_dynamic_and_generated_outside_git() -> None:
     """Builds derive package versions from VCS while generated source stays ignored."""
     metadata = _pyproject()

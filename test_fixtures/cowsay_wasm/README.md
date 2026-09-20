@@ -55,10 +55,10 @@ The no-bundler browser path is deliberately plain: `wasm-pack` emits the ES modu
 
 ```sh
 cargo test --test fixture_integrity
-conda run --name inf python ../../scripts/validate_calibration_corpus.py --project cowsay
+make fixture
 ```
 
-The validator enforces the shared corpus contract. Rust tests preserve the exact/non-exact distinction and validate behavior; they do not require fixture source to hit a similarity range.
+The validator uses the active `python` by default; override it with `make fixture PYTHON=/path/to/python` when needed. It enforces the shared corpus contract. Rust tests preserve the exact/non-exact distinction and validate behavior; they do not require fixture source to hit a similarity range.
 
 ## Project layout
 
