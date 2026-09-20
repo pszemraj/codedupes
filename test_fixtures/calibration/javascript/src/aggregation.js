@@ -17,6 +17,13 @@ function assertInvoiceRecord(record, index) {
 
 const { addSafeInteger } = require("./safe-integers.js");
 
+// Exact keys need a total order: locale collation can equate distinct Unicode strings.
+function compareIdentifierKeys(left, right) {
+  if (left < right) return -1;
+  if (left > right) return 1;
+  return 0;
+}
+
 function aggregateInvoices(records) {
   const byInvoice = new Map();
   for (const [index, record] of records.entries()) {
@@ -30,7 +37,7 @@ function aggregateInvoices(records) {
     });
   }
   return [...byInvoice.entries()]
-    .sort(([left], [right]) => left.localeCompare(right))
+    .sort(([left], [right]) => compareIdentifierKeys(left, right))
     .map(([invoiceId, value]) => ({ invoiceId, ...value }));
 }
 
@@ -40,7 +47,7 @@ function buildInvoiceDigest(records) {
     assertInvoiceRecord(record, index);
     if (!record.voided) accepted.push([record.invoiceId.trim(), record.amountMinor]);
   });
-  accepted.sort(([left], [right]) => left.localeCompare(right));
+  accepted.sort(([left], [right]) => compareIdentifierKeys(left, right));
   const digest = [];
   for (const [invoiceId, amountMinor] of accepted) {
     const tail = digest.at(-1);
@@ -66,7 +73,7 @@ function summarizeInvoiceAccounts(records) {
     accounts[key].count += 1;
   }
   return Object.keys(accounts)
-    .sort((left, right) => left.localeCompare(right))
+    .sort(compareIdentifierKeys)
     .map((invoiceId) => ({ invoiceId, ...accounts[invoiceId] }));
 }
 

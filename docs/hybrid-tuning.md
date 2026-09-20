@@ -70,7 +70,7 @@ conda run --name inf python scripts/measure_calibration.py \
   --project ledger --model gte-modernbert-base --device mps
 ```
 
-Repeat for every project and built-in model. CPU fp32 is the reference and MPS is an independent real-device comparison. The measurement, selection, and report scripts bind artifacts to their source, annotations, model, extraction, runtime, dtype, batch, and math policy; a material input change requires fresh evidence. Raw scores and model caches remain local. Calibration rejects `PYTORCH_MPS_FAST_MATH` because altered Metal arithmetic is not comparable evidence.
+Repeat for every project and built-in model. CPU fp32 is the reference and MPS is an independent real-device comparison. Each run records the corpus embedding device and every probe's query-encoding device; calibration rejects cache reuse or a query fallback away from the requested device while ordinary searches retain automatic fallback. The measurement, selection, and report scripts bind artifacts to their source, annotations, model, extraction, runtime, dtype, batch, and math policy; a material input change requires fresh evidence. Raw scores and model caches remain local. Calibration rejects `PYTORCH_MPS_FAST_MATH` because altered Metal arithmetic is not comparable evidence.
 
 Select per-language duplicate gates and a global top-10 search gate from the CPU measurements:
 

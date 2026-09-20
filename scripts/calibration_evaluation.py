@@ -64,7 +64,7 @@ MINIMUM_SELECTION_PRECISION = 0.5
 # bytes. Bump this whenever selection or audit behavior changes.
 SELECTION_ALGORITHM_VERSION = 5
 SELECTION_SCHEMA_VERSION = 7
-CHECKED_REPORT_SCHEMA_VERSION = 8
+CHECKED_REPORT_SCHEMA_VERSION = 9
 SEARCH_SELECTION_WINDOW_RADIUS = 5
 THRESHOLD_GRID_START = 0.0
 THRESHOLD_GRID_STOP = 1.0
@@ -603,6 +603,7 @@ def measurement_digest(measurement: dict[str, Any]) -> str:
                     "input_fingerprint",
                     "captured_profile",
                     "execution",
+                    "query_execution",
                     "live_default",
                     "timing_seconds",
                 )
@@ -694,6 +695,21 @@ def validate_measurement_provenance(project: Project, measurement: dict[str, Any
             or stats["encoded_inputs"] != encoded_inputs
         ):
             raise ValueError(f"{project.id}: invalid {task} execution provenance")
+    expected_probes = {probe["id"] for probe in project.annotations["probes"]}
+    query_execution = metadata.get("query_execution")
+    if (
+        not isinstance(query_execution, list)
+        or len(query_execution) != len(expected_probes)
+        or {row.get("probe") for row in query_execution if isinstance(row, dict)} != expected_probes
+        or any(
+            not isinstance(row, dict)
+            or set(row) != {"probe", "execution_device", "cache_hit"}
+            or row["execution_device"] != device
+            or row["cache_hit"] is not False
+            for row in query_execution
+        )
+    ):
+        raise ValueError(f"{project.id}: invalid query execution provenance")
 
 
 def development_projects(projects: list[Project]) -> list[Project]:
@@ -1555,6 +1571,7 @@ def full_report(project: Project, measurement: dict[str, Any]) -> dict[str, Any]
         }
         for task, stats in measurement["metadata"]["execution"].items()
     }
+    query_execution = measurement["metadata"]["query_execution"]
     return {
         "project": project.id,
         "model": measurement["metadata"]["model"],
@@ -1565,6 +1582,11 @@ def full_report(project: Project, measurement: dict[str, Any]) -> dict[str, Any]
         "runtime_versions": measurement["metadata"]["runtime_versions"],
         "timing_seconds": measurement["metadata"]["timing_seconds"],
         "execution": execution,
+        "query_execution": {
+            "probe_count": len(query_execution),
+            "device": measurement["metadata"]["requested_device"],
+            "cache_hits": sum(row["cache_hit"] for row in query_execution),
+        },
         "replay_parity": replay_parity(measurement),
         "duplicate": duplicate_report(project, measurement),
         "search": search_report(project, measurement),
@@ -1891,6 +1913,7 @@ def validate_checked_report(
                         "runtime_versions",
                         "timing_seconds",
                         "execution",
+                        "query_execution",
                         "replay_parity",
                         "duplicate",
                         "search",
@@ -1964,6 +1987,15 @@ def validate_checked_report(
                         raise ValueError(
                             f"{project_id}: invalid checked {task} execution provenance"
                         )
+                query_execution = report.get("query_execution")
+                if (
+                    not isinstance(query_execution, dict)
+                    or set(query_execution) != {"probe_count", "device", "cache_hits"}
+                    or query_execution["probe_count"] != len(probes)
+                    or query_execution["device"] != device
+                    or query_execution["cache_hits"] != 0
+                ):
+                    raise ValueError(f"{project_id}: invalid checked query execution provenance")
 
         comparisons = record["device_comparisons"]
         if not isinstance(comparisons, dict) or set(comparisons) != set(profile_keys):

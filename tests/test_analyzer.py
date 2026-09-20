@@ -43,6 +43,7 @@ _QUERY_KWARG_NAMES = {
     "cache_scope",
     "corpus_identity",
     "device",
+    "execution",
     "instruction_prefix",
     "model_name",
     "mps_fallback",

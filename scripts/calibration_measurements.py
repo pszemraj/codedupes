@@ -57,14 +57,14 @@ except ImportError:
         write_json,
     )
 
-ARTIFACT_VERSION = 6
+ARTIFACT_VERSION = 7
 CALIBRATION_BATCH_SIZE = 4
 DEFAULT_MEASUREMENTS = REPO / "scratch/calibration"
 # Bump whenever capture, extraction, scoring, replay, or their provenance
 # changes in a way that could change a measured artifact. Source-byte drift is
 # recorded separately as a diagnostic so behavior-preserving refactors do not
 # strand valid raw evidence.
-MEASUREMENT_PIPELINE_VERSION = 1
+MEASUREMENT_PIPELINE_VERSION = 2
 
 
 class MeasurementPipelineSourceWarning(RuntimeWarning):
@@ -222,6 +222,24 @@ def _execution(analyzer: ProjectAnalyzer, requested: str) -> dict[str, Any]:
     return asdict(stats)
 
 
+def _query_execution(
+    analyzer: ProjectAnalyzer,
+    requested: str,
+    probe: str,
+    expected_count: int,
+) -> dict[str, Any]:
+    """Require one newly recorded, uncached query encode on the requested device."""
+    records = analyzer.query_execution
+    if len(records) != expected_count:
+        raise ValueError(
+            f"measurement did not record exactly one execution for probe {probe!r}: {records}"
+        )
+    record = records[-1]
+    if record.execution_device != requested or record.cache_hit:
+        raise ValueError(f"probe {probe!r} did not execute independently on {requested}: {record}")
+    return {"probe": probe, **asdict(record)}
+
+
 def capture(
     project: Project,
     model: str,
@@ -342,8 +360,12 @@ def capture(
     started = time.perf_counter()
     count = search.index(project.root)
     query_scores = []
+    query_execution = []
     for probe in project.annotations["probes"]:
         hits = search.search(probe["query"], top_k=count, threshold=-1.0)
+        query_execution.append(
+            _query_execution(search, device, probe["id"], len(query_execution) + 1)
+        )
         by_uid = {
             unit.uid: (max(-1.0, min(float(score), 1.0)), rank)
             for rank, (unit, score) in enumerate(hits, 1)
@@ -385,6 +407,7 @@ def capture(
             },
             "timing_seconds": {"duplicate": duplicate_seconds, "search": search_seconds},
             "execution": {"duplicate": duplicate_execution, "search": search_execution},
+            "query_execution": query_execution,
             "live_default": [
                 {"a": ids[item.unit_a.uid], "b": ids[item.unit_b.uid], "tier": item.tier}
                 for item in result.hybrid_duplicates
@@ -518,6 +541,17 @@ def _validate_measurement_payload(measurement: dict[str, Any], project: Project)
         raise ValueError(f"{project.id}: incomplete measurement pair matrix")
 
     probes = {probe["id"] for probe in project.annotations["probes"]}
+    query_execution = measurement.get("metadata", {}).get("query_execution")
+    if (
+        not isinstance(query_execution, list)
+        or any(
+            not isinstance(row, dict) or set(row) != {"probe", "execution_device", "cache_hit"}
+            for row in query_execution
+        )
+        or len(query_execution) != len(probes)
+        or {row["probe"] for row in query_execution} != probes
+    ):
+        raise ValueError(f"{project.id}: incomplete query execution provenance")
     query_scores = measurement.get("query_scores")
     if not isinstance(query_scores, list) or any(not isinstance(row, dict) for row in query_scores):
         raise ValueError("measurement query_scores must be a list of objects")
@@ -579,14 +613,24 @@ def load_measurement(
         and metadata["model"] != resolve_model_profile(expected_model).key
     ):
         raise ValueError(f"measurement belongs to another model: {path}")
-    if expected_device is not None and (
-        metadata["requested_device"] != expected_device
-        or any(
-            stats["execution_device"] != expected_device or stats["cache_hit_rows"]
-            for stats in metadata["execution"].values()
-        )
-    ):
-        raise ValueError(f"measurement did not execute on {expected_device}: {path}")
+    if expected_device is not None:
+        query_execution = metadata.get("query_execution")
+        if (
+            metadata["requested_device"] != expected_device
+            or any(
+                stats["execution_device"] != expected_device or stats["cache_hit_rows"]
+                for stats in metadata["execution"].values()
+            )
+            or not isinstance(query_execution, list)
+            or not query_execution
+            or any(
+                not isinstance(row, dict)
+                or row.get("execution_device") != expected_device
+                or row.get("cache_hit") is not False
+                for row in query_execution
+            )
+        ):
+            raise ValueError(f"measurement did not execute on {expected_device}: {path}")
     source_fingerprint = metadata.get("pipeline_source_fingerprint")
     if (
         not isinstance(source_fingerprint, str)

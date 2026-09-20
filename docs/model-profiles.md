@@ -9,13 +9,13 @@ Most users should leave model and task settings unset. `codedupes` uses the pinn
 | profile key | canonical model ID | family | search threshold | default revision | default trust mode |
 | --- | --- | --- | --- | --- | --- |
 | `gte-modernbert-base` | `Alibaba-NLP/gte-modernbert-base` | `gte-modernbert` | `0.68` | `e7f32e3c00f91d699e8c43b53106206bcc72bb22` | `False` |
-| `embeddinggemma-300m` | `unsloth/embeddinggemma-300m` | `embeddinggemma` | `0.53` | `bfa3c846ac738e62aa61806ef9112d34acb1dc5a` | `False` |
+| `embeddinggemma-300m` | `unsloth/embeddinggemma-300m` | `embeddinggemma` | `0.52` | `bfa3c846ac738e62aa61806ef9112d34acb1dc5a` | `False` |
 
 - The table's search threshold is only the floor for query matches; query-to-code similarity is much lower than code-to-code duplicate similarity.
 - Every built-in default revision is a pinned immutable commit. The [calibration workflow](hybrid-tuning.md) records the checkpoint, task, pipeline, and candidate policy behind each threshold.
 - The [calibration workflow](hybrid-tuning.md#reproduce-the-result) defines threshold selection and the separate search-smoke acceptance contract.
 
-Gemma's selected `0.53` search floor gives 68% precision and 73% recall on the development corpus. Independent multi-domain probes expose a remaining limitation: only 2 of 6 clear EmbeddingGemma's `0.53` floor; CSV parsing, retry, LRU eviction, and byte-formatting targets rank first but remain below `0.53`. GTE's `0.68` floor surfaces all 6 independent targets. Override the floor for a repository with a different tradeoff; these authored fixtures do not establish ecosystem-wide accuracy. The Gemma floor is the higher-recall choice just inside the allowed F1-loss band relative to `0.55`, while the retry probe lands just below the current floor. A justified recalibration may therefore move both the floor and the surfaced smoke set; the [checked result](../test_fixtures/calibration/calibration-results.json) contains the exact selection rows.
+EmbeddingGemma's selected search floor favors recall within the allowed F1-loss band, while GTE's higher floor is more selective. Independent multi-domain smoke probes remain a separate acceptance check because some rank-first targets can still fall below a calibrated default. Override the floor for a repository with a different tradeoff; these authored fixtures do not establish ecosystem-wide accuracy. The [checked result](../test_fixtures/calibration/calibration-results.json) contains the exact selection rows and metrics.
 
 ### Duplicate and search gates
 
@@ -26,7 +26,7 @@ Gemma's selected `0.53` search floor gives 68% precision and 73% recall on the d
 | python | `0.87` | `0.74` |
 | c | `0.84` | `0.82` |
 | rust | `0.84` | `0.88` |
-| javascript | `0.70` | `0.80` |
+| javascript | `0.69` | `0.80` |
 | typescript | `0.76` | `0.82` |
 
 See [analysis behavior](analysis-defaults.md#semantic-duplicate-gate-defaults) for same-language and cross-language handling.
@@ -38,7 +38,7 @@ They were selected from CPU float32 measurements and independently checked on MP
 
 | profile | identifier Jaccard min | statement ratio min | promotion gates |
 | --- | --- | --- | --- |
-| `gte-modernbert-base` | `0.40` | `0.00` | python `0.90`, c `0.86`, rust `0.85`, javascript `0.70`; typescript off |
+| `gte-modernbert-base` | `0.30` | `0.00` | python `0.90`; c, rust, javascript, and typescript off |
 | `embeddinggemma-300m` | `0.40` | `0.00` | python `0.79`, c `0.90`, rust `0.90`, javascript `0.80`, typescript `0.82` |
 | `generic` | `0.00` | `0.20` | off |
 

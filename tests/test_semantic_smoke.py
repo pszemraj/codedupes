@@ -139,7 +139,11 @@ def test_search_smoke_ranks_targets_and_filters_noise(
         )
     expected_surfaced = {
         "gte-modernbert-base": {probe["expected"] for probe in spec["relevant"]},
-        "embeddinggemma-300m": {"find_insertion_index", "take_rate_limit_token"},
+        "embeddinggemma-300m": {
+            "find_insertion_index",
+            "retry_with_backoff",
+            "take_rate_limit_token",
+        },
     }[profile.key]
     assert surfaced == expected_surfaced, (
         f"{profile.key}: default floor surfaced {sorted(surfaced)}; "

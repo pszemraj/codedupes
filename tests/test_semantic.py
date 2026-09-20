@@ -84,15 +84,20 @@ def test_query_search_with_mocked_semantic_model(tmp_path, monkeypatch):
     monkeypatch.setattr(semantic, "get_model", lambda *args, **kwargs: fake)
 
     embeddings = fake.encode([u.source for u in units], convert_to_numpy=True)
+    execution = []
     results = find_similar_to_query(
         query="find addition",
         units=units,
         embeddings=embeddings,
         top_k=1,
+        device="cpu",
+        use_cache=False,
+        execution=execution,
     )
 
     assert len(results) == 1
     assert results[0][0] in units
+    assert execution == [semantic.QueryExecution(execution_device="cpu", cache_hit=False)]
 
 
 def test_code_unit_statement_count_trusts_the_unit(tmp_path: Path) -> None:
@@ -907,6 +912,7 @@ def test_query_cache_hits_enforce_cosine_vector_invariants(
         namespace=cache_namespace,
     )
 
+    execution = []
     results = find_similar_to_query(
         query,
         units,
@@ -914,11 +920,19 @@ def test_query_cache_hits_enforce_cosine_vector_invariants(
         model_name="gte-modernbert-base",
         revision=_FULL_REVISION,
         threshold=0.9,
+        device="cpu",
         cache_scope=tmp_path,
+        execution=execution,
     )
 
     assert results == [(units[0], 1.0)]
     assert len(model.encoded) == expected_encode_calls
+    assert execution == [
+        semantic.QueryExecution(
+            execution_device="cpu" if expected_encode_calls else None,
+            cache_hit=expected_encode_calls == 0,
+        )
+    ]
 
 
 def test_semantic_pair_scores_bound_float32_cosine_overshoot(tmp_path: Path) -> None:
@@ -2904,9 +2918,9 @@ def test_local_fingerprint_tracks_embedding_assets(tmp_path, relative) -> None:
 @pytest.mark.parametrize(
     ("choice", "expected"),
     [
-        ("auto", 0.53),
+        ("auto", 0.52),
         ("generic", 0.35),
-        ("embeddinggemma-300m", 0.53),
+        ("embeddinggemma-300m", 0.52),
         ("gte-modernbert-base", 0.68),
     ],
 )

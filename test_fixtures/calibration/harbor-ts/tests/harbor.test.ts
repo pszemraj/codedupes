@@ -41,6 +41,30 @@ test("aggregation variants preserve validation, ordering, and caller input", () 
   assert.equal(loads[1].zone, " east ");
 });
 
+test("aggregation variants retain exact Unicode keys across input permutations", () => {
+  const unicodeLoads = [
+    { loadId: "L-1", zone: "\u00e9", weightKg: 10, status: "active" as const },
+    { loadId: "L-2", zone: "e\u0301", weightKg: 20, status: "active" as const },
+    { loadId: "L-3", zone: "\u00e9", weightKg: 30, status: "active" as const },
+  ];
+  const expected = [
+    { zone: "E\u0301", totalKg: 20, loadCount: 1 },
+    { zone: "\u00c9", totalKg: 40, loadCount: 2 },
+  ];
+  const permutations = [
+    [0, 1, 2], [0, 2, 1], [1, 0, 2],
+    [1, 2, 0], [2, 0, 1], [2, 1, 0],
+  ];
+  for (const permutation of permutations) {
+    const source = permutation.map((index) => unicodeLoads[index]);
+    const original = structuredClone(source);
+    for (const aggregate of [summarizeDockLoads, buildManifestTotals, collectZoneWeightTotals]) {
+      assert.deepEqual(aggregate(source), expected);
+      assert.deepEqual(source, original);
+    }
+  }
+});
+
 test("booking and aggregation paths reject unsafe integer weights", () => {
   const unsafeWeight = "9007199254740993";
   const raw = { bookingId: "B-safe", zone: "east", arrivalDate: "2026-10-04", weightKg: unsafeWeight };

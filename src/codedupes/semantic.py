@@ -124,6 +124,14 @@ class EmbeddingRunStats:
     manifest_generation: int | None = None
 
 
+@dataclass(frozen=True)
+class QueryExecution:
+    """Describe where one successful query vector came from."""
+
+    execution_device: str | None
+    cache_hit: bool
+
+
 def _reset_embedding_run_stats(stats: EmbeddingRunStats | None) -> None:
     """Reset a caller-owned embedding telemetry collector in place."""
     if stats is None:
@@ -3808,6 +3816,7 @@ def _find_similar_to_query_unlocked(
     corpus_identity: EmbeddingSpaceIdentity | None = None,
     strict_revision_cache: bool = False,
     threshold_profile: ThresholdProfile = "auto",
+    execution: list[QueryExecution] | None = None,
 ) -> list[tuple[CodeUnit, float]]:
     """Find code units most similar to a natural-language query.
 
@@ -3846,6 +3855,8 @@ def _find_similar_to_query_unlocked(
         concrete commit hash (disabling caching when unmappable) instead of the
         requested revision label, defaults to ``False``. Must match the mode
         used to build ``corpus_identity``.
+    :param execution: Optional collector receiving one record for a successful
+        query, after cache lookup and any device fallback complete.
     :return: Up to ``top_k`` ``(unit, similarity)`` pairs at or above the threshold,
         sorted by descending similarity.
     :raises ValueError: If ``top_k`` is not a positive integer, ``threshold`` is
@@ -4002,6 +4013,8 @@ def _find_similar_to_query_unlocked(
     corpus_source_commit = corpus_identity.source_commit if corpus_identity is not None else None
 
     query_embedding: np.ndarray | None = None
+    query_cache_hit = False
+    query_execution_device: str | None = None
     if cache_key is not None:
         lookup = cache.get_many_with_provenance(
             cache_scope, profile.canonical_name, cache_revision, [cache_key]
@@ -4028,6 +4041,7 @@ def _find_similar_to_query_unlocked(
                 "from another checkpoint must never reach the dot product."
             )
             query_embedding = None
+        query_cache_hit = query_embedding is not None
 
     if query_embedding is not None:
         # A warm query hit skips _prepare_semantic_device; same allocator
@@ -4178,6 +4192,7 @@ def _find_similar_to_query_unlocked(
                     cache_scope, profile.canonical_name, cache_revision, [cache_key]
                 )
                 query_embedding = _validated_query_hit(hit.get(cache_key))
+                query_cache_hit = query_embedding is not None
 
         if query_embedding is None:
             encode_fn = _select_encode_fn(model, encode_plan.route)
@@ -4196,6 +4211,7 @@ def _find_similar_to_query_unlocked(
                 prompt=encode_plan.prompt,
             )
             _require_compatible_query_execution()
+            query_execution_device = _get_effective_model_device(model, resolved_device)
             query_embedding = query_embeddings[0]
 
             if (
@@ -4236,7 +4252,15 @@ def _find_similar_to_query_unlocked(
     ]
     top_indices = filtered_indices[:top_k]
 
-    return [(units[i], float(similarities[i])) for i in top_indices]
+    results = [(units[i], float(similarities[i])) for i in top_indices]
+    if execution is not None:
+        execution.append(
+            QueryExecution(
+                execution_device=query_execution_device,
+                cache_hit=query_cache_hit,
+            )
+        )
+    return results
 
 
 def find_similar_to_query(
@@ -4258,6 +4282,7 @@ def find_similar_to_query(
     corpus_identity: EmbeddingSpaceIdentity | None = None,
     strict_revision_cache: bool = False,
     threshold_profile: ThresholdProfile = "auto",
+    execution: list[QueryExecution] | None = None,
 ) -> list[tuple[CodeUnit, float]]:
     """Search embeddings while serializing shared-model lifecycle and inference.
 
@@ -4290,6 +4315,8 @@ def find_similar_to_query(
         concrete commit hash (disabling caching when unmappable) instead of the
         requested revision label, defaults to ``False``. Must match the mode
         used to build ``corpus_identity``.
+    :param execution: Optional collector receiving one record for a successful
+        query, after cache lookup and any device fallback complete.
     :return: Up to ``top_k`` ``(unit, similarity)`` pairs at or above the threshold,
         sorted by descending similarity.
     :raises ValueError: If ``query`` is blank, ``top_k`` is not a positive integer,
@@ -4321,6 +4348,7 @@ def find_similar_to_query(
             cache_scope=cache_scope,
             corpus_identity=corpus_identity,
             strict_revision_cache=strict_revision_cache,
+            execution=execution,
         )
 
 

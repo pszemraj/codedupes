@@ -165,7 +165,7 @@ Each `index()` or `analyze()` call replaces the analyzer's corpus-specific state
 
 `AnalyzerConfig.progress` accepts `"auto"` (default), `"always"`, or `"never"`; other values raise `ValueError` at configuration construction. Auto mode renders embedding progress only for more than 100 uncached inputs when stderr is a TTY. The same keyword is available on `compute_embeddings`, `compute_embeddings_with_identity`, `run_semantic_analysis`, and `run_semantic_analysis_with_identity`.
 
-The low-level functions accept an `EmbeddingRunStats` collector through `stats=` and fill it in place. `AnalysisResult.embedding_stats` contains that collector after successful semantic analysis; `CodeAnalyzer.embedding_stats` exposes it after `index()`. See [embedding telemetry](output.md#embedding-telemetry) for counter definitions, cache warnings, and unavailable statistics.
+The low-level corpus functions accept an `EmbeddingRunStats` collector through `stats=` and fill it in place. `find_similar_to_query()` likewise accepts an `execution=` list and appends a `QueryExecution` record after each query vector is successfully searched, including its effective encode device or whether the vector came from cache. `AnalysisResult.embedding_stats` contains corpus telemetry after successful semantic analysis; `CodeAnalyzer.embedding_stats` exposes it after `index()`, and `CodeAnalyzer.query_execution` retains the query records for that index. See [embedding telemetry](output.md#embedding-telemetry) for corpus counter definitions, cache warnings, and unavailable statistics.
 
 ```python
 from pathlib import Path

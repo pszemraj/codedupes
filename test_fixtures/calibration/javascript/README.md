@@ -6,7 +6,7 @@ Run `npm test` and `npm start` from this directory. Both commands use only the N
 
 ## Fixture contracts
 
-Invoice aggregation validates every row before skipping voided invoices, preserves its input, and returns invoice-sorted totals and counts. Payout plans validate the complete summary set before producing sorted transfer instructions. Positive balances strictly below an enabled minimum are deferred; a zero minimum is the baseline behavior.
+Invoice aggregation validates every row before skipping voided invoices, preserves its input, and returns totals and counts in ordinal order of the exact trimmed invoice IDs. It intentionally does not apply Unicode normalization. Payout plans validate the complete summary set before producing sorted transfer instructions. Positive balances strictly below an enabled minimum are deferred; a zero minimum is the baseline behavior.
 
 Webhook records require nonblank IDs, a normalizable email address, a safe integer amount, and a boolean `voided` flag. Invoice aggregation and deferred payout totals also reject additions that leave JavaScript's safe-integer range. Batch processors only reserve IDs after acceptance, so a malformed first record never prevents a corrected later record from being accepted. Batch and JSON-lines adapters deliberately report failures differently.
 

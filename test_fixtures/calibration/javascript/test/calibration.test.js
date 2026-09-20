@@ -40,6 +40,34 @@ test("translated aggregation agrees and validates before void filtering", () => 
   assert.throws(() => summarizeInvoiceAccounts(invalidVoided), /safe integer/);
 });
 
+test("aggregation variants retain exact Unicode keys across input permutations", () => {
+  const unicodeRecords = [
+    { invoiceId: "\u00e9", amountMinor: 10, voided: false },
+    { invoiceId: "e\u0301", amountMinor: 20, voided: false },
+    { invoiceId: "\u00e9", amountMinor: 30, voided: false },
+  ];
+  const expected = [
+    { invoiceId: "e\u0301", totalMinor: 20, count: 1 },
+    { invoiceId: "\u00e9", totalMinor: 40, count: 2 },
+  ];
+  const permutations = [
+    [0, 1, 2], [0, 2, 1], [1, 0, 2],
+    [1, 2, 0], [2, 0, 1], [2, 1, 0],
+  ];
+  for (const permutation of permutations) {
+    const source = permutation.map((index) => unicodeRecords[index]);
+    const original = structuredClone(source);
+    for (const aggregate of [
+      aggregateInvoices,
+      buildInvoiceDigest,
+      summarizeInvoiceAccounts,
+    ]) {
+      assert.deepEqual(aggregate(source), expected);
+      assert.deepEqual(source, original);
+    }
+  }
+});
+
 test("aggregation variants reject totals outside the safe-integer range", () => {
   const overflowing = [
     { invoiceId: "a", amountMinor: Number.MAX_SAFE_INTEGER, voided: false },

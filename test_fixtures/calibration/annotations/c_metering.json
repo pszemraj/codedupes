@@ -333,14 +333,16 @@
         "dictionary-versus-sort"
       ],
       "scope": "whole_unit",
-      "behavior_equivalent": true,
-      "equivalence_domain": "Reading arrays with count <= METERING_MAX_DEVICES, including invalid discarded readings and capacity-limited output buffers.",
-      "contract": "Validate every reading before discard filtering; preserve input; group live readings by case-sensitive device key and return lexicographically sorted totals and counts.",
+      "behavior_equivalent": false,
+      "equivalence_domain": "Valid reading arrays with count <= METERING_MAX_DEVICES where output capacity admits every live device and no device total exceeds INT_MAX.",
+      "contract": "For successful calls, preserve input; validate every reading before discard filtering; group live readings by case-sensitive device key; and return lexicographically sorted totals and counts.",
       "rationale": "The accumulator and ordered-index implementations supply one aggregation contract and neither has a caller-specific responsibility.",
       "evidence": [
         "tests/test_metering.c::test_aggregation_differential",
-        "tests/test_metering.c::test_invalid_discarded_reading_is_rejected"
-      ]
+        "tests/test_metering.c::test_invalid_discarded_reading_is_rejected",
+        "tests/test_metering.c::test_aggregation_failure_precedence_differs"
+      ],
+      "difference_witness": "With capacity 0, a valid METER_A reading followed by discarded reading {device=\"\", usage=3} returns METERING_CAPACITY from linear aggregation and METERING_INVALID from sorted aggregation. With capacity 1, readings METER_B:1, METER_A:INT_MAX, METER_A:1 return METERING_CAPACITY from linear aggregation and METERING_OVERFLOW from sorted aggregation."
     },
     {
       "id": "aggregate-linear--index",
@@ -373,14 +375,16 @@
         "sort-versus-scan"
       ],
       "scope": "whole_unit",
-      "behavior_equivalent": true,
-      "equivalence_domain": "Reading arrays with count <= METERING_MAX_DEVICES, including invalid discarded readings and capacity-limited output buffers.",
-      "contract": "Validate every reading before discard filtering; preserve input; group live readings by case-sensitive device key and return lexicographically sorted totals and counts.",
+      "behavior_equivalent": false,
+      "equivalence_domain": "Valid reading arrays with count <= METERING_MAX_DEVICES where output capacity admits every live device and no device total exceeds INT_MAX.",
+      "contract": "For successful calls, preserve input; validate every reading before discard filtering; group live readings by case-sensitive device key; and return lexicographically sorted totals and counts.",
       "rationale": "Both routines should be consolidated around a single aggregation implementation despite their different local control flow.",
       "evidence": [
         "tests/test_metering.c::test_aggregation_differential",
-        "tests/test_metering.c::test_invalid_discarded_reading_is_rejected"
-      ]
+        "tests/test_metering.c::test_invalid_discarded_reading_is_rejected",
+        "tests/test_metering.c::test_aggregation_failure_precedence_differs"
+      ],
+      "difference_witness": "With capacity 0, a valid METER_A reading followed by discarded reading {device=\"\", usage=3} returns METERING_INVALID from sorted aggregation and METERING_CAPACITY from index aggregation. With capacity 1, readings METER_B:1, METER_A:INT_MAX, METER_A:1 return METERING_OVERFLOW from sorted aggregation and METERING_CAPACITY from index aggregation."
     },
     {
       "id": "payout-baseline--floor",

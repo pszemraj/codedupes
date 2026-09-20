@@ -130,6 +130,9 @@ def _empty_measurement(project, model: str = "gte-modernbert-base") -> dict:
                 "duplicate": {"execution_device": "cpu", "cache_hit_rows": 0},
                 "search": {"execution_device": "cpu", "cache_hit_rows": 0},
             },
+            "query_execution": [
+                {"probe": probe, "execution_device": "cpu", "cache_hit": False} for probe in probes
+            ],
             "live_default": [],
             "input_fingerprint": measurement_fingerprint(project, model, "cpu"),
             "measurement_pipeline_version": calibration_measurements.MEASUREMENT_PIPELINE_VERSION,
@@ -1004,19 +1007,51 @@ def test_derived_selections_ignore_advisory_pipeline_source_fingerprint():
     assert measurement_digest(measurement) == original
 
 
-@pytest.mark.parametrize("field", ["execution", "live_default", "timing_seconds"])
+@pytest.mark.parametrize(
+    "field", ["execution", "query_execution", "live_default", "timing_seconds"]
+)
 def test_derived_selections_bind_claimed_execution_provenance(field: str):
     project = load_projects(project_ids=["ledger"])[0]
     measurement = _empty_measurement(project)
     original = measurement_digest(measurement)
     if field == "execution":
         measurement["metadata"][field]["duplicate"]["cache_hit_rows"] = 17
+    elif field == "query_execution":
+        measurement["metadata"][field][0]["execution_device"] = "mps"
     elif field == "live_default":
         measurement["metadata"][field].append({"a": "forged", "b": "pair", "tier": "exact"})
     else:
         measurement["metadata"][field]["duplicate"] = 99.0
 
     assert measurement_digest(measurement) != original
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        ("fallback", "did not execute on cpu"),
+        ("cache", "did not execute on cpu"),
+        ("missing", "incomplete query execution provenance"),
+    ],
+)
+def test_measurements_reject_invalid_query_execution_provenance(
+    tmp_path: Path, mutation: str, message: str
+):
+    project = load_projects(project_ids=["ledger"])[0]
+    measurement = _empty_measurement(project)
+    if mutation == "fallback":
+        measurement["metadata"]["query_execution"][0]["execution_device"] = "mps"
+    elif mutation == "cache":
+        measurement["metadata"]["query_execution"][0]["cache_hit"] = True
+    else:
+        measurement["metadata"]["query_execution"].pop()
+    path = tmp_path / "measurement.json"
+    write_json(path, measurement)
+    with pytest.raises(ValueError, match=message):
+        if mutation == "missing":
+            load_measurement(path, project)
+        else:
+            load_measurement(path, project, expected_device="cpu")
 
 
 def test_device_comparison_rejects_score_coverage_mismatch():
@@ -1059,6 +1094,11 @@ def test_measurement_provenance_rejects_forged_runtime_and_fast_math(monkeypatch
         "search": execution.copy(),
     }
     validate_measurement_provenance(project, measurement)
+
+    measurement["metadata"]["query_execution"][0]["execution_device"] = "mps"
+    with pytest.raises(ValueError, match="invalid query execution provenance"):
+        validate_measurement_provenance(project, measurement)
+    measurement["metadata"]["query_execution"][0]["execution_device"] = "cpu"
 
     # Captured gates audit the analyzer run but do not affect the raw vectors or
     # scores, so a threshold-only policy edit must not force model re-inference.
@@ -1819,6 +1859,7 @@ def test_checked_calibration_result_rejects_tampered_embedded_selections(tamper:
         "selection_digest",
         "timing",
         "execution",
+        "query_execution",
         "identity",
         "dtype",
         "runtime",
@@ -1846,6 +1887,8 @@ def test_checked_calibration_result_rejects_tampered_provenance(tamper: str):
         first_report["timing_seconds"]["duplicate"] = True
     elif tamper == "execution":
         first_report["execution"]["duplicate"]["cache_hit_rows"] = 1
+    elif tamper == "query_execution":
+        first_report["query_execution"]["device"] = "mps"
     elif tamper == "identity":
         first_report["device"] = "mps"
     elif tamper == "dtype":

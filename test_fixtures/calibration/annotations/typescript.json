@@ -237,11 +237,12 @@
             "difficulty": "easy",
             "scope": "whole_unit",
             "behavior_equivalent": true,
-            "equivalence_domain": "Every load is validated before cancelled loads are ignored; active totals and counts are sorted by normalized zone without mutating caller input.",
-            "contract": "Return sorted active zone totals and counts after strict load validation.",
+            "equivalence_domain": "Every load is validated before cancelled loads are ignored; active totals and counts are ordered ordinally by exact normalized zone keys without mutating caller input.",
+            "contract": "Return ordinally ordered active zone totals and counts after strict load validation.",
             "rationale": "The Map implementation and sorted contiguous grouping implement the same aggregation contract and one should replace the other during maintenance.",
             "evidence": [
-                "tests/harbor.test.ts::aggregation variants preserve validation, ordering, and caller input"
+                "tests/harbor.test.ts::aggregation variants preserve validation, ordering, and caller input",
+                "tests/harbor.test.ts::aggregation variants retain exact Unicode keys across input permutations"
             ]
         },
         {
@@ -256,11 +257,12 @@
             "difficulty": "easy",
             "scope": "whole_unit",
             "behavior_equivalent": true,
-            "equivalence_domain": "Every load is validated before cancelled loads are ignored; active totals and counts are sorted by normalized zone without mutating caller input.",
-            "contract": "Return sorted active zone totals and counts after strict load validation.",
+            "equivalence_domain": "Every load is validated before cancelled loads are ignored; active totals and counts are ordered ordinally by exact normalized zone keys without mutating caller input.",
+            "contract": "Return ordinally ordered active zone totals and counts after strict load validation.",
             "rationale": "The Map and immutable record accumulators duplicate the same zone aggregation responsibility.",
             "evidence": [
-                "tests/harbor.test.ts::aggregation variants preserve validation, ordering, and caller input"
+                "tests/harbor.test.ts::aggregation variants preserve validation, ordering, and caller input",
+                "tests/harbor.test.ts::aggregation variants retain exact Unicode keys across input permutations"
             ]
         },
         {
@@ -275,11 +277,12 @@
             "difficulty": "easy",
             "scope": "whole_unit",
             "behavior_equivalent": true,
-            "equivalence_domain": "Every load is validated before cancelled loads are ignored; active totals and counts are sorted by normalized zone without mutating caller input.",
-            "contract": "Return sorted active zone totals and counts after strict load validation.",
+            "equivalence_domain": "Every load is validated before cancelled loads are ignored; active totals and counts are ordered ordinally by exact normalized zone keys without mutating caller input.",
+            "contract": "Return ordinally ordered active zone totals and counts after strict load validation.",
             "rationale": "Sorting contiguous groups and building immutable records are alternate implementations of one aggregation operation.",
             "evidence": [
-                "tests/harbor.test.ts::aggregation variants preserve validation, ordering, and caller input"
+                "tests/harbor.test.ts::aggregation variants preserve validation, ordering, and caller input",
+                "tests/harbor.test.ts::aggregation variants retain exact Unicode keys across input permutations"
             ]
         },
         {

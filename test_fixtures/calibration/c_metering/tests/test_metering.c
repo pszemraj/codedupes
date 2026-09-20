@@ -69,6 +69,21 @@ static void test_aggregation_overflow_is_rejected(void) {
     CHECK(aggregate_usage_by_index(readings, 2, totals, METERING_MAX_DEVICES, &count) == METERING_OVERFLOW);
 }
 
+static void test_aggregation_failure_precedence_differs(void) {
+    const Reading invalid_after_capacity[] = {{"METER_A", 1, 0}, {"", 3, 1}};
+    const Reading overflow_after_capacity[] = {
+        {"METER_B", 1, 0}, {"METER_A", INT_MAX, 0}, {"METER_A", 1, 0},
+    };
+    DeviceTotal totals[METERING_MAX_DEVICES] = {0};
+    size_t count = 0;
+    CHECK(aggregate_usage_linear(invalid_after_capacity, 2, totals, 0, &count) == METERING_CAPACITY);
+    CHECK(aggregate_usage_sorted(invalid_after_capacity, 2, totals, 0, &count) == METERING_INVALID);
+    CHECK(aggregate_usage_by_index(invalid_after_capacity, 2, totals, 0, &count) == METERING_CAPACITY);
+    CHECK(aggregate_usage_linear(overflow_after_capacity, 3, totals, 1, &count) == METERING_CAPACITY);
+    CHECK(aggregate_usage_sorted(overflow_after_capacity, 3, totals, 1, &count) == METERING_OVERFLOW);
+    CHECK(aggregate_usage_by_index(overflow_after_capacity, 3, totals, 1, &count) == METERING_CAPACITY);
+}
+
 static void test_payout_floor_and_policy(void) {
     const DeviceTotal totals[] = {
         {"METER_A", 7, 1},
@@ -252,6 +267,7 @@ int main(void) {
     test_aggregation_differential();
     test_invalid_discarded_reading_is_rejected();
     test_aggregation_overflow_is_rejected();
+    test_aggregation_failure_precedence_differs();
     test_payout_floor_and_policy();
     test_payout_input_and_deferred_overflow_are_rejected();
     test_helper_extraction_differential();

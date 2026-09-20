@@ -41,6 +41,7 @@ from codedupes.semantic import (
     EmbeddingRunStats,
     EmbeddingSpaceIdentity,
     ProgressMode,
+    QueryExecution,
     SearchDocumentMode,
     SemanticBackendError,
     _prepare_search_document,
@@ -653,6 +654,7 @@ class CodeAnalyzer:
         self._resolved_search_semantic_task: str | None = None
         self._embedding_space_identity: EmbeddingSpaceIdentity | None = None
         self._embedding_stats: EmbeddingRunStats | None = None
+        self._query_execution: list[QueryExecution] = []
         self._cache_scope: Path | None = None
         self._extraction_diagnostics: list[ExtractionDiagnostic] = []
         self._python_files: list[Path] = []
@@ -693,6 +695,14 @@ class CodeAnalyzer:
         """
         return self._embedding_stats
 
+    @property
+    def query_execution(self) -> tuple[QueryExecution, ...]:
+        """Return provenance for query vectors successfully searched against this index.
+
+        :return: One immutable record per encoded or cache-reused query vector.
+        """
+        return tuple(self._query_execution)
+
     def _reset_analysis_state(self, cache_scope: Path) -> None:
         """Clear corpus-specific state before one analysis run.
 
@@ -705,6 +715,7 @@ class CodeAnalyzer:
         self._resolved_search_semantic_task = None
         self._embedding_space_identity = None
         self._embedding_stats = None
+        self._query_execution = []
         self._cache_scope = cache_scope
         self._extraction_diagnostics = []
         self._python_files = []
@@ -1308,6 +1319,7 @@ class CodeAnalyzer:
                 cache_scope=self._cache_scope,
                 corpus_identity=self._embedding_space_identity,
                 strict_revision_cache=self.config.strict_revision_cache,
+                execution=self._query_execution,
             )
 
 

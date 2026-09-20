@@ -1,6 +1,13 @@
 import type { DockLoad, ZoneSummary } from "./models.ts";
 import { addSafeInteger } from "./safe-integers.ts";
 
+/** Order exact keys without locale collation, which can equate distinct Unicode strings. */
+function compareIdentifierKeys(left: string, right: string): number {
+  if (left < right) return -1;
+  if (left > right) return 1;
+  return 0;
+}
+
 function checkedLoad(load: DockLoad): void {
   if (!load.loadId.trim()) throw new Error("loadId is required");
   if (!load.zone.trim()) throw new Error("zone is required");
@@ -26,7 +33,7 @@ export function summarizeDockLoads(loads: readonly DockLoad[]): ZoneSummary[] {
   }
   return [...totals]
     .map(([zone, total]) => ({ zone, ...total }))
-    .sort((left, right) => left.zone.localeCompare(right.zone));
+    .sort((left, right) => compareIdentifierKeys(left.zone, right.zone));
 }
 
 /** Aggregate the same contract through sorting and contiguous zone groups. */
@@ -36,7 +43,7 @@ export function buildManifestTotals(loads: readonly DockLoad[]): ZoneSummary[] {
     checkedLoad(load);
     if (load.status === "active") active.push({ ...load, zone: load.zone.trim().toUpperCase() });
   }
-  active.sort((left, right) => left.zone.localeCompare(right.zone));
+  active.sort((left, right) => compareIdentifierKeys(left.zone, right.zone));
   const summaries: ZoneSummary[] = [];
   for (const load of active) {
     const previous = summaries.at(-1);
@@ -64,5 +71,5 @@ export function collectZoneWeightTotals(loads: readonly DockLoad[]): ZoneSummary
       loadCount: known.loadCount + 1,
     };
   });
-  return Object.values(totals).sort((left, right) => left.zone.localeCompare(right.zone));
+  return Object.values(totals).sort((left, right) => compareIdentifierKeys(left.zone, right.zone));
 }
