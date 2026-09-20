@@ -530,6 +530,11 @@ def test_precomputed_embeddings_require_2d_row_alignment(
             "zero or invalid vector",
             id="zero-row",
         ),
+        pytest.param(
+            np.array([[1.0 + 100.0j, 0.0], [1.0 + 0.0j, 0.0]], dtype=np.complex64),
+            "real-valued vectors",
+            id="complex",
+        ),
         pytest.param(np.empty((2, 0), dtype=np.float32), "zero columns", id="zero-width"),
     ],
 )

@@ -432,8 +432,8 @@ def canonicalize_embeddings(
     :param expected_rows: Required row count (one per input text).
     :param expected_dim: Required embedding dimensionality, or ``None`` to accept any.
     :return: Contiguous float32 matrix with unit-normalized rows.
-    :raises InvalidEmbeddingError: If shape, row count, dimensionality, finiteness,
-        or norm invariants are violated.
+    :raises InvalidEmbeddingError: If shape, row count, dimensionality, real-value,
+        finiteness, or norm invariants are violated.
     """
     matrix = np.asarray(values)
 
@@ -445,6 +445,8 @@ def canonicalize_embeddings(
         raise InvalidEmbeddingError(f"Expected dimension {expected_dim}, got {matrix.shape[1]}")
     if matrix.shape[0] and matrix.shape[1] == 0:
         raise InvalidEmbeddingError("Embedding matrix has zero columns")
+    if np.iscomplexobj(matrix):
+        raise InvalidEmbeddingError("Embedding matrix must contain real-valued vectors")
 
     if matrix.shape[0] == 0:
         return np.ascontiguousarray(matrix, dtype=np.float32)
@@ -498,7 +500,7 @@ def _validate_precomputed_embeddings(units: Sequence[CodeUnit], embeddings: obje
     :param embeddings: Caller-supplied embedding matrix or array-like value.
     :return: A contiguous float32 unit-normalized matrix aligned with ``units``.
     :raises ValueError: If the matrix is not two-dimensional, has a different
-        number of rows than ``units``, or contains a non-finite or zero row.
+        number of rows than ``units``, or contains a complex, non-finite, or zero row.
     """
     matrix = embeddings if isinstance(embeddings, np.ndarray) else np.asarray(embeddings)
     if matrix.ndim != 2:
