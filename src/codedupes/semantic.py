@@ -1089,7 +1089,7 @@ def _resolve_revision_for_cache(
     not tracked, so this mode requires an explicit correctness trade-off.
 
     The default ``strict=True`` policy resolves an unpinned hub model by
-    falls back to reading the locally cached HuggingFace commit hash so cache
+    reading the locally cached HuggingFace commit hash so cache
     keys stay stable across runs even before the model is loaded, and returns
     ``None`` (disabling persistent caching for the run) when a branch or tag
     cannot be mapped offline - loading the model would be required before
@@ -2587,7 +2587,7 @@ def _prepare_cache_context(
     :param cache_scope: Corpus root addressing the cache shard; ``None`` disables caching.
     :param strict_revision_cache: Whether an unpinned hub revision resolves to a
         concrete commit hash (disabling caching when unmappable) instead of the
-        requested revision label, defaults to ``False``.
+        requested revision label, defaults to ``True``.
     :param variant_suffix: Optional caller-defined vector-space discriminator.
     :return: ``(cache, cache_revision, cache_variant, cache_namespace)``.
     """
@@ -2896,7 +2896,7 @@ def _compute_embeddings_unlocked(
         ``None`` disables caching for this call regardless of ``use_cache``.
     :param strict_revision_cache: Whether an unpinned hub revision resolves to a
         concrete commit hash (disabling caching when unmappable) instead of the
-        requested revision label, defaults to ``False``.
+        requested revision label, defaults to ``True``.
     :param progress: Progress-bar policy for corpus embedding inference.
     :param stats: Optional telemetry collector filled in place.
     :param diagnostics: Optional collector for over-context unit warnings.
@@ -3417,7 +3417,7 @@ def compute_embeddings_with_identity(
         ``None`` disables caching for this call regardless of ``use_cache``.
     :param strict_revision_cache: Whether an unpinned hub revision resolves to a
         concrete commit hash (disabling caching when unmappable) instead of the
-        requested revision label, defaults to ``False``.
+        requested revision label, defaults to ``True``.
     :param progress: Progress-bar policy for corpus embedding inference.
     :param stats: Optional telemetry collector filled in place.
     :param diagnostics: Optional collector for over-context unit warnings.
@@ -3500,7 +3500,7 @@ def compute_embeddings(
         ``None`` disables caching for this call regardless of ``use_cache``.
     :param strict_revision_cache: Whether an unpinned hub revision resolves to a
         concrete commit hash (disabling caching when unmappable) instead of the
-        requested revision label, defaults to ``False``.
+        requested revision label, defaults to ``True``.
     :param progress: Progress-bar policy for corpus embedding inference.
     :param stats: Optional telemetry collector filled in place.
     :param diagnostics: Optional collector for over-context unit warnings.
@@ -3825,7 +3825,7 @@ def _find_similar_to_query_unlocked(
         any other or unknown checkpoint.
     :param strict_revision_cache: Whether an unpinned hub revision resolves to a
         concrete commit hash (disabling caching when unmappable) instead of the
-        requested revision label, defaults to ``False``. Must match the mode
+        requested revision label, defaults to ``True``. Must match the mode
         used to build ``corpus_identity``.
     :param execution: Optional collector receiving one record for a successful
         query, after cache lookup and any device fallback complete.
@@ -4285,7 +4285,7 @@ def find_similar_to_query(
         or runtime drift requires rebuilding the corpus.
     :param strict_revision_cache: Whether an unpinned hub revision resolves to a
         concrete commit hash (disabling caching when unmappable) instead of the
-        requested revision label, defaults to ``False``. Must match the mode
+        requested revision label, defaults to ``True``. Must match the mode
         used to build ``corpus_identity``.
     :param execution: Optional collector receiving one record for a successful
         query, after cache lookup and any device fallback complete.
@@ -4371,7 +4371,7 @@ def run_semantic_analysis_with_identity(
         ``None`` disables caching for this call regardless of ``use_cache``.
     :param strict_revision_cache: Whether an unpinned hub revision resolves to a
         concrete commit hash (disabling caching when unmappable) instead of the
-        requested revision label, defaults to ``False``.
+        requested revision label, defaults to ``True``.
     :param cross_language: Also generate duplicate pairs across languages
         (uncalibrated), defaults to ``False``.
     :param language_thresholds: Per-language duplicate gates applied inside the
@@ -4466,7 +4466,7 @@ def run_semantic_analysis(
         ``None`` disables caching for this call regardless of ``use_cache``.
     :param strict_revision_cache: Whether an unpinned hub revision resolves to a
         concrete commit hash (disabling caching when unmappable) instead of the
-        requested revision label, defaults to ``False``.
+        requested revision label, defaults to ``True``.
     :param cross_language: Also generate duplicate pairs across languages
         (uncalibrated), defaults to ``False``.
     :param language_thresholds: Per-language duplicate gates applied inside the

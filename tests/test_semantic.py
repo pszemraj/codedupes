@@ -3106,6 +3106,22 @@ def test_resolve_embedding_space_identity_detects_disk_changes_across_separate_c
 # --- T7: strict-by-default cache revision keying, loose opt-in -------------
 
 
+@pytest.mark.parametrize(
+    "function",
+    [
+        semantic.resolve_embedding_space_identity,
+        semantic.compute_embeddings_with_identity,
+        semantic.compute_embeddings,
+        semantic.find_similar_to_query,
+        semantic.run_semantic_analysis_with_identity,
+        semantic.run_semantic_analysis,
+    ],
+)
+def test_public_semantic_helpers_default_to_strict_revision_cache(function) -> None:
+    parameter = inspect.signature(function).parameters["strict_revision_cache"]
+    assert parameter.default is True
+
+
 def test_resolve_revision_for_cache_loose_opt_in_labels_unpinned_model(monkeypatch) -> None:
     def _fail_if_called(*_args, **_kwargs):
         raise AssertionError("loose mode must never consult the offline hub-cache lookup")
