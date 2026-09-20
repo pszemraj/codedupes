@@ -341,6 +341,25 @@ def test_behavior_requirement_probe_uses_command_c_compiler(
     assert missing_behavior_requirements([project]) == expected
 
 
+def test_behavior_requirement_probe_labels_empty_c_compiler(monkeypatch, tmp_path):
+    project = SimpleNamespace(
+        spec={
+            "languages": ["c"],
+            "behavior_tests": [{"argv": ["make", "test"]}],
+        }
+    )
+    monkeypatch.setenv("CC", "")
+    monkeypatch.setattr(
+        calibration_contract.shutil,
+        "which",
+        lambda executable, path=None: (
+            None if executable == "CC=<empty>" else str(tmp_path / executable)
+        ),
+    )
+
+    assert missing_behavior_requirements([project]) == ["CC=<empty>"]
+
+
 def test_behavior_requirement_probe_checks_toolchain_variants(monkeypatch, tmp_path):
     projects = [
         SimpleNamespace(
@@ -1356,20 +1375,6 @@ def test_report_rejects_selection_that_is_not_shipped():
         )
 
 
-def test_checked_report_writer_rejects_partial_device_sets(monkeypatch, capsys):
-    monkeypatch.setattr(sys, "argv", ["report", "--devices", "cpu"])
-    monkeypatch.setattr(
-        report_calibration_distributions,
-        "load_projects",
-        lambda *args: pytest.fail("partial device selection must fail before loading projects"),
-    )
-
-    with pytest.raises(SystemExit, match="2"):
-        report_calibration_distributions.main()
-
-    assert "require both --devices cpu mps" in capsys.readouterr().err
-
-
 @pytest.mark.parametrize("second_version", ["2.14.0", "2.13.0"])
 def test_report_writer_derives_measurement_runtime(tmp_path: Path, monkeypatch, second_version):
     checked = read_json(DEFAULT_MANIFEST.parent / "calibration-results.json")
@@ -1422,9 +1427,6 @@ def test_report_writer_derives_measurement_runtime(tmp_path: Path, monkeypatch, 
         "argv",
         [
             "report_calibration_distributions.py",
-            "--devices",
-            "cpu",
-            "mps",
             "--threshold-selection",
             str(threshold_path),
             "--hybrid-selection",

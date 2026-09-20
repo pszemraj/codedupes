@@ -560,7 +560,9 @@ def missing_behavior_executables(projects: list[Project]) -> list[str]:
 def _configured_c_compiler(command_env: dict[str, str] | None = None) -> str:
     """Return the executable selected by the C fixture's ``CC ?= cc`` rule."""
     command_env = command_env or {}
-    command = command_env.get("CC", os.environ.get("CC") or "cc")
+    command = command_env["CC"] if "CC" in command_env else os.environ.get("CC", "cc")
+    if not command.strip():
+        return "CC=<empty>"
     try:
         argv = shlex.split(command)
     except ValueError:

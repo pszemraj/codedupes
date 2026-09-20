@@ -86,7 +86,6 @@ def main() -> int:
     add_contract_arguments(parser)
     parser.add_argument("--measurements", type=Path, default=DEFAULT_MEASUREMENTS)
     parser.add_argument("--models", nargs="+", default=[p.key for p in list_supported_models()])
-    parser.add_argument("--devices", nargs="+", choices=["cpu", "mps"], default=["cpu", "mps"])
     parser.add_argument(
         "--threshold-selection",
         type=Path,
@@ -103,9 +102,7 @@ def main() -> int:
         args.models = canonical_model_keys(args.models)
     except ValueError as exc:
         parser.error(str(exc))
-    args.devices = list(dict.fromkeys(args.devices))
-    if set(args.devices) != {"cpu", "mps"}:
-        parser.error("checked reports require both --devices cpu mps")
+    devices = ["cpu", "mps"]
     projects = load_projects(args.manifest, args.projects, args.policy)
     selection_projects = development_projects(projects)
     payload = {
@@ -128,7 +125,7 @@ def main() -> int:
             "hybrid selection used another threshold selection; rerun the hybrid sweep"
         )
     for project in projects:
-        loaded = load_all(project, args.measurements, args.models, args.devices)
+        loaded = load_all(project, args.measurements, args.models, devices)
         all_measurements.extend(loaded.values())
         cpu_measurements.extend(
             measurement
@@ -147,12 +144,10 @@ def main() -> int:
             f"{model}/{device}": full_report(project, measurement)
             for (model, device), measurement in loaded.items()
         }
-        comparisons = {}
-        if {"cpu", "mps"} <= set(args.devices):
-            for model in args.models:
-                comparisons[model] = compare_devices(
-                    loaded[(model, "cpu")], loaded[(model, "mps")], project
-                )
+        comparisons = {
+            model: compare_devices(loaded[(model, "cpu")], loaded[(model, "mps")], project)
+            for model in args.models
+        }
         payload["projects"].append(
             {
                 "project": project.id,
