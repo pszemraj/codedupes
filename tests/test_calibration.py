@@ -1310,7 +1310,7 @@ def test_selection_context_rejects_changed_policy_values(monkeypatch, field: str
     current = getattr(calibration_evaluation, field)
     replacement = {
         "F1_RECALL_TOLERANCE": 0.006,
-        "SELECTION_ALGORITHM_VERSION": 5,
+        "SELECTION_ALGORITHM_VERSION": 6,
         "DEFAULT_TOP_K": 11,
         "THRESHOLD_GRID_STEP": 0.02,
         "HYBRID_WEAK_GRID": (0.0, 0.5),

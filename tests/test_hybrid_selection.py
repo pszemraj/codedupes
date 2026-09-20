@@ -141,10 +141,10 @@ def test_joint_selection_uses_pooled_f1_instead_of_language_f1(monkeypatch: pyte
         )["python"]
     }
 
-    # Python alone prefers the low gate: it recovers five positives despite
+    # Python alone prefers promotion: it recovers five positives despite
     # admitting nine negatives. Pooling with C correctly prefers the clean
     # disabled gate, whose lower false-positive count wins overall F1.
-    assert python_options[0.8]["f1"] > python_options[None]["f1"]
+    assert python_options[0.83]["f1"] > python_options[None]["f1"]
     selected, _options, _audit = sweep_hybrid_gates._select_joint(
         projects, measurements, admissions
     )
@@ -159,7 +159,7 @@ def test_promotion_sweep_accepts_admissions_through_one(admission: float):
         [project], {"python": measurement}, {"python": admission}, 0.4, 0.0
     )["python"]
     promoted = next(option for option in options if option["tp"] == 1)
-    assert promoted["high_gate"] == admission
+    assert promoted["high_gate"] == 1.0
 
 
 def test_promotion_sweep_can_separate_pairs_above_point_98():
@@ -171,6 +171,34 @@ def test_promotion_sweep_can_separate_pairs_above_point_98():
     )["python"]
     best = max(options, key=lambda option: option["f1"])
     assert (best["high_gate"], best["tp"], best["fp"]) == (0.99, 1, 0)
+
+
+def test_promotion_sweep_centers_numeric_fixture_plateaus():
+    """Equivalent numeric promotion gates use the admission sweep's tie rule."""
+    project, measurement = _project_and_measurement("python", "python", [("positive", 0.85, 0.1)])
+
+    options = sweep_hybrid_gates._promotion_options(
+        [project], {"python": measurement}, {"python": 0.80}, 0.4, 0.0
+    )["python"]
+    promoted = next(option for option in options if option["tp"] == 1)
+
+    # Gates .80 through .85 all promote the sole pair; the right-of-middle
+    # lattice point matches sweep_semantic_thresholds._select.
+    assert promoted["high_gate"] == 0.83
+
+
+def test_promotion_sweep_keeps_promotion_off_for_equivalent_outcome():
+    """A no-op numeric gate must not enable promotion when None is equivalent."""
+    project, measurement = _project_and_measurement("python", "python", [("positive", 0.85, 0.5)])
+
+    options = sweep_hybrid_gates._promotion_options(
+        [project], {"python": measurement}, {"python": 0.80}, 0.4, 0.0
+    )["python"]
+
+    # The pair is visible through corroboration under every numeric gate, so
+    # the shared outcome must retain the explicit promotion-off policy.
+    assert len(options) == 1
+    assert options[0]["high_gate"] is None
 
 
 def test_joint_selection_favors_recall_only_near_best_f1(monkeypatch: pytest.MonkeyPatch):

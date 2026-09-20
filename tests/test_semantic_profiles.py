@@ -174,9 +174,9 @@ def test_builtin_hybrid_split_matches_the_recorded_corroboration_sweep() -> None
 
     assert (gte.hybrid_weak_identifier_jaccard_min, gte.hybrid_statement_ratio_min) == (0.40, 0.0)
     assert dict(gte.language_high_confidence_thresholds) == {
-        "python": 0.88,
-        "c": 0.84,
-        "rust": 0.84,
+        "python": 0.90,
+        "c": 0.86,
+        "rust": 0.85,
         "javascript": 0.70,
         "typescript": None,
     }
@@ -185,9 +185,9 @@ def test_builtin_hybrid_split_matches_the_recorded_corroboration_sweep() -> None
         0.0,
     )
     assert dict(gemma.language_high_confidence_thresholds) == {
-        "python": 0.78,
-        "c": 0.89,
-        "rust": 0.88,
+        "python": 0.79,
+        "c": 0.90,
+        "rust": 0.90,
         "javascript": 0.80,
         "typescript": 0.82,
     }
@@ -205,10 +205,7 @@ def test_builtin_hybrid_split_matches_the_recorded_corroboration_sweep() -> None
         if gate is not None and gate == profile.semantic_threshold_for_language(language)
     }
     assert empty_review_bands == {
-        ("gte-modernbert-base", "c"),
-        ("gte-modernbert-base", "rust"),
         ("embeddinggemma-300m", "javascript"),
-        ("embeddinggemma-300m", "rust"),
         ("embeddinggemma-300m", "typescript"),
         ("gte-modernbert-base", "javascript"),
     }

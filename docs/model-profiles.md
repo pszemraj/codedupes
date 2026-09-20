@@ -34,11 +34,12 @@ See [analysis behavior](analysis-defaults.md#semantic-duplicate-gate-defaults) f
 ### Hybrid confidence gates
 
 These values promote admitted semantic pairs to `semantic_high_confidence`; otherwise they remain `semantic_review`.
+They were selected from CPU float32 measurements and independently checked on MPS float32; the CUDA bfloat16 policy shares these gates but is not separate calibration evidence.
 
 | profile | identifier Jaccard min | statement ratio min | promotion gates |
 | --- | --- | --- | --- |
-| `gte-modernbert-base` | `0.40` | `0.00` | python `0.88`, c `0.84`, rust `0.84`, javascript `0.70`; typescript off |
-| `embeddinggemma-300m` | `0.40` | `0.00` | python `0.78`, c `0.89`, rust `0.88`, javascript `0.80`, typescript `0.82` |
+| `gte-modernbert-base` | `0.40` | `0.00` | python `0.90`, c `0.86`, rust `0.85`, javascript `0.70`; typescript off |
+| `embeddinggemma-300m` | `0.40` | `0.00` | python `0.79`, c `0.90`, rust `0.90`, javascript `0.80`, typescript `0.82` |
 | `generic` | `0.00` | `0.20` | off |
 
 Where a promotion gate equals its admission gate, same-language similarity alone leaves no `semantic_review` band: every admitted pair clears the promotion gate.

@@ -62,7 +62,7 @@ F1_RECALL_TOLERANCE = 0.005
 MINIMUM_SELECTION_PRECISION = 0.5
 # Selection code is intentionally versioned by behavior rather than by source
 # bytes. Bump this whenever selection or audit behavior changes.
-SELECTION_ALGORITHM_VERSION = 4
+SELECTION_ALGORITHM_VERSION = 5
 SELECTION_SCHEMA_VERSION = 7
 CHECKED_REPORT_SCHEMA_VERSION = 8
 SEARCH_SELECTION_WINDOW_RADIUS = 5

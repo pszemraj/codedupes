@@ -213,19 +213,31 @@ def _promotion_options(
                 )
             }
             signature = tuple(sorted(predicted))
-            outcome = {
-                "high_gate": high_gate,
-                "outcome_digest": selection_digest(signature),
-                "_outcome_signature": signature,
-                **metrics(predicted, labels),
-            }
-            previous = outcomes.get(signature)
-            if previous is None or (high_gate is not None, high_gate or 0.0) < (
-                previous["high_gate"] is not None,
-                previous["high_gate"] or 0.0,
-            ):
+            outcome = outcomes.get(signature)
+            if outcome is None:
+                outcome = {
+                    "_candidate_gates": [],
+                    "outcome_digest": selection_digest(signature),
+                    "_outcome_signature": signature,
+                    **metrics(predicted, labels),
+                }
                 outcomes[signature] = outcome
-        options[language] = list(outcomes.values())
+            outcome["_candidate_gates"].append(high_gate)
+
+        options[language] = []
+        for outcome in outcomes.values():
+            candidate_gates = outcome.pop("_candidate_gates")
+            numeric_gates = [gate for gate in candidate_gates if gate is not None]
+            # Promotion-off is not a threshold on the numeric lattice. When
+            # corroboration already produces this outcome, retain that strict
+            # policy; otherwise center the equivalent numeric plateau using
+            # the same right-of-middle rule as admission selection.
+            outcome["high_gate"] = (
+                None
+                if len(numeric_gates) != len(candidate_gates)
+                else numeric_gates[len(numeric_gates) // 2]
+            )
+            options[language].append(outcome)
     return options
 
 

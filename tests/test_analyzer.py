@@ -2286,7 +2286,7 @@ def test_resolve_hybrid_split_gates_off_with_explicit_semantic_threshold(tmp_pat
         )
     )
     weak_min, ratio_min, gates = default_analyzer._resolve_hybrid_split(units)
-    assert gates == {"python": 0.88}
+    assert gates == {"python": 0.90}
     assert weak_min == profile.hybrid_weak_identifier_jaccard_min
     assert ratio_min == profile.hybrid_statement_ratio_min
 

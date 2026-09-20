@@ -10,7 +10,7 @@
     "input_context": {
       "batch_size": 4,
       "selection_policy": {
-        "algorithm_version": 4,
+        "algorithm_version": 5,
         "objective": {
           "primary": "f1",
           "minimum_precision": 0.5,
@@ -3072,16 +3072,16 @@
       }
     ],
     "measurement_digests": {
-      "ledger/gte-modernbert-base/cpu": "70d1c4fa1fb54c9f30b1a081e0a38a33fe8b71c47562582fd16f667719dd3033",
-      "cowsay/gte-modernbert-base/cpu": "ec704a20cccc50ec13cfe1a738fc1b357b85da16ca91b6bad6e9df34292a1de5",
-      "c_metering/gte-modernbert-base/cpu": "86f7272403bd3c76ee27a151163aac537828c11996fcf0726ff8b4acc8c9ff66",
-      "javascript/gte-modernbert-base/cpu": "7b2af1be438f864f4398dc28c803505117190c32403461723d8de932c9239889",
-      "harbor-ts/gte-modernbert-base/cpu": "312eb242016d9c691b250fcc7ba58dff86e9a4c1d11097234a59d0fe89335542",
-      "ledger/embeddinggemma-300m/cpu": "21421a7cb5483e2b3ee9ab0f04356d97792f7c980563693432a4e1dd587183c4",
-      "cowsay/embeddinggemma-300m/cpu": "9d5e599660ad13e4d165e993a5b51c65c3fefada4a058abec8b9d1cc1bd50446",
-      "c_metering/embeddinggemma-300m/cpu": "42daef25067d014f162b08a0e4d961ab96175f38faa052add90966afd143ccb7",
-      "javascript/embeddinggemma-300m/cpu": "247778e05d65282adae2abf3a42a43727db0ce6e94b475a6ecc44a8cb6327fce",
-      "harbor-ts/embeddinggemma-300m/cpu": "b050ca0db50d7136bab3dad644453aa11ec9f29beae9519c7a3595ec755a41c8"
+      "ledger/gte-modernbert-base/cpu": "ce6ccbba8d86f8b274ef5eb15c199f859108abe7968ef10911ca46a5df662bf4",
+      "cowsay/gte-modernbert-base/cpu": "6b7957e3238fdcf0b07ee098f184d1d78680896d562a37c288f975465e10c0af",
+      "c_metering/gte-modernbert-base/cpu": "f2a76c6bc12d56fb1bfdcbe43808e29a78b7cbcf77ab537f2dabf02ac0846ef0",
+      "javascript/gte-modernbert-base/cpu": "24fc0f306fea36c9557b15b374b4071c6cd8d2650b74aaff5a4a6501e12be748",
+      "harbor-ts/gte-modernbert-base/cpu": "34eb6dc8e9fc39c8f6b90581e99fb180330b006b227daae03c1974fb2c731897",
+      "ledger/embeddinggemma-300m/cpu": "93899ce9e81a3a8941d693b9d6fb3ca36644a3375436e0a5a671292c3f211aca",
+      "cowsay/embeddinggemma-300m/cpu": "b9f8cc0f3ccb918cecf877cc46426e9736c85e8c2af2cd88ae62fc128162f3de",
+      "c_metering/embeddinggemma-300m/cpu": "1078909ec065e2b93c61fe7baea581a8d49268fb999016ae5ddcc72e5db3c2cb",
+      "javascript/embeddinggemma-300m/cpu": "8377827b9049008dae0d023949c17798e301c0553e4aa31c4bf7ccae1792c616",
+      "harbor-ts/embeddinggemma-300m/cpu": "4355eda81c915e816ef6bc5e11322d31c6c331b2577fdddc67ee4be1e4cc356d"
     }
   },
   "hybrid_selection": {
@@ -3094,7 +3094,7 @@
     "input_context": {
       "batch_size": 4,
       "selection_policy": {
-        "algorithm_version": 4,
+        "algorithm_version": 5,
         "objective": {
           "primary": "f1",
           "minimum_precision": 0.5,
@@ -3411,7 +3411,7 @@
         "step": 0.01
       }
     },
-    "threshold_selection_digest": "a51d9615b9c12a5313487dd2c57632b2db0210d4b53748131e1cc6d4f2c57c2e",
+    "threshold_selection_digest": "d5205dcc293b542287ff60be919cca38f71d666197a99a7917d043522bbd47dd",
     "models": [
       {
         "model": "gte-modernbert-base",
@@ -3449,10 +3449,10 @@
             "weak_identifier_jaccard_min": 0.4,
             "statement_ratio_min": 0.0,
             "high_gates": {
-              "c": 0.84,
+              "c": 0.86,
               "javascript": 0.7,
-              "python": 0.88,
-              "rust": 0.84,
+              "python": 0.9,
+              "rust": 0.85,
               "typescript": null
             },
             "metrics": {
@@ -3469,7 +3469,7 @@
             "per_language": [
               {
                 "language": "c",
-                "high_gate": 0.84,
+                "high_gate": 0.86,
                 "outcome_digest": "2ae709423afd592c429bba8ae64aa90f35ad933a939db1e2e78b356ca572b3f4",
                 "metrics": {
                   "tp": 12,
@@ -3501,7 +3501,7 @@
               },
               {
                 "language": "python",
-                "high_gate": 0.88,
+                "high_gate": 0.9,
                 "outcome_digest": "e018ea160a5af85aaf40b116532e71aabde2baa736e7ce9271364b49f1b4be43",
                 "metrics": {
                   "tp": 6,
@@ -3517,7 +3517,7 @@
               },
               {
                 "language": "rust",
-                "high_gate": 0.84,
+                "high_gate": 0.85,
                 "outcome_digest": "a8a03a57f35b79921c01e547c87795064b5e6a52e01e244e43eb862e63648081",
                 "metrics": {
                   "tp": 10,
@@ -3583,8 +3583,8 @@
         "promotion_by_language": [
           {
             "language": "python",
-            "current_gate": 0.88,
-            "selected_gate": 0.88,
+            "current_gate": 0.9,
+            "selected_gate": 0.9,
             "selected_outcome_digest": "e018ea160a5af85aaf40b116532e71aabde2baa736e7ce9271364b49f1b4be43",
             "selected_metrics": {
               "tp": 6,
@@ -3601,8 +3601,8 @@
           },
           {
             "language": "rust",
-            "current_gate": 0.84,
-            "selected_gate": 0.84,
+            "current_gate": 0.85,
+            "selected_gate": 0.85,
             "selected_outcome_digest": "a8a03a57f35b79921c01e547c87795064b5e6a52e01e244e43eb862e63648081",
             "selected_metrics": {
               "tp": 10,
@@ -3619,8 +3619,8 @@
           },
           {
             "language": "c",
-            "current_gate": 0.84,
-            "selected_gate": 0.84,
+            "current_gate": 0.86,
+            "selected_gate": 0.86,
             "selected_outcome_digest": "2ae709423afd592c429bba8ae64aa90f35ad933a939db1e2e78b356ca572b3f4",
             "selected_metrics": {
               "tp": 12,
@@ -3709,10 +3709,10 @@
             "weak_identifier_jaccard_min": 0.4,
             "statement_ratio_min": 0.0,
             "high_gates": {
-              "c": 0.89,
+              "c": 0.9,
               "javascript": 0.8,
-              "python": 0.78,
-              "rust": 0.88,
+              "python": 0.79,
+              "rust": 0.9,
               "typescript": null
             },
             "metrics": {
@@ -3729,7 +3729,7 @@
             "per_language": [
               {
                 "language": "c",
-                "high_gate": 0.89,
+                "high_gate": 0.9,
                 "outcome_digest": "993e72fb2fb058948cac0eeafddbddb75191d6a3626b4ff5a2dd69ed6ebd8cc9",
                 "metrics": {
                   "tp": 17,
@@ -3761,7 +3761,7 @@
               },
               {
                 "language": "python",
-                "high_gate": 0.78,
+                "high_gate": 0.79,
                 "outcome_digest": "4e092ad12a3c359d125a556e91ed0654f6e95dc351b2f4ffffa97ba4d548a4ef",
                 "metrics": {
                   "tp": 10,
@@ -3777,7 +3777,7 @@
               },
               {
                 "language": "rust",
-                "high_gate": 0.88,
+                "high_gate": 0.9,
                 "outcome_digest": "a8a03a57f35b79921c01e547c87795064b5e6a52e01e244e43eb862e63648081",
                 "metrics": {
                   "tp": 10,
@@ -3813,10 +3813,10 @@
             "weak_identifier_jaccard_min": 0.4,
             "statement_ratio_min": 0.0,
             "high_gates": {
-              "c": 0.89,
+              "c": 0.9,
               "javascript": 0.8,
-              "python": 0.78,
-              "rust": 0.88,
+              "python": 0.79,
+              "rust": 0.9,
               "typescript": null
             },
             "metrics": {
@@ -3833,7 +3833,7 @@
             "per_language": [
               {
                 "language": "c",
-                "high_gate": 0.89,
+                "high_gate": 0.9,
                 "outcome_digest": "993e72fb2fb058948cac0eeafddbddb75191d6a3626b4ff5a2dd69ed6ebd8cc9",
                 "metrics": {
                   "tp": 17,
@@ -3865,7 +3865,7 @@
               },
               {
                 "language": "python",
-                "high_gate": 0.78,
+                "high_gate": 0.79,
                 "outcome_digest": "4e092ad12a3c359d125a556e91ed0654f6e95dc351b2f4ffffa97ba4d548a4ef",
                 "metrics": {
                   "tp": 10,
@@ -3881,7 +3881,7 @@
               },
               {
                 "language": "rust",
-                "high_gate": 0.88,
+                "high_gate": 0.9,
                 "outcome_digest": "a8a03a57f35b79921c01e547c87795064b5e6a52e01e244e43eb862e63648081",
                 "metrics": {
                   "tp": 10,
@@ -3946,8 +3946,8 @@
         "promotion_by_language": [
           {
             "language": "python",
-            "current_gate": 0.78,
-            "selected_gate": 0.78,
+            "current_gate": 0.79,
+            "selected_gate": 0.79,
             "selected_outcome_digest": "4e092ad12a3c359d125a556e91ed0654f6e95dc351b2f4ffffa97ba4d548a4ef",
             "selected_metrics": {
               "tp": 10,
@@ -3964,8 +3964,8 @@
           },
           {
             "language": "rust",
-            "current_gate": 0.88,
-            "selected_gate": 0.88,
+            "current_gate": 0.9,
+            "selected_gate": 0.9,
             "selected_outcome_digest": "a8a03a57f35b79921c01e547c87795064b5e6a52e01e244e43eb862e63648081",
             "selected_metrics": {
               "tp": 10,
@@ -3982,8 +3982,8 @@
           },
           {
             "language": "c",
-            "current_gate": 0.89,
-            "selected_gate": 0.89,
+            "current_gate": 0.9,
+            "selected_gate": 0.9,
             "selected_outcome_digest": "993e72fb2fb058948cac0eeafddbddb75191d6a3626b4ff5a2dd69ed6ebd8cc9",
             "selected_metrics": {
               "tp": 17,
@@ -4038,16 +4038,16 @@
       }
     ],
     "measurement_digests": {
-      "ledger/gte-modernbert-base/cpu": "70d1c4fa1fb54c9f30b1a081e0a38a33fe8b71c47562582fd16f667719dd3033",
-      "cowsay/gte-modernbert-base/cpu": "ec704a20cccc50ec13cfe1a738fc1b357b85da16ca91b6bad6e9df34292a1de5",
-      "c_metering/gte-modernbert-base/cpu": "86f7272403bd3c76ee27a151163aac537828c11996fcf0726ff8b4acc8c9ff66",
-      "javascript/gte-modernbert-base/cpu": "7b2af1be438f864f4398dc28c803505117190c32403461723d8de932c9239889",
-      "harbor-ts/gte-modernbert-base/cpu": "312eb242016d9c691b250fcc7ba58dff86e9a4c1d11097234a59d0fe89335542",
-      "ledger/embeddinggemma-300m/cpu": "21421a7cb5483e2b3ee9ab0f04356d97792f7c980563693432a4e1dd587183c4",
-      "cowsay/embeddinggemma-300m/cpu": "9d5e599660ad13e4d165e993a5b51c65c3fefada4a058abec8b9d1cc1bd50446",
-      "c_metering/embeddinggemma-300m/cpu": "42daef25067d014f162b08a0e4d961ab96175f38faa052add90966afd143ccb7",
-      "javascript/embeddinggemma-300m/cpu": "247778e05d65282adae2abf3a42a43727db0ce6e94b475a6ecc44a8cb6327fce",
-      "harbor-ts/embeddinggemma-300m/cpu": "b050ca0db50d7136bab3dad644453aa11ec9f29beae9519c7a3595ec755a41c8"
+      "ledger/gte-modernbert-base/cpu": "ce6ccbba8d86f8b274ef5eb15c199f859108abe7968ef10911ca46a5df662bf4",
+      "cowsay/gte-modernbert-base/cpu": "6b7957e3238fdcf0b07ee098f184d1d78680896d562a37c288f975465e10c0af",
+      "c_metering/gte-modernbert-base/cpu": "f2a76c6bc12d56fb1bfdcbe43808e29a78b7cbcf77ab537f2dabf02ac0846ef0",
+      "javascript/gte-modernbert-base/cpu": "24fc0f306fea36c9557b15b374b4071c6cd8d2650b74aaff5a4a6501e12be748",
+      "harbor-ts/gte-modernbert-base/cpu": "34eb6dc8e9fc39c8f6b90581e99fb180330b006b227daae03c1974fb2c731897",
+      "ledger/embeddinggemma-300m/cpu": "93899ce9e81a3a8941d693b9d6fb3ca36644a3375436e0a5a671292c3f211aca",
+      "cowsay/embeddinggemma-300m/cpu": "b9f8cc0f3ccb918cecf877cc46426e9736c85e8c2af2cd88ae62fc128162f3de",
+      "c_metering/embeddinggemma-300m/cpu": "1078909ec065e2b93c61fe7baea581a8d49268fb999016ae5ddcc72e5db3c2cb",
+      "javascript/embeddinggemma-300m/cpu": "8377827b9049008dae0d023949c17798e301c0553e4aa31c4bf7ccae1792c616",
+      "harbor-ts/embeddinggemma-300m/cpu": "4355eda81c915e816ef6bc5e11322d31c6c331b2577fdddc67ee4be1e4cc356d"
     }
   },
   "projects": [
@@ -4076,8 +4076,8 @@
             "sentence-transformers": "5.7.0"
           },
           "timing_seconds": {
-            "duplicate": 5.491813208005624,
-            "search": 2.6926719159819186
+            "duplicate": 5.696305833000224,
+            "search": 2.7172553339914884
           },
           "execution": {
             "duplicate": {
@@ -4171,8 +4171,8 @@
             "sentence-transformers": "5.7.0"
           },
           "timing_seconds": {
-            "duplicate": 4.421852958999807,
-            "search": 1.038658542005578
+            "duplicate": 4.376280209020479,
+            "search": 1.02647045897902
           },
           "execution": {
             "duplicate": {
@@ -4266,8 +4266,8 @@
             "sentence-transformers": "5.7.0"
           },
           "timing_seconds": {
-            "duplicate": 6.493088374991203,
-            "search": 2.919112416013377
+            "duplicate": 6.376171291980427,
+            "search": 2.950820666999789
           },
           "execution": {
             "duplicate": {
@@ -4361,8 +4361,8 @@
             "sentence-transformers": "5.7.0"
           },
           "timing_seconds": {
-            "duplicate": 5.29612354200799,
-            "search": 1.600550834002206
+            "duplicate": 5.466452874999959,
+            "search": 1.6241037920117378
           },
           "execution": {
             "duplicate": {
@@ -4743,8 +4743,8 @@
             "sentence-transformers": "5.7.0"
           },
           "timing_seconds": {
-            "duplicate": 4.978191500005778,
-            "search": 2.1084982909960672
+            "duplicate": 5.02008454099996,
+            "search": 2.098830041999463
           },
           "execution": {
             "duplicate": {
@@ -4838,8 +4838,8 @@
             "sentence-transformers": "5.7.0"
           },
           "timing_seconds": {
-            "duplicate": 4.183171625016257,
-            "search": 0.8273224580043461
+            "duplicate": 4.224263790994883,
+            "search": 0.8386015839932952
           },
           "execution": {
             "duplicate": {
@@ -4933,8 +4933,8 @@
             "sentence-transformers": "5.7.0"
           },
           "timing_seconds": {
-            "duplicate": 5.300092124991352,
-            "search": 2.5274019579810556
+            "duplicate": 5.271390874986537,
+            "search": 2.5082782079989556
           },
           "execution": {
             "duplicate": {
@@ -5028,8 +5028,8 @@
             "sentence-transformers": "5.7.0"
           },
           "timing_seconds": {
-            "duplicate": 4.708913416019641,
-            "search": 1.3251508329994977
+            "duplicate": 5.125276750011835,
+            "search": 1.3430998339899816
           },
           "execution": {
             "duplicate": {
@@ -5458,8 +5458,8 @@
             "sentence-transformers": "5.7.0"
           },
           "timing_seconds": {
-            "duplicate": 5.566082292003557,
-            "search": 2.780876040982548
+            "duplicate": 5.574518124980386,
+            "search": 2.6933344999852125
           },
           "execution": {
             "duplicate": {
@@ -5552,8 +5552,8 @@
             "sentence-transformers": "5.7.0"
           },
           "timing_seconds": {
-            "duplicate": 4.421174250019249,
-            "search": 1.0337880000006407
+            "duplicate": 4.555644458014285,
+            "search": 1.0420619159995113
           },
           "execution": {
             "duplicate": {
@@ -5646,8 +5646,8 @@
             "sentence-transformers": "5.7.0"
           },
           "timing_seconds": {
-            "duplicate": 5.991516833018977,
-            "search": 3.2127810419769958
+            "duplicate": 6.029598249995615,
+            "search": 3.210634042014135
           },
           "execution": {
             "duplicate": {
@@ -5741,8 +5741,8 @@
             "sentence-transformers": "5.7.0"
           },
           "timing_seconds": {
-            "duplicate": 5.2325582500197925,
-            "search": 1.7050179160141852
+            "duplicate": 5.488045000005513,
+            "search": 1.7064403329859488
           },
           "execution": {
             "duplicate": {
@@ -6155,8 +6155,8 @@
             "sentence-transformers": "5.7.0"
           },
           "timing_seconds": {
-            "duplicate": 5.009088333987165,
-            "search": 2.2546148330147844
+            "duplicate": 4.9474465000093915,
+            "search": 2.2388317919976544
           },
           "execution": {
             "duplicate": {
@@ -6249,8 +6249,8 @@
             "sentence-transformers": "5.7.0"
           },
           "timing_seconds": {
-            "duplicate": 4.193458333000308,
-            "search": 0.867821665975498
+            "duplicate": 4.345960917009506,
+            "search": 0.8642827089934144
           },
           "execution": {
             "duplicate": {
@@ -6343,8 +6343,8 @@
             "sentence-transformers": "5.7.0"
           },
           "timing_seconds": {
-            "duplicate": 5.5925950840173755,
-            "search": 2.724056000006385
+            "duplicate": 5.394729541003471,
+            "search": 2.713622209004825
           },
           "execution": {
             "duplicate": {
@@ -6437,8 +6437,8 @@
             "sentence-transformers": "5.7.0"
           },
           "timing_seconds": {
-            "duplicate": 4.8834532919863705,
-            "search": 1.3825522080005612
+            "duplicate": 4.885067999974126,
+            "search": 1.3983877080027014
           },
           "execution": {
             "duplicate": {
@@ -6830,8 +6830,8 @@
             "sentence-transformers": "5.7.0"
           },
           "timing_seconds": {
-            "duplicate": 4.693618000019342,
-            "search": 1.8244194590079132
+            "duplicate": 4.5731467500154395,
+            "search": 1.7906407080008648
           },
           "execution": {
             "duplicate": {
@@ -6925,8 +6925,8 @@
             "sentence-transformers": "5.7.0"
           },
           "timing_seconds": {
-            "duplicate": 4.066969625011552,
-            "search": 0.7400097500067204
+            "duplicate": 4.092150125012267,
+            "search": 0.7406483750091866
           },
           "execution": {
             "duplicate": {
@@ -7020,8 +7020,8 @@
             "sentence-transformers": "5.7.0"
           },
           "timing_seconds": {
-            "duplicate": 5.18056962499395,
-            "search": 2.37471687499783
+            "duplicate": 5.187024165992625,
+            "search": 2.4165613330260385
           },
           "execution": {
             "duplicate": {
@@ -7114,8 +7114,8 @@
             "sentence-transformers": "5.7.0"
           },
           "timing_seconds": {
-            "duplicate": 4.733554708014708,
-            "search": 1.2103653329832014
+            "duplicate": 4.651750457996968,
+            "search": 1.2176368749933317
           },
           "execution": {
             "duplicate": {
@@ -7484,26 +7484,26 @@
     }
   ],
   "measurement_digests": {
-    "ledger/gte-modernbert-base/cpu": "70d1c4fa1fb54c9f30b1a081e0a38a33fe8b71c47562582fd16f667719dd3033",
-    "ledger/gte-modernbert-base/mps": "1ec6b071698704900b3faa6df06e372804bd9ba7c15b9c223734cd2d12fa6b0f",
-    "ledger/embeddinggemma-300m/cpu": "21421a7cb5483e2b3ee9ab0f04356d97792f7c980563693432a4e1dd587183c4",
-    "ledger/embeddinggemma-300m/mps": "7feea294d1f0c5e6973864a94084daa4e68a1fd180a493af430579625cdc440f",
-    "cowsay/gte-modernbert-base/cpu": "ec704a20cccc50ec13cfe1a738fc1b357b85da16ca91b6bad6e9df34292a1de5",
-    "cowsay/gte-modernbert-base/mps": "056e7b18826b68c2980b76fe1197e607f1d53a201e45a0d36e14bb84409de6f6",
-    "cowsay/embeddinggemma-300m/cpu": "9d5e599660ad13e4d165e993a5b51c65c3fefada4a058abec8b9d1cc1bd50446",
-    "cowsay/embeddinggemma-300m/mps": "3ab60436e5681390ebcb15f796ac869a780ea0318eb63a05d4ff338dc865ba32",
-    "c_metering/gte-modernbert-base/cpu": "86f7272403bd3c76ee27a151163aac537828c11996fcf0726ff8b4acc8c9ff66",
-    "c_metering/gte-modernbert-base/mps": "bec03a957ec27b8c5d47ca8c569d0598e3a26afb987dc10be301d24d7a26a2f4",
-    "c_metering/embeddinggemma-300m/cpu": "42daef25067d014f162b08a0e4d961ab96175f38faa052add90966afd143ccb7",
-    "c_metering/embeddinggemma-300m/mps": "218c6d096bdef453f4d8143e13eb9658f8e0d2b9bf82eaa5def5509ec9fc25fa",
-    "javascript/gte-modernbert-base/cpu": "7b2af1be438f864f4398dc28c803505117190c32403461723d8de932c9239889",
-    "javascript/gte-modernbert-base/mps": "ab4d178ecdb6845ec20fa0838edbd158fddc39f5ebf5bf506bc8aface6877ca0",
-    "javascript/embeddinggemma-300m/cpu": "247778e05d65282adae2abf3a42a43727db0ce6e94b475a6ecc44a8cb6327fce",
-    "javascript/embeddinggemma-300m/mps": "0bddc1a72d5f1e8cd61feeda9c2552ec8338de66272acd07d47210ab603d68a7",
-    "harbor-ts/gte-modernbert-base/cpu": "312eb242016d9c691b250fcc7ba58dff86e9a4c1d11097234a59d0fe89335542",
-    "harbor-ts/gte-modernbert-base/mps": "a6265461b11a6167dc35f4b76add79302aaafc6d9fe01a301d6658276e356ca4",
-    "harbor-ts/embeddinggemma-300m/cpu": "b050ca0db50d7136bab3dad644453aa11ec9f29beae9519c7a3595ec755a41c8",
-    "harbor-ts/embeddinggemma-300m/mps": "2d7f1ca4e2f26f80b0db9d0590358870cc06b46b879df502621e40a0959150c3"
+    "ledger/gte-modernbert-base/cpu": "ce6ccbba8d86f8b274ef5eb15c199f859108abe7968ef10911ca46a5df662bf4",
+    "ledger/gte-modernbert-base/mps": "cbdcca1e3b87275d46a2c9602d238310d3969c51cecfc369681ef26f2b4ca575",
+    "ledger/embeddinggemma-300m/cpu": "93899ce9e81a3a8941d693b9d6fb3ca36644a3375436e0a5a671292c3f211aca",
+    "ledger/embeddinggemma-300m/mps": "16a37c469796cd3faef3fc8750ce2272f135853ddecd1249ca61ed411b75c274",
+    "cowsay/gte-modernbert-base/cpu": "6b7957e3238fdcf0b07ee098f184d1d78680896d562a37c288f975465e10c0af",
+    "cowsay/gte-modernbert-base/mps": "32ded73e026cc0328c95e01d239f6469170bd54c15df3e3e5f1ac2501e22b354",
+    "cowsay/embeddinggemma-300m/cpu": "b9f8cc0f3ccb918cecf877cc46426e9736c85e8c2af2cd88ae62fc128162f3de",
+    "cowsay/embeddinggemma-300m/mps": "6f972b5f25f5de6a980ecd5b39615ad731abba59f315a0cd06cca49eb8259dd8",
+    "c_metering/gte-modernbert-base/cpu": "f2a76c6bc12d56fb1bfdcbe43808e29a78b7cbcf77ab537f2dabf02ac0846ef0",
+    "c_metering/gte-modernbert-base/mps": "bb446bdcb2439bd3dce68b585d447d68a2bf97351b2ec9eb8c1d8cf241876ae6",
+    "c_metering/embeddinggemma-300m/cpu": "1078909ec065e2b93c61fe7baea581a8d49268fb999016ae5ddcc72e5db3c2cb",
+    "c_metering/embeddinggemma-300m/mps": "b09f4011a049a1c214a0e0026452e78b94aaafaeddee8c931dcb48ec828ad9b7",
+    "javascript/gte-modernbert-base/cpu": "24fc0f306fea36c9557b15b374b4071c6cd8d2650b74aaff5a4a6501e12be748",
+    "javascript/gte-modernbert-base/mps": "c38cca225f14cbf8e063ed06f3beed83cf042c945f1f3974aee5b580b0b3ce88",
+    "javascript/embeddinggemma-300m/cpu": "8377827b9049008dae0d023949c17798e301c0553e4aa31c4bf7ccae1792c616",
+    "javascript/embeddinggemma-300m/mps": "68dea5708f2046a8e4decdebd520b36d8cb14177b761990fa9d31c5da10d939f",
+    "harbor-ts/gte-modernbert-base/cpu": "34eb6dc8e9fc39c8f6b90581e99fb180330b006b227daae03c1974fb2c731897",
+    "harbor-ts/gte-modernbert-base/mps": "652f5c148470e26bc6e7dce84b96b5065a945933a1eaec9d82fc3f2efaaefceb",
+    "harbor-ts/embeddinggemma-300m/cpu": "4355eda81c915e816ef6bc5e11322d31c6c331b2577fdddc67ee4be1e4cc356d",
+    "harbor-ts/embeddinggemma-300m/mps": "b77140c4f964374e8cc4d8810904e8a92d36878cfe673e9d494933bede89c854"
   },
   "measurement_runtime": {
     "torch": "2.14.0",
