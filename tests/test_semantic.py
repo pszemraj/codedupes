@@ -421,6 +421,24 @@ def test_embedding_identity_rejects_invalid_search_document() -> None:
         )
 
 
+def test_array_only_embedding_api_rejects_contextual_documents(tmp_path: Path, monkeypatch) -> None:
+    units = extract_arithmetic_units(tmp_path)
+
+    def fail_if_called(*_args, **_kwargs):
+        raise AssertionError("contextual array-only embedding must fail before model loading")
+
+    monkeypatch.setattr(semantic, "get_model", fail_if_called)
+
+    with pytest.raises(ValueError, match="require compute_embeddings_with_identity"):
+        compute_embeddings(
+            units,
+            document_texts=[f"path: arithmetic.py\n{unit.source}" for unit in units],
+            search_document="contextual",
+            device="cpu",
+            use_cache=False,
+        )
+
+
 @pytest.mark.parametrize(
     "kwargs",
     [

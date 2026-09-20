@@ -3534,9 +3534,18 @@ def compute_embeddings(
     :param diagnostics: Optional collector for over-context unit warnings.
     :param document_texts: Optional prepared document text for each input unit.
     :param search_document: Search document mode represented by ``document_texts``.
+        Contextual documents require :func:`compute_embeddings_with_identity` so
+        their uncalibrated representation cannot be separated from its identity.
     :return: Normalized embedding matrix row-aligned with ``units``.
-    :raises ValueError: If ``document_texts`` does not have the same length as ``units``.
+    :raises ValueError: If ``document_texts`` does not have the same length as ``units``,
+        or contextual documents are requested through this identity-discarding API.
     """
+    search_document = _validate_search_document_mode(search_document)
+    if search_document == "contextual":
+        raise ValueError(
+            "contextual search documents require compute_embeddings_with_identity() "
+            "so search can enforce an explicit threshold"
+        )
     embeddings, _identity = compute_embeddings_with_identity(
         units,
         model_name=model_name,

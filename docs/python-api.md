@@ -128,7 +128,7 @@ See [task defaults and calibration requirements](model-profiles.md#semantic-task
 
 The contextual-threshold requirement follows the indexed representation even if the config changes afterward. Its [cache behavior](caching.md#what-invalidates-what) follows the complete document input. `analyze()` always embeds bare source for duplicate detection regardless of this search-only setting.
 
-For direct embedding/query calls, pass the identity returned by `compute_embeddings_with_identity(...)` as `find_similar_to_query(corpus_identity=...)`. It is required for contextual documents and prompt- or route-sensitive models, and preserves calibration and checkpoint checks on both cold and warm cache paths. Use `search_document="contextual"` with aligned `document_texts` when supplying contextual inputs.
+For direct embedding/query calls, pass the identity returned by `compute_embeddings_with_identity(...)` as `find_similar_to_query(corpus_identity=...)`. It is required for contextual documents and prompt- or route-sensitive models, and preserves calibration and checkpoint checks on both cold and warm cache paths. Use `search_document="contextual"` with aligned `document_texts` when supplying contextual inputs. The array-only `compute_embeddings(...)` helper accepts source documents only because it cannot return the identity needed to enforce contextual-search thresholds.
 
 ```python
 from pathlib import Path
