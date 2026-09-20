@@ -536,12 +536,15 @@ def missing_behavior_executables(projects: list[Project]) -> list[str]:
     :param projects: Calibration projects whose behavior commands will run.
     :return: Sorted unavailable executable names or paths.
     """
-    required = {
-        sys.executable if command["argv"][0] == "{python}" else command["argv"][0]
-        for project in projects
-        for command in project.spec["behavior_tests"]
-    }
-    return sorted(executable for executable in required if shutil.which(executable) is None)
+    missing = set()
+    for project in projects:
+        for command in project.spec["behavior_tests"]:
+            executable = sys.executable if command["argv"][0] == "{python}" else command["argv"][0]
+            command_env = os.environ.copy()
+            command_env.update(command.get("env", {}))
+            if shutil.which(executable, path=command_env.get("PATH")) is None:
+                missing.add(executable)
+    return sorted(missing)
 
 
 def _configured_c_compiler(command_env: dict[str, str] | None = None) -> str:
@@ -572,8 +575,10 @@ def missing_behavior_requirements(projects: list[Project]) -> list[str]:
         for command in project.spec["behavior_tests"]:
             if Path(command["argv"][0]).name not in {"make", "gmake"}:
                 continue
-            compiler = _configured_c_compiler(command.get("env"))
-            if shutil.which(compiler) is None:
+            command_env = os.environ.copy()
+            command_env.update(command.get("env", {}))
+            compiler = _configured_c_compiler(command_env)
+            if shutil.which(compiler, path=command_env.get("PATH")) is None:
                 missing.add(compiler)
 
     checked: set[str] = set()
@@ -581,6 +586,8 @@ def missing_behavior_requirements(projects: list[Project]) -> list[str]:
         for command in project.spec["behavior_tests"]:
             argv = command["argv"]
             executable = argv[0]
+            command_env = os.environ.copy()
+            command_env.update(command.get("env", {}))
             if executable in missing:
                 continue
             if executable == "cargo" and len(argv) > 1 and argv[1].startswith("+"):
@@ -589,7 +596,7 @@ def missing_behavior_requirements(projects: list[Project]) -> list[str]:
                 if label in checked:
                     continue
                 checked.add(label)
-                rustup = shutil.which("rustup")
+                rustup = shutil.which("rustup", path=command_env.get("PATH"))
                 if rustup is None:
                     missing.add(label)
                     continue
@@ -597,6 +604,7 @@ def missing_behavior_requirements(projects: list[Project]) -> list[str]:
                     result = subprocess.run(
                         [rustup, "toolchain", "list"],
                         capture_output=True,
+                        env=command_env,
                         text=True,
                         timeout=10,
                         check=False,
@@ -617,7 +625,7 @@ def missing_behavior_requirements(projects: list[Project]) -> list[str]:
                 if label in checked:
                     continue
                 checked.add(label)
-                node = shutil.which("node")
+                node = shutil.which("node", path=command_env.get("PATH"))
                 if node is None:
                     missing.add(label)
                     continue
@@ -625,6 +633,7 @@ def missing_behavior_requirements(projects: list[Project]) -> list[str]:
                     result = subprocess.run(
                         [node, *flags, "--version"],
                         capture_output=True,
+                        env=command_env,
                         text=True,
                         timeout=10,
                         check=False,

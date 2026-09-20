@@ -263,10 +263,33 @@ def test_behavior_executable_probe_reports_only_missing_tools(monkeypatch, tmp_p
     monkeypatch.setattr(
         calibration_contract.shutil,
         "which",
-        lambda executable: None if executable == "missing-tool" else str(tmp_path / "tool"),
+        lambda executable, path=None: (
+            None if executable == "missing-tool" else str(tmp_path / "tool")
+        ),
     )
 
     assert missing_behavior_executables([project]) == ["missing-tool"]
+
+
+def test_behavior_executable_probe_uses_command_path(monkeypatch, tmp_path):
+    command_path = str(tmp_path / "bin")
+    project = SimpleNamespace(
+        spec={
+            "behavior_tests": [
+                {"argv": ["fixture-tool"], "env": {"PATH": command_path}},
+            ]
+        }
+    )
+    observed_paths = []
+
+    def available_on_command_path(executable, path=None):
+        observed_paths.append(path)
+        return str(tmp_path / executable) if path == command_path else None
+
+    monkeypatch.setattr(calibration_contract.shutil, "which", available_on_command_path)
+
+    assert missing_behavior_executables([project]) == []
+    assert observed_paths == [command_path]
 
 
 def test_behavior_requirement_probe_checks_c_compiler(monkeypatch, tmp_path):
@@ -280,7 +303,9 @@ def test_behavior_requirement_probe_checks_c_compiler(monkeypatch, tmp_path):
     monkeypatch.setattr(
         calibration_contract.shutil,
         "which",
-        lambda executable: None if executable == "missing-cc" else str(tmp_path / executable),
+        lambda executable, path=None: (
+            None if executable == "missing-cc" else str(tmp_path / executable)
+        ),
     )
 
     assert missing_behavior_requirements([project]) == ["missing-cc"]
@@ -306,7 +331,7 @@ def test_behavior_requirement_probe_uses_command_c_compiler(
     monkeypatch.setattr(
         calibration_contract.shutil,
         "which",
-        lambda executable: (
+        lambda executable, path=None: (
             None if executable.startswith("missing-") else str(tmp_path / executable)
         ),
     )
@@ -329,7 +354,7 @@ def test_behavior_requirement_probe_checks_toolchain_variants(monkeypatch, tmp_p
     monkeypatch.setattr(
         calibration_contract.shutil,
         "which",
-        lambda executable: str(tmp_path / executable),
+        lambda executable, path=None: str(tmp_path / executable),
     )
 
     def unavailable_variants(argv, **_kwargs):
