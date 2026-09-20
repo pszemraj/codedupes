@@ -14,7 +14,12 @@ from typing import Any
 import numpy as np
 
 from codedupes import semantic
-from codedupes.constants import DEFAULT_TOP_K, DEFAULT_TRADITIONAL_THRESHOLD
+from codedupes.constants import (
+    DEFAULT_CHECK_SEMANTIC_TASK,
+    DEFAULT_SEARCH_SEMANTIC_TASK,
+    DEFAULT_TOP_K,
+    DEFAULT_TRADITIONAL_THRESHOLD,
+)
 from codedupes.semantic_profiles import resolve_model_profile
 
 try:
@@ -24,6 +29,7 @@ try:
         analyzer_config,
         extract_project,
         pair_key,
+        relative_file,
         resolve_annotations,
         unit_ids,
         validate_project,
@@ -33,7 +39,6 @@ try:
         CALIBRATION_BATCH_SIZE,
         artifact_path,
         load_measurement,
-        measurement_fingerprint,
     )
 except ImportError:
     from calibration_contract import (
@@ -42,6 +47,7 @@ except ImportError:
         analyzer_config,
         extract_project,
         pair_key,
+        relative_file,
         resolve_annotations,
         unit_ids,
         validate_project,
@@ -51,7 +57,6 @@ except ImportError:
         CALIBRATION_BATCH_SIZE,
         artifact_path,
         load_measurement,
-        measurement_fingerprint,
     )
 
 
@@ -60,8 +65,13 @@ MINIMUM_SELECTION_PRECISION = 0.5
 # Selection code is intentionally versioned by behavior rather than by source
 # bytes. Bump this whenever selection or audit behavior changes.
 SELECTION_ALGORITHM_VERSION = 4
-SELECTION_SCHEMA_VERSION = 6
-CHECKED_REPORT_SCHEMA_VERSION = 7
+SELECTION_SCHEMA_VERSION = 7
+CHECKED_REPORT_SCHEMA_VERSION = 8
+# Bump when calibration measurement behavior changes. Do not substitute the
+# exact hatch-vcs package version: it changes on comment-only commits and its
+# generated module is intentionally refreshed only by install/build. Raw local
+# artifacts additionally retain their stricter source-byte fingerprint.
+MEASUREMENT_PIPELINE_VERSION = 1
 SEARCH_SELECTION_WINDOW_RADIUS = 5
 THRESHOLD_GRID_START = 0.0
 THRESHOLD_GRID_STOP = 1.0
@@ -88,6 +98,7 @@ _DUPLICATE_TIERS = {
     "semantic_high_confidence",
     "semantic_review",
 }
+_VALIDATED_CHECKED_PROJECTS: set[str] = set()
 
 
 def _is_finite_number(value: Any) -> bool:
@@ -545,6 +556,75 @@ def support_files_digest(project: Project) -> str:
     return selection_digest(files)
 
 
+def _project_measurement_behavior(project: Project) -> dict[str, Any]:
+    """Describe fixture inputs without hashing implementation source files."""
+    source_units, _ = extract_project(project)
+    source_paths = {unit.file_path.resolve() for unit in source_units} | {
+        relative_file(project.root, unit["selector"]["path"]).resolve()
+        for unit in project.annotations["units"]
+    }
+    return {
+        "pipeline_version": MEASUREMENT_PIPELINE_VERSION,
+        "embedding_pipeline_schema": semantic.EMBEDDING_PIPELINE_SCHEMA,
+        "search_document": "source",
+        "traditional_threshold": DEFAULT_TRADITIONAL_THRESHOLD,
+        "source": {
+            path.relative_to(project.root).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+            for path in sorted(source_paths)
+        },
+        "units": {unit["id"]: unit["selector"] for unit in project.annotations["units"]},
+        "queries": {probe["id"]: probe["query"] for probe in project.annotations["probes"]},
+        "policy": project.policy,
+    }
+
+
+def _model_measurement_behavior(project_behavior: dict[str, Any], model: str) -> str:
+    """Fingerprint checked measurement inputs for one canonical model."""
+    profile = resolve_model_profile(model)
+    return selection_digest(
+        {
+            "project": project_behavior,
+            "model": profile.canonical_name,
+            "revision": profile.default_revision,
+            "family": profile.family,
+            "trust_remote_code": profile.default_trust_remote_code,
+            "tasks": [DEFAULT_CHECK_SEMANTIC_TASK, DEFAULT_SEARCH_SEMANTIC_TASK],
+        }
+    )
+
+
+def _selection_project_context(project: Project, models: list[str]) -> dict[str, Any]:
+    """Build one project's checked selection identity."""
+    behavior = _project_measurement_behavior(project)
+    return {
+        "annotations": selection_digest(project.annotations),
+        "project": selection_digest(project.spec),
+        "policy": project.policy_name,
+        "support_files": support_files_digest(project),
+        "measurement_behavior": {
+            resolve_model_profile(model).key: _model_measurement_behavior(behavior, model)
+            for model in models
+        },
+    }
+
+
+def _validate_checked_project_once(project: Project, project_context: dict[str, Any]) -> None:
+    """Memoize deterministic corpus validation by its complete checked identity."""
+    identity = selection_digest(
+        {
+            "project_id": project.id,
+            "context": project_context,
+            "annotations": project.annotations,
+            "spec": project.spec,
+            "policy": project.policy,
+        }
+    )
+    if identity in _VALIDATED_CHECKED_PROJECTS:
+        return
+    validate_project(project, require_adjudicated=True)
+    _VALIDATED_CHECKED_PROJECTS.add(identity)
+
+
 def measurement_digest(measurement: dict[str, Any]) -> str:
     """Bind derived selections to the score payload and its inference provenance."""
     metadata = measurement["metadata"]
@@ -683,17 +763,7 @@ def selection_context(projects: list[Project], models: list[str]) -> dict[str, A
         "batch_size": CALIBRATION_BATCH_SIZE,
         "selection_policy": selection_policy_identity(),
         "projects": {
-            project.id: {
-                "annotations": selection_digest(project.annotations),
-                "project": selection_digest(project.spec),
-                "policy": project.policy_name,
-                "support_files": support_files_digest(project),
-                "measurements": {
-                    resolve_model_profile(model).key: measurement_fingerprint(project, model, "cpu")
-                    for model in models
-                },
-            }
-            for project in projects
+            project.id: _selection_project_context(project, models) for project in projects
         },
     }
 
@@ -1681,12 +1751,6 @@ def validate_checked_report(
     :raises ValueError: If the checked report is malformed or internally inconsistent.
     :return: None
     """
-    for project in projects:
-        validate_project(project, require_adjudicated=True)
-
-    if payload.get("schema_version") != CHECKED_REPORT_SCHEMA_VERSION:
-        raise ValueError("checked calibration report has an unsupported schema")
-
     profile_keys = tuple(dict.fromkeys(resolve_model_profile(model).key for model in models))
     project_by_id = {project.id: project for project in projects}
     if len(project_by_id) != len(projects):
@@ -1694,6 +1758,13 @@ def validate_checked_report(
     selection_projects = development_projects(list(project_by_id.values()))
     selection_project_ids = {project.id for project in selection_projects}
     selection_languages = {project.spec["languages"][0] for project in selection_projects}
+    checked_project_contexts = {
+        project.id: _selection_project_context(project, list(profile_keys)) for project in projects
+    }
+    for project in projects:
+        _validate_checked_project_once(project, checked_project_contexts[project.id])
+    if payload.get("schema_version") != CHECKED_REPORT_SCHEMA_VERSION:
+        raise ValueError("checked calibration report has an unsupported schema")
     threshold_selection = payload.get("threshold_selection")
     hybrid_selection = payload.get("hybrid_selection")
     if not isinstance(threshold_selection, dict) or not isinstance(hybrid_selection, dict):

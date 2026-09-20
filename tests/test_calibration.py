@@ -1142,24 +1142,28 @@ def test_selections_reject_changed_review_or_scope(change: str):
 
 def test_support_file_identity_tracks_declared_behavior_evidence(tmp_path: Path):
     readme = tmp_path / "README.md"
+    contract = tmp_path / "fixture.toml"
     tests = tmp_path / "tests"
     tests.mkdir()
     behavior = tests / "test_behavior.txt"
-    readme.write_text("behavior contract v1\n")
+    readme.write_text("fixture documentation v1\n")
+    contract.write_text("behavior = 'v1'\n")
     behavior.write_text("behavior v1\n")
     project = SimpleNamespace(
         id="sample",
         root=tmp_path,
-        spec={"support_files": ["README.md"], "test_roots": ["tests"]},
+        spec={"support_files": ["fixture.toml"], "test_roots": ["tests"]},
     )
     original = support_files_digest(project)
     cache = tests / "__pycache__"
     cache.mkdir()
     (cache / "test_behavior.cpython-312.pyc").write_bytes(b"generated")
     assert support_files_digest(project) == original
-    readme.write_text("behavior contract v2\n")
+    readme.write_text("fixture documentation reflowed\n")
+    assert support_files_digest(project) == original
+    contract.write_text("behavior = 'v2'\n")
     assert support_files_digest(project) != original
-    readme.write_text("behavior contract v1\n")
+    contract.write_text("behavior = 'v1'\n")
     behavior.write_text("behavior v2\n")
     assert support_files_digest(project) != original
     project.spec["support_files"] = ["missing.*"]
@@ -1177,6 +1181,45 @@ def test_selection_context_uses_structured_policy_identity(tmp_path: Path, monke
     updated = selection_context(projects, models)
     assert updated == original
     validate_selection_context({"input_context": original}, projects, models)
+
+
+def test_selection_context_ignores_raw_pipeline_source_fingerprints(monkeypatch):
+    """Checked evidence must survive implementation-only source edits."""
+    projects, models = load_projects(project_ids=["ledger"]), ["gte-modernbert-base"]
+    original = selection_context(projects, models)
+
+    def fail_raw_fingerprint(*_args, **_kwargs):
+        raise AssertionError("checked context must not use raw source-byte fingerprints")
+
+    monkeypatch.setattr(
+        calibration_evaluation,
+        "measurement_fingerprint",
+        fail_raw_fingerprint,
+        raising=False,
+    )
+
+    assert selection_context(projects, models) == original
+
+
+def test_checked_project_validation_is_memoized_by_context(monkeypatch):
+    project = load_projects(project_ids=["ledger"])[0]
+    context = calibration_evaluation._selection_project_context(project, ["gte-modernbert-base"])
+    calls = []
+    calibration_evaluation._VALIDATED_CHECKED_PROJECTS.clear()
+    monkeypatch.setattr(
+        calibration_evaluation,
+        "validate_project",
+        lambda *args, **kwargs: calls.append((args, kwargs)),
+    )
+
+    calibration_evaluation._validate_checked_project_once(project, context)
+    calibration_evaluation._validate_checked_project_once(project, context)
+    assert len(calls) == 1
+
+    project.annotations["pairs"][0]["rationale"] += " changed"
+    calibration_evaluation._validate_checked_project_once(project, context)
+    assert len(calls) == 2
+    calibration_evaluation._VALIDATED_CHECKED_PROJECTS.clear()
 
 
 @pytest.mark.parametrize(
@@ -1444,10 +1487,10 @@ def test_checked_calibration_result_matches_shipped_profiles(monkeypatch):
     validate_checked_report(result, projects, models)
     expected = selection_context(projects, models)
     assert {
-        project_id: project_context["measurements"]
+        project_id: project_context["measurement_behavior"]
         for project_id, project_context in context["projects"].items()
     } == {
-        project_id: project_context["measurements"]
+        project_id: project_context["measurement_behavior"]
         for project_id, project_context in expected["projects"].items()
     }
     assert result["measurement_runtime"]["scope"] == "all checked CPU and MPS reports"

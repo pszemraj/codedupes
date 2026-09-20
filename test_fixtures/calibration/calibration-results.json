@@ -1,7 +1,7 @@
 {
-  "schema_version": 7,
+  "schema_version": 8,
   "threshold_selection": {
-    "schema_version": 6,
+    "schema_version": 7,
     "objective": {
       "primary": "f1",
       "minimum_precision": 0.5,
@@ -253,52 +253,52 @@
       "projects": {
         "ledger": {
           "annotations": "2a60e4c34f79ae63502a09798fca17d63ff33558304f37cdb158ffb763fc94d3",
-          "project": "0d3adeb2a1b1fc7ff7b2a3d7659a73265ed443233daa3df8af9c34df97a53a06",
+          "project": "a50eb5ace6357fbe7b3b51e419d27c058cc90d70376a499062c8dec013e65471",
           "policy": "default",
-          "support_files": "5fae080d350bded7270f05f8316777fe2249eb7ece18a815b945da2979f8ff40",
-          "measurements": {
-            "gte-modernbert-base": "bfa33ea4d07b67be96be165b081ecbc7e1964649cf1ccf5bee78c797bf6d1272",
-            "embeddinggemma-300m": "9b3ed1d5b30767fcdc453f9b2b4d78ad6075916c7b47f12ea9b2de78a091c08f"
+          "support_files": "75901685e2d15e010dbf0400a0384e3596233184994b0fc87837d20f38ab041c",
+          "measurement_behavior": {
+            "gte-modernbert-base": "e19a0e842c4a9adb8aa33dc34b8042fd873fb42ffeb50f1f7ca2c13b6b46f33e",
+            "embeddinggemma-300m": "0844f0dd8d0ed068789d3cae13029cb02ec8ade689e33c3ac509663c9c45a02e"
           }
         },
         "cowsay": {
           "annotations": "ac2779d3ff4fab4ce862c548d0eb7910b5e32dc721c092d560d43542b55211f7",
-          "project": "6f9ff2c4c2fc0ff4bbc158d8b761d81e8e0e3bda08a06378790cf3485ec08e60",
+          "project": "0a0284e1f2acc960a92e6df1a97fe563a2271e8dd918e77a04d245d8404901d3",
           "policy": "default",
-          "support_files": "77ec35a8866b25bada5dc69851135125852c625696aa3eeba1779360b5c97cb7",
-          "measurements": {
-            "gte-modernbert-base": "41fe4213ee21084cbe5487624a42bff4b27e14be7eb8ce96f662a2d9ab36c683",
-            "embeddinggemma-300m": "88bf4f0fa3298eed00c99e7eccf3f68c1adeaad1cf5b5adbdfb1ff735cdcfc56"
+          "support_files": "213e6ace3b8a324b4ac3f60c833b9733bbb6795089b853dbf28023c9f52a44b9",
+          "measurement_behavior": {
+            "gte-modernbert-base": "79c8a2f4bb00c50b29dcf68f9d57b3215ee5d28b6401505ff131a3e416878363",
+            "embeddinggemma-300m": "8eff23d427ffba6dcb28065618afa374a857f53596f413ad10dc3eefd74fdd97"
           }
         },
         "c_metering": {
           "annotations": "d1f2d17b5e5d61e7a2a7c46571b2286ec682072c530160453d08987785b1e455",
-          "project": "8fc6af9d9df5409d6542fe1484c65dc74b510f617d4eed8bcef78093c196a7c9",
+          "project": "329249fb378c4b2fcf3ce7c6ccba14bf920052b20729c70997ab3587c2fc3429",
           "policy": "default",
-          "support_files": "5c1d7ac485d9a630b03b04bfa8bb7f887839ceebbd0859dd3e3f87c91868bf5f",
-          "measurements": {
-            "gte-modernbert-base": "307da11b62d4d0afe523312c2524d6a0ba568f80c66d362e689e065c15dee20a",
-            "embeddinggemma-300m": "1f578220d064169bcb997e1cdc9345556ab10b3e1b6289a497122d088e6f9498"
+          "support_files": "8569a771655e2e120f2083cfeca13ee15a2651fa02c09fd2894dda8812a7b9fe",
+          "measurement_behavior": {
+            "gte-modernbert-base": "a1b7de2e364bd2e8800c3aad06596de5cc80b6d1115cd3ca40ca26d035ff7091",
+            "embeddinggemma-300m": "2f998437b7c65244ce79fb128d49dec37e54ef5b62dde2236765e072dae96d87"
           }
         },
         "javascript": {
           "annotations": "bbfddc0be3d91f2089b3047d14ef1d3ba63b2f5dafbd972777e8a689465eb3db",
-          "project": "30641293e6b0bea19f5da920d28437f3c7f206693b3349a92542ab12115c8f9f",
+          "project": "df05897b84d0c78f7416e22c87a59e288452ac3e237dbb5c11ddeae44291d5a6",
           "policy": "default",
-          "support_files": "fd7a105c1ceb6fc21ad125210f5d80369f5d022c299408b5a401aec7aba18fe3",
-          "measurements": {
-            "gte-modernbert-base": "1c0801b44e1114e7a3d5c38dee92cd8ae46fe870f21c888cec9c6b67d475f829",
-            "embeddinggemma-300m": "1f945912baba0d4a1c7131433cc51564f60f94d1b1944c1ee13c6c5c9ba9e6f1"
+          "support_files": "b5991418e5b8bec4d1e06e02fe0275d0a3fe007f88b78a925e8a549ad0c08246",
+          "measurement_behavior": {
+            "gte-modernbert-base": "4d47bf04ed212b37f3ac26f632252f7d630f0ba1a97384a66dd25a2a7c5998c8",
+            "embeddinggemma-300m": "26c3415c4978e01d2566ec8457c12c09b495a9b3ca6c4889f14db936f2cecead"
           }
         },
         "harbor-ts": {
           "annotations": "9637e3a67cfc9ce5bb8b7e3d22e86203ab9c8078bc51a1ae19dcdc1973dd0ae5",
-          "project": "bffc6270179b31d999c4d0166c88d9358c2fe58e90e9cc7207a5b28a6563fa6c",
+          "project": "57e6c0edb409d6623ac7c6d88782c5c649dfaa8a79e7992308f3dd0101b5e8c2",
           "policy": "default",
-          "support_files": "e1d3d2e3536baac72cbda2ee40a8577d1892e5b1203712f2ba631832f44efc43",
-          "measurements": {
-            "gte-modernbert-base": "3ac4bb524732969a415afe6042a1f9edc0c202b8e467ad9c71048f9b50100eee",
-            "embeddinggemma-300m": "f55fca8db4a2ba086ea456ab0e1293162205540ef0fb383ae7078b5a68ed919b"
+          "support_files": "f14d024308b3d9d6d7d5e25aac2aaf92a5c21754f7dc5ebc10b7ce7e2e33cbbd",
+          "measurement_behavior": {
+            "gte-modernbert-base": "e313965bea536a674019d3c550fefa1cb45617539817563a6a488db006f9ab05",
+            "embeddinggemma-300m": "915d0a153d0d35da7313e336a6ce5e60d4ac03a3ea70a1c1afde5d03ac548e33"
           }
         }
       }
@@ -3085,7 +3085,7 @@
     }
   },
   "hybrid_selection": {
-    "schema_version": 6,
+    "schema_version": 7,
     "objective": {
       "primary": "f1",
       "minimum_precision": 0.5,
@@ -3337,52 +3337,52 @@
       "projects": {
         "ledger": {
           "annotations": "2a60e4c34f79ae63502a09798fca17d63ff33558304f37cdb158ffb763fc94d3",
-          "project": "0d3adeb2a1b1fc7ff7b2a3d7659a73265ed443233daa3df8af9c34df97a53a06",
+          "project": "a50eb5ace6357fbe7b3b51e419d27c058cc90d70376a499062c8dec013e65471",
           "policy": "default",
-          "support_files": "5fae080d350bded7270f05f8316777fe2249eb7ece18a815b945da2979f8ff40",
-          "measurements": {
-            "gte-modernbert-base": "bfa33ea4d07b67be96be165b081ecbc7e1964649cf1ccf5bee78c797bf6d1272",
-            "embeddinggemma-300m": "9b3ed1d5b30767fcdc453f9b2b4d78ad6075916c7b47f12ea9b2de78a091c08f"
+          "support_files": "75901685e2d15e010dbf0400a0384e3596233184994b0fc87837d20f38ab041c",
+          "measurement_behavior": {
+            "gte-modernbert-base": "e19a0e842c4a9adb8aa33dc34b8042fd873fb42ffeb50f1f7ca2c13b6b46f33e",
+            "embeddinggemma-300m": "0844f0dd8d0ed068789d3cae13029cb02ec8ade689e33c3ac509663c9c45a02e"
           }
         },
         "cowsay": {
           "annotations": "ac2779d3ff4fab4ce862c548d0eb7910b5e32dc721c092d560d43542b55211f7",
-          "project": "6f9ff2c4c2fc0ff4bbc158d8b761d81e8e0e3bda08a06378790cf3485ec08e60",
+          "project": "0a0284e1f2acc960a92e6df1a97fe563a2271e8dd918e77a04d245d8404901d3",
           "policy": "default",
-          "support_files": "77ec35a8866b25bada5dc69851135125852c625696aa3eeba1779360b5c97cb7",
-          "measurements": {
-            "gte-modernbert-base": "41fe4213ee21084cbe5487624a42bff4b27e14be7eb8ce96f662a2d9ab36c683",
-            "embeddinggemma-300m": "88bf4f0fa3298eed00c99e7eccf3f68c1adeaad1cf5b5adbdfb1ff735cdcfc56"
+          "support_files": "213e6ace3b8a324b4ac3f60c833b9733bbb6795089b853dbf28023c9f52a44b9",
+          "measurement_behavior": {
+            "gte-modernbert-base": "79c8a2f4bb00c50b29dcf68f9d57b3215ee5d28b6401505ff131a3e416878363",
+            "embeddinggemma-300m": "8eff23d427ffba6dcb28065618afa374a857f53596f413ad10dc3eefd74fdd97"
           }
         },
         "c_metering": {
           "annotations": "d1f2d17b5e5d61e7a2a7c46571b2286ec682072c530160453d08987785b1e455",
-          "project": "8fc6af9d9df5409d6542fe1484c65dc74b510f617d4eed8bcef78093c196a7c9",
+          "project": "329249fb378c4b2fcf3ce7c6ccba14bf920052b20729c70997ab3587c2fc3429",
           "policy": "default",
-          "support_files": "5c1d7ac485d9a630b03b04bfa8bb7f887839ceebbd0859dd3e3f87c91868bf5f",
-          "measurements": {
-            "gte-modernbert-base": "307da11b62d4d0afe523312c2524d6a0ba568f80c66d362e689e065c15dee20a",
-            "embeddinggemma-300m": "1f578220d064169bcb997e1cdc9345556ab10b3e1b6289a497122d088e6f9498"
+          "support_files": "8569a771655e2e120f2083cfeca13ee15a2651fa02c09fd2894dda8812a7b9fe",
+          "measurement_behavior": {
+            "gte-modernbert-base": "a1b7de2e364bd2e8800c3aad06596de5cc80b6d1115cd3ca40ca26d035ff7091",
+            "embeddinggemma-300m": "2f998437b7c65244ce79fb128d49dec37e54ef5b62dde2236765e072dae96d87"
           }
         },
         "javascript": {
           "annotations": "bbfddc0be3d91f2089b3047d14ef1d3ba63b2f5dafbd972777e8a689465eb3db",
-          "project": "30641293e6b0bea19f5da920d28437f3c7f206693b3349a92542ab12115c8f9f",
+          "project": "df05897b84d0c78f7416e22c87a59e288452ac3e237dbb5c11ddeae44291d5a6",
           "policy": "default",
-          "support_files": "fd7a105c1ceb6fc21ad125210f5d80369f5d022c299408b5a401aec7aba18fe3",
-          "measurements": {
-            "gte-modernbert-base": "1c0801b44e1114e7a3d5c38dee92cd8ae46fe870f21c888cec9c6b67d475f829",
-            "embeddinggemma-300m": "1f945912baba0d4a1c7131433cc51564f60f94d1b1944c1ee13c6c5c9ba9e6f1"
+          "support_files": "b5991418e5b8bec4d1e06e02fe0275d0a3fe007f88b78a925e8a549ad0c08246",
+          "measurement_behavior": {
+            "gte-modernbert-base": "4d47bf04ed212b37f3ac26f632252f7d630f0ba1a97384a66dd25a2a7c5998c8",
+            "embeddinggemma-300m": "26c3415c4978e01d2566ec8457c12c09b495a9b3ca6c4889f14db936f2cecead"
           }
         },
         "harbor-ts": {
           "annotations": "9637e3a67cfc9ce5bb8b7e3d22e86203ab9c8078bc51a1ae19dcdc1973dd0ae5",
-          "project": "bffc6270179b31d999c4d0166c88d9358c2fe58e90e9cc7207a5b28a6563fa6c",
+          "project": "57e6c0edb409d6623ac7c6d88782c5c649dfaa8a79e7992308f3dd0101b5e8c2",
           "policy": "default",
-          "support_files": "e1d3d2e3536baac72cbda2ee40a8577d1892e5b1203712f2ba631832f44efc43",
-          "measurements": {
-            "gte-modernbert-base": "3ac4bb524732969a415afe6042a1f9edc0c202b8e467ad9c71048f9b50100eee",
-            "embeddinggemma-300m": "f55fca8db4a2ba086ea456ab0e1293162205540ef0fb383ae7078b5a68ed919b"
+          "support_files": "f14d024308b3d9d6d7d5e25aac2aaf92a5c21754f7dc5ebc10b7ce7e2e33cbbd",
+          "measurement_behavior": {
+            "gte-modernbert-base": "e313965bea536a674019d3c550fefa1cb45617539817563a6a488db006f9ab05",
+            "embeddinggemma-300m": "915d0a153d0d35da7313e336a6ce5e60d4ac03a3ea70a1c1afde5d03ac548e33"
           }
         }
       }
@@ -3411,7 +3411,7 @@
         "step": 0.01
       }
     },
-    "threshold_selection_digest": "e3b91a4f8f853286ba27a857f5b99d432e8c4f031ac9e45e07db2b5da5863357",
+    "threshold_selection_digest": "a51d9615b9c12a5313487dd2c57632b2db0210d4b53748131e1cc6d4f2c57c2e",
     "models": [
       {
         "model": "gte-modernbert-base",

@@ -47,6 +47,22 @@ def test_vcs_less_source_archives_have_a_build_version_fallback() -> None:
     assert hatch["version"]["fallback-version"] == "0.0.0+unknown"
 
 
+def test_version_is_vcs_dynamic_and_generated_outside_git() -> None:
+    """Builds derive package versions from VCS while generated source stays ignored."""
+    metadata = _pyproject()
+    project = metadata["project"]
+    hatch = metadata["tool"]["hatch"]  # type: ignore[index]
+    build_requirements = metadata["build-system"]["requires"]  # type: ignore[index]
+
+    assert project["dynamic"] == ["version"]
+    assert "version" not in project
+    assert {"hatchling", "hatch-vcs"} <= set(build_requirements)
+    assert hatch["version"]["source"] == "vcs"
+    version_file = hatch["build"]["hooks"]["vcs"]["version-file"]
+    assert version_file == "src/codedupes/_version.py"
+    assert version_file in (ROOT / ".gitignore").read_text(encoding="utf-8").splitlines()
+
+
 def test_sdist_uses_an_explicit_release_file_allowlist() -> None:
     """Local ignored worktrees must never leak into source distributions."""
     hatch = _pyproject()["tool"]["hatch"]  # type: ignore[index]
