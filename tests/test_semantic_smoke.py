@@ -137,11 +137,13 @@ def test_search_smoke_ranks_targets_and_filters_noise(
         assert all(unit.name == probe["expected"] for unit, _score in default_results), (
             f"{profile.key}: {probe['query']!r} returned irrelevant default hits"
         )
+    # This is intentionally threshold-dependent acceptance evidence. Keep the
+    # exact sets synchronized with the checked calibration whenever a built-in
+    # profile's default search threshold changes.
     expected_surfaced = {
         "gte-modernbert-base": {probe["expected"] for probe in spec["relevant"]},
         "embeddinggemma-300m": {
             "find_insertion_index",
-            "retry_with_backoff",
             "take_rate_limit_token",
         },
     }[profile.key]

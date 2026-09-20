@@ -2203,7 +2203,7 @@ def test_hybrid_synthesis_cross_language_promotion_uses_the_stricter_gate(
 @pytest.mark.parametrize(
     ("model_name", "expected_tiers"),
     [
-        # Below GTE's 0.88 Python promotion gate, identifier corroboration is required.
+        # Below GTE's Python promotion gate, identifier corroboration is required.
         (
             "gte-modernbert-base",
             {"same_size": "semantic_review", "lopsided": "semantic_review"},
@@ -2219,6 +2219,9 @@ def test_analyzer_applies_the_profile_hybrid_split(
     tmp_path: Path, monkeypatch, model_name: str, expected_tiers: dict[str, str]
 ) -> None:
     """The analyzer must split semantic-only pairs with the profile's calibrated constants."""
+    review_band_score = 0.88
+    profile = resolve_model_profile(model_name)
+    assert review_band_score >= profile.semantic_threshold_for_language("python")
     source = dedent(
         """
         def collect_total(records):
@@ -2240,8 +2243,13 @@ def test_analyzer_applies_the_profile_hybrid_split(
     def paired(units: list[CodeUnit]) -> list[DuplicatePair]:
         by_name = {unit.name: unit for unit in units}
         return [
-            DuplicatePair(by_name["collect_total"], by_name["measure_sum"], 0.86, "semantic"),
-            DuplicatePair(by_name["collect_total"], by_name["tiny"], 0.86, "semantic"),
+            DuplicatePair(
+                by_name["collect_total"],
+                by_name["measure_sum"],
+                review_band_score,
+                "semantic",
+            ),
+            DuplicatePair(by_name["collect_total"], by_name["tiny"], review_band_score, "semantic"),
         ]
 
     monkeypatch.setattr(

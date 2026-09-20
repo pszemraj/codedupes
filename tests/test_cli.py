@@ -1785,6 +1785,7 @@ def test_cli_info_verbose_exit_zero(flag):
     assert result.exit_code == 0
     assert "codedupes" in result.output.lower()
     assert "PyTorch" in result.output
+    assert "Tokenizers" in result.output
     assert "╭" in result.output and "│" in result.output
     assert result.stderr == ""
     assert "mps built/available" in result.output.lower()

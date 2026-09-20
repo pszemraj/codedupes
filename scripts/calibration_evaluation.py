@@ -64,9 +64,9 @@ except ImportError:
 MINIMUM_SELECTION_PRECISION = 0.5
 # Selection code is intentionally versioned by behavior rather than by source
 # bytes. Bump this whenever selection or audit behavior changes.
-SELECTION_ALGORITHM_VERSION = 6
+SELECTION_ALGORITHM_VERSION = 7
 SELECTION_SCHEMA_VERSION = 8
-CHECKED_REPORT_SCHEMA_VERSION = 10
+CHECKED_REPORT_SCHEMA_VERSION = 11
 SEARCH_SELECTION_WINDOW_RADIUS = 5
 _SEARCH_METRIC_KEYS = frozenset(
     {
@@ -490,7 +490,7 @@ def best_f1_candidates(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             f"{MINIMUM_SELECTION_PRECISION:.2f}"
         )
     best = max(row["f1"] for row in safe)
-    return [row for row in safe if math.isclose(row["f1"], best, rel_tol=0.0, abs_tol=1e-12)]
+    return [row for row in safe if row["f1"] == best]
 
 
 def recall_preference(row: dict[str, Any]) -> tuple[int, int, float, float]:
@@ -1002,12 +1002,7 @@ def _validate_hybrid_selection_audit(
         "high_gates": selected_high_gates,
         "metrics": selected["metrics"],
     }
-    if not math.isclose(
-        best["metrics"]["f1"],
-        selected_candidate["metrics"]["f1"],
-        rel_tol=0.0,
-        abs_tol=1e-12,
-    ):
+    if best["metrics"]["f1"] != selected_candidate["metrics"]["f1"]:
         raise ValueError(f"{label} selected candidate does not maximize F1")
     selected_preference = recall_preference(selected_candidate["metrics"])
     best_preference = recall_preference(best["metrics"])
@@ -1019,9 +1014,7 @@ def _validate_hybrid_selection_audit(
         raise ValueError(f"{label} best-F1 candidate outranks the selected candidate")
     if runner_up is None:
         return
-    if not math.isclose(
-        runner_up["metrics"]["f1"], best["metrics"]["f1"], rel_tol=0.0, abs_tol=1e-12
-    ):
+    if runner_up["metrics"]["f1"] != best["metrics"]["f1"]:
         raise ValueError(f"{label} runner-up is not an exact best-F1 tie")
     if _joint_audit_tiebreak(runner_up, languages) == _joint_audit_tiebreak(
         selected_candidate, languages

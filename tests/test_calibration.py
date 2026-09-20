@@ -210,6 +210,12 @@ def test_recall_preference_applies_only_to_exact_best_f1_ties():
         {"threshold": 0.89, "precision": 1.0, "recall": 1 / 3, "f1": 0.5},
     ]
     assert _select(tied)["threshold"] == 0.87
+
+    near_tie = [
+        {"threshold": 0.90, "precision": 0.70, "recall": 0.50, "f1": 0.60},
+        {"threshold": 0.80, "precision": 0.70, "recall": 0.90, "f1": 0.60 - 5e-13},
+    ]
+    assert _select(near_tie)["threshold"] == 0.90
     with pytest.raises(ValueError, match="minimum precision"):
         _select([{**tied[0], "precision": MINIMUM_SELECTION_PRECISION - 0.01}])
 
@@ -919,6 +925,25 @@ def test_measurements_bind_capture_inputs_but_load_on_other_runtimes(tmp_path: P
     assert load_measurement(path, project)["metadata"]["input_fingerprint"] == fingerprint
 
 
+def test_measurement_fingerprint_includes_tokenizer_runtime(monkeypatch):
+    """Tokenizer releases can change vectors and therefore belong to raw evidence identity."""
+    project = load_projects(project_ids=["ledger"])[0]
+    versions = {
+        package: semantic._safe_package_version(package) or "missing"
+        for package in ("torch", "transformers", "tokenizers", "sentence-transformers")
+    }
+    monkeypatch.setattr(semantic, "_safe_package_version", versions.get)
+
+    assert set(semantic.get_semantic_runtime_versions()) == (
+        calibration_measurements.RUNTIME_VERSION_KEYS
+    )
+    before = measurement_fingerprint(project, "gte-modernbert-base", "cpu")
+    versions["tokenizers"] = f"{versions['tokenizers']}+different"
+    after = measurement_fingerprint(project, "gte-modernbert-base", "cpu")
+
+    assert after != before
+
+
 def test_calibration_identity_and_capture_reject_mps_fast_math(tmp_path: Path, monkeypatch):
     project = load_projects(project_ids=["ledger"])[0]
     monkeypatch.delenv("PYTORCH_MPS_FAST_MATH", raising=False)
@@ -1402,7 +1427,7 @@ def test_selection_context_rejects_changed_policy_values(monkeypatch, field: str
     current = getattr(calibration_evaluation, field)
     replacement = {
         "MINIMUM_SELECTION_PRECISION": 0.6,
-        "SELECTION_ALGORITHM_VERSION": 7,
+        "SELECTION_ALGORITHM_VERSION": 8,
         "DEFAULT_TOP_K": 11,
         "THRESHOLD_GRID_STEP": 0.02,
         "HYBRID_WEAK_GRID": (0.0, 0.5),

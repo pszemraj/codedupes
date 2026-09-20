@@ -97,6 +97,7 @@ def info_command(output_width: int, verbose: bool) -> None:
                     ("Platform", platform.platform()),
                     ("PyTorch", runtime_versions["torch"]),
                     ("Transformers", runtime_versions["transformers"]),
+                    ("Tokenizers", runtime_versions["tokenizers"]),
                     ("Sentence Transformers", runtime_versions["sentence-transformers"]),
                 ],
             )

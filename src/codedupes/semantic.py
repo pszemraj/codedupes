@@ -1759,6 +1759,7 @@ def get_semantic_runtime_versions() -> dict[str, str]:
         "python": sys.version.split()[0],
         "torch": _safe_package_version("torch") or "missing",
         "transformers": _safe_package_version("transformers") or "missing",
+        "tokenizers": _safe_package_version("tokenizers") or "missing",
         "sentence-transformers": _safe_package_version("sentence-transformers") or "missing",
     }
 

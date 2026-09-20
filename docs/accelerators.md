@@ -75,12 +75,12 @@ Model loads pin an explicit dtype instead of inheriting the checkpoint's configu
 
 MPS autocast is not the shipped policy. On an Apple M5 with PyTorch 2.14, batch size 4, the ledger fixture, and three fresh uncached processes per model and mode, explicit bfloat16 autocast produced these median combined duplicate and search measurements:
 
-| Model | MPS fp32 | bf16 autocast | Maximum pair/query drift | Changed shipped results |
-| --- | ---: | ---: | ---: | ---: |
-| GTE ModernBERT | 6.723 s | 5.167 s | 0.0830 / 0.0562 | 13 duplicate, 2 search |
-| EmbeddingGemma | 6.561 s | 6.521 s | 0.0531 / 0.0385 | 5 duplicate, 0 search |
+| Model | MPS fp32 | bf16 autocast | Maximum pair/query drift |
+| --- | ---: | ---: | ---: |
+| GTE ModernBERT | 6.723 s | 5.167 s | 0.0830 / 0.0562 |
+| EmbeddingGemma | 6.561 s | 6.521 s | 0.0531 / 0.0385 |
 
-Autocast changed calibrated decisions, while its speed benefit varied by model. An earlier whole-model bfloat16 run was about 13% faster but still shifted pair scores at threshold scale. MPS inference therefore stays float32. Any future dtype change requires the full [calibration workflow](hybrid-tuning.md).
+These measurements characterize dtype speed and score drift, not decision counts at the current gates. The drift is large relative to the calibration grid, while the speed benefit varied by model. An earlier whole-model bfloat16 run was about 13% faster but still shifted pair scores at threshold scale. MPS inference therefore stays float32. Any future dtype change requires the full [calibration workflow](hybrid-tuning.md).
 
 ### CPU bfloat16 policy
 

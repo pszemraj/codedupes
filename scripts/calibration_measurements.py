@@ -56,14 +56,20 @@ except ImportError:
         write_json,
     )
 
-ARTIFACT_VERSION = 7
+ARTIFACT_VERSION = 8
 CALIBRATION_BATCH_SIZE = 4
-RUNTIME_VERSION_KEYS = {"python", "torch", "transformers", "sentence-transformers"}
+RUNTIME_VERSION_KEYS = {
+    "python",
+    "torch",
+    "transformers",
+    "tokenizers",
+    "sentence-transformers",
+}
 DEFAULT_MEASUREMENTS = REPO / "scratch/calibration"
 # Bump whenever capture, extraction, scoring, replay, or their provenance
 # changes in a way that could change a measured artifact. Package versions are
 # diagnostic provenance; documentation-only releases do not invalidate scores.
-MEASUREMENT_PIPELINE_VERSION = 2
+MEASUREMENT_PIPELINE_VERSION = 3
 
 
 def _identity_digest(identity: dict[str, Any]) -> str:
