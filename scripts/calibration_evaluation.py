@@ -91,6 +91,12 @@ _DUPLICATE_TIERS = {
     "semantic_high_confidence",
     "semantic_review",
 }
+_RUNTIME_VERSION_KEYS = {
+    "python",
+    "torch",
+    "transformers",
+    "sentence-transformers",
+}
 _VALIDATED_CHECKED_PROJECTS: set[str] = set()
 
 
@@ -1951,7 +1957,7 @@ def validate_checked_report(
                 runtime = report.get("runtime_versions")
                 if (
                     not isinstance(runtime, dict)
-                    or not runtime
+                    or set(runtime) != _RUNTIME_VERSION_KEYS
                     or any(
                         not isinstance(key, str) or not isinstance(value, str) or not value
                         for key, value in runtime.items()
@@ -2126,8 +2132,6 @@ def validate_checked_report(
 
     if not report_runtimes or any(runtime != report_runtimes[0] for runtime in report_runtimes[1:]):
         raise ValueError("checked calibration report has mixed runtime provenance")
-    if report_runtimes[0] != semantic.get_semantic_runtime_versions():
-        raise ValueError("checked calibration report does not match the current runtime")
     runtime_summary = payload.get("measurement_runtime")
     expected_scope = (
         f"all checked {' and '.join(sorted(device.upper() for device in report_devices))} reports"

@@ -1546,7 +1546,7 @@ def test_report_writer_derives_measurement_runtime(tmp_path: Path, monkeypatch, 
     )
 
 
-def test_checked_calibration_result_matches_shipped_profiles(monkeypatch):
+def test_checked_calibration_result_matches_shipped_profiles():
     result = read_json(DEFAULT_MANIFEST.parent / "calibration-results.json")
     assert len(result["measurement_digests"]) == 20
     assert all(key.endswith(("/cpu", "/mps")) for key in result["measurement_digests"])
@@ -1571,12 +1571,6 @@ def test_checked_calibration_result_matches_shipped_profiles(monkeypatch):
         for report in project["reports"].values()
     }
     assert len(recorded_runtimes) == 1
-    recorded_runtime = dict(next(iter(recorded_runtimes)))
-    monkeypatch.setattr(semantic, "get_semantic_runtime_versions", lambda: recorded_runtime)
-    monkeypatch.setattr(
-        "scripts.calibration_measurements.semantic.get_semantic_runtime_versions",
-        lambda: recorded_runtime,
-    )
     models = [item["model"] for item in result["threshold_selection"]["models"]]
     validate_checked_report(result, projects, models)
     expected = selection_context(projects, models)
@@ -1608,7 +1602,6 @@ def test_checked_calibration_result_matches_shipped_profiles(monkeypatch):
             assert language["selected_threshold"] == profile.semantic_threshold_for_language(
                 language["language"]
             )
-
         hybrid = hybrid_models[model]
         assert hybrid["selected"]["selection_ready"] is True
         assert (
@@ -1630,6 +1623,19 @@ def test_checked_calibration_result_matches_shipped_profiles(monkeypatch):
         for comparison in project["device_comparisons"].values():
             assert comparison["duplicate_decision_changes"] == []
             assert comparison["search_decision_changes"] == []
+
+
+def test_checked_calibration_result_validation_is_runtime_independent(monkeypatch):
+    """Validate recorded provenance without requiring the measurement runtime locally."""
+    result = read_json(DEFAULT_MANIFEST.parent / "calibration-results.json")
+    models = [item["model"] for item in result["threshold_selection"]["models"]]
+    monkeypatch.setattr(
+        semantic,
+        "get_semantic_runtime_versions",
+        lambda: pytest.fail("checked-only validation inspected the installed runtime"),
+    )
+
+    validate_checked_report(result, load_projects(), models)
 
 
 def test_checked_calibration_report_schema_accepts_committed_result():
