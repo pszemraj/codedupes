@@ -602,34 +602,7 @@ def missing_behavior_requirements(projects: list[Project]) -> list[str]:
             command_env.update(command.get("env", {}))
             if executable in missing:
                 continue
-            if executable == "cargo" and len(argv) > 1 and argv[1].startswith("+"):
-                toolchain = argv[1][1:]
-                label = f"cargo +{toolchain}"
-                if label in checked:
-                    continue
-                checked.add(label)
-                rustup = shutil.which("rustup", path=command_env.get("PATH"))
-                if rustup is None:
-                    missing.add(label)
-                    continue
-                try:
-                    result = subprocess.run(
-                        [rustup, "toolchain", "list"],
-                        capture_output=True,
-                        env=command_env,
-                        text=True,
-                        timeout=10,
-                        check=False,
-                    )
-                except (OSError, subprocess.TimeoutExpired):
-                    missing.add(label)
-                    continue
-                installed = {line.split()[0] for line in result.stdout.splitlines() if line.split()}
-                if result.returncode or not any(
-                    name == toolchain or name.startswith(f"{toolchain}-") for name in installed
-                ):
-                    missing.add(label)
-            elif executable == "node":
+            if executable == "node":
                 flags = tuple(arg for arg in argv[1:] if arg.startswith("--experimental-"))
                 if not flags:
                     continue

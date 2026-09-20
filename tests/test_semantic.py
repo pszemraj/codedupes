@@ -1671,21 +1671,6 @@ def test_get_model_rejects_incomplete_local_directory(
         semantic.get_model(str(model_dir))
 
 
-@pytest.mark.parametrize("version", ["2.12.9", "3.0.0", "3.0.0.dev1"])
-def test_torch_runtime_rejects_unsupported_versions(monkeypatch, version: str) -> None:
-    monkeypatch.setattr(semantic, "_safe_package_version", lambda _name: version)
-
-    with pytest.raises(SemanticBackendError, match="requires >=2.13,<3"):
-        semantic._validate_torch_runtime()
-
-
-@pytest.mark.parametrize("version", ["2.13.0", "2.13.0.dev20260101", "2.13.0rc1", "2.14.1"])
-def test_torch_runtime_accepts_supported_versions(monkeypatch, version: str) -> None:
-    monkeypatch.setattr(semantic, "_safe_package_version", lambda _name: version)
-
-    semantic._validate_torch_runtime()
-
-
 def test_prepare_semantic_device_ignores_fraction_on_non_mps(caplog) -> None:
     with caplog.at_level(logging.INFO, logger="codedupes.semantic"):
         resolved = semantic._prepare_semantic_device(

@@ -169,9 +169,9 @@ class GrammarProvider:
                 capsule_factory = getattr(grammar_module, function_name)
                 language = tree_sitter.Language(capsule_factory())
             except (ModuleNotFoundError, AttributeError, TypeError, ValueError) as exc:
-                package, pinned = GRAMMAR_PACKAGES[grammar_key]
+                package = GRAMMAR_PACKAGES[grammar_key]
                 raise GrammarUnavailableError(
-                    f"Could not load the {grammar_key} grammar from {package}=={pinned}: {exc}"
+                    f"Could not load the {grammar_key} grammar from {package}: {exc}"
                 ) from exc
 
             cls._languages[grammar_key] = language

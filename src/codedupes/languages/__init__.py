@@ -3,7 +3,6 @@
 from codedupes.languages.naming import module_prefix, qualified
 from codedupes.languages.registry import (
     GRAMMAR_PACKAGES,
-    REQUIRED_PARSER_PACKAGES,
     SUPPORTED_LANGUAGES,
     GrammarStatus,
     LanguageSelection,
@@ -17,7 +16,6 @@ from codedupes.languages.tree_sitter_backend import GrammarUnavailableError
 
 __all__ = [
     "GRAMMAR_PACKAGES",
-    "REQUIRED_PARSER_PACKAGES",
     "SUPPORTED_LANGUAGES",
     "GrammarStatus",
     "GrammarUnavailableError",

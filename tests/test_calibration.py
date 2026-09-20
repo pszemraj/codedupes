@@ -66,7 +66,6 @@ from scripts.calibration_evaluation import (
 )
 from scripts.calibration_measurements import (
     ARTIFACT_VERSION,
-    MeasurementPipelineSourceWarning,
     capture,
     load_measurement,
     measurement_fingerprint,
@@ -136,7 +135,7 @@ def _empty_measurement(project, model: str = "gte-modernbert-base") -> dict:
             "live_default": [],
             "input_fingerprint": measurement_fingerprint(project, model, "cpu"),
             "measurement_pipeline_version": calibration_measurements.MEASUREMENT_PIPELINE_VERSION,
-            "pipeline_source_fingerprint": calibration_measurements._pipeline_source_fingerprint(),
+            "codedupes_version": calibration_measurements.__version__,
         },
         "units": [
             {
@@ -373,7 +372,7 @@ def test_behavior_requirement_probe_checks_toolchain_variants(monkeypatch, tmp_p
             spec={
                 "languages": ["rust", "typescript"],
                 "behavior_tests": [
-                    {"argv": ["cargo", "+stable", "test"]},
+                    {"argv": ["cargo", "test"]},
                     {"argv": ["node", "--experimental-strip-types", "script.ts"]},
                 ],
             }
@@ -382,18 +381,18 @@ def test_behavior_requirement_probe_checks_toolchain_variants(monkeypatch, tmp_p
     monkeypatch.setattr(
         calibration_contract.shutil,
         "which",
-        lambda executable, path=None: str(tmp_path / executable),
+        lambda executable, path=None: (
+            None if executable == "rustup" else str(tmp_path / executable)
+        ),
     )
 
     def unavailable_variants(argv, **_kwargs):
-        if argv[0].endswith("rustup"):
-            return SimpleNamespace(returncode=0, stdout="nightly-aarch64-apple-darwin\n")
+        assert argv[0].endswith("node")
         return SimpleNamespace(returncode=9, stdout="")
 
     monkeypatch.setattr(calibration_contract.subprocess, "run", unavailable_variants)
 
     assert missing_behavior_requirements(projects) == [
-        "cargo +stable",
         "node --experimental-strip-types",
     ]
 
@@ -830,7 +829,7 @@ def test_hybrid_selection_rejects_unready_semantic_admissions():
         _selection_map(payload)
 
 
-def test_measurements_reject_changed_source_queries_or_runtime(tmp_path: Path, monkeypatch):
+def test_measurements_bind_capture_inputs_but_load_on_other_runtimes(tmp_path: Path, monkeypatch):
     project = load_projects(project_ids=["ledger"])[0]
     path = tmp_path / "measurement.json"
     write_json(path, _empty_measurement(project))
@@ -858,17 +857,14 @@ def test_measurements_reject_changed_source_queries_or_runtime(tmp_path: Path, m
     project.annotations["probes"][0]["query"] = project.annotations["probes"][0][
         "query"
     ].removesuffix(" changed")
-    monkeypatch.setattr(
-        "scripts.calibration_measurements.semantic.get_semantic_runtime_versions",
-        lambda: {
-            "python": "3.15.0",
-            "torch": "9.9.9",
-            "transformers": "9.9.9",
-            "sentence-transformers": "9.9.9",
-        },
-    )
-    with pytest.raises(ValueError, match="stale measurement"):
-        load_measurement(path, project)
+
+    def no_live_runtime(*_args, **_kwargs):
+        pytest.fail("reading recorded scores must not inspect the live inference runtime")
+
+    monkeypatch.setattr(semantic, "get_semantic_runtime_versions", no_live_runtime)
+    monkeypatch.setattr(semantic, "_resolve_model_dtype", no_live_runtime)
+    monkeypatch.setattr(semantic, "_mps_fast_math_variant", no_live_runtime)
+    assert load_measurement(path, project)["metadata"]["input_fingerprint"] == fingerprint
 
 
 def test_calibration_identity_and_capture_reject_mps_fast_math(tmp_path: Path, monkeypatch):
@@ -911,16 +907,6 @@ def test_measurements_reject_behavior_identity_mismatches(
     write_json(path, measurement)
     with pytest.raises(ValueError, match="stale measurement"):
         load_measurement(path, project)
-
-
-def test_measurements_warn_but_load_when_pipeline_source_bytes_drift(tmp_path: Path, monkeypatch):
-    project = load_projects(project_ids=["ledger"])[0]
-    path = tmp_path / "measurement.json"
-    write_json(path, _empty_measurement(project))
-    monkeypatch.setattr(calibration_measurements, "_pipeline_source_fingerprint", lambda: "0" * 64)
-
-    with pytest.warns(MeasurementPipelineSourceWarning, match="source bytes differ"):
-        assert load_measurement(path, project)["metadata"]["project"] == project.id
 
 
 @pytest.mark.parametrize("mutation", ["missing_pair", "duplicate_query", "bad_rank"])
@@ -997,14 +983,17 @@ def test_derived_selections_bind_exact_raw_scores():
     assert measurement_digest(measurement)
 
 
-def test_derived_selections_ignore_advisory_pipeline_source_fingerprint():
+def test_derived_selections_ignore_diagnostic_package_version(tmp_path):
     project = load_projects(project_ids=["ledger"])[0]
     measurement = _empty_measurement(project)
     original = measurement_digest(measurement)
 
-    measurement["metadata"]["pipeline_source_fingerprint"] = "0" * 64
+    measurement["metadata"]["codedupes_version"] = "99.0.0"
 
     assert measurement_digest(measurement) == original
+    path = tmp_path / "measurement.json"
+    write_json(path, measurement)
+    assert load_measurement(path, project) == measurement
 
 
 @pytest.mark.parametrize(
@@ -1113,7 +1102,7 @@ def test_measurement_provenance_rejects_forged_runtime_and_fast_math(monkeypatch
 
     recorded_runtime = measurement["metadata"]["runtime_versions"].copy()
     measurement["metadata"]["runtime_versions"]["torch"] = "forged"
-    with pytest.raises(ValueError, match="provenance does not match"):
+    with pytest.raises(ValueError, match="stale measurement"):
         validate_measurement_provenance(project, measurement)
 
     measurement["metadata"]["runtime_versions"] = recorded_runtime
@@ -1123,8 +1112,19 @@ def test_measurement_provenance_rejects_forged_runtime_and_fast_math(monkeypatch
     )
     for stats in measurement["metadata"]["execution"].values():
         stats["execution_device"] = "mps"
+    for row in measurement["metadata"]["query_execution"]:
+        row["execution_device"] = "mps"
+    # Saved faithful-MPS evidence is readable even on a host configured for
+    # fast math; only capture executes Metal and must reject that setting.
     monkeypatch.setenv("PYTORCH_MPS_FAST_MATH", "1")
-    with pytest.raises(ValueError, match="provenance does not match"):
+    monkeypatch.setattr(
+        semantic,
+        "get_semantic_runtime_versions",
+        lambda: pytest.fail("provenance validation must not inspect the reader's runtime"),
+    )
+    validate_measurement_provenance(project, measurement)
+    measurement["metadata"]["math_policy"] = "mps_fast_math"
+    with pytest.raises(ValueError, match="stale measurement"):
         validate_measurement_provenance(project, measurement)
 
 
@@ -1629,11 +1629,16 @@ def test_checked_calibration_result_validation_is_runtime_independent(monkeypatc
     """Validate recorded provenance without requiring the measurement runtime locally."""
     result = read_json(DEFAULT_MANIFEST.parent / "calibration-results.json")
     models = [item["model"] for item in result["threshold_selection"]["models"]]
-    monkeypatch.setattr(
-        semantic,
-        "get_semantic_runtime_versions",
-        lambda: pytest.fail("checked-only validation inspected the installed runtime"),
-    )
+    for name in ("get_semantic_runtime_versions", "_resolve_model_dtype", "_mps_fast_math_variant"):
+        monkeypatch.setattr(
+            semantic,
+            name,
+            lambda *_args, **_kwargs: pytest.fail(
+                "checked-only validation inspected the installed runtime"
+            ),
+        )
+    monkeypatch.setenv("CODEDUPES_CPU_BF16", "1")
+    monkeypatch.setenv("PYTORCH_MPS_FAST_MATH", "1")
 
     validate_checked_report(result, load_projects(), models)
 

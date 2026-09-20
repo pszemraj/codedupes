@@ -44,7 +44,7 @@ With `wasm-pack` installed, run from the same fixture directory:
 
 ```sh
 wasm-pack build --target web --out-dir web/pkg --release
-make serve
+python -m http.server 8080
 ```
 
 Open `http://localhost:8080/web/`. Serve the project over HTTP rather than opening `web/index.html` directly; the generated JavaScript module needs to fetch its `.wasm` file.
@@ -55,10 +55,10 @@ The no-bundler browser path is deliberately plain: `wasm-pack` emits the ES modu
 
 ```sh
 cargo test --test fixture_integrity
-make fixture
+python ../../scripts/validate_calibration_corpus.py --project cowsay
 ```
 
-The validator uses the active `python` by default; override it with `make fixture PYTHON=/path/to/python` when needed. It enforces the shared corpus contract. Rust tests preserve the exact/non-exact distinction and validate behavior; they do not require fixture source to hit a similarity range.
+The validator uses codedupes from your Python environment and enforces the shared corpus contract. Rust tests preserve the exact/non-exact distinction and validate behavior; they do not require fixture source to hit a similarity range.
 
 ## Project layout
 
@@ -73,8 +73,6 @@ web/
   index.html
   app.js
   styles.css
-scripts/
-  build-web.sh
 ```
 
 The wrapping width counts Unicode scalar values rather than terminal display cells. That is intentional here: bringing in a display-width dependency would add noise to a fixture whose target is source-clone detection.

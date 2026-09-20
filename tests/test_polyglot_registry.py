@@ -206,11 +206,10 @@ def test_explicit_c_selection_resolves_header_ambiguity(tmp_path: Path) -> None:
     assert not repository_allows_c_headers(tmp_path, ("rust",))
 
 
-def test_grammar_status_requires_exact_pins(monkeypatch: pytest.MonkeyPatch) -> None:
-    installed = {
-        TREE_SITTER_PACKAGE[0]: TREE_SITTER_PACKAGE[1],
-        **{package: version for package, version in GRAMMAR_PACKAGES.values()},
-    }
+def test_grammar_status_checks_loadability_without_duplicate_version_rules(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    installed = {package: "0.99.0" for package in {TREE_SITTER_PACKAGE, *GRAMMAR_PACKAGES.values()}}
 
     monkeypatch.setattr(metadata, "version", installed.__getitem__)
     monkeypatch.setattr(registry, "_probe_dialect", lambda dialect: None)
@@ -218,19 +217,23 @@ def test_grammar_status_requires_exact_pins(monkeypatch: pytest.MonkeyPatch) -> 
     assert statuses
     assert all(status.available and status.error is None for status in statuses)
 
-    installed["tree-sitter-rust"] = "99.0.0"
+    def missing_rust(package):
+        if package == "tree-sitter-rust":
+            raise metadata.PackageNotFoundError(package)
+        return installed[package]
+
+    monkeypatch.setattr(metadata, "version", missing_rust)
     statuses = get_grammar_statuses()
     rust = next(status for status in statuses if status.dialect == "rust")
     assert not rust.available
-    assert "tree-sitter-rust==0.24.2 is required" in (rust.error or "")
+    assert "tree-sitter-rust is not installed" in (rust.error or "")
 
 
-def test_grammar_status_pins_the_python_grammar(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Python parses through a pinned grammar wheel like every other language."""
-    installed = {
-        TREE_SITTER_PACKAGE[0]: TREE_SITTER_PACKAGE[1],
-        **{package: version for package, version in GRAMMAR_PACKAGES.values()},
-    }
+def test_grammar_status_reports_the_installed_python_grammar(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Python reports its installed grammar wheel like every other language."""
+    installed = {package: "0.99.0" for package in {TREE_SITTER_PACKAGE, *GRAMMAR_PACKAGES.values()}}
     monkeypatch.setattr(metadata, "version", installed.__getitem__)
     monkeypatch.setattr(registry, "_probe_dialect", lambda dialect: None)
 
@@ -238,7 +241,7 @@ def test_grammar_status_pins_the_python_grammar(monkeypatch: pytest.MonkeyPatch)
 
     python = statuses["python"]
     assert python.language == "python"
-    assert (python.package, python.pinned_version) == ("tree-sitter-python", "0.25.0")
+    assert (python.package, python.installed_version) == ("tree-sitter-python", "0.99.0")
     assert python.available and python.error is None
 
 
@@ -269,10 +272,7 @@ def test_grammar_status_reports_wheels_that_fail_parser_construction(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A right-version wheel that cannot build a parser must not report ready."""
-    installed = {
-        TREE_SITTER_PACKAGE[0]: TREE_SITTER_PACKAGE[1],
-        **{package: version for package, version in GRAMMAR_PACKAGES.values()},
-    }
+    installed = {package: "0.99.0" for package in {TREE_SITTER_PACKAGE, *GRAMMAR_PACKAGES.values()}}
     monkeypatch.setattr(metadata, "version", installed.__getitem__)
     monkeypatch.setattr(
         registry,

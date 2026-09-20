@@ -263,9 +263,9 @@
         },
         "cowsay": {
           "annotations": "ac2779d3ff4fab4ce862c548d0eb7910b5e32dc721c092d560d43542b55211f7",
-          "project": "0a0284e1f2acc960a92e6df1a97fe563a2271e8dd918e77a04d245d8404901d3",
+          "project": "762b154e66a23006f51dcd779b0ea397b33afc02879200c88121e6f01e01454b",
           "policy": "default",
-          "support_files": "213e6ace3b8a324b4ac3f60c833b9733bbb6795089b853dbf28023c9f52a44b9",
+          "support_files": "183d1afb938e3cc542b3e219334b7128b1dfed84cd316ebb0cdcefb38333384c",
           "measurement_behavior": {
             "gte-modernbert-base": "7b1761fb0499b1fadf8123bb4690fe27ab8fb1ab4c1c94667e3a217bbdd75f18",
             "embeddinggemma-300m": "65e95f798b76a3286c0827a3123b5a7807ef1198277df9fa4365f0d1f3ae0bbb"
@@ -3347,9 +3347,9 @@
         },
         "cowsay": {
           "annotations": "ac2779d3ff4fab4ce862c548d0eb7910b5e32dc721c092d560d43542b55211f7",
-          "project": "0a0284e1f2acc960a92e6df1a97fe563a2271e8dd918e77a04d245d8404901d3",
+          "project": "762b154e66a23006f51dcd779b0ea397b33afc02879200c88121e6f01e01454b",
           "policy": "default",
-          "support_files": "213e6ace3b8a324b4ac3f60c833b9733bbb6795089b853dbf28023c9f52a44b9",
+          "support_files": "183d1afb938e3cc542b3e219334b7128b1dfed84cd316ebb0cdcefb38333384c",
           "measurement_behavior": {
             "gte-modernbert-base": "7b1761fb0499b1fadf8123bb4690fe27ab8fb1ab4c1c94667e3a217bbdd75f18",
             "embeddinggemma-300m": "65e95f798b76a3286c0827a3123b5a7807ef1198277df9fa4365f0d1f3ae0bbb"
@@ -3411,7 +3411,7 @@
         "step": 0.01
       }
     },
-    "threshold_selection_digest": "daaf98ea9d308039034cdc65a3528056245a7e9cf613a5efcfd852f22e831e3b",
+    "threshold_selection_digest": "09171d348dd9aee3337a7c3b054c5d780d426efb6b4dddaaf96c291525f91be0",
     "models": [
       {
         "model": "gte-modernbert-base",

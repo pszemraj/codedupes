@@ -8,7 +8,7 @@ The checked [calibration result](../test_fixtures/calibration/calibration-result
 
 This result completes the development-corpus phase of Issue #20, not the issue. The remaining phase is a compact hand-reviewed real-code check in every supported language, followed by only the targeted corpus additions and recalibration that those checks justify. The current fixtures do not support ecosystem-level statistical claims or cross-language calibration.
 
-The metric tables below are rendered from the checked result by `conda run --name inf python scripts/render_calibration_tables.py`; a regression test keeps the published values synchronized with that artifact.
+The metric tables below are rendered from the checked result by `python scripts/render_calibration_tables.py`; a regression test keeps the published values synchronized with that artifact.
 
 ### Selected difficulty recall
 
@@ -59,16 +59,16 @@ TODO (Issue #20, phase 2): Calibrate default-visible density on versioned, licen
 Validate source selectors, pair coverage, tests, and entry points first. The toolchain-marked pytest integration target and the validator command below run these behavior commands; they require a stable Rust toolchain, a C compiler and Make, and Node.js/npm with type-stripping support:
 
 ```bash
-conda run --name inf pytest -m toolchain
-conda run --name inf python scripts/validate_calibration_corpus.py --run-behavior
+pytest -m toolchain
+python scripts/validate_calibration_corpus.py --run-behavior
 ```
 
 Measure one project, model, and device in each fresh process. Measurements write to ignored `scratch/calibration/` files and disable embedding-cache reuse.
 
 ```bash
-conda run --name inf python scripts/measure_calibration.py \
+python scripts/measure_calibration.py \
   --project ledger --model gte-modernbert-base --device cpu
-conda run --name inf python scripts/measure_calibration.py \
+python scripts/measure_calibration.py \
   --project ledger --model gte-modernbert-base --device mps
 ```
 
@@ -77,34 +77,34 @@ Repeat for every project and built-in model. CPU fp32 is the reference and MPS i
 Select per-language duplicate gates and a global top-10 search gate from the CPU measurements:
 
 ```bash
-conda run --name inf python scripts/sweep_semantic_thresholds.py \
+python scripts/sweep_semantic_thresholds.py \
   --json-out scratch/calibration/threshold-selection.json
 ```
 
 Once every admission selection is ready, select hybrid visibility constants and per-language promotion gates:
 
 ```bash
-conda run --name inf python scripts/sweep_hybrid_gates.py \
+python scripts/sweep_hybrid_gates.py \
   --threshold-selection scratch/calibration/threshold-selection.json \
   --json-out scratch/calibration/hybrid-selection.json
 ```
 
-Duplicate admission, search, and hybrid visibility discard candidates below 50% judged precision, maximize judged F1, and prefer higher recall within `0.005` F1 of the optimum. Search preserves explicit no-result probes; duplicate admission excludes pairs already found by a traditional method. Hybrid selection applies the precision floor to every language and pooled result while jointly selecting corroboration and promotion gates. It keeps promotion disabled when that policy is fixture-equivalent to numeric gates; otherwise it emits the center of each fixture-equivalent numeric plateau rather than its permissive edge. Exact pooled ties prefer the lower identifier-overlap floor and retain a distinct `runner_up` in the checked audit; the phase-two density evaluation determines whether a fixture-equivalent alternative behaves better on real code. Selections bind fixture source, unit and query inputs, model revisions and tasks, plus explicit policy and pipeline versions. Formatting and comments in the calibration implementation therefore do not invalidate evidence; changing fixture behavior, model inputs, runtime policy, or an explicit pipeline version does. Raw measurements retain an advisory implementation-byte fingerprint: drift warns reviewers to confirm that the pipeline version was handled correctly, but does not reject behavior-compatible score evidence.
+Duplicate admission, search, and hybrid visibility discard candidates below 50% judged precision, maximize judged F1, and prefer higher recall within `0.005` F1 of the optimum. Search preserves explicit no-result probes; duplicate admission excludes pairs already found by a traditional method. Hybrid selection applies the precision floor to every language and pooled result while jointly selecting corroboration and promotion gates. It keeps promotion disabled when that policy is fixture-equivalent to numeric gates; otherwise it emits the center of each fixture-equivalent numeric plateau rather than its permissive edge. Exact pooled ties prefer the lower identifier-overlap floor and retain a distinct `runner_up` in the checked audit; the phase-two density evaluation determines whether a fixture-equivalent alternative behaves better on real code. Selections bind fixture source, unit and query inputs, model revisions and tasks, plus explicit policy and pipeline versions. Changes to these inputs require fresh evidence; formatting and comments in the calibration implementation do not. New captures record the package version for diagnostics without using it to invalidate otherwise compatible evidence.
 
 Run the multi-domain search smoke test against the selected default:
 
 ```bash
-CODEDUPES_SMOKE_SEARCH=1 conda run --name inf pytest tests/test_semantic_smoke.py -k search
+CODEDUPES_SMOKE_SEARCH=1 pytest tests/test_semantic_smoke.py -k search
 ```
 
 Keep these queries unchanged. Each target must rank first without a score floor, emitted default hits must be relevant, and no-result queries must stay empty. The checked result records nearby duplicate and search rows plus the hybrid candidate grids, best-F1 candidate, final-order runner-up (or `null` when no distinct near-best outcome exists), per-language precision evidence, and digests of the exact predicted-pair outcomes so policies with equal aggregate counts remain distinguishable.
 
-The raw-backed report generator reproduces the complete hybrid sweep before it writes those compact audit rows. Without the ignored raw score matrices, the checked-only validator can verify their candidate grids, arithmetic, per-language safety, ordering, outcome-digest distinction, and internally consistent measurement-runtime provenance without requiring the validator to have those package versions installed. It cannot independently prove that a digest names a particular raw prediction set or that no omitted candidate ranked higher. Loading raw measurements for regeneration still requires the recorded runtime because version changes can alter the score matrices.
+The raw-backed report generator reproduces the complete hybrid sweep before it writes those compact audit rows. Without the ignored raw score matrices, the checked-only validator can verify their candidate grids, arithmetic, per-language safety, ordering, outcome-digest distinction, and internally consistent measurement-runtime provenance. It cannot independently prove that a digest names a particular raw prediction set or that no omitted candidate ranked higher. Both paths process saved scores without requiring the reader's runtime, hardware, or math settings to match the capture. Recorded execution metadata remains bound to the raw inputs, and the checked comparison requires a consistent capture runtime across reports. Fresh inference records the runtime that actually produced its scores.
 
-Apply accepted values in [the profile definitions](../src/codedupes/semantic_profiles.py) and [profile tables](model-profiles.md#built-in-profiles) as one change, then run `conda run --name inf pytest tests/test_semantic_profiles.py tests/test_calibration.py`. Rerun both selection commands above so the recorded metrics and policy identity match the shipped defaults. Capture fresh MPS results, then write the compact checked summary:
+Apply accepted values in [the profile definitions](../src/codedupes/semantic_profiles.py) and [profile tables](model-profiles.md#built-in-profiles) as one change, then run `pytest tests/test_semantic_profiles.py tests/test_calibration.py`. Rerun both selection commands above so the recorded metrics and policy identity match the shipped defaults. Capture fresh MPS results, then write the compact checked summary:
 
 ```bash
-conda run --name inf python scripts/report_calibration_distributions.py \
+python scripts/report_calibration_distributions.py \
   --json-out test_fixtures/calibration/calibration-results.json
 ```
 

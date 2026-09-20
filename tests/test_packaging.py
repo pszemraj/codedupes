@@ -9,7 +9,7 @@ from pathlib import Path
 from packaging.requirements import Requirement
 from packaging.version import Version
 
-from codedupes.languages.registry import REQUIRED_PARSER_PACKAGES
+from codedupes.languages.registry import GRAMMAR_PACKAGES, TREE_SITTER_PACKAGE
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -45,15 +45,6 @@ def test_vcs_less_source_archives_have_a_build_version_fallback() -> None:
     """GitHub/source snapshots must remain buildable without a .git directory."""
     hatch = _pyproject()["tool"]["hatch"]  # type: ignore[index]
     assert hatch["version"]["fallback-version"] == "0.0.0+unknown"
-
-
-def test_cowsay_fixture_make_target_uses_configurable_python() -> None:
-    """Keep the fixture validator independent of a maintainer's Conda environment."""
-    makefile = (ROOT / "test_fixtures/cowsay_wasm/Makefile").read_text(encoding="utf-8")
-
-    assert "PYTHON ?= python" in makefile
-    assert "\t$(PYTHON) ../../scripts/validate_calibration_corpus.py --project cowsay" in makefile
-    assert "conda run" not in makefile
 
 
 def test_version_is_vcs_dynamic_and_generated_outside_git() -> None:
@@ -111,12 +102,10 @@ def test_readme_documentation_links_resolve_in_repository() -> None:
         assert resolved.is_relative_to(ROOT) and resolved.is_file(), target
 
 
-def test_polyglot_tree_sitter_runtime_is_exactly_pinned() -> None:
-    """pyproject pins must match the registry, the runtime source of truth."""
+def test_polyglot_tree_sitter_packages_are_declared_dependencies() -> None:
+    """Every parser used at runtime must be installed with the package."""
     project = _pyproject()["project"]
     dependencies = project["dependencies"]  # type: ignore[index]
     requirements = {Requirement(item).name: Requirement(item) for item in dependencies}
 
-    for package, version in REQUIRED_PARSER_PACKAGES.items():
-        requirement = requirements[package]
-        assert str(requirement.specifier) == f"=={version}"
+    assert {TREE_SITTER_PACKAGE, *GRAMMAR_PACKAGES.values()} <= requirements.keys()

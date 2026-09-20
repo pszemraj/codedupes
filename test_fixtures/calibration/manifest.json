@@ -33,14 +33,14 @@
       "root": "../cowsay_wasm",
       "analysis_roots": ["src"],
       "test_roots": ["tests"],
-      "support_files": ["Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "web/*"],
+      "support_files": ["Cargo.toml", "Cargo.lock", "web/*"],
       "languages": ["rust"],
       "split": "development",
       "split_group": "cowsay-application",
       "annotations": "annotations/cowsay.json",
       "behavior_tests": [
-        {"id": "rust-tests", "argv": ["cargo", "+stable", "test", "--locked"]},
-        {"id": "application", "argv": ["cargo", "+stable", "run", "--locked", "--", "--wrapper", "fold", "--width", "16", "Hello from the pilot"]}
+        {"id": "rust-tests", "argv": ["cargo", "test", "--locked"]},
+        {"id": "application", "argv": ["cargo", "run", "--locked", "--", "--wrapper", "fold", "--width", "16", "Hello from the pilot"]}
       ]
     },
     {

@@ -13,7 +13,6 @@ from typing import Any
 
 import numpy as np
 
-from codedupes import semantic
 from codedupes.constants import (
     DEFAULT_TOP_K,
     DEFAULT_TRADITIONAL_THRESHOLD,
@@ -34,9 +33,11 @@ try:
     )
     from .calibration_measurements import (
         CALIBRATION_BATCH_SIZE,
+        RUNTIME_VERSION_KEYS,
         artifact_path,
         load_measurement,
         measurement_behavior_identity,
+        validate_measurement_identity,
     )
 except ImportError:
     from calibration_contract import (
@@ -52,9 +53,11 @@ except ImportError:
     )
     from calibration_measurements import (
         CALIBRATION_BATCH_SIZE,
+        RUNTIME_VERSION_KEYS,
         artifact_path,
         load_measurement,
         measurement_behavior_identity,
+        validate_measurement_identity,
     )
 
 
@@ -90,12 +93,6 @@ _DUPLICATE_TIERS = {
     "hybrid_confirmed",
     "semantic_high_confidence",
     "semantic_review",
-}
-_RUNTIME_VERSION_KEYS = {
-    "python",
-    "torch",
-    "transformers",
-    "sentence-transformers",
 }
 _VALIDATED_CHECKED_PROJECTS: set[str] = set()
 
@@ -646,13 +643,11 @@ def validate_measurement_digests(
 
 
 def validate_measurement_provenance(project: Project, measurement: dict[str, Any]) -> None:
-    """Verify report metadata against the current model, runtime, and fresh-run policy."""
+    """Verify the recorded execution and current model/input policy."""
     metadata = measurement["metadata"]
     profile = resolve_model_profile(metadata["model"])
     device = metadata["requested_device"]
-    expected_dtype = str(semantic._resolve_model_dtype(profile.family, device)).removeprefix(
-        "torch."
-    )
+    validate_measurement_identity(project, metadata)
     captured_profile = metadata.get("captured_profile")
     profile_fields = {
         "semantic_threshold",
@@ -672,15 +667,10 @@ def validate_measurement_provenance(project: Project, measurement: dict[str, Any
         or not captured_profile["semantic_threshold"] <= high_gate <= 1.0
     ):
         raise ValueError(f"{project.id}: invalid captured threshold profile")
-    expected_math_policy = semantic._mps_fast_math_variant(device) or "standard"
     if (
         metadata["canonical_model"] != profile.canonical_name
         or metadata["revision"] != profile.default_revision
         or metadata["batch_size"] != CALIBRATION_BATCH_SIZE
-        or metadata.get("math_policy") != "standard"
-        or expected_math_policy != "standard"
-        or metadata["runtime_versions"] != semantic.get_semantic_runtime_versions()
-        or metadata["inference_dtype"] != expected_dtype
     ):
         raise ValueError(f"{project.id}: measurement provenance does not match current policy")
     if set(metadata["timing_seconds"]) != {"duplicate", "search"} or any(
@@ -1899,10 +1889,6 @@ def validate_checked_report(
             profile = resolve_model_profile(model)
             for device in ("cpu", "mps"):
                 report = reports[f"{model}/{device}"]
-                expected_dtype = str(
-                    semantic._resolve_model_dtype(profile.family, device)
-                ).removeprefix("torch.")
-                expected_math_policy = semantic._mps_fast_math_variant(device) or "standard"
                 if not isinstance(report, dict):
                     raise ValueError(  # noqa: TRY004 -- checked JSON is one validation failure type
                         f"{project_id}: checked report entry is not an object"
@@ -1929,9 +1915,8 @@ def validate_checked_report(
                     or report.get("device") != device
                     or type(report.get("batch_size")) is not int
                     or report["batch_size"] != CALIBRATION_BATCH_SIZE
-                    or report.get("inference_dtype") != expected_dtype
+                    or report.get("inference_dtype") != "float32"
                     or report.get("math_policy") != "standard"
-                    or expected_math_policy != "standard"
                     or report.get("replay_parity") is not True
                     or not isinstance(report.get("duplicate"), dict)
                     or not isinstance(report.get("search"), dict)
@@ -1957,7 +1942,7 @@ def validate_checked_report(
                 runtime = report.get("runtime_versions")
                 if (
                     not isinstance(runtime, dict)
-                    or set(runtime) != _RUNTIME_VERSION_KEYS
+                    or set(runtime) != RUNTIME_VERSION_KEYS
                     or any(
                         not isinstance(key, str) or not isinstance(value, str) or not value
                         for key, value in runtime.items()

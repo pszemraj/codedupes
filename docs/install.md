@@ -4,7 +4,7 @@
 
 Git-source installation requires **Python 3.11+**, Git, and PyTorch `>=2.13.0,<3`. Install the [PyTorch build for your platform](https://pytorch.org/get-started/locally/) before codedupes, then use the [README install command](../README.md#install).
 
-Other dependencies are declared in [pyproject.toml](../pyproject.toml) and installed with the package. You do not need to clone this repository to analyze your own code.
+Dependencies are declared in [pyproject.toml](../pyproject.toml) and installed with the package. Use any Python environment manager you prefer; the commands below assume that environment is active. You do not need to clone this repository to analyze your own code.
 
 A GPU is optional. On Apple Silicon, use macOS 14.0+ and a PyTorch wheel built with MPS support. [Accelerator behavior](accelerators.md) covers automatic device selection and diagnostics.
 
@@ -14,7 +14,7 @@ If `codedupes` is not found after installation, ensure your Python installation'
 
 ## Polyglot parser dependencies
 
-A normal installation includes the pinned Tree-sitter parser packages from [pyproject.toml](../pyproject.toml): `tree-sitter` plus the `tree-sitter-python`, `tree-sitter-c`, `tree-sitter-rust`, `tree-sitter-javascript`, and `tree-sitter-typescript` grammars, each exact-pinned; `codedupes info --verbose` shows the required and installed version of every grammar. They provide precompiled grammars; scanning does not download or compile them. Python source is parsed with its pinned grammar rather than the interpreter's `ast`, so every language shares one extraction path. You do not need a C, Rust, or JavaScript build toolchain to scan those source files.
+A normal installation includes the pinned Tree-sitter parser packages from [pyproject.toml](../pyproject.toml): `tree-sitter` plus the `tree-sitter-python`, `tree-sitter-c`, `tree-sitter-rust`, `tree-sitter-javascript`, and `tree-sitter-typescript` grammars. `codedupes info --verbose` reports installed versions and tests parser loadability. Dependency constraints live in package metadata; runtime diagnostics do not duplicate them. The packages provide precompiled grammars; scanning does not download or compile them. Python source is parsed with its grammar rather than the interpreter's `ast`, so every language shares one extraction path. You do not need a C, Rust, or JavaScript build toolchain to scan those source files.
 
 See [Polyglot language support](polyglot-languages.md) for supported extensions, extraction scope, and parser errors.
 

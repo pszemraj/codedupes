@@ -7,7 +7,6 @@ import json
 import math
 import os
 import time
-import warnings
 from dataclasses import asdict
 from itertools import combinations, pairwise
 from pathlib import Path
@@ -15,7 +14,7 @@ from typing import Any
 
 import numpy as np
 
-from codedupes import semantic
+from codedupes import __version__, semantic
 from codedupes.analyzer import _statement_count_ratio
 from codedupes.constants import (
     DEFAULT_CHECK_SEMANTIC_TASK,
@@ -59,16 +58,12 @@ except ImportError:
 
 ARTIFACT_VERSION = 7
 CALIBRATION_BATCH_SIZE = 4
+RUNTIME_VERSION_KEYS = {"python", "torch", "transformers", "sentence-transformers"}
 DEFAULT_MEASUREMENTS = REPO / "scratch/calibration"
 # Bump whenever capture, extraction, scoring, replay, or their provenance
-# changes in a way that could change a measured artifact. Source-byte drift is
-# recorded separately as a diagnostic so behavior-preserving refactors do not
-# strand valid raw evidence.
+# changes in a way that could change a measured artifact. Package versions are
+# diagnostic provenance; documentation-only releases do not invalidate scores.
 MEASUREMENT_PIPELINE_VERSION = 2
-
-
-class MeasurementPipelineSourceWarning(RuntimeWarning):
-    """Warn that source bytes changed without changing the measurement contract."""
 
 
 def _identity_digest(identity: dict[str, Any]) -> str:
@@ -76,29 +71,6 @@ def _identity_digest(identity: dict[str, Any]) -> str:
     return hashlib.sha256(
         json.dumps(identity, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
-
-
-def _pipeline_source_fingerprint() -> str:
-    """Fingerprint implementation bytes for advisory raw-artifact diagnostics."""
-    pipeline_paths = [
-        Path(__file__),
-        REPO / "scripts/calibration_contract.py",
-        REPO / "src/codedupes/analyzer.py",
-        REPO / "src/codedupes/constants.py",
-        REPO / "src/codedupes/devices.py",
-        REPO / "src/codedupes/extractor.py",
-        REPO / "src/codedupes/models.py",
-        REPO / "src/codedupes/pairs.py",
-        REPO / "src/codedupes/semantic.py",
-        REPO / "src/codedupes/traditional.py",
-        *sorted((REPO / "src/codedupes/languages").glob("*.py")),
-    ]
-    return _identity_digest(
-        {
-            path.relative_to(REPO).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
-            for path in pipeline_paths
-        }
-    )
 
 
 def measurement_behavior_identity(project: Project, model: str) -> dict[str, Any]:
@@ -198,6 +170,48 @@ def artifact_path(root: Path, project: Project, model: str, device: str) -> Path
     """Return the raw measurement path for one project/model/device run."""
     key = resolve_model_profile(model).key
     return root / project.id / key / f"{device}.json"
+
+
+def validate_measurement_identity(project: Project, metadata: dict[str, Any]) -> None:
+    """Validate saved inputs using the capture's execution metadata, without live inference.
+
+    Replaying saved scores does not execute the model. The reader's Python,
+    accelerator availability, and inference libraries cannot change those scores.
+    The fingerprint still binds the recorded runtime and execution policy to the
+    current corpus and model inputs, so metadata edits cannot silently pass.
+
+    :param project: Calibration project whose inputs must still match.
+    :param metadata: Execution and input metadata recorded by capture.
+    :raises ValueError: If the recorded identity is invalid or stale.
+    """
+    runtime = metadata.get("runtime_versions")
+    if (
+        not isinstance(runtime, dict)
+        or set(runtime) != RUNTIME_VERSION_KEYS
+        or any(not isinstance(value, str) or not value for value in runtime.values())
+        or metadata.get("requested_device") not in {"cpu", "mps"}
+        or type(metadata.get("batch_size")) is not int
+        or metadata["batch_size"] <= 0
+        or metadata.get("inference_dtype") != "float32"
+        or metadata.get("math_policy") != "standard"
+    ):
+        raise ValueError(f"{project.id}: stale measurement or invalid execution metadata")
+    behavior = measurement_behavior_identity(project, metadata["model"])
+    identity = behavior["project"] | {
+        "device": metadata["requested_device"],
+        **{
+            key: metadata[key]
+            for key in ("batch_size", "inference_dtype", "math_policy", "runtime_versions")
+        },
+        **{
+            key: behavior[key]
+            for key in ("model", "revision", "family", "trust_remote_code", "tasks")
+        },
+    }
+    if metadata.get("measurement_pipeline_version") != MEASUREMENT_PIPELINE_VERSION or metadata.get(
+        "input_fingerprint"
+    ) != _identity_digest(identity):
+        raise ValueError(f"{project.id}: stale measurement")
 
 
 def _pair_scores(embeddings: np.ndarray) -> dict[tuple[int, int], float]:
@@ -394,7 +408,7 @@ def capture(
             "input_fingerprint": measurement_fingerprint(
                 project, profile.key, device, batch_size=batch_size
             ),
-            "pipeline_source_fingerprint": _pipeline_source_fingerprint(),
+            "codedupes_version": __version__,
             "captured_profile": {
                 "semantic_threshold": profile.semantic_threshold_for_language(
                     project.spec["languages"][0]
@@ -631,33 +645,7 @@ def load_measurement(
             )
         ):
             raise ValueError(f"measurement did not execute on {expected_device}: {path}")
-    source_fingerprint = metadata.get("pipeline_source_fingerprint")
-    if (
-        not isinstance(source_fingerprint, str)
-        or len(source_fingerprint) != 64
-        or any(character not in "0123456789abcdef" for character in source_fingerprint)
-    ):
-        raise ValueError(f"measurement has invalid pipeline source fingerprint: {path}")
     if project is not None:
-        identity = measurement_identity(
-            project,
-            metadata["model"],
-            metadata["requested_device"],
-            batch_size=metadata["batch_size"],
-        )
-        if (
-            metadata.get("measurement_pipeline_version") != identity["pipeline_version"]
-            or metadata.get("inference_dtype") != identity["inference_dtype"]
-            or metadata.get("math_policy") != identity["math_policy"]
-            or metadata.get("runtime_versions") != identity["runtime_versions"]
-            or metadata.get("input_fingerprint") != _identity_digest(identity)
-        ):
-            raise ValueError(f"stale measurement: {path}")
+        validate_measurement_identity(project, metadata)
         _validate_measurement_payload(measurement, project)
-    if source_fingerprint != _pipeline_source_fingerprint():
-        warnings.warn(
-            f"measurement pipeline source bytes differ from the capture: {path}",
-            MeasurementPipelineSourceWarning,
-            stacklevel=2,
-        )
     return measurement

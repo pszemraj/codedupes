@@ -143,7 +143,7 @@ The [unused-code heuristic](analysis-defaults.md#potentially-unused-defaults) ev
 
 ## Parser readiness
 
-Run `codedupes info --verbose` to inspect the required and installed package version of each of the six parser dialects (`python`, `c`, `rust`, `javascript`, `typescript`, `tsx`). Readiness checks construct a parser and run an empty parse, so a wrong-platform or ABI-broken wheel is reported before analysis.
+Run `codedupes info --verbose` to inspect the installed package version of each of the six parser dialects (`python`, `c`, `rust`, `javascript`, `typescript`, `tsx`). Readiness checks construct a parser and run an empty parse, so a wrong-platform or ABI-broken wheel is reported before analysis. Version requirements are declared in `pyproject.toml` and enforced during installation.
 
 ## Grammar upgrade procedure
 

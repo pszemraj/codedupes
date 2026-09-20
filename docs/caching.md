@@ -109,6 +109,8 @@ Cache inspection, eviction, and clearing continue past shards that disappear or 
 
 Keys cover the canonical model, revision, complete prepared input, encode route/prompt, pipeline schema, dtype variant, library versions, and remote-code trust setting. Old preprocessing schemas cannot reuse current vectors. Deriving keys does not require loading weights.
 
+Library versions select compatible cached vectors; they do not restrict which versions users may install beyond the requirements in `pyproject.toml`. The codedupes package version is not a cache key: a documentation-only release should not re-embed unchanged inputs.
+
 [Accelerator precision and fallback](accelerators.md#precision-and-metal-environment-variables) define which execution policies share an identity and when a corpus must restart.
 
 ### Filesystem permissions

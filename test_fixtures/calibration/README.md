@@ -19,5 +19,5 @@ The current corpus is development data and has no held-out split. Selection uses
 From the repository root, validate every contract, behavior suite, and entry point with:
 
 ```bash
-conda run --name inf python scripts/validate_calibration_corpus.py --run-behavior
+python scripts/validate_calibration_corpus.py --run-behavior
 ```

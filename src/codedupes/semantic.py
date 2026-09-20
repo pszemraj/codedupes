@@ -18,7 +18,6 @@ from pathlib import Path
 from typing import Any, Literal, TypeVar, cast
 
 import numpy as np
-from packaging.version import InvalidVersion, Version
 
 from codedupes.constants import (
     CPU_FALLBACK_MAX_BATCH_SIZE,
@@ -231,8 +230,6 @@ _local_model_manifest_memo: dict[str, _LocalModelManifestState] = {}
 # guards it here.
 _local_model_fingerprint_scope: dict[str, str | None] | None = None
 
-_TORCH_MIN_RELEASE = (2, 13)
-_TORCH_MAX_EXCLUSIVE_RELEASE = (3,)
 _PAIRWISE_SCAN_BLOCK_SIZE = 500
 
 EMBEDDINGGEMMA_QUERY_PREFIXES: dict[SemanticTask, str] = {
@@ -1766,29 +1763,6 @@ def get_semantic_runtime_versions() -> dict[str, str]:
     }
 
 
-def _validate_torch_runtime() -> None:
-    """Enforce the supported PyTorch range even when installer checks were bypassed."""
-    raw = _safe_package_version("torch")
-    if raw is None:
-        raise SemanticBackendError(
-            "Could not determine the installed PyTorch version. "
-            "Install a supported runtime with `pip install 'torch>=2.13,<3'`."
-        )
-
-    try:
-        parsed = Version(raw)
-    except InvalidVersion as exc:
-        raise SemanticBackendError(f"Could not parse torch version: {raw}") from exc
-
-    # Release tuples are compared instead of Version objects: Version ordering puts
-    # 2.13.0.dev1 and 2.13.0rc1 below 2.13, which would reject supported pre-releases.
-    if not (_TORCH_MIN_RELEASE <= parsed.release < _TORCH_MAX_EXCLUSIVE_RELEASE):
-        raise SemanticBackendError(
-            f"Incompatible torch version {raw}. codedupes semantic analysis requires "
-            ">=2.13,<3. Run: pip install 'torch>=2.13,<3'."
-        )
-
-
 def _is_known_semantic_backend_error(error: Exception) -> bool:
     """Return True when an exception is likely caused by semantic backend compatibility.
 
@@ -1862,12 +1836,10 @@ def _require_dependency(module_name: str, install_hint: str) -> None:
 
 
 def _check_semantic_dependencies() -> None:
-    """Validate required runtime dependencies before model loading."""
+    """Check importability; pyproject.toml defines dependency version requirements."""
     _require_dependency("sentence_transformers", "pip install codedupes")
     _require_dependency("transformers", "pip install codedupes")
     _require_dependency("torch", "pip install codedupes")
-
-    _validate_torch_runtime()
 
 
 def _resolve_semantic_device_request(
