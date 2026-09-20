@@ -969,12 +969,13 @@ def test_measurements_bind_capture_inputs_but_load_on_other_runtimes(tmp_path: P
     assert load_measurement(path, project)["metadata"]["input_fingerprint"] == fingerprint
 
 
-def test_measurement_fingerprint_includes_tokenizer_runtime(monkeypatch):
-    """Tokenizer releases can change vectors and therefore belong to raw evidence identity."""
+@pytest.mark.parametrize("changed_package", ["numpy", "tokenizers"])
+def test_measurement_fingerprint_includes_numeric_runtime(monkeypatch, changed_package):
+    """Numeric runtime releases can change vectors and raw score evidence."""
     project = load_projects(project_ids=["ledger"])[0]
     versions = {
         package: semantic._safe_package_version(package) or "missing"
-        for package in ("torch", "transformers", "tokenizers", "sentence-transformers")
+        for package in ("numpy", "torch", "transformers", "tokenizers", "sentence-transformers")
     }
     monkeypatch.setattr(semantic, "_safe_package_version", versions.get)
 
@@ -982,7 +983,7 @@ def test_measurement_fingerprint_includes_tokenizer_runtime(monkeypatch):
         calibration_measurements.RUNTIME_VERSION_KEYS
     )
     before = measurement_fingerprint(project, "gte-modernbert-base", "cpu")
-    versions["tokenizers"] = f"{versions['tokenizers']}+different"
+    versions[changed_package] = f"{versions[changed_package]}+different"
     after = measurement_fingerprint(project, "gte-modernbert-base", "cpu")
 
     assert after != before
@@ -1036,7 +1037,7 @@ def test_capture_disables_mps_operator_fallback_before_dtype_resolution(
     tmp_path: Path, monkeypatch
 ):
     project = load_projects(project_ids=["ledger"])[0]
-    monkeypatch.setenv("PYTORCH_ENABLE_MPS_FALLBACK", "0")
+    monkeypatch.delitem(sys.modules, "torch", raising=False)
     order = []
 
     def configure(device, *, mps_fallback):
@@ -1050,6 +1051,15 @@ def test_capture_disables_mps_operator_fallback_before_dtype_resolution(
     monkeypatch.setattr(semantic, "_resolve_model_dtype", resolve_dtype)
 
     with pytest.raises(RuntimeError, match="dtype probe reached"):
+        capture(project, "gte-modernbert-base", "mps", tmp_path)
+
+
+def test_capture_rejects_an_already_imported_mps_runtime(tmp_path: Path, monkeypatch):
+    project = load_projects(project_ids=["ledger"])[0]
+    monkeypatch.setenv("PYTORCH_ENABLE_MPS_FALLBACK", "0")
+    monkeypatch.setitem(sys.modules, "torch", object())
+
+    with pytest.raises(ValueError, match="fresh process"):
         capture(project, "gte-modernbert-base", "mps", tmp_path)
 
 

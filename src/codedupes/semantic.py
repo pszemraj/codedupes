@@ -1400,6 +1400,7 @@ def _embedding_runtime_fingerprint() -> str:
             f"transformers={_safe_package_version('transformers') or 'missing'}",
             f"tokenizers={_safe_package_version('tokenizers') or 'missing'}",
             f"torch={_safe_package_version('torch') or 'missing'}",
+            f"numpy={_safe_package_version('numpy') or 'missing'}",
         )
     ).encode()
     return hashlib.blake2b(payload, digest_size=10).hexdigest()
@@ -1756,6 +1757,7 @@ def get_semantic_runtime_versions() -> dict[str, str]:
     """
     return {
         "python": sys.version.split()[0],
+        "numpy": _safe_package_version("numpy") or "missing",
         "torch": _safe_package_version("torch") or "missing",
         "transformers": _safe_package_version("transformers") or "missing",
         "tokenizers": _safe_package_version("tokenizers") or "missing",

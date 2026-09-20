@@ -1792,6 +1792,7 @@ def test_cli_info_verbose_exit_zero(flag):
     result = runner.invoke(cli.cli, ["info", flag])
     assert result.exit_code == 0
     assert "codedupes" in result.output.lower()
+    assert "NumPy" in result.output
     assert "PyTorch" in result.output
     assert "Tokenizers" in result.output
     assert "╭" in result.output and "│" in result.output

@@ -95,6 +95,7 @@ def info_command(output_width: int, verbose: bool) -> None:
                 [
                     ("Python", runtime_versions["python"]),
                     ("Platform", platform.platform()),
+                    ("NumPy", runtime_versions["numpy"]),
                     ("PyTorch", runtime_versions["torch"]),
                     ("Transformers", runtime_versions["transformers"]),
                     ("Tokenizers", runtime_versions["tokenizers"]),

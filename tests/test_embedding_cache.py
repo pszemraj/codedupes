@@ -844,6 +844,19 @@ def test_runtime_upgrade_invalidates_whole_corpus_not_row_subset(tmp_path, monke
     assert len(model.encode_calls[-1]) == len(units)
 
 
+def test_numpy_upgrade_changes_embedding_runtime_fingerprint(monkeypatch):
+    versions = {
+        package: semantic._safe_package_version(package) or "missing"
+        for package in ("numpy", "torch", "transformers", "tokenizers", "sentence-transformers")
+    }
+    monkeypatch.setattr(semantic, "_safe_package_version", versions.get)
+
+    before = semantic._embedding_runtime_fingerprint()
+    versions["numpy"] = f"{versions['numpy']}+different"
+
+    assert semantic._embedding_runtime_fingerprint() != before
+
+
 def test_cache_variant_includes_encode_plan_identity():
     profile = semantic.resolve_model_profile("test-model")
     plain = semantic._cache_variant_for(

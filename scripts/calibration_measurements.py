@@ -57,11 +57,12 @@ except ImportError:
         write_json,
     )
 
-ARTIFACT_VERSION = 9
+ARTIFACT_VERSION = 10
 CALIBRATION_BATCH_SIZE = 4
 CALIBRATION_MPS_OPERATOR_FALLBACK = False
 RUNTIME_VERSION_KEYS = {
     "python",
+    "numpy",
     "torch",
     "transformers",
     "tokenizers",
@@ -71,7 +72,7 @@ DEFAULT_MEASUREMENTS = REPO / "scratch/calibration"
 # Bump whenever capture, extraction, scoring, replay, or their provenance
 # changes in a way that could change a measured artifact. Package versions are
 # diagnostic provenance; documentation-only releases do not invalidate scores.
-MEASUREMENT_PIPELINE_VERSION = 4
+MEASUREMENT_PIPELINE_VERSION = 5
 
 
 def _identity_digest(identity: dict[str, Any]) -> str:
@@ -282,11 +283,7 @@ def capture(
     math_policy = semantic._mps_fast_math_variant(device) or "standard"
     if math_policy != "standard":
         raise ValueError("disable PYTORCH_MPS_FAST_MATH while calibrating")
-    if (
-        device == "mps"
-        and "torch" in sys.modules
-        and os.environ.get("PYTORCH_ENABLE_MPS_FALLBACK") != "0"
-    ):
+    if device == "mps" and "torch" in sys.modules:
         raise ValueError(
             "calibration requires a fresh process so MPS operator fallback can be disabled "
             "before importing PyTorch"
