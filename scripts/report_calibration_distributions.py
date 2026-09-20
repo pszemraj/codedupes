@@ -6,7 +6,7 @@ import argparse
 import json
 from pathlib import Path
 
-from codedupes.semantic_profiles import list_supported_models, resolve_model_profile
+from codedupes.semantic_profiles import list_supported_models
 
 try:
     from .calibration_contract import (
@@ -17,12 +17,14 @@ try:
     )
     from .calibration_evaluation import (
         CHECKED_REPORT_SCHEMA_VERSION,
+        canonical_model_keys,
         compare_devices,
         development_projects,
         full_report,
         load_all,
         measurement_digests,
         selection_digest,
+        validate_checked_report,
         validate_hybrid_candidate_grids,
         validate_measurement_digests,
         validate_selection_context,
@@ -41,12 +43,14 @@ except ImportError:
     )
     from calibration_evaluation import (
         CHECKED_REPORT_SCHEMA_VERSION,
+        canonical_model_keys,
         compare_devices,
         development_projects,
         full_report,
         load_all,
         measurement_digests,
         selection_digest,
+        validate_checked_report,
         validate_hybrid_candidate_grids,
         validate_measurement_digests,
         validate_selection_context,
@@ -95,7 +99,13 @@ def main() -> int:
     )
     parser.add_argument("--json-out", type=Path)
     args = parser.parse_args()
-    args.models = [resolve_model_profile(model).key for model in args.models]
+    try:
+        args.models = canonical_model_keys(args.models)
+    except ValueError as exc:
+        parser.error(str(exc))
+    args.devices = list(dict.fromkeys(args.devices))
+    if set(args.devices) != {"cpu", "mps"}:
+        parser.error("checked reports require both --devices cpu mps")
     projects = load_projects(args.manifest, args.projects, args.policy)
     selection_projects = development_projects(projects)
     payload = {
@@ -187,6 +197,7 @@ def main() -> int:
         "torch": torch_versions.pop(),
         "scope": f"all checked {devices} reports",
     }
+    validate_checked_report(payload, projects, args.models)
     if args.json_out:
         write_json(args.json_out, payload)
     else:

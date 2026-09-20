@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 from pathlib import Path
 from statistics import median
 from typing import Any
@@ -21,9 +22,7 @@ try:
     from .calibration_evaluation import (
         SEARCH_SELECTION_WINDOW_RADIUS,
         SELECTION_SCHEMA_VERSION,
-        THRESHOLD_GRID_START,
-        THRESHOLD_GRID_STEP,
-        THRESHOLD_GRID_STOP,
+        canonical_model_keys,
         development_projects,
         judgments,
         load_all,
@@ -33,7 +32,9 @@ try:
         recall_preference,
         selection_context,
         selection_objective,
+        threshold_candidate_grids,
         validate_selection_contract,
+        validate_threshold_candidate_grids,
     )
     from .calibration_measurements import DEFAULT_MEASUREMENTS
 except ImportError:
@@ -46,9 +47,7 @@ except ImportError:
     from calibration_evaluation import (
         SEARCH_SELECTION_WINDOW_RADIUS,
         SELECTION_SCHEMA_VERSION,
-        THRESHOLD_GRID_START,
-        THRESHOLD_GRID_STEP,
-        THRESHOLD_GRID_STOP,
+        canonical_model_keys,
         development_projects,
         judgments,
         load_all,
@@ -58,15 +57,23 @@ except ImportError:
         recall_preference,
         selection_context,
         selection_objective,
+        threshold_candidate_grids,
         validate_selection_contract,
+        validate_threshold_candidate_grids,
     )
     from calibration_measurements import DEFAULT_MEASUREMENTS
 
 
 def threshold_grid(start: float, stop: float, step: float) -> list[float]:
     """Build an inclusive threshold grid."""
-    if not 0 <= start <= stop <= 1 or step <= 0:
-        raise ValueError("threshold grid must satisfy 0 <= start <= stop <= 1 and step > 0")
+    if (
+        not all(math.isfinite(value) for value in (start, stop, step))
+        or not 0 <= start <= stop <= 1
+        or step <= 0
+    ):
+        raise ValueError(
+            "threshold grid must use finite values satisfying 0 <= start <= stop <= 1 and step > 0"
+        )
     values = []
     value = start
     while value <= stop + 1e-12:
@@ -324,6 +331,8 @@ def validate_threshold_selection(
 ) -> None:
     """Reject threshold decisions not reproducible from their bound measurements."""
     validate_selection_contract(payload)
+    validate_threshold_candidate_grids(payload.get("grids"))
+    models = canonical_model_keys(models)
     expected = _selection_models(
         projects,
         models,
@@ -341,16 +350,16 @@ def main() -> int:
     add_contract_arguments(parser)
     parser.add_argument("--measurements", type=Path, default=DEFAULT_MEASUREMENTS)
     parser.add_argument("--models", nargs="+", default=[p.key for p in list_supported_models()])
-    parser.add_argument("--duplicate-start", type=float, default=THRESHOLD_GRID_START)
-    parser.add_argument("--duplicate-stop", type=float, default=THRESHOLD_GRID_STOP)
-    parser.add_argument("--search-start", type=float, default=THRESHOLD_GRID_START)
-    parser.add_argument("--search-stop", type=float, default=THRESHOLD_GRID_STOP)
-    parser.add_argument("--step", type=float, default=THRESHOLD_GRID_STEP)
     parser.add_argument("--json-out", type=Path)
     args = parser.parse_args()
+    try:
+        args.models = canonical_model_keys(args.models)
+    except ValueError as exc:
+        parser.error(str(exc))
     projects = development_projects(load_projects(args.manifest, args.projects, args.policy))
-    duplicate_grid = threshold_grid(args.duplicate_start, args.duplicate_stop, args.step)
-    search_grid = threshold_grid(args.search_start, args.search_stop, args.step)
+    grids = threshold_candidate_grids()
+    duplicate_grid = grids["duplicate"]
+    search_grid = grids["search"]
     payload: dict[str, Any] = {
         "schema_version": SELECTION_SCHEMA_VERSION,
         "objective": selection_objective(),

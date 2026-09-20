@@ -11,6 +11,7 @@ from scripts.calibration_evaluation import (
     F1_RECALL_TOLERANCE,
     SELECTION_SCHEMA_VERSION,
     hybrid_candidate_grids,
+    selection_digest,
     selection_objective,
 )
 
@@ -46,6 +47,16 @@ def _project_and_measurement(
         annotations={"pairs": annotations},
     )
     return project, {"metadata": {"model": "gte-modernbert-base"}, "units": units, "pairs": rows}
+
+
+def _audit_option(outcome_id: str, **values) -> dict:
+    """Build a mocked promotion option with exact outcome identity."""
+    signature = (("project", outcome_id, "pair"),)
+    return {
+        **values,
+        "outcome_digest": selection_digest(signature),
+        "_outcome_signature": signature,
+    }
 
 
 def test_joint_selection_can_trade_corroboration_for_promotion(monkeypatch: pytest.MonkeyPatch):
@@ -195,15 +206,16 @@ def test_joint_selection_deduplicates_runner_up_outcomes(monkeypatch: pytest.Mon
     def promotion_options(_projects, _measurements, _admissions, weak, _ratio):
         return {
             "python": (
-                {
-                    "high_gate": None,
-                    "tp": 2,
-                    "fp": 0,
-                    "fn": 1,
-                    "precision": 1.0,
-                    "ambiguous_predictions": int(weak == 0.8),
-                    "unjudged_predictions": 0,
-                },
+                _audit_option(
+                    "second" if weak == 0.8 else "first",
+                    high_gate=None,
+                    tp=2,
+                    fp=0,
+                    fn=1,
+                    precision=1.0,
+                    ambiguous_predictions=0,
+                    unjudged_predictions=0,
+                ),
             )
         }
 
@@ -218,7 +230,10 @@ def test_joint_selection_deduplicates_runner_up_outcomes(monkeypatch: pytest.Mon
     assert selected["weak_identifier_jaccard_min"] == 0.0
     assert audit["runner_up"] is not None
     assert audit["runner_up"]["weak_identifier_jaccard_min"] == 0.8
-    assert audit["runner_up"]["metrics"]["ambiguous_predictions"] == 1
+    assert (
+        audit["runner_up"]["per_language"][0]["outcome_digest"]
+        != audit["best_f1_candidate"]["per_language"][0]["outcome_digest"]
+    )
     assert audit["runner_up"]["metrics"]["f1"] == selected["f1"]
 
 
@@ -228,24 +243,26 @@ def test_joint_selection_filters_unsafe_rows_before_equal_f1_recall_tie(
     """An unsafe recall winner must not evict a precision-safe F1 tie."""
     monkeypatch.setattr(calibration_evaluation, "HYBRID_WEAK_GRID", (0.4,))
     monkeypatch.setattr(calibration_evaluation, "HYBRID_RATIO_GRID", (0.0,))
-    unsafe = {
-        "high_gate": 0.8,
-        "tp": 2,
-        "fp": 3,
-        "fn": 0,
-        "precision": 2 / 5,
-        "ambiguous_predictions": 0,
-        "unjudged_predictions": 0,
-    }
-    safe = {
-        "high_gate": None,
-        "tp": 2,
-        "fp": 1,
-        "fn": 2,
-        "precision": 2 / 3,
-        "ambiguous_predictions": 0,
-        "unjudged_predictions": 0,
-    }
+    unsafe = _audit_option(
+        "unsafe",
+        high_gate=0.8,
+        tp=2,
+        fp=3,
+        fn=0,
+        precision=2 / 5,
+        ambiguous_predictions=0,
+        unjudged_predictions=0,
+    )
+    safe = _audit_option(
+        "safe",
+        high_gate=None,
+        tp=2,
+        fp=1,
+        fn=2,
+        precision=2 / 3,
+        ambiguous_predictions=0,
+        unjudged_predictions=0,
+    )
     monkeypatch.setattr(
         sweep_hybrid_gates,
         "_promotion_options",
@@ -266,33 +283,36 @@ def test_joint_selection_requires_safe_precision_in_every_language(
     """A large language must not hide an unsafe promotion option in a small one."""
     monkeypatch.setattr(calibration_evaluation, "HYBRID_WEAK_GRID", (0.4,))
     monkeypatch.setattr(calibration_evaluation, "HYBRID_RATIO_GRID", (0.0,))
-    anchor = {
-        "high_gate": None,
-        "tp": 100,
-        "fp": 90,
-        "fn": 20,
-        "precision": 100 / 190,
-        "ambiguous_predictions": 0,
-        "unjudged_predictions": 0,
-    }
-    unsafe_small = {
-        "high_gate": 0.8,
-        "tp": 3,
-        "fp": 4,
-        "fn": 0,
-        "precision": 3 / 7,
-        "ambiguous_predictions": 0,
-        "unjudged_predictions": 0,
-    }
-    safe_small = {
-        "high_gate": None,
-        "tp": 1,
-        "fp": 0,
-        "fn": 2,
-        "precision": 1.0,
-        "ambiguous_predictions": 0,
-        "unjudged_predictions": 0,
-    }
+    anchor = _audit_option(
+        "anchor",
+        high_gate=None,
+        tp=100,
+        fp=90,
+        fn=20,
+        precision=100 / 190,
+        ambiguous_predictions=0,
+        unjudged_predictions=0,
+    )
+    unsafe_small = _audit_option(
+        "unsafe-small",
+        high_gate=0.8,
+        tp=3,
+        fp=4,
+        fn=0,
+        precision=3 / 7,
+        ambiguous_predictions=0,
+        unjudged_predictions=0,
+    )
+    safe_small = _audit_option(
+        "safe-small",
+        high_gate=None,
+        tp=1,
+        fp=0,
+        fn=2,
+        precision=1.0,
+        ambiguous_predictions=0,
+        unjudged_predictions=0,
+    )
     monkeypatch.setattr(
         sweep_hybrid_gates,
         "_promotion_options",

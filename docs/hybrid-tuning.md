@@ -85,7 +85,7 @@ conda run --name inf python scripts/sweep_hybrid_gates.py \
   --json-out scratch/calibration/hybrid-selection.json
 ```
 
-Duplicate admission, search, and hybrid visibility discard candidates below 50% judged precision, maximize judged F1, and prefer higher recall within `0.005` F1 of the optimum. Search preserves explicit no-result probes; duplicate admission excludes pairs already found by a traditional method. Hybrid selection applies the precision floor to every language and pooled result while jointly selecting corroboration and promotion gates. Selections bind an explicit algorithm version, objective, search depth, and candidate grids rather than source-file bytes. Formatting, comments, and model aliases therefore do not invalidate evidence; changing a recorded policy value does.
+Duplicate admission, search, and hybrid visibility discard candidates below 50% judged precision, maximize judged F1, and prefer higher recall within `0.005` F1 of the optimum. Search preserves explicit no-result probes; duplicate admission excludes pairs already found by a traditional method. Hybrid selection applies the precision floor to every language and pooled result while jointly selecting corroboration and promotion gates. Selections bind an explicit algorithm version, objective, search depth, and canonical candidate grids rather than source-file bytes. Formatting, comments, and model aliases therefore do not invalidate evidence; changing a recorded policy value does.
 
 Run the multi-domain search smoke test against the selected default:
 
@@ -93,9 +93,9 @@ Run the multi-domain search smoke test against the selected default:
 CODEDUPES_SMOKE_SEARCH=1 conda run --name inf pytest tests/test_semantic_smoke.py -k search
 ```
 
-Keep these queries unchanged. Each target must rank first without a score floor, emitted default hits must be relevant, and no-result queries must stay empty. The checked result records nearby duplicate and search rows plus the hybrid candidate grids, best-F1 candidate, final-order runner-up, and per-language precision evidence.
+Keep these queries unchanged. Each target must rank first without a score floor, emitted default hits must be relevant, and no-result queries must stay empty. The checked result records nearby duplicate and search rows plus the hybrid candidate grids, best-F1 candidate, final-order runner-up, per-language precision evidence, and digests of the exact predicted-pair outcomes so policies with equal aggregate counts remain distinguishable.
 
-The raw-backed report generator reproduces the complete hybrid sweep before it writes those compact audit rows. Without the ignored raw score matrices, the checked-only validator can verify their candidate grids, arithmetic, per-language safety, and ordering claims, but it cannot independently prove that no omitted candidate ranked higher.
+The raw-backed report generator reproduces the complete hybrid sweep before it writes those compact audit rows. Without the ignored raw score matrices, the checked-only validator can verify their candidate grids, arithmetic, per-language safety, ordering, and outcome-digest distinction, but it cannot independently prove that a digest names a particular raw prediction set or that no omitted candidate ranked higher.
 
 Apply accepted values in [the profile definitions](../src/codedupes/semantic_profiles.py) and [profile tables](model-profiles.md#built-in-profiles) as one change, then run `conda run --name inf pytest tests/test_semantic_profiles.py tests/test_calibration.py`. Rerun both selection commands above so the recorded metrics and policy identity match the shipped defaults. Capture fresh MPS results, then write the compact checked summary:
 

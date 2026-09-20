@@ -20,6 +20,7 @@ from scripts import (
     calibration_contract,
     calibration_evaluation,
     report_calibration_distributions,
+    sweep_hybrid_gates,
     sweep_semantic_thresholds,
 )
 from scripts.calibration_contract import (
@@ -54,6 +55,7 @@ from scripts.calibration_evaluation import (
     selection_objective,
     selection_policy_identity,
     support_files_digest,
+    threshold_candidate_grids,
     validate_checked_report,
     validate_measurement_digests,
     validate_measurement_provenance,
@@ -284,6 +286,34 @@ def test_behavior_requirement_probe_checks_c_compiler(monkeypatch, tmp_path):
     assert missing_behavior_requirements([project]) == ["missing-cc"]
 
 
+@pytest.mark.parametrize(
+    ("global_cc", "command_cc", "expected"),
+    [
+        ("present-global", "missing-command", ["missing-command"]),
+        ("missing-global", "present-command", []),
+    ],
+)
+def test_behavior_requirement_probe_uses_command_c_compiler(
+    monkeypatch, tmp_path, global_cc: str, command_cc: str, expected: list[str]
+):
+    project = SimpleNamespace(
+        spec={
+            "languages": ["c"],
+            "behavior_tests": [{"argv": ["make", "test"], "env": {"CC": f"{command_cc} --flag"}}],
+        }
+    )
+    monkeypatch.setenv("CC", global_cc)
+    monkeypatch.setattr(
+        calibration_contract.shutil,
+        "which",
+        lambda executable: (
+            None if executable.startswith("missing-") else str(tmp_path / executable)
+        ),
+    )
+
+    assert missing_behavior_requirements([project]) == expected
+
+
 def test_behavior_requirement_probe_checks_toolchain_variants(monkeypatch, tmp_path):
     projects = [
         SimpleNamespace(
@@ -474,9 +504,12 @@ def test_search_selection_requires_all_no_result_probes_to_stay_empty():
 def test_threshold_grid_includes_a_stop_between_steps():
     assert threshold_grid(0.70, 0.85, 0.10) == [0.70, 0.80, 0.85]
     assert threshold_grid(0.70, 0.70, 0.10) == [0.70]
+    for step in (float("nan"), float("inf")):
+        with pytest.raises(ValueError, match="finite values"):
+            threshold_grid(0.0, 1.0, step)
 
 
-def test_coarse_sweep_measures_shipped_thresholds_exactly(tmp_path: Path, monkeypatch):
+def test_canonical_sweep_measures_shipped_thresholds_exactly(tmp_path: Path, monkeypatch):
     project = SimpleNamespace(
         id="sample",
         spec={"languages": ["python"], "split": "development"},
@@ -504,7 +537,7 @@ def test_coarse_sweep_measures_shipped_thresholds_exactly(tmp_path: Path, monkey
     monkeypatch.setattr(
         sys,
         "argv",
-        ["sweep", "--models", "gte-modernbert-base", "--step", "0.3", "--json-out", str(output)],
+        ["sweep", "--models", "gte-modernbert-base", "--json-out", str(output)],
     )
     assert sweep_semantic_thresholds.main() == 0
     result = read_json(output)
@@ -512,21 +545,60 @@ def test_coarse_sweep_measures_shipped_thresholds_exactly(tmp_path: Path, monkey
     assert duplicate["current_threshold"] == duplicate["current_metrics"]["threshold"] == 0.87
     assert duplicate["current_metrics"]["tp"] == 1
     assert duplicate["current_difficulty_recall"]["easy"]["detected"] == 1
+    duplicate_index = result["grids"]["duplicate"].index(duplicate["selected_threshold"])
     assert [row["threshold"] for row in duplicate["selection_window"]] == result["grids"][
         "duplicate"
-    ]
+    ][max(0, duplicate_index - 5) : duplicate_index + 6]
     assert duplicate["selected_metrics"] in duplicate["selection_window"]
     search = result["models"][0]["search"]
     assert search["current_threshold"] == search["current_metrics"]["threshold"] == 0.68
     assert (search["current_metrics"]["tp"], search["current_metrics"]["fp"]) == (1, 0)
-    assert [row["threshold"] for row in search["selection_window"]] == result["grids"]["search"]
+    search_index = result["grids"]["search"].index(search["selected_threshold"])
+    assert [row["threshold"] for row in search["selection_window"]] == result["grids"]["search"][
+        max(0, search_index - 5) : search_index + 6
+    ]
     assert search["selected_metrics"] in search["selection_window"]
-    assert result["grids"]["search"] == [0.0, 0.3, 0.6, 0.9, 1.0]
+    assert result["grids"] == threshold_candidate_grids()
     measurements = {("sample", "gte-modernbert-base"): measurement}
     validate_threshold_selection(result, [project], ["gte-modernbert-base"], measurements)
+    custom_grid = deepcopy(result)
+    custom_grid["grids"]["duplicate"][1] = 0.005
+    with pytest.raises(ValueError, match="mismatched candidate grids"):
+        validate_threshold_selection(
+            custom_grid,
+            [project],
+            ["gte-modernbert-base"],
+            measurements,
+        )
     result["models"][0]["duplicate_by_language"][0]["selected_threshold"] = 0.0
     with pytest.raises(ValueError, match="does not match its raw measurements"):
         validate_threshold_selection(result, [project], ["gte-modernbert-base"], measurements)
+
+
+@pytest.mark.parametrize(
+    "entrypoint",
+    [
+        sweep_semantic_thresholds.main,
+        sweep_hybrid_gates.main,
+        report_calibration_distributions.main,
+    ],
+)
+def test_calibration_clis_reject_duplicate_canonical_model_aliases(monkeypatch, capsys, entrypoint):
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "calibration-command",
+            "--models",
+            "gte-modernbert-base",
+            "Alibaba-NLP/gte-modernbert-base",
+        ],
+    )
+
+    with pytest.raises(SystemExit, match="2"):
+        entrypoint()
+
+    assert "duplicate canonical profiles" in capsys.readouterr().err
 
 
 def test_replay_matches_production_tier_rules():
@@ -1031,6 +1103,7 @@ def test_selection_context_uses_structured_policy_identity(tmp_path: Path, monke
         "F1_RECALL_TOLERANCE",
         "SELECTION_ALGORITHM_VERSION",
         "DEFAULT_TOP_K",
+        "THRESHOLD_GRID_STEP",
         "HYBRID_WEAK_GRID",
     ],
 )
@@ -1041,8 +1114,9 @@ def test_selection_context_rejects_changed_policy_values(monkeypatch, field: str
     current = getattr(calibration_evaluation, field)
     replacement = {
         "F1_RECALL_TOLERANCE": 0.006,
-        "SELECTION_ALGORITHM_VERSION": 4,
+        "SELECTION_ALGORITHM_VERSION": 5,
         "DEFAULT_TOP_K": 11,
+        "THRESHOLD_GRID_STEP": 0.02,
         "HYBRID_WEAK_GRID": (0.0, 0.5),
     }[field]
     assert replacement != current
@@ -1157,20 +1231,39 @@ def test_report_rejects_selection_that_is_not_shipped():
         )
 
 
+def test_checked_report_writer_rejects_partial_device_sets(monkeypatch, capsys):
+    monkeypatch.setattr(sys, "argv", ["report", "--devices", "cpu"])
+    monkeypatch.setattr(
+        report_calibration_distributions,
+        "load_projects",
+        lambda *args: pytest.fail("partial device selection must fail before loading projects"),
+    )
+
+    with pytest.raises(SystemExit, match="2"):
+        report_calibration_distributions.main()
+
+    assert "require both --devices cpu mps" in capsys.readouterr().err
+
+
 @pytest.mark.parametrize("second_version", ["2.14.0", "2.13.0"])
 def test_report_writer_derives_measurement_runtime(tmp_path: Path, monkeypatch, second_version):
     checked = read_json(DEFAULT_MANIFEST.parent / "calibration-results.json")
     project = load_projects(project_ids=["ledger"])[0]
-    # Reuse recorded CPU reports to exercise serialization without model inference.
+    # Reuse recorded compact reports to exercise serialization without model inference.
     reports = {
-        (report["model"], "cpu"): report
+        (report["model"], report["device"]): report
         for report in checked["projects"][0]["reports"].values()
-        if report["device"] == "cpu"
     }
-    for report, version in zip(reports.values(), ["2.14.0", second_version], strict=True):
+    for index, report in enumerate(reports.values()):
+        version = "2.14.0" if index == 0 else second_version
         report["runtime_versions"] = {"torch": version}
     monkeypatch.setattr(report_calibration_distributions, "load_all", lambda *args: reports)
     monkeypatch.setattr(report_calibration_distributions, "full_report", lambda p, report: report)
+    monkeypatch.setattr(
+        report_calibration_distributions,
+        "compare_devices",
+        lambda *args: {},
+    )
     monkeypatch.setattr(
         report_calibration_distributions, "validate_measurement_digests", lambda *args: None
     )
@@ -1182,6 +1275,12 @@ def test_report_writer_derives_measurement_runtime(tmp_path: Path, monkeypatch, 
     )
     monkeypatch.setattr(report_calibration_distributions, "measurement_digests", lambda *args: {})
     monkeypatch.setattr(report_calibration_distributions, "load_projects", lambda *args: [project])
+    validated = []
+    monkeypatch.setattr(
+        report_calibration_distributions,
+        "validate_checked_report",
+        lambda payload, *args: validated.append(payload),
+    )
     threshold_path = tmp_path / "threshold-selection.json"
     hybrid_path = tmp_path / "hybrid-selection.json"
     output = tmp_path / "report.json"
@@ -1200,6 +1299,7 @@ def test_report_writer_derives_measurement_runtime(tmp_path: Path, monkeypatch, 
             "report_calibration_distributions.py",
             "--devices",
             "cpu",
+            "mps",
             "--threshold-selection",
             str(threshold_path),
             "--hybrid-selection",
@@ -1217,8 +1317,9 @@ def test_report_writer_derives_measurement_runtime(tmp_path: Path, monkeypatch, 
     result = read_json(output)
     assert result["measurement_runtime"] == {
         "torch": "2.14.0",
-        "scope": "all checked CPU reports",
+        "scope": "all checked CPU and MPS reports",
     }
+    assert validated == [result]
     assert result["projects"][0]["split"] == "development"
     assert all(
         report["runtime_versions"]["torch"] == result["measurement_runtime"]["torch"]
@@ -1371,6 +1472,7 @@ def test_checked_selection_metrics_ignore_evaluation_report_records():
         ("hybrid_audit_bool", "outside the candidate grid"),
         ("hybrid_audit_grid", "outside the candidate grid"),
         ("hybrid_audit_promotion_grid", "outside the candidate grid"),
+        ("hybrid_audit_digest", "inconsistent language evidence"),
         ("hybrid_audit_denominator", "positive-pair denominator"),
         ("hybrid_audit_order", "outranks the selected candidate"),
         ("hybrid_audit_repeated_outcome", "repeats the selected outcome"),
@@ -1433,6 +1535,10 @@ def test_checked_calibration_result_rejects_tampered_embedded_selections(tamper:
         ] = 0.39
     elif tamper == "hybrid_audit_promotion_grid":
         hybrid["models"][0]["selection_audit"]["best_f1_candidate"]["high_gates"]["c"] = 0.845
+    elif tamper == "hybrid_audit_digest":
+        hybrid["models"][0]["selection_audit"]["best_f1_candidate"]["per_language"][0][
+            "outcome_digest"
+        ] = "forged"
     elif tamper == "hybrid_audit_denominator":
         rows = hybrid["models"][0]["selection_audit"]["best_f1_candidate"]["per_language"]
         rows[0]["metrics"]["tp"] += 1
@@ -1467,6 +1573,7 @@ def test_checked_calibration_result_rejects_tampered_embedded_selections(tamper:
                 {
                     "language": item["language"],
                     "high_gate": item["selected_gate"],
+                    "outcome_digest": item["selected_outcome_digest"],
                     "metrics": deepcopy(item["selected_metrics"]),
                 }
                 for item in model["promotion_by_language"]

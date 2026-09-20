@@ -544,9 +544,10 @@ def missing_behavior_executables(projects: list[Project]) -> list[str]:
     return sorted(executable for executable in required if shutil.which(executable) is None)
 
 
-def _configured_c_compiler() -> str:
+def _configured_c_compiler(command_env: dict[str, str] | None = None) -> str:
     """Return the executable selected by the C fixture's ``CC ?= cc`` rule."""
-    command = os.environ.get("CC") or "cc"
+    command_env = command_env or {}
+    command = command_env.get("CC", os.environ.get("CC") or "cc")
     try:
         argv = shlex.split(command)
     except ValueError:
@@ -565,10 +566,15 @@ def missing_behavior_requirements(projects: list[Project]) -> list[str]:
     :return: Sorted unavailable executable names or capability labels.
     """
     missing = set(missing_behavior_executables(projects))
-    if any("c" in project.spec["languages"] for project in projects):
-        compiler = _configured_c_compiler()
-        if shutil.which(compiler) is None:
-            missing.add(compiler)
+    for project in projects:
+        if "c" not in project.spec["languages"]:
+            continue
+        for command in project.spec["behavior_tests"]:
+            if Path(command["argv"][0]).name not in {"make", "gmake"}:
+                continue
+            compiler = _configured_c_compiler(command.get("env"))
+            if shutil.which(compiler) is None:
+                missing.add(compiler)
 
     checked: set[str] = set()
     for project in projects:

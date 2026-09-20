@@ -22,6 +22,7 @@ try:
     from .calibration_evaluation import (
         MINIMUM_SELECTION_PRECISION,
         SELECTION_SCHEMA_VERSION,
+        canonical_model_keys,
         development_projects,
         hybrid_candidate_grids,
         judgments,
@@ -53,6 +54,7 @@ except ImportError:
     from calibration_evaluation import (
         MINIMUM_SELECTION_PRECISION,
         SELECTION_SCHEMA_VERSION,
+        canonical_model_keys,
         development_projects,
         hybrid_candidate_grids,
         judgments,
@@ -159,6 +161,19 @@ def _pooled_metrics(
     return metrics(predicted, labels)
 
 
+_JOINT_METRIC_FIELDS = (
+    "tp",
+    "fp",
+    "fn",
+    "precision",
+    "judged_only_precision",
+    "recall",
+    "f1",
+    "ambiguous_predictions",
+    "unjudged_predictions",
+)
+
+
 def _promotion_options(
     projects: list[Any],
     measurements: dict[str, dict[str, Any]],
@@ -168,9 +183,9 @@ def _promotion_options(
 ) -> dict[str, list[dict[str, Any]]]:
     """Return distinct promotion outcomes for every language at one corroboration setting.
 
-    Metric totals are sufficient for pooling because each project/language
-    namespace is disjoint. Keeping one representative gate for equal totals
-    makes the later Cartesian product small without changing its objective.
+    Each retained option carries the exact predicted-pair signature as private
+    sweep state. Aggregate metric totals determine the objective, but they are
+    not sufficient to distinguish policies that make different mistakes.
     """
     by_language: dict[str, list[Any]] = {}
     for project in projects:
@@ -183,7 +198,7 @@ def _promotion_options(
             for project in language_projects
             for key, value in _semantic_labels(project, measurements[project.id]).items()
         }
-        outcomes: dict[tuple[int, int, int, int], dict[str, Any]] = {}
+        outcomes: dict[tuple[tuple[str, str, str], ...], dict[str, Any]] = {}
         for high_gate in [
             None,
             *threshold_grid(
@@ -197,13 +212,13 @@ def _promotion_options(
                     measurements[project.id], admissions[language], weak, ratio, high_gate
                 )
             }
-            outcome = {"high_gate": high_gate, **metrics(predicted, labels)}
-            signature = (
-                outcome["tp"],
-                outcome["fp"],
-                outcome["ambiguous_predictions"],
-                outcome["unjudged_predictions"],
-            )
+            signature = tuple(sorted(predicted))
+            outcome = {
+                "high_gate": high_gate,
+                "outcome_digest": selection_digest(signature),
+                "_outcome_signature": signature,
+                **metrics(predicted, labels),
+            }
             previous = outcomes.get(signature)
             if previous is None or (high_gate is not None, high_gate or 0.0) < (
                 previous["high_gate"] is not None,
@@ -246,19 +261,6 @@ def _joint_tiebreak(row: dict[str, Any], languages: list[str]) -> tuple[Any, ...
     )
 
 
-_JOINT_METRIC_FIELDS = (
-    "tp",
-    "fp",
-    "fn",
-    "precision",
-    "judged_only_precision",
-    "recall",
-    "f1",
-    "ambiguous_predictions",
-    "unjudged_predictions",
-)
-
-
 def _compact_joint_candidate(
     row: dict[str, Any], options: dict[str, dict[str, Any]], languages: list[str]
 ) -> dict[str, Any]:
@@ -272,6 +274,7 @@ def _compact_joint_candidate(
             {
                 "language": language,
                 "high_gate": options[language]["high_gate"],
+                "outcome_digest": options[language]["outcome_digest"],
                 "metrics": _combined_metrics((options[language],)),
             }
             for language in languages
@@ -290,17 +293,9 @@ def _rank_joint_candidates(
 
 def _joint_outcome_signature(
     options: dict[str, dict[str, Any]], languages: list[str]
-) -> tuple[tuple[int, int, int, int], ...]:
+) -> tuple[tuple[tuple[str, str, str], ...], ...]:
     """Identify one joint prediction outcome independently of no-op policy variants."""
-    return tuple(
-        (
-            options[language]["tp"],
-            options[language]["fp"],
-            options[language]["ambiguous_predictions"],
-            options[language]["unjudged_predictions"],
-        )
-        for language in languages
-    )
+    return tuple(options[language]["_outcome_signature"] for language in languages)
 
 
 def _select_joint(
@@ -430,9 +425,8 @@ def _hybrid_models(
                     "language": language,
                     "current_gate": profile.high_confidence_threshold_for_language(language),
                     "selected_gate": option["high_gate"],
-                    "selected_metrics": {
-                        key: value for key, value in option.items() if key != "high_gate"
-                    },
+                    "selected_outcome_digest": option["outcome_digest"],
+                    "selected_metrics": {key: option[key] for key in _JOINT_METRIC_FIELDS},
                     "selection_ready": (
                         option["ambiguous_predictions"] == 0 and option["unjudged_predictions"] == 0
                     ),
@@ -496,6 +490,7 @@ def validate_hybrid_selection(
     validate_selection_contract(threshold_selection)
     validate_selection_contract(payload)
     validate_hybrid_candidate_grids(payload.get("candidate_grids"))
+    models = canonical_model_keys(models)
     expected = _hybrid_models(projects, models, measurements, _selection_map(threshold_selection))
     if payload.get("models") != expected:
         raise ValueError("hybrid selection does not match its threshold selection and raw data")
@@ -514,6 +509,10 @@ def main() -> int:
     parser.add_argument("--models", nargs="+", default=[p.key for p in list_supported_models()])
     parser.add_argument("--json-out", type=Path)
     args = parser.parse_args()
+    try:
+        args.models = canonical_model_keys(args.models)
+    except ValueError as exc:
+        parser.error(str(exc))
     projects = development_projects(load_projects(args.manifest, args.projects, args.policy))
     threshold_selection = read_json(args.threshold_selection)
     validate_selection_context(threshold_selection, projects, args.models)

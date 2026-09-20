@@ -57,9 +57,9 @@ F1_RECALL_TOLERANCE = 0.005
 MINIMUM_SELECTION_PRECISION = 0.5
 # Selection code is intentionally versioned by behavior rather than by source
 # bytes. Bump this whenever selection or audit behavior changes.
-SELECTION_ALGORITHM_VERSION = 3
-SELECTION_SCHEMA_VERSION = 5
-CHECKED_REPORT_SCHEMA_VERSION = 6
+SELECTION_ALGORITHM_VERSION = 4
+SELECTION_SCHEMA_VERSION = 6
+CHECKED_REPORT_SCHEMA_VERSION = 7
 SEARCH_SELECTION_WINDOW_RADIUS = 5
 THRESHOLD_GRID_START = 0.0
 THRESHOLD_GRID_STOP = 1.0
@@ -275,7 +275,7 @@ def _validate_search_selection_metrics(payload: Any, label: str) -> None:
         raise ValueError(f"{label} has inconsistent search metrics")
 
 
-def _validate_selection_grids(payload: Any) -> dict[str, list[float]]:
+def validate_threshold_candidate_grids(payload: Any) -> dict[str, list[float]]:
     """Validate the recorded duplicate/search candidate grids."""
     if not isinstance(payload, dict) or set(payload) != {"duplicate", "search"}:
         raise ValueError("threshold selection has invalid candidate grids")
@@ -496,6 +496,7 @@ def selection_policy_identity() -> dict[str, Any]:
         "algorithm_version": SELECTION_ALGORITHM_VERSION,
         "objective": selection_objective(),
         "search_top_k": DEFAULT_TOP_K,
+        "threshold_candidate_grids": threshold_candidate_grids(),
         "hybrid_candidate_grids": hybrid_candidate_grids(),
     }
 
@@ -664,8 +665,18 @@ def development_projects(projects: list[Project]) -> list[Project]:
     return selected
 
 
+def canonical_model_keys(models: list[str]) -> list[str]:
+    """Resolve model aliases once and reject duplicate canonical profiles."""
+    keys = [resolve_model_profile(model).key for model in models]
+    duplicates = sorted({key for key in keys if keys.count(key) > 1})
+    if duplicates:
+        raise ValueError(f"models resolve to duplicate canonical profiles: {duplicates}")
+    return keys
+
+
 def selection_context(projects: list[Project], models: list[str]) -> dict[str, Any]:
     """Bind selections to their policy, corpus scope, judgments, and measured inputs."""
+    models = canonical_model_keys(models)
     return {
         "batch_size": CALIBRATION_BATCH_SIZE,
         "selection_policy": selection_policy_identity(),
@@ -786,8 +797,11 @@ def _validate_joint_audit_candidate(
         field: 0 for field in ("tp", "fp", "fn", "ambiguous_predictions", "unjudged_predictions")
     }
     for language, item in language_rows.items():
-        if set(item) != {"language", "high_gate", "metrics"} or not _same_gate(
-            item["high_gate"], high_gates[language]
+        if (
+            set(item) != {"language", "high_gate", "outcome_digest", "metrics"}
+            or not isinstance(item["outcome_digest"], str)
+            or _SHA256_HEX.fullmatch(item["outcome_digest"]) is None
+            or not _same_gate(item["high_gate"], high_gates[language])
         ):
             raise ValueError(f"{label} has inconsistent language evidence")
         _validate_judgment_metrics(
@@ -825,18 +839,10 @@ def _joint_audit_tiebreak(payload: dict[str, Any], languages: set[str]) -> tuple
 
 def _joint_audit_outcome(
     per_language: list[dict[str, Any]], languages: set[str]
-) -> tuple[tuple[int, int, int, int], ...]:
-    """Identify a compact joint prediction outcome independently of its policy values."""
-    rows = {item["language"]: item["metrics"] for item in per_language}
-    return tuple(
-        (
-            rows[language]["tp"],
-            rows[language]["fp"],
-            rows[language]["ambiguous_predictions"],
-            rows[language]["unjudged_predictions"],
-        )
-        for language in sorted(languages)
-    )
+) -> tuple[str, ...]:
+    """Identify exact per-language predictions independently of policy values."""
+    rows = {item["language"]: item["outcome_digest"] for item in per_language}
+    return tuple(rows[language] for language in sorted(languages))
 
 
 def _validate_hybrid_selection_audit(
@@ -913,7 +919,10 @@ def _validate_hybrid_selection_audit(
         raise ValueError(f"{label} runner-up repeats the selected candidate")
     if _joint_audit_outcome(runner_up["per_language"], languages) == _joint_audit_outcome(
         [
-            {"language": item["language"], "metrics": item["selected_metrics"]}
+            {
+                "language": item["language"],
+                "outcome_digest": item["selected_outcome_digest"],
+            }
             for item in promotion_entries
         ],
         languages,
@@ -941,7 +950,7 @@ def validate_shipped_selection_profiles(
     validate_selection_contract(threshold_selection)
     validate_selection_contract(hybrid_selection)
     validate_hybrid_candidate_grids(hybrid_selection.get("candidate_grids"))
-    grids = _validate_selection_grids(threshold_selection.get("grids"))
+    grids = validate_threshold_candidate_grids(threshold_selection.get("grids"))
     expected_models = {resolve_model_profile(model).key for model in models}
     thresholds = _selection_models(threshold_selection, "threshold")
     hybrids = _selection_models(hybrid_selection, "hybrid")
@@ -1172,9 +1181,14 @@ def validate_shipped_selection_profiles(
                 "language",
                 "current_gate",
                 "selected_gate",
+                "selected_outcome_digest",
                 "selected_metrics",
                 "selection_ready",
-            } or not _same_gate(item.get("current_gate"), expected_promotion_gates[language]):
+            } or (
+                not isinstance(item.get("selected_outcome_digest"), str)
+                or _SHA256_HEX.fullmatch(item["selected_outcome_digest"]) is None
+                or not _same_gate(item.get("current_gate"), expected_promotion_gates[language])
+            ):
                 raise ValueError(f"{model}: hybrid promotion selection has an invalid schema")
             _validate_judgment_metrics(
                 item.get("selected_metrics"), f"{model} {language} promotion metrics"
