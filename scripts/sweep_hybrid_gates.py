@@ -262,7 +262,12 @@ def _combined_metrics(options: tuple[dict[str, Any], ...]) -> dict[str, Any]:
 
 
 def _joint_tiebreak(row: dict[str, Any], languages: list[str]) -> tuple[Any, ...]:
-    """Choose a stable, simple setting among exactly equal pooled outcomes."""
+    """Choose a stable setting among exactly equal pooled outcomes.
+
+    Lower corroboration floors win first. Co-varying per-language promotion
+    gates leave no total strictness order, so the checked audit retains a
+    distinct runner-up for the phase-two real-code density comparison.
+    """
     return (
         row["weak_identifier_jaccard_min"],
         row["statement_ratio_min"],

@@ -8,6 +8,8 @@ The checked [calibration result](../test_fixtures/calibration/calibration-result
 
 This result completes the development-corpus phase of Issue #20, not the issue. The remaining phase is a compact hand-reviewed real-code check in every supported language, followed by only the targeted corpus additions and recalibration that those checks justify. The current fixtures do not support ecosystem-level statistical claims or cross-language calibration.
 
+The metric tables below are rendered from the checked result by `conda run --name inf python scripts/render_calibration_tables.py`; a regression test keeps the published values synchronized with that artifact.
+
 ### Selected difficulty recall
 
 Duplicate recall at the selected per-language admission gates is shown as detected / labeled comparable positive pairs. A dash means the language has no labeled hard pair.
@@ -17,10 +19,10 @@ Duplicate recall at the selected per-language admission gates is shown as detect
 | Python | 3/5 | 3/10 | - | 4/5 | 8/10 | - |
 | Rust | 5/5 | 5/6 | 0/1 | 5/5 | 5/6 | 0/1 |
 | C | 4/5 | 8/14 | - | 5/5 | 13/14 | - |
-| JavaScript | 4/5 | 8/14 | - | 4/5 | 8/14 | - |
+| JavaScript | 5/5 | 8/14 | - | 4/5 | 8/14 | - |
 | TypeScript | 5/5 | 4/6 | 0/1 | 5/5 | 5/6 | 0/1 |
-| **Overall** | **21/25** | **28/50** | **0/2** | **23/25** | **39/50** | **0/2** |
-| **Recall** | **84.0%** | **56.0%** | **0.0%** | **92.0%** | **78.0%** | **0.0%** |
+| **Overall** | **22/25** | **28/50** | **0/2** | **23/25** | **39/50** | **0/2** |
+| **Recall** | **88.0%** | **56.0%** | **0.0%** | **92.0%** | **78.0%** | **0.0%** |
 
 Difficulty belongs to positive examples, so precision and F1 do not have a difficulty bucket.
 
@@ -30,12 +32,12 @@ The duplicate-admission rows include every comparable reviewed pair. The default
 
 | output | model | TP / FP / FN | precision | recall | F1 |
 | --- | --- | ---: | ---: | ---: | ---: |
-| duplicate admission | GTE | 49 / 5 / 28 | 90.7% | 63.6% | 74.8% |
+| duplicate admission | GTE | 50 / 7 / 27 | 87.7% | 64.9% | 74.6% |
 | duplicate admission | Gemma | 62 / 13 / 15 | 82.7% | 80.5% | 81.6% |
-| semantic-only default-visible | GTE | 49 / 1 / 28 | 98.0% | 63.6% | 77.2% |
+| semantic-only default-visible | GTE | 50 / 2 / 27 | 96.2% | 64.9% | 77.5% |
 | semantic-only default-visible | Gemma | 59 / 4 / 18 | 93.7% | 76.6% | 84.3% |
 | search | GTE | 72 / 20 / 22 | 78.3% | 76.6% | 77.4% |
-| search | Gemma | 69 / 32 / 25 | 68.3% | 73.4% | 70.8% |
+| search | Gemma | 72 / 38 / 22 | 65.5% | 76.6% | 70.6% |
 
 The checked JSON contains the exact ratios, per-language rows, candidate windows, hybrid alternatives, runtime metadata, timings, and device-drift evidence behind these rounded tables.
 
@@ -43,12 +45,12 @@ The checked JSON contains the exact ratios, per-language rows, candidate windows
 
 At commit `9508215`, both profiles were run uncached on live MPS over this repository's production and maintenance Python in `src/` and `scripts/`. Tests, calibration fixtures, local scratch data, generated distributions, and tool metadata were excluded. The scan found no exact, structurally similar, traditional-near, or hybrid-confirmed pair. Manual review of the leading semantic-only results found wrappers, caller/callee pairs, sibling operations, and parallel parser backends rather than code that should be consolidated.
 
-| profile | merge-base semantic admissions | phase-one semantic admissions | merge-base default-visible | phase-one default-visible |
+| profile | merge-base policy semantic admissions | policy at `9508215` semantic admissions | merge-base policy default-visible | policy at `9508215` default-visible |
 | --- | ---: | ---: | ---: | ---: |
 | GTE | 529 | 83 | 139 | 64 |
 | Gemma | 245 | 245 | 218 | 145 |
 
-The phase-one policy reduced noise, especially for GTE, but did not meet Issue #20's real-code precision bar. Similarity-only threshold increases did not cleanly separate fixture positives from related-but-distinct repository functions, while withholding every semantic-only candidate discarded useful recall.
+The intermediate policy at `9508215` reduced noise, especially for GTE, but did not meet Issue #20's real-code precision bar. These counts are a historical snapshot, not output from the final phase-one profiles: later source and policy changes make a direct comparison invalid. Similarity-only threshold increases did not cleanly separate fixture positives from related-but-distinct repository functions, while withholding every semantic-only candidate discarded useful recall.
 
 TODO (Issue #20, phase 2): Calibrate default-visible density on versioned, license-recorded real-code pools. Add one `negative_pool` per supported language (use this repository's `src/` and `scripts/` for Python; select independent pinned projects for C, Rust, JavaScript, and TypeScript), capture both built-in models on CPU and live MPS, record each policy's `semantic_high_confidence` pairs per 1,000 embedded units, and set an explicit per-language budget from the observed density-fixture-recall frontier. Pools are unlabeled rate evidence, not false-positive labels, and must not influence fixture precision, recall, or F1. Implement the manifest role, selection constraint, selection/report audit, profile update, and regression coverage as one atomic recalibration after that evidence exists.
 
@@ -87,7 +89,7 @@ conda run --name inf python scripts/sweep_hybrid_gates.py \
   --json-out scratch/calibration/hybrid-selection.json
 ```
 
-Duplicate admission, search, and hybrid visibility discard candidates below 50% judged precision, maximize judged F1, and prefer higher recall within `0.005` F1 of the optimum. Search preserves explicit no-result probes; duplicate admission excludes pairs already found by a traditional method. Hybrid selection applies the precision floor to every language and pooled result while jointly selecting corroboration and promotion gates. It keeps promotion disabled when that policy is fixture-equivalent to numeric gates; otherwise it emits the center of each fixture-equivalent numeric plateau rather than its permissive edge. Selections bind fixture source, unit and query inputs, model revisions and tasks, plus explicit policy and pipeline versions. Formatting and comments in the calibration implementation therefore do not invalidate evidence; changing fixture behavior, model inputs, runtime policy, or an explicit pipeline version does. Raw measurements retain an advisory implementation-byte fingerprint: drift warns reviewers to confirm that the pipeline version was handled correctly, but does not reject behavior-compatible score evidence.
+Duplicate admission, search, and hybrid visibility discard candidates below 50% judged precision, maximize judged F1, and prefer higher recall within `0.005` F1 of the optimum. Search preserves explicit no-result probes; duplicate admission excludes pairs already found by a traditional method. Hybrid selection applies the precision floor to every language and pooled result while jointly selecting corroboration and promotion gates. It keeps promotion disabled when that policy is fixture-equivalent to numeric gates; otherwise it emits the center of each fixture-equivalent numeric plateau rather than its permissive edge. Exact pooled ties prefer the lower identifier-overlap floor and retain a distinct `runner_up` in the checked audit; the phase-two density evaluation determines whether a fixture-equivalent alternative behaves better on real code. Selections bind fixture source, unit and query inputs, model revisions and tasks, plus explicit policy and pipeline versions. Formatting and comments in the calibration implementation therefore do not invalidate evidence; changing fixture behavior, model inputs, runtime policy, or an explicit pipeline version does. Raw measurements retain an advisory implementation-byte fingerprint: drift warns reviewers to confirm that the pipeline version was handled correctly, but does not reject behavior-compatible score evidence.
 
 Run the multi-domain search smoke test against the selected default:
 

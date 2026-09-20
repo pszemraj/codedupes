@@ -8,6 +8,12 @@ from click.testing import CliRunner
 
 from codedupes import cli
 from codedupes.models import AnalysisResult
+from scripts.calibration_contract import read_json
+from scripts.render_calibration_tables import (
+    DEFAULT_REPORT,
+    render_difficulty_table,
+    render_pooled_metrics_table,
+)
 from tests.conftest import patch_cli_analyzer
 
 
@@ -85,3 +91,14 @@ def test_readme_and_docs_codedupes_examples_are_parseable(monkeypatch, tmp_path:
             f"Unparseable command at {markdown_path.relative_to(repo_root)}:{line_number}: "
             f"codedupes {shlex.join(argv)}\n{result.output}"
         )
+
+
+def test_hybrid_tuning_tables_match_checked_calibration_result() -> None:
+    """Keep checked calibration metrics and their documentation synchronized."""
+    payload = read_json(DEFAULT_REPORT)
+    documentation = (DEFAULT_REPORT.parents[2] / "docs/hybrid-tuning.md").read_text(
+        encoding="utf-8"
+    )
+
+    assert render_difficulty_table(payload) in documentation
+    assert render_pooled_metrics_table(payload) in documentation
