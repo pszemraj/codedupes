@@ -478,7 +478,7 @@ class AnalyzerConfig:
     filter_tiny_traditional: bool = True
     tiny_unit_statement_cutoff: int = DEFAULT_TINY_UNIT_STATEMENT_CUTOFF
     embedding_cache: bool = True
-    strict_revision_cache: bool = False
+    strict_revision_cache: bool = True
     progress: ProgressMode = "auto"
     search_document: SearchDocumentMode = "source"
 
@@ -572,7 +572,7 @@ class AnalyzerConfig:
                 ("device", self.device != DEFAULT_SEMANTIC_DEVICE),
                 ("mps_fallback", self.mps_fallback is not None),
                 ("mps_memory_fraction", self.mps_memory_fraction is not None),
-                ("strict_revision_cache", self.strict_revision_cache),
+                ("strict_revision_cache", not self.strict_revision_cache),
                 ("batch_size", self.batch_size != DEFAULT_BATCH_SIZE),
                 ("suppress_test_semantic_matches", self.suppress_test_semantic_matches),
             ),

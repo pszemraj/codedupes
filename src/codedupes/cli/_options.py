@@ -176,6 +176,8 @@ def _display_option(name: str, params: dict[str, Any]) -> str:
     """
     if name in {"trust_remote_code", "mps_fallback"} and params[name] == (False,):
         return f"--no-{name.replace('_', '-')}"
+    if name == "strict_revision_cache" and params[name] is False:
+        return "--loose-revision-cache"
     return f"--{name.replace('_', '-')}"
 
 
@@ -612,12 +614,13 @@ def semantic_options() -> Callable[[F], F]:
             help="Override the model profile's remote-code trust setting",
         ),
         click.option(
-            "--strict-revision-cache",
-            is_flag=True,
+            "--strict-revision-cache/--loose-revision-cache",
+            default=True,
+            show_default=True,
             panel=Panel.SEMANTIC,
             help=(
-                "Key an unpinned hub model's cache revision to a resolved commit hash instead of "
-                "the requested revision label"
+                "Resolve unpinned Hub labels to cached commit hashes before reuse; loose mode "
+                "allows coherent but potentially stale warm hits"
             ),
         ),
         click.option(

@@ -1420,7 +1420,13 @@ def test_concurrent_republish_between_lookup_and_load_discards_stale_hits(tmp_pa
 
     monkeypatch.setattr(semantic, "get_model", fake_get_model)
 
-    compute_embeddings(units, model_name="drift-model", revision="main", cache_scope=tmp_path)
+    compute_embeddings(
+        units,
+        model_name="drift-model",
+        revision="main",
+        cache_scope=tmp_path,
+        strict_revision_cache=False,
+    )
     assert loads["count"] == 1
 
     # One local source change gives the next run a genuine miss beside warm hits.
@@ -1429,7 +1435,11 @@ def test_concurrent_republish_between_lookup_and_load_discards_stale_hits(tmp_pa
     mixed_units = [units[0], changed, units[2]]
 
     result = compute_embeddings(
-        mixed_units, model_name="drift-model", revision="main", cache_scope=tmp_path
+        mixed_units,
+        model_name="drift-model",
+        revision="main",
+        cache_scope=tmp_path,
+        strict_revision_cache=False,
     )
 
     # confirm_source_commit passes here (the current shard already says b), so
@@ -1444,7 +1454,13 @@ def test_concurrent_republish_between_lookup_and_load_discards_stale_hits(tmp_pa
     assert meta["source_commit"] == "b" * 40
 
     # The rebuilt shard is coherent: an identical rerun is fully warm, no load.
-    compute_embeddings(mixed_units, model_name="drift-model", revision="main", cache_scope=tmp_path)
+    compute_embeddings(
+        mixed_units,
+        model_name="drift-model",
+        revision="main",
+        cache_scope=tmp_path,
+        strict_revision_cache=False,
+    )
     assert loads["count"] == 2
 
 
@@ -1456,7 +1472,13 @@ def test_loose_branch_move_never_mixes_two_checkpoints(tmp_path, monkeypatch):
     _patch_get_model(monkeypatch, model)
     monkeypatch.setattr(semantic, "_get_loaded_model_commit_hash", lambda _model: "a" * 40)
 
-    compute_embeddings(units, model_name="drift-model", revision="main", cache_scope=tmp_path)
+    compute_embeddings(
+        units,
+        model_name="drift-model",
+        revision="main",
+        cache_scope=tmp_path,
+        strict_revision_cache=False,
+    )
     assert len(model.encode_calls) == 1
 
     # Upstream, "main" moves to checkpoint b; locally one source unit changes,
@@ -1467,7 +1489,11 @@ def test_loose_branch_move_never_mixes_two_checkpoints(tmp_path, monkeypatch):
     monkeypatch.setattr(semantic, "_get_loaded_model_commit_hash", lambda _model: "b" * 40)
 
     result = compute_embeddings(
-        mixed_units, model_name="drift-model", revision="main", cache_scope=tmp_path
+        mixed_units,
+        model_name="drift-model",
+        revision="main",
+        cache_scope=tmp_path,
+        strict_revision_cache=False,
     )
 
     # All three rows were re-embedded under checkpoint b - never one changed
@@ -1477,7 +1503,13 @@ def test_loose_branch_move_never_mixes_two_checkpoints(tmp_path, monkeypatch):
     assert result.shape == (3, model.dim)
 
     # The purged shard was rebuilt coherently: a repeat run is fully warm.
-    compute_embeddings(mixed_units, model_name="drift-model", revision="main", cache_scope=tmp_path)
+    compute_embeddings(
+        mixed_units,
+        model_name="drift-model",
+        revision="main",
+        cache_scope=tmp_path,
+        strict_revision_cache=False,
+    )
     assert len(model.encode_calls) == 2
 
 
@@ -1500,7 +1532,11 @@ def test_unreportable_mutable_revision_never_mixes_cached_and_fresh_rows(tmp_pat
     monkeypatch.setattr(semantic, "_get_loaded_model_commit_hash", lambda _model: None)
 
     first = compute_embeddings(
-        units, model_name="drift-model", revision="main", cache_scope=tmp_path
+        units,
+        model_name="drift-model",
+        revision="main",
+        cache_scope=tmp_path,
+        strict_revision_cache=False,
     )
     np.testing.assert_array_equal(first, np.tile([1.0, 0.0], (3, 1)))
 
@@ -1512,6 +1548,7 @@ def test_unreportable_mutable_revision_never_mixes_cached_and_fresh_rows(tmp_pat
         model_name="drift-model",
         revision="main",
         cache_scope=tmp_path,
+        strict_revision_cache=False,
     )
 
     np.testing.assert_array_equal(second, np.tile([0.0, 1.0], (3, 1)))
@@ -1526,7 +1563,11 @@ def test_loose_branch_move_purges_shard_and_aborts_search(tmp_path, monkeypatch)
     monkeypatch.setattr(semantic, "_get_loaded_model_commit_hash", lambda _model: "a" * 40)
 
     embeddings = compute_embeddings(
-        units, model_name="drift-model", revision="main", cache_scope=tmp_path
+        units,
+        model_name="drift-model",
+        revision="main",
+        cache_scope=tmp_path,
+        strict_revision_cache=False,
     )
 
     # The branch moves before the first uncached query: the query load
@@ -1541,10 +1582,17 @@ def test_loose_branch_move_purges_shard_and_aborts_search(tmp_path, monkeypatch)
             model_name="drift-model",
             revision="main",
             cache_scope=tmp_path,
+            strict_revision_cache=False,
         )
 
     # The purge emptied the shard, so reindexing re-embeds everything under b.
-    compute_embeddings(units, model_name="drift-model", revision="main", cache_scope=tmp_path)
+    compute_embeddings(
+        units,
+        model_name="drift-model",
+        revision="main",
+        cache_scope=tmp_path,
+        strict_revision_cache=False,
+    )
     assert len(model.encode_calls[-1]) == len(units)
 
 
@@ -1580,6 +1628,7 @@ def test_index_requires_query_checkpoint_before_encoding(
         device="cpu",
         min_semantic_statements=0,
         embedding_cache=corpus_cache != "disabled",
+        strict_revision_cache=False,
     )
     analyzer = CodeAnalyzer(config)
     with monkeypatch.context() as corpus_patch:
@@ -1639,6 +1688,7 @@ def test_query_provenance_namespace_only_invalidates_mutable_query_rows(
         revision=revision,
         device="cpu",
         cache_scope=tmp_path,
+        strict_revision_cache=False,
     )
     profile = semantic.resolve_model_profile("drift-model")
     query = "find addition"
@@ -1667,6 +1717,7 @@ def test_query_provenance_namespace_only_invalidates_mutable_query_rows(
         revision=revision,
         device="cpu",
         cache_scope=tmp_path,
+        strict_revision_cache=False,
     )
     np.testing.assert_array_equal(warm_embeddings, embeddings)
     assert warm_identity == identity
@@ -1679,6 +1730,7 @@ def test_query_provenance_namespace_only_invalidates_mutable_query_rows(
         revision=revision,
         device="cpu",
         cache_scope=tmp_path,
+        strict_revision_cache=False,
         corpus_identity=warm_identity,
         threshold=-1.0,
     )
@@ -1701,7 +1753,11 @@ def test_republished_shard_query_hit_never_reaches_stale_corpus(tmp_path, monkey
     monkeypatch.setattr(semantic, "_get_loaded_model_commit_hash", lambda _model: "a" * 40)
 
     embeddings, identity = compute_embeddings_with_identity(
-        units, model_name="drift-model", revision="main", cache_scope=tmp_path
+        units,
+        model_name="drift-model",
+        revision="main",
+        cache_scope=tmp_path,
+        strict_revision_cache=False,
     )
     assert identity.source_commit == "a" * 40
     find_similar_to_query(
@@ -1711,6 +1767,7 @@ def test_republished_shard_query_hit_never_reaches_stale_corpus(tmp_path, monkey
         model_name="drift-model",
         revision="main",
         cache_scope=tmp_path,
+        strict_revision_cache=False,
         corpus_identity=identity,
     )
 
@@ -1722,7 +1779,11 @@ def test_republished_shard_query_hit_never_reaches_stale_corpus(tmp_path, monkey
     canonical = semantic.resolve_model_profile("drift-model").canonical_name
     assert cache.confirm_source_commit(tmp_path, canonical, "main", "b" * 40) is False
     fresh_embeddings, fresh_identity = compute_embeddings_with_identity(
-        units, model_name="drift-model", revision="main", cache_scope=tmp_path
+        units,
+        model_name="drift-model",
+        revision="main",
+        cache_scope=tmp_path,
+        strict_revision_cache=False,
     )
     assert fresh_identity.source_commit == "b" * 40
     find_similar_to_query(
@@ -1732,6 +1793,7 @@ def test_republished_shard_query_hit_never_reaches_stale_corpus(tmp_path, monkey
         model_name="drift-model",
         revision="main",
         cache_scope=tmp_path,
+        strict_revision_cache=False,
         corpus_identity=fresh_identity,
     )
 
@@ -1747,6 +1809,7 @@ def test_republished_shard_query_hit_never_reaches_stale_corpus(tmp_path, monkey
             model_name="drift-model",
             revision="main",
             cache_scope=tmp_path,
+            strict_revision_cache=False,
             corpus_identity=identity,
         )
 
@@ -1759,7 +1822,13 @@ def test_loose_corpus_writes_stamp_the_loaded_commit(tmp_path, monkeypatch):
     _patch_get_model(monkeypatch, model)
     monkeypatch.setattr(semantic, "_get_loaded_model_commit_hash", lambda _model: "a" * 40)
 
-    compute_embeddings(units, model_name="drift-model", revision="main", cache_scope=tmp_path)
+    compute_embeddings(
+        units,
+        model_name="drift-model",
+        revision="main",
+        cache_scope=tmp_path,
+        strict_revision_cache=False,
+    )
 
     cache = embedding_cache.get_embedding_cache()
     assert cache is not None

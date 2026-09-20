@@ -2924,7 +2924,7 @@ def test_analyzer_config_rejects_device_controls_without_semantic_mode() -> None
         AnalyzerConfig(run_semantic=False, mps_memory_fraction=0.8)
 
     with pytest.raises(ValueError, match="strict_revision_cache.*require run_semantic=True"):
-        AnalyzerConfig(run_semantic=False, strict_revision_cache=True)
+        AnalyzerConfig(run_semantic=False, strict_revision_cache=False)
 
 
 @pytest.mark.parametrize(

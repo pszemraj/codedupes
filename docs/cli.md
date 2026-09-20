@@ -108,7 +108,7 @@ codedupes check ./src --instruction-prefix "Represent this code for duplicate de
 - `--model-revision <rev>`: Override the [profile's model revision](model-profiles.md#built-in-profiles)
 - `--trust-remote-code` / `--no-trust-remote-code`: Allow or disallow model remote code execution
 - `--instruction-prefix <text>`: Replace the model prompt for code/query embeddings (encode route is preserved)
-- `--strict-revision-cache`: Use [strict Hub revision resolution](caching.md#hub-revisions) for cache identity
+- `--strict-revision-cache` / `--loose-revision-cache`: Require concrete Hub revisions before cache reuse (default), or opt into potentially stale label-keyed warm hits
 
 ### Device
 
@@ -156,7 +156,7 @@ Clear all cached embeddings or only entries for one model. An empty or whitespac
 - `--no-unused` and `--strict-unused` are mutually exclusive
 - `--trust-remote-code` and `--no-trust-remote-code` are mutually exclusive
 - `--mps-fallback` and `--no-mps-fallback` are mutually exclusive
-- Explicit semantic-analysis controls are rejected with `--traditional-only`, including model/task, candidate-scope, device/runtime options, and `--strict-revision-cache`. `--no-cache` is accepted as a harmless no-op.
+- Explicit semantic-analysis controls are rejected with `--traditional-only`, including model/task, candidate-scope, device/runtime options, and either revision-cache policy flag. `--no-cache` is accepted as a harmless no-op.
 - Explicit traditional-analysis controls are rejected with `--semantic-only`: `--traditional-threshold`, `--no-tiny-filter`, and `--tiny-cutoff`
 
 To investigate a surprising combined result, compare `--traditional-only`, `--semantic-only`, and the default run. Add `--verbose` for model-loading, device-resolution, and fallback logs. See [semantic candidate rules](analysis-defaults.md#semantic-candidate-defaults) for candidate selection and long-input handling, and [Output and exit codes](output.md) for diagnostics and failure behavior.

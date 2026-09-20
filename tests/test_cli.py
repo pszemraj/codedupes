@@ -359,7 +359,15 @@ def test_cli_json_isolates_custom_family_warning_before_config(tmp_path, command
     args = [command, str(tmp_path)]
     if command == "search":
         args.append("entry")
-    result = _run_cli_subprocess([*args, "--model", "review/gte-modernbert-base", "--json"])
+    result = _run_cli_subprocess(
+        [
+            *args,
+            "--model",
+            "review/gte-modernbert-base",
+            "--loose-revision-cache",
+            "--json",
+        ]
+    )
 
     assert result.returncode == 0, result.stdout
     assert json.loads(result.stdout)["schema_version"] == 3
@@ -2892,6 +2900,7 @@ def test_cli_rejects_mps_memory_fraction_with_cpu_device(tmp_path):
         (["--no-mps-fallback"], "--no-mps-fallback"),
         (["--mps-memory-fraction", "0.8"], "--mps-memory-fraction"),
         (["--strict-revision-cache"], "--strict-revision-cache"),
+        (["--loose-revision-cache"], "--loose-revision-cache"),
     ],
 )
 def test_cli_rejects_device_controls_with_traditional_only(
@@ -2921,6 +2930,7 @@ def test_cli_rejects_device_controls_with_traditional_only(
     [
         ("--no-cache", "embedding_cache", False),
         ("--strict-revision-cache", "strict_revision_cache", True),
+        ("--loose-revision-cache", "strict_revision_cache", False),
     ],
 )
 def test_cli_cache_flags_plumb_to_config(
@@ -2989,7 +2999,7 @@ def test_cli_check_defaults_to_embedding_cache_enabled(monkeypatch, tmp_path):
     assert captured[0].embedding_cache is True
 
 
-def test_cli_defaults_to_loose_revision_cache(monkeypatch, tmp_path):
+def test_cli_defaults_to_strict_revision_cache(monkeypatch, tmp_path):
     path = tmp_path / "sample.py"
     path.write_text("def entry():\n    return 1\n")
 
@@ -3004,7 +3014,7 @@ def test_cli_defaults_to_loose_revision_cache(monkeypatch, tmp_path):
     result = runner.invoke(cli.cli, ["check", str(path)])
 
     assert result.exit_code == 1
-    assert captured[0].strict_revision_cache is False
+    assert captured[0].strict_revision_cache is True
 
 
 @pytest.mark.parametrize("command", ["check", "search"])
@@ -3013,6 +3023,7 @@ def test_cli_help_documents_strict_revision_cache_flag(command):
 
     assert result.exit_code == 0
     assert "--strict-revision-cache" in result.output
+    assert "loose" in result.output and "stale warm hits" in result.output
 
 
 def test_cli_cache_info_reports_empty_cache():

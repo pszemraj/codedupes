@@ -1071,7 +1071,7 @@ def _resolve_revision_for_cache(
     model_name: str,
     explicit_revision: str | None,
     *,
-    strict: bool = False,
+    strict: bool = True,
 ) -> str | None:
     """Resolve a revision usable as a cache key component, without loading the model.
 
@@ -1080,16 +1080,15 @@ def _resolve_revision_for_cache(
     content fingerprint of the directory (an explicit revision is ignored for
     them because nothing pins on-disk weights) regardless of ``strict``.
 
-    The default (loose, ``strict=False``) policy keys an unpinned hub revision
+    The opt-in loose (``strict=False``) policy keys an unpinned hub revision
     by the requested LABEL itself - the explicit ``--model-revision`` value,
     or ``"main"`` when none was given - without ever resolving it to a
     concrete commit or disabling persistent caching. An upstream branch move
     (even a metadata-only commit) never invalidates the cache under this
     policy; the cost is that a real weight change behind a moving branch is
-    not tracked, so run ``codedupes cache clear --model`` or pass
-    ``strict=True`` when that matters.
+    not tracked, so this mode requires an explicit correctness trade-off.
 
-    ``strict=True`` restores the pre-loose policy: an unpinned hub model
+    The default ``strict=True`` policy resolves an unpinned hub model by
     falls back to reading the locally cached HuggingFace commit hash so cache
     keys stay stable across runs even before the model is loaded, and returns
     ``None`` (disabling persistent caching for the run) when a branch or tag
@@ -1100,7 +1099,7 @@ def _resolve_revision_for_cache(
     :param explicit_revision: Optional explicit revision override.
     :param strict: Whether to resolve an unpinned hub revision to a concrete
         commit hash (and disable caching when that mapping fails) instead of
-        keying by the requested revision label, defaults to ``False``.
+        keying by the requested revision label, defaults to ``True``.
     :return: Concrete revision string, revision label, or (strict mode only)
         ``None`` when it cannot be resolved offline.
     """
@@ -1150,7 +1149,7 @@ def _confirm_cache_revision_after_load(
     model_name: str,
     resolved_revision: str | None,
     *,
-    strict: bool = False,
+    strict: bool = True,
 ) -> str | None:
     """Resolve a vector-safe cache revision after loading an embedding model.
 
@@ -1160,14 +1159,14 @@ def _confirm_cache_revision_after_load(
     — and retain stale hits — under a fingerprint the loaded weights no
     longer match.
 
-    For hub models, the default (loose, ``strict=False``) policy never
+    For hub models, the opt-in loose (``strict=False``) policy never
     reconciles against what the backend actually loaded: an explicit or
     profile-pinned full commit hash keys as-is (unchanged either way);
     otherwise the pre-load revision label (or ``"main"``) is trusted as-is,
     mirroring :func:`_resolve_revision_for_cache` exactly so the two can never
     disagree and force a spurious rekey.
 
-    ``strict=True`` restores the pre-loose policy: it requires either the
+    The default ``strict=True`` policy requires either the
     loaded config's concrete commit hash or an explicitly pinned full commit
     hash, returning ``None`` (disabling persistent reuse for this run) when a
     symbolic branch/tag is unsafe because the backend cannot report what it
@@ -1178,7 +1177,7 @@ def _confirm_cache_revision_after_load(
     :param resolved_revision: Revision passed to the model loader.
     :param strict: Whether to require post-load commit-hash confirmation for
         hub models instead of trusting the pre-load revision label, defaults
-        to ``False``.
+        to ``True``.
     :return: Safe cache revision, or (strict mode only) ``None`` when
         persistent reuse must be disabled.
     """
@@ -1613,7 +1612,7 @@ def resolve_embedding_space_identity(
     device: str = DEFAULT_SEMANTIC_DEVICE,
     mps_fallback: bool | None = None,
     persist_local_model_manifest: bool = True,
-    strict_revision_cache: bool = False,
+    strict_revision_cache: bool = True,
 ) -> EmbeddingSpaceIdentity:
     """Resolve the vector-space identity for code corpus embeddings.
 
@@ -1628,7 +1627,7 @@ def resolve_embedding_space_identity(
         read from and saved to the persistent cache manifest.
     :param strict_revision_cache: Whether an unpinned hub revision resolves to a
         concrete commit hash (disabling caching when unmappable) instead of the
-        requested revision label, defaults to ``False``.
+        requested revision label, defaults to ``True``.
     :return: Canonical model, concrete revision/fingerprint, and runtime variant.
     """
     # Same contract as compute_embeddings_with_identity: configure
@@ -1675,7 +1674,7 @@ def _require_current_embedding_space(
     device: str,
     mps_fallback: bool | None,
     persist_local_model_manifest: bool,
-    strict_revision_cache: bool = False,
+    strict_revision_cache: bool = True,
 ) -> str:
     """Require the configured corpus vector space to match its stored identity.
 
@@ -2571,7 +2570,7 @@ def _prepare_cache_context(
     trust_remote_code: bool,
     use_cache: bool,
     cache_scope: Path | None,
-    strict_revision_cache: bool = False,
+    strict_revision_cache: bool = True,
     variant_suffix: str = "",
 ) -> tuple[EmbeddingCache | None, str | None, str, str]:
     """Resolve the shared embedding-cache addressing context for one encode call.
@@ -2861,7 +2860,7 @@ def _compute_embeddings_unlocked(
     mps_memory_fraction: float | None = None,
     use_cache: bool = True,
     cache_scope: Path | None = None,
-    strict_revision_cache: bool = False,
+    strict_revision_cache: bool = True,
     progress: ProgressMode = "auto",
     stats: EmbeddingRunStats | None = None,
     diagnostics: list[ExtractionDiagnostic] | None = None,
@@ -3391,7 +3390,7 @@ def compute_embeddings_with_identity(
     mps_memory_fraction: float | None = None,
     use_cache: bool = True,
     cache_scope: Path | None = None,
-    strict_revision_cache: bool = False,
+    strict_revision_cache: bool = True,
     progress: ProgressMode = "auto",
     stats: EmbeddingRunStats | None = None,
     diagnostics: list[ExtractionDiagnostic] | None = None,
@@ -3474,7 +3473,7 @@ def compute_embeddings(
     mps_memory_fraction: float | None = None,
     use_cache: bool = True,
     cache_scope: Path | None = None,
-    strict_revision_cache: bool = False,
+    strict_revision_cache: bool = True,
     progress: ProgressMode = "auto",
     stats: EmbeddingRunStats | None = None,
     diagnostics: list[ExtractionDiagnostic] | None = None,
@@ -3787,7 +3786,7 @@ def _find_similar_to_query_unlocked(
     use_cache: bool = True,
     cache_scope: Path | None = None,
     corpus_identity: EmbeddingSpaceIdentity | None = None,
-    strict_revision_cache: bool = False,
+    strict_revision_cache: bool = True,
     threshold_profile: ThresholdProfile = "auto",
     execution: list[QueryExecution] | None = None,
 ) -> list[tuple[CodeUnit, float]]:
@@ -4253,7 +4252,7 @@ def find_similar_to_query(
     use_cache: bool = True,
     cache_scope: Path | None = None,
     corpus_identity: EmbeddingSpaceIdentity | None = None,
-    strict_revision_cache: bool = False,
+    strict_revision_cache: bool = True,
     threshold_profile: ThresholdProfile = "auto",
     execution: list[QueryExecution] | None = None,
 ) -> list[tuple[CodeUnit, float]]:
@@ -4340,7 +4339,7 @@ def run_semantic_analysis_with_identity(
     mps_memory_fraction: float | None = None,
     use_cache: bool = True,
     cache_scope: Path | None = None,
-    strict_revision_cache: bool = False,
+    strict_revision_cache: bool = True,
     cross_language: bool = False,
     language_thresholds: Mapping[str, float] | None = None,
     progress: ProgressMode = "auto",
@@ -4435,7 +4434,7 @@ def run_semantic_analysis(
     mps_memory_fraction: float | None = None,
     use_cache: bool = True,
     cache_scope: Path | None = None,
-    strict_revision_cache: bool = False,
+    strict_revision_cache: bool = True,
     cross_language: bool = False,
     language_thresholds: Mapping[str, float] | None = None,
     progress: ProgressMode = "auto",

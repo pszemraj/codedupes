@@ -16,7 +16,7 @@
 - The exact-duplicate `method` label `ast_hash` is now `structural_hash` in `DuplicatePair.method`, the `--show-all` JSON edge lists, and the CLI table; it names the `CodeUnit.structural_hash` fingerprint every language shares.
 - The Python-only `parse-error` diagnostic was replaced by the [shared codes](polyglot-languages.md#source-ranges-and-parse-recovery): a syntax error now yields `partial-parse` plus `unit-parse-error` for the broken unit while intact units are still extracted, and a non-UTF-8 file yields `invalid-utf8` and is analyzed after lossy decoding instead of being skipped.
 - Search-only Python callers should use `AnalyzerConfig(mode="search")`; see the [search configuration](python-api.md#semantic-query-search). `analyze()` rejects that mode, while `index()` and `search()` support it.
-- The default [Hub revision policy](caching.md#hub-revisions) now uses labels; `--strict-revision-cache` retains the previous policy.
+- Unpinned Hub models use concrete locally resolved commits for cache identity by default. `--loose-revision-cache` opts into label-keyed warm hits that may remain stale after an upstream branch move.
 - Runtime dependency minimums changed; use the [installation requirements](install.md). The C2LLM profile and DeepSpeed-only `gpu` extra were removed. Replace `semantic_profiles.resolve_model_name()` with `resolve_model_profile(...).canonical_name`.
 - Source archives without VCS metadata build as `0.0.0+unknown`; tagged Git builds retain VCS-derived versions. Source distributions use an explicit file allowlist.
 

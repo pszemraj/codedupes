@@ -159,7 +159,7 @@ In `AnalyzerConfig(mode="search")`, `semantic_threshold` is any finite search fl
 
 Direct `compute_embeddings()` and `compute_embeddings_with_identity()` calls require one `document_texts` entry per input unit when supplied. Mismatched lengths raise `ValueError` before revision resolution, cache lookup, or model loading, including for an empty corpus.
 
-Each `index()` or `analyze()` call replaces the analyzer's corpus-specific state before extraction. `search()` therefore targets only the most recent run and requires it to have semantic embeddings. A later empty or nonsemantic analysis cannot reuse an older corpus accidentally. The analyzer binds the matrix to its model, revision, and vector-affecting runtime configuration. If any of those changes before a query, `search()` requires a fresh `index()`/`analyze()`. Set `AnalyzerConfig(strict_revision_cache=True)` for [strict revision resolution](caching.md#what-invalidates-what).
+Each `index()` or `analyze()` call replaces the analyzer's corpus-specific state before extraction. `search()` therefore targets only the most recent run and requires it to have semantic embeddings. A later empty or nonsemantic analysis cannot reuse an older corpus accidentally. The analyzer binds the matrix to its model, revision, and vector-affecting runtime configuration. If any of those changes before a query, `search()` requires a fresh `index()`/`analyze()`. Strict [Hub revision resolution](caching.md#hub-revisions) is the default; set `AnalyzerConfig(strict_revision_cache=False)` only to opt into label-keyed warm hits.
 
 ## Progress and embedding telemetry
 

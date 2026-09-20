@@ -2063,6 +2063,7 @@ def test_unreportable_mutable_provenance_bypasses_the_query_cache(
         model_name="test-model",
         revision=revision,
         cache_scope=tmp_path,
+        strict_revision_cache=False,
     )
     assert identity.source_commit is None
 
@@ -2074,6 +2075,7 @@ def test_unreportable_mutable_provenance_bypasses_the_query_cache(
             model_name="test-model",
             revision=revision,
             cache_scope=tmp_path,
+            strict_revision_cache=False,
             corpus_identity=identity,
             threshold=0.0,
         )
@@ -3101,18 +3103,18 @@ def test_resolve_embedding_space_identity_detects_disk_changes_across_separate_c
     assert before.resolved_revision != after.resolved_revision
 
 
-# --- T7: loose-by-default cache revision keying, strict opt-in -------------
+# --- T7: strict-by-default cache revision keying, loose opt-in -------------
 
 
-def test_resolve_revision_for_cache_loose_default_labels_unpinned_model(monkeypatch) -> None:
+def test_resolve_revision_for_cache_loose_opt_in_labels_unpinned_model(monkeypatch) -> None:
     def _fail_if_called(*_args, **_kwargs):
         raise AssertionError("loose mode must never consult the offline hub-cache lookup")
 
     monkeypatch.setattr(semantic, "_resolve_hf_cached_revision", _fail_if_called)
 
-    assert semantic._resolve_revision_for_cache("some-generic-model", None) == "main"
+    assert semantic._resolve_revision_for_cache("some-generic-model", None, strict=False) == "main"
     assert (
-        semantic._resolve_revision_for_cache("some-generic-model", "feature-branch")
+        semantic._resolve_revision_for_cache("some-generic-model", "feature-branch", strict=False)
         == "feature-branch"
     )
 
@@ -3146,29 +3148,33 @@ def test_resolve_revision_for_cache_strict_resolves_commit_and_disables_on_unmap
         is None
     )
     assert (
-        semantic._resolve_revision_for_cache("some-generic-model", "feature-branch")
+        semantic._resolve_revision_for_cache("some-generic-model", "feature-branch", strict=False)
         == "feature-branch"
     )
 
 
-def test_confirm_cache_revision_after_load_loose_default_trusts_pre_load_label() -> None:
+def test_confirm_cache_revision_after_load_loose_opt_in_trusts_pre_load_label() -> None:
     # Loose mode never inspects the model at all: an arbitrary object without
     # the introspection surface _get_loaded_model_commit_hash expects proves
     # that no post-load reconciliation happens.
     sentinel_model = object()
 
     assert (
-        semantic._confirm_cache_revision_after_load(sentinel_model, "some-generic-model", "main")
+        semantic._confirm_cache_revision_after_load(
+            sentinel_model, "some-generic-model", "main", strict=False
+        )
         == "main"
     )
     assert (
-        semantic._confirm_cache_revision_after_load(sentinel_model, "some-generic-model", None)
+        semantic._confirm_cache_revision_after_load(
+            sentinel_model, "some-generic-model", None, strict=False
+        )
         == "main"
     )
     commit_hash = "b" * 40
     assert (
         semantic._confirm_cache_revision_after_load(
-            sentinel_model, "some-generic-model", commit_hash
+            sentinel_model, "some-generic-model", commit_hash, strict=False
         )
         == commit_hash
     )
@@ -3194,7 +3200,7 @@ def test_confirm_cache_revision_after_load_strict_requires_loaded_commit(monkeyp
     )
 
 
-def test_loose_default_cache_survives_simulated_branch_move(tmp_path: Path, monkeypatch) -> None:
+def test_loose_opt_in_cache_survives_simulated_branch_move(tmp_path: Path, monkeypatch) -> None:
     """A warm loose-mode cache must not invalidate when an upstream ref moves.
 
     Uses an unpinned (generic-profile) model name so the default request
@@ -3214,19 +3220,27 @@ def test_loose_default_cache_survives_simulated_branch_move(tmp_path: Path, monk
     monkeypatch.setattr(semantic, "_resolve_hf_cached_revision", _fail_if_called)
 
     first = compute_embeddings(
-        units, model_name="some-generic-model", device="cpu", cache_scope=tmp_path
+        units,
+        model_name="some-generic-model",
+        device="cpu",
+        cache_scope=tmp_path,
+        strict_revision_cache=False,
     )
     assert model.encode_calls == 1
 
     second = compute_embeddings(
-        units, model_name="some-generic-model", device="cpu", cache_scope=tmp_path
+        units,
+        model_name="some-generic-model",
+        device="cpu",
+        cache_scope=tmp_path,
+        strict_revision_cache=False,
     )
 
     assert model.encode_calls == 1
     np.testing.assert_array_equal(first, second)
 
 
-def test_strict_revision_cache_reencodes_after_simulated_branch_move(
+def test_default_revision_cache_reencodes_after_simulated_branch_move(
     tmp_path: Path, monkeypatch
 ) -> None:
     """A moved branch changes the resolved commit hash, invalidating a strict-mode warm cache.
@@ -3255,7 +3269,6 @@ def test_strict_revision_cache_reencodes_after_simulated_branch_move(
         model_name="some-generic-model",
         device="cpu",
         cache_scope=tmp_path,
-        strict_revision_cache=True,
     )
     assert model.encode_calls == 1
 
@@ -3265,7 +3278,6 @@ def test_strict_revision_cache_reencodes_after_simulated_branch_move(
         model_name="some-generic-model",
         device="cpu",
         cache_scope=tmp_path,
-        strict_revision_cache=True,
     )
     assert model.encode_calls == 1
 
@@ -3278,14 +3290,13 @@ def test_strict_revision_cache_reencodes_after_simulated_branch_move(
         model_name="some-generic-model",
         device="cpu",
         cache_scope=tmp_path,
-        strict_revision_cache=True,
     )
 
     assert model.encode_calls == 2
     assert loaded_revisions == [commit_a, commit_b]
 
 
-def test_strict_revision_cache_disables_caching_for_unmappable_symbolic_ref(
+def test_default_revision_cache_disables_caching_for_unmappable_symbolic_ref(
     tmp_path: Path, monkeypatch
 ) -> None:
     units = extract_arithmetic_units(tmp_path)
@@ -3301,7 +3312,6 @@ def test_strict_revision_cache_disables_caching_for_unmappable_symbolic_ref(
             revision="unmappable-branch",
             device="cpu",
             cache_scope=tmp_path,
-            strict_revision_cache=True,
         )
 
     assert model.encode_calls == 2

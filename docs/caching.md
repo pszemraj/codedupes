@@ -44,11 +44,11 @@ Query vectors share the corpus shard. Each novel query write rewrites that shard
 
 ### Hub revisions
 
-Built-in profiles and explicit full-commit `--model-revision` values use immutable revision keys. Unpinned Hub models default to the requested branch/tag label, or `main`, without an offline revision lookup before a warm hit.
+Built-in profiles and explicit full-commit `--model-revision` values use immutable revision keys. By default, unpinned Hub models resolve a requested branch/tag (or `main`) through the local Hugging Face cache before a warm hit and use that concrete commit for cache identity and model loading. If the label cannot be resolved offline, persistent reuse is disabled for that run.
 
 A label-keyed shard records the source commit with its vector generation. When a miss loads the model, codedupes compares the loaded commit with both the current shard and the snapshot that supplied earlier hits. Drift invalidates those hits and rebuilds the corpus. Writers reject batches with missing provenance or whose commit became stale during encoding. A backend that cannot report its commit recomputes the complete corpus and bypasses both corpus and query caching.
 
-Fully warm label-keyed runs can keep serving a coherent set of older vectors after a branch moves. Clear that model's cache after a known upstream change to refresh it immediately. `--strict-revision-cache` instead resolves the label through the local Hugging Face cache before reuse and uses that concrete commit for model loading. If the label cannot be resolved offline, persistent reuse is disabled. Built-in pins and local directories are unaffected.
+`--loose-revision-cache` opts into label-keyed shards. A fully warm loose run can keep serving a coherent set of older vectors after a branch moves, so use it only when avoiding invalidation matters more than automatically following a locally updated Hub ref. On a miss, the source-commit guards still prevent vectors from different checkpoints from mixing. Built-in pins and local directories are unaffected.
 
 An indexed corpus retains its source commit even without persistent storage. Query vectors must match that checkpoint, whether cached or freshly encoded; a different or unreportable checkpoint requires reindexing. This also applies when another process replaces the shard after indexing. See the [search state contract](python-api.md#semantic-query-search).
 
