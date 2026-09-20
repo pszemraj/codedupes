@@ -20,6 +20,7 @@ from codedupes.traditional import find_exact_pair_keys, jaccard_similarity
 from scripts import (
     calibration_contract,
     calibration_evaluation,
+    calibration_measurements,
     report_calibration_distributions,
     sweep_hybrid_gates,
     sweep_semantic_thresholds,
@@ -65,6 +66,7 @@ from scripts.calibration_evaluation import (
 )
 from scripts.calibration_measurements import (
     ARTIFACT_VERSION,
+    MeasurementPipelineSourceWarning,
     capture,
     load_measurement,
     measurement_fingerprint,
@@ -130,6 +132,8 @@ def _empty_measurement(project, model: str = "gte-modernbert-base") -> dict:
             },
             "live_default": [],
             "input_fingerprint": measurement_fingerprint(project, model, "cpu"),
+            "measurement_pipeline_version": calibration_measurements.MEASUREMENT_PIPELINE_VERSION,
+            "pipeline_source_fingerprint": calibration_measurements._pipeline_source_fingerprint(),
         },
         "units": [
             {
@@ -878,6 +882,44 @@ def test_calibration_identity_and_capture_reject_mps_fast_math(tmp_path: Path, m
         capture(project, "gte-modernbert-base", "mps", tmp_path)
 
 
+@pytest.mark.parametrize("mutation", ["batch", "dtype", "pipeline_version"])
+def test_measurements_reject_behavior_identity_mismatches(
+    tmp_path: Path, monkeypatch, mutation: str
+):
+    project = load_projects(project_ids=["ledger"])[0]
+    measurement = _empty_measurement(project)
+    path = tmp_path / "measurement.json"
+
+    if mutation == "batch":
+        assert (
+            measurement_fingerprint(project, "gte-modernbert-base", "cpu", batch_size=5)
+            != measurement["metadata"]["input_fingerprint"]
+        )
+        measurement["metadata"]["batch_size"] = 5
+    elif mutation == "dtype":
+        measurement["metadata"]["inference_dtype"] = "float16"
+    else:
+        monkeypatch.setattr(
+            calibration_measurements,
+            "MEASUREMENT_PIPELINE_VERSION",
+            calibration_measurements.MEASUREMENT_PIPELINE_VERSION + 1,
+        )
+
+    write_json(path, measurement)
+    with pytest.raises(ValueError, match="stale measurement"):
+        load_measurement(path, project)
+
+
+def test_measurements_warn_but_load_when_pipeline_source_bytes_drift(tmp_path: Path, monkeypatch):
+    project = load_projects(project_ids=["ledger"])[0]
+    path = tmp_path / "measurement.json"
+    write_json(path, _empty_measurement(project))
+    monkeypatch.setattr(calibration_measurements, "_pipeline_source_fingerprint", lambda: "0" * 64)
+
+    with pytest.warns(MeasurementPipelineSourceWarning, match="source bytes differ"):
+        assert load_measurement(path, project)["metadata"]["project"] == project.id
+
+
 @pytest.mark.parametrize("mutation", ["missing_pair", "duplicate_query", "bad_rank"])
 def test_measurements_reject_incomplete_or_duplicate_score_matrices(tmp_path: Path, mutation: str):
     project = load_projects(project_ids=["ledger"])[0]
@@ -950,6 +992,16 @@ def test_derived_selections_bind_exact_raw_scores():
     with pytest.raises(ValueError, match="different raw measurements"):
         validate_measurement_digests(payload, [measurement])
     assert measurement_digest(measurement)
+
+
+def test_derived_selections_ignore_advisory_pipeline_source_fingerprint():
+    project = load_projects(project_ids=["ledger"])[0]
+    measurement = _empty_measurement(project)
+    original = measurement_digest(measurement)
+
+    measurement["metadata"]["pipeline_source_fingerprint"] = "0" * 64
+
+    assert measurement_digest(measurement) == original
 
 
 @pytest.mark.parametrize("field", ["execution", "live_default", "timing_seconds"])

@@ -15,8 +15,6 @@ import numpy as np
 
 from codedupes import semantic
 from codedupes.constants import (
-    DEFAULT_CHECK_SEMANTIC_TASK,
-    DEFAULT_SEARCH_SEMANTIC_TASK,
     DEFAULT_TOP_K,
     DEFAULT_TRADITIONAL_THRESHOLD,
 )
@@ -29,7 +27,6 @@ try:
         analyzer_config,
         extract_project,
         pair_key,
-        relative_file,
         resolve_annotations,
         unit_ids,
         validate_project,
@@ -39,6 +36,7 @@ try:
         CALIBRATION_BATCH_SIZE,
         artifact_path,
         load_measurement,
+        measurement_behavior_identity,
     )
 except ImportError:
     from calibration_contract import (
@@ -47,7 +45,6 @@ except ImportError:
         analyzer_config,
         extract_project,
         pair_key,
-        relative_file,
         resolve_annotations,
         unit_ids,
         validate_project,
@@ -57,6 +54,7 @@ except ImportError:
         CALIBRATION_BATCH_SIZE,
         artifact_path,
         load_measurement,
+        measurement_behavior_identity,
     )
 
 
@@ -67,11 +65,6 @@ MINIMUM_SELECTION_PRECISION = 0.5
 SELECTION_ALGORITHM_VERSION = 4
 SELECTION_SCHEMA_VERSION = 7
 CHECKED_REPORT_SCHEMA_VERSION = 8
-# Bump when calibration measurement behavior changes. Do not substitute the
-# exact hatch-vcs package version: it changes on comment-only commits and its
-# generated module is intentionally refreshed only by install/build. Raw local
-# artifacts additionally retain their stricter source-byte fingerprint.
-MEASUREMENT_PIPELINE_VERSION = 1
 SEARCH_SELECTION_WINDOW_RADIUS = 5
 THRESHOLD_GRID_START = 0.0
 THRESHOLD_GRID_STOP = 1.0
@@ -556,53 +549,17 @@ def support_files_digest(project: Project) -> str:
     return selection_digest(files)
 
 
-def _project_measurement_behavior(project: Project) -> dict[str, Any]:
-    """Describe fixture inputs without hashing implementation source files."""
-    source_units, _ = extract_project(project)
-    source_paths = {unit.file_path.resolve() for unit in source_units} | {
-        relative_file(project.root, unit["selector"]["path"]).resolve()
-        for unit in project.annotations["units"]
-    }
-    return {
-        "pipeline_version": MEASUREMENT_PIPELINE_VERSION,
-        "embedding_pipeline_schema": semantic.EMBEDDING_PIPELINE_SCHEMA,
-        "search_document": "source",
-        "traditional_threshold": DEFAULT_TRADITIONAL_THRESHOLD,
-        "source": {
-            path.relative_to(project.root).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
-            for path in sorted(source_paths)
-        },
-        "units": {unit["id"]: unit["selector"] for unit in project.annotations["units"]},
-        "queries": {probe["id"]: probe["query"] for probe in project.annotations["probes"]},
-        "policy": project.policy,
-    }
-
-
-def _model_measurement_behavior(project_behavior: dict[str, Any], model: str) -> str:
-    """Fingerprint checked measurement inputs for one canonical model."""
-    profile = resolve_model_profile(model)
-    return selection_digest(
-        {
-            "project": project_behavior,
-            "model": profile.canonical_name,
-            "revision": profile.default_revision,
-            "family": profile.family,
-            "trust_remote_code": profile.default_trust_remote_code,
-            "tasks": [DEFAULT_CHECK_SEMANTIC_TASK, DEFAULT_SEARCH_SEMANTIC_TASK],
-        }
-    )
-
-
 def _selection_project_context(project: Project, models: list[str]) -> dict[str, Any]:
     """Build one project's checked selection identity."""
-    behavior = _project_measurement_behavior(project)
     return {
         "annotations": selection_digest(project.annotations),
         "project": selection_digest(project.spec),
         "policy": project.policy_name,
         "support_files": support_files_digest(project),
         "measurement_behavior": {
-            resolve_model_profile(model).key: _model_measurement_behavior(behavior, model)
+            resolve_model_profile(model).key: selection_digest(
+                measurement_behavior_identity(project, model)
+            )
             for model in models
         },
     }
@@ -626,7 +583,7 @@ def _validate_checked_project_once(project: Project, project_context: dict[str, 
 
 
 def measurement_digest(measurement: dict[str, Any]) -> str:
-    """Bind derived selections to the score payload and its inference provenance."""
+    """Bind derived selections to scores and behavior identity, not source-byte diagnostics."""
     metadata = measurement["metadata"]
     return selection_digest(
         {

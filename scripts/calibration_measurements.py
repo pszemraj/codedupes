@@ -7,6 +7,7 @@ import json
 import math
 import os
 import time
+import warnings
 from dataclasses import asdict
 from itertools import combinations, pairwise
 from pathlib import Path
@@ -16,7 +17,11 @@ import numpy as np
 
 from codedupes import semantic
 from codedupes.analyzer import _statement_count_ratio
-from codedupes.constants import DEFAULT_CHECK_SEMANTIC_TASK, DEFAULT_SEARCH_SEMANTIC_TASK
+from codedupes.constants import (
+    DEFAULT_CHECK_SEMANTIC_TASK,
+    DEFAULT_SEARCH_SEMANTIC_TASK,
+    DEFAULT_TRADITIONAL_THRESHOLD,
+)
 from codedupes.pairs import ordered_pair_key
 from codedupes.semantic_profiles import resolve_model_profile
 from codedupes.traditional import find_exact_pair_keys, jaccard_similarity
@@ -52,32 +57,29 @@ except ImportError:
         write_json,
     )
 
-ARTIFACT_VERSION = 5
+ARTIFACT_VERSION = 6
 CALIBRATION_BATCH_SIZE = 4
 DEFAULT_MEASUREMENTS = REPO / "scratch/calibration"
+# Bump whenever capture, extraction, scoring, replay, or their provenance
+# changes in a way that could change a measured artifact. Source-byte drift is
+# recorded separately as a diagnostic so behavior-preserving refactors do not
+# strand valid raw evidence.
+MEASUREMENT_PIPELINE_VERSION = 1
 
 
-def measurement_fingerprint(project: Project, model: str, device: str) -> str:
-    """Fingerprint source, unit identities, model policy, and the measurement pipeline.
+class MeasurementPipelineSourceWarning(RuntimeWarning):
+    """Warn that source bytes changed without changing the measurement contract."""
 
-    :param project: Calibration project whose source and queries are measured.
-    :param model: Built-in semantic model key or alias.
-    :param device: Calibration reference device, either ``cpu`` or ``mps``.
-    :return: Stable SHA-256 identity for one raw measurement input.
-    :raises ValueError: If ``device`` is outside the calibration device set.
-    """
-    if device not in {"cpu", "mps"}:
-        raise ValueError("calibration fingerprint device must be cpu or mps")
-    profile = resolve_model_profile(model)
-    source_units, _ = extract_project(project)
-    source_paths = {unit.file_path for unit in source_units} | {
-        relative_file(project.root, unit["selector"]["path"])
-        for unit in project.annotations["units"]
-    }
-    source_files = {
-        path.relative_to(project.root).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
-        for path in sorted(source_paths)
-    }
+
+def _identity_digest(identity: dict[str, Any]) -> str:
+    """Return a deterministic SHA-256 digest for one identity mapping."""
+    return hashlib.sha256(
+        json.dumps(identity, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
+def _pipeline_source_fingerprint() -> str:
+    """Fingerprint implementation bytes for advisory raw-artifact diagnostics."""
     pipeline_paths = [
         Path(__file__),
         REPO / "scripts/calibration_contract.py",
@@ -91,27 +93,105 @@ def measurement_fingerprint(project: Project, model: str, device: str) -> str:
         REPO / "src/codedupes/traditional.py",
         *sorted((REPO / "src/codedupes/languages").glob("*.py")),
     ]
-    identity = {
-        "source": source_files,
-        "units": {unit["id"]: unit["selector"] for unit in project.annotations["units"]},
-        "queries": {probe["id"]: probe["query"] for probe in project.annotations["probes"]},
-        "policy": project.policy,
+    return _identity_digest(
+        {
+            path.relative_to(REPO).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+            for path in pipeline_paths
+        }
+    )
+
+
+def measurement_behavior_identity(project: Project, model: str) -> dict[str, Any]:
+    """Describe project and model inputs shared by raw and checked measurement evidence.
+
+    :param project: Calibration project whose source and queries are measured.
+    :param model: Built-in semantic model key or alias.
+    :return: Structured behavior identity independent of a measurement host.
+    """
+    profile = resolve_model_profile(model)
+    source_units, _ = extract_project(project)
+    source_paths = {unit.file_path.resolve() for unit in source_units} | {
+        relative_file(project.root, unit["selector"]["path"]).resolve()
+        for unit in project.annotations["units"]
+    }
+    source_files = {
+        path.relative_to(project.root).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in sorted(source_paths)
+    }
+    return {
+        "project": {
+            "pipeline_version": MEASUREMENT_PIPELINE_VERSION,
+            "embedding_pipeline_schema": semantic.EMBEDDING_PIPELINE_SCHEMA,
+            "search_document": "source",
+            "traditional_threshold": DEFAULT_TRADITIONAL_THRESHOLD,
+            "source": source_files,
+            "units": {unit["id"]: unit["selector"] for unit in project.annotations["units"]},
+            "queries": {probe["id"]: probe["query"] for probe in project.annotations["probes"]},
+            "policy": project.policy,
+        },
         "model": profile.canonical_name,
-        "device": device,
-        "math_policy": semantic._mps_fast_math_variant(device) or "standard",
         "revision": profile.default_revision,
         "family": profile.family,
         "trust_remote_code": profile.default_trust_remote_code,
         "tasks": [DEFAULT_CHECK_SEMANTIC_TASK, DEFAULT_SEARCH_SEMANTIC_TASK],
+    }
+
+
+def measurement_identity(
+    project: Project,
+    model: str,
+    device: str,
+    *,
+    batch_size: int = CALIBRATION_BATCH_SIZE,
+) -> dict[str, Any]:
+    """Describe every behavior-affecting input to one raw measurement.
+
+    :param project: Calibration project whose source and queries are measured.
+    :param model: Built-in semantic model key or alias.
+    :param device: Calibration reference device, either ``cpu`` or ``mps``.
+    :param batch_size: Inference batch size used for the uncached measurement.
+    :return: Structured measurement identity suitable for stable hashing.
+    :raises ValueError: If the device or batch size is invalid.
+    """
+    if device not in {"cpu", "mps"}:
+        raise ValueError("calibration fingerprint device must be cpu or mps")
+    if type(batch_size) is not int or batch_size <= 0:
+        raise ValueError("calibration fingerprint batch size must be a positive integer")
+    behavior = measurement_behavior_identity(project, model)
+    math_policy = semantic._mps_fast_math_variant(device) or "standard"
+    inference_dtype = str(semantic._resolve_model_dtype(behavior["family"], device)).removeprefix(
+        "torch."
+    )
+    return behavior["project"] | {
+        "device": device,
+        "batch_size": batch_size,
+        "inference_dtype": inference_dtype,
+        "math_policy": math_policy,
         "runtime_versions": semantic.get_semantic_runtime_versions(),
-        "pipeline": {
-            path.relative_to(REPO).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
-            for path in pipeline_paths
+        **{
+            key: behavior[key]
+            for key in ("model", "revision", "family", "trust_remote_code", "tasks")
         },
     }
-    return hashlib.sha256(
-        json.dumps(identity, sort_keys=True, separators=(",", ":")).encode()
-    ).hexdigest()
+
+
+def measurement_fingerprint(
+    project: Project,
+    model: str,
+    device: str,
+    *,
+    batch_size: int = CALIBRATION_BATCH_SIZE,
+) -> str:
+    """Fingerprint behavior-affecting inputs to one raw measurement.
+
+    :param project: Calibration project whose source and queries are measured.
+    :param model: Built-in semantic model key or alias.
+    :param device: Calibration reference device, either ``cpu`` or ``mps``.
+    :param batch_size: Inference batch size used for the uncached measurement.
+    :return: Stable SHA-256 identity for one raw measurement input.
+    :raises ValueError: If the device or batch size is invalid.
+    """
+    return _identity_digest(measurement_identity(project, model, device, batch_size=batch_size))
 
 
 def artifact_path(root: Path, project: Project, model: str, device: str) -> Path:
@@ -288,7 +368,11 @@ def capture(
             "inference_dtype": inference_dtype,
             "math_policy": math_policy,
             "runtime_versions": semantic.get_semantic_runtime_versions(),
-            "input_fingerprint": measurement_fingerprint(project, profile.key, device),
+            "measurement_pipeline_version": MEASUREMENT_PIPELINE_VERSION,
+            "input_fingerprint": measurement_fingerprint(
+                project, profile.key, device, batch_size=batch_size
+            ),
+            "pipeline_source_fingerprint": _pipeline_source_fingerprint(),
             "captured_profile": {
                 "semantic_threshold": profile.semantic_threshold_for_language(
                     project.spec["languages"][0]
@@ -503,14 +587,33 @@ def load_measurement(
         )
     ):
         raise ValueError(f"measurement did not execute on {expected_device}: {path}")
-    if project is not None and measurement["metadata"][
-        "input_fingerprint"
-    ] != measurement_fingerprint(
-        project,
-        measurement["metadata"]["model"],
-        measurement["metadata"]["requested_device"],
+    source_fingerprint = metadata.get("pipeline_source_fingerprint")
+    if (
+        not isinstance(source_fingerprint, str)
+        or len(source_fingerprint) != 64
+        or any(character not in "0123456789abcdef" for character in source_fingerprint)
     ):
-        raise ValueError(f"stale measurement: {path}")
+        raise ValueError(f"measurement has invalid pipeline source fingerprint: {path}")
     if project is not None:
+        identity = measurement_identity(
+            project,
+            metadata["model"],
+            metadata["requested_device"],
+            batch_size=metadata["batch_size"],
+        )
+        if (
+            metadata.get("measurement_pipeline_version") != identity["pipeline_version"]
+            or metadata.get("inference_dtype") != identity["inference_dtype"]
+            or metadata.get("math_policy") != identity["math_policy"]
+            or metadata.get("runtime_versions") != identity["runtime_versions"]
+            or metadata.get("input_fingerprint") != _identity_digest(identity)
+        ):
+            raise ValueError(f"stale measurement: {path}")
         _validate_measurement_payload(measurement, project)
+    if source_fingerprint != _pipeline_source_fingerprint():
+        warnings.warn(
+            f"measurement pipeline source bytes differ from the capture: {path}",
+            MeasurementPipelineSourceWarning,
+            stacklevel=2,
+        )
     return measurement
