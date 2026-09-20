@@ -885,6 +885,21 @@ def _validate_hybrid_selection_audit(
         )
 
     selected_high_gates = {item["language"]: item["selected_gate"] for item in promotion_entries}
+    if (
+        not _is_finite_number(selected.get("weak_identifier_jaccard_min"))
+        or selected["weak_identifier_jaccard_min"] not in HYBRID_WEAK_GRID
+    ):
+        raise ValueError(f"{label} selected weak corroboration gate is outside the candidate grid")
+    if (
+        not _is_finite_number(selected.get("statement_ratio_min"))
+        or selected["statement_ratio_min"] not in HYBRID_RATIO_GRID
+    ):
+        raise ValueError(f"{label} selected ratio corroboration gate is outside the candidate grid")
+    if any(
+        gate not in _promotion_gate_grid(admissions[language])
+        for language, gate in selected_high_gates.items()
+    ):
+        raise ValueError(f"{label} selected promotion gate is outside the candidate grid")
     selected_totals = {
         field: sum(item["selected_metrics"][field] for item in promotion_entries)
         for field in ("tp", "fp", "fn", "ambiguous_predictions", "unjudged_predictions")

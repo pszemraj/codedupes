@@ -1534,6 +1534,33 @@ def test_checked_selection_metrics_ignore_evaluation_report_records():
 
 
 @pytest.mark.parametrize(
+    "tamper",
+    ["weak_identifier_jaccard_min", "statement_ratio_min", "promotion"],
+)
+def test_checked_hybrid_selected_gates_belong_to_candidate_grids(tamper: str):
+    result = read_json(DEFAULT_MANIFEST.parent / "calibration-results.json")
+    hybrid = deepcopy(result["hybrid_selection"]["models"][0])
+    selected = hybrid["selected"]
+    promotions = hybrid["promotion_by_language"]
+    if tamper == "weak_identifier_jaccard_min":
+        selected[tamper] = 0.39
+    elif tamper == "statement_ratio_min":
+        selected[tamper] = 0.33
+    else:
+        promotions[0]["selected_gate"] = 0.875
+
+    with pytest.raises(ValueError, match="selected .* gate is outside the candidate grid"):
+        calibration_evaluation._validate_hybrid_selection_audit(
+            hybrid["selection_audit"],
+            selected,
+            promotions,
+            set(hybrid["admission_thresholds"]),
+            hybrid["admission_thresholds"],
+            "hybrid audit",
+        )
+
+
+@pytest.mark.parametrize(
     ("tamper", "message"),
     [
         ("schema", "unsupported schema version"),
