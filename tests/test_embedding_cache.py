@@ -708,8 +708,8 @@ def test_document_text_count_rejected_before_cache_or_model_work(
         "search_document": "contextual",
     }
     if cache_state == "warm":
-        first = compute_embeddings(units, document_texts=texts, **options)
-        warm = compute_embeddings(units, document_texts=texts, **options)
+        first, _ = compute_embeddings_with_identity(units, document_texts=texts, **options)
+        warm, _ = compute_embeddings_with_identity(units, document_texts=texts, **options)
         np.testing.assert_array_equal(first, warm)
         assert first.shape[0] == len(units)
         assert len(model.encode_calls) == 1

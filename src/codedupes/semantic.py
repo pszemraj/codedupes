@@ -3541,6 +3541,8 @@ def compute_embeddings(
         or contextual documents are requested through this identity-discarding API.
     """
     search_document = _validate_search_document_mode(search_document)
+    if document_texts is not None and len(document_texts) != len(units):
+        raise ValueError("document_texts must have the same length as units")
     if search_document == "contextual":
         raise ValueError(
             "contextual search documents require compute_embeddings_with_identity() "
