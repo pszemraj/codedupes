@@ -7,6 +7,7 @@ import json
 import math
 import re
 from collections import Counter
+from fractions import Fraction
 from itertools import pairwise
 from pathlib import Path
 from typing import Any
@@ -64,9 +65,9 @@ except ImportError:
 MINIMUM_SELECTION_PRECISION = 0.5
 # Selection code is intentionally versioned by behavior rather than by source
 # bytes. Bump this whenever selection or audit behavior changes.
-SELECTION_ALGORITHM_VERSION = 7
+SELECTION_ALGORITHM_VERSION = 8
 SELECTION_SCHEMA_VERSION = 8
-CHECKED_REPORT_SCHEMA_VERSION = 11
+CHECKED_REPORT_SCHEMA_VERSION = 12
 SEARCH_SELECTION_WINDOW_RADIUS = 5
 _SEARCH_METRIC_KEYS = frozenset(
     {
@@ -481,25 +482,34 @@ def _combine_search_metrics(
     }
 
 
+def exact_f1(row: dict[str, Any]) -> Fraction:
+    """Return exact F1 from one row's integer confusion-matrix counts."""
+    numerator = 2 * row["tp"]
+    denominator = numerator + row["fp"] + row["fn"]
+    return Fraction(numerator, denominator) if denominator else Fraction(0)
+
+
 def best_f1_candidates(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Return precision-safe rows tied at the maximum F1."""
+    """Return precision-safe rows tied at the exact maximum F1."""
     safe = [row for row in rows if row["precision"] >= MINIMUM_SELECTION_PRECISION]
     if not safe:
         raise ValueError(
             "no calibration candidate satisfies the minimum precision "
             f"{MINIMUM_SELECTION_PRECISION:.2f}"
         )
-    best = max(row["f1"] for row in safe)
-    return [row for row in safe if row["f1"] == best]
+    best = max(exact_f1(row) for row in safe)
+    return [row for row in safe if exact_f1(row) == best]
 
 
-def recall_preference(row: dict[str, Any]) -> tuple[int, int, float, float]:
+def recall_preference(row: dict[str, Any]) -> tuple[int, int, Fraction, Fraction]:
     """Prefer resolved judgments, then recall and precision among exact F1 ties."""
+    recall_denominator = row["tp"] + row["fn"]
+    precision_denominator = row["tp"] + row["fp"]
     return (
         -row.get("ambiguous_predictions", 0),
         -row.get("unjudged_predictions", 0),
-        row["recall"],
-        row["precision"],
+        Fraction(row["tp"], recall_denominator) if recall_denominator else Fraction(0),
+        Fraction(row["tp"], precision_denominator) if precision_denominator else Fraction(0),
     )
 
 
@@ -653,6 +663,7 @@ def measurement_digest(measurement: dict[str, Any]) -> str:
                     "batch_size",
                     "inference_dtype",
                     "math_policy",
+                    "mps_operator_fallback",
                     "runtime_versions",
                     "input_fingerprint",
                     "captured_profile",
@@ -1002,7 +1013,7 @@ def _validate_hybrid_selection_audit(
         "high_gates": selected_high_gates,
         "metrics": selected["metrics"],
     }
-    if best["metrics"]["f1"] != selected_candidate["metrics"]["f1"]:
+    if exact_f1(best["metrics"]) != exact_f1(selected_candidate["metrics"]):
         raise ValueError(f"{label} selected candidate does not maximize F1")
     selected_preference = recall_preference(selected_candidate["metrics"])
     best_preference = recall_preference(best["metrics"])
@@ -1014,7 +1025,7 @@ def _validate_hybrid_selection_audit(
         raise ValueError(f"{label} best-F1 candidate outranks the selected candidate")
     if runner_up is None:
         return
-    if runner_up["metrics"]["f1"] != best["metrics"]["f1"]:
+    if exact_f1(runner_up["metrics"]) != exact_f1(best["metrics"]):
         raise ValueError(f"{label} runner-up is not an exact best-F1 tie")
     if _joint_audit_tiebreak(runner_up, languages) == _joint_audit_tiebreak(
         selected_candidate, languages
@@ -1630,6 +1641,7 @@ def full_report(project: Project, measurement: dict[str, Any]) -> dict[str, Any]
         "batch_size": measurement["metadata"]["batch_size"],
         "inference_dtype": measurement["metadata"]["inference_dtype"],
         "math_policy": measurement["metadata"]["math_policy"],
+        "mps_operator_fallback": measurement["metadata"]["mps_operator_fallback"],
         "runtime_versions": measurement["metadata"]["runtime_versions"],
         "timing_seconds": measurement["metadata"]["timing_seconds"],
         "execution": execution,
@@ -1967,6 +1979,7 @@ def validate_checked_report(
                         "batch_size",
                         "inference_dtype",
                         "math_policy",
+                        "mps_operator_fallback",
                         "runtime_versions",
                         "timing_seconds",
                         "execution",
@@ -1982,6 +1995,7 @@ def validate_checked_report(
                     or report["batch_size"] != CALIBRATION_BATCH_SIZE
                     or report.get("inference_dtype") != "float32"
                     or report.get("math_policy") != "standard"
+                    or report.get("mps_operator_fallback") is not False
                     or report.get("replay_parity") is not True
                     or not isinstance(report.get("duplicate"), dict)
                     or not isinstance(report.get("search"), dict)

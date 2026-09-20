@@ -121,6 +121,7 @@ def _empty_measurement(project, model: str = "gte-modernbert-base") -> dict:
             "batch_size": 4,
             "inference_dtype": "float32",
             "math_policy": "standard",
+            "mps_operator_fallback": False,
             "runtime_versions": semantic.get_semantic_runtime_versions(),
             "captured_profile": {},
             "timing_seconds": {"duplicate": 0.0, "search": 0.0},
@@ -194,6 +195,9 @@ def test_recall_preference_applies_only_to_exact_best_f1_ties():
         rows.append(
             {
                 "threshold": threshold,
+                "tp": tp,
+                "fp": fp,
+                "fn": 100 - tp,
                 "precision": precision,
                 "recall": recall,
                 "f1": 2 * precision * recall / (precision + recall),
@@ -205,17 +209,57 @@ def test_recall_preference_applies_only_to_exact_best_f1_ties():
     assert _select([rows[0], rows[2]])["threshold"] == 0.80
 
     tied = [
-        {"threshold": 0.82, "precision": 3 / 7, "recall": 0.6, "f1": 0.5},
-        {"threshold": 0.87, "precision": 2 / 3, "recall": 0.4, "f1": 0.5},
-        {"threshold": 0.89, "precision": 1.0, "recall": 1 / 3, "f1": 0.5},
+        {
+            "threshold": 0.82,
+            "tp": 3,
+            "fp": 4,
+            "fn": 2,
+            "precision": 3 / 7,
+            "recall": 0.6,
+            "f1": 0.5,
+        },
+        {
+            "threshold": 0.87,
+            "tp": 2,
+            "fp": 1,
+            "fn": 3,
+            "precision": 2 / 3,
+            "recall": 0.4,
+            "f1": 0.5,
+        },
+        {
+            "threshold": 0.89,
+            "tp": 1,
+            "fp": 0,
+            "fn": 2,
+            "precision": 1.0,
+            "recall": 1 / 3,
+            "f1": 0.5,
+        },
     ]
     assert _select(tied)["threshold"] == 0.87
 
-    near_tie = [
-        {"threshold": 0.90, "precision": 0.70, "recall": 0.50, "f1": 0.60},
-        {"threshold": 0.80, "precision": 0.70, "recall": 0.90, "f1": 0.60 - 5e-13},
+    rounded_tie = [
+        {
+            "threshold": 0.90,
+            "tp": 1,
+            "fp": 0,
+            "fn": 4,
+            "precision": 1.0,
+            "recall": 0.2,
+            "f1": 0.33333333333333337,
+        },
+        {
+            "threshold": 0.80,
+            "tp": 1,
+            "fp": 1,
+            "fn": 3,
+            "precision": 0.5,
+            "recall": 0.25,
+            "f1": 0.3333333333333333,
+        },
     ]
-    assert _select(near_tie)["threshold"] == 0.90
+    assert _select(rounded_tie)["threshold"] == 0.80
     with pytest.raises(ValueError, match="minimum precision"):
         _select([{**tied[0], "precision": MINIMUM_SELECTION_PRECISION - 0.01}])
 
@@ -958,7 +1002,7 @@ def test_calibration_identity_and_capture_reject_mps_fast_math(tmp_path: Path, m
         capture(project, "gte-modernbert-base", "mps", tmp_path)
 
 
-@pytest.mark.parametrize("mutation", ["batch", "dtype", "pipeline_version"])
+@pytest.mark.parametrize("mutation", ["batch", "dtype", "fallback", "pipeline_version"])
 def test_measurements_reject_behavior_identity_mismatches(
     tmp_path: Path, monkeypatch, mutation: str
 ):
@@ -974,6 +1018,8 @@ def test_measurements_reject_behavior_identity_mismatches(
         measurement["metadata"]["batch_size"] = 5
     elif mutation == "dtype":
         measurement["metadata"]["inference_dtype"] = "float16"
+    elif mutation == "fallback":
+        measurement["metadata"]["mps_operator_fallback"] = True
     else:
         monkeypatch.setattr(
             calibration_measurements,
@@ -984,6 +1030,27 @@ def test_measurements_reject_behavior_identity_mismatches(
     write_json(path, measurement)
     with pytest.raises(ValueError, match="stale measurement"):
         load_measurement(path, project)
+
+
+def test_capture_disables_mps_operator_fallback_before_dtype_resolution(
+    tmp_path: Path, monkeypatch
+):
+    project = load_projects(project_ids=["ledger"])[0]
+    monkeypatch.setenv("PYTORCH_ENABLE_MPS_FALLBACK", "0")
+    order = []
+
+    def configure(device, *, mps_fallback):
+        order.append(("configure", device, mps_fallback))
+
+    def resolve_dtype(_family, _device):
+        assert order == [("configure", "mps", False)]
+        raise RuntimeError("dtype probe reached")
+
+    monkeypatch.setattr(semantic, "_configure_semantic_runtime_env", configure)
+    monkeypatch.setattr(semantic, "_resolve_model_dtype", resolve_dtype)
+
+    with pytest.raises(RuntimeError, match="dtype probe reached"):
+        capture(project, "gte-modernbert-base", "mps", tmp_path)
 
 
 @pytest.mark.parametrize("mutation", ["missing_pair", "duplicate_query", "bad_rank"])
@@ -1427,7 +1494,7 @@ def test_selection_context_rejects_changed_policy_values(monkeypatch, field: str
     current = getattr(calibration_evaluation, field)
     replacement = {
         "MINIMUM_SELECTION_PRECISION": 0.6,
-        "SELECTION_ALGORITHM_VERSION": 8,
+        "SELECTION_ALGORITHM_VERSION": 9,
         "DEFAULT_TOP_K": 11,
         "THRESHOLD_GRID_STEP": 0.02,
         "HYBRID_WEAK_GRID": (0.0, 0.5),
@@ -1960,6 +2027,7 @@ def test_checked_calibration_result_rejects_tampered_embedded_selections(tamper:
         "runtime",
         "batch",
         "math",
+        "fallback",
         "encoded_inputs",
     ],
 )
@@ -2000,6 +2068,8 @@ def test_checked_calibration_result_rejects_tampered_provenance(tamper: str):
         first_report["batch_size"] = 999_999
     elif tamper == "math":
         first_report["math_policy"] = "mpsfm=1"
+    elif tamper == "fallback":
+        first_report["mps_operator_fallback"] = True
     else:
         first_report["execution"]["duplicate"]["encoded_inputs"] = 1
     with pytest.raises(ValueError, match="checked"):

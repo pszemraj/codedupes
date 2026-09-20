@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from fractions import Fraction
 from itertools import product
 from pathlib import Path
 from typing import Any
@@ -25,6 +26,7 @@ try:
         best_f1_candidates,
         canonical_model_keys,
         development_projects,
+        exact_f1,
         hybrid_candidate_grids,
         judgments,
         load_all,
@@ -57,6 +59,7 @@ except ImportError:
         best_f1_candidates,
         canonical_model_keys,
         development_projects,
+        exact_f1,
         hybrid_candidate_grids,
         judgments,
         load_all,
@@ -331,7 +334,7 @@ def _select_joint(
     languages = sorted(admissions)
     # Two distinct outcomes per F1 are sufficient to preserve the global winner
     # and an informative runner-up without retaining the full product in memory.
-    by_f1: dict[float, list[tuple[dict[str, Any], dict[str, dict[str, Any]]]]] = {}
+    by_f1: dict[Fraction, list[tuple[dict[str, Any], dict[str, dict[str, Any]]]]] = {}
     for weak in calibration_evaluation.HYBRID_WEAK_GRID:
         for ratio in calibration_evaluation.HYBRID_RATIO_GRID:
             options_by_language = _promotion_options(
@@ -356,7 +359,7 @@ def _select_joint(
                     row,
                     {language: option for language, option in zip(languages, combination)},
                 )
-                bucket = by_f1.setdefault(row["f1"], [])
+                bucket = by_f1.setdefault(exact_f1(row), [])
                 signature = _joint_outcome_signature(candidate[1], languages)
                 equivalent = next(
                     (

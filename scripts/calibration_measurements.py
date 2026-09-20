@@ -6,6 +6,7 @@ import hashlib
 import json
 import math
 import os
+import sys
 import time
 from dataclasses import asdict
 from itertools import combinations, pairwise
@@ -56,8 +57,9 @@ except ImportError:
         write_json,
     )
 
-ARTIFACT_VERSION = 8
+ARTIFACT_VERSION = 9
 CALIBRATION_BATCH_SIZE = 4
+CALIBRATION_MPS_OPERATOR_FALLBACK = False
 RUNTIME_VERSION_KEYS = {
     "python",
     "torch",
@@ -69,7 +71,7 @@ DEFAULT_MEASUREMENTS = REPO / "scratch/calibration"
 # Bump whenever capture, extraction, scoring, replay, or their provenance
 # changes in a way that could change a measured artifact. Package versions are
 # diagnostic provenance; documentation-only releases do not invalidate scores.
-MEASUREMENT_PIPELINE_VERSION = 3
+MEASUREMENT_PIPELINE_VERSION = 4
 
 
 def _identity_digest(identity: dict[str, Any]) -> str:
@@ -137,14 +139,12 @@ def measurement_identity(
         raise ValueError("calibration fingerprint batch size must be a positive integer")
     behavior = measurement_behavior_identity(project, model)
     math_policy = semantic._mps_fast_math_variant(device) or "standard"
-    inference_dtype = str(semantic._resolve_model_dtype(behavior["family"], device)).removeprefix(
-        "torch."
-    )
     return behavior["project"] | {
         "device": device,
         "batch_size": batch_size,
-        "inference_dtype": inference_dtype,
+        "inference_dtype": "float32",
         "math_policy": math_policy,
+        "mps_operator_fallback": CALIBRATION_MPS_OPERATOR_FALLBACK,
         "runtime_versions": semantic.get_semantic_runtime_versions(),
         **{
             key: behavior[key]
@@ -200,6 +200,7 @@ def validate_measurement_identity(project: Project, metadata: dict[str, Any]) ->
         or metadata["batch_size"] <= 0
         or metadata.get("inference_dtype") != "float32"
         or metadata.get("math_policy") != "standard"
+        or metadata.get("mps_operator_fallback") is not CALIBRATION_MPS_OPERATOR_FALLBACK
     ):
         raise ValueError(f"{project.id}: stale measurement or invalid execution metadata")
     behavior = measurement_behavior_identity(project, metadata["model"])
@@ -207,7 +208,13 @@ def validate_measurement_identity(project: Project, metadata: dict[str, Any]) ->
         "device": metadata["requested_device"],
         **{
             key: metadata[key]
-            for key in ("batch_size", "inference_dtype", "math_policy", "runtime_versions")
+            for key in (
+                "batch_size",
+                "inference_dtype",
+                "math_policy",
+                "mps_operator_fallback",
+                "runtime_versions",
+            )
         },
         **{
             key: behavior[key]
@@ -275,6 +282,16 @@ def capture(
     math_policy = semantic._mps_fast_math_variant(device) or "standard"
     if math_policy != "standard":
         raise ValueError("disable PYTORCH_MPS_FAST_MATH while calibrating")
+    if (
+        device == "mps"
+        and "torch" in sys.modules
+        and os.environ.get("PYTORCH_ENABLE_MPS_FALLBACK") != "0"
+    ):
+        raise ValueError(
+            "calibration requires a fresh process so MPS operator fallback can be disabled "
+            "before importing PyTorch"
+        )
+    semantic._configure_semantic_runtime_env(device, mps_fallback=CALIBRATION_MPS_OPERATOR_FALLBACK)
 
     # A fresh deterministic finding changes the reviewed corpus contract even
     # when it is excluded from semantic scoring. Refuse to spend model time or
@@ -287,6 +304,8 @@ def capture(
     inference_dtype = str(semantic._resolve_model_dtype(profile.family, device)).removeprefix(
         "torch."
     )
+    if inference_dtype != "float32":
+        raise ValueError("calibration requires float32 inference")
 
     inventory, _ = extract_project(project, inventory=True)
     resolved = resolve_annotations(project, inventory)
@@ -302,6 +321,7 @@ def capture(
         batch_size=batch_size,
         embedding_cache=False,
         progress="never",
+        mps_fallback=CALIBRATION_MPS_OPERATOR_FALLBACK,
     )
     analyzer = ProjectAnalyzer(project, config)
     started = time.perf_counter()
@@ -373,6 +393,7 @@ def capture(
             batch_size=batch_size,
             embedding_cache=False,
             progress="never",
+            mps_fallback=CALIBRATION_MPS_OPERATOR_FALLBACK,
             mode="search",
             run_traditional=False,
         ),
@@ -409,6 +430,7 @@ def capture(
             "batch_size": batch_size,
             "inference_dtype": inference_dtype,
             "math_policy": math_policy,
+            "mps_operator_fallback": CALIBRATION_MPS_OPERATOR_FALLBACK,
             "runtime_versions": semantic.get_semantic_runtime_versions(),
             "measurement_pipeline_version": MEASUREMENT_PIPELINE_VERSION,
             "input_fingerprint": measurement_fingerprint(
@@ -628,6 +650,8 @@ def load_measurement(
         raise ValueError(f"measurement has invalid batch size: {path}")
     if metadata.get("math_policy") != "standard":
         raise ValueError(f"measurement has invalid math policy: {path}")
+    if metadata.get("mps_operator_fallback") is not CALIBRATION_MPS_OPERATOR_FALLBACK:
+        raise ValueError(f"stale measurement or invalid execution metadata: {path}")
     if (
         expected_model is not None
         and metadata["model"] != resolve_model_profile(expected_model).key
