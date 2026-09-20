@@ -588,6 +588,28 @@ def test_canonical_precomputed_embeddings_reuse_storage_with_bounded_validation(
     assert max(observed_rows) <= semantic._PRECOMPUTED_VALIDATION_BLOCK_ROWS
 
 
+def test_fresh_embedding_normalization_bounds_float64_working_rows(monkeypatch) -> None:
+    row_count = semantic._PRECOMPUTED_VALIDATION_BLOCK_ROWS * 2 + 3
+    embeddings = np.ones((row_count, 4), dtype=np.float32)
+    converted_rows: list[int] = []
+    original_asarray = semantic.np.asarray
+
+    def traced_asarray(values, dtype=None, *args, **kwargs):
+        shape = getattr(values, "shape", ())
+        if dtype is not None and np.dtype(dtype) == np.dtype(np.float64) and shape:
+            converted_rows.append(shape[0])
+        return original_asarray(values, dtype, *args, **kwargs)
+
+    monkeypatch.setattr(semantic.np, "asarray", traced_asarray)
+
+    canonical = semantic.canonicalize_embeddings(embeddings, expected_rows=row_count)
+
+    assert canonical.shape == embeddings.shape
+    assert converted_rows
+    assert max(converted_rows) <= semantic._PRECOMPUTED_VALIDATION_BLOCK_ROWS
+    np.testing.assert_allclose(np.linalg.norm(canonical, axis=1), 1.0)
+
+
 def test_near_unit_direct_embeddings_are_still_normalized_before_scoring(tmp_path: Path) -> None:
     units = extract_arithmetic_units(tmp_path)
     second_component = math.sqrt(1.0 - 0.9**2)

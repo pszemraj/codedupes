@@ -435,7 +435,7 @@ def canonicalize_embeddings(
     :raises InvalidEmbeddingError: If shape, row count, dimensionality, finiteness,
         or norm invariants are violated.
     """
-    matrix = np.asarray(values, dtype=np.float64)
+    matrix = np.asarray(values)
 
     if matrix.ndim != 2:
         raise InvalidEmbeddingError(f"Expected a 2D embedding matrix, got shape {matrix.shape!r}")
@@ -446,31 +446,43 @@ def canonicalize_embeddings(
     if matrix.shape[0] and matrix.shape[1] == 0:
         raise InvalidEmbeddingError("Embedding matrix has zero columns")
 
-    if not np.isfinite(matrix).all():
-        raise InvalidEmbeddingError(
-            "Embedding matrix contains NaN or infinity",
-            retryable=True,
-        )
     if matrix.shape[0] == 0:
         return np.ascontiguousarray(matrix, dtype=np.float32)
 
-    # Scale before the norm so finite float32 extremes retain their direction:
-    # direct squaring can overflow at ~1e38 or underflow for subnormal rows.
-    scales = np.max(np.abs(matrix), axis=1, keepdims=True)
-    if not np.isfinite(scales).all() or np.any(scales == 0):
-        raise InvalidEmbeddingError(
-            "Embedding matrix contains a zero or invalid vector",
-            retryable=True,
+    # Bound float64 normalization temporaries for both fresh model output and
+    # caller-supplied matrices. A full-corpus cast plus the scaled working copy
+    # can otherwise dwarf the model itself on a large repository.
+    canonical = np.empty(matrix.shape, dtype=np.float32, order="C")
+    for start in range(0, len(matrix), _PRECOMPUTED_VALIDATION_BLOCK_ROWS):
+        block = np.asarray(
+            matrix[start : start + _PRECOMPUTED_VALIDATION_BLOCK_ROWS],
+            dtype=np.float64,
         )
-    scaled = matrix / scales
-    norms = np.linalg.norm(scaled, axis=1, keepdims=True)
-    if not np.isfinite(norms).all() or np.any(norms == 0):
-        raise InvalidEmbeddingError(
-            "Embedding matrix contains a zero or invalid vector",
-            retryable=True,
-        )
+        if not np.isfinite(block).all():
+            raise InvalidEmbeddingError(
+                "Embedding matrix contains NaN or infinity",
+                retryable=True,
+            )
 
-    return np.ascontiguousarray(scaled / norms, dtype=np.float32)
+        # Scale before the norm so finite float32 extremes retain their
+        # direction: direct squaring can overflow at ~1e38 or underflow for
+        # subnormal rows.
+        scales = np.max(np.abs(block), axis=1, keepdims=True)
+        if not np.isfinite(scales).all() or np.any(scales == 0):
+            raise InvalidEmbeddingError(
+                "Embedding matrix contains a zero or invalid vector",
+                retryable=True,
+            )
+        scaled = block / scales
+        norms = np.linalg.norm(scaled, axis=1, keepdims=True)
+        if not np.isfinite(norms).all() or np.any(norms == 0):
+            raise InvalidEmbeddingError(
+                "Embedding matrix contains a zero or invalid vector",
+                retryable=True,
+            )
+        canonical[start : start + len(block)] = scaled / norms
+
+    return canonical
 
 
 def _validate_precomputed_embeddings(units: Sequence[CodeUnit], embeddings: object) -> np.ndarray:
