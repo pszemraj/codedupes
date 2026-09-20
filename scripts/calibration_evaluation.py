@@ -61,14 +61,25 @@ except ImportError:
     )
 
 
-F1_RECALL_TOLERANCE = 0.005
 MINIMUM_SELECTION_PRECISION = 0.5
 # Selection code is intentionally versioned by behavior rather than by source
 # bytes. Bump this whenever selection or audit behavior changes.
-SELECTION_ALGORITHM_VERSION = 5
-SELECTION_SCHEMA_VERSION = 7
-CHECKED_REPORT_SCHEMA_VERSION = 9
+SELECTION_ALGORITHM_VERSION = 6
+SELECTION_SCHEMA_VERSION = 8
+CHECKED_REPORT_SCHEMA_VERSION = 10
 SEARCH_SELECTION_WINDOW_RADIUS = 5
+_SEARCH_METRIC_KEYS = frozenset(
+    {
+        "tp",
+        "fp",
+        "fn",
+        "precision",
+        "recall",
+        "f1",
+        "no_result_clean",
+        "no_result_total",
+    }
+)
 THRESHOLD_GRID_START = 0.0
 THRESHOLD_GRID_STOP = 1.0
 THRESHOLD_GRID_STEP = 0.01
@@ -249,39 +260,62 @@ def _validate_checked_search_report(
         raise ValueError(f"{label} has invalid no-result search evidence")
 
 
-def _validate_search_selection_metrics(payload: Any, label: str) -> None:
-    """Validate a threshold sweep's compact search metric row."""
-    expected_keys = {
-        "threshold",
-        "tp",
-        "fp",
-        "fn",
-        "precision",
-        "recall",
-        "f1",
-        "no_result_clean",
-        "no_result_total",
-    }
-    if not isinstance(payload, dict) or set(payload) != expected_keys:
+def _validate_search_metric_values(metrics: Any, label: str) -> None:
+    """Validate one pooled or per-language search metric payload."""
+    if not isinstance(metrics, dict) or set(metrics) != _SEARCH_METRIC_KEYS:
         raise ValueError(f"{label} has an invalid search metric schema")
     if (
-        not _is_finite_number(payload["threshold"])
-        or any(
-            type(payload[field]) is not int or payload[field] < 0 for field in ("tp", "fp", "fn")
-        )
-        or type(payload["no_result_clean"]) is not int
-        or type(payload["no_result_total"]) is not int
-        or not 0 <= payload["no_result_clean"] <= payload["no_result_total"]
+        any(type(metrics[field]) is not int or metrics[field] < 0 for field in ("tp", "fp", "fn"))
+        or type(metrics["no_result_clean"]) is not int
+        or type(metrics["no_result_total"]) is not int
+        or not 0 <= metrics["no_result_clean"] <= metrics["no_result_total"]
     ):
         raise ValueError(f"{label} has invalid search metric values")
-    precision, recall, f1 = _score_ratios(payload["tp"], payload["fp"], payload["fn"])
+    precision, recall, f1 = _score_ratios(metrics["tp"], metrics["fp"], metrics["fn"])
     if any(
-        not _is_finite_number(payload[field])
-        or not 0.0 <= payload[field] <= 1.0
-        or not math.isclose(payload[field], value, rel_tol=0.0, abs_tol=1e-12)
+        not _is_finite_number(metrics[field])
+        or not 0.0 <= metrics[field] <= 1.0
+        or not math.isclose(metrics[field], value, rel_tol=0.0, abs_tol=1e-12)
         for field, value in {"precision": precision, "recall": recall, "f1": f1}.items()
     ):
         raise ValueError(f"{label} has inconsistent search metrics")
+
+
+def _validate_search_selection_metrics(payload: Any, label: str) -> None:
+    """Validate a threshold sweep's compact search metric row."""
+    if not isinstance(payload, dict) or set(payload) != _SEARCH_METRIC_KEYS | {"threshold"}:
+        raise ValueError(f"{label} has an invalid search metric schema")
+
+    if not _is_finite_number(payload["threshold"]):
+        raise ValueError(f"{label} has invalid search metric values")
+    _validate_search_metric_values({field: payload[field] for field in _SEARCH_METRIC_KEYS}, label)
+
+
+def _validate_search_language_metrics(payload: Any, pooled: dict[str, Any], label: str) -> None:
+    """Validate compact per-language evidence against its pooled search row."""
+    if not isinstance(payload, list) or not payload:
+        raise ValueError(f"{label} has invalid per-language search metrics")
+
+    language_rows: dict[str, dict[str, Any]] = {}
+    for index, row in enumerate(payload):
+        if (
+            not isinstance(row, dict)
+            or set(row) != _SEARCH_METRIC_KEYS | {"language"}
+            or not isinstance(row["language"], str)
+            or not row["language"]
+            or row["language"] in language_rows
+        ):
+            raise ValueError(f"{label} has invalid per-language search metrics")
+        _validate_search_metric_values(
+            {field: row[field] for field in _SEARCH_METRIC_KEYS},
+            f"{label} per-language row {index}",
+        )
+        language_rows[row["language"]] = row
+    if any(
+        pooled[field] != sum(row[field] for row in language_rows.values())
+        for field in ("tp", "fp", "fn", "no_result_clean", "no_result_total")
+    ):
+        raise ValueError(f"{label} per-language search metrics do not match pooled totals")
 
 
 def validate_threshold_candidate_grids(payload: Any) -> dict[str, list[float]]:
@@ -412,39 +446,55 @@ def _semantic_visible_metrics(duplicate_report: dict[str, Any]) -> dict[str, Any
     }
 
 
-def _combine_search_metrics(payloads: list[dict[str, Any]], threshold: float) -> dict[str, Any]:
+def _combine_search_metrics(
+    payloads: list[tuple[str, dict[str, Any]]], threshold: float
+) -> dict[str, Any]:
     """Aggregate validated checked search reports into a selection metric row."""
-    tp = sum(payload["tp"] for payload in payloads)
-    fp = sum(payload["fp"] for payload in payloads)
-    fn = sum(payload["fn"] for payload in payloads)
-    precision, recall, f1 = _score_ratios(tp, fp, fn)
+    by_language: dict[str, list[dict[str, Any]]] = {}
+    for language, payload in payloads:
+        by_language.setdefault(language, []).append(payload)
+
+    def combine(reports: list[dict[str, Any]]) -> dict[str, Any]:
+        tp = sum(report["tp"] for report in reports)
+        fp = sum(report["fp"] for report in reports)
+        fn = sum(report["fn"] for report in reports)
+        precision, recall, f1 = _score_ratios(tp, fp, fn)
+        return {
+            "tp": tp,
+            "fp": fp,
+            "fn": fn,
+            "precision": precision,
+            "recall": recall,
+            "f1": f1,
+            "no_result_clean": sum(report["no_result"]["clean"] for report in reports),
+            "no_result_total": sum(report["no_result"]["total"] for report in reports),
+        }
+
+    pooled = combine([payload for _language, payload in payloads])
     return {
         "threshold": threshold,
-        "tp": tp,
-        "fp": fp,
-        "fn": fn,
-        "precision": precision,
-        "recall": recall,
-        "f1": f1,
-        "no_result_clean": sum(payload["no_result"]["clean"] for payload in payloads),
-        "no_result_total": sum(payload["no_result"]["total"] for payload in payloads),
+        **pooled,
+        "per_language": [
+            {"language": language, **combine(by_language[language])}
+            for language in sorted(by_language)
+        ],
     }
 
 
-def near_best_f1(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Return precision-safe rows within the allowed F1 loss for recall preference."""
+def best_f1_candidates(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Return precision-safe rows tied at the maximum F1."""
     safe = [row for row in rows if row["precision"] >= MINIMUM_SELECTION_PRECISION]
     if not safe:
         raise ValueError(
             "no calibration candidate satisfies the minimum precision "
             f"{MINIMUM_SELECTION_PRECISION:.2f}"
         )
-    floor = max(row["f1"] for row in safe) - F1_RECALL_TOLERANCE
-    return [row for row in safe if row["f1"] >= floor - 1e-12]
+    best = max(row["f1"] for row in safe)
+    return [row for row in safe if math.isclose(row["f1"], best, rel_tol=0.0, abs_tol=1e-12)]
 
 
 def recall_preference(row: dict[str, Any]) -> tuple[int, int, float, float]:
-    """Prefer resolved judgments, then recall and precision within the F1 bound."""
+    """Prefer resolved judgments, then recall and precision among exact F1 ties."""
     return (
         -row.get("ambiguous_predictions", 0),
         -row.get("unjudged_predictions", 0),
@@ -471,7 +521,8 @@ def selection_objective() -> dict[str, float | str]:
     return {
         "primary": "f1",
         "minimum_precision": MINIMUM_SELECTION_PRECISION,
-        "recall_preference_max_f1_loss": F1_RECALL_TOLERANCE,
+        "minimum_precision_scope": "pooled_and_per_language",
+        "tie_breaker": "recall_then_precision_on_exact_f1_ties",
     }
 
 
@@ -951,10 +1002,13 @@ def _validate_hybrid_selection_audit(
         "high_gates": selected_high_gates,
         "metrics": selected["metrics"],
     }
-    if best["metrics"]["f1"] + 1e-12 < selected_candidate["metrics"]["f1"] or (
-        best["metrics"]["f1"] - selected_candidate["metrics"]["f1"] > F1_RECALL_TOLERANCE + 1e-12
+    if not math.isclose(
+        best["metrics"]["f1"],
+        selected_candidate["metrics"]["f1"],
+        rel_tol=0.0,
+        abs_tol=1e-12,
     ):
-        raise ValueError(f"{label} does not justify the selected F1 tolerance")
+        raise ValueError(f"{label} selected candidate does not maximize F1")
     selected_preference = recall_preference(selected_candidate["metrics"])
     best_preference = recall_preference(best["metrics"])
     if best_preference > selected_preference or (
@@ -965,10 +1019,10 @@ def _validate_hybrid_selection_audit(
         raise ValueError(f"{label} best-F1 candidate outranks the selected candidate")
     if runner_up is None:
         return
-    if runner_up["metrics"]["f1"] > best["metrics"]["f1"] + 1e-12 or (
-        best["metrics"]["f1"] - runner_up["metrics"]["f1"] > F1_RECALL_TOLERANCE + 1e-12
+    if not math.isclose(
+        runner_up["metrics"]["f1"], best["metrics"]["f1"], rel_tol=0.0, abs_tol=1e-12
     ):
-        raise ValueError(f"{label} runner-up is outside the F1 selection bound")
+        raise ValueError(f"{label} runner-up is not an exact best-F1 tie")
     if _joint_audit_tiebreak(runner_up, languages) == _joint_audit_tiebreak(
         selected_candidate, languages
     ):
@@ -984,9 +1038,6 @@ def _validate_hybrid_selection_audit(
         languages,
     ):
         raise ValueError(f"{label} runner-up repeats the selected outcome")
-    # The best-F1 policy can legitimately be the final-order runner-up when a
-    # near-best policy wins the recall preference. Raw-backed generation checks
-    # the exact rank; checked-only validation must not reject that valid shape.
     runner_preference = recall_preference(runner_up["metrics"])
     if runner_preference > selected_preference or (
         runner_preference == selected_preference
@@ -1114,6 +1165,7 @@ def validate_shipped_selection_profiles(
                 "current_metrics",
                 "selected_threshold",
                 "selected_metrics",
+                "selected_per_language",
                 "selection_window",
             }
             or not _same_gate(search.get("selected_threshold"), profile.default_search_threshold)
@@ -1125,6 +1177,16 @@ def validate_shipped_selection_profiles(
             _validate_search_selection_metrics(search.get(field), f"{model} search {field}")
             if search[field]["threshold"] != profile.default_search_threshold:
                 raise ValueError(f"{model}: search selection metrics use another threshold")
+        search_languages = search.get("selected_per_language")
+        _validate_search_language_metrics(
+            search_languages,
+            search["selected_metrics"],
+            f"{model} selected search",
+        )
+        if {row["language"] for row in search_languages} != languages:
+            raise ValueError(f"{model}: search selection has inconsistent language evidence")
+        if any(row["precision"] < MINIMUM_SELECTION_PRECISION for row in search_languages):
+            raise ValueError(f"{model}: search selection is precision-unsafe in one language")
         if (
             search["selected_metrics"]["no_result_clean"]
             != search["selected_metrics"]["no_result_total"]
@@ -1623,15 +1685,25 @@ def _validate_checked_selection_outcomes(
                     )
 
         search_reports = [
-            record["reports"][f"{model}/cpu"]["search"]
+            (record["language"], record["reports"][f"{model}/cpu"]["search"])
             for record in selection_records_by_id.values()
         ]
         expected_search = _combine_search_metrics(search_reports, profile.default_search_threshold)
+        if any(
+            row["precision"] < MINIMUM_SELECTION_PRECISION
+            for row in expected_search["per_language"]
+        ):
+            raise ValueError(f"{model}: checked search precision is unsafe in one language")
+        expected_pooled_search = {
+            key: value for key, value in expected_search.items() if key != "per_language"
+        }
         for field in ("current_metrics", "selected_metrics"):
-            if threshold["search"][field] != expected_search:
+            if threshold["search"][field] != expected_pooled_search:
                 raise ValueError(
                     f"{model}: search selection metrics differ from checked CPU reports"
                 )
+        if threshold["search"]["selected_per_language"] != expected_search["per_language"]:
+            raise ValueError(f"{model}: search language evidence differs from checked CPU reports")
 
         hybrid = hybrid_models[model]
         visible_by_language = {

@@ -9,13 +9,13 @@ Most users should leave model and task settings unset. `codedupes` uses the pinn
 | profile key | canonical model ID | family | search threshold | default revision | default trust mode |
 | --- | --- | --- | --- | --- | --- |
 | `gte-modernbert-base` | `Alibaba-NLP/gte-modernbert-base` | `gte-modernbert` | `0.68` | `e7f32e3c00f91d699e8c43b53106206bcc72bb22` | `False` |
-| `embeddinggemma-300m` | `unsloth/embeddinggemma-300m` | `embeddinggemma` | `0.52` | `bfa3c846ac738e62aa61806ef9112d34acb1dc5a` | `False` |
+| `embeddinggemma-300m` | `unsloth/embeddinggemma-300m` | `embeddinggemma` | `0.56` | `bfa3c846ac738e62aa61806ef9112d34acb1dc5a` | `False` |
 
 - The table's search threshold is only the floor for query matches; query-to-code similarity is much lower than code-to-code duplicate similarity.
 - Every built-in default revision is a pinned immutable commit. The [calibration workflow](hybrid-tuning.md) records the checkpoint, task, pipeline, and candidate policy behind each threshold.
 - The [calibration workflow](hybrid-tuning.md#reproduce-the-result) defines threshold selection and the separate search-smoke acceptance contract.
 
-EmbeddingGemma's selected search floor favors recall within the allowed F1-loss band, while GTE's higher floor is more selective. Independent multi-domain smoke probes remain a separate acceptance check because some rank-first targets can still fall below a calibrated default. Override the floor for a repository with a different tradeoff; these authored fixtures do not establish ecosystem-wide accuracy. The [checked result](../test_fixtures/calibration/calibration-results.json) contains the exact selection rows and metrics.
+Each selected search floor maximizes F1 after applying the pooled and per-language precision floor and no-result constraint. Independent multi-domain smoke probes remain a separate acceptance check because some rank-first targets can still fall below a calibrated default. Override the floor for a repository with a different tradeoff; these authored fixtures do not establish ecosystem-wide accuracy. The [checked result](../test_fixtures/calibration/calibration-results.json) contains the exact selection rows and metrics.
 
 ### Duplicate and search gates
 
@@ -39,7 +39,7 @@ They were selected from CPU float32 measurements and independently checked on MP
 | profile | identifier Jaccard min | statement ratio min | promotion gates |
 | --- | --- | --- | --- |
 | `gte-modernbert-base` | `0.30` | `0.00` | python `0.90`; c, rust, javascript, and typescript off |
-| `embeddinggemma-300m` | `0.40` | `0.00` | python `0.79`, c `0.90`, rust `0.90`, javascript `0.80`, typescript `0.82` |
+| `embeddinggemma-300m` | `0.40` | `0.00` | python `0.79`, c `0.90`, rust `0.90`, javascript `0.80`; typescript off |
 | `generic` | `0.00` | `0.20` | off |
 
 Where a promotion gate equals its admission gate, same-language similarity alone leaves no `semantic_review` band: every admitted pair clears the promotion gate.

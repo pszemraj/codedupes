@@ -22,6 +22,7 @@ try:
     from .calibration_evaluation import (
         MINIMUM_SELECTION_PRECISION,
         SELECTION_SCHEMA_VERSION,
+        best_f1_candidates,
         canonical_model_keys,
         development_projects,
         hybrid_candidate_grids,
@@ -29,7 +30,6 @@ try:
         load_all,
         measurement_digests,
         metrics,
-        near_best_f1,
         recall_preference,
         replay,
         selection_context,
@@ -54,6 +54,7 @@ except ImportError:
     from calibration_evaluation import (
         MINIMUM_SELECTION_PRECISION,
         SELECTION_SCHEMA_VERSION,
+        best_f1_candidates,
         canonical_model_keys,
         development_projects,
         hybrid_candidate_grids,
@@ -61,7 +62,6 @@ except ImportError:
         load_all,
         measurement_digests,
         metrics,
-        near_best_f1,
         recall_preference,
         replay,
         selection_context,
@@ -326,7 +326,7 @@ def _select_joint(
     corroboration setting recover pairs that a promotion-disabled sweep misses.
     Search the complete product of distinct per-language outcomes for each
     corroboration row, requiring every language and the pooled result to clear
-    the precision floor before applying the shared recall/F1 policy.
+    the precision floor before maximizing F1 and applying exact-tie policy.
     """
     languages = sorted(admissions)
     # Two distinct outcomes per F1 are sufficient to preserve the global winner
@@ -381,7 +381,7 @@ def _select_joint(
             f"{MINIMUM_SELECTION_PRECISION:.2f} in every language"
         )
     representatives = [candidate for bucket in by_f1.values() for candidate in bucket]
-    eligible_rows = near_best_f1([row for row, _ in representatives])
+    eligible_rows = best_f1_candidates([row for row, _ in representatives])
     eligible = [(row, options) for row, options in representatives if row in eligible_rows]
     ranked = _rank_joint_candidates(eligible, languages)
     selected, selected_options = ranked[0]

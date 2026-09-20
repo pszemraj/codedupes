@@ -42,7 +42,6 @@ from scripts.calibration_contract import (
     write_json,
 )
 from scripts.calibration_evaluation import (
-    F1_RECALL_TOLERANCE,
     MINIMUM_SELECTION_PRECISION,
     SELECTION_SCHEMA_VERSION,
     compare_devices,
@@ -188,7 +187,7 @@ def _empty_measurement(project, model: str = "gte-modernbert-base") -> dict:
     }
 
 
-def test_recall_preference_stays_within_f1_bound_and_safe_precision():
+def test_recall_preference_applies_only_to_exact_best_f1_ties():
     rows = []
     for threshold, tp, fp in [(0.80, 70, 5), (0.79, 72, 9), (0.40, 95, 70)]:
         precision, recall = tp / (tp + fp), tp / 100
@@ -201,8 +200,8 @@ def test_recall_preference_stays_within_f1_bound_and_safe_precision():
             }
         )
     selected = _select(rows)
-    assert selected["threshold"] == 0.79
-    assert max(row["f1"] for row in rows) - selected["f1"] <= F1_RECALL_TOLERANCE
+    assert selected["threshold"] == 0.80
+    assert selected["f1"] == max(row["f1"] for row in rows)
     assert _select([rows[0], rows[2]])["threshold"] == 0.80
 
     tied = [
@@ -544,6 +543,7 @@ def test_search_sweep_scores_complete_relevance_sets():
     records = [
         {
             "key": ("p", "q", "a"),
+            "language": "python",
             "score": 0.82,
             "rank": 1,
             "expected": True,
@@ -551,6 +551,7 @@ def test_search_sweep_scores_complete_relevance_sets():
         },
         {
             "key": ("p", "q", "b"),
+            "language": "python",
             "score": 0.66,
             "rank": 2,
             "expected": True,
@@ -558,6 +559,7 @@ def test_search_sweep_scores_complete_relevance_sets():
         },
         {
             "key": ("p", "q", "c"),
+            "language": "python",
             "score": 0.40,
             "rank": 3,
             "expected": False,
@@ -565,6 +567,7 @@ def test_search_sweep_scores_complete_relevance_sets():
         },
         {
             "key": ("p", "none", "d"),
+            "language": "python",
             "score": 0.90,
             "rank": 11,
             "expected": False,
@@ -581,6 +584,7 @@ def test_search_selection_requires_all_no_result_probes_to_stay_empty():
     records = [
         {
             "key": ("p", "query", "a"),
+            "language": "python",
             "score": 0.82,
             "rank": 1,
             "expected": True,
@@ -588,6 +592,7 @@ def test_search_selection_requires_all_no_result_probes_to_stay_empty():
         },
         {
             "key": ("p", "query", "b"),
+            "language": "python",
             "score": 0.60,
             "rank": 2,
             "expected": True,
@@ -595,6 +600,7 @@ def test_search_selection_requires_all_no_result_probes_to_stay_empty():
         },
         {
             "key": ("p", "none", "c"),
+            "language": "python",
             "score": 0.65,
             "rank": 1,
             "expected": False,
@@ -606,6 +612,52 @@ def test_search_selection_requires_all_no_result_probes_to_stay_empty():
     assert _select_search(rows)["threshold"] == 0.70
     with pytest.raises(ValueError, match="keeps all no-result probes empty"):
         _select_search(rows[:1])
+
+
+def test_search_selection_requires_safe_precision_in_every_language():
+    records = [
+        {
+            "key": ("python-project", "query", f"py-{index}"),
+            "language": "python",
+            "score": 0.90 if index == 1 else 0.70,
+            "rank": index,
+            "expected": True,
+            "no_result": False,
+        }
+        for index in range(1, 5)
+    ]
+    records.extend(
+        [
+            {
+                "key": ("rust-project", "query", "rust-expected"),
+                "language": "rust",
+                "score": 0.90,
+                "rank": 1,
+                "expected": True,
+                "no_result": False,
+            },
+            {
+                "key": ("rust-project", "query", "rust-fp-1"),
+                "language": "rust",
+                "score": 0.65,
+                "rank": 2,
+                "expected": False,
+                "no_result": False,
+            },
+            {
+                "key": ("rust-project", "query", "rust-fp-2"),
+                "language": "rust",
+                "score": 0.64,
+                "rank": 3,
+                "expected": False,
+                "no_result": False,
+            },
+        ]
+    )
+    rows = search_rows(records, [0.60, 0.80])
+    assert rows[0]["precision"] > MINIMUM_SELECTION_PRECISION
+    assert rows[0]["per_language"][1]["precision"] < MINIMUM_SELECTION_PRECISION
+    assert _select_search(rows)["threshold"] == 0.80
 
 
 def test_threshold_grid_includes_a_stop_between_steps():
@@ -1336,7 +1388,7 @@ def test_checked_project_validation_is_memoized_by_context(monkeypatch):
 @pytest.mark.parametrize(
     "field",
     [
-        "F1_RECALL_TOLERANCE",
+        "MINIMUM_SELECTION_PRECISION",
         "SELECTION_ALGORITHM_VERSION",
         "DEFAULT_TOP_K",
         "THRESHOLD_GRID_STEP",
@@ -1349,8 +1401,8 @@ def test_selection_context_rejects_changed_policy_values(monkeypatch, field: str
     original = selection_context(projects, models)
     current = getattr(calibration_evaluation, field)
     replacement = {
-        "F1_RECALL_TOLERANCE": 0.006,
-        "SELECTION_ALGORITHM_VERSION": 6,
+        "MINIMUM_SELECTION_PRECISION": 0.6,
+        "SELECTION_ALGORITHM_VERSION": 7,
         "DEFAULT_TOP_K": 11,
         "THRESHOLD_GRID_STEP": 0.02,
         "HYBRID_WEAK_GRID": (0.0, 0.5),
@@ -1616,6 +1668,10 @@ def test_checked_calibration_result_matches_shipped_profiles():
             item["selected_metrics"]["precision"] >= MINIMUM_SELECTION_PRECISION
             for item in hybrid["promotion_by_language"]
         )
+        assert all(
+            item["precision"] >= MINIMUM_SELECTION_PRECISION
+            for item in selection["search"]["selected_per_language"]
+        )
 
     for project in result["projects"]:
         assert all(report["replay_parity"] for report in project["reports"].values())
@@ -1722,6 +1778,7 @@ def test_checked_hybrid_selected_gates_belong_to_candidate_grids(tamper: str):
         ("difficulty", "difficulty schema"),
         ("unjudged", "invalid unresolved pair"),
         ("window", "search selection window"),
+        ("search_language", "inconsistent language evidence"),
         ("admission_window", "selection window"),
         ("candidate_grids", "mismatched candidate grids"),
         ("candidate_grids_bool", "mismatched candidate grids"),
@@ -1776,6 +1833,8 @@ def test_checked_calibration_result_rejects_tampered_embedded_selections(tamper:
         ]
     elif tamper == "window":
         threshold["models"][0]["search"]["selection_window"] = []
+    elif tamper == "search_language":
+        threshold["models"][0]["search"]["selected_per_language"][0]["language"] = "go"
     elif tamper == "admission_window":
         threshold["models"][0]["duplicate_by_language"][0]["selection_window"] = []
     elif tamper == "candidate_grids":

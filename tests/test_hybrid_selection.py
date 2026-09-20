@@ -8,7 +8,6 @@ import pytest
 
 from scripts import calibration_evaluation, sweep_hybrid_gates
 from scripts.calibration_evaluation import (
-    F1_RECALL_TOLERANCE,
     SELECTION_SCHEMA_VERSION,
     hybrid_candidate_grids,
     selection_digest,
@@ -201,7 +200,7 @@ def test_promotion_sweep_keeps_promotion_off_for_equivalent_outcome():
     assert options[0]["high_gate"] is None
 
 
-def test_joint_selection_favors_recall_only_near_best_f1(monkeypatch: pytest.MonkeyPatch):
+def test_joint_selection_maximizes_f1_before_recall(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(calibration_evaluation, "HYBRID_WEAK_GRID", (0.4,))
     monkeypatch.setattr(calibration_evaluation, "HYBRID_RATIO_GRID", (0.0,))
     project, measurement = _project_and_measurement(
@@ -218,12 +217,9 @@ def test_joint_selection_favors_recall_only_near_best_f1(monkeypatch: pytest.Mon
     selected, _, audit = sweep_hybrid_gates._select_joint(
         [project], {"python": measurement}, {"python": 0.80}
     )
-    assert (selected["tp"], selected["fp"]) == (72, 9)
-    assert selected["f1"] >= 0.80 - F1_RECALL_TOLERANCE
-    runner_up = audit["runner_up"]
-    assert runner_up is not None
-    assert runner_up["metrics"]["f1"] >= selected["f1"] - F1_RECALL_TOLERANCE
-    assert runner_up["per_language"][0]["metrics"]["precision"] >= 0.5
+    assert (selected["tp"], selected["fp"]) == (70, 5)
+    assert selected["f1"] == audit["best_f1_candidate"]["metrics"]["f1"]
+    assert audit["runner_up"] is None
 
 
 def test_joint_selection_deduplicates_runner_up_outcomes(monkeypatch: pytest.MonkeyPatch):

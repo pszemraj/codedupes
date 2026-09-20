@@ -20,15 +20,16 @@ try:
         write_json,
     )
     from .calibration_evaluation import (
+        MINIMUM_SELECTION_PRECISION,
         SEARCH_SELECTION_WINDOW_RADIUS,
         SELECTION_SCHEMA_VERSION,
+        best_f1_candidates,
         canonical_model_keys,
         development_projects,
         judgments,
         load_all,
         measurement_digests,
         metrics,
-        near_best_f1,
         recall_preference,
         selection_context,
         selection_objective,
@@ -45,15 +46,16 @@ except ImportError:
         write_json,
     )
     from calibration_evaluation import (
+        MINIMUM_SELECTION_PRECISION,
         SEARCH_SELECTION_WINDOW_RADIUS,
         SELECTION_SCHEMA_VERSION,
+        best_f1_candidates,
         canonical_model_keys,
         development_projects,
         judgments,
         load_all,
         measurement_digests,
         metrics,
-        near_best_f1,
         recall_preference,
         selection_context,
         selection_objective,
@@ -85,19 +87,26 @@ def threshold_grid(start: float, stop: float, step: float) -> list[float]:
 
 
 def _select(rows: list[dict[str, Any]]) -> dict[str, Any]:
-    """Favor recall within the precision-safe F1 bound, centering exact tie plateaus."""
-    eligible = near_best_f1(rows)
+    """Maximize precision-safe F1, then recall, centering exact tie plateaus."""
+    eligible = best_f1_candidates(rows)
     best_key = max(recall_preference(row) for row in eligible)
     tied = [row for row in eligible if recall_preference(row) == best_key]
     return tied[len(tied) // 2]
 
 
 def _select_search(rows: list[dict[str, Any]]) -> dict[str, Any]:
-    """Select only among thresholds that keep every no-result probe empty."""
+    """Select among thresholds safe for every language and no-result probe."""
     clean = [row for row in rows if row["no_result_clean"] == row["no_result_total"]]
     if not clean:
         raise ValueError("no search candidate keeps all no-result probes empty")
-    return _select(clean)
+    safe = [
+        row
+        for row in clean
+        if all(item["precision"] >= MINIMUM_SELECTION_PRECISION for item in row["per_language"])
+    ]
+    if not safe:
+        raise ValueError("no search candidate satisfies minimum precision in every language")
+    return _select(safe)
 
 
 def _score_summary(values: list[float]) -> dict[str, float | int | None]:
@@ -117,6 +126,11 @@ def _selection_window(rows: list[dict[str, Any]], selected: dict[str, Any]) -> l
     start = max(0, selected_index - SEARCH_SELECTION_WINDOW_RADIUS)
     stop = selected_index + SEARCH_SELECTION_WINDOW_RADIUS + 1
     return rows[start:stop]
+
+
+def _compact_search_row(row: dict[str, Any]) -> dict[str, Any]:
+    """Drop repeated language evidence from a pooled search metric row."""
+    return {key: value for key, value in row.items() if key != "per_language"}
 
 
 def _difficulty_recall(
@@ -223,6 +237,7 @@ def _search_records(project: Any, measurement: dict[str, Any]) -> list[dict[str,
     return [
         {
             "key": (project.id, row["probe"], row["unit"]),
+            "language": project.spec["languages"][0],
             "score": row["cosine"],
             "rank": row["rank"],
             "expected": (row["probe"], row["unit"]) in expected,
@@ -235,13 +250,13 @@ def _search_records(project: Any, measurement: dict[str, Any]) -> list[dict[str,
 
 def search_rows(records: list[dict[str, Any]], grid: list[float]) -> list[dict[str, Any]]:
     """Sweep one global search threshold at the production top-k limit."""
-    expected = {row["key"] for row in records if row["expected"]}
-    no_result_queries = {(row["key"][0], row["key"][1]) for row in records if row["no_result"]}
-    rows = []
-    for threshold in grid:
+
+    def score(subset: list[dict[str, Any]], threshold: float) -> dict[str, Any]:
+        expected = {row["key"] for row in subset if row["expected"]}
+        no_result_queries = {(row["key"][0], row["key"][1]) for row in subset if row["no_result"]}
         output = {
             row["key"]
-            for row in records
+            for row in subset
             if row["score"] >= threshold and row["rank"] <= DEFAULT_TOP_K
         }
         tp = len(output & expected)
@@ -250,17 +265,35 @@ def search_rows(records: list[dict[str, Any]], grid: list[float]) -> list[dict[s
         precision = tp / (tp + fp) if tp + fp else 0.0
         recall = tp / (tp + fn) if tp + fn else 0.0
         violated = {(project, probe) for project, probe, _ in output} & no_result_queries
+        return {
+            "tp": tp,
+            "fp": fp,
+            "fn": fn,
+            "precision": precision,
+            "recall": recall,
+            "f1": 2 * precision * recall / (precision + recall) if precision + recall else 0.0,
+            "no_result_clean": len(no_result_queries) - len(violated),
+            "no_result_total": len(no_result_queries),
+        }
+
+    languages = sorted({row["language"] for row in records})
+    rows = []
+    for threshold in grid:
+        pooled = score(records, threshold)
         rows.append(
             {
                 "threshold": threshold,
-                "tp": tp,
-                "fp": fp,
-                "fn": fn,
-                "precision": precision,
-                "recall": recall,
-                "f1": 2 * precision * recall / (precision + recall) if precision + recall else 0.0,
-                "no_result_clean": len(no_result_queries) - len(violated),
-                "no_result_total": len(no_result_queries),
+                **pooled,
+                "per_language": [
+                    {
+                        "language": language,
+                        **score(
+                            [record for record in records if record["language"] == language],
+                            threshold,
+                        ),
+                    }
+                    for language in languages
+                ],
             }
         )
     return rows
@@ -314,12 +347,16 @@ def _selection_models(
             search_records.extend(_search_records(project, measurement))
         search = search_rows(search_records, search_grid)
         selected_search = _select_search(search)
+        current_search = search_rows(search_records, [profile.default_search_threshold])[0]
         model_result["search"] = {
             "current_threshold": profile.default_search_threshold,
-            "current_metrics": search_rows(search_records, [profile.default_search_threshold])[0],
+            "current_metrics": _compact_search_row(current_search),
             "selected_threshold": selected_search["threshold"],
-            "selected_metrics": selected_search,
-            "selection_window": _selection_window(search, selected_search),
+            "selected_metrics": _compact_search_row(selected_search),
+            "selected_per_language": selected_search["per_language"],
+            "selection_window": [
+                _compact_search_row(row) for row in _selection_window(search, selected_search)
+            ],
         }
         results.append(model_result)
     return results

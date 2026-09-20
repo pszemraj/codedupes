@@ -35,9 +35,9 @@ The duplicate-admission rows include every comparable reviewed pair. The default
 | duplicate admission | GTE | 50 / 7 / 27 | 87.7% | 64.9% | 74.6% |
 | duplicate admission | Gemma | 62 / 13 / 15 | 82.7% | 80.5% | 81.6% |
 | semantic-only default-visible | GTE | 50 / 2 / 27 | 96.2% | 64.9% | 77.5% |
-| semantic-only default-visible | Gemma | 59 / 4 / 18 | 93.7% | 76.6% | 84.3% |
+| semantic-only default-visible | Gemma | 58 / 2 / 19 | 96.7% | 75.3% | 84.7% |
 | search | GTE | 72 / 20 / 22 | 78.3% | 76.6% | 77.4% |
-| search | Gemma | 72 / 38 / 22 | 65.5% | 76.6% | 70.6% |
+| search | Gemma | 59 / 13 / 35 | 81.9% | 62.8% | 71.1% |
 
 The checked JSON contains the exact ratios, per-language rows, candidate windows, hybrid alternatives, runtime metadata, timings, and device-drift evidence behind these rounded tables.
 
@@ -89,7 +89,7 @@ python scripts/sweep_hybrid_gates.py \
   --json-out scratch/calibration/hybrid-selection.json
 ```
 
-Duplicate admission, search, and hybrid visibility discard candidates below 50% judged precision, maximize judged F1, and prefer higher recall within `0.005` F1 of the optimum. Search preserves explicit no-result probes; duplicate admission excludes pairs already found by a traditional method. Hybrid selection applies the precision floor to every language and pooled result while jointly selecting corroboration and promotion gates. It keeps promotion disabled when that policy is fixture-equivalent to numeric gates; otherwise it emits the center of each fixture-equivalent numeric plateau rather than its permissive edge. Exact pooled ties prefer the lower identifier-overlap floor and retain a distinct `runner_up` in the checked audit; the phase-two density evaluation determines whether a fixture-equivalent alternative behaves better on real code. Selections bind fixture source, unit and query inputs, model revisions and tasks, plus explicit policy and pipeline versions. Changes to these inputs require fresh evidence; formatting and comments in the calibration implementation do not. New captures record the package version for diagnostics without using it to invalidate otherwise compatible evidence.
+Duplicate admission, search, and hybrid visibility discard candidates below 50% judged precision, maximize judged F1, and use recall only to break exact F1 ties. Search applies the precision floor to every language and the pooled result while preserving explicit no-result probes; duplicate admission excludes pairs already found by a traditional method. Hybrid selection applies the same per-language and pooled floor while jointly selecting corroboration and promotion gates. It keeps promotion disabled when that policy is fixture-equivalent to numeric gates; otherwise it emits the center of each fixture-equivalent numeric plateau rather than its permissive edge. Exact pooled ties prefer the lower identifier-overlap floor and retain a distinct `runner_up` in the checked audit; the phase-two density evaluation determines whether a fixture-equivalent alternative behaves better on real code. Selections bind fixture source, unit and query inputs, model revisions and tasks, plus explicit policy and pipeline versions. Changes to these inputs require fresh evidence; formatting and comments in the calibration implementation do not. New captures record the package version for diagnostics without using it to invalidate otherwise compatible evidence.
 
 Run the multi-domain search smoke test against the selected default:
 
@@ -97,7 +97,7 @@ Run the multi-domain search smoke test against the selected default:
 CODEDUPES_SMOKE_SEARCH=1 pytest tests/test_semantic_smoke.py -k search
 ```
 
-Keep these queries unchanged. Each target must rank first without a score floor, emitted default hits must be relevant, and no-result queries must stay empty. The checked result records nearby duplicate and search rows plus the hybrid candidate grids, best-F1 candidate, final-order runner-up (or `null` when no distinct near-best outcome exists), per-language precision evidence, and digests of the exact predicted-pair outcomes so policies with equal aggregate counts remain distinguishable.
+Keep these queries unchanged. Each target must rank first without a score floor, emitted default hits must be relevant, and no-result queries must stay empty. The checked result records nearby duplicate and search rows plus the hybrid candidate grids, best-F1 candidate, final-order runner-up (or `null` when no distinct exact-best-F1 outcome exists), per-language precision evidence, and digests of the exact predicted-pair outcomes so policies with equal aggregate counts remain distinguishable.
 
 The raw-backed report generator reproduces the complete hybrid sweep before it writes those compact audit rows. Without the ignored raw score matrices, the checked-only validator can verify their candidate grids, arithmetic, per-language safety, ordering, outcome-digest distinction, and internally consistent measurement-runtime provenance. It cannot independently prove that a digest names a particular raw prediction set or that no omitted candidate ranked higher. Both paths process saved scores without requiring the reader's runtime, hardware, or math settings to match the capture. Recorded execution metadata remains bound to the raw inputs, and the checked comparison requires a consistent capture runtime across reports. Fresh inference records the runtime that actually produced its scores.
 
