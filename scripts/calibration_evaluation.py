@@ -26,6 +26,7 @@ try:
         pair_key,
         resolve_annotations,
         unit_ids,
+        validate_project,
         write_json,
     )
     from .calibration_measurements import (
@@ -43,6 +44,7 @@ except ImportError:
         pair_key,
         resolve_annotations,
         unit_ids,
+        validate_project,
         write_json,
     )
     from calibration_measurements import (
@@ -1412,7 +1414,9 @@ def search_report(
     fn = len(expected - output)
     precision = tp / (tp + fp) if tp + fp else 0.0
     recall = tp / (tp + fn) if tp + fn else 0.0
-    no_result = {probe["id"] for probe in project.annotations["probes"] if not probe["expected"]}
+    no_result = {
+        probe["id"] for probe in project.annotations["probes"] if probe["kind"] == "no_result"
+    }
     violated = sorted(
         probe for probe in no_result if any(output_probe == probe for output_probe, _ in output)
     )
@@ -1662,6 +1666,9 @@ def validate_checked_report(
     :raises ValueError: If the checked report is malformed or internally inconsistent.
     :return: None
     """
+    for project in projects:
+        validate_project(project, require_adjudicated=True)
+
     if payload.get("schema_version") != CHECKED_REPORT_SCHEMA_VERSION:
         raise ValueError("checked calibration report has an unsupported schema")
 
@@ -1788,7 +1795,7 @@ def validate_checked_report(
             for unit_id in probe["expected"]
         }
         no_result_probe_ids = {
-            probe_id for probe_id, probe in probes.items() if not probe["expected"]
+            probe_id for probe_id, probe in probes.items() if probe["kind"] == "no_result"
         }
         expected_corpus = {
             "annotated_units": len(project.annotations["units"]),
@@ -1801,7 +1808,9 @@ def validate_checked_report(
             "probes": len(project.annotations["probes"]),
         }
         expected_relevant = sum(len(probe["expected"]) for probe in project.annotations["probes"])
-        expected_no_result = sum(not probe["expected"] for probe in project.annotations["probes"])
+        expected_no_result = sum(
+            probe["kind"] == "no_result" for probe in project.annotations["probes"]
+        )
         if (
             set(record)
             != {"project", "split", "language", "corpus", "reports", "device_comparisons"}
@@ -2061,6 +2070,7 @@ def load_all(
     project: Project, root: Path, models: list[str], devices: list[str]
 ) -> dict[tuple[str, str], dict[str, Any]]:
     """Load requested raw measurements."""
+    validate_project(project, require_adjudicated=True)
     measurements = {
         (resolve_model_profile(model).key, device): load_measurement(
             artifact_path(root, project, model, device),

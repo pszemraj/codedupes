@@ -136,6 +136,14 @@ def load_projects(
         ):
             if required not in spec:
                 raise ValueError(f"{spec['id']}: missing {required}")
+        languages = spec["languages"]
+        if (
+            not isinstance(languages, list)
+            or len(languages) != 1
+            or not isinstance(languages[0], str)
+            or not languages[0]
+        ):
+            raise ValueError(f"{spec['id']}: calibration projects require exactly one language")
         if spec["split"] not in {"development", "evaluation"}:
             raise ValueError("split must be development or evaluation")
         group = spec["split_group"]
@@ -380,6 +388,8 @@ def resolve_annotations(project: Project, units: list[CodeUnit]) -> dict[str, Co
             raise ValueError("invalid search expected set")
         if probe["kind"] == "no_result" and expected:
             raise ValueError("no-result probe has expected targets")
+        if probe["kind"] != "no_result" and not expected:
+            raise ValueError("non-no-result probe requires expected targets")
         if probe.get("relevance_complete") is not True:
             raise ValueError("search relevance must be reviewed over the declared project scope")
     return resolved

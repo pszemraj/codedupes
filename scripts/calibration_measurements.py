@@ -33,6 +33,7 @@ try:
         relative_file,
         resolve_annotations,
         unit_ids,
+        validate_project,
         write_json,
     )
 except ImportError:
@@ -47,6 +48,7 @@ except ImportError:
         relative_file,
         resolve_annotations,
         unit_ids,
+        validate_project,
         write_json,
     )
 
@@ -155,6 +157,11 @@ def capture(
     math_policy = semantic._mps_fast_math_variant(device) or "standard"
     if math_policy != "standard":
         raise ValueError("disable PYTORCH_MPS_FAST_MATH while calibrating")
+
+    # A fresh deterministic finding changes the reviewed corpus contract even
+    # when it is excluded from semantic scoring. Refuse to spend model time or
+    # emit raw evidence until every such pair has an explicit judgment.
+    validate_project(project, require_adjudicated=True)
 
     profile = resolve_model_profile(model)
     if profile.default_revision is None or len(profile.default_revision) != 40:

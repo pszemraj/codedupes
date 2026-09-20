@@ -7,6 +7,7 @@ from copy import deepcopy
 from dataclasses import replace
 from itertools import combinations
 from pathlib import Path
+from shutil import copyfile, copytree
 from types import SimpleNamespace
 
 import pytest
@@ -46,6 +47,7 @@ from scripts.calibration_evaluation import (
     compare_devices,
     development_projects,
     hybrid_candidate_grids,
+    load_all,
     measurement_digest,
     measurement_digests,
     replay,
@@ -422,6 +424,61 @@ def test_annotation_provenance_must_match_manifest_split(tmp_path: Path):
         load_projects(manifest_path)
 
 
+def test_calibration_manifest_rejects_multiple_languages(tmp_path: Path):
+    manifest = read_json(DEFAULT_MANIFEST)
+    for spec in manifest["projects"]:
+        spec["root"] = str((DEFAULT_MANIFEST.parent / spec["root"]).resolve())
+        spec["annotations"] = str((DEFAULT_MANIFEST.parent / spec["annotations"]).resolve())
+    manifest["projects"][0]["languages"] = ["python", "javascript"]
+    manifest_path = tmp_path / "manifest.json"
+    write_json(manifest_path, manifest)
+
+    with pytest.raises(ValueError, match="require exactly one language"):
+        load_projects(manifest_path)
+
+
+@pytest.mark.parametrize("kind", ["behavioral", "partial_symbol", "exact_symbol"])
+def test_non_no_result_probes_require_expected_targets(kind: str):
+    project = load_projects(project_ids=["ledger"])[0]
+    project.annotations["probes"][0]["kind"] = kind
+    project.annotations["probes"][0]["expected"] = []
+    inventory, _ = extract_project(project, inventory=True)
+
+    with pytest.raises(ValueError, match="requires expected targets"):
+        resolve_annotations(project, inventory)
+
+
+def test_calibration_outputs_reject_unjudged_deterministic_findings(tmp_path: Path, monkeypatch):
+    project = load_projects(project_ids=["ledger"])[0]
+    copied_root = tmp_path / "ledger"
+    copytree(project.root, copied_root)
+    copyfile(
+        copied_root / "src/ledger/audit.py",
+        copied_root / "src/ledger/audit_clone.py",
+    )
+    copied_project = replace(
+        project,
+        manifest_path=tmp_path / "manifest.json",
+        spec={**project.spec, "root": "ledger"},
+    )
+    monkeypatch.delenv("CODEDUPES_CPU_BF16", raising=False)
+    monkeypatch.delenv("PYTORCH_MPS_FAST_MATH", raising=False)
+
+    with pytest.raises(ValueError, match="unjudged deterministic findings"):
+        validate_project(copied_project)
+    with pytest.raises(ValueError, match="unjudged deterministic findings"):
+        capture(copied_project, "gte-modernbert-base", "cpu", tmp_path / "raw")
+    with pytest.raises(ValueError, match="unjudged deterministic findings"):
+        load_all(
+            copied_project,
+            tmp_path / "raw",
+            ["gte-modernbert-base"],
+            ["cpu"],
+        )
+    with pytest.raises(ValueError, match="unjudged deterministic findings"):
+        validate_checked_report({}, [copied_project], ["gte-modernbert-base"])
+
+
 def test_duplicate_sweep_uses_reviewed_comparable_pairs():
     project = SimpleNamespace(
         id="sample",
@@ -540,7 +597,7 @@ def test_canonical_sweep_measures_shipped_thresholds_exactly(tmp_path: Path, mon
         spec={"languages": ["python"], "split": "development"},
         annotations={
             "pairs": [{"a": "a", "b": "b", "judgment": "positive", "difficulty": "easy"}],
-            "probes": [{"id": "q", "expected": ["a"]}],
+            "probes": [{"id": "q", "kind": "behavioral", "expected": ["a"]}],
         },
     )
     measurement = {

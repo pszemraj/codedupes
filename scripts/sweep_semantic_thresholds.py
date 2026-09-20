@@ -217,7 +217,9 @@ def _search_records(project: Any, measurement: dict[str, Any]) -> list[dict[str,
         raise ValueError(
             f"{project.id}: expected search targets were not embedded: {sorted(missing)}"
         )
-    no_result = {probe["id"] for probe in project.annotations["probes"] if not probe["expected"]}
+    no_result = {
+        probe["id"] for probe in project.annotations["probes"] if probe["kind"] == "no_result"
+    }
     return [
         {
             "key": (project.id, row["probe"], row["unit"]),
