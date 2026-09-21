@@ -1,6 +1,5 @@
 use super::shared::{display_width, split_word};
 
-// fixture:semantic-wrap:start
 pub(crate) fn wrap(message: &str, width: usize) -> Vec<String> {
     let width = width.max(1);
     let wrapped: Vec<String> = message
@@ -48,4 +47,3 @@ pub(crate) fn wrap(message: &str, width: usize) -> Vec<String> {
         wrapped
     }
 }
-// fixture:semantic-wrap:end

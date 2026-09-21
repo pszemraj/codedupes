@@ -1,0 +1,1236 @@
+{
+  "schema_version": 2,
+  "provenance": {
+    "origin": "issue-20 authored development pilot",
+    "split": "development",
+    "split_group": "cowsay-application"
+  },
+  "retrieval_observations": {
+    "tool": "semble find-related, source tree only, top 10",
+    "easy": "scanner::wrap and fold::wrap are each the first source result for the other (about 0.923).",
+    "medium": "queue::wrap is the second source result when querying scanner::wrap (0.786); its queue-based paragraph state is a distinct but visible implementation.",
+    "hard": "shared::split_word reaches fragments::segment only seventh (0.400), despite both partitioning a nonempty Unicode token at a positive scalar boundary. Queue behavior tests exercise segment through public rendering.",
+    "scheduler": "The source-level job-selection and bounded-heap searches return their counterpart only after several type, test, and local-control-flow chunks. The algorithms share the scheduler contract but use distinct working representations."
+  },
+  "units": [
+    {
+      "id": "cow.render",
+      "selector": {
+        "path": "src/cow.rs",
+        "qualified_name": "cow.render",
+        "kind": "function"
+      }
+    },
+    {
+      "id": "lib.CowOptions.Default.default",
+      "selector": {
+        "path": "src/lib.rs",
+        "qualified_name": "lib.CowOptions.Default.default",
+        "kind": "method"
+      }
+    },
+    {
+      "id": "lib.render",
+      "selector": {
+        "path": "src/lib.rs",
+        "qualified_name": "lib.render",
+        "kind": "function"
+      }
+    },
+    {
+      "id": "lib.render_pipeline",
+      "selector": {
+        "path": "src/lib.rs",
+        "qualified_name": "lib.render_pipeline",
+        "kind": "function"
+      }
+    },
+    {
+      "id": "composed.render",
+      "selector": {
+        "path": "src/composed.rs",
+        "qualified_name": "composed.render",
+        "kind": "function"
+      }
+    },
+    {
+      "id": "lib.cowsay",
+      "selector": {
+        "path": "src/lib.rs",
+        "qualified_name": "lib.cowsay",
+        "kind": "function"
+      }
+    },
+    {
+      "id": "lib.fixture_version",
+      "selector": {
+        "path": "src/lib.rs",
+        "qualified_name": "lib.fixture_version",
+        "kind": "function"
+      }
+    },
+    {
+      "id": "scheduler.select_for_worker",
+      "selector": {
+        "path": "src/scheduler.rs",
+        "qualified_name": "scheduler.select_for_worker",
+        "kind": "function"
+      }
+    },
+    {
+      "id": "scheduler.reserve_candidates",
+      "selector": {
+        "path": "src/scheduler.rs",
+        "qualified_name": "scheduler.reserve_candidates",
+        "kind": "function"
+      }
+    },
+    {
+      "id": "main.main",
+      "selector": {
+        "path": "src/main.rs",
+        "qualified_name": "main.main",
+        "kind": "function"
+      }
+    },
+    {
+      "id": "main.run",
+      "selector": {
+        "path": "src/main.rs",
+        "qualified_name": "main.run",
+        "kind": "function"
+      }
+    },
+    {
+      "id": "main.print_usage",
+      "selector": {
+        "path": "src/main.rs",
+        "qualified_name": "main.print_usage",
+        "kind": "function"
+      }
+    },
+    {
+      "id": "bubble.render",
+      "selector": {
+        "path": "src/bubble/mod.rs",
+        "qualified_name": "bubble.render",
+        "kind": "function"
+      }
+    },
+    {
+      "id": "bubble.pad_line",
+      "selector": {
+        "path": "src/bubble/mod.rs",
+        "qualified_name": "bubble.pad_line",
+        "kind": "function"
+      }
+    },
+    {
+      "id": "bubble.speech.make_borders",
+      "selector": {
+        "path": "src/bubble/speech.rs",
+        "qualified_name": "bubble.speech.make_borders",
+        "kind": "function"
+      }
+    },
+    {
+      "id": "bubble.speech.render_bubble",
+      "selector": {
+        "path": "src/bubble/speech.rs",
+        "qualified_name": "bubble.speech.render_bubble",
+        "kind": "function"
+      }
+    },
+    {
+      "id": "bubble.thought.make_borders",
+      "selector": {
+        "path": "src/bubble/thought.rs",
+        "qualified_name": "bubble.thought.make_borders",
+        "kind": "function"
+      }
+    },
+    {
+      "id": "bubble.thought.render_bubble",
+      "selector": {
+        "path": "src/bubble/thought.rs",
+        "qualified_name": "bubble.thought.render_bubble",
+        "kind": "function"
+      }
+    },
+    {
+      "id": "wrapping.fold.wrap",
+      "selector": {
+        "path": "src/wrapping/fold.rs",
+        "qualified_name": "wrapping.fold.wrap",
+        "kind": "function"
+      }
+    },
+    {
+      "id": "wrapping.cursor.wrap",
+      "selector": {
+        "path": "src/wrapping/cursor.rs",
+        "qualified_name": "wrapping.cursor.wrap",
+        "kind": "function"
+      }
+    },
+    {
+      "id": "wrapping.fragments.segment",
+      "selector": {
+        "path": "src/wrapping/fragments.rs",
+        "qualified_name": "wrapping.fragments.segment",
+        "kind": "function"
+      }
+    },
+    {
+      "id": "wrapping.fragments.segment_indexed",
+      "selector": {
+        "path": "src/wrapping/fragments.rs",
+        "qualified_name": "wrapping.fragments.segment_indexed",
+        "kind": "function"
+      }
+    },
+    {
+      "id": "wrapping.queue.wrap",
+      "selector": {
+        "path": "src/wrapping/queue.rs",
+        "qualified_name": "wrapping.queue.wrap",
+        "kind": "function"
+      }
+    },
+    {
+      "id": "wrapping.wrap",
+      "selector": {
+        "path": "src/wrapping/mod.rs",
+        "qualified_name": "wrapping.wrap",
+        "kind": "function"
+      }
+    },
+    {
+      "id": "wrapping.scanner.wrap",
+      "selector": {
+        "path": "src/wrapping/scanner.rs",
+        "qualified_name": "wrapping.scanner.wrap",
+        "kind": "function"
+      }
+    },
+    {
+      "id": "wrapping.shared.display_width",
+      "selector": {
+        "path": "src/wrapping/shared.rs",
+        "qualified_name": "wrapping.shared.display_width",
+        "kind": "function"
+      }
+    },
+    {
+      "id": "wrapping.shared.split_word",
+      "selector": {
+        "path": "src/wrapping/shared.rs",
+        "qualified_name": "wrapping.shared.split_word",
+        "kind": "function"
+      }
+    }
+  ],
+  "families": [
+    {
+      "id": "borders",
+      "members": [
+        "bubble.speech.make_borders",
+        "bubble.thought.make_borders"
+      ]
+    },
+    {
+      "id": "bubble-rendering",
+      "members": [
+        "bubble.speech.render_bubble",
+        "bubble.thought.render_bubble"
+      ]
+    },
+    {
+      "id": "word-wrapping",
+      "members": [
+        "wrapping.scanner.wrap",
+        "wrapping.fold.wrap",
+        "wrapping.queue.wrap",
+        "wrapping.cursor.wrap"
+      ]
+    },
+    {
+      "id": "word-fragmenting",
+      "members": [
+        "wrapping.shared.split_word",
+        "wrapping.fragments.segment",
+        "wrapping.fragments.segment_indexed"
+      ]
+    },
+    {
+      "id": "render-assembly",
+      "members": [
+        "lib.render_pipeline",
+        "composed.render"
+      ]
+    },
+    {
+      "id": "worker-selection",
+      "members": [
+        "scheduler.select_for_worker",
+        "scheduler.reserve_candidates"
+      ]
+    }
+  ],
+  "pairs": [
+    {
+      "id": "bubble.speech.make_borders--bubble.thought.make_borders",
+      "a": "bubble.speech.make_borders",
+      "b": "bubble.thought.make_borders",
+      "judgment": "positive",
+      "tags": [
+        "exact"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": true,
+      "equivalence_domain": "Equal width produces byte-identical top and bottom border strings.",
+      "contract": "Equal width produces byte-identical top and bottom border strings.",
+      "rationale": "Consolidate the common border construction used by both modes.",
+      "evidence": [
+        "tests/fixture_integrity.rs::exact_clone_is_still_byte_identical",
+        "tests/behavior.rs::renders_single_line_speech"
+      ],
+      "difficulty": "easy"
+    },
+    {
+      "id": "bubble.speech.render_bubble--bubble.thought.render_bubble",
+      "a": "bubble.speech.render_bubble",
+      "b": "bubble.thought.render_bubble",
+      "judgment": "positive",
+      "tags": [
+        "edited"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "Speech and thought modes preserve content and widths but intentionally use different delimiters.",
+      "contract": "Speech and thought modes preserve content and widths but intentionally use different delimiters.",
+      "rationale": "Share the bubble framing and padded-line assembly while parameterizing mode-specific delimiters.",
+      "evidence": [
+        "tests/behavior.rs::renders_single_line_speech",
+        "tests/behavior.rs::renders_thought_mode"
+      ],
+      "difference_witness": "One line moo renders < moo > in speech and ( moo ) in thought.",
+      "difficulty": "easy"
+    },
+    {
+      "id": "wrapping.scanner.wrap--wrapping.fold.wrap",
+      "a": "wrapping.scanner.wrap",
+      "b": "wrapping.fold.wrap",
+      "judgment": "positive",
+      "tags": [
+        "translated"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": true,
+      "equivalence_domain": "Message strings passed through render, with its width clamp to 4..96; both bubble modes",
+      "contract": "Unicode scalar widths, whitespace collapsing, paragraph preservation and long-word splitting agree through the public renderer.",
+      "rationale": "Consolidate the two implementations of the public wrapping contract; neither caller requires separate performance behavior.",
+      "evidence": [
+        "tests/behavior.rs::both_semantic_wrappers_render_identically",
+        "tests/behavior.rs::public_width_clamps_and_unicode_scalar_boundaries"
+      ],
+      "difficulty": "easy"
+    },
+    {
+      "id": "wrapping.scanner.wrap--wrapping.queue.wrap",
+      "a": "wrapping.scanner.wrap",
+      "b": "wrapping.queue.wrap",
+      "judgment": "positive",
+      "tags": [
+        "translated",
+        "queue"
+      ],
+      "difficulty": "medium",
+      "scope": "whole_unit",
+      "behavior_equivalent": true,
+      "equivalence_domain": "Message strings passed through render, with its width clamp to 4..96; both bubble modes.",
+      "contract": "Unicode scalar widths, whitespace collapsing, paragraph preservation, and long-word splitting agree through the public renderer.",
+      "rationale": "The active-line scanner and FIFO pending-word implementation maintain the same public wrapping responsibility.",
+      "evidence": [
+        "tests/behavior.rs::both_semantic_wrappers_render_identically",
+        "tests/behavior.rs::native_cli_reports_invalid_options_and_runs_both_wrappers"
+      ]
+    },
+    {
+      "id": "wrapping.fold.wrap--wrapping.queue.wrap",
+      "a": "wrapping.fold.wrap",
+      "b": "wrapping.queue.wrap",
+      "judgment": "positive",
+      "tags": [
+        "translated",
+        "queue"
+      ],
+      "difficulty": "medium",
+      "scope": "whole_unit",
+      "behavior_equivalent": true,
+      "equivalence_domain": "Message strings passed through render, with its width clamp to 4..96; both bubble modes.",
+      "contract": "Unicode scalar widths, whitespace collapsing, paragraph preservation, and long-word splitting agree through the public renderer.",
+      "rationale": "The iterator-fold and FIFO implementations are separately maintained forms of the same wrapping contract.",
+      "evidence": [
+        "tests/behavior.rs::both_semantic_wrappers_render_identically",
+        "tests/behavior.rs::native_cli_reports_invalid_options_and_runs_both_wrappers"
+      ]
+    },
+    {
+      "id": "wrapping.scanner.wrap--wrapping.cursor.wrap",
+      "a": "wrapping.scanner.wrap",
+      "b": "wrapping.cursor.wrap",
+      "judgment": "positive",
+      "tags": [
+        "translated",
+        "indexed-loop"
+      ],
+      "difficulty": "easy",
+      "scope": "whole_unit",
+      "behavior_equivalent": true,
+      "equivalence_domain": "Message strings passed through render, with its width clamp to 4..96; both bubble modes.",
+      "contract": "Unicode scalar widths, whitespace collapsing, paragraph preservation, and long-word splitting agree through the public renderer.",
+      "rationale": "Both wrappers maintain an active output line through nested imperative loops; one replaces iterators with explicit cursors.",
+      "evidence": [
+        "tests/behavior.rs::both_semantic_wrappers_render_identically",
+        "tests/fixture_integrity.rs::semantic_clone_has_different_source_but_equal_behavior"
+      ]
+    },
+    {
+      "id": "wrapping.fold.wrap--wrapping.cursor.wrap",
+      "a": "wrapping.fold.wrap",
+      "b": "wrapping.cursor.wrap",
+      "judgment": "positive",
+      "tags": [
+        "iterator-versus-indexed",
+        "algorithmic-rewrite"
+      ],
+      "difficulty": "medium",
+      "scope": "whole_unit",
+      "behavior_equivalent": true,
+      "equivalence_domain": "Message strings passed through render, with its width clamp to 4..96; both bubble modes.",
+      "contract": "Unicode scalar widths, whitespace collapsing, paragraph preservation, and long-word splitting agree through the public renderer.",
+      "rationale": "Iterator flattening and tuple-fold state obscure the same behavior expressed by explicit word and fragment cursors.",
+      "evidence": [
+        "tests/behavior.rs::both_semantic_wrappers_render_identically",
+        "tests/fixture_integrity.rs::semantic_clone_has_different_source_but_equal_behavior"
+      ]
+    },
+    {
+      "id": "wrapping.queue.wrap--wrapping.cursor.wrap",
+      "a": "wrapping.queue.wrap",
+      "b": "wrapping.cursor.wrap",
+      "judgment": "positive",
+      "tags": [
+        "queue-versus-indexed"
+      ],
+      "difficulty": "medium",
+      "scope": "whole_unit",
+      "behavior_equivalent": true,
+      "equivalence_domain": "Message strings passed through render, with its width clamp to 4..96; both bubble modes.",
+      "contract": "Unicode scalar widths, whitespace collapsing, paragraph preservation, and long-word splitting agree through the public renderer.",
+      "rationale": "FIFO fragment consumption and indexed traversal retain the same active-line and paragraph state under different collection mechanics.",
+      "evidence": [
+        "tests/behavior.rs::both_semantic_wrappers_render_identically",
+        "tests/fixture_integrity.rs::semantic_clone_has_different_source_but_equal_behavior"
+      ]
+    },
+    {
+      "id": "wrapping.shared.split_word--wrapping.fragments.segment",
+      "a": "wrapping.shared.split_word",
+      "b": "wrapping.fragments.segment",
+      "judgment": "positive",
+      "tags": [
+        "translated",
+        "hard"
+      ],
+      "difficulty": "hard",
+      "scope": "whole_unit",
+      "behavior_equivalent": true,
+      "equivalence_domain": "Nonempty Unicode tokens and a positive scalar boundary.",
+      "contract": "Partition a token into ordered chunks no wider than the supplied scalar boundary without losing or reordering characters.",
+      "rationale": "The shared loop and Queue's iterator-fold fragmenter duplicate a narrow but real long-token maintenance operation.",
+      "evidence": [
+        "tests/behavior.rs::both_semantic_wrappers_render_identically",
+        "tests/behavior.rs::wraps_long_words_without_losing_characters",
+        "tests/fixture_integrity.rs::semantic_clone_has_different_source_but_equal_behavior"
+      ]
+    },
+    {
+      "id": "wrapping.shared.split_word--wrapping.fragments.segment_indexed",
+      "a": "wrapping.shared.split_word",
+      "b": "wrapping.fragments.segment_indexed",
+      "judgment": "positive",
+      "tags": [
+        "translated",
+        "scalar-buffer"
+      ],
+      "difficulty": "medium",
+      "scope": "whole_unit",
+      "behavior_equivalent": true,
+      "equivalence_domain": "Nonempty Unicode tokens and a positive scalar boundary.",
+      "contract": "Partition a token into ordered chunks no wider than the supplied scalar boundary without losing or reordering characters.",
+      "rationale": "Direct character accumulation and indexed scalar-buffer slicing implement the same small token operation; the sparse Rust candidate pool surfaces their relationship in one query direction.",
+      "evidence": [
+        "tests/behavior.rs::wraps_long_words_without_losing_characters",
+        "tests/behavior.rs::both_semantic_wrappers_render_identically"
+      ]
+    },
+    {
+      "id": "wrapping.fragments.segment--wrapping.fragments.segment_indexed",
+      "a": "wrapping.fragments.segment",
+      "b": "wrapping.fragments.segment_indexed",
+      "judgment": "positive",
+      "tags": [
+        "translated",
+        "indexed-loop"
+      ],
+      "difficulty": "easy",
+      "scope": "whole_unit",
+      "behavior_equivalent": true,
+      "equivalence_domain": "Nonempty Unicode tokens and a positive scalar boundary.",
+      "contract": "Partition a token into ordered chunks no wider than the supplied scalar boundary without losing or reordering characters.",
+      "rationale": "Both implementations collect Unicode scalars and append chunks in boundary order; only the iteration mechanism differs.",
+      "evidence": [
+        "tests/behavior.rs::wraps_long_words_without_losing_characters",
+        "tests/behavior.rs::both_semantic_wrappers_render_identically"
+      ]
+    },
+    {
+      "id": "lib.render_pipeline--composed.render",
+      "a": "lib.render_pipeline",
+      "b": "composed.render",
+      "judgment": "positive",
+      "tags": [
+        "translated",
+        "assembly"
+      ],
+      "difficulty": "easy",
+      "scope": "whole_unit",
+      "behavior_equivalent": true,
+      "equivalence_domain": "All messages and CowOptions values, including width clamps and every wrapping algorithm.",
+      "contract": "Clamp width, wrap the message, render the selected bubble, append the matching cow, and return one newline-separated string.",
+      "rationale": "Format-based and mutable-buffer assembly implement the same final rendering pipeline behind a selectable runtime path.",
+      "evidence": [
+        "tests/behavior.rs::both_render_assemblies_preserve_public_output",
+        "tests/behavior.rs::native_cli_reports_invalid_options_and_runs_both_wrappers"
+      ]
+    },
+    {
+      "id": "scheduler.select_for_worker--scheduler.reserve_candidates",
+      "a": "scheduler.select_for_worker",
+      "b": "scheduler.reserve_candidates",
+      "judgment": "positive",
+      "tags": [
+        "translated",
+        "algorithmic_rewrite"
+      ],
+      "difficulty": "medium",
+      "scope": "whole_unit",
+      "behavior_equivalent": true,
+      "equivalence_domain": "All job slices, clocks, and limits under the scheduler contract, including invalid records that must be rejected before eligibility filtering.",
+      "contract": "Return the eligible job IDs in descending priority, then ascending creation time and ID; reject duplicate IDs and invalid expiry windows without changing the input.",
+      "rationale": "Sorting every eligible job and retaining bounded heap ranks are two maintainable implementations of one worker-selection policy. Consolidation can keep one selection engine without changing the caller contract.",
+      "evidence": [
+        "tests/scheduler.rs::ranking_and_ties_have_a_concrete_oracle",
+        "tests/scheduler.rs::validation_precedes_policy_filtering",
+        "tests/scheduler.rs::generated_sets_preserve_inputs_and_match_expected_prefixes"
+      ]
+    },
+    {
+      "id": "bubble.speech.make_borders--wrapping.shared.split_word",
+      "a": "bubble.speech.make_borders",
+      "b": "wrapping.shared.split_word",
+      "judgment": "negative",
+      "tags": [
+        "shared_vocabulary"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "Separate responsibilities in the text-rendering application.",
+      "contract": "Separate responsibilities in the text-rendering application.",
+      "rationale": "Border construction repeats fixed framing characters; splitting a long word partitions Unicode scalars without producing framing.",
+      "evidence": [
+        "tests/behavior.rs::both_semantic_wrappers_render_identically",
+        "tests/behavior.rs::public_width_clamps_and_unicode_scalar_boundaries",
+        "tests/behavior.rs::native_cli_reports_invalid_options_and_runs_both_wrappers"
+      ],
+      "difference_witness": "The public Unicode-width test requires both padding and wrapping; the invalid --wrapper trace is rejected by CLI parsing before any layout, and speech/thought mode changes artwork and framing separately."
+    },
+    {
+      "id": "bubble.thought.make_borders--main.run",
+      "a": "bubble.thought.make_borders",
+      "b": "main.run",
+      "judgment": "negative",
+      "tags": [
+        "shared_vocabulary"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "Separate responsibilities in the text-rendering application.",
+      "contract": "Separate responsibilities in the text-rendering application.",
+      "rationale": "CLI argument validation and input ownership do not duplicate border construction.",
+      "evidence": [
+        "tests/behavior.rs::both_semantic_wrappers_render_identically",
+        "tests/behavior.rs::public_width_clamps_and_unicode_scalar_boundaries",
+        "tests/behavior.rs::native_cli_reports_invalid_options_and_runs_both_wrappers"
+      ],
+      "difference_witness": "The public Unicode-width test requires both padding and wrapping; the invalid --wrapper trace is rejected by CLI parsing before any layout, and speech/thought mode changes artwork and framing separately."
+    },
+    {
+      "id": "bubble.speech.render_bubble--bubble.pad_line",
+      "a": "bubble.speech.render_bubble",
+      "b": "bubble.pad_line",
+      "judgment": "negative",
+      "tags": [
+        "shared_vocabulary"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "Separate responsibilities in the text-rendering application.",
+      "contract": "Separate responsibilities in the text-rendering application.",
+      "rationale": "Rendering calls the existing padding helper; it does not maintain an independent implementation of padding.",
+      "evidence": [
+        "tests/behavior.rs::both_semantic_wrappers_render_identically",
+        "tests/behavior.rs::public_width_clamps_and_unicode_scalar_boundaries",
+        "tests/behavior.rs::native_cli_reports_invalid_options_and_runs_both_wrappers"
+      ],
+      "difference_witness": "The public Unicode-width test requires both padding and wrapping; the invalid --wrapper trace is rejected by CLI parsing before any layout, and speech/thought mode changes artwork and framing separately."
+    },
+    {
+      "id": "bubble.thought.render_bubble--main.run",
+      "a": "bubble.thought.render_bubble",
+      "b": "main.run",
+      "judgment": "negative",
+      "tags": [
+        "shared_vocabulary"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "Separate responsibilities in the text-rendering application.",
+      "contract": "Separate responsibilities in the text-rendering application.",
+      "rationale": "CLI argument handling delegates rendering and contains no independent bubble construction.",
+      "evidence": [
+        "tests/behavior.rs::both_semantic_wrappers_render_identically",
+        "tests/behavior.rs::public_width_clamps_and_unicode_scalar_boundaries",
+        "tests/behavior.rs::native_cli_reports_invalid_options_and_runs_both_wrappers"
+      ],
+      "difference_witness": "The public Unicode-width test requires both padding and wrapping; the invalid --wrapper trace is rejected by CLI parsing before any layout, and speech/thought mode changes artwork and framing separately."
+    },
+    {
+      "id": "wrapping.scanner.wrap--bubble.pad_line",
+      "a": "wrapping.scanner.wrap",
+      "b": "bubble.pad_line",
+      "judgment": "negative",
+      "tags": [
+        "shared_vocabulary"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "Separate responsibilities in the text-rendering application.",
+      "contract": "Separate responsibilities in the text-rendering application.",
+      "rationale": "Word/paragraph layout decides line boundaries; padding preserves an existing line and fills its remaining width.",
+      "evidence": [
+        "tests/behavior.rs::both_semantic_wrappers_render_identically",
+        "tests/behavior.rs::public_width_clamps_and_unicode_scalar_boundaries",
+        "tests/behavior.rs::native_cli_reports_invalid_options_and_runs_both_wrappers"
+      ],
+      "difference_witness": "The public Unicode-width test requires both padding and wrapping; the invalid --wrapper trace is rejected by CLI parsing before any layout, and speech/thought mode changes artwork and framing separately."
+    },
+    {
+      "id": "wrapping.fold.wrap--main.run",
+      "a": "wrapping.fold.wrap",
+      "b": "main.run",
+      "judgment": "negative",
+      "tags": [
+        "shared_vocabulary"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "Separate responsibilities in the text-rendering application.",
+      "contract": "Separate responsibilities in the text-rendering application.",
+      "rationale": "CLI parsing selects a wrapping implementation but does not implement the wrapping state machine.",
+      "evidence": [
+        "tests/behavior.rs::both_semantic_wrappers_render_identically",
+        "tests/behavior.rs::public_width_clamps_and_unicode_scalar_boundaries",
+        "tests/behavior.rs::native_cli_reports_invalid_options_and_runs_both_wrappers"
+      ],
+      "difference_witness": "The public Unicode-width test requires both padding and wrapping; the invalid --wrapper trace is rejected by CLI parsing before any layout, and speech/thought mode changes artwork and framing separately."
+    },
+    {
+      "id": "cow.render--bubble.render",
+      "a": "cow.render",
+      "b": "bubble.render",
+      "judgment": "negative",
+      "tags": [
+        "shared_vocabulary"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "Separate responsibilities in the text-rendering application.",
+      "contract": "Separate responsibilities in the text-rendering application.",
+      "rationale": "Cow artwork and bubble-mode dispatch have unrelated construction responsibilities.",
+      "evidence": [
+        "tests/behavior.rs::both_semantic_wrappers_render_identically",
+        "tests/behavior.rs::public_width_clamps_and_unicode_scalar_boundaries",
+        "tests/behavior.rs::native_cli_reports_invalid_options_and_runs_both_wrappers"
+      ],
+      "difference_witness": "The public Unicode-width test requires both padding and wrapping; the invalid --wrapper trace is rejected by CLI parsing before any layout, and speech/thought mode changes artwork and framing separately."
+    },
+    {
+      "id": "bubble.render--wrapping.wrap",
+      "a": "bubble.render",
+      "b": "wrapping.wrap",
+      "judgment": "negative",
+      "tags": [
+        "shared_vocabulary"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "Separate responsibilities in the text-rendering application.",
+      "contract": "Separate responsibilities in the text-rendering application.",
+      "rationale": "These short dispatchers choose different operations and contain no substantial shared maintenance region.",
+      "evidence": [
+        "tests/behavior.rs::both_semantic_wrappers_render_identically",
+        "tests/behavior.rs::public_width_clamps_and_unicode_scalar_boundaries",
+        "tests/behavior.rs::native_cli_reports_invalid_options_and_runs_both_wrappers"
+      ],
+      "difference_witness": "The public Unicode-width test requires both padding and wrapping; the invalid --wrapper trace is rejected by CLI parsing before any layout, and speech/thought mode changes artwork and framing separately."
+    },
+    {
+      "id": "review-20-cowsay-001",
+      "a": "bubble.pad_line",
+      "b": "bubble.speech.make_borders",
+      "judgment": "negative",
+      "tags": [
+        "published_false_positive",
+        "nearby_negative"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "All documented cowsay fixture inputs.",
+      "contract": "The endpoints implement different layout responsibilities.",
+      "rationale": "Padding extends one content line to a measured width; border construction creates the top and bottom frame strings.",
+      "evidence": [
+        "tests/behavior.rs::public_width_clamps_and_unicode_scalar_boundaries"
+      ],
+      "difference_witness": "Padding preserves line text and adds spaces, while make_borders returns underscore and dash borders unrelated to line content."
+    },
+    {
+      "id": "review-20-cowsay-002",
+      "a": "bubble.pad_line",
+      "b": "bubble.thought.make_borders",
+      "judgment": "negative",
+      "tags": [
+        "published_false_positive",
+        "nearby_negative"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "All documented cowsay fixture inputs.",
+      "contract": "The endpoints implement different layout responsibilities.",
+      "rationale": "Line padding computes trailing spaces; thought-border construction creates framing glyph runs.",
+      "evidence": [
+        "tests/behavior.rs::public_width_clamps_and_unicode_scalar_boundaries"
+      ],
+      "difference_witness": "A Unicode content line is returned padded by pad_line, whereas make_borders ignores content and returns two frame strings."
+    },
+    {
+      "id": "review-20-cowsay-003",
+      "a": "bubble.pad_line",
+      "b": "bubble.thought.render_bubble",
+      "judgment": "negative",
+      "tags": [
+        "published_false_positive",
+        "nearby_negative"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "All documented cowsay fixture inputs.",
+      "contract": "A low-level spacing helper and complete thought-bubble renderer are separate responsibilities.",
+      "rationale": "pad_line is one helper used during framing; render_bubble builds borders, side glyphs, and joins every line.",
+      "evidence": [
+        "tests/behavior.rs::renders_thought_mode",
+        "tests/behavior.rs::public_width_clamps_and_unicode_scalar_boundaries"
+      ],
+      "difference_witness": "pad_line returns one unframed line; render_bubble returns a multiline thought bubble."
+    },
+    {
+      "id": "review-20-cowsay-005",
+      "a": "bubble.render",
+      "b": "bubble.speech.render_bubble",
+      "judgment": "negative",
+      "tags": [
+        "published_false_positive",
+        "dispatcher_callee"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "All documented cowsay fixture inputs.",
+      "contract": "Mode dispatch and one complete rendering implementation are separate maintenance responsibilities.",
+      "rationale": "bubble::render measures width and selects a mode; the speech renderer implements frame construction for one already selected mode.",
+      "evidence": [
+        "tests/behavior.rs::renders_single_line_speech",
+        "tests/behavior.rs::renders_thought_mode"
+      ],
+      "difference_witness": "The dispatcher can produce thought output; speech::render_bubble always produces speech framing."
+    },
+    {
+      "id": "review-20-cowsay-006",
+      "a": "bubble.render",
+      "b": "bubble.thought.render_bubble",
+      "judgment": "negative",
+      "tags": [
+        "published_false_positive",
+        "dispatcher_callee"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "All documented cowsay fixture inputs.",
+      "contract": "Mode dispatch and one complete rendering implementation are separate maintenance responsibilities.",
+      "rationale": "bubble::render measures width and selects a mode; the thought renderer implements only thought framing.",
+      "evidence": [
+        "tests/behavior.rs::renders_single_line_speech",
+        "tests/behavior.rs::renders_thought_mode"
+      ],
+      "difference_witness": "The dispatcher can produce speech output; thought::render_bubble always produces thought framing."
+    },
+    {
+      "id": "review-20-cowsay-007",
+      "a": "bubble.render",
+      "b": "lib.render",
+      "judgment": "negative",
+      "tags": [
+        "published_false_positive",
+        "pipeline_neighbors"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "All documented cowsay fixture inputs.",
+      "contract": "Adjacent rendering layers retain different orchestration boundaries.",
+      "rationale": "bubble::render accepts wrapped lines and frames them; lib::render clamps options, wraps a message, adds cow artwork, and assembles final output.",
+      "evidence": [
+        "tests/behavior.rs::both_semantic_wrappers_render_identically",
+        "tests/behavior.rs::public_width_clamps_and_unicode_scalar_boundaries"
+      ],
+      "difference_witness": "bubble::render never wraps text or appends a cow; lib::render always coordinates those stages."
+    },
+    {
+      "id": "review-20-cowsay-010",
+      "a": "bubble.speech.make_borders",
+      "b": "bubble.speech.render_bubble",
+      "judgment": "negative",
+      "tags": [
+        "published_false_positive",
+        "helper_caller"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "All documented cowsay fixture inputs.",
+      "contract": "Border construction and complete bubble rendering are separate responsibilities.",
+      "rationale": "make_borders creates only horizontal frame strings; render_bubble adds side glyphs, padding, and line-specific corners.",
+      "evidence": [
+        "tests/behavior.rs::renders_single_line_speech",
+        "tests/behavior.rs::public_width_clamps_and_unicode_scalar_boundaries"
+      ],
+      "difference_witness": "make_borders returns a two-string tuple; render_bubble returns the full multiline bubble."
+    },
+    {
+      "id": "review-20-cowsay-011",
+      "a": "bubble.speech.make_borders",
+      "b": "bubble.thought.render_bubble",
+      "judgment": "negative",
+      "tags": [
+        "published_false_positive",
+        "nearby_negative"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "All documented cowsay fixture inputs.",
+      "contract": "A speech-border helper and thought renderer have different behavior contracts.",
+      "rationale": "The helper returns horizontal borders only; the renderer builds complete thought-mode rows using parentheses.",
+      "evidence": [
+        "tests/behavior.rs::renders_thought_mode",
+        "tests/behavior.rs::public_width_clamps_and_unicode_scalar_boundaries"
+      ],
+      "difference_witness": "The border helper cannot emit thought side glyphs or content rows."
+    },
+    {
+      "id": "review-20-cowsay-015",
+      "a": "bubble.speech.render_bubble",
+      "b": "bubble.thought.make_borders",
+      "judgment": "negative",
+      "tags": [
+        "published_false_positive",
+        "nearby_negative"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "All documented cowsay fixture inputs.",
+      "contract": "A complete speech renderer and thought-border helper have different behavior contracts.",
+      "rationale": "The speech renderer produces content rows and corners; the thought helper returns only horizontal borders.",
+      "evidence": [
+        "tests/behavior.rs::renders_single_line_speech",
+        "tests/behavior.rs::renders_thought_mode"
+      ],
+      "difference_witness": "speech::render_bubble contains message text and slash sides; thought::make_borders returns no content rows."
+    },
+    {
+      "id": "review-20-cowsay-018",
+      "a": "bubble.thought.make_borders",
+      "b": "bubble.thought.render_bubble",
+      "judgment": "negative",
+      "tags": [
+        "published_false_positive",
+        "helper_caller"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "All documented cowsay fixture inputs.",
+      "contract": "Border construction and complete bubble rendering are separate responsibilities.",
+      "rationale": "make_borders creates two frame strings; render_bubble owns content rows, padding, parentheses, and joining.",
+      "evidence": [
+        "tests/behavior.rs::renders_thought_mode",
+        "tests/behavior.rs::public_width_clamps_and_unicode_scalar_boundaries"
+      ],
+      "difference_witness": "The helper returns a tuple without content; the renderer returns the complete thought bubble."
+    },
+    {
+      "id": "review-20-cowsay-021",
+      "a": "bubble.thought.render_bubble",
+      "b": "lib.render",
+      "judgment": "negative",
+      "tags": [
+        "published_false_positive",
+        "pipeline_neighbors"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "All documented cowsay fixture inputs.",
+      "contract": "A mode-specific renderer and whole-application rendering pipeline are separate responsibilities.",
+      "rationale": "Thought rendering frames prewrapped lines; lib::render clamps width, wraps raw text, selects a bubble mode, and appends cow artwork.",
+      "evidence": [
+        "tests/behavior.rs::renders_thought_mode",
+        "tests/behavior.rs::both_semantic_wrappers_render_identically"
+      ],
+      "difference_witness": "lib::render can produce speech and always appends a cow; thought::render_bubble does neither."
+    },
+    {
+      "id": "review-20-cowsay-031",
+      "a": "lib.render",
+      "b": "main.run",
+      "judgment": "negative",
+      "tags": [
+        "published_false_positive",
+        "pipeline_neighbors"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "All documented cowsay fixture inputs.",
+      "contract": "Library rendering and native CLI parsing are separate responsibilities.",
+      "rationale": "lib::render performs the text-rendering pipeline from typed options; main::run parses argv/stdin and translates failures before delegating.",
+      "evidence": [
+        "tests/behavior.rs::native_cli_reports_invalid_options_and_runs_both_wrappers",
+        "tests/behavior.rs::both_semantic_wrappers_render_identically"
+      ],
+      "difference_witness": "An invalid --wrapper returns Err from run without calling render; lib::render accepts only a valid WrapAlgorithm."
+    },
+    {
+      "id": "review-20-cowsay-033",
+      "a": "wrapping.fold.wrap",
+      "b": "wrapping.shared.split_word",
+      "judgment": "negative",
+      "tags": [
+        "published_false_positive",
+        "helper_caller"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "All documented cowsay fixture inputs.",
+      "contract": "Paragraph wrapping and long-word splitting are separate responsibilities.",
+      "rationale": "The fold implementation manages whitespace, paragraphs, and line accumulation; split_word is a shared boundary helper for one oversized token.",
+      "evidence": [
+        "tests/behavior.rs::both_semantic_wrappers_render_identically",
+        "tests/behavior.rs::wraps_long_words_without_losing_characters"
+      ],
+      "difference_witness": "Wrapping an ordinary sentence produces multiple word-aware lines without calling split behavior for every word; split_word knows no paragraph boundaries."
+    },
+    {
+      "id": "review-20-cowsay-034",
+      "a": "wrapping.scanner.wrap",
+      "b": "wrapping.shared.split_word",
+      "judgment": "negative",
+      "tags": [
+        "published_false_positive",
+        "helper_caller"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "All documented cowsay fixture inputs.",
+      "contract": "Paragraph wrapping and long-word splitting are separate responsibilities.",
+      "rationale": "The scanner implementation controls paragraph and current-line state; split_word only chunks one oversized Unicode word.",
+      "evidence": [
+        "tests/behavior.rs::both_semantic_wrappers_render_identically",
+        "tests/behavior.rs::wraps_long_words_without_losing_characters"
+      ],
+      "difference_witness": "scanner::wrap preserves paragraph breaks and word spacing; split_word receives neither paragraphs nor whitespace context."
+    },
+    {
+      "id": "review-20-cowsay-037",
+      "a": "bubble.render",
+      "b": "composed.render",
+      "judgment": "negative",
+      "tags": [
+        "reviewed_high_score",
+        "pipeline_neighbor"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "All documented cowsay fixture inputs.",
+      "contract": "Bubble mode dispatch frames pre-wrapped lines; composed rendering owns the entire message-to-output pipeline.",
+      "rationale": "The composed renderer invokes bubble::render after separately clamping width, wrapping the message, and obtaining cow artwork. It does not duplicate bubble framing.",
+      "evidence": [
+        "tests/behavior.rs::both_render_assemblies_preserve_public_output",
+        "tests/behavior.rs::renders_thought_mode"
+      ],
+      "difference_witness": "bubble::render accepts wrapped lines and has no cow output, while composed::render accepts raw text and always appends cow artwork."
+    },
+    {
+      "id": "review-20-cowsay-038",
+      "a": "bubble.render",
+      "b": "lib.render_pipeline",
+      "judgment": "negative",
+      "tags": [
+        "reviewed_high_score",
+        "pipeline_neighbor"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "All documented cowsay fixture inputs.",
+      "contract": "Bubble mode dispatch frames pre-wrapped lines; the pipeline converts raw text and options into the complete cowsay response.",
+      "rationale": "render_pipeline delegates one stage to bubble::render and separately controls width, wrapping, cow artwork, and final assembly.",
+      "evidence": [
+        "tests/behavior.rs::both_render_assemblies_preserve_public_output",
+        "tests/behavior.rs::public_width_clamps_and_unicode_scalar_boundaries"
+      ],
+      "difference_witness": "bubble::render cannot clamp a width or append cow artwork; render_pipeline does both before returning its response."
+    },
+    {
+      "id": "review-20-cowsay-039",
+      "a": "wrapping.queue.wrap",
+      "b": "wrapping.shared.split_word",
+      "judgment": "negative",
+      "tags": [
+        "reviewed_high_score",
+        "helper_neighbor"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "All documented cowsay fixture inputs.",
+      "contract": "Queue wrapping owns paragraph and pending-word state; split_word partitions one Unicode token at a scalar boundary.",
+      "rationale": "The queue implementation uses the independently maintained fragments::segment helper for oversize words, while shared::split_word is a different helper used by the scanner and fold implementations.",
+      "evidence": [
+        "tests/behavior.rs::both_semantic_wrappers_render_identically",
+        "tests/behavior.rs::wraps_long_words_without_losing_characters"
+      ],
+      "difference_witness": "queue::wrap consumes complete paragraphs and preserves line boundaries; split_word receives a single token and cannot retain paragraph structure."
+    },
+    {
+      "id": "review-20-cowsay-040",
+      "a": "bubble.thought.render_bubble",
+      "b": "composed.render",
+      "judgment": "negative",
+      "tags": [
+        "reviewed_high_score",
+        "pipeline_neighbor"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "All documented cowsay fixture inputs.",
+      "contract": "Thought framing renders already-wrapped lines; composed rendering selects a mode after full text layout and appends artwork.",
+      "rationale": "The composed path calls generic bubble dispatch rather than maintaining the thought renderer, and it also supports speech output.",
+      "evidence": [
+        "tests/behavior.rs::both_render_assemblies_preserve_public_output",
+        "tests/behavior.rs::renders_thought_mode"
+      ],
+      "difference_witness": "thought::render_bubble always emits parenthesized thought framing; composed::render can render speech and includes a cow."
+    },
+    {
+      "id": "review-20-cowsay-041",
+      "a": "composed.render",
+      "b": "main.run",
+      "judgment": "negative",
+      "tags": [
+        "reviewed_high_score",
+        "cli_pipeline_neighbor"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "All documented cowsay fixture inputs.",
+      "contract": "Composed rendering assembles a typed rendering request; CLI execution parses argv or stdin and reports malformed options.",
+      "rationale": "main::run delegates to the public render dispatcher and owns command-line parsing, input selection, and error conversion; it does not reimplement final assembly.",
+      "evidence": [
+        "tests/behavior.rs::native_cli_reports_invalid_options_and_runs_both_wrappers",
+        "tests/behavior.rs::both_render_assemblies_preserve_public_output"
+      ],
+      "difference_witness": "An unknown --renderer exits from main::run with an error before a render algorithm is selected, while composed::render only receives valid CowOptions."
+    },
+    {
+      "id": "scheduler.select_for_worker--wrapping.queue.wrap",
+      "a": "scheduler.select_for_worker",
+      "b": "wrapping.queue.wrap",
+      "judgment": "negative",
+      "tags": [
+        "cross_domain_nearby",
+        "queue_state"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "Documented scheduler and cowsay inputs.",
+      "contract": "Worker selection validates and ranks job records; queue wrapping preserves paragraph text while fitting words into Unicode-scalar-width lines.",
+      "rationale": "Both functions consume ordered collections with state, but their validation, working data, output type, and maintenance responsibilities do not overlap in a consolidatable region.",
+      "evidence": [
+        "tests/scheduler.rs::state_and_expiry_boundaries",
+        "tests/behavior.rs::both_semantic_wrappers_render_identically"
+      ],
+      "difference_witness": "A ready Job produces its numeric ID through selection, while queue wrapping receives a string and returns formatted text lines."
+    },
+    {
+      "id": "scheduler.reserve_candidates--composed.render",
+      "a": "scheduler.reserve_candidates",
+      "b": "composed.render",
+      "judgment": "negative",
+      "tags": [
+        "cross_domain_nearby",
+        "accumulator_state"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "Documented scheduler and cowsay inputs.",
+      "contract": "The bounded heap retains ranked job IDs; the composed renderer prepares wrapped text, frames it, and appends cow artwork.",
+      "rationale": "Their collection-building control flow is incidental. One maintains a priority frontier and the other assembles a response string, so no substantial shared maintenance work exists.",
+      "evidence": [
+        "tests/scheduler.rs::generated_sets_preserve_inputs_and_match_expected_prefixes",
+        "tests/behavior.rs::both_render_assemblies_preserve_public_output"
+      ],
+      "difference_witness": "A limit of one can evict lower-priority jobs from the scheduler heap; composed rendering has no job ranking or eviction path and returns a cow response."
+    }
+  ],
+  "probes": [
+    {
+      "id": "word-layout",
+      "kind": "behavioral",
+      "query": "Wrap paragraphs into bounded-width lines, splitting words that are too long.",
+      "expected": [
+        "wrapping.scanner.wrap",
+        "wrapping.fold.wrap",
+        "wrapping.queue.wrap",
+        "wrapping.cursor.wrap"
+      ],
+      "relevance_complete": true
+    },
+    {
+      "id": "bubble-modes",
+      "kind": "behavioral",
+      "query": "Build a text bubble around already wrapped lines for speech or thought.",
+      "expected": [
+        "bubble.speech.render_bubble",
+        "bubble.thought.render_bubble",
+        "bubble.render"
+      ],
+      "relevance_complete": true
+    },
+    {
+      "id": "borders",
+      "kind": "behavioral",
+      "query": "Construct the top and bottom horizontal borders for a message bubble.",
+      "expected": [
+        "bubble.speech.make_borders",
+        "bubble.thought.make_borders"
+      ],
+      "relevance_complete": true
+    },
+    {
+      "id": "job-selection",
+      "kind": "behavioral",
+      "query": "Select ready jobs by priority, creation time, and identifier while rejecting invalid records.",
+      "expected": [
+        "scheduler.select_for_worker",
+        "scheduler.reserve_candidates"
+      ],
+      "relevance_complete": true
+    },
+    {
+      "id": "long-word",
+      "kind": "behavioral",
+      "query": "Divide one long word into character-bounded pieces without losing Unicode characters.",
+      "expected": [
+        "wrapping.shared.split_word",
+        "wrapping.fragments.segment",
+        "wrapping.fragments.segment_indexed"
+      ],
+      "relevance_complete": true
+    },
+    {
+      "id": "cli-options",
+      "kind": "behavioral",
+      "query": "Parse command-line options, read a message from arguments or standard input, and reject unsupported options.",
+      "expected": [
+        "main.run"
+      ],
+      "relevance_complete": true
+    },
+    {
+      "id": "partial-bubble",
+      "kind": "partial_symbol",
+      "query": "render_bub",
+      "expected": [
+        "bubble.speech.render_bubble",
+        "bubble.thought.render_bubble"
+      ],
+      "relevance_complete": true
+    },
+    {
+      "id": "partial-split",
+      "kind": "partial_symbol",
+      "query": "split_wor",
+      "expected": [
+        "wrapping.shared.split_word"
+      ],
+      "relevance_complete": true
+    },
+    {
+      "id": "partial-border",
+      "kind": "partial_symbol",
+      "query": "make_bord",
+      "expected": [
+        "bubble.speech.make_borders",
+        "bubble.thought.make_borders"
+      ],
+      "relevance_complete": true
+    },
+    {
+      "id": "exact-pad",
+      "kind": "exact_symbol",
+      "query": "pad_line",
+      "expected": [
+        "bubble.pad_line"
+      ],
+      "relevance_complete": true
+    },
+    {
+      "id": "noise-sql",
+      "kind": "no_result",
+      "query": "Apply a database schema migration inside a SQL transaction.",
+      "expected": [],
+      "relevance_complete": true
+    },
+    {
+      "id": "noise-http",
+      "kind": "no_result",
+      "query": "Refresh an OAuth token by sending an HTTP POST request.",
+      "expected": [],
+      "relevance_complete": true
+    }
+  ]
+}

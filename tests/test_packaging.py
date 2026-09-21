@@ -9,7 +9,7 @@ from pathlib import Path
 from packaging.requirements import Requirement
 from packaging.version import Version
 
-from codedupes.languages.registry import REQUIRED_PARSER_PACKAGES
+from codedupes.languages.registry import GRAMMAR_PACKAGES, TREE_SITTER_PACKAGE
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -45,6 +45,22 @@ def test_vcs_less_source_archives_have_a_build_version_fallback() -> None:
     """GitHub/source snapshots must remain buildable without a .git directory."""
     hatch = _pyproject()["tool"]["hatch"]  # type: ignore[index]
     assert hatch["version"]["fallback-version"] == "0.0.0+unknown"
+
+
+def test_version_is_vcs_dynamic_and_generated_outside_git() -> None:
+    """Builds derive package versions from VCS while generated source stays ignored."""
+    metadata = _pyproject()
+    project = metadata["project"]
+    hatch = metadata["tool"]["hatch"]  # type: ignore[index]
+    build_requirements = metadata["build-system"]["requires"]  # type: ignore[index]
+
+    assert project["dynamic"] == ["version"]
+    assert "version" not in project
+    assert {"hatchling", "hatch-vcs"} <= set(build_requirements)
+    assert hatch["version"]["source"] == "vcs"
+    version_file = hatch["build"]["hooks"]["vcs"]["version-file"]
+    assert version_file == "src/codedupes/_version.py"
+    assert version_file in (ROOT / ".gitignore").read_text(encoding="utf-8").splitlines()
 
 
 def test_sdist_uses_an_explicit_release_file_allowlist() -> None:
@@ -86,12 +102,10 @@ def test_readme_documentation_links_resolve_in_repository() -> None:
         assert resolved.is_relative_to(ROOT) and resolved.is_file(), target
 
 
-def test_polyglot_tree_sitter_runtime_is_exactly_pinned() -> None:
-    """pyproject pins must match the registry, the runtime source of truth."""
+def test_polyglot_tree_sitter_packages_are_declared_dependencies() -> None:
+    """Every parser used at runtime must be installed with the package."""
     project = _pyproject()["project"]
     dependencies = project["dependencies"]  # type: ignore[index]
     requirements = {Requirement(item).name: Requirement(item) for item in dependencies}
 
-    for package, version in REQUIRED_PARSER_PACKAGES.items():
-        requirement = requirements[package]
-        assert str(requirement.specifier) == f"=={version}"
+    assert {TREE_SITTER_PACKAGE, *GRAMMAR_PACKAGES.values()} <= requirements.keys()

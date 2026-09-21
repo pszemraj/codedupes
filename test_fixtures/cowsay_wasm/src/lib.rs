@@ -1,16 +1,24 @@
 //! Cowsay implemented in Rust, with a small WebAssembly boundary.
 //!
-//! This crate is also a code-clone fixture. Several duplicated regions are
-//! intentional; see `fixtures/clone-ground-truth.json` before refactoring.
+//! Native callers can select from several text-wrapping algorithms.
 
-mod bubble;
-mod cow;
-mod wrapping;
+pub(crate) mod bubble;
+pub(crate) mod composed;
+pub(crate) mod cow;
+pub mod scheduler;
+pub(crate) mod wrapping;
 
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
 
 pub use wrapping::WrapAlgorithm;
+
+/// Select how the finished bubble and cow strings are assembled.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RenderAlgorithm {
+    Pipeline,
+    Composed,
+}
 
 /// Rendering options for the native Rust API.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -19,8 +27,10 @@ pub struct CowOptions {
     pub width: usize,
     /// Render a thought bubble and thought connector instead of speech.
     pub thinking: bool,
-    /// Select which intentionally duplicated wrapping implementation to use.
+    /// Select the wrapping implementation.
     pub wrap_algorithm: WrapAlgorithm,
+    /// Select the final rendering assembly implementation.
+    pub render_algorithm: RenderAlgorithm,
 }
 
 impl Default for CowOptions {
@@ -29,12 +39,20 @@ impl Default for CowOptions {
             width: 40,
             thinking: false,
             wrap_algorithm: WrapAlgorithm::Scanner,
+            render_algorithm: RenderAlgorithm::Pipeline,
         }
     }
 }
 
 /// Render a complete cowsay string through the native Rust API.
 pub fn render(message: &str, options: CowOptions) -> String {
+    match options.render_algorithm {
+        RenderAlgorithm::Pipeline => render_pipeline(message, options),
+        RenderAlgorithm::Composed => composed::render(message, options),
+    }
+}
+
+fn render_pipeline(message: &str, options: CowOptions) -> String {
     let width = options
         .width
         .clamp(wrapping::MIN_WRAP_WIDTH, wrapping::MAX_WRAP_WIDTH);
@@ -47,8 +65,7 @@ pub fn render(message: &str, options: CowOptions) -> String {
 
 /// Browser-facing WebAssembly API.
 ///
-/// `use_fold_wrapper` switches between the two semantically equivalent
-/// wrapping implementations planted in this fixture.
+/// `use_fold_wrapper` selects the fold implementation instead of the scanner.
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
 pub fn cowsay(message: &str, width: u32, thinking: bool, use_fold_wrapper: bool) -> String {
     let wrap_algorithm = if use_fold_wrapper {
@@ -63,6 +80,7 @@ pub fn cowsay(message: &str, width: u32, thinking: bool, use_fold_wrapper: bool)
             width: width as usize,
             thinking,
             wrap_algorithm,
+            render_algorithm: RenderAlgorithm::Pipeline,
         },
     )
 }

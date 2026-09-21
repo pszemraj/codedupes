@@ -1,0 +1,1456 @@
+{
+  "schema_version": 2,
+  "provenance": {
+    "origin": "issue-20 authored development pilot",
+    "split": "development",
+    "split_group": "ledger-application"
+  },
+  "units": [
+    {
+      "id": "ledger.__main__.main",
+      "selector": {
+        "path": "src/ledger/__main__.py",
+        "qualified_name": "ledger.__main__.main",
+        "kind": "function"
+      }
+    },
+    {
+      "id": "ledger.adapters.import_csv_file",
+      "selector": {
+        "path": "src/ledger/adapters.py",
+        "qualified_name": "ledger.adapters.import_csv_file",
+        "kind": "function"
+      }
+    },
+    {
+      "id": "ledger.adapters.ingest_api_batch",
+      "selector": {
+        "path": "src/ledger/adapters.py",
+        "qualified_name": "ledger.adapters.ingest_api_batch",
+        "kind": "function"
+      }
+    },
+    {
+      "id": "ledger.audit.assess_credit_risk",
+      "selector": {
+        "path": "src/ledger/audit.py",
+        "qualified_name": "ledger.audit.assess_credit_risk",
+        "kind": "function"
+      }
+    },
+    {
+      "id": "ledger.audit.audit_reference_usage",
+      "selector": {
+        "path": "src/ledger/audit.py",
+        "qualified_name": "ledger.audit.audit_reference_usage",
+        "kind": "function"
+      }
+    },
+    {
+      "id": "ledger.audit.audit_chronology",
+      "selector": {
+        "path": "src/ledger/audit.py",
+        "qualified_name": "ledger.audit.audit_chronology",
+        "kind": "function"
+      }
+    },
+    {
+      "id": "ledger.audit.audit_currency_limits",
+      "selector": {
+        "path": "src/ledger/audit.py",
+        "qualified_name": "ledger.audit.audit_currency_limits",
+        "kind": "function"
+      }
+    },
+    {
+      "id": "ledger.imports.normalize_transaction",
+      "selector": {
+        "path": "src/ledger/imports.py",
+        "qualified_name": "ledger.imports.normalize_transaction",
+        "kind": "function"
+      }
+    },
+    {
+      "id": "ledger.imports.ingest_rows",
+      "selector": {
+        "path": "src/ledger/imports.py",
+        "qualified_name": "ledger.imports.ingest_rows",
+        "kind": "function"
+      }
+    },
+    {
+      "id": "ledger.imports.prepare_import",
+      "selector": {
+        "path": "src/ledger/imports.py",
+        "qualified_name": "ledger.imports.prepare_import",
+        "kind": "function"
+      }
+    },
+    {
+      "id": "ledger.inventory.allocate_orders",
+      "selector": {
+        "path": "src/ledger/inventory.py",
+        "qualified_name": "ledger.inventory.allocate_orders",
+        "kind": "function"
+      }
+    },
+    {
+      "id": "ledger.inventory.InventoryBook.reserve",
+      "selector": {
+        "path": "src/ledger/inventory.py",
+        "qualified_name": "ledger.inventory.InventoryBook.reserve",
+        "kind": "method"
+      }
+    },
+    {
+      "id": "ledger.inventory.InventoryBook.restock",
+      "selector": {
+        "path": "src/ledger/inventory.py",
+        "qualified_name": "ledger.inventory.InventoryBook.restock",
+        "kind": "method"
+      }
+    },
+    {
+      "id": "ledger.inventory.audit_stock_levels",
+      "selector": {
+        "path": "src/ledger/inventory.py",
+        "qualified_name": "ledger.inventory.audit_stock_levels",
+        "kind": "function"
+      }
+    },
+    {
+      "id": "ledger.models.Transaction",
+      "selector": {
+        "path": "src/ledger/models.py",
+        "qualified_name": "ledger.models.Transaction",
+        "kind": "class"
+      }
+    },
+    {
+      "id": "ledger.models.InvoiceSummary",
+      "selector": {
+        "path": "src/ledger/models.py",
+        "qualified_name": "ledger.models.InvoiceSummary",
+        "kind": "class"
+      }
+    },
+    {
+      "id": "ledger.models.ImportedTransaction",
+      "selector": {
+        "path": "src/ledger/models.py",
+        "qualified_name": "ledger.models.ImportedTransaction",
+        "kind": "class"
+      }
+    },
+    {
+      "id": "ledger.models.ImportReport",
+      "selector": {
+        "path": "src/ledger/models.py",
+        "qualified_name": "ledger.models.ImportReport",
+        "kind": "class"
+      }
+    },
+    {
+      "id": "ledger.models.SettlementPlan",
+      "selector": {
+        "path": "src/ledger/models.py",
+        "qualified_name": "ledger.models.SettlementPlan",
+        "kind": "class"
+      }
+    },
+    {
+      "id": "ledger.planning.plan_settlements",
+      "selector": {
+        "path": "src/ledger/planning.py",
+        "qualified_name": "ledger.planning.plan_settlements",
+        "kind": "function"
+      }
+    },
+    {
+      "id": "ledger.planning.plan_batch_with_deferrals",
+      "selector": {
+        "path": "src/ledger/planning.py",
+        "qualified_name": "ledger.planning.plan_batch_with_deferrals",
+        "kind": "function"
+      }
+    },
+    {
+      "id": "ledger.settlement.summarize_import",
+      "selector": {
+        "path": "src/ledger/settlement.py",
+        "qualified_name": "ledger.settlement.summarize_import",
+        "kind": "function"
+      }
+    },
+    {
+      "id": "ledger.settlement.build_invoice_report",
+      "selector": {
+        "path": "src/ledger/settlement.py",
+        "qualified_name": "ledger.settlement.build_invoice_report",
+        "kind": "function"
+      }
+    },
+    {
+      "id": "ledger.settlement.summarize_import_indexed",
+      "selector": {
+        "path": "src/ledger/settlement.py",
+        "qualified_name": "ledger.settlement.summarize_import_indexed",
+        "kind": "function"
+      }
+    },
+    {
+      "id": "ledger/src/ledger/inventory.py::ledger.inventory.InventoryBook._pending_orders::method::65",
+      "selector": {
+        "path": "src/ledger/inventory.py",
+        "qualified_name": "ledger.inventory.InventoryBook._pending_orders",
+        "kind": "method",
+        "start_line": 65
+      }
+    }
+  ],
+  "families": [
+    {
+      "id": "aggregation",
+      "members": [
+        "ledger.settlement.summarize_import",
+        "ledger.settlement.build_invoice_report"
+      ]
+    },
+    {
+      "id": "settlement",
+      "members": [
+        "ledger.planning.plan_settlements",
+        "ledger.planning.plan_batch_with_deferrals"
+      ]
+    },
+    {
+      "id": "normalization",
+      "members": [
+        "ledger.imports.ingest_rows",
+        "ledger.imports.prepare_import",
+        "ledger.imports.normalize_transaction",
+        "ledger.adapters.import_csv_file",
+        "ledger.adapters.ingest_api_batch"
+      ]
+    },
+    {
+      "id": "file-and-api",
+      "members": [
+        "ledger.adapters.import_csv_file",
+        "ledger.adapters.ingest_api_batch"
+      ]
+    },
+    {
+      "id": "inventory-allocation",
+      "members": [
+        "ledger.inventory.allocate_orders",
+        "ledger.inventory.InventoryBook.reserve"
+      ]
+    }
+  ],
+  "pairs": [
+    {
+      "id": "ledger.settlement.summarize_import--ledger.settlement.build_invoice_report",
+      "a": "ledger.settlement.summarize_import",
+      "b": "ledger.settlement.build_invoice_report",
+      "judgment": "positive",
+      "tags": [
+        "translated"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": true,
+      "equivalence_domain": "Validate before ignoring voided records; trim case-sensitive Unicode IDs; preserve input; return sorted immutable totals and counts.",
+      "contract": "Validate before ignoring voided records; trim case-sensitive Unicode IDs; preserve input; return sorted immutable totals and counts.",
+      "rationale": "Consolidate the invoice aggregation contract; neither caller requires a separate algorithm.",
+      "evidence": [
+        "tests/test_settlement.py::test_documented_result",
+        "tests/test_settlement.py::test_invalid_voided_row_is_still_rejected",
+        "tests/test_settlement.py::test_seeded_differential_and_aggregate_invariants"
+      ],
+      "difficulty": "medium"
+    },
+    {
+      "id": "ledger.settlement.summarize_import--ledger.settlement.summarize_import_indexed",
+      "a": "ledger.settlement.summarize_import",
+      "b": "ledger.settlement.summarize_import_indexed",
+      "judgment": "positive",
+      "tags": [
+        "near_clone",
+        "indexed_traversal"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": true,
+      "equivalence_domain": "Validate before ignoring voided records; trim case-sensitive Unicode IDs; preserve input; return sorted immutable totals and counts.",
+      "contract": "Validate before ignoring voided records; trim case-sensitive Unicode IDs; preserve input; return sorted immutable totals and counts.",
+      "rationale": "The indexed traversal repeats the baseline validation and accumulation policy with only local collection-shape changes.",
+      "evidence": [
+        "tests/test_settlement.py::test_documented_result",
+        "tests/test_settlement.py::test_invalid_voided_row_is_still_rejected",
+        "tests/test_settlement.py::test_seeded_differential_and_aggregate_invariants"
+      ],
+      "difficulty": "easy"
+    },
+    {
+      "id": "ledger.planning.plan_settlements--ledger.planning.plan_batch_with_deferrals",
+      "a": "ledger.planning.plan_settlements",
+      "b": "ledger.planning.plan_batch_with_deferrals",
+      "judgment": "positive",
+      "tags": [
+        "extended"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": true,
+      "equivalence_domain": "minimum_payout_minor=0; identical valid summaries and validation errors",
+      "contract": "Whole planning result includes lines, transfer instructions, deferred total, and audit events.",
+      "rationale": "Use one planner with the explicit minimum-payout policy while retaining caller-specific presentation.",
+      "evidence": [
+        "tests/test_workflows.py::test_baseline_and_active_extension",
+        "tests/test_workflows.py::test_validation_empty_and_thresholds"
+      ],
+      "difference_witness": "For A=75 and minimum=100, the extension defers A, emits an event and no transfer; baseline creates the transfer.",
+      "difficulty": "easy"
+    },
+    {
+      "id": "ledger.settlement.build_invoice_report--ledger.settlement.summarize_import_indexed",
+      "a": "ledger.settlement.build_invoice_report",
+      "b": "ledger.settlement.summarize_import_indexed",
+      "judgment": "positive",
+      "tags": [
+        "translated",
+        "grouping-versus-indexed"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": true,
+      "equivalence_domain": "Validate before ignoring voided records; trim case-sensitive Unicode IDs; preserve input; return sorted immutable totals and counts.",
+      "contract": "Validate before ignoring voided records; trim case-sensitive Unicode IDs; preserve input; return sorted immutable totals and counts.",
+      "rationale": "Sorted grouping and indexed dictionary accumulation independently implement the same invoice summary operation.",
+      "evidence": [
+        "tests/test_settlement.py::test_documented_result",
+        "tests/test_settlement.py::test_invalid_voided_row_is_still_rejected",
+        "tests/test_settlement.py::test_seeded_differential_and_aggregate_invariants"
+      ],
+      "difficulty": "medium"
+    },
+    {
+      "id": "ledger.planning.plan_settlements--ledger.settlement.summarize_import_indexed",
+      "a": "ledger.planning.plan_settlements",
+      "b": "ledger.settlement.summarize_import_indexed",
+      "judgment": "negative",
+      "tags": [
+        "nearby-negative",
+        "invoice-workflow"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "Validated invoice summaries and raw imported transactions in their separate workflow stages.",
+      "contract": "Import summarization computes totals and counts; settlement planning classifies those totals into transfers or refund states.",
+      "rationale": "The functions are consecutive workflow stages with distinct inputs, outputs, and business decisions.",
+      "evidence": [
+        "tests/test_settlement.py::test_documented_result",
+        "tests/test_workflows.py::test_baseline_and_active_extension"
+      ],
+      "difference_witness": "Summarization groups Transaction rows; planning never reads transactions and instead emits transfer instructions."
+    },
+    {
+      "id": "ledger.audit.audit_reference_usage--ledger.settlement.summarize_import_indexed",
+      "a": "ledger.audit.audit_reference_usage",
+      "b": "ledger.settlement.summarize_import_indexed",
+      "judgment": "negative",
+      "tags": [
+        "nearby-negative",
+        "group-by-invoice"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "Accepted imported records under their aggregation and audit contracts.",
+      "contract": "Reference auditing reports invoices linked to multiple external IDs; settlement summarization computes monetary totals and transaction counts.",
+      "rationale": "Grouping by invoice is shared vocabulary rather than a shared result or maintenance responsibility.",
+      "evidence": [
+        "tests/test_workflows.py::test_audit_witnesses",
+        "tests/test_settlement.py::test_documented_result"
+      ],
+      "difference_witness": "An invoice with two external IDs yields an audit finding even when its monetary summary is otherwise ordinary."
+    },
+    {
+      "id": "ledger.imports.prepare_import--ledger.settlement.summarize_import_indexed",
+      "a": "ledger.imports.prepare_import",
+      "b": "ledger.settlement.summarize_import_indexed",
+      "judgment": "negative",
+      "tags": [
+        "nearby-negative",
+        "batch-processing"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "Raw import mappings and typed settlement transactions in their separate ingestion stages.",
+      "contract": "Import preparation validates mappings, rejects duplicates, and records row outcomes; settlement summarization groups already typed transactions into invoice totals.",
+      "rationale": "Both iterate financial records, but normalization and acceptance accounting are distinct from invoice aggregation.",
+      "evidence": [
+        "tests/test_workflows.py::test_duplicate_acceptance_and_date_bounds",
+        "tests/test_settlement.py::test_documented_result"
+      ],
+      "difference_witness": "A duplicate external ID becomes a prepare_import rejection, while the summarizer has no external-ID acceptance policy."
+    },
+    {
+      "id": "ledger.audit.audit_chronology--ledger.settlement.summarize_import_indexed",
+      "a": "ledger.audit.audit_chronology",
+      "b": "ledger.settlement.summarize_import_indexed",
+      "judgment": "negative",
+      "tags": [
+        "nearby-negative",
+        "ordered-record-scan"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "Accepted imported records under their chronology and settlement contracts.",
+      "contract": "Chronology auditing reports per-invoice date regressions; settlement summarization computes monetary totals and counts.",
+      "rationale": "Their invoice-keyed scans serve unrelated temporal-audit and aggregation responsibilities.",
+      "evidence": [
+        "tests/test_workflows.py::test_audit_witnesses",
+        "tests/test_settlement.py::test_documented_result"
+      ],
+      "difference_witness": "Reordering two dated records can create a chronology violation without changing the settlement total."
+    },
+    {
+      "id": "ledger.imports.ingest_rows--ledger.imports.prepare_import",
+      "a": "ledger.imports.ingest_rows",
+      "b": "ledger.imports.prepare_import",
+      "judgment": "positive",
+      "tags": [
+        "restructured"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": true,
+      "equivalence_domain": "Only accepted rows reserve IDs; stable row-local errors, accepted records, counters, and date bounds.",
+      "contract": "Only accepted rows reserve IDs; stable row-local errors, accepted records, counters, and date bounds.",
+      "rationale": "Consolidate row acceptance, duplicate detection, and report accounting around one normalizer.",
+      "evidence": [
+        "tests/test_workflows.py::test_duplicate_acceptance_and_date_bounds",
+        "tests/test_workflows.py::test_field_boundaries_and_first_error"
+      ],
+      "difficulty": "medium"
+    },
+    {
+      "id": "ledger.imports.ingest_rows--ledger.imports.normalize_transaction",
+      "a": "ledger.imports.ingest_rows",
+      "b": "ledger.imports.normalize_transaction",
+      "judgment": "positive",
+      "tags": [
+        "partial"
+      ],
+      "scope": "partial",
+      "behavior_equivalent": false,
+      "equivalence_domain": "Strict field validation in declared precedence and identical typed transaction construction.",
+      "contract": "Strict field validation in declared precedence and identical typed transaction construction.",
+      "rationale": "Extract one transaction-normalization operation and keep file lifetime, batch identity, and report assembly in their callers.",
+      "evidence": [
+        "tests/test_workflows.py::test_field_boundaries_and_first_error",
+        "tests/test_workflows.py::test_csv_api_shared_region_and_distinct_reports"
+      ],
+      "difference_witness": "An invalid amount raises from the scalar normalizer; row adapters retain a rejection with caller-specific position/context.",
+      "regions": [
+        {
+          "unit": "ledger.imports.ingest_rows",
+          "start_line": 54,
+          "end_line": 80,
+          "sha256": "7cf6962a50ec7b2c7d1d1e959979e7ae355b4361400d8de9f103601b128c5e35"
+        },
+        {
+          "unit": "ledger.imports.normalize_transaction",
+          "start_line": 15,
+          "end_line": 41,
+          "sha256": "f7a4071b5df48278243dc53dc3b4176bd9ae7e57b8339c18f34f6d582129aae8"
+        }
+      ],
+      "difficulty": "medium"
+    },
+    {
+      "id": "ledger.imports.ingest_rows--ledger.adapters.import_csv_file",
+      "a": "ledger.imports.ingest_rows",
+      "b": "ledger.adapters.import_csv_file",
+      "judgment": "positive",
+      "tags": [
+        "partial"
+      ],
+      "scope": "partial",
+      "behavior_equivalent": false,
+      "equivalence_domain": "Strict field validation in declared precedence and identical typed transaction construction.",
+      "contract": "Strict field validation in declared precedence and identical typed transaction construction.",
+      "rationale": "Extract one transaction-normalization operation and keep file lifetime, batch identity, and report assembly in their callers.",
+      "evidence": [
+        "tests/test_workflows.py::test_field_boundaries_and_first_error",
+        "tests/test_workflows.py::test_csv_api_shared_region_and_distinct_reports"
+      ],
+      "difference_witness": "An invalid amount raises from the scalar normalizer; row adapters retain a rejection with caller-specific position/context.",
+      "regions": [
+        {
+          "unit": "ledger.imports.ingest_rows",
+          "start_line": 54,
+          "end_line": 80,
+          "sha256": "7cf6962a50ec7b2c7d1d1e959979e7ae355b4361400d8de9f103601b128c5e35"
+        },
+        {
+          "unit": "ledger.adapters.import_csv_file",
+          "start_line": 24,
+          "end_line": 50,
+          "sha256": "9477560a1f196cb6cfbf4b039e480c6fa6d0a368b376d77163c28737729f81c5"
+        }
+      ],
+      "difficulty": "easy"
+    },
+    {
+      "id": "ledger.imports.ingest_rows--ledger.adapters.ingest_api_batch",
+      "a": "ledger.imports.ingest_rows",
+      "b": "ledger.adapters.ingest_api_batch",
+      "judgment": "positive",
+      "tags": [
+        "partial"
+      ],
+      "scope": "partial",
+      "behavior_equivalent": false,
+      "equivalence_domain": "Strict field validation in declared precedence and identical typed transaction construction.",
+      "contract": "Strict field validation in declared precedence and identical typed transaction construction.",
+      "rationale": "Extract one transaction-normalization operation and keep file lifetime, batch identity, and report assembly in their callers.",
+      "evidence": [
+        "tests/test_workflows.py::test_field_boundaries_and_first_error",
+        "tests/test_workflows.py::test_csv_api_shared_region_and_distinct_reports"
+      ],
+      "difference_witness": "An invalid amount raises from the scalar normalizer; row adapters retain a rejection with caller-specific position/context.",
+      "regions": [
+        {
+          "unit": "ledger.imports.ingest_rows",
+          "start_line": 54,
+          "end_line": 80,
+          "sha256": "7cf6962a50ec7b2c7d1d1e959979e7ae355b4361400d8de9f103601b128c5e35"
+        },
+        {
+          "unit": "ledger.adapters.ingest_api_batch",
+          "start_line": 79,
+          "end_line": 105,
+          "sha256": "7cf6962a50ec7b2c7d1d1e959979e7ae355b4361400d8de9f103601b128c5e35"
+        }
+      ],
+      "difficulty": "easy"
+    },
+    {
+      "id": "ledger.imports.prepare_import--ledger.imports.normalize_transaction",
+      "a": "ledger.imports.prepare_import",
+      "b": "ledger.imports.normalize_transaction",
+      "judgment": "negative",
+      "tags": [
+        "adapter"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "One decodes a record; the other handles ordered batches and duplicate external IDs.",
+      "contract": "One decodes a record; the other handles ordered batches and duplicate external IDs.",
+      "rationale": "The orchestrator calls the normalizer; it does not duplicate the decoding algorithm. Shared signatures/types do not justify merging these responsibilities.",
+      "evidence": [
+        "tests/test_workflows.py::test_duplicate_acceptance_and_date_bounds"
+      ],
+      "difference_witness": "Two valid r1 rows: prepare_import rejects the second; normalizing each separately succeeds."
+    },
+    {
+      "id": "ledger.imports.prepare_import--ledger.adapters.import_csv_file",
+      "a": "ledger.imports.prepare_import",
+      "b": "ledger.adapters.import_csv_file",
+      "judgment": "positive",
+      "tags": [
+        "partial",
+        "restructured"
+      ],
+      "scope": "partial",
+      "behavior_equivalent": false,
+      "equivalence_domain": "Shared normalization and accepted-ID rule; adapter report shapes and side effects differ.",
+      "contract": "Shared normalization and accepted-ID rule; adapter report shapes and side effects differ.",
+      "rationale": "Consolidate batch acceptance and ID accounting through the existing decoder, retaining adapter ownership and error contexts.",
+      "evidence": [
+        "tests/test_workflows.py::test_duplicate_acceptance_and_date_bounds",
+        "tests/test_workflows.py::test_csv_api_shared_region_and_distinct_reports"
+      ],
+      "difference_witness": "A bad amount is a zero-based row rejection in prepare_import; CSV reports a physical line, and API reports an item status.",
+      "difficulty": "medium",
+      "regions": [
+        {
+          "unit": "ledger.imports.prepare_import",
+          "start_line": 102,
+          "end_line": 117,
+          "sha256": "83e00363b81b119d1cfd5999a792f86450b6ca8403179a711e51a39ef004d0e6"
+        },
+        {
+          "unit": "ledger.adapters.import_csv_file",
+          "start_line": 22,
+          "end_line": 54,
+          "sha256": "34ff23e4478680d0abc7270e7c7116b200e1870240cfde33c846b010a9beba25"
+        }
+      ]
+    },
+    {
+      "id": "ledger.imports.prepare_import--ledger.adapters.ingest_api_batch",
+      "a": "ledger.imports.prepare_import",
+      "b": "ledger.adapters.ingest_api_batch",
+      "judgment": "positive",
+      "tags": [
+        "partial",
+        "restructured"
+      ],
+      "scope": "partial",
+      "behavior_equivalent": false,
+      "equivalence_domain": "Shared normalization and accepted-ID rule; adapter report shapes and side effects differ.",
+      "contract": "Shared normalization and accepted-ID rule; adapter report shapes and side effects differ.",
+      "rationale": "Consolidate batch acceptance and ID accounting through the existing decoder, retaining adapter ownership and error contexts.",
+      "evidence": [
+        "tests/test_workflows.py::test_duplicate_acceptance_and_date_bounds",
+        "tests/test_workflows.py::test_csv_api_shared_region_and_distinct_reports"
+      ],
+      "difference_witness": "A bad amount is a zero-based row rejection in prepare_import; CSV reports a physical line, and API reports an item status.",
+      "difficulty": "medium",
+      "regions": [
+        {
+          "unit": "ledger.imports.prepare_import",
+          "start_line": 102,
+          "end_line": 117,
+          "sha256": "83e00363b81b119d1cfd5999a792f86450b6ca8403179a711e51a39ef004d0e6"
+        },
+        {
+          "unit": "ledger.adapters.ingest_api_batch",
+          "start_line": 75,
+          "end_line": 109,
+          "sha256": "27b9bad4cf7d1dcba800c52959487c47f911781e4d3733d363d61c6ac1af9fdd"
+        }
+      ]
+    },
+    {
+      "id": "ledger.imports.normalize_transaction--ledger.adapters.import_csv_file",
+      "a": "ledger.imports.normalize_transaction",
+      "b": "ledger.adapters.import_csv_file",
+      "judgment": "positive",
+      "tags": [
+        "partial"
+      ],
+      "scope": "partial",
+      "behavior_equivalent": false,
+      "equivalence_domain": "Strict field validation in declared precedence and identical typed transaction construction.",
+      "contract": "Strict field validation in declared precedence and identical typed transaction construction.",
+      "rationale": "Extract one transaction-normalization operation and keep file lifetime, batch identity, and report assembly in their callers.",
+      "evidence": [
+        "tests/test_workflows.py::test_field_boundaries_and_first_error",
+        "tests/test_workflows.py::test_csv_api_shared_region_and_distinct_reports"
+      ],
+      "difference_witness": "An invalid amount raises from the scalar normalizer; row adapters retain a rejection with caller-specific position/context.",
+      "regions": [
+        {
+          "unit": "ledger.imports.normalize_transaction",
+          "start_line": 15,
+          "end_line": 41,
+          "sha256": "f7a4071b5df48278243dc53dc3b4176bd9ae7e57b8339c18f34f6d582129aae8"
+        },
+        {
+          "unit": "ledger.adapters.import_csv_file",
+          "start_line": 24,
+          "end_line": 50,
+          "sha256": "9477560a1f196cb6cfbf4b039e480c6fa6d0a368b376d77163c28737729f81c5"
+        }
+      ],
+      "difficulty": "medium"
+    },
+    {
+      "id": "ledger.imports.normalize_transaction--ledger.adapters.ingest_api_batch",
+      "a": "ledger.imports.normalize_transaction",
+      "b": "ledger.adapters.ingest_api_batch",
+      "judgment": "positive",
+      "tags": [
+        "partial"
+      ],
+      "scope": "partial",
+      "behavior_equivalent": false,
+      "equivalence_domain": "Strict field validation in declared precedence and identical typed transaction construction.",
+      "contract": "Strict field validation in declared precedence and identical typed transaction construction.",
+      "rationale": "Extract one transaction-normalization operation and keep file lifetime, batch identity, and report assembly in their callers.",
+      "evidence": [
+        "tests/test_workflows.py::test_field_boundaries_and_first_error",
+        "tests/test_workflows.py::test_csv_api_shared_region_and_distinct_reports"
+      ],
+      "difference_witness": "An invalid amount raises from the scalar normalizer; row adapters retain a rejection with caller-specific position/context.",
+      "regions": [
+        {
+          "unit": "ledger.imports.normalize_transaction",
+          "start_line": 15,
+          "end_line": 41,
+          "sha256": "f7a4071b5df48278243dc53dc3b4176bd9ae7e57b8339c18f34f6d582129aae8"
+        },
+        {
+          "unit": "ledger.adapters.ingest_api_batch",
+          "start_line": 79,
+          "end_line": 105,
+          "sha256": "7cf6962a50ec7b2c7d1d1e959979e7ae355b4361400d8de9f103601b128c5e35"
+        }
+      ],
+      "difficulty": "medium"
+    },
+    {
+      "id": "ledger.adapters.import_csv_file--ledger.adapters.ingest_api_batch",
+      "a": "ledger.adapters.import_csv_file",
+      "b": "ledger.adapters.ingest_api_batch",
+      "judgment": "positive",
+      "tags": [
+        "partial"
+      ],
+      "scope": "partial",
+      "behavior_equivalent": false,
+      "equivalence_domain": "Strict field validation in declared precedence and identical typed transaction construction.",
+      "contract": "Strict field validation in declared precedence and identical typed transaction construction.",
+      "rationale": "Extract one transaction-normalization operation and keep file lifetime, batch identity, and report assembly in their callers.",
+      "evidence": [
+        "tests/test_workflows.py::test_field_boundaries_and_first_error",
+        "tests/test_workflows.py::test_csv_api_shared_region_and_distinct_reports"
+      ],
+      "difference_witness": "An invalid amount raises from the scalar normalizer; row adapters retain a rejection with caller-specific position/context.",
+      "regions": [
+        {
+          "unit": "ledger.adapters.import_csv_file",
+          "start_line": 24,
+          "end_line": 50,
+          "sha256": "9477560a1f196cb6cfbf4b039e480c6fa6d0a368b376d77163c28737729f81c5"
+        },
+        {
+          "unit": "ledger.adapters.ingest_api_batch",
+          "start_line": 79,
+          "end_line": 105,
+          "sha256": "7cf6962a50ec7b2c7d1d1e959979e7ae355b4361400d8de9f103601b128c5e35"
+        }
+      ],
+      "difficulty": "easy"
+    },
+    {
+      "id": "ledger.settlement.summarize_import--ledger.audit.assess_credit_risk",
+      "a": "ledger.settlement.summarize_import",
+      "b": "ledger.audit.assess_credit_risk",
+      "judgment": "negative",
+      "tags": [
+        "shared_vocabulary"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "Independent operational responsibilities; no substantial shared computation after accounting for record vocabulary.",
+      "contract": "Independent operational responsibilities; no substantial shared computation after accounting for record vocabulary.",
+      "rationale": "Aggregation constructs invoice totals; risk classification consumes summaries and applies exposure/activity rules.",
+      "evidence": [
+        "tests/test_workflows.py::test_audit_witnesses",
+        "tests/test_workflows.py::test_csv_api_shared_region_and_distinct_reports"
+      ],
+      "difference_witness": "The documented two-event audit batch yields reference/date/budget findings; import acceptance and invoice/transfer reporting retain those events for their different responsibilities."
+    },
+    {
+      "id": "ledger.settlement.build_invoice_report--ledger.audit.audit_reference_usage",
+      "a": "ledger.settlement.build_invoice_report",
+      "b": "ledger.audit.audit_reference_usage",
+      "judgment": "negative",
+      "tags": [
+        "shared_vocabulary"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "Independent operational responsibilities; no substantial shared computation after accounting for record vocabulary.",
+      "contract": "Independent operational responsibilities; no substantial shared computation after accounting for record vocabulary.",
+      "rationale": "Aggregation reduces money and counts; reference auditing constructs external-ID sets and reports multi-reference invoices.",
+      "evidence": [
+        "tests/test_workflows.py::test_audit_witnesses",
+        "tests/test_workflows.py::test_csv_api_shared_region_and_distinct_reports"
+      ],
+      "difference_witness": "The documented two-event audit batch yields reference/date/budget findings; import acceptance and invoice/transfer reporting retain those events for their different responsibilities."
+    },
+    {
+      "id": "ledger.planning.plan_settlements--ledger.audit.assess_credit_risk",
+      "a": "ledger.planning.plan_settlements",
+      "b": "ledger.audit.assess_credit_risk",
+      "judgment": "negative",
+      "tags": [
+        "shared_vocabulary"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "Independent operational responsibilities; no substantial shared computation after accounting for record vocabulary.",
+      "contract": "Independent operational responsibilities; no substantial shared computation after accounting for record vocabulary.",
+      "rationale": "Risk assessment never creates transfers or settlement states; its credit-limit/activity rules do not duplicate transfer construction.",
+      "evidence": [
+        "tests/test_workflows.py::test_audit_witnesses",
+        "tests/test_workflows.py::test_csv_api_shared_region_and_distinct_reports"
+      ],
+      "difference_witness": "The documented two-event audit batch yields reference/date/budget findings; import acceptance and invoice/transfer reporting retain those events for their different responsibilities."
+    },
+    {
+      "id": "ledger.planning.plan_batch_with_deferrals--ledger.audit.audit_currency_limits",
+      "a": "ledger.planning.plan_batch_with_deferrals",
+      "b": "ledger.audit.audit_currency_limits",
+      "judgment": "negative",
+      "tags": [
+        "shared_vocabulary"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "Independent operational responsibilities; no substantial shared computation after accounting for record vocabulary.",
+      "contract": "Independent operational responsibilities; no substantial shared computation after accounting for record vocabulary.",
+      "rationale": "Deferral builds invoice instructions; currency auditing consumes chronological exposure against currency budgets.",
+      "evidence": [
+        "tests/test_workflows.py::test_audit_witnesses",
+        "tests/test_workflows.py::test_csv_api_shared_region_and_distinct_reports"
+      ],
+      "difference_witness": "The documented two-event audit batch yields reference/date/budget findings; import acceptance and invoice/transfer reporting retain those events for their different responsibilities."
+    },
+    {
+      "id": "ledger.imports.ingest_rows--ledger.audit.audit_chronology",
+      "a": "ledger.imports.ingest_rows",
+      "b": "ledger.audit.audit_chronology",
+      "judgment": "negative",
+      "tags": [
+        "shared_vocabulary"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "Independent operational responsibilities; no substantial shared computation after accounting for record vocabulary.",
+      "contract": "Independent operational responsibilities; no substantial shared computation after accounting for record vocabulary.",
+      "rationale": "Import validates raw fields and duplicate IDs; chronological audit compares dates of already accepted events per invoice.",
+      "evidence": [
+        "tests/test_workflows.py::test_audit_witnesses",
+        "tests/test_workflows.py::test_csv_api_shared_region_and_distinct_reports"
+      ],
+      "difference_witness": "The documented two-event audit batch yields reference/date/budget findings; import acceptance and invoice/transfer reporting retain those events for their different responsibilities."
+    },
+    {
+      "id": "ledger.imports.prepare_import--ledger.audit.audit_reference_usage",
+      "a": "ledger.imports.prepare_import",
+      "b": "ledger.audit.audit_reference_usage",
+      "judgment": "negative",
+      "tags": [
+        "shared_vocabulary"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "Independent operational responsibilities; no substantial shared computation after accounting for record vocabulary.",
+      "contract": "Independent operational responsibilities; no substantial shared computation after accounting for record vocabulary.",
+      "rationale": "Batch validation and ID reservation are distinct from detecting many source references to the same invoice.",
+      "evidence": [
+        "tests/test_workflows.py::test_audit_witnesses",
+        "tests/test_workflows.py::test_csv_api_shared_region_and_distinct_reports"
+      ],
+      "difference_witness": "The documented two-event audit batch yields reference/date/budget findings; import acceptance and invoice/transfer reporting retain those events for their different responsibilities."
+    },
+    {
+      "id": "ledger.adapters.import_csv_file--ledger.audit.audit_chronology",
+      "a": "ledger.adapters.import_csv_file",
+      "b": "ledger.audit.audit_chronology",
+      "judgment": "negative",
+      "tags": [
+        "shared_vocabulary"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "Independent operational responsibilities; no substantial shared computation after accounting for record vocabulary.",
+      "contract": "Independent operational responsibilities; no substantial shared computation after accounting for record vocabulary.",
+      "rationale": "File ownership, decoding and rejection assembly are not duplicated by accepted-event chronology checks.",
+      "evidence": [
+        "tests/test_workflows.py::test_audit_witnesses",
+        "tests/test_workflows.py::test_csv_api_shared_region_and_distinct_reports"
+      ],
+      "difference_witness": "The documented two-event audit batch yields reference/date/budget findings; import acceptance and invoice/transfer reporting retain those events for their different responsibilities."
+    },
+    {
+      "id": "ledger.adapters.ingest_api_batch--ledger.audit.audit_currency_limits",
+      "a": "ledger.adapters.ingest_api_batch",
+      "b": "ledger.audit.audit_currency_limits",
+      "judgment": "negative",
+      "tags": [
+        "shared_vocabulary"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "Independent operational responsibilities; no substantial shared computation after accounting for record vocabulary.",
+      "contract": "Independent operational responsibilities; no substantial shared computation after accounting for record vocabulary.",
+      "rationale": "Envelope/idempotency/field decoding is distinct from consuming currency budgets on valid events.",
+      "evidence": [
+        "tests/test_workflows.py::test_audit_witnesses",
+        "tests/test_workflows.py::test_csv_api_shared_region_and_distinct_reports"
+      ],
+      "difference_witness": "The documented two-event audit batch yields reference/date/budget findings; import acceptance and invoice/transfer reporting retain those events for their different responsibilities."
+    },
+    {
+      "id": "review-20-ledger-002",
+      "a": "ledger.__main__.main",
+      "b": "ledger.imports.prepare_import",
+      "judgment": "negative",
+      "tags": [
+        "published_false_positive",
+        "entry_point"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "All documented ledger fixture inputs.",
+      "contract": "The endpoints implement different application responsibilities.",
+      "rationale": "The runnable demonstration orchestrates several workflows; prepare_import performs one import algorithm with validation and duplicate accounting.",
+      "evidence": [
+        "tests/test_workflows.py::test_duplicate_acceptance_and_date_bounds"
+      ],
+      "difference_witness": "main returns no import report and prints settlements and audits; prepare_import returns only an ImportReport."
+    },
+    {
+      "id": "review-20-ledger-009",
+      "a": "ledger.audit.assess_credit_risk",
+      "b": "ledger.audit.audit_currency_limits",
+      "judgment": "negative",
+      "tags": [
+        "published_false_positive",
+        "nearby_negative"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "All documented ledger fixture inputs.",
+      "contract": "The audit endpoints enforce different policies and produce different findings.",
+      "rationale": "Credit risk classifies invoice summaries by total and activity; currency limits consume chronological transactions against per-currency budgets.",
+      "evidence": [
+        "tests/test_workflows.py::test_audit_witnesses"
+      ],
+      "difference_witness": "One emits invoice over-limit or inactive findings; the other emits indexed currency exhausted findings."
+    },
+    {
+      "id": "review-20-ledger-010",
+      "a": "ledger.audit.assess_credit_risk",
+      "b": "ledger.audit.audit_reference_usage",
+      "judgment": "negative",
+      "tags": [
+        "published_false_positive",
+        "nearby_negative"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "All documented ledger fixture inputs.",
+      "contract": "The audit endpoints enforce different policies and produce different findings.",
+      "rationale": "Risk uses totals and counts from summaries; reference auditing groups external IDs from accepted transactions.",
+      "evidence": [
+        "tests/test_workflows.py::test_audit_witnesses"
+      ],
+      "difference_witness": "A single high-total summary can trigger risk, while reference usage requires multiple distinct external IDs."
+    },
+    {
+      "id": "review-20-ledger-013",
+      "a": "ledger.audit.audit_chronology",
+      "b": "ledger.audit.audit_currency_limits",
+      "judgment": "negative",
+      "tags": [
+        "published_false_positive",
+        "nearby_negative"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "All documented ledger fixture inputs.",
+      "contract": "The audit endpoints enforce different policies and produce different findings.",
+      "rationale": "Chronology detects per-invoice date reversal; currency auditing tracks global spend budgets by currency.",
+      "evidence": [
+        "tests/test_workflows.py::test_audit_witnesses"
+      ],
+      "difference_witness": "An out-of-order zero-value event can fail chronology without exhausting a currency budget."
+    },
+    {
+      "id": "review-20-ledger-014",
+      "a": "ledger.audit.audit_chronology",
+      "b": "ledger.audit.audit_reference_usage",
+      "judgment": "negative",
+      "tags": [
+        "published_false_positive",
+        "nearby_negative"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "All documented ledger fixture inputs.",
+      "contract": "The audit endpoints enforce different policies and produce different findings.",
+      "rationale": "Chronology compares event order and dates; reference auditing collects distinct external IDs per invoice.",
+      "evidence": [
+        "tests/test_workflows.py::test_audit_witnesses"
+      ],
+      "difference_witness": "The same two events yield an indexed date witness and a separate invoice-to-ID-set witness."
+    },
+    {
+      "id": "review-20-ledger-015",
+      "a": "ledger.audit.audit_chronology",
+      "b": "ledger.imports.prepare_import",
+      "judgment": "negative",
+      "tags": [
+        "published_false_positive",
+        "distinct_responsibility"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "All documented ledger fixture inputs.",
+      "contract": "The endpoints implement different application responsibilities.",
+      "rationale": "Chronology inspects already accepted typed events; import preparation validates raw mappings and reserves accepted IDs.",
+      "evidence": [
+        "tests/test_workflows.py::test_duplicate_acceptance_and_date_bounds",
+        "tests/test_workflows.py::test_audit_witnesses"
+      ],
+      "difference_witness": "prepare_import rejects malformed fields and duplicates; chronology neither parses fields nor tracks duplicate IDs."
+    },
+    {
+      "id": "review-20-ledger-017",
+      "a": "ledger.audit.audit_chronology",
+      "b": "ledger.settlement.build_invoice_report",
+      "judgment": "negative",
+      "tags": [
+        "published_false_positive",
+        "distinct_responsibility"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "All documented ledger fixture inputs.",
+      "contract": "The endpoints implement different application responsibilities.",
+      "rationale": "Chronology compares accepted event dates; aggregation groups money and counts after void filtering.",
+      "evidence": [
+        "tests/test_settlement.py::test_documented_result",
+        "tests/test_workflows.py::test_audit_witnesses"
+      ],
+      "difference_witness": "A date reversal produces an audit row but does not alter build_invoice_report totals."
+    },
+    {
+      "id": "review-20-ledger-018",
+      "a": "ledger.audit.audit_chronology",
+      "b": "ledger.settlement.summarize_import",
+      "judgment": "negative",
+      "tags": [
+        "published_false_positive",
+        "distinct_responsibility"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "All documented ledger fixture inputs.",
+      "contract": "The endpoints implement different application responsibilities.",
+      "rationale": "Chronology checks temporal order; dictionary aggregation computes invoice totals and transaction counts.",
+      "evidence": [
+        "tests/test_settlement.py::test_documented_result",
+        "tests/test_workflows.py::test_audit_witnesses"
+      ],
+      "difference_witness": "Changing only posted dates changes chronology findings but leaves aggregation output unchanged."
+    },
+    {
+      "id": "review-20-ledger-020",
+      "a": "ledger.audit.audit_reference_usage",
+      "b": "ledger.settlement.summarize_import",
+      "judgment": "negative",
+      "tags": [
+        "published_false_positive",
+        "distinct_responsibility"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "All documented ledger fixture inputs.",
+      "contract": "The endpoints implement different application responsibilities.",
+      "rationale": "Reference auditing preserves external-ID sets; aggregation discards external identity and sums invoice money.",
+      "evidence": [
+        "tests/test_settlement.py::test_documented_result",
+        "tests/test_workflows.py::test_audit_witnesses"
+      ],
+      "difference_witness": "Two IDs for one invoice trigger a reference finding even when their monetary total is irrelevant."
+    },
+    {
+      "id": "review-20-ledger-025",
+      "a": "ledger.imports.ingest_rows",
+      "b": "ledger.settlement.summarize_import",
+      "judgment": "negative",
+      "tags": [
+        "published_false_positive",
+        "distinct_responsibility"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "All documented ledger fixture inputs.",
+      "contract": "The endpoints implement different application responsibilities.",
+      "rationale": "Importing validates external fields and duplicate IDs; settlement aggregation consumes typed transactions and groups active amounts.",
+      "evidence": [
+        "tests/test_workflows.py::test_duplicate_acceptance_and_date_bounds",
+        "tests/test_settlement.py::test_documented_result"
+      ],
+      "difference_witness": "A malformed amount is returned as an import rejection; summarize_import raises on an invalid typed amount and otherwise returns summaries."
+    },
+    {
+      "id": "review-20-ledger-026",
+      "a": "ledger.imports.prepare_import",
+      "b": "ledger.planning.plan_settlements",
+      "judgment": "negative",
+      "tags": [
+        "published_false_positive",
+        "distinct_responsibility"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "All documented ledger fixture inputs.",
+      "contract": "The endpoints implement different application responsibilities.",
+      "rationale": "Import preparation builds accepted transactions and error counts; settlement planning builds transfer instructions from summaries.",
+      "evidence": [
+        "tests/test_workflows.py::test_duplicate_acceptance_and_date_bounds",
+        "tests/test_workflows.py::test_baseline_and_active_extension"
+      ],
+      "difference_witness": "Duplicate external IDs affect prepare_import; plan_settlements instead rejects duplicate invoice IDs."
+    },
+    {
+      "id": "review-20-ledger-028",
+      "a": "ledger.imports.prepare_import",
+      "b": "ledger.settlement.summarize_import",
+      "judgment": "negative",
+      "tags": [
+        "published_false_positive",
+        "distinct_responsibility"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "All documented ledger fixture inputs.",
+      "contract": "The endpoints implement different application responsibilities.",
+      "rationale": "The extracted import orchestrator performs raw decoding and ID acceptance; dictionary aggregation groups already typed settlement inputs.",
+      "evidence": [
+        "tests/test_workflows.py::test_duplicate_acceptance_and_date_bounds",
+        "tests/test_settlement.py::test_documented_result"
+      ],
+      "difference_witness": "Invalid rows become ordered rejection records in prepare_import but are exceptions in summarize_import."
+    },
+    {
+      "id": "review-20-ledger-033",
+      "a": "ledger.planning.plan_settlements",
+      "b": "ledger.settlement.build_invoice_report",
+      "judgment": "negative",
+      "tags": [
+        "published_false_positive",
+        "pipeline_neighbors"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "All documented ledger fixture inputs.",
+      "contract": "Adjacent pipeline stages retain different maintenance responsibilities.",
+      "rationale": "Aggregation creates summaries from transactions; planning consumes summaries to assign states and transfers.",
+      "evidence": [
+        "tests/test_settlement.py::test_documented_result",
+        "tests/test_workflows.py::test_baseline_and_active_extension"
+      ],
+      "difference_witness": "Negative totals remain summaries from aggregation but become refund_due lines without transfers in planning."
+    },
+    {
+      "id": "review-20-ledger-034",
+      "a": "ledger.planning.plan_settlements",
+      "b": "ledger.settlement.summarize_import",
+      "judgment": "negative",
+      "tags": [
+        "published_false_positive",
+        "pipeline_neighbors"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "All documented ledger fixture inputs.",
+      "contract": "Adjacent pipeline stages retain different maintenance responsibilities.",
+      "rationale": "Dictionary aggregation computes invoice totals and counts; baseline planning validates those summaries and emits settlement instructions.",
+      "evidence": [
+        "tests/test_settlement.py::test_documented_result",
+        "tests/test_workflows.py::test_baseline_and_active_extension"
+      ],
+      "difference_witness": "Aggregation has void filtering and amount summation; planning has ready, refund_due, and balanced state construction."
+    },
+    {
+      "id": "ledger.inventory.allocate_orders--ledger.inventory.InventoryBook.reserve",
+      "a": "ledger.inventory.allocate_orders",
+      "b": "ledger.inventory.InventoryBook.reserve",
+      "judgment": "positive",
+      "tags": [
+        "fn_vs_method",
+        "restructured"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": true,
+      "equivalence_domain": "The same initial stock, ordered valid tuple orders, and partial-allocation policy; compare returned pure stock with the book post-call snapshot.",
+      "contract": "Validate the complete order batch before allocation; process FIFO; preserve pure caller input; report filled quantities and shortages; commit only the stateful result.",
+      "rationale": "Consolidate the duplicated FIFO allocation and shortage policy into one pure engine with a small state-commit adapter.",
+      "evidence": [
+        "tests/test_inventory.py::test_pure_and_stateful_paths_share_the_explicit_state_mapping",
+        "tests/test_inventory.py::test_non_partial_policy_leaves_unfilled_quantity_available",
+        "tests/test_inventory.py::test_invalid_later_order_rolls_back_the_stateful_book"
+      ],
+      "difficulty": "medium"
+    },
+    {
+      "id": "ledger.inventory.allocate_orders--ledger.inventory.audit_stock_levels",
+      "a": "ledger.inventory.allocate_orders",
+      "b": "ledger.inventory.audit_stock_levels",
+      "judgment": "negative",
+      "tags": [
+        "nearby_negative",
+        "inventory_policy"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "Inventory mapping inputs under their documented allocation and minimum-level policies.",
+      "contract": "Allocation consumes ordered demand and returns a new stock state; auditing only reports whether independently configured stock minima are breached.",
+      "rationale": "Both inspect stock quantities, but the audit intentionally has no FIFO demand, partial-fulfillment, shortage, or state-transition responsibility.",
+      "evidence": [
+        "tests/test_inventory.py::test_inventory_audit_is_a_non_allocating_neighbor",
+        "tests/test_inventory.py::test_pure_and_stateful_paths_share_the_explicit_state_mapping"
+      ],
+      "difference_witness": "An A=1 inventory with minimum A=3 yields an audit breach, while allocation requires an order and returns allocations, shortages, and updated stock."
+    },
+    {
+      "id": "ledger.inventory.InventoryBook.reserve--ledger.inventory.InventoryBook.restock",
+      "a": "ledger.inventory.InventoryBook.reserve",
+      "b": "ledger.inventory.InventoryBook.restock",
+      "judgment": "negative",
+      "tags": [
+        "nearby_negative",
+        "state_mutation"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "One InventoryBook instance under valid deliveries and reservation orders.",
+      "contract": "Reservation subtracts fillable ordered demand and reports shortages; restocking adds confirmed deliveries and returns a stock snapshot.",
+      "rationale": "These stateful methods share inventory vocabulary and validation shape but apply opposite business transitions and have no substantial common allocation region.",
+      "evidence": [
+        "tests/test_inventory.py::test_multiple_calls_commit_only_valid_reservations",
+        "tests/test_inventory.py::test_non_partial_policy_leaves_unfilled_quantity_available"
+      ],
+      "difference_witness": "Restocking A by two increases available stock without a shortage record; reserving A consumes availability and can produce a shortage."
+    },
+    {
+      "id": "inventory-allocate--pending-orders",
+      "a": "ledger.inventory.allocate_orders",
+      "b": "ledger/src/ledger/inventory.py::ledger.inventory.InventoryBook._pending_orders::method::65",
+      "judgment": "positive",
+      "tags": [
+        "partial",
+        "helper_extraction",
+        "restructured"
+      ],
+      "difficulty": "medium",
+      "scope": "partial",
+      "behavior_equivalent": false,
+      "equivalence_domain": "Ordered tuple entries containing a nonblank SKU and positive non-boolean integer demand.",
+      "contract": "Decode and validate the complete ordered request before any allocation or stored-state change.",
+      "rationale": "The pure path inlines the order decoder while the stateful path extracts an independent try-unpack validator; one shared decoder removes duplicated validation without merging allocation and state commit orchestration.",
+      "evidence": [
+        "tests/test_inventory.py::test_invalid_later_order_rolls_back_the_stateful_book",
+        "tests/test_inventory.py::test_pure_and_stateful_paths_share_the_explicit_state_mapping"
+      ],
+      "difference_witness": "A two-item list can be unpacked by the helper but the pure entry point requires a tuple, and only allocate_orders returns updated stock, allocations, and shortages.",
+      "regions": [
+        {
+          "unit": "ledger.inventory.allocate_orders",
+          "start_line": 22,
+          "end_line": 31,
+          "sha256": "71f4f15c7ba4cda3c1cc9877f865617977af892b7c70f94ff513a3dab12ab226"
+        },
+        {
+          "unit": "ledger/src/ledger/inventory.py::ledger.inventory.InventoryBook._pending_orders::method::65",
+          "start_line": 65,
+          "end_line": 78,
+          "sha256": "685c01334a17cdecd7fff459aaf98a30da52cd41ce2239ea3d1b9a5a0907c08d"
+        }
+      ]
+    },
+    {
+      "id": "inventory-reserve--pending-orders-negative",
+      "a": "ledger.inventory.InventoryBook.reserve",
+      "b": "ledger/src/ledger/inventory.py::ledger.inventory.InventoryBook._pending_orders::method::65",
+      "judgment": "negative",
+      "tags": [
+        "helper_caller",
+        "direct_reuse"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "Reservation batches passed to one InventoryBook.",
+      "contract": "The helper decodes requests; reserve calls it before applying partial-fill policy and committing a candidate stock map.",
+      "rationale": "This is direct helper reuse inside reserve, not an independently maintained copy of request validation.",
+      "evidence": [
+        "tests/test_inventory.py::test_invalid_later_order_rolls_back_the_stateful_book"
+      ],
+      "difference_witness": "The helper returns checked requests without changing stock; reserve commits stock and returns allocations and shortages."
+    },
+    {
+      "id": "inventory-restock--pending-orders-negative",
+      "a": "ledger.inventory.InventoryBook.restock",
+      "b": "ledger/src/ledger/inventory.py::ledger.inventory.InventoryBook._pending_orders::method::65",
+      "judgment": "negative",
+      "tags": [
+        "tuple_validation",
+        "nearby_negative"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "Delivery tuples and reservation tuples under their distinct inventory policies.",
+      "contract": "Restock validates confirmed positive deliveries and adds stock; the helper validates positive requested demand without mutating stock.",
+      "rationale": "Their pair-shaped loops enforce different business transitions and error contracts, leaving no substantial shared operation beyond generic tuple checking.",
+      "evidence": [
+        "tests/test_inventory.py::test_multiple_calls_commit_only_valid_reservations"
+      ],
+      "difference_witness": "Restocking A by two raises stored availability; decoding an order for A never changes inventory."
+    },
+    {
+      "id": "inventory-restock--audit-negative",
+      "a": "ledger.inventory.InventoryBook.restock",
+      "b": "ledger.inventory.audit_stock_levels",
+      "judgment": "negative",
+      "tags": [
+        "inventory_policy",
+        "nearby_negative"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "Inventory mappings under delivery and minimum-level policies.",
+      "contract": "Restock commits additive deliveries; auditing reads stock and returns sorted minimum-level breaches.",
+      "rationale": "One is a state transition and the other a read-only policy report, despite shared stock vocabulary.",
+      "evidence": [
+        "tests/test_inventory.py::test_multiple_calls_commit_only_valid_reservations",
+        "tests/test_inventory.py::test_inventory_audit_is_a_non_allocating_neighbor"
+      ],
+      "difference_witness": "A delivery can change stock without an audit finding, while an audit can report a breach without changing stock."
+    },
+    {
+      "id": "ledger-main--ingest-rows-negative",
+      "a": "ledger.__main__.main",
+      "b": "ledger.imports.ingest_rows",
+      "judgment": "negative",
+      "tags": [
+        "orchestration",
+        "direct_reuse"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "The fixture demonstration and raw ledger imports.",
+      "contract": "main calls ingest_rows before driving CSV/API, settlement, inventory, and audit examples; ingest_rows owns row normalization and rejection accounting.",
+      "rationale": "The application entry point directly calls the importer and contains no copied import algorithm.",
+      "evidence": [
+        "src/ledger/__main__.py::ingest_rows(rows)",
+        "tests/test_workflows.py::test_duplicate_acceptance_and_date_bounds"
+      ],
+      "difference_witness": "main prints results from several application domains; ingest_rows returns only one ImportReport."
+    },
+    {
+      "id": "inventory-restock--allocate-negative",
+      "a": "ledger.inventory.InventoryBook.restock",
+      "b": "ledger.inventory.allocate_orders",
+      "judgment": "negative",
+      "tags": [
+        "tuple_validation",
+        "opposite_state_transition"
+      ],
+      "scope": "whole_unit",
+      "behavior_equivalent": false,
+      "equivalence_domain": "Positive delivery tuples and demand tuples against inventory quantities.",
+      "contract": "Restock adds confirmed deliveries to stored state; allocation consumes FIFO demand under partial-fill policy and reports shortages from a copied map.",
+      "rationale": "Generic two-item validation does not outweigh opposite transitions, distinct policies, and distinct outputs.",
+      "evidence": [
+        "tests/test_inventory.py::test_multiple_calls_commit_only_valid_reservations",
+        "tests/test_inventory.py::test_pure_and_stateful_paths_share_the_explicit_state_mapping"
+      ],
+      "difference_witness": "A delivery increases A, whereas an order can decrease A and emit a shortage record."
+    }
+  ],
+  "probes": [
+    {
+      "id": "invoice-totals",
+      "kind": "behavioral",
+      "query": "Group active payments by invoice and return ordered totals and transaction counts.",
+      "expected": [
+        "ledger.settlement.summarize_import",
+        "ledger.settlement.build_invoice_report",
+        "ledger.settlement.summarize_import_indexed"
+      ],
+      "relevance_complete": true
+    },
+    {
+      "id": "small-payouts",
+      "kind": "behavioral",
+      "query": "Keep small positive balances for later payment and record why they were deferred.",
+      "expected": [
+        "ledger.planning.plan_batch_with_deferrals"
+      ],
+      "relevance_complete": true
+    },
+    {
+      "id": "csv-import",
+      "kind": "behavioral",
+      "query": "Read a local comma-separated transaction file and attach line numbers to rejected records.",
+      "expected": [
+        "ledger.adapters.import_csv_file"
+      ],
+      "relevance_complete": true
+    },
+    {
+      "id": "batch-replay",
+      "kind": "behavioral",
+      "query": "Accept an identified batch of transaction items once and recognize a repeated batch.",
+      "expected": [
+        "ledger.adapters.ingest_api_batch"
+      ],
+      "relevance_complete": true
+    },
+    {
+      "id": "date-audit",
+      "kind": "behavioral",
+      "query": "Find accepted invoice events that move backwards in calendar time.",
+      "expected": [
+        "ledger.audit.audit_chronology"
+      ],
+      "relevance_complete": true
+    },
+    {
+      "id": "decode-one",
+      "kind": "behavioral",
+      "query": "Decode a single raw transaction and reject its first invalid identifier, amount, currency or date.",
+      "expected": [
+        "ledger.imports.normalize_transaction"
+      ],
+      "relevance_complete": true
+    },
+    {
+      "id": "partial-invoice",
+      "kind": "partial_symbol",
+      "query": "build_invoice",
+      "expected": [
+        "ledger.settlement.build_invoice_report"
+      ],
+      "relevance_complete": true
+    },
+    {
+      "id": "partial-plan",
+      "kind": "partial_symbol",
+      "query": "plan_batch",
+      "expected": [
+        "ledger.planning.plan_batch_with_deferrals"
+      ],
+      "relevance_complete": true
+    },
+    {
+      "id": "partial-audit",
+      "kind": "partial_symbol",
+      "query": "audit_currency",
+      "expected": [
+        "ledger.audit.audit_currency_limits"
+      ],
+      "relevance_complete": true
+    },
+    {
+      "id": "exact-import",
+      "kind": "exact_symbol",
+      "query": "prepare_import",
+      "expected": [
+        "ledger.imports.prepare_import"
+      ],
+      "relevance_complete": true
+    },
+    {
+      "id": "noise-crypto",
+      "kind": "no_result",
+      "query": "Generate an RSA key pair and sign an X.509 certificate.",
+      "expected": [],
+      "relevance_complete": true
+    },
+    {
+      "id": "noise-images",
+      "kind": "no_result",
+      "query": "Resize a JPEG image using bicubic interpolation.",
+      "expected": [],
+      "relevance_complete": true
+    }
+  ]
+}

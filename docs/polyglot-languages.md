@@ -1,6 +1,6 @@
 # Polyglot language support
 
-codedupes supports Python, C, Rust, JavaScript, JSX, TypeScript, and TSX without turning its duplicate engine into a collection of language-specific special cases. The language backend owns parsing and feature extraction. The duplicate, embedding, ranking, and reporting stages consume the same `CodeUnit` model regardless of source language.
+codedupes supports Python, C, Rust, JavaScript, JSX, TypeScript, and TSX. The language backend owns parsing and feature extraction; later stages consume the same `CodeUnit` model regardless of source language.
 
 ## Architecture
 
@@ -16,7 +16,7 @@ source discovery
   -> language-aware reporting
 ```
 
-Every language is parsed with Tree-sitter through one backend code path. Python, C, Rust, JavaScript/JSX, TypeScript, and TSX each pair a pinned grammar with a backend that decides which nodes become units and how visibility is read; parsing, diagnostics, fingerprints, and identifier collection are shared, and statement counting is shared machinery with per-backend node sets. The registry in [registry](../src/codedupes/languages/registry.py) defines extensions, aliases, dialects, grammar package pins, and ambiguous C-header handling. `CodeExtractor` remains the public facade.
+Every language is parsed with Tree-sitter through one backend code path. Python, C, Rust, JavaScript/JSX, TypeScript, and TSX each pair a pinned grammar with a backend that decides which nodes become units and how visibility is read. The registry in [registry](../src/codedupes/languages/registry.py) defines extensions, aliases, dialects, grammar package pins, and ambiguous C-header handling.
 
 The [parser packages](install.md#polyglot-parser-dependencies) are exact-pinned because grammar node kinds and field layouts affect extraction.
 
@@ -46,7 +46,7 @@ A lowercase `.h` file is ambiguous because both C and C++ use that extension. Au
 codedupes check ./include --language c --traditional-only
 ```
 
-This is stricter than a retrieval tool's extension map. Duplicate fingerprints must not be generated from a plausibly wrong grammar.
+Duplicate fingerprints are not generated from a plausibly wrong grammar.
 
 Skipped headers are reported rather than silently dropped: a directory scan emits one summary `c-header-policy` extraction diagnostic naming how many `.h` files it passed over and suggesting `--language c`. An explicitly named `.h` file gets its own diagnostic.
 
@@ -69,6 +69,8 @@ The declarator walker handles nested pointer, parenthesized, attributed, and fun
 ### Rust
 
 Body-bearing `function_item` nodes are emitted. Free and nested functions are `FUNCTION` units. Functions inside `impl` or trait bodies are `METHOD` units. Trait methods with default bodies are included; required signatures without bodies are skipped.
+
+Statement counts recurse through nested control flow. A semicolon-free tail expression counts as one statement.
 
 Inline test code is excluded by default: functions under a `#[cfg(test)]` (including `#[cfg(all(..., test, ...))]` regardless of predicate order) module or attribute, and free `#[test]` functions, are skipped. File-glob test exclusion cannot catch these because Rust inline test modules share source files with production code. `#[cfg(not(test))]` and `#[cfg(any(test, ...))]` gate real production configurations and stay extracted.
 
@@ -131,27 +133,27 @@ Python applies the same rules with its own preserved-name and pruning policy. At
 
 Identifier sets exclude each language's builtins. Python's exclude keywords, builtins, `self`, and `cls` (but not the `site`-injected `exit`, `quit`, `help`, `copyright`, `credits`, and `license`, which are not language builtins), and include attribute and keyword-argument names, so an alpha-renamed Python clone keeps a measurable identifier overlap with its original through the API it touches. Identifier matching is Unicode-aware. Python, ECMAScript (from ES2015 on), and Rust accept non-ASCII identifiers, so a non-ASCII name yields a unit and identifier-set entries instead of being dropped by an ASCII-only pattern.
 
-Traditional exact and Jaccard comparisons are blocked by canonical language and blocking kind before pair generation. Functions and methods share one `callable` kind and the same structural fingerprint domain, so a function copied into a class body stays comparable with its module-level original even after renaming the definition and local variables; reported unit types remain distinct. Classes block separately. Exact matching stays same-language: a C and a Rust function cannot become exact duplicates because their canonical token streams align. Overlapping units in the same file, such as a parent function and its nested function, are not reported as duplicates of each other.
+Traditional exact and Jaccard comparisons are blocked by canonical language and blocking kind before pair generation. Functions and methods share one `callable` kind and the same structural fingerprint domain, so a function copied into a class body stays comparable with its module-level original even after renaming the definition and local variables; reported unit types remain distinct. Classes block separately. Exact matching stays same-language: a C and a Rust function cannot become exact duplicates even if their canonical token streams align, because their comparison keys include language. Overlapping units in the same file, such as a parent function and its nested function, are not reported as duplicates of each other.
 
-Semantic comparison follows the [per-language gates and cross-language policy](analysis-defaults.md#semantic-duplicate-gate-defaults). Semantic search retrieves across the selected languages.
+Semantic comparison follows the [profile gates](model-profiles.md#duplicate-and-search-gates) and [cross-language policy](analysis-defaults.md#semantic-duplicate-gate-defaults). Semantic search retrieves across the selected languages.
 
 ## Unused-code analysis
 
-The [unused-code heuristic](analysis-defaults.md#potentially-unused-defaults) evaluates Python only, from a name-based reference graph built with the standard-library `ast` over every visited Python file, units or not - the one place codedupes parses with `ast` rather than a grammar, so a file `ast` rejects contributes no references and is reported with a warning. It matches units by file, line, and name, so decorator-inclusive spans resolve. Extending it requires translation-unit and preprocessor context for C, Cargo/module/trait resolution for Rust, and project-wide module resolution for JavaScript/TypeScript. Syntax extraction alone cannot establish those references.
+The [unused-code heuristic](analysis-defaults.md#potentially-unused-defaults) evaluates Python only, using the standard-library `ast` rather than a grammar. Extending it requires language-specific resolution beyond syntax extraction.
 
 ## Parser readiness
 
-Run `codedupes info --verbose` to inspect the required and installed package version of each of the six parser dialects (`python`, `c`, `rust`, `javascript`, `typescript`, `tsx`). Readiness checks construct a parser and run an empty parse, so a wrong-platform or ABI-broken wheel is reported before analysis.
+Run `codedupes info --verbose` to inspect the installed package version of each of the six parser dialects (`python`, `c`, `rust`, `javascript`, `typescript`, `tsx`). Readiness checks construct a parser and run an empty parse, so a wrong-platform or ABI-broken wheel is reported before analysis. Version requirements are declared in `pyproject.toml` and enforced during installation.
 
 ## Grammar upgrade procedure
 
 Treat every grammar update as a behavioral change:
 
 1. Change one exact package pin in `codedupes.languages.registry` and `pyproject.toml` (tests enforce that both match).
-2. Construct its parser and run every extraction fixture (`pytest -m grammar`), including the golden structural-hash values.
+2. Construct its parser and run every extraction fixture (`pytest -m "grammar and not toolchain"`), including the golden structural-hash values. The separately marked toolchain checks exercise calibration applications rather than parser extraction.
 3. Review changes in unit names, ranges, native kinds, statement counts, and fingerprints.
 4. Run parser-independent normalization tests.
-5. Run the [calibration validator](../test_fixtures/polyglot_calibration/README.md#validation), [hybrid split sweep](hybrid-tuning.md#run-the-sweep), and [threshold sweep and distribution report](hybrid-tuning.md#semantic-threshold-sweep-model-profiles). Compare results with the recorded tables and reassess the [duplicate gates](analysis-defaults.md#semantic-duplicate-gate-defaults) if measurements change.
+5. Run the [calibration validator and fresh measurements](hybrid-tuning.md) for both models on CPU and real MPS. Source or extraction changes make the existing measurement tables stale, so regenerate them and review score and decision drift before considering any [duplicate gate](model-profiles.md#duplicate-and-search-gates) change.
 6. Update the pin only after every difference is understood.
 
 A semver-compatible grammar update can still rename a node or field, or change which nodes are visible. Broad version ranges would let an ordinary dependency refresh silently change duplicate reports. `tree-sitter-python` is held to the same procedure as the other grammars: its statement-count and docstring-pruning tests are the tripwire for a release that hides or renames the statement nodes the backend counts.

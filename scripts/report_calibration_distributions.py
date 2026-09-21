@@ -1,252 +1,202 @@
-"""Report per-category embedding-similarity distributions for calibration corpora.
-
-For each (language, model) pair this embeds the corpus once, then summarizes
-cosine similarity per labeled category (exact through near_restructure),
-for negative controls, and for the background of all other same-language unit
-pairs. The distributions show where each model separates clones from
-non-clones per language, independent of any threshold grid.
-
-Each summary carries the same calibration manifest the threshold sweep records
-(pinned commit, pipeline schema, effective embedding-space identity, candidate
-policy, corpus and label digests), because these distributions are cited as
-evidence for the shipped per-language gates. Like the sweep, a distribution run
-refuses models that cannot be pinned to an immutable 40-character commit.
-"""
+"""Summarize shipped-policy behavior and CPU/MPS drift."""
 
 from __future__ import annotations
 
 import argparse
 import json
 from pathlib import Path
-from typing import Any
 
-import numpy as np
-
-from codedupes.analyzer import AnalyzerConfig, CodeAnalyzer
-from codedupes.constants import DEFAULT_CHECK_SEMANTIC_TASK, DEFAULT_MIN_SEMANTIC_STATEMENTS
-from codedupes.semantic_profiles import resolve_model_profile
+from codedupes.semantic_profiles import list_supported_models
 
 try:
-    from .sweep_common import resolve_label_unit
-    from .sweep_semantic_thresholds import _calibration_manifest, _require_immutable_revision
-    from .validate_calibration_corpus import CATEGORY_NAMES
+    from .calibration_contract import (
+        add_contract_arguments,
+        load_projects,
+        read_json,
+        write_json,
+    )
+    from .calibration_evaluation import (
+        CHECKED_REPORT_SCHEMA_VERSION,
+        canonical_model_keys,
+        compare_devices,
+        development_projects,
+        full_report,
+        load_all,
+        measurement_digests,
+        selection_digest,
+        validate_checked_report,
+        validate_hybrid_candidate_grids,
+        validate_measurement_digests,
+        validate_selection_context,
+        validate_selection_contract,
+        validate_shipped_selection_profiles,
+    )
+    from .calibration_measurements import DEFAULT_MEASUREMENTS
+    from .sweep_hybrid_gates import validate_hybrid_selection
+    from .sweep_semantic_thresholds import validate_threshold_selection
 except ImportError:
-    from sweep_common import resolve_label_unit
-    from sweep_semantic_thresholds import _calibration_manifest, _require_immutable_revision
-    from validate_calibration_corpus import CATEGORY_NAMES
-
-DEFAULT_LANGUAGES = ("c", "rust", "javascript", "typescript", "python")
-DEFAULT_MODELS = ("gte-modernbert-base", "embeddinggemma-300m")
-
-
-def _summary(values: list[float]) -> dict[str, Any]:
-    """Summarize one similarity sample.
-
-    :param list[float] values: Cosine similarities.
-    :return dict[str, Any]: Count and percentile summary.
-    """
-    if not values:
-        return {"count": 0}
-    array = np.array(values, dtype=np.float64)
-    return {
-        "count": int(array.size),
-        "min": round(float(array.min()), 4),
-        "p25": round(float(np.percentile(array, 25)), 4),
-        "median": round(float(np.median(array)), 4),
-        "p75": round(float(np.percentile(array, 75)), 4),
-        "max": round(float(array.max()), 4),
-    }
-
-
-def _pair_similarities(
-    groups: list[list[str]],
-    units: list[Any],
-    uid_to_row: dict[str, int],
-    embeddings: np.ndarray,
-) -> tuple[list[float], int]:
-    """Score labeled pairs against the embedding matrix.
-
-    :param list[list[str]] groups: Label groups of unit specs.
-    :param list[Any] units: Extracted corpus units for spec resolution.
-    :param dict[str, int] uid_to_row: Embedding row index per unit uid.
-    :param np.ndarray embeddings: Normalized embedding matrix.
-    :return tuple[list[float], int]: Similarities and count of unembedded pairs.
-    """
-    similarities: list[float] = []
-    missing = 0
-    for group in groups:
-        resolved = [resolve_label_unit(units, spec) for spec in group]
-        for index_a in range(len(resolved)):
-            for index_b in range(index_a + 1, len(resolved)):
-                row_a = uid_to_row.get(resolved[index_a].uid)
-                row_b = uid_to_row.get(resolved[index_b].uid)
-                if row_a is None or row_b is None:
-                    missing += 1
-                    continue
-                similarities.append(float(embeddings[row_a] @ embeddings[row_b]))
-    return similarities, missing
-
-
-def _analyze_language(
-    *,
-    language: str,
-    model_name: str,
-    corpus_root: Path,
-    device: str,
-    batch_size: int,
-    min_statements: int,
-) -> dict[str, Any]:
-    """Build the distribution report for one (language, model) pair.
-
-    :param str language: Corpus language key and directory name.
-    :param str model_name: Built-in model profile key.
-    :param Path corpus_root: Calibration fixture root directory.
-    :param str device: Embedding device.
-    :param int batch_size: Embedding batch size.
-    :param int min_statements: Minimum recursive statement count for candidates.
-    :return dict[str, Any]: Distribution summary per category, with its calibration manifest.
-    """
-    profile = resolve_model_profile(model_name)
-    revision = _require_immutable_revision(model_name, None)
-    corpus_path = corpus_root / language
-    labels_path = corpus_root / "labels" / f"{language}.json"
-    config = AnalyzerConfig(
-        run_traditional=False,
-        run_semantic=True,
-        run_unused=False,
-        include_private=True,
-        languages=(language,),
-        model_name=model_name,
-        model_revision=revision,
-        semantic_task=DEFAULT_CHECK_SEMANTIC_TASK,
-        min_semantic_statements=min_statements,
-        batch_size=batch_size,
-        device=device,
+    from calibration_contract import (
+        add_contract_arguments,
+        load_projects,
+        read_json,
+        write_json,
     )
-    analyzer = CodeAnalyzer(config)
-    result = analyzer.analyze(corpus_path)
-    embeddings = analyzer._embeddings
-    semantic_units = analyzer._semantic_units
-    assert embeddings is not None and semantic_units is not None
-    identity = analyzer._embedding_space_identity
-    assert identity is not None
-    uid_to_row = {unit.uid: row for row, unit in enumerate(semantic_units)}
-
-    labels = json.loads(labels_path.read_text())
-    categories: dict[str, list[list[str]]] = labels["categories"]
-
-    report: dict[str, Any] = {
-        "calibration": _calibration_manifest(
-            profile=profile,
-            resolved_revision=revision,
-            mode="distribution",
-            semantic_task=DEFAULT_CHECK_SEMANTIC_TASK,
-            requested_device=device,
-            identity=identity,
-            dimension=int(embeddings.shape[1]) if embeddings.size else 0,
-            min_statements=min_statements,
-            batch_size=batch_size,
-            languages=config.languages,
-            corpus_path=corpus_path,
-            labels_path=labels_path,
-        ),
-        "units": len(result.units),
-        "embedded": len(semantic_units),
-        "min_recursive_statements": min_statements,
-    }
-    labeled_rows: set[tuple[int, int]] = set()
-    for category in CATEGORY_NAMES:
-        groups = categories.get(category, [])
-        if not groups:
-            continue
-        similarities, missing = _pair_similarities(groups, result.units, uid_to_row, embeddings)
-        summary = _summary(similarities)
-        if missing:
-            summary["unembedded_pairs"] = missing
-        report[category] = summary
-        for group in groups:
-            rows = [uid_to_row.get(resolve_label_unit(result.units, spec).uid) for spec in group]
-            for index_a in range(len(rows)):
-                for index_b in range(index_a + 1, len(rows)):
-                    if rows[index_a] is not None and rows[index_b] is not None:
-                        labeled_rows.add(
-                            (min(rows[index_a], rows[index_b]), max(rows[index_a], rows[index_b]))
-                        )
-
-    negative_similarities, negative_missing = _pair_similarities(
-        labels.get("negative_controls", []), result.units, uid_to_row, embeddings
+    from calibration_evaluation import (
+        CHECKED_REPORT_SCHEMA_VERSION,
+        canonical_model_keys,
+        compare_devices,
+        development_projects,
+        full_report,
+        load_all,
+        measurement_digests,
+        selection_digest,
+        validate_checked_report,
+        validate_hybrid_candidate_grids,
+        validate_measurement_digests,
+        validate_selection_context,
+        validate_selection_contract,
+        validate_shipped_selection_profiles,
     )
-    negative_summary = _summary(negative_similarities)
-    if negative_missing:
-        negative_summary["unembedded_pairs"] = negative_missing
-    report["negative_controls"] = negative_summary
+    from calibration_measurements import DEFAULT_MEASUREMENTS
+    from sweep_hybrid_gates import validate_hybrid_selection
+    from sweep_semantic_thresholds import validate_threshold_selection
 
-    # Background: every same-language candidate pair that is not labeled positive.
-    matrix = embeddings @ embeddings.T
-    background: list[float] = []
-    for row_a in range(len(semantic_units)):
-        for row_b in range(row_a + 1, len(semantic_units)):
-            if (row_a, row_b) not in labeled_rows:
-                background.append(float(matrix[row_a, row_b]))
-    report["background"] = _summary(background)
-    return report
+
+def _validate_shipped_selections(
+    threshold_selection: dict, hybrid_selection: dict, models: list[str]
+) -> None:
+    """Require the checked report's selected gates to equal the shipped profiles."""
+    entries = threshold_selection.get("models")
+    if not isinstance(entries, list) or any(not isinstance(entry, dict) for entry in entries):
+        raise ValueError("threshold selection models must be objects")
+    languages = {
+        item.get("language")
+        for entry in entries
+        for item in entry.get("duplicate_by_language", [])
+        if isinstance(item, dict)
+    }
+    if not languages or any(not isinstance(language, str) for language in languages):
+        raise ValueError("threshold selection has invalid language gates")
+    validate_shipped_selection_profiles(threshold_selection, hybrid_selection, models, languages)
 
 
 def main() -> int:
-    """Entry point.
-
-    :return int: Process exit code.
-    """
-    parser = argparse.ArgumentParser(
-        description="Summarize per-category embedding similarity for calibration corpora."
-    )
+    """Create a compact report from raw local measurements."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    add_contract_arguments(parser)
+    parser.add_argument("--measurements", type=Path, default=DEFAULT_MEASUREMENTS)
+    parser.add_argument("--models", nargs="+", default=[p.key for p in list_supported_models()])
     parser.add_argument(
-        "--corpus-root", type=Path, default=Path("test_fixtures/polyglot_calibration")
-    )
-    parser.add_argument("--languages", nargs="*", default=list(DEFAULT_LANGUAGES))
-    parser.add_argument("--models", nargs="*", default=list(DEFAULT_MODELS))
-    parser.add_argument("--device", default="cpu")
-    parser.add_argument("--batch-size", type=int, default=4)
-    parser.add_argument(
-        "--min-statements",
-        type=int,
-        default=DEFAULT_MIN_SEMANTIC_STATEMENTS,
-        help=(
-            "Minimum recursive statement count for semantic candidates "
-            f"(default: production value {DEFAULT_MIN_SEMANTIC_STATEMENTS})."
-        ),
-    )
-    parser.add_argument(
-        "--json-out",
+        "--threshold-selection",
         type=Path,
-        default=Path("test_fixtures/polyglot_calibration/reports/similarity_distributions.json"),
+        default=DEFAULT_MEASUREMENTS / "threshold-selection.json",
     )
+    parser.add_argument(
+        "--hybrid-selection",
+        type=Path,
+        default=DEFAULT_MEASUREMENTS / "hybrid-selection.json",
+    )
+    parser.add_argument("--json-out", type=Path)
     args = parser.parse_args()
-
-    payload: dict[str, Any] = {}
-    for model_name in args.models:
-        payload[model_name] = {}
-        for language in args.languages:
-            report = _analyze_language(
-                language=language,
-                model_name=model_name,
-                corpus_root=args.corpus_root,
-                device=args.device,
-                batch_size=args.batch_size,
-                min_statements=args.min_statements,
+    try:
+        args.models = canonical_model_keys(args.models)
+    except ValueError as exc:
+        parser.error(str(exc))
+    devices = ["cpu", "mps"]
+    projects = load_projects(args.manifest, args.projects, args.policy)
+    selection_projects = development_projects(projects)
+    payload = {
+        "schema_version": CHECKED_REPORT_SCHEMA_VERSION,
+        "threshold_selection": read_json(args.threshold_selection),
+        "hybrid_selection": read_json(args.hybrid_selection),
+        "projects": [],
+    }
+    cpu_measurements = []
+    all_measurements = []
+    development_cpu = {}
+    for field in ("threshold_selection", "hybrid_selection"):
+        validate_selection_contract(payload[field])
+        validate_selection_context(payload[field], selection_projects, args.models)
+    validate_hybrid_candidate_grids(payload["hybrid_selection"].get("candidate_grids"))
+    if payload["hybrid_selection"].get("threshold_selection_digest") != selection_digest(
+        payload["threshold_selection"]
+    ):
+        raise ValueError(
+            "hybrid selection used another threshold selection; rerun the hybrid sweep"
+        )
+    for project in projects:
+        loaded = load_all(project, args.measurements, args.models, devices)
+        all_measurements.extend(loaded.values())
+        cpu_measurements.extend(
+            measurement
+            for (_model, device), measurement in loaded.items()
+            if device == "cpu" and project.spec["split"] == "development"
+        )
+        if project.spec["split"] == "development":
+            development_cpu.update(
+                {
+                    (project.id, model): measurement
+                    for (model, device), measurement in loaded.items()
+                    if device == "cpu"
+                }
             )
-            payload[model_name][language] = report
-            calibration = report["calibration"]
-            print(f"\n== {model_name} / {language} ==")
-            print(f"  revision: {calibration['resolved_revision']}")
-            print(f"  embedding_space: {calibration['embedding_space']}")
-            for key, value in report.items():
-                if key != "calibration":
-                    print(f"  {key}: {value}")
-
-    args.json_out.parent.mkdir(parents=True, exist_ok=True)
-    args.json_out.write_text(json.dumps(payload, indent=2))
-    print(f"\nWrote distribution report: {args.json_out}")
+        reports = {
+            f"{model}/{device}": full_report(project, measurement)
+            for (model, device), measurement in loaded.items()
+        }
+        comparisons = {
+            model: compare_devices(loaded[(model, "cpu")], loaded[(model, "mps")], project)
+            for model in args.models
+        }
+        payload["projects"].append(
+            {
+                "project": project.id,
+                "split": project.spec["split"],
+                "language": project.spec["languages"][0],
+                "corpus": {
+                    "annotated_units": len(project.annotations["units"]),
+                    "positive_pairs": sum(
+                        pair["judgment"] == "positive" for pair in project.annotations["pairs"]
+                    ),
+                    "negative_pairs": sum(
+                        pair["judgment"] == "negative" for pair in project.annotations["pairs"]
+                    ),
+                    "probes": len(project.annotations["probes"]),
+                },
+                "reports": reports,
+                "device_comparisons": comparisons,
+            }
+        )
+    for field in ("threshold_selection", "hybrid_selection"):
+        validate_measurement_digests(payload[field], cpu_measurements)
+    validate_threshold_selection(
+        payload["threshold_selection"], selection_projects, args.models, development_cpu
+    )
+    validate_hybrid_selection(
+        payload["hybrid_selection"],
+        payload["threshold_selection"],
+        selection_projects,
+        args.models,
+        development_cpu,
+    )
+    _validate_shipped_selections(
+        payload["threshold_selection"], payload["hybrid_selection"], args.models
+    )
+    payload["measurement_digests"] = measurement_digests(all_measurements)
+    reports = [report for project in payload["projects"] for report in project["reports"].values()]
+    torch_versions = {report["runtime_versions"]["torch"] for report in reports}
+    if len(torch_versions) != 1:
+        raise ValueError("runtime summary requires one PyTorch version across all reports")
+    devices = " and ".join(sorted({report["device"].upper() for report in reports}))
+    payload["measurement_runtime"] = {
+        "torch": torch_versions.pop(),
+        "scope": f"all checked {devices} reports",
+    }
+    validate_checked_report(payload, projects, args.models)
+    if args.json_out:
+        write_json(args.json_out, payload)
+    else:
+        print(json.dumps(payload, indent=2))
     return 0
 
 

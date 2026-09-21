@@ -22,21 +22,9 @@ See [report selection](output.md#report-selection) and [exit codes](output.md#ex
 
 ## Semantic duplicate gate defaults
 
-Semantic duplicate detection is gated per language: each built-in model profile carries a calibrated cosine gate for every supported language, measured against `test_fixtures/polyglot_calibration/`.
+Semantic duplicate detection is gated per language. [Built-in duplicate and search gates](model-profiles.md#duplicate-and-search-gates) are profile policy; the [calibration workflow](hybrid-tuning.md) records their development evidence.
 
-| language | `gte-modernbert-base` | `embeddinggemma-300m` |
-| --- | --- | --- |
-| python | `0.80` | `0.74` |
-| c | `0.82` | `0.78` |
-| rust | `0.74` | `0.78` |
-| javascript | `0.70` | `0.72` |
-| typescript | `0.68` | `0.78` |
-
-Gate selection is recall-first. A shipped gate may sit below the sweep's F1-selected threshold wherever the sweep shows recall gains below it, however many grid steps down that is (gte `c` `0.82` against a selected `0.90`; embeddinggemma `javascript` `0.72` against `0.82` and `rust` `0.78` against `0.82`). Where recall is flat, a gate sits at most one grid step looser as an off-corpus generalization hedge, never further. Every shipped gate keeps recall at or above the selection's and F1 within 80% of it; `tests/test_calibration_reports.py` enforces both against the recorded sweep reports.
-
-See [threshold-profile choices](model-profiles.md#choosing-threshold-defaults) for profile selection.
-
-The profile fallback (`0.82` gte, `0.78` gemma) is the strictest calibrated gate and applies only to languages without their own entry. An explicit `--semantic-threshold`/`--threshold` (or `AnalyzerConfig.semantic_threshold`) replaces every per-language gate with one flat value. The pairwise embedding scan partitions candidates by language and scans each group at that language's own gate, so a loosely gated language never drags another language's scan down; the scalar floor handed to the scan covers only languages that arrive without a calibrated entry.
+An explicit `--semantic-threshold`/`--threshold` (or `AnalyzerConfig.semantic_threshold`) replaces every per-language gate with one flat value. The pairwise embedding scan partitions candidates by language, so a loosely gated language never drags another language's scan down.
 
 Semantic duplicate pairs are same-language by default. `--cross-language` (or `AnalyzerConfig(cross_language=True)`) also reports cross-language pairs; those claims are uncalibrated, so an opted-in mixed pair is held to `min(gate_a, gate_b)`, the looser of its two language gates.
 
@@ -48,8 +36,7 @@ Default semantic candidate selection:
 
 - unit types: `function`, `method`
 - class units are excluded by default from semantic embedding
-- minimum statement count: `3` (via `min_semantic_statements`)
-- statements are counted recursively through control-flow bodies, so a large function implemented inside one outer block is not measured as a single statement; nested function/class definitions count as one declaration each. Each grammar defines its statement and nested-scope node kinds: Python follows `ast.stmt` semantics (`elif` counts, a `with` statement counts once plus its body, only `else`/`except`/`finally`/`case` clauses are transparent, a leading docstring is not counted; see [Python units](polyglot-languages.md#python)), and Rust's semicolon-free tail expression counts as one statement. Every backend sets the count at extraction.
+- minimum statement count: `3` (via `min_semantic_statements`); each backend computes recursive counts from its grammar, so a function implemented inside one outer control-flow block is not treated as one statement. See [language extraction details](polyglot-languages.md#what-becomes-a-code-unit).
 - each semantic input is one complete logical definition - the unit's exact source span of decorators (a decorated Python definition starts at its first decorator), signature, docstring, and body; functions are not split into arbitrary text chunks
 - eligible definitions and search queries are passed to the embedding backend unchanged. The backend applies its normal tokenization and context-window truncation, including any encode prompt.
 
@@ -128,18 +115,12 @@ Use `--no-tiny-filter` / `--tiny-cutoff`, or `AnalyzerConfig.filter_tiny_traditi
 
 ## Hybrid synthesis confidence defaults
 
-A semantic-only pair has already passed its language's duplicate gate (applied before synthesis; there is no separate semantic-only minimum). Synthesis then splits it into `semantic_high_confidence` or `semantic_review`; the split affects ranking and default visibility, never admission. A pair is promoted when either path holds:
+A semantic-only pair has already passed its language's duplicate gate (applied before synthesis; there is no separate semantic-only minimum). Synthesis then splits it into `semantic_high_confidence` or `semantic_review`; the split affects ranking and default visibility, never admission. A pair is promoted by corroboration or a similarity gate:
 
-- corroboration: weak identifier Jaccard >= `hybrid_weak_identifier_jaccard_min` and statement-count ratio >= `hybrid_statement_ratio_min`, both on the model profile;
-- similarity promotion: cosine >= the language's `language_high_confidence_thresholds` entry on the profile (cross-language pairs must clear the stricter of the two gates; a language without a calibrated entry has promotion off).
+- corroboration requires both the profile's weak identifier Jaccard and statement-count ratio;
+- similarity promotion requires the profile's language gate (cross-language pairs must clear the stricter gate; a language without a calibrated entry has promotion off).
 
-| profile | identifier Jaccard min | statement ratio min | promotion gates |
-| --- | --- | --- | --- |
-| `gte-modernbert-base` | `0.00` | `0.80` | typescript `0.88`; off elsewhere |
-| `embeddinggemma-300m` | `0.00` | `0.20` | off |
-| `generic` | `0.00` | `0.20` | off |
-
-Both corroboration constants are one pooled selection per profile from the [corroboration sweep](hybrid-tuning.md#run-the-sweep) at the shipped admission gates. Identifier overlap is measured from the same identifier collection in every language (Python's includes attribute and keyword-argument names, see [fingerprints](polyglot-languages.md#fingerprints-and-comparison-boundaries)), so the identifier floor is a cross-language measurement, not an artifact of one extractor. It is `0.00` because the semantic-only positives in every corpus are alpha-renamed: at each profile's shipped statement-ratio floor no positive identifier floor is feasible in all five languages - even `0.05` drops Rust and Python below recall retention under both models, TypeScript below recall retention under `gte-modernbert-base` and below published precision under `embeddinggemma-300m`, and C below published precision under `embeddinggemma-300m`. The statement-ratio floor carries GTE's split; EmbeddingGemma's `0.20` floor withholds only extreme size mismatches. An explicit `--semantic-threshold` keeps the profile's corroboration constants but turns promotion off because the gates are calibrated relative to the shipped admission gates. See the [calibration results](../test_fixtures/polyglot_calibration/README.md#calibration-results) and [hybrid gate workflow](hybrid-tuning.md).
+The [hybrid confidence gates](model-profiles.md#hybrid-confidence-gates) define the shipped values. An explicit `--semantic-threshold` keeps the profile's corroboration constants but turns similarity promotion off because those promotion gates belong to the shipped profile policy.
 
 ## Confidence scale
 

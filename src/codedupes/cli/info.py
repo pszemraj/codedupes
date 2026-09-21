@@ -95,8 +95,10 @@ def info_command(output_width: int, verbose: bool) -> None:
                 [
                     ("Python", runtime_versions["python"]),
                     ("Platform", platform.platform()),
+                    ("NumPy", runtime_versions["numpy"]),
                     ("PyTorch", runtime_versions["torch"]),
                     ("Transformers", runtime_versions["transformers"]),
+                    ("Tokenizers", runtime_versions["tokenizers"]),
                     ("Sentence Transformers", runtime_versions["sentence-transformers"]),
                 ],
             )
@@ -173,7 +175,7 @@ def info_command(output_width: int, verbose: bool) -> None:
         for status in get_grammar_statuses():
             installed = status.installed_version or "not installed"
             state = "ready" if status.available else "unavailable"
-            detail = f"{status.package}=={status.pinned_version} (installed={installed}, {state})"
+            detail = f"{status.package} (installed={installed}, {state})"
             if status.error:
                 detail += f"\n{status.error}"
             grammar_rows.append((status.dialect, detail))

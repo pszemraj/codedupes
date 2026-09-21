@@ -2,9 +2,9 @@
 
 Each function implements a distinct, well-known programming task so that the
 natural-language queries in queries.json have exactly one intended hit. The
-opt-in smoke test in tests/test_semantic_smoke.py asserts that every relevant
-query clears the default search threshold while off-topic queries return
-nothing. Do not deduplicate or lint-fix this file; it is an analysis input.
+opt-in smoke test in tests/test_semantic_smoke.py checks target ranking without
+a score floor and relevance of emitted default results; off-topic queries must
+return nothing. Do not deduplicate or lint-fix this file; it is an analysis input.
 """
 
 import time

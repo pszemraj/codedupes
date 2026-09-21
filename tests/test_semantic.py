@@ -7,6 +7,7 @@ import os
 import stat
 from dataclasses import replace
 from pathlib import Path
+from typing import get_type_hints
 
 import numpy as np
 import pytest
@@ -14,6 +15,7 @@ import sentence_transformers
 import torch
 
 from codedupes import devices, semantic
+from codedupes.analyzer import CodeAnalyzer
 from codedupes.constants import CPU_FALLBACK_MAX_BATCH_SIZE
 from codedupes.embedding_cache import EmbeddingCache, compute_cache_key
 from codedupes.models import CodeUnit, CodeUnitType
@@ -82,15 +84,20 @@ def test_query_search_with_mocked_semantic_model(tmp_path, monkeypatch):
     monkeypatch.setattr(semantic, "get_model", lambda *args, **kwargs: fake)
 
     embeddings = fake.encode([u.source for u in units], convert_to_numpy=True)
+    execution = []
     results = find_similar_to_query(
         query="find addition",
         units=units,
         embeddings=embeddings,
         top_k=1,
+        device="cpu",
+        use_cache=False,
+        execution=execution,
     )
 
     assert len(results) == 1
     assert results[0][0] in units
+    assert execution == [semantic.QueryExecution(execution_device="cpu", cache_hit=False)]
 
 
 def test_code_unit_statement_count_trusts_the_unit(tmp_path: Path) -> None:
@@ -386,6 +393,58 @@ def test_prompt_sensitive_search_requires_corpus_identity(tmp_path: Path) -> Non
 
 
 @pytest.mark.parametrize(
+    "compute",
+    [semantic.compute_embeddings, semantic.compute_embeddings_with_identity],
+)
+def test_embedding_apis_reject_invalid_search_document_before_model_loading(
+    tmp_path: Path, monkeypatch, compute
+) -> None:
+    units = extract_arithmetic_units(tmp_path)
+
+    def fail_if_called(*_args, **_kwargs):
+        raise AssertionError("invalid search_document must fail before model loading")
+
+    monkeypatch.setattr(semantic, "get_model", fail_if_called)
+
+    with pytest.raises(ValueError, match="search_document must be 'source' or 'contextual'"):
+        compute(
+            units,
+            document_texts=[f"path: arithmetic.py\n{unit.source}" for unit in units],
+            search_document="contextual-typo",
+            device="cpu",
+            use_cache=False,
+        )
+
+
+def test_embedding_identity_rejects_invalid_search_document() -> None:
+    with pytest.raises(ValueError, match="search_document must be 'source' or 'contextual'"):
+        semantic.EmbeddingSpaceIdentity(
+            model_name="model",
+            resolved_revision="revision",
+            runtime_variant="variant",
+            search_document="contextual-typo",
+        )
+
+
+def test_array_only_embedding_api_rejects_contextual_documents(tmp_path: Path, monkeypatch) -> None:
+    units = extract_arithmetic_units(tmp_path)
+
+    def fail_if_called(*_args, **_kwargs):
+        raise AssertionError("contextual array-only embedding must fail before model loading")
+
+    monkeypatch.setattr(semantic, "get_model", fail_if_called)
+
+    with pytest.raises(ValueError, match="require compute_embeddings_with_identity"):
+        compute_embeddings(
+            units,
+            document_texts=[f"path: arithmetic.py\n{unit.source}" for unit in units],
+            search_document="contextual",
+            device="cpu",
+            use_cache=False,
+        )
+
+
+@pytest.mark.parametrize(
     "kwargs",
     [
         {"semantic_task": "classification"},
@@ -450,6 +509,280 @@ def test_uncalibrated_search_context_requires_explicit_threshold(
         ) == len(units)
 
 
+def test_empty_search_still_rejects_uncalibrated_default() -> None:
+    with pytest.raises(ValueError, match="explicit threshold"):
+        find_similar_to_query(
+            "anything",
+            [],
+            np.empty((0, 0), dtype=np.float32),
+            model_name="gte-modernbert-base",
+            revision="f" * 40,
+            use_cache=False,
+        )
+    assert (
+        find_similar_to_query(
+            "anything",
+            [],
+            np.empty((0, 0), dtype=np.float32),
+            model_name="gte-modernbert-base",
+            revision="f" * 40,
+            threshold=0.0,
+            use_cache=False,
+        )
+        == []
+    )
+    assert find_semantic_duplicates([], np.empty((0, 0), dtype=np.float32), threshold=0.0) == []
+
+
+@pytest.mark.parametrize(
+    "embeddings",
+    [
+        pytest.param(np.ones((1, 2), dtype=np.float32), id="short"),
+        pytest.param(np.ones((3, 2), dtype=np.float32), id="long"),
+        pytest.param(np.ones(2, dtype=np.float32), id="non-2d"),
+    ],
+)
+def test_precomputed_embeddings_require_2d_row_alignment(
+    tmp_path: Path, monkeypatch, embeddings: np.ndarray
+) -> None:
+    units = extract_arithmetic_units(tmp_path)
+
+    def fail_if_called(*_args, **_kwargs):
+        raise AssertionError("invalid precomputed embeddings must fail before model loading")
+
+    monkeypatch.setattr(semantic, "get_model", fail_if_called)
+
+    with pytest.raises(
+        ValueError, match=r"embeddings must (be a 2D matrix|contain one row per unit)"
+    ):
+        find_semantic_duplicates(units, embeddings, threshold=0.0)
+    with pytest.raises(
+        ValueError, match=r"embeddings must (be a 2D matrix|contain one row per unit)"
+    ):
+        find_similar_to_query(
+            "find addition",
+            units,
+            embeddings,
+            threshold=0.0,
+            device="cpu",
+            use_cache=False,
+        )
+
+
+@pytest.mark.parametrize(
+    ("embeddings", "message"),
+    [
+        pytest.param(
+            np.array([[np.nan, 0.0], [1.0, 0.0]], dtype=np.float32),
+            "NaN or infinity",
+            id="nan",
+        ),
+        pytest.param(
+            np.array([[np.inf, 0.0], [1.0, 0.0]], dtype=np.float32),
+            "NaN or infinity",
+            id="infinity",
+        ),
+        pytest.param(
+            np.array([[0.0, 0.0], [1.0, 0.0]], dtype=np.float32),
+            "zero or invalid vector",
+            id="zero-row",
+        ),
+        pytest.param(
+            np.array([[1.0 + 100.0j, 0.0], [1.0 + 0.0j, 0.0]], dtype=np.complex64),
+            "real-valued vectors",
+            id="complex",
+        ),
+        pytest.param(np.empty((2, 0), dtype=np.float32), "zero columns", id="zero-width"),
+    ],
+)
+def test_precomputed_embeddings_reject_invalid_rows_before_similarity_or_model_loading(
+    tmp_path: Path, monkeypatch, embeddings: np.ndarray, message: str
+) -> None:
+    units = extract_arithmetic_units(tmp_path)
+
+    def fail_if_called(*_args, **_kwargs):
+        raise AssertionError("invalid precomputed embeddings must fail before model loading")
+
+    monkeypatch.setattr(semantic, "get_model", fail_if_called)
+
+    with pytest.raises(ValueError, match=message):
+        find_semantic_duplicates(units, embeddings, threshold=0.0)
+    with pytest.raises(ValueError, match=message):
+        find_similar_to_query(
+            "find addition",
+            units,
+            embeddings,
+            threshold=0.0,
+            device="cpu",
+            use_cache=False,
+        )
+
+
+def test_direct_embeddings_are_normalized_before_duplicate_scoring(tmp_path: Path) -> None:
+    units = extract_arithmetic_units(tmp_path)
+    embeddings = np.array([[5.0, 0.0], [1.0, 0.5]], dtype=np.float32)
+
+    # The raw dot product is 5.0, but the true cosine is ~0.894. The pair must
+    # not clear a 0.95 duplicate gate merely because a caller supplied scaled rows.
+    assert find_semantic_duplicates(units, embeddings, threshold=0.95) == []
+
+
+def test_canonical_precomputed_embeddings_reuse_storage_with_bounded_validation(
+    tmp_path: Path, monkeypatch
+) -> None:
+    units = extract_arithmetic_units(tmp_path)
+    units = [units[index % len(units)] for index in range(2050)]
+    embeddings = np.zeros((len(units), 2), dtype=np.float32)
+    embeddings[:, 0] = 1.0
+    observed_rows = []
+    original = semantic.canonicalize_embeddings
+
+    def traced_canonicalize(values, *, expected_rows, expected_dim=None):
+        observed_rows.append(expected_rows)
+        return original(values, expected_rows=expected_rows, expected_dim=expected_dim)
+
+    monkeypatch.setattr(semantic, "canonicalize_embeddings", traced_canonicalize)
+
+    validated = semantic._validate_precomputed_embeddings(units, embeddings)
+
+    assert validated is embeddings
+    assert observed_rows
+    assert max(observed_rows) <= semantic._PRECOMPUTED_VALIDATION_BLOCK_ROWS
+
+
+def test_fresh_embedding_normalization_bounds_float64_working_rows(monkeypatch) -> None:
+    row_count = semantic._PRECOMPUTED_VALIDATION_BLOCK_ROWS * 2 + 3
+    embeddings = np.ones((row_count, 4), dtype=np.float32)
+    converted_rows: list[int] = []
+    original_asarray = semantic.np.asarray
+
+    def traced_asarray(values, dtype=None, *args, **kwargs):
+        shape = getattr(values, "shape", ())
+        if dtype is not None and np.dtype(dtype) == np.dtype(np.float64) and shape:
+            converted_rows.append(shape[0])
+        return original_asarray(values, dtype, *args, **kwargs)
+
+    monkeypatch.setattr(semantic.np, "asarray", traced_asarray)
+
+    canonical = semantic.canonicalize_embeddings(embeddings, expected_rows=row_count)
+
+    assert canonical.shape == embeddings.shape
+    assert converted_rows
+    assert max(converted_rows) <= semantic._PRECOMPUTED_VALIDATION_BLOCK_ROWS
+    np.testing.assert_allclose(np.linalg.norm(canonical, axis=1), 1.0)
+
+
+def test_near_unit_direct_embeddings_are_still_normalized_before_scoring(tmp_path: Path) -> None:
+    units = extract_arithmetic_units(tmp_path)
+    second_component = math.sqrt(1.0 - 0.9**2)
+    embeddings = np.array([[1.0000005, 0.0], [0.9, second_component]], dtype=np.float32)
+
+    # A tolerance-based unit-vector shortcut would preserve the first row's
+    # scale and admit this pair just above the caller's exact decision boundary.
+    assert find_semantic_duplicates(units, embeddings, threshold=0.9000003) == []
+
+
+@pytest.mark.parametrize(
+    "scale",
+    [
+        pytest.param(np.float32(3e38), id="near-float32-maximum"),
+        pytest.param(np.nextafter(np.float32(0), np.float32(1)), id="float32-subnormal"),
+    ],
+)
+def test_direct_embeddings_stably_normalize_finite_float32_extremes(
+    tmp_path: Path, scale: np.float32
+) -> None:
+    units = extract_arithmetic_units(tmp_path)
+    embeddings = np.array([[scale, scale], [scale, 0.0]], dtype=np.float32)
+
+    duplicates = find_semantic_duplicates(units, embeddings, threshold=0.7)
+
+    assert len(duplicates) == 1
+    assert duplicates[0].similarity == pytest.approx(1 / math.sqrt(2), abs=1e-6)
+
+
+def test_direct_embedding_apis_return_to_base_ndarray_semantics(
+    tmp_path: Path, monkeypatch
+) -> None:
+    units = extract_arithmetic_units(tmp_path)
+    embeddings = np.array([[1.0, 0.0], [1.0, 0.0]], dtype=np.float32).view(np.matrix)
+
+    assert len(find_semantic_duplicates(units, embeddings, threshold=0.9)) == 1
+
+    class QueryModel:
+        def encode(self, texts, **kwargs):
+            return np.array([[1.0, 0.0]], dtype=np.float32)
+
+    monkeypatch.setattr(semantic, "get_model", lambda *args, **kwargs: QueryModel())
+    results = find_similar_to_query(
+        "find addition",
+        units,
+        embeddings,
+        threshold=-1.0,
+        device="cpu",
+        use_cache=False,
+    )
+    assert {unit.uid for unit, _score in results} == {unit.uid for unit in units}
+
+
+def test_direct_embeddings_are_normalized_before_query_scoring(tmp_path: Path, monkeypatch) -> None:
+    units = extract_arithmetic_units(tmp_path)
+    embeddings = np.array([[5.0, 0.0], [1.0, 0.5]], dtype=np.float32)
+
+    class QueryModel:
+        def encode(self, texts, **kwargs):
+            return np.array([[1.0, 0.0]], dtype=np.float32)
+
+    monkeypatch.setattr(semantic, "get_model", lambda *args, **kwargs: QueryModel())
+
+    results = find_similar_to_query(
+        "find addition",
+        units,
+        embeddings,
+        top_k=np.int64(1),
+        threshold=0.95,
+        device="cpu",
+        use_cache=False,
+    )
+
+    assert results == [(units[0], 1.0)]
+
+
+def test_search_top_k_annotations_are_int() -> None:
+    """Expose the conventional static type while accepting NumPy integers at runtime."""
+    for search in (
+        semantic._find_similar_to_query_unlocked,
+        find_similar_to_query,
+        CodeAnalyzer.search,
+    ):
+        assert get_type_hints(search)["top_k"] is int
+
+
+@pytest.mark.parametrize("top_k", [0, -1, 1.5, True])
+def test_search_requires_positive_integer_top_k(top_k) -> None:
+    with pytest.raises(ValueError, match="top_k must be a positive integer"):
+        find_similar_to_query(
+            "anything",
+            [],
+            np.empty((0, 0), dtype=np.float32),
+            top_k=top_k,
+            threshold=0.0,
+            use_cache=False,
+        )
+
+
+@pytest.mark.parametrize("query", ["", " \t\n"])
+def test_search_requires_nonempty_query(query: str) -> None:
+    with pytest.raises(ValueError, match="query must be a non-empty string"):
+        find_similar_to_query(
+            query,
+            [],
+            np.empty((0, 0), dtype=np.float32),
+            threshold=0.0,
+            use_cache=False,
+        )
+
+
 @pytest.mark.parametrize(
     "threshold",
     [
@@ -508,9 +841,9 @@ def test_find_similar_to_query_default_threshold_is_search_default(
     tmp_path: Path, monkeypatch
 ) -> None:
     units = extract_arithmetic_units(tmp_path)
-    # First row scores 0.6: above the search default (0.50) but below every
+    # First row scores 0.7: above the search default (0.68) but below every
     # duplicate-detection gate; second row scores 0.3 and is dropped.
-    embeddings = np.array([[0.6, 0.8], [0.3, 0.9539392]], dtype=np.float32)
+    embeddings = np.array([[0.7, 0.71414284], [0.3, 0.9539392]], dtype=np.float32)
 
     class QueryModel:
         def encode(self, texts, **kwargs):
@@ -526,22 +859,80 @@ def test_find_similar_to_query_default_threshold_is_search_default(
     )
 
     assert [unit for unit, _score in results] == [units[0]]
-    assert results[0][1] == pytest.approx(0.6, abs=1e-6)
+    assert results[0][1] == pytest.approx(0.7, abs=1e-6)
 
 
-def test_find_semantic_duplicates_ignores_nan_similarity(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("cached_vector", "expected_encode_calls"),
+    [
+        (np.array([0.1, 0.0], dtype=np.float32), 0),
+        (np.array([0.0, 0.0], dtype=np.float32), 1),
+    ],
+    ids=["renormalize", "zero-row-miss"],
+)
+def test_query_cache_hits_enforce_cosine_vector_invariants(
+    tmp_path: Path,
+    monkeypatch,
+    cached_vector: np.ndarray,
+    expected_encode_calls: int,
+) -> None:
     units = extract_arithmetic_units(tmp_path)
-    embeddings = np.array(
-        [
-            [np.nan, 0.0],
-            [1.0, 0.0],
-        ],
-        dtype=np.float32,
+    embeddings = np.array([[1.0, 0.0], [0.0, 1.0]], dtype=np.float32)
+    model = _RecordingModel()
+    monkeypatch.setattr(semantic, "get_model", lambda *args, **kwargs: model)
+    profile = semantic.resolve_model_profile("gte-modernbert-base")
+    plan = semantic.resolve_encode_plan("gte-modernbert-base", mode="query")
+    cache, cache_revision, cache_variant, cache_namespace = semantic._prepare_cache_context(
+        "query",
+        profile,
+        "gte-modernbert-base",
+        _FULL_REVISION,
+        "cpu",
+        plan,
+        mps_fallback=None,
+        trust_remote_code=False,
+        use_cache=True,
+        cache_scope=tmp_path,
+    )
+    assert cache is not None
+    assert cache_revision is not None
+    query = "find addition"
+    cache_key = semantic.compute_cache_key(
+        profile.canonical_name,
+        cache_revision,
+        semantic._prepare_embedding_text(query),
+        mode="query",
+        variant=cache_variant,
+    )
+    cache.put_many(
+        tmp_path,
+        profile.canonical_name,
+        cache_revision,
+        [(cache_key, cached_vector)],
+        namespace=cache_namespace,
     )
 
-    duplicates = find_semantic_duplicates(units, embeddings, threshold=0.5)
+    execution = []
+    results = find_similar_to_query(
+        query,
+        units,
+        embeddings,
+        model_name="gte-modernbert-base",
+        revision=_FULL_REVISION,
+        threshold=0.9,
+        device="cpu",
+        cache_scope=tmp_path,
+        execution=execution,
+    )
 
-    assert duplicates == []
+    assert results == [(units[0], 1.0)]
+    assert len(model.encoded) == expected_encode_calls
+    assert execution == [
+        semantic.QueryExecution(
+            execution_device="cpu" if expected_encode_calls else None,
+            cache_hit=expected_encode_calls == 0,
+        )
+    ]
 
 
 def test_semantic_pair_scores_bound_float32_cosine_overshoot(tmp_path: Path) -> None:
@@ -570,47 +961,6 @@ def test_query_scores_bound_cosine_overshoot_before_thresholding(tmp_path: Path,
     assert results == [(units[0], 1.0), (units[1], -1.0)]
 
 
-def test_find_semantic_duplicates_rejects_nan_and_inf_but_keeps_finite_pair(
-    tmp_path: Path,
-) -> None:
-    # Rounds out the isfinite guard's coverage (see the comment above the
-    # pair loop in find_semantic_duplicates): both a NaN similarity and a
-    # +inf similarity must be dropped, and neither should suppress a genuine
-    # finite above-threshold pair computed in the same run.
-    units = extract_units(
-        tmp_path,
-        """
-        def first(x):
-            return x + 1
-
-        def second(x):
-            return x + 2
-
-        def third(x):
-            return x + 3
-
-        def fourth(x):
-            return x + 4
-        """,
-    )
-    embeddings = np.array(
-        [
-            [np.nan, 0.0],  # first: every pair involving this row is NaN.
-            [1.0, 0.0],  # second
-            [1.0, 0.0],  # third: (second, third) is a legitimate finite pair.
-            [np.inf, 0.0],  # fourth: every pair involving this row is +inf.
-        ],
-        dtype=np.float32,
-    )
-
-    duplicates = find_semantic_duplicates(units, embeddings, threshold=0.9)
-
-    assert len(duplicates) == 1
-    kept = duplicates[0]
-    assert {kept.unit_a.name, kept.unit_b.name} == {"second", "third"}
-    assert kept.similarity == pytest.approx(1.0)
-
-
 @pytest.mark.parametrize("threshold", [0.82, 0.78, 0.70, 0.90])
 def test_find_semantic_duplicates_rechecks_threshold_after_numpy_prefilter(
     tmp_path: Path, threshold: float
@@ -618,7 +968,10 @@ def test_find_semantic_duplicates_rechecks_threshold_after_numpy_prefilter(
     units = extract_arithmetic_units(tmp_path)
     rounded_down = np.float32(threshold)
     assert float(rounded_down) < threshold
-    embeddings = np.array([[1.0, 0.0], [rounded_down, 0.0]], dtype=np.float32)
+    embeddings = np.array(
+        [[1.0, 0.0], [rounded_down, math.sqrt(1.0 - rounded_down**2)]],
+        dtype=np.float32,
+    )
 
     duplicates = find_semantic_duplicates(units, embeddings, threshold=threshold)
 
@@ -642,6 +995,11 @@ def test_find_semantic_duplicates_rechecks_threshold_after_numpy_prefilter(
             lambda _row_count: np.array([[1.0, 0.0]], dtype=np.float32),
             "rows",
             id="wrong-row-count",
+        ),
+        pytest.param(
+            lambda row_count: np.empty((row_count, 0), dtype=np.float32),
+            "zero columns",
+            id="zero-width",
         ),
     ],
 )
@@ -1313,21 +1671,6 @@ def test_get_model_rejects_incomplete_local_directory(
         semantic.get_model(str(model_dir))
 
 
-@pytest.mark.parametrize("version", ["2.12.9", "3.0.0", "3.0.0.dev1"])
-def test_torch_runtime_rejects_unsupported_versions(monkeypatch, version: str) -> None:
-    monkeypatch.setattr(semantic, "_safe_package_version", lambda _name: version)
-
-    with pytest.raises(SemanticBackendError, match="requires >=2.13,<3"):
-        semantic._validate_torch_runtime()
-
-
-@pytest.mark.parametrize("version", ["2.13.0", "2.13.0.dev20260101", "2.13.0rc1", "2.14.1"])
-def test_torch_runtime_accepts_supported_versions(monkeypatch, version: str) -> None:
-    monkeypatch.setattr(semantic, "_safe_package_version", lambda _name: version)
-
-    semantic._validate_torch_runtime()
-
-
 def test_prepare_semantic_device_ignores_fraction_on_non_mps(caplog) -> None:
     with caplog.at_level(logging.INFO, logger="codedupes.semantic"):
         resolved = semantic._prepare_semantic_device(
@@ -1720,6 +2063,7 @@ def test_unreportable_mutable_provenance_bypasses_the_query_cache(
         model_name="test-model",
         revision=revision,
         cache_scope=tmp_path,
+        strict_revision_cache=False,
     )
     assert identity.source_commit is None
 
@@ -1731,6 +2075,7 @@ def test_unreportable_mutable_provenance_bypasses_the_query_cache(
             model_name="test-model",
             revision=revision,
             cache_scope=tmp_path,
+            strict_revision_cache=False,
             corpus_identity=identity,
             threshold=0.0,
         )
@@ -2011,7 +2356,7 @@ def test_find_similar_to_query_warm_cache_raises_for_explicit_unavailable_device
         )
 
 
-def test_warm_cache_returns_with_unset_fraction_restore_managed_mps_cap(
+def test_warm_cache_returns_restore_managed_mps_cap_without_allocator_work(
     tmp_path: Path, monkeypatch
 ) -> None:
     units = _warm_corpus_cache(tmp_path, monkeypatch)
@@ -2061,8 +2406,8 @@ def test_warm_cache_returns_with_unset_fraction_restore_managed_mps_cap(
     )
     assert restore_calls == [True]
 
-    # A run that requests its own fraction is not "unset": the warm corpus
-    # return must leave cap management to the next real device preparation.
+    # A CPU run's supplied fraction is ignored. Because the warm return performs
+    # no allocator work, it must still restore a cap left by an earlier run.
     restore_calls.clear()
     compute_embeddings(
         units,
@@ -2072,7 +2417,21 @@ def test_warm_cache_returns_with_unset_fraction_restore_managed_mps_cap(
         mps_memory_fraction=0.9,
         cache_scope=tmp_path,
     )
-    assert restore_calls == []
+    assert restore_calls == [True]
+
+    restore_calls.clear()
+    find_similar_to_query(
+        "find addition",
+        units,
+        embeddings,
+        model_name="gte-modernbert-base",
+        revision=_FULL_REVISION,
+        device="cpu",
+        mps_memory_fraction=0.9,
+        threshold=0.0,
+        cache_scope=tmp_path,
+    )
+    assert restore_calls == [True]
 
 
 def test_query_embedding_cache_put_is_fifo_capped(tmp_path: Path, monkeypatch) -> None:
@@ -2546,10 +2905,10 @@ def test_local_fingerprint_tracks_embedding_assets(tmp_path, relative) -> None:
 @pytest.mark.parametrize(
     ("choice", "expected"),
     [
-        ("auto", 0.40),
+        ("auto", 0.56),
         ("generic", 0.35),
-        ("embeddinggemma-300m", 0.40),
-        ("gte-modernbert-base", 0.50),
+        ("embeddinggemma-300m", 0.56),
+        ("gte-modernbert-base", 0.68),
     ],
 )
 def test_search_threshold_profile_defaults_and_numeric_precedence(choice, expected) -> None:
@@ -2560,6 +2919,12 @@ def test_search_threshold_profile_defaults_and_numeric_precedence(choice, expect
     assert (
         semantic.resolve_search_threshold("embeddinggemma", 0.62, threshold_profile=choice) == 0.62
     )
+
+
+@pytest.mark.parametrize("threshold", [math.nan, math.inf, -math.inf])
+def test_resolve_search_threshold_rejects_nonfinite_override(threshold: float) -> None:
+    with pytest.raises(ValueError, match="threshold must be finite"):
+        semantic.resolve_search_threshold("embeddinggemma", threshold)
 
 
 def test_fingerprint_local_model_dir_handles_symlink_cycles(tmp_path: Path) -> None:
@@ -2738,18 +3103,34 @@ def test_resolve_embedding_space_identity_detects_disk_changes_across_separate_c
     assert before.resolved_revision != after.resolved_revision
 
 
-# --- T7: loose-by-default cache revision keying, strict opt-in -------------
+# --- T7: strict-by-default cache revision keying, loose opt-in -------------
 
 
-def test_resolve_revision_for_cache_loose_default_labels_unpinned_model(monkeypatch) -> None:
+@pytest.mark.parametrize(
+    "function",
+    [
+        semantic.resolve_embedding_space_identity,
+        semantic.compute_embeddings_with_identity,
+        semantic.compute_embeddings,
+        semantic.find_similar_to_query,
+        semantic.run_semantic_analysis_with_identity,
+        semantic.run_semantic_analysis,
+    ],
+)
+def test_public_semantic_helpers_default_to_strict_revision_cache(function) -> None:
+    parameter = inspect.signature(function).parameters["strict_revision_cache"]
+    assert parameter.default is True
+
+
+def test_resolve_revision_for_cache_loose_opt_in_labels_unpinned_model(monkeypatch) -> None:
     def _fail_if_called(*_args, **_kwargs):
         raise AssertionError("loose mode must never consult the offline hub-cache lookup")
 
     monkeypatch.setattr(semantic, "_resolve_hf_cached_revision", _fail_if_called)
 
-    assert semantic._resolve_revision_for_cache("some-generic-model", None) == "main"
+    assert semantic._resolve_revision_for_cache("some-generic-model", None, strict=False) == "main"
     assert (
-        semantic._resolve_revision_for_cache("some-generic-model", "feature-branch")
+        semantic._resolve_revision_for_cache("some-generic-model", "feature-branch", strict=False)
         == "feature-branch"
     )
 
@@ -2783,29 +3164,33 @@ def test_resolve_revision_for_cache_strict_resolves_commit_and_disables_on_unmap
         is None
     )
     assert (
-        semantic._resolve_revision_for_cache("some-generic-model", "feature-branch")
+        semantic._resolve_revision_for_cache("some-generic-model", "feature-branch", strict=False)
         == "feature-branch"
     )
 
 
-def test_confirm_cache_revision_after_load_loose_default_trusts_pre_load_label() -> None:
+def test_confirm_cache_revision_after_load_loose_opt_in_trusts_pre_load_label() -> None:
     # Loose mode never inspects the model at all: an arbitrary object without
     # the introspection surface _get_loaded_model_commit_hash expects proves
     # that no post-load reconciliation happens.
     sentinel_model = object()
 
     assert (
-        semantic._confirm_cache_revision_after_load(sentinel_model, "some-generic-model", "main")
+        semantic._confirm_cache_revision_after_load(
+            sentinel_model, "some-generic-model", "main", strict=False
+        )
         == "main"
     )
     assert (
-        semantic._confirm_cache_revision_after_load(sentinel_model, "some-generic-model", None)
+        semantic._confirm_cache_revision_after_load(
+            sentinel_model, "some-generic-model", None, strict=False
+        )
         == "main"
     )
     commit_hash = "b" * 40
     assert (
         semantic._confirm_cache_revision_after_load(
-            sentinel_model, "some-generic-model", commit_hash
+            sentinel_model, "some-generic-model", commit_hash, strict=False
         )
         == commit_hash
     )
@@ -2831,7 +3216,7 @@ def test_confirm_cache_revision_after_load_strict_requires_loaded_commit(monkeyp
     )
 
 
-def test_loose_default_cache_survives_simulated_branch_move(tmp_path: Path, monkeypatch) -> None:
+def test_loose_opt_in_cache_survives_simulated_branch_move(tmp_path: Path, monkeypatch) -> None:
     """A warm loose-mode cache must not invalidate when an upstream ref moves.
 
     Uses an unpinned (generic-profile) model name so the default request
@@ -2851,19 +3236,27 @@ def test_loose_default_cache_survives_simulated_branch_move(tmp_path: Path, monk
     monkeypatch.setattr(semantic, "_resolve_hf_cached_revision", _fail_if_called)
 
     first = compute_embeddings(
-        units, model_name="some-generic-model", device="cpu", cache_scope=tmp_path
+        units,
+        model_name="some-generic-model",
+        device="cpu",
+        cache_scope=tmp_path,
+        strict_revision_cache=False,
     )
     assert model.encode_calls == 1
 
     second = compute_embeddings(
-        units, model_name="some-generic-model", device="cpu", cache_scope=tmp_path
+        units,
+        model_name="some-generic-model",
+        device="cpu",
+        cache_scope=tmp_path,
+        strict_revision_cache=False,
     )
 
     assert model.encode_calls == 1
     np.testing.assert_array_equal(first, second)
 
 
-def test_strict_revision_cache_reencodes_after_simulated_branch_move(
+def test_default_revision_cache_reencodes_after_simulated_branch_move(
     tmp_path: Path, monkeypatch
 ) -> None:
     """A moved branch changes the resolved commit hash, invalidating a strict-mode warm cache.
@@ -2892,7 +3285,6 @@ def test_strict_revision_cache_reencodes_after_simulated_branch_move(
         model_name="some-generic-model",
         device="cpu",
         cache_scope=tmp_path,
-        strict_revision_cache=True,
     )
     assert model.encode_calls == 1
 
@@ -2902,7 +3294,6 @@ def test_strict_revision_cache_reencodes_after_simulated_branch_move(
         model_name="some-generic-model",
         device="cpu",
         cache_scope=tmp_path,
-        strict_revision_cache=True,
     )
     assert model.encode_calls == 1
 
@@ -2915,14 +3306,13 @@ def test_strict_revision_cache_reencodes_after_simulated_branch_move(
         model_name="some-generic-model",
         device="cpu",
         cache_scope=tmp_path,
-        strict_revision_cache=True,
     )
 
     assert model.encode_calls == 2
     assert loaded_revisions == [commit_a, commit_b]
 
 
-def test_strict_revision_cache_disables_caching_for_unmappable_symbolic_ref(
+def test_default_revision_cache_disables_caching_for_unmappable_symbolic_ref(
     tmp_path: Path, monkeypatch
 ) -> None:
     units = extract_arithmetic_units(tmp_path)
@@ -2938,7 +3328,6 @@ def test_strict_revision_cache_disables_caching_for_unmappable_symbolic_ref(
             revision="unmappable-branch",
             device="cpu",
             cache_scope=tmp_path,
-            strict_revision_cache=True,
         )
 
     assert model.encode_calls == 2
@@ -2961,11 +3350,9 @@ def _scan_fixture() -> tuple[list[CodeUnit], np.ndarray]:
         rng.integers(0, 2, size=(count, dimensions)).astype(np.float32) * 2.0 - 1.0
     ) * 0.25
 
-    # Non-finite rows. Row 0 is all-positive so its product with the +inf row is
-    # +inf rather than NaN, exercising the finite guard behind the gate mask.
+    # A deterministic all-positive row exercises the dense positive-score
+    # branch without violating the direct-embedding finite-row contract.
     embeddings[0] = 0.25
-    embeddings[1] = np.inf
-    embeddings[4] = np.nan
 
     # Perfect-similarity rows for the three post-gate filters: an overlapping
     # same-file pair, a surviving cross-file twin, and a class/function pair.
@@ -3135,7 +3522,6 @@ def test_vectorized_pair_scan_matches_naive_reference() -> None:
     assert ordered_pair_key(units[8], units[9]) not in reported_keys
     assert ordered_pair_key(units[16], units[17]) not in reported_keys
     assert ordered_pair_key(units[0], units[1]) not in reported_keys
-    assert all(units[4].uid not in key for key in reported_keys)
 
     cross = find_semantic_duplicates(
         units, embeddings, threshold=0.9, cross_language=True, language_thresholds=gates
@@ -3162,7 +3548,8 @@ def test_vectorized_pair_scan_preserves_full_width_float32_scores_and_order() ->
     threshold = 0.97
 
     # This is the product shape used by the original scalar candidate walk.
-    full_width_scores = embeddings[500:] @ embeddings.T
+    canonical = semantic.canonicalize_embeddings(embeddings, expected_rows=len(units))
+    full_width_scores = canonical[500:] @ canonical.T
 
     expected: list[tuple[tuple[str, str], float]] = []
     for local_idx, group_i in enumerate(range(500, 520)):
@@ -3173,19 +3560,9 @@ def test_vectorized_pair_scan_preserves_full_width_float32_scores_and_order() ->
     expected.sort(key=lambda entry: entry[1], reverse=True)
     assert len(expected) == 190
 
-    matmul_shapes: list[tuple[tuple[int, ...], tuple[int, ...]]] = []
-
-    class MatmulTracingArray(np.ndarray):
-        def __matmul__(self, other):
-            matmul_shapes.append((self.shape, other.shape))
-            return np.ndarray.__matmul__(self, other)
-
-    reported = find_semantic_duplicates(
-        units, embeddings.view(MatmulTracingArray), threshold=threshold
-    )
+    reported = find_semantic_duplicates(units, embeddings, threshold=threshold)
 
     assert _pair_view(reported) == expected
-    assert matmul_shapes == [((500, 768), (768, 520)), ((20, 768), (768, 520))]
 
 
 def test_vectorized_pair_scan_bounds_candidate_extraction_and_masks_lower_triangle(

@@ -13,11 +13,11 @@ import threading
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from importlib import metadata as importlib_metadata
+from numbers import Integral
 from pathlib import Path
 from typing import Any, Literal, TypeVar, cast
 
 import numpy as np
-from packaging.version import InvalidVersion, Version
 
 from codedupes.constants import (
     CPU_FALLBACK_MAX_BATCH_SIZE,
@@ -73,6 +73,19 @@ logger = logging.getLogger(__name__)
 ProgressMode = Literal["auto", "always", "never"]
 SearchDocumentMode = Literal["source", "contextual"]
 PROGRESS_BAR_MIN_INPUTS = 100
+_PRECOMPUTED_VALIDATION_BLOCK_ROWS = 1024
+
+
+def _validate_search_document_mode(value: object) -> SearchDocumentMode:
+    """Return a supported search-document mode or reject the runtime value.
+
+    :param value: Runtime value supplied through a public Python API.
+    :return: Validated search-document mode.
+    :raises ValueError: If the value is not ``source`` or ``contextual``.
+    """
+    if value not in {"source", "contextual"}:
+        raise ValueError("search_document must be 'source' or 'contextual'")
+    return cast(SearchDocumentMode, value)
 
 
 def _should_show_progress(mode: ProgressMode, input_count: int) -> bool:
@@ -108,6 +121,14 @@ class EmbeddingRunStats:
     orphan_rows_retained: int = 0
     orphan_rows_collected: int = 0
     manifest_generation: int | None = None
+
+
+@dataclass(frozen=True)
+class QueryExecution:
+    """Describe where one successful query vector came from."""
+
+    execution_device: str | None
+    cache_hit: bool
 
 
 def _reset_embedding_run_stats(stats: EmbeddingRunStats | None) -> None:
@@ -209,8 +230,6 @@ _local_model_manifest_memo: dict[str, _LocalModelManifestState] = {}
 # guards it here.
 _local_model_fingerprint_scope: dict[str, str | None] | None = None
 
-_TORCH_MIN_RELEASE = (2, 13)
-_TORCH_MAX_EXCLUSIVE_RELEASE = (3,)
 _PAIRWISE_SCAN_BLOCK_SIZE = 500
 
 EMBEDDINGGEMMA_QUERY_PREFIXES: dict[SemanticTask, str] = {
@@ -281,6 +300,10 @@ class EmbeddingSpaceIdentity:
     source_commit: str | None = field(default=None, compare=False)
     search_document: SearchDocumentMode = field(default="source", compare=False)
 
+    def __post_init__(self) -> None:
+        """Reject malformed runtime-only representation annotations."""
+        _validate_search_document_mode(self.search_document)
+
 
 def embedding_cache_keys_for_units(
     units: list[CodeUnit],
@@ -298,7 +321,9 @@ def embedding_cache_keys_for_units(
     :param document_texts: Optional prepared texts aligned with ``units``.
     :param search_document: Search representation used for the texts.
     :return: Unit identifiers mapped to content-addressed cache keys.
+    :raises ValueError: If ``search_document`` is unsupported.
     """
+    search_document = _validate_search_document_mode(search_document)
     active_revision = revision or identity.resolved_revision
     if active_revision is None:
         return {}
@@ -430,10 +455,10 @@ def canonicalize_embeddings(
     :param expected_rows: Required row count (one per input text).
     :param expected_dim: Required embedding dimensionality, or ``None`` to accept any.
     :return: Contiguous float32 matrix with unit-normalized rows.
-    :raises InvalidEmbeddingError: If shape, row count, dimensionality, finiteness,
-        or norm invariants are violated.
+    :raises InvalidEmbeddingError: If shape, row count, dimensionality, real-value,
+        finiteness, or norm invariants are violated.
     """
-    matrix = np.asarray(values, dtype=np.float32)
+    matrix = np.asarray(values)
 
     if matrix.ndim != 2:
         raise InvalidEmbeddingError(f"Expected a 2D embedding matrix, got shape {matrix.shape!r}")
@@ -441,21 +466,93 @@ def canonicalize_embeddings(
         raise InvalidEmbeddingError(f"Expected {expected_rows} rows, got {matrix.shape[0]}")
     if expected_dim is not None and matrix.shape[1] != expected_dim:
         raise InvalidEmbeddingError(f"Expected dimension {expected_dim}, got {matrix.shape[1]}")
+    if matrix.shape[0] and matrix.shape[1] == 0:
+        raise InvalidEmbeddingError("Embedding matrix has zero columns")
+    if np.iscomplexobj(matrix):
+        raise InvalidEmbeddingError("Embedding matrix must contain real-valued vectors")
 
-    if not np.isfinite(matrix).all():
-        raise InvalidEmbeddingError(
-            "Embedding matrix contains NaN or infinity",
-            retryable=True,
+    if matrix.shape[0] == 0:
+        return np.ascontiguousarray(matrix, dtype=np.float32)
+
+    # Bound float64 normalization temporaries for both fresh model output and
+    # caller-supplied matrices. A full-corpus cast plus the scaled working copy
+    # can otherwise dwarf the model itself on a large repository.
+    canonical = np.empty(matrix.shape, dtype=np.float32, order="C")
+    for start in range(0, len(matrix), _PRECOMPUTED_VALIDATION_BLOCK_ROWS):
+        block = np.asarray(
+            matrix[start : start + _PRECOMPUTED_VALIDATION_BLOCK_ROWS],
+            dtype=np.float64,
         )
+        if not np.isfinite(block).all():
+            raise InvalidEmbeddingError(
+                "Embedding matrix contains NaN or infinity",
+                retryable=True,
+            )
 
-    norms = np.linalg.norm(matrix, axis=1, keepdims=True)
-    if not np.isfinite(norms).all() or np.any(norms <= 1e-12):
-        raise InvalidEmbeddingError(
-            "Embedding matrix contains a zero or invalid vector",
-            retryable=True,
+        # Scale before the norm so finite float32 extremes retain their
+        # direction: direct squaring can overflow at ~1e38 or underflow for
+        # subnormal rows.
+        scales = np.max(np.abs(block), axis=1, keepdims=True)
+        if not np.isfinite(scales).all() or np.any(scales == 0):
+            raise InvalidEmbeddingError(
+                "Embedding matrix contains a zero or invalid vector",
+                retryable=True,
+            )
+        scaled = block / scales
+        norms = np.linalg.norm(scaled, axis=1, keepdims=True)
+        if not np.isfinite(norms).all() or np.any(norms == 0):
+            raise InvalidEmbeddingError(
+                "Embedding matrix contains a zero or invalid vector",
+                retryable=True,
+            )
+        canonical[start : start + len(block)] = scaled / norms
+
+    return canonical
+
+
+def _validate_precomputed_embeddings(units: Sequence[CodeUnit], embeddings: object) -> np.ndarray:
+    """Validate and canonicalize caller-supplied corpus embeddings.
+
+    Fresh model output is checked by :func:`canonicalize_embeddings`, but direct
+    duplicate and query APIs also accept an already-built matrix. Those APIs
+    must apply the same finite, nonzero, unit-vector invariant before treating a
+    dot product as cosine similarity. Shape validation stays explicit so callers
+    receive a useful alignment error before any model or cache work.
+
+    :param units: Corpus units expected to have one embedding row each.
+    :param embeddings: Caller-supplied embedding matrix or array-like value.
+    :return: A contiguous float32 unit-normalized matrix aligned with ``units``.
+    :raises ValueError: If the matrix is not two-dimensional, has a different
+        number of rows than ``units``, or contains a complex, non-finite, or zero row.
+    """
+    matrix = embeddings if isinstance(embeddings, np.ndarray) else np.asarray(embeddings)
+    if matrix.ndim != 2:
+        raise ValueError(f"embeddings must be a 2D matrix; got shape {matrix.shape!r}")
+    if matrix.shape[0] != len(units):
+        raise ValueError(
+            "embeddings must contain one row per unit; "
+            f"got {matrix.shape[0]} rows for {len(units)} units"
         )
+    try:
+        # Analyzer-produced corpora are already contiguous canonical float32.
+        # Validate those exact fixed points in bounded blocks so repeated search
+        # does not allocate corpus-sized float64 normalization temporaries. An
+        # approximate norm shortcut is deliberately unsafe here: even a tiny
+        # residual scale can change a score at an exact caller threshold.
+        if type(matrix) is np.ndarray and matrix.dtype == np.float32 and matrix.flags.c_contiguous:
+            for start in range(0, len(matrix), _PRECOMPUTED_VALIDATION_BLOCK_ROWS):
+                block = matrix[start : start + _PRECOMPUTED_VALIDATION_BLOCK_ROWS]
+                canonical = canonicalize_embeddings(block, expected_rows=len(block))
+                if not np.array_equal(block, canonical):
+                    break
+            else:
+                return matrix
 
-    return np.ascontiguousarray(matrix / norms, dtype=np.float32)
+        # Direct callers may supply scaled, noncontiguous, or non-float32 rows.
+        # The shared canonicalizer already bounds its float64 working blocks.
+        return canonicalize_embeddings(matrix, expected_rows=len(matrix))
+    except InvalidEmbeddingError as exc:
+        raise ValueError(f"embeddings must contain finite, nonzero rows: {exc}") from exc
 
 
 def _configure_semantic_runtime_env(
@@ -974,7 +1071,7 @@ def _resolve_revision_for_cache(
     model_name: str,
     explicit_revision: str | None,
     *,
-    strict: bool = False,
+    strict: bool = True,
 ) -> str | None:
     """Resolve a revision usable as a cache key component, without loading the model.
 
@@ -983,17 +1080,16 @@ def _resolve_revision_for_cache(
     content fingerprint of the directory (an explicit revision is ignored for
     them because nothing pins on-disk weights) regardless of ``strict``.
 
-    The default (loose, ``strict=False``) policy keys an unpinned hub revision
+    The opt-in loose (``strict=False``) policy keys an unpinned hub revision
     by the requested LABEL itself - the explicit ``--model-revision`` value,
     or ``"main"`` when none was given - without ever resolving it to a
     concrete commit or disabling persistent caching. An upstream branch move
     (even a metadata-only commit) never invalidates the cache under this
     policy; the cost is that a real weight change behind a moving branch is
-    not tracked, so run ``codedupes cache clear --model`` or pass
-    ``strict=True`` when that matters.
+    not tracked, so this mode requires an explicit correctness trade-off.
 
-    ``strict=True`` restores the pre-loose policy: an unpinned hub model
-    falls back to reading the locally cached HuggingFace commit hash so cache
+    The default ``strict=True`` policy resolves an unpinned hub model by
+    reading the locally cached HuggingFace commit hash so cache
     keys stay stable across runs even before the model is loaded, and returns
     ``None`` (disabling persistent caching for the run) when a branch or tag
     cannot be mapped offline - loading the model would be required before
@@ -1003,7 +1099,7 @@ def _resolve_revision_for_cache(
     :param explicit_revision: Optional explicit revision override.
     :param strict: Whether to resolve an unpinned hub revision to a concrete
         commit hash (and disable caching when that mapping fails) instead of
-        keying by the requested revision label, defaults to ``False``.
+        keying by the requested revision label, defaults to ``True``.
     :return: Concrete revision string, revision label, or (strict mode only)
         ``None`` when it cannot be resolved offline.
     """
@@ -1053,7 +1149,7 @@ def _confirm_cache_revision_after_load(
     model_name: str,
     resolved_revision: str | None,
     *,
-    strict: bool = False,
+    strict: bool = True,
 ) -> str | None:
     """Resolve a vector-safe cache revision after loading an embedding model.
 
@@ -1063,14 +1159,14 @@ def _confirm_cache_revision_after_load(
     — and retain stale hits — under a fingerprint the loaded weights no
     longer match.
 
-    For hub models, the default (loose, ``strict=False``) policy never
+    For hub models, the opt-in loose (``strict=False``) policy never
     reconciles against what the backend actually loaded: an explicit or
     profile-pinned full commit hash keys as-is (unchanged either way);
     otherwise the pre-load revision label (or ``"main"``) is trusted as-is,
     mirroring :func:`_resolve_revision_for_cache` exactly so the two can never
     disagree and force a spurious rekey.
 
-    ``strict=True`` restores the pre-loose policy: it requires either the
+    The default ``strict=True`` policy requires either the
     loaded config's concrete commit hash or an explicitly pinned full commit
     hash, returning ``None`` (disabling persistent reuse for this run) when a
     symbolic branch/tag is unsafe because the backend cannot report what it
@@ -1081,7 +1177,7 @@ def _confirm_cache_revision_after_load(
     :param resolved_revision: Revision passed to the model loader.
     :param strict: Whether to require post-load commit-hash confirmation for
         hub models instead of trusting the pre-load revision label, defaults
-        to ``False``.
+        to ``True``.
     :return: Safe cache revision, or (strict mode only) ``None`` when
         persistent reuse must be disabled.
     """
@@ -1304,6 +1400,7 @@ def _embedding_runtime_fingerprint() -> str:
             f"transformers={_safe_package_version('transformers') or 'missing'}",
             f"tokenizers={_safe_package_version('tokenizers') or 'missing'}",
             f"torch={_safe_package_version('torch') or 'missing'}",
+            f"numpy={_safe_package_version('numpy') or 'missing'}",
         )
     ).encode()
     return hashlib.blake2b(payload, digest_size=10).hexdigest()
@@ -1516,7 +1613,7 @@ def resolve_embedding_space_identity(
     device: str = DEFAULT_SEMANTIC_DEVICE,
     mps_fallback: bool | None = None,
     persist_local_model_manifest: bool = True,
-    strict_revision_cache: bool = False,
+    strict_revision_cache: bool = True,
 ) -> EmbeddingSpaceIdentity:
     """Resolve the vector-space identity for code corpus embeddings.
 
@@ -1531,7 +1628,7 @@ def resolve_embedding_space_identity(
         read from and saved to the persistent cache manifest.
     :param strict_revision_cache: Whether an unpinned hub revision resolves to a
         concrete commit hash (disabling caching when unmappable) instead of the
-        requested revision label, defaults to ``False``.
+        requested revision label, defaults to ``True``.
     :return: Canonical model, concrete revision/fingerprint, and runtime variant.
     """
     # Same contract as compute_embeddings_with_identity: configure
@@ -1578,7 +1675,7 @@ def _require_current_embedding_space(
     device: str,
     mps_fallback: bool | None,
     persist_local_model_manifest: bool,
-    strict_revision_cache: bool = False,
+    strict_revision_cache: bool = True,
 ) -> str:
     """Require the configured corpus vector space to match its stored identity.
 
@@ -1660,33 +1757,12 @@ def get_semantic_runtime_versions() -> dict[str, str]:
     """
     return {
         "python": sys.version.split()[0],
+        "numpy": _safe_package_version("numpy") or "missing",
         "torch": _safe_package_version("torch") or "missing",
         "transformers": _safe_package_version("transformers") or "missing",
+        "tokenizers": _safe_package_version("tokenizers") or "missing",
         "sentence-transformers": _safe_package_version("sentence-transformers") or "missing",
     }
-
-
-def _validate_torch_runtime() -> None:
-    """Enforce the supported PyTorch range even when installer checks were bypassed."""
-    raw = _safe_package_version("torch")
-    if raw is None:
-        raise SemanticBackendError(
-            "Could not determine the installed PyTorch version. "
-            "Install a supported runtime with `pip install 'torch>=2.13,<3'`."
-        )
-
-    try:
-        parsed = Version(raw)
-    except InvalidVersion as exc:
-        raise SemanticBackendError(f"Could not parse torch version: {raw}") from exc
-
-    # Release tuples are compared instead of Version objects: Version ordering puts
-    # 2.13.0.dev1 and 2.13.0rc1 below 2.13, which would reject supported pre-releases.
-    if not (_TORCH_MIN_RELEASE <= parsed.release < _TORCH_MAX_EXCLUSIVE_RELEASE):
-        raise SemanticBackendError(
-            f"Incompatible torch version {raw}. codedupes semantic analysis requires "
-            ">=2.13,<3. Run: pip install 'torch>=2.13,<3'."
-        )
 
 
 def _is_known_semantic_backend_error(error: Exception) -> bool:
@@ -1762,12 +1838,10 @@ def _require_dependency(module_name: str, install_hint: str) -> None:
 
 
 def _check_semantic_dependencies() -> None:
-    """Validate required runtime dependencies before model loading."""
+    """Check importability; pyproject.toml defines dependency version requirements."""
     _require_dependency("sentence_transformers", "pip install codedupes")
     _require_dependency("transformers", "pip install codedupes")
     _require_dependency("torch", "pip install codedupes")
-
-    _validate_torch_runtime()
 
 
 def _resolve_semantic_device_request(
@@ -2498,7 +2572,7 @@ def _prepare_cache_context(
     trust_remote_code: bool,
     use_cache: bool,
     cache_scope: Path | None,
-    strict_revision_cache: bool = False,
+    strict_revision_cache: bool = True,
     variant_suffix: str = "",
 ) -> tuple[EmbeddingCache | None, str | None, str, str]:
     """Resolve the shared embedding-cache addressing context for one encode call.
@@ -2515,7 +2589,7 @@ def _prepare_cache_context(
     :param cache_scope: Corpus root addressing the cache shard; ``None`` disables caching.
     :param strict_revision_cache: Whether an unpinned hub revision resolves to a
         concrete commit hash (disabling caching when unmappable) instead of the
-        requested revision label, defaults to ``False``.
+        requested revision label, defaults to ``True``.
     :param variant_suffix: Optional caller-defined vector-space discriminator.
     :return: ``(cache, cache_revision, cache_variant, cache_namespace)``.
     """
@@ -2788,7 +2862,7 @@ def _compute_embeddings_unlocked(
     mps_memory_fraction: float | None = None,
     use_cache: bool = True,
     cache_scope: Path | None = None,
-    strict_revision_cache: bool = False,
+    strict_revision_cache: bool = True,
     progress: ProgressMode = "auto",
     stats: EmbeddingRunStats | None = None,
     diagnostics: list[ExtractionDiagnostic] | None = None,
@@ -2824,7 +2898,7 @@ def _compute_embeddings_unlocked(
         ``None`` disables caching for this call regardless of ``use_cache``.
     :param strict_revision_cache: Whether an unpinned hub revision resolves to a
         concrete commit hash (disabling caching when unmappable) instead of the
-        requested revision label, defaults to ``False``.
+        requested revision label, defaults to ``True``.
     :param progress: Progress-bar policy for corpus embedding inference.
     :param stats: Optional telemetry collector filled in place.
     :param diagnostics: Optional collector for over-context unit warnings.
@@ -2836,6 +2910,7 @@ def _compute_embeddings_unlocked(
     :raises SemanticBackendError: If an explicitly requested device is unavailable,
         even when the corpus is empty or every embedding is already cached.
     """
+    search_document = _validate_search_document_mode(search_document)
     _reset_embedding_run_stats(stats)
     if batch_size <= 0:
         raise ValueError("batch_size must be > 0")
@@ -2967,6 +3042,10 @@ def _compute_embeddings_unlocked(
         ),
     )
     if not units:
+        # This early return skips _prepare_semantic_device. No allocator work is
+        # needed, so restore any prior process-global cap even when this no-op
+        # call supplied a fraction that would be ignored on CPU/CUDA.
+        restore_mps_memory_fraction_if_managed()
         _record_embedding_run_stats(
             stats,
             prepared_texts=[],
@@ -3027,13 +3106,10 @@ def _compute_embeddings_unlocked(
     # Duplicate code units share one cache key, so compare against the covered
     # keys rather than the unique-hit count: len(hits) undercounts coverage.
     if cache_keys is not None and all(key in hits for key in cache_keys):
-        if mps_memory_fraction is None:
-            # This warm return skips _prepare_semantic_device, the only other
-            # path that restores the process-global allocator baseline, but the
-            # documented contract still applies: a run whose configuration
-            # leaves the fraction unset must not inherit an earlier managed cap
-            # (no-op unless one is currently managed).
-            restore_mps_memory_fraction_if_managed()
+        # A complete warm hit skips _prepare_semantic_device and performs no
+        # allocator work, so no requested fraction should leave a previous run's
+        # process-global cap active.
+        restore_mps_memory_fraction_if_managed()
         # The hits all came from one shard snapshot, so its recorded commit is
         # the provenance of every matrix row this warm return assembles.
         _record_embedding_run_stats(
@@ -3316,7 +3392,7 @@ def compute_embeddings_with_identity(
     mps_memory_fraction: float | None = None,
     use_cache: bool = True,
     cache_scope: Path | None = None,
-    strict_revision_cache: bool = False,
+    strict_revision_cache: bool = True,
     progress: ProgressMode = "auto",
     stats: EmbeddingRunStats | None = None,
     diagnostics: list[ExtractionDiagnostic] | None = None,
@@ -3343,15 +3419,17 @@ def compute_embeddings_with_identity(
         ``None`` disables caching for this call regardless of ``use_cache``.
     :param strict_revision_cache: Whether an unpinned hub revision resolves to a
         concrete commit hash (disabling caching when unmappable) instead of the
-        requested revision label, defaults to ``False``.
+        requested revision label, defaults to ``True``.
     :param progress: Progress-bar policy for corpus embedding inference.
     :param stats: Optional telemetry collector filled in place.
     :param diagnostics: Optional collector for over-context unit warnings.
     :param document_texts: Optional prepared document text for each input unit.
     :param search_document: Search document mode represented by ``document_texts``.
     :return: Normalized embedding matrix and its effective vector-space identity.
-    :raises ValueError: If ``document_texts`` does not have the same length as ``units``.
+    :raises ValueError: If ``document_texts`` does not have the same length as ``units``
+        or ``search_document`` is unsupported.
     """
+    search_document = _validate_search_document_mode(search_document)
     # Import-sensitive runtime variables (MPS operator fallback above all) must
     # be set before any path below can import torch - cache-variant derivation
     # may probe CPU capabilities, which is already too late.
@@ -3397,7 +3475,7 @@ def compute_embeddings(
     mps_memory_fraction: float | None = None,
     use_cache: bool = True,
     cache_scope: Path | None = None,
-    strict_revision_cache: bool = False,
+    strict_revision_cache: bool = True,
     progress: ProgressMode = "auto",
     stats: EmbeddingRunStats | None = None,
     diagnostics: list[ExtractionDiagnostic] | None = None,
@@ -3424,15 +3502,26 @@ def compute_embeddings(
         ``None`` disables caching for this call regardless of ``use_cache``.
     :param strict_revision_cache: Whether an unpinned hub revision resolves to a
         concrete commit hash (disabling caching when unmappable) instead of the
-        requested revision label, defaults to ``False``.
+        requested revision label, defaults to ``True``.
     :param progress: Progress-bar policy for corpus embedding inference.
     :param stats: Optional telemetry collector filled in place.
     :param diagnostics: Optional collector for over-context unit warnings.
     :param document_texts: Optional prepared document text for each input unit.
     :param search_document: Search document mode represented by ``document_texts``.
+        Contextual documents require :func:`compute_embeddings_with_identity` so
+        their uncalibrated representation cannot be separated from its identity.
     :return: Normalized embedding matrix row-aligned with ``units``.
-    :raises ValueError: If ``document_texts`` does not have the same length as ``units``.
+    :raises ValueError: If ``document_texts`` does not have the same length as ``units``,
+        or contextual documents are requested through this identity-discarding API.
     """
+    search_document = _validate_search_document_mode(search_document)
+    if document_texts is not None and len(document_texts) != len(units):
+        raise ValueError("document_texts must have the same length as units")
+    if search_document == "contextual":
+        raise ValueError(
+            "contextual search documents require compute_embeddings_with_identity() "
+            "so search can enforce an explicit threshold"
+        )
     embeddings, _identity = compute_embeddings_with_identity(
         units,
         model_name=model_name,
@@ -3487,7 +3576,10 @@ def find_semantic_duplicates(
     :param language_thresholds: Per-language duplicate gates; ``None`` applies
         ``threshold`` flat to every language.
     :return: Similar pairs sorted by confidence.
+    :raises ValueError: If ``embeddings`` is not a two-dimensional matrix with
+        one row per unit, or a threshold is invalid.
     """
+    embeddings = _validate_precomputed_embeddings(units, embeddings)
     exclude_exact = exclude_exact or set()
     if not np.isfinite(threshold) or not 0.0 <= threshold <= 1.0:
         raise ValueError("threshold must be finite and in [0.0, 1.0]")
@@ -3640,8 +3732,12 @@ def resolve_search_threshold(
     :param semantic_task: Task used to embed corpus and query.
     :param threshold_profile: Threshold defaults to select; numeric gates take precedence.
     :return: Explicit gate or the applicable profile default.
-    :raises ValueError: If the search context requires an explicit threshold override.
+    :raises ValueError: If an explicit threshold is non-finite or the search context
+        requires an explicit threshold override.
     """
+    if threshold is not None and not np.isfinite(threshold):
+        raise ValueError("threshold must be finite")
+
     profile = resolve_model_profile(model_name)
     selected_profile = resolve_threshold_profile(profile, threshold_profile)
     semantic_task = normalize_semantic_task(
@@ -3692,8 +3788,9 @@ def _find_similar_to_query_unlocked(
     use_cache: bool = True,
     cache_scope: Path | None = None,
     corpus_identity: EmbeddingSpaceIdentity | None = None,
-    strict_revision_cache: bool = False,
+    strict_revision_cache: bool = True,
     threshold_profile: ThresholdProfile = "auto",
+    execution: list[QueryExecution] | None = None,
 ) -> list[tuple[CodeUnit, float]]:
     """Find code units most similar to a natural-language query.
 
@@ -3730,19 +3827,28 @@ def _find_similar_to_query_unlocked(
         any other or unknown checkpoint.
     :param strict_revision_cache: Whether an unpinned hub revision resolves to a
         concrete commit hash (disabling caching when unmappable) instead of the
-        requested revision label, defaults to ``False``. Must match the mode
+        requested revision label, defaults to ``True``. Must match the mode
         used to build ``corpus_identity``.
+    :param execution: Optional collector receiving one record for a successful
+        query, after cache lookup and any device fallback complete.
     :return: Up to ``top_k`` ``(unit, similarity)`` pairs at or above the threshold,
         sorted by descending similarity.
-    :raises ValueError: If ``threshold`` is non-finite, an uncalibrated corpus uses
-        the default threshold, or a prompt-sensitive corpus omits its identity.
+    :raises ValueError: If ``top_k`` is not a positive integer, ``threshold`` is
+        non-finite, an uncalibrated corpus uses the default threshold, or a
+        prompt-sensitive corpus omits its identity.
     :raises SemanticBackendError: If an explicitly requested device is unavailable,
         even when the query embedding is already cached.
     :raises RuntimeError: If the query checkpoint cannot be verified against the
         indexed corpus, or its embedding execution policy changed.
     """
+    if not isinstance(query, str) or not query.strip():
+        raise ValueError("query must be a non-empty string")
+
     validate_explicit_device_request(device, mps_fallback=mps_fallback)
 
+    if isinstance(top_k, bool) or not isinstance(top_k, Integral) or top_k <= 0:
+        raise ValueError("top_k must be a positive integer")
+    top_k = int(top_k)
     if threshold is not None and not np.isfinite(threshold):
         raise ValueError("threshold must be finite")
 
@@ -3757,11 +3863,6 @@ def _find_similar_to_query_unlocked(
             "Pass CodeAnalyzer.search(threshold=...), find_similar_to_query(threshold=...), "
             "or --semantic-threshold."
         )
-
-    # After the input contracts above: an empty corpus can match
-    # nothing, so return before embedding the query (or loading the model).
-    if not units:
-        return []
 
     profile = resolve_model_profile(model_name)
     resolved_task = normalize_semantic_task(
@@ -3810,6 +3911,15 @@ def _find_similar_to_query_unlocked(
     if threshold is None and threshold_profile == "auto":
         log_family_threshold_notice(profile)
 
+    # After every caller-visible contract: an empty corpus can match nothing,
+    # so return before embedding the query (or loading the model).
+    if not units:
+        # See the corresponding empty-corpus return in
+        # _compute_embeddings_unlocked: no allocator work is needed, so a no-op
+        # search must not preserve a cap from an earlier run.
+        restore_mps_memory_fraction_if_managed()
+        return []
+
     encode_plan = _resolve_encode_plan(profile, "query", resolved_task, instruction_prefix)
     query_text = _prepare_embedding_text(query)
 
@@ -3851,25 +3961,34 @@ def _find_similar_to_query_unlocked(
     )
 
     def _validated_query_hit(candidate: np.ndarray | None) -> np.ndarray | None:
-        """Reject a cached query vector whose dimensionality cannot match the corpus.
+        """Canonicalize a cached query vector before cosine similarity.
 
         :param candidate: Cached query embedding, or ``None`` on a miss.
-        :return: The candidate when usable, else ``None`` to force a fresh encode.
+        :return: A finite unit vector when usable, else ``None`` to force a fresh encode.
         """
         if candidate is None:
             return None
-        if embeddings.size and candidate.shape[-1] != embeddings.shape[1]:
+        try:
+            if candidate.ndim != 1:
+                raise InvalidEmbeddingError(
+                    f"Expected a cached embedding row, got shape {candidate.shape!r}"
+                )
+            return canonicalize_embeddings(
+                candidate[np.newaxis, :],
+                expected_rows=1,
+                expected_dim=embeddings.shape[1],
+            )[0]
+        except InvalidEmbeddingError as exc:
             logger.warning(
-                "Discarding a cached query embedding whose dimensionality "
-                f"({candidate.shape[-1]}) does not match the corpus matrix "
-                f"({embeddings.shape[1]}); re-encoding the query."
+                f"Discarding an invalid cached query embedding ({exc}); re-encoding the query."
             )
             return None
-        return candidate
 
     corpus_source_commit = corpus_identity.source_commit if corpus_identity is not None else None
 
     query_embedding: np.ndarray | None = None
+    query_cache_hit = False
+    query_execution_device: str | None = None
     if cache_key is not None:
         lookup = cache.get_many_with_provenance(
             cache_scope, profile.canonical_name, cache_revision, [cache_key]
@@ -3896,11 +4015,12 @@ def _find_similar_to_query_unlocked(
                 "from another checkpoint must never reach the dot product."
             )
             query_embedding = None
+        query_cache_hit = query_embedding is not None
 
-    if query_embedding is not None and (mps_memory_fraction is None or embedding_device == "cpu"):
+    if query_embedding is not None:
         # A warm query hit skips _prepare_semantic_device; same allocator
-        # contract as the warm corpus return: an effectively unset fraction
-        # must not inherit an earlier managed cap.
+        # contract as the warm corpus return: it performs no allocator work and
+        # must not inherit a managed cap from an earlier run.
         restore_mps_memory_fraction_if_managed()
 
     if query_embedding is None:
@@ -4046,6 +4166,7 @@ def _find_similar_to_query_unlocked(
                     cache_scope, profile.canonical_name, cache_revision, [cache_key]
                 )
                 query_embedding = _validated_query_hit(hit.get(cache_key))
+                query_cache_hit = query_embedding is not None
 
         if query_embedding is None:
             encode_fn = _select_encode_fn(model, encode_plan.route)
@@ -4064,6 +4185,7 @@ def _find_similar_to_query_unlocked(
                 prompt=encode_plan.prompt,
             )
             _require_compatible_query_execution()
+            query_execution_device = _get_effective_model_device(model, resolved_device)
             query_embedding = query_embeddings[0]
 
             if (
@@ -4104,7 +4226,15 @@ def _find_similar_to_query_unlocked(
     ]
     top_indices = filtered_indices[:top_k]
 
-    return [(units[i], float(similarities[i])) for i in top_indices]
+    results = [(units[i], float(similarities[i])) for i in top_indices]
+    if execution is not None:
+        execution.append(
+            QueryExecution(
+                execution_device=query_execution_device,
+                cache_hit=query_cache_hit,
+            )
+        )
+    return results
 
 
 def find_similar_to_query(
@@ -4124,8 +4254,9 @@ def find_similar_to_query(
     use_cache: bool = True,
     cache_scope: Path | None = None,
     corpus_identity: EmbeddingSpaceIdentity | None = None,
-    strict_revision_cache: bool = False,
+    strict_revision_cache: bool = True,
     threshold_profile: ThresholdProfile = "auto",
+    execution: list[QueryExecution] | None = None,
 ) -> list[tuple[CodeUnit, float]]:
     """Search embeddings while serializing shared-model lifecycle and inference.
 
@@ -4156,13 +4287,18 @@ def find_similar_to_query(
         or runtime drift requires rebuilding the corpus.
     :param strict_revision_cache: Whether an unpinned hub revision resolves to a
         concrete commit hash (disabling caching when unmappable) instead of the
-        requested revision label, defaults to ``False``. Must match the mode
+        requested revision label, defaults to ``True``. Must match the mode
         used to build ``corpus_identity``.
+    :param execution: Optional collector receiving one record for a successful
+        query, after cache lookup and any device fallback complete.
     :return: Up to ``top_k`` ``(unit, similarity)`` pairs at or above the threshold,
         sorted by descending similarity.
-    :raises ValueError: If ``threshold`` is non-finite, an uncalibrated corpus uses
-        the default threshold, or a prompt-sensitive corpus omits its identity.
+    :raises ValueError: If ``query`` is blank, ``top_k`` is not a positive integer,
+        ``embeddings`` is not a two-dimensional matrix with one row per unit,
+        ``threshold`` is non-finite, an uncalibrated corpus uses the default
+        threshold, or a prompt-sensitive corpus omits its identity.
     """
+    embeddings = _validate_precomputed_embeddings(units, embeddings)
     # Same contract as compute_embeddings_with_identity: configure
     # import-sensitive runtime variables before anything can import torch.
     _configure_semantic_runtime_env(device, mps_fallback=mps_fallback)
@@ -4186,6 +4322,7 @@ def find_similar_to_query(
             cache_scope=cache_scope,
             corpus_identity=corpus_identity,
             strict_revision_cache=strict_revision_cache,
+            execution=execution,
         )
 
 
@@ -4204,7 +4341,7 @@ def run_semantic_analysis_with_identity(
     mps_memory_fraction: float | None = None,
     use_cache: bool = True,
     cache_scope: Path | None = None,
-    strict_revision_cache: bool = False,
+    strict_revision_cache: bool = True,
     cross_language: bool = False,
     language_thresholds: Mapping[str, float] | None = None,
     progress: ProgressMode = "auto",
@@ -4236,7 +4373,7 @@ def run_semantic_analysis_with_identity(
         ``None`` disables caching for this call regardless of ``use_cache``.
     :param strict_revision_cache: Whether an unpinned hub revision resolves to a
         concrete commit hash (disabling caching when unmappable) instead of the
-        requested revision label, defaults to ``False``.
+        requested revision label, defaults to ``True``.
     :param cross_language: Also generate duplicate pairs across languages
         (uncalibrated), defaults to ``False``.
     :param language_thresholds: Per-language duplicate gates applied inside the
@@ -4299,7 +4436,7 @@ def run_semantic_analysis(
     mps_memory_fraction: float | None = None,
     use_cache: bool = True,
     cache_scope: Path | None = None,
-    strict_revision_cache: bool = False,
+    strict_revision_cache: bool = True,
     cross_language: bool = False,
     language_thresholds: Mapping[str, float] | None = None,
     progress: ProgressMode = "auto",
@@ -4331,7 +4468,7 @@ def run_semantic_analysis(
         ``None`` disables caching for this call regardless of ``use_cache``.
     :param strict_revision_cache: Whether an unpinned hub revision resolves to a
         concrete commit hash (disabling caching when unmappable) instead of the
-        requested revision label, defaults to ``False``.
+        requested revision label, defaults to ``True``.
     :param cross_language: Also generate duplicate pairs across languages
         (uncalibrated), defaults to ``False``.
     :param language_thresholds: Per-language duplicate gates applied inside the

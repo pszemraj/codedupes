@@ -1,19 +1,14 @@
 # CLI reference
 
-The supported command-line entry point is `codedupes`. Install it first with the
-[installation guide](install.md), then run `codedupes info` to confirm the installed
-parsers and the device that semantic analysis will use. Examples below assume the
-command is available on `PATH`.
+The supported command-line entry point is `codedupes`. Install it with the [installation guide](install.md), then run `codedupes info` to confirm parser and device readiness. Examples assume the command is available on `PATH`.
 
 `codedupes --version` prints the installed version. Running `codedupes` without a subcommand prints help and exits `2`.
 
-See [Output and exit codes](output.md) for JSON and process status, [Polyglot language support](polyglot-languages.md) for extraction semantics, [Analysis defaults](analysis-defaults.md) for heuristics, [Model profiles](model-profiles.md) for semantic defaults, [Accelerators](accelerators.md) for device behavior, and [Embedding cache](caching.md) for persistent cache behavior.
+See linked topic documentation in the relevant option descriptions for behavior beyond command syntax.
 
 ## `codedupes check <path>`
 
-Run duplicate and unused-code analysis.
-
-[Analysis defaults](analysis-defaults.md#what-a-default-check-does) describe the combined scan, candidate tiers, and unused-code heuristic. See [hybrid gate tuning](hybrid-tuning.md) only when changing shipped calibration defaults.
+Run duplicate and unused-code analysis. [Analysis defaults](analysis-defaults.md#what-a-default-check-does) describe the combined scan and candidate tiers.
 
 Examples:
 
@@ -59,10 +54,7 @@ Single-method flags leave unused-code detection enabled; add `--no-unused` to di
 
 Run semantic search over extracted code units.
 
-Search indexes the chosen path for this command invocation, then returns matching
-functions and methods by default. Use `--semantic-unit-type` to change the eligible
-unit types, including classes. Each invocation extracts the current source; the
-persistent cache reuses embeddings between runs.
+Search indexes the chosen path for this invocation, returning functions and methods by default. Use `--semantic-unit-type` to include classes; the persistent cache can reuse embeddings between invocations.
 
 Examples:
 
@@ -86,7 +78,7 @@ For file-level grouping and `--top-k` order, see [file search output](output.md#
 
 ## Options shared by `check` and `search`
 
-rich-click groups command help into the following panels. Use `codedupes <command> -h` or `--help` for the rendered reference.
+Use `codedupes <command> -h` or `--help` for rendered option help.
 
 ### Scope
 
@@ -108,8 +100,6 @@ codedupes check ./src --model embeddinggemma-300m
 codedupes check ./src --instruction-prefix "Represent this code for duplicate detection: " --semantic-threshold 0.85
 ```
 
-See [model profiles](model-profiles.md#semantic-task-defaults-and-choices) for task choices and when a custom configuration requires an explicit threshold.
-
 - `--semantic-threshold <float>`: Override the [semantic gate](analysis-defaults.md#semantic-duplicate-gate-defaults) or [search floor](model-profiles.md#built-in-profiles)
 - `--threshold-profile <auto|generic|embeddinggemma-300m|gte-modernbert-base>`: Choose [threshold defaults](model-profiles.md#choosing-threshold-defaults)
 - `--semantic-unit-type <name>`: Semantic candidate unit type (`function`, `method`, `class`); repeat for multiple types. See [candidate defaults](analysis-defaults.md#semantic-candidate-defaults)
@@ -118,7 +108,7 @@ See [model profiles](model-profiles.md#semantic-task-defaults-and-choices) for t
 - `--model-revision <rev>`: Override the [profile's model revision](model-profiles.md#built-in-profiles)
 - `--trust-remote-code` / `--no-trust-remote-code`: Allow or disallow model remote code execution
 - `--instruction-prefix <text>`: Replace the model prompt for code/query embeddings (encode route is preserved)
-- `--strict-revision-cache`: Use [strict Hub revision resolution](caching.md#hub-revisions) for cache identity
+- `--strict-revision-cache` / `--loose-revision-cache`: Require concrete Hub revisions before cache reuse (default), or opt into potentially stale label-keyed warm hits
 
 ### Device
 
@@ -143,9 +133,7 @@ CLI options are configured through command-line flags; automatic `CODEDUPES_*` o
 
 ## `codedupes info`
 
-Show a compact panel with the tool version, Python and PyTorch versions, resolved device, default model, and supported languages. Add `-v` or `--verbose` for the full runtime/device diagnostics, parser package status, analysis defaults, exclusions, model profiles, and embedding-cache summary. Device diagnostic errors remain visible in the compact overview.
-
-Diagnostic panels fit their content, and long values wrap inside the panel. See [parser readiness](polyglot-languages.md#parser-readiness) and [accelerator precision](accelerators.md#precision-and-metal-environment-variables) for interpreting the verbose fields.
+Show the tool, runtime, device, model, and language summary. Add `-v` or `--verbose` for diagnostics, parser status, defaults, profiles, and cache details; device errors remain visible in the compact overview. See [parser readiness](polyglot-languages.md#parser-readiness) and [accelerator precision](accelerators.md#precision-and-metal-environment-variables) for interpretation.
 
 ## `codedupes cache info`
 
@@ -157,7 +145,8 @@ Clear all cached embeddings or only entries for one model. An empty or whitespac
 
 ## Validation and mode notes
 
-- Threshold values must be in `[0.0, 1.0]`
+- `check` threshold values must be in `[0.0, 1.0]`; `search --threshold`
+  accepts any finite value, including a negative similarity floor
 - `--semantic-threshold` and `--traditional-threshold` override `--threshold` for their respective methods
 - `--batch-size`, `--top-k`, and `--max-duplicates` must be greater than `0`
 - `--min-statements` and `--tiny-cutoff` must be greater than or equal to `0`
@@ -167,7 +156,7 @@ Clear all cached embeddings or only entries for one model. An empty or whitespac
 - `--no-unused` and `--strict-unused` are mutually exclusive
 - `--trust-remote-code` and `--no-trust-remote-code` are mutually exclusive
 - `--mps-fallback` and `--no-mps-fallback` are mutually exclusive
-- Explicit semantic-analysis controls are rejected with `--traditional-only`, including model/task, candidate-scope, device/runtime options, and `--strict-revision-cache`. `--no-cache` is accepted as a harmless no-op.
+- Explicit semantic-analysis controls are rejected with `--traditional-only`, including model/task, candidate-scope, device/runtime options, and either revision-cache policy flag. `--no-cache` is accepted as a harmless no-op.
 - Explicit traditional-analysis controls are rejected with `--semantic-only`: `--traditional-threshold`, `--no-tiny-filter`, and `--tiny-cutoff`
 
 To investigate a surprising combined result, compare `--traditional-only`, `--semantic-only`, and the default run. Add `--verbose` for model-loading, device-resolution, and fallback logs. See [semantic candidate rules](analysis-defaults.md#semantic-candidate-defaults) for candidate selection and long-input handling, and [Output and exit codes](output.md) for diagnostics and failure behavior.

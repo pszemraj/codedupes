@@ -39,7 +39,7 @@ DECLARATION_FILE_SUFFIXES: Final[tuple[str, ...]] = (".d.ts", ".d.mts", ".d.cts"
 CPP_SUFFIXES: Final[frozenset[str]] = frozenset(
     {".C", ".H", ".cc", ".cpp", ".cxx", ".c++", ".hh", ".hpp", ".hxx", ".h++"}
 )
-TREE_SITTER_PACKAGE: Final[tuple[str, str]] = ("tree-sitter", "0.25.2")
+TREE_SITTER_PACKAGE: Final[str] = "tree-sitter"
 
 
 @dataclass(frozen=True)
@@ -57,27 +57,18 @@ class GrammarStatus:
     language: str
     dialect: str
     package: str
-    pinned_version: str
     installed_version: str | None
     available: bool
     error: str | None = None
 
 
-GRAMMAR_PACKAGES: Final[dict[str, tuple[str, str]]] = {
-    "python": ("tree-sitter-python", "0.25.0"),
-    "c": ("tree-sitter-c", "0.24.2"),
-    "rust": ("tree-sitter-rust", "0.24.2"),
-    "javascript": ("tree-sitter-javascript", "0.25.0"),
-    "typescript": ("tree-sitter-typescript", "0.23.2"),
-    "tsx": ("tree-sitter-typescript", "0.23.2"),
-}
-
-# Single source of truth for every exact parser pin. pyproject.toml must match
-# this mapping; tests enforce the invariant so a pin bump is always a reviewed,
-# two-location change instead of a transitive surprise.
-REQUIRED_PARSER_PACKAGES: Final[dict[str, str]] = {
-    TREE_SITTER_PACKAGE[0]: TREE_SITTER_PACKAGE[1],
-    **{package: version for package, version in GRAMMAR_PACKAGES.values()},
+GRAMMAR_PACKAGES: Final[dict[str, str]] = {
+    "python": "tree-sitter-python",
+    "c": "tree-sitter-c",
+    "rust": "tree-sitter-rust",
+    "javascript": "tree-sitter-javascript",
+    "typescript": "tree-sitter-typescript",
+    "tsx": "tree-sitter-typescript",
 }
 
 
@@ -263,7 +254,7 @@ def _probe_dialect(dialect: str) -> str | None:
 
     Version metadata alone cannot prove a native wheel is loadable: a wrong
     platform wheel, missing shared library, bad capsule, or Tree-sitter ABI
-    mismatch all pass the version check and still fail at parser construction.
+    mismatch can still fail at parser construction.
 
     :param dialect: Parser dialect to probe.
     :return: Error message describing the failure, or ``None`` when the parser loads.
@@ -285,36 +276,26 @@ def _probe_dialect(dialect: str) -> str | None:
 def get_grammar_statuses() -> tuple[GrammarStatus, ...]:
     """Report whether every required parser package is installed and loadable.
 
-    Exact version pins are checked first; when they match, each dialect's
-    parser is actually constructed (memoized per process) so a broken wheel is
-    reported instead of surfacing later mid-analysis.
+    Dependency versions are the installer's responsibility, declared in
+    pyproject.toml. Readiness tests the installed parser (memoized per process),
+    rather than maintaining a second set of dependency constraints here.
 
-    :return: Status for the core package and every pinned grammar dialect.
+    :return: Installed version and loadability for every grammar dialect.
     """
-    core_package, core_pinned = TREE_SITTER_PACKAGE
     try:
-        tree_sitter_version = metadata.version(core_package)
-        tree_sitter_error = (
-            None
-            if tree_sitter_version == core_pinned
-            else f"{core_package}=={core_pinned} is required; found {tree_sitter_version}"
-        )
+        metadata.version(TREE_SITTER_PACKAGE)
+        tree_sitter_error = None
     except metadata.PackageNotFoundError:
-        tree_sitter_version = None
-        tree_sitter_error = f"{core_package}=={core_pinned} is not installed"
+        tree_sitter_error = f"{TREE_SITTER_PACKAGE} is not installed"
 
     statuses: list[GrammarStatus] = []
-    for dialect, (package, pinned) in GRAMMAR_PACKAGES.items():
+    for dialect, package in GRAMMAR_PACKAGES.items():
         try:
             installed = metadata.version(package)
-            package_error = (
-                None
-                if installed == pinned
-                else f"{package}=={pinned} is required; found {installed}"
-            )
+            package_error = None
         except metadata.PackageNotFoundError:
             installed = None
-            package_error = f"{package}=={pinned} is not installed"
+            package_error = f"{package} is not installed"
 
         language = "typescript" if dialect == "tsx" else dialect
         error_parts = [part for part in (tree_sitter_error, package_error) if part]
@@ -327,7 +308,6 @@ def get_grammar_statuses() -> tuple[GrammarStatus, ...]:
                 language=language,
                 dialect=dialect,
                 package=package,
-                pinned_version=pinned,
                 installed_version=installed,
                 available=not error_parts,
                 error="; ".join(error_parts) or None,

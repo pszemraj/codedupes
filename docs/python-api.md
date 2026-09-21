@@ -128,17 +128,44 @@ See [task defaults and calibration requirements](model-profiles.md#semantic-task
 
 The contextual-threshold requirement follows the indexed representation even if the config changes afterward. Its [cache behavior](caching.md#what-invalidates-what) follows the complete document input. `analyze()` always embeds bare source for duplicate detection regardless of this search-only setting.
 
-For direct embedding/query calls, pass the identity returned by `compute_embeddings_with_identity(...)` as `find_similar_to_query(corpus_identity=...)`. It is required for contextual documents and prompt- or route-sensitive models, and preserves calibration and checkpoint checks on both cold and warm cache paths. Use `search_document="contextual"` with aligned `document_texts` when supplying contextual inputs.
+For direct embedding/query calls, pass the identity returned by `compute_embeddings_with_identity(...)` as `find_similar_to_query(corpus_identity=...)`. It is required for contextual documents and prompt- or route-sensitive models, and preserves calibration and checkpoint checks on both cold and warm cache paths. Use `search_document="contextual"` with aligned `document_texts` when supplying contextual inputs. The array-only `compute_embeddings(...)` helper accepts source documents only because it cannot return the identity needed to enforce contextual-search thresholds.
+
+```python
+from pathlib import Path
+
+from codedupes.constants import DEFAULT_SEARCH_SEMANTIC_TASK
+from codedupes.extractor import CodeExtractor
+from codedupes.semantic import compute_embeddings_with_identity, find_similar_to_query
+
+repo_root = Path("./src").resolve()
+units = CodeExtractor(repo_root).extract_all()
+embeddings, identity = compute_embeddings_with_identity(
+    units,
+    semantic_task=DEFAULT_SEARCH_SEMANTIC_TASK,
+    cache_scope=repo_root,
+)
+hits = find_similar_to_query(
+    "load csv data",
+    units,
+    embeddings,
+    corpus_identity=identity,
+    cache_scope=repo_root,
+)
+```
+
+Direct `find_similar_to_query()` and `find_semantic_duplicates()` calls require a two-dimensional embedding matrix with exactly one row per supplied unit. Inputs are converted to float32 and unit-normalized before cosine comparison; non-finite or zero rows, and short, long, or one-dimensional matrices raise `ValueError` before cache or model work. A `(0, dimensions)` matrix remains valid for an empty unit list.
+
+In `AnalyzerConfig(mode="search")`, `semantic_threshold` is any finite search floor, including a negative value when every ranked result is needed. Check-mode duplicate gates remain restricted to `[0, 1]`.
 
 Direct `compute_embeddings()` and `compute_embeddings_with_identity()` calls require one `document_texts` entry per input unit when supplied. Mismatched lengths raise `ValueError` before revision resolution, cache lookup, or model loading, including for an empty corpus.
 
-Each `index()` or `analyze()` call replaces the analyzer's corpus-specific state before extraction. `search()` therefore targets only the most recent run and requires it to have semantic embeddings. A later empty or nonsemantic analysis cannot reuse an older corpus accidentally. The analyzer binds the matrix to its model, revision, and vector-affecting runtime configuration. If any of those changes before a query, `search()` requires a fresh `index()`/`analyze()`. Set `AnalyzerConfig(strict_revision_cache=True)` for [strict revision resolution](caching.md#what-invalidates-what).
+Each `index()` or `analyze()` call replaces the analyzer's corpus-specific state before extraction. `search()` therefore targets only the most recent run and requires it to have semantic embeddings. A later empty or nonsemantic analysis cannot reuse an older corpus accidentally. The analyzer binds the matrix to its model, revision, and vector-affecting runtime configuration. If any of those changes before a query, `search()` requires a fresh `index()`/`analyze()`. Strict [Hub revision resolution](caching.md#hub-revisions) is the default; set `AnalyzerConfig(strict_revision_cache=False)` only to opt into label-keyed warm hits.
 
 ## Progress and embedding telemetry
 
 `AnalyzerConfig.progress` accepts `"auto"` (default), `"always"`, or `"never"`; other values raise `ValueError` at configuration construction. Auto mode renders embedding progress only for more than 100 uncached inputs when stderr is a TTY. The same keyword is available on `compute_embeddings`, `compute_embeddings_with_identity`, `run_semantic_analysis`, and `run_semantic_analysis_with_identity`.
 
-The low-level functions accept an `EmbeddingRunStats` collector through `stats=` and fill it in place. `AnalysisResult.embedding_stats` contains that collector after successful semantic analysis; `CodeAnalyzer.embedding_stats` exposes it after `index()`. See [embedding telemetry](output.md#embedding-telemetry) for counter definitions, cache warnings, and unavailable statistics.
+The low-level corpus functions accept an `EmbeddingRunStats` collector through `stats=` and fill it in place. `find_similar_to_query()` likewise accepts an `execution=` list and appends a `QueryExecution` record after each query vector is successfully searched, including its effective encode device or whether the vector came from cache. `AnalysisResult.embedding_stats` contains corpus telemetry after successful semantic analysis; `CodeAnalyzer.embedding_stats` exposes it after `index()`, and `CodeAnalyzer.query_execution` retains the query records for that index. See [embedding telemetry](output.md#embedding-telemetry) for corpus counter definitions, cache warnings, and unavailable statistics.
 
 ```python
 from pathlib import Path
@@ -187,7 +214,7 @@ clear_model_cache()
 
 ## Logging
 
-Python query calls log the effective search threshold at DEBUG; human-readable CLI output reports it once per command. [Family-threshold notices](model-profiles.md#alias-resolution-rules) are emitted once per model per process when automatic defaults are selected for a recognized copy or non-builtin Hub model.
+Python query calls log the effective search threshold at DEBUG. The human-readable CLI reports the resolved threshold during configuration; verbose DEBUG output also shows query-time resolution. [Family-threshold notices](model-profiles.md#alias-resolution-rules) are emitted once per model per process when automatic defaults are selected for a recognized copy or non-builtin Hub model.
 
 Model loading quiets known-noisy dependency loggers (httpx request lines, transformers/sentence-transformers chatter) automatically, but only ones still inheriting the root level - any logger you configure explicitly is left alone. To pin them yourself, or to a different level:
 
@@ -251,7 +278,7 @@ from codedupes.report import group_file_results
 analyzer = CodeAnalyzer(AnalyzerConfig(mode="search", progress="never"))
 indexed_units = analyzer.index("./src")
 query = "load csv data"
-hits = analyzer.search(query, top_k=indexed_units)
+hits = analyzer.search(query, top_k=max(indexed_units, 1))
 payload = search_result_to_json(
     query,
     hits,

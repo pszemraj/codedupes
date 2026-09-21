@@ -1,0 +1,92 @@
+{
+  "schema_version": 2,
+  "purpose": "Development corpus for issue #20 threshold calibration; not held-out evaluation data",
+  "policies": {
+    "default": {
+      "include_private": true,
+      "include_tests": false,
+      "min_semantic_statements": 3,
+      "semantic_unit_types": ["function", "method"],
+      "filter_tiny_traditional": true,
+      "tiny_unit_statement_cutoff": 3,
+      "suppress_test_semantic_matches": false
+    }
+  },
+  "projects": [
+    {
+      "id": "ledger",
+      "root": "ledger",
+      "analysis_roots": ["src"],
+      "test_roots": ["tests"],
+      "support_files": [],
+      "languages": ["python"],
+      "split": "development",
+      "split_group": "ledger-application",
+      "annotations": "annotations/ledger.json",
+      "behavior_tests": [
+        {"id": "unit-tests", "argv": ["{python}", "-m", "unittest", "discover", "-s", "tests", "-v"], "env": {"PYTHONPATH": "src"}},
+        {"id": "application", "argv": ["{python}", "-m", "ledger"], "env": {"PYTHONPATH": "src"}}
+      ]
+    },
+    {
+      "id": "cowsay",
+      "root": "../cowsay_wasm",
+      "analysis_roots": ["src"],
+      "test_roots": ["tests"],
+      "support_files": ["Cargo.toml", "Cargo.lock", "web/*"],
+      "languages": ["rust"],
+      "split": "development",
+      "split_group": "cowsay-application",
+      "annotations": "annotations/cowsay.json",
+      "behavior_tests": [
+        {"id": "rust-tests", "argv": ["cargo", "test", "--locked"]},
+        {"id": "application", "argv": ["cargo", "run", "--locked", "--", "--wrapper", "fold", "--width", "16", "Hello from the pilot"]}
+      ]
+    },
+    {
+      "id": "c_metering",
+      "root": "c_metering",
+      "analysis_roots": ["src"],
+      "test_roots": ["tests"],
+      "support_files": ["Makefile", "include/metering.h"],
+      "languages": ["c"],
+      "split": "development",
+      "split_group": "c-metering-application",
+      "annotations": "annotations/c_metering.json",
+      "behavior_tests": [
+        {"id": "c-tests", "argv": ["make", "test"]},
+        {"id": "application", "argv": ["make", "run"]}
+      ]
+    },
+    {
+      "id": "javascript",
+      "root": "javascript",
+      "analysis_roots": ["src"],
+      "test_roots": ["test"],
+      "support_files": ["package.json"],
+      "languages": ["javascript"],
+      "split": "development",
+      "split_group": "javascript-fulfillment-application",
+      "annotations": "annotations/javascript.json",
+      "behavior_tests": [
+        {"id": "node-tests", "argv": ["npm", "test"]},
+        {"id": "application", "argv": ["npm", "start"]}
+      ]
+    },
+    {
+      "id": "harbor-ts",
+      "root": "harbor-ts",
+      "analysis_roots": ["src"],
+      "test_roots": ["tests"],
+      "support_files": [],
+      "languages": ["typescript"],
+      "split": "development",
+      "split_group": "harbor-typescript-application",
+      "annotations": "annotations/typescript.json",
+      "behavior_tests": [
+        {"id": "node-tests", "argv": ["node", "--experimental-strip-types", "--test", "tests/harbor.test.ts", "tests/signup.test.ts"]},
+        {"id": "application", "argv": ["node", "--experimental-strip-types", "src/main.ts"]}
+      ]
+    }
+  ]
+}

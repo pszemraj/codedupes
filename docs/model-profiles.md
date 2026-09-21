@@ -8,12 +8,43 @@ Most users should leave model and task settings unset. `codedupes` uses the pinn
 
 | profile key | canonical model ID | family | search threshold | default revision | default trust mode |
 | --- | --- | --- | --- | --- | --- |
-| `gte-modernbert-base` | `Alibaba-NLP/gte-modernbert-base` | `gte-modernbert` | `0.50` | `e7f32e3c00f91d699e8c43b53106206bcc72bb22` | `False` |
-| `embeddinggemma-300m` | `unsloth/embeddinggemma-300m` | `embeddinggemma` | `0.40` | `bfa3c846ac738e62aa61806ef9112d34acb1dc5a` | `False` |
+| `gte-modernbert-base` | `Alibaba-NLP/gte-modernbert-base` | `gte-modernbert` | `0.68` | `e7f32e3c00f91d699e8c43b53106206bcc72bb22` | `False` |
+| `embeddinggemma-300m` | `unsloth/embeddinggemma-300m` | `embeddinggemma` | `0.56` | `bfa3c846ac738e62aa61806ef9112d34acb1dc5a` | `False` |
 
-- [Per-language duplicate gates and their selection policy](analysis-defaults.md#semantic-duplicate-gate-defaults) control `check` reporting. The table's search threshold is only the floor for query matches; query-to-code similarity is much lower than code-to-code duplicate similarity.
-- Every built-in default revision is a pinned immutable commit. [Calibration sweeps](hybrid-tuning.md#semantic-threshold-sweep-model-profiles) record the checkpoint, prompt plan, pipeline, and candidate policy behind each threshold.
-- Search defaults favor recall. Inspect scores on representative queries and raise `--semantic-threshold` (or the Python API's per-query `threshold`) if results are too broad; no fixed floor separates relevant and off-topic code on every repository. The multi-domain probes in `test_fixtures/search_probes/` check the built-in search floors; the single-domain [calibration sweeps](hybrid-tuning.md#semantic-threshold-sweep-model-profiles) are additional guardrails, not the source of those floors.
+- The table's search threshold is only the floor for query matches; query-to-code similarity is much lower than code-to-code duplicate similarity.
+- Every built-in default revision is a pinned immutable commit. The [calibration workflow](hybrid-tuning.md) records the checkpoint, task, pipeline, and candidate policy behind each threshold.
+- The [calibration workflow](hybrid-tuning.md#reproduce-the-result) defines threshold selection and the separate search-smoke acceptance contract.
+
+Each selected search floor maximizes F1 after applying the pooled and per-language precision floor and no-result constraint. Independent multi-domain smoke probes remain a separate acceptance check because some rank-first targets can still fall below a calibrated default. Override the floor for a repository with a different tradeoff; these authored fixtures do not establish ecosystem-wide accuracy. The [checked result](../test_fixtures/calibration/calibration-results.json) contains the exact selection rows and metrics.
+
+### Duplicate and search gates
+
+`check` uses these shipped duplicate gates by canonical language. A profile fallback applies only to languages without an entry; it is GTE `0.87` or EmbeddingGemma `0.88`. The generic profile uses `0.82` for every language.
+
+| language | `gte-modernbert-base` | `embeddinggemma-300m` |
+| --- | --- | --- |
+| python | `0.87` | `0.74` |
+| c | `0.84` | `0.82` |
+| rust | `0.84` | `0.88` |
+| javascript | `0.69` | `0.80` |
+| typescript | `0.76` | `0.82` |
+
+See [analysis behavior](analysis-defaults.md#semantic-duplicate-gate-defaults) for same-language and cross-language handling.
+
+### Hybrid confidence gates
+
+These values promote admitted semantic pairs to `semantic_high_confidence`; otherwise they remain `semantic_review`.
+They were selected from CPU float32 measurements and independently checked on MPS float32; the CUDA bfloat16 policy shares these gates but is not separate calibration evidence.
+
+| profile | identifier Jaccard min | statement ratio min | promotion gates |
+| --- | --- | --- | --- |
+| `gte-modernbert-base` | `0.30` | `0.00` | python `0.90`; c, rust, javascript, and typescript off |
+| `embeddinggemma-300m` | `0.40` | `0.00` | python `0.79`, c `0.90`, rust `0.90`, javascript `0.80`; typescript off |
+| `generic` | `0.00` | `0.20` | off |
+
+Where a promotion gate equals its admission gate, same-language similarity alone leaves no `semantic_review` band: every admitted pair clears the promotion gate.
+
+See [hybrid synthesis behavior](analysis-defaults.md#hybrid-synthesis-confidence-defaults) for how the gates affect reporting.
 
 ## Alias resolution rules
 
@@ -34,7 +65,7 @@ Both `check` and `search` accept `--threshold-profile`; the Python setting is `t
 | `embeddinggemma-300m` | Use the built-in EmbeddingGemma profile's thresholds. |
 | `gte-modernbert-base` | Use the built-in GTE profile's thresholds. |
 
-Explicit numeric thresholds take precedence. Selecting a threshold profile sets duplicate and search thresholds and the [hybrid confidence split](analysis-defaults.md#hybrid-synthesis-confidence-defaults); it does not change the model, prompts, revision, or cached embeddings. It also does not bypass the explicit numeric threshold requirements for [custom embedding contexts](#semantic-task-defaults-and-choices). In human-readable output, the CLI reports its effective threshold choice and values without prompting; `--json` suppresses those logs and does not add threshold metadata to the JSON schema.
+Explicit numeric thresholds take precedence. Selecting a threshold profile sets duplicate, search, and [hybrid confidence](#hybrid-confidence-gates) gates; it does not change the model, prompts, revision, or cached embeddings. It also does not bypass the explicit numeric threshold requirements for [custom embedding contexts](#semantic-task-defaults-and-choices). In human-readable output, the CLI reports its effective threshold choice and values without prompting; `--json` suppresses those logs and does not add threshold metadata to the JSON schema.
 
 For an approved local EmbeddingGemma copy, normal family recognition is enough:
 

@@ -7,6 +7,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from codedupes import semantic
 from codedupes.models import CodeUnit, CodeUnitType
 from codedupes.semantic import find_semantic_duplicates
 
@@ -126,12 +127,18 @@ def test_cross_language_pairs_use_the_looser_of_both_language_gates() -> None:
     }
 
 
-def test_single_language_scan_reuses_the_embedding_matrix() -> None:
+def test_single_language_scan_reuses_the_embedding_matrix(monkeypatch) -> None:
     fancy_indexes: list[object] = []
+    validate = semantic._validate_precomputed_embeddings
+
+    def traced_validate(*args, **kwargs):
+        return _tracing_matrix(validate(*args, **kwargs), fancy_indexes)
+
+    monkeypatch.setattr(semantic, "_validate_precomputed_embeddings", traced_validate)
     same_language = [_unit("a.py", "a", "python"), _unit("b.py", "b", "python")]
     find_semantic_duplicates(
         same_language,
-        _tracing_matrix(_pairwise_matrix(0.99, 2), fancy_indexes),
+        _pairwise_matrix(0.99, 2),
         threshold=0.99,
     )
     assert fancy_indexes == []
@@ -139,7 +146,7 @@ def test_single_language_scan_reuses_the_embedding_matrix() -> None:
     mixed = [_unit("a.py", "a", "python"), _unit("b.js", "b", "javascript")]
     find_semantic_duplicates(
         mixed,
-        _tracing_matrix(_pairwise_matrix(0.99, 2), fancy_indexes),
+        _pairwise_matrix(0.99, 2),
         threshold=0.99,
     )
     assert len(fancy_indexes) == 2

@@ -85,6 +85,35 @@ def test_configure_mps_memory_fraction_applies_and_warns_above_recommended(caplo
     assert "exceeds the device recommended working-set size" not in caplog.text
 
 
+@pytest.mark.parametrize("empty_call", ["compute", "search"])
+@pytest.mark.parametrize("fraction", [None, 0.9], ids=["unset", "ignored-cpu-fraction"])
+def test_empty_semantic_calls_restore_a_managed_mps_memory_cap(
+    empty_call: str, fraction: float | None
+) -> None:
+    """An empty run still resets process-global MPS allocator policy."""
+    devices.configure_mps_memory_fraction("mps", 0.5)
+    assert devices._mps_memory_fraction_managed is True
+
+    if empty_call == "compute":
+        embeddings = semantic.compute_embeddings(
+            [], device="cpu", mps_memory_fraction=fraction, use_cache=False
+        )
+        assert embeddings.shape == (0, 0)
+    else:
+        results = semantic.find_similar_to_query(
+            "anything",
+            [],
+            np.empty((0, 0), dtype=np.float32),
+            threshold=0.0,
+            device="cpu",
+            mps_memory_fraction=fraction,
+            use_cache=False,
+        )
+        assert results == []
+
+    assert devices._mps_memory_fraction_managed is False
+
+
 def test_clear_device_cache_synchronizes_then_collects_then_empties(monkeypatch) -> None:
     events: list[str] = []
     real_synchronize = torch.mps.synchronize
@@ -156,8 +185,21 @@ def test_embeddinggemma_dtype_on_mps_is_float32() -> None:
 def test_model_loads_and_encodes_on_mps(tmp_path: Path) -> None:
     units = extract_arithmetic_units(tmp_path)
 
-    embeddings = semantic.compute_embeddings(units, device="mps", batch_size=2)
+    embeddings, identity = semantic.compute_embeddings_with_identity(
+        units, device="mps", batch_size=2, use_cache=False
+    )
     model = semantic.get_model(DEFAULT_MODEL, device="mps")
+    execution = []
+    results = semantic.find_similar_to_query(
+        "addition",
+        units,
+        embeddings,
+        device="mps",
+        threshold=-1.0,
+        use_cache=False,
+        corpus_identity=identity,
+        execution=execution,
+    )
     torch.mps.synchronize()
 
     assert str(getattr(model, "device", "")).startswith("mps")
@@ -165,6 +207,8 @@ def test_model_loads_and_encodes_on_mps(tmp_path: Path) -> None:
     assert embeddings.shape[0] == len(units)
     assert np.isfinite(embeddings).all()
     np.testing.assert_allclose(np.linalg.norm(embeddings, axis=1), 1.0, atol=1e-5)
+    assert len(results) == len(units)
+    assert execution == [semantic.QueryExecution(execution_device="mps", cache_hit=False)]
 
 
 def test_model_cache_is_keyed_by_resolved_device() -> None:
@@ -356,7 +400,9 @@ def test_fast_math_query_oom_aborts_before_similarity(tmp_path: Path, monkeypatc
 
 def test_query_oom_recovers_on_cpu(tmp_path: Path) -> None:
     units = extract_arithmetic_units(tmp_path)
-    embeddings = semantic.compute_embeddings(units, device="cpu", use_cache=False)
+    embeddings, identity = semantic.compute_embeddings_with_identity(
+        units, device="mps", use_cache=False
+    )
     model = semantic.get_model(DEFAULT_MODEL, device="mps")
 
     attempts: list[tuple[int, str | None]] = []
@@ -369,6 +415,7 @@ def test_query_oom_recovers_on_cpu(tmp_path: Path) -> None:
     model.encode = recording_encode
     torch.mps.set_per_process_memory_fraction(_TINY_MEMORY_FRACTION)
 
+    execution = []
     results = semantic.find_similar_to_query(
         "addition",
         units,
@@ -376,6 +423,8 @@ def test_query_oom_recovers_on_cpu(tmp_path: Path) -> None:
         device="mps",
         threshold=0.0,
         use_cache=False,
+        corpus_identity=identity,
+        execution=execution,
     )
 
     # Query embedding runs at batch size one, so the ladder is a single real MPS
@@ -385,3 +434,14 @@ def test_query_oom_recovers_on_cpu(tmp_path: Path) -> None:
     assert [score for _unit, score in results] == sorted(
         (score for _unit, score in results), reverse=True
     )
+    assert execution == [semantic.QueryExecution(execution_device="cpu", cache_hit=False)]
+
+    from scripts.calibration_measurements import _query_execution
+
+    with pytest.raises(ValueError, match="did not execute independently on mps"):
+        _query_execution(
+            SimpleNamespace(query_execution=tuple(execution)),
+            "mps",
+            "find-addition",
+            1,
+        )
