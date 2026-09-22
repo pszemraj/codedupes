@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 import codecs
 import logging
+import re
 import sys
 import tomllib
 from collections import defaultdict
@@ -693,6 +694,28 @@ def _decorators(unit: CodeUnit) -> str:
     return "\n".join(lines)
 
 
+_ABSTRACT_DECORATOR_RE = re.compile(r"^@\s*(?:abc\.)?abstractmethod\b")
+
+
+def _is_abstract(unit: CodeUnit) -> bool:
+    """Return whether one of the unit's own decorator lines is ``@abstractmethod``.
+
+    :param unit: Candidate unit.
+    :return: ``True`` when a decorator line matches ``@abstractmethod`` or ``@abc.abstractmethod`` exactly.
+    """
+    return any(_ABSTRACT_DECORATOR_RE.match(line) for line in _decorators(unit).splitlines())
+
+
+def _is_test_file(path: Path) -> bool:
+    """Return whether a path matches the default test-file exclude shapes.
+
+    :param path: File path to inspect.
+    :return: ``True`` for a ``test_*`` prefix or a ``_test``/``_tests`` stem suffix.
+    """
+    stem = path.stem
+    return stem.startswith("test_") or stem.endswith(("_test", "_tests"))
+
+
 def _is_unused_candidate(unit: CodeUnit, strict_unused: bool) -> bool:
     """Apply every unused heuristic except the ``codedupes: ignore`` directive.
 
@@ -710,10 +733,9 @@ def _is_unused_candidate(unit: CodeUnit, strict_unused: bool) -> bool:
         return False
     if unit.name.startswith("get_") or unit.name.startswith("set_"):
         return False
-    decorators = _decorators(unit)
-    if "@abstractmethod" in decorators or "@abc.abstractmethod" in decorators:
+    if _is_abstract(unit):
         return False
-    return not (unit.name.startswith("test_") or "_test" in unit.file_path.name)
+    return not (unit.name.startswith("test_") or _is_test_file(unit.file_path))
 
 
 def find_potentially_unused(units: list[CodeUnit], strict_unused: bool = False) -> list[CodeUnit]:

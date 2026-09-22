@@ -1280,11 +1280,15 @@ def test_parser_stack_overflow_is_a_diagnostic_not_a_crash(tmp_path: Path) -> No
 
 
 def test_abstractmethod_exemption_reads_only_the_units_own_decorators(tmp_path: Path) -> None:
-    """The decorated method is exempt; its class and a body mentioning the text are not."""
+    """The decorated method is exempt; its class, a body mentioning the text, and a
+    same-prefix decorator name are not."""
     source = dedent(
         """
         import abc
         from abc import abstractmethod
+
+        def abstractmethodish(func):
+            return func
 
         class _Holder(abc.ABC):
             @abc.abstractmethod
@@ -1295,6 +1299,10 @@ def test_abstractmethod_exemption_reads_only_the_units_own_decorators(tmp_path: 
             def _step(self):
                 return 2
 
+            @abstractmethodish
+            def _lookalike(self):
+                return 3
+
         def _fake():
             return "@abstractmethod"
         """
@@ -1302,4 +1310,20 @@ def test_abstractmethod_exemption_reads_only_the_units_own_decorators(tmp_path: 
     units, unused = _referenced_graph(tmp_path, source)
 
     assert _unit(units, "sample._Holder._do").references == set()
-    assert unused == {"_Holder", "_fake"}
+    assert unused == {"_Holder", "_fake", "_lookalike"}
+
+
+def test_test_file_exemption_matches_the_default_exclude_shapes(tmp_path: Path) -> None:
+    """The test-file exemption matches only the default exclude shapes, not any ``_test`` substring."""
+    source = "def _dead():\n    return 1\n"
+    expect_reported = {
+        "legacy_testament.py": True,
+        "probe_test.py": False,
+        "probe_tests.py": False,
+        "test_probe.py": False,
+    }
+    for filename, reported in expect_reported.items():
+        units = extract_units(tmp_path, source, filename=filename, include_private=True)
+        build_reference_graph(units)
+        unused = find_potentially_unused(units, strict_unused=True)
+        assert ("_dead" in {unit.name for unit in unused}) is reported, filename
