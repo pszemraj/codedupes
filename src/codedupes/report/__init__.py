@@ -9,12 +9,14 @@ from .json import (
 )
 from .selection import (
     ACTIONABLE_TIERS,
+    DEFAULT_MAX_DUPLICATES,
     WITHHELD_TIERS,
     FailOnPolicy,
     FileSearchResult,
     HiddenGroup,
     ReportPolicy,
     ReportSelection,
+    actionable_pairs,
     assign_unit_ids,
     collect_units,
     group_file_results,
@@ -25,6 +27,7 @@ from .selection import (
 
 __all__ = [
     "ACTIONABLE_TIERS",
+    "DEFAULT_MAX_DUPLICATES",
     "SCHEMA_VERSION",
     "WITHHELD_TIERS",
     "FailOnPolicy",
@@ -32,6 +35,7 @@ __all__ = [
     "HiddenGroup",
     "ReportPolicy",
     "ReportSelection",
+    "actionable_pairs",
     "assign_unit_ids",
     "check_result_to_json",
     "collect_units",

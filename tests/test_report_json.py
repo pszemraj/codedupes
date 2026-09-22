@@ -21,7 +21,12 @@ from codedupes.report.json import (
     search_result_to_json,
     to_json_text,
 )
-from codedupes.report.selection import ReportPolicy, group_file_results, select_findings
+from codedupes.report.selection import (
+    DEFAULT_MAX_DUPLICATES,
+    ReportPolicy,
+    group_file_results,
+    select_findings,
+)
 
 _ID = re.compile(r"^u\d+$")
 
@@ -58,8 +63,19 @@ def _result(tmp_path: Path) -> AnalysisResult:
     )
 
 
-def _payload(result: AnalysisResult, policy: ReportPolicy | None = None) -> dict:
-    return check_result_to_json(select_findings(result, policy), fail_on="actionable", exit_code=1)
+def _payload(
+    result: AnalysisResult,
+    policy: ReportPolicy | None = None,
+    *,
+    fail_on: str = "actionable",
+    exit_code: int = 1,
+) -> dict:
+    return check_result_to_json(
+        select_findings(result, policy),
+        fail_on=fail_on,
+        exit_code=exit_code,
+        strict_unused=False,
+    )
 
 
 def _referenced_ids(payload: dict) -> set[str]:
@@ -128,9 +144,48 @@ def test_check_json_v3_summary_counts(tmp_path):
     assert summary["hybrid_duplicates"] == 2
     assert summary["reported_duplicates"] + summary["omitted_review_duplicates"] == 2
     assert summary["truncated_duplicates"] == 0
+    # The library policy is uncapped; only the CLI applies DEFAULT_MAX_DUPLICATES.
     assert summary["max_duplicates"] is None
+    assert summary["actionable_duplicates"] == 1
+    assert summary["reported_actionable_duplicates"] == 1
     assert summary["raw_traditional_duplicates"] == 1
     assert summary["raw_semantic_duplicates"] == 1
+    assert summary["fail_on"] == "actionable"
+    assert summary["strict_unused"] is False
+    assert summary["exit_code"] == 1
+    assert summary["hidden_only_failure"] == []
+
+
+def test_check_json_hidden_only_failure_names_withheld_review(tmp_path):
+    result = _result(tmp_path)
+    result.hybrid_duplicates.pop(0)  # Leave only the semantic_review pair.
+    result.traditional_duplicates.clear()
+    result.potentially_unused.clear()
+
+    withheld = _payload(result, fail_on="all", exit_code=1)["summary"]
+    assert withheld["reported_duplicates"] == 0
+    assert withheld["omitted_review_duplicates"] == 1
+    assert withheld["actionable_duplicates"] == 0
+    assert withheld["hidden_only_failure"] == ["review"]
+
+    listed = _payload(result, ReportPolicy(include_review=True), fail_on="all", exit_code=1)
+    assert listed["summary"]["hidden_only_failure"] == []
+
+    # Review pairs never fail the default policy, so nothing hidden is named.
+    passing = _payload(result, fail_on="actionable", exit_code=0)["summary"]
+    assert passing["hidden_only_failure"] == []
+
+
+def test_check_json_raw_modes_count_every_pair_as_actionable(tmp_path):
+    result = _result(tmp_path)
+    result.analysis_mode = "semantic"
+    result.hybrid_duplicates.clear()
+
+    summary = _payload(result, ReportPolicy(max_duplicates=1))["summary"]
+
+    assert summary["actionable_duplicates"] == 2
+    assert summary["reported_actionable_duplicates"] == 1
+    assert summary["truncated_duplicates"] == 1
 
 
 def _chain_result(tmp_path: Path, pairs: int) -> AnalysisResult:
@@ -155,6 +210,20 @@ def test_check_json_emits_every_selected_finding_untruncated(tmp_path):
     assert len(payload["duplicates"]) == 25
     assert len(payload["units"]) == 26
     assert payload["summary"]["truncated_duplicates"] == 0
+
+
+def test_check_json_cli_default_policy_caps_at_twenty(tmp_path):
+    payload = _payload(
+        _chain_result(tmp_path, 25), ReportPolicy(max_duplicates=DEFAULT_MAX_DUPLICATES)
+    )
+    summary = payload["summary"]
+
+    assert len(payload["duplicates"]) == 20
+    assert len(payload["units"]) == 21
+    assert summary["max_duplicates"] == 20
+    assert summary["truncated_duplicates"] == 5
+    assert summary["actionable_duplicates"] == 25
+    assert summary["reported_actionable_duplicates"] == 20
 
 
 def test_check_json_max_duplicates_caps_edges_and_units_but_not_counts(tmp_path):

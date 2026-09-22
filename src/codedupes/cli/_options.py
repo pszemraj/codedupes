@@ -81,6 +81,34 @@ class Panel(StrEnum):
 SEMANTIC_ONLY_PANELS = frozenset({Panel.SEMANTIC, Panel.DEVICE})
 
 
+class MaxDuplicatesType(click.ParamType):
+    """``--max-duplicates`` value: a positive integer, or ``all`` for no cap."""
+
+    name = "max_duplicates"
+
+    def convert(self, value: Any, param: click.Parameter | None, ctx: click.Context | None) -> Any:
+        """Parse one cap value.
+
+        :param value: Raw CLI text, or the already-typed default.
+        :param param: Parameter being converted.
+        :param ctx: Active Click context.
+        :return: The positive integer cap, or ``None`` for ``all``.
+        """
+        if value is None or type(value) is int:
+            limit = value
+        else:
+            text = str(value).strip().lower()
+            if text == "all":
+                return None
+            limit = int(text) if text.isascii() and text.isdecimal() else 0
+        if limit is not None and limit < 1:
+            self.fail("must be a positive integer or 'all'.", param, ctx)
+        return limit
+
+
+MAX_DUPLICATES = MaxDuplicatesType()
+
+
 output_width_option = click.option(
     "--output-width",
     type=int,
@@ -347,14 +375,22 @@ class CheckOptions:
                     f"Cannot use {listed} with --semantic-only; traditional duplicate analysis is disabled."
                 )
 
+        # Every expansion flag lifts the default primary-list cap; an explicit
+        # --max-duplicates always wins, whatever the argument order.
+        expands = params["include_review"] or params["show_all"] or params["full_table"]
+        max_duplicates = params["max_duplicates"]
+        if expands and not _is_cli_explicit(ctx, "max_duplicates"):
+            max_duplicates = None
+
         return cls(
             semantic=SemanticOptions.from_params(params),
             **{
                 name: params[name]
                 for name in cls.__dataclass_fields__
-                if name not in {"semantic", "include_review"}
+                if name not in {"semantic", "include_review", "max_duplicates"}
             },
             include_review=params["include_review"] or params["show_all"],
+            max_duplicates=max_duplicates,
         )
 
     @property

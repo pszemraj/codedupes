@@ -24,8 +24,11 @@ from codedupes.models import (
 )
 
 FailOnPolicy = Literal["actionable", "all", "none"]
-# Groups omitted from the primary duplicate list that the exit code still counts.
-HiddenGroup = Literal["review", "truncated"]
+# Groups omitted from the primary duplicate list that the exit code still
+# counts. Only withheld review pairs qualify: the primary list ranks actionable
+# tiers first and the cap is at least one, so a cap can never hide every
+# failing pair while emitting only passing ones.
+HiddenGroup = Literal["review"]
 # Tiers with deterministic structural/token corroboration; the only ones that
 # fail the default ``actionable`` policy.
 ACTIONABLE_TIERS: frozenset[HybridTier] = frozenset(
@@ -33,6 +36,10 @@ ACTIONABLE_TIERS: frozenset[HybridTier] = frozenset(
 )
 # Tiers withheld from default reports; ``--include-review`` restores them.
 WITHHELD_TIERS: frozenset[HybridTier] = frozenset({"semantic_review"})
+# The CLI's default cap on the primary duplicate list, shared by terminal and
+# JSON output. ``ReportPolicy()`` itself stays uncapped so library callers get
+# the complete list unless they ask for the CLI's concise report.
+DEFAULT_MAX_DUPLICATES = 20
 
 
 @dataclass(frozen=True)
@@ -41,8 +48,8 @@ class ReportPolicy:
 
     include_review: bool = False
     show_all: bool = False
-    # Cap on emitted duplicate pairs, applied after the review filter in
-    # analyzer order so the highest-confidence pairs survive. ``None`` = no cap.
+    # Cap on emitted duplicate pairs, applied after the review filter to the
+    # report ranking (actionable tiers first). ``None`` = no cap.
     max_duplicates: int | None = None
 
     def __post_init__(self) -> None:
@@ -135,6 +142,40 @@ def _pair_units(pairs: Iterable[HybridDuplicate | DuplicatePair]) -> Iterable[Co
         yield pair.unit_b
 
 
+def _report_rank(pair: HybridDuplicate) -> int:
+    """Return the primary-list group of a hybrid pair: actionable, advisory, review.
+
+    :param pair: Hybrid duplicate to rank.
+    :return: ``0`` for actionable tiers, ``2`` for withheld tiers, ``1`` otherwise.
+    """
+    if pair.tier in ACTIONABLE_TIERS:
+        return 0
+    if pair.tier in WITHHELD_TIERS:
+        return 2
+    return 1
+
+
+def actionable_pairs(
+    pairs: Iterable[HybridDuplicate | DuplicatePair], *, combined: bool
+) -> list[HybridDuplicate | DuplicatePair]:
+    """Return the pairs that fail the ``actionable`` policy.
+
+    Combined mode carries tiers, so only :data:`ACTIONABLE_TIERS` count; the
+    single-method modes have no tier classification, so every raw pair counts.
+
+    :param pairs: Duplicate findings under consideration.
+    :param combined: Whether ``pairs`` are hybrid pairs carrying tiers.
+    :return: The actionable subset in input order.
+    """
+    if not combined:
+        return list(pairs)
+    return [
+        pair
+        for pair in pairs
+        if isinstance(pair, HybridDuplicate) and pair.tier in ACTIONABLE_TIERS
+    ]
+
+
 def select_findings(result: AnalysisResult, policy: ReportPolicy | None = None) -> ReportSelection:
     """Apply a visibility policy to a complete analysis result.
 
@@ -153,13 +194,15 @@ def select_findings(result: AnalysisResult, policy: ReportPolicy | None = None) 
 
     if mode == "combined":
         duplicates_by_tier.update(Counter(pair.tier for pair in result.hybrid_duplicates))
-        if policy.shows_review:
-            duplicates = list(result.hybrid_duplicates)
-        else:
-            shown: list[HybridDuplicate] = []
-            for pair in result.hybrid_duplicates:
-                (omitted_review if pair.tier in WITHHELD_TIERS else shown).append(pair)
-            duplicates = shown
+        shown: list[HybridDuplicate] = []
+        for pair in result.hybrid_duplicates:
+            withheld = pair.tier in WITHHELD_TIERS and not policy.shows_review
+            (omitted_review if withheld else shown).append(pair)
+        # Report ranking: actionable tiers first, then semantic_high_confidence,
+        # then any included semantic_review pairs. The stable sort keeps the
+        # analyzer's confidence order inside each group and never touches
+        # ``result.hybrid_duplicates``.
+        duplicates = sorted(shown, key=_report_rank)
         if policy.show_all:
             traditional = list(result.traditional_duplicates)
             semantic = list(result.semantic_duplicates)
@@ -173,8 +216,8 @@ def select_findings(result: AnalysisResult, policy: ReportPolicy | None = None) 
             key=lambda pair: -pair.similarity,
         )
 
-    # The cap keeps a prefix of the ranking established above: analyzer tier
-    # order for combined mode, descending similarity for the raw modes. The
+    # The cap keeps a prefix of the report ranking established above: tier
+    # groups for combined mode, descending similarity for the raw modes. The
     # raw ``--show-all`` lists are diagnostic and stay complete.
     if policy.max_duplicates is not None:
         truncated = duplicates[policy.max_duplicates :]
@@ -223,13 +266,11 @@ def _findings_fail(
         raise ValueError(f"Unknown failure policy {policy!r}; expected actionable, all, or none.")
     if policy == "none":
         return False
-    failing = list(duplicates)
-    if combined and policy == "actionable":
-        failing = [
-            pair
-            for pair in failing
-            if isinstance(pair, HybridDuplicate) and pair.tier in ACTIONABLE_TIERS
-        ]
+    failing = (
+        actionable_pairs(duplicates, combined=combined)
+        if policy == "actionable"
+        else list(duplicates)
+    )
     failing_unused = [] if policy == "actionable" and not strict_unused else list(unused)
     return bool(failing or failing_unused)
 
@@ -251,16 +292,10 @@ def run_should_fail(
     :return: Whether findings require exit code one.
     :raises ValueError: If ``policy`` is not a supported failure policy.
     """
-    combined = result.analysis_mode == "combined"
-    duplicates: Sequence[HybridDuplicate | DuplicatePair] = (
-        result.hybrid_duplicates
-        if combined
-        else result.traditional_duplicates + result.semantic_duplicates
-    )
     return _findings_fail(
-        duplicates,
+        result.all_duplicates,
         result.potentially_unused,
-        combined=combined,
+        combined=result.analysis_mode == "combined",
         policy=policy,
         strict_unused=strict_unused,
     )
@@ -274,10 +309,11 @@ def hidden_only_failure(
 ) -> frozenset[HiddenGroup]:
     """Return which omitted groups fail when the primary list and unused findings pass.
 
-    The exit code is decided on the complete result, so a run can fail over pairs
-    the primary list withheld (``review``) or cut with ``max_duplicates``
-    (``truncated``). Raw diagnostic lists may still show their evidence, but in
-    combined mode only the primary list carries the tiers used by this policy.
+    The exit code is decided on the complete result, so a run can fail over
+    ``semantic_review`` pairs the primary list withheld (``review``). Pairs cut
+    by ``max_duplicates`` never qualify: the primary list ranks actionable tiers
+    first and the cap is at least one, so whenever a truncated pair fails, an
+    emitted pair already fails too.
 
     :param selection: Report selection derived from the complete result.
     :param policy: Selected finding policy.
@@ -294,15 +330,11 @@ def hidden_only_failure(
         strict_unused=strict_unused,
     ):
         return frozenset()
-    hidden: dict[HiddenGroup, Sequence[HybridDuplicate | DuplicatePair]] = {
-        "review": selection.omitted_review,
-        "truncated": selection.truncated,
-    }
-    return frozenset(
-        group
-        for group, pairs in hidden.items()
-        if _findings_fail(pairs, (), combined=combined, policy=policy, strict_unused=strict_unused)
-    )
+    if _findings_fail(
+        selection.omitted_review, (), combined=combined, policy=policy, strict_unused=strict_unused
+    ):
+        return frozenset({"review"})
+    return frozenset()
 
 
 def group_file_results(results: list[tuple[CodeUnit, float]], top_k: int) -> list[FileSearchResult]:

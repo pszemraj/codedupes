@@ -19,8 +19,10 @@ from .selection import (
     FailOnPolicy,
     FileSearchResult,
     ReportSelection,
+    actionable_pairs,
     assign_unit_ids,
     collect_units,
+    hidden_only_failure,
 )
 
 SCHEMA_VERSION = 3
@@ -138,15 +140,18 @@ def check_result_to_json(
     *,
     fail_on: FailOnPolicy,
     exit_code: int,
+    strict_unused: bool,
 ) -> dict[str, Any]:
     """Serialize one selected check report using the normalized graph shape.
 
     :param selection: Findings selected for this report.
     :param fail_on: Finding policy selected for this run.
     :param exit_code: Exit code computed from the selected policy.
+    :param strict_unused: Whether unused findings counted under the failure policy.
     :return: Check payload.
     """
     result = selection.result
+    combined = result.analysis_mode == "combined"
     ids = assign_unit_ids(selection.units)
     duplicates = [
         _hybrid_edge(pair, ids) if isinstance(pair, HybridDuplicate) else _raw_edge(pair, ids)
@@ -164,6 +169,12 @@ def check_result_to_json(
             "omitted_review_duplicates": len(selection.omitted_review),
             "truncated_duplicates": len(selection.truncated),
             "max_duplicates": selection.policy.max_duplicates,
+            "actionable_duplicates": len(
+                actionable_pairs(result.all_duplicates, combined=combined)
+            ),
+            "reported_actionable_duplicates": len(
+                actionable_pairs(selection.duplicates, combined=combined)
+            ),
             "duplicates_by_tier": dict(selection.duplicates_by_tier),
             "potentially_unused": len(result.potentially_unused),
             "raw_traditional_duplicates": len(result.traditional_duplicates),
@@ -176,7 +187,11 @@ def check_result_to_json(
             "unused_excluded_units": result.unused_excluded_units,
             "embeddings": _embedding_stats_to_dict(result.embedding_stats),
             "fail_on": fail_on,
+            "strict_unused": strict_unused,
             "exit_code": exit_code,
+            "hidden_only_failure": sorted(
+                hidden_only_failure(selection, policy=fail_on, strict_unused=strict_unused)
+            ),
         },
         "duplicates": duplicates,
         "potentially_unused": [ids[unit.uid] for unit in selection.potentially_unused],
