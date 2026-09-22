@@ -204,7 +204,7 @@ def test_cli_search_file_ranking_groups_before_top_k(
         assert "sample.alpha:10 (99.00%)" in result.output
         assert "sample.gamma:30 (97.00%)" in result.output
         assert "sample.epsilon:50 (95.00%)" in result.output
-        assert "+1 more matching units" in result.output
+        assert "+1 more matching unit" in result.output
         assert "delta" not in result.output
         assert "zeta" not in result.output
     else:

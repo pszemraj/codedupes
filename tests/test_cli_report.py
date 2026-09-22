@@ -87,8 +87,8 @@ def test_cli_traditional_panel_label_is_language_neutral(monkeypatch, tmp_path):
     assert "token_hash" in result.output
     assert "Exact duplicate families" in result.output
     assert "1 family (2 units)" in result.output
-    assert "Traditional Duplicates (Structural/Token/Jaccard)" in result.output
-    assert "(1 pairs)" in result.output
+    assert "Near Duplicates (Jaccard)" in result.output
+    assert "(1 pair)" in result.output
     assert "AST" not in result.output
 
 
@@ -502,7 +502,7 @@ def test_cli_family_panel_leads_the_report_and_counts_as_one_finding(monkeypatch
     wide = runner.invoke(cli.cli, ["check", str(path), "--output-width", "160"])
     assert wide.exit_code == 1
     families_at = wide.output.index("Exact Duplicate Families (1 family)")
-    pairs_at = wide.output.index("Hybrid Duplicates (1 pairs, 1 review withheld)")
+    pairs_at = wide.output.index("Hybrid Duplicates (1 pair, 1 review withheld)")
     assert families_at < pairs_at
     panel = wide.output[families_at:pairs_at]
     assert "token_hash" in panel
@@ -798,7 +798,7 @@ def test_cli_review_visibility(monkeypatch, tmp_path, include_review):
         assert "Withheld review candidates" in terminal.output
         assert "2 (use --include-review)" in terminal.output
         assert "semantic_review" in terminal.output
-        assert "(1 pairs, 2 review withheld)" in terminal.output
+        assert "(1 pair, 2 review withheld)" in terminal.output
         assert "lonely" not in terminal.output
 
 
@@ -849,7 +849,7 @@ def test_cli_max_duplicates_caps_the_report_but_not_the_exit_code(monkeypatch, t
     # Default policy withholds both review pairs first, so the cap cuts nothing
     # and the summary does not mention it.
     assert "Truncated duplicates" not in terminal.output
-    assert "(1 pairs, 2 review withheld)" in terminal.output
+    assert "(1 pair, 2 review withheld)" in terminal.output
 
     capped = runner.invoke(
         cli.cli,
@@ -860,7 +860,7 @@ def test_cli_max_duplicates_caps_the_report_but_not_the_exit_code(monkeypatch, t
     # because the withheld row is absent under --include-review.
     assert "2 (2 semantic_review; use --max-duplicates all)" in capped.output
     assert "Withheld review candidates" not in capped.output
-    assert "(1 pairs, 2 truncated)" in capped.output
+    assert "(1 pair, 2 truncated)" in capped.output
     assert "lonely" not in capped.output
 
     cut_review = runner.invoke(
@@ -903,7 +903,7 @@ def test_cli_max_duplicates_applies_to_single_method_modes(monkeypatch, tmp_path
     assert terminal.exit_code == 1
     assert "Reported duplicates" in terminal.output
     assert "2 (use --max-duplicates all)" in terminal.output
-    assert "(1 pairs, 2 truncated)" in terminal.output
+    assert "(1 pair, 2 truncated)" in terminal.output
 
 
 def test_cli_withheld_only_result_prints_a_placeholder_instead_of_nothing(monkeypatch, tmp_path):

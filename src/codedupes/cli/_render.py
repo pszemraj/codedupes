@@ -33,7 +33,7 @@ from . import _output
 from ._output import DEFAULT_TABLE_ROWS
 
 _RAW_DUPLICATE_TITLES = {
-    "traditional": "Traditional Duplicates (Structural/Token/Jaccard)",
+    "traditional": "Near Duplicates (Jaccard)",
     "semantic": "Semantic Duplicates (Embedding)",
     "none": "Duplicates",
 }
@@ -117,6 +117,16 @@ def format_location(unit: CodeUnit) -> str:
     return f"{format_path(unit.file_path)}:{unit.lineno}"
 
 
+def _count(count: int, noun: str) -> str:
+    """Pluralize a simple count/noun pair for terminal output.
+
+    :param count: Item count.
+    :param noun: Singular noun, regular plural (append ``s``).
+    :return: ``"N noun"`` for one item, ``"N nouns"`` otherwise.
+    """
+    return f"{count} {noun}" if count == 1 else f"{count} {noun}s"
+
+
 def truncate_source(source: str, max_lines: int = 5) -> str:
     """Truncate source code for compact display.
 
@@ -127,7 +137,7 @@ def truncate_source(source: str, max_lines: int = 5) -> str:
     lines = source.strip().split("\n")
     if len(lines) <= max_lines:
         return source.strip()
-    return "\n".join(lines[:max_lines]) + f"\n... ({len(lines) - max_lines} more lines)"
+    return "\n".join(lines[:max_lines]) + f"\n... ({_count(len(lines) - max_lines, 'more line')})"
 
 
 def _print_diagnostics(title: str, diagnostics: list[ExtractionDiagnostic]) -> None:
@@ -151,7 +161,7 @@ def _print_diagnostics(title: str, diagnostics: list[ExtractionDiagnostic]) -> N
         )
     remaining = len(diagnostics) - 10
     if remaining > 0:
-        _output.console.print(f"  [dim]... and {remaining} more diagnostics[/dim]")
+        _output.console.print(f"  [dim]... and {_count(remaining, 'more diagnostic')}[/dim]")
 
 
 def _family_noun(count: int) -> str:
@@ -160,7 +170,7 @@ def _family_noun(count: int) -> str:
     :param count: Number of families.
     :return: Singular or plural noun.
     """
-    return "exact family" if count == 1 else "exact families"
+    return "family" if count == 1 else "families"
 
 
 def print_summary(
@@ -184,7 +194,7 @@ def print_summary(
     # Name the cut tiers: review pairs rank last, so under --include-review a
     # cap can drop every one of them while the withheld row stays absent.
     cut_tiers = ", ".join(
-        f"{count} {_family_noun(count) if tier == 'exact' else tier}"
+        f"{count} exact {_family_noun(count)}" if tier == "exact" else f"{count} {tier}"
         for tier, count in selection.truncated_by_tier.items()
         if count
     )
@@ -194,10 +204,7 @@ def print_summary(
     truncated_unused = len(selection.truncated_unused)
     unused_note = f"{truncated_unused} (use --max-unused all)"
     families = len(selection.all_exact_families)
-    family_note = (
-        f"{families} {'family' if families == 1 else 'families'} "
-        f"({selection.exact_family_members} units)"
-    )
+    family_note = f"{families} {_family_noun(families)} ({selection.exact_family_members} units)"
     _output.console.print()
 
     summary = Table(title="Analysis Summary", show_header=False, box=None)
@@ -267,7 +274,7 @@ def print_summary(
     if result.unused_excluded_units:
         summary.add_row(
             "Unused-analysis exclusions",
-            f"{result.unused_excluded_units} non-Python units",
+            _count(result.unused_excluded_units, "non-Python unit"),
         )
     if result.embedding_stats is not None:
         summary.add_row("Embeddings", _format_embedding_stats(result.embedding_stats))
@@ -378,7 +385,7 @@ def _print_duplicate_table(
             )
         return
 
-    counts = f"{len(duplicates)} pairs"
+    counts = _count(len(duplicates), "pair")
     if withheld:
         counts += f", {withheld} review withheld"
     if truncated:
@@ -482,7 +489,7 @@ def print_exact_families(
     if not families:
         return
 
-    counts = f"{len(families)} {'family' if len(families) == 1 else 'families'}"
+    counts = f"{len(families)} {_family_noun(len(families))}"
     if truncated:
         counts += f", {truncated} truncated"
     _output.console.print(f"\n[bold yellow]Exact Duplicate Families[/bold yellow] ({counts})")
@@ -592,7 +599,7 @@ def print_unused(
     if not unused:
         return
 
-    counts = f"{len(unused)} units"
+    counts = _count(len(unused), "unit")
     if truncated:
         counts += f", {truncated} truncated"
     _output.console.print(f"\n[bold yellow]{title}[/bold yellow] ({counts})")
@@ -727,7 +734,7 @@ def print_file_search_results(results: list[FileSearchResult]) -> None:
         ]
         remaining = result.matching_units - len(result.matches)
         if remaining:
-            evidence.append(f"+{remaining} more matching units")
+            evidence.append(f"+{_count(remaining, 'more matching unit')}")
         table.add_row(str(rank), f"{result.score:.2%}", location, "\n".join(evidence))
 
     _output.console.print(table)

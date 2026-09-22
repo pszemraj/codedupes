@@ -288,5 +288,5 @@ The primary panels list every finding the [report caps](#report-selection) selec
 Locations use the shorter of working-directory-relative and absolute `<path>:<line>` spellings.
 
 - Combined: `Hybrid Duplicates (N pairs, M review withheld, K truncated)`, followed by any raw panels requested through [report selection](#report-selection). When every hybrid pair is withheld, one dim line reports the withheld count instead of an empty table. The summary lists every tier's count, the `exact` row reading `N families (M units)`, plus `Actionable duplicates` as `total (reported)`; withheld and truncated totals appear when non-zero, the latter naming the cut tiers (families as `N exact families`) and pointing at `--max-duplicates all`, and `Truncated dead code` points at `--max-unused all`.
-- `--traditional-only`: `Traditional Duplicates (Structural/Token/Jaccard)` for the non-exact pairs, after the family panel; the summary adds an `Exact duplicate families` row.
+- `--traditional-only`: `Near Duplicates (Jaccard)` for the non-exact pairs (exact pairs are already in the family panel), after the family panel; the summary adds an `Exact duplicate families` row.
 - `--semantic-only`: `Semantic Duplicates (Embedding)`.
