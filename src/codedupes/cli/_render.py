@@ -23,8 +23,8 @@ from codedupes.models import (
 from codedupes.report.selection import (
     FailOnPolicy,
     FileSearchResult,
-    HiddenGroup,
     ReportSelection,
+    actionable_pairs,
     hidden_only_failure,
 )
 from codedupes.semantic import EmbeddingRunStats
@@ -154,58 +154,12 @@ def _print_diagnostics(title: str, diagnostics: list[ExtractionDiagnostic]) -> N
         _output.console.print(f"  [dim]... and {remaining} more diagnostics[/dim]")
 
 
-def _truncation_note(selection: ReportSelection) -> str:
-    """Describe pairs cut by the ``--max-duplicates`` cap for a summary row.
-
-    :param selection: Report selection with a non-empty ``truncated`` list.
-    :return: Count plus the cap that produced it.
-    """
-    return f"{len(selection.truncated)} (--max-duplicates {selection.policy.max_duplicates})"
-
-
-def _hidden_failure_status(
-    selection: ReportSelection,
-    hidden: frozenset[HiddenGroup],
-    *,
-    fail_on: FailOnPolicy,
-    exit_code: int,
-    max_items: int | None,
-) -> str:
-    """Word a failing status whose failing pairs are absent from the primary list.
-
-    :param selection: Report selection that produced ``hidden``.
-    :param hidden: Hidden groups that fail the policy while emitted findings pass.
-    :param fail_on: Finding policy selected for this run.
-    :param exit_code: Exit code computed from the selected policy.
-    :param max_items: Terminal row limit, or ``None`` when all rows are displayed.
-    :return: Status text naming the hidden groups and how to list them.
-    """
-    culprits: list[str] = []
-    remedies: list[str] = []
-    if "review" in hidden:
-        culprits.append("withheld semantic_review candidates")
-        remedies.append("--include-review")
-    if "truncated" in hidden:
-        culprits.append(f"pairs truncated by --max-duplicates {selection.policy.max_duplicates}")
-        remedies.append("a higher --max-duplicates")
-    complete_pairs = (
-        len(selection.duplicates) + len(selection.omitted_review) + len(selection.truncated)
-    )
-    if max_items is not None and complete_pairs > max_items:
-        remedies.append("--full-table")
-    return (
-        f"fail (exit {exit_code}; only {' and '.join(culprits)} fail --fail-on {fail_on}, "
-        f"use {' and '.join(remedies)} to list them in the primary report)"
-    )
-
-
 def print_summary(
     selection: ReportSelection,
     *,
     fail_on: FailOnPolicy,
     exit_code: int,
     strict_unused: bool = False,
-    max_items: int | None = DEFAULT_TABLE_ROWS,
 ) -> None:
     """Print analysis summary.
 
@@ -213,12 +167,19 @@ def print_summary(
     :param fail_on: Finding policy selected for this run.
     :param exit_code: Exit code computed from the selected policy.
     :param strict_unused: Whether unused findings count under the failure policy.
-    :param max_items: Terminal row limit, or ``None`` when all rows are displayed.
     :return: ``None``.
     """
     result = selection.result
     withheld = len(selection.omitted_review)
     truncated = len(selection.truncated)
+    # Name the cut tiers: review pairs rank last, so under --include-review a
+    # cap can drop every one of them while the withheld row stays absent.
+    cut_tiers = ", ".join(
+        f"{count} {tier}" for tier, count in selection.truncated_by_tier.items() if count
+    )
+    truncation_note = (
+        f"{truncated} ({cut_tiers + '; ' if cut_tiers else ''}use --max-duplicates all)"
+    )
     _output.console.print()
 
     summary = Table(title="Analysis Summary", show_header=False, box=None)
@@ -247,11 +208,14 @@ def print_summary(
         summary.add_row("Hybrid duplicates", str(len(result.hybrid_duplicates)))
         for tier, count in selection.duplicates_by_tier.items():
             summary.add_row(f"  {tier}", str(count))
+        actionable = len(actionable_pairs(result.hybrid_duplicates, combined=True))
+        reported_actionable = len(actionable_pairs(selection.duplicates, combined=True))
+        summary.add_row("Actionable duplicates", f"{actionable} ({reported_actionable} reported)")
         summary.add_row("Reported duplicates", str(len(selection.duplicates)))
         if withheld:
             summary.add_row("Withheld review candidates", f"{withheld} (use --include-review)")
         if truncated:
-            summary.add_row("Truncated duplicates", _truncation_note(selection))
+            summary.add_row("Truncated duplicates", truncation_note)
         summary.add_row("Likely dead code", str(len(result.potentially_unused)))
         summary.add_row("", "")
         summary.add_row("Raw traditional duplicates", str(len(result.traditional_duplicates)))
@@ -268,7 +232,7 @@ def print_summary(
             )
         if truncated:
             summary.add_row("Reported duplicates", str(len(selection.duplicates)))
-            summary.add_row("Truncated duplicates", _truncation_note(selection))
+            summary.add_row("Truncated duplicates", truncation_note)
         summary.add_row("Potentially unused", str(len(result.potentially_unused)))
 
     if result.extraction_diagnostics:
@@ -284,10 +248,13 @@ def print_summary(
         summary.add_row("Embeddings", _format_embedding_stats(result.embedding_stats))
     summary.add_row("Failure policy", fail_on)
     status = f"{'fail' if exit_code else 'pass'} (exit {exit_code})"
-    hidden = hidden_only_failure(selection, policy=fail_on, strict_unused=strict_unused)
-    if exit_code and hidden:
-        status = _hidden_failure_status(
-            selection, hidden, fail_on=fail_on, exit_code=exit_code, max_items=max_items
+    if exit_code and hidden_only_failure(selection, policy=fail_on, strict_unused=strict_unused):
+        # Only withheld review pairs can fail without an emitted finding failing
+        # too: the primary list ranks actionable tiers first, so the cap never
+        # hides every failing pair.
+        status = (
+            f"fail (exit {exit_code}; only withheld semantic_review candidates fail "
+            f"--fail-on {fail_on}, use --include-review to list them in the primary report)"
         )
     summary.add_row("Finding status", status)
 
@@ -379,7 +346,7 @@ def _print_duplicate_table(
     :param duplicates: Duplicate pairs to display.
     :param title: Section title.
     :param show_source: Whether to render source snippets.
-    :param max_items: Optional row limit.
+    :param max_items: Optional row limit for the raw diagnostic tables; the primary list is already bounded by the report cap and passes ``None``.
     :param hybrid: Whether the payload is hybrid duplicates.
     :param withheld: Review pairs the report policy withheld from this table.
     :param truncated: Pairs the ``--max-duplicates`` cap cut from this table.
@@ -492,15 +459,13 @@ def print_duplicates(
 def print_hybrid_duplicates(
     duplicates: list[HybridDuplicate],
     show_source: bool = False,
-    max_items: int | None = DEFAULT_TABLE_ROWS,
     withheld: int = 0,
     truncated: int = 0,
 ) -> None:
-    """Print synthesized hybrid duplicate pairs.
+    """Print every selected hybrid duplicate pair; the report cap is the only bound.
 
     :param duplicates: Hybrid duplicates to print.
     :param show_source: Whether to render source snippets.
-    :param max_items: Optional max rows.
     :param withheld: Review pairs the report policy withheld from the table.
     :param truncated: Pairs the ``--max-duplicates`` cap cut from the table.
     :return: ``None``.
@@ -509,7 +474,7 @@ def print_hybrid_duplicates(
         duplicates,
         title="Hybrid Duplicates",
         show_source=show_source,
-        max_items=max_items,
+        max_items=None,
         hybrid=True,
         withheld=withheld,
         truncated=truncated,
@@ -565,16 +530,19 @@ def print_findings(
 ) -> None:
     """Print every finding panel selected for one check report.
 
+    The primary duplicate list is already bounded by the report cap, so it
+    renders in full; ``max_items`` only abbreviates the unused table and the
+    raw ``--show-all`` lists.
+
     :param selection: Findings selected for this report.
     :param show_source: Whether to render source snippets.
-    :param max_items: Optional row limit per table.
+    :param max_items: Optional row limit for the unused and raw diagnostic tables.
     :return: ``None``.
     """
     if selection.mode == "combined":
         print_hybrid_duplicates(
             cast(list[HybridDuplicate], selection.duplicates),
             show_source=show_source,
-            max_items=max_items,
             withheld=len(selection.omitted_review),
             truncated=len(selection.truncated),
         )
@@ -599,10 +567,21 @@ def print_findings(
         cast(list[DuplicatePair], selection.duplicates),
         _RAW_DUPLICATE_TITLES[selection.mode],
         show_source=show_source,
-        max_items=max_items,
+        max_items=None,
         truncated=len(selection.truncated),
     )
     print_unused(selection.potentially_unused, max_items=max_items)
+
+
+def _ranked_table() -> Table:
+    """Build the Rank/Score scaffold every search result table starts from.
+
+    :return: Table with the two leading columns; callers append their own.
+    """
+    table = Table(header_style="bold", box=box.ROUNDED, border_style="dim", show_lines=True)
+    table.add_column("Rank", justify="right", width=4, min_width=4, no_wrap=True)
+    table.add_column("Score", style="green", width=7, min_width=7, no_wrap=True)
+    return table
 
 
 def print_search_results(results: list[tuple[CodeUnit, float]]) -> None:
@@ -611,9 +590,7 @@ def print_search_results(results: list[tuple[CodeUnit, float]]) -> None:
         _output.console.print("[yellow]No matches found.[/yellow]")
         return
 
-    table = Table(header_style="bold", box=box.ROUNDED, border_style="dim", show_lines=True)
-    table.add_column("Rank", justify="right", width=4, min_width=4, no_wrap=True)
-    table.add_column("Score", style="green", width=7, min_width=7, no_wrap=True)
+    table = _ranked_table()
     table.add_column("Name", overflow="fold")
     table.add_column("Location", style="dim", overflow="fold")
 
@@ -633,9 +610,7 @@ def print_file_search_results(results: list[FileSearchResult]) -> None:
         _output.console.print("[yellow]No matches found.[/yellow]")
         return
 
-    table = Table(header_style="bold", box=box.ROUNDED, border_style="dim", show_lines=True)
-    table.add_column("Rank", justify="right", width=4, min_width=4, no_wrap=True)
-    table.add_column("Score", style="green", width=7, min_width=7, no_wrap=True)
+    table = _ranked_table()
     table.add_column("File", style="dim", overflow="fold")
     table.add_column("Matching code units", overflow="fold")
 

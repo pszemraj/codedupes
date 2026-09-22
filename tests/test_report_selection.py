@@ -19,7 +19,9 @@ from codedupes.models import (
 )
 from codedupes.report.selection import (
     ACTIONABLE_TIERS,
+    DEFAULT_MAX_DUPLICATES,
     ReportPolicy,
+    actionable_pairs,
     assign_unit_ids,
     collect_units,
     hidden_only_failure,
@@ -277,15 +279,91 @@ def test_max_duplicates_keeps_a_prefix_after_the_review_filter(tmp_path):
     assert [pair.tier for pair in capped.truncated] == ["semantic_high_confidence"]
     assert [pair.tier for pair in capped.omitted_review] == ["semantic_review"]
     assert len(capped.duplicates) + len(capped.omitted_review) + len(capped.truncated) == 4
-    # The tier breakdown still describes the complete result.
+    # The tier breakdown still describes the complete result; the truncated
+    # breakdown is zero-filled over every tier like it.
     assert capped.duplicates_by_tier["semantic_high_confidence"] == 1
+    assert capped.truncated_by_tier == {
+        "exact": 0,
+        "traditional_near": 0,
+        "hybrid_confirmed": 0,
+        "semantic_high_confidence": 1,
+        "semantic_review": 0,
+    }
     # Units referenced only by truncated pairs drop out with them.
     assert [unit.name for unit in capped.units] == ["f0", "f1", "f2", "f3"]
 
+    # Review pairs rank last, so including them changes the truncated set, not
+    # the emitted prefix.
     with_review = select_findings(result, ReportPolicy(include_review=True, max_duplicates=2))
-    assert [pair.tier for pair in with_review.duplicates] == ["exact", "semantic_review"]
+    assert [pair.tier for pair in with_review.duplicates] == ["exact", "hybrid_confirmed"]
     assert with_review.omitted_review == []
-    assert len(with_review.truncated) == 2
+    assert [pair.tier for pair in with_review.truncated] == [
+        "semantic_high_confidence",
+        "semantic_review",
+    ]
+    # With nothing withheld, the truncated breakdown is the only place that
+    # says the included review pair was cut rather than shown.
+    assert with_review.truncated_by_tier["semantic_review"] == 1
+    assert with_review.truncated_by_tier["semantic_high_confidence"] == 1
+
+
+def test_select_findings_ranks_actionable_tiers_first_within_analyzer_order(tmp_path):
+    tiers: list[HybridTier] = [
+        "semantic_high_confidence",
+        "hybrid_confirmed",
+        "semantic_review",
+        "traditional_near",
+        "semantic_high_confidence",
+    ]
+    result = _ranked_result(tmp_path, tiers)
+
+    selection = select_findings(result)
+
+    assert [pair.tier for pair in selection.duplicates] == [
+        "hybrid_confirmed",
+        "traditional_near",
+        "semantic_high_confidence",
+        "semantic_high_confidence",
+    ]
+    # Analyzer (confidence) order survives inside each group.
+    assert [pair.unit_a.name for pair in selection.duplicates] == ["f1", "f3", "f0", "f4"]
+    assert [pair.tier for pair in selection.omitted_review] == ["semantic_review"]
+
+    with_review = select_findings(result, ReportPolicy(include_review=True))
+    assert [pair.tier for pair in with_review.duplicates] == [
+        "hybrid_confirmed",
+        "traditional_near",
+        "semantic_high_confidence",
+        "semantic_high_confidence",
+        "semantic_review",
+    ]
+    # The complete result keeps the analyzer's ranking.
+    assert [pair.tier for pair in result.hybrid_duplicates] == tiers
+
+
+def test_actionable_pairs_filters_tiers_only_in_combined_mode(tmp_path):
+    result = _ranked_result(
+        tmp_path, ["semantic_high_confidence", "exact", "semantic_review", "traditional_near"]
+    )
+
+    combined = actionable_pairs(result.hybrid_duplicates, combined=True)
+    assert [pair.tier for pair in combined] == ["exact", "traditional_near"]
+
+    raw = [DuplicatePair(result.units[0], result.units[1], 0.9, "semantic")]
+    assert actionable_pairs(raw, combined=False) == raw
+
+
+def test_report_policy_default_is_uncapped_and_cli_default_is_twenty(tmp_path):
+    assert ReportPolicy().max_duplicates is None
+    assert DEFAULT_MAX_DUPLICATES == 20
+    result = _ranked_result(tmp_path, ["exact"] * 25)
+
+    complete = select_findings(result)
+    concise = select_findings(result, ReportPolicy(max_duplicates=DEFAULT_MAX_DUPLICATES))
+
+    assert len(complete.duplicates) == 25
+    assert len(concise.duplicates) == 20
+    assert len(concise.truncated) == 5
 
 
 def test_max_duplicates_is_a_no_op_at_or_above_the_admitted_count(tmp_path):
@@ -355,18 +433,20 @@ def test_report_policy_rejects_a_cap_that_emits_nothing(cap):
         ReportPolicy(max_duplicates=cap)
 
 
-def test_hidden_only_failure_names_truncated_pairs(tmp_path):
+def test_truncation_never_hides_the_only_failing_pair(tmp_path):
     # Confidence is only tier-monotone at equal similarity, so a strong
-    # semantic_high_confidence pair can outrank an actionable hybrid_confirmed
-    # one; a cap of one then hides the pair that fails the default policy.
+    # semantic_high_confidence pair outranks an actionable hybrid_confirmed one
+    # in the analyzer; the report ranks the actionable pair first so a cap of
+    # one still emits the pair that fails the default policy.
     result = _ranked_result(
         tmp_path, ["semantic_high_confidence", "hybrid_confirmed", "semantic_review"]
     )
     capped = select_findings(result, ReportPolicy(max_duplicates=1))
 
     assert run_should_fail(result, policy="actionable", strict_unused=False) is True
-    assert hidden_only_failure(capped, policy="actionable", strict_unused=False) == {"truncated"}
-    # Under --fail-on all the emitted pair fails by itself, so nothing hidden is named.
+    assert [pair.tier for pair in capped.duplicates] == ["hybrid_confirmed"]
+    assert [pair.tier for pair in capped.truncated] == ["semantic_high_confidence"]
+    assert hidden_only_failure(capped, policy="actionable", strict_unused=False) == set()
     assert hidden_only_failure(capped, policy="all", strict_unused=False) == set()
 
     # Truncating only advisory pairs hides nothing that fails.

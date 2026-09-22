@@ -10,9 +10,9 @@ import rich_click as click
 import codedupes.cli as cli_module
 from codedupes.constants import DEFAULT_CHECK_SEMANTIC_TASK, SEMANTIC_TASK_CHOICES
 from codedupes.report.json import check_result_to_json, to_json_text
-from codedupes.report.selection import run_should_fail, select_findings
+from codedupes.report.selection import DEFAULT_MAX_DUPLICATES, run_should_fail, select_findings
 
-from ._options import CheckOptions, Panel, option_panels, semantic_options
+from ._options import MAX_DUPLICATES, CheckOptions, Panel, option_panels, semantic_options
 from ._output import _configured_cli_output, _run_cli_action
 from ._render import print_findings, print_summary
 
@@ -121,8 +121,8 @@ from ._render import print_findings, print_summary
     is_flag=True,
     panel=Panel.OUTPUT,
     help=(
-        "Also list semantic_review pairs (semantic match without corroboration); "
-        "implied by --show-all"
+        "Also list semantic_review pairs (semantic match without corroboration) and "
+        "lift the default --max-duplicates cap; implied by --show-all"
     ),
 )
 @click.option(
@@ -130,19 +130,22 @@ from ._render import print_findings, print_summary
     is_flag=True,
     panel=Panel.OUTPUT,
     help=(
-        "Show every hybrid tier plus the raw traditional/semantic duplicate lists "
-        "(implies --include-review)"
+        "Show every hybrid tier plus the raw traditional/semantic duplicate lists and "
+        "lift the default --max-duplicates cap (implies --include-review)"
     ),
 )
 @click.option(
     "--max-duplicates",
-    type=click.IntRange(min=1),
-    default=None,
+    type=MAX_DUPLICATES,
+    metavar="N|all",
+    default=DEFAULT_MAX_DUPLICATES,
+    show_default=True,
     panel=Panel.OUTPUT,
     help=(
-        "Cap the primary duplicate list at N pairs, highest confidence first, in JSON "
-        "and terminal output. Raw --show-all lists stay complete; the exit code counts "
-        "every finding"
+        "Cap the primary duplicate list at N pairs, actionable tiers first, in JSON and "
+        "terminal output; 'all' removes the cap, as do --include-review, --show-all, and "
+        "--full-table unless N is given. Raw --show-all lists stay complete; the exit "
+        "code counts every finding"
     ),
 )
 @click.option(
@@ -155,7 +158,10 @@ from ._render import print_findings, print_summary
     "--full-table",
     is_flag=True,
     panel=Panel.OUTPUT,
-    help="Show all rows in terminal tables",
+    help=(
+        "Show all rows in the unused and raw duplicate tables and lift the default "
+        "--max-duplicates cap"
+    ),
 )
 @click.option(
     "--fail-on",
@@ -202,7 +208,12 @@ def check_command(ctx: click.Context, path: Path, **params: Any) -> None:
 
         if opts.as_json:
             report_text = to_json_text(
-                check_result_to_json(selection, fail_on=opts.fail_on, exit_code=exit_code)
+                check_result_to_json(
+                    selection,
+                    fail_on=opts.fail_on,
+                    exit_code=exit_code,
+                    strict_unused=opts.strict_unused,
+                )
             )
         else:
             print_summary(
@@ -210,7 +221,6 @@ def check_command(ctx: click.Context, path: Path, **params: Any) -> None:
                 fail_on=opts.fail_on,
                 exit_code=exit_code,
                 strict_unused=opts.strict_unused,
-                max_items=opts.table_max_items,
             )
             print_findings(
                 selection,

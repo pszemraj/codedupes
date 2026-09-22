@@ -2241,7 +2241,6 @@ class ECMAScriptBackend(TreeSitterBackend):
         :param exported_names: Top-level names the file exports by reference.
         :return: Unit spec, or ``None`` when the function has no body or stable name.
         """
-        node_type = getattr(node, "type", "")
         if _has_ancestor(node, {"ambient_declaration"}):
             return None
         body = _child_by_field(node, "body")
@@ -2249,7 +2248,9 @@ class ECMAScriptBackend(TreeSitterBackend):
             return None
 
         source_node = node
-        if node_type in self.function_declarations:
+        bound = False
+        unit_type = CodeUnitType.FUNCTION
+        if getattr(node, "type", "") in self.function_declarations:
             name = self._name_field(node, source)
             if not name:
                 export_parent = getattr(node, "parent", None)
@@ -2260,30 +2261,62 @@ class ECMAScriptBackend(TreeSitterBackend):
                     return None
                 name = "default"
                 source_node = export_parent
-            context = self._lexical_context(node, source)
-            qualified_name = qualified(prefix, *context, name)
-            unit_type = CodeUnitType.FUNCTION
         else:
             binding = self._binding_for_value(node, source)
             own_name = self._name_field(node, source)
             if binding:
-                bound_name, source_node = binding
-                contextual_name = self._contextual_binding(node, bound_name, source)
-                name = bound_name.rsplit(".", 1)[-1]
-                qualified_name = qualified(prefix, contextual_name)
-                source_kind = getattr(source_node, "type", "")
-                unit_type = (
-                    CodeUnitType.METHOD
-                    if source_kind in self.field_types
-                    else CodeUnitType.FUNCTION
-                )
+                name, source_node = binding
+                bound = True
+                if getattr(source_node, "type", "") in self.field_types:
+                    unit_type = CodeUnitType.METHOD
             elif own_name:
                 name = own_name
-                qualified_name = qualified(prefix, *self._lexical_context(node, source), name)
-                unit_type = CodeUnitType.FUNCTION
             else:
                 return None
 
+        return self._bindable_spec(
+            node,
+            source,
+            prefix,
+            exported_names,
+            body=body,
+            name=name,
+            source_node=source_node,
+            bound=bound,
+            unit_type=unit_type,
+        )
+
+    def _bindable_spec(
+        self,
+        node: Any,
+        source: bytes,
+        prefix: str,
+        exported_names: frozenset[str],
+        *,
+        body: Any,
+        name: str,
+        source_node: Any,
+        bound: bool,
+        unit_type: CodeUnitType,
+    ) -> UnitSpec:
+        """Finish a function or class spec once its name and source node are known.
+
+        :param node: Function or class node.
+        :param source: Full file source bytes.
+        :param prefix: Module prefix for qualified names.
+        :param exported_names: Top-level names the file exports by reference.
+        :param body: Body node the unit hashes and counts statements from.
+        :param name: Declared name, or the dotted binding name when ``bound``.
+        :param source_node: Node whose span and export status define the unit.
+        :param bound: Whether ``name`` came from a variable, property, or export binding.
+        :param unit_type: Unit type to record.
+        :return: Unit spec.
+        """
+        if bound:
+            qualified_name = qualified(prefix, self._contextual_binding(node, name, source))
+            name = name.rsplit(".", 1)[-1]
+        else:
+            qualified_name = qualified(prefix, *self._lexical_context(node, source), name)
         exported = self._is_exported(
             source_node,
             source,
@@ -2297,7 +2330,7 @@ class ECMAScriptBackend(TreeSitterBackend):
             name=name,
             qualified_name=qualified_name,
             unit_type=unit_type,
-            native_kind=node_type,
+            native_kind=getattr(node, "type", ""),
             is_public=self._is_public_member(source_node, source, name),
             is_exported=exported,
         )
@@ -2317,7 +2350,6 @@ class ECMAScriptBackend(TreeSitterBackend):
         :param exported_names: Top-level names the file exports by reference.
         :return: Unit spec, or ``None`` when the class has no body or stable name.
         """
-        node_type = getattr(node, "type", "")
         if _has_ancestor(node, {"ambient_declaration"}):
             return None
         body = _first_node(
@@ -2330,29 +2362,16 @@ class ECMAScriptBackend(TreeSitterBackend):
         if identity is None:
             return None
         name, source_node = identity
-        if not _same_node(source_node, node):
-            bound_name = name
-            contextual_name = self._contextual_binding(node, bound_name, source)
-            name = bound_name.rsplit(".", 1)[-1]
-            qualified_name = qualified(prefix, contextual_name)
-        else:
-            qualified_name = qualified(prefix, *self._lexical_context(node, source), name)
-        exported = self._is_exported(
-            source_node,
+        return self._bindable_spec(
+            node,
             source,
-            qualified_name.removeprefix(prefix + "."),
+            prefix,
             exported_names,
-        )
-        return UnitSpec(
-            node=node,
-            source_node=source_node,
             body=body,
             name=name,
-            qualified_name=qualified_name,
+            source_node=source_node,
+            bound=not _same_node(source_node, node),
             unit_type=CodeUnitType.CLASS,
-            native_kind=node_type,
-            is_public=self._is_public_member(source_node, source, name),
-            is_exported=exported,
         )
 
     def _method_spec(

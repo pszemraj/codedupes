@@ -54,7 +54,16 @@ codedupes check ./src --json | jq empty
     "reported_duplicates": 1,
     "omitted_review_duplicates": 2,
     "truncated_duplicates": 0,
-    "max_duplicates": null,
+    "truncated_by_tier": {
+      "exact": 0,
+      "traditional_near": 0,
+      "hybrid_confirmed": 0,
+      "semantic_high_confidence": 0,
+      "semantic_review": 0
+    },
+    "max_duplicates": 20,
+    "actionable_duplicates": 1,
+    "reported_actionable_duplicates": 1,
     "duplicates_by_tier": {
       "exact": 0,
       "traditional_near": 0,
@@ -89,7 +98,9 @@ codedupes check ./src --json | jq empty
       "manifest_generation": 17
     },
     "fail_on": "actionable",
-    "exit_code": 1
+    "strict_unused": false,
+    "exit_code": 1,
+    "hidden_only_failure": []
   },
   "duplicates": [
     {
@@ -139,13 +150,15 @@ The shortened example omits `u1` and `u2` from `units`; real output includes eve
 
 #### Report selection
 
-In default combined mode, `duplicates` contains hybrid edges of every tier except `semantic_review`; see [tier evidence](analysis-defaults.md#hybrid-synthesis-confidence-defaults). `--include-review` admits review pairs into the same [confidence ranking](analysis-defaults.md#confidence-scale). `--show-all` implies `--include-review` and also adds `traditional_duplicates` and `semantic_duplicates` as raw edge lists with `unit_a`, `unit_b`, `similarity`, and `method` (`structural_hash`, `token_hash`, or `jaccard` for traditional edges; `semantic` for semantic edges).
+In default combined mode, `duplicates` contains hybrid edges of every tier except `semantic_review`; see [tier evidence](analysis-defaults.md#hybrid-synthesis-confidence-defaults). The list is ranked for review, not by raw score: actionable tiers (`exact`, `traditional_near`, `hybrid_confirmed`) come first, then `semantic_high_confidence`, then any `semantic_review` pairs admitted by `--include-review`; inside each group pairs keep the analyzer's [confidence order](analysis-defaults.md#confidence-scale). `--show-all` implies `--include-review` and also adds `traditional_duplicates` and `semantic_duplicates` as raw edge lists with `unit_a`, `unit_b`, `similarity`, and `method` (`structural_hash`, `token_hash`, or `jaccard` for traditional edges; `semantic` for semantic edges).
 
-`summary.hybrid_duplicates` counts the complete synthesis, `summary.duplicates_by_tier` breaks that count down over all five tiers (always present, zero-filled), `summary.reported_duplicates` counts the edges actually emitted, `summary.omitted_review_duplicates` counts pairs withheld by the report policy, and `summary.truncated_duplicates` counts pairs cut by `--max-duplicates`. In combined mode, `reported_duplicates + omitted_review_duplicates + truncated_duplicates == hybrid_duplicates` regardless of report-selection flags.
+`summary.hybrid_duplicates` counts the complete synthesis, `summary.duplicates_by_tier` breaks that count down over all five tiers (always present, zero-filled), `summary.reported_duplicates` counts the edges actually emitted, `summary.omitted_review_duplicates` counts pairs withheld by the report policy, and `summary.truncated_duplicates` counts pairs cut by the report cap, broken down over the same five tiers in `summary.truncated_by_tier` (zero-filled; all zeros in single-method modes). In combined mode, `reported_duplicates + omitted_review_duplicates + truncated_duplicates == hybrid_duplicates` regardless of report-selection flags. `summary.actionable_duplicates` counts the pairs in the complete result that fail `--fail-on actionable` (actionable tiers in combined mode; every raw pair in a single-method mode) and `summary.reported_actionable_duplicates` counts how many of those are in `duplicates`, so `reported_duplicates - reported_actionable_duplicates` is the number of advisory pairs on the report.
 
-Nothing is truncated unless you ask: `--max-duplicates N` keeps the first `N` edges of the admitted list in the analyzer's confidence order (so the strongest evidence survives), records the cap as `summary.max_duplicates` (`null` when unset), and drops units referenced only by cut edges from `units`. The cap applies after the review filter, so `--include-review --max-duplicates N` ranks review pairs into the same budget; the raw `--show-all` lists are never capped. The exit code ignores the cap, see [exit codes](#exit-codes).
+The primary list is capped by default: `duplicates` holds at most 20 pairs (`--max-duplicates`, recorded as `summary.max_duplicates`), the same pairs in the same order as the terminal table, and `units` drops units referenced only by cut edges. Because actionable tiers rank first, the cap trims advisory candidates before corroborated ones. `--max-duplicates N` changes the budget and `--max-duplicates all` removes it (`max_duplicates: null`); `--include-review`, `--show-all`, and `--full-table` also remove it unless an explicit `--max-duplicates` accompanies them. With `--include-review --max-duplicates N`, review pairs sit at the end of the ranking, so they appear only once every actionable and advisory pair fits under `N`; pairs the cap cuts count as `truncated`, not `omitted_review`, and `truncated_by_tier.semantic_review` says how many review pairs were cut. The raw `--show-all` lists are never capped. The exit code ignores the cap, see [exit codes](#exit-codes).
 
-In `--semantic-only` or `--traditional-only` mode, `duplicates` directly contains the active raw edge list ordered by descending similarity (exact pairs at 1.0 first, ties in analyzer order; `--max-duplicates` keeps that prefix), `duplicates_by_tier` is all zeros, and the `--show-all` arrays are omitted. `analysis_mode` is always one of `combined`, `traditional`, `semantic`, or `none`.
+In `--semantic-only` or `--traditional-only` mode, `duplicates` directly contains the active raw edge list ordered by descending similarity (exact pairs at 1.0 first, ties in analyzer order; the cap keeps that prefix), `duplicates_by_tier` and `truncated_by_tier` are all zeros, and the `--show-all` arrays are omitted. `analysis_mode` is always one of `combined`, `traditional`, `semantic`, or `none`.
+
+Only the primary duplicate list is bounded. `potentially_unused` lists every unused finding, `extraction_diagnostics` and `semantic_diagnostics` are complete, and the raw `--show-all` edge lists are complete; their endpoints stay in `units`. A scan with many unused findings or diagnostics therefore still produces a large document.
 
 See [hybrid confidence tiers](analysis-defaults.md#hybrid-synthesis-confidence-defaults) to interpret `tier` and `confidence`.
 
@@ -243,7 +256,7 @@ For `semantic-context-overflow` warnings and their cache behavior, see [long-inp
 - `--fail-on all`: any duplicate or unused finding in the complete result exits `1`, including `semantic_review` pairs the report withheld.
 - `--fail-on none`: findings never change the successful exit code.
 
-The exit code is computed on the complete analysis result before report selection, so `--include-review`, `--show-all`, and `--max-duplicates` never change it. When every failing finding is hidden from the report, the terminal `Finding status` row says which hidden group fails and how to list it: withheld review pairs under `--fail-on all` point at `--include-review`, and pairs cut by `--max-duplicates` point at a higher cap (a strong pure-semantic pair can outrank a corroborated one, so a small cap can hide the only `hybrid_confirmed` pair that fails `actionable`). In JSON the same situations read as `exit_code: 1` with no failing edge in `duplicates` and a non-zero `omitted_review_duplicates` or `truncated_duplicates`. The selected policy and computed result are always present as `summary.fail_on` and `summary.exit_code`. Terminal summaries show the same values as `Failure policy` and `Finding status` rows.
+The exit code is computed on the complete analysis result before report selection, so `--include-review`, `--show-all`, and `--max-duplicates` never change it. The only way every failing finding can be hidden from the report is `--fail-on all` with withheld `semantic_review` pairs; the terminal `Finding status` row then says so and points at `--include-review`, and JSON records `"hidden_only_failure": ["review"]` (otherwise `[]`). The report cap cannot cause this: actionable tiers rank first, so whenever a cut pair fails, an emitted pair fails too. The selected policy, the unused strictness it was evaluated with, and the computed result are always present as `summary.fail_on`, `summary.strict_unused`, and `summary.exit_code`. Terminal summaries show the same values as `Failure policy` and `Finding status` rows.
 
 Command status conventions:
 
@@ -255,10 +268,10 @@ Default combined semantic backend or runtime failures are fatal. `--allow-semant
 
 ## Terminal duplicate panels
 
-Tables show up to 20 rows by default; their footers count additional selected rows and point to `--full-table`. The [report-level cap](#report-selection) applies before table rendering. When hidden findings fail the run, the status guidance also names `--full-table` if restoring the hidden pairs can exceed the terminal limit; raising `--max-duplicates` alone does not remove that limit.
+The primary duplicate table lists every pair the [report cap](#report-selection) selected, so it shows exactly the pairs `--json` would emit. The unused table and the raw `--show-all` tables show up to 20 rows; their footers count the remaining rows and point to `--full-table`, which lifts that row limit and, unless `--max-duplicates` is given explicitly, the report cap as well.
 
 Locations use the shorter of working-directory-relative and absolute `<path>:<line>` spellings.
 
-- Combined: `Hybrid Duplicates (N pairs, M review withheld, K truncated)`, followed by any raw panels requested through [report selection](#report-selection). When every hybrid pair is withheld, one dim line reports the withheld count instead of an empty table. The summary lists every tier's count; withheld and truncated totals appear when non-zero.
+- Combined: `Hybrid Duplicates (N pairs, M review withheld, K truncated)`, followed by any raw panels requested through [report selection](#report-selection). When every hybrid pair is withheld, one dim line reports the withheld count instead of an empty table. The summary lists every tier's count plus `Actionable duplicates` as `total (reported)`; withheld and truncated totals appear when non-zero, the latter naming the cut tiers and pointing at `--max-duplicates all`.
 - `--traditional-only`: `Traditional Duplicates (Structural/Token/Jaccard)`.
 - `--semantic-only`: `Semantic Duplicates (Embedding)`.

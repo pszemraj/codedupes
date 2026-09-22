@@ -30,8 +30,10 @@ from .models import (
 )
 from .report import (
     ACTIONABLE_TIERS,
+    DEFAULT_MAX_DUPLICATES,
     ReportPolicy,
     ReportSelection,
+    actionable_pairs,
     check_result_to_json,
     hidden_only_failure,
     run_should_fail,
@@ -48,6 +50,7 @@ except ImportError:
 
 __all__ = [
     "ACTIONABLE_TIERS",
+    "DEFAULT_MAX_DUPLICATES",
     "HYBRID_TIERS",
     "AnalysisResult",
     "AnalyzerConfig",
@@ -61,6 +64,7 @@ __all__ = [
     "ReportSelection",
     "__version__",
     "__version_tuple__",
+    "actionable_pairs",
     "analyze_directory",
     "check_result_to_json",
     "hidden_only_failure",
