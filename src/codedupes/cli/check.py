@@ -244,6 +244,7 @@ def check_command(ctx: click.Context, path: Path, **params: Any) -> None:
                 selection,
                 show_source=opts.show_source,
                 max_items=opts.table_max_items,
+                strict_unused=opts.strict_unused,
             )
 
     if opts.as_json:

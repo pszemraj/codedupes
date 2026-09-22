@@ -118,27 +118,27 @@ def test_cli_full_table_lifts_the_pair_cap_and_the_unused_cap(monkeypatch, tmp_p
     # Both primary tables render every selected row; only the report caps bound them.
     assert "(20 pairs, 5 truncated)" in default_result.output
     assert "5 (5 semantic_high_confidence; use --max-duplicates all)" in default_result.output
-    assert "Likely Dead Code (20 units, 5 truncated)" in default_result.output
-    assert "Truncated dead code" in default_result.output
+    assert "Potentially Unused (20 units, 5 truncated)" in default_result.output
+    assert "Truncated unused" in default_result.output
     assert "5 (use --max-unused all)" in default_result.output
     assert "--full-table" not in default_result.output
 
     full_result = runner.invoke(cli.cli, ["check", str(path), "--full-table"])
     assert full_result.exit_code == 1
     assert "(25 pairs)" in full_result.output
-    assert "Likely Dead Code (25 units)" in full_result.output
+    assert "Potentially Unused (25 units)" in full_result.output
     assert "Truncated duplicates" not in full_result.output
-    assert "Truncated dead code" not in full_result.output
+    assert "Truncated unused" not in full_result.output
 
     # An explicit cap survives --full-table; the other cap still lifts.
     capped = runner.invoke(cli.cli, ["check", str(path), "--full-table", "--max-duplicates", "10"])
     assert "(10 pairs, 15 truncated)" in capped.output
-    assert "Likely Dead Code (25 units)" in capped.output
+    assert "Potentially Unused (25 units)" in capped.output
     capped_unused = runner.invoke(
         cli.cli, ["check", str(path), "--full-table", "--max-unused", "10"]
     )
     assert "(25 pairs)" in capped_unused.output
-    assert "Likely Dead Code (10 units, 15 truncated)" in capped_unused.output
+    assert "Potentially Unused (10 units, 15 truncated)" in capped_unused.output
 
 
 def test_cli_unused_panel_ranks_by_line_span_and_shows_lines_column(monkeypatch, tmp_path):
@@ -152,11 +152,28 @@ def test_cli_unused_panel_ranks_by_line_span_and_shows_lines_column(monkeypatch,
     terminal = runner.invoke(
         cli.cli, ["check", str(path), "--max-unused", "3", "--output-width", "160"]
     )
-    panel = terminal.output.split("Likely Dead Code")[1]
+    panel = terminal.output.split("Potentially Unused")[1]
     assert "Lines" in panel
     assert re.findall(r"dead_\d{2}", panel) == ["dead_00", "dead_01", "dead_02"]
     # dead_00 spans seven lines (def plus six pass statements).
     assert re.search(r"dead_00\s*│\s*function\s*│\s*7\s*│", panel)
+    assert "Unused policy" in terminal.output
+    assert "default" in terminal.output
+    assert (
+        "No detected references; public functions and methods are excluded "
+        "(use --strict-unused to include them); largest first." in terminal.output
+    )
+
+    strict = runner.invoke(
+        cli.cli,
+        ["check", str(path), "--strict-unused", "--max-unused", "3", "--output-width", "160"],
+    )
+    assert "Unused policy" in strict.output
+    assert "strict" in strict.output
+    assert (
+        "No detected references, including public functions and methods; largest first."
+        in strict.output
+    )
 
     payload = json.loads(
         runner.invoke(cli.cli, ["check", str(path), "--json", "--max-unused", "3"]).output
@@ -638,7 +655,7 @@ def test_cli_explicit_max_unused_wins_over_expansion_flags(monkeypatch, tmp_path
 
     assert result.exit_code == 1
     assert "(25 pairs)" in result.output
-    assert "Likely Dead Code (3 units, 22 truncated)" in result.output
+    assert "Potentially Unused (3 units, 22 truncated)" in result.output
 
 
 def test_cli_cap_keeps_the_actionable_pair_ahead_of_a_stronger_advisory_pair(monkeypatch, tmp_path):

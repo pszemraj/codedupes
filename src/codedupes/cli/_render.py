@@ -242,12 +242,6 @@ def print_summary(
             summary.add_row("Withheld review candidates", f"{withheld} (use --include-review)")
         if truncated:
             summary.add_row("Truncated duplicates", truncation_note)
-        summary.add_row("Likely dead code", str(len(result.potentially_unused)))
-        if truncated_unused:
-            summary.add_row("Truncated dead code", unused_note)
-        summary.add_row("", "")
-        summary.add_row("Raw traditional duplicates", str(len(result.traditional_duplicates)))
-        summary.add_row("Raw semantic duplicates", str(len(result.semantic_duplicates)))
     else:
         if selection.mode == "traditional":
             summary.add_row("Traditional duplicates", str(len(result.traditional_duplicates)))
@@ -263,9 +257,16 @@ def print_summary(
         if truncated:
             summary.add_row("Reported duplicates", str(selection.reported_findings))
             summary.add_row("Truncated duplicates", truncation_note)
-        summary.add_row("Potentially unused", str(len(result.potentially_unused)))
-        if truncated_unused:
-            summary.add_row("Truncated unused", unused_note)
+
+    summary.add_row("Potentially unused", str(len(result.potentially_unused)))
+    if truncated_unused:
+        summary.add_row("Truncated unused", unused_note)
+    summary.add_row("Unused policy", "strict" if strict_unused else "default")
+
+    if selection.mode == "combined":
+        summary.add_row("", "")
+        summary.add_row("Raw traditional duplicates", str(len(result.traditional_duplicates)))
+        summary.add_row("Raw semantic duplicates", str(len(result.semantic_duplicates)))
 
     if result.extraction_diagnostics:
         summary.add_row("Extraction diagnostics", str(len(result.extraction_diagnostics)))
@@ -586,13 +587,13 @@ def print_hybrid_duplicates(
 def print_unused(
     unused: list[CodeUnit],
     *,
-    title: str = "Potentially Unused",
+    strict: bool,
     truncated: int = 0,
 ) -> None:
     """Print every selected unused unit, largest first; the report cap is the only bound.
 
     :param unused: Units with no detected references, in report order.
-    :param title: Section title.
+    :param strict: Whether public functions and methods are also reported.
     :param truncated: Units the ``--max-unused`` cap cut from the report.
     :return: ``None``.
     """
@@ -602,11 +603,14 @@ def print_unused(
     counts = _count(len(unused), "unit")
     if truncated:
         counts += f", {truncated} truncated"
-    _output.console.print(f"\n[bold yellow]{title}[/bold yellow] ({counts})")
-    _output.console.print(
-        "[dim]These have no detected references and don't appear to be public API; "
-        "largest first.[/dim]"
+    _output.console.print(f"\n[bold yellow]Potentially Unused[/bold yellow] ({counts})")
+    blurb = (
+        "No detected references, including public functions and methods; largest first."
+        if strict
+        else "No detected references; public functions and methods are excluded "
+        "(use --strict-unused to include them); largest first."
     )
+    _output.console.print(f"[dim]{blurb}[/dim]")
 
     table = Table(header_style="bold", box=box.ROUNDED, border_style="dim", show_lines=True)
     table.add_column("Name", style="cyan", overflow="fold")
@@ -630,6 +634,7 @@ def print_findings(
     *,
     show_source: bool,
     max_items: int | None,
+    strict_unused: bool,
 ) -> None:
     """Print every finding panel selected for one check report.
 
@@ -640,6 +645,7 @@ def print_findings(
     :param selection: Findings selected for this report.
     :param show_source: Whether to render source snippets.
     :param max_items: Optional row limit for the raw diagnostic tables.
+    :param strict_unused: Whether public functions and methods are also reported.
     :return: ``None``.
     """
     print_exact_families(
@@ -656,7 +662,7 @@ def print_findings(
         )
         print_unused(
             selection.potentially_unused,
-            title="Likely Dead Code",
+            strict=strict_unused,
             truncated=len(selection.truncated_unused),
         )
         if selection.traditional_duplicates is not None:
@@ -682,7 +688,11 @@ def print_findings(
         max_items=None,
         truncated=len(selection.truncated),
     )
-    print_unused(selection.potentially_unused, truncated=len(selection.truncated_unused))
+    print_unused(
+        selection.potentially_unused,
+        strict=strict_unused,
+        truncated=len(selection.truncated_unused),
+    )
 
 
 def _ranked_table() -> Table:
