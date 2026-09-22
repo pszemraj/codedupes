@@ -10,6 +10,15 @@ from tests.cli_helpers import build_result, build_unit, run_cli_subprocess
 from tests.conftest import patch_cli_analyzer
 
 
+def _unwrapped(output: str) -> str:
+    """Rejoin a rendered error panel's message across its line wrapping.
+
+    :param output: Captured CLI output.
+    :return: Output with panel borders dropped and every whitespace run reduced to one space.
+    """
+    return " ".join(output.replace("│", " ").split())
+
+
 @pytest.mark.parametrize("value", ["nan", "inf", "-inf", "-0.1", "1.1"])
 def test_cli_check_rejects_invalid_duplicate_threshold_before_analysis(
     monkeypatch, tmp_path, value
@@ -810,7 +819,7 @@ def test_cli_focus_rejects_file_targets_and_out_of_root_paths(tmp_path):
         cli.cli, ["check", str(file_target), "--focus", str(file_target)]
     )
     assert result_file_target.exit_code == 2
-    assert "--focus requires a directory target" in result_file_target.output
+    assert "--focus requires a directory target" in _unwrapped(result_file_target.output)
 
     root = tmp_path / "root"
     root.mkdir()
@@ -820,7 +829,7 @@ def test_cli_focus_rejects_file_targets_and_out_of_root_paths(tmp_path):
 
     result_outside = CliRunner().invoke(cli.cli, ["check", str(root), "--focus", str(outside)])
     assert result_outside.exit_code == 2
-    assert "is not inside the scan root" in result_outside.output
+    assert "is not inside the scan root" in _unwrapped(result_outside.output)
 
 
 def test_cli_focus_missing_path_is_a_click_error(tmp_path):
