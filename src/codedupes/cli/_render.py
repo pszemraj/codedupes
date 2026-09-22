@@ -172,7 +172,14 @@ def print_summary(
     result = selection.result
     withheld = len(selection.omitted_review)
     truncated = len(selection.truncated)
-    truncation_note = f"{truncated} (use --max-duplicates all)"
+    # Name the cut tiers: review pairs rank last, so under --include-review a
+    # cap can drop every one of them while the withheld row stays absent.
+    cut_tiers = ", ".join(
+        f"{count} {tier}" for tier, count in selection.truncated_by_tier.items() if count
+    )
+    truncation_note = (
+        f"{truncated} ({cut_tiers + '; ' if cut_tiers else ''}use --max-duplicates all)"
+    )
     _output.console.print()
 
     summary = Table(title="Analysis Summary", show_header=False, box=None)

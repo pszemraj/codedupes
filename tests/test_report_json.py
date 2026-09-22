@@ -186,6 +186,31 @@ def test_check_json_raw_modes_count_every_pair_as_actionable(tmp_path):
     assert summary["actionable_duplicates"] == 2
     assert summary["reported_actionable_duplicates"] == 1
     assert summary["truncated_duplicates"] == 1
+    # Raw pairs carry no tier, so the breakdown stays zero-filled.
+    assert summary["truncated_by_tier"] == dict.fromkeys(summary["duplicates_by_tier"], 0)
+
+
+def test_check_json_truncated_by_tier_names_cut_review_pairs(tmp_path):
+    result = _result(tmp_path)  # One exact pair, one semantic_review pair.
+
+    withheld = _payload(result, ReportPolicy(max_duplicates=1))["summary"]
+    assert withheld["omitted_review_duplicates"] == 1
+    assert withheld["truncated_duplicates"] == 0
+    assert withheld["truncated_by_tier"]["semantic_review"] == 0
+
+    # Including review pairs ranks them last, so the same cap now cuts the
+    # review pair instead of withholding it.
+    cut = _payload(result, ReportPolicy(include_review=True, max_duplicates=1))["summary"]
+    assert cut["reported_duplicates"] == 1
+    assert cut["omitted_review_duplicates"] == 0
+    assert cut["truncated_duplicates"] == 1
+    assert cut["truncated_by_tier"] == {
+        "exact": 0,
+        "traditional_near": 0,
+        "hybrid_confirmed": 0,
+        "semantic_high_confidence": 0,
+        "semantic_review": 1,
+    }
 
 
 def _chain_result(tmp_path: Path, pairs: int) -> AnalysisResult:

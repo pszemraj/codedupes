@@ -168,6 +168,7 @@ def check_result_to_json(
             "reported_duplicates": len(selection.duplicates),
             "omitted_review_duplicates": len(selection.omitted_review),
             "truncated_duplicates": len(selection.truncated),
+            "truncated_by_tier": dict(selection.truncated_by_tier),
             "max_duplicates": selection.policy.max_duplicates,
             "actionable_duplicates": len(
                 actionable_pairs(result.all_duplicates, combined=combined)

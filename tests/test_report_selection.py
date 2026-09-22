@@ -279,8 +279,16 @@ def test_max_duplicates_keeps_a_prefix_after_the_review_filter(tmp_path):
     assert [pair.tier for pair in capped.truncated] == ["semantic_high_confidence"]
     assert [pair.tier for pair in capped.omitted_review] == ["semantic_review"]
     assert len(capped.duplicates) + len(capped.omitted_review) + len(capped.truncated) == 4
-    # The tier breakdown still describes the complete result.
+    # The tier breakdown still describes the complete result; the truncated
+    # breakdown is zero-filled over every tier like it.
     assert capped.duplicates_by_tier["semantic_high_confidence"] == 1
+    assert capped.truncated_by_tier == {
+        "exact": 0,
+        "traditional_near": 0,
+        "hybrid_confirmed": 0,
+        "semantic_high_confidence": 1,
+        "semantic_review": 0,
+    }
     # Units referenced only by truncated pairs drop out with them.
     assert [unit.name for unit in capped.units] == ["f0", "f1", "f2", "f3"]
 
@@ -293,6 +301,10 @@ def test_max_duplicates_keeps_a_prefix_after_the_review_filter(tmp_path):
         "semantic_high_confidence",
         "semantic_review",
     ]
+    # With nothing withheld, the truncated breakdown is the only place that
+    # says the included review pair was cut rather than shown.
+    assert with_review.truncated_by_tier["semantic_review"] == 1
+    assert with_review.truncated_by_tier["semantic_high_confidence"] == 1
 
 
 def test_select_findings_ranks_actionable_tiers_first_within_analyzer_order(tmp_path):

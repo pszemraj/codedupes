@@ -2121,7 +2121,7 @@ def test_cli_full_table_lifts_the_pair_cap_and_the_unused_row_limit(monkeypatch,
     assert default_result.exit_code == 1
     # The primary table renders every selected pair; only the report cap bounds it.
     assert "(20 pairs, 5 truncated)" in default_result.output
-    assert "5 (use --max-duplicates all)" in default_result.output
+    assert "5 (5 exact; use --max-duplicates all)" in default_result.output
     assert (
         "... and 5 more (use --full-table to list all rows)"
         in default_result.output.split("Likely Dead Code")[1]
@@ -2526,12 +2526,19 @@ def test_cli_default_report_lists_the_same_twenty_pairs_in_terminal_and_json(mon
     assert summary["max_duplicates"] == 20
     assert summary["reported_duplicates"] == 20
     assert summary["truncated_duplicates"] == 5
+    assert summary["truncated_by_tier"] == {
+        "exact": 0,
+        "traditional_near": 0,
+        "hybrid_confirmed": 0,
+        "semantic_high_confidence": 5,
+        "semantic_review": 0,
+    }
     assert summary["actionable_duplicates"] == 12
     assert summary["reported_actionable_duplicates"] == 12
     assert summary["strict_unused"] is False
     assert summary["hidden_only_failure"] == []
     assert "(20 pairs, 5 truncated)" in terminal.output
-    assert "5 (use --max-duplicates all)" in terminal.output
+    assert "5 (5 semantic_high_confidence; use --max-duplicates all)" in terminal.output
     assert "Actionable duplicates" in terminal.output
     assert "12 (12 reported)" in terminal.output
     assert "more (use --full-table" not in terminal.output
@@ -2625,7 +2632,7 @@ def test_cli_cap_keeps_the_actionable_pair_ahead_of_a_stronger_advisory_pair(mon
     assert "third" not in table
     assert "fail (exit 1)" in capped.output
     assert "to list them in the primary report" not in capped.output
-    assert "1 (use --max-duplicates all)" in capped.output
+    assert "1 (1 semantic_high_confidence; use --max-duplicates all)" in capped.output
 
     as_json = runner.invoke(cli.cli, ["check", str(path), "--json", "--max-duplicates", "1"])
     payload = json.loads(as_json.output)
@@ -2798,9 +2805,22 @@ def test_cli_max_duplicates_caps_the_report_but_not_the_exit_code(monkeypatch, t
         ["check", str(path), "--no-unused", "--include-review", "--max-duplicates", "1"],
     )
     assert capped.exit_code == 1
-    assert "2 (use --max-duplicates all)" in capped.output
+    # Review pairs rank last, so the cap cut both of them; the note says so
+    # because the withheld row is absent under --include-review.
+    assert "2 (2 semantic_review; use --max-duplicates all)" in capped.output
+    assert "Withheld review candidates" not in capped.output
     assert "(1 pairs, 2 truncated)" in capped.output
     assert "lonely" not in capped.output
+
+    cut_review = runner.invoke(
+        cli.cli,
+        ["check", str(path), "--json", "--no-unused", "--include-review", "--max-duplicates", "1"],
+    )
+    cut_summary = json.loads(cut_review.output)["summary"]
+    assert cut_summary["omitted_review_duplicates"] == 0
+    assert cut_summary["truncated_duplicates"] == 2
+    assert cut_summary["truncated_by_tier"]["semantic_review"] == 2
+    assert cut_summary["duplicates_by_tier"]["semantic_review"] == 2
 
 
 def test_cli_max_duplicates_applies_to_single_method_modes(monkeypatch, tmp_path):

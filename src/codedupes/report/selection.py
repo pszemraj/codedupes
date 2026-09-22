@@ -84,6 +84,9 @@ class ReportSelection:
     omitted_review: list[HybridDuplicate]
     truncated: list[HybridDuplicate] | list[DuplicatePair]
     duplicates_by_tier: dict[HybridTier, int]
+    # Tier breakdown of ``truncated``: review pairs rank last, so a cap can cut
+    # every included review pair while ``omitted_review`` stays empty.
+    truncated_by_tier: dict[HybridTier, int]
     traditional_duplicates: list[DuplicatePair] | None
     semantic_duplicates: list[DuplicatePair] | None
     potentially_unused: list[CodeUnit]
@@ -222,6 +225,10 @@ def select_findings(result: AnalysisResult, policy: ReportPolicy | None = None) 
     if policy.max_duplicates is not None:
         truncated = duplicates[policy.max_duplicates :]
         duplicates = duplicates[: policy.max_duplicates]
+    truncated_by_tier: dict[HybridTier, int] = dict.fromkeys(HYBRID_TIERS, 0)
+    truncated_by_tier.update(
+        Counter(pair.tier for pair in truncated if isinstance(pair, HybridDuplicate))
+    )
 
     units = collect_units(
         _pair_units(duplicates),
@@ -237,6 +244,7 @@ def select_findings(result: AnalysisResult, policy: ReportPolicy | None = None) 
         omitted_review=omitted_review,
         truncated=truncated,
         duplicates_by_tier=duplicates_by_tier,
+        truncated_by_tier=truncated_by_tier,
         traditional_duplicates=traditional,
         semantic_duplicates=semantic,
         potentially_unused=list(result.potentially_unused),
