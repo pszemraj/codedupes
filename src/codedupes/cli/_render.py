@@ -127,19 +127,6 @@ def _count(count: int, noun: str) -> str:
     return f"{count} {noun}" if count == 1 else f"{count} {noun}s"
 
 
-def truncate_source(source: str, max_lines: int = 5) -> str:
-    """Truncate source code for compact display.
-
-    :param source: Source string to truncate.
-    :param max_lines: Maximum lines to keep.
-    :return: Truncated source with optional overflow note.
-    """
-    lines = source.strip().split("\n")
-    if len(lines) <= max_lines:
-        return source.strip()
-    return "\n".join(lines[:max_lines]) + f"\n... ({_count(len(lines) - max_lines, 'more line')})"
-
-
 def _print_diagnostics(title: str, diagnostics: list[ExtractionDiagnostic]) -> None:
     """Print one diagnostic section, capped at the first ten entries.
 
@@ -341,16 +328,21 @@ def _syntax_lexer(unit: CodeUnit) -> str:
     }.get(dialect, "text")
 
 
-def _print_source_panels(*units: CodeUnit) -> None:
-    """Print a syntax-highlighted source snippet per unit.
+def _print_source_panels(*units: CodeUnit, source_lines: int | None) -> None:
+    """Print a syntax-highlighted source snippet per unit, bounded by a line budget.
 
     :param units: Code units to render, in order.
+    :param source_lines: Maximum lines to keep per unit, or ``None`` for no bound.
     :return: ``None``.
     """
     for unit in units:
+        lines, omitted = unit.source_lines(source_lines)
+        text = "\n".join(lines)
+        if omitted:
+            text += f"\n... ({_count(omitted, 'more line')})"
         _output.console.print(
             Panel(
-                Syntax(truncate_source(unit.source), _syntax_lexer(unit), theme="monokai"),
+                Syntax(text, _syntax_lexer(unit), theme="monokai"),
                 title=f"[cyan]{escape(unit.qualified_name)}[/cyan]",
                 border_style="dim",
             )
@@ -362,6 +354,7 @@ def _print_duplicate_table(
     *,
     title: str,
     show_source: bool,
+    source_lines: int | None = None,
     max_items: int | None,
     hybrid: bool,
     withheld: int = 0,
@@ -372,6 +365,7 @@ def _print_duplicate_table(
     :param duplicates: Duplicate pairs to display.
     :param title: Section title.
     :param show_source: Whether to render source snippets.
+    :param source_lines: Maximum source lines per unit when ``show_source`` is set.
     :param max_items: Optional row limit for the raw diagnostic tables; the primary list is already bounded by the report cap and passes ``None``.
     :param hybrid: Whether the payload is hybrid duplicates.
     :param withheld: Review pairs the report policy withheld from this table.
@@ -442,7 +436,7 @@ def _print_duplicate_table(
 
         if show_source:
             _output.console.print(table)
-            _print_source_panels(unit_a, unit_b)
+            _print_source_panels(unit_a, unit_b, source_lines=source_lines)
             table = _build_duplicates_table(hybrid=hybrid, compact=compact)
 
     if not show_source:
@@ -479,12 +473,14 @@ def print_exact_families(
     *,
     truncated: int = 0,
     show_source: bool = False,
+    source_lines: int | None = None,
 ) -> None:
     """Print every selected exact family; the report cap is the only bound.
 
     :param families: Families to print, in report order.
     :param truncated: Families the ``--max-duplicates`` cap cut from the report.
     :param show_source: Whether to render a source snippet per member.
+    :param source_lines: Maximum source lines per unit when ``show_source`` is set.
     :return: ``None``.
     """
     if not families:
@@ -526,7 +522,7 @@ def print_exact_families(
 
         if show_source:
             _output.console.print(table)
-            _print_source_panels(*family.members)
+            _print_source_panels(*family.members, source_lines=source_lines)
             table = _build_families_table(compact=compact)
 
     if not show_source:
@@ -537,6 +533,7 @@ def print_duplicates(
     duplicates: list[DuplicatePair],
     title: str,
     show_source: bool = False,
+    source_lines: int | None = None,
     max_items: int | None = DEFAULT_TABLE_ROWS,
     truncated: int = 0,
 ) -> None:
@@ -545,6 +542,7 @@ def print_duplicates(
     :param duplicates: Duplicate pairs to print.
     :param title: Section title.
     :param show_source: Whether to render source snippets.
+    :param source_lines: Maximum source lines per unit when ``show_source`` is set.
     :param max_items: Optional max rows.
     :param truncated: Pairs the ``--max-duplicates`` cap cut from the table.
     :return: ``None``.
@@ -553,6 +551,7 @@ def print_duplicates(
         duplicates,
         title=title,
         show_source=show_source,
+        source_lines=source_lines,
         max_items=max_items,
         hybrid=False,
         truncated=truncated,
@@ -562,6 +561,7 @@ def print_duplicates(
 def print_hybrid_duplicates(
     duplicates: list[HybridDuplicate],
     show_source: bool = False,
+    source_lines: int | None = None,
     withheld: int = 0,
     truncated: int = 0,
 ) -> None:
@@ -569,6 +569,7 @@ def print_hybrid_duplicates(
 
     :param duplicates: Hybrid duplicates to print.
     :param show_source: Whether to render source snippets.
+    :param source_lines: Maximum source lines per unit when ``show_source`` is set.
     :param withheld: Review pairs the report policy withheld from the table.
     :param truncated: Pairs the ``--max-duplicates`` cap cut from the table.
     :return: ``None``.
@@ -577,6 +578,7 @@ def print_hybrid_duplicates(
         duplicates,
         title="Hybrid Duplicates",
         show_source=show_source,
+        source_lines=source_lines,
         max_items=None,
         hybrid=True,
         withheld=withheld,
@@ -633,6 +635,7 @@ def print_findings(
     selection: ReportSelection,
     *,
     show_source: bool,
+    source_lines: int | None = None,
     max_items: int | None,
     strict_unused: bool,
 ) -> None:
@@ -644,6 +647,7 @@ def print_findings(
 
     :param selection: Findings selected for this report.
     :param show_source: Whether to render source snippets.
+    :param source_lines: Maximum source lines per unit when ``show_source`` is set.
     :param max_items: Optional row limit for the raw diagnostic tables.
     :param strict_unused: Whether public functions and methods are also reported.
     :return: ``None``.
@@ -652,11 +656,13 @@ def print_findings(
         selection.exact_families,
         truncated=len(selection.truncated_exact_families),
         show_source=show_source,
+        source_lines=source_lines,
     )
     if selection.mode == "combined":
         print_hybrid_duplicates(
             cast(list[HybridDuplicate], selection.duplicates),
             show_source=show_source,
+            source_lines=source_lines,
             withheld=len(selection.omitted_review),
             truncated=len(selection.truncated),
         )
@@ -670,6 +676,7 @@ def print_findings(
                 selection.traditional_duplicates,
                 "Traditional Duplicates (Raw Structural/Token/Jaccard)",
                 show_source=show_source,
+                source_lines=source_lines,
                 max_items=max_items,
             )
         if selection.semantic_duplicates is not None:
@@ -677,6 +684,7 @@ def print_findings(
                 selection.semantic_duplicates,
                 "Semantic Duplicates (Raw Embedding)",
                 show_source=show_source,
+                source_lines=source_lines,
                 max_items=max_items,
             )
         return
@@ -685,6 +693,7 @@ def print_findings(
         cast(list[DuplicatePair], selection.duplicates),
         _RAW_DUPLICATE_TITLES[selection.mode],
         show_source=show_source,
+        source_lines=source_lines,
         max_items=None,
         truncated=len(selection.truncated),
     )

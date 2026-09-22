@@ -82,7 +82,7 @@ SEMANTIC_ONLY_PANELS = frozenset({Panel.SEMANTIC, Panel.DEVICE})
 
 
 class ReportCapType(click.ParamType):
-    """Report cap value (``--max-duplicates``, ``--max-unused``): a positive integer, or ``all`` for no cap."""
+    """Cap (``--max-duplicates``, ``--max-unused``, ``--source-lines``): integer or ``all``."""
 
     name = "report_cap"
 
@@ -311,6 +311,7 @@ class CheckOptions:
     max_duplicates: int | None
     max_unused: int | None
     show_source: bool
+    source_lines: int | None
     full_table: bool
     fail_on: Literal["actionable", "all", "none"]
 
@@ -345,9 +346,9 @@ class CheckOptions:
             as_json=params["as_json"],
             verbose=params["verbose"],
             output_width_explicit=_is_cli_explicit(ctx, "output_width"),
-            show_source=params["show_source"],
             full_table=params["full_table"],
         )
+        show_source = params["show_source"] or _is_cli_explicit(ctx, "source_lines")
 
         if params["traditional_only"]:
             specified = [
@@ -390,9 +391,10 @@ class CheckOptions:
             **{
                 name: params[name]
                 for name in cls.__dataclass_fields__
-                if name not in {"semantic", "include_review", *caps}
+                if name not in {"semantic", "include_review", "show_source", *caps}
             },
             include_review=params["include_review"] or params["show_all"],
+            show_source=show_source,
             **caps,
         )
 

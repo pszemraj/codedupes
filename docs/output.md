@@ -157,6 +157,8 @@ The shortened example omits `u1` through `u5` from `units`; real output includes
 
 `native_kind` is the grammar node kind (`function_definition` or `class_definition` for Python, whether or not the definition is decorated). `line`, `start_byte`, and `start_column` locate the unit's first byte - the first decorator of a decorated Python definition - so an indented method reports a non-zero `start_column`; see [source ranges](polyglot-languages.md#source-ranges-and-parse-recovery).
 
+`--show-source` (or an explicit `--source-lines`) adds `source` and `source_lines_omitted` to every unit record: `source` is the unit's source joined back with `\n`, bounded to `--source-lines` lines (default `40`, `all` removes the bound), and `source_lines_omitted` is the count of trailing lines cut to fit that bound (`0` when nothing was cut). Neither field is present without `--show-source`/`--source-lines`, and every other default payload stays byte-identical.
+
 `weak_identifier_jaccard` and `statement_count_ratio` are computed only for the two semantic-only tiers; they are `null` for traditional-near and hybrid-confirmed pairs.
 
 #### Exact families
@@ -283,7 +285,7 @@ Default combined semantic backend or runtime failures are fatal. `--allow-semant
 
 ## Terminal duplicate panels
 
-The primary panels list every finding the [report caps](#report-selection) selected, so they show exactly what `--json` would emit. `Exact Duplicate Families (N families, K truncated)` comes first when any family is kept, one row per family with member count, `Lines`, `Method`, the first member, and up to three more locations before a `+N more` note; `--show-source` prints one snippet per member. The pair table follows, and the unused table (`Potentially Unused (N units, K truncated)`, same title in every mode) lists the largest units first with a `Lines` column and a blurb stating which units are excluded (`--strict-unused` reports public functions and methods too). Only the raw `--show-all` tables keep a 20-row display limit; their footers point to `--full-table`, which lifts that limit and, unless given explicitly, the `--max-duplicates` and `--max-unused` caps as well.
+The primary panels list every finding the [report caps](#report-selection) selected, so they show exactly what `--json` would emit. `Exact Duplicate Families (N families, K truncated)` comes first when any family is kept, one row per family with member count, `Lines`, `Method`, the first member, and up to three more locations before a `+N more` note; `--show-source` prints one snippet per member, bounded to `--source-lines` lines (default `40`) with a trailing `... (N more lines)` note when cut. The pair table follows, and the unused table (`Potentially Unused (N units, K truncated)`, same title in every mode) lists the largest units first with a `Lines` column and a blurb stating which units are excluded (`--strict-unused` reports public functions and methods too). Only the raw `--show-all` tables keep a 20-row display limit; their footers point to `--full-table`, which lifts that limit and, unless given explicitly, the `--max-duplicates` and `--max-unused` caps as well.
 
 Every table names units by `qualified_name`, not the bare name, so a shared function name is distinguishable across files and nesting; module prefixes are never elided. Locations use the shorter of working-directory-relative and absolute `<path>:<line>` spellings.
 

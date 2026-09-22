@@ -63,13 +63,17 @@ def _diagnostic_to_dict(diagnostic: ExtractionDiagnostic) -> dict[str, Any]:
     }
 
 
-def unit_to_dict(unit: CodeUnit) -> dict[str, Any]:
+def unit_to_dict(
+    unit: CodeUnit, *, include_source: bool = False, source_lines: int | None = None
+) -> dict[str, Any]:
     """Convert a code unit to a JSON-serializable summary.
 
     :param unit: Code unit to serialize.
+    :param include_source: Whether to add a bounded ``source`` field.
+    :param source_lines: Max lines to keep, or ``None`` for no bound (needs ``include_source``).
     :return: Serialized unit fields, including the in-run ``uid``.
     """
-    return {
+    payload: dict[str, Any] = {
         "uid": unit.uid,
         "name": unit.name,
         "qualified_name": unit.qualified_name,
@@ -88,16 +92,32 @@ def unit_to_dict(unit: CodeUnit) -> dict[str, Any]:
         "is_public": unit.is_public,
         "is_exported": unit.is_exported,
     }
+    if include_source:
+        lines, omitted = unit.source_lines(source_lines)
+        payload["source"] = "\n".join(lines)
+        payload["source_lines_omitted"] = omitted
+    return payload
 
 
-def _unit_nodes(units: list[CodeUnit], ids: dict[str, str]) -> dict[str, dict[str, Any]]:
+def _unit_nodes(
+    units: list[CodeUnit],
+    ids: dict[str, str],
+    *,
+    include_source: bool = False,
+    source_lines: int | None = None,
+) -> dict[str, dict[str, Any]]:
     """Serialize referenced units once each, keyed by their report-local id.
 
     :param units: Distinct referenced units in report order.
     :param ids: Mapping from unit uid to report-local id.
+    :param include_source: Whether to add a bounded ``source`` field to every unit.
+    :param source_lines: Maximum source lines to keep per unit, or ``None`` for no bound.
     :return: Node map keyed by report-local id.
     """
-    return {ids[unit.uid]: unit_to_dict(unit) for unit in units}
+    return {
+        ids[unit.uid]: unit_to_dict(unit, include_source=include_source, source_lines=source_lines)
+        for unit in units
+    }
 
 
 def _hybrid_edge(duplicate: HybridDuplicate, ids: dict[str, str]) -> dict[str, Any]:
@@ -155,6 +175,8 @@ def check_result_to_json(
     fail_on: FailOnPolicy,
     exit_code: int,
     strict_unused: bool,
+    include_source: bool = False,
+    source_lines: int | None = None,
 ) -> dict[str, Any]:
     """Serialize one selected check report using the normalized graph shape.
 
@@ -162,6 +184,8 @@ def check_result_to_json(
     :param fail_on: Finding policy selected for this run.
     :param exit_code: Exit code computed from the selected policy.
     :param strict_unused: Whether unused findings counted under the failure policy.
+    :param include_source: Whether to add a bounded ``source`` field to every unit.
+    :param source_lines: Maximum source lines to keep per unit, or ``None`` for no bound.
     :return: Check payload.
     """
     result = selection.result
@@ -228,7 +252,9 @@ def check_result_to_json(
         output["semantic_duplicates"] = [
             _raw_edge(pair, ids) for pair in selection.semantic_duplicates
         ]
-    output["units"] = _unit_nodes(selection.units, ids)
+    output["units"] = _unit_nodes(
+        selection.units, ids, include_source=include_source, source_lines=source_lines
+    )
     return output
 
 

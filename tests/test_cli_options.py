@@ -508,7 +508,7 @@ def test_cli_rejects_combined_only_flags_in_single_method_modes(tmp_path, flag, 
 @pytest.mark.parametrize(
     ("command", "tail_args", "rich_args", "expected_option"),
     [
-        ("check", [], ["--show-source"], "--show-source"),
+        ("check", [], ["--full-table"], "--full-table"),
         ("search", ["entry"], ["--verbose"], "--verbose"),
         ("check", [], ["--output-width", "160"], "--output-width"),
     ],

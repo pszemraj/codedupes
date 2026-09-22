@@ -22,6 +22,7 @@ from codedupes.logging_utils import quiet_dependency_loggers
 DEFAULT_OUTPUT_WIDTH = 160
 MIN_OUTPUT_WIDTH = 80
 DEFAULT_TABLE_ROWS = 20
+DEFAULT_SOURCE_LINES = 40
 
 
 def _make_console(output_width: int = DEFAULT_OUTPUT_WIDTH, *, stderr: bool = False) -> Console:
@@ -276,15 +277,16 @@ def _validate_json_output_controls(
     as_json: bool,
     verbose: bool,
     output_width_explicit: bool,
-    show_source: bool = False,
     full_table: bool = False,
 ) -> None:
     """Reject flags that are incompatible with JSON-only output mode.
 
+    ``--show-source``/``--source-lines`` are terminal-panel controls that also
+    add ``source`` to JSON unit records, so they are valid with ``--json``.
+
     :param as_json: Whether JSON output is active.
     :param verbose: Whether verbose logging was requested.
     :param output_width_explicit: Whether output width was explicitly set.
-    :param show_source: Whether source panels were requested.
     :param full_table: Whether unbounded terminal tables were requested.
     :return: ``None``.
     :raises click.UsageError: If a terminal-only option accompanies JSON.
@@ -297,8 +299,6 @@ def _validate_json_output_controls(
         incompatible.append("--verbose")
     if output_width_explicit:
         incompatible.append("--output-width")
-    if show_source:
-        incompatible.append("--show-source")
     if full_table:
         incompatible.append("--full-table")
 

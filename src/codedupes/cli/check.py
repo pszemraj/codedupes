@@ -18,7 +18,7 @@ from codedupes.report.selection import (
 )
 
 from ._options import REPORT_CAP, CheckOptions, Panel, option_panels, semantic_options
-from ._output import _configured_cli_output, _run_cli_action
+from ._output import DEFAULT_SOURCE_LINES, _configured_cli_output, _run_cli_action
 from ._render import print_findings, print_summary
 
 
@@ -170,7 +170,19 @@ from ._render import print_findings, print_summary
     "--show-source",
     is_flag=True,
     panel=Panel.OUTPUT,
-    help="Show source code snippets",
+    help=(
+        "Show a source snippet per reported unit (terminal panels; JSON adds "
+        "`source` to every unit record)"
+    ),
+)
+@click.option(
+    "--source-lines",
+    type=REPORT_CAP,
+    metavar="N|all",
+    default=DEFAULT_SOURCE_LINES,
+    show_default=True,
+    panel=Panel.OUTPUT,
+    help="Max source lines per reported unit; implies --show-source ('all' removes the cap)",
 )
 @click.option(
     "--full-table",
@@ -231,6 +243,8 @@ def check_command(ctx: click.Context, path: Path, **params: Any) -> None:
                     fail_on=opts.fail_on,
                     exit_code=exit_code,
                     strict_unused=opts.strict_unused,
+                    include_source=opts.show_source,
+                    source_lines=opts.source_lines,
                 )
             )
         else:
@@ -243,6 +257,7 @@ def check_command(ctx: click.Context, path: Path, **params: Any) -> None:
             print_findings(
                 selection,
                 show_source=opts.show_source,
+                source_lines=opts.source_lines,
                 max_items=opts.table_max_items,
                 strict_unused=opts.strict_unused,
             )

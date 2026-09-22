@@ -124,6 +124,17 @@ class CodeUnit:
             return self.start_byte < other.end_byte and other.start_byte < self.end_byte
         return self.lineno <= other.end_lineno and other.lineno <= self.end_lineno
 
+    def source_lines(self, limit: int | None) -> tuple[list[str], int]:
+        """Return this unit's source split into lines, bounded by a line budget.
+
+        :param limit: Maximum lines to keep, or ``None`` for no bound.
+        :return: Kept lines, and the count of lines omitted from the end.
+        """
+        lines = self.source.split("\n")
+        if limit is None or len(lines) <= limit:
+            return lines, 0
+        return lines[:limit], len(lines) - limit
+
 
 class _PairIdentity:
     """Hash and compare a duplicate record by its unordered unit pair.

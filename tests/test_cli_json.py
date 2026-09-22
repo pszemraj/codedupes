@@ -310,3 +310,28 @@ def test_cli_json_v4_emits_each_unit_once(monkeypatch, tmp_path):
     payload = json.loads(result.output)
     assert len(payload["duplicates"]) == 4
     assert len(payload["units"]) == 2
+
+
+def test_cli_json_show_source_adds_bounded_source_to_units(monkeypatch, tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+    patch_cli_analyzer(monkeypatch, cli, analyze_result=lambda: build_result(tmp_path))
+    runner = CliRunner()
+
+    plain = runner.invoke(cli.cli, ["check", str(path), "--json"])
+    plain_unit = json.loads(plain.output)["units"]["u0"]
+    assert "source" not in plain_unit
+    assert "source_lines_omitted" not in plain_unit
+
+    bounded = runner.invoke(
+        cli.cli, ["check", str(path), "--json", "--show-source", "--source-lines", "1"]
+    )
+    bounded_unit = json.loads(bounded.output)["units"]["u0"]
+    assert bounded_unit["source"] == "def entry():"
+    assert bounded_unit["source_lines_omitted"] == 1
+
+    # `--source-lines all` implies `--show-source` even without the flag.
+    implied = runner.invoke(cli.cli, ["check", str(path), "--json", "--source-lines", "all"])
+    implied_unit = json.loads(implied.output)["units"]["u0"]
+    assert implied_unit["source"] == build_unit(tmp_path).source
+    assert implied_unit["source_lines_omitted"] == 0

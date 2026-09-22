@@ -20,6 +20,7 @@ from codedupes.report.json import (
     check_result_to_json,
     search_result_to_json,
     to_json_text,
+    unit_to_dict,
 )
 from codedupes.report.selection import (
     DEFAULT_MAX_DUPLICATES,
@@ -428,6 +429,22 @@ def test_check_json_show_all_raw_edges_use_short_ids(tmp_path):
     ]
     assert payload["semantic_duplicates"][0]["unit_a"] == "u1"
     assert payload["semantic_duplicates"][0]["unit_b"] == "u0"
+
+
+def test_unit_to_dict_source_is_opt_in_and_bounded(tmp_path):
+    unit = _unit(tmp_path, "a")
+
+    default = unit_to_dict(unit)
+    assert "source" not in default
+    assert "source_lines_omitted" not in default
+
+    bounded = unit_to_dict(unit, include_source=True, source_lines=1)
+    assert bounded["source"] == "def a():"
+    assert bounded["source_lines_omitted"] == 2
+
+    unbounded = unit_to_dict(unit, include_source=True)
+    assert unbounded["source"] == unit.source
+    assert unbounded["source_lines_omitted"] == 0
 
 
 def test_search_json_v4_unit_and_file_levels(tmp_path):

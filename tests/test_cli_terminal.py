@@ -145,6 +145,34 @@ def test_cli_source_panel_titles_preserve_bracketed_module_names(tmp_path: Path)
     assert "[bold].duplicate" in table_only.stdout
 
 
+def test_cli_source_lines_bounds_source_panels(tmp_path: Path) -> None:
+    body = "\n".join(f"    x{i} = {i}" for i in range(5))
+    source = f"def duplicate(value):\n{body}\n    return value\n"
+    (tmp_path / "a.py").write_text(source, encoding="utf-8")
+    (tmp_path / "b.py").write_text(source, encoding="utf-8")
+
+    result = CliRunner().invoke(
+        cli.cli,
+        [
+            "check",
+            str(tmp_path),
+            "--traditional-only",
+            "--no-unused",
+            "--no-tiny-filter",
+            "--show-source",
+            "--source-lines",
+            "2",
+            "--full-table",
+        ],
+    )
+
+    assert result.exit_code == 1, result.output
+    assert "def duplicate(value):" in result.stdout
+    assert "x0 = 0" in result.stdout
+    assert "x1 = 1" not in result.stdout
+    assert "more line" in result.stdout
+
+
 @pytest.mark.parametrize("result_level", ["unit", "file"])
 def test_cli_table_locations_preserve_bracketed_path_segments(monkeypatch, tmp_path, result_level):
     path = tmp_path / "sample.py"
