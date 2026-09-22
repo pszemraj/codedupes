@@ -566,15 +566,24 @@ def print_findings(
     print_unused(selection.potentially_unused, max_items=max_items)
 
 
+def _ranked_table() -> Table:
+    """Build the Rank/Score scaffold every search result table starts from.
+
+    :return: Table with the two leading columns; callers append their own.
+    """
+    table = Table(header_style="bold", box=box.ROUNDED, border_style="dim", show_lines=True)
+    table.add_column("Rank", justify="right", width=4, min_width=4, no_wrap=True)
+    table.add_column("Score", style="green", width=7, min_width=7, no_wrap=True)
+    return table
+
+
 def print_search_results(results: list[tuple[CodeUnit, float]]) -> None:
     """Print search results in a simple rank table."""
     if not results:
         _output.console.print("[yellow]No matches found.[/yellow]")
         return
 
-    table = Table(header_style="bold", box=box.ROUNDED, border_style="dim", show_lines=True)
-    table.add_column("Rank", justify="right", width=4, min_width=4, no_wrap=True)
-    table.add_column("Score", style="green", width=7, min_width=7, no_wrap=True)
+    table = _ranked_table()
     table.add_column("Name", overflow="fold")
     table.add_column("Location", style="dim", overflow="fold")
 
@@ -594,9 +603,7 @@ def print_file_search_results(results: list[FileSearchResult]) -> None:
         _output.console.print("[yellow]No matches found.[/yellow]")
         return
 
-    table = Table(header_style="bold", box=box.ROUNDED, border_style="dim", show_lines=True)
-    table.add_column("Rank", justify="right", width=4, min_width=4, no_wrap=True)
-    table.add_column("Score", style="green", width=7, min_width=7, no_wrap=True)
+    table = _ranked_table()
     table.add_column("File", style="dim", overflow="fold")
     table.add_column("Matching code units", overflow="fold")
 

@@ -1604,6 +1604,63 @@ def _build_embedding_space_identity(
     )
 
 
+@dataclass(frozen=True)
+class _CodeEncodeContext:
+    """Model-side inputs shared by identity resolution and corpus embedding."""
+
+    profile: SemanticModelProfile
+    task: SemanticTask
+    encode_plan: EncodePlan
+    trust_remote_code: bool
+    revision: str | None
+
+
+def _resolve_code_encode_context(
+    model_name: str,
+    *,
+    semantic_task: str | None,
+    instruction_prefix: str | None,
+    revision: str | None,
+    trust_remote_code: bool | None,
+    strict_revision_cache: bool,
+    persist_local_model_manifest: bool,
+) -> _CodeEncodeContext:
+    """Resolve the profile, task, encode plan, trust, and concrete revision for code inputs.
+
+    :param model_name: Model alias, Hub identifier, or local directory.
+    :param semantic_task: Requested task; ``None`` uses the check default.
+    :param instruction_prefix: Optional instruction override for code inputs.
+    :param revision: Optional model revision; ``None`` uses the profile default.
+    :param trust_remote_code: Remote-code override; ``None`` uses the profile default.
+    :param strict_revision_cache: Resolve unpinned Hub labels to cached commit hashes.
+    :param persist_local_model_manifest: Store a fresh local-directory fingerprint on disk.
+    :return: Resolved context; ``revision`` is ``None`` when nothing concrete is cacheable.
+    """
+    profile = resolve_model_profile(model_name)
+    task = normalize_semantic_task(semantic_task, default_task=DEFAULT_CHECK_SEMANTIC_TASK)
+    encode_plan = _resolve_encode_plan(profile, "code", task, instruction_prefix)
+    resolved_trust_remote_code = _resolve_trust_remote_code(model_name, trust_remote_code)
+    local_model_path = resolve_local_model_path(profile.canonical_name)
+    if local_model_path is not None:
+        resolved_revision = _fingerprint_local_model_dir_cached(
+            local_model_path,
+            persist_manifest=persist_local_model_manifest,
+        )
+    else:
+        resolved_revision = _resolve_revision_for_cache(
+            model_name,
+            revision,
+            strict=strict_revision_cache,
+        )
+    return _CodeEncodeContext(
+        profile=profile,
+        task=task,
+        encode_plan=encode_plan,
+        trust_remote_code=resolved_trust_remote_code,
+        revision=resolved_revision,
+    )
+
+
 def resolve_embedding_space_identity(
     model_name: str = DEFAULT_MODEL,
     instruction_prefix: str | None = None,
@@ -1634,33 +1691,23 @@ def resolve_embedding_space_identity(
     # Same contract as compute_embeddings_with_identity: configure
     # import-sensitive runtime variables before anything can import torch.
     _configure_semantic_runtime_env(device, mps_fallback=mps_fallback)
-    profile = resolve_model_profile(model_name)
-    resolved_task = normalize_semantic_task(
-        semantic_task,
-        default_task=DEFAULT_CHECK_SEMANTIC_TASK,
+    context = _resolve_code_encode_context(
+        model_name,
+        semantic_task=semantic_task,
+        instruction_prefix=instruction_prefix,
+        revision=revision,
+        trust_remote_code=trust_remote_code,
+        strict_revision_cache=strict_revision_cache,
+        persist_local_model_manifest=persist_local_model_manifest,
     )
-    encode_plan = _resolve_encode_plan(profile, "code", resolved_task, instruction_prefix)
-    resolved_trust_remote_code = _resolve_trust_remote_code(model_name, trust_remote_code)
-    local_model_path = resolve_local_model_path(profile.canonical_name)
-    if local_model_path is not None:
-        resolved_revision = _fingerprint_local_model_dir_cached(
-            local_model_path,
-            persist_manifest=persist_local_model_manifest,
-        )
-    else:
-        resolved_revision = _resolve_revision_for_cache(
-            model_name,
-            revision,
-            strict=strict_revision_cache,
-        )
 
     return _build_embedding_space_identity(
-        profile,
-        resolved_revision,
-        encode_plan,
+        context.profile,
+        context.revision,
+        context.encode_plan,
         device,
         mps_fallback=mps_fallback,
-        trust_remote_code=resolved_trust_remote_code,
+        trust_remote_code=context.trust_remote_code,
     )
 
 
@@ -2921,22 +2968,21 @@ def _compute_embeddings_unlocked(
     # nothing to embed, matching the contract enforced for populated corpora.
     validate_explicit_device_request(device, mps_fallback=mps_fallback)
 
-    profile = resolve_model_profile(model_name)
-    resolved_task = normalize_semantic_task(
-        semantic_task,
-        default_task=DEFAULT_CHECK_SEMANTIC_TASK,
+    context = _resolve_code_encode_context(
+        model_name,
+        semantic_task=semantic_task,
+        instruction_prefix=instruction_prefix,
+        revision=revision,
+        trust_remote_code=trust_remote_code,
+        strict_revision_cache=strict_revision_cache,
+        persist_local_model_manifest=use_cache and cache_scope is not None,
     )
-    encode_plan = _resolve_encode_plan(profile, "code", resolved_task, instruction_prefix)
-    resolved_trust_remote_code = _resolve_trust_remote_code(model_name, trust_remote_code)
-    identity_local_model_path = resolve_local_model_path(profile.canonical_name)
-    identity_revision = (
-        _fingerprint_local_model_dir_cached(
-            identity_local_model_path,
-            persist_manifest=use_cache and cache_scope is not None,
-        )
-        if identity_local_model_path is not None
-        else _resolve_revision_for_cache(model_name, revision, strict=strict_revision_cache)
-    )
+    profile = context.profile
+    resolved_task = context.task
+    encode_plan = context.encode_plan
+    resolved_trust_remote_code = context.trust_remote_code
+    # Reassigned once the loaded model confirms (or corrects) the cache revision.
+    identity_revision = context.revision
     prepared_texts = (
         list(document_texts)
         if document_texts is not None
