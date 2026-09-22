@@ -239,6 +239,8 @@ quiet_dependency_loggers()  # or quiet_dependency_loggers(logging.ERROR)
 - `AnalysisResult.unused_diagnostics`: per-file diagnostics from the unused reference walk (`unused-read-error`, `unused-parse-error`, `unused-recursion-limit`); `codedupes.unused.run_unused_analysis` returns them, together with `unused` and `suppressed`, in an `UnusedReport`
 - `AnalysisResult.unused_excluded_units`: non-Python units intentionally excluded from unused analysis
 - `AnalysisResult.unused_supported_languages`: languages the unused heuristic evaluates (currently always `("python",)`)
+- `AnalysisResult.suppressed_duplicates`: traditional and semantic pairs dropped for carrying a `codedupes: ignore[duplicates]` directive on either endpoint
+- `AnalysisResult.suppressed_unused`: units carrying a `codedupes: ignore`/`codedupes: ignore[unused]` directive that would otherwise have been reported unused (same `suppressed` count `run_unused_analysis` returns on `UnusedReport`)
 - `AnalysisResult.all_duplicates`: hybrid duplicates in combined mode; raw duplicates in single-method mode
 - `AnalysisResult.analysis_mode`: `"combined"`, `"traditional"`, `"semantic"`, or `"none"`
 - `AnalysisResult.embedding_stats`: [embedding telemetry](#progress-and-embedding-telemetry)

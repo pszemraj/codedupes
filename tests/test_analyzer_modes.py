@@ -12,6 +12,7 @@ from codedupes import analyzer as analyzer_module
 from codedupes.analyzer import AnalyzerConfig, CodeAnalyzer
 from codedupes.models import AnalysisResult, CodeUnit, CodeUnitType, DuplicatePair
 from codedupes.pairs import ordered_pair_key
+from codedupes.report.selection import build_exact_families
 from tests.analyzer_helpers import (
     embedding_identity_from_kwargs,
     make_semantic_runner,
@@ -320,6 +321,49 @@ def test_traditional_findings_are_mode_invariant(tmp_path: Path, monkeypatch) ->
 
     assert pair_keys(traditional)
     assert pair_keys(combined) == pair_keys(traditional)
+
+
+def test_ignore_duplicates_removes_the_pair_and_shrinks_the_family(tmp_path: Path) -> None:
+    """``codedupes: ignore[duplicates]`` drops every pair naming the marked unit."""
+    source = dedent(
+        """
+        def alpha(value):
+            total = value + 1
+            total *= 2
+            return total + 3
+
+        def beta(value):
+            total = value + 1
+            total *= 2
+            return total + 3
+
+        def gamma(value):  # codedupes: ignore[duplicates]
+            total = value + 1
+            total *= 2
+            return total + 3
+        """
+    ).strip()
+    project = create_project(tmp_path, source, module="triplet.py")
+
+    result = CodeAnalyzer(
+        AnalyzerConfig(
+            run_semantic=False,
+            run_unused=False,
+            filter_tiny_traditional=False,
+        )
+    ).analyze(project)
+
+    assert len(result.traditional_duplicates) == 1
+    assert result.suppressed_duplicates == 2
+    names = {
+        result.traditional_duplicates[0].unit_a.name,
+        result.traditional_duplicates[0].unit_b.name,
+    }
+    assert names == {"alpha", "beta"}
+
+    families = build_exact_families(result.traditional_duplicates)
+    assert len(families) == 1
+    assert len(families[0].members) == 2
 
 
 @pytest.mark.parametrize("run_unused", [True, False])

@@ -228,6 +228,8 @@ def check_result_to_json(
             "semantic_diagnostics": len(result.semantic_diagnostics),
             "unused_supported_languages": list(result.unused_supported_languages),
             "unused_excluded_units": result.unused_excluded_units,
+            "suppressed_duplicates": result.suppressed_duplicates,
+            "suppressed_unused": result.suppressed_unused,
             "embeddings": _embedding_stats_to_dict(result.embedding_stats),
             "fail_on": fail_on,
             "strict_unused": strict_unused,

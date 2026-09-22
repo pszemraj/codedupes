@@ -57,6 +57,8 @@ def test_cli_json_output_hybrid_default(monkeypatch, tmp_path):
     assert output["summary"]["max_unused"] == 20
     assert output["summary"]["reported_unused"] == 1
     assert output["summary"]["truncated_unused"] == 0
+    assert output["summary"]["suppressed_duplicates"] == 0
+    assert output["summary"]["suppressed_unused"] == 0
     # The exact pair is one family record; the pairwise list holds no exact edge.
     assert output["exact_families"] == [
         {"method": "structural_hash", "members": ["u0", "u1"], "lines": 2, "redundant_lines": 2}

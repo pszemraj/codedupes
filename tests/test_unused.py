@@ -174,10 +174,10 @@ def test_public_method_inside_a_private_class_still_credits_what_it_calls(
     assert "public_helper" not in {unit.name for unit in unused}
 
 
-def test_noqa_and_main_block_mark_as_used(tmp_path: Path) -> None:
+def test_ignore_directive_and_main_block_mark_as_used(tmp_path: Path) -> None:
     source = dedent(
         """
-        def ignored_unused():  # noqa: codedupes
+        def ignored_unused():  # codedupes: ignore
             return 42
 
         def used_by_main():
@@ -194,6 +194,120 @@ def test_noqa_and_main_block_mark_as_used(tmp_path: Path) -> None:
 
     assert "ignored_unused" not in names
     assert "used_by_main" not in names
+
+
+def test_noqa_marker_no_longer_suppresses(tmp_path: Path) -> None:
+    """The retired ``noqa: codedupes`` marker no longer suppresses anything."""
+    source = dedent(
+        """
+        def ignored_unused():  # noqa: codedupes
+            return 42
+        """
+    ).strip()
+    units = extract_units(tmp_path, source, include_private=True)
+    build_reference_graph(units, project_root=tmp_path)
+    unused = find_potentially_unused(units, strict_unused=True)
+
+    assert "ignored_unused" in {unit.name for unit in unused}
+
+
+def test_directive_in_a_string_or_docstring_does_not_suppress(tmp_path: Path) -> None:
+    """A ``codedupes: ignore`` marker inside a string or docstring is not a directive."""
+    source = dedent(
+        '''
+        def unused_with_docstring():
+            """codedupes: ignore"""
+            return 1
+
+        def unused_with_string():
+            return "codedupes: ignore"
+        '''
+    ).strip()
+    units = extract_units(tmp_path, source, include_private=True)
+    build_reference_graph(units, project_root=tmp_path)
+    unused = find_potentially_unused(units, strict_unused=True)
+    names = {unit.name for unit in unused}
+
+    assert "unused_with_docstring" in names
+    assert "unused_with_string" in names
+
+
+def test_nested_directive_does_not_suppress_the_container(tmp_path: Path) -> None:
+    """A directive on a nested unit never propagates up to its container."""
+    source = dedent(
+        """
+        def outer():
+            def inner():  # codedupes: ignore
+                return 1
+
+            return 2
+        """
+    ).strip()
+    units = extract_units(tmp_path, source, include_private=True)
+    build_reference_graph(units, project_root=tmp_path)
+    unused = find_potentially_unused(units, strict_unused=True)
+    names = {unit.name for unit in unused}
+
+    assert "outer" in names
+    assert "inner" not in names
+
+
+def test_container_directive_suppresses_nested_units(tmp_path: Path) -> None:
+    """A directive on a container applies to every unit nested in it.
+
+    ``_Service`` is private, so absent the directive both the class and its
+    method would be reported (see ``test_public_method_of_private_class_is_reported_by_default``).
+    """
+    source = dedent(
+        """
+        class _Service:  # codedupes: ignore
+            def run(self):
+                return 1
+        """
+    ).strip()
+    units = extract_units(tmp_path, source, include_private=True)
+    build_reference_graph(units, project_root=tmp_path)
+    unused = find_potentially_unused(units, strict_unused=False)
+    names = {unit.name for unit in unused}
+
+    assert "_Service" not in names
+    assert "run" not in names
+
+
+def test_ignore_unused_alone_leaves_duplicates_reported(tmp_path: Path) -> None:
+    """``codedupes: ignore[unused]`` suppresses only the unused finding, not duplicates."""
+    source = dedent(
+        """
+        def unused_helper():  # codedupes: ignore[unused]
+            return 1
+        """
+    ).strip()
+    units = extract_units(tmp_path, source, include_private=True)
+    build_reference_graph(units, project_root=tmp_path)
+    unused = find_potentially_unused(units, strict_unused=True)
+
+    assert "unused_helper" not in {unit.name for unit in unused}
+    assert _unit(units, "sample.unused_helper").suppressions == frozenset({"unused"})
+
+
+def test_suppressed_unused_counts_only_would_be_findings(tmp_path: Path) -> None:
+    """``run_unused_analysis`` counts only directive-suppressed units that would else be findings."""
+    source = dedent(
+        """
+        def public_exempt():  # codedupes: ignore
+            return 1
+
+        def _private_unused():  # codedupes: ignore
+            return 2
+        """
+    ).strip()
+    units = extract_units(tmp_path, source, include_private=True)
+    report = unused_module.run_unused_analysis(units, project_root=tmp_path, strict_unused=False)
+
+    # public_exempt would not be a finding even absent the directive (public
+    # surface exemption under the default, non-strict policy), so it must not
+    # be counted as suppressed; only _private_unused would-be-reported.
+    assert report.suppressed == 1
 
 
 def test_main_block_references_survive_a_bom(tmp_path: Path) -> None:

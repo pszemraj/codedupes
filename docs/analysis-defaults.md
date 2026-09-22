@@ -103,11 +103,11 @@ Unreferenced units are still not reported when they are:
 - `get_*` and `set_*` definitions of any unit type (not only methods - a module-level `get_thing()` is suppressed too, even in strict mode)
 - definitions whose own decorators include `@abstractmethod` or `@abc.abstractmethod` (the enclosing class and a body that merely mentions the text are not exempt)
 - `test_*` definitions and definitions in files whose names contain `_test`
-- units containing `# noqa: codedupes` or `# codedupes: ignore`
+- units carrying a `codedupes: ignore` or `codedupes: ignore[unused]` suppression directive (see [Suppression directives](#suppression-directives) above); the retired `# noqa: codedupes` marker and the old substring check over unit source no longer suppress anything
 
 Default mode also skips public surface: a function or method every segment of whose qualified name is public (`pkg.mod.run`, `Service.run`) is API, not a finding. A public name reached only through a private module, class, or function (`_Service.run`, `_factory.helper`, `_factory.Local.run`) and every private definition stay reportable. Dunder module names such as `__main__` also fail the public-surface rule: unreferenced functions in an entry-point script are reportable by default, while calls from its main block still mark their targets as referenced. Strict mode removes only that suppression; the exclusions above still apply, and framework-dispatched methods stay referenced because that rule is a reference, not a policy.
 
-Unused findings are independent of duplicate detection: a potentially unused unit remains eligible for semantic and traditional duplicate reporting.
+Unused findings are independent of duplicate detection: a potentially unused unit remains eligible for semantic and traditional duplicate reporting. A directive-suppressed unit that would otherwise have been a finding is counted in `suppressed_unused`, whether or not it carries `[duplicates]` too.
 
 ## Traditional duplicate defaults
 
@@ -120,6 +120,8 @@ Default tiny-filter behavior for traditional duplicates:
 - traditional pairs where both units are tiny: dropped
 
 Use `--no-tiny-filter` / `--tiny-cutoff`, or `AnalyzerConfig.filter_tiny_traditional` / `tiny_unit_statement_cutoff`, to change the filter.
+
+A `codedupes: ignore[duplicates]` (or bare `codedupes: ignore`) directive on either endpoint drops the pair entirely, after the tiny filter and before hybrid synthesis, so it never resurfaces in an exact family or a hybrid edge. Dropped pairs are counted in `suppressed_duplicates`; the same directive applies to semantic pairs, dropped after the `--suppress-test-semantic` filter on the same terms.
 
 ## Hybrid synthesis confidence defaults
 

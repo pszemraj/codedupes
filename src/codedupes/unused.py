@@ -693,42 +693,41 @@ def _decorators(unit: CodeUnit) -> str:
     return "\n".join(lines)
 
 
+def _is_unused_candidate(unit: CodeUnit, strict_unused: bool) -> bool:
+    """Apply every unused heuristic except the ``codedupes: ignore`` directive.
+
+    :param unit: Candidate code unit.
+    :param strict_unused: Whether to report public functions and public methods of public classes too.
+    :return: ``True`` when the unit would be reported absent a suppression directive.
+    """
+    if unit.language != "python":
+        return False
+    if not strict_unused and _is_public_surface(unit):
+        return False
+    if unit.references:
+        return False
+    if unit.is_likely_api:
+        return False
+    if unit.name.startswith("get_") or unit.name.startswith("set_"):
+        return False
+    decorators = _decorators(unit)
+    if "@abstractmethod" in decorators or "@abc.abstractmethod" in decorators:
+        return False
+    return not (unit.name.startswith("test_") or "_test" in unit.file_path.name)
+
+
 def find_potentially_unused(units: list[CodeUnit], strict_unused: bool = False) -> list[CodeUnit]:
-    """Find code units that are never referenced and are not likely API.
+    """Find code units that are never referenced, not likely API, and not suppressed.
 
     :param units: Candidate code units.
     :param strict_unused: Whether to report public functions and public methods of public classes too.
-    :return: Units with no references and not classified as API.
+    :return: Candidates carrying no ``unused`` suppression directive.
     """
-    unused = []
-    for unit in units:
-        if unit.language != "python":
-            continue
-        if not strict_unused and _is_public_surface(unit):
-            continue
-
-        if unit.references:
-            continue
-
-        source = unit.source.lower()
-        if "noqa: codedupes" in source or "codedupes: ignore" in source:
-            continue
-
-        if unit.is_likely_api:
-            continue
-        if unit.name == "__init__":
-            continue
-        if unit.name.startswith("get_") or unit.name.startswith("set_"):
-            continue
-        decorators = _decorators(unit)
-        if "@abstractmethod" in decorators or "@abc.abstractmethod" in decorators:
-            continue
-        if unit.name.startswith("test_") or "_test" in unit.file_path.name:
-            continue
-
-        unused.append(unit)
-
-    return unused
+    return [
+        unit
+        for unit in units
+        if _is_unused_candidate(unit, strict_unused) and "unused" not in unit.suppressions
+    ]
 
 
 @dataclass
@@ -753,9 +752,14 @@ def run_unused_analysis(
     :param project_root: Project root for pyproject entry-point resolution, or ``None``.
     :param source_files: Every Python file the extractor visited, units or not.
     :param strict_unused: Whether to report public functions and public methods of public classes too.
-    :return: Potentially unused units, together with per-file diagnostics.
+    :return: Potentially unused units, the count suppressed by directive, and per-file diagnostics.
     """
     diagnostics = build_reference_graph(units, project_root=project_root, source_files=source_files)
     unused = find_potentially_unused(units, strict_unused=strict_unused)
+    suppressed = sum(
+        1
+        for unit in units
+        if _is_unused_candidate(unit, strict_unused) and "unused" in unit.suppressions
+    )
     logger.info(f"Found {len(unused)} potentially unused code units")
-    return UnusedReport(unused=unused, diagnostics=diagnostics)
+    return UnusedReport(unused=unused, suppressed=suppressed, diagnostics=diagnostics)

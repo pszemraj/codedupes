@@ -275,6 +275,12 @@ def print_summary(
             "Unused-analysis exclusions",
             _count(result.unused_excluded_units, "non-Python unit"),
         )
+    if result.suppressed_duplicates or result.suppressed_unused:
+        summary.add_row(
+            "Suppressed findings",
+            f"{result.suppressed_duplicates} duplicate edges, "
+            f"{result.suppressed_unused} unused (codedupes: ignore)",
+        )
     if result.embedding_stats is not None:
         summary.add_row("Embeddings", _format_embedding_stats(result.embedding_stats))
     summary.add_row("Failure policy", fail_on)

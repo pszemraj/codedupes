@@ -266,6 +266,24 @@ def _filter_tiny_traditional_duplicates(
     return filtered_exact, filtered_near
 
 
+def _drop_suppressed_duplicates(
+    pairs: list[DuplicatePair],
+) -> tuple[list[DuplicatePair], int]:
+    """Drop duplicate pairs where either unit carries a ``duplicates`` suppression directive.
+
+    :param pairs: Duplicate pairs to filter.
+    :return: Retained pairs and the count of pairs dropped.
+    """
+    kept: list[DuplicatePair] = []
+    dropped = 0
+    for pair in pairs:
+        if "duplicates" in pair.unit_a.suppressions or "duplicates" in pair.unit_b.suppressions:
+            dropped += 1
+            continue
+        kept.append(pair)
+    return kept, dropped
+
+
 def _semantic_high_gate(
     unit_a: CodeUnit,
     unit_b: CodeUnit,
@@ -1008,6 +1026,8 @@ class CodeAnalyzer:
         traditional_duplicates: list[DuplicatePair] = []
         unused: list[CodeUnit] = []
         unused_diagnostics: list[ExtractionDiagnostic] = []
+        suppressed_duplicates = 0
+        suppressed_unused = 0
         semantic_fallback = False
         semantic_fallback_reason: str | None = None
         semantic_task = self.config.semantic_task or DEFAULT_CHECK_SEMANTIC_TASK
@@ -1047,6 +1067,10 @@ class CodeAnalyzer:
             logger.info(f"Found {len(exact_dupes)} exact duplicates")
             logger.info(f"Found {len(near_dupes)} near duplicates (Jaccard)")
             traditional_duplicates = exact_dupes + near_dupes
+            traditional_duplicates, dropped_traditional = _drop_suppressed_duplicates(
+                traditional_duplicates
+            )
+            suppressed_duplicates += dropped_traditional
 
         unused_excluded_units = 0
 
@@ -1142,6 +1166,9 @@ class CodeAnalyzer:
                     )
                 ]
 
+            semantic_duplicates, dropped_semantic = _drop_suppressed_duplicates(semantic_duplicates)
+            suppressed_duplicates += dropped_semantic
+
         if self.config.run_unused:
             unused_report = run_unused_analysis(
                 units,
@@ -1151,6 +1178,7 @@ class CodeAnalyzer:
             )
             unused = unused_report.unused
             unused_diagnostics = unused_report.diagnostics
+            suppressed_unused = unused_report.suppressed
             unused_excluded_units = sum(unit.language != "python" for unit in units)
 
         combined_mode = self.config.run_traditional and self.config.run_semantic
@@ -1194,6 +1222,8 @@ class CodeAnalyzer:
             semantic_diagnostics=list(self._semantic_diagnostics),
             unused_diagnostics=unused_diagnostics,
             unused_excluded_units=unused_excluded_units,
+            suppressed_duplicates=suppressed_duplicates,
+            suppressed_unused=suppressed_unused,
             embedding_stats=embedding_stats,
         )
 
