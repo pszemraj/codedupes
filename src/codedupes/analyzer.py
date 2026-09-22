@@ -320,7 +320,7 @@ def _synthesize_hybrid_duplicates(
     :param semantic_high_gates: Per-language similarity at which an
         uncorroborated semantic-only candidate is promoted anyway; ``None`` or
         a missing language disables that path for the pair.
-    :return: Hybrid duplicates sorted by descending confidence. Every candidate
+    :return: Hybrid duplicates sorted by descending score. Every candidate
         pair reaches a tier: semantic-only pairs without corroboration fall back
         to ``semantic_review`` rather than being dropped.
     """
@@ -376,14 +376,14 @@ def _synthesize_hybrid_duplicates(
         semantic_sim = entry["semantic_similarity"]  # type: ignore[assignment]
 
         tier: str | None = None
-        confidence: float | None = None
+        score: float | None = None
         weak_identifier_jaccard: float | None = None
         statement_ratio: float | None = None
 
-        # Confidence is a corroboration scale, not a raw similarity: at equal
-        # evidence strength a tier with more independent corroboration must
-        # always outrank one with less, or the weakest tier crowds the
-        # best-evidenced pairs off the top of the table. Per tier:
+        # The score is a corroboration ranking, not a calibrated probability:
+        # at equal evidence strength a tier with more independent
+        # corroboration must always outrank one with less, or the weakest
+        # tier crowds the best-evidenced pairs off the top of the table. Per tier:
         #   exact                    = 1.0
         #   traditional_near         = 0.55 + 0.45 * jaccard
         #   hybrid_confirmed         = 0.50 * semantic + 0.50 * jaccard
@@ -392,17 +392,17 @@ def _synthesize_hybrid_duplicates(
         # The last two keep semantic_review strictly below its corroborated
         # sibling at every similarity (the gap is 0.05 + 0.10 * semantic).
         # traditional_near and hybrid_confirmed also reach 1.0 at perfect
-        # scores, so the final sort leads with the tier, not the confidence.
+        # scores, so the final sort leads with the tier, not the score.
         if has_exact:
             tier = "exact"
-            confidence = 1.0
+            score = 1.0
         elif jaccard_sim is not None and jaccard_sim >= jaccard_threshold:
             if semantic_sim is not None:
                 tier = "hybrid_confirmed"
-                confidence = (0.5 * semantic_sim) + (0.5 * jaccard_sim)
+                score = (0.5 * semantic_sim) + (0.5 * jaccard_sim)
             else:
                 tier = "traditional_near"
-                confidence = 0.55 + (0.45 * jaccard_sim)
+                score = 0.55 + (0.45 * jaccard_sim)
         elif semantic_sim is not None:
             ids_a = identifier_cache.setdefault(unit_a.uid, set(unit_a.identifiers))
             ids_b = identifier_cache.setdefault(unit_b.uid, set(unit_b.identifiers))
@@ -417,12 +417,12 @@ def _synthesize_hybrid_duplicates(
             strong = high_gate is not None and semantic_sim >= high_gate
             if corroborated or strong:
                 tier = "semantic_high_confidence"
-                confidence = 0.45 + (0.55 * semantic_sim)
+                score = 0.45 + (0.55 * semantic_sim)
             else:
                 tier = "semantic_review"
-                confidence = 0.40 + (0.45 * semantic_sim)
+                score = 0.40 + (0.45 * semantic_sim)
 
-        if tier is None or confidence is None:
+        if tier is None or score is None:
             continue
 
         hybrid_duplicates.append(
@@ -430,7 +430,7 @@ def _synthesize_hybrid_duplicates(
                 unit_a=unit_a,
                 unit_b=unit_b,
                 tier=tier,  # type: ignore[arg-type]
-                confidence=float(confidence),
+                score=float(score),
                 has_exact=has_exact,
                 exact_method=exact_method,
                 jaccard_similarity=jaccard_sim,
@@ -445,7 +445,7 @@ def _synthesize_hybrid_duplicates(
     hybrid_duplicates.sort(
         key=lambda duplicate: (
             duplicate.tier != "exact",
-            -duplicate.confidence,
+            -duplicate.score,
             -(duplicate.semantic_similarity if duplicate.semantic_similarity is not None else -1.0),
             -(duplicate.jaccard_similarity if duplicate.jaccard_similarity is not None else -1.0),
             duplicate.unit_a.uid,
@@ -1061,7 +1061,7 @@ class CodeAnalyzer:
             if self.config.run_traditional:
                 # Exclude every exact-hash pair — including pairs the tiny filter stripped
                 # from traditional output — so semantic scoring can never re-report an
-                # exact duplicate as a new lower-confidence match. Near-duplicate (jaccard)
+                # exact duplicate as a new, lower-scoring match. Near-duplicate (jaccard)
                 # pairs stay out of exclusion so semantic scoring can confirm traditional
                 # evidence and enable hybrid_confirmed scoring.
                 exclude = find_exact_pair_keys(semantic_candidates)

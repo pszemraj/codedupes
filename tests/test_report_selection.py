@@ -61,14 +61,14 @@ def _unit(
 
 
 def _hybrid(unit_a: CodeUnit, unit_b: CodeUnit, tier: HybridTier) -> HybridDuplicate:
-    confidence = {
+    score = {
         "exact": 1.0,
         "traditional_near": 0.95,
         "hybrid_confirmed": 0.93,
         "semantic_high_confidence": 0.9,
         "semantic_review": 0.8,
     }[tier]
-    return HybridDuplicate(unit_a=unit_a, unit_b=unit_b, tier=tier, confidence=confidence)
+    return HybridDuplicate(unit_a=unit_a, unit_b=unit_b, tier=tier, score=score)
 
 
 def _family_names(families: list[ExactFamily]) -> list[list[str]]:
@@ -363,7 +363,7 @@ def _ranked_result(tmp_path: Path, tiers: list[HybridTier]) -> AnalysisResult:
     """Build a combined result whose hybrid list is ``tiers`` in analyzer order."""
     units = [_unit(tmp_path, f"f{i}", start_byte=i * 30) for i in range(len(tiers) + 1)]
     hybrid = [
-        HybridDuplicate(units[i], units[i + 1], tier, confidence=1.0 - i * 0.01)
+        HybridDuplicate(units[i], units[i + 1], tier, score=1.0 - i * 0.01)
         for i, tier in enumerate(tiers)
     ]
     return _result(
@@ -436,7 +436,7 @@ def test_select_findings_ranks_actionable_tiers_first_within_analyzer_order(tmp_
         "semantic_high_confidence",
         "semantic_high_confidence",
     ]
-    # Analyzer (confidence) order survives inside each group.
+    # Analyzer (score) order survives inside each group.
     assert [pair.unit_a.name for pair in selection.duplicates] == ["f1", "f3", "f0", "f4"]
     assert [pair.tier for pair in selection.omitted_review] == ["semantic_review"]
 

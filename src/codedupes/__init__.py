@@ -11,7 +11,7 @@ Example:
     result = analyze_directory("./src")
 
     for dup in result.hybrid_duplicates:
-        print(f"{dup.unit_a.name} ~ {dup.unit_b.name} ({dup.confidence:.0%}, {dup.tier})")
+        print(f"{dup.unit_a.name} ~ {dup.unit_b.name} ({dup.score:.0%}, {dup.tier})")
 
     for unused in result.potentially_unused:
         print(f"Unused: {unused.qualified_name}")

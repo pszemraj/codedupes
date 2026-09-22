@@ -246,7 +246,7 @@ def test_cli_long_results_keep_scores_and_headers(monkeypatch, tmp_path, width, 
         unit,
         unit,
         tier="hybrid_confirmed",
-        confidence=0.94,
+        score=0.94,
         semantic_similarity=0.96,
         jaccard_similarity=0.91,
     )
@@ -272,7 +272,7 @@ def test_cli_long_results_keep_scores_and_headers(monkeypatch, tmp_path, width, 
     assert "…" not in result.stdout
     if command == "check":
         for field in (
-            "Confidence",
+            "Score",
             "Semantic",
             "Jaccard",
             "94.00%",

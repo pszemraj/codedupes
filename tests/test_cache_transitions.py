@@ -93,7 +93,7 @@ def _normalized_findings(result: AnalysisResult) -> dict[str, Any]:
             _unit_identity(duplicate.unit_a),
             _unit_identity(duplicate.unit_b),
             duplicate.tier,
-            round(duplicate.confidence, 6),
+            round(duplicate.score, 6),
         )
 
     return {

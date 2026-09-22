@@ -176,7 +176,7 @@ class HybridDuplicate(_PairIdentity):
     unit_a: CodeUnit
     unit_b: CodeUnit
     tier: HybridTier
-    confidence: float
+    score: float
     has_exact: bool = False
     # Fingerprint that made the pair exact (``structural_hash`` or ``token_hash``);
     # ``None`` for every other tier.

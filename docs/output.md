@@ -119,7 +119,7 @@ codedupes check ./src --json | jq empty
       "unit_a": "u0",
       "unit_b": "u1",
       "tier": "hybrid_confirmed",
-      "confidence": 0.94,
+      "score": 0.94,
       "semantic_similarity": 0.96,
       "jaccard_similarity": 0.92,
       "weak_identifier_jaccard": null,
@@ -165,7 +165,7 @@ Exact duplicates are an equivalence, not a scored pair, so the report groups the
 
 #### Report selection
 
-In default combined mode the primary list is `exact_families` followed by `duplicates`, which holds hybrid edges of every tier except `semantic_review`; see [tier evidence](analysis-defaults.md#hybrid-synthesis-confidence-defaults). The list is ranked for review, not by raw score: families come first in descending `redundant_lines` (ties by first-member position), then the actionable pair tiers (`traditional_near`, `hybrid_confirmed`), then `semantic_high_confidence`, then any `semantic_review` pairs admitted by `--include-review`; inside each pair group pairs keep the analyzer's [confidence order](analysis-defaults.md#confidence-scale). `--show-all` implies `--include-review` and also adds `traditional_duplicates` and `semantic_duplicates` as raw edge lists with `unit_a`, `unit_b`, `similarity`, and `method` (`structural_hash`, `token_hash`, or `jaccard` for traditional edges; `semantic` for semantic edges); those raw lists still spell out every pairwise exact edge.
+In default combined mode the primary list is `exact_families` followed by `duplicates`, which holds hybrid edges of every tier except `semantic_review`; see [tier evidence](analysis-defaults.md#hybrid-synthesis-confidence-defaults). The list is ranked for review, not by raw score: families come first in descending `redundant_lines` (ties by first-member position), then the actionable pair tiers (`traditional_near`, `hybrid_confirmed`), then `semantic_high_confidence`, then any `semantic_review` pairs admitted by `--include-review`; inside each pair group pairs keep the analyzer's [score order](analysis-defaults.md#score-scale). `--show-all` implies `--include-review` and also adds `traditional_duplicates` and `semantic_duplicates` as raw edge lists with `unit_a`, `unit_b`, `similarity`, and `method` (`structural_hash`, `token_hash`, or `jaccard` for traditional edges; `semantic` for semantic edges); those raw lists still spell out every pairwise exact edge.
 
 Summary counts are findings, where a family counts once and every other tier counts per pair. `summary.hybrid_duplicates` counts the complete synthesis that way, `summary.duplicates_by_tier` breaks it down over all five tiers (always present, zero-filled; `exact` is the family count), `summary.exact_family_members` counts the distinct units inside families, `summary.reported_duplicates` counts the families and pairs actually emitted, `summary.omitted_review_duplicates` counts pairs withheld by the report policy, and `summary.truncated_duplicates` counts findings cut by the report cap, broken down over the same five tiers in `summary.truncated_by_tier` (`exact` is the number of cut families). In combined mode, `reported_duplicates + omitted_review_duplicates + truncated_duplicates == hybrid_duplicates` regardless of report-selection flags. `summary.actionable_duplicates` counts the findings in the complete result that fail `--fail-on actionable` (families plus actionable tiers in combined mode; families plus every raw pair in a single-method mode) and `summary.reported_actionable_duplicates` counts how many of those are emitted, so `reported_duplicates - reported_actionable_duplicates` is the number of advisory pairs on the report. `summary.raw_traditional_duplicates` and `summary.raw_semantic_duplicates` still count raw edges.
 
@@ -175,7 +175,7 @@ In `--semantic-only` or `--traditional-only` mode, exact edges are grouped into 
 
 `potentially_unused` is ranked and bounded too: ids are ordered by line span (`end_line - line + 1`) descending, then statement count, then file position, so the largest dead definitions lead, and the list holds at most 20 (`--max-unused`, recorded as `summary.max_unused`; `--max-unused all` removes the cap and the expansion flags above lift it unless an explicit value is given). `summary.potentially_unused` stays the complete count while `summary.reported_unused` and `summary.truncated_unused` split it into emitted and cut; units referenced only by cut unused findings leave `units`. `extraction_diagnostics`, `semantic_diagnostics`, and the raw `--show-all` edge lists are deliberately complete: they are per-file records a consumer needs in full, so a scan with many diagnostics still produces a large document.
 
-See [hybrid confidence tiers](analysis-defaults.md#hybrid-synthesis-confidence-defaults) to interpret `tier` and `confidence`.
+See [hybrid confidence tiers](analysis-defaults.md#hybrid-synthesis-confidence-defaults) to interpret `tier` and `score`.
 
 ### Search
 

@@ -43,7 +43,7 @@ def build_result(tmp_path: Path) -> AnalysisResult:
         unit_a=unit,
         unit_b=copy,
         tier="exact",
-        confidence=1.0,
+        score=1.0,
         has_exact=True,
         exact_method="structural_hash",
     )

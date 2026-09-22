@@ -26,7 +26,7 @@ def test_hybrid_synthesis_exact_only_included(tmp_path: Path) -> None:
 
     assert len(hybrid) == 1
     assert hybrid[0].tier == "exact"
-    assert hybrid[0].confidence == 1.0
+    assert hybrid[0].score == 1.0
 
 
 def test_hybrid_synthesis_jaccard_only_included(tmp_path: Path) -> None:
@@ -59,7 +59,7 @@ def test_hybrid_synthesis_hybrid_confirmed(tmp_path: Path) -> None:
 
     assert len(hybrid) == 1
     assert hybrid[0].tier == "hybrid_confirmed"
-    assert hybrid[0].confidence == pytest.approx((0.5 * 0.93) + (0.5 * 0.88))
+    assert hybrid[0].score == pytest.approx((0.5 * 0.93) + (0.5 * 0.88))
 
 
 # The corroborator mechanism tests below pin the identifier/size thresholds
@@ -100,7 +100,7 @@ def test_hybrid_synthesis_semantic_only_corroboration_sets_tier(tmp_path: Path) 
     )
     assert len(hybrid) == 1
     assert hybrid[0].tier == "semantic_high_confidence"
-    assert hybrid[0].confidence == pytest.approx(0.45 + (0.55 * 0.75))
+    assert hybrid[0].score == pytest.approx(0.45 + (0.55 * 0.75))
 
     weak_sources_a = make_code_unit(
         tmp_path,
@@ -131,7 +131,7 @@ def test_hybrid_synthesis_semantic_only_corroboration_sets_tier(tmp_path: Path) 
     )
     assert len(hybrid_weak) == 1
     assert hybrid_weak[0].tier == "semantic_review"
-    assert hybrid_weak[0].confidence == pytest.approx(0.40 + (0.45 * 0.95))
+    assert hybrid_weak[0].score == pytest.approx(0.40 + (0.45 * 0.95))
     assert hybrid_weak[0].weak_identifier_jaccard == 0.0
     assert hybrid_weak[0].statement_count_ratio == pytest.approx(0.25)
 
@@ -185,11 +185,11 @@ def test_semantic_review_never_outranks_a_corroborated_pair(tmp_path: Path) -> N
     )
 
     assert [duplicate.tier for duplicate in hybrid] == ["hybrid_confirmed", "semantic_review"]
-    assert hybrid[0].confidence > hybrid[1].confidence
+    assert hybrid[0].score > hybrid[1].score
 
 
 def test_exact_pairs_outrank_perfect_score_near_and_confirmed_pairs(tmp_path: Path) -> None:
-    # traditional_near and hybrid_confirmed both reach confidence 1.0 at
+    # traditional_near and hybrid_confirmed both reach score 1.0 at
     # perfect scores; their real similarities used to sort ahead of an exact
     # pair's None scores. Exact must lead regardless of uid order, so the
     # exact units are named to sort last.
@@ -223,7 +223,7 @@ def test_exact_pairs_outrank_perfect_score_near_and_confirmed_pairs(tmp_path: Pa
         "hybrid_confirmed",
         "traditional_near",
     ]
-    assert [duplicate.confidence for duplicate in hybrid] == [1.0, 1.0, 1.0]
+    assert [duplicate.score for duplicate in hybrid] == [1.0, 1.0, 1.0]
     assert hybrid[0].exact_method == "token_hash"
     assert [duplicate.exact_method for duplicate in hybrid[1:]] == [None, None]
 
@@ -306,9 +306,9 @@ def test_hybrid_synthesis_promotes_uncorroborated_pair_only_above_its_high_gate(
     assert [pair.tier for pair in hybrid] == [expected_tier]
     assert hybrid[0].weak_identifier_jaccard == 0.0
     if expected_tier == "semantic_high_confidence":
-        assert hybrid[0].confidence == pytest.approx(0.45 + 0.55 * 0.91)
+        assert hybrid[0].score == pytest.approx(0.45 + 0.55 * 0.91)
     else:
-        assert hybrid[0].confidence == pytest.approx(0.40 + 0.45 * 0.91)
+        assert hybrid[0].score == pytest.approx(0.40 + 0.45 * 0.91)
 
 
 def test_hybrid_synthesis_cross_language_promotion_uses_the_stricter_gate(

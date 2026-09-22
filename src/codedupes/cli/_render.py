@@ -301,7 +301,7 @@ def _build_duplicates_table(*, hybrid: bool = False, compact: bool = False) -> T
         table.add_column("Evidence", width=26, min_width=18, overflow="fold")
         table.add_column("Code units", style="cyan", overflow="fold")
     elif hybrid:
-        table.add_column("Confidence", style="green", width=10, min_width=10, no_wrap=True)
+        table.add_column("Score", style="green", width=10, min_width=10, no_wrap=True)
         table.add_column("Tier", style="magenta", overflow="fold")
         table.add_column("Semantic", style="green", width=8, min_width=8, no_wrap=True)
         table.add_column("Jaccard", style="green", width=7, min_width=7, no_wrap=True)
@@ -398,7 +398,7 @@ def _print_duplicate_table(
                 f"{pair.jaccard_similarity:.2%}" if pair.jaccard_similarity is not None else "-"
             )
             cells = (
-                f"{pair.confidence:.2%}",
+                f"{pair.score:.2%}",
                 pair.tier,
                 semantic,
                 jaccard,
@@ -420,8 +420,7 @@ def _print_duplicate_table(
 
         if compact:
             evidence = (
-                f"Confidence: {cells[0]}\nTier: {cells[1]}\n"
-                f"Semantic: {cells[2]}\nJaccard: {cells[3]}"
+                f"Score: {cells[0]}\nTier: {cells[1]}\nSemantic: {cells[2]}\nJaccard: {cells[3]}"
                 if hybrid
                 else f"Similarity: {cells[0]}\nMethod: {cells[3]}"
             )

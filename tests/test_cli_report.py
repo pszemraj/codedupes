@@ -230,7 +230,7 @@ def test_run_should_fail_policy(
                 unit_a=unit,
                 unit_b=unit,
                 tier=tier,
-                confidence=0.9,
+                score=0.9,
             )
         ]
         if tier is not None
@@ -266,7 +266,7 @@ def test_cli_fail_on_all_and_none(monkeypatch, tmp_path):
                 unit_a=unit,
                 unit_b=unit,
                 tier="semantic_review",
-                confidence=0.8,
+                score=0.8,
             )
         ],
         potentially_unused=[unit],
@@ -321,7 +321,7 @@ def _build_tiered_result(tmp_path: Path) -> AnalysisResult:
                 unit_a=unit,
                 unit_b=other,
                 tier="hybrid_confirmed",
-                confidence=0.92,
+                score=0.92,
                 semantic_similarity=0.95,
                 jaccard_similarity=0.9,
             ),
@@ -329,14 +329,14 @@ def _build_tiered_result(tmp_path: Path) -> AnalysisResult:
                 unit_a=unit,
                 unit_b=review_only,
                 tier="semantic_review",
-                confidence=0.76,
+                score=0.76,
                 semantic_similarity=0.81,
             ),
             HybridDuplicate(
                 unit_a=other,
                 unit_b=review_only,
                 tier="semantic_review",
-                confidence=0.76,
+                score=0.76,
                 semantic_similarity=0.80,
             ),
         ],
@@ -346,7 +346,7 @@ def _build_tiered_result(tmp_path: Path) -> AnalysisResult:
 
 
 def _build_capped_result(tmp_path: Path, pairs: int = 25) -> AnalysisResult:
-    """Combined result chaining ``pairs`` edges whose analyzer order is by confidence.
+    """Combined result chaining ``pairs`` edges whose analyzer order is by score.
 
     Odd edges are ``hybrid_confirmed`` and even edges ``semantic_high_confidence``,
     so the report order (actionable first) differs from the analyzer order.
@@ -664,7 +664,7 @@ def test_cli_cap_keeps_the_actionable_pair_ahead_of_a_stronger_advisory_pair(mon
     hybrid = analyzer_module._synthesize_hybrid_duplicates(
         traditional, semantic, jaccard_threshold=0.85
     )
-    # Production synthesis ranks the uncorroborated pair first by confidence.
+    # Production synthesis ranks the uncorroborated pair first by score.
     assert [pair.tier for pair in hybrid] == ["semantic_high_confidence", "hybrid_confirmed"]
     result = AnalysisResult(
         units=[entry, other, third],
@@ -917,7 +917,7 @@ def test_cli_withheld_only_result_prints_a_placeholder_instead_of_nothing(monkey
         traditional_duplicates=[],
         semantic_duplicates=[],
         hybrid_duplicates=[
-            HybridDuplicate(unit_a=unit, unit_b=unit, tier="semantic_review", confidence=0.8)
+            HybridDuplicate(unit_a=unit, unit_b=unit, tier="semantic_review", score=0.8)
         ],
         potentially_unused=[],
         analysis_mode="combined",

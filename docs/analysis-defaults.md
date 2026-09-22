@@ -8,7 +8,7 @@ These defaults apply to `codedupes check` and `AnalyzerConfig` in check mode. Se
 
 The semantic pass may load the selected embedding model and may download it on its first use. [CLI options](cli.md#codedupes-check-path) cover single-method and unused-analysis controls.
 
-Combined output assigns each pair an evidence tier and sorts by [confidence](#confidence-scale); reports then list actionable tiers before advisory ones, see [report selection](output.md#report-selection):
+Combined output assigns each pair an evidence tier and sorts by [score](#score-scale); reports then list actionable tiers before advisory ones, see [report selection](output.md#report-selection):
 
 | tier | evidence |
 | --- | --- |
@@ -124,11 +124,11 @@ A semantic-only pair has already passed its language's duplicate gate (applied b
 
 The [hybrid confidence gates](model-profiles.md#hybrid-confidence-gates) define the shipped values. An explicit `--semantic-threshold` keeps the profile's corroboration constants but turns similarity promotion off because those promotion gates belong to the shipped profile policy.
 
-## Confidence scale
+## Score scale
 
-Finite cosine scores are bounded to [-1, 1] before reporting, so float32 rounding cannot produce values above 1. Confidence combines similarity and corroborating evidence into a ranking score. Interpret it alongside the tier:
+Finite cosine scores are bounded to [-1, 1] before reporting, so float32 rounding cannot produce values above 1. `score` combines similarity and corroborating evidence into a ranking key; it is not a calibrated probability — a `traditional_near` pair over identical identifier sets scores `1.0` even when the bodies differ by one operator. Interpret it alongside the tier:
 
-| tier | confidence |
+| tier | score |
 | --- | --- |
 | `exact` | `1.0` |
 | `traditional_near` | `0.55 + 0.45 * jaccard` |

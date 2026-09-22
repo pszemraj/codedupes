@@ -93,7 +93,6 @@ class ExactFamily:
 
     members: tuple[CodeUnit, ...]
     method: ExactMethod
-    confidence: float = 1.0
 
     @property
     def lines(self) -> int:
@@ -438,7 +437,7 @@ def select_findings(result: AnalysisResult, policy: ReportPolicy | None = None) 
             (omitted_review if withheld else shown).append(pair)
         # Report ranking: actionable tiers first, then semantic_high_confidence,
         # then any included semantic_review pairs. The stable sort keeps the
-        # analyzer's confidence order inside each group and never touches
+        # analyzer's score order inside each group and never touches
         # ``result.hybrid_duplicates``.
         pairs = sorted(shown, key=_report_rank)
         if policy.show_all:

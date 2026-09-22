@@ -111,7 +111,7 @@ def _hybrid_edge(duplicate: HybridDuplicate, ids: dict[str, str]) -> dict[str, A
         "unit_a": ids[duplicate.unit_a.uid],
         "unit_b": ids[duplicate.unit_b.uid],
         "tier": duplicate.tier,
-        "confidence": duplicate.confidence,
+        "score": duplicate.score,
         "semantic_similarity": duplicate.semantic_similarity,
         "jaccard_similarity": duplicate.jaccard_similarity,
         "weak_identifier_jaccard": duplicate.weak_identifier_jaccard,
