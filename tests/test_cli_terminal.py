@@ -129,6 +129,21 @@ def test_cli_source_panel_titles_preserve_bracketed_module_names(tmp_path: Path)
     assert "[bold].duplicate" in result.stdout
     assert "other.duplicate" in result.stdout
 
+    table_only = CliRunner().invoke(
+        cli.cli,
+        [
+            "check",
+            str(tmp_path),
+            "--traditional-only",
+            "--no-unused",
+            "--no-tiny-filter",
+            "--full-table",
+        ],
+    )
+
+    assert table_only.exit_code == 1, table_only.output
+    assert "[bold].duplicate" in table_only.stdout
+
 
 @pytest.mark.parametrize("result_level", ["unit", "file"])
 def test_cli_table_locations_preserve_bracketed_path_segments(monkeypatch, tmp_path, result_level):
@@ -238,6 +253,7 @@ def test_cli_long_results_keep_scores_and_headers(monkeypatch, tmp_path, width, 
     monkeypatch.chdir(tmp_path)
     unit = build_unit(tmp_path)
     unit.name = "calculate_normalized_customer_score"
+    unit.qualified_name = "customer_scoring.calculate_normalized_customer_score"
     unit.file_path = tmp_path / "deeply" / "nested" / "customer_scoring.py"
     path = tmp_path / "sample.py"
     path.write_text(unit.source)

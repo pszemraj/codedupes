@@ -410,8 +410,8 @@ def _print_duplicate_table(
                 pair.tier,
                 semantic,
                 jaccard,
-                f"{pair.unit_a.name}\n[dim]{format_location(pair.unit_a)}[/dim]",
-                f"{pair.unit_b.name}\n[dim]{format_location(pair.unit_b)}[/dim]",
+                f"{escape(pair.unit_a.qualified_name)}\n[dim]{format_location(pair.unit_a)}[/dim]",
+                f"{escape(pair.unit_b.qualified_name)}\n[dim]{format_location(pair.unit_b)}[/dim]",
             )
             unit_a = pair.unit_a
             unit_b = pair.unit_b
@@ -419,8 +419,8 @@ def _print_duplicate_table(
             pair = cast(DuplicatePair, duplicate)
             cells = (
                 f"{pair.similarity:.2%}",
-                f"{pair.unit_a.name}\n[dim]{format_location(pair.unit_a)}[/dim]",
-                f"{pair.unit_b.name}\n[dim]{format_location(pair.unit_b)}[/dim]",
+                f"{escape(pair.unit_a.qualified_name)}\n[dim]{format_location(pair.unit_a)}[/dim]",
+                f"{escape(pair.unit_b.qualified_name)}\n[dim]{format_location(pair.unit_b)}[/dim]",
                 pair.method,
             )
             unit_a = pair.unit_a
@@ -434,8 +434,8 @@ def _print_duplicate_table(
             )
             table.add_row(
                 evidence,
-                f"A: {escape(unit_a.name)}\n[dim]{format_location(unit_a)}[/dim]\n"
-                f"B: {escape(unit_b.name)}\n[dim]{format_location(unit_b)}[/dim]",
+                f"A: {escape(unit_a.qualified_name)}\n[dim]{format_location(unit_a)}[/dim]\n"
+                f"B: {escape(unit_b.qualified_name)}\n[dim]{format_location(unit_b)}[/dim]",
             )
         else:
             table.add_row(*cells)
@@ -512,7 +512,7 @@ def print_exact_families(
         if compact:
             table.add_row(
                 f"Members: {len(family.members)}\nLines: {family.lines}\nMethod: {family.method}",
-                f"{escape(first.name)}\n[dim]{format_location(first)}[/dim]\n"
+                f"{escape(first.qualified_name)}\n[dim]{format_location(first)}[/dim]\n"
                 + "\n".join(f"[dim]{cell}[/dim]" for cell in other_cells),
             )
         else:
@@ -520,7 +520,7 @@ def print_exact_families(
                 str(len(family.members)),
                 str(family.lines),
                 family.method,
-                f"{escape(first.name)}\n[dim]{format_location(first)}[/dim]",
+                f"{escape(first.qualified_name)}\n[dim]{format_location(first)}[/dim]",
                 "\n".join(other_cells),
             )
 
@@ -620,7 +620,7 @@ def print_unused(
 
     for unit in unused:
         table.add_row(
-            unit.name,
+            escape(unit.qualified_name),
             unit.unit_type.name.lower(),
             str(unit.end_lineno - unit.lineno + 1),
             format_location(unit),
@@ -717,7 +717,7 @@ def print_search_results(results: list[tuple[CodeUnit, float]]) -> None:
     table.add_column("Location", style="dim", overflow="fold")
 
     for idx, (unit, score) in enumerate(results, start=1):
-        table.add_row(str(idx), f"{score:.2%}", unit.name, format_location(unit))
+        table.add_row(str(idx), f"{score:.2%}", escape(unit.qualified_name), format_location(unit))
 
     _output.console.print(table)
 

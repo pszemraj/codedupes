@@ -23,6 +23,7 @@
 - Source archives without VCS metadata build as `0.0.0+unknown`; tagged Git builds retain VCS-derived versions. Source distributions use an explicit file allowlist.
 - A pair exact under both fingerprints is now labelled `token_hash` (previously `structural_hash`, since traditional deduplication preferred it), and `exact_families` folds a token clique into its containing `structural_hash` family instead of double-reporting it. `HybridDuplicate.has_exact` was removed; use `exact_method is not None` or the family's `method`.
 - The terminal unused table is titled `Potentially Unused` in every mode (combined mode previously said `Likely Dead Code`), and its blurb now states which units the current run excludes; a new `Unused policy: strict|default` summary row matches `--strict-unused`.
+- Every terminal table names units by `qualified_name` instead of the bare name, so a shared function name is distinguishable across files and nesting.
 
 ## Detection and extraction
 
