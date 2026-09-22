@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import ast
 import logging
+import shutil
+import subprocess
 from pathlib import Path
 from textwrap import dedent
 
@@ -17,6 +19,8 @@ from codedupes.unused import (
     find_potentially_unused,
 )
 from tests.conftest import extract_units
+
+requires_git = pytest.mark.skipif(shutil.which("git") is None, reason="git is not installed")
 
 
 def _unit(units: list[CodeUnit], qualified_name: str) -> CodeUnit:
@@ -279,6 +283,196 @@ def test_pyproject_entry_point_groups_mark_as_used(tmp_path: Path) -> None:
 
     assert _unit(units, "sample_module.plugin_entry").references == {"project.entrypoint"}
     assert {unit.name for unit in unused} == {"helper"}
+
+
+_ENTRY_POINT_ANALYZER_CONFIG = AnalyzerConfig(
+    run_traditional=False, run_semantic=False, run_unused=True, strict_unused=True
+)
+
+
+def _entry_point_project(tmp_path: Path) -> Path:
+    """Write a project whose pyproject.toml names entry points inside a src package.
+
+    :param tmp_path: Test directory.
+    :return: Project root, containing ``pyproject.toml`` and ``src/pkg/``.
+    """
+    root = tmp_path / "proj"
+    root.mkdir()
+    (root / "pyproject.toml").write_text(
+        dedent(
+            """
+            [project]
+            name = "proj"
+            version = "0.1"
+
+            [project.scripts]
+            app = "pkg.cli:_main"
+            cls = "pkg.cli:App.run"
+            """
+        ).strip()
+        + "\n"
+    )
+    pkg = root / "src" / "pkg"
+    pkg.mkdir(parents=True)
+    (pkg / "__init__.py").write_text("")
+    (pkg / "cli.py").write_text(
+        dedent(
+            """
+            def _main():
+                return 1
+
+
+            class App:
+                def run(self):
+                    return 2
+            """
+        ).strip()
+        + "\n"
+    )
+    (pkg / "other.py").write_text(
+        dedent(
+            """
+            def _main():
+                return 3
+            """
+        ).strip()
+        + "\n"
+    )
+    return root
+
+
+def test_entry_points_credit_only_the_named_module(tmp_path: Path) -> None:
+    """The entry point names ``pkg.cli``; ``pkg.other``'s same-named function is untouched."""
+    root = _entry_point_project(tmp_path)
+    analyzer = CodeAnalyzer(_ENTRY_POINT_ANALYZER_CONFIG)
+
+    result = analyzer.analyze(root)
+
+    unused_by_file = {(unit.file_path.name, unit.name) for unit in result.potentially_unused}
+    assert ("other.py", "_main") in unused_by_file
+    assert ("cli.py", "_main") not in unused_by_file
+    assert not any(name == "run" for _file, name in unused_by_file)
+
+
+def test_entry_points_resolve_when_scanning_src(tmp_path: Path) -> None:
+    """``pyproject.toml`` one level above the scan root is still found."""
+    root = _entry_point_project(tmp_path)
+    analyzer = CodeAnalyzer(_ENTRY_POINT_ANALYZER_CONFIG)
+
+    result = analyzer.analyze(root / "src")
+
+    unused_by_file = {(unit.file_path.name, unit.name) for unit in result.potentially_unused}
+    assert ("other.py", "_main") in unused_by_file
+    assert ("cli.py", "_main") not in unused_by_file
+
+
+def test_entry_points_resolve_for_a_single_file_scan(tmp_path: Path) -> None:
+    """A single-file target resolves the project root from the file's directory."""
+    root = _entry_point_project(tmp_path)
+    analyzer = CodeAnalyzer(_ENTRY_POINT_ANALYZER_CONFIG)
+
+    result = analyzer.analyze(root / "src" / "pkg" / "cli.py")
+
+    assert {unit.name for unit in result.potentially_unused} == set()
+
+
+def test_entry_points_resolve_from_a_pyproject_two_levels_up(tmp_path: Path) -> None:
+    """``pyproject.toml`` two levels above the scan root is still found."""
+    root = _entry_point_project(tmp_path)
+    analyzer = CodeAnalyzer(_ENTRY_POINT_ANALYZER_CONFIG)
+
+    result = analyzer.analyze(root / "src" / "pkg")
+
+    unused_by_file = {(unit.file_path.name, unit.name) for unit in result.potentially_unused}
+    assert ("other.py", "_main") in unused_by_file
+    assert ("cli.py", "_main") not in unused_by_file
+
+
+def test_entry_point_in_a_package_init_resolves_when_scanning_the_package(
+    tmp_path: Path,
+) -> None:
+    """A ``pkg/__init__.py`` unit's qualified name drops the package segment at its own root."""
+    root = tmp_path / "proj"
+    root.mkdir()
+    (root / "pyproject.toml").write_text(
+        dedent(
+            """
+            [project]
+            name = "proj"
+            version = "0.1"
+
+            [project.scripts]
+            app = "pkg:_main"
+            """
+        ).strip()
+        + "\n"
+    )
+    pkg = root / "src" / "pkg"
+    pkg.mkdir(parents=True)
+    (pkg / "__init__.py").write_text("def _main():\n    return 1\n")
+    analyzer = CodeAnalyzer(_ENTRY_POINT_ANALYZER_CONFIG)
+
+    result = analyzer.analyze(pkg)
+
+    assert {unit.name for unit in result.potentially_unused} == set()
+
+
+@requires_git
+def test_pyproject_above_the_git_root_is_ignored(tmp_path: Path) -> None:
+    """A ``pyproject.toml`` outside the git work tree is not treated as the project root."""
+    (tmp_path / "pyproject.toml").write_text(
+        dedent(
+            """
+            [project]
+            name = "outer"
+            version = "0.1"
+
+            [project.scripts]
+            app = "pkg.cli:_main"
+            """
+        ).strip()
+        + "\n"
+    )
+    root = tmp_path / "repo"
+    root.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+    pkg = root / "src" / "pkg"
+    pkg.mkdir(parents=True)
+    (pkg / "__init__.py").write_text("")
+    (pkg / "cli.py").write_text("def _main():\n    return 1\n")
+    analyzer = CodeAnalyzer(_ENTRY_POINT_ANALYZER_CONFIG)
+
+    result = analyzer.analyze(root / "src")
+
+    assert {unit.name for unit in result.potentially_unused} == {"_main"}
+
+
+def test_entry_point_without_an_object_credits_nothing(tmp_path: Path) -> None:
+    """A malformed target with no ``:`` separator is skipped, not credited by last segment."""
+    root = tmp_path / "proj"
+    root.mkdir()
+    (root / "pyproject.toml").write_text(
+        dedent(
+            """
+            [project]
+            name = "proj"
+            version = "0.1"
+
+            [project.scripts]
+            app = "pkg.cli.run"
+            """
+        ).strip()
+        + "\n"
+    )
+    pkg = root / "src" / "pkg"
+    pkg.mkdir(parents=True)
+    (pkg / "__init__.py").write_text("")
+    (pkg / "cli.py").write_text("def run():\n    return 1\n")
+    analyzer = CodeAnalyzer(_ENTRY_POINT_ANALYZER_CONFIG)
+
+    result = analyzer.analyze(root)
+
+    assert {unit.name for unit in result.potentially_unused} == {"run"}
 
 
 def test_reference_graph_parses_each_file_once(tmp_path: Path, monkeypatch) -> None:

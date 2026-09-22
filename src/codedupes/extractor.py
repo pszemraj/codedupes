@@ -77,6 +77,32 @@ def git_ignored_paths(root: Path) -> frozenset[Path]:
     return frozenset(Path(entry.rstrip("/")) for entry in entries)
 
 
+def git_work_tree(path: Path) -> Path | None:
+    """Return the git work tree containing a directory, if any.
+
+    :param path: Directory to query, passed to ``git`` as ``-C``.
+    :return: Resolved work-tree root, or ``None`` outside a git work tree or
+        when ``git`` is unavailable.
+    """
+    try:
+        completed = subprocess.run(
+            ["git", "-C", os.fspath(path), "rev-parse", "--show-toplevel"],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            check=False,
+        )
+    except OSError:
+        return None
+    if completed.returncode != 0:
+        return None
+    toplevel = completed.stdout.decode(errors="replace").strip()
+    if not toplevel:
+        return None
+    # git prints the realpath, which can differ from Path.resolve() on macOS
+    # (/private/var vs /var); resolve again so both compare equal.
+    return Path(toplevel).resolve()
+
+
 class CodeExtractor:
     """Extract supported code units from a source tree or individual file."""
 

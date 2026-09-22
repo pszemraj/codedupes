@@ -13,6 +13,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from codedupes.extractor import git_work_tree
 from codedupes.models import CodeUnit, CodeUnitType, ExtractionDiagnostic
 
 logger = logging.getLogger(__name__)
@@ -433,18 +434,45 @@ def _resolve_reference_targets(name: str, aliases: dict[str, str]) -> set[str]:
     return candidates
 
 
-def _extract_pyproject_entry_points(project_root: Path) -> set[str]:
-    """Collect callable targets from ``[project.scripts]``, ``gui-scripts``, and ``entry-points``.
+def find_pyproject(target: Path) -> Path | None:
+    """Find the nearest ``pyproject.toml`` at or above a scan target.
 
-    :param project_root: Project root path.
-    :return: Entry point callable names.
+    The walk stops after checking the git work-tree root (if the target is
+    inside one), so a ``pyproject.toml`` that happens to sit further up an
+    unrelated ancestor directory is not mistaken for the project's own.
+
+    :param target: Scan root or single-file target.
+    :return: The nearest ``pyproject.toml``, or ``None`` when none exists at
+        or above the target within that boundary.
     """
-    pyproject_path = project_root / "pyproject.toml"
-    if not pyproject_path.is_file():
-        return set()
+    directory = (target if target.is_dir() else target.parent).resolve()
+    boundary = git_work_tree(directory)
+    current = directory
+    while True:
+        candidate = current / "pyproject.toml"
+        if candidate.is_file():
+            return candidate
+        if boundary is not None and current == boundary:
+            return None
+        parent = current.parent
+        if parent == current:
+            return None
+        current = parent
 
+
+def _entry_point_targets(pyproject: Path) -> set[tuple[str, str]]:
+    """Collect ``(module, object)`` targets from a ``pyproject.toml``.
+
+    Reads ``[project.scripts]``, ``[project.gui-scripts]``, and every
+    ``[project.entry-points.*]`` group. A target with no object (a bare
+    module, or one missing the ``:`` separator entirely) is skipped rather
+    than falling back to crediting anything sharing its last dotted segment.
+
+    :param pyproject: Path to the ``pyproject.toml`` file.
+    :return: Set of ``(dotted module path, dotted object path)`` pairs.
+    """
     try:
-        data = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
+        data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
     except (OSError, tomllib.TOMLDecodeError, UnicodeError):
         return set()
 
@@ -457,19 +485,20 @@ def _extract_pyproject_entry_points(project_root: Path) -> set[str]:
     if isinstance(groups, dict):
         tables.extend(groups.values())
 
-    targets: set[str] = set()
+    targets: set[tuple[str, str]] = set()
     for table in tables:
         if not isinstance(table, dict):
             continue
         for value in table.values():
             if not isinstance(value, str):
                 continue
-            target = value.split(":", 1)[-1]
-            if "." in target:
-                target = target.rsplit(".", 1)[-1]
-            target = target.strip()
-            if target:
-                targets.add(target)
+            # Strip a trailing extras marker (`pkg.mod:obj [extra1,extra2]`).
+            value = value.split("[", 1)[0].strip()
+            module, sep, obj = value.partition(":")
+            module = module.strip()
+            obj = obj.strip()
+            if sep and module and obj:
+                targets.add((module, obj))
 
     return targets
 
@@ -527,7 +556,9 @@ def build_reference_graph(
     except the referring unit itself.
 
     :param units: Collected code units; non-Python units are ignored.
-    :param project_root: Optional root for pyproject entry-point resolution.
+    :param project_root: Optional scan root or single-file target; entry
+        points are read from the nearest ``pyproject.toml`` at or above it,
+        bounded by the git work tree (see :func:`find_pyproject`).
     :param source_files: Every Python file the extractor visited; files without
         units (re-export modules, scripts) still contribute references.
     :return: One diagnostic per file the reference walk could not process.
@@ -613,12 +644,21 @@ def build_reference_graph(
             for unit in units_for(file_path, method):
                 unit.references.add(f"framework::{base}")
 
-    # Seed references from project entry points.
+    # Seed references from the entry points of the nearest project above the
+    # scan target, bounded by the git work tree.
     if project_root is not None:
-        root = project_root if project_root.is_dir() else project_root.parent
-        for target in _extract_pyproject_entry_points(root):
-            for candidate in by_name.get(target, []):
-                candidate.references.add("project.entrypoint")
+        pyproject_path = find_pyproject(project_root)
+        if pyproject_path is not None:
+            for module, obj in _entry_point_targets(pyproject_path):
+                key = f"{module.rsplit('.', 1)[-1]}.{obj}"
+                for candidate in by_name.get(key, []):
+                    candidate.references.add("project.entrypoint")
+                # A pkg/__init__.py unit's qualified name drops the package
+                # segment when the extraction root is that package directory,
+                # so the suffix key above cannot resolve it there.
+                for candidate in by_name.get(obj, []):
+                    if candidate.file_path.name == "__init__.py":
+                        candidate.references.add("project.entrypoint")
 
     return [module.diagnostic for module in modules.values() if module.diagnostic is not None]
 
