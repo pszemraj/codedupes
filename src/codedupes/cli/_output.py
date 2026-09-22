@@ -278,6 +278,7 @@ def _validate_json_output_controls(
     verbose: bool,
     output_width_explicit: bool,
     full_table: bool = False,
+    show_diff: bool = False,
 ) -> None:
     """Reject flags that are incompatible with JSON-only output mode.
 
@@ -288,6 +289,7 @@ def _validate_json_output_controls(
     :param verbose: Whether verbose logging was requested.
     :param output_width_explicit: Whether output width was explicitly set.
     :param full_table: Whether unbounded terminal tables were requested.
+    :param show_diff: Whether diff panels were requested.
     :return: ``None``.
     :raises click.UsageError: If a terminal-only option accompanies JSON.
     """
@@ -301,6 +303,8 @@ def _validate_json_output_controls(
         incompatible.append("--output-width")
     if full_table:
         incompatible.append("--full-table")
+    if show_diff:
+        incompatible.append("--show-diff")
 
     if incompatible:
         listed = ", ".join(incompatible)

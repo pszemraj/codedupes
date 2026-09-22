@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import difflib
 import os
+import textwrap
 from collections import Counter
 from collections.abc import Iterable
 from typing import cast
@@ -86,8 +88,8 @@ def _format_embedding_stats(stats: EmbeddingRunStats) -> str:
     return f"{', '.join(parts)} ({', '.join(context)})"
 
 
-def format_path(path: os.PathLike[str] | str) -> str:
-    """Format a compact, markup-safe path for table rendering.
+def _display_path(path: os.PathLike[str] | str) -> str:
+    """Return a compact display path, unescaped.
 
     Bare file names collide across directories, which renders a cross-directory
     duplicate pair as two identical cells. Prefer the shorter of the relative
@@ -95,17 +97,24 @@ def format_path(path: os.PathLike[str] | str) -> str:
     filename within narrow tables.
 
     :param path: Path to format.
-    :return: Markup-escaped path.
+    :return: Compact path, not markup-escaped.
     """
     absolute = os.fspath(path)
     try:
         relative = os.path.relpath(path)
     except ValueError:
         # Windows: no relative path exists across drives.
-        location = absolute
-    else:
-        location = min(relative, absolute, key=len)
-    return escape(location)
+        return absolute
+    return min(relative, absolute, key=len)
+
+
+def format_path(path: os.PathLike[str] | str) -> str:
+    """Format a compact, markup-safe path for table rendering.
+
+    :param path: Path to format.
+    :return: Markup-escaped path.
+    """
+    return escape(_display_path(path))
 
 
 def format_location(unit: CodeUnit) -> str:
@@ -349,12 +358,65 @@ def _print_source_panels(*units: CodeUnit, source_lines: int | None) -> None:
         )
 
 
+def _diff_lines(unit: CodeUnit) -> list[str]:
+    """Split a unit's source into diff lines, dedenting its body only.
+
+    A method's first line already carries the signature at its own
+    indentation, but ``textwrap.dedent`` on the remaining lines keeps a
+    function-vs-method pair from diffing on indentation alone.
+
+    :param unit: Unit whose source is being diffed.
+    :return: Source lines, with every line after the first dedented as a block.
+    """
+    lines = unit.source.split("\n")
+    if len(lines) <= 1:
+        return lines
+    return [lines[0], *textwrap.dedent("\n".join(lines[1:])).split("\n")]
+
+
+def _print_diff_panel(unit_a: CodeUnit, unit_b: CodeUnit, *, source_lines: int | None) -> None:
+    """Print a unified diff panel between two units' source, when they differ.
+
+    :param unit_a: First unit; the diff's "from" side.
+    :param unit_b: Second unit; the diff's "to" side.
+    :param source_lines: Maximum diff lines to keep, or ``None`` for no bound.
+    :return: ``None``.
+    """
+    diff = list(
+        difflib.unified_diff(
+            _diff_lines(unit_a),
+            _diff_lines(unit_b),
+            fromfile=f"{_display_path(unit_a.file_path)}:{unit_a.lineno} {unit_a.qualified_name}",
+            tofile=f"{_display_path(unit_b.file_path)}:{unit_b.lineno} {unit_b.qualified_name}",
+            n=2,
+            lineterm="",
+        )
+    )
+    if not diff:
+        return
+    omitted = 0
+    if source_lines is not None and len(diff) > source_lines:
+        omitted = len(diff) - source_lines
+        diff = diff[:source_lines]
+    text = "\n".join(diff)
+    if omitted:
+        text += f"\n... ({_count(omitted, 'more diff line')})"
+    _output.console.print(
+        Panel(
+            Syntax(text, "diff", theme="monokai"),
+            title=f"[cyan]{escape(unit_a.qualified_name)} vs {escape(unit_b.qualified_name)}[/cyan]",
+            border_style="dim",
+        )
+    )
+
+
 def _print_duplicate_table(
     duplicates: list[DuplicatePair] | list[HybridDuplicate],
     *,
     title: str,
     show_source: bool,
     source_lines: int | None = None,
+    show_diff: bool = False,
     max_items: int | None,
     hybrid: bool,
     withheld: int = 0,
@@ -365,7 +427,8 @@ def _print_duplicate_table(
     :param duplicates: Duplicate pairs to display.
     :param title: Section title.
     :param show_source: Whether to render source snippets.
-    :param source_lines: Maximum source lines per unit when ``show_source`` is set.
+    :param source_lines: Maximum source/diff lines per unit when ``show_source``/``show_diff`` is set.
+    :param show_diff: Whether to render a unified diff per pair.
     :param max_items: Optional row limit for the raw diagnostic tables; the primary list is already bounded by the report cap and passes ``None``.
     :param hybrid: Whether the payload is hybrid duplicates.
     :param withheld: Review pairs the report policy withheld from this table.
@@ -390,6 +453,7 @@ def _print_duplicate_table(
     table = _build_duplicates_table(hybrid=hybrid, compact=compact)
 
     visible = duplicates if max_items is None else duplicates[:max_items]
+    pending_rows = False
     for duplicate in visible:
         if hybrid:
             pair = cast(HybridDuplicate, duplicate)
@@ -433,13 +497,18 @@ def _print_duplicate_table(
             )
         else:
             table.add_row(*cells)
+        pending_rows = True
 
-        if show_source:
+        if show_source or show_diff:
             _output.console.print(table)
-            _print_source_panels(unit_a, unit_b, source_lines=source_lines)
+            if show_source:
+                _print_source_panels(unit_a, unit_b, source_lines=source_lines)
+            if show_diff:
+                _print_diff_panel(unit_a, unit_b, source_lines=source_lines)
             table = _build_duplicates_table(hybrid=hybrid, compact=compact)
+            pending_rows = False
 
-    if not show_source:
+    if pending_rows:
         _output.console.print(table)
 
     if max_items is not None and len(duplicates) > max_items:
@@ -474,13 +543,19 @@ def print_exact_families(
     truncated: int = 0,
     show_source: bool = False,
     source_lines: int | None = None,
+    show_diff: bool = False,
 ) -> None:
     """Print every selected exact family; the report cap is the only bound.
+
+    Diffs only make sense for ``structural_hash`` families (each member
+    against the first); a ``token_hash`` family is token-identical, so
+    ``--show-diff`` prints nothing extra for it.
 
     :param families: Families to print, in report order.
     :param truncated: Families the ``--max-duplicates`` cap cut from the report.
     :param show_source: Whether to render a source snippet per member.
-    :param source_lines: Maximum source lines per unit when ``show_source`` is set.
+    :param source_lines: Maximum source/diff lines per unit when ``show_source``/``show_diff`` is set.
+    :param show_diff: Whether to render a unified diff per non-first member.
     :return: ``None``.
     """
     if not families:
@@ -498,6 +573,7 @@ def print_exact_families(
     compact = _output.console.width < 120
     table = _build_families_table(compact=compact)
 
+    pending_rows = False
     for family in families:
         first, *others = family.members
         shown = others[:3]
@@ -519,13 +595,19 @@ def print_exact_families(
                 f"{escape(first.qualified_name)}\n[dim]{format_location(first)}[/dim]",
                 "\n".join(other_cells),
             )
+        pending_rows = True
 
-        if show_source:
+        diff_members = others if show_diff and family.method == "structural_hash" else ()
+        if show_source or diff_members:
             _output.console.print(table)
-            _print_source_panels(*family.members, source_lines=source_lines)
+            if show_source:
+                _print_source_panels(*family.members, source_lines=source_lines)
+            for other in diff_members:
+                _print_diff_panel(first, other, source_lines=source_lines)
             table = _build_families_table(compact=compact)
+            pending_rows = False
 
-    if not show_source:
+    if pending_rows:
         _output.console.print(table)
 
 
@@ -534,6 +616,7 @@ def print_duplicates(
     title: str,
     show_source: bool = False,
     source_lines: int | None = None,
+    show_diff: bool = False,
     max_items: int | None = DEFAULT_TABLE_ROWS,
     truncated: int = 0,
 ) -> None:
@@ -542,7 +625,8 @@ def print_duplicates(
     :param duplicates: Duplicate pairs to print.
     :param title: Section title.
     :param show_source: Whether to render source snippets.
-    :param source_lines: Maximum source lines per unit when ``show_source`` is set.
+    :param source_lines: Maximum source/diff lines per unit when ``show_source``/``show_diff`` is set.
+    :param show_diff: Whether to render a unified diff per pair.
     :param max_items: Optional max rows.
     :param truncated: Pairs the ``--max-duplicates`` cap cut from the table.
     :return: ``None``.
@@ -552,6 +636,7 @@ def print_duplicates(
         title=title,
         show_source=show_source,
         source_lines=source_lines,
+        show_diff=show_diff,
         max_items=max_items,
         hybrid=False,
         truncated=truncated,
@@ -562,6 +647,7 @@ def print_hybrid_duplicates(
     duplicates: list[HybridDuplicate],
     show_source: bool = False,
     source_lines: int | None = None,
+    show_diff: bool = False,
     withheld: int = 0,
     truncated: int = 0,
 ) -> None:
@@ -569,7 +655,8 @@ def print_hybrid_duplicates(
 
     :param duplicates: Hybrid duplicates to print.
     :param show_source: Whether to render source snippets.
-    :param source_lines: Maximum source lines per unit when ``show_source`` is set.
+    :param source_lines: Maximum source/diff lines per unit when ``show_source``/``show_diff`` is set.
+    :param show_diff: Whether to render a unified diff per pair.
     :param withheld: Review pairs the report policy withheld from the table.
     :param truncated: Pairs the ``--max-duplicates`` cap cut from the table.
     :return: ``None``.
@@ -579,6 +666,7 @@ def print_hybrid_duplicates(
         title="Hybrid Duplicates",
         show_source=show_source,
         source_lines=source_lines,
+        show_diff=show_diff,
         max_items=None,
         hybrid=True,
         withheld=withheld,
@@ -636,6 +724,7 @@ def print_findings(
     *,
     show_source: bool,
     source_lines: int | None = None,
+    show_diff: bool = False,
     max_items: int | None,
     strict_unused: bool,
 ) -> None:
@@ -647,7 +736,8 @@ def print_findings(
 
     :param selection: Findings selected for this report.
     :param show_source: Whether to render source snippets.
-    :param source_lines: Maximum source lines per unit when ``show_source`` is set.
+    :param source_lines: Maximum source/diff lines per unit when ``show_source``/``show_diff`` is set.
+    :param show_diff: Whether to render a unified diff per pair.
     :param max_items: Optional row limit for the raw diagnostic tables.
     :param strict_unused: Whether public functions and methods are also reported.
     :return: ``None``.
@@ -657,12 +747,14 @@ def print_findings(
         truncated=len(selection.truncated_exact_families),
         show_source=show_source,
         source_lines=source_lines,
+        show_diff=show_diff,
     )
     if selection.mode == "combined":
         print_hybrid_duplicates(
             cast(list[HybridDuplicate], selection.duplicates),
             show_source=show_source,
             source_lines=source_lines,
+            show_diff=show_diff,
             withheld=len(selection.omitted_review),
             truncated=len(selection.truncated),
         )
@@ -677,6 +769,7 @@ def print_findings(
                 "Traditional Duplicates (Raw Structural/Token/Jaccard)",
                 show_source=show_source,
                 source_lines=source_lines,
+                show_diff=show_diff,
                 max_items=max_items,
             )
         if selection.semantic_duplicates is not None:
@@ -685,6 +778,7 @@ def print_findings(
                 "Semantic Duplicates (Raw Embedding)",
                 show_source=show_source,
                 source_lines=source_lines,
+                show_diff=show_diff,
                 max_items=max_items,
             )
         return
@@ -694,6 +788,7 @@ def print_findings(
         _RAW_DUPLICATE_TITLES[selection.mode],
         show_source=show_source,
         source_lines=source_lines,
+        show_diff=show_diff,
         max_items=None,
         truncated=len(selection.truncated),
     )

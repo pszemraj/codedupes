@@ -185,6 +185,15 @@ from ._render import print_findings, print_summary
     help="Max source lines per reported unit; implies --show-source ('all' removes the cap)",
 )
 @click.option(
+    "--show-diff",
+    is_flag=True,
+    panel=Panel.OUTPUT,
+    help=(
+        "Show a unified diff per duplicate pair (structural_hash families diff each member "
+        "against the first; token_hash families are token-identical, so nothing prints)"
+    ),
+)
+@click.option(
     "--full-table",
     is_flag=True,
     panel=Panel.OUTPUT,
@@ -258,6 +267,7 @@ def check_command(ctx: click.Context, path: Path, **params: Any) -> None:
                 selection,
                 show_source=opts.show_source,
                 source_lines=opts.source_lines,
+                show_diff=opts.show_diff,
                 max_items=opts.table_max_items,
                 strict_unused=opts.strict_unused,
             )

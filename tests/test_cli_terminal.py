@@ -173,6 +173,98 @@ def test_cli_source_lines_bounds_source_panels(tmp_path: Path) -> None:
     assert "more line" in result.stdout
 
 
+def test_cli_show_diff_prints_the_differing_operator(tmp_path: Path) -> None:
+    source = "def add(a, b):\n    return a + b\n\n\ndef add_alt(a, b):\n    return a - b\n"
+    (tmp_path / "sample.py").write_text(source, encoding="utf-8")
+
+    result = CliRunner().invoke(
+        cli.cli,
+        [
+            "check",
+            str(tmp_path),
+            "--traditional-only",
+            "--no-unused",
+            "--no-tiny-filter",
+            "--traditional-threshold",
+            "0.5",
+            "--show-diff",
+        ],
+    )
+
+    assert result.exit_code == 1, result.output
+    # A single-statement body dedents flush left, so only the operator differs.
+    assert "-return a + b" in result.stdout
+    assert "+return a - b" in result.stdout
+    assert "sample.add" in result.stdout
+    assert "sample.py:1" in result.stdout
+
+
+def test_cli_show_diff_skips_token_families_and_diffs_structural_families(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "file1.py").write_text("def helper():\n    return 1\n", encoding="utf-8")
+    (tmp_path / "file2.py").write_text("def helper():\n    return 1\n", encoding="utf-8")
+    (tmp_path / "file3.py").write_text(
+        "def calc(value):\n    result = value + 1\n    return result\n", encoding="utf-8"
+    )
+    (tmp_path / "file4.py").write_text(
+        "def calc(value):\n    total = value + 1\n    return total\n", encoding="utf-8"
+    )
+
+    result = CliRunner().invoke(
+        cli.cli,
+        [
+            "check",
+            str(tmp_path),
+            "--traditional-only",
+            "--no-unused",
+            "--no-tiny-filter",
+            "--show-diff",
+            "--full-table",
+        ],
+    )
+
+    assert result.exit_code == 1, result.output
+    # structural_hash family (renamed local): diffed against the first member.
+    assert "file3.calc vs file4.calc" in result.stdout
+    assert "-result = value + 1" in result.stdout
+    assert "+total = value + 1" in result.stdout
+    # token_hash family (byte-identical copies): no diff panel, nothing to show.
+    assert "file1.helper vs file2.helper" not in result.stdout
+
+
+def test_cli_show_diff_respects_source_lines_budget(tmp_path: Path) -> None:
+    increments_a = "\n".join(["    result = result + 1"] * 5)
+    increments_b = "\n".join(["    total = total + 1"] * 5)
+    (tmp_path / "file_a.py").write_text(
+        f"def calc(value):\n    result = value + 1\n{increments_a}\n    return result\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "file_b.py").write_text(
+        f"def calc(value):\n    total = value + 1\n{increments_b}\n    return total\n",
+        encoding="utf-8",
+    )
+
+    result = CliRunner().invoke(
+        cli.cli,
+        [
+            "check",
+            str(tmp_path),
+            "--traditional-only",
+            "--no-unused",
+            "--no-tiny-filter",
+            "--show-diff",
+            "--source-lines",
+            "6",
+        ],
+    )
+
+    assert result.exit_code == 1, result.output
+    assert "-result = value + 1" in result.stdout
+    assert "+total = value + 1" not in result.stdout
+    assert "more diff line" in result.stdout
+
+
 @pytest.mark.parametrize("result_level", ["unit", "file"])
 def test_cli_table_locations_preserve_bracketed_path_segments(monkeypatch, tmp_path, result_level):
     path = tmp_path / "sample.py"

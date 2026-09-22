@@ -509,6 +509,7 @@ def test_cli_rejects_combined_only_flags_in_single_method_modes(tmp_path, flag, 
     ("command", "tail_args", "rich_args", "expected_option"),
     [
         ("check", [], ["--full-table"], "--full-table"),
+        ("check", [], ["--show-diff"], "--show-diff"),
         ("search", ["entry"], ["--verbose"], "--verbose"),
         ("check", [], ["--output-width", "160"], "--output-width"),
     ],

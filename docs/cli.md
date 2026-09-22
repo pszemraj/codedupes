@@ -29,6 +29,7 @@ codedupes check ./src --semantic-threshold 0.84 --traditional-threshold 0.75
 codedupes check ./src --exclude "**/generated/**" --exclude "**/migrations/**"
 codedupes check tests --no-default-excludes --no-unused
 codedupes check ./src --json --show-source --source-lines all
+codedupes check ./src --traditional-only --show-diff
 ```
 
 Options, in addition to the [shared options](#options-shared-by-check-and-search):
@@ -51,6 +52,7 @@ Options, in addition to the [shared options](#options-shared-by-check-and-search
 - `--full-table`: Print all rows in the raw `--show-all` duplicate tables and lift the default `--max-duplicates` and `--max-unused` caps
 - `--show-source`: Show a bounded source snippet per reported unit, in terminal panels and (unlike other display controls) also as a `source` field on every JSON unit record
 - `--source-lines <N|all>`: Cap each shown snippet at `N` lines (default `40`) or remove the cap with `all`; implies `--show-source`
+- `--show-diff`: Show a unified diff per duplicate pair, bounded by `--source-lines`; `structural_hash` families diff each member against the first, `token_hash` families print nothing extra (token-identical already)
 - `--fail-on <actionable|all|none>`: Select the [finding exit policy](output.md#exit-codes)
 
 Single-method flags leave unused-code detection enabled; add `--no-unused` to disable it.
@@ -157,7 +159,7 @@ Clear all cached embeddings or only entries for one model. An empty or whitespac
 - `--batch-size` and `--top-k` must be greater than `0`; `--max-duplicates` and `--max-unused` take a positive integer or `all`
 - `--min-statements` and `--tiny-cutoff` must be greater than or equal to `0`
 - `--include-review`, `--show-all`, and `--allow-semantic-fallback` are only valid in default combined `check` mode (not with `--semantic-only` or `--traditional-only`)
-- `--json` rejects rich-only display controls: `--full-table`, `--verbose`, and explicit `--output-width`; `--show-source`/`--source-lines` are accepted and add `source` to JSON unit records instead
+- `--json` rejects rich-only display controls: `--show-diff`, `--full-table`, `--verbose`, and explicit `--output-width`; `--show-source`/`--source-lines` are accepted and add `source` to JSON unit records instead
 - `--semantic-only` and `--traditional-only` are mutually exclusive
 - `--no-unused` and `--strict-unused` are mutually exclusive
 - `--trust-remote-code` and `--no-trust-remote-code` are mutually exclusive

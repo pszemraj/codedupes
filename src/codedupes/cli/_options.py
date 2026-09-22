@@ -312,6 +312,7 @@ class CheckOptions:
     max_unused: int | None
     show_source: bool
     source_lines: int | None
+    show_diff: bool
     full_table: bool
     fail_on: Literal["actionable", "all", "none"]
 
@@ -347,6 +348,7 @@ class CheckOptions:
             verbose=params["verbose"],
             output_width_explicit=_is_cli_explicit(ctx, "output_width"),
             full_table=params["full_table"],
+            show_diff=params["show_diff"],
         )
         show_source = params["show_source"] or _is_cli_explicit(ctx, "source_lines")
 
