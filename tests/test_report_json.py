@@ -1,4 +1,4 @@
-"""Schema-v3 JSON serialization of check and search reports."""
+"""Schema-v4 JSON serialization of check and search reports."""
 
 from __future__ import annotations
 
@@ -31,7 +31,14 @@ from codedupes.report.selection import (
 _ID = re.compile(r"^u\d+$")
 
 
-def _unit(tmp_path: Path, name: str, *, file: str = "a.py", start_byte: int = 0) -> CodeUnit:
+def _unit(
+    tmp_path: Path,
+    name: str,
+    *,
+    file: str = "a.py",
+    start_byte: int = 0,
+    token_hash: str | None = None,
+) -> CodeUnit:
     return CodeUnit(
         name=name,
         qualified_name=f"mod.{name}",
@@ -42,6 +49,7 @@ def _unit(tmp_path: Path, name: str, *, file: str = "a.py", start_byte: int = 0)
         source=f"def {name}():\n    return 1\n",
         start_byte=start_byte,
         end_byte=start_byte + 20,
+        token_hash=token_hash,
     )
 
 
@@ -55,7 +63,7 @@ def _result(tmp_path: Path) -> AnalysisResult:
         traditional_duplicates=[DuplicatePair(a, b, 1.0, "structural_hash")],
         semantic_duplicates=[DuplicatePair(b, c, 0.9, "semantic")],
         hybrid_duplicates=[
-            HybridDuplicate(a, b, "exact", 1.0, has_exact=True),
+            HybridDuplicate(a, b, "exact", 1.0, has_exact=True, exact_method="structural_hash"),
             HybridDuplicate(b, c, "semantic_review", 0.8, semantic_similarity=0.9),
         ],
         potentially_unused=[orphan],
@@ -80,18 +88,20 @@ def _payload(
 
 def _referenced_ids(payload: dict) -> set[str]:
     ids = set(payload["potentially_unused"])
+    for family in payload["exact_families"]:
+        ids.update(family["members"])
     for key in ("duplicates", "traditional_duplicates", "semantic_duplicates"):
         for edge in payload.get(key, []):
             ids.update((edge["unit_a"], edge["unit_b"]))
     return ids
 
 
-def test_check_json_v3_ids_resolve_and_have_no_orphans(tmp_path):
+def test_check_json_v4_ids_resolve_and_have_no_orphans(tmp_path):
     result = _result(tmp_path)
 
     payload = _payload(result, ReportPolicy(show_all=True))
 
-    assert payload["schema_version"] == SCHEMA_VERSION == 3
+    assert payload["schema_version"] == SCHEMA_VERSION == 4
     assert _referenced_ids(payload) == set(payload["units"])
     assert all(_ID.match(key) for key in payload["units"])
     by_uid = {unit.uid: unit for unit in result.units}
@@ -99,13 +109,13 @@ def test_check_json_v3_ids_resolve_and_have_no_orphans(tmp_path):
         assert by_uid[record["uid"]].name == record["name"], key
 
 
-def test_check_json_v3_ids_follow_file_then_source_order(tmp_path):
+def test_check_json_v4_ids_follow_file_then_source_order(tmp_path):
     payload = _payload(_result(tmp_path), ReportPolicy(include_review=True))
 
     assert [payload["units"][f"u{i}"]["name"] for i in range(4)] == ["c", "b", "a", "orphan"]
 
 
-def test_check_json_v3_hidden_review_units_are_absent(tmp_path):
+def test_check_json_v4_hidden_review_units_are_absent(tmp_path):
     result = _result(tmp_path)
 
     default = _payload(result)
@@ -129,7 +139,7 @@ def test_check_json_round_trips_and_keeps_unit_ids_under_edge_shuffle(tmp_path):
     assert _payload(shuffled, policy)["units"] == payload["units"]
 
 
-def test_check_json_v3_summary_counts(tmp_path):
+def test_check_json_v4_summary_counts(tmp_path):
     payload = _payload(_result(tmp_path))
     summary = payload["summary"]
 
@@ -148,6 +158,7 @@ def test_check_json_v3_summary_counts(tmp_path):
     assert summary["max_duplicates"] is None
     assert summary["actionable_duplicates"] == 1
     assert summary["reported_actionable_duplicates"] == 1
+    assert summary["exact_family_members"] == 2
     assert summary["raw_traditional_duplicates"] == 1
     assert summary["raw_semantic_duplicates"] == 1
     assert summary["fail_on"] == "actionable"
@@ -186,8 +197,11 @@ def test_check_json_raw_modes_count_every_pair_as_actionable(tmp_path):
     assert summary["actionable_duplicates"] == 2
     assert summary["reported_actionable_duplicates"] == 1
     assert summary["truncated_duplicates"] == 1
-    # Raw pairs carry no tier, so the breakdown stays zero-filled.
-    assert summary["truncated_by_tier"] == dict.fromkeys(summary["duplicates_by_tier"], 0)
+    # Raw pairs carry no tier, so only ``exact`` (families) is ever non-zero;
+    # the family took the one slot and the semantic pair was cut.
+    assert summary["duplicates_by_tier"] == dict.fromkeys(HYBRID_TIERS, 0) | {"exact": 1}
+    assert summary["truncated_by_tier"] == dict.fromkeys(HYBRID_TIERS, 0)
+    assert summary["hybrid_duplicates"] == 0
 
 
 def test_check_json_truncated_by_tier_names_cut_review_pairs(tmp_path):
@@ -214,10 +228,18 @@ def test_check_json_truncated_by_tier_names_cut_review_pairs(tmp_path):
 
 
 def _chain_result(tmp_path: Path, pairs: int) -> AnalysisResult:
-    """Build ``pairs`` exact hybrid edges chaining ``pairs + 1`` units."""
+    """Build ``pairs`` hybrid_confirmed edges chaining ``pairs + 1`` units."""
     units = [_unit(tmp_path, f"f{i}", start_byte=i * 30) for i in range(pairs + 1)]
     hybrid = [
-        HybridDuplicate(units[i], units[i + 1], "exact", 1.0, has_exact=True) for i in range(pairs)
+        HybridDuplicate(
+            units[i],
+            units[i + 1],
+            "hybrid_confirmed",
+            0.99 - i * 0.001,
+            jaccard_similarity=0.9,
+            semantic_similarity=0.9,
+        )
+        for i in range(pairs)
     ]
     return AnalysisResult(
         units=units,
@@ -268,8 +290,108 @@ def test_check_json_max_duplicates_caps_edges_and_units_but_not_counts(tmp_path)
         + summary["truncated_duplicates"]
         == summary["hybrid_duplicates"]
     )
-    assert summary["duplicates_by_tier"]["exact"] == 25
+    assert summary["duplicates_by_tier"]["hybrid_confirmed"] == 25
     assert summary["exit_code"] == 1
+
+
+def _family_result(
+    tmp_path: Path, copies: int, *, method: str = "structural_hash"
+) -> AnalysisResult:
+    """Build one ``copies``-member exact clique plus one hybrid_confirmed pair."""
+    members = [
+        _unit(
+            tmp_path,
+            f"copy{i}",
+            file=f"m{i}.py",
+            token_hash="t" if method == "token_hash" else None,
+        )
+        for i in range(copies)
+    ]
+    near_a = _unit(tmp_path, "near_a", file="n.py", start_byte=0)
+    near_b = _unit(tmp_path, "near_b", file="n.py", start_byte=40)
+    hybrid = [
+        HybridDuplicate(members[i], members[j], "exact", 1.0, has_exact=True, exact_method=method)
+        for i in range(copies)
+        for j in range(i + 1, copies)
+    ]
+    hybrid.append(
+        HybridDuplicate(
+            near_a, near_b, "hybrid_confirmed", 0.9, jaccard_similarity=0.9, semantic_similarity=0.9
+        )
+    )
+    return AnalysisResult(
+        units=members + [near_a, near_b],
+        traditional_duplicates=[],
+        semantic_duplicates=[],
+        hybrid_duplicates=hybrid,
+        potentially_unused=[],
+        analysis_mode="combined",
+    )
+
+
+def test_check_json_exact_family_record_replaces_pairwise_edges(tmp_path):
+    payload = _payload(_family_result(tmp_path, 5, method="token_hash"))
+    summary = payload["summary"]
+
+    # Ten exact edges become one record; no exact edge remains in duplicates.
+    assert payload["exact_families"] == [
+        {
+            "method": "token_hash",
+            "members": ["u0", "u1", "u2", "u3", "u4"],
+            "lines": 2,
+            "redundant_lines": 8,
+        }
+    ]
+    assert [edge["tier"] for edge in payload["duplicates"]] == ["hybrid_confirmed"]
+    assert "has_exact" not in payload["duplicates"][0]
+    assert _referenced_ids(payload) == set(payload["units"])
+    assert summary["hybrid_duplicates"] == 2
+    assert summary["reported_duplicates"] == 2
+    assert summary["actionable_duplicates"] == 2
+    assert summary["reported_actionable_duplicates"] == 2
+    assert summary["duplicates_by_tier"]["exact"] == 1
+    assert summary["exact_family_members"] == 5
+    assert summary["hidden_only_failure"] == []
+
+
+def test_check_json_family_cap_counts_and_truncated_by_tier_exact(tmp_path):
+    result = _family_result(tmp_path, 5)
+    # A second, smaller family ranks after the five-copy one.
+    small_a = _unit(tmp_path, "small_a", file="s.py", start_byte=0)
+    small_b = _unit(tmp_path, "small_b", file="s.py", start_byte=40)
+    result.units.extend([small_a, small_b])
+    result.hybrid_duplicates.append(HybridDuplicate(small_a, small_b, "exact", 1.0, has_exact=True))
+
+    payload = _payload(result, ReportPolicy(max_duplicates=1))
+    summary = payload["summary"]
+
+    assert [family["members"] for family in payload["exact_families"]] == [
+        ["u0", "u1", "u2", "u3", "u4"]
+    ]
+    assert payload["exact_families"][0]["method"] == "structural_hash"
+    assert payload["duplicates"] == []
+    assert len(payload["units"]) == 5
+    assert summary["max_duplicates"] == 1
+    assert summary["hybrid_duplicates"] == 3
+    assert summary["reported_duplicates"] == 1
+    assert summary["truncated_duplicates"] == 2
+    assert summary["truncated_by_tier"] == {
+        "exact": 1,
+        "traditional_near": 0,
+        "hybrid_confirmed": 1,
+        "semantic_high_confidence": 0,
+        "semantic_review": 0,
+    }
+    assert summary["duplicates_by_tier"]["exact"] == 2
+    assert summary["exact_family_members"] == 7
+    assert summary["actionable_duplicates"] == 3
+    assert summary["reported_actionable_duplicates"] == 1
+    assert (
+        summary["reported_duplicates"]
+        + summary["omitted_review_duplicates"]
+        + summary["truncated_duplicates"]
+        == summary["hybrid_duplicates"]
+    )
 
 
 def test_check_json_show_all_raw_edges_use_short_ids(tmp_path):
@@ -282,7 +404,7 @@ def test_check_json_show_all_raw_edges_use_short_ids(tmp_path):
     assert payload["semantic_duplicates"][0]["unit_b"] == "u0"
 
 
-def test_search_json_v3_unit_and_file_levels(tmp_path):
+def test_search_json_v4_unit_and_file_levels(tmp_path):
     a = _unit(tmp_path, "a", file="a.py", start_byte=0)
     b = _unit(tmp_path, "b", file="a.py", start_byte=40)
     c = _unit(tmp_path, "c", file="b.py", start_byte=0)
@@ -291,7 +413,7 @@ def test_search_json_v3_unit_and_file_levels(tmp_path):
     unit_level = search_result_to_json(
         "q", hits, 3, None, extraction_diagnostics=[], semantic_diagnostics=[]
     )
-    assert unit_level["schema_version"] == 3
+    assert unit_level["schema_version"] == 4
     assert [hit["unit"] for hit in unit_level["results"]] == ["u2", "u0", "u1"]
     assert unit_level["units"]["u2"]["uid"] == c.uid
     assert set(unit_level["units"]) == {"u0", "u1", "u2"}

@@ -16,16 +16,16 @@ from codedupes.models import (
 from codedupes.semantic import EmbeddingRunStats
 
 from .selection import (
+    ExactFamily,
     FailOnPolicy,
     FileSearchResult,
     ReportSelection,
-    actionable_pairs,
     assign_unit_ids,
     collect_units,
     hidden_only_failure,
 )
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 def _embedding_stats_to_dict(stats: EmbeddingRunStats | None) -> dict[str, Any] | None:
@@ -112,11 +112,25 @@ def _hybrid_edge(duplicate: HybridDuplicate, ids: dict[str, str]) -> dict[str, A
         "unit_b": ids[duplicate.unit_b.uid],
         "tier": duplicate.tier,
         "confidence": duplicate.confidence,
-        "has_exact": duplicate.has_exact,
         "semantic_similarity": duplicate.semantic_similarity,
         "jaccard_similarity": duplicate.jaccard_similarity,
         "weak_identifier_jaccard": duplicate.weak_identifier_jaccard,
         "statement_count_ratio": duplicate.statement_count_ratio,
+    }
+
+
+def _family_record(family: ExactFamily, ids: dict[str, str]) -> dict[str, Any]:
+    """Serialize one exact family over report-local ids.
+
+    :param family: Exact family to serialize.
+    :param ids: Mapping from unit uid to report-local id.
+    :return: Serialized family: fingerprint method, member ids, and size.
+    """
+    return {
+        "method": family.method,
+        "members": [ids[unit.uid] for unit in family.members],
+        "lines": family.lines,
+        "redundant_lines": family.redundant_lines,
     }
 
 
@@ -157,6 +171,7 @@ def check_result_to_json(
         _hybrid_edge(pair, ids) if isinstance(pair, HybridDuplicate) else _raw_edge(pair, ids)
         for pair in selection.duplicates
     ]
+    exact_families = [_family_record(family, ids) for family in selection.exact_families]
 
     output: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
@@ -164,19 +179,17 @@ def check_result_to_json(
         "summary": {
             "total_units": len(result.units),
             "units_by_language": _language_counts(result.units),
-            "hybrid_duplicates": len(result.hybrid_duplicates),
-            "reported_duplicates": len(selection.duplicates),
+            # Finding counts: an exact family counts once, every other tier per pair.
+            "hybrid_duplicates": selection.total_findings if combined else 0,
+            "reported_duplicates": selection.reported_findings,
             "omitted_review_duplicates": len(selection.omitted_review),
-            "truncated_duplicates": len(selection.truncated),
+            "truncated_duplicates": selection.truncated_findings,
             "truncated_by_tier": dict(selection.truncated_by_tier),
             "max_duplicates": selection.policy.max_duplicates,
-            "actionable_duplicates": len(
-                actionable_pairs(result.all_duplicates, combined=combined)
-            ),
-            "reported_actionable_duplicates": len(
-                actionable_pairs(selection.duplicates, combined=combined)
-            ),
+            "actionable_duplicates": selection.actionable_findings,
+            "reported_actionable_duplicates": selection.reported_actionable_findings,
             "duplicates_by_tier": dict(selection.duplicates_by_tier),
+            "exact_family_members": selection.exact_family_members,
             "potentially_unused": len(result.potentially_unused),
             "raw_traditional_duplicates": len(result.traditional_duplicates),
             "raw_semantic_duplicates": len(result.semantic_duplicates),
@@ -194,6 +207,7 @@ def check_result_to_json(
                 hidden_only_failure(selection, policy=fail_on, strict_unused=strict_unused)
             ),
         },
+        "exact_families": exact_families,
         "duplicates": duplicates,
         "potentially_unused": [ids[unit.uid] for unit in selection.potentially_unused],
         "extraction_diagnostics": [

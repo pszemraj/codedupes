@@ -21,10 +21,10 @@ from codedupes.models import (
     HybridDuplicate,
 )
 from codedupes.report.selection import (
+    ExactFamily,
     FailOnPolicy,
     FileSearchResult,
     ReportSelection,
-    actionable_pairs,
     hidden_only_failure,
 )
 from codedupes.semantic import EmbeddingRunStats
@@ -154,6 +154,15 @@ def _print_diagnostics(title: str, diagnostics: list[ExtractionDiagnostic]) -> N
         _output.console.print(f"  [dim]... and {remaining} more diagnostics[/dim]")
 
 
+def _family_noun(count: int) -> str:
+    """Return ``family`` or ``families`` for a count.
+
+    :param count: Number of families.
+    :return: Singular or plural noun.
+    """
+    return "exact family" if count == 1 else "exact families"
+
+
 def print_summary(
     selection: ReportSelection,
     *,
@@ -171,14 +180,21 @@ def print_summary(
     """
     result = selection.result
     withheld = len(selection.omitted_review)
-    truncated = len(selection.truncated)
+    truncated = selection.truncated_findings
     # Name the cut tiers: review pairs rank last, so under --include-review a
     # cap can drop every one of them while the withheld row stays absent.
     cut_tiers = ", ".join(
-        f"{count} {tier}" for tier, count in selection.truncated_by_tier.items() if count
+        f"{count} {_family_noun(count) if tier == 'exact' else tier}"
+        for tier, count in selection.truncated_by_tier.items()
+        if count
     )
     truncation_note = (
         f"{truncated} ({cut_tiers + '; ' if cut_tiers else ''}use --max-duplicates all)"
+    )
+    families = len(selection.all_exact_families)
+    family_note = (
+        f"{families} {'family' if families == 1 else 'families'} "
+        f"({selection.exact_family_members} units)"
     )
     _output.console.print()
 
@@ -205,13 +221,14 @@ def print_summary(
     summary.add_row("", "")
 
     if selection.mode == "combined":
-        summary.add_row("Hybrid duplicates", str(len(result.hybrid_duplicates)))
+        summary.add_row("Hybrid duplicates", str(selection.total_findings))
         for tier, count in selection.duplicates_by_tier.items():
-            summary.add_row(f"  {tier}", str(count))
-        actionable = len(actionable_pairs(result.hybrid_duplicates, combined=True))
-        reported_actionable = len(actionable_pairs(selection.duplicates, combined=True))
-        summary.add_row("Actionable duplicates", f"{actionable} ({reported_actionable} reported)")
-        summary.add_row("Reported duplicates", str(len(selection.duplicates)))
+            summary.add_row(f"  {tier}", family_note if tier == "exact" and count else str(count))
+        summary.add_row(
+            "Actionable duplicates",
+            f"{selection.actionable_findings} ({selection.reported_actionable_findings} reported)",
+        )
+        summary.add_row("Reported duplicates", str(selection.reported_findings))
         if withheld:
             summary.add_row("Withheld review candidates", f"{withheld} (use --include-review)")
         if truncated:
@@ -230,8 +247,10 @@ def print_summary(
                 "Duplicates",
                 str(len(result.traditional_duplicates) + len(result.semantic_duplicates)),
             )
+        if families:
+            summary.add_row("Exact duplicate families", family_note)
         if truncated:
-            summary.add_row("Reported duplicates", str(len(selection.duplicates)))
+            summary.add_row("Reported duplicates", str(selection.reported_findings))
             summary.add_row("Truncated duplicates", truncation_note)
         summary.add_row("Potentially unused", str(len(result.potentially_unused)))
 
@@ -308,27 +327,20 @@ def _syntax_lexer(unit: CodeUnit) -> str:
     }.get(dialect, "text")
 
 
-def _print_source_panels(unit_a: CodeUnit, unit_b: CodeUnit) -> None:
-    """Print syntax-highlighted source snippets for two units.
+def _print_source_panels(*units: CodeUnit) -> None:
+    """Print a syntax-highlighted source snippet per unit.
 
-    :param unit_a: First code unit.
-    :param unit_b: Second code unit.
+    :param units: Code units to render, in order.
     :return: ``None``.
     """
-    _output.console.print(
-        Panel(
-            Syntax(truncate_source(unit_a.source), _syntax_lexer(unit_a), theme="monokai"),
-            title=f"[cyan]{escape(unit_a.qualified_name)}[/cyan]",
-            border_style="dim",
+    for unit in units:
+        _output.console.print(
+            Panel(
+                Syntax(truncate_source(unit.source), _syntax_lexer(unit), theme="monokai"),
+                title=f"[cyan]{escape(unit.qualified_name)}[/cyan]",
+                border_style="dim",
+            )
         )
-    )
-    _output.console.print(
-        Panel(
-            Syntax(truncate_source(unit_b.source), _syntax_lexer(unit_b), theme="monokai"),
-            title=f"[cyan]{escape(unit_b.qualified_name)}[/cyan]",
-            border_style="dim",
-        )
-    )
 
 
 def _print_duplicate_table(
@@ -428,6 +440,83 @@ def _print_duplicate_table(
             f"[dim]... and {len(duplicates) - max_items} more "
             "(use --full-table to list all rows)[/dim]"
         )
+
+
+def _build_families_table(*, compact: bool) -> Table:
+    """Build the exact-family table columns for terminal output.
+
+    :param compact: Whether to stack the counts for a narrow terminal.
+    :return: Configured rich ``Table`` instance.
+    """
+    table = Table(header_style="bold", box=box.ROUNDED, border_style="dim", show_lines=True)
+    if compact:
+        table.add_column("Family", width=26, min_width=18, overflow="fold")
+        table.add_column("Code units", style="cyan", overflow="fold")
+    else:
+        table.add_column("Members", style="green", width=7, min_width=7, justify="right")
+        table.add_column("Lines", style="green", width=5, min_width=5, justify="right")
+        table.add_column("Method", style="magenta", width=15, min_width=15, no_wrap=True)
+        table.add_column("First member", style="cyan", overflow="fold")
+        table.add_column("Others", style="cyan", overflow="fold")
+    return table
+
+
+def print_exact_families(
+    families: list[ExactFamily],
+    *,
+    truncated: int = 0,
+    show_source: bool = False,
+) -> None:
+    """Print every selected exact family; the report cap is the only bound.
+
+    :param families: Families to print, in report order.
+    :param truncated: Families the ``--max-duplicates`` cap cut from the report.
+    :param show_source: Whether to render a source snippet per member.
+    :return: ``None``.
+    """
+    if not families:
+        return
+
+    counts = f"{len(families)} {'family' if len(families) == 1 else 'families'}"
+    if truncated:
+        counts += f", {truncated} truncated"
+    _output.console.print(f"\n[bold yellow]Exact Duplicate Families[/bold yellow] ({counts})")
+    _output.console.print(
+        "[dim]Each row is one set of mutually identical units; token_hash members are "
+        "token-for-token copies, structural_hash members differ only in names or literals.[/dim]"
+    )
+    compact = _output.console.width < 120
+    table = _build_families_table(compact=compact)
+
+    for family in families:
+        first, *others = family.members
+        shown = others[:3]
+        overflow = len(others) - len(shown)
+        other_cells = [format_location(unit) for unit in shown]
+        if overflow:
+            other_cells.append(f"+{overflow} more")
+        if compact:
+            table.add_row(
+                f"Members: {len(family.members)}\nLines: {family.lines}\nMethod: {family.method}",
+                f"{escape(first.name)}\n[dim]{format_location(first)}[/dim]\n"
+                + "\n".join(f"[dim]{cell}[/dim]" for cell in other_cells),
+            )
+        else:
+            table.add_row(
+                str(len(family.members)),
+                str(family.lines),
+                family.method,
+                f"{escape(first.name)}\n[dim]{format_location(first)}[/dim]",
+                "\n".join(other_cells),
+            )
+
+        if show_source:
+            _output.console.print(table)
+            _print_source_panels(*family.members)
+            table = _build_families_table(compact=compact)
+
+    if not show_source:
+        _output.console.print(table)
 
 
 def print_duplicates(
@@ -539,6 +628,11 @@ def print_findings(
     :param max_items: Optional row limit for the unused and raw diagnostic tables.
     :return: ``None``.
     """
+    print_exact_families(
+        selection.exact_families,
+        truncated=len(selection.truncated_exact_families),
+        show_source=show_source,
+    )
     if selection.mode == "combined":
         print_hybrid_duplicates(
             cast(list[HybridDuplicate], selection.duplicates),

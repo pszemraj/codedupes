@@ -37,24 +37,34 @@ def _build_unit(tmp_path: Path) -> CodeUnit:
     return make_code_unit(tmp_path, name="entry", source="def entry():\n    return 1")
 
 
+def _build_copy(tmp_path: Path) -> CodeUnit:
+    """Return a second unit that is an exact copy of :func:`_build_unit`."""
+    return make_code_unit(
+        tmp_path, name="entry_copy", source="def entry_copy():\n    return 1", lineno=5
+    )
+
+
 def _build_result(tmp_path: Path) -> AnalysisResult:
+    """Combined result with one two-member exact family and one unused unit."""
     unit = _build_unit(tmp_path)
+    copy = _build_copy(tmp_path)
     duplicate = DuplicatePair(
         unit_a=unit,
-        unit_b=unit,
+        unit_b=copy,
         similarity=1.0,
         method="structural_hash",
     )
     hybrid = HybridDuplicate(
         unit_a=unit,
-        unit_b=unit,
+        unit_b=copy,
         tier="exact",
         confidence=1.0,
         has_exact=True,
+        exact_method="structural_hash",
     )
 
     return AnalysisResult(
-        units=[unit],
+        units=[unit, copy],
         traditional_duplicates=[duplicate],
         semantic_duplicates=[],
         hybrid_duplicates=[hybrid],
@@ -112,19 +122,23 @@ def test_cli_json_output_hybrid_default(monkeypatch, tmp_path):
     assert output["summary"]["strict_unused"] is False
     assert output["summary"]["exit_code"] == 1
     assert output["summary"]["hidden_only_failure"] == []
-    assert output["schema_version"] == 3
+    assert output["schema_version"] == 4
     assert output["summary"]["max_duplicates"] == 20
     assert output["summary"]["reported_duplicates"] == 1
     assert output["summary"]["omitted_review_duplicates"] == 0
     assert output["summary"]["actionable_duplicates"] == 1
     assert output["summary"]["reported_actionable_duplicates"] == 1
     assert output["summary"]["duplicates_by_tier"]["exact"] == 1
-    assert "duplicates" in output
-    assert output["duplicates"][0]["unit_a"] == "u0"
-    assert output["duplicates"][0]["unit_b"] in output["units"]
+    assert output["summary"]["exact_family_members"] == 2
+    # The exact pair is one family record; the pairwise list holds no exact edge.
+    assert output["exact_families"] == [
+        {"method": "structural_hash", "members": ["u0", "u1"], "lines": 2, "redundant_lines": 2}
+    ]
+    assert output["duplicates"] == []
     assert output["potentially_unused"][0] in output["units"]
     assert output["units"]["u0"]["uid"] == _build_unit(tmp_path).uid
-    assert len(output["units"]) <= 2 * len(output["duplicates"]) + len(output["potentially_unused"])
+    assert output["units"]["u1"]["uid"] == _build_copy(tmp_path).uid
+    assert len(output["units"]) == 2
     assert "hybrid_duplicates" not in output
     assert "traditional_duplicates" not in output
     assert "semantic_duplicates" not in output
@@ -334,7 +348,7 @@ def test_cli_json_discards_direct_backend_output_on_success(monkeypatch, tmp_pat
 
     assert result.exit_code == 1
     assert result.stderr == ""
-    assert json.loads(result.output)["schema_version"] == 3
+    assert json.loads(result.output)["schema_version"] == 4
 
 
 def _run_cli_subprocess(
@@ -376,7 +390,7 @@ def test_cli_json_isolates_custom_family_warning_before_config(tmp_path, command
     )
 
     assert result.returncode == 0, result.stdout
-    assert json.loads(result.stdout)["schema_version"] == 3
+    assert json.loads(result.stdout)["schema_version"] == 4
 
 
 @pytest.mark.parametrize(
@@ -433,9 +447,9 @@ def test_cli_json_isolates_backend_output_in_completed_report(
 
     assert result.returncode == exit_code, result.stdout
     payload = json.loads(result.stdout)
-    assert payload["schema_version"] == 3
+    assert payload["schema_version"] == 4
     if command == "check":
-        assert payload["duplicates"]
+        assert payload["exact_families"]
         assert payload["summary"]["exit_code"] == exit_code
 
 
@@ -868,7 +882,7 @@ def test_cli_search_json_reports_indexed_unit_count(monkeypatch, tmp_path, index
 
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
-    assert payload["schema_version"] == 3
+    assert payload["schema_version"] == 4
     assert payload["summary"]["indexed_units"] == indexed_units
     assert payload["results"] == []
     assert result.stderr == ""
@@ -942,7 +956,7 @@ def test_cli_search_rejects_nonfinite_threshold_before_analysis(monkeypatch, tmp
     assert "semantic_threshold must be finite" in result.stderr
 
 
-def test_cli_json_v3_raw_mode_uses_edge_list(monkeypatch, tmp_path):
+def test_cli_json_v4_raw_mode_uses_edge_list(monkeypatch, tmp_path):
     path = tmp_path / "sample.py"
     path.write_text("def entry():\n    return 1\n")
     unit = _build_unit(tmp_path)
@@ -967,7 +981,7 @@ def test_cli_json_v3_raw_mode_uses_edge_list(monkeypatch, tmp_path):
 
     assert result.exit_code == 1
     payload = json.loads(result.output)
-    assert payload["schema_version"] == 3
+    assert payload["schema_version"] == 4
     assert payload["duplicates"] == [
         {
             "method": "semantic",
@@ -978,23 +992,28 @@ def test_cli_json_v3_raw_mode_uses_edge_list(monkeypatch, tmp_path):
     ]
     assert payload["units"]["u0"]["name"] == "entry"
     assert payload["units"]["u0"]["uid"] == unit.uid
+    assert payload["exact_families"] == []
     assert set(payload["summary"]["duplicates_by_tier"].values()) == {0}
     assert "traditional_duplicates" not in payload
     assert "semantic_duplicates" not in payload
 
 
-def test_cli_json_v3_emits_each_unit_once(monkeypatch, tmp_path):
+def test_cli_json_v4_emits_each_unit_once(monkeypatch, tmp_path):
     path = tmp_path / "sample.py"
     path.write_text("def entry():\n    return 1\n")
     result_obj = _build_result(tmp_path)
-    result_obj.hybrid_duplicates *= 4
+    unit, copy = result_obj.units
+    near = HybridDuplicate(
+        unit, copy, "hybrid_confirmed", 0.9, jaccard_similarity=0.9, semantic_similarity=0.9
+    )
+    result_obj.hybrid_duplicates = [near] * 4
     patch_cli_analyzer(monkeypatch, cli, analyze_result=result_obj)
 
     result = CliRunner().invoke(cli.cli, ["check", str(path), "--json"])
 
     payload = json.loads(result.output)
     assert len(payload["duplicates"]) == 4
-    assert len(payload["units"]) == 1
+    assert len(payload["units"]) == 2
 
 
 def test_cli_no_private_option_check(monkeypatch, tmp_path):
@@ -2074,13 +2093,19 @@ def test_cli_traditional_panel_label_is_language_neutral(monkeypatch, tmp_path):
     path = tmp_path / "sample.py"
     path.write_text("def entry():\n    return 1\n")
     unit = _build_unit(tmp_path)
+    copy = _build_copy(tmp_path)
+    near_a = make_code_unit(tmp_path, name="near_a", source="def near_a():\n    return 2", lineno=9)
+    near_b = make_code_unit(
+        tmp_path, name="near_b", source="def near_b():\n    return 3", lineno=13
+    )
     patch_cli_analyzer(
         monkeypatch,
         cli,
         analyze_result=AnalysisResult(
-            units=[unit],
+            units=[unit, copy, near_a, near_b],
             traditional_duplicates=[
-                DuplicatePair(unit_a=unit, unit_b=unit, similarity=1.0, method="token_hash")
+                DuplicatePair(unit_a=unit, unit_b=copy, similarity=1.0, method="token_hash"),
+                DuplicatePair(unit_a=near_a, unit_b=near_b, similarity=0.9, method="jaccard"),
             ],
             semantic_duplicates=[],
             hybrid_duplicates=[],
@@ -2091,29 +2116,20 @@ def test_cli_traditional_panel_label_is_language_neutral(monkeypatch, tmp_path):
 
     result = CliRunner().invoke(cli.cli, ["check", str(path), "--traditional-only"])
     # Every language reports the shared structural fingerprint; no table names an AST.
+    assert "Exact Duplicate Families (1 family)" in result.output
+    assert "token_hash" in result.output
+    assert "Exact duplicate families" in result.output
+    assert "1 family (2 units)" in result.output
     assert "Traditional Duplicates (Structural/Token/Jaccard)" in result.output
+    assert "(1 pairs)" in result.output
     assert "AST" not in result.output
 
 
 def test_cli_full_table_lifts_the_pair_cap_and_the_unused_row_limit(monkeypatch, tmp_path):
     path = tmp_path / "sample.py"
     path.write_text("def entry():\n    return 1\n")
-    unit = _build_unit(tmp_path)
-    hybrid = HybridDuplicate(
-        unit_a=unit,
-        unit_b=unit,
-        tier="exact",
-        confidence=1.0,
-        has_exact=True,
-    )
-    result_obj = AnalysisResult(
-        units=[unit],
-        traditional_duplicates=[],
-        semantic_duplicates=[],
-        hybrid_duplicates=[hybrid for _ in range(25)],
-        potentially_unused=[unit for _ in range(25)],
-        analysis_mode="combined",
-    )
+    result_obj = _build_capped_result(tmp_path)
+    result_obj.potentially_unused = [result_obj.units[0] for _ in range(25)]
     patch_cli_analyzer(monkeypatch, cli, analyze_result=result_obj)
 
     runner = CliRunner()
@@ -2121,7 +2137,7 @@ def test_cli_full_table_lifts_the_pair_cap_and_the_unused_row_limit(monkeypatch,
     assert default_result.exit_code == 1
     # The primary table renders every selected pair; only the report cap bounds it.
     assert "(20 pairs, 5 truncated)" in default_result.output
-    assert "5 (5 exact; use --max-duplicates all)" in default_result.output
+    assert "5 (5 semantic_high_confidence; use --max-duplicates all)" in default_result.output
     assert (
         "... and 5 more (use --full-table to list all rows)"
         in default_result.output.split("Likely Dead Code")[1]
@@ -2502,6 +2518,90 @@ def _json_pairs(payload: dict) -> list[tuple[str, str]]:
         (units[edge["unit_a"]]["name"], units[edge["unit_b"]]["name"])
         for edge in payload["duplicates"]
     ]
+
+
+def _build_family_result(tmp_path: Path) -> AnalysisResult:
+    """Combined result: one three-copy exact family, one confirmed pair, one review pair."""
+    copies = [
+        make_code_unit(
+            tmp_path,
+            name=f"copy_{i}",
+            source=f"def copy_{i}(x):\n    y = x + 1\n    return y",
+            lineno=1 + 4 * i,
+        )
+        for i in range(3)
+    ]
+    near_a = make_code_unit(
+        tmp_path, name="near_a", source="def near_a():\n    return 2", lineno=20
+    )
+    near_b = make_code_unit(
+        tmp_path, name="near_b", source="def near_b():\n    return 3", lineno=24
+    )
+    review = make_code_unit(
+        tmp_path, name="review", source="def review():\n    return 4", lineno=28
+    )
+    hybrid = [
+        HybridDuplicate(
+            copies[i], copies[j], "exact", 1.0, has_exact=True, exact_method="token_hash"
+        )
+        for i in range(3)
+        for j in range(i + 1, 3)
+    ]
+    hybrid.append(
+        HybridDuplicate(
+            near_a, near_b, "hybrid_confirmed", 0.9, jaccard_similarity=0.9, semantic_similarity=0.9
+        )
+    )
+    hybrid.append(HybridDuplicate(near_b, review, "semantic_review", 0.8, semantic_similarity=0.88))
+    return AnalysisResult(
+        units=copies + [near_a, near_b, review],
+        traditional_duplicates=[],
+        semantic_duplicates=[],
+        hybrid_duplicates=hybrid,
+        potentially_unused=[],
+        analysis_mode="combined",
+    )
+
+
+def test_cli_family_panel_leads_the_report_and_counts_as_one_finding(monkeypatch, tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+    patch_cli_analyzer(monkeypatch, cli, analyze_result=_build_family_result(tmp_path))
+    runner = CliRunner()
+
+    wide = runner.invoke(cli.cli, ["check", str(path), "--output-width", "160"])
+    assert wide.exit_code == 1
+    families_at = wide.output.index("Exact Duplicate Families (1 family)")
+    pairs_at = wide.output.index("Hybrid Duplicates (1 pairs, 1 review withheld)")
+    assert families_at < pairs_at
+    panel = wide.output[families_at:pairs_at]
+    assert "token_hash" in panel
+    assert "copy_0" in panel
+    # Three exact edges are one row; the family table lists the other members by location.
+    assert panel.count("sample.py:") == 3
+    assert "1 family (3 units)" in wide.output
+    assert "2 (2 reported)" in wide.output  # Actionable duplicates
+    assert "Reported duplicates" in wide.output
+
+    compact = runner.invoke(cli.cli, ["check", str(path), "--output-width", "80"])
+    assert compact.exit_code == 1
+    assert "Members: 3" in compact.output
+    assert "Method: token_hash" in compact.output
+
+    capped = runner.invoke(cli.cli, ["check", str(path), "--max-duplicates", "1"])
+    assert "Exact Duplicate Families (1 family)" in capped.output
+    assert "no reported pairs; 1 semantic_review" in capped.output
+    assert "1 (1 hybrid_confirmed; use --max-duplicates all)" in capped.output
+
+    payload = json.loads(runner.invoke(cli.cli, ["check", str(path), "--json"]).output)
+    assert len(payload["exact_families"]) == 1
+    assert len(payload["exact_families"][0]["members"]) == 3
+    assert payload["exact_families"][0]["method"] == "token_hash"
+    assert [edge["tier"] for edge in payload["duplicates"]] == ["hybrid_confirmed"]
+    assert payload["summary"]["hybrid_duplicates"] == 3
+    assert payload["summary"]["reported_duplicates"] == 2
+    assert payload["summary"]["omitted_review_duplicates"] == 1
+    assert payload["summary"]["exact_family_members"] == 3
 
 
 def test_cli_default_report_lists_the_same_twenty_pairs_in_terminal_and_json(monkeypatch, tmp_path):

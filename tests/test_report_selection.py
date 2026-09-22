@@ -20,9 +20,11 @@ from codedupes.models import (
 from codedupes.report.selection import (
     ACTIONABLE_TIERS,
     DEFAULT_MAX_DUPLICATES,
+    ExactFamily,
     ReportPolicy,
     actionable_pairs,
     assign_unit_ids,
+    build_exact_families,
     collect_units,
     hidden_only_failure,
     run_should_fail,
@@ -30,23 +32,44 @@ from codedupes.report.selection import (
 )
 
 
-def _unit(tmp_path: Path, name: str, *, file: str = "a.py", start_byte: int = 0) -> CodeUnit:
+def _unit(
+    tmp_path: Path,
+    name: str,
+    *,
+    file: str = "a.py",
+    start_byte: int = 0,
+    lines: int = 2,
+    structural_hash: str | None = None,
+    token_hash: str | None = None,
+) -> CodeUnit:
     return CodeUnit(
         name=name,
         qualified_name=f"mod.{name}",
         unit_type=CodeUnitType.FUNCTION,
         file_path=tmp_path / file,
         lineno=1 + start_byte // 10,
-        end_lineno=2 + start_byte // 10,
+        end_lineno=start_byte // 10 + lines,
         source=f"def {name}():\n    return 1\n",
         start_byte=start_byte,
         end_byte=start_byte + 20,
+        structural_hash=structural_hash,
+        token_hash=token_hash,
     )
 
 
 def _hybrid(unit_a: CodeUnit, unit_b: CodeUnit, tier: HybridTier) -> HybridDuplicate:
-    confidence = {"exact": 1.0, "semantic_high_confidence": 0.9, "semantic_review": 0.8}[tier]
+    confidence = {
+        "exact": 1.0,
+        "traditional_near": 0.95,
+        "hybrid_confirmed": 0.93,
+        "semantic_high_confidence": 0.9,
+        "semantic_review": 0.8,
+    }[tier]
     return HybridDuplicate(unit_a=unit_a, unit_b=unit_b, tier=tier, confidence=confidence)
+
+
+def _family_names(families: list[ExactFamily]) -> list[list[str]]:
+    return [[unit.name for unit in family.members] for family in families]
 
 
 def _result(tmp_path: Path, **overrides) -> AnalysisResult:
@@ -81,7 +104,11 @@ def test_select_findings_hides_review_by_default_without_touching_result(tmp_pat
 
     selection = select_findings(result)
 
-    assert [pair.tier for pair in selection.duplicates] == ["exact"]
+    # The exact edge is reported as a family, never as a pair.
+    assert selection.duplicates == []
+    assert _family_names(selection.exact_families) == [["a", "b"]]
+    assert selection.exact_families[0].method == "structural_hash"
+    assert selection.truncated_exact_families == []
     assert [pair.tier for pair in selection.omitted_review] == ["semantic_review"]
     assert selection.duplicates_by_tier == {
         "exact": 1,
@@ -100,7 +127,8 @@ def test_select_findings_include_review_preserves_analyzer_order(tmp_path):
 
     selection = select_findings(result, ReportPolicy(include_review=True))
 
-    assert selection.duplicates == result.hybrid_duplicates
+    assert selection.duplicates == result.hybrid_duplicates[1:]
+    assert _family_names(selection.exact_families) == [["a", "b"]]
     assert selection.omitted_review == []
     assert selection.traditional_duplicates is None
 
@@ -111,7 +139,8 @@ def test_select_findings_show_all_implies_review_and_raw_lists(tmp_path):
     selection = select_findings(result, ReportPolicy(show_all=True))
 
     assert selection.policy.shows_review
-    assert selection.duplicates == result.hybrid_duplicates
+    assert selection.duplicates == result.hybrid_duplicates[1:]
+    assert _family_names(selection.exact_families) == [["a", "b"]]
     assert selection.traditional_duplicates == result.traditional_duplicates
     assert selection.semantic_duplicates == result.semantic_duplicates
 
@@ -121,9 +150,11 @@ def test_select_findings_single_method_has_no_tier_filter(tmp_path):
 
     selection = select_findings(result, ReportPolicy(show_all=True))
 
-    assert selection.duplicates == result.traditional_duplicates + result.semantic_duplicates
+    # Raw modes group exact edges too; every other pair is listed without a tier.
+    assert selection.duplicates == result.semantic_duplicates
+    assert _family_names(selection.exact_families) == [["a", "b"]]
     assert selection.omitted_review == []
-    assert set(selection.duplicates_by_tier.values()) == {0}
+    assert selection.duplicates_by_tier == dict.fromkeys(HYBRID_TIERS, 0) | {"exact": 1}
     assert selection.traditional_duplicates is None
     assert selection.semantic_duplicates is None
 
@@ -275,10 +306,12 @@ def test_max_duplicates_keeps_a_prefix_after_the_review_filter(tmp_path):
 
     capped = select_findings(result, ReportPolicy(max_duplicates=2))
 
-    assert [pair.tier for pair in capped.duplicates] == ["exact", "hybrid_confirmed"]
+    assert _family_names(capped.exact_families) == [["f0", "f1"]]
+    assert [pair.tier for pair in capped.duplicates] == ["hybrid_confirmed"]
     assert [pair.tier for pair in capped.truncated] == ["semantic_high_confidence"]
     assert [pair.tier for pair in capped.omitted_review] == ["semantic_review"]
-    assert len(capped.duplicates) + len(capped.omitted_review) + len(capped.truncated) == 4
+    assert capped.reported_findings + len(capped.omitted_review) + capped.truncated_findings == 4
+    assert capped.total_findings == 4
     # The tier breakdown still describes the complete result; the truncated
     # breakdown is zero-filled over every tier like it.
     assert capped.duplicates_by_tier["semantic_high_confidence"] == 1
@@ -295,7 +328,8 @@ def test_max_duplicates_keeps_a_prefix_after_the_review_filter(tmp_path):
     # Review pairs rank last, so including them changes the truncated set, not
     # the emitted prefix.
     with_review = select_findings(result, ReportPolicy(include_review=True, max_duplicates=2))
-    assert [pair.tier for pair in with_review.duplicates] == ["exact", "hybrid_confirmed"]
+    assert _family_names(with_review.exact_families) == [["f0", "f1"]]
+    assert [pair.tier for pair in with_review.duplicates] == ["hybrid_confirmed"]
     assert with_review.omitted_review == []
     assert [pair.tier for pair in with_review.truncated] == [
         "semantic_high_confidence",
@@ -356,7 +390,7 @@ def test_actionable_pairs_filters_tiers_only_in_combined_mode(tmp_path):
 def test_report_policy_default_is_uncapped_and_cli_default_is_twenty(tmp_path):
     assert ReportPolicy().max_duplicates is None
     assert DEFAULT_MAX_DUPLICATES == 20
-    result = _ranked_result(tmp_path, ["exact"] * 25)
+    result = _ranked_result(tmp_path, ["hybrid_confirmed"] * 25)
 
     complete = select_findings(result)
     concise = select_findings(result, ReportPolicy(max_duplicates=DEFAULT_MAX_DUPLICATES))
@@ -373,7 +407,10 @@ def test_max_duplicates_is_a_no_op_at_or_above_the_admitted_count(tmp_path):
     generous = select_findings(result, ReportPolicy(max_duplicates=50))
 
     assert exact.truncated == generous.truncated == []
-    assert exact.duplicates == generous.duplicates == result.hybrid_duplicates
+    assert exact.truncated_exact_families == generous.truncated_exact_families == []
+    assert exact.duplicates == generous.duplicates == result.hybrid_duplicates[1:]
+    assert _family_names(exact.exact_families) == _family_names(generous.exact_families)
+    assert _family_names(exact.exact_families) == [["f0", "f1"]]
 
 
 def test_max_duplicates_leaves_show_all_raw_lists_complete(tmp_path):
@@ -381,8 +418,11 @@ def test_max_duplicates_leaves_show_all_raw_lists_complete(tmp_path):
 
     selection = select_findings(result, ReportPolicy(show_all=True, max_duplicates=1))
 
-    assert len(selection.duplicates) == 1
+    # The family takes the single slot; the review pair is cut, not the family.
+    assert len(selection.exact_families) == 1
+    assert selection.duplicates == []
     assert len(selection.truncated) == 1
+    assert selection.reported_findings == 1
     assert selection.traditional_duplicates == result.traditional_duplicates
     assert selection.semantic_duplicates == result.semantic_duplicates
 
@@ -411,10 +451,13 @@ def test_max_duplicates_ranks_traditional_only_mode_by_similarity(tmp_path):
 
     capped = select_findings(result, ReportPolicy(max_duplicates=2))
 
-    assert capped.duplicates == [exact, near_099]
+    # The exact pair is a family and leads; the near pairs follow by similarity.
+    assert _family_names(capped.exact_families) == [["a", "b"]]
+    assert capped.duplicates == [near_099]
     # Truncated holds the rest, still ranked by descending similarity, and the
     # two 0.90 pairs keep their input order (stable sort over the tie).
     assert capped.truncated == [near_090_first, near_090_second, near_086]
+    assert capped.duplicates_by_tier["exact"] == 1
 
 
 def test_max_duplicates_applies_to_single_method_raw_lists(tmp_path):
@@ -422,7 +465,8 @@ def test_max_duplicates_applies_to_single_method_raw_lists(tmp_path):
 
     selection = select_findings(result, ReportPolicy(max_duplicates=1))
 
-    assert selection.duplicates == result.traditional_duplicates[:1]
+    assert _family_names(selection.exact_families) == [["a", "b"]]
+    assert selection.duplicates == []
     assert selection.truncated == result.semantic_duplicates
     assert run_should_fail(result, policy="actionable", strict_unused=False) is True
 
@@ -431,6 +475,175 @@ def test_max_duplicates_applies_to_single_method_raw_lists(tmp_path):
 def test_report_policy_rejects_a_cap_that_emits_nothing(cap):
     with pytest.raises(ValueError, match="at least 1"):
         ReportPolicy(max_duplicates=cap)
+
+
+def test_build_exact_families_unions_per_method_and_labels_the_strongest_fingerprint(tmp_path):
+    # Three structural-labelled edges over a copy-pasted trio (a clique from the
+    # analyzer), one renamed pair, one token-only pair, and a self-edge.
+    copies = [
+        _unit(tmp_path, f"copy{i}", file=f"m{i}.py", structural_hash="s1", token_hash="t1")
+        for i in range(3)
+    ]
+    renamed_a = _unit(tmp_path, "renamed_a", start_byte=100, structural_hash="s2", token_hash="t2")
+    renamed_b = _unit(tmp_path, "renamed_b", start_byte=200, structural_hash="s2", token_hash="t3")
+    indent_a = _unit(tmp_path, "indent_a", start_byte=300, structural_hash="s4", token_hash="t4")
+    indent_b = _unit(tmp_path, "indent_b", start_byte=400, structural_hash="s5", token_hash="t4")
+    edges = [
+        DuplicatePair(copies[0], copies[1], 1.0, "structural_hash"),
+        DuplicatePair(copies[1], copies[2], 1.0, "structural_hash"),
+        DuplicatePair(copies[0], copies[2], 1.0, "structural_hash"),
+        DuplicatePair(renamed_a, renamed_b, 1.0, "structural_hash"),
+        DuplicatePair(indent_a, indent_b, 1.0, "token_hash"),
+        DuplicatePair(renamed_a, renamed_a, 1.0, "structural_hash"),
+        DuplicatePair(copies[0], renamed_a, 0.9, "jaccard"),
+    ]
+
+    families = build_exact_families(edges)
+
+    assert _family_names(families) == [
+        ["copy0", "copy1", "copy2"],
+        ["renamed_a", "renamed_b"],
+        ["indent_a", "indent_b"],
+    ]
+    assert [family.method for family in families] == [
+        "token_hash",
+        "structural_hash",
+        "token_hash",
+    ]
+    assert [family.pair_count for family in families] == [3, 1, 1]
+    assert [family.redundant_lines for family in families] == [4, 2, 2]
+
+    # Hybrid exact edges group the same way, keyed on the recorded method; a
+    # hand-built hybrid without one counts as structural.
+    hybrid = build_exact_families(
+        [
+            HybridDuplicate(copies[0], copies[1], "exact", 1.0, exact_method="structural_hash"),
+            HybridDuplicate(indent_a, indent_b, "exact", 1.0, exact_method="token_hash"),
+            HybridDuplicate(renamed_a, renamed_b, "exact", 1.0),
+            _hybrid(renamed_a, indent_a, "semantic_review"),
+        ]
+    )
+    # Equal redundant lines fall back to the first member's position (a.py first).
+    assert _family_names(hybrid) == [
+        ["renamed_a", "renamed_b"],
+        ["indent_a", "indent_b"],
+        ["copy0", "copy1"],
+    ]
+    assert [family.method for family in hybrid] == ["structural_hash", "token_hash", "token_hash"]
+
+
+def test_families_rank_first_by_redundant_lines_then_position(tmp_path):
+    # Two copies of a 30-line function beat five copies of a 6-line helper
+    # (30 vs 24 redundant lines); equal keys fall back to first-member position.
+    big = [_unit(tmp_path, f"big{i}", file=f"b{i}.py", lines=30) for i in range(2)]
+    small = [_unit(tmp_path, f"small{i}", file=f"s{i}.py", lines=6) for i in range(5)]
+    tie_a = [_unit(tmp_path, f"tie_a{i}", file=f"a{i}.py", lines=20) for i in range(2)]
+    tie_z = [_unit(tmp_path, f"tie_z{i}", file=f"z{i}.py", lines=20) for i in range(2)]
+    hybrid = [
+        HybridDuplicate(tie_z[0], tie_z[1], "exact", 1.0),
+        HybridDuplicate(small[0], small[4], "exact", 1.0),
+        HybridDuplicate(big[0], big[1], "exact", 1.0),
+        HybridDuplicate(tie_a[0], tie_a[1], "exact", 1.0),
+        _hybrid(big[0], small[0], "hybrid_confirmed"),
+    ]
+    for i in range(4):
+        hybrid.append(HybridDuplicate(small[i], small[i + 1], "exact", 1.0))
+    result = _result(
+        tmp_path,
+        units=big + small + tie_a + tie_z,
+        traditional_duplicates=[],
+        semantic_duplicates=[],
+        hybrid_duplicates=hybrid,
+    )
+
+    selection = select_findings(result)
+
+    assert [len(family.members) for family in selection.exact_families] == [2, 5, 2, 2]
+    assert [family.redundant_lines for family in selection.exact_families] == [30, 24, 20, 20]
+    assert [family.members[0].name for family in selection.exact_families] == [
+        "big0",
+        "small0",
+        "tie_a0",
+        "tie_z0",
+    ]
+    assert [pair.tier for pair in selection.duplicates] == ["hybrid_confirmed"]
+
+
+def test_max_duplicates_counts_a_family_as_one_finding(tmp_path):
+    copies = [_unit(tmp_path, f"c{i}", file=f"c{i}.py") for i in range(5)]
+    clique = [
+        HybridDuplicate(copies[i], copies[j], "exact", 1.0)
+        for i in range(5)
+        for j in range(i + 1, 5)
+    ]
+    others = [_unit(tmp_path, f"o{i}", file=f"o{i}.py") for i in range(4)]
+    pairs = [
+        _hybrid(others[0], others[1], "hybrid_confirmed"),
+        _hybrid(others[2], others[3], "semantic_high_confidence"),
+    ]
+    result = _result(
+        tmp_path,
+        units=copies + others,
+        traditional_duplicates=[],
+        semantic_duplicates=[],
+        hybrid_duplicates=clique + pairs,
+    )
+
+    capped = select_findings(result, ReportPolicy(max_duplicates=2))
+
+    # Ten exact edges are one family, leaving one slot for the strongest pair.
+    assert _family_names(capped.exact_families) == [[f"c{i}" for i in range(5)]]
+    assert capped.exact_families[0].pair_count == 10
+    assert [pair.tier for pair in capped.duplicates] == ["hybrid_confirmed"]
+    assert [pair.tier for pair in capped.truncated] == ["semantic_high_confidence"]
+    assert capped.duplicates_by_tier["exact"] == 1
+    assert capped.truncated_by_tier["exact"] == 0
+    assert capped.total_findings == 3
+    assert capped.reported_findings == 2
+    assert capped.actionable_findings == 2
+    assert capped.reported_actionable_findings == 2
+    assert capped.exact_family_members == 5
+    # Family members are in the report units; the truncated pair's are not.
+    assert [unit.name for unit in capped.units] == [f"c{i}" for i in range(5)] + ["o0", "o1"]
+
+    # A cap of one keeps the family and cuts every pair; the cut family count
+    # lands in truncated_by_tier.exact when a second family is squeezed out.
+    tight = select_findings(result, ReportPolicy(max_duplicates=1))
+    assert _family_names(tight.exact_families) == [[f"c{i}" for i in range(5)]]
+    assert tight.duplicates == []
+    assert tight.truncated_findings == 2
+    two_families = _result(
+        tmp_path,
+        units=copies + others,
+        traditional_duplicates=[],
+        semantic_duplicates=[],
+        hybrid_duplicates=clique + [HybridDuplicate(others[0], others[1], "exact", 1.0)],
+    )
+    squeezed = select_findings(two_families, ReportPolicy(max_duplicates=1))
+    assert _family_names(squeezed.truncated_exact_families) == [["o0", "o1"]]
+    assert squeezed.truncated_by_tier["exact"] == 1
+    assert squeezed.duplicates_by_tier["exact"] == 2
+    assert squeezed.exact_family_members == 7
+
+
+def test_hidden_only_failure_treats_a_kept_family_as_failing(tmp_path):
+    a = _unit(tmp_path, "a")
+    b = _unit(tmp_path, "b", start_byte=40)
+    c = _unit(tmp_path, "c", start_byte=80)
+    result = _result(
+        tmp_path,
+        traditional_duplicates=[],
+        semantic_duplicates=[],
+        hybrid_duplicates=[_hybrid(a, b, "exact"), _hybrid(b, c, "semantic_review")],
+    )
+    selection = select_findings(result)
+
+    assert selection.duplicates == []
+    assert len(selection.exact_families) == 1
+    # The family, not the withheld review pair, explains the failure.
+    assert hidden_only_failure(selection, policy="all", strict_unused=False) == set()
+    assert hidden_only_failure(selection, policy="actionable", strict_unused=False) == set()
+    assert hidden_only_failure(selection, policy="none", strict_unused=False) == set()
 
 
 def test_truncation_never_hides_the_only_failing_pair(tmp_path):

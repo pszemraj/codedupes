@@ -3,6 +3,9 @@
 Analysis results stay complete; this module decides which findings a report
 emits and which findings make ``check`` fail. JSON, terminal, and exit-code
 paths all read the same :class:`ReportSelection` so they cannot disagree.
+Pairwise exact edges are grouped into :class:`ExactFamily` records here, so
+the analysis layer keeps its complete edge list while reports show each
+copy-paste family once.
 """
 
 from __future__ import annotations
@@ -36,6 +39,9 @@ ACTIONABLE_TIERS: frozenset[HybridTier] = frozenset(
 )
 # Tiers withheld from default reports; ``--include-review`` restores them.
 WITHHELD_TIERS: frozenset[HybridTier] = frozenset({"semantic_review"})
+# Fingerprint methods whose raw pairs make up the ``exact`` tier.
+ExactMethod = Literal["structural_hash", "token_hash"]
+EXACT_METHODS: frozenset[str] = frozenset({"structural_hash", "token_hash"})
 # The CLI's default cap on the primary duplicate list, shared by terminal and
 # JSON output. ``ReportPolicy()`` itself stays uncapped so library callers get
 # the complete list unless they ask for the CLI's concise report.
@@ -69,28 +75,132 @@ class ReportPolicy:
         return self.include_review or self.show_all
 
 
+@dataclass(frozen=True, eq=False)
+class ExactFamily:
+    """Units that are mutually exact duplicates, reported once instead of as C(n, 2) edges.
+
+    ``method`` is the strongest fingerprint every member shares: ``token_hash``
+    members are token-for-token identical (comments and whitespace aside),
+    while ``structural_hash`` members match only after identifier and literal
+    normalization.
+    """
+
+    members: tuple[CodeUnit, ...]
+    method: ExactMethod
+    confidence: float = 1.0
+
+    @property
+    def lines(self) -> int:
+        """Return the line span of the largest member.
+
+        :return: ``end_lineno - lineno + 1`` maximized over the members.
+        """
+        return max(unit.end_lineno - unit.lineno + 1 for unit in self.members)
+
+    @property
+    def redundant_lines(self) -> int:
+        """Return the source lines removable by keeping one copy.
+
+        :return: ``(len(members) - 1) * lines``; the family ranking key.
+        """
+        return (len(self.members) - 1) * self.lines
+
+    @property
+    def pair_count(self) -> int:
+        """Return how many pairwise exact edges the family stands for.
+
+        :return: ``n * (n - 1) / 2`` for ``n`` members.
+        """
+        count = len(self.members)
+        return count * (count - 1) // 2
+
+
 @dataclass(frozen=True)
 class ReportSelection:
     """Findings chosen for one report, derived from a complete analysis result.
 
-    ``duplicates`` + ``omitted_review`` + ``truncated`` is the complete duplicate
-    list the analyzer produced for the selected mode.
+    Exact edges are grouped into ``exact_families``; every other duplicate stays
+    a pair. ``exact_families`` + ``duplicates`` is the emitted primary list,
+    ``truncated_exact_families`` + ``truncated`` is what the cap cut, and adding
+    ``omitted_review`` gives every finding the analyzer produced for the mode.
     """
 
     result: AnalysisResult
     policy: ReportPolicy
     mode: AnalysisMode
+    exact_families: list[ExactFamily]
     duplicates: list[HybridDuplicate] | list[DuplicatePair]
     omitted_review: list[HybridDuplicate]
+    truncated_exact_families: list[ExactFamily]
     truncated: list[HybridDuplicate] | list[DuplicatePair]
+    # Finding counts per tier over the complete result; ``exact`` counts families.
     duplicates_by_tier: dict[HybridTier, int]
-    # Tier breakdown of ``truncated``: review pairs rank last, so a cap can cut
-    # every included review pair while ``omitted_review`` stays empty.
+    # Tier breakdown of what the cap cut: review pairs rank last, so a cap can
+    # cut every included review pair while ``omitted_review`` stays empty.
     truncated_by_tier: dict[HybridTier, int]
     traditional_duplicates: list[DuplicatePair] | None
     semantic_duplicates: list[DuplicatePair] | None
     potentially_unused: list[CodeUnit]
     units: list[CodeUnit]
+
+    @property
+    def all_exact_families(self) -> list[ExactFamily]:
+        """Return every family in report order, kept first.
+
+        :return: Emitted families followed by the ones the cap cut.
+        """
+        return self.exact_families + self.truncated_exact_families
+
+    @property
+    def exact_family_members(self) -> int:
+        """Return the number of distinct units inside exact families.
+
+        :return: Member count over kept and truncated families.
+        """
+        return len({unit.uid for family in self.all_exact_families for unit in family.members})
+
+    @property
+    def reported_findings(self) -> int:
+        """Return the size of the emitted primary list.
+
+        :return: Emitted families plus emitted pairs.
+        """
+        return len(self.exact_families) + len(self.duplicates)
+
+    @property
+    def truncated_findings(self) -> int:
+        """Return how many primary-list items the cap cut.
+
+        :return: Truncated families plus truncated pairs.
+        """
+        return len(self.truncated_exact_families) + len(self.truncated)
+
+    @property
+    def total_findings(self) -> int:
+        """Return every duplicate finding the mode produced, families counted once.
+
+        :return: ``reported_findings + len(omitted_review) + truncated_findings``.
+        """
+        return self.reported_findings + len(self.omitted_review) + self.truncated_findings
+
+    @property
+    def actionable_findings(self) -> int:
+        """Return the findings in the complete result that fail ``actionable``.
+
+        :return: Every family plus every actionable non-exact pair.
+        """
+        combined = self.mode == "combined"
+        pairs = actionable_pairs(self.result.all_duplicates, combined=combined)
+        return len(self.all_exact_families) + sum(not _is_exact_edge(pair) for pair in pairs)
+
+    @property
+    def reported_actionable_findings(self) -> int:
+        """Return how many emitted findings fail ``actionable``.
+
+        :return: Emitted families plus emitted actionable pairs.
+        """
+        combined = self.mode == "combined"
+        return len(self.exact_families) + len(actionable_pairs(self.duplicates, combined=combined))
 
 
 @dataclass
@@ -145,6 +255,101 @@ def _pair_units(pairs: Iterable[HybridDuplicate | DuplicatePair]) -> Iterable[Co
         yield pair.unit_b
 
 
+def _exact_edge_method(pair: HybridDuplicate | DuplicatePair) -> str | None:
+    """Return the fingerprint behind an exact edge, or ``None`` for any other pair.
+
+    :param pair: Hybrid or raw duplicate.
+    :return: ``structural_hash`` or ``token_hash``; a hand-built exact hybrid without a recorded method counts as structural.
+    """
+    if isinstance(pair, HybridDuplicate):
+        if pair.tier != "exact":
+            return None
+        return pair.exact_method or "structural_hash"
+    return pair.method if pair.method in EXACT_METHODS else None
+
+
+def _is_exact_edge(pair: HybridDuplicate | DuplicatePair) -> bool:
+    """Return whether a pair belongs to the exact tier.
+
+    :param pair: Hybrid or raw duplicate.
+    :return: ``True`` for exact edges.
+    """
+    return _exact_edge_method(pair) is not None
+
+
+def _connected_components(edges: Iterable[tuple[CodeUnit, CodeUnit]]) -> list[list[CodeUnit]]:
+    """Union-find the endpoints of ``edges`` into connected components.
+
+    :param edges: Unit pairs; every endpoint lands in exactly one component.
+    :return: Components in first-seen order, members in first-seen order.
+    """
+    parent: dict[str, str] = {}
+    units: dict[str, CodeUnit] = {}
+
+    def find(uid: str) -> str:
+        """Return the component root of ``uid``, halving the path on the way up.
+
+        :param uid: Unit uid already registered in ``parent``.
+        :return: Root uid.
+        """
+        while parent[uid] != uid:
+            parent[uid] = parent[parent[uid]]
+            uid = parent[uid]
+        return uid
+
+    for unit_a, unit_b in edges:
+        for unit in (unit_a, unit_b):
+            units.setdefault(unit.uid, unit)
+            parent.setdefault(unit.uid, unit.uid)
+        parent[find(unit_a.uid)] = find(unit_b.uid)
+
+    components: dict[str, list[CodeUnit]] = {}
+    for uid, unit in units.items():
+        components.setdefault(find(uid), []).append(unit)
+    return list(components.values())
+
+
+def build_exact_families(
+    edges: Iterable[HybridDuplicate | DuplicatePair],
+) -> list[ExactFamily]:
+    """Group exact edges into families, ranked by the lines a consolidation removes.
+
+    Structural edges are unioned first; the remaining token-only edges form
+    their own families. Token equality is finer than structural equality in
+    every backend except for tree-shape changes the token stream cannot see
+    (Python indentation), which is why the two fingerprints are grouped
+    separately instead of assuming one implies the other. A structural family
+    whose members all share one token fingerprint is labelled ``token_hash``,
+    the strongest relation that holds. Non-exact edges and self-edges are
+    ignored.
+
+    :param edges: Duplicate pairs; only exact edges contribute.
+    :return: Families ordered by ``redundant_lines`` descending, then first member position.
+    """
+    by_method: dict[str, list[tuple[CodeUnit, CodeUnit]]] = {method: [] for method in EXACT_METHODS}
+    for pair in edges:
+        method = _exact_edge_method(pair)
+        if method is None or pair.unit_a.uid == pair.unit_b.uid:
+            continue
+        by_method[method].append((pair.unit_a, pair.unit_b))
+
+    families: list[ExactFamily] = []
+    for component in _connected_components(by_method["structural_hash"]):
+        members = tuple(sorted(component, key=unit_sort_key))
+        token_hashes = {unit.token_hash for unit in members}
+        method: ExactMethod = (
+            "token_hash"
+            if len(token_hashes) == 1 and None not in token_hashes
+            else "structural_hash"
+        )
+        families.append(ExactFamily(members=members, method=method))
+    for component in _connected_components(by_method["token_hash"]):
+        members = tuple(sorted(component, key=unit_sort_key))
+        families.append(ExactFamily(members=members, method="token_hash"))
+    families.sort(key=lambda family: (-family.redundant_lines, unit_sort_key(family.members[0])))
+    return families
+
+
 def _report_rank(pair: HybridDuplicate) -> int:
     """Return the primary-list group of a hybrid pair: actionable, advisory, review.
 
@@ -192,45 +397,65 @@ def select_findings(result: AnalysisResult, policy: ReportPolicy | None = None) 
     omitted_review: list[HybridDuplicate] = []
     traditional: list[DuplicatePair] | None = None
     semantic: list[DuplicatePair] | None = None
-    duplicates: list[HybridDuplicate] | list[DuplicatePair]
-    truncated: list[HybridDuplicate] | list[DuplicatePair] = []
+    pairs: list[HybridDuplicate] | list[DuplicatePair]
 
     if mode == "combined":
-        duplicates_by_tier.update(Counter(pair.tier for pair in result.hybrid_duplicates))
+        duplicates_by_tier.update(
+            Counter(pair.tier for pair in result.hybrid_duplicates if pair.tier != "exact")
+        )
+        exact_edges: list[HybridDuplicate] | list[DuplicatePair] = [
+            pair for pair in result.hybrid_duplicates if pair.tier == "exact"
+        ]
         shown: list[HybridDuplicate] = []
         for pair in result.hybrid_duplicates:
+            if pair.tier == "exact":
+                continue
             withheld = pair.tier in WITHHELD_TIERS and not policy.shows_review
             (omitted_review if withheld else shown).append(pair)
         # Report ranking: actionable tiers first, then semantic_high_confidence,
         # then any included semantic_review pairs. The stable sort keeps the
         # analyzer's confidence order inside each group and never touches
         # ``result.hybrid_duplicates``.
-        duplicates = sorted(shown, key=_report_rank)
+        pairs = sorted(shown, key=_report_rank)
         if policy.show_all:
             traditional = list(result.traditional_duplicates)
             semantic = list(result.semantic_duplicates)
     else:
+        raw = result.traditional_duplicates + result.semantic_duplicates
+        exact_edges = [pair for pair in raw if _is_exact_edge(pair)]
         # Traditional near pairs come out of the analyzer sorted by index pair,
         # not similarity, so the raw list is re-ranked here before capping;
-        # Python's stable sort keeps ties (exact pairs at 1.0, equal-similarity
-        # pairs) in analyzer order.
-        duplicates = sorted(
-            result.traditional_duplicates + result.semantic_duplicates,
+        # Python's stable sort keeps equal-similarity pairs in analyzer order.
+        pairs = sorted(
+            (pair for pair in raw if not _is_exact_edge(pair)),
             key=lambda pair: -pair.similarity,
         )
 
-    # The cap keeps a prefix of the report ranking established above: tier
-    # groups for combined mode, descending similarity for the raw modes. The
-    # raw ``--show-all`` lists are diagnostic and stay complete.
+    # Exact edges collapse into families that lead the primary list; each
+    # family is one item against the cap, ranked by the lines it would remove.
+    families = build_exact_families(exact_edges)
+    duplicates_by_tier["exact"] = len(families)
+    ranked: list[ExactFamily | HybridDuplicate | DuplicatePair] = [*families, *pairs]
+
+    # The cap keeps a prefix of the report ranking established above: families,
+    # then tier groups for combined mode or descending similarity for the raw
+    # modes. The raw ``--show-all`` lists are diagnostic and stay complete.
+    cut: list[ExactFamily | HybridDuplicate | DuplicatePair] = []
     if policy.max_duplicates is not None:
-        truncated = duplicates[policy.max_duplicates :]
-        duplicates = duplicates[: policy.max_duplicates]
+        cut = ranked[policy.max_duplicates :]
+        ranked = ranked[: policy.max_duplicates]
+    exact_families = [item for item in ranked if isinstance(item, ExactFamily)]
+    duplicates = [item for item in ranked if not isinstance(item, ExactFamily)]
+    truncated_exact_families = [item for item in cut if isinstance(item, ExactFamily)]
+    truncated = [item for item in cut if not isinstance(item, ExactFamily)]
     truncated_by_tier: dict[HybridTier, int] = dict.fromkeys(HYBRID_TIERS, 0)
     truncated_by_tier.update(
         Counter(pair.tier for pair in truncated if isinstance(pair, HybridDuplicate))
     )
+    truncated_by_tier["exact"] = len(truncated_exact_families)
 
     units = collect_units(
+        (unit for family in exact_families for unit in family.members),
         _pair_units(duplicates),
         _pair_units(traditional or ()),
         _pair_units(semantic or ()),
@@ -240,9 +465,11 @@ def select_findings(result: AnalysisResult, policy: ReportPolicy | None = None) 
         result=result,
         policy=policy,
         mode=mode,
-        duplicates=duplicates,
+        exact_families=exact_families,
+        duplicates=duplicates,  # type: ignore[arg-type]
         omitted_review=omitted_review,
-        truncated=truncated,
+        truncated_exact_families=truncated_exact_families,
+        truncated=truncated,  # type: ignore[arg-type]
         duplicates_by_tier=duplicates_by_tier,
         truncated_by_tier=truncated_by_tier,
         traditional_duplicates=traditional,
@@ -318,10 +545,10 @@ def hidden_only_failure(
     """Return which omitted groups fail when the primary list and unused findings pass.
 
     The exit code is decided on the complete result, so a run can fail over
-    ``semantic_review`` pairs the primary list withheld (``review``). Pairs cut
-    by ``max_duplicates`` never qualify: the primary list ranks actionable tiers
-    first and the cap is at least one, so whenever a truncated pair fails, an
-    emitted pair already fails too.
+    ``semantic_review`` pairs the primary list withheld (``review``). Findings
+    cut by ``max_duplicates`` never qualify: the primary list ranks exact
+    families and then actionable tiers first and the cap is at least one, so
+    whenever a truncated finding fails, an emitted finding already fails too.
 
     :param selection: Report selection derived from the complete result.
     :param policy: Selected finding policy.
@@ -330,6 +557,11 @@ def hidden_only_failure(
     :raises ValueError: If ``policy`` is not a supported failure policy.
     """
     combined = selection.mode == "combined"
+    if policy not in ("actionable", "all", "none"):
+        raise ValueError(f"Unknown failure policy {policy!r}; expected actionable, all, or none.")
+    # An emitted family is an actionable finding under every failing policy.
+    if policy != "none" and selection.exact_families:
+        return frozenset()
     if _findings_fail(
         selection.duplicates,
         selection.potentially_unused,
