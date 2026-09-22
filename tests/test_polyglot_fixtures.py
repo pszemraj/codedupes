@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 from pathlib import Path
 
 import pytest
@@ -13,6 +14,22 @@ pytestmark = pytest.mark.grammar
 
 
 _FIXTURE_ROOT = Path(__file__).resolve().parents[1] / "test_fixtures"
+
+
+@pytest.mark.parametrize(
+    "relative_root",
+    ["calibration/ledger", "exact_family", "search_probes"],
+)
+def test_python_fixture_roots_compile(relative_root: str) -> None:
+    """tree-sitter accepts input CPython rejects, so fixtures need their own ``ast.parse`` check.
+
+    A tree-sitter-python parse can come back with no ``ERROR`` node for source
+    that is not actually valid Python (see ``docs/polyglot-languages.md``), so
+    extraction cannot catch an invalid fixture on its own. This guards every
+    Python fixture root against silently regressing into invalid syntax.
+    """
+    for path in sorted((_FIXTURE_ROOT / relative_root).rglob("*.py")):
+        ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
 
 
 @pytest.mark.parametrize(

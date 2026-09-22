@@ -457,10 +457,10 @@ def test_cli_exact_family_fixture_end_to_end():
         (family["method"], sorted(units[m]["name"] for m in family["members"]), family["lines"])
         for family in payload["exact_families"]
     ] == [
-        ("token_hash", ["render_receipt"] * 5, 17),
+        ("token_hash", ["render_receipt"] * 5, 16),
         ("structural_hash", ["sum_amounts", "sum_credits"], 11),
     ]
-    assert payload["exact_families"][0]["redundant_lines"] == 4 * 17
+    assert payload["exact_families"][0]["redundant_lines"] == 4 * 16
     assert {
         units[m]["file"].rsplit("/", 1)[-1] for m in payload["exact_families"][0]["members"]
     } == {

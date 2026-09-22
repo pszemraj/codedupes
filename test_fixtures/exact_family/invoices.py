@@ -16,5 +16,4 @@ def render_receipt(entries):
         total += amount
     lines.append("-" * 30)
     lines.append(f"{'total':<20}{total:>10.2f}")
-    return "
-".join(lines)
+    return "\n".join(lines)
