@@ -130,6 +130,9 @@ def test_cli_json_output_hybrid_default(monkeypatch, tmp_path):
     assert output["summary"]["reported_actionable_duplicates"] == 1
     assert output["summary"]["duplicates_by_tier"]["exact"] == 1
     assert output["summary"]["exact_family_members"] == 2
+    assert output["summary"]["max_unused"] == 20
+    assert output["summary"]["reported_unused"] == 1
+    assert output["summary"]["truncated_unused"] == 0
     # The exact pair is one family record; the pairwise list holds no exact edge.
     assert output["exact_families"] == [
         {"method": "structural_hash", "members": ["u0", "u1"], "lines": 2, "redundant_lines": 2}
@@ -1644,6 +1647,8 @@ def test_cli_rejects_missing_path(tmp_path, command, tail_args):
         (["--max-duplicates", "-1"], "must be a positive integer or 'all'"),
         (["--max-duplicates", "1.5"], "must be a positive integer or 'all'"),
         (["--max-duplicates", "many"], "must be a positive integer or 'all'"),
+        (["--max-unused", "0"], "must be a positive integer or 'all'"),
+        (["--max-unused", "many"], "must be a positive integer or 'all'"),
         (["--mps-memory-fraction", "0"], "must be finite and in the interval (0.0, 2.0]"),
         (["--no-unused", "--strict-unused"], "Cannot combine --no-unused and --strict-unused"),
     ],
@@ -2125,35 +2130,82 @@ def test_cli_traditional_panel_label_is_language_neutral(monkeypatch, tmp_path):
     assert "AST" not in result.output
 
 
-def test_cli_full_table_lifts_the_pair_cap_and_the_unused_row_limit(monkeypatch, tmp_path):
+def _build_capped_result_with_unused(tmp_path: Path, unused: int = 25) -> AnalysisResult:
+    """Capped result plus ``unused`` dead units whose sizes descend with their index."""
+    result = _build_capped_result(tmp_path)
+    result.potentially_unused = [
+        make_code_unit(
+            tmp_path,
+            name=f"dead_{i:02d}",
+            source="def dead_{i:02d}():\n" + "    pass\n" * (unused - i),
+            lineno=200 + 40 * i,
+        )
+        for i in range(unused)
+    ]
+    return result
+
+
+def test_cli_full_table_lifts_the_pair_cap_and_the_unused_cap(monkeypatch, tmp_path):
     path = tmp_path / "sample.py"
     path.write_text("def entry():\n    return 1\n")
-    result_obj = _build_capped_result(tmp_path)
-    result_obj.potentially_unused = [result_obj.units[0] for _ in range(25)]
-    patch_cli_analyzer(monkeypatch, cli, analyze_result=result_obj)
+    patch_cli_analyzer(monkeypatch, cli, analyze_result=_build_capped_result_with_unused(tmp_path))
 
     runner = CliRunner()
     default_result = runner.invoke(cli.cli, ["check", str(path)])
     assert default_result.exit_code == 1
-    # The primary table renders every selected pair; only the report cap bounds it.
+    # Both primary tables render every selected row; only the report caps bound them.
     assert "(20 pairs, 5 truncated)" in default_result.output
     assert "5 (5 semantic_high_confidence; use --max-duplicates all)" in default_result.output
-    assert (
-        "... and 5 more (use --full-table to list all rows)"
-        in default_result.output.split("Likely Dead Code")[1]
-    )
-    assert "... and 5 more" not in default_result.output.split("Likely Dead Code")[0]
+    assert "Likely Dead Code (20 units, 5 truncated)" in default_result.output
+    assert "Truncated dead code" in default_result.output
+    assert "5 (use --max-unused all)" in default_result.output
+    assert "--full-table" not in default_result.output
 
     full_result = runner.invoke(cli.cli, ["check", str(path), "--full-table"])
     assert full_result.exit_code == 1
     assert "(25 pairs)" in full_result.output
+    assert "Likely Dead Code (25 units)" in full_result.output
     assert "Truncated duplicates" not in full_result.output
-    assert "... and 5 more" not in full_result.output
+    assert "Truncated dead code" not in full_result.output
 
-    # An explicit cap survives --full-table; only the unused row limit lifts.
+    # An explicit cap survives --full-table; the other cap still lifts.
     capped = runner.invoke(cli.cli, ["check", str(path), "--full-table", "--max-duplicates", "10"])
     assert "(10 pairs, 15 truncated)" in capped.output
-    assert "... and 5 more" not in capped.output
+    assert "Likely Dead Code (25 units)" in capped.output
+    capped_unused = runner.invoke(
+        cli.cli, ["check", str(path), "--full-table", "--max-unused", "10"]
+    )
+    assert "(25 pairs)" in capped_unused.output
+    assert "Likely Dead Code (10 units, 15 truncated)" in capped_unused.output
+
+
+def test_cli_unused_panel_ranks_by_line_span_and_shows_lines_column(monkeypatch, tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+    patch_cli_analyzer(
+        monkeypatch, cli, analyze_result=_build_capped_result_with_unused(tmp_path, unused=6)
+    )
+    runner = CliRunner()
+
+    terminal = runner.invoke(
+        cli.cli, ["check", str(path), "--max-unused", "3", "--output-width", "160"]
+    )
+    panel = terminal.output.split("Likely Dead Code")[1]
+    assert "Lines" in panel
+    assert re.findall(r"dead_\d{2}", panel) == ["dead_00", "dead_01", "dead_02"]
+    # dead_00 spans seven lines (def plus six pass statements).
+    assert re.search(r"dead_00\s*│\s*function\s*│\s*7\s*│", panel)
+
+    payload = json.loads(
+        runner.invoke(cli.cli, ["check", str(path), "--json", "--max-unused", "3"]).output
+    )
+    names = [payload["units"][key]["name"] for key in payload["potentially_unused"]]
+    assert names == ["dead_00", "dead_01", "dead_02"]
+    assert payload["summary"]["potentially_unused"] == 6
+    assert payload["summary"]["reported_unused"] == 3
+    assert payload["summary"]["truncated_unused"] == 3
+    assert payload["summary"]["max_unused"] == 3
+    assert not any(record["name"] == "dead_05" for record in payload["units"].values())
 
 
 def test_cli_check_fails_on_semantic_backend_error_without_fallback(monkeypatch, tmp_path):
@@ -2719,6 +2771,9 @@ def test_cli_expansion_flags_lift_the_default_cap(monkeypatch, tmp_path, expansi
     assert len(pairs) == 25
     assert _terminal_pairs(terminal.output) == pairs
     assert payload["summary"]["max_duplicates"] is None
+    # Expansion flags lift both caps; an explicit --max-duplicates only lifts its own.
+    lifts_unused = expansion != ["--max-duplicates", "all"]
+    assert payload["summary"]["max_unused"] == (None if lifts_unused else 20)
     assert payload["summary"]["truncated_duplicates"] == 0
     assert "(25 pairs)" in terminal.output
     assert "Truncated duplicates" not in terminal.output
@@ -2744,6 +2799,24 @@ def test_cli_explicit_max_duplicates_wins_over_expansion_flags(monkeypatch, tmp_
     assert len(payload["duplicates"]) == 3
     assert payload["summary"]["max_duplicates"] == 3
     assert payload["summary"]["truncated_duplicates"] == 22
+    assert payload["summary"]["max_unused"] is None
+
+
+@pytest.mark.parametrize(
+    "options",
+    [["--show-all", "--max-unused", "3"], ["--max-unused", "3", "--full-table"]],
+    ids=lambda value: " ".join(value),
+)
+def test_cli_explicit_max_unused_wins_over_expansion_flags(monkeypatch, tmp_path, options):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+    patch_cli_analyzer(monkeypatch, cli, analyze_result=_build_capped_result_with_unused(tmp_path))
+
+    result = CliRunner().invoke(cli.cli, ["check", str(path), *options])
+
+    assert result.exit_code == 1
+    assert "(25 pairs)" in result.output
+    assert "Likely Dead Code (3 units, 22 truncated)" in result.output
 
 
 def test_cli_cap_keeps_the_actionable_pair_ahead_of_a_stronger_advisory_pair(monkeypatch, tmp_path):

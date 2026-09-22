@@ -10,9 +10,14 @@ import rich_click as click
 import codedupes.cli as cli_module
 from codedupes.constants import DEFAULT_CHECK_SEMANTIC_TASK, SEMANTIC_TASK_CHOICES
 from codedupes.report.json import check_result_to_json, to_json_text
-from codedupes.report.selection import DEFAULT_MAX_DUPLICATES, run_should_fail, select_findings
+from codedupes.report.selection import (
+    DEFAULT_MAX_DUPLICATES,
+    DEFAULT_MAX_UNUSED,
+    run_should_fail,
+    select_findings,
+)
 
-from ._options import MAX_DUPLICATES, CheckOptions, Panel, option_panels, semantic_options
+from ._options import REPORT_CAP, CheckOptions, Panel, option_panels, semantic_options
 from ._output import _configured_cli_output, _run_cli_action
 from ._render import print_findings, print_summary
 
@@ -136,16 +141,29 @@ from ._render import print_findings, print_summary
 )
 @click.option(
     "--max-duplicates",
-    type=MAX_DUPLICATES,
+    type=REPORT_CAP,
     metavar="N|all",
     default=DEFAULT_MAX_DUPLICATES,
     show_default=True,
     panel=Panel.OUTPUT,
     help=(
-        "Cap the primary duplicate list at N pairs, actionable tiers first, in JSON and "
+        "Cap the primary duplicate list at N findings in JSON and terminal output: exact "
+        "families first (each counts once), then actionable pairs; 'all' removes the cap, "
+        "as do --include-review, --show-all, and --full-table unless N is given. Raw "
+        "--show-all lists stay complete; the exit code counts every finding"
+    ),
+)
+@click.option(
+    "--max-unused",
+    type=REPORT_CAP,
+    metavar="N|all",
+    default=DEFAULT_MAX_UNUSED,
+    show_default=True,
+    panel=Panel.OUTPUT,
+    help=(
+        "Cap the potentially-unused list at N units, largest line span first, in JSON and "
         "terminal output; 'all' removes the cap, as do --include-review, --show-all, and "
-        "--full-table unless N is given. Raw --show-all lists stay complete; the exit "
-        "code counts every finding"
+        "--full-table unless N is given. The exit code counts every finding"
     ),
 )
 @click.option(
@@ -159,8 +177,8 @@ from ._render import print_findings, print_summary
     is_flag=True,
     panel=Panel.OUTPUT,
     help=(
-        "Show all rows in the unused and raw duplicate tables and lift the default "
-        "--max-duplicates cap"
+        "Show all rows in the raw --show-all duplicate tables and lift the default "
+        "--max-duplicates and --max-unused caps"
     ),
 )
 @click.option(

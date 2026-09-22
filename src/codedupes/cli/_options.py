@@ -81,10 +81,10 @@ class Panel(StrEnum):
 SEMANTIC_ONLY_PANELS = frozenset({Panel.SEMANTIC, Panel.DEVICE})
 
 
-class MaxDuplicatesType(click.ParamType):
-    """``--max-duplicates`` value: a positive integer, or ``all`` for no cap."""
+class ReportCapType(click.ParamType):
+    """Report cap value (``--max-duplicates``, ``--max-unused``): a positive integer, or ``all`` for no cap."""
 
-    name = "max_duplicates"
+    name = "report_cap"
 
     def convert(self, value: Any, param: click.Parameter | None, ctx: click.Context | None) -> Any:
         """Parse one cap value.
@@ -106,7 +106,7 @@ class MaxDuplicatesType(click.ParamType):
         return limit
 
 
-MAX_DUPLICATES = MaxDuplicatesType()
+REPORT_CAP = ReportCapType()
 
 
 output_width_option = click.option(
@@ -308,6 +308,7 @@ class CheckOptions:
     show_all: bool
     include_review: bool
     max_duplicates: int | None
+    max_unused: int | None
     show_source: bool
     full_table: bool
     fail_on: Literal["actionable", "all", "none"]
@@ -375,22 +376,23 @@ class CheckOptions:
                     f"Cannot use {listed} with --semantic-only; traditional duplicate analysis is disabled."
                 )
 
-        # Every expansion flag lifts the default primary-list cap; an explicit
-        # --max-duplicates always wins, whatever the argument order.
+        # Every expansion flag lifts the default report caps; an explicit
+        # --max-duplicates or --max-unused always wins, whatever the argument order.
         expands = params["include_review"] or params["show_all"] or params["full_table"]
-        max_duplicates = params["max_duplicates"]
-        if expands and not _is_cli_explicit(ctx, "max_duplicates"):
-            max_duplicates = None
+        caps = {
+            name: None if expands and not _is_cli_explicit(ctx, name) else params[name]
+            for name in ("max_duplicates", "max_unused")
+        }
 
         return cls(
             semantic=SemanticOptions.from_params(params),
             **{
                 name: params[name]
                 for name in cls.__dataclass_fields__
-                if name not in {"semantic", "include_review", "max_duplicates"}
+                if name not in {"semantic", "include_review", *caps}
             },
             include_review=params["include_review"] or params["show_all"],
-            max_duplicates=max_duplicates,
+            **caps,
         )
 
     @property
@@ -403,11 +405,12 @@ class CheckOptions:
             include_review=self.include_review,
             show_all=self.show_all,
             max_duplicates=self.max_duplicates,
+            max_unused=self.max_unused,
         )
 
     @property
     def table_max_items(self) -> int | None:
-        """Return the terminal table row cap.
+        """Return the row cap for the raw ``--show-all`` duplicate tables.
 
         :return: Maximum table rows, or ``None`` when ``--full-table`` disables the cap.
         """

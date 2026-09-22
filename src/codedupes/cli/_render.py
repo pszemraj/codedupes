@@ -191,6 +191,8 @@ def print_summary(
     truncation_note = (
         f"{truncated} ({cut_tiers + '; ' if cut_tiers else ''}use --max-duplicates all)"
     )
+    truncated_unused = len(selection.truncated_unused)
+    unused_note = f"{truncated_unused} (use --max-unused all)"
     families = len(selection.all_exact_families)
     family_note = (
         f"{families} {'family' if families == 1 else 'families'} "
@@ -234,6 +236,8 @@ def print_summary(
         if truncated:
             summary.add_row("Truncated duplicates", truncation_note)
         summary.add_row("Likely dead code", str(len(result.potentially_unused)))
+        if truncated_unused:
+            summary.add_row("Truncated dead code", unused_note)
         summary.add_row("", "")
         summary.add_row("Raw traditional duplicates", str(len(result.traditional_duplicates)))
         summary.add_row("Raw semantic duplicates", str(len(result.semantic_duplicates)))
@@ -253,6 +257,8 @@ def print_summary(
             summary.add_row("Reported duplicates", str(selection.reported_findings))
             summary.add_row("Truncated duplicates", truncation_note)
         summary.add_row("Potentially unused", str(len(result.potentially_unused)))
+        if truncated_unused:
+            summary.add_row("Truncated unused", unused_note)
 
     if result.extraction_diagnostics:
         summary.add_row("Extraction diagnostics", str(len(result.extraction_diagnostics)))
@@ -572,43 +578,44 @@ def print_hybrid_duplicates(
 
 def print_unused(
     unused: list[CodeUnit],
-    max_items: int | None = DEFAULT_TABLE_ROWS,
+    *,
     title: str = "Potentially Unused",
+    truncated: int = 0,
 ) -> None:
-    """Print potentially unused code units.
+    """Print every selected unused unit, largest first; the report cap is the only bound.
 
-    :param unused: Units with no detected references.
-    :param max_items: Optional max rows.
+    :param unused: Units with no detected references, in report order.
     :param title: Section title.
+    :param truncated: Units the ``--max-unused`` cap cut from the report.
     :return: ``None``.
     """
     if not unused:
         return
 
-    _output.console.print(f"\n[bold yellow]{title}[/bold yellow] ({len(unused)} units)")
+    counts = f"{len(unused)} units"
+    if truncated:
+        counts += f", {truncated} truncated"
+    _output.console.print(f"\n[bold yellow]{title}[/bold yellow] ({counts})")
     _output.console.print(
-        "[dim]These have no detected references and don't appear to be public API.[/dim]"
+        "[dim]These have no detected references and don't appear to be public API; "
+        "largest first.[/dim]"
     )
 
     table = Table(header_style="bold", box=box.ROUNDED, border_style="dim", show_lines=True)
     table.add_column("Name", style="cyan", overflow="fold")
     table.add_column("Type", style="dim", width=8, min_width=8, no_wrap=True)
+    table.add_column("Lines", style="green", width=5, min_width=5, justify="right")
     table.add_column("Location", style="dim", overflow="fold")
 
-    visible = unused if max_items is None else unused[:max_items]
-    for unit in visible:
+    for unit in unused:
         table.add_row(
             unit.name,
             unit.unit_type.name.lower(),
+            str(unit.end_lineno - unit.lineno + 1),
             format_location(unit),
         )
 
     _output.console.print(table)
-
-    if max_items is not None and len(unused) > max_items:
-        _output.console.print(
-            f"[dim]... and {len(unused) - max_items} more (use --full-table to list all rows)[/dim]"
-        )
 
 
 def print_findings(
@@ -619,13 +626,13 @@ def print_findings(
 ) -> None:
     """Print every finding panel selected for one check report.
 
-    The primary duplicate list is already bounded by the report cap, so it
-    renders in full; ``max_items`` only abbreviates the unused table and the
-    raw ``--show-all`` lists.
+    The primary duplicate and unused lists are already bounded by the report
+    caps, so they render in full; ``max_items`` only abbreviates the raw
+    ``--show-all`` lists.
 
     :param selection: Findings selected for this report.
     :param show_source: Whether to render source snippets.
-    :param max_items: Optional row limit for the unused and raw diagnostic tables.
+    :param max_items: Optional row limit for the raw diagnostic tables.
     :return: ``None``.
     """
     print_exact_families(
@@ -640,7 +647,11 @@ def print_findings(
             withheld=len(selection.omitted_review),
             truncated=len(selection.truncated),
         )
-        print_unused(selection.potentially_unused, title="Likely Dead Code", max_items=max_items)
+        print_unused(
+            selection.potentially_unused,
+            title="Likely Dead Code",
+            truncated=len(selection.truncated_unused),
+        )
         if selection.traditional_duplicates is not None:
             print_duplicates(
                 selection.traditional_duplicates,
@@ -664,7 +675,7 @@ def print_findings(
         max_items=None,
         truncated=len(selection.truncated),
     )
-    print_unused(selection.potentially_unused, max_items=max_items)
+    print_unused(selection.potentially_unused, truncated=len(selection.truncated_unused))
 
 
 def _ranked_table() -> Table:
