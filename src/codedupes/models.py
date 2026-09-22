@@ -417,6 +417,22 @@ def derive_checks(
     )
 
 
+@dataclass(frozen=True)
+class FocusSummary:
+    """Scope ``--focus`` applied to one report, and what fell out of it.
+
+    The complete result stays corpus-wide; only the findings a focused
+    report emits change. ``out_of_focus_duplicates``/``out_of_focus_unused``
+    are counted in finding units (an exact family counts once), so they add
+    up with the focused report's own counts back to the unfocused totals.
+    """
+
+    paths: tuple[Path, ...]
+    units: int
+    out_of_focus_duplicates: int
+    out_of_focus_unused: int
+
+
 @dataclass
 class AnalysisResult:
     """Full analysis result."""
@@ -437,6 +453,7 @@ class AnalysisResult:
     suppressed_duplicates: int = 0
     suppressed_unused: int = 0
     embedding_stats: EmbeddingRunStats | None = None
+    focus: FocusSummary | None = None
 
     @property
     def analysis_mode(self) -> AnalysisMode:

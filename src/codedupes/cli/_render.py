@@ -258,6 +258,10 @@ def print_summary(
     summary.add_column(style="white", overflow="fold")
 
     summary.add_row("Analysis status", result.analysis_status)
+    if result.focus is not None:
+        summary.add_row("Focus", ", ".join(str(path) for path in result.focus.paths))
+        summary.add_row("Out-of-focus duplicates", str(result.focus.out_of_focus_duplicates))
+        summary.add_row("Out-of-focus unused", str(result.focus.out_of_focus_unused))
     summary.add_row("Total code units", str(len(result.units)))
     language_counts = Counter(unit.language for unit in result.units)
     for language, count in sorted(language_counts.items()):

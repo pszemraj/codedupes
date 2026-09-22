@@ -28,6 +28,7 @@ from codedupes.report.json import (
 from codedupes.report.selection import (
     DEFAULT_MAX_DUPLICATES,
     ReportPolicy,
+    focus_result,
     group_file_results,
     select_findings,
 )
@@ -500,6 +501,26 @@ def test_check_json_run_checks_count_diagnostics(tmp_path):
         "diagnostics": 1,
     }
     assert payload["analysis_status"] == "partial"
+
+
+def test_check_json_focus_summary_is_null_when_unfocused(tmp_path):
+    result = _result(tmp_path)
+    payload = _payload(result)
+
+    assert payload["summary"]["focus"] is None
+
+
+def test_check_json_focus_summary_serializes_sorted_paths(tmp_path):
+    result = _result(tmp_path)
+    focused = focus_result(result, (tmp_path / "a.py", tmp_path / "b.py"))
+    payload = _payload(focused)
+
+    assert payload["summary"]["focus"] == {
+        "paths": sorted([str(tmp_path / "a.py"), str(tmp_path / "b.py")]),
+        "units": focused.focus.units,
+        "out_of_focus_duplicates": focused.focus.out_of_focus_duplicates,
+        "out_of_focus_unused": focused.focus.out_of_focus_unused,
+    }
 
 
 def test_unit_to_dict_source_is_opt_in_and_bounded(tmp_path):

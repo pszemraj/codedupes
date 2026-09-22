@@ -800,3 +800,35 @@ def test_cli_rejects_device_controls_with_traditional_only(
 
     assert result.exit_code == 2
     assert f"Cannot use {expected_option}" in result.output
+
+
+def test_cli_focus_rejects_file_targets_and_out_of_root_paths(tmp_path):
+    file_target = tmp_path / "sample.py"
+    file_target.write_text("def entry():\n    return 1\n")
+
+    result_file_target = CliRunner().invoke(
+        cli.cli, ["check", str(file_target), "--focus", str(file_target)]
+    )
+    assert result_file_target.exit_code == 2
+    assert "--focus requires a directory target" in result_file_target.output
+
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "sample.py").write_text("def entry():\n    return 1\n")
+    outside = tmp_path / "outside.py"
+    outside.write_text("def other():\n    return 2\n")
+
+    result_outside = CliRunner().invoke(cli.cli, ["check", str(root), "--focus", str(outside)])
+    assert result_outside.exit_code == 2
+    assert "is not inside the scan root" in result_outside.output
+
+
+def test_cli_focus_missing_path_is_a_click_error(tmp_path):
+    root = tmp_path / "root"
+    root.mkdir()
+    missing = tmp_path / "missing.py"
+
+    result = CliRunner().invoke(cli.cli, ["check", str(root), "--focus", str(missing)])
+
+    assert result.exit_code == 2
+    assert "does not exist" in result.output

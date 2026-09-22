@@ -14,6 +14,8 @@ from codedupes.models import (
     CodeUnit,
     CodeUnitType,
     DuplicatePair,
+    ExtractionDiagnostic,
+    FocusSummary,
     HybridDuplicate,
     HybridTier,
 )
@@ -27,6 +29,7 @@ from codedupes.report.selection import (
     assign_unit_ids,
     build_exact_families,
     collect_units,
+    focus_result,
     hidden_only_failure,
     run_should_fail,
     select_findings,
@@ -810,3 +813,78 @@ def test_truncation_never_hides_the_only_failing_pair(tmp_path):
     )
     assert run_should_fail(advisory.result, policy="actionable", strict_unused=False) is False
     assert hidden_only_failure(advisory, policy="actionable", strict_unused=False) == set()
+
+
+def test_focus_result_keeps_whole_families_touching_focus(tmp_path):
+    # a, b live in a.py and form the exact family; c lives in b.py. Focusing
+    # on b.py touches no member of the {a, b} family, so the whole family
+    # drops even though it never overlaps the focus path directly.
+    result = _result(tmp_path)
+    focus_path = tmp_path / "b.py"
+
+    focused = focus_result(result, (focus_path,))
+
+    assert focused.traditional_duplicates == []
+    assert [pair.tier for pair in focused.hybrid_duplicates] == ["semantic_review"]
+    assert focused.semantic_duplicates == [result.semantic_duplicates[1]]
+    assert focused.focus == FocusSummary(
+        paths=(focus_path,), units=1, out_of_focus_duplicates=1, out_of_focus_unused=0
+    )
+    # The complete result stays corpus-wide.
+    assert focused.units == result.units
+    assert focused.run is result.run
+
+
+def test_focus_result_filters_unused_and_leaves_units_and_diagnostics(tmp_path):
+    diagnostic = ExtractionDiagnostic(
+        file_path=tmp_path / "a.py", language="python", message="warn"
+    )
+    out_of_focus_unit = _unit(tmp_path, "unused_a", file="a.py", start_byte=200)
+    in_focus_unit = _unit(tmp_path, "unused_d", file="b.py", start_byte=200)
+    result = _result(
+        tmp_path,
+        potentially_unused=[out_of_focus_unit, in_focus_unit],
+        extraction_diagnostics=[diagnostic],
+        unused_excluded_units=2,
+    )
+
+    focused = focus_result(result, (tmp_path / "b.py",))
+
+    assert focused.potentially_unused == [in_focus_unit]
+    assert focused.focus.out_of_focus_unused == 1
+    # Diagnostics, the corpus, and exclusion counts stay corpus-wide.
+    assert focused.units == result.units
+    assert focused.extraction_diagnostics == [diagnostic]
+    assert focused.unused_excluded_units == 2
+    assert focused.run is result.run
+
+
+def test_focus_result_directory_focus_matches_descendants(tmp_path):
+    nested = _unit(tmp_path, "nested", file="pkg/sub/nested.py")
+    outside = _unit(tmp_path, "outside", file="other.py")
+    result = _result(
+        tmp_path,
+        units=[nested, outside],
+        traditional_duplicates=[],
+        semantic_duplicates=[],
+        hybrid_duplicates=[],
+        potentially_unused=[nested, outside],
+    )
+
+    focused = focus_result(result, (tmp_path / "pkg",))
+
+    assert focused.potentially_unused == [nested]
+    assert focused.focus.units == 1
+
+
+def test_focus_result_counts_reconcile_with_select_findings(tmp_path):
+    result = _result(tmp_path)
+    focused = focus_result(result, (tmp_path / "b.py",))
+
+    complete_selection = select_findings(result)
+    focused_selection = select_findings(focused)
+
+    assert (
+        complete_selection.total_findings
+        == focused_selection.total_findings + focused.focus.out_of_focus_duplicates
+    )

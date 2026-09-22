@@ -13,6 +13,8 @@ from click.testing import CliRunner
 from codedupes import cli
 from codedupes.models import (
     AnalysisResult,
+    CodeUnit,
+    CodeUnitType,
     DuplicatePair,
     HybridDuplicate,
 )
@@ -1121,3 +1123,102 @@ def test_cli_semantic_only_uses_raw_findings_for_exit(monkeypatch, tmp_path):
     result = runner.invoke(cli.cli, ["check", str(path), "--semantic-only"])
     assert result.exit_code == 1
     assert "Semantic Duplicates (Embedding)" in result.output
+
+
+def _focus_unit(tmp_path: Path, name: str, file: str, *, lineno: int = 1) -> CodeUnit:
+    return CodeUnit(
+        name=name,
+        qualified_name=f"mod.{name}",
+        unit_type=CodeUnitType.FUNCTION,
+        file_path=tmp_path / file,
+        lineno=lineno,
+        end_lineno=lineno + 1,
+        source=f"def {name}():\n    return 1\n",
+    )
+
+
+def _build_focus_result(tmp_path: Path) -> AnalysisResult:
+    """Combined result: an out-of-focus exact family and an in-focus unused unit."""
+    outside_a = _focus_unit(tmp_path, "outside_a", "other.py")
+    outside_b = _focus_unit(tmp_path, "outside_b", "other.py", lineno=5)
+    in_focus = _focus_unit(tmp_path, "in_focus", "pkg/mod.py")
+    duplicate = DuplicatePair(outside_a, outside_b, similarity=1.0, method="structural_hash")
+    hybrid = HybridDuplicate(
+        outside_a, outside_b, tier="exact", score=1.0, exact_method="structural_hash"
+    )
+    return AnalysisResult(
+        units=[outside_a, outside_b, in_focus],
+        traditional_duplicates=[duplicate],
+        semantic_duplicates=[],
+        hybrid_duplicates=[hybrid],
+        potentially_unused=[in_focus],
+        run=make_run_record(tmp_path, mode="combined"),
+    )
+
+
+def test_cli_focus_scopes_exit_code_and_report(monkeypatch, tmp_path):
+    focus_dir = tmp_path / "pkg"
+    focus_dir.mkdir()
+    (focus_dir / "mod.py").write_text("def in_focus():\n    return 1\n")
+    patch_cli_analyzer(monkeypatch, cli, analyze_result=lambda: _build_focus_result(tmp_path))
+    runner = CliRunner()
+
+    unfocused = runner.invoke(cli.cli, ["check", str(tmp_path)])
+    assert unfocused.exit_code == 1
+
+    terminal_result = runner.invoke(cli.cli, ["check", str(tmp_path), "--focus", str(focus_dir)])
+    assert terminal_result.exit_code == 0
+    assert "Focus" in terminal_result.output
+    assert "Out-of-focus duplicates" in terminal_result.output
+
+    json_result = runner.invoke(
+        cli.cli, ["check", str(tmp_path), "--focus", str(focus_dir), "--json"]
+    )
+    assert json_result.exit_code == 0
+    payload = json.loads(json_result.output)
+    assert payload["exact_families"] == []
+    assert payload["summary"]["focus"] == {
+        "paths": [str(focus_dir.resolve())],
+        "units": 1,
+        "out_of_focus_duplicates": 1,
+        "out_of_focus_unused": 0,
+    }
+
+    # Focusing on the file the exact family lives in restores the failing exit code:
+    # focus scopes the finding itself, not just which panel prints it.
+    (tmp_path / "other.py").write_text("def outside_a():\n    return 1\n")
+    refocused = runner.invoke(
+        cli.cli, ["check", str(tmp_path), "--focus", str(tmp_path / "other.py")]
+    )
+    assert refocused.exit_code == 1
+
+
+def test_cli_focus_with_unused_only_lists_focused_unused(monkeypatch, tmp_path):
+    focus_dir = tmp_path / "pkg"
+    focus_dir.mkdir()
+    (focus_dir / "mod.py").write_text("def in_focus():\n    return 1\n")
+
+    def _build_result() -> AnalysisResult:
+        outside = _focus_unit(tmp_path, "outside", "other.py")
+        in_focus = _focus_unit(tmp_path, "in_focus", "pkg/mod.py")
+        return AnalysisResult(
+            units=[outside, in_focus],
+            traditional_duplicates=[],
+            semantic_duplicates=[],
+            hybrid_duplicates=[],
+            potentially_unused=[outside, in_focus],
+            run=make_run_record(tmp_path, mode="unused"),
+        )
+
+    patch_cli_analyzer(monkeypatch, cli, analyze_result=_build_result)
+    runner = CliRunner()
+
+    result = runner.invoke(
+        cli.cli, ["check", str(tmp_path), "--unused-only", "--focus", str(focus_dir), "--json"]
+    )
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["summary"]["potentially_unused"] == 1
+    assert payload["summary"]["focus"]["out_of_focus_unused"] == 1
+    unit_ids = payload["potentially_unused"]
+    assert [payload["units"][uid]["name"] for uid in unit_ids] == ["in_focus"]

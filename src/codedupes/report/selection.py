@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Iterable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Literal
 
@@ -22,6 +22,7 @@ from codedupes.models import (
     AnalysisResult,
     CodeUnit,
     DuplicatePair,
+    FocusSummary,
     HybridDuplicate,
     HybridTier,
 )
@@ -638,3 +639,109 @@ def group_file_results(results: list[tuple[CodeUnit, float]], top_k: int) -> lis
         matches.sort(key=lambda match: (-match[1], match[0].lineno, match[0].uid))
         files.append(FileSearchResult(path, matches[0][1], len(matches), matches[:3]))
     return sorted(files, key=lambda result: (-result.score, str(result.file_path)))[:top_k]
+
+
+def _in_focus(unit: CodeUnit, paths: tuple[Path, ...]) -> bool:
+    """Return whether a unit's file falls under any focus path.
+
+    :param unit: Unit to test.
+    :param paths: Resolved focus paths (files or directories); a unit under
+        a focus directory or matching a focus file counts as in focus.
+    :return: Whether the unit is in focus.
+    """
+    return any(unit.file_path.is_relative_to(path) for path in paths)
+
+
+def _finding_count(pairs: Sequence[HybridDuplicate | DuplicatePair]) -> int:
+    """Count findings the way a report does: an exact family counts once.
+
+    :param pairs: Duplicate pairs, raw or hybrid.
+    :return: Exact families plus every non-exact pair.
+    """
+    families = build_exact_families(pairs)
+    non_exact = sum(not _is_exact_edge(pair) for pair in pairs)
+    return len(families) + non_exact
+
+
+def _focus_pairs(
+    pairs: Sequence[HybridDuplicate] | Sequence[DuplicatePair],
+    *,
+    kept_family_uids: frozenset[str],
+    paths: tuple[Path, ...],
+) -> list[HybridDuplicate] | list[DuplicatePair]:
+    """Filter one duplicate list to the pairs a focused report keeps.
+
+    An exact edge is one indivisible finding with the rest of its family, so
+    it is kept only when both endpoints already belong to a family that has
+    at least one in-focus member (``kept_family_uids``); a non-exact pair is
+    its own finding, kept when either endpoint is in focus.
+
+    :param pairs: Duplicate pairs to filter, raw or hybrid.
+    :param kept_family_uids: Uids of every member of a family with an in-focus member.
+    :param paths: Resolved focus paths.
+    :return: The subset of ``pairs`` a focused report keeps, in input order.
+    """
+    kept: list[HybridDuplicate] | list[DuplicatePair] = []
+    for pair in pairs:
+        if _is_exact_edge(pair):
+            if pair.unit_a.uid in kept_family_uids and pair.unit_b.uid in kept_family_uids:
+                kept.append(pair)  # type: ignore[arg-type]
+        elif _in_focus(pair.unit_a, paths) or _in_focus(pair.unit_b, paths):
+            kept.append(pair)  # type: ignore[arg-type]
+    return kept
+
+
+def focus_result(result: AnalysisResult, paths: tuple[Path, ...]) -> AnalysisResult:
+    """Scope one complete result's findings to a set of focus paths.
+
+    The complete result stays corpus-wide: ``units``, every diagnostics list,
+    ``unused_excluded_units``, ``embedding_stats``, and ``run`` are untouched.
+    Only the duplicate and unused findings a focused report emits change, so
+    exit codes and JSON/terminal reports built from the returned result cover
+    exactly the focus scope. An exact-duplicate family is kept whole when any
+    of its members is in focus, since consolidating it is one indivisible
+    finding; every other duplicate pair is kept when either endpoint is in
+    focus; a potentially-unused unit is kept when its file is in focus.
+
+    :param result: Complete analysis result.
+    :param paths: Resolved, deduplicated focus paths (files or directories); must be non-empty.
+    :return: A new result scoped to ``paths``, with ``focus`` set.
+    """
+    families = build_exact_families(result.all_duplicates)
+    kept_family_uids = frozenset(
+        unit.uid
+        for family in families
+        if any(_in_focus(member, paths) for member in family.members)
+        for unit in family.members
+    )
+
+    traditional = _focus_pairs(
+        result.traditional_duplicates, kept_family_uids=kept_family_uids, paths=paths
+    )
+    semantic = _focus_pairs(
+        result.semantic_duplicates, kept_family_uids=kept_family_uids, paths=paths
+    )
+    hybrid = _focus_pairs(result.hybrid_duplicates, kept_family_uids=kept_family_uids, paths=paths)
+    unused = [unit for unit in result.potentially_unused if _in_focus(unit, paths)]
+
+    focused = replace(
+        result,
+        traditional_duplicates=traditional,
+        semantic_duplicates=semantic,
+        hybrid_duplicates=hybrid,
+        potentially_unused=unused,
+    )
+    out_of_focus_duplicates = _finding_count(result.all_duplicates) - _finding_count(
+        focused.all_duplicates
+    )
+    out_of_focus_unused = len(result.potentially_unused) - len(unused)
+    focus_units = sum(1 for unit in result.units if _in_focus(unit, paths))
+    return replace(
+        focused,
+        focus=FocusSummary(
+            paths=paths,
+            units=focus_units,
+            out_of_focus_duplicates=out_of_focus_duplicates,
+            out_of_focus_unused=out_of_focus_unused,
+        ),
+    )

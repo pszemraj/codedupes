@@ -80,6 +80,8 @@ A successful directory scan is complete for its selection, including explicit ex
 
 A file target publishes an incomplete observation. It merges into the prior selection instead of deleting unseen siblings. A single-file scan replaces only that file's baseline slice, so observed edits or eligibility changes can orphan old keys. It neither advances the complete-scan clock nor refreshes the pin age of unseen units.
 
+`check --focus` does not change any of this: the analyzer still scans and embeds the full target, so the cache scope, selection, and complete/incomplete status are exactly what an unfocused `check` of the same target would produce. Focus only filters the report and exit code afterward; see [focused reports](output.md#focused-reports).
+
 ### Orphan collection
 
 The shard-wide manifest generation counts complete scans, independently of vector snapshot IDs. A key orphaned at generation `g` remains available for three further complete scans. Reintroducing its content clears the orphan record and reuses the row.

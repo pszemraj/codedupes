@@ -14,6 +14,7 @@ from codedupes.models import (
     CodeUnit,
     DuplicatePair,
     ExtractionDiagnostic,
+    FocusSummary,
     HybridDuplicate,
     RunRecord,
     derive_checks,
@@ -267,6 +268,22 @@ def _raw_edge(duplicate: DuplicatePair, ids: dict[str, str]) -> dict[str, Any]:
     }
 
 
+def _focus_to_dict(focus: FocusSummary | None) -> dict[str, Any] | None:
+    """Convert an optional focus summary to a JSON-safe mapping.
+
+    :param focus: Focus summary from a ``--focus``-scoped result, or ``None``.
+    :return: Serialized focus fields, or ``None`` when the report is unfocused.
+    """
+    if focus is None:
+        return None
+    return {
+        "paths": sorted(str(path) for path in focus.paths),
+        "units": focus.units,
+        "out_of_focus_duplicates": focus.out_of_focus_duplicates,
+        "out_of_focus_unused": focus.out_of_focus_unused,
+    }
+
+
 def check_result_to_json(
     selection: ReportSelection,
     *,
@@ -336,6 +353,7 @@ def check_result_to_json(
             "hidden_only_failure": sorted(
                 hidden_only_failure(selection, policy=fail_on, strict_unused=strict_unused)
             ),
+            "focus": _focus_to_dict(result.focus),
         },
         "exact_families": exact_families,
         "duplicates": duplicates,

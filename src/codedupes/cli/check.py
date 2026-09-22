@@ -13,12 +13,20 @@ from codedupes.report.json import check_result_to_json, to_json_text
 from codedupes.report.selection import (
     DEFAULT_MAX_DUPLICATES,
     DEFAULT_MAX_UNUSED,
+    focus_result,
     run_should_fail,
     select_findings,
 )
 
 from . import _output
-from ._options import REPORT_CAP, CheckOptions, Panel, option_panels, semantic_options
+from ._options import (
+    REPORT_CAP,
+    CheckOptions,
+    Panel,
+    option_panels,
+    resolve_focus_paths,
+    semantic_options,
+)
 from ._output import DEFAULT_SOURCE_LINES, _configured_cli_output, _run_cli_action
 from ._render import print_findings, print_run, print_summary
 
@@ -28,6 +36,18 @@ from ._render import print_findings, print_run, print_summary
     help="Run duplicate + unused analysis",
 )
 @click.argument("path", type=click.Path(path_type=Path, exists=True), panel=Panel.SCOPE)
+@click.option(
+    "--focus",
+    multiple=True,
+    type=click.Path(path_type=Path, exists=True),
+    panel=Panel.SCOPE,
+    help=(
+        "Scope the report and exit code to findings touching this file or directory "
+        "(repeat for multiple); an exact-duplicate family is kept whole when any member "
+        "is in focus, a duplicate pair when either endpoint is, and unused units by file. "
+        "Requires a directory target"
+    ),
+)
 @click.option(
     "-t",
     "--threshold",
@@ -248,6 +268,7 @@ def check_command(ctx: click.Context, path: Path, **params: Any) -> None:
             config = opts.to_analysis_config(path)
         except ValueError as exc:
             raise click.UsageError(str(exc)) from exc
+        focus_paths = resolve_focus_paths(opts.focus, path)
 
         result = _run_cli_action(
             lambda: cli_module.CodeAnalyzer(config).analyze(path),
@@ -255,6 +276,8 @@ def check_command(ctx: click.Context, path: Path, **params: Any) -> None:
             verbose=opts.verbose,
             catch_file_not_found=True,
         )
+        if focus_paths:
+            result = focus_result(result, focus_paths)
         # Exit status is decided on the complete result before any report
         # selection so visibility flags can never change CI outcomes.
         exit_code = int(

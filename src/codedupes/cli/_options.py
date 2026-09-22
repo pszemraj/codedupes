@@ -67,6 +67,31 @@ def _resolve_exclude_patterns(
     return defaults + list(exclude)
 
 
+def resolve_focus_paths(focus: tuple[Path, ...], target: Path) -> tuple[Path, ...]:
+    """Resolve and validate ``--focus`` paths against the scan target.
+
+    :param focus: Raw ``--focus`` paths from the command line.
+    :param target: File or directory passed as the analysis target.
+    :return: Resolved, deduplicated, sorted focus paths; empty when ``focus`` is empty.
+    :raises click.UsageError: If ``target`` is a file, or a focus path is outside it.
+    """
+    if not focus:
+        return ()
+    if target.is_file():
+        raise click.UsageError(
+            "--focus requires a directory target; scan the project root instead, e.g. "
+            f"codedupes check <root> --focus {target}"
+        )
+    root = target.resolve()
+    resolved: set[Path] = set()
+    for raw in focus:
+        candidate = raw.resolve()
+        if not candidate.is_relative_to(root):
+            raise click.UsageError(f"--focus path {raw} is not inside the scan root {target}.")
+        resolved.add(candidate)
+    return tuple(sorted(resolved))
+
+
 class Panel(StrEnum):
     """Help-panel names shared by option definitions and validation."""
 
@@ -333,6 +358,7 @@ class CheckOptions:
     no_default_excludes: bool
     no_gitignore: bool
     include_stubs: bool
+    focus: tuple[Path, ...]
     as_json: bool
     verbose: bool
     output_width: int

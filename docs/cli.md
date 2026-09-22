@@ -35,6 +35,7 @@ codedupes check ./src --unused-only --strict-unused
 
 Options, in addition to the [shared options](#options-shared-by-check-and-search):
 
+- `--focus <path>`: Scope the [report and exit code](output.md#focused-reports) to findings touching this file or directory; repeat for multiple paths. Requires a directory target and each path inside it
 - `-t, --threshold <float>`: Shared threshold override for semantic and traditional checks (in single-method modes, it applies to the active method only)
 - `--traditional-threshold <float>`: Override the [traditional Jaccard threshold](analysis-defaults.md#traditional-duplicate-defaults) only
 - `--cross-language`: Also report semantic duplicate pairs across languages; see [comparison boundaries](polyglot-languages.md#fingerprints-and-comparison-boundaries)
@@ -64,10 +65,11 @@ Options, in addition to the [shared options](#options-shared-by-check-and-search
 
 `codedupes check <file>` only compares code units within that one file, so a duplicate of it living elsewhere in the project is not reported. Unused-code detection is not limited the same way: it resolves a [project-wide reference root](analysis-defaults.md#extraction-scope-defaults) for the target (the nearest `pyproject.toml`, else the git work tree, else the file's own directory) and parses every Python file under it, test files included, so a call from elsewhere in the project still counts.
 
+For cross-file duplicate detection against one file, scan the project root and use `--focus` (repeatable) to narrow the report and exit code back to that file or a set of files/directories:
+
 ```text
-# Cross-file duplicate detection for one file against the rest of a project
-# is not available in this release; scan the project root instead.
 codedupes check <root> --focus <file>
+codedupes check . --focus src/pkg/new_module.py --focus src/pkg/util/
 ```
 
 ## `codedupes search <path> "<query>"`
@@ -175,6 +177,7 @@ Clear all cached embeddings or only entries for one model. An empty or whitespac
 - `--json` rejects rich-only display controls: `--show-diff`, `--full-table`, `--verbose`, and explicit `--output-width`; `--show-source`/`--source-lines` are accepted and add `source` to JSON unit records instead
 - `--semantic-only`, `--traditional-only`, and `--unused-only` are mutually exclusive; `--unused-only` also rejects `--no-unused` and every duplicate-detection-only option (see [`check`](#codedupes-check-path))
 - `--no-unused` and `--strict-unused` are mutually exclusive
+- `--focus` requires a directory target and rejects a path outside the scan root; a missing focus path is the same click "does not exist" error as a missing scan target
 - `--no-unused` and an explicit `--max-unused` are mutually exclusive
 - `--trust-remote-code` and `--no-trust-remote-code` are mutually exclusive
 - `--mps-fallback` and `--no-mps-fallback` are mutually exclusive
