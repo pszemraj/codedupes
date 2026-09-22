@@ -94,6 +94,7 @@ codedupes search . "validate session token" --language js --language ts
 - `--no-private`: Exclude private units according to [language visibility rules](polyglot-languages.md#visibility-filtering)
 - `--exclude <name|glob>`: Add a quoted exclusion pattern; repeat for multiple patterns. See [pattern matching and scope](analysis-defaults.md#extraction-scope-defaults)
 - `--no-default-excludes`: Disable [default test-file exclusions](analysis-defaults.md#extraction-scope-defaults)
+- `--no-gitignore`: Scan paths git ignores; by default a directory scan inside a git work tree [skips them](analysis-defaults.md#extraction-scope-defaults)
 - `--include-stubs`: Include `.pyi` files when scanning a directory (single-file `.pyi` targets are analyzed as given)
 
 ### Semantic model

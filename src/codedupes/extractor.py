@@ -6,6 +6,7 @@ import fnmatch
 import logging
 import os
 import re
+import subprocess
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -32,6 +33,50 @@ DEFAULT_EXCLUDE_PATTERNS = [
 ]
 
 
+def git_ignored_paths(root: Path) -> frozenset[Path]:
+    """Return the root-relative paths git ignores beneath a scan root.
+
+    Git is the authority on its own ignore rules (nested ``.gitignore`` files,
+    ``.git/info/exclude``, the global excludes file, negations, and tracked
+    files that match a pattern but are not ignored), so the answer comes from
+    ``git ls-files`` rather than a reimplementation. A wholly ignored directory
+    is one entry, which lets the walk prune it without listing its contents.
+
+    :param root: Resolved scan root.
+    :return: Ignored paths relative to ``root``; empty when ``root`` is not
+        inside a git work tree, ``git`` is unavailable, or ``root`` itself is
+        ignored (an explicitly selected ignored directory is scanned in full).
+    """
+    command = [
+        "git",
+        "-C",
+        os.fspath(root),
+        "ls-files",
+        "--others",
+        "--ignored",
+        "--exclude-standard",
+        "--directory",
+        "-z",
+    ]
+    try:
+        completed = subprocess.run(
+            command, stdin=subprocess.DEVNULL, capture_output=True, check=False
+        )
+    except OSError as error:
+        logger.debug(f"git is unavailable; .gitignore is not applied to {root}: {error}")
+        return frozenset()
+    if completed.returncode != 0:
+        detail = completed.stderr.decode(errors="replace").strip().splitlines()
+        logger.debug(
+            f".gitignore is not applied to {root}: {detail[0] if detail else 'git ls-files failed'}"
+        )
+        return frozenset()
+    entries = [os.fsdecode(entry) for entry in completed.stdout.split(b"\0") if entry]
+    if any(entry.rstrip("/") in {"", "."} for entry in entries):
+        return frozenset()
+    return frozenset(Path(entry.rstrip("/")) for entry in entries)
+
+
 class CodeExtractor:
     """Extract supported code units from a source tree or individual file."""
 
@@ -42,6 +87,7 @@ class CodeExtractor:
         include_private: bool = True,
         include_stubs: bool = False,
         languages: tuple[str, ...] | list[str] | None = None,
+        respect_gitignore: bool = True,
     ) -> None:
         """Construct an extractor for a project root.
 
@@ -53,8 +99,12 @@ class CodeExtractor:
         :param include_stubs: Include ``.pyi`` files.
         :param languages: Optional canonical/alias language filter. Auto-detects
             supported source files when omitted.
+        :param respect_gitignore: Skip paths git ignores when the root is inside a
+            git work tree. Directly named files are analyzed regardless.
         """
         self.root = root.resolve()
+        self.respect_gitignore = respect_gitignore
+        self._ignored_paths: frozenset[Path] | None = None
         self._uses_default_exclude_patterns = exclude_patterns is None
         self.exclude_patterns = (
             DEFAULT_EXCLUDE_PATTERNS.copy() if exclude_patterns is None else exclude_patterns
@@ -94,24 +144,48 @@ class CodeExtractor:
         """
         return is_default_excluded_dir(name)
 
+    def _is_gitignored(self, path: Path, *, check_ancestors: bool = True) -> bool:
+        """Return whether git ignores an in-tree path or one of its ancestors.
+
+        The ignored set is read once per extractor, on first use, so a
+        single-file target never runs git.
+
+        :param path: Candidate path under the extraction root.
+        :param check_ancestors: Include parent directories in the lookup.
+        :return: Whether the path is skipped by the ignore rules.
+        """
+        if not self.respect_gitignore:
+            return False
+        if self._ignored_paths is None:
+            self._ignored_paths = git_ignored_paths(self.root)
+        if not self._ignored_paths:
+            return False
+        rel = path.relative_to(self.root)
+        if rel in self._ignored_paths:
+            return True
+        return check_ancestors and any(parent in self._ignored_paths for parent in rel.parents)
+
     def _should_exclude(
         self,
         path: Path,
         *,
         check_ancestors: bool = True,
         match_patterns: bool = True,
+        match_ignored: bool = True,
     ) -> bool:
         """Check exclusions for a path and its resolved in-tree symlink target.
 
         :param path: Candidate path.
         :param check_ancestors: Check parents unless the walk already pruned them.
         :param match_patterns: Apply configured path/name globs when true.
+        :param match_ignored: Apply git ignore rules when true.
         :return: ``True`` when extraction should skip this file or directory.
         """
         if self._matches_exclude(
             path,
             check_ancestors=check_ancestors,
             match_patterns=match_patterns,
+            match_ignored=match_ignored,
         ):
             return True
         if not path.is_symlink():
@@ -124,6 +198,7 @@ class CodeExtractor:
         return resolved.is_relative_to(self.root) and self._matches_exclude(
             resolved,
             match_patterns=match_patterns,
+            match_ignored=match_ignored,
         )
 
     def _matches_exclude(
@@ -132,12 +207,14 @@ class CodeExtractor:
         *,
         check_ancestors: bool = True,
         match_patterns: bool = True,
+        match_ignored: bool = True,
     ) -> bool:
         """Match a path's in-tree name against the configured exclusions.
 
         :param path: Candidate path under the extraction root.
         :param check_ancestors: Include parent directories in the match candidates.
         :param match_patterns: Apply configured path/name globs when true.
+        :param match_ignored: Apply git ignore rules when true.
         :return: Whether the name or an ancestor matches an exclusion.
         """
         rel = path.relative_to(self.root)
@@ -146,6 +223,8 @@ class CodeExtractor:
         if not check_ancestors:
             directory_parts = (rel.name,) if path_is_directory else ()
         if any(self._is_excluded_dir_name(part) for part in directory_parts):
+            return True
+        if match_ignored and self._is_gitignored(path, check_ancestors=check_ancestors):
             return True
         if not match_patterns:
             return False
@@ -198,10 +277,13 @@ class CodeExtractor:
         # naming are computed relative to the root, and the symlink is the
         # file's identity within the analyzed tree.
         file_path = file_path.absolute()
+        # A named file is a deliberate request: implicit test globs and git
+        # ignore rules gate directory discovery, and the walk applied both.
         match_patterns = not self._uses_default_exclude_patterns
         if file_path.is_relative_to(self.root) and self._should_exclude(
             file_path,
             match_patterns=match_patterns,
+            match_ignored=False,
         ):
             return
         try:
@@ -212,7 +294,7 @@ class CodeExtractor:
             resolved = file_path
         if resolved.is_relative_to(self.root):
             file_path = resolved
-        if self._should_exclude(file_path, match_patterns=match_patterns):
+        if self._should_exclude(file_path, match_patterns=match_patterns, match_ignored=False):
             logger.debug(f"Skipping excluded file {file_path}")
             return
 
@@ -314,6 +396,8 @@ class CodeExtractor:
         skipped_headers: list[Path] = []
         skipped_test_files = 0
         skipped_test_dirs = 0
+        skipped_ignored_files = 0
+        skipped_ignored_dirs = 0
         default_test_patterns = set(DEFAULT_EXCLUDE_PATTERNS).intersection(self.exclude_patterns)
 
         def matches_default_tests(path: Path) -> bool:
@@ -333,6 +417,16 @@ class CodeExtractor:
                 for pattern in default_test_patterns
             )
 
+        def skipped_by_gitignore(path: Path) -> bool:
+            """Identify paths the walk skipped for git ignore rules alone.
+
+            :param path: File or directory skipped by the current walk.
+            :return: Whether git ignore rules, not built-in directory names, skipped it.
+            """
+            return self._should_exclude(path, match_patterns=False) and not self._should_exclude(
+                path, match_patterns=False, match_ignored=False
+            )
+
         for dirpath, dirnames, filenames in os.walk(
             self.root, followlinks=False, onerror=self._report_walk_error
         ):
@@ -344,6 +438,7 @@ class CodeExtractor:
                 directory = current_dir / name
                 if self._should_exclude(directory, check_ancestors=False):
                     skipped_test_dirs += matches_default_tests(directory)
+                    skipped_ignored_dirs += skipped_by_gitignore(directory)
                 else:
                     included_dirs.append(name)
             dirnames[:] = included_dirs
@@ -369,6 +464,7 @@ class CodeExtractor:
                 # Ancestors were pruned above; symlink targets still need a full check.
                 if self._should_exclude(source_file, check_ancestors=False):
                     skipped_test_files += matches_default_tests(source_file)
+                    skipped_ignored_files += skipped_by_gitignore(source_file)
                     continue
                 if selection is None:
                     skipped_headers.append(source_file)
@@ -388,6 +484,11 @@ class CodeExtractor:
             logger.info(
                 f"Skipped {skipped_test_files} files and {skipped_test_dirs} directories "
                 "matching default test exclusions; use --no-default-excludes to include them."
+            )
+        if skipped_ignored_files or skipped_ignored_dirs:
+            logger.info(
+                f"Skipped {skipped_ignored_files} files and {skipped_ignored_dirs} directories "
+                "ignored by git; use --no-gitignore to include them."
             )
 
         if skipped_headers:

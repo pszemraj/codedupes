@@ -46,8 +46,8 @@ logger = logging.getLogger(__name__)
 DEFAULT_EXCLUDE_HELP_HINT = (
     "Add a name or root-relative glob to exclude (repeat for multiple patterns). "
     "Bare names match at any depth; excluded directories include all descendants. "
-    "Default test exclusions apply to directory scans; artifact directories beneath the scan "
-    "root are always excluded."
+    "Default test exclusions and git ignore rules apply to directory scans; artifact "
+    "directories beneath the scan root are always excluded."
 )
 
 
@@ -289,6 +289,7 @@ class CheckOptions:
     no_private: bool
     exclude: tuple[str, ...]
     no_default_excludes: bool
+    no_gitignore: bool
     include_stubs: bool
     as_json: bool
     verbose: bool
@@ -440,6 +441,7 @@ class CheckOptions:
             exclude_patterns=_resolve_exclude_patterns(
                 self.exclude, self.no_default_excludes, path
             ),
+            respect_gitignore=not self.no_gitignore,
             include_private=not self.no_private,
             languages=self.languages or None,
             jaccard_threshold=traditional_threshold,
@@ -467,6 +469,7 @@ class SearchOptions:
     no_private: bool
     exclude: tuple[str, ...]
     no_default_excludes: bool
+    no_gitignore: bool
     include_stubs: bool
     as_json: bool
     verbose: bool
@@ -516,6 +519,7 @@ class SearchOptions:
             exclude_patterns=_resolve_exclude_patterns(
                 self.exclude, self.no_default_excludes, path
             ),
+            respect_gitignore=not self.no_gitignore,
             include_private=not self.no_private,
             languages=self.languages or None,
             semantic_threshold=_resolve_search_threshold(
@@ -597,6 +601,16 @@ def semantic_options() -> Callable[[F], F]:
             help=(
                 "Disable default test-file exclusions; artifact directories beneath the scan "
                 "root remain excluded."
+            ),
+        ),
+        click.option(
+            "--no-gitignore",
+            is_flag=True,
+            panel=Panel.SCOPE,
+            help=(
+                "Scan paths git ignores. By default a directory scan inside a git work tree "
+                "skips them (nested .gitignore files, .git/info/exclude, and the global "
+                "excludes file all apply)."
             ),
         ),
         click.option(

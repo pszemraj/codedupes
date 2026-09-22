@@ -53,7 +53,7 @@ result = analyzer.analyze("./src")
 
 | Area | Fields | Behavior |
 | --- | --- | --- |
-| Extraction | `exclude_patterns`, `include_private`, `languages`, `include_stubs` | [Scope defaults](analysis-defaults.md#extraction-scope-defaults) and [language selection](polyglot-languages.md#supported-files) |
+| Extraction | `exclude_patterns`, `respect_gitignore`, `include_private`, `languages`, `include_stubs` | [Scope defaults](analysis-defaults.md#extraction-scope-defaults) and [language selection](polyglot-languages.md#supported-files) |
 | Analysis stages | `mode`, `run_traditional`, `run_semantic`, `run_unused`, `strict_unused`, `allow_semantic_fallback`, `suppress_test_semantic_matches` | [Check defaults](analysis-defaults.md), [fallback behavior](output.md#exit-codes), and [CLI option mapping](cli.md#codedupes-check-path) |
 | Traditional matching | `jaccard_threshold`, `filter_tiny_traditional`, `tiny_unit_statement_cutoff` | [Traditional defaults](analysis-defaults.md#traditional-duplicate-defaults) |
 | Semantic matching | `semantic_threshold`, `threshold_profile`, `cross_language`, `min_semantic_statements`, `semantic_unit_types`, `semantic_task` | [Semantic candidates and gates](analysis-defaults.md#semantic-duplicate-gate-defaults) and [model profiles](model-profiles.md) |

@@ -62,6 +62,26 @@ def test_cli_implicit_default_exclusions_preserve_analyzer_default(
     assert captured[0].exclude_patterns is None
 
 
+@pytest.mark.parametrize(("command", "expected_exit_code"), [("check", 1), ("search", 0)])
+@pytest.mark.parametrize("scan_ignored", [False, True])
+def test_cli_no_gitignore_threads_through_to_the_analyzer(
+    monkeypatch, tmp_path, command, expected_exit_code, scan_ignored
+):
+    (tmp_path / "sample.py").write_text("def entry():\n    return 1\n", encoding="utf-8")
+    captured = []
+    patch_cli_analyzer(
+        monkeypatch, cli, analyze_result=build_result(tmp_path), captured_configs=captured
+    )
+
+    args = [command, str(tmp_path), "--traditional-only" if command == "check" else "entry"]
+    if scan_ignored:
+        args.append("--no-gitignore")
+    result = CliRunner().invoke(cli.cli, args)
+
+    assert result.exit_code == expected_exit_code, result.output
+    assert captured[0].respect_gitignore is (not scan_ignored)
+
+
 @pytest.mark.parametrize("command", ["check", "search"])
 @pytest.mark.parametrize("outside_root", [False, True])
 @pytest.mark.parametrize("symlinked_parent", [False, True])
