@@ -12,7 +12,7 @@ Combined output assigns each pair an evidence tier and sorts by [confidence](#co
 
 | tier | evidence |
 | --- | --- |
-| `exact` | structural or token fingerprints agree |
+| `exact` | structural or token fingerprints agree; reported as [families](output.md#exact-families), one record per set of copies |
 | `traditional_near` | identifier Jaccard match |
 | `hybrid_confirmed` | semantic and traditional-near match |
 | `semantic_high_confidence` | semantic match plus size/identifier corroboration or a calibrated similarity margin |

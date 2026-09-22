@@ -249,11 +249,12 @@ quiet_dependency_loggers()  # or quiet_dependency_loggers(logging.ERROR)
 
 ## Report selection and JSON
 
-The CLI's report policy and [JSON schema](output.md#json-schema-v3) are importable, so Python callers can produce the same document as `check --json`:
+The CLI's report policy and [JSON schema](output.md#json-schema-v4) are importable, so Python callers can produce the same document as `check --json`:
 
 ```python
 from codedupes import (
     DEFAULT_MAX_DUPLICATES,
+    DEFAULT_MAX_UNUSED,
     ReportPolicy,
     check_result_to_json,
     run_should_fail,
@@ -261,7 +262,9 @@ from codedupes import (
     to_json_text,
 )
 
-selection = select_findings(result, ReportPolicy(max_duplicates=DEFAULT_MAX_DUPLICATES))
+selection = select_findings(
+    result, ReportPolicy(max_duplicates=DEFAULT_MAX_DUPLICATES, max_unused=DEFAULT_MAX_UNUSED)
+)
 exit_code = int(run_should_fail(result, policy="actionable", strict_unused=False))
 print(
     to_json_text(
@@ -272,9 +275,9 @@ print(
 )
 ```
 
-`ReportPolicy()` is uncapped: `select_findings(result)` returns every default-visible pair, which is what `check --max-duplicates all` emits. The CLI's concise default is `ReportPolicy(max_duplicates=DEFAULT_MAX_DUPLICATES)` (20); `ReportPolicy(include_review=True)` and `ReportPolicy(show_all=True)` match `--include-review` and `--show-all`, which lift the cap on the command line.
+`ReportPolicy()` is uncapped: `select_findings(result)` returns every default-visible finding, which is what `check --max-duplicates all --max-unused all` emits. The CLI's concise default is `ReportPolicy(max_duplicates=DEFAULT_MAX_DUPLICATES, max_unused=DEFAULT_MAX_UNUSED)` (20 and 20); `ReportPolicy(include_review=True)` and `ReportPolicy(show_all=True)` match `--include-review` and `--show-all`, which lift both caps on the command line. Either cap below `1` raises `ValueError`.
 
-`select_findings` applies the visibility policy to a complete result and returns a `ReportSelection` with the emitted `duplicates`, the withheld `omitted_review` pairs, the `truncated` pairs cut by `max_duplicates`, zero-filled `duplicates_by_tier` and `truncated_by_tier` counts, and the referenced `units` in report-id order. In combined mode `duplicates` is ranked for review — actionable tiers, then `semantic_high_confidence`, then included `semantic_review` pairs, each group in the analyzer's confidence order — and the cap keeps a prefix of that ranking; `result.hybrid_duplicates` keeps the analyzer's order. `actionable_pairs(pairs, combined=...)` is the shared filter behind the `actionable` policy and the `actionable_duplicates` counts. `run_should_fail` always evaluates the complete result, so hidden pairs still count; `hidden_only_failure(selection, ...)` returns `{"review"}` when withheld `semantic_review` pairs are the only failing findings and an empty set otherwise (a cap cannot hide every failing pair because actionable tiers rank first). Both failure helpers raise `ValueError` for a `policy` outside `"actionable"`, `"all"`, and `"none"`.
+`select_findings` applies the visibility policy to a complete result and returns a `ReportSelection`. Exact edges of the primary list are grouped into `exact_families` (`ExactFamily` records with sorted `members`, a `method` of `token_hash` or `structural_hash`, and `lines`, `redundant_lines`, and `pair_count` properties; `build_exact_families(edges)` is the grouping itself), every other duplicate is a pair in `duplicates`, withheld pairs are `omitted_review`, and `truncated_exact_families` plus `truncated` hold what `max_duplicates` cut; `duplicates_by_tier` and `truncated_by_tier` are zero-filled with `exact` counting families. `potentially_unused` is ranked by `unused_sort_key` (line span, statement count, position) and capped by `max_unused`, with the cut units in `truncated_unused`; `units` holds the referenced units in report-id order. The finding counts JSON and the terminal print (`total_findings`, `reported_findings`, `truncated_findings`, `actionable_findings`, `reported_actionable_findings`, `exact_family_members`) are properties of the selection. In combined mode the primary list is ranked for review — families by `redundant_lines`, then actionable pair tiers, then `semantic_high_confidence`, then included `semantic_review` pairs, each pair group in the analyzer's confidence order — and the cap keeps a prefix of that ranking with a family counting once; `result.hybrid_duplicates` keeps the analyzer's order, exact pairs first. `actionable_pairs(pairs, combined=...)` is the shared pairwise filter behind the `actionable` policy. `run_should_fail` always evaluates the complete result, so hidden findings still count; `hidden_only_failure(selection, ...)` returns `{"review"}` when withheld `semantic_review` pairs are the only failing findings and an empty set otherwise (a cap cannot hide every failing finding because families and actionable tiers rank first). Both failure helpers raise `ValueError` for a `policy` outside `"actionable"`, `"all"`, and `"none"`.
 
 `search_result_to_json` serializes unit hits or [file search results](output.md#file-search). For file reports, fetch every matching unit before grouping so a file's contributors cannot exhaust the unit limit and hide other files:
 

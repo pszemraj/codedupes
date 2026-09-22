@@ -37,21 +37,21 @@ set -o pipefail
 codedupes check ./src --json | jq empty
 ```
 
-## JSON schema v3
+## JSON schema v4
 
-`check --json` and `search --json` emit schema version `3`. Units are nodes in a top-level `units` object keyed by report-local ids (`u0`, `u1`, ...); findings refer to those ids instead of repeating a complete unit object for every pair endpoint. Ids are assigned in file-path then source-offset order over the referenced units only, so they renumber whenever the referenced set changes (for example with `--include-review`). Treat them as opaque within one report. Each unit record also carries the [in-run `CodeUnit.uid`](python-api.md#key-result-types).
+`check --json` and `search --json` emit schema version `4`. Units are nodes in a top-level `units` object keyed by report-local ids (`u0`, `u1`, ...); findings refer to those ids instead of repeating a complete unit object for every endpoint. Ids are assigned in file-path then source-offset order over the referenced units only, so they renumber whenever the referenced set changes (for example with `--include-review`). Treat them as opaque within one report. Each unit record also carries the [in-run `CodeUnit.uid`](python-api.md#key-result-types).
 
 ### Check
 
 ```json
 {
-  "schema_version": 3,
+  "schema_version": 4,
   "analysis_mode": "combined",
   "summary": {
     "total_units": 42,
     "units_by_language": {"python": 42},
-    "hybrid_duplicates": 3,
-    "reported_duplicates": 1,
+    "hybrid_duplicates": 4,
+    "reported_duplicates": 2,
     "omitted_review_duplicates": 2,
     "truncated_duplicates": 0,
     "truncated_by_tier": {
@@ -62,17 +62,21 @@ codedupes check ./src --json | jq empty
       "semantic_review": 0
     },
     "max_duplicates": 20,
-    "actionable_duplicates": 1,
-    "reported_actionable_duplicates": 1,
+    "actionable_duplicates": 2,
+    "reported_actionable_duplicates": 2,
     "duplicates_by_tier": {
-      "exact": 0,
+      "exact": 1,
       "traditional_near": 0,
       "hybrid_confirmed": 1,
       "semantic_high_confidence": 0,
       "semantic_review": 2
     },
+    "exact_family_members": 3,
     "potentially_unused": 1,
-    "raw_traditional_duplicates": 1,
+    "reported_unused": 1,
+    "truncated_unused": 0,
+    "max_unused": 20,
+    "raw_traditional_duplicates": 4,
     "raw_semantic_duplicates": 3,
     "semantic_fallback": false,
     "semantic_fallback_reason": null,
@@ -102,13 +106,20 @@ codedupes check ./src --json | jq empty
     "exit_code": 1,
     "hidden_only_failure": []
   },
+  "exact_families": [
+    {
+      "method": "token_hash",
+      "members": ["u3", "u4", "u5"],
+      "lines": 18,
+      "redundant_lines": 36
+    }
+  ],
   "duplicates": [
     {
       "unit_a": "u0",
       "unit_b": "u1",
       "tier": "hybrid_confirmed",
       "confidence": 0.94,
-      "has_exact": false,
       "semantic_similarity": 0.96,
       "jaccard_similarity": 0.92,
       "weak_identifier_jaccard": null,
@@ -142,23 +153,27 @@ codedupes check ./src --json | jq empty
 }
 ```
 
-The shortened example omits `u1` and `u2` from `units`; real output includes every id referenced by any emitted finding list exactly once. Units with no emitted finding are not present, so `summary.total_units` is the full extracted corpus count while `units` contains only units needed to resolve the report.
+The shortened example omits `u1` through `u5` from `units`; real output includes every id referenced by any emitted finding list exactly once. Units with no emitted finding are not present, so `summary.total_units` is the full extracted corpus count while `units` contains only units needed to resolve the report.
 
 `native_kind` is the grammar node kind (`function_definition` or `class_definition` for Python, whether or not the definition is decorated). `line`, `start_byte`, and `start_column` locate the unit's first byte - the first decorator of a decorated Python definition - so an indented method reports a non-zero `start_column`; see [source ranges](polyglot-languages.md#source-ranges-and-parse-recovery).
 
-`weak_identifier_jaccard` and `statement_count_ratio` are computed only for the two semantic-only tiers; they are `null` for exact, traditional-near, and hybrid-confirmed pairs.
+`weak_identifier_jaccard` and `statement_count_ratio` are computed only for the two semantic-only tiers; they are `null` for traditional-near and hybrid-confirmed pairs.
+
+#### Exact families
+
+Exact duplicates are an equivalence, not a scored pair, so the report groups them: a set of `n` mutually identical units is one `exact_families` record instead of `n(n-1)/2` `exact` edges, and `duplicates` never contains an exact edge. `members` lists the report ids in file order, `lines` is the line span of the largest member, and `redundant_lines` is `(members - 1) * lines`, the source you would delete by keeping one copy. `method` is the strongest fingerprint every member shares: `token_hash` members are token-for-token copies (comments and whitespace aside), while `structural_hash` members match only after identifier and literal normalization, so they may differ in names and string literals. Families are built per fingerprint from the exact edges of the complete result, so they are the same in every mode and under every cap.
 
 #### Report selection
 
-In default combined mode, `duplicates` contains hybrid edges of every tier except `semantic_review`; see [tier evidence](analysis-defaults.md#hybrid-synthesis-confidence-defaults). The list is ranked for review, not by raw score: actionable tiers (`exact`, `traditional_near`, `hybrid_confirmed`) come first, then `semantic_high_confidence`, then any `semantic_review` pairs admitted by `--include-review`; inside each group pairs keep the analyzer's [confidence order](analysis-defaults.md#confidence-scale). `--show-all` implies `--include-review` and also adds `traditional_duplicates` and `semantic_duplicates` as raw edge lists with `unit_a`, `unit_b`, `similarity`, and `method` (`structural_hash`, `token_hash`, or `jaccard` for traditional edges; `semantic` for semantic edges).
+In default combined mode the primary list is `exact_families` followed by `duplicates`, which holds hybrid edges of every tier except `semantic_review`; see [tier evidence](analysis-defaults.md#hybrid-synthesis-confidence-defaults). The list is ranked for review, not by raw score: families come first in descending `redundant_lines` (ties by first-member position), then the actionable pair tiers (`traditional_near`, `hybrid_confirmed`), then `semantic_high_confidence`, then any `semantic_review` pairs admitted by `--include-review`; inside each pair group pairs keep the analyzer's [confidence order](analysis-defaults.md#confidence-scale). `--show-all` implies `--include-review` and also adds `traditional_duplicates` and `semantic_duplicates` as raw edge lists with `unit_a`, `unit_b`, `similarity`, and `method` (`structural_hash`, `token_hash`, or `jaccard` for traditional edges; `semantic` for semantic edges); those raw lists still spell out every pairwise exact edge.
 
-`summary.hybrid_duplicates` counts the complete synthesis, `summary.duplicates_by_tier` breaks that count down over all five tiers (always present, zero-filled), `summary.reported_duplicates` counts the edges actually emitted, `summary.omitted_review_duplicates` counts pairs withheld by the report policy, and `summary.truncated_duplicates` counts pairs cut by the report cap, broken down over the same five tiers in `summary.truncated_by_tier` (zero-filled; all zeros in single-method modes). In combined mode, `reported_duplicates + omitted_review_duplicates + truncated_duplicates == hybrid_duplicates` regardless of report-selection flags. `summary.actionable_duplicates` counts the pairs in the complete result that fail `--fail-on actionable` (actionable tiers in combined mode; every raw pair in a single-method mode) and `summary.reported_actionable_duplicates` counts how many of those are in `duplicates`, so `reported_duplicates - reported_actionable_duplicates` is the number of advisory pairs on the report.
+Summary counts are findings, where a family counts once and every other tier counts per pair. `summary.hybrid_duplicates` counts the complete synthesis that way, `summary.duplicates_by_tier` breaks it down over all five tiers (always present, zero-filled; `exact` is the family count), `summary.exact_family_members` counts the distinct units inside families, `summary.reported_duplicates` counts the families and pairs actually emitted, `summary.omitted_review_duplicates` counts pairs withheld by the report policy, and `summary.truncated_duplicates` counts findings cut by the report cap, broken down over the same five tiers in `summary.truncated_by_tier` (`exact` is the number of cut families). In combined mode, `reported_duplicates + omitted_review_duplicates + truncated_duplicates == hybrid_duplicates` regardless of report-selection flags. `summary.actionable_duplicates` counts the findings in the complete result that fail `--fail-on actionable` (families plus actionable tiers in combined mode; families plus every raw pair in a single-method mode) and `summary.reported_actionable_duplicates` counts how many of those are emitted, so `reported_duplicates - reported_actionable_duplicates` is the number of advisory pairs on the report. `summary.raw_traditional_duplicates` and `summary.raw_semantic_duplicates` still count raw edges.
 
-The primary list is capped by default: `duplicates` holds at most 20 pairs (`--max-duplicates`, recorded as `summary.max_duplicates`), the same pairs in the same order as the terminal table, and `units` drops units referenced only by cut edges. Because actionable tiers rank first, the cap trims advisory candidates before corroborated ones. `--max-duplicates N` changes the budget and `--max-duplicates all` removes it (`max_duplicates: null`); `--include-review`, `--show-all`, and `--full-table` also remove it unless an explicit `--max-duplicates` accompanies them. With `--include-review --max-duplicates N`, review pairs sit at the end of the ranking, so they appear only once every actionable and advisory pair fits under `N`; pairs the cap cuts count as `truncated`, not `omitted_review`, and `truncated_by_tier.semantic_review` says how many review pairs were cut. The raw `--show-all` lists are never capped. The exit code ignores the cap, see [exit codes](#exit-codes).
+The primary list is capped by default: families plus pairs hold at most 20 findings (`--max-duplicates`, recorded as `summary.max_duplicates`), the same findings in the same order as the terminal panels, and `units` drops units referenced only by cut findings. Because families and actionable tiers rank first, the cap trims advisory candidates before corroborated ones, and a family is one item however many copies it holds. `--max-duplicates N` changes the budget and `--max-duplicates all` removes it (`max_duplicates: null`); `--include-review`, `--show-all`, and `--full-table` also remove it unless an explicit `--max-duplicates` accompanies them. With `--include-review --max-duplicates N`, review pairs sit at the end of the ranking, so they appear only once every actionable and advisory finding fits under `N`; findings the cap cuts count as `truncated`, not `omitted_review`, and `truncated_by_tier.semantic_review` says how many review pairs were cut. The raw `--show-all` lists are never capped. The exit code ignores the cap, see [exit codes](#exit-codes).
 
-In `--semantic-only` or `--traditional-only` mode, `duplicates` directly contains the active raw edge list ordered by descending similarity (exact pairs at 1.0 first, ties in analyzer order; the cap keeps that prefix), `duplicates_by_tier` and `truncated_by_tier` are all zeros, and the `--show-all` arrays are omitted. `analysis_mode` is always one of `combined`, `traditional`, `semantic`, or `none`.
+In `--semantic-only` or `--traditional-only` mode, exact edges are grouped into `exact_families` the same way and `duplicates` contains the remaining raw edges ordered by descending similarity (ties in analyzer order; the cap keeps families then that prefix). `duplicates_by_tier` and `truncated_by_tier` are zero except for `exact`, which counts families, `hybrid_duplicates` is `0`, and the `--show-all` arrays are omitted. `analysis_mode` is always one of `combined`, `traditional`, `semantic`, or `none`.
 
-Only the primary duplicate list is bounded. `potentially_unused` lists every unused finding, `extraction_diagnostics` and `semantic_diagnostics` are complete, and the raw `--show-all` edge lists are complete; their endpoints stay in `units`. A scan with many unused findings or diagnostics therefore still produces a large document.
+`potentially_unused` is ranked and bounded too: ids are ordered by line span (`end_line - line + 1`) descending, then statement count, then file position, so the largest dead definitions lead, and the list holds at most 20 (`--max-unused`, recorded as `summary.max_unused`; `--max-unused all` removes the cap and the expansion flags above lift it unless an explicit value is given). `summary.potentially_unused` stays the complete count while `summary.reported_unused` and `summary.truncated_unused` split it into emitted and cut; units referenced only by cut unused findings leave `units`. `extraction_diagnostics`, `semantic_diagnostics`, and the raw `--show-all` edge lists are deliberately complete: they are per-file records a consumer needs in full, so a scan with many diagnostics still produces a large document.
 
 See [hybrid confidence tiers](analysis-defaults.md#hybrid-synthesis-confidence-defaults) to interpret `tier` and `confidence`.
 
@@ -168,7 +183,7 @@ Default search hits (`--result-level unit`) use `{"unit": "u0", "score": 0.95}`;
 
 ```json
 {
-  "schema_version": 3,
+  "schema_version": 4,
   "query": "refund validation",
   "summary": {
     "indexed_units": 0,
@@ -256,7 +271,7 @@ For `semantic-context-overflow` warnings and their cache behavior, see [long-inp
 - `--fail-on all`: any duplicate or unused finding in the complete result exits `1`, including `semantic_review` pairs the report withheld.
 - `--fail-on none`: findings never change the successful exit code.
 
-The exit code is computed on the complete analysis result before report selection, so `--include-review`, `--show-all`, and `--max-duplicates` never change it. The only way every failing finding can be hidden from the report is `--fail-on all` with withheld `semantic_review` pairs; the terminal `Finding status` row then says so and points at `--include-review`, and JSON records `"hidden_only_failure": ["review"]` (otherwise `[]`). The report cap cannot cause this: actionable tiers rank first, so whenever a cut pair fails, an emitted pair fails too. The selected policy, the unused strictness it was evaluated with, and the computed result are always present as `summary.fail_on`, `summary.strict_unused`, and `summary.exit_code`. Terminal summaries show the same values as `Failure policy` and `Finding status` rows.
+The exit code is computed on the complete analysis result before report selection, so `--include-review`, `--show-all`, `--max-duplicates`, and `--max-unused` never change it. The only way every failing finding can be hidden from the report is `--fail-on all` with withheld `semantic_review` pairs; the terminal `Finding status` row then says so and points at `--include-review`, and JSON records `"hidden_only_failure": ["review"]` (otherwise `[]`). The report caps cannot cause this: families and actionable tiers rank first and unused failure is all-or-nothing, so whenever a cut finding fails, an emitted finding fails too. The selected policy, the unused strictness it was evaluated with, and the computed result are always present as `summary.fail_on`, `summary.strict_unused`, and `summary.exit_code`. Terminal summaries show the same values as `Failure policy` and `Finding status` rows.
 
 Command status conventions:
 
@@ -268,10 +283,10 @@ Default combined semantic backend or runtime failures are fatal. `--allow-semant
 
 ## Terminal duplicate panels
 
-The primary duplicate table lists every pair the [report cap](#report-selection) selected, so it shows exactly the pairs `--json` would emit. The unused table and the raw `--show-all` tables show up to 20 rows; their footers count the remaining rows and point to `--full-table`, which lifts that row limit and, unless `--max-duplicates` is given explicitly, the report cap as well.
+The primary panels list every finding the [report caps](#report-selection) selected, so they show exactly what `--json` would emit. `Exact Duplicate Families (N families, K truncated)` comes first when any family is kept, one row per family with member count, `Lines`, `Method`, the first member, and up to three more locations before a `+N more` note; `--show-source` prints one snippet per member. The pair table follows, and the unused table (`Likely Dead Code (N units, K truncated)` in combined mode, `Potentially Unused` otherwise) lists the largest units first with a `Lines` column. Only the raw `--show-all` tables keep a 20-row display limit; their footers point to `--full-table`, which lifts that limit and, unless given explicitly, the `--max-duplicates` and `--max-unused` caps as well.
 
 Locations use the shorter of working-directory-relative and absolute `<path>:<line>` spellings.
 
-- Combined: `Hybrid Duplicates (N pairs, M review withheld, K truncated)`, followed by any raw panels requested through [report selection](#report-selection). When every hybrid pair is withheld, one dim line reports the withheld count instead of an empty table. The summary lists every tier's count plus `Actionable duplicates` as `total (reported)`; withheld and truncated totals appear when non-zero, the latter naming the cut tiers and pointing at `--max-duplicates all`.
-- `--traditional-only`: `Traditional Duplicates (Structural/Token/Jaccard)`.
+- Combined: `Hybrid Duplicates (N pairs, M review withheld, K truncated)`, followed by any raw panels requested through [report selection](#report-selection). When every hybrid pair is withheld, one dim line reports the withheld count instead of an empty table. The summary lists every tier's count, the `exact` row reading `N families (M units)`, plus `Actionable duplicates` as `total (reported)`; withheld and truncated totals appear when non-zero, the latter naming the cut tiers (families as `N exact families`) and pointing at `--max-duplicates all`, and `Truncated dead code` points at `--max-unused all`.
+- `--traditional-only`: `Traditional Duplicates (Structural/Token/Jaccard)` for the non-exact pairs, after the family panel; the summary adds an `Exact duplicate families` row.
 - `--semantic-only`: `Semantic Duplicates (Embedding)`.
