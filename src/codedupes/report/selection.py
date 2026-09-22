@@ -42,10 +42,12 @@ WITHHELD_TIERS: frozenset[HybridTier] = frozenset({"semantic_review"})
 # Fingerprint methods whose raw pairs make up the ``exact`` tier.
 ExactMethod = Literal["structural_hash", "token_hash"]
 EXACT_METHODS: frozenset[str] = frozenset({"structural_hash", "token_hash"})
-# The CLI's default cap on the primary duplicate list, shared by terminal and
-# JSON output. ``ReportPolicy()`` itself stays uncapped so library callers get
-# the complete list unless they ask for the CLI's concise report.
+# The CLI's default caps on the primary duplicate list and the unused list,
+# shared by terminal and JSON output. ``ReportPolicy()`` itself stays uncapped
+# so library callers get the complete lists unless they ask for the CLI's
+# concise report.
 DEFAULT_MAX_DUPLICATES = 20
+DEFAULT_MAX_UNUSED = 20
 
 
 @dataclass(frozen=True)
@@ -54,17 +56,21 @@ class ReportPolicy:
 
     include_review: bool = False
     show_all: bool = False
-    # Cap on emitted duplicate pairs, applied after the review filter to the
-    # report ranking (actionable tiers first). ``None`` = no cap.
+    # Cap on emitted duplicate findings, applied after the review filter to the
+    # report ranking (families, then actionable tiers first). ``None`` = no cap.
     max_duplicates: int | None = None
+    # Cap on emitted unused findings, applied to the size ranking. ``None`` = no cap.
+    max_unused: int | None = None
 
     def __post_init__(self) -> None:
         """Reject a cap that would emit nothing.
 
-        :raises ValueError: If ``max_duplicates`` is below one.
+        :raises ValueError: If ``max_duplicates`` or ``max_unused`` is below one.
         """
-        if self.max_duplicates is not None and self.max_duplicates < 1:
-            raise ValueError("max_duplicates must be at least 1 or None.")
+        for name in ("max_duplicates", "max_unused"):
+            cap = getattr(self, name)
+            if cap is not None and cap < 1:
+                raise ValueError(f"{name} must be at least 1 or None.")
 
     @property
     def shows_review(self) -> bool:
@@ -140,7 +146,9 @@ class ReportSelection:
     truncated_by_tier: dict[HybridTier, int]
     traditional_duplicates: list[DuplicatePair] | None
     semantic_duplicates: list[DuplicatePair] | None
+    # Unused findings ranked largest first; ``truncated_unused`` is what the cap cut.
     potentially_unused: list[CodeUnit]
+    truncated_unused: list[CodeUnit]
     units: list[CodeUnit]
 
     @property
@@ -220,6 +228,22 @@ def unit_sort_key(unit: CodeUnit) -> tuple[str, int, str]:
     :return: Sort key that reads top-to-bottom within a file and is total.
     """
     return (str(unit.file_path), unit.start_byte, unit.uid)
+
+
+def unused_sort_key(unit: CodeUnit) -> tuple[int, int, tuple[str, int, str]]:
+    """Return the unused-report ordering key: largest line span first.
+
+    Reading cost scales with length, so the biggest dead definitions lead.
+    Statement count breaks span ties and file position makes the order total.
+
+    :param unit: Unit to order.
+    :return: Sort key; ascending order lists the largest unit first.
+    """
+    return (
+        -(unit.end_lineno - unit.lineno + 1),
+        -(unit.statement_count or 0),
+        unit_sort_key(unit),
+    )
 
 
 def collect_units(*groups: Iterable[CodeUnit]) -> list[CodeUnit]:
@@ -454,12 +478,20 @@ def select_findings(result: AnalysisResult, policy: ReportPolicy | None = None) 
     )
     truncated_by_tier["exact"] = len(truncated_exact_families)
 
+    # Unused findings rank by size and take their own cap; units referenced
+    # only by cut findings leave the report with them.
+    unused = sorted(result.potentially_unused, key=unused_sort_key)
+    truncated_unused: list[CodeUnit] = []
+    if policy.max_unused is not None:
+        truncated_unused = unused[policy.max_unused :]
+        unused = unused[: policy.max_unused]
+
     units = collect_units(
         (unit for family in exact_families for unit in family.members),
         _pair_units(duplicates),
         _pair_units(traditional or ()),
         _pair_units(semantic or ()),
-        result.potentially_unused,
+        unused,
     )
     return ReportSelection(
         result=result,
@@ -474,7 +506,8 @@ def select_findings(result: AnalysisResult, policy: ReportPolicy | None = None) 
         truncated_by_tier=truncated_by_tier,
         traditional_duplicates=traditional,
         semantic_duplicates=semantic,
-        potentially_unused=list(result.potentially_unused),
+        potentially_unused=unused,
+        truncated_unused=truncated_unused,
         units=units,
     )
 

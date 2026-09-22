@@ -31,6 +31,7 @@ from .models import (
 from .report import (
     ACTIONABLE_TIERS,
     DEFAULT_MAX_DUPLICATES,
+    DEFAULT_MAX_UNUSED,
     ExactFamily,
     ReportPolicy,
     ReportSelection,
@@ -53,6 +54,7 @@ except ImportError:
 __all__ = [
     "ACTIONABLE_TIERS",
     "DEFAULT_MAX_DUPLICATES",
+    "DEFAULT_MAX_UNUSED",
     "HYBRID_TIERS",
     "AnalysisResult",
     "AnalyzerConfig",

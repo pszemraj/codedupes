@@ -394,6 +394,32 @@ def test_check_json_family_cap_counts_and_truncated_by_tier_exact(tmp_path):
     )
 
 
+def test_check_json_max_unused_caps_ids_and_units_but_not_counts(tmp_path):
+    result = _result(tmp_path)
+    result.potentially_unused = [
+        _unit(tmp_path, f"dead{i}", file=f"d{i}.py", start_byte=0) for i in range(6)
+    ]
+    for i, unit in enumerate(result.potentially_unused):
+        unit.end_lineno = unit.lineno + i  # dead5 is the largest
+
+    payload = _payload(result, ReportPolicy(max_unused=2))
+    summary = payload["summary"]
+
+    names = [payload["units"][key]["name"] for key in payload["potentially_unused"]]
+    assert names == ["dead5", "dead4"]
+    assert _referenced_ids(payload) == set(payload["units"])
+    assert {record["name"] for record in payload["units"].values()} == {"a", "b", "dead5", "dead4"}
+    assert summary["potentially_unused"] == 6
+    assert summary["reported_unused"] == 2
+    assert summary["truncated_unused"] == 4
+    assert summary["max_unused"] == 2
+
+    uncapped = _payload(result)["summary"]
+    assert uncapped["reported_unused"] == 6
+    assert uncapped["truncated_unused"] == 0
+    assert uncapped["max_unused"] is None
+
+
 def test_check_json_show_all_raw_edges_use_short_ids(tmp_path):
     payload = _payload(_result(tmp_path), ReportPolicy(show_all=True))
 

@@ -20,6 +20,7 @@ from codedupes.models import (
 from codedupes.report.selection import (
     ACTIONABLE_TIERS,
     DEFAULT_MAX_DUPLICATES,
+    DEFAULT_MAX_UNUSED,
     ExactFamily,
     ReportPolicy,
     actionable_pairs,
@@ -39,6 +40,7 @@ def _unit(
     file: str = "a.py",
     start_byte: int = 0,
     lines: int = 2,
+    statement_count: int | None = None,
     structural_hash: str | None = None,
     token_hash: str | None = None,
 ) -> CodeUnit:
@@ -52,6 +54,7 @@ def _unit(
         source=f"def {name}():\n    return 1\n",
         start_byte=start_byte,
         end_byte=start_byte + 20,
+        statement_count=statement_count,
         structural_hash=structural_hash,
         token_hash=token_hash,
     )
@@ -203,7 +206,81 @@ def test_select_findings_includes_unused_units(tmp_path):
     selection = select_findings(result)
 
     assert selection.potentially_unused == [orphan]
+    assert selection.truncated_unused == []
     assert selection.units[-1] is orphan
+
+
+def test_select_findings_ranks_unused_by_span_then_statements_then_position(tmp_path):
+    # Walk order is z.py, y.py, x.py, w.py; the report order is by size instead.
+    long_thin = _unit(tmp_path, "long_thin", file="z.py", lines=40, statement_count=2)
+    dense = _unit(tmp_path, "dense", file="y.py", lines=12, statement_count=11)
+    sparse = _unit(tmp_path, "sparse", file="x.py", lines=12, statement_count=3)
+    tie_later = _unit(
+        tmp_path, "tie_later", file="w.py", start_byte=50, lines=12, statement_count=3
+    )
+    tie_first = _unit(tmp_path, "tie_first", file="w.py", start_byte=0, lines=12, statement_count=3)
+    tiny = _unit(tmp_path, "tiny", file="v.py", lines=1)
+    result = _result(
+        tmp_path,
+        potentially_unused=[long_thin, dense, sparse, tie_later, tie_first, tiny],
+    )
+
+    selection = select_findings(result)
+
+    assert [unit.name for unit in selection.potentially_unused] == [
+        "long_thin",  # 40 lines beats everything, two statements notwithstanding
+        "dense",  # 12 lines, 11 statements
+        "tie_first",  # 12 lines, 3 statements, w.py offset 0
+        "tie_later",  # 12 lines, 3 statements, w.py offset 50
+        "sparse",  # 12 lines, 3 statements, x.py
+        "tiny",
+    ]
+    assert result.potentially_unused[0] is long_thin  # the result is untouched
+
+
+def test_max_unused_caps_the_unused_list_and_drops_their_units(tmp_path):
+    assert ReportPolicy().max_unused is None
+    assert DEFAULT_MAX_UNUSED == 20
+    unused = [_unit(tmp_path, f"dead{i}", file=f"d{i}.py", lines=30 - i) for i in range(25)]
+    result = _result(tmp_path, potentially_unused=list(reversed(unused)))
+
+    complete = select_findings(result)
+    concise = select_findings(result, ReportPolicy(max_unused=DEFAULT_MAX_UNUSED))
+    tight = select_findings(result, ReportPolicy(max_unused=3))
+
+    assert [unit.name for unit in complete.potentially_unused] == [f"dead{i}" for i in range(25)]
+    assert complete.truncated_unused == []
+    assert [unit.name for unit in concise.potentially_unused] == [f"dead{i}" for i in range(20)]
+    assert [unit.name for unit in concise.truncated_unused] == [f"dead{i}" for i in range(20, 25)]
+    # Units referenced only by cut unused findings leave the report with them.
+    assert {unit.name for unit in tight.units} == {"a", "b", "dead0", "dead1", "dead2"}
+    assert len(tight.truncated_unused) == 22
+    # The exit code still sees every unused finding.
+    assert run_should_fail(result, policy="all", strict_unused=True) is True
+
+
+def test_hidden_only_failure_is_all_or_nothing_under_an_unused_cap(tmp_path):
+    a = _unit(tmp_path, "a")
+    b = _unit(tmp_path, "b", start_byte=40)
+    unused = [_unit(tmp_path, f"dead{i}", file=f"d{i}.py") for i in range(5)]
+    result = _result(
+        tmp_path,
+        traditional_duplicates=[],
+        semantic_duplicates=[],
+        hybrid_duplicates=[_hybrid(a, b, "semantic_review")],
+        potentially_unused=unused,
+    )
+
+    capped = select_findings(result, ReportPolicy(max_unused=1))
+
+    assert len(capped.potentially_unused) == 1
+    # One emitted unused finding already fails a policy that counts unused
+    # (``all`` always does; ``actionable`` only when strict), so the withheld
+    # review pair is never the only explanation.
+    assert hidden_only_failure(capped, policy="all", strict_unused=True) == set()
+    assert hidden_only_failure(capped, policy="all", strict_unused=False) == set()
+    assert hidden_only_failure(capped, policy="actionable", strict_unused=True) == set()
+    assert hidden_only_failure(capped, policy="actionable", strict_unused=False) == set()
 
 
 def test_assign_unit_ids_ignores_edge_order(tmp_path):
@@ -473,8 +550,10 @@ def test_max_duplicates_applies_to_single_method_raw_lists(tmp_path):
 
 @pytest.mark.parametrize("cap", [0, -1])
 def test_report_policy_rejects_a_cap_that_emits_nothing(cap):
-    with pytest.raises(ValueError, match="at least 1"):
+    with pytest.raises(ValueError, match="max_duplicates must be at least 1"):
         ReportPolicy(max_duplicates=cap)
+    with pytest.raises(ValueError, match="max_unused must be at least 1"):
+        ReportPolicy(max_unused=cap)
 
 
 def test_build_exact_families_unions_per_method_and_labels_the_strongest_fingerprint(tmp_path):

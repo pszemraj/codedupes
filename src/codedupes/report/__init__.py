@@ -10,6 +10,7 @@ from .json import (
 from .selection import (
     ACTIONABLE_TIERS,
     DEFAULT_MAX_DUPLICATES,
+    DEFAULT_MAX_UNUSED,
     EXACT_METHODS,
     WITHHELD_TIERS,
     ExactFamily,
@@ -27,11 +28,13 @@ from .selection import (
     hidden_only_failure,
     run_should_fail,
     select_findings,
+    unused_sort_key,
 )
 
 __all__ = [
     "ACTIONABLE_TIERS",
     "DEFAULT_MAX_DUPLICATES",
+    "DEFAULT_MAX_UNUSED",
     "EXACT_METHODS",
     "SCHEMA_VERSION",
     "WITHHELD_TIERS",
@@ -54,4 +57,5 @@ __all__ = [
     "select_findings",
     "to_json_text",
     "unit_to_dict",
+    "unused_sort_key",
 ]
