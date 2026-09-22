@@ -297,7 +297,7 @@ def test_cli_cache_info_errors_when_cache_construction_fails(monkeypatch):
 
     result = CliRunner().invoke(cli.cli, ["cache", "info"])
 
-    assert result.exit_code == 1
+    assert result.exit_code == 3
     assert result.stdout == ""
     assert "Cache unavailable: no home directory" in result.stderr
 
@@ -371,7 +371,7 @@ def test_cli_cache_clear_reports_failure(monkeypatch):
 
     result = CliRunner().invoke(cli.cli, ["cache", "clear"])
 
-    assert result.exit_code == 1
+    assert result.exit_code == 3
     assert result.stdout == ""
     assert "Cache clear failed: cache is read-only" in result.stderr
 
@@ -388,7 +388,7 @@ def test_cli_cache_clear_reports_best_effort_deletion_failures(monkeypatch):
 
     result = CliRunner().invoke(cli.cli, ["cache", "clear"])
 
-    assert result.exit_code == 1
+    assert result.exit_code == 3
     assert result.stdout == ""
     assert "removed 2 cached embedding(s)" in result.stderr
     assert "1 deletion operation(s) failed" in result.stderr
@@ -431,7 +431,7 @@ def test_cli_cache_warnings_use_rich_stderr(monkeypatch, command):
     monkeypatch.setattr(EmbeddingCache, "clear", noisy_clear)
     result = CliRunner().invoke(cli.cli, [*command, "--output-width", "80"])
 
-    assert result.exit_code == (1 if command[-1] == "clear" else 0), result.output
+    assert result.exit_code == (3 if command[-1] == "clear" else 0), result.output
     assert "WARNING" in result.stderr
     assert "Cache operation failed" in result.stderr
     assert max(map(len, result.stderr.splitlines())) <= 80

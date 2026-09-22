@@ -555,6 +555,7 @@ def run_should_fail(
     *,
     policy: FailOnPolicy,
     strict_unused: bool,
+    fail_on_incomplete: bool = False,
 ) -> bool:
     """Return whether the complete analysis result should make ``check`` exit one.
 
@@ -564,9 +565,13 @@ def run_should_fail(
     :param result: Completed analysis result.
     :param policy: Selected finding policy.
     :param strict_unused: Whether unused findings are strict rather than heuristic.
-    :return: Whether findings require exit code one.
+    :param fail_on_incomplete: Whether an incomplete analysis also fails the run,
+        independent of ``policy`` (applies under ``"none"`` too).
+    :return: Whether findings, or an incomplete analysis, require exit code one.
     :raises ValueError: If ``policy`` is not a supported failure policy.
     """
+    if fail_on_incomplete and result.analysis_status != "complete":
+        return True
     return _findings_fail(
         result.all_duplicates,
         result.potentially_unused,

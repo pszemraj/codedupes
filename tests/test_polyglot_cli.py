@@ -149,7 +149,7 @@ def test_missing_grammar_reports_remediation_instead_of_a_generic_error(
     patch_cli_analyzer(monkeypatch, cli, analyze_result=raise_grammar_error)
     result = CliRunner().invoke(cli.cli, ["check", str(path), "--traditional-only"])
 
-    assert result.exit_code == 1
+    assert result.exit_code == 3
     assert "Parser unavailable" in result.output
     assert "tree-sitter-rust==0.24.2" in result.output
     assert "codedupes info" in result.output

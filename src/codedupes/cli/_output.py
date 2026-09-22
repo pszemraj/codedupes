@@ -23,6 +23,13 @@ DEFAULT_OUTPUT_WIDTH = 160
 MIN_OUTPUT_WIDTH = 80
 DEFAULT_TABLE_ROWS = 20
 DEFAULT_SOURCE_LINES = 40
+# Exit codes: findings (or an incomplete analysis under --fail-on-incomplete)
+# use EXIT_FINDINGS; a runtime failure (parser unavailable, an unhandled
+# exception, a path that disappeared mid-run) uses EXIT_RUNTIME_FAILURE so
+# automation can tell "the check ran and found something" from "the check
+# did not run to completion." Click usage/validation errors keep exit 2.
+EXIT_FINDINGS = 1
+EXIT_RUNTIME_FAILURE = 3
 
 
 def _make_console(output_width: int = DEFAULT_OUTPUT_WIDTH, *, stderr: bool = False) -> Console:
@@ -220,18 +227,18 @@ def _run_cli_action(
         if not catch_file_not_found:
             raise
         error_console.print(f"[red]Error:[/red] {exc}")
-        raise click.exceptions.Exit(1) from exc
+        raise click.exceptions.Exit(EXIT_RUNTIME_FAILURE) from exc
     except GrammarUnavailableError as exc:
         error_console.print(f"[red]Parser unavailable:[/red] {exc}")
         error_console.print(
             "Run `codedupes info --verbose` to check Tree-sitter parser package status."
         )
-        raise click.exceptions.Exit(1) from exc
+        raise click.exceptions.Exit(EXIT_RUNTIME_FAILURE) from exc
     except Exception as exc:
         error_console.print(f"[red]Error during {error_label}:[/red] {exc}")
         if verbose:
             error_console.print_exception()
-        raise click.exceptions.Exit(1) from exc
+        raise click.exceptions.Exit(EXIT_RUNTIME_FAILURE) from exc
 
 
 def _validate_positive_int(_ctx: click.Context, _param: click.Parameter, value: int) -> int:

@@ -2,14 +2,7 @@
 
 ## Report streams
 
-For `check` and `search`, stdout contains the report: JSON under `--json` and Rich
-tables otherwise. Errors and parser-unavailable remediation use stderr; Rich mode also
-sends logs, cache warnings, sentence-transformers progress, and Hugging Face download
-progress there. A completed JSON report is a single parseable JSON document even when
-`check` exits `1` for findings. JSON mode disables progress and records non-fatal cache
-failures in `summary.embeddings.cache_warnings` instead of emitting them. Direct
-backend output on stdout or stderr, including buffered C stdio, is captured during
-JSON runs and replayed to stderr only on runtime failure, without a completed JSON report.
+For `check` and `search`, stdout contains the report: JSON under `--json` and Rich tables otherwise. Errors and parser-unavailable remediation use stderr; Rich mode also sends logs, cache warnings, sentence-transformers progress, and Hugging Face download progress there. A completed JSON report is a single parseable JSON document even when `check` exits `1` for findings (or an incomplete analysis under `--fail-on-incomplete`). JSON mode disables progress and records non-fatal cache failures in `summary.embeddings.cache_warnings` instead of emitting them. Direct backend output on stdout or stderr, including buffered C stdio, is captured during JSON runs and replayed to stderr only on a runtime failure (exit `3`), without a completed JSON report.
 
 Terminal reports fit the available width. Below 120 columns, duplicate tables stack
 their metrics and both code locations into **Evidence** and **Code units** columns.
@@ -148,6 +141,7 @@ codedupes check ./src --json | jq empty
     },
     "fail_on": "actionable",
     "strict_unused": false,
+    "fail_on_incomplete": false,
     "exit_code": 1,
     "hidden_only_failure": []
   },
@@ -378,13 +372,16 @@ For `semantic-context-overflow` warnings and their cache behavior, see [long-inp
 
 The exit code is computed on the complete analysis result before report selection, so `--include-review`, `--show-all`, `--max-duplicates`, and `--max-unused` never change it. The only way every failing finding can be hidden from the report is `--fail-on all` with withheld `semantic_review` pairs; the terminal `Finding status` row then says so and points at `--include-review`, and JSON records `"hidden_only_failure": ["review"]` (otherwise `[]`). The report caps cannot cause this: families and actionable tiers rank first and unused failure is all-or-nothing, so whenever a cut finding fails, an emitted finding fails too. The selected policy, the unused strictness it was evaluated with, and the computed result are always present as `summary.fail_on`, `summary.strict_unused`, and `summary.exit_code`. Terminal summaries show the same values as `Failure policy` and `Finding status` rows.
 
+`check --fail-on-incomplete` adds a second, independent failure source on top of `--fail-on`: it exits `1` whenever [`analysis_status`](#run-record-and-check-status) is not `"complete"` — empty extraction, a file-level extraction failure, a combined-mode semantic fallback, or a file the unused walk had to skip — even under `--fail-on none`, and even when the run found no findings at all. It never changes `--fail-on`'s own verdict; the two are ORed together. `summary.fail_on_incomplete` records whether it was set. The terminal `Finding status` row appends `analysis {status}: {reasons} fails --fail-on-incomplete` inside the existing `fail (exit 1; …)` form when it is the reason (or a contributing reason) for the failure; a run that fails only because of ordinary findings still reads `fail (exit 1)` verbatim. Fallback counts as partial even with `--allow-semantic-fallback`, since the flag's purpose is to keep the run from being fatal, not to declare the degraded result complete.
+
 Command status conventions:
 
-- `0`: command completed and the selected finding policy did not fail the run.
-- `1`: selected findings failed `check`, or a command encountered a runtime failure.
+- `0`: command completed and the selected finding policy (and `--fail-on-incomplete`, if set) did not fail the run.
+- `1`: selected findings failed `check`, or `--fail-on-incomplete` was set and the analysis did not complete.
 - `2`: CLI usage or validation error.
+- `3`: runtime failure — the command did not complete (parser unavailable, an unhandled backend exception, a path that disappeared mid-run, or a cache operation that failed outright). `cache info`/`cache clear` use the same code for their own runtime failures.
 
-Default combined semantic backend or runtime failures are fatal. `--allow-semantic-fallback` continues with full-scope traditional results and records `summary.semantic_fallback` plus `summary.semantic_fallback_reason`; under the default actionable policy, heuristic unused findings alone do not turn that successful degraded run into exit `1`.
+Default combined semantic backend or runtime failures are fatal (exit `3`). `--allow-semantic-fallback` continues with full-scope traditional results and records `summary.semantic_fallback` plus `summary.semantic_fallback_reason`; under the default actionable policy, heuristic unused findings alone do not turn that successful degraded run into exit `1` — add `--fail-on-incomplete` to fail on the degradation itself.
 
 ## Terminal duplicate panels
 

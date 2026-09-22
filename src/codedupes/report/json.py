@@ -273,6 +273,7 @@ def check_result_to_json(
     fail_on: FailOnPolicy,
     exit_code: int,
     strict_unused: bool,
+    fail_on_incomplete: bool = False,
     include_source: bool = False,
     source_lines: int | None = None,
 ) -> dict[str, Any]:
@@ -282,6 +283,7 @@ def check_result_to_json(
     :param fail_on: Finding policy selected for this run.
     :param exit_code: Exit code computed from the selected policy.
     :param strict_unused: Whether unused findings counted under the failure policy.
+    :param fail_on_incomplete: Whether an incomplete analysis also fails the run.
     :param include_source: Whether to add a bounded ``source`` field to every unit.
     :param source_lines: Maximum source lines to keep per unit, or ``None`` for no bound.
     :return: Check payload.
@@ -329,6 +331,7 @@ def check_result_to_json(
             "embeddings": _embedding_stats_to_dict(result.embedding_stats),
             "fail_on": fail_on,
             "strict_unused": strict_unused,
+            "fail_on_incomplete": fail_on_incomplete,
             "exit_code": exit_code,
             "hidden_only_failure": sorted(
                 hidden_only_failure(selection, policy=fail_on, strict_unused=strict_unused)

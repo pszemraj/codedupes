@@ -316,6 +316,84 @@ def test_cli_fail_on_all_and_none(monkeypatch, tmp_path):
     assert summary["omitted_review_duplicates"] == 1
 
 
+def _build_semantic_fallback_result(tmp_path: Path) -> AnalysisResult:
+    """Combined result with no findings but a degraded (partial) analysis."""
+    unit = build_unit(tmp_path)
+    return AnalysisResult(
+        units=[unit],
+        traditional_duplicates=[],
+        semantic_duplicates=[],
+        hybrid_duplicates=[],
+        potentially_unused=[],
+        run=make_run_record(tmp_path, mode="combined"),
+        semantic_fallback=True,
+        semantic_fallback_reason="Semantic analysis unavailable: boom",
+    )
+
+
+def test_cli_fail_on_incomplete_fails_a_partial_run_with_no_findings(monkeypatch, tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+    patch_cli_analyzer(
+        monkeypatch, cli, analyze_result=lambda: _build_semantic_fallback_result(tmp_path)
+    )
+    runner = CliRunner()
+
+    default_result = runner.invoke(cli.cli, ["check", str(path)])
+    assert default_result.exit_code == 0
+
+    incomplete_result = runner.invoke(cli.cli, ["check", str(path), "--fail-on-incomplete"])
+    assert incomplete_result.exit_code == 1
+    assert "fails --fail-on-incomplete" in incomplete_result.output
+
+    json_result = runner.invoke(cli.cli, ["check", str(path), "--fail-on-incomplete", "--json"])
+    assert json_result.exit_code == 1
+    payload = json.loads(json_result.output)
+    assert payload["analysis_status"] == "partial"
+    assert payload["summary"]["fail_on_incomplete"] is True
+    assert payload["summary"]["exit_code"] == 1
+
+
+def test_cli_fail_on_incomplete_applies_under_fail_on_none(monkeypatch, tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+    patch_cli_analyzer(
+        monkeypatch, cli, analyze_result=lambda: _build_semantic_fallback_result(tmp_path)
+    )
+    runner = CliRunner()
+
+    without_incomplete = runner.invoke(cli.cli, ["check", str(path), "--fail-on", "none"])
+    assert without_incomplete.exit_code == 0
+
+    with_incomplete = runner.invoke(
+        cli.cli, ["check", str(path), "--fail-on", "none", "--fail-on-incomplete"]
+    )
+    assert with_incomplete.exit_code == 1
+
+
+def test_cli_fail_on_incomplete_fails_empty_extraction(monkeypatch, tmp_path):
+    path = tmp_path / "empty"
+    path.mkdir()
+    result_obj = AnalysisResult(
+        units=[],
+        traditional_duplicates=[],
+        semantic_duplicates=[],
+        hybrid_duplicates=[],
+        potentially_unused=[],
+        run=make_run_record(tmp_path, mode="combined"),
+    )
+    patch_cli_analyzer(monkeypatch, cli, analyze_result=lambda: result_obj)
+    runner = CliRunner()
+
+    terminal_result = runner.invoke(cli.cli, ["check", str(path), "--fail-on-incomplete"])
+    assert terminal_result.exit_code == 1
+    assert "extraction produced no code units" in terminal_result.stderr
+
+    json_result = runner.invoke(cli.cli, ["check", str(path), "--fail-on-incomplete", "--json"])
+    assert json_result.exit_code == 1
+    assert "extraction produced no code units" not in json_result.stderr
+
+
 def _build_tiered_result(tmp_path: Path) -> AnalysisResult:
     """Combined result with one confirmed pair, two review pairs, and an unused unit."""
     unit = build_unit(tmp_path)

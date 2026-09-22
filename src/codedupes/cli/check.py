@@ -17,6 +17,7 @@ from codedupes.report.selection import (
     select_findings,
 )
 
+from . import _output
 from ._options import REPORT_CAP, CheckOptions, Panel, option_panels, semantic_options
 from ._output import DEFAULT_SOURCE_LINES, _configured_cli_output, _run_cli_action
 from ._render import print_findings, print_run, print_summary
@@ -210,6 +211,16 @@ from ._render import print_findings, print_run, print_summary
     panel=Panel.OUTPUT,
     help="Which findings make the exit code 1",
 )
+@click.option(
+    "--fail-on-incomplete",
+    is_flag=True,
+    panel=Panel.OUTPUT,
+    help=(
+        "Also exit 1 when the analysis did not complete (empty extraction, a file-level "
+        "extraction failure, semantic fallback, or a file skipped by unused analysis), "
+        "independent of --fail-on, including --fail-on none"
+    ),
+)
 @semantic_options()
 @option_panels
 @click.pass_context
@@ -241,7 +252,12 @@ def check_command(ctx: click.Context, path: Path, **params: Any) -> None:
         # Exit status is decided on the complete result before any report
         # selection so visibility flags can never change CI outcomes.
         exit_code = int(
-            run_should_fail(result, policy=opts.fail_on, strict_unused=opts.strict_unused)
+            run_should_fail(
+                result,
+                policy=opts.fail_on,
+                strict_unused=opts.strict_unused,
+                fail_on_incomplete=opts.fail_on_incomplete,
+            )
         )
         selection = select_findings(result, opts.report_policy)
 
@@ -252,17 +268,25 @@ def check_command(ctx: click.Context, path: Path, **params: Any) -> None:
                     fail_on=opts.fail_on,
                     exit_code=exit_code,
                     strict_unused=opts.strict_unused,
+                    fail_on_incomplete=opts.fail_on_incomplete,
                     include_source=opts.show_source,
                     source_lines=opts.source_lines,
                 )
             )
         else:
+            if result.checks.extraction.status == "empty":
+                _output.error_console.print(
+                    "[yellow]Warning:[/yellow] extraction produced no code units; ensure "
+                    "the path contains supported source code and that extraction filters "
+                    "permit it."
+                )
             print_run(result.run, result.checks)
             print_summary(
                 selection,
                 fail_on=opts.fail_on,
                 exit_code=exit_code,
                 strict_unused=opts.strict_unused,
+                fail_on_incomplete=opts.fail_on_incomplete,
             )
             print_findings(
                 selection,

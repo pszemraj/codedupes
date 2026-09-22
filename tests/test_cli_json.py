@@ -246,7 +246,7 @@ def test_cli_json_replays_python_and_native_output_on_failure(tmp_path, command,
         merge_stderr=False,
     )
 
-    assert result.returncode == 1
+    assert result.returncode == 3
     assert result.stdout == ""
     assert "Python backend diagnostic" in result.stderr
     assert "native backend diagnostic" in result.stderr

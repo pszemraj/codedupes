@@ -223,6 +223,7 @@ def print_summary(
     fail_on: FailOnPolicy,
     exit_code: int,
     strict_unused: bool = False,
+    fail_on_incomplete: bool = False,
 ) -> None:
     """Print analysis summary.
 
@@ -230,6 +231,7 @@ def print_summary(
     :param fail_on: Finding policy selected for this run.
     :param exit_code: Exit code computed from the selected policy.
     :param strict_unused: Whether unused findings count under the failure policy.
+    :param fail_on_incomplete: Whether an incomplete analysis also fails the run.
     :return: ``None``.
     """
     result = selection.result
@@ -329,14 +331,21 @@ def print_summary(
         summary.add_row("Embeddings", _format_embedding_stats(result.embedding_stats))
     summary.add_row("Failure policy", fail_on)
     status = f"{'fail' if exit_code else 'pass'} (exit {exit_code})"
-    if exit_code and hidden_only_failure(selection, policy=fail_on, strict_unused=strict_unused):
+    if exit_code:
         # Only withheld review pairs can fail without an emitted finding failing
         # too: the primary list ranks actionable tiers first, so the cap never
         # hides every failing pair.
-        status = (
-            f"fail (exit {exit_code}; only withheld semantic_review candidates fail "
-            f"--fail-on {fail_on}, use --include-review to list them in the primary report)"
-        )
+        notes = []
+        if hidden_only_failure(selection, policy=fail_on, strict_unused=strict_unused):
+            notes.append(
+                "only withheld semantic_review candidates fail "
+                f"--fail-on {fail_on}, use --include-review to list them in the primary report"
+            )
+        if fail_on_incomplete and result.analysis_status != "complete":
+            reasons = ", ".join(result.checks.incomplete_reasons)
+            notes.append(f"analysis {result.analysis_status}: {reasons} fails --fail-on-incomplete")
+        if notes:
+            status = f"fail (exit {exit_code}; {'; '.join(notes)})"
     summary.add_row("Finding status", status)
 
     _output.console.print(summary)

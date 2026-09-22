@@ -54,6 +54,7 @@ Options, in addition to the [shared options](#options-shared-by-check-and-search
 - `--source-lines <N|all>`: Cap each shown snippet at `N` lines (default `40`) or remove the cap with `all`; implies `--show-source`
 - `--show-diff`: Show a unified diff per duplicate pair, bounded by `--source-lines`; `structural_hash` families diff each member against the first, `token_hash` families print nothing extra (token-identical already)
 - `--fail-on <actionable|all|none>`: Select the [finding exit policy](output.md#exit-codes)
+- `--fail-on-incomplete`: Also exit `1` when the [analysis did not complete](output.md#exit-codes), independent of `--fail-on` (including `none`)
 
 Single-method flags leave unused-code detection enabled; add `--no-unused` to disable it.
 
@@ -159,7 +160,7 @@ Display the embedding-cache summary plus per-model entry counts and a per-repo b
 
 ## `codedupes cache clear [--model <name>]`
 
-Clear all cached embeddings or only entries for one model. An empty or whitespace-only `--model` is a usage error (exit `2`) and deletes nothing; omit the option to clear all models. See [Embedding cache](caching.md).
+Clear all cached embeddings or only entries for one model. An empty or whitespace-only `--model` is a usage error (exit `2`) and deletes nothing; omit the option to clear all models. A failure to construct the cache, an outright clear failure, or a best-effort clear that leaves any deletion failed all exit `3` (`cache info` uses the same code for its own construction failure); see [exit codes](output.md#exit-codes). See [Embedding cache](caching.md).
 
 ## Validation and mode notes
 

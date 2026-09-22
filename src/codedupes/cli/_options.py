@@ -315,6 +315,7 @@ class CheckOptions:
     show_diff: bool
     full_table: bool
     fail_on: Literal["actionable", "all", "none"]
+    fail_on_incomplete: bool
 
     @classmethod
     def from_params(cls, ctx: click.Context, params: dict[str, Any]) -> CheckOptions:

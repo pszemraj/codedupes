@@ -53,7 +53,7 @@ def test_cli_check_fails_on_semantic_backend_error_without_fallback(monkeypatch,
 
     runner = CliRunner()
     result = runner.invoke(cli.cli, ["check", str(path), "--min-statements", "0"])
-    assert result.exit_code == 1
+    assert result.exit_code == 3
     assert "Error during analysis" in result.output
     assert "--allow-semantic-fallback" in result.output
     # The wrapper must carry the root cause: --verbose is the only other route
@@ -101,6 +101,8 @@ def test_cli_check_degrades_on_semantic_backend_error_in_json(monkeypatch, tmp_p
     assert payload["summary"]["semantic_fallback"] is True
     assert payload["summary"]["semantic_fallback_reason"] is not None
     assert "Semantic analysis unavailable" in payload["summary"]["semantic_fallback_reason"]
+    assert payload["analysis_status"] == "partial"
+    assert payload["run"]["checks"]["semantic"]["status"] == "fallback"
 
 
 @pytest.mark.parametrize(
@@ -123,7 +125,7 @@ def test_cli_check_json_keeps_errors_off_stdout(monkeypatch, tmp_path, error, ex
 
     result = CliRunner().invoke(cli.cli, ["check", str(path), "--json"])
 
-    assert result.exit_code == 1
+    assert result.exit_code == 3
     # --json promises machine-parseable JSON only on stdout.
     assert result.stdout == ""
     assert expected_text in result.stderr
@@ -150,7 +152,7 @@ def test_cli_check_verbose_traceback_goes_to_stderr(monkeypatch, tmp_path):
 
     result = CliRunner().invoke(cli.cli, ["check", str(path), "--verbose"])
 
-    assert result.exit_code == 1
+    assert result.exit_code == 3
     assert "Traceback" in result.stderr
     assert "Traceback" not in result.stdout
 
@@ -177,7 +179,7 @@ def test_cli_semantic_required_modes_fail_on_semantic_backend_error(
 
     runner = CliRunner()
     result = runner.invoke(cli.cli, [args[0], str(path), *args[1:]])
-    assert result.exit_code == 1
+    assert result.exit_code == 3
     assert expected_message in result.output
 
 

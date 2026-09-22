@@ -453,7 +453,7 @@ def test_cli_search_reports_path_deleted_after_validation(monkeypatch, tmp_path)
 
     result = CliRunner().invoke(cli.cli, ["search", str(path), "entry"])
 
-    assert result.exit_code == 1
+    assert result.exit_code == 3
     assert not isinstance(result.exception, FileNotFoundError)
     assert "Error: Path does not exist" in result.stderr
 
@@ -473,7 +473,7 @@ def test_cli_search_reports_runtime_failures(monkeypatch, tmp_path, phase, as_js
     args = ["search", str(tmp_path), "entry"] + (["--json"] if as_json else [])
     result = CliRunner().invoke(cli.cli, args)
 
-    assert result.exit_code == 1
+    assert result.exit_code == 3
     assert result.stdout == ""
     assert "model asset disappeared" in result.stderr
     assert "Traceback" not in result.stderr

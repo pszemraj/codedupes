@@ -313,6 +313,38 @@ def test_run_should_fail_uses_result_analysis_mode(tmp_path):
     assert run_should_fail(single, policy="actionable", strict_unused=False) is True
 
 
+def test_run_should_fail_fail_on_incomplete_ignores_policy(tmp_path):
+    partial = _result(
+        tmp_path,
+        traditional_duplicates=[],
+        semantic_duplicates=[],
+        hybrid_duplicates=[],
+        potentially_unused=[],
+        semantic_fallback=True,
+    )
+    assert partial.analysis_status == "partial"
+
+    for policy in ("actionable", "all", "none"):
+        assert run_should_fail(partial, policy=policy, strict_unused=False) is False
+        assert (
+            run_should_fail(partial, policy=policy, strict_unused=False, fail_on_incomplete=True)
+            is True
+        )
+
+    complete = _result(
+        tmp_path,
+        traditional_duplicates=[],
+        semantic_duplicates=[],
+        hybrid_duplicates=[],
+        potentially_unused=[],
+    )
+    assert complete.analysis_status == "complete"
+    assert (
+        run_should_fail(complete, policy="actionable", strict_unused=False, fail_on_incomplete=True)
+        is False
+    )
+
+
 @pytest.mark.parametrize("policy", ["actonable", "nonee"])
 @pytest.mark.parametrize("has_findings", [False, True])
 def test_failure_helpers_reject_unknown_policies(tmp_path, policy, has_findings):
