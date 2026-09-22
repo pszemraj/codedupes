@@ -1007,6 +1007,7 @@ class CodeAnalyzer:
 
         traditional_duplicates: list[DuplicatePair] = []
         unused: list[CodeUnit] = []
+        unused_diagnostics: list[ExtractionDiagnostic] = []
         semantic_fallback = False
         semantic_fallback_reason: str | None = None
         semantic_task = self.config.semantic_task or DEFAULT_CHECK_SEMANTIC_TASK
@@ -1142,12 +1143,14 @@ class CodeAnalyzer:
                 ]
 
         if self.config.run_unused:
-            unused = run_unused_analysis(
+            unused_report = run_unused_analysis(
                 units,
                 project_root=path,
                 strict_unused=self.config.strict_unused,
                 source_files=self._python_files,
             )
+            unused = unused_report.unused
+            unused_diagnostics = unused_report.diagnostics
             unused_excluded_units = sum(unit.language != "python" for unit in units)
 
         combined_mode = self.config.run_traditional and self.config.run_semantic
@@ -1189,6 +1192,7 @@ class CodeAnalyzer:
             semantic_fallback_reason=semantic_fallback_reason,
             extraction_diagnostics=list(self._extraction_diagnostics),
             semantic_diagnostics=list(self._semantic_diagnostics),
+            unused_diagnostics=unused_diagnostics,
             unused_excluded_units=unused_excluded_units,
             embedding_stats=embedding_stats,
         )

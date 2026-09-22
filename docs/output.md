@@ -129,6 +129,7 @@ codedupes check ./src --json | jq empty
   "potentially_unused": ["u2"],
   "extraction_diagnostics": [],
   "semantic_diagnostics": [],
+  "unused_diagnostics": [],
   "units": {
     "u0": {
       "uid": "/repo/src/a.py::python::a.normalize::0",
@@ -175,7 +176,7 @@ The primary list is capped by default: families plus pairs hold at most 20 findi
 
 In `--semantic-only` or `--traditional-only` mode, exact edges are grouped into `exact_families` the same way and `duplicates` contains the remaining raw edges ordered by descending similarity (ties in analyzer order; the cap keeps families then that prefix). `duplicates_by_tier` and `truncated_by_tier` are zero except for `exact`, which counts families, `hybrid_duplicates` is `0`, and the `--show-all` arrays are omitted. `analysis_mode` is always one of `combined`, `traditional`, `semantic`, or `none`.
 
-`potentially_unused` is ranked and bounded too: ids are ordered by line span (`end_line - line + 1`) descending, then statement count, then file position, so the largest dead definitions lead, and the list holds at most 20 (`--max-unused`, recorded as `summary.max_unused`; `--max-unused all` removes the cap and the expansion flags above lift it unless an explicit value is given). `summary.potentially_unused` stays the complete count while `summary.reported_unused` and `summary.truncated_unused` split it into emitted and cut; units referenced only by cut unused findings leave `units`. `extraction_diagnostics`, `semantic_diagnostics`, and the raw `--show-all` edge lists are deliberately complete: they are per-file records a consumer needs in full, so a scan with many diagnostics still produces a large document.
+`potentially_unused` is ranked and bounded too: ids are ordered by line span (`end_line - line + 1`) descending, then statement count, then file position, so the largest dead definitions lead, and the list holds at most 20 (`--max-unused`, recorded as `summary.max_unused`; `--max-unused all` removes the cap and the expansion flags above lift it unless an explicit value is given). `summary.potentially_unused` stays the complete count while `summary.reported_unused` and `summary.truncated_unused` split it into emitted and cut; units referenced only by cut unused findings leave `units`. `extraction_diagnostics`, `semantic_diagnostics`, `unused_diagnostics`, and the raw `--show-all` edge lists are deliberately complete: they are per-file records a consumer needs in full, so a scan with many diagnostics still produces a large document.
 
 See [hybrid confidence tiers](analysis-defaults.md#hybrid-synthesis-confidence-defaults) to interpret `tier` and `score`.
 
@@ -261,7 +262,7 @@ Move and deletion counts need a comparable [corpus baseline](caching.md#corpus-l
 
 ## Diagnostics
 
-`check` emits `extraction_diagnostics` and `semantic_diagnostics` arrays with matching counts in `summary`. `search` emits both diagnostic arrays, without summary counts, so recoverable extraction failures remain visible even when the search index is empty. Entries use `file`, `language`, `severity`, `code`, `message`, `line`, and `end_line`. Both terminal commands print up to ten entries per diagnostic category; checks also print summary counts.
+`check` emits `extraction_diagnostics`, `semantic_diagnostics`, and `unused_diagnostics` arrays; the first two have matching counts in `summary`, `unused_diagnostics` does not. `search` emits the extraction and semantic diagnostic arrays, without summary counts, so recoverable extraction failures remain visible even when the search index is empty; search runs no unused analysis, so it has no `unused_diagnostics`. Entries use `file`, `language`, `severity`, `code`, `message`, `line`, and `end_line`. `unused_diagnostics` codes are `unused-read-error`, `unused-parse-error`, and `unused-recursion-limit`, one entry per file the unused reference walk could not process. Both terminal commands print up to ten entries per diagnostic category; checks also print summary counts for the two that have them.
 
 For `semantic-context-overflow` warnings and their cache behavior, see [long-input handling](analysis-defaults.md#semantic-candidate-defaults).
 

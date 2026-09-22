@@ -73,6 +73,40 @@ def test_cli_reports_semantic_diagnostics(monkeypatch, tmp_path):
     assert payload["semantic_diagnostics"][0]["code"] == "semantic-warning"
 
 
+def test_cli_reports_unused_diagnostics(monkeypatch, tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+    unit = build_unit(tmp_path)
+    result_obj = AnalysisResult(
+        units=[unit],
+        traditional_duplicates=[],
+        semantic_duplicates=[],
+        hybrid_duplicates=[],
+        potentially_unused=[],
+        analysis_mode="combined",
+        unused_diagnostics=[
+            ExtractionDiagnostic(
+                file_path=unit.file_path,
+                language="python",
+                code="unused-parse-error",
+                message="SyntaxError: invalid syntax",
+                lineno=7,
+            )
+        ],
+    )
+    patch_cli_analyzer(monkeypatch, cli, analyze_result=result_obj)
+    runner = CliRunner()
+
+    table_result = runner.invoke(cli.cli, ["check", str(path)])
+    assert "Unused diagnostics" in table_result.output
+    assert "invalid syntax" in table_result.output
+
+    json_result = runner.invoke(cli.cli, ["check", str(path), "--json"])
+    payload = json.loads(json_result.output)
+    assert "unused_diagnostics" not in payload["summary"]
+    assert payload["unused_diagnostics"][0]["code"] == "unused-parse-error"
+
+
 def test_cli_output_width_option(monkeypatch, tmp_path):
     path = tmp_path / "sample.py"
     path.write_text("def entry():\n    return 1\n")

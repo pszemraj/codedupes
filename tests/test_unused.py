@@ -887,7 +887,7 @@ def test_module_the_stdlib_parser_rejects_warns_and_contributes_no_references(
     assert [unit.qualified_name for unit in units] == ["sample._intact", "sample._caller"]
 
     with caplog.at_level(logging.WARNING, logger="codedupes.unused"):
-        build_reference_graph(units)
+        diagnostics = build_reference_graph(units)
     unused = find_potentially_unused(units, strict_unused=True)
 
     [record] = [record for record in caplog.records if record.name == "codedupes.unused"]
@@ -895,22 +895,35 @@ def test_module_the_stdlib_parser_rejects_warns_and_contributes_no_references(
     assert record.getMessage().startswith(
         f"Unused analysis collected no references from {units[0].file_path}: SyntaxError"
     )
+    assert [d.code for d in diagnostics] == ["unused-parse-error"]
+    assert diagnostics[0].lineno == 7
+    assert "SyntaxError" in diagnostics[0].message
     assert _unit(units, "sample._intact").references == set()
     assert {unit.name for unit in unused} == {"_intact", "_caller"}
 
 
-def test_deep_elif_chain_warns_instead_of_aborting_the_analysis(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture
-) -> None:
-    """``ast.NodeVisitor`` recurses per node; a generated chain must not crash ``analyze()``."""
-    branches = "\n".join(f"    elif x == {i}:\n        return {i}" for i in range(1, 600))
-    root = tmp_path / "pkg"
-    root.mkdir()
+def _write_elif_chain(root: Path, branch_count: int) -> None:
+    """Write a package with a generated ``elif`` chain and its lone caller.
+
+    :param root: Package directory to write into (must already exist).
+    :param branch_count: Number of generated ``elif`` branches.
+    :return: ``None``.
+    """
+    branches = "\n".join(f"    elif x == {i}:\n        return {i}" for i in range(1, branch_count))
     (root / "__init__.py").write_text("")
     (root / "chain.py").write_text(
         f"def _big(x):\n    if x == 0:\n        return 0\n{branches}\n\n"
         "def _user():\n    return _big(1)\n"
     )
+
+
+def test_deep_elif_chain_is_analyzed_without_a_recursion_bailout(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The raised visitor recursion limit must absorb a few hundred nested branches."""
+    root = tmp_path / "pkg"
+    root.mkdir()
+    _write_elif_chain(root, 600)
     analyzer = CodeAnalyzer(
         AnalyzerConfig(
             run_traditional=False, run_semantic=False, run_unused=True, strict_unused=True
@@ -920,12 +933,42 @@ def test_deep_elif_chain_warns_instead_of_aborting_the_analysis(
     with caplog.at_level(logging.WARNING, logger="codedupes.unused"):
         result = analyzer.analyze(root)
 
-    [record] = [record for record in caplog.records if record.name == "codedupes.unused"]
-    assert record.getMessage().startswith(
-        f"Unused analysis collected no references from {(root / 'chain.py').resolve()}: "
+    assert [record for record in caplog.records if record.name == "codedupes.unused"] == []
+    assert result.unused_diagnostics == []
+    # _user calls _big, so _big is referenced and drops out; _user stays.
+    assert {unit.name for unit in result.potentially_unused} == {"_user"}
+
+
+def test_visitor_recursion_bailout_is_reported_per_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A chain deeper than even the raised limit becomes a diagnostic, not a crash."""
+    monkeypatch.setattr(unused_module, "_VISIT_RECURSION_LIMIT", 100)
+    root = tmp_path / "pkg"
+    root.mkdir()
+    _write_elif_chain(root, 600)
+    analyzer = CodeAnalyzer(
+        AnalyzerConfig(
+            run_traditional=False, run_semantic=False, run_unused=True, strict_unused=True
+        )
     )
-    assert "recursion" in record.getMessage()
+
+    result = analyzer.analyze(root)
+
+    assert [d.code for d in result.unused_diagnostics] == ["unused-recursion-limit"]
     assert {unit.name for unit in result.potentially_unused} == {"_big", "_user"}
+
+
+def test_parser_stack_overflow_is_a_diagnostic_not_a_crash(tmp_path: Path) -> None:
+    """``ast.parse`` itself overflows its C stack on pathological nesting; survive it."""
+    path = tmp_path / "deep.py"
+    branches = "\n".join(f"    elif x == {i}:\n        return {i}" for i in range(1, 6000))
+    path.write_text(f"def _big(x):\n    if x == 0:\n        return 0\n{branches}\n")
+
+    units = list(CodeExtractor(tmp_path, include_private=True).extract_from_file(path))
+    diagnostics = build_reference_graph(units)
+
+    assert [d.code for d in diagnostics] == ["unused-recursion-limit"]
 
 
 def test_abstractmethod_exemption_reads_only_the_units_own_decorators(tmp_path: Path) -> None:

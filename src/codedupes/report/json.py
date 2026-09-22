@@ -243,6 +243,9 @@ def check_result_to_json(
         "semantic_diagnostics": [
             _diagnostic_to_dict(diagnostic) for diagnostic in result.semantic_diagnostics
         ],
+        "unused_diagnostics": [
+            _diagnostic_to_dict(diagnostic) for diagnostic in result.unused_diagnostics
+        ],
     }
     if selection.traditional_duplicates is not None:
         output["traditional_duplicates"] = [

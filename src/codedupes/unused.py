@@ -5,14 +5,23 @@ from __future__ import annotations
 import ast
 import codecs
 import logging
+import sys
 import tomllib
 from collections import defaultdict
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from codedupes.models import CodeUnit, CodeUnitType
+from codedupes.models import CodeUnit, CodeUnitType, ExtractionDiagnostic
 
 logger = logging.getLogger(__name__)
+
+# ast.NodeVisitor recurses per syntax node; the interpreter's default limit
+# overflows on a generated elif or operator chain a few hundred deep, well
+# inside what tree-sitter extracts without complaint. This is raised for the
+# reference walk only, never lowered, and restored afterward.
+_VISIT_RECURSION_LIMIT = 15_000
 
 
 @dataclass
@@ -51,6 +60,7 @@ class ModuleReferences:
     module_references: set[str] = field(default_factory=set)
     definitions: list[DefinitionReferences] = field(default_factory=list)
     classes: list[ClassInfo] = field(default_factory=list)
+    diagnostic: ExtractionDiagnostic | None = None
 
 
 def _definition_linenos(
@@ -271,32 +281,67 @@ class _ReferenceCollector(ast.NodeVisitor):
         self._visit_body(node, definition, class_info)
 
 
-def _parse_module(file_path: Path) -> ast.Module | None:
-    """Parse one Python file the way the extractor reads it, warning when ``ast`` cannot.
+@contextmanager
+def _recursion_limit(minimum: int) -> Iterator[None]:
+    """Temporarily raise the interpreter recursion limit, never lower it.
+
+    :param minimum: Recursion limit floor for the wrapped block.
+    :return: Context manager restoring the prior recursion limit on exit.
+    """
+    current = sys.getrecursionlimit()
+    if minimum > current:
+        sys.setrecursionlimit(minimum)
+    try:
+        yield
+    finally:
+        sys.setrecursionlimit(current)
+
+
+def _diagnostic(
+    file_path: Path, code: str, message: str, lineno: int | None = None
+) -> ExtractionDiagnostic:
+    """Build a Python-language diagnostic for one unused-analysis failure.
+
+    :param file_path: File the diagnostic refers to.
+    :param code: Machine-readable diagnostic code.
+    :param message: Human-readable diagnostic text.
+    :param lineno: Optional 1-based line number the diagnostic anchors to.
+    :return: The constructed diagnostic.
+    """
+    return ExtractionDiagnostic(
+        file_path=file_path, language="python", message=message, code=code, lineno=lineno
+    )
+
+
+def _parse_module(file_path: Path) -> ast.Module | ExtractionDiagnostic:
+    """Parse one Python file the way the extractor reads it.
 
     The extractor skips a BOM and decodes invalid UTF-8 lossily, so the same
-    bytes are parsed here; a file ``ast`` still rejects (a syntax error the
-    grammar recovered from, syntax newer than the interpreter) contributes no
-    references, which the warning makes visible.
+    bytes are parsed here. A file ``ast`` cannot parse (a syntax error the
+    grammar recovered from, syntax newer than the interpreter, a parser stack
+    overflow on deeply nested expressions that tree-sitter copes with) yields
+    a diagnostic instead of a module.
 
     :param file_path: Python source path.
-    :return: Parsed module, or ``None`` when the file cannot be read or parsed.
+    :return: Parsed module, or a diagnostic describing why parsing failed.
     """
     try:
         raw = file_path.read_bytes()
     except OSError as error:
-        logger.warning(f"Unused analysis skipped {file_path}: {error}")
-        return None
+        return _diagnostic(file_path, "unused-read-error", f"Could not read {file_path}: {error}")
     source = raw.removeprefix(codecs.BOM_UTF8).decode("utf-8", errors="replace")
     try:
         # ValueError covers Python 3.11's embedded-NUL report.
         return ast.parse(source)
-    except (SyntaxError, ValueError, RecursionError) as error:
-        logger.warning(
-            f"Unused analysis collected no references from {file_path}: "
-            f"{type(error).__name__}: {error}"
+    except (SyntaxError, ValueError) as error:
+        message = f"{type(error).__name__}: {getattr(error, 'msg', str(error))}"
+        return _diagnostic(
+            file_path, "unused-parse-error", message, lineno=getattr(error, "lineno", None)
         )
-        return None
+    except (RecursionError, MemoryError) as error:
+        # CPython's C parser overflows its own stack on pathological nesting
+        # (~5,950 chained ``elif``s) and raises MemoryError, not RecursionError.
+        return _diagnostic(file_path, "unused-recursion-limit", f"{type(error).__name__}: {error}")
 
 
 def _extract_aliases(tree: ast.Module) -> dict[str, str]:
@@ -337,22 +382,32 @@ def collect_module_references(file_path: Path) -> ModuleReferences:
     """Parse one module once and collect aliases plus per-scope references.
 
     :param file_path: Python source path.
-    :return: Module references; empty when the file cannot be parsed.
+    :return: Module references; carries a diagnostic when the file could not
+        be parsed or its syntax tree could not be walked.
     """
-    tree = _parse_module(file_path)
-    if tree is None:
-        return ModuleReferences()
+    parsed = _parse_module(file_path)
+    if isinstance(parsed, ExtractionDiagnostic):
+        logger.warning(
+            f"Unused analysis collected no references from {file_path}: {parsed.message}"
+        )
+        return ModuleReferences(diagnostic=parsed)
+    tree = parsed
     collector = _ReferenceCollector()
     try:
-        collector.visit(tree)
-    except RecursionError:
-        # ast.NodeVisitor recurses per node; a generated elif or operator
-        # chain a few hundred deep overflows it while tree-sitter copes.
-        logger.warning(
-            f"Unused analysis collected no references from {file_path}: "
-            "expression nesting exceeds the interpreter recursion limit"
+        with _recursion_limit(_VISIT_RECURSION_LIMIT):
+            collector.visit(tree)
+    except RecursionError as error:
+        # ast.NodeVisitor recurses per node; a chain deeper than even the
+        # raised limit overflows it while tree-sitter copes.
+        diagnostic = _diagnostic(
+            file_path,
+            "unused-recursion-limit",
+            f"expression nesting exceeds the interpreter recursion limit ({error})",
         )
-        return ModuleReferences()
+        logger.warning(
+            f"Unused analysis collected no references from {file_path}: {diagnostic.message}"
+        )
+        return ModuleReferences(diagnostic=diagnostic)
     return ModuleReferences(
         aliases=_extract_aliases(tree),
         module_references=collector.module_references,
@@ -464,7 +519,7 @@ def build_reference_graph(
     units: list[CodeUnit],
     project_root: Path | None = None,
     source_files: list[Path] | None = None,
-) -> None:
+) -> list[ExtractionDiagnostic]:
     """Populate ``unit.references`` from every name each Python module loads.
 
     Matching is by name: a reference to ``helper`` marks every unit named
@@ -475,11 +530,11 @@ def build_reference_graph(
     :param project_root: Optional root for pyproject entry-point resolution.
     :param source_files: Every Python file the extractor visited; files without
         units (re-export modules, scripts) still contribute references.
-    :return: ``None``.
+    :return: One diagnostic per file the reference walk could not process.
     """
     units = [unit for unit in units if unit.language == "python"]
     if not units:
-        return
+        return []
 
     by_name: dict[str, list[CodeUnit]] = defaultdict(list)
     by_location: dict[tuple[Path, int, str], list[CodeUnit]] = defaultdict(list)
@@ -565,6 +620,8 @@ def build_reference_graph(
             for candidate in by_name.get(target, []):
                 candidate.references.add("project.entrypoint")
 
+    return [module.diagnostic for module in modules.values() if module.diagnostic is not None]
+
 
 def _is_public_surface(unit: CodeUnit) -> bool:
     """Return whether default mode treats the unit as public API that callers outside the tree may use.
@@ -634,22 +691,31 @@ def find_potentially_unused(units: list[CodeUnit], strict_unused: bool = False) 
     return unused
 
 
+@dataclass
+class UnusedReport:
+    """Result of one unused-code analysis pass."""
+
+    unused: list[CodeUnit]
+    suppressed: int = 0
+    diagnostics: list[ExtractionDiagnostic] = field(default_factory=list)
+
+
 def run_unused_analysis(
     units: list[CodeUnit],
     *,
     project_root: Path | None,
     strict_unused: bool,
     source_files: list[Path] | None = None,
-) -> list[CodeUnit]:
+) -> UnusedReport:
     """Build the reference graph and report the units it leaves unreferenced.
 
     :param units: Collected code units; non-Python units are ignored.
     :param project_root: Project root for pyproject entry-point resolution, or ``None``.
     :param source_files: Every Python file the extractor visited, units or not.
     :param strict_unused: Whether to report public functions and public methods of public classes too.
-    :return: Potentially unused Python units.
+    :return: Potentially unused units, together with per-file diagnostics.
     """
-    build_reference_graph(units, project_root=project_root, source_files=source_files)
+    diagnostics = build_reference_graph(units, project_root=project_root, source_files=source_files)
     unused = find_potentially_unused(units, strict_unused=strict_unused)
     logger.info(f"Found {len(unused)} potentially unused code units")
-    return unused
+    return UnusedReport(unused=unused, diagnostics=diagnostics)

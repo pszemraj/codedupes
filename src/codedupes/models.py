@@ -211,6 +211,7 @@ class AnalysisResult:
     semantic_fallback_reason: str | None = None
     extraction_diagnostics: list[ExtractionDiagnostic] = field(default_factory=list)
     semantic_diagnostics: list[ExtractionDiagnostic] = field(default_factory=list)
+    unused_diagnostics: list[ExtractionDiagnostic] = field(default_factory=list)
     unused_supported_languages: tuple[str, ...] = ("python",)
     unused_excluded_units: int = 0
     embedding_stats: EmbeddingRunStats | None = None

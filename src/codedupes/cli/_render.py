@@ -268,6 +268,8 @@ def print_summary(
         summary.add_row("Extraction diagnostics", str(len(result.extraction_diagnostics)))
     if result.semantic_diagnostics:
         summary.add_row("Semantic diagnostics", str(len(result.semantic_diagnostics)))
+    if result.unused_diagnostics:
+        summary.add_row("Unused diagnostics", str(len(result.unused_diagnostics)))
     if result.unused_excluded_units:
         summary.add_row(
             "Unused-analysis exclusions",
@@ -290,6 +292,7 @@ def print_summary(
     _output.console.print(summary)
     _print_diagnostics("Extraction diagnostics", result.extraction_diagnostics)
     _print_diagnostics("Semantic diagnostics", result.semantic_diagnostics)
+    _print_diagnostics("Unused diagnostics", result.unused_diagnostics)
     _output.console.print()
 
 
