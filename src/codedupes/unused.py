@@ -532,13 +532,20 @@ def build_reference_graph(
     for file_path, module in modules.items():
         mark(f"__module__::{file_path}", module.module_references, module.aliases)
         for definition in module.definitions:
-            for unit in units_for(file_path, definition):
-                mark(unit.uid, definition.references, module.aliases)
+            # A definition the extractor dropped (a filtered-out private
+            # symbol, or one nested in a private container) still has a
+            # body that references other units; credit it from a synthetic
+            # id so those references aren't lost.
+            referrers = [u.uid for u in units_for(file_path, definition)] or [
+                f"__definition__::{file_path}::{definition.name}::{definition.linenos[-1]}"
+            ]
+            for referrer_uid in referrers:
+                mark(referrer_uid, definition.references, module.aliases)
                 # A nested definition's reference to itself must not surface
                 # as the enclosing unit referencing it.
                 for origin, names in definition.nested.values():
                     own = frozenset(item.uid for item in units_for(file_path, origin))
-                    mark(unit.uid, names, module.aliases, own)
+                    mark(referrer_uid, names, module.aliases, own)
 
     # Public methods of classes deriving from outside the project are reached
     # by the framework's dispatch (NodeVisitor.visit_*, logging.Filter.filter),

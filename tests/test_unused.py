@@ -121,6 +121,55 @@ def test_public_function_is_skipped_by_default(tmp_path: Path) -> None:
     assert "_private_function" in names
 
 
+def test_public_referenced_only_from_a_filtered_private_definition_is_not_reported(
+    tmp_path: Path,
+) -> None:
+    """A private caller the extractor dropped must still credit what it calls."""
+    source = dedent(
+        """
+        def public():
+            return 1
+
+        def _private_caller():
+            return public()
+        """
+    ).strip()
+    units = extract_units(tmp_path, source, include_private=False)
+    build_reference_graph(units)
+
+    assert [unit.name for unit in units] == ["public"]
+    unused = find_potentially_unused(units, strict_unused=True)
+
+    assert "public" not in {unit.name for unit in unused}
+    file_path = units[0].file_path
+    assert _unit(units, "sample.public").references == {
+        f"__definition__::{file_path}::_private_caller::4"
+    }
+
+
+def test_public_method_inside_a_private_class_still_credits_what_it_calls(
+    tmp_path: Path,
+) -> None:
+    """A public method whose private container was dropped still credits its calls."""
+    source = dedent(
+        """
+        def public_helper():
+            return 1
+
+        class _Service:
+            def run(self):
+                return public_helper()
+        """
+    ).strip()
+    units = extract_units(tmp_path, source, include_private=False)
+    build_reference_graph(units)
+
+    assert [unit.name for unit in units] == ["public_helper"]
+    unused = find_potentially_unused(units, strict_unused=True)
+
+    assert "public_helper" not in {unit.name for unit in unused}
+
+
 def test_noqa_and_main_block_mark_as_used(tmp_path: Path) -> None:
     source = dedent(
         """
