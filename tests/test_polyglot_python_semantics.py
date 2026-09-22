@@ -1,13 +1,11 @@
-"""Python backend: identifiers, dunder-all filtering, privacy rules, error recovery, and byte-exact encoding handling."""
+"""Python backend: identifiers, dunder-all filtering, privacy rules, and error recovery."""
 
 from __future__ import annotations
 
-import codecs
 from pathlib import Path
 
 import pytest
 
-from codedupes.extractor import CodeExtractor
 from codedupes.languages.tree_sitter_backend import _PYTHON_BUILTINS
 from tests.polyglot_helpers import python_result, python_units
 
@@ -239,40 +237,3 @@ def test_python_error_recovery_reports_partial_parse_and_skips_the_broken_unit(
         "unit-parse-error",
     ]
     assert all(diagnostic.language == "python" for diagnostic in result.diagnostics)
-
-
-def test_python_bom_keeps_on_disk_byte_offsets(tmp_path: Path) -> None:
-    """The lexer skips the BOM, so the first unit starts at byte 3 and the byte
-    range still slices the file as stored."""
-    path = tmp_path / "bom_sample.py"
-    body = 'def greet(name):\n    message = "héllo " + name\n    return message\n'
-    path.write_bytes(codecs.BOM_UTF8 + body.encode("utf-8"))
-
-    extractor = CodeExtractor(tmp_path, include_private=True, languages=("python",))
-    units = list(extractor.extract_from_file(path))
-    raw = path.read_bytes()
-
-    assert extractor.diagnostics == []
-    [unit] = units
-    assert unit.start_byte == len(codecs.BOM_UTF8)
-    assert raw[unit.start_byte : unit.end_byte].decode("utf-8") == unit.source
-    assert not unit.source.startswith("﻿")
-
-
-def test_python_crlf_source_stays_byte_exact(tmp_path: Path) -> None:
-    path = tmp_path / "crlf_sample.py"
-    path.write_bytes(
-        b"# leading comment\r\ndef greet(name):\r\n"
-        b'    message = "hi " + name\r\n'
-        b"    return message\r\n"
-    )
-
-    units = list(
-        CodeExtractor(tmp_path, include_private=True, languages=("python",)).extract_from_file(path)
-    )
-    raw = path.read_bytes()
-
-    [unit] = units
-    assert "\r\n" in unit.source
-    assert raw[unit.start_byte : unit.end_byte].decode("utf-8") == unit.source
-    assert (unit.lineno, unit.end_lineno) == (2, 4)

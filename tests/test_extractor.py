@@ -569,6 +569,8 @@ def test_python_crlf_source_stays_byte_exact(tmp_path: Path) -> None:
 
 
 def test_python_bom_file_extracts_with_on_disk_byte_offsets(tmp_path: Path) -> None:
+    # The lexer skips the BOM, so the first unit starts at byte 3 and the byte range
+    # still slices the file as stored.
     file_path = tmp_path / "bom_sample.py"
     body = 'def greet(name):\n    message = "héllo " + name\n    return message\n'
     file_path.write_bytes(codecs.BOM_UTF8 + body.encode("utf-8"))
