@@ -70,3 +70,41 @@ def test_c_structural_hash_normalizes_names_and_keeps_operator_semantics(tmp_pat
 
     assert by_name["add"].structural_hash == by_name["total"].structural_hash
     assert by_name["total"].structural_hash != by_name["subtract"].structural_hash
+
+
+def test_c_suppression_directive_attachment(tmp_path: Path) -> None:
+    """``codedupes: ignore`` attaches through C's comment forms."""
+    [line_comment] = extract(
+        tmp_path,
+        "line_comment.c",
+        """
+        // codedupes: ignore
+        int foo(void) {
+            return 1;
+        }
+        """,
+    )
+    assert line_comment.suppressions == {"unused", "duplicates"}
+
+    [block_comment] = extract(
+        tmp_path,
+        "block_comment.c",
+        """
+        /* codedupes: ignore */
+        int foo(void) {
+            return 1;
+        }
+        """,
+    )
+    assert block_comment.suppressions == {"unused", "duplicates"}
+
+    [trailing_brace] = extract(
+        tmp_path,
+        "trailing_brace.c",
+        """
+        int foo(void) {  // codedupes: ignore
+            return 1;
+        }
+        """,
+    )
+    assert trailing_brace.suppressions == {"unused", "duplicates"}

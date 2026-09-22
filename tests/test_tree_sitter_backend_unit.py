@@ -17,6 +17,7 @@ from codedupes.languages.tree_sitter_backend import (
     _same_node,
     _structural_hash,
     _token_hash,
+    parse_suppressions,
 )
 from codedupes.models import CodeUnitType
 
@@ -691,3 +692,46 @@ def test_typescript_private_method_is_not_public(tmp_path: Path) -> None:
     assert spec is not None
     assert spec.qualified_name == "sample.Worker.run"
     assert not spec.is_public
+
+
+@pytest.mark.parametrize(
+    ("text", "known", "unknown"),
+    [
+        pytest.param("# codedupes: ignore", {"unused", "duplicates"}, set(), id="no-bracket-all"),
+        pytest.param("# codedupes: ignore[unused]", {"unused"}, set(), id="one-kind"),
+        pytest.param(
+            "# codedupes: ignore[unused, duplicates]",
+            {"unused", "duplicates"},
+            set(),
+            id="every-known-kind",
+        ),
+        pytest.param(
+            "# codedupes: ignore[unused] because reasons",
+            {"unused"},
+            set(),
+            id="trailing-reason-ignored",
+        ),
+        pytest.param("# codedupes: ignore[bogus]", set(), {"bogus"}, id="unknown-kind"),
+        pytest.param(
+            "# codedupes: ignore[unused, bogus]",
+            {"unused"},
+            {"bogus"},
+            id="mixed-known-and-unknown",
+        ),
+        pytest.param("// codedupes:ignore", {"unused", "duplicates"}, set(), id="no-space"),
+        pytest.param(
+            "/* codedupes: ignore */", {"unused", "duplicates"}, set(), id="block-comment"
+        ),
+        pytest.param("/// codedupes: ignore", {"unused", "duplicates"}, set(), id="doc-comment"),
+        pytest.param("# codedupes: ignored", set(), set(), id="ignored-does-not-match"),
+        pytest.param("# noqa: codedupes", set(), set(), id="noqa-does-not-match"),
+        pytest.param("# CODEDUPES: IGNORE", set(), set(), id="case-sensitive"),
+        pytest.param("# just a comment", set(), set(), id="no-directive"),
+    ],
+)
+def test_parse_suppressions_grammar(text: str, known: set[str], unknown: set[str]) -> None:
+    """The directive grammar is one form, comments only, case-sensitive."""
+    parsed_known, parsed_unknown = parse_suppressions(text)
+
+    assert parsed_known == frozenset(known)
+    assert parsed_unknown == frozenset(unknown)

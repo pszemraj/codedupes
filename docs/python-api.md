@@ -246,6 +246,7 @@ quiet_dependency_loggers()  # or quiet_dependency_loggers(logging.ERROR)
 - `CodeUnit.language`, `dialect`, and `native_kind`: canonical language, parser dialect, and grammar node kind (`function_definition`/`class_definition` for Python)
 - `CodeUnit.start_byte`/`end_byte`: exact byte range used to slice the emitted source; a decorated Python definition starts at its first decorator
 - `CodeUnit.structural_hash`, `token_hash`, `identifiers`, and `statement_count`: computed by the language backend from one Tree-sitter parse for every language; see [fingerprints](polyglot-languages.md#fingerprints-and-comparison-boundaries)
+- `CodeUnit.suppressions`: [`codedupes: ignore`](analysis-defaults.md#suppression-directives) kinds attached to this unit, including any inherited from an enclosing unit's own directive; empty when none apply
 - `HYBRID_TIERS`: the five tier names in declaration order, for zero-filled counts; pairs sort by [score](analysis-defaults.md#score-scale)
 
 ## Report selection and JSON

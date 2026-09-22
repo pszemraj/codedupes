@@ -465,3 +465,66 @@ def test_rust_attribute_lookup_stays_linear_in_item_count(tmp_path: Path) -> Non
 
     assert len(units) == 2000
     assert elapsed < 5.0, f"3000-item Rust file took {elapsed:.1f}s"
+
+
+def test_rust_suppression_directive_attachment(tmp_path: Path) -> None:
+    """``codedupes: ignore`` attaches through Rust's comment forms, skipping attributes."""
+    [line_comment] = extract(
+        tmp_path,
+        "line_comment.rs",
+        """
+        // codedupes: ignore
+        fn foo() -> i32 {
+            1
+        }
+        """,
+    )
+    assert line_comment.suppressions == {"unused", "duplicates"}
+
+    [block_comment] = extract(
+        tmp_path,
+        "block_comment.rs",
+        """
+        /* codedupes: ignore */
+        fn foo() -> i32 {
+            1
+        }
+        """,
+    )
+    assert block_comment.suppressions == {"unused", "duplicates"}
+
+    [doc_comment] = extract(
+        tmp_path,
+        "doc_comment.rs",
+        """
+        /// codedupes: ignore
+        fn foo() -> i32 {
+            1
+        }
+        """,
+    )
+    assert doc_comment.suppressions == {"unused", "duplicates"}
+
+    [above_attribute] = extract(
+        tmp_path,
+        "above_attribute.rs",
+        """
+        /// codedupes: ignore
+        #[inline]
+        fn foo() -> i32 {
+            1
+        }
+        """,
+    )
+    assert above_attribute.suppressions == {"unused", "duplicates"}
+
+    [trailing_brace] = extract(
+        tmp_path,
+        "trailing_brace.rs",
+        """
+        fn foo() -> i32 {  // codedupes: ignore
+            1
+        }
+        """,
+    )
+    assert trailing_brace.suppressions == {"unused", "duplicates"}

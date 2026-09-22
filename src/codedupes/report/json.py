@@ -92,6 +92,8 @@ def unit_to_dict(
         "is_public": unit.is_public,
         "is_exported": unit.is_exported,
     }
+    if unit.suppressions:
+        payload["suppressions"] = sorted(unit.suppressions)
     if include_source:
         lines, omitted = unit.source_lines(source_lines)
         payload["source"] = "\n".join(lines)

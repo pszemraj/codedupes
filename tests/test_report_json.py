@@ -97,6 +97,24 @@ def _referenced_ids(payload: dict) -> set[str]:
     return ids
 
 
+def test_unit_to_dict_suppressions_is_opt_in(tmp_path):
+    """``suppressions`` is omitted for a unit with none, sorted when present."""
+    plain = _unit(tmp_path, "plain")
+    marked = CodeUnit(
+        name="marked",
+        qualified_name="mod.marked",
+        unit_type=CodeUnitType.FUNCTION,
+        file_path=tmp_path / "a.py",
+        lineno=1,
+        end_lineno=2,
+        source="def marked():\n    return 1\n",
+        suppressions=frozenset({"duplicates", "unused"}),
+    )
+
+    assert "suppressions" not in unit_to_dict(plain)
+    assert unit_to_dict(marked)["suppressions"] == ["duplicates", "unused"]
+
+
 def test_check_json_v4_ids_resolve_and_have_no_orphans(tmp_path):
     result = _result(tmp_path)
 

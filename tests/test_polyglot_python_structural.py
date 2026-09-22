@@ -610,3 +610,160 @@ def test_python_statement_counts_follow_ast_stmt_semantics(
     outer = min(result.units, key=lambda unit: unit.start_byte)
 
     assert outer.statement_count == expected_count
+
+
+def test_python_directive_attachment(tmp_path: Path) -> None:
+    """``codedupes: ignore`` attaches by grammar position, never by textual proximity."""
+    trailing_on_def = python_units(
+        tmp_path,
+        """
+        def f():  # codedupes: ignore
+            return 1
+        """,
+        filename="trailing_on_def.py",
+    )
+    assert trailing_on_def["trailing_on_def.f"].suppressions == {"unused", "duplicates"}
+
+    on_decorator_line = python_units(
+        tmp_path,
+        """
+        def _decorate(fn):
+            return fn
+
+        @_decorate  # codedupes: ignore
+        def f():
+            return 1
+        """,
+        filename="on_decorator_line.py",
+    )
+    assert on_decorator_line["on_decorator_line.f"].suppressions == {"unused", "duplicates"}
+
+    between_decorators = python_units(
+        tmp_path,
+        """
+        def _decorate(fn):
+            return fn
+
+        @_decorate
+        # codedupes: ignore
+        @_decorate
+        def f():
+            return 1
+        """,
+        filename="between_decorators.py",
+    )
+    assert between_decorators["between_decorators.f"].suppressions == {"unused", "duplicates"}
+
+    block_above_decorators = python_units(
+        tmp_path,
+        """
+        def _decorate(fn):
+            return fn
+
+        # codedupes: ignore
+        @_decorate
+        def f():
+            return 1
+        """,
+        filename="block_above_decorators.py",
+    )
+    assert block_above_decorators["block_above_decorators.f"].suppressions == {
+        "unused",
+        "duplicates",
+    }
+
+    above_first_method = python_units(
+        tmp_path,
+        """
+        class C:
+            # codedupes: ignore
+            def m(self):
+                return 1
+        """,
+        filename="above_first_method.py",
+    )
+    assert above_first_method["above_first_method.C"].suppressions == set()
+    assert above_first_method["above_first_method.C.m"].suppressions == {"unused", "duplicates"}
+
+    nested_inner = python_units(
+        tmp_path,
+        """
+        def outer():
+            # codedupes: ignore
+            def inner():
+                return 1
+            return inner
+        """,
+        filename="nested_inner.py",
+    )
+    assert nested_inner["nested_inner.outer"].suppressions == set()
+    assert nested_inner["nested_inner.outer.inner"].suppressions == {"unused", "duplicates"}
+
+    class_directive = python_units(
+        tmp_path,
+        """
+        # codedupes: ignore
+        class C:
+            def m(self):
+                return 1
+        """,
+        filename="class_directive.py",
+    )
+    assert class_directive["class_directive.C"].suppressions == {"unused", "duplicates"}
+    assert class_directive["class_directive.C.m"].suppressions == {"unused", "duplicates"}
+
+    string_marker = python_units(
+        tmp_path,
+        """
+        def f():
+            "# codedupes: ignore"
+            return 1
+        """,
+        filename="string_marker.py",
+    )
+    assert string_marker["string_marker.f"].suppressions == set()
+
+    docstring_marker = python_units(
+        tmp_path,
+        '''
+        def f():
+            """codedupes: ignore"""
+            return 1
+        ''',
+        filename="docstring_marker.py",
+    )
+    assert docstring_marker["docstring_marker.f"].suppressions == set()
+
+    trailing_assignment = python_units(
+        tmp_path,
+        """
+        x = 1  # codedupes: ignore
+        def f():
+            return 1
+        """,
+        filename="trailing_assignment.py",
+    )
+    assert trailing_assignment["trailing_assignment.f"].suppressions == set()
+
+    blank_line_breaks = python_units(
+        tmp_path,
+        """
+        # codedupes: ignore
+
+        def f():
+            return 1
+        """,
+        filename="blank_line_breaks.py",
+    )
+    assert blank_line_breaks["blank_line_breaks.f"].suppressions == set()
+
+    unknown_kind_result = python_result(
+        tmp_path,
+        """
+        def f():  # codedupes: ignore[bogus]
+            return 1
+        """,
+        filename="unknown_kind.py",
+    )
+    assert unknown_kind_result.units[0].suppressions == set()
+    assert [d.code for d in unknown_kind_result.diagnostics] == ["suppression-syntax"]

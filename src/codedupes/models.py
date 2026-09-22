@@ -87,6 +87,10 @@ class CodeUnit:
     is_dunder: bool = False
     is_exported: bool = False
 
+    # ``codedupes: ignore[...]`` directives attached to this unit, including
+    # any inherited from an enclosing unit's own directive.
+    suppressions: frozenset[str] = field(default_factory=frozenset)
+
     @property
     def uid(self) -> str:
         """Build an in-run unique identifier for this code unit.

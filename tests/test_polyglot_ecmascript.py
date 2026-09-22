@@ -511,3 +511,53 @@ def test_tsx_and_unicode_use_exact_byte_slices(tmp_path: Path) -> None:
     assert card.dialect == "tsx"
     assert source_bytes[card.start_byte : card.end_byte].decode("utf-8") == card.source
     assert "<section>" in card.source
+
+
+def test_javascript_suppression_directive_attachment(tmp_path: Path) -> None:
+    """``codedupes: ignore`` attaches through JS's comment forms and export wrapping."""
+    [leading_line] = extract(
+        tmp_path,
+        "leading_line.js",
+        """
+        // codedupes: ignore
+        function foo() {
+          return 1;
+        }
+        """,
+    )
+    assert leading_line.suppressions == {"unused", "duplicates"}
+
+    [leading_block] = extract(
+        tmp_path,
+        "leading_block.js",
+        """
+        /* codedupes: ignore */
+        function foo() {
+          return 1;
+        }
+        """,
+    )
+    assert leading_block.suppressions == {"unused", "duplicates"}
+
+    [trailing_brace] = extract(
+        tmp_path,
+        "trailing_brace.js",
+        """
+        function foo() {  // codedupes: ignore
+          return 1;
+        }
+        """,
+    )
+    assert trailing_brace.suppressions == {"unused", "duplicates"}
+
+    [export_arrow] = extract(
+        tmp_path,
+        "export_arrow.js",
+        """
+        // codedupes: ignore
+        export const foo = () => {
+          return 1;
+        };
+        """,
+    )
+    assert export_arrow.suppressions == {"unused", "duplicates"}
