@@ -524,7 +524,7 @@ def _structural_hash(
     *,
     policy: HashPolicy = DEFAULT_HASH_POLICY,
 ) -> str:
-    """Fingerprint a subtree with local identifiers, literals, and comments normalized.
+    """Fingerprint a subtree with local identifiers, string literals, and comments normalized.
 
     :param node: Unit node to fingerprint.
     :param source: Full file source bytes.

@@ -63,6 +63,28 @@ def test_exact_duplicates_via_structural_hash(tmp_path: Path) -> None:
     assert methods == {"structural_hash"}
 
 
+def test_token_identical_copies_are_labelled_token_hash(tmp_path: Path) -> None:
+    """A pair exact under both fingerprints is labelled token_hash, the strongest one every pair shares."""
+    source = dedent(
+        """
+        def helper(a, b):
+            return a + b
+
+
+        def helper(a, b):
+            return a + b
+        """
+    ).strip()
+    units = extract_units(tmp_path, source, include_private=True)
+
+    exact, near = run_traditional_analysis(units, jaccard_threshold=0.85)
+
+    assert len(exact) == 1
+    assert len(near) == 0
+    methods = {pair.method for pair in exact}
+    assert methods == {"token_hash"}
+
+
 @pytest.mark.parametrize("index", ["key", "start:stop", "(key,)"])
 def test_singleton_tuple_subscripts_are_not_exact_duplicates(tmp_path: Path, index: str) -> None:
     """A comma wraps a single index in a tuple, including slices and tuple-valued keys."""

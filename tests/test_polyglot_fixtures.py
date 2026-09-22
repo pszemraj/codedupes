@@ -46,7 +46,7 @@ def test_python_fixture_roots_compile(relative_root: str) -> None:
 def test_equal_token_hashes_imply_equal_structural_hashes_on_fixtures(
     relative_root: str, language: str, expects_token_group: bool
 ) -> None:
-    """Report families label a token-identical group ``token_hash``; that label is only meaningful while token equality never crosses a structural boundary.
+    """Report families label a token-identical group ``token_hash`` only when its clique exactly matches its structural component; that identity holds only while token equality never crosses a structural boundary.
 
     This is a corpus regression check, not a backend theorem: Python
     indentation changes the tree without changing the token stream, so a

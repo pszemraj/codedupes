@@ -87,8 +87,8 @@ class ExactFamily:
 
     ``method`` is the strongest fingerprint every member shares: ``token_hash``
     members are token-for-token identical (comments and whitespace aside),
-    while ``structural_hash`` members match only after identifier and literal
-    normalization.
+    while ``structural_hash`` members match only after identifier and
+    string-literal normalization.
     """
 
     members: tuple[CodeUnit, ...]
@@ -337,14 +337,20 @@ def build_exact_families(
 ) -> list[ExactFamily]:
     """Group exact edges into families, ranked by the lines a consolidation removes.
 
-    Structural edges are unioned first; the remaining token-only edges form
-    their own families. Token equality is finer than structural equality in
-    every backend except for tree-shape changes the token stream cannot see
-    (Python indentation), which is why the two fingerprints are grouped
-    separately instead of assuming one implies the other. A structural family
-    whose members all share one token fingerprint is labelled ``token_hash``,
-    the strongest relation that holds. Non-exact edges and self-edges are
-    ignored.
+    Structural and token edges are unioned into components separately: token
+    equality is normally finer than structural equality, but Python
+    indentation can change the parse tree without changing the token stream,
+    so a token edge does not always sit inside the structural component it
+    would usually imply, and the two fingerprints cannot be assumed to nest.
+    A structural component is labelled ``token_hash`` only when every one of
+    its members also shares one token fingerprint (its uid set exactly
+    matches a token component); otherwise it is ``structural_hash``, the
+    strongest fingerprint every member shares — a token clique with a
+    renamed relative folds into the larger structural family instead of
+    keeping its own record. A token component already covered by a
+    structural family (its uid set is a subset of one) contributes nothing
+    further; any token component left over forms its own ``token_hash``
+    family. Non-exact edges and self-edges are ignored.
 
     :param edges: Duplicate pairs; only exact edges contribute.
     :return: Families ordered by ``redundant_lines`` descending, then first member position.
@@ -356,17 +362,19 @@ def build_exact_families(
             continue
         by_method[method].append((pair.unit_a, pair.unit_b))
 
+    structural_components = _connected_components(by_method["structural_hash"])
+    token_components = _connected_components(by_method["token_hash"])
+    structural_uid_sets = [frozenset(unit.uid for unit in c) for c in structural_components]
+    token_uid_sets = [frozenset(unit.uid for unit in c) for c in token_components]
+
     families: list[ExactFamily] = []
-    for component in _connected_components(by_method["structural_hash"]):
+    for component, uids in zip(structural_components, structural_uid_sets, strict=True):
         members = tuple(sorted(component, key=unit_sort_key))
-        token_hashes = {unit.token_hash for unit in members}
-        method: ExactMethod = (
-            "token_hash"
-            if len(token_hashes) == 1 and None not in token_hashes
-            else "structural_hash"
-        )
+        method: ExactMethod = "token_hash" if uids in token_uid_sets else "structural_hash"
         families.append(ExactFamily(members=members, method=method))
-    for component in _connected_components(by_method["token_hash"]):
+    for component, uids in zip(token_components, token_uid_sets, strict=True):
+        if any(uids <= structural_uids for structural_uids in structural_uid_sets):
+            continue
         members = tuple(sorted(component, key=unit_sort_key))
         families.append(ExactFamily(members=members, method="token_hash"))
     families.sort(key=lambda family: (-family.redundant_lines, unit_sort_key(family.members[0])))

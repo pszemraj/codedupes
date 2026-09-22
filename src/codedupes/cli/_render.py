@@ -488,7 +488,8 @@ def print_exact_families(
     _output.console.print(f"\n[bold yellow]Exact Duplicate Families[/bold yellow] ({counts})")
     _output.console.print(
         "[dim]Each row is one set of mutually identical units; token_hash members are "
-        "token-for-token copies, structural_hash members differ only in names or literals.[/dim]"
+        "token-for-token copies, structural_hash members differ only in names or "
+        "string literals.[/dim]"
     )
     compact = _output.console.width < 120
     table = _build_families_table(compact=compact)

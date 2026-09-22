@@ -349,8 +349,8 @@ def _synthesize_hybrid_duplicates(
     for duplicate in traditional_duplicates:
         entry = ensure_entry(duplicate.unit_a, duplicate.unit_b)
         if duplicate.method in {"structural_hash", "token_hash"}:
-            # The traditional list is deduped structural-first, so a pair that
-            # is exact under both fingerprints arrives labelled structural.
+            # The traditional list is deduped token-first, so a pair that
+            # is exact under both fingerprints arrives labelled token_hash.
             if entry["exact_method"] is None:
                 entry["exact_method"] = duplicate.method
         elif duplicate.method == "jaccard":
@@ -371,7 +371,6 @@ def _synthesize_hybrid_duplicates(
         unit_a = entry["unit_a"]  # type: ignore[assignment]
         unit_b = entry["unit_b"]  # type: ignore[assignment]
         exact_method = entry["exact_method"]  # type: ignore[assignment]
-        has_exact = exact_method is not None
         jaccard_sim = entry["jaccard_similarity"]  # type: ignore[assignment]
         semantic_sim = entry["semantic_similarity"]  # type: ignore[assignment]
 
@@ -393,7 +392,7 @@ def _synthesize_hybrid_duplicates(
         # sibling at every similarity (the gap is 0.05 + 0.10 * semantic).
         # traditional_near and hybrid_confirmed also reach 1.0 at perfect
         # scores, so the final sort leads with the tier, not the score.
-        if has_exact:
+        if exact_method is not None:
             tier = "exact"
             score = 1.0
         elif jaccard_sim is not None and jaccard_sim >= jaccard_threshold:
@@ -431,7 +430,6 @@ def _synthesize_hybrid_duplicates(
                 unit_b=unit_b,
                 tier=tier,  # type: ignore[arg-type]
                 score=float(score),
-                has_exact=has_exact,
                 exact_method=exact_method,
                 jaccard_similarity=jaccard_sim,
                 semantic_similarity=semantic_sim,

@@ -63,7 +63,7 @@ def _result(tmp_path: Path) -> AnalysisResult:
         traditional_duplicates=[DuplicatePair(a, b, 1.0, "structural_hash")],
         semantic_duplicates=[DuplicatePair(b, c, 0.9, "semantic")],
         hybrid_duplicates=[
-            HybridDuplicate(a, b, "exact", 1.0, has_exact=True, exact_method="structural_hash"),
+            HybridDuplicate(a, b, "exact", 1.0, exact_method="structural_hash"),
             HybridDuplicate(b, c, "semantic_review", 0.8, semantic_similarity=0.9),
         ],
         potentially_unused=[orphan],
@@ -310,7 +310,7 @@ def _family_result(
     near_a = _unit(tmp_path, "near_a", file="n.py", start_byte=0)
     near_b = _unit(tmp_path, "near_b", file="n.py", start_byte=40)
     hybrid = [
-        HybridDuplicate(members[i], members[j], "exact", 1.0, has_exact=True, exact_method=method)
+        HybridDuplicate(members[i], members[j], "exact", 1.0, exact_method=method)
         for i in range(copies)
         for j in range(i + 1, copies)
     ]
@@ -360,7 +360,7 @@ def test_check_json_family_cap_counts_and_truncated_by_tier_exact(tmp_path):
     small_a = _unit(tmp_path, "small_a", file="s.py", start_byte=0)
     small_b = _unit(tmp_path, "small_b", file="s.py", start_byte=40)
     result.units.extend([small_a, small_b])
-    result.hybrid_duplicates.append(HybridDuplicate(small_a, small_b, "exact", 1.0, has_exact=True))
+    result.hybrid_duplicates.append(HybridDuplicate(small_a, small_b, "exact", 1.0))
 
     payload = _payload(result, ReportPolicy(max_duplicates=1))
     summary = payload["summary"]

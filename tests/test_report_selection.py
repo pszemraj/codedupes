@@ -556,59 +556,85 @@ def test_report_policy_rejects_a_cap_that_emits_nothing(cap):
         ReportPolicy(max_unused=cap)
 
 
-def test_build_exact_families_unions_per_method_and_labels_the_strongest_fingerprint(tmp_path):
-    # Three structural-labelled edges over a copy-pasted trio (a clique from the
-    # analyzer), one renamed pair, one token-only pair, and a self-edge.
-    copies = [
-        _unit(tmp_path, f"copy{i}", file=f"m{i}.py", structural_hash="s1", token_hash="t1")
-        for i in range(3)
+def test_build_exact_families_folds_token_cliques_into_their_structural_family(tmp_path):
+    # A token clique with no structural edge among its members: its own
+    # token_hash family.
+    clique = [_unit(tmp_path, f"clique{i}", file=f"clique{i}.py") for i in range(3)]
+    clique_edges = [
+        DuplicatePair(clique[0], clique[1], 1.0, "token_hash"),
+        DuplicatePair(clique[1], clique[2], 1.0, "token_hash"),
     ]
-    renamed_a = _unit(tmp_path, "renamed_a", start_byte=100, structural_hash="s2", token_hash="t2")
-    renamed_b = _unit(tmp_path, "renamed_b", start_byte=200, structural_hash="s2", token_hash="t3")
-    indent_a = _unit(tmp_path, "indent_a", start_byte=300, structural_hash="s4", token_hash="t4")
-    indent_b = _unit(tmp_path, "indent_b", start_byte=400, structural_hash="s5", token_hash="t4")
-    edges = [
-        DuplicatePair(copies[0], copies[1], 1.0, "structural_hash"),
-        DuplicatePair(copies[1], copies[2], 1.0, "structural_hash"),
-        DuplicatePair(copies[0], copies[2], 1.0, "structural_hash"),
-        DuplicatePair(renamed_a, renamed_b, 1.0, "structural_hash"),
-        DuplicatePair(indent_a, indent_b, 1.0, "token_hash"),
+
+    # A renamed pair is structural-only: its own structural_hash family.
+    renamed_a = _unit(tmp_path, "renamed_a", file="renamed.py", start_byte=0)
+    renamed_b = _unit(tmp_path, "renamed_b", file="renamed.py", start_byte=100)
+    renamed_edge = DuplicatePair(renamed_a, renamed_b, 1.0, "structural_hash")
+
+    # An indentation pair is token-only with no structural counterpart at
+    # all: its own token_hash family, same as an isolated token clique.
+    indent_a = _unit(tmp_path, "indent_a", file="indent.py", start_byte=0)
+    indent_b = _unit(tmp_path, "indent_b", file="indent.py", start_byte=100)
+    indent_edge = DuplicatePair(indent_a, indent_b, 1.0, "token_hash")
+
+    # Token-identical twins plus a structurally-equal (renamed) cousin: the
+    # token clique's uid set is a subset of the larger structural component,
+    # so it folds in instead of keeping its own record, and the family is
+    # structural_hash because not every member shares a token fingerprint.
+    twin_a = _unit(tmp_path, "twin_a", file="nested.py", start_byte=0)
+    twin_b = _unit(tmp_path, "twin_b", file="nested.py", start_byte=100)
+    cousin = _unit(tmp_path, "cousin", file="nested.py", start_byte=200)
+    nested_edges = [
+        DuplicatePair(twin_a, twin_b, 1.0, "token_hash"),
+        DuplicatePair(twin_a, cousin, 1.0, "structural_hash"),
+        DuplicatePair(twin_b, cousin, 1.0, "structural_hash"),
+    ]
+
+    # A token edge and a structural edge sharing one endpoint but not the
+    # other stay two families: Python indentation can make X and Y
+    # token-equal without making them structurally equal, so the token
+    # component need not nest inside the structural component its shared
+    # member also belongs to.
+    chain_x = _unit(tmp_path, "chain_x", file="chain.py", start_byte=0)
+    chain_y = _unit(tmp_path, "chain_y", file="chain.py", start_byte=100)
+    chain_z = _unit(tmp_path, "chain_z", file="chain.py", start_byte=200)
+    chain_edges = [
+        DuplicatePair(chain_x, chain_y, 1.0, "token_hash"),
+        DuplicatePair(chain_y, chain_z, 1.0, "structural_hash"),
+    ]
+
+    # A self-edge and a jaccard (non-exact) edge never contribute a family.
+    ignored_edges = [
         DuplicatePair(renamed_a, renamed_a, 1.0, "structural_hash"),
-        DuplicatePair(copies[0], renamed_a, 0.9, "jaccard"),
+        DuplicatePair(clique[0], indent_a, 0.9, "jaccard"),
     ]
 
-    families = build_exact_families(edges)
-
-    assert _family_names(families) == [
-        ["copy0", "copy1", "copy2"],
-        ["renamed_a", "renamed_b"],
-        ["indent_a", "indent_b"],
-    ]
-    assert [family.method for family in families] == [
-        "token_hash",
-        "structural_hash",
-        "token_hash",
-    ]
-    assert [family.pair_count for family in families] == [3, 1, 1]
-    assert [family.redundant_lines for family in families] == [4, 2, 2]
-
-    # Hybrid exact edges group the same way, keyed on the recorded method; a
-    # hand-built hybrid without one counts as structural.
-    hybrid = build_exact_families(
+    families = build_exact_families(
         [
-            HybridDuplicate(copies[0], copies[1], "exact", 1.0, exact_method="structural_hash"),
-            HybridDuplicate(indent_a, indent_b, "exact", 1.0, exact_method="token_hash"),
-            HybridDuplicate(renamed_a, renamed_b, "exact", 1.0),
-            _hybrid(renamed_a, indent_a, "semantic_review"),
+            *clique_edges,
+            renamed_edge,
+            indent_edge,
+            *nested_edges,
+            *chain_edges,
+            *ignored_edges,
         ]
     )
-    # Equal redundant lines fall back to the first member's position (a.py first).
-    assert _family_names(hybrid) == [
-        ["renamed_a", "renamed_b"],
-        ["indent_a", "indent_b"],
-        ["copy0", "copy1"],
-    ]
-    assert [family.method for family in hybrid] == ["structural_hash", "token_hash", "token_hash"]
+
+    by_members = {
+        tuple(sorted(unit.name for unit in family.members)): family.method for family in families
+    }
+    assert by_members == {
+        ("clique0", "clique1", "clique2"): "token_hash",
+        ("renamed_a", "renamed_b"): "structural_hash",
+        ("indent_a", "indent_b"): "token_hash",
+        ("cousin", "twin_a", "twin_b"): "structural_hash",
+        ("chain_x", "chain_y"): "token_hash",
+        ("chain_y", "chain_z"): "structural_hash",
+    }
+
+    # A hand-built hybrid exact edge with no recorded exact_method counts as
+    # structural, the strongest fingerprint it can be assumed to share.
+    hybrid = build_exact_families([HybridDuplicate(renamed_a, renamed_b, "exact", 1.0)])
+    assert [family.method for family in hybrid] == ["structural_hash"]
 
 
 def test_families_rank_first_by_redundant_lines_then_position(tmp_path):

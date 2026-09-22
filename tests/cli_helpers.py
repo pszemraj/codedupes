@@ -44,7 +44,6 @@ def build_result(tmp_path: Path) -> AnalysisResult:
         unit_b=copy,
         tier="exact",
         score=1.0,
-        has_exact=True,
         exact_method="structural_hash",
     )
 

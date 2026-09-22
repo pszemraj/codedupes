@@ -417,9 +417,7 @@ def _build_family_result(tmp_path: Path) -> AnalysisResult:
         tmp_path, name="review", source="def review():\n    return 4", lineno=28
     )
     hybrid = [
-        HybridDuplicate(
-            copies[i], copies[j], "exact", 1.0, has_exact=True, exact_method="token_hash"
-        )
+        HybridDuplicate(copies[i], copies[j], "exact", 1.0, exact_method="token_hash")
         for i in range(3)
         for j in range(i + 1, 3)
     ]

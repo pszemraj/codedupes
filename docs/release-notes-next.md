@@ -21,6 +21,7 @@
 - Unpinned Hub models use concrete locally resolved commits for cache identity by default. `--loose-revision-cache` opts into label-keyed warm hits that may remain stale after an upstream branch move.
 - Runtime dependency minimums changed; use the [installation requirements](install.md). The C2LLM profile and DeepSpeed-only `gpu` extra were removed. Replace `semantic_profiles.resolve_model_name()` with `resolve_model_profile(...).canonical_name`.
 - Source archives without VCS metadata build as `0.0.0+unknown`; tagged Git builds retain VCS-derived versions. Source distributions use an explicit file allowlist.
+- A pair exact under both fingerprints is now labelled `token_hash` (previously `structural_hash`, since traditional deduplication preferred it), and `exact_families` folds a token clique into its containing `structural_hash` family instead of double-reporting it. `HybridDuplicate.has_exact` was removed; use `exact_method is not None` or the family's `method`.
 
 ## Detection and extraction
 
