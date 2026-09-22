@@ -4,16 +4,21 @@ from __future__ import annotations
 
 import json
 from collections import Counter
+from collections.abc import Sequence
 from dataclasses import asdict
 from typing import Any
 
 from codedupes.models import (
+    AnalysisChecks,
+    CheckRecord,
     CodeUnit,
     DuplicatePair,
     ExtractionDiagnostic,
     HybridDuplicate,
+    RunRecord,
+    derive_checks,
 )
-from codedupes.semantic import EmbeddingRunStats
+from codedupes.semantic import EmbeddingRunStats, QueryExecution
 
 from .selection import (
     ExactFamily,
@@ -60,6 +65,97 @@ def _diagnostic_to_dict(diagnostic: ExtractionDiagnostic) -> dict[str, Any]:
         "message": diagnostic.message,
         "line": diagnostic.lineno,
         "end_line": diagnostic.end_lineno,
+    }
+
+
+def _check_record_to_dict(check: CheckRecord) -> dict[str, Any]:
+    """Convert one derived check record to a JSON-safe mapping.
+
+    :param check: Derived check status.
+    :return: Serialized check fields.
+    """
+    return {
+        "status": check.status,
+        "files": check.files,
+        "files_failed": check.files_failed,
+        "diagnostics": check.diagnostics,
+    }
+
+
+def _run_to_dict(run: RunRecord, checks: AnalysisChecks) -> dict[str, Any]:
+    """Serialize a resolved run record and its derived per-check status.
+
+    Built explicitly rather than via :func:`dataclasses.asdict` so paths
+    render as strings and mappings sort deterministically.
+
+    :param run: Resolved run record.
+    :param checks: Per-check status derived from ``run`` and this run's diagnostics.
+    :return: Serialized run block.
+    """
+    return {
+        "tool_version": run.tool_version,
+        "root": str(run.root),
+        "target": str(run.target),
+        "languages": list(run.languages) if run.languages is not None else None,
+        "exclude_patterns": list(run.exclude_patterns),
+        "respect_gitignore": run.respect_gitignore,
+        "include_private": run.include_private,
+        "include_stubs": run.include_stubs,
+        "extracted_files": run.extracted_files,
+        "units": {
+            "extracted": run.units.extracted,
+            "semantic_eligible": run.units.semantic_eligible,
+        },
+        "traditional": (
+            None
+            if run.traditional is None
+            else {
+                "jaccard_threshold": run.traditional.jaccard_threshold,
+                "tiny_filter": run.traditional.tiny_filter,
+                "tiny_cutoff": run.traditional.tiny_cutoff,
+            }
+        ),
+        "semantic": (
+            None
+            if run.semantic is None
+            else {
+                "requested_model": run.semantic.requested_model,
+                "model": run.semantic.model,
+                "revision": run.semantic.revision,
+                "profile": run.semantic.profile,
+                "threshold_profile": run.semantic.threshold_profile,
+                "task": run.semantic.task,
+                "device": run.semantic.device,
+                "execution_device": run.semantic.execution_device,
+                "thresholds": dict(sorted(run.semantic.thresholds.items())),
+                "threshold_floor": run.semantic.threshold_floor,
+                "min_statements": run.semantic.min_statements,
+                "unit_types": list(run.semantic.unit_types),
+                "cross_language": run.semantic.cross_language,
+                "hybrid_split": (
+                    None
+                    if run.semantic.hybrid_split is None
+                    else {
+                        "weak_identifier_jaccard_min": (
+                            run.semantic.hybrid_split.weak_identifier_jaccard_min
+                        ),
+                        "statement_ratio_min": run.semantic.hybrid_split.statement_ratio_min,
+                        "promotion_gates": dict(
+                            sorted(run.semantic.hybrid_split.promotion_gates.items())
+                        ),
+                    }
+                ),
+            }
+        ),
+        "unused": (
+            None if run.unused is None else {"strict": run.unused.strict, "files": run.unused.files}
+        ),
+        "checks": {
+            "extraction": _check_record_to_dict(checks.extraction),
+            "traditional": _check_record_to_dict(checks.traditional),
+            "semantic": _check_record_to_dict(checks.semantic),
+            "unused": _check_record_to_dict(checks.unused),
+        },
     }
 
 
@@ -202,6 +298,8 @@ def check_result_to_json(
     output: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
         "analysis_mode": result.analysis_mode,
+        "analysis_status": result.analysis_status,
+        "run": _run_to_dict(result.run, result.checks),
         "summary": {
             "total_units": len(result.units),
             "units_by_language": _language_counts(result.units),
@@ -224,8 +322,6 @@ def check_result_to_json(
             "raw_semantic_duplicates": len(result.semantic_duplicates),
             "semantic_fallback": result.semantic_fallback,
             "semantic_fallback_reason": result.semantic_fallback_reason,
-            "extraction_diagnostics": len(result.extraction_diagnostics),
-            "semantic_diagnostics": len(result.semantic_diagnostics),
             "unused_supported_languages": list(result.unused_supported_languages),
             "unused_excluded_units": result.unused_excluded_units,
             "suppressed_duplicates": result.suppressed_duplicates,
@@ -265,15 +361,26 @@ def check_result_to_json(
     return output
 
 
+def _query_execution_to_dict(execution: QueryExecution) -> dict[str, Any]:
+    """Serialize one query-vector provenance record.
+
+    :param execution: Provenance for a single query embedding.
+    :return: JSON-safe mapping.
+    """
+    return {"execution_device": execution.execution_device, "cache_hit": execution.cache_hit}
+
+
 def search_result_to_json(
     query: str,
     results: list[tuple[CodeUnit, float]],
     indexed_units: int,
     embedding_stats: EmbeddingRunStats | None,
     *,
+    run: RunRecord,
     extraction_diagnostics: list[ExtractionDiagnostic],
     semantic_diagnostics: list[ExtractionDiagnostic],
     file_results: list[FileSearchResult] | None = None,
+    query_execution: Sequence[QueryExecution] = (),
 ) -> dict[str, Any]:
     """Serialize semantic search results using normalized unit references.
 
@@ -281,11 +388,24 @@ def search_result_to_json(
     :param results: Ranked unit and score pairs.
     :param indexed_units: Number of indexed corpus units.
     :param embedding_stats: Optional indexing telemetry.
+    :param run: Resolved run record for this search's index build.
     :param extraction_diagnostics: Diagnostics from corpus extraction.
     :param semantic_diagnostics: Warnings from semantic indexing.
     :param file_results: Ranked file results, or ``None`` for unit-level output.
+    :param query_execution: Provenance for every query vector this search resolved.
     :return: Search payload.
     """
+    # ``indexed_units`` is the search corpus after semantic-eligibility
+    # filtering; the extraction check needs the pre-filter total so an empty
+    # index from eligibility rules is not mistaken for a failed extraction.
+    checks = derive_checks(
+        run,
+        extracted_units=run.units.extracted,
+        extraction_diagnostics=extraction_diagnostics,
+        semantic_fallback=False,
+        semantic_diagnostics=semantic_diagnostics,
+        unused_diagnostics=[],
+    )
     if file_results is None:
         referenced = collect_units(unit for unit, _ in results)
         ids = assign_unit_ids(referenced)
@@ -309,10 +429,14 @@ def search_result_to_json(
     payload = {
         "schema_version": SCHEMA_VERSION,
         "query": query,
+        "analysis_status": checks.analysis_status,
+        "run": _run_to_dict(run, checks),
         "summary": {
             "indexed_units": indexed_units,
+            "extracted_units": run.units.extracted,
             "results": len(serialized_results),
             "embeddings": _embedding_stats_to_dict(embedding_stats),
+            "query_execution": [_query_execution_to_dict(item) for item in query_execution],
         },
         "results": serialized_results,
         "units": _unit_nodes(referenced, ids),

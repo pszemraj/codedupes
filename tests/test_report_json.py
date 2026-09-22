@@ -14,7 +14,9 @@ from codedupes.models import (
     CodeUnit,
     CodeUnitType,
     DuplicatePair,
+    ExtractionDiagnostic,
     HybridDuplicate,
+    UnitCounts,
 )
 from codedupes.report.json import (
     SCHEMA_VERSION,
@@ -29,6 +31,7 @@ from codedupes.report.selection import (
     group_file_results,
     select_findings,
 )
+from codedupes.semantic import QueryExecution
 from tests.conftest import make_run_record
 
 _ID = re.compile(r"^u\d+$")
@@ -451,6 +454,54 @@ def test_check_json_show_all_raw_edges_use_short_ids(tmp_path):
     assert payload["semantic_duplicates"][0]["unit_b"] == "u0"
 
 
+def test_check_json_run_block_and_analysis_status(tmp_path):
+    result = _result(tmp_path)
+    payload = _payload(result)
+
+    assert payload["analysis_status"] == "complete"
+    run = payload["run"]
+    assert run["tool_version"]
+    assert run["root"] == str(tmp_path)
+    assert run["target"] == str(tmp_path)
+    assert run["checks"] == {
+        "extraction": {"status": "completed", "files": 0, "files_failed": 0, "diagnostics": 0},
+        "traditional": {"status": "completed", "files": None, "files_failed": 0, "diagnostics": 0},
+        "semantic": {"status": "completed", "files": None, "files_failed": 0, "diagnostics": 0},
+        "unused": {"status": "completed", "files": 0, "files_failed": 0, "diagnostics": 0},
+    }
+    assert "extraction_diagnostics" not in payload["summary"]
+    assert "semantic_diagnostics" not in payload["summary"]
+    assert payload["extraction_diagnostics"] == []
+
+
+def test_check_json_run_checks_count_diagnostics(tmp_path):
+    unit = _unit(tmp_path, "a")
+    diagnostic = ExtractionDiagnostic(
+        file_path=unit.file_path,
+        language="python",
+        message="ERROR node in parse tree",
+        code="partial-parse",
+    )
+    result = AnalysisResult(
+        units=[unit],
+        traditional_duplicates=[],
+        semantic_duplicates=[],
+        hybrid_duplicates=[],
+        potentially_unused=[],
+        run=make_run_record(tmp_path, mode="combined", extracted_files=1),
+        extraction_diagnostics=[diagnostic],
+    )
+    payload = _payload(result, fail_on="none", exit_code=0)
+
+    assert payload["run"]["checks"]["extraction"] == {
+        "status": "partial",
+        "files": 1,
+        "files_failed": 1,
+        "diagnostics": 1,
+    }
+    assert payload["analysis_status"] == "partial"
+
+
 def test_unit_to_dict_source_is_opt_in_and_bounded(tmp_path):
     unit = _unit(tmp_path, "a")
 
@@ -472,20 +523,48 @@ def test_search_json_v4_unit_and_file_levels(tmp_path):
     b = _unit(tmp_path, "b", file="a.py", start_byte=40)
     c = _unit(tmp_path, "c", file="b.py", start_byte=0)
     hits = [(c, 0.95), (a, 0.9), (b, 0.8)]
+    run = make_run_record(
+        tmp_path,
+        mode="semantic",
+        extracted_files=3,
+        units=UnitCounts(extracted=3, semantic_eligible=2),
+    )
+    query_execution = [QueryExecution(execution_device="cpu", cache_hit=True)]
 
     unit_level = search_result_to_json(
-        "q", hits, 3, None, extraction_diagnostics=[], semantic_diagnostics=[]
+        "q",
+        hits,
+        3,
+        None,
+        run=run,
+        extraction_diagnostics=[],
+        semantic_diagnostics=[],
+        query_execution=query_execution,
     )
     assert unit_level["schema_version"] == 4
     assert [hit["unit"] for hit in unit_level["results"]] == ["u2", "u0", "u1"]
     assert unit_level["units"]["u2"]["uid"] == c.uid
     assert set(unit_level["units"]) == {"u0", "u1", "u2"}
+    assert unit_level["analysis_status"] == "complete"
+    assert unit_level["run"]["checks"]["semantic"]["status"] == "completed"
+    assert unit_level["summary"]["extracted_units"] == run.units.extracted
+    assert unit_level["summary"]["query_execution"] == [
+        {"execution_device": "cpu", "cache_hit": True}
+    ]
 
     files = group_file_results(hits, top_k=1)
     file_level = search_result_to_json(
-        "q", hits, 3, None, extraction_diagnostics=[], semantic_diagnostics=[], file_results=files
+        "q",
+        hits,
+        3,
+        None,
+        run=run,
+        extraction_diagnostics=[],
+        semantic_diagnostics=[],
+        file_results=files,
     )
     assert file_level["result_level"] == "file"
     assert file_level["results"][0]["matches"] == [{"unit": "u0", "score": 0.95}]
     assert set(file_level["units"]) == {"u0"}
     assert file_level["units"]["u0"]["uid"] == c.uid
+    assert file_level["summary"]["query_execution"] == []

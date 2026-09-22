@@ -38,6 +38,26 @@ def test_cli_table_output_uses_auto_progress(monkeypatch, tmp_path):
     assert "model not loaded" in result.output
 
 
+def test_cli_check_prints_run_panel(monkeypatch, tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+    patch_cli_analyzer(
+        monkeypatch,
+        cli,
+        analyze_result=lambda: build_result(tmp_path),
+    )
+
+    result = CliRunner().invoke(cli.cli, ["check", str(path)])
+
+    run_pos = result.output.index("Run")
+    summary_pos = result.output.index("Analysis Summary")
+    assert run_pos < summary_pos
+    assert "Hybrid Duplicates" not in result.output[:summary_pos]
+    assert "Scope" in result.output
+    assert "combined" in result.output
+    assert "extraction=completed" in result.output
+
+
 def test_cli_reports_semantic_diagnostics(monkeypatch, tmp_path):
     path = tmp_path / "sample.py"
     path.write_text("def entry():\n    return 1\n")
@@ -69,7 +89,7 @@ def test_cli_reports_semantic_diagnostics(monkeypatch, tmp_path):
 
     json_result = runner.invoke(cli.cli, ["check", str(path), "--json"])
     payload = json.loads(json_result.output)
-    assert payload["summary"]["semantic_diagnostics"] == 1
+    assert payload["run"]["checks"]["semantic"]["diagnostics"] == 1
     assert payload["semantic_diagnostics"][0]["code"] == "semantic-warning"
 
 

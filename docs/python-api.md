@@ -242,7 +242,11 @@ quiet_dependency_loggers()  # or quiet_dependency_loggers(logging.ERROR)
 - `AnalysisResult.suppressed_duplicates`: traditional and semantic pairs dropped for carrying a `codedupes: ignore[duplicates]` directive on either endpoint
 - `AnalysisResult.suppressed_unused`: units carrying a `codedupes: ignore`/`codedupes: ignore[unused]` directive that would otherwise have been reported unused (same `suppressed` count `run_unused_analysis` returns on `UnusedReport`)
 - `AnalysisResult.all_duplicates`: hybrid duplicates in combined mode; raw duplicates in single-method mode
-- `AnalysisResult.analysis_mode`: `"combined"`, `"traditional"`, `"semantic"`, or `"none"`
+- `AnalysisResult.analysis_mode`: derived from `run`; `"combined"` when both traditional and semantic ran, else `"traditional"`, `"semantic"`, or `"unused"`
+- `AnalysisResult.run`: the resolved `RunRecord` this analysis actually applied — root/target, scope, per-detector settings (`traditional`, `semantic`, `unused`, each `None` when that detector did not run), and extraction/unit counts; see [the run record](output.md#run-record-and-check-status)
+- `AnalysisResult.checks`: `AnalysisChecks` derived from `run` and this result's diagnostics — one `CheckRecord(status, files, files_failed, diagnostics)` per detector, `status` one of `completed`, `partial`, `empty`, `fallback`, `disabled`
+- `AnalysisResult.analysis_status`: `checks.analysis_status` — `"complete"`, `"partial"`, or `"empty"`
+- `CodeAnalyzer.run_record`: the same `RunRecord` after the latest `index()` or `analyze()` call, or `None` before the first run
 - `AnalysisResult.embedding_stats`: [embedding telemetry](#progress-and-embedding-telemetry)
 - `CodeUnit.uid`: in-run definition identity, `<path>::<language>::<qualified name>::<start byte>` for every language; the byte position keeps overloads and redefinitions distinct
 - `CodeUnit.language`, `dialect`, and `native_kind`: canonical language, parser dialect, and grammar node kind (`function_definition`/`class_definition` for Python)
@@ -300,19 +304,22 @@ payload = search_result_to_json(
     hits,
     indexed_units,
     analyzer.embedding_stats,
+    run=analyzer.run_record,
     extraction_diagnostics=analyzer.extraction_diagnostics,
     semantic_diagnostics=analyzer.semantic_diagnostics,
     file_results=group_file_results(hits, top_k=5),
+    query_execution=analyzer.query_execution,
 )
 print(to_json_text(payload))
 ```
 
-For a unit report, set `search(query, top_k=...)` to the desired unit count and omit `file_results` from the serializer call.
+For a unit report, set `search(query, top_k=...)` to the desired unit count and omit `file_results` from the serializer call. `run` is required: it is `analyzer.run_record` after `index()` (or `analyze()`) has populated it. `query_execution` is optional and defaults to `()`; pass `analyzer.query_execution` to include per-query cache/device provenance in `summary.query_execution`. The extraction check inside `run.checks` is derived from `run.units.extracted` (the pre-filter extraction count), not from `indexed_units` (the post-eligibility-filter search corpus size), so a corpus that extraction populated but semantic eligibility filtered down to zero reports `analysis_status: "complete"` rather than `"empty"`; see [the three empty cases](output.md#search).
 
 ## Notes
 
 - `AnalyzerConfig` enforces workflow dependencies:
-  - semantic-only settings require `run_semantic=True`
+  - semantic-only settings require `run_semantic=True`, including `model_name`, `min_semantic_statements`, and `semantic_unit_types`
   - traditional-only settings require `run_traditional=True`
   - `strict_unused=True` requires `run_unused=True`
+  - at least one of `run_traditional`, `run_semantic`, `run_unused` must be `True`; a config with every detector disabled raises `ValueError` at construction
 - `device`, `mps_fallback`, and `mps_memory_fraction` require `run_semantic=True`. `embedding_cache=False` is accepted when semantic analysis is disabled and has no effect.

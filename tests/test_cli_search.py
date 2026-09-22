@@ -13,7 +13,9 @@ from codedupes import cli
 from codedupes.models import (
     AnalysisResult,
     ExtractionDiagnostic,
+    UnitCounts,
 )
+from codedupes.semantic import QueryExecution
 from tests.cli_helpers import build_result, build_unit
 from tests.conftest import make_code_unit, make_run_record, patch_cli_analyzer
 from tests.embedding_cache_helpers import CountingModel, patch_get_model
@@ -102,11 +104,14 @@ def test_cli_search_indexes_without_running_full_analysis(monkeypatch, tmp_path)
             self.extraction_diagnostics = []
             self.semantic_diagnostics = []
             self.embedding_stats = None
+            self.run_record = None
+            self.query_execution = ()
 
         def analyze(self, _path):
             raise AssertionError("search must build its corpus via index(), not analyze()")
 
         def index(self, _path):
+            self.run_record = make_run_record(path, mode="semantic")
             return 1
 
         def search(self, query, top_k=10):
@@ -155,8 +160,11 @@ def test_cli_search_file_ranking_groups_before_top_k(
             self.extraction_diagnostics = []
             self.semantic_diagnostics = []
             self.embedding_stats = None
+            self.run_record = None
+            self.query_execution = ()
 
         def index(self, path):
+            self.run_record = make_run_record(path, mode="semantic")
             return len(hits)
 
         def search(self, query, top_k=10):
@@ -267,6 +275,7 @@ def _patch_search_analyzer(
     results: list | None = None,
     index_error: Exception | None = None,
     semantic_diagnostics: list[ExtractionDiagnostic] | None = None,
+    query_execution: tuple = (),
 ) -> None:
     """Patch the CLI analyzer with a search double that controls the index size."""
 
@@ -281,13 +290,18 @@ def _patch_search_analyzer(
             self.query_execution = ()
 
         def index(self, path):
-            self.run_record = make_run_record(path, mode="semantic")
+            self.run_record = make_run_record(
+                path,
+                mode="semantic",
+                units=UnitCounts(extracted=extracted_unit_count, semantic_eligible=indexed_units),
+            )
             if index_error is not None:
                 raise index_error
             return indexed_units
 
         def search(self, query, top_k=10):
             del query, top_k
+            self.query_execution = query_execution
             return list(results or [])
 
     monkeypatch.setattr(cli, "CodeAnalyzer", StubSearchAnalyzer)
@@ -379,6 +393,54 @@ def test_cli_search_json_reports_indexed_unit_count(monkeypatch, tmp_path, index
     assert payload["summary"]["indexed_units"] == indexed_units
     assert payload["results"] == []
     assert result.stderr == ""
+
+
+def test_cli_search_json_distinguishes_the_three_empty_cases(monkeypatch, tmp_path):
+    """An empty index reads differently depending on where it went empty."""
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+
+    _patch_search_analyzer(monkeypatch, indexed_units=0, extracted_unit_count=0)
+    empty_extraction = json.loads(
+        CliRunner().invoke(cli.cli, ["search", str(path), "entry", "--json"]).stdout
+    )
+    assert empty_extraction["analysis_status"] == "empty"
+    assert empty_extraction["run"]["checks"]["extraction"]["status"] == "empty"
+
+    _patch_search_analyzer(monkeypatch, indexed_units=0, extracted_unit_count=1)
+    empty_after_filtering = json.loads(
+        CliRunner().invoke(cli.cli, ["search", str(path), "entry", "--json"]).stdout
+    )
+    assert empty_after_filtering["analysis_status"] == "complete"
+    assert empty_after_filtering["run"]["checks"]["extraction"]["status"] == "completed"
+    assert empty_after_filtering["summary"]["indexed_units"] == 0
+    assert empty_after_filtering["summary"]["extracted_units"] == 1
+
+    _patch_search_analyzer(monkeypatch, indexed_units=7, extracted_unit_count=7)
+    populated = json.loads(
+        CliRunner().invoke(cli.cli, ["search", str(path), "entry", "--json"]).stdout
+    )
+    assert populated["analysis_status"] == "complete"
+    assert populated["run"]["checks"]["extraction"]["status"] == "completed"
+
+
+def test_cli_search_json_records_query_execution(monkeypatch, tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+    _patch_search_analyzer(
+        monkeypatch,
+        indexed_units=1,
+        results=[(build_unit(tmp_path), 0.9)],
+        query_execution=(QueryExecution(execution_device="cpu", cache_hit=False),),
+    )
+
+    result = CliRunner().invoke(cli.cli, ["search", str(path), "entry", "--json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["summary"]["query_execution"] == [
+        {"execution_device": "cpu", "cache_hit": False}
+    ]
 
 
 def test_cli_search_reports_path_deleted_after_validation(monkeypatch, tmp_path):

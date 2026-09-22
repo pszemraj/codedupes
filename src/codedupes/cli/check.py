@@ -19,7 +19,7 @@ from codedupes.report.selection import (
 
 from ._options import REPORT_CAP, CheckOptions, Panel, option_panels, semantic_options
 from ._output import DEFAULT_SOURCE_LINES, _configured_cli_output, _run_cli_action
-from ._render import print_findings, print_summary
+from ._render import print_findings, print_run, print_summary
 
 
 @cli_module.cli.command(
@@ -257,6 +257,7 @@ def check_command(ctx: click.Context, path: Path, **params: Any) -> None:
                 )
             )
         else:
+            print_run(result.run, result.checks)
             print_summary(
                 selection,
                 fail_on=opts.fail_on,

@@ -47,6 +47,51 @@ codedupes check ./src --json | jq empty
 {
   "schema_version": 4,
   "analysis_mode": "combined",
+  "analysis_status": "complete",
+  "run": {
+    "tool_version": "0.9.0",
+    "root": "/repo",
+    "target": "/repo",
+    "languages": null,
+    "exclude_patterns": ["**/.git/**", "**/node_modules/**"],
+    "respect_gitignore": true,
+    "include_private": true,
+    "include_stubs": false,
+    "extracted_files": 40,
+    "units": {"extracted": 42, "semantic_eligible": 40},
+    "traditional": {
+      "jaccard_threshold": 0.85,
+      "tiny_filter": true,
+      "tiny_cutoff": 3
+    },
+    "semantic": {
+      "requested_model": "Alibaba-NLP/gte-modernbert-base",
+      "model": "Alibaba-NLP/gte-modernbert-base",
+      "revision": "abc1234",
+      "profile": "gte-modernbert",
+      "threshold_profile": "auto",
+      "task": "code-duplicate",
+      "device": "auto",
+      "execution_device": "cuda",
+      "thresholds": {"python": 0.86},
+      "threshold_floor": 0.6,
+      "min_statements": 3,
+      "unit_types": ["function", "method"],
+      "cross_language": false,
+      "hybrid_split": {
+        "weak_identifier_jaccard_min": 0.4,
+        "statement_ratio_min": 0.6,
+        "promotion_gates": {"python": 0.9}
+      }
+    },
+    "unused": {"strict": false, "files": 40},
+    "checks": {
+      "extraction": {"status": "completed", "files": 40, "files_failed": 0, "diagnostics": 0},
+      "traditional": {"status": "completed", "files": null, "files_failed": 0, "diagnostics": 0},
+      "semantic": {"status": "completed", "files": null, "files_failed": 0, "diagnostics": 0},
+      "unused": {"status": "completed", "files": 40, "files_failed": 0, "diagnostics": 0}
+    }
+  },
   "summary": {
     "total_units": 42,
     "units_by_language": {"python": 42},
@@ -80,8 +125,6 @@ codedupes check ./src --json | jq empty
     "raw_semantic_duplicates": 3,
     "semantic_fallback": false,
     "semantic_fallback_reason": null,
-    "extraction_diagnostics": 0,
-    "semantic_diagnostics": 0,
     "unused_supported_languages": ["python"],
     "unused_excluded_units": 0,
     "suppressed_duplicates": 0,
@@ -164,6 +207,14 @@ The shortened example omits `u1` through `u5` from `units`; real output includes
 
 `weak_identifier_jaccard` and `statement_count_ratio` are computed only for the two semantic-only tiers; they are `null` for traditional-near and hybrid-confirmed pairs.
 
+#### Run record and check status
+
+`run` is what this analysis actually configured and did, independent of what it found: `root` is the resolved analysis root, `target` preserves an explicit file or symlink target's own path, `exclude_patterns` is the effective exclude list after default resolution, and `units.extracted`/`units.semantic_eligible` count the corpus before and after semantic candidate filtering. `traditional`, `semantic`, and `unused` are `null` when that detector did not run and otherwise carry its resolved settings — `semantic.model`/`semantic.revision` reflect what actually loaded (falling back to the requested name/revision when no model load was needed), `semantic.execution_device` is the device the model last ran on for this analysis and is `null` when every embedding came from cache, and `semantic.hybrid_split` is `null` outside combined mode.
+
+`run.checks` derives one status per detector from `run` and this result's diagnostics, so it never needs its own storage: `extraction` is `empty` when the corpus has no units, `partial` when any file raised a scope-losing diagnostic (`read-error`, `invalid-utf8`, `partial-parse`, `unit-parse-error`, `walk-error`) and `completed` otherwise — an advisory-only diagnostic (`c-header-policy`, `semantic-context-overflow`, `suppression-syntax`) does not mark extraction partial. `traditional` and `unused` are `disabled` when that detector did not run, else `completed` (`unused` is `partial` when any file raised an unused-analysis diagnostic). `semantic` is `disabled` when it did not run, `fallback` when combined mode degraded to traditional-only results (`summary.semantic_fallback`), else `completed`. Each check record's `files`/`files_failed`/`diagnostics` count that detector's own scope; `files` is `null` for `traditional` and `semantic`, which do not have a per-file failure count.
+
+`analysis_status` (also `AnalysisChecks.analysis_status` in the Python API) summarizes `run.checks` in one value: `"empty"` when extraction produced no units, `"partial"` when extraction is `partial`, semantic fell back, or unused is `partial`, otherwise `"complete"`. A `"complete"` scan can still report zero duplicates and zero unused findings — this field is about whether every configured check ran to completion, not about what it found.
+
 #### Exact families
 
 Exact duplicates are an equivalence, not a scored pair, so the report groups them: a set of `n` mutually identical units is one `exact_families` record instead of `n(n-1)/2` `exact` edges, and `duplicates` never contains an exact edge. `members` lists the report ids in file order, `lines` is the line span of the largest member, and `redundant_lines` is `(members - 1) * lines`, the source you would delete by keeping one copy. `method` is the strongest fingerprint every member shares: `token_hash` members are token-for-token copies (comments and whitespace aside), while `structural_hash` members match only after identifier and string-literal normalization, so they may differ in names and string literals — numeric literals are not normalized, so a renamed pair still keeps the same numbers in both bodies. A token clique whose members are all also structurally equal to a renamed relative folds into that larger `structural_hash` family instead of keeping its own record; a token component that is not fully covered by a structural family (Python indentation can make units token-equal without making them structurally equal) forms its own `token_hash` family. Families are built per fingerprint from the exact edges of the complete result, so they are the same in every mode and under every cap.
@@ -176,7 +227,7 @@ Summary counts are findings, where a family counts once and every other tier cou
 
 The primary list is capped by default: families plus pairs hold at most 20 findings (`--max-duplicates`, recorded as `summary.max_duplicates`), the same findings in the same order as the terminal panels, and `units` drops units referenced only by cut findings. Because families and actionable tiers rank first, the cap trims advisory candidates before corroborated ones, and a family is one item however many copies it holds. `--max-duplicates N` changes the budget and `--max-duplicates all` removes it (`max_duplicates: null`); `--include-review`, `--show-all`, and `--full-table` also remove it unless an explicit `--max-duplicates` accompanies them. With `--include-review --max-duplicates N`, review pairs sit at the end of the ranking, so they appear only once every actionable and advisory finding fits under `N`; findings the cap cuts count as `truncated`, not `omitted_review`, and `truncated_by_tier.semantic_review` says how many review pairs were cut. The raw `--show-all` lists are never capped. The exit code ignores the cap, see [exit codes](#exit-codes).
 
-In `--semantic-only` or `--traditional-only` mode, exact edges are grouped into `exact_families` the same way and `duplicates` contains the remaining raw edges ordered by descending similarity (ties in analyzer order; the cap keeps families then that prefix). `duplicates_by_tier` and `truncated_by_tier` are zero except for `exact`, which counts families, `hybrid_duplicates` is `0`, and the `--show-all` arrays are omitted. `analysis_mode` is always one of `combined`, `traditional`, `semantic`, or `none`.
+In `--semantic-only` or `--traditional-only` mode, exact edges are grouped into `exact_families` the same way and `duplicates` contains the remaining raw edges ordered by descending similarity (ties in analyzer order; the cap keeps families then that prefix). `duplicates_by_tier` and `truncated_by_tier` are zero except for `exact`, which counts families, `hybrid_duplicates` is `0`, and the `--show-all` arrays are omitted. `analysis_mode` is always one of `combined`, `traditional`, `semantic`, or `unused` (neither traditional nor semantic detection ran, so `duplicates` and `exact_families` are empty and `traditional`/`semantic` are `null` in `run`).
 
 `potentially_unused` is ranked and bounded too: ids are ordered by line span (`end_line - line + 1`) descending, then statement count, then file position, so the largest dead definitions lead, and the list holds at most 20 (`--max-unused`, recorded as `summary.max_unused`; `--max-unused all` removes the cap and the expansion flags above lift it unless an explicit value is given). `summary.potentially_unused` stays the complete count while `summary.reported_unused` and `summary.truncated_unused` split it into emitted and cut; units referenced only by cut unused findings leave `units`. `summary.suppressed_unused` counts units that carry a `codedupes: ignore`/`codedupes: ignore[unused]` directive and would otherwise have been a finding; a directive on a unit that was already exempt some other way (public surface, `get_*`/`set_*`, a test file) is not counted. `extraction_diagnostics`, `semantic_diagnostics`, `unused_diagnostics`, and the raw `--show-all` edge lists are deliberately complete: they are per-file records a consumer needs in full, so a scan with many diagnostics still produces a large document.
 
@@ -190,8 +241,46 @@ Default search hits (`--result-level unit`) use `{"unit": "u0", "score": 0.95}`;
 {
   "schema_version": 4,
   "query": "refund validation",
+  "analysis_status": "empty",
+  "run": {
+    "tool_version": "0.9.0",
+    "root": "/repo/empty",
+    "target": "/repo/empty",
+    "languages": null,
+    "exclude_patterns": [],
+    "respect_gitignore": true,
+    "include_private": true,
+    "include_stubs": false,
+    "extracted_files": 0,
+    "units": {"extracted": 0, "semantic_eligible": 0},
+    "traditional": null,
+    "semantic": {
+      "requested_model": "Alibaba-NLP/gte-modernbert-base",
+      "model": "Alibaba-NLP/gte-modernbert-base",
+      "revision": null,
+      "profile": "gte-modernbert",
+      "threshold_profile": "auto",
+      "task": "code-search-query",
+      "device": "auto",
+      "execution_device": null,
+      "thresholds": {},
+      "threshold_floor": 0.0,
+      "min_statements": 3,
+      "unit_types": ["function", "method"],
+      "cross_language": false,
+      "hybrid_split": null
+    },
+    "unused": null,
+    "checks": {
+      "extraction": {"status": "empty", "files": 0, "files_failed": 0, "diagnostics": 0},
+      "traditional": {"status": "disabled", "files": null, "files_failed": 0, "diagnostics": 0},
+      "semantic": {"status": "completed", "files": null, "files_failed": 0, "diagnostics": 0},
+      "unused": {"status": "disabled", "files": null, "files_failed": 0, "diagnostics": 0}
+    }
+  },
   "summary": {
     "indexed_units": 0,
+    "extracted_units": 0,
     "results": 0,
     "embeddings": {
       "requested_rows": 0,
@@ -209,7 +298,8 @@ Default search hits (`--result-level unit`) use `{"unit": "u0", "score": 0.95}`;
       "orphan_rows_retained": 0,
       "orphan_rows_collected": 0,
       "manifest_generation": null
-    }
+    },
+    "query_execution": []
   },
   "results": [],
   "units": {},
@@ -218,7 +308,15 @@ Default search hits (`--result-level unit`) use `{"unit": "u0", "score": 0.95}`;
 }
 ```
 
-`summary.indexed_units` is the semantic corpus size after eligibility filtering. An empty terminal index warns on stderr and distinguishes empty extraction from eligibility filtering.
+`summary.indexed_units` is the semantic corpus size after eligibility filtering; `summary.extracted_units` (`run.units.extracted`) is the pre-filter extraction count, so the two distinguish an empty repository from a populated one that eligibility filtering emptied. `summary.query_execution` lists one `{"execution_device", "cache_hit"}` record per query vector this search resolved (empty for `--result-level file`'s per-match grouping, which does not issue extra queries); `cache_hit: true` and `execution_device: null` together mean the query embedding came from the persistent cache without loading the model.
+
+An empty index means one of three different things, and `analysis_status`/`run.checks.extraction` distinguish them:
+
+- **Empty repository**: extraction itself produced no units. `run.units.extracted` is `0`, `run.checks.extraction.status` is `"empty"`, and `analysis_status` is `"empty"` (the example above). The terminal warns that extraction produced no code units.
+- **Filtered to empty**: extraction produced units, but semantic eligibility filtering (`--min-statements`, `--semantic-unit-type`) removed every one of them. `run.units.extracted` is nonzero while `summary.indexed_units` is `0`, `run.checks.extraction.status` is `"completed"`, and `analysis_status` is `"complete"`. The terminal warns that candidate filtering emptied the index and names the filters to loosen.
+- **Populated but no matches**: the index has units and the query ran, but nothing scored above the search threshold. `summary.indexed_units` is nonzero, `results` is `[]`, and `analysis_status` is `"complete"`.
+
+An empty terminal index warns on stderr and distinguishes empty extraction from eligibility filtering the same way.
 
 #### File search
 
@@ -264,7 +362,9 @@ Move and deletion counts need a comparable [corpus baseline](caching.md#corpus-l
 
 ## Diagnostics
 
-`check` emits `extraction_diagnostics`, `semantic_diagnostics`, and `unused_diagnostics` arrays; the first two have matching counts in `summary`, `unused_diagnostics` does not. `search` emits the extraction and semantic diagnostic arrays, without summary counts, so recoverable extraction failures remain visible even when the search index is empty; search runs no unused analysis, so it has no `unused_diagnostics`. Entries use `file`, `language`, `severity`, `code`, `message`, `line`, and `end_line`. `unused_diagnostics` codes are `unused-read-error`, `unused-parse-error`, and `unused-recursion-limit`, one entry per file the unused reference walk could not process. Both terminal commands print up to ten entries per diagnostic category; checks also print summary counts for the two that have them.
+`check` emits `extraction_diagnostics`, `semantic_diagnostics`, and `unused_diagnostics` arrays; `search` emits the extraction and semantic diagnostic arrays (search runs no unused analysis, so it has no `unused_diagnostics`). All three arrays stay complete regardless of report caps or `run.checks`, so recoverable failures remain visible even when the search index is empty. Entries use `file`, `language`, `severity`, `code`, `message`, `line`, and `end_line`. `unused_diagnostics` codes are `unused-read-error`, `unused-parse-error`, and `unused-recursion-limit`, one entry per file the unused reference walk could not process.
+
+Counts moved off `summary` and onto [`run.checks`](#run-record-and-check-status): `run.checks.extraction.diagnostics` is `len(extraction_diagnostics)` and `run.checks.extraction.files_failed` counts the distinct files behind a scope-losing diagnostic (a `partial-parse`/`read-error`/etc., not an advisory notice like `c-header-policy`); `run.checks.semantic.diagnostics` is `len(semantic_diagnostics)`; `run.checks.unused.diagnostics`/`files_failed` mirror `len(unused_diagnostics)` for `check`. Both terminal commands still print up to ten entries per diagnostic category; `check`'s `Run` panel and summary show the derived check statuses instead of raw counts.
 
 For `semantic-context-overflow` warnings and their cache behavior, see [long-input handling](analysis-defaults.md#semantic-candidate-defaults).
 
@@ -287,6 +387,8 @@ Command status conventions:
 Default combined semantic backend or runtime failures are fatal. `--allow-semantic-fallback` continues with full-scope traditional results and records `summary.semantic_fallback` plus `summary.semantic_fallback_reason`; under the default actionable policy, heuristic unused findings alone do not turn that successful degraded run into exit `1`.
 
 ## Terminal duplicate panels
+
+`check` prints a `Run` panel before anything else: tool version, `Root`/`Target`, `Scope` (the resolved `analysis_mode`), a `Checks` line (`extraction=completed, traditional=completed, semantic=completed, unused=completed`, one entry per detector), then a `Traditional`/`Semantic` line for each detector that ran, and `Units` (extracted vs. semantic-eligible counts). It never lists findings — the summary and finding panels below it do — so a reader learns what was configured and what completed before seeing what it found. The `Analysis Summary` table gains an `Analysis status` row showing the same `complete`/`partial`/`empty` value as JSON's `analysis_status`.
 
 The primary panels list every finding the [report caps](#report-selection) selected, so they show exactly what `--json` would emit. `Exact Duplicate Families (N families, K truncated)` comes first when any family is kept, one row per family with member count, `Lines`, `Method`, the first member, and up to three more locations before a `+N more` note; `--show-source` prints one snippet per member, bounded to `--source-lines` lines (default `40`) with a trailing `... (N more lines)` note when cut. `--show-diff` adds a unified diff per row after any source panels, also bounded by `--source-lines` with a trailing `... (N more diff lines)` note: pair tables diff both units, `structural_hash` families diff each member against the first, and `token_hash` families print nothing extra because their members are already token-for-token identical. The pair table follows, and the unused table (`Potentially Unused (N units, K truncated)`, same title in every mode) lists the largest units first with a `Lines` column and a blurb stating which units are excluded (`--strict-unused` reports public functions and methods too). Only the raw `--show-all` tables keep a 20-row display limit; their footers point to `--full-table`, which lifts that limit and, unless given explicitly, the `--max-duplicates` and `--max-unused` caps as well.
 

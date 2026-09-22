@@ -125,6 +125,18 @@ def test_cli_embedding_telemetry_tracks_filesystem_transitions(
             assert stats["cache_enabled"] is (phase != "uncached")
             assert stats["requested_rows"] == hits + encoded + reused
             assert all(Path(unit["file"]).is_file() for unit in payload["units"].values())
+            # execution_device reflects whether *this* run actually loaded the
+            # model (null on a pure cache hit); normalize it like embeddings
+            # before comparing payloads across cache states.
+            assert payload["run"]["semantic"]["execution_device"] == (
+                "cpu" if stats["model_loaded"] else None
+            )
+            payload["run"]["semantic"]["execution_device"] = None
+            # Same rationale for the per-query execution provenance search emits:
+            # a cache-hit query vector never touches the model this run.
+            for execution in payload["summary"].get("query_execution", []):
+                execution["execution_device"] = None
+                execution["cache_hit"] = None
             if phase == "rename":
                 assert payload["duplicates" if command == "check" else "results"]
                 cached_payload = payload

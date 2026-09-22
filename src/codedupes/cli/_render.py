@@ -17,10 +17,12 @@ from rich.table import Table
 from rich.text import Text
 
 from codedupes.models import (
+    AnalysisChecks,
     CodeUnit,
     DuplicatePair,
     ExtractionDiagnostic,
     HybridDuplicate,
+    RunRecord,
 )
 from codedupes.report.selection import (
     ExactFamily,
@@ -37,7 +39,6 @@ from ._output import DEFAULT_TABLE_ROWS
 _RAW_DUPLICATE_TITLES = {
     "traditional": "Near Duplicates (Jaccard)",
     "semantic": "Semantic Duplicates (Embedding)",
-    "none": "Duplicates",
 }
 
 
@@ -169,6 +170,53 @@ def _family_noun(count: int) -> str:
     return "family" if count == 1 else "families"
 
 
+def print_run(run: RunRecord, checks: AnalysisChecks) -> None:
+    """Print the resolved run record as a compact settings panel.
+
+    Prints before the summary so a reader learns what was configured and what
+    completed before seeing what it found.
+
+    :param run: Resolved run record for this analysis.
+    :param checks: Derived per-check status for this analysis.
+    :return: ``None``.
+    """
+    rows: list[tuple[str, object]] = [
+        ("codedupes", run.tool_version),
+        ("Root", _display_path(run.root)),
+        ("Target", _display_path(run.target)),
+        ("Scope", run.analysis_mode),
+        (
+            "Checks",
+            ", ".join(
+                f"{name}={record.status}"
+                for name, record in (
+                    ("extraction", checks.extraction),
+                    ("traditional", checks.traditional),
+                    ("semantic", checks.semantic),
+                    ("unused", checks.unused),
+                )
+            ),
+        ),
+    ]
+    if run.traditional is not None:
+        traditional_note = f"jaccard>={run.traditional.jaccard_threshold:.2f}"
+        if run.traditional.tiny_filter:
+            traditional_note += f", tiny filter <{run.traditional.tiny_cutoff} statements"
+        rows.append(("Traditional", traditional_note))
+    if run.semantic is not None:
+        device = run.semantic.execution_device or run.semantic.device
+        rows.append(
+            ("Semantic", f"{run.semantic.model} ({run.semantic.threshold_profile}, {device})")
+        )
+    rows.append(
+        (
+            "Units",
+            f"{run.units.extracted} extracted, {run.units.semantic_eligible} semantic-eligible",
+        )
+    )
+    _output.console.print(_settings_panel("Run", rows))
+
+
 def print_summary(
     selection: ReportSelection,
     *,
@@ -207,6 +255,7 @@ def print_summary(
     summary.add_column(style="bold cyan", overflow="fold")
     summary.add_column(style="white", overflow="fold")
 
+    summary.add_row("Analysis status", result.analysis_status)
     summary.add_row("Total code units", str(len(result.units)))
     language_counts = Counter(unit.language for unit in result.units)
     for language, count in sorted(language_counts.items()):
@@ -243,11 +292,6 @@ def print_summary(
             summary.add_row("Traditional duplicates", str(len(result.traditional_duplicates)))
         elif selection.mode == "semantic":
             summary.add_row("Semantic duplicates", str(len(result.semantic_duplicates)))
-        else:
-            summary.add_row(
-                "Duplicates",
-                str(len(result.traditional_duplicates) + len(result.semantic_duplicates)),
-            )
         if families:
             summary.add_row("Exact duplicate families", family_note)
         if truncated:
@@ -792,15 +836,16 @@ def print_findings(
             )
         return
 
-    print_duplicates(
-        cast(list[DuplicatePair], selection.duplicates),
-        _RAW_DUPLICATE_TITLES[selection.mode],
-        show_source=show_source,
-        source_lines=source_lines,
-        show_diff=show_diff,
-        max_items=None,
-        truncated=len(selection.truncated),
-    )
+    if selection.mode != "unused":
+        print_duplicates(
+            cast(list[DuplicatePair], selection.duplicates),
+            _RAW_DUPLICATE_TITLES[selection.mode],
+            show_source=show_source,
+            source_lines=source_lines,
+            show_diff=show_diff,
+            max_items=None,
+            truncated=len(selection.truncated),
+        )
     print_unused(
         selection.potentially_unused,
         strict=strict_unused,
