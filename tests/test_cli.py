@@ -2563,6 +2563,62 @@ def _build_family_result(tmp_path: Path) -> AnalysisResult:
     )
 
 
+@pytest.mark.grammar
+def test_cli_exact_family_fixture_end_to_end():
+    fixture = Path(__file__).resolve().parents[1] / "test_fixtures" / "exact_family"
+    runner = CliRunner()
+    base = ["check", str(fixture), "--traditional-only", "--no-unused"]
+
+    result = runner.invoke(cli.cli, [*base, "--json"])
+    assert result.exit_code == 1
+    payload = json.loads(result.output)
+    units = payload["units"]
+
+    # Five token-identical copies (ten raw edges) and one renamed pair collapse
+    # into two family records; no exact edge remains in the pairwise list.
+    assert payload["duplicates"] == []
+    assert [
+        (family["method"], sorted(units[m]["name"] for m in family["members"]), family["lines"])
+        for family in payload["exact_families"]
+    ] == [
+        ("token_hash", ["render_receipt"] * 5, 17),
+        ("structural_hash", ["sum_amounts", "sum_credits"], 11),
+    ]
+    assert payload["exact_families"][0]["redundant_lines"] == 4 * 17
+    assert {
+        units[m]["file"].rsplit("/", 1)[-1] for m in payload["exact_families"][0]["members"]
+    } == {
+        "exports.py",
+        "invoices.py",
+        "receipts.py",
+        "refunds.py",
+        "statements.py",
+    }
+    summary = payload["summary"]
+    assert summary["duplicates_by_tier"]["exact"] == 2
+    assert summary["exact_family_members"] == 7
+    assert summary["reported_duplicates"] == 2
+    assert summary["actionable_duplicates"] == 2
+    assert summary["raw_traditional_duplicates"] == 11
+    assert summary["exit_code"] == 1
+    assert len(units) == 7
+
+    capped = json.loads(runner.invoke(cli.cli, [*base, "--json", "--max-duplicates", "1"]).output)
+    assert len(capped["exact_families"]) == 1
+    assert len(capped["exact_families"][0]["members"]) == 5
+    assert capped["summary"]["truncated_by_tier"]["exact"] == 1
+    assert capped["summary"]["truncated_duplicates"] == 1
+    assert capped["summary"]["duplicates_by_tier"]["exact"] == 2
+    assert len(capped["units"]) == 5
+
+    terminal = runner.invoke(cli.cli, [*base, "--output-width", "160"])
+    assert terminal.exit_code == 1
+    assert "Exact Duplicate Families (2 families)" in terminal.output
+    assert "2 families (7 units)" in terminal.output
+    assert "+1 more" in terminal.output
+    assert "Traditional Duplicates" not in terminal.output
+
+
 def test_cli_family_panel_leads_the_report_and_counts_as_one_finding(monkeypatch, tmp_path):
     path = tmp_path / "sample.py"
     path.write_text("def entry():\n    return 1\n")
