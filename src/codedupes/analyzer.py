@@ -26,7 +26,7 @@ from codedupes.constants import (
 )
 from codedupes.devices import normalize_semantic_device, validate_mps_memory_fraction
 from codedupes.embedding_cache import capture_cache_warnings, get_embedding_cache
-from codedupes.extractor import CodeExtractor
+from codedupes.extractor import CodeExtractor, git_work_tree
 from codedupes.languages.registry import normalize_languages
 from codedupes.models import (
     AnalysisResult,
@@ -67,7 +67,7 @@ from codedupes.traditional import (
     jaccard_similarity,
     run_traditional_analysis,
 )
-from codedupes.unused import run_unused_analysis
+from codedupes.unused import find_pyproject, run_unused_analysis
 
 logger = logging.getLogger(__name__)
 
@@ -867,6 +867,33 @@ class CodeAnalyzer:
                 respect_gitignore=self.config.respect_gitignore,
             )
             units = list(extractor.extract_from_file(path))
+            self._extraction_diagnostics = list(extractor.diagnostics)
+            # Duplicate detection stays intra-file, but the unused reference
+            # graph should see the whole project: resolve a project root (the
+            # nearest pyproject.toml, else the git work tree, else the file's
+            # own directory) and parse every Python file under it for names
+            # the single-file target's units might otherwise look unreferenced by.
+            pyproject = find_pyproject(path)
+            root = (
+                pyproject.parent
+                if pyproject is not None
+                else (git_work_tree(path.parent) or path.parent)
+            )
+            reference_extractor = CodeExtractor(
+                root,
+                exclude_patterns=self.config.exclude_patterns,
+                include_private=self.config.include_private,
+                include_stubs=self.config.include_stubs,
+                languages=self.config.languages,
+                respect_gitignore=self.config.respect_gitignore,
+            )
+            reference_files = reference_extractor.reference_files()
+            seen_reference_files = {path}
+            self._python_files = [path]
+            for reference_file in reference_files:
+                if reference_file not in seen_reference_files:
+                    seen_reference_files.add(reference_file)
+                    self._python_files.append(reference_file)
         else:
             extractor = CodeExtractor(
                 path,
@@ -877,9 +904,12 @@ class CodeAnalyzer:
                 respect_gitignore=self.config.respect_gitignore,
             )
             units = extractor.extract_all()
+            self._extraction_diagnostics = list(extractor.diagnostics)
+            self._python_files = [
+                *extractor.extracted_files.get("python", []),
+                *extractor.reference_only_files,
+            ]
 
-        self._extraction_diagnostics = list(extractor.diagnostics)
-        self._python_files = list(extractor.extracted_files.get("python", []))
         logger.info(f"Extracted {len(units)} code units")
         return units
 

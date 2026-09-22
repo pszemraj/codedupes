@@ -1159,6 +1159,42 @@ def test_analyzer_hands_every_visited_python_file_to_the_unused_analysis(
     assert [unit.name for unit in result.potentially_unused] == ["_dead"]
 
 
+def test_production_function_referenced_only_from_tests_is_not_reported(tmp_path: Path) -> None:
+    """A production function called only from a default-excluded test file is not unused.
+
+    ``test_impl.py`` is a reference-only file: it is never extracted into a
+    ``CodeUnit``, so crediting ``helper`` depends on the definition-to-referrer
+    fallback for a referrer with no matching unit (see A1).
+    """
+    root = tmp_path / "pkg"
+    root.mkdir()
+    (root / "__init__.py").write_text("")
+    (root / "impl.py").write_text("def helper():\n    return 1\n")
+    tests_dir = root / "tests"
+    tests_dir.mkdir()
+    (tests_dir / "test_impl.py").write_text(
+        "from pkg.impl import helper\n\n\ndef test_helper():\n    assert helper() == 1\n"
+    )
+    config = AnalyzerConfig(
+        run_traditional=False, run_semantic=False, run_unused=True, strict_unused=True
+    )
+
+    default_result = CodeAnalyzer(config).analyze(root)
+    assert "helper" not in {unit.name for unit in default_result.potentially_unused}
+
+    from codedupes.extractor import DEFAULT_EXCLUDE_PATTERNS
+
+    excluded_config = AnalyzerConfig(
+        run_traditional=False,
+        run_semantic=False,
+        run_unused=True,
+        strict_unused=True,
+        exclude_patterns=[*DEFAULT_EXCLUDE_PATTERNS, "tests"],
+    )
+    excluded_result = CodeAnalyzer(excluded_config).analyze(root)
+    assert "helper" in {unit.name for unit in excluded_result.potentially_unused}
+
+
 def test_non_utf8_module_still_contributes_references(tmp_path: Path) -> None:
     """The graph decodes lossily like the extractor instead of dropping the file."""
     path = tmp_path / "legacy.py"

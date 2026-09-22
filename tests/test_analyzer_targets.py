@@ -70,6 +70,30 @@ def test_explicit_c_header_probe_honors_default_test_exclusions(tmp_path: Path) 
     assert result.extraction_diagnostics == []
 
 
+def test_file_target_reads_references_from_the_project_tree(tmp_path: Path) -> None:
+    """A single-file target's unused analysis still sees the whole project's references."""
+    pkg = tmp_path / "pkg"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("")
+    (pkg / "a.py").write_text("def helper():\n    return 1\n")
+    (pkg / "b.py").write_text("from pkg.a import helper\n\n\ndef caller():\n    return helper()\n")
+    config = AnalyzerConfig(
+        run_traditional=False, run_semantic=False, run_unused=True, strict_unused=True
+    )
+
+    # Without a pyproject.toml and outside a git work tree, root falls back to
+    # the target's own directory, which still contains the sibling that
+    # references it.
+    fallback_result = CodeAnalyzer(config).analyze(pkg / "a.py")
+    assert "helper" not in {unit.name for unit in fallback_result.potentially_unused}
+
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "demo"\n')
+
+    project_result = CodeAnalyzer(config).analyze(pkg / "a.py")
+    assert [unit.qualified_name for unit in project_result.units] == ["a.helper"]
+    assert "helper" not in {unit.name for unit in project_result.potentially_unused}
+
+
 def test_explicit_test_file_bypasses_defaults_but_honors_configured_excludes(
     tmp_path: Path,
 ) -> None:

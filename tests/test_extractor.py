@@ -315,7 +315,8 @@ def test_extract_all_skips_suffix_test_files_by_default(tmp_path: Path, caplog) 
     assert [unit.file_path.name for unit in units] == ["keeper.py"]
     assert (
         "Skipped 2 files and 0 directories matching default test exclusions; "
-        "use --no-default-excludes to include them."
+        "their Python files still count as references for unused-code analysis. "
+        "Use --no-default-excludes to include them in duplicate detection too."
     ) in caplog.text
 
 
@@ -329,13 +330,24 @@ def test_default_exclusion_hint_counts_pruned_directories(tmp_path: Path, caplog
         path.write_text("def entry():\n    return 1\n", encoding="utf-8")
     patterns = ([] if include_tests else DEFAULT_EXCLUDE_PATTERNS) + ["skip.py"]
 
+    extractor = CodeExtractor(tmp_path, exclude_patterns=patterns)
     with caplog.at_level("INFO", logger="codedupes.extractor"):
-        CodeExtractor(tmp_path, exclude_patterns=patterns).extract_all()
+        extractor.extract_all()
 
     if include_tests:
         assert "matching default test exclusions" not in caplog.text
+        # Nothing is skipped by a default shape when defaults are disabled, so
+        # nothing needs the reference-only path either.
+        assert extractor.reference_only_files == []
     else:
-        assert "Skipped 1 files and 1 directories matching default test exclusions" in caplog.text
+        assert (
+            "Skipped 1 files and 1 directories matching default test exclusions; "
+            "their Python files still count as references for unused-code analysis."
+        ) in caplog.text
+        # Both default-excluded shapes feed the reference-only list; the
+        # artifact directory and the user's own "skip.py" exclusion do not.
+        names = {path.name for path in extractor.reference_only_files}
+        assert names == {"test_one.py", "deep.py"}
 
 
 def test_extract_from_file_respects_exclude_patterns(tmp_path: Path) -> None:
@@ -738,3 +750,47 @@ def test_gitignore_files_outside_a_work_tree_are_plain_files(tmp_path: Path) -> 
 
     units = CodeExtractor(tmp_path, include_private=True).extract_all()
     assert sorted(unit.name for unit in units) == ["ignored_module_fn", "kept_fn"]
+
+
+@requires_git
+def test_reference_only_files_are_the_default_test_exclusions(tmp_path: Path) -> None:
+    """Files skipped only by a default test shape still surface for reference parsing."""
+    root = tmp_path / "repo"
+    root.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+    (root / ".gitignore").write_text("tests/generated/\n")
+    for relative in [
+        "tests/test_impl.py",
+        "tests/conftest.py",
+        "tests/generated/test_gen.py",
+        "pkg/legacy_test.py",
+        "pkg/keeper.py",
+        "node_modules/test_dep.py",
+    ]:
+        path = root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("def entry():\n    return 1\n")
+
+    def reference_only_names(exclude_patterns: list[str] | None) -> set[str]:
+        extractor = CodeExtractor(root, exclude_patterns=exclude_patterns, include_private=True)
+        extractor.extract_all()
+        return {file.relative_to(root).as_posix() for file in extractor.reference_only_files}
+
+    # Default configuration: both default-excluded shapes feed the reference-only
+    # list; the gitignored file and the artifact directory do not.
+    assert reference_only_names(None) == {
+        "tests/test_impl.py",
+        "tests/conftest.py",
+        "pkg/legacy_test.py",
+    }
+
+    # Disabling default test exclusions extracts test files directly, so nothing
+    # needs the reference-only path.
+    assert reference_only_names([]) == set()
+
+    # A real user exclusion for "tests" drops the whole directory from both
+    # duplicate detection and unused-code references; the unrelated default
+    # shape match under "pkg" is unaffected.
+    from codedupes.extractor import DEFAULT_EXCLUDE_PATTERNS
+
+    assert reference_only_names([*DEFAULT_EXCLUDE_PATTERNS, "tests"]) == {"pkg/legacy_test.py"}

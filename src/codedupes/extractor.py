@@ -22,6 +22,9 @@ from codedupes.models import CodeUnit, ExtractionDiagnostic
 
 logger = logging.getLogger(__name__)
 
+# (use full relative path or basename, directory-only, name/path matcher, zero-depth matcher)
+_ExcludeMatcher = tuple[bool, bool, re.Pattern[str], re.Pattern[str] | None]
+
 DEFAULT_EXCLUDE_PATTERNS = [
     "**/test_*",
     "**/*_test.*",
@@ -135,9 +138,7 @@ class CodeExtractor:
         self.exclude_patterns = (
             DEFAULT_EXCLUDE_PATTERNS.copy() if exclude_patterns is None else exclude_patterns
         )
-        self._exclude_matchers: list[
-            tuple[bool, bool, re.Pattern[str], re.Pattern[str] | None]
-        ] = []
+        self._exclude_matchers: list[_ExcludeMatcher] = []
         for pattern in self.exclude_patterns:
             anchored = pattern.startswith(("./", "/"))
             directory_only = pattern.endswith("/")
@@ -151,6 +152,15 @@ class CodeExtractor:
             self._exclude_matchers.append(
                 (anchored or "/" in pattern, directory_only, matcher, zero_depth)
             )
+        # Matchers for patterns the caller added on top of the built-in test
+        # shapes: used to walk default-excluded test files and directories for
+        # unused-code references without re-admitting a real user exclusion,
+        # a gitignored path, or an artifact directory.
+        self._user_exclude_matchers: list[_ExcludeMatcher] = [
+            matcher
+            for pattern, matcher in zip(self.exclude_patterns, self._exclude_matchers, strict=True)
+            if pattern not in DEFAULT_EXCLUDE_PATTERNS
+        ]
         self.include_private = include_private
         self.include_stubs = include_stubs
         self.languages = normalize_languages(languages)
@@ -159,6 +169,10 @@ class CodeExtractor:
         # it yielded units: the unused analysis parses each Python file for
         # references, and a re-export module or script has none to yield.
         self.extracted_files: dict[str, list[Path]] = {}
+        # Python files skipped by a default test-file shape alone (not a user
+        # exclusion, git ignore rule, or artifact directory): still parsed for
+        # unused-code references even though they are not extracted as units.
+        self.reference_only_files: list[Path] = []
         self._c_headers_allowed: bool | None = None
 
     @staticmethod
@@ -198,6 +212,7 @@ class CodeExtractor:
         check_ancestors: bool = True,
         match_patterns: bool = True,
         match_ignored: bool = True,
+        matchers: list[_ExcludeMatcher] | None = None,
     ) -> bool:
         """Check exclusions for a path and its resolved in-tree symlink target.
 
@@ -205,6 +220,8 @@ class CodeExtractor:
         :param check_ancestors: Check parents unless the walk already pruned them.
         :param match_patterns: Apply configured path/name globs when true.
         :param match_ignored: Apply git ignore rules when true.
+        :param matchers: Pattern matchers to use instead of the full configured set;
+            artifact directories and git ignore rules still apply either way.
         :return: ``True`` when extraction should skip this file or directory.
         """
         if self._matches_exclude(
@@ -212,6 +229,7 @@ class CodeExtractor:
             check_ancestors=check_ancestors,
             match_patterns=match_patterns,
             match_ignored=match_ignored,
+            matchers=matchers,
         ):
             return True
         if not path.is_symlink():
@@ -225,6 +243,7 @@ class CodeExtractor:
             resolved,
             match_patterns=match_patterns,
             match_ignored=match_ignored,
+            matchers=matchers,
         )
 
     def _matches_exclude(
@@ -234,6 +253,7 @@ class CodeExtractor:
         check_ancestors: bool = True,
         match_patterns: bool = True,
         match_ignored: bool = True,
+        matchers: list[_ExcludeMatcher] | None = None,
     ) -> bool:
         """Match a path's in-tree name against the configured exclusions.
 
@@ -241,6 +261,8 @@ class CodeExtractor:
         :param check_ancestors: Include parent directories in the match candidates.
         :param match_patterns: Apply configured path/name globs when true.
         :param match_ignored: Apply git ignore rules when true.
+        :param matchers: Pattern matchers to use instead of the full configured set;
+            artifact directories and git ignore rules still apply either way.
         :return: Whether the name or an ancestor matches an exclusion.
         """
         rel = path.relative_to(self.root)
@@ -259,11 +281,12 @@ class CodeExtractor:
         candidates = [rel]
         if check_ancestors:
             candidates.extend(parent for parent in rel.parents if parent != Path("."))
+        active_matchers = self._exclude_matchers if matchers is None else matchers
         for candidate in candidates:
             is_directory = candidate != rel or path_is_directory
             relative_name = os.path.normcase(candidate.as_posix())
             basename = os.path.normcase(candidate.name)
-            for use_path, directory_only, matcher, zero_depth in self._exclude_matchers:
+            for use_path, directory_only, matcher, zero_depth in active_matchers:
                 if directory_only and not is_directory:
                     continue
                 value = relative_name if use_path else basename
@@ -287,6 +310,65 @@ class CodeExtractor:
                 self.root, self.languages, should_exclude=self._should_exclude
             )
         return self._c_headers_allowed
+
+    def _default_only_exclusion(self, path: Path) -> bool:
+        """Return whether a path is excluded only by a default test-file shape.
+
+        :param path: Candidate path, already known to be excluded (ancestors pruned).
+        :return: ``True`` when the full exclusion rules skip the path but the
+            user's own patterns, git ignore rules, and artifact directories do not.
+        """
+        return self._should_exclude(path, check_ancestors=False) and not self._should_exclude(
+            path, check_ancestors=False, matchers=self._user_exclude_matchers
+        )
+
+    def _collect_reference_files(self, directory: Path) -> list[Path]:
+        """Walk a default-excluded directory for Python files to parse for references.
+
+        The caller has already established that ``directory`` is skipped only by a
+        default test-file shape, so this walk prunes with the user's own patterns
+        alone; git ignore rules and artifact directories still apply through
+        :meth:`_should_exclude`.
+
+        :param directory: Directory the main walk pruned for matching a default test shape.
+        :return: Python file paths under ``directory`` not otherwise excluded.
+        """
+        collected: list[Path] = []
+        for dirpath, dirnames, filenames in os.walk(
+            directory, followlinks=False, onerror=self._report_walk_error
+        ):
+            current_dir = Path(dirpath)
+            included_dirs = []
+            for name in sorted(dirnames):
+                subdirectory = current_dir / name
+                if not self._should_exclude(
+                    subdirectory, check_ancestors=False, matchers=self._user_exclude_matchers
+                ):
+                    included_dirs.append(name)
+            dirnames[:] = included_dirs
+
+            for filename in sorted(filenames):
+                if not filename.endswith(".py"):
+                    continue
+                source_file = current_dir / filename
+                if self._should_exclude(
+                    source_file, check_ancestors=False, matchers=self._user_exclude_matchers
+                ):
+                    continue
+                collected.append(source_file)
+        return collected
+
+    def reference_files(self) -> list[Path]:
+        """Return Python files under the root for unused-code reference parsing only.
+
+        Walks the whole tree with the user's own exclusion patterns (git ignore
+        rules and artifact directories still apply), so test files the default
+        shapes would otherwise drop from duplicate detection are included. Used
+        by a single-file scan target to seed the reference graph project-wide.
+
+        :return: Every Python file under the root the user's own patterns admit.
+        """
+        return self._collect_reference_files(self.root)
 
     def extract_from_file(self, file_path: Path) -> Iterator[CodeUnit]:
         """Yield all supported code units from a single file.
@@ -414,6 +496,9 @@ class CodeExtractor:
     def extract_all(self) -> list[CodeUnit]:
         """Extract all supported code units from the configured directory tree.
 
+        As a side effect, populates :attr:`reference_only_files` with Python files
+        skipped only by a default test-file shape, for unused-code reference parsing.
+
         :return: Every code unit extracted from the tree, in sorted walk order.
         """
         units: list[CodeUnit] = []
@@ -465,6 +550,8 @@ class CodeExtractor:
                 if self._should_exclude(directory, check_ancestors=False):
                     skipped_test_dirs += matches_default_tests(directory)
                     skipped_ignored_dirs += skipped_by_gitignore(directory)
+                    if self._default_only_exclusion(directory):
+                        self.reference_only_files.extend(self._collect_reference_files(directory))
                 else:
                     included_dirs.append(name)
             dirnames[:] = included_dirs
@@ -491,6 +578,8 @@ class CodeExtractor:
                 if self._should_exclude(source_file, check_ancestors=False):
                     skipped_test_files += matches_default_tests(source_file)
                     skipped_ignored_files += skipped_by_gitignore(source_file)
+                    if source_file.suffix == ".py" and self._default_only_exclusion(source_file):
+                        self.reference_only_files.append(source_file)
                     continue
                 if selection is None:
                     skipped_headers.append(source_file)
@@ -509,7 +598,9 @@ class CodeExtractor:
         if skipped_test_files or skipped_test_dirs:
             logger.info(
                 f"Skipped {skipped_test_files} files and {skipped_test_dirs} directories "
-                "matching default test exclusions; use --no-default-excludes to include them."
+                "matching default test exclusions; their Python files still count as "
+                "references for unused-code analysis. Use --no-default-excludes to include "
+                "them in duplicate detection too."
             )
         if skipped_ignored_files or skipped_ignored_dirs:
             logger.info(

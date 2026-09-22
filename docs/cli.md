@@ -57,6 +57,16 @@ Options, in addition to the [shared options](#options-shared-by-check-and-search
 
 Single-method flags leave unused-code detection enabled; add `--no-unused` to disable it.
 
+### Single-file targets
+
+`codedupes check <file>` only compares code units within that one file, so a duplicate of it living elsewhere in the project is not reported. Unused-code detection is not limited the same way: it resolves a [project-wide reference root](analysis-defaults.md#extraction-scope-defaults) for the target (the nearest `pyproject.toml`, else the git work tree, else the file's own directory) and parses every Python file under it, test files included, so a call from elsewhere in the project still counts.
+
+```text
+# Cross-file duplicate detection for one file against the rest of a project
+# is not available in this release; scan the project root instead.
+codedupes check <root> --focus <file>
+```
+
 ## `codedupes search <path> "<query>"`
 
 Run semantic search over extracted code units.
