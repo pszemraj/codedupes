@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -79,6 +79,24 @@ class Panel(StrEnum):
 
 
 SEMANTIC_ONLY_PANELS = frozenset({Panel.SEMANTIC, Panel.DEVICE})
+# Options that only make sense with traditional (Jaccard) duplicate detection
+# enabled, and are therefore rejected under --semantic-only and --unused-only.
+TRADITIONAL_ONLY_OPTIONS: tuple[str, ...] = (
+    "traditional_threshold",
+    "no_tiny_filter",
+    "tiny_cutoff",
+)
+# Options that only make sense when duplicate detection (of either method)
+# runs at all, and are therefore rejected under --unused-only.
+DUPLICATE_ONLY_OPTIONS: tuple[str, ...] = (
+    "threshold",
+    "max_duplicates",
+    "show_source",
+    "source_lines",
+    "show_diff",
+    "include_review",
+    "show_all",
+)
 
 
 class ReportCapType(click.ParamType):
@@ -209,6 +227,30 @@ def _display_option(name: str, params: dict[str, Any]) -> str:
     return f"--{name.replace('_', '-')}"
 
 
+def _reject_explicit_options(
+    ctx: click.Context,
+    params: dict[str, Any],
+    names: Iterable[str],
+    *,
+    mode_flag: str,
+    reason: str,
+) -> None:
+    """Raise a usage error naming every option a mode flag makes incompatible.
+
+    :param ctx: Active Click context.
+    :param params: Parsed Click parameters.
+    :param names: Internal parameter names incompatible with ``mode_flag``.
+    :param mode_flag: User-facing flag spelling that triggered the check, without leading dashes.
+    :param reason: Human-readable reason appended after the offending flag list.
+    :return: ``None``.
+    :raises click.UsageError: If any of ``names`` was set explicitly on the command line.
+    """
+    specified = [name for name in names if _is_cli_explicit(ctx, name)]
+    if specified:
+        listed = ", ".join(_display_option(name, params) for name in specified)
+        raise click.UsageError(f"Cannot use {listed} with --{mode_flag}; {reason}.")
+
+
 @dataclass(frozen=True)
 class SemanticOptions:
     """Shared semantic-analysis command options."""
@@ -300,6 +342,7 @@ class CheckOptions:
     cross_language: bool
     semantic_only: bool
     traditional_only: bool
+    unused_only: bool
     allow_semantic_fallback: bool
     no_unused: bool
     strict_unused: bool
@@ -329,15 +372,26 @@ class CheckOptions:
             raise click.UsageError(
                 "Cannot combine --no-unused and --strict-unused because unused reporting is disabled."
             )
+        if params["no_unused"] and _is_cli_explicit(ctx, "max_unused"):
+            raise click.UsageError(
+                "Cannot use --max-unused with --no-unused because unused reporting is disabled."
+            )
         if params["semantic_only"] and params["traditional_only"]:
             raise click.UsageError("Cannot use both --semantic-only and --traditional-only.")
-        if params["allow_semantic_fallback"] and (
-            params["semantic_only"] or params["traditional_only"]
-        ):
+        if params["unused_only"] and params["semantic_only"]:
+            raise click.UsageError("Cannot use both --unused-only and --semantic-only.")
+        if params["unused_only"] and params["traditional_only"]:
+            raise click.UsageError("Cannot use both --unused-only and --traditional-only.")
+        if params["unused_only"] and params["no_unused"]:
+            raise click.UsageError("Cannot use both --unused-only and --no-unused.")
+        exclusive_mode = (
+            params["semantic_only"] or params["traditional_only"] or params["unused_only"]
+        )
+        if params["allow_semantic_fallback"] and exclusive_mode:
             raise click.UsageError(
                 "--allow-semantic-fallback is only valid in default combined mode."
             )
-        if params["semantic_only"] or params["traditional_only"]:
+        if exclusive_mode:
             for name in ("show_all", "include_review"):
                 if params[name]:
                     raise click.UsageError(
@@ -354,32 +408,35 @@ class CheckOptions:
         show_source = params["show_source"] or _is_cli_explicit(ctx, "source_lines")
 
         if params["traditional_only"]:
-            specified = [
-                name
-                for name in options_in_panels(ctx.command, SEMANTIC_ONLY_PANELS)
-                if _is_cli_explicit(ctx, name)
-            ]
-            if specified:
-                listed = ", ".join(_display_option(name, params) for name in specified)
-                raise click.UsageError(
-                    f"Cannot use {listed} with --traditional-only; semantic analysis is disabled."
-                )
+            _reject_explicit_options(
+                ctx,
+                params,
+                options_in_panels(ctx.command, SEMANTIC_ONLY_PANELS),
+                mode_flag="traditional-only",
+                reason="semantic analysis is disabled",
+            )
 
         if params["semantic_only"]:
-            specified = [
-                name
-                for name in (
-                    "traditional_threshold",
-                    "no_tiny_filter",
-                    "tiny_cutoff",
-                )
-                if _is_cli_explicit(ctx, name)
-            ]
-            if specified:
-                listed = ", ".join(f"--{name.replace('_', '-')}" for name in specified)
-                raise click.UsageError(
-                    f"Cannot use {listed} with --semantic-only; traditional duplicate analysis is disabled."
-                )
+            _reject_explicit_options(
+                ctx,
+                params,
+                TRADITIONAL_ONLY_OPTIONS,
+                mode_flag="semantic-only",
+                reason="traditional duplicate analysis is disabled",
+            )
+
+        if params["unused_only"]:
+            _reject_explicit_options(
+                ctx,
+                params,
+                [
+                    *options_in_panels(ctx.command, SEMANTIC_ONLY_PANELS),
+                    *TRADITIONAL_ONLY_OPTIONS,
+                    *DUPLICATE_ONLY_OPTIONS,
+                ],
+                mode_flag="unused-only",
+                reason="duplicate analysis is disabled",
+            )
 
         # Every expansion flag lifts the default report caps; an explicit
         # --max-duplicates or --max-unused always wins, whatever the argument order.
@@ -430,17 +487,20 @@ class CheckOptions:
         """
         import codedupes.cli as cli_module
 
+        run_traditional = not (self.semantic_only or self.unused_only)
+        run_semantic = not (self.traditional_only or self.unused_only)
+
         semantic_threshold, traditional_threshold = _resolve_check_thresholds(
             self.threshold,
             self.semantic_threshold,
             self.traditional_threshold,
         )
         semantic_kwargs = self.semantic.analysis_kwargs()
-        if self.semantic_only:
-            traditional_threshold = DEFAULT_TRADITIONAL_THRESHOLD
-        if self.traditional_only:
+        if not run_semantic:
             semantic_threshold = None
             semantic_kwargs["semantic_task"] = None
+        if not run_traditional:
+            traditional_threshold = DEFAULT_TRADITIONAL_THRESHOLD
 
         return cli_module.AnalyzerConfig(
             exclude_patterns=_resolve_exclude_patterns(
@@ -452,8 +512,8 @@ class CheckOptions:
             jaccard_threshold=traditional_threshold,
             semantic_threshold=semantic_threshold,
             cross_language=self.cross_language,
-            run_traditional=not self.semantic_only,
-            run_semantic=not self.traditional_only,
+            run_traditional=run_traditional,
+            run_semantic=run_semantic,
             allow_semantic_fallback=self.allow_semantic_fallback,
             run_unused=not self.no_unused,
             filter_tiny_traditional=not self.no_tiny_filter,

@@ -82,6 +82,12 @@ from ._render import print_findings, print_run, print_summary
     help="Only run structural/token analysis",
 )
 @click.option(
+    "--unused-only",
+    is_flag=True,
+    panel=Panel.DETECTION,
+    help="Only run unused-code detection; no model is loaded",
+)
+@click.option(
     "--allow-semantic-fallback",
     is_flag=True,
     panel=Panel.SEMANTIC,

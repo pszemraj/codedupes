@@ -30,6 +30,7 @@ codedupes check ./src --exclude "**/generated/**" --exclude "**/migrations/**"
 codedupes check tests --no-default-excludes --no-unused
 codedupes check ./src --json --show-source --source-lines all
 codedupes check ./src --traditional-only --show-diff
+codedupes check ./src --unused-only --strict-unused
 ```
 
 Options, in addition to the [shared options](#options-shared-by-check-and-search):
@@ -40,6 +41,7 @@ Options, in addition to the [shared options](#options-shared-by-check-and-search
 - `--semantic-task <name>`: Duplicate embedding task; see [task defaults and choices](model-profiles.md#semantic-task-defaults-and-choices)
 - `--semantic-only`: Use only semantic matching for duplicate detection
 - `--traditional-only`: Use only traditional matching for duplicate detection
+- `--unused-only`: Only run unused-code detection; no duplicate detection runs and no embedding model is loaded
 - `--allow-semantic-fallback`: Enable [combined-mode fallback](output.md#exit-codes)
 - `--no-unused`: Disable unused-code detection
 - `--strict-unused`: Also report unreferenced public functions and public methods; see the [unused-code policy](analysis-defaults.md#potentially-unused-defaults)
@@ -56,7 +58,7 @@ Options, in addition to the [shared options](#options-shared-by-check-and-search
 - `--fail-on <actionable|all|none>`: Select the [finding exit policy](output.md#exit-codes)
 - `--fail-on-incomplete`: Also exit `1` when the [analysis did not complete](output.md#exit-codes), independent of `--fail-on` (including `none`)
 
-Single-method flags leave unused-code detection enabled; add `--no-unused` to disable it.
+`--semantic-only`, `--traditional-only`, and `--unused-only` are mutually exclusive; the first two leave unused-code detection enabled (add `--no-unused` to disable it), while `--unused-only` disables both duplicate methods instead and rejects any option that only makes sense with duplicate detection running (a duplicate threshold, `--max-duplicates`, `--show-source`/`--source-lines`/`--show-diff`, `--include-review`/`--show-all`, or any semantic/device option). `--fail-on` semantics are unchanged under `--unused-only`: the default `actionable` policy never fails on non-strict unused findings alone, so add `--strict-unused` or `--fail-on all` to make an unused-only run fail on what it finds.
 
 ### Single-file targets
 
@@ -169,10 +171,11 @@ Clear all cached embeddings or only entries for one model. An empty or whitespac
 - `--semantic-threshold` and `--traditional-threshold` override `--threshold` for their respective methods
 - `--batch-size` and `--top-k` must be greater than `0`; `--max-duplicates` and `--max-unused` take a positive integer or `all`
 - `--min-statements` and `--tiny-cutoff` must be greater than or equal to `0`
-- `--include-review`, `--show-all`, and `--allow-semantic-fallback` are only valid in default combined `check` mode (not with `--semantic-only` or `--traditional-only`)
+- `--include-review`, `--show-all`, and `--allow-semantic-fallback` are only valid in default combined `check` mode (not with `--semantic-only`, `--traditional-only`, or `--unused-only`)
 - `--json` rejects rich-only display controls: `--show-diff`, `--full-table`, `--verbose`, and explicit `--output-width`; `--show-source`/`--source-lines` are accepted and add `source` to JSON unit records instead
-- `--semantic-only` and `--traditional-only` are mutually exclusive
+- `--semantic-only`, `--traditional-only`, and `--unused-only` are mutually exclusive; `--unused-only` also rejects `--no-unused` and every duplicate-detection-only option (see [`check`](#codedupes-check-path))
 - `--no-unused` and `--strict-unused` are mutually exclusive
+- `--no-unused` and an explicit `--max-unused` are mutually exclusive
 - `--trust-remote-code` and `--no-trust-remote-code` are mutually exclusive
 - `--mps-fallback` and `--no-mps-fallback` are mutually exclusive
 - Explicit semantic-analysis controls are rejected with `--traditional-only`, including model/task, candidate-scope, device/runtime options, and either revision-cache policy flag. `--no-cache` is accepted as a harmless no-op.

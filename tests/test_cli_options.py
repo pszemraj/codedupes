@@ -462,14 +462,23 @@ def test_cli_check_rejects_invalid_option_values(tmp_path, options, expected_mes
     assert expected_message in result.output
 
 
-def test_cli_rejects_conflicting_single_method_flags(tmp_path):
+@pytest.mark.parametrize(
+    ("first", "second"),
+    [
+        ("--semantic-only", "--traditional-only"),
+        ("--semantic-only", "--unused-only"),
+        ("--traditional-only", "--unused-only"),
+        ("--unused-only", "--no-unused"),
+    ],
+)
+def test_cli_rejects_conflicting_single_method_flags(tmp_path, first, second):
     path = tmp_path / "sample.py"
     path.write_text("def entry():\n    return 1\n")
 
     runner = CliRunner()
     result = runner.invoke(
         cli.cli,
-        ["check", str(path), "--semantic-only", "--traditional-only"],
+        ["check", str(path), first, second],
     )
     assert result.exit_code == 2
 
@@ -490,19 +499,10 @@ def test_cli_rejects_combined_only_flags_in_single_method_modes(tmp_path, flag, 
     path.write_text("def entry():\n    return 1\n")
 
     runner = CliRunner()
-    semantic_result = runner.invoke(
-        cli.cli,
-        ["check", str(path), "--semantic-only", flag],
-    )
-    assert semantic_result.exit_code == 2
-    assert expected_message in semantic_result.output
-
-    traditional_result = runner.invoke(
-        cli.cli,
-        ["check", str(path), "--traditional-only", flag],
-    )
-    assert traditional_result.exit_code == 2
-    assert expected_message in traditional_result.output
+    for mode_flag in ("--semantic-only", "--traditional-only", "--unused-only"):
+        result = runner.invoke(cli.cli, ["check", str(path), mode_flag, flag])
+        assert result.exit_code == 2
+        assert expected_message in result.output
 
 
 @pytest.mark.parametrize(
@@ -616,6 +616,70 @@ def test_cli_rejects_all_traditional_mode_flags_with_semantic_only(
 
     assert result.exit_code == 2
     assert f"Cannot use {expected_option}" in result.output
+
+
+def test_cli_unused_only_builds_an_unused_only_config(monkeypatch, tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+
+    captured = []
+    patch_cli_analyzer(
+        monkeypatch,
+        cli,
+        analyze_result=lambda: build_result(tmp_path),
+        captured_configs=captured,
+    )
+    runner = CliRunner()
+    result = runner.invoke(cli.cli, ["check", str(path), "--unused-only", "--strict-unused"])
+
+    assert result.exit_code == 1
+    assert captured[-1].run_traditional is False
+    assert captured[-1].run_semantic is False
+    assert captured[-1].run_unused is True
+    assert captured[-1].strict_unused is True
+    assert captured[-1].semantic_threshold is None
+    assert captured[-1].semantic_task is None
+    assert captured[-1].jaccard_threshold == cli.DEFAULT_TRADITIONAL_THRESHOLD
+
+
+@pytest.mark.parametrize(
+    "extra_args",
+    [
+        ["--threshold", "0.8"],
+        ["--traditional-threshold", "0.8"],
+        ["--max-duplicates", "5"],
+        ["--show-source"],
+        ["--source-lines", "10"],
+        ["--show-diff"],
+        ["--include-review"],
+        ["--show-all"],
+        ["--model", "sentence-transformers/all-MiniLM-L6-v2"],
+        ["--device", "cpu"],
+    ],
+)
+def test_cli_rejects_duplicate_controls_with_unused_only(tmp_path, extra_args):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+
+    runner = CliRunner()
+    result = runner.invoke(cli.cli, ["check", str(path), "--unused-only", *extra_args])
+
+    assert result.exit_code == 2
+    # --include-review/--show-all are rejected by the combined-mode-only check
+    # (which fires for every exclusive mode) before the unused-only-specific
+    # rejection; every other option is rejected by name with --unused-only.
+    assert extra_args[0] in result.output
+
+
+def test_cli_rejects_max_unused_with_no_unused(tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+
+    runner = CliRunner()
+    result = runner.invoke(cli.cli, ["check", str(path), "--no-unused", "--max-unused", "5"])
+
+    assert result.exit_code == 2
+    assert "Cannot use --max-unused with --no-unused" in result.output
 
 
 def test_cli_help_and_version():

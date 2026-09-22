@@ -394,6 +394,60 @@ def test_cli_fail_on_incomplete_fails_empty_extraction(monkeypatch, tmp_path):
     assert "extraction produced no code units" not in json_result.stderr
 
 
+def _build_unused_only_result(tmp_path: Path) -> AnalysisResult:
+    """Unused-only result: no duplicate detection ran, one unused unit."""
+    unit = build_unit(tmp_path)
+    return AnalysisResult(
+        units=[unit],
+        traditional_duplicates=[],
+        semantic_duplicates=[],
+        hybrid_duplicates=[],
+        potentially_unused=[unit],
+        run=make_run_record(tmp_path, mode="unused"),
+    )
+
+
+def test_cli_unused_only_prints_only_the_unused_panel(monkeypatch, tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+    patch_cli_analyzer(monkeypatch, cli, analyze_result=lambda: _build_unused_only_result(tmp_path))
+    runner = CliRunner()
+
+    terminal_result = runner.invoke(cli.cli, ["check", str(path), "--unused-only"])
+    assert terminal_result.exit_code == 0
+    assert "Potentially Unused" in terminal_result.output
+    assert "Near Duplicates" not in terminal_result.output
+    assert "Semantic Duplicates" not in terminal_result.output
+    assert "Hybrid Duplicates" not in terminal_result.output
+
+    json_result = runner.invoke(cli.cli, ["check", str(path), "--unused-only", "--json"])
+    assert json_result.exit_code == 0
+    payload = json.loads(json_result.output)
+    assert payload["analysis_mode"] == "unused"
+    assert payload["duplicates"] == []
+    assert payload["exact_families"] == []
+    assert payload["run"]["traditional"] is None
+    assert payload["run"]["semantic"] is None
+
+
+def test_cli_unused_only_exit_policy_unchanged(monkeypatch, tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+    patch_cli_analyzer(monkeypatch, cli, analyze_result=lambda: _build_unused_only_result(tmp_path))
+    runner = CliRunner()
+
+    default_result = runner.invoke(cli.cli, ["check", str(path), "--unused-only"])
+    assert default_result.exit_code == 0
+
+    strict_result = runner.invoke(cli.cli, ["check", str(path), "--unused-only", "--strict-unused"])
+    assert strict_result.exit_code == 1
+
+    fail_all_result = runner.invoke(
+        cli.cli, ["check", str(path), "--unused-only", "--fail-on", "all"]
+    )
+    assert fail_all_result.exit_code == 1
+
+
 def _build_tiered_result(tmp_path: Path) -> AnalysisResult:
     """Combined result with one confirmed pair, two review pairs, and an unused unit."""
     unit = build_unit(tmp_path)
