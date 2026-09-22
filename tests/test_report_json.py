@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import random
 import re
+from dataclasses import replace
 from pathlib import Path
 
 from codedupes.models import (
@@ -28,6 +29,7 @@ from codedupes.report.selection import (
     group_file_results,
     select_findings,
 )
+from tests.conftest import make_run_record
 
 _ID = re.compile(r"^u\d+$")
 
@@ -68,7 +70,7 @@ def _result(tmp_path: Path) -> AnalysisResult:
             HybridDuplicate(b, c, "semantic_review", 0.8, semantic_similarity=0.9),
         ],
         potentially_unused=[orphan],
-        analysis_mode="combined",
+        run=make_run_record(tmp_path, mode="combined"),
     )
 
 
@@ -208,7 +210,7 @@ def test_check_json_hidden_only_failure_names_withheld_review(tmp_path):
 
 def test_check_json_raw_modes_count_every_pair_as_actionable(tmp_path):
     result = _result(tmp_path)
-    result.analysis_mode = "semantic"
+    result = replace(result, run=make_run_record(tmp_path, mode="semantic"))
     result.hybrid_duplicates.clear()
 
     summary = _payload(result, ReportPolicy(max_duplicates=1))["summary"]
@@ -266,7 +268,7 @@ def _chain_result(tmp_path: Path, pairs: int) -> AnalysisResult:
         semantic_duplicates=[],
         hybrid_duplicates=hybrid,
         potentially_unused=[],
-        analysis_mode="combined",
+        run=make_run_record(tmp_path, mode="combined"),
     )
 
 
@@ -344,7 +346,7 @@ def _family_result(
         semantic_duplicates=[],
         hybrid_duplicates=hybrid,
         potentially_unused=[],
-        analysis_mode="combined",
+        run=make_run_record(tmp_path, mode="combined"),
     )
 
 

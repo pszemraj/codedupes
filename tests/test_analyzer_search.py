@@ -342,7 +342,7 @@ def test_search_requires_embeddings(tmp_path: Path) -> None:
     create_project(tmp_path, source)
     project = tmp_path / "src"
     analyzer = CodeAnalyzer(
-        AnalyzerConfig(run_semantic=False, run_traditional=False, run_unused=False)
+        AnalyzerConfig(run_semantic=False, run_traditional=True, run_unused=False)
     )
 
     analyzer.analyze(project)
@@ -371,7 +371,7 @@ def test_empty_reanalysis_clears_previous_search_state(tmp_path: Path, monkeypat
     analyzer.analyze(project)
     result = analyzer.analyze(empty_project)
 
-    assert result.analysis_mode == "none"
+    assert result.analysis_mode == "semantic"
     assert analyzer.search("entry") == []
 
 

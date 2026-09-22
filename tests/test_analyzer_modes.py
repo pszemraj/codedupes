@@ -18,7 +18,12 @@ from tests.analyzer_helpers import (
     make_semantic_runner,
     traditional_single_jaccard_runner,
 )
-from tests.conftest import build_two_function_source, create_project, make_code_unit
+from tests.conftest import (
+    build_two_function_source,
+    create_project,
+    make_code_unit,
+    make_run_record,
+)
 
 
 def _capture_traditional_units_runner(captured_units: list[CodeUnit]):
@@ -69,7 +74,7 @@ def test_all_duplicates_returns_raw_for_single_method_modes(tmp_path: Path) -> N
         semantic_duplicates=[semantic_duplicate],
         hybrid_duplicates=[],
         potentially_unused=[],
-        analysis_mode="semantic",
+        run=make_run_record(tmp_path, mode="semantic"),
     )
 
     assert semantic_result.all_duplicates == [semantic_duplicate]
@@ -109,6 +114,8 @@ def test_unused_detection_config_variants(tmp_path: Path, analyzer_config, expec
     result = analyzer.analyze(project)
 
     assert {unit.name for unit in result.potentially_unused} == expected_unused
+    if not analyzer_config.run_traditional and not analyzer_config.run_semantic:
+        assert result.analysis_mode == "unused"
 
 
 def test_integration_on_mixed_project(tmp_path: Path) -> None:
@@ -274,7 +281,7 @@ def test_traditional_scope_is_independent_of_semantic_mode(
             run_traditional=True,
             run_semantic=run_semantic,
             run_unused=False,
-            min_semantic_statements=2,
+            **({"min_semantic_statements": 2} if run_semantic else {}),
         )
     )
     analyzer.analyze(project)
@@ -614,7 +621,6 @@ def test_single_method_modes_bypass_hybrid_synthesis(tmp_path: Path, monkeypatch
             run_traditional=True,
             run_semantic=False,
             run_unused=False,
-            min_semantic_statements=0,
             filter_tiny_traditional=False,
         )
     ).analyze(project)
@@ -642,6 +648,8 @@ def test_empty_directory_analysis(tmp_path: Path) -> None:
     assert result.semantic_duplicates == []
     assert result.hybrid_duplicates == []
     assert result.potentially_unused == []
+    assert result.analysis_mode == "combined"
+    assert result.analysis_status == "empty"
 
 
 @pytest.mark.grammar

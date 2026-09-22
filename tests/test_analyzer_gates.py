@@ -320,11 +320,6 @@ def test_explicit_semantic_threshold_applies_flat_across_languages(
 
     monkeypatch.setattr(
         analyzer_module,
-        "resolve_model_profile",
-        lambda _model: pytest.fail("explicit threshold must bypass profile gates"),
-    )
-    monkeypatch.setattr(
-        analyzer_module,
         "run_semantic_analysis",
         make_semantic_runner(capture=captured, duplicate_factory=paired_duplicates),
     )
@@ -340,6 +335,10 @@ def test_explicit_semantic_threshold_applies_flat_across_languages(
     )
     result = analyzer.analyze(project)
 
+    # An explicit flat threshold bypasses per-language gate resolution: the
+    # scan uses 0.70 for every language rather than a profile lookup. The run
+    # record still resolves the model profile for provenance (its `profile`
+    # field), which is a separate, informational use of the same function.
     assert captured["threshold"] == 0.70
     assert len(result.semantic_duplicates) == 1
 

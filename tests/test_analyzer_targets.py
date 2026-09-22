@@ -148,6 +148,21 @@ def test_index_explicit_test_file_bypasses_defaults_but_honors_configured_exclud
     assert CodeAnalyzer(excluded).index(source) == 0
 
 
+def test_run_record_file_target_has_no_default_excludes(tmp_path: Path) -> None:
+    """A file target's run record shows no effective excludes; a directory target does."""
+    source = tmp_path / "entry.py"
+    source.write_text("def entry():\n    return 1\n", encoding="utf-8")
+
+    file_result = CodeAnalyzer(AnalyzerConfig(run_semantic=False, run_unused=False)).analyze(source)
+    assert file_result.run.exclude_patterns == ()
+    assert file_result.run.target.name == "entry.py"
+
+    directory_result = CodeAnalyzer(AnalyzerConfig(run_semantic=False, run_unused=False)).analyze(
+        tmp_path
+    )
+    assert directory_result.run.exclude_patterns != ()
+
+
 def test_analyze_directory_still_gates_stubs_on_include_stubs(tmp_path: Path) -> None:
     (tmp_path / "typed_mod.pyi").write_text("def entry() -> int: ...\n")
     (tmp_path / "real_mod.py").write_text("def keep():\n    return 1\n")

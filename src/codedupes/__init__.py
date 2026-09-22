@@ -21,12 +21,15 @@ from .analyzer import AnalyzerConfig, CodeAnalyzer, analyze_directory
 from .logging_utils import quiet_dependency_loggers
 from .models import (
     HYBRID_TIERS,
+    AnalysisChecks,
     AnalysisResult,
+    CheckRecord,
     CodeUnit,
     CodeUnitType,
     DuplicatePair,
     ExtractionDiagnostic,
     HybridDuplicate,
+    RunRecord,
 )
 from .report import (
     ACTIONABLE_TIERS,
@@ -56,8 +59,10 @@ __all__ = [
     "DEFAULT_MAX_DUPLICATES",
     "DEFAULT_MAX_UNUSED",
     "HYBRID_TIERS",
+    "AnalysisChecks",
     "AnalysisResult",
     "AnalyzerConfig",
+    "CheckRecord",
     "CodeAnalyzer",
     "CodeUnit",
     "CodeUnitType",
@@ -67,6 +72,7 @@ __all__ = [
     "HybridDuplicate",
     "ReportPolicy",
     "ReportSelection",
+    "RunRecord",
     "__version__",
     "__version_tuple__",
     "actionable_pairs",

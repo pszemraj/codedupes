@@ -7,9 +7,21 @@ from typing import Any
 
 import pytest
 
-from codedupes import devices, semantic_profiles
+from codedupes import __version__, devices, semantic_profiles
+from codedupes.constants import DEFAULT_MODEL
 from codedupes.extractor import CodeExtractor
-from codedupes.models import AnalysisResult, CodeUnit, CodeUnitType, ExtractionDiagnostic
+from codedupes.models import (
+    AnalysisMode,
+    AnalysisResult,
+    CodeUnit,
+    CodeUnitType,
+    ExtractionDiagnostic,
+    RunRecord,
+    SemanticSettings,
+    TraditionalSettings,
+    UnitCounts,
+    UnusedSettings,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -37,6 +49,62 @@ def _isolated_threshold_notices(monkeypatch: pytest.MonkeyPatch) -> None:
     :return: ``None``.
     """
     monkeypatch.setattr(semantic_profiles, "_threshold_notice_models", set())
+
+
+def make_run_record(root: Path, *, mode: AnalysisMode = "combined", **overrides: Any) -> RunRecord:
+    """Build a ``RunRecord`` for a hand-built ``AnalysisResult`` test fixture.
+
+    :param root: Root/target path recorded for this run.
+    :param mode: Analysis mode to synthesize: ``combined``, ``traditional``, ``semantic``, or ``unused``.
+    :param overrides: Field overrides applied on top of the mode's defaults.
+    :return: Constructed run record.
+    :raises ValueError: If ``mode`` is not one of the supported analysis modes.
+    """
+    if mode not in {"combined", "traditional", "semantic", "unused"}:
+        raise ValueError(f"Unsupported mode {mode!r}")
+    traditional = (
+        TraditionalSettings(jaccard_threshold=0.85, tiny_filter=True, tiny_cutoff=3)
+        if mode in {"combined", "traditional"}
+        else None
+    )
+    semantic = (
+        SemanticSettings(
+            requested_model=DEFAULT_MODEL,
+            model=DEFAULT_MODEL,
+            revision=None,
+            profile="gte-modernbert",
+            threshold_profile="auto",
+            task="semantic-similarity",
+            device="cpu",
+            execution_device=None,
+            thresholds={},
+            threshold_floor=0.0,
+            min_statements=3,
+            unit_types=("function", "method"),
+            cross_language=False,
+            hybrid_split=None,
+        )
+        if mode in {"combined", "semantic"}
+        else None
+    )
+    unused = UnusedSettings(strict=False, files=0)
+    fields: dict[str, Any] = {
+        "tool_version": __version__,
+        "root": root,
+        "target": root,
+        "languages": ("python",),
+        "exclude_patterns": (),
+        "respect_gitignore": True,
+        "include_private": True,
+        "include_stubs": False,
+        "extracted_files": 0,
+        "units": UnitCounts(extracted=0, semantic_eligible=0),
+        "traditional": traditional,
+        "semantic": semantic,
+        "unused": unused,
+    }
+    fields.update(overrides)
+    return RunRecord(**fields)
 
 
 def make_code_unit(
@@ -163,15 +231,20 @@ def patch_cli_analyzer(
             self.extraction_diagnostics = []
             self.semantic_diagnostics = list(semantic_diagnostics or [])
             self.embedding_stats = None
+            self.run_record = None
+            self.query_execution: tuple[Any, ...] = ()
             if captured_configs is not None:
                 captured_configs.append(config)
 
         def analyze(self, _path: Path) -> AnalysisResult:
-            return analyze_result() if callable(analyze_result) else analyze_result
+            result = analyze_result() if callable(analyze_result) else analyze_result
+            self.run_record = result.run
+            return result
 
-        def index(self, _path: Path) -> int:
+        def index(self, path: Path) -> int:
             # A populated corpus, so search tests exercise the normal path
             # instead of the empty-index warning branch.
+            self.run_record = make_run_record(path, mode="semantic")
             return 1
 
         def search(self, query: str, top_k: int = 10) -> list[tuple[CodeUnit, float]]:

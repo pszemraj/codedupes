@@ -15,7 +15,7 @@ from codedupes.models import (
     HybridDuplicate,
 )
 from codedupes.semantic import EmbeddingRunStats
-from tests.conftest import make_code_unit
+from tests.conftest import make_code_unit, make_run_record
 
 
 def build_unit(tmp_path: Path) -> CodeUnit:
@@ -53,7 +53,7 @@ def build_result(tmp_path: Path) -> AnalysisResult:
         semantic_duplicates=[],
         hybrid_duplicates=[hybrid],
         potentially_unused=[unit],
-        analysis_mode="combined",
+        run=make_run_record(tmp_path, mode="combined"),
         embedding_stats=EmbeddingRunStats(
             requested_rows=1,
             unique_inputs=1,

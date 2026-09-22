@@ -17,7 +17,7 @@ from codedupes.models import (
     HybridDuplicate,
 )
 from tests.cli_helpers import build_copy, build_result_with_semantic_duplicate, build_unit
-from tests.conftest import make_code_unit, patch_cli_analyzer
+from tests.conftest import make_code_unit, make_run_record, patch_cli_analyzer
 
 
 def test_cli_show_all_prints_raw_sections(monkeypatch, tmp_path):
@@ -77,7 +77,7 @@ def test_cli_traditional_panel_label_is_language_neutral(monkeypatch, tmp_path):
             semantic_duplicates=[],
             hybrid_duplicates=[],
             potentially_unused=[],
-            analysis_mode="traditional",
+            run=make_run_record(tmp_path, mode="traditional"),
         ),
     )
 
@@ -201,7 +201,7 @@ def test_cli_combined_exit_code_ignores_raw_filtered_findings(monkeypatch, tmp_p
             semantic_duplicates=[],
             hybrid_duplicates=[],
             potentially_unused=[],
-            analysis_mode="combined",
+            run=make_run_record(tmp_path, mode="combined"),
         ),
     )
 
@@ -264,7 +264,7 @@ def test_run_should_fail_policy(
         semantic_duplicates=[],
         hybrid_duplicates=hybrid,
         potentially_unused=[unit] if include_unused else [],
-        analysis_mode="combined" if combined_mode else "traditional",
+        run=make_run_record(tmp_path, mode="combined" if combined_mode else "traditional"),
     )
 
     assert cli.run_should_fail(result, policy=policy, strict_unused=strict_unused) is expected
@@ -287,7 +287,7 @@ def test_cli_fail_on_all_and_none(monkeypatch, tmp_path):
             )
         ],
         potentially_unused=[unit],
-        analysis_mode="combined",
+        run=make_run_record(tmp_path, mode="combined"),
     )
     patch_cli_analyzer(monkeypatch, cli, analyze_result=result_obj)
     runner = CliRunner()
@@ -358,7 +358,7 @@ def _build_tiered_result(tmp_path: Path) -> AnalysisResult:
             ),
         ],
         potentially_unused=[other],
-        analysis_mode="combined",
+        run=make_run_record(tmp_path, mode="combined"),
     )
 
 
@@ -394,7 +394,7 @@ def _build_capped_result(tmp_path: Path, pairs: int = 25) -> AnalysisResult:
         semantic_duplicates=[],
         hybrid_duplicates=hybrid,
         potentially_unused=[],
-        analysis_mode="combined",
+        run=make_run_record(tmp_path, mode="combined"),
     )
 
 
@@ -450,7 +450,7 @@ def _build_family_result(tmp_path: Path) -> AnalysisResult:
         semantic_duplicates=[],
         hybrid_duplicates=hybrid,
         potentially_unused=[],
-        analysis_mode="combined",
+        run=make_run_record(tmp_path, mode="combined"),
     )
 
 
@@ -687,7 +687,7 @@ def test_cli_cap_keeps_the_actionable_pair_ahead_of_a_stronger_advisory_pair(mon
         semantic_duplicates=semantic,
         hybrid_duplicates=hybrid,
         potentially_unused=[],
-        analysis_mode="combined",
+        run=make_run_record(tmp_path, mode="combined"),
     )
     patch_cli_analyzer(monkeypatch, cli, analyze_result=result)
     runner = CliRunner()
@@ -739,7 +739,7 @@ def test_cli_max_duplicates_ranks_traditional_only_by_similarity(monkeypatch, tm
         ],
         semantic_duplicates=[],
         hybrid_duplicates=[],
-        analysis_mode="traditional",
+        run=make_run_record(tmp_path, mode="traditional"),
     )
     patch_cli_analyzer(monkeypatch, cli, analyze_result=result)
     runner = CliRunner()
@@ -898,7 +898,7 @@ def test_cli_max_duplicates_applies_to_single_method_modes(monkeypatch, tmp_path
         _build_tiered_result(tmp_path),
         traditional_duplicates=[],
         hybrid_duplicates=[],
-        analysis_mode="semantic",
+        run=make_run_record(tmp_path, mode="semantic"),
     )
     patch_cli_analyzer(monkeypatch, cli, analyze_result=result)
     runner = CliRunner()
@@ -935,7 +935,7 @@ def test_cli_withheld_only_result_prints_a_placeholder_instead_of_nothing(monkey
             HybridDuplicate(unit_a=unit, unit_b=unit, tier="semantic_review", score=0.8)
         ],
         potentially_unused=[],
-        analysis_mode="combined",
+        run=make_run_record(tmp_path, mode="combined"),
     )
     patch_cli_analyzer(monkeypatch, cli, analyze_result=review_only)
     runner = CliRunner()
@@ -981,7 +981,7 @@ def test_cli_semantic_only_uses_raw_findings_for_exit(monkeypatch, tmp_path):
             semantic_duplicates=[duplicate],
             hybrid_duplicates=[],
             potentially_unused=[],
-            analysis_mode="semantic",
+            run=make_run_record(tmp_path, mode="semantic"),
         ),
     )
 

@@ -14,7 +14,7 @@ from scripts.render_calibration_tables import (
     render_difficulty_table,
     render_pooled_metrics_table,
 )
-from tests.conftest import patch_cli_analyzer
+from tests.conftest import make_run_record, patch_cli_analyzer
 
 
 def _empty_result() -> AnalysisResult:
@@ -28,7 +28,7 @@ def _empty_result() -> AnalysisResult:
         semantic_duplicates=[],
         hybrid_duplicates=[],
         potentially_unused=[],
-        analysis_mode="none",
+        run=make_run_record(Path("."), mode="combined"),
     )
 
 

@@ -31,6 +31,7 @@ from codedupes.report.selection import (
     run_should_fail,
     select_findings,
 )
+from tests.conftest import make_run_record
 
 
 def _unit(
@@ -91,7 +92,7 @@ def _result(tmp_path: Path, **overrides) -> AnalysisResult:
             _hybrid(b, c, "semantic_review"),
         ],
         "potentially_unused": [],
-        "analysis_mode": "combined",
+        "run": make_run_record(tmp_path, mode="combined"),
     }
     fields.update(overrides)
     return AnalysisResult(**fields)
@@ -149,7 +150,7 @@ def test_select_findings_show_all_implies_review_and_raw_lists(tmp_path):
 
 
 def test_select_findings_single_method_has_no_tier_filter(tmp_path):
-    result = _result(tmp_path, analysis_mode="semantic", hybrid_duplicates=[])
+    result = _result(tmp_path, run=make_run_record(tmp_path, mode="semantic"), hybrid_duplicates=[])
 
     selection = select_findings(result, ReportPolicy(show_all=True))
 
@@ -162,14 +163,14 @@ def test_select_findings_single_method_has_no_tier_filter(tmp_path):
     assert selection.semantic_duplicates is None
 
 
-def test_select_findings_none_mode_is_empty(tmp_path):
+def test_select_findings_unused_mode_has_no_duplicates(tmp_path):
     result = AnalysisResult(
         units=[],
         traditional_duplicates=[],
         semantic_duplicates=[],
         hybrid_duplicates=[],
         potentially_unused=[],
-        analysis_mode="none",
+        run=make_run_record(tmp_path, mode="unused"),
     )
 
     selection = select_findings(result)
@@ -302,7 +303,10 @@ def test_run_should_fail_uses_result_analysis_mode(tmp_path):
     raw = [DuplicatePair(a, b, 0.9, "jaccard")]
     combined = _result(tmp_path, traditional_duplicates=raw, hybrid_duplicates=[])
     single = _result(
-        tmp_path, traditional_duplicates=raw, hybrid_duplicates=[], analysis_mode="traditional"
+        tmp_path,
+        traditional_duplicates=raw,
+        hybrid_duplicates=[],
+        run=make_run_record(tmp_path, mode="traditional"),
     )
 
     assert run_should_fail(combined, policy="actionable", strict_unused=False) is False
@@ -523,7 +527,7 @@ def test_max_duplicates_ranks_traditional_only_mode_by_similarity(tmp_path):
         traditional_duplicates=[exact, near_086, near_099, near_090_first, near_090_second],
         semantic_duplicates=[],
         hybrid_duplicates=[],
-        analysis_mode="traditional",
+        run=make_run_record(tmp_path, mode="traditional"),
     )
 
     capped = select_findings(result, ReportPolicy(max_duplicates=2))
@@ -538,7 +542,7 @@ def test_max_duplicates_ranks_traditional_only_mode_by_similarity(tmp_path):
 
 
 def test_max_duplicates_applies_to_single_method_raw_lists(tmp_path):
-    result = _result(tmp_path, analysis_mode="semantic", hybrid_duplicates=[])
+    result = _result(tmp_path, run=make_run_record(tmp_path, mode="semantic"), hybrid_duplicates=[])
 
     selection = select_findings(result, ReportPolicy(max_duplicates=1))
 

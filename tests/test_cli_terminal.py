@@ -17,7 +17,7 @@ from codedupes.models import (
     HybridDuplicate,
 )
 from tests.cli_helpers import build_result, build_result_with_semantic_duplicate, build_unit
-from tests.conftest import make_code_unit, patch_cli_analyzer
+from tests.conftest import make_code_unit, make_run_record, patch_cli_analyzer
 
 
 def test_cli_table_output_uses_auto_progress(monkeypatch, tmp_path):
@@ -48,7 +48,7 @@ def test_cli_reports_semantic_diagnostics(monkeypatch, tmp_path):
         semantic_duplicates=[],
         hybrid_duplicates=[],
         potentially_unused=[],
-        analysis_mode="combined",
+        run=make_run_record(tmp_path, mode="combined"),
         semantic_diagnostics=[
             ExtractionDiagnostic(
                 file_path=unit.file_path,
@@ -83,7 +83,7 @@ def test_cli_reports_unused_diagnostics(monkeypatch, tmp_path):
         semantic_duplicates=[],
         hybrid_duplicates=[],
         potentially_unused=[],
-        analysis_mode="combined",
+        run=make_run_record(tmp_path, mode="combined"),
         unused_diagnostics=[
             ExtractionDiagnostic(
                 file_path=unit.file_path,
@@ -429,7 +429,7 @@ def test_cli_long_results_keep_scores_and_headers(monkeypatch, tmp_path, width, 
             semantic_duplicates=[],
             hybrid_duplicates=[hybrid],
             potentially_unused=[unit],
-            analysis_mode="combined",
+            run=make_run_record(tmp_path, mode="combined"),
         ),
         search_results=[(unit, 0.99)],
     )

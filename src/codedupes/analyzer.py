@@ -29,12 +29,19 @@ from codedupes.embedding_cache import capture_cache_warnings, get_embedding_cach
 from codedupes.extractor import CodeExtractor, git_work_tree
 from codedupes.languages.registry import normalize_languages
 from codedupes.models import (
+    INCOMPLETE_EXTRACTION_CODES,
     AnalysisResult,
     CodeUnit,
     CodeUnitType,
     DuplicatePair,
     ExtractionDiagnostic,
     HybridDuplicate,
+    HybridSplit,
+    RunRecord,
+    SemanticSettings,
+    TraditionalSettings,
+    UnitCounts,
+    UnusedSettings,
 )
 from codedupes.pairs import ordered_pair_key
 from codedupes.semantic import (
@@ -585,6 +592,11 @@ class AnalyzerConfig:
         if not self.run_unused and self.strict_unused:
             raise ValueError("strict_unused requires run_unused=True")
 
+        if not (self.run_traditional or self.run_semantic or self.run_unused):
+            raise ValueError(
+                "At least one of run_traditional, run_semantic, or run_unused must be True"
+            )
+
         _reject_mode_gated_fields(
             self.run_semantic,
             "run_semantic",
@@ -602,6 +614,12 @@ class AnalyzerConfig:
                 ("strict_revision_cache", not self.strict_revision_cache),
                 ("batch_size", self.batch_size != DEFAULT_BATCH_SIZE),
                 ("suppress_test_semantic_matches", self.suppress_test_semantic_matches),
+                ("model_name", self.model_name != DEFAULT_MODEL),
+                (
+                    "min_semantic_statements",
+                    self.min_semantic_statements != DEFAULT_MIN_SEMANTIC_STATEMENTS,
+                ),
+                ("semantic_unit_types", self.semantic_unit_types != DEFAULT_SEMANTIC_UNIT_TYPES),
             ),
         )
 
@@ -686,6 +704,10 @@ class CodeAnalyzer:
         self._extraction_diagnostics: list[ExtractionDiagnostic] = []
         self._python_files: list[Path] = []
         self._semantic_diagnostics: list[ExtractionDiagnostic] = []
+        self._extraction_root: Path | None = None
+        self._extracted_file_count: int = 0
+        self._effective_excludes: tuple[str, ...] = ()
+        self._run_record: RunRecord | None = None
 
     @property
     def extraction_diagnostics(self) -> list[ExtractionDiagnostic]:
@@ -730,6 +752,14 @@ class CodeAnalyzer:
         """
         return tuple(self._query_execution)
 
+    @property
+    def run_record(self) -> RunRecord | None:
+        """Return the resolved run record from the last analyze()/index() call.
+
+        :return: Resolved run record, or ``None`` before the first run.
+        """
+        return self._run_record
+
     def _reset_analysis_state(self, cache_scope: Path) -> None:
         """Clear corpus-specific state before one analysis run.
 
@@ -747,6 +777,10 @@ class CodeAnalyzer:
         self._extraction_diagnostics = []
         self._python_files = []
         self._semantic_diagnostics = []
+        self._extraction_root = None
+        self._extracted_file_count = 0
+        self._effective_excludes = ()
+        self._run_record = None
 
     def _publish_corpus_manifest(
         self,
@@ -769,14 +803,7 @@ class CodeAnalyzer:
         # Missing units are not authoritative deletions when extraction could
         # not observe the requested source, including explicit file targets.
         if any(
-            diagnostic.code
-            in {
-                "read-error",
-                "invalid-utf8",
-                "partial-parse",
-                "unit-parse-error",
-                "walk-error",
-            }
+            diagnostic.code in INCOMPLETE_EXTRACTION_CODES
             for diagnostic in self._extraction_diagnostics
         ):
             return
@@ -868,6 +895,10 @@ class CodeAnalyzer:
             )
             units = list(extractor.extract_from_file(path))
             self._extraction_diagnostics = list(extractor.diagnostics)
+            self._extracted_file_count = sum(
+                len(files) for files in extractor.extracted_files.values()
+            )
+            self._effective_excludes = tuple(self.config.exclude_patterns or ())
             # Duplicate detection stays intra-file, but the unused reference
             # graph should see the whole project: resolve a project root (the
             # nearest pyproject.toml, else the git work tree, else the file's
@@ -879,6 +910,7 @@ class CodeAnalyzer:
                 if pyproject is not None
                 else (git_work_tree(path.parent) or path.parent)
             )
+            self._extraction_root = root
             reference_extractor = CodeExtractor(
                 root,
                 exclude_patterns=self.config.exclude_patterns,
@@ -905,6 +937,11 @@ class CodeAnalyzer:
             )
             units = extractor.extract_all()
             self._extraction_diagnostics = list(extractor.diagnostics)
+            self._extracted_file_count = sum(
+                len(files) for files in extractor.extracted_files.values()
+            )
+            self._effective_excludes = tuple(extractor.exclude_patterns)
+            self._extraction_root = path
             self._python_files = [
                 *extractor.extracted_files.get("python", []),
                 *extractor.reference_only_files,
@@ -1018,6 +1055,108 @@ class CodeAnalyzer:
             profile.hybrid_weak_identifier_jaccard_min,
             profile.hybrid_statement_ratio_min,
             gates,
+        )
+
+    def _build_run_record(
+        self,
+        path: Path,
+        *,
+        units: list[CodeUnit],
+        semantic_candidates: list[CodeUnit],
+        semantic_gates: dict[str, float],
+        semantic_floor: float,
+        hybrid_split: tuple[float, float, dict[str, float]],
+        semantic_task: str,
+        embedding_stats: EmbeddingRunStats | None,
+        python_files: list[Path],
+        run_traditional: bool,
+        run_unused: bool,
+    ) -> RunRecord:
+        """Build the resolved run record describing what this run actually did.
+
+        :param path: Analysis target, preserving an explicit symlink's own name.
+        :param units: Extracted code units.
+        :param semantic_candidates: Units eligible for semantic embedding.
+        :param semantic_gates: Per-language semantic duplicate gates in effect.
+        :param semantic_floor: Fallback semantic scan floor.
+        :param hybrid_split: Weak identifier Jaccard minimum, statement ratio
+            minimum, and per-language promotion gates hybrid synthesis applied.
+        :param semantic_task: Resolved task used to embed semantic candidates.
+        :param embedding_stats: Telemetry from the semantic stage, or ``None``.
+        :param python_files: Every Python file parsed for the unused reference graph.
+        :param run_traditional: Whether traditional detection actually ran.
+        :param run_unused: Whether unused-code detection actually ran.
+        :return: Resolved run record.
+        """
+        from codedupes import __version__  # Lazy: module-scope import is circular.
+
+        traditional = (
+            TraditionalSettings(
+                jaccard_threshold=self.config.jaccard_threshold,
+                tiny_filter=self.config.filter_tiny_traditional,
+                tiny_cutoff=self.config.tiny_unit_statement_cutoff,
+            )
+            if run_traditional
+            else None
+        )
+
+        semantic: SemanticSettings | None = None
+        if self.config.run_semantic:
+            profile = resolve_model_profile(self.config.model_name)
+            identity = self._embedding_space_identity
+            model_name = identity.model_name if identity is not None else profile.canonical_name
+            resolved_revision = (
+                identity.resolved_revision if identity is not None else self.config.model_revision
+            )
+            execution_device = (
+                embedding_stats.execution_device if embedding_stats is not None else None
+            )
+            weak_min, ratio_min, promotion_gates = hybrid_split
+            semantic = SemanticSettings(
+                requested_model=self.config.model_name,
+                model=model_name,
+                revision=resolved_revision,
+                profile=profile.family,
+                threshold_profile=self.config.threshold_profile,
+                task=semantic_task,
+                device=self.config.device,
+                execution_device=execution_device,
+                thresholds=dict(semantic_gates),
+                threshold_floor=semantic_floor,
+                min_statements=self.config.min_semantic_statements,
+                unit_types=self.config.semantic_unit_types,
+                cross_language=self.config.cross_language,
+                hybrid_split=(
+                    HybridSplit(
+                        weak_identifier_jaccard_min=weak_min,
+                        statement_ratio_min=ratio_min,
+                        promotion_gates=dict(promotion_gates),
+                    )
+                    if run_traditional
+                    else None
+                ),
+            )
+
+        unused = (
+            UnusedSettings(strict=self.config.strict_unused, files=len(python_files))
+            if run_unused
+            else None
+        )
+
+        return RunRecord(
+            tool_version=__version__,
+            root=self._extraction_root or path,
+            target=path,
+            languages=self.config.languages,
+            exclude_patterns=self._effective_excludes,
+            respect_gitignore=self.config.respect_gitignore,
+            include_private=self.config.include_private,
+            include_stubs=self.config.include_stubs,
+            extracted_files=self._extracted_file_count,
+            units=UnitCounts(extracted=len(units), semantic_eligible=len(semantic_candidates)),
+            traditional=traditional,
+            semantic=semantic,
+            unused=unused,
         )
 
     def analyze(self, path: Path | str) -> AnalysisResult:
@@ -1225,19 +1364,22 @@ class CodeAnalyzer:
                 semantic_high_gates=semantic_high_gates,
             )
 
-        if not units:
-            analysis_mode = "none"
-        elif combined_mode:
-            analysis_mode = "combined"
-        elif self.config.run_traditional:
-            analysis_mode = "traditional"
-        elif self.config.run_semantic:
-            analysis_mode = "semantic"
-        else:
-            analysis_mode = "none"
-
         if embedding_stats is not None:
             self._publish_corpus_manifest(path, semantic_candidates, semantic_task)
+
+        self._run_record = self._build_run_record(
+            path,
+            units=units,
+            semantic_candidates=semantic_candidates,
+            semantic_gates=semantic_gates,
+            semantic_floor=semantic_scan_floor,
+            hybrid_split=hybrid_split,
+            semantic_task=semantic_task,
+            embedding_stats=embedding_stats,
+            python_files=self._python_files,
+            run_traditional=self.config.run_traditional,
+            run_unused=self.config.run_unused,
+        )
 
         return AnalysisResult(
             units=units,
@@ -1245,7 +1387,7 @@ class CodeAnalyzer:
             semantic_duplicates=semantic_duplicates,
             hybrid_duplicates=hybrid_duplicates,
             potentially_unused=unused,
-            analysis_mode=analysis_mode,
+            run=self._run_record,
             semantic_fallback=semantic_fallback,
             semantic_fallback_reason=semantic_fallback_reason,
             extraction_diagnostics=list(self._extraction_diagnostics),
@@ -1325,6 +1467,19 @@ class CodeAnalyzer:
             self._resolved_search_semantic_task or DEFAULT_SEARCH_SEMANTIC_TASK,
             search_document=self.config.search_document,
             document_texts=document_texts,
+        )
+        self._run_record = self._build_run_record(
+            path,
+            units=units,
+            semantic_candidates=semantic_candidates,
+            semantic_gates={},
+            semantic_floor=0.0,
+            hybrid_split=(HYBRID_WEAK_JACCARD_MIN, HYBRID_STATEMENT_RATIO_MIN, {}),
+            semantic_task=self._resolved_search_semantic_task or DEFAULT_SEARCH_SEMANTIC_TASK,
+            embedding_stats=self._embedding_stats,
+            python_files=self._python_files,
+            run_traditional=False,
+            run_unused=False,
         )
         return len(semantic_candidates)
 

@@ -15,7 +15,7 @@ from codedupes.models import (
     HybridDuplicate,
 )
 from tests.cli_helpers import build_copy, build_result, build_unit, run_cli_subprocess
-from tests.conftest import patch_cli_analyzer
+from tests.conftest import make_run_record, patch_cli_analyzer
 
 
 def test_cli_json_output_hybrid_default(monkeypatch, tmp_path):
@@ -268,7 +268,7 @@ def test_cli_json_v4_raw_mode_uses_edge_list(monkeypatch, tmp_path):
             semantic_duplicates=[duplicate],
             hybrid_duplicates=[],
             potentially_unused=[],
-            analysis_mode="semantic",
+            run=make_run_record(tmp_path, mode="semantic"),
         ),
     )
 

@@ -170,6 +170,25 @@ def test_configuration_validation() -> None:
         AnalyzerConfig(tiny_unit_statement_cutoff=-1)
 
 
+def test_analyzer_config_rejects_every_check_disabled() -> None:
+    with pytest.raises(
+        ValueError,
+        match="At least one of run_traditional, run_semantic, or run_unused must be True",
+    ):
+        AnalyzerConfig(run_traditional=False, run_semantic=False, run_unused=False)
+
+
+def test_analyzer_config_rejects_semantic_candidate_controls_without_semantic_mode() -> None:
+    with pytest.raises(ValueError, match="model_name.*require run_semantic=True"):
+        AnalyzerConfig(run_semantic=False, model_name="embeddinggemma-300m")
+
+    with pytest.raises(ValueError, match="min_semantic_statements.*require run_semantic=True"):
+        AnalyzerConfig(run_semantic=False, min_semantic_statements=5)
+
+    with pytest.raises(ValueError, match="semantic_unit_types.*require run_semantic=True"):
+        AnalyzerConfig(run_semantic=False, semantic_unit_types=("class",))
+
+
 def test_invalid_mode_dependency_raises() -> None:
     with pytest.raises(ValueError, match="strict_unused requires run_unused=True"):
         AnalyzerConfig(run_unused=False, strict_unused=True)

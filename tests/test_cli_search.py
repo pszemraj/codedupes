@@ -15,7 +15,7 @@ from codedupes.models import (
     ExtractionDiagnostic,
 )
 from tests.cli_helpers import build_result, build_unit
-from tests.conftest import make_code_unit, patch_cli_analyzer
+from tests.conftest import make_code_unit, make_run_record, patch_cli_analyzer
 from tests.embedding_cache_helpers import CountingModel, patch_get_model
 
 
@@ -29,7 +29,7 @@ def test_cli_search_json_surfaces_semantic_diagnostics(monkeypatch, tmp_path):
         semantic_duplicates=[],
         hybrid_duplicates=[],
         potentially_unused=[],
-        analysis_mode="semantic",
+        run=make_run_record(tmp_path, mode="semantic"),
     )
     patch_cli_analyzer(
         monkeypatch,
@@ -277,8 +277,11 @@ def _patch_search_analyzer(
             self.extraction_diagnostics = []
             self.semantic_diagnostics = list(semantic_diagnostics or [])
             self.embedding_stats = None
+            self.run_record = None
+            self.query_execution = ()
 
-        def index(self, _path):
+        def index(self, path):
+            self.run_record = make_run_record(path, mode="semantic")
             if index_error is not None:
                 raise index_error
             return indexed_units
