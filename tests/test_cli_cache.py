@@ -15,13 +15,13 @@ from codedupes import cli
 from codedupes.embedding_cache import CacheClearResult, EmbeddingCache
 from tests.cli_helpers import build_result, build_unit
 from tests.conftest import patch_cli_analyzer
-from tests.test_embedding_cache import REVISION_1, CountingModel, _patch_get_model
+from tests.embedding_cache_helpers import REVISION_1, CountingModel, patch_get_model
 
 
 def test_cli_json_surfaces_cache_write_failure(monkeypatch, tmp_path):
     path = tmp_path / "sample.py"
     path.write_text("def entry(value):\n    return value + 1\n")
-    _patch_get_model(monkeypatch, CountingModel())
+    patch_get_model(monkeypatch, CountingModel())
     monkeypatch.setattr(embedding_cache_module, "_warned_cache_error", False)
 
     def fail_cache_write(*_args, **_kwargs):
@@ -73,7 +73,7 @@ def test_cli_embedding_telemetry_tracks_filesystem_transitions(
             return super().encode(texts, **kwargs)
 
     model = ProgressModel()
-    _patch_get_model(monkeypatch, model)
+    patch_get_model(monkeypatch, model)
     args = [command, str(repo)]
     if command == "check":
         args += ["--semantic-only", "--no-unused", "--fail-on", "none"]

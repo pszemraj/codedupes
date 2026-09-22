@@ -10,7 +10,7 @@ from click.testing import CliRunner
 from codedupes import cli
 from tests.cli_helpers import build_result
 from tests.conftest import patch_cli_analyzer
-from tests.test_embedding_cache import CountingModel, _patch_get_model
+from tests.embedding_cache_helpers import CountingModel, patch_get_model
 
 
 @pytest.mark.parametrize(("command", "expected_exit_code"), [("check", 1), ("search", 0)])
@@ -99,7 +99,7 @@ def test_cli_explicit_symlink_exclusions(
         parent_alias.symlink_to(root, target_is_directory=True)
         alias = parent_alias / alias.name
     model = CountingModel()
-    _patch_get_model(monkeypatch, model)
+    patch_get_model(monkeypatch, model)
 
     args = [command, str(alias), "--json"]
     if command == "check":

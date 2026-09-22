@@ -16,7 +16,7 @@ from codedupes.models import (
 )
 from tests.cli_helpers import build_result, build_unit
 from tests.conftest import make_code_unit, patch_cli_analyzer
-from tests.test_embedding_cache import CountingModel, _patch_get_model
+from tests.embedding_cache_helpers import CountingModel, patch_get_model
 
 
 def test_cli_search_json_surfaces_semantic_diagnostics(monkeypatch, tmp_path):
@@ -557,7 +557,7 @@ def test_cli_contextual_search_requires_explicit_threshold(monkeypatch, tmp_path
     path = tmp_path / "sample.py"
     path.write_text("def entry():\n    return 1\n")
     model = CountingModel()
-    _patch_get_model(monkeypatch, model)
+    patch_get_model(monkeypatch, model)
     args = [
         "search",
         str(path),
