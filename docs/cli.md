@@ -21,6 +21,8 @@ codedupes check ./src --traditional-only --no-unused
 codedupes check ./src --include-review
 codedupes check ./src --show-all
 codedupes check ./src --json --max-duplicates 50
+# Every default-visible pair, not just the top 20.
+codedupes check ./src --json --max-duplicates all
 codedupes check ./src --fail-on all
 codedupes check ./src/module.py
 codedupes check ./src --semantic-threshold 0.84 --traditional-threshold 0.75
@@ -42,9 +44,9 @@ Options, in addition to the [shared options](#options-shared-by-check-and-search
 - `--suppress-test-semantic`: Suppress semantic duplicate matches involving `test_*` functions
 - `--no-tiny-filter`: Disable tiny code-unit filtering for traditional duplicates
 - `--tiny-cutoff <int>`: Override the [traditional tiny-filter cutoff](analysis-defaults.md#traditional-duplicate-defaults)
-- `--include-review`, `--show-all`: Expand the [reported findings](output.md#report-selection)
-- `--max-duplicates <int>`: Cap the [reported duplicate pairs](output.md#report-selection)
-- `--full-table`: Disable table row truncation and print all rows in terminal output
+- `--include-review`, `--show-all`: Expand the [reported findings](output.md#report-selection) and lift the default report cap
+- `--max-duplicates <N|all>`: Cap the [reported duplicate pairs](output.md#report-selection) at `N` (default `20`, actionable tiers first) or remove the cap with `all`
+- `--full-table`: Print all rows in the unused and raw duplicate tables and lift the default report cap
 - `--show-source`: Show truncated duplicate snippets
 - `--fail-on <actionable|all|none>`: Select the [finding exit policy](output.md#exit-codes)
 
@@ -148,7 +150,7 @@ Clear all cached embeddings or only entries for one model. An empty or whitespac
 - `check` threshold values must be in `[0.0, 1.0]`; `search --threshold`
   accepts any finite value, including a negative similarity floor
 - `--semantic-threshold` and `--traditional-threshold` override `--threshold` for their respective methods
-- `--batch-size`, `--top-k`, and `--max-duplicates` must be greater than `0`
+- `--batch-size` and `--top-k` must be greater than `0`; `--max-duplicates` takes a positive integer or `all`
 - `--min-statements` and `--tiny-cutoff` must be greater than or equal to `0`
 - `--include-review`, `--show-all`, and `--allow-semantic-fallback` are only valid in default combined `check` mode (not with `--semantic-only` or `--traditional-only`)
 - `--json` rejects rich-only display controls: `--show-source`, `--full-table`, `--verbose`, and explicit `--output-width`

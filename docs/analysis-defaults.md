@@ -8,7 +8,7 @@ These defaults apply to `codedupes check` and `AnalyzerConfig` in check mode. Se
 
 The semantic pass may load the selected embedding model and may download it on its first use. [CLI options](cli.md#codedupes-check-path) cover single-method and unused-analysis controls.
 
-Combined output assigns each pair an evidence tier and sorts by [confidence](#confidence-scale):
+Combined output assigns each pair an evidence tier and sorts by [confidence](#confidence-scale); reports then list actionable tiers before advisory ones, see [report selection](output.md#report-selection):
 
 | tier | evidence |
 | --- | --- |

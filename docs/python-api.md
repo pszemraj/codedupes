@@ -253,6 +253,7 @@ The CLI's report policy and [JSON schema](output.md#json-schema-v3) are importab
 
 ```python
 from codedupes import (
+    DEFAULT_MAX_DUPLICATES,
     ReportPolicy,
     check_result_to_json,
     run_should_fail,
@@ -260,14 +261,20 @@ from codedupes import (
     to_json_text,
 )
 
-selection = select_findings(
-    result, ReportPolicy(include_review=False, show_all=False, max_duplicates=None)
-)
+selection = select_findings(result, ReportPolicy(max_duplicates=DEFAULT_MAX_DUPLICATES))
 exit_code = int(run_should_fail(result, policy="actionable", strict_unused=False))
-print(to_json_text(check_result_to_json(selection, fail_on="actionable", exit_code=exit_code)))
+print(
+    to_json_text(
+        check_result_to_json(
+            selection, fail_on="actionable", exit_code=exit_code, strict_unused=False
+        )
+    )
+)
 ```
 
-`select_findings` applies the visibility policy to a complete result and returns a `ReportSelection` with the emitted `duplicates`, the withheld `omitted_review` pairs, the `truncated` pairs cut by `max_duplicates` (a prefix of the analyzer's ranking survives), zero-filled `duplicates_by_tier` counts, and the referenced `units` in report-id order. `run_should_fail` always evaluates the complete result, so hidden pairs still count; `hidden_only_failure(selection, ...)` returns which hidden groups (`"review"`, `"truncated"`) fail when the primary duplicate list and unused findings pass. Raw diagnostic lists may still include those pairs, but omit the hybrid tiers used by the failure policy. Both failure helpers raise `ValueError` for a `policy` outside `"actionable"`, `"all"`, and `"none"`.
+`ReportPolicy()` is uncapped: `select_findings(result)` returns every default-visible pair, which is what `check --max-duplicates all` emits. The CLI's concise default is `ReportPolicy(max_duplicates=DEFAULT_MAX_DUPLICATES)` (20); `ReportPolicy(include_review=True)` and `ReportPolicy(show_all=True)` match `--include-review` and `--show-all`, which lift the cap on the command line.
+
+`select_findings` applies the visibility policy to a complete result and returns a `ReportSelection` with the emitted `duplicates`, the withheld `omitted_review` pairs, the `truncated` pairs cut by `max_duplicates`, zero-filled `duplicates_by_tier` counts, and the referenced `units` in report-id order. In combined mode `duplicates` is ranked for review — actionable tiers, then `semantic_high_confidence`, then included `semantic_review` pairs, each group in the analyzer's confidence order — and the cap keeps a prefix of that ranking; `result.hybrid_duplicates` keeps the analyzer's order. `actionable_pairs(pairs, combined=...)` is the shared filter behind the `actionable` policy and the `actionable_duplicates` counts. `run_should_fail` always evaluates the complete result, so hidden pairs still count; `hidden_only_failure(selection, ...)` returns `{"review"}` when withheld `semantic_review` pairs are the only failing findings and an empty set otherwise (a cap cannot hide every failing pair because actionable tiers rank first). Both failure helpers raise `ValueError` for a `policy` outside `"actionable"`, `"all"`, and `"none"`.
 
 `search_result_to_json` serializes unit hits or [file search results](output.md#file-search). For file reports, fetch every matching unit before grouping so a file's contributors cannot exhaust the unit limit and hide other files:
 
