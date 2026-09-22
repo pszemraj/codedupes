@@ -349,23 +349,32 @@ def test_behavior_executable_probe_uses_command_path(monkeypatch, tmp_path):
     assert observed_paths == [command_path]
 
 
-def test_behavior_requirement_probe_checks_c_compiler(monkeypatch, tmp_path):
+@pytest.mark.parametrize(
+    ("global_cc", "expected"),
+    [
+        pytest.param("missing-cc --target=wasm32", "missing-cc", id="first-word-is-the-compiler"),
+        pytest.param("", "CC=<empty>", id="empty-value-is-labelled"),
+    ],
+)
+def test_behavior_requirement_probe_checks_c_compiler(
+    monkeypatch, tmp_path, global_cc: str, expected: str
+):
     project = SimpleNamespace(
         spec={
             "languages": ["c"],
             "behavior_tests": [{"argv": ["make", "test"]}],
         }
     )
-    monkeypatch.setenv("CC", "missing-cc --target=wasm32")
+    monkeypatch.setenv("CC", global_cc)
     monkeypatch.setattr(
         calibration_contract.shutil,
         "which",
         lambda executable, path=None: (
-            None if executable == "missing-cc" else str(tmp_path / executable)
+            None if executable == expected else str(tmp_path / executable)
         ),
     )
 
-    assert missing_behavior_requirements([project]) == ["missing-cc"]
+    assert missing_behavior_requirements([project]) == [expected]
 
 
 @pytest.mark.parametrize(
@@ -394,25 +403,6 @@ def test_behavior_requirement_probe_uses_command_c_compiler(
     )
 
     assert missing_behavior_requirements([project]) == expected
-
-
-def test_behavior_requirement_probe_labels_empty_c_compiler(monkeypatch, tmp_path):
-    project = SimpleNamespace(
-        spec={
-            "languages": ["c"],
-            "behavior_tests": [{"argv": ["make", "test"]}],
-        }
-    )
-    monkeypatch.setenv("CC", "")
-    monkeypatch.setattr(
-        calibration_contract.shutil,
-        "which",
-        lambda executable, path=None: (
-            None if executable == "CC=<empty>" else str(tmp_path / executable)
-        ),
-    )
-
-    assert missing_behavior_requirements([project]) == ["CC=<empty>"]
 
 
 def test_behavior_requirement_probe_checks_toolchain_variants(monkeypatch, tmp_path):
