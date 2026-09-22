@@ -178,6 +178,9 @@ class HybridDuplicate(_PairIdentity):
     tier: HybridTier
     confidence: float
     has_exact: bool = False
+    # Fingerprint that made the pair exact (``structural_hash`` or ``token_hash``);
+    # ``None`` for every other tier.
+    exact_method: str | None = None
     jaccard_similarity: float | None = None
     semantic_similarity: float | None = None
     weak_identifier_jaccard: float | None = None

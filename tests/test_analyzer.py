@@ -2095,6 +2095,46 @@ def test_semantic_review_never_outranks_a_corroborated_pair(tmp_path: Path) -> N
     assert hybrid[0].confidence > hybrid[1].confidence
 
 
+def test_exact_pairs_outrank_perfect_score_near_and_confirmed_pairs(tmp_path: Path) -> None:
+    # traditional_near and hybrid_confirmed both reach confidence 1.0 at
+    # perfect scores; their real similarities used to sort ahead of an exact
+    # pair's None scores. Exact must lead regardless of uid order, so the
+    # exact units are named to sort last.
+    def unit(name: str, lineno: int) -> CodeUnit:
+        return make_code_unit(
+            tmp_path,
+            name=name,
+            source=f"def {name}(a):\n    b = a + 1\n    c = b + 1\n    return c\n",
+            lineno=lineno,
+            identifiers=frozenset({name, "a", "b", "c"}),
+            statement_count=3,
+        )
+
+    near_a, near_b = unit("a_near_a", 1), unit("a_near_b", 10)
+    confirmed_a, confirmed_b = unit("b_confirmed_a", 20), unit("b_confirmed_b", 30)
+    exact_a, exact_b = unit("z_exact_a", 40), unit("z_exact_b", 50)
+
+    hybrid = analyzer_module._synthesize_hybrid_duplicates(
+        [
+            DuplicatePair(unit_a=near_a, unit_b=near_b, similarity=1.0, method="jaccard"),
+            DuplicatePair(unit_a=confirmed_a, unit_b=confirmed_b, similarity=1.0, method="jaccard"),
+            DuplicatePair(unit_a=exact_a, unit_b=exact_b, similarity=1.0, method="token_hash"),
+        ],
+        [DuplicatePair(unit_a=confirmed_a, unit_b=confirmed_b, similarity=1.0, method="semantic")],
+        jaccard_threshold=0.85,
+        **_MECHANISM_SPLIT,
+    )
+
+    assert [duplicate.tier for duplicate in hybrid] == [
+        "exact",
+        "hybrid_confirmed",
+        "traditional_near",
+    ]
+    assert [duplicate.confidence for duplicate in hybrid] == [1.0, 1.0, 1.0]
+    assert hybrid[0].exact_method == "token_hash"
+    assert [duplicate.exact_method for duplicate in hybrid[1:]] == [None, None]
+
+
 def _alpha_renamed_pair(tmp_path: Path, similarity: float) -> list[DuplicatePair]:
     """Build a same-shape pair whose identifier sets are fully disjoint.
 

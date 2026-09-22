@@ -339,7 +339,7 @@ def _synthesize_hybrid_duplicates(
             entry = {
                 "unit_a": unit_a,
                 "unit_b": unit_b,
-                "has_exact": False,
+                "exact_method": None,
                 "jaccard_similarity": None,
                 "semantic_similarity": None,
             }
@@ -349,7 +349,10 @@ def _synthesize_hybrid_duplicates(
     for duplicate in traditional_duplicates:
         entry = ensure_entry(duplicate.unit_a, duplicate.unit_b)
         if duplicate.method in {"structural_hash", "token_hash"}:
-            entry["has_exact"] = True
+            # The traditional list is deduped structural-first, so a pair that
+            # is exact under both fingerprints arrives labelled structural.
+            if entry["exact_method"] is None:
+                entry["exact_method"] = duplicate.method
         elif duplicate.method == "jaccard":
             previous = entry["jaccard_similarity"]
             if previous is None or duplicate.similarity > previous:
@@ -367,7 +370,8 @@ def _synthesize_hybrid_duplicates(
     for entry in pair_evidence.values():
         unit_a = entry["unit_a"]  # type: ignore[assignment]
         unit_b = entry["unit_b"]  # type: ignore[assignment]
-        has_exact = bool(entry["has_exact"])
+        exact_method = entry["exact_method"]  # type: ignore[assignment]
+        has_exact = exact_method is not None
         jaccard_sim = entry["jaccard_similarity"]  # type: ignore[assignment]
         semantic_sim = entry["semantic_similarity"]  # type: ignore[assignment]
 
@@ -387,6 +391,8 @@ def _synthesize_hybrid_duplicates(
         #   semantic_review          = 0.40 + 0.45 * semantic
         # The last two keep semantic_review strictly below its corroborated
         # sibling at every similarity (the gap is 0.05 + 0.10 * semantic).
+        # traditional_near and hybrid_confirmed also reach 1.0 at perfect
+        # scores, so the final sort leads with the tier, not the confidence.
         if has_exact:
             tier = "exact"
             confidence = 1.0
@@ -426,6 +432,7 @@ def _synthesize_hybrid_duplicates(
                 tier=tier,  # type: ignore[arg-type]
                 confidence=float(confidence),
                 has_exact=has_exact,
+                exact_method=exact_method,
                 jaccard_similarity=jaccard_sim,
                 semantic_similarity=semantic_sim,
                 weak_identifier_jaccard=weak_identifier_jaccard,
@@ -433,8 +440,11 @@ def _synthesize_hybrid_duplicates(
             )
         )
 
+    # Exact pairs lead outright: a jaccard-1.0 near pair also scores 1.0, and
+    # its jaccard would otherwise sort it ahead of exact pairs carrying None.
     hybrid_duplicates.sort(
         key=lambda duplicate: (
+            duplicate.tier != "exact",
             -duplicate.confidence,
             -(duplicate.semantic_similarity if duplicate.semantic_similarity is not None else -1.0),
             -(duplicate.jaccard_similarity if duplicate.jaccard_similarity is not None else -1.0),

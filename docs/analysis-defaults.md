@@ -134,4 +134,4 @@ Finite cosine scores are bounded to [-1, 1] before reporting, so float32 roundin
 | `semantic_high_confidence` | `0.45 + 0.55 * semantic` |
 | `semantic_review` | `0.40 + 0.45 * semantic` |
 
-At the same semantic similarity, `semantic_review` scores below `semantic_high_confidence` by `0.05 + 0.10 * semantic`. Scores from different tiers can still overlap when their input similarities differ. Ties break on semantic similarity, then Jaccard, then unit uid.
+At the same semantic similarity, `semantic_review` scores below `semantic_high_confidence` by `0.05 + 0.10 * semantic`. Scores from different tiers can still overlap when their input similarities differ. `exact` pairs sort ahead of every other tier, including near pairs that also reach `1.0` at perfect Jaccard; within the remaining tiers ties break on semantic similarity, then Jaccard, then unit uid.
