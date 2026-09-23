@@ -12,6 +12,7 @@ from codedupes.analyzer import AnalyzerConfig, CodeAnalyzer, analyze_directory
 from codedupes.semantic import SemanticBackendError
 from tests.analyzer_helpers import make_semantic_runner
 from tests.conftest import create_project
+from tests.semantic_helpers import fail_if_called
 
 
 def test_analyze_directory_uses_auto_revision_for_custom_model(tmp_path: Path, monkeypatch) -> None:
@@ -55,34 +56,6 @@ def test_allow_semantic_fallback_requires_combined_mode() -> None:
 
 
 @pytest.mark.parametrize(
-    ("config_overrides", "threshold_profile"),
-    [
-        ({"semantic_task": "classification"}, "auto"),
-        ({"instruction_prefix": "CUSTOM: "}, "auto"),
-        ({"model_revision": "f" * 40}, "auto"),
-        ({"trust_remote_code": True}, "auto"),
-        # Selecting another threshold profile cannot bypass the context guard.
-        ({"instruction_prefix": "CUSTOM: "}, "generic"),
-        ({"model_revision": "f" * 40}, "embeddinggemma-300m"),
-    ],
-)
-def test_uncalibrated_duplicate_context_rejected_at_construction(
-    config_overrides: dict[str, str],
-    threshold_profile: str,
-) -> None:
-    with pytest.raises(ValueError, match="provide semantic_threshold explicitly"):
-        AnalyzerConfig(
-            run_traditional=False,
-            run_semantic=True,
-            run_unused=False,
-            min_semantic_statements=0,
-            model_name="embeddinggemma-300m",
-            threshold_profile=threshold_profile,
-            **config_overrides,
-        )
-
-
-@pytest.mark.parametrize(
     "config_overrides",
     [
         {"semantic_task": "classification"},
@@ -91,9 +64,32 @@ def test_uncalibrated_duplicate_context_rejected_at_construction(
         {"trust_remote_code": True},
     ],
 )
-def test_search_mode_defers_uncalibrated_context_to_query_time(
+def test_uncalibrated_duplicate_context_rejected_at_construction(
     config_overrides: dict[str, str],
 ) -> None:
+    """Each kwarg trips its own independent reason inside ``_uncalibrated_gate_reasons``.
+
+    ``threshold_profile`` is not read by that guard, so varying it (e.g. to
+    "generic") would only re-run the same reason through the same branch;
+    that case was dropped rather than kept alongside these four.
+    """
+    with pytest.raises(ValueError, match="provide semantic_threshold explicitly"):
+        AnalyzerConfig(
+            run_traditional=False,
+            run_semantic=True,
+            run_unused=False,
+            min_semantic_statements=0,
+            model_name="embeddinggemma-300m",
+            **config_overrides,
+        )
+
+
+def test_search_mode_defers_uncalibrated_context_to_query_time() -> None:
+    """``mode='check'`` gates the whole guard block, so search mode never evaluates
+
+    any of the four uncalibrated-context reasons; combining them into one config
+    (rather than one case per field) still proves none of them are rejected.
+    """
     config = AnalyzerConfig(
         mode="search",
         run_traditional=False,
@@ -101,7 +97,10 @@ def test_search_mode_defers_uncalibrated_context_to_query_time(
         run_unused=False,
         min_semantic_statements=0,
         model_name="embeddinggemma-300m",
-        **config_overrides,
+        semantic_task="classification",
+        instruction_prefix="CUSTOM: ",
+        model_revision="f" * 40,
+        trust_remote_code=True,
     )
     assert config.mode == "search"
 
@@ -216,11 +215,8 @@ def test_empty_extraction_still_validates_explicit_device(tmp_path: Path, monkey
     def _raise_unavailable(*_args, **_kwargs):
         raise SemanticBackendError("mps is not available in this environment")
 
-    def _fail_if_called(*_args, **_kwargs):
-        raise AssertionError("an empty corpus must not load a model")
-
     monkeypatch.setattr(semantic_module, "_resolve_semantic_device_request", _raise_unavailable)
-    monkeypatch.setattr(semantic_module, "get_model", _fail_if_called)
+    monkeypatch.setattr(semantic_module, "get_model", fail_if_called)
     empty_project = tmp_path / "empty"
     empty_project.mkdir()
 
@@ -243,7 +239,7 @@ def test_empty_extraction_still_validates_explicit_device(tmp_path: Path, monkey
 
     # A device that always has a CPU path resolves the empty manifest without
     # selecting a runtime device or loading the model.
-    monkeypatch.setattr(semantic_module, "_resolve_semantic_device_request", _fail_if_called)
+    monkeypatch.setattr(semantic_module, "_resolve_semantic_device_request", fail_if_called)
     cpu_result = CodeAnalyzer(AnalyzerConfig(device="cpu")).analyze(empty_project)
     assert cpu_result.units == []
     assert cpu_result.embedding_stats is not None
