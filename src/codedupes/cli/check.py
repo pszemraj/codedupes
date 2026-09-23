@@ -265,7 +265,7 @@ def check_command(ctx: click.Context, path: Path, **params: Any) -> None:
         output_width=opts.output_width,
     ):
         try:
-            config = opts.to_analysis_config(path)
+            config = opts.to_analysis_config()
         except ValueError as exc:
             raise click.UsageError(str(exc)) from exc
         focus_paths = resolve_focus_paths(opts.focus, path)

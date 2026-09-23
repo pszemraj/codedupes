@@ -486,6 +486,7 @@ class AnalyzerConfig:
 
     # Extraction
     exclude_patterns: list[str] | None = None
+    default_excludes: bool = True
     respect_gitignore: bool = True
     include_private: bool = True
     languages: tuple[str, ...] | None = None
@@ -829,6 +830,7 @@ class CodeAnalyzer:
             "semantic_unit_types": self.config.semantic_unit_types,
             "include_stubs": self.config.include_stubs,
             "exclude_patterns": self.config.exclude_patterns,
+            "default_excludes": self.config.default_excludes,
             "respect_gitignore": self.config.respect_gitignore,
             "semantic_task": semantic_task,
             "instruction_prefix": self.config.instruction_prefix,
@@ -890,6 +892,7 @@ class CodeAnalyzer:
             extractor = CodeExtractor(
                 path.parent,
                 exclude_patterns=self.config.exclude_patterns,
+                default_excludes=self.config.default_excludes,
                 include_private=self.config.include_private,
                 # Stub filtering only gates directory discovery. This target
                 # is explicit, including aliases resolving to in-tree .pyi files.
@@ -920,6 +923,7 @@ class CodeAnalyzer:
                 reference_extractor = CodeExtractor(
                     root,
                     exclude_patterns=self.config.exclude_patterns,
+                    default_excludes=self.config.default_excludes,
                     include_private=self.config.include_private,
                     include_stubs=self.config.include_stubs,
                     languages=self.config.languages,
@@ -933,6 +937,7 @@ class CodeAnalyzer:
             extractor = CodeExtractor(
                 path,
                 exclude_patterns=self.config.exclude_patterns,
+                default_excludes=self.config.default_excludes,
                 include_private=self.config.include_private,
                 include_stubs=self.config.include_stubs,
                 languages=self.config.languages,
@@ -1574,6 +1579,7 @@ def analyze_directory(
     cross_language: bool = False,
     traditional_threshold: float = DEFAULT_TRADITIONAL_THRESHOLD,
     exclude_patterns: list[str] | None = None,
+    default_excludes: bool = True,
     respect_gitignore: bool = True,
     languages: tuple[str, ...] | None = None,
     model_name: str = DEFAULT_MODEL,
@@ -1602,6 +1608,7 @@ def analyze_directory(
     :param cross_language: Report cross-language semantic pairs using the looser gate.
     :param traditional_threshold: Jaccard threshold for traditional near-duplicates.
     :param exclude_patterns: Glob patterns for files to exclude.
+    :param default_excludes: Apply the built-in test-file exclusion shapes.
     :param respect_gitignore: Skip git-ignored paths when scanning inside a work tree.
     :param languages: Language filter; ``None`` auto-detects supported files.
     :param model_name: Model alias, Hub ID, or explicit local directory path.
@@ -1630,6 +1637,7 @@ def analyze_directory(
         cross_language=cross_language,
         jaccard_threshold=traditional_threshold,
         exclude_patterns=exclude_patterns,
+        default_excludes=default_excludes,
         respect_gitignore=respect_gitignore,
         languages=languages,
         model_name=model_name,

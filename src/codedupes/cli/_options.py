@@ -23,7 +23,6 @@ from codedupes.constants import (
     DEFAULT_TRADITIONAL_THRESHOLD,
     SEMANTIC_DEVICE_CHOICES,
 )
-from codedupes.extractor import DEFAULT_EXCLUDE_PATTERNS
 from codedupes.report.selection import ReportPolicy
 from codedupes.semantic import ProgressMode, resolve_search_threshold
 from codedupes.semantic_profiles import (
@@ -49,22 +48,6 @@ DEFAULT_EXCLUDE_HELP_HINT = (
     "Default test exclusions and git ignore rules apply to directory scans; artifact "
     "directories beneath the scan root are always excluded."
 )
-
-
-def _resolve_exclude_patterns(
-    exclude: tuple[str, ...], no_default_excludes: bool, path: Path
-) -> list[str] | None:
-    """Combine CLI exclusions while respecting explicitly selected files.
-
-    :param exclude: User-supplied exclusion patterns.
-    :param no_default_excludes: Whether default test patterns are disabled.
-    :param path: Selected file or directory.
-    :return: Explicit patterns, or ``None`` for the analyzer's scope-aware defaults.
-    """
-    if not no_default_excludes and not exclude:
-        return None
-    defaults = [] if no_default_excludes or path.is_file() else DEFAULT_EXCLUDE_PATTERNS.copy()
-    return defaults + list(exclude)
 
 
 def resolve_focus_paths(focus: tuple[Path, ...], target: Path) -> tuple[Path, ...]:
@@ -503,11 +486,10 @@ class CheckOptions:
         """
         return None if self.full_table else DEFAULT_TABLE_ROWS
 
-    def to_analysis_config(self, path: Path) -> Any:
+    def to_analysis_config(self) -> Any:
         """Build the analyzer config represented by this option bundle.
 
-        :param path: Selected file or directory.
-        :return: Analyzer configuration with scope-appropriate exclusions.
+        :return: Analyzer configuration for this option bundle.
         """
         import codedupes.cli as cli_module
 
@@ -527,9 +509,8 @@ class CheckOptions:
             traditional_threshold = DEFAULT_TRADITIONAL_THRESHOLD
 
         return cli_module.AnalyzerConfig(
-            exclude_patterns=_resolve_exclude_patterns(
-                self.exclude, self.no_default_excludes, path
-            ),
+            exclude_patterns=list(self.exclude),
+            default_excludes=not self.no_default_excludes,
             respect_gitignore=not self.no_gitignore,
             include_private=not self.no_private,
             languages=self.languages or None,
@@ -595,19 +576,17 @@ class SearchOptions:
             **{name: params[name] for name in cls.__dataclass_fields__ if name != "semantic"},
         )
 
-    def to_analysis_config(self, path: Path) -> Any:
+    def to_analysis_config(self) -> Any:
         """Build the analyzer config represented by this option bundle.
 
-        :param path: Selected file or directory.
-        :return: Analyzer configuration with scope-appropriate exclusions.
+        :return: Analyzer configuration for this option bundle.
         """
         import codedupes.cli as cli_module
 
         config = cli_module.AnalyzerConfig(
             mode="search",
-            exclude_patterns=_resolve_exclude_patterns(
-                self.exclude, self.no_default_excludes, path
-            ),
+            exclude_patterns=list(self.exclude),
+            default_excludes=not self.no_default_excludes,
             respect_gitignore=not self.no_gitignore,
             include_private=not self.no_private,
             languages=self.languages or None,

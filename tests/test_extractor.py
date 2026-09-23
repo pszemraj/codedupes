@@ -322,15 +322,14 @@ def test_extract_all_skips_suffix_test_files_by_default(tmp_path: Path, caplog) 
 
 @pytest.mark.parametrize("include_tests", [False, True])
 def test_default_exclusion_hint_counts_pruned_directories(tmp_path: Path, caplog, include_tests):
-    from codedupes.extractor import DEFAULT_EXCLUDE_PATTERNS
-
     for relative in ["test_one.py", "test_helpers/deep.py", "node_modules/test_dep.py", "skip.py"]:
         path = tmp_path / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("def entry():\n    return 1\n", encoding="utf-8")
-    patterns = ([] if include_tests else DEFAULT_EXCLUDE_PATTERNS) + ["skip.py"]
 
-    extractor = CodeExtractor(tmp_path, exclude_patterns=patterns)
+    extractor = CodeExtractor(
+        tmp_path, exclude_patterns=["skip.py"], default_excludes=not include_tests
+    )
     with caplog.at_level("INFO", logger="codedupes.extractor"):
         extractor.extract_all()
 
@@ -400,10 +399,10 @@ def test_exclude_root_relative_paths(tmp_path: Path, pattern: str) -> None:
     assert [unit.file_path.relative_to(tmp_path).as_posix() for unit in units] == [paths[1]]
 
 
-def test_explicit_empty_excludes_include_tests(tmp_path: Path) -> None:
+def test_no_default_excludes_includes_tests(tmp_path: Path) -> None:
     path = tmp_path / "test_entry.py"
     path.write_text("def entry():\n    return 1\n", encoding="utf-8")
-    assert len(CodeExtractor(tmp_path, exclude_patterns=[]).extract_all()) == 1
+    assert len(CodeExtractor(tmp_path, default_excludes=False).extract_all()) == 1
 
 
 @pytest.mark.parametrize("cpp_path", ["examples/foreign.cpp", "test_foreign.cpp"])
@@ -412,9 +411,8 @@ def test_header_detection_ignores_excluded_cpp(tmp_path: Path, cpp_path: str) ->
     foreign = tmp_path / cpp_path
     foreign.parent.mkdir(parents=True, exist_ok=True)
     foreign.write_text("", encoding="utf-8")
-    from codedupes.extractor import DEFAULT_EXCLUDE_PATTERNS
 
-    extractor = CodeExtractor(tmp_path, exclude_patterns=[*DEFAULT_EXCLUDE_PATTERNS, "examples"])
+    extractor = CodeExtractor(tmp_path, exclude_patterns=["examples"])
     assert extractor._allow_c_headers()
 
 
@@ -786,47 +784,44 @@ def test_reference_only_files_are_the_default_test_exclusions(tmp_path: Path) ->
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("def entry():\n    return 1\n")
 
-    def reference_only_names(exclude_patterns: list[str] | None) -> set[str]:
-        extractor = CodeExtractor(root, exclude_patterns=exclude_patterns, include_private=True)
+    def reference_only_names(
+        exclude_patterns: list[str] | None = None, *, default_excludes: bool = True
+    ) -> set[str]:
+        extractor = CodeExtractor(
+            root,
+            exclude_patterns=exclude_patterns,
+            default_excludes=default_excludes,
+            include_private=True,
+        )
         extractor.extract_all()
         return {file.relative_to(root).as_posix() for file in extractor.reference_only_files}
 
-    # Default configuration: both default-excluded shapes feed the reference-only
-    # list; the gitignored file and the artifact directory do not.
+    # Defaults only: both default-excluded shapes feed the reference-only list;
+    # the gitignored file and the artifact directory do not.
     default_names = {
         "tests/test_impl.py",
         "tests/conftest.py",
         "pkg/legacy_test.py",
     }
-    assert reference_only_names(None) == default_names
+    assert reference_only_names() == default_names
 
-    # An explicit list of the same default patterns behaves exactly like None:
-    # every pattern still fills a default slot, so none becomes a user exclusion.
-    from codedupes.extractor import DEFAULT_EXCLUDE_PATTERNS
+    # A user exclusion for "tests/" is a hard exclusion: the whole directory
+    # drops out of both duplicate detection and unused-code references. The
+    # unrelated default-shape match under "pkg" is unaffected and stays
+    # reference-transparent.
+    assert reference_only_names(["**/tests/**"]) == {"pkg/legacy_test.py"}
 
-    assert reference_only_names(DEFAULT_EXCLUDE_PATTERNS.copy()) == default_names
+    # Disabling defaults makes the same user exclusion still a hard exclusion.
+    assert reference_only_names(["**/tests/**"], default_excludes=False) == set()
 
-    # A pattern past the default budget is a real user exclusion, dropping the
-    # file from references too, not only from duplicate detection.
-    assert reference_only_names([*DEFAULT_EXCLUDE_PATTERNS, "pkg/legacy_test.py"]) == {
-        "tests/test_impl.py",
-        "tests/conftest.py",
-    }
+    # A differently shaped user pattern for the same directory is just as hard
+    # an exclusion.
+    assert reference_only_names(["tests/"]) == {"pkg/legacy_test.py"}
 
-    # Disabling default test exclusions extracts test files directly, so nothing
-    # needs the reference-only path.
-    assert reference_only_names([]) == set()
+    # Disabling default test exclusions alone extracts test files directly, so
+    # nothing needs the reference-only path.
+    assert reference_only_names(default_excludes=False) == set()
 
-    # A real user exclusion for "tests" drops the whole directory from both
-    # duplicate detection and unused-code references; the unrelated default
-    # shape match under "pkg" is unaffected.
-    assert reference_only_names([*DEFAULT_EXCLUDE_PATTERNS, "tests"]) == {"pkg/legacy_test.py"}
-
-    # Repeating a built-in shape past the default budget is a real user
-    # exclusion for the reference walk too.
-    assert reference_only_names([*DEFAULT_EXCLUDE_PATTERNS, "**/tests/**"]) == {
-        "pkg/legacy_test.py"
-    }
-
-    # A lone default shape is still a default pattern: reference-transparent.
-    assert reference_only_names(["**/tests/**"]) == {"tests/test_impl.py", "tests/conftest.py"}
+    # A user pattern for an unrelated path leaves every default-shape file
+    # reference-only.
+    assert reference_only_names(["missing"]) == default_names

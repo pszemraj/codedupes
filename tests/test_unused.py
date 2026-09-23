@@ -1306,45 +1306,28 @@ def test_production_function_referenced_only_from_tests_is_not_reported(tmp_path
     (tests_dir / "test_impl.py").write_text(
         "from pkg.impl import helper\n\n\ndef test_helper():\n    assert helper() == 1\n"
     )
-    config = AnalyzerConfig(
-        run_traditional=False, run_semantic=False, run_unused=True, strict_unused=True
-    )
 
-    default_result = CodeAnalyzer(config).analyze(root)
-    assert "helper" not in {unit.name for unit in default_result.potentially_unused}
-
-    from codedupes.extractor import DEFAULT_EXCLUDE_PATTERNS
-
-    explicit_defaults = CodeAnalyzer(
-        AnalyzerConfig(
+    def unused_names(**config_overrides: object) -> set[str]:
+        config = AnalyzerConfig(
             run_traditional=False,
             run_semantic=False,
             run_unused=True,
             strict_unused=True,
-            exclude_patterns=DEFAULT_EXCLUDE_PATTERNS.copy(),
+            **config_overrides,
         )
-    ).analyze(root)
-    assert "helper" not in {unit.name for unit in explicit_defaults.potentially_unused}
+        result = CodeAnalyzer(config).analyze(root)
+        return {unit.name for unit in result.potentially_unused}
 
-    excluded_config = AnalyzerConfig(
-        run_traditional=False,
-        run_semantic=False,
-        run_unused=True,
-        strict_unused=True,
-        exclude_patterns=[*DEFAULT_EXCLUDE_PATTERNS, "tests"],
-    )
-    excluded_result = CodeAnalyzer(excluded_config).analyze(root)
-    assert "helper" in {unit.name for unit in excluded_result.potentially_unused}
+    # Defaults alone: the test file is reference-only, so it still credits helper.
+    assert "helper" not in unused_names()
 
-    same_shape_config = AnalyzerConfig(
-        run_traditional=False,
-        run_semantic=False,
-        run_unused=True,
-        strict_unused=True,
-        exclude_patterns=[*DEFAULT_EXCLUDE_PATTERNS, "**/tests/**"],
-    )
-    same_shape_result = CodeAnalyzer(same_shape_config).analyze(root)
-    assert "helper" in {unit.name for unit in same_shape_result.potentially_unused}
+    # A user exclusion for "tests/" is a hard exclusion, whatever its glob shape
+    # or whether the default test-file shapes are also active: it cannot hide
+    # an otherwise-unused helper by keeping the excluded test's reference to it
+    # visible to the unused-code reference walk.
+    assert "helper" in unused_names(exclude_patterns=["**/tests/**"])
+    assert "helper" in unused_names(exclude_patterns=["tests/"])
+    assert "helper" in unused_names(default_excludes=False, exclude_patterns=["**/tests/**"])
 
 
 @pytest.mark.parametrize(

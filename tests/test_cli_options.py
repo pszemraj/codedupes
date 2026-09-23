@@ -389,7 +389,7 @@ def test_cli_environment_variables_never_reach_parsed_config(
     assert captured[0].embedding_cache is (not explicit_options)
     assert captured[0].languages is None
     assert captured[0].include_private is True
-    assert captured[0].exclude_patterns is None
+    assert captured[0].exclude_patterns == []
 
     help_result = runner.invoke(cli.cli, [command, "--help"])
     assert help_result.exit_code == 0

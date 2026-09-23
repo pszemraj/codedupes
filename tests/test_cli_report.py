@@ -450,6 +450,75 @@ def test_cli_unused_only_exit_policy_unchanged(monkeypatch, tmp_path):
     assert fail_all_result.exit_code == 1
 
 
+def _write_test_only_reference_project(tmp_path: Path) -> Path:
+    """Project where ``helper`` is only referenced from a file under ``tests/``.
+
+    :param tmp_path: Root to build the project under.
+    :return: Project root (also the resolved reference root: it holds ``pyproject.toml``).
+    """
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "demo"\n')
+    pkg = tmp_path / "pkg"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("")
+    (pkg / "app.py").write_text("def helper():\n    return 1\n")
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir()
+    (tests_dir / "test_app.py").write_text(
+        "from pkg.app import helper\n\n\ndef test_helper():\n    assert helper() == 1\n"
+    )
+    return tmp_path
+
+
+@pytest.mark.parametrize("no_default_excludes", [False, True])
+@pytest.mark.parametrize("target_is_file", [False, True])
+def test_cli_user_exclude_of_tests_hard_excludes_from_unused_references(
+    tmp_path: Path, target_is_file: bool, no_default_excludes: bool
+) -> None:
+    """A real, unmocked run: a user's own ``--exclude`` for ``tests/`` must be a hard
+    exclusion, whether or not the default test-file shapes are also active, and for
+    both a directory target and a single-file target (whose reference walk resolves
+    the project root through the nearest ``pyproject.toml``, same as the directory
+    target's root -- so the same root-relative glob applies in both cases).
+    """
+    project = _write_test_only_reference_project(tmp_path)
+    target = (project / "pkg" / "app.py") if target_is_file else project
+
+    args = [
+        "check",
+        str(target),
+        "--exclude",
+        "**/tests/**",
+        "--unused-only",
+        "--strict-unused",
+        "--json",
+    ]
+    if no_default_excludes:
+        args.append("--no-default-excludes")
+
+    result = CliRunner().invoke(cli.cli, args)
+    assert result.exit_code in {0, 1}, result.output
+    payload = json.loads(result.output)
+    units = payload["units"]
+    unused_names = {units[uid]["name"] for uid in payload["potentially_unused"]}
+    assert "helper" in unused_names
+
+
+def test_cli_without_user_exclude_the_test_reference_hides_the_helper(tmp_path: Path) -> None:
+    """Control for the matrix above: with no ``--exclude``, the default test-file
+    shape stays reference-transparent and the helper is not reported as unused.
+    """
+    project = _write_test_only_reference_project(tmp_path)
+
+    result = CliRunner().invoke(
+        cli.cli, ["check", str(project), "--unused-only", "--strict-unused", "--json"]
+    )
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    units = payload["units"]
+    unused_names = {units[uid]["name"] for uid in payload["potentially_unused"]}
+    assert "helper" not in unused_names
+
+
 def _build_tiered_result(tmp_path: Path) -> AnalysisResult:
     """Combined result with one confirmed pair, two review pairs, and an unused unit."""
     unit = build_unit(tmp_path)

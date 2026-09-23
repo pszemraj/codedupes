@@ -32,11 +32,9 @@ def test_cli_focus_displays_brackets_in_path(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize(("command", "expected_exit_code"), [("check", 1), ("search", 0)])
 @pytest.mark.parametrize("include_tests", [False, True])
-def test_cli_exclusions_extend_defaults(
+def test_cli_exclude_and_no_default_excludes_are_forwarded_separately(
     monkeypatch, tmp_path, command, expected_exit_code, include_tests
 ):
-    from codedupes.extractor import DEFAULT_EXCLUDE_PATTERNS
-
     captured = []
     patch_cli_analyzer(
         monkeypatch, cli, analyze_result=build_result(tmp_path), captured_configs=captured
@@ -47,15 +45,15 @@ def test_cli_exclusions_extend_defaults(
         args.append("--no-default-excludes")
     result = CliRunner().invoke(cli.cli, args)
     assert result.exit_code == expected_exit_code, result.output
-    # The extractor's own handling of a pattern list is test_extractor.py's;
-    # this only proves the CLI composes the right list to forward.
-    assert captured[0].exclude_patterns == (
-        ["examples"] if include_tests else [*DEFAULT_EXCLUDE_PATTERNS, "examples"]
-    )
+    # The CLI forwards the user's own pattern and the defaults toggle as two
+    # separate settings rather than flattening them into one list; the
+    # extractor's own handling of the two is test_extractor.py's.
+    assert captured[0].exclude_patterns == ["examples"]
+    assert captured[0].default_excludes is not include_tests
 
 
 @pytest.mark.parametrize(("command", "expected_exit_code"), [("check", 1), ("search", 0)])
-def test_cli_implicit_default_exclusions_preserve_analyzer_default(
+def test_cli_no_exclude_options_pass_an_empty_user_list_with_defaults_on(
     monkeypatch, tmp_path, command, expected_exit_code
 ):
     path = tmp_path / "sample.py"
@@ -73,7 +71,8 @@ def test_cli_implicit_default_exclusions_preserve_analyzer_default(
     result = CliRunner().invoke(cli.cli, args)
 
     assert result.exit_code == expected_exit_code, result.output
-    assert captured[0].exclude_patterns is None
+    assert captured[0].exclude_patterns == []
+    assert captured[0].default_excludes is True
 
 
 @pytest.mark.parametrize(("command", "expected_exit_code"), [("check", 1), ("search", 0)])

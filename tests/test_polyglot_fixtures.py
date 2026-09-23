@@ -56,7 +56,7 @@ def test_equal_token_hashes_imply_equal_structural_hashes_on_fixtures(
     """
     extractor = CodeExtractor(
         _FIXTURE_ROOT / relative_root,
-        exclude_patterns=[],
+        default_excludes=False,
         include_private=True,
         languages=(language,),
     )

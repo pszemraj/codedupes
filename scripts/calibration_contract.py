@@ -197,7 +197,7 @@ def extract_project(
         extractor = CodeExtractor(
             root if root.is_dir() else root.parent,
             include_private=True if inventory else project.policy.get("include_private", True),
-            exclude_patterns=[] if include_tests else None,
+            default_excludes=not include_tests,
             languages=project.spec["languages"],
         )
         found = (

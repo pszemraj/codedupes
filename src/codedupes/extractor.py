@@ -7,7 +7,6 @@ import logging
 import os
 import re
 import subprocess
-from collections import Counter
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -116,6 +115,7 @@ class CodeExtractor:
         self,
         root: Path,
         exclude_patterns: list[str] | None = None,
+        default_excludes: bool = True,
         include_private: bool = True,
         include_stubs: bool = False,
         languages: tuple[str, ...] | list[str] | None = None,
@@ -124,9 +124,15 @@ class CodeExtractor:
         """Construct an extractor for a project root.
 
         :param root: Root path to scan.
-        :param exclude_patterns: Path/name globs; ``None`` uses test defaults for
-            directory discovery, while an empty list disables those defaults.
-            Directly named files bypass only the implicit test defaults.
+        :param exclude_patterns: The caller's own path/name globs; ``None`` or an
+            empty list means none. These are hard exclusions: they drop matching
+            files from both directory discovery and the unused-code reference
+            walk, and they still apply to an explicitly named file, relative to
+            its parent.
+        :param default_excludes: Apply the built-in test-file shapes
+            (``DEFAULT_EXCLUDE_PATTERNS``) to directory discovery. They stay
+            reference-transparent: a file they alone exclude is still parsed for
+            unused-code references. Never applies to an explicitly named file.
         :param include_private: Include private names when true.
         :param include_stubs: Include ``.pyi`` files.
         :param languages: Optional canonical/alias language filter. Auto-detects
@@ -137,39 +143,17 @@ class CodeExtractor:
         self.root = root.resolve()
         self.respect_gitignore = respect_gitignore
         self._ignored_paths: frozenset[Path] | None = None
-        self._uses_default_exclude_patterns = exclude_patterns is None
+        user_patterns = list(exclude_patterns) if exclude_patterns else []
         self.exclude_patterns = (
-            DEFAULT_EXCLUDE_PATTERNS.copy() if exclude_patterns is None else exclude_patterns
+            [*DEFAULT_EXCLUDE_PATTERNS, *user_patterns] if default_excludes else user_patterns
         )
-        self._exclude_matchers: list[_ExcludeMatcher] = []
-        for pattern in self.exclude_patterns:
-            anchored = pattern.startswith(("./", "/"))
-            directory_only = pattern.endswith("/")
-            pattern = pattern.removeprefix("./").lstrip("/").rstrip("/")
-            matcher = re.compile(fnmatch.translate(os.path.normcase(pattern)))
-            zero_depth = (
-                re.compile(fnmatch.translate(os.path.normcase(pattern[3:])))
-                if pattern.startswith("**/")
-                else None
-            )
-            self._exclude_matchers.append(
-                (anchored or "/" in pattern, directory_only, matcher, zero_depth)
-            )
-        # Walk the configured patterns alongside their matchers, consuming one
-        # remaining occurrence of each default shape from a budget of the
-        # built-in defaults: a pattern past that budget, including a repeat of
-        # a default shape, is a real user exclusion for the reference walk.
-        remaining_defaults = Counter(DEFAULT_EXCLUDE_PATTERNS)
-        default_exclude_patterns: list[str] = []
-        user_exclude_matchers: list[_ExcludeMatcher] = []
-        for pattern, matcher in zip(self.exclude_patterns, self._exclude_matchers, strict=True):
-            if remaining_defaults[pattern] > 0:
-                remaining_defaults[pattern] -= 1
-                default_exclude_patterns.append(pattern)
-            else:
-                user_exclude_matchers.append(matcher)
-        self._default_exclude_patterns = default_exclude_patterns
-        self._user_exclude_matchers = user_exclude_matchers
+        self._exclude_matchers: list[_ExcludeMatcher] = [
+            self._compile_matcher(pattern) for pattern in self.exclude_patterns
+        ]
+        self._default_exclude_patterns = DEFAULT_EXCLUDE_PATTERNS.copy() if default_excludes else []
+        self._user_exclude_matchers: list[_ExcludeMatcher] = [
+            self._compile_matcher(pattern) for pattern in user_patterns
+        ]
         self.include_private = include_private
         self.include_stubs = include_stubs
         self.languages = normalize_languages(languages)
@@ -192,6 +176,25 @@ class CodeExtractor:
         :return: Whether the directory is excluded.
         """
         return is_default_excluded_dir(name)
+
+    @staticmethod
+    def _compile_matcher(pattern: str) -> _ExcludeMatcher:
+        """Compile one exclude glob into its anchoring and matching components.
+
+        :param pattern: Raw exclude pattern as supplied by the caller.
+        :return: Anchoring flag, directory-only flag, path matcher, and the
+            zero-depth matcher for a ``**/``-prefixed pattern (``None`` otherwise).
+        """
+        anchored = pattern.startswith(("./", "/"))
+        directory_only = pattern.endswith("/")
+        pattern = pattern.removeprefix("./").lstrip("/").rstrip("/")
+        matcher = re.compile(fnmatch.translate(os.path.normcase(pattern)))
+        zero_depth = (
+            re.compile(fnmatch.translate(os.path.normcase(pattern[3:])))
+            if pattern.startswith("**/")
+            else None
+        )
+        return (anchored or "/" in pattern, directory_only, matcher, zero_depth)
 
     def _is_gitignored(self, path: Path, *, check_ancestors: bool = True) -> bool:
         """Return whether git ignores an in-tree path or one of its ancestors.
@@ -398,13 +401,13 @@ class CodeExtractor:
         # naming are computed relative to the root, and the symlink is the
         # file's identity within the analyzed tree.
         file_path = file_path.absolute()
-        # A named file is a deliberate request: implicit test globs and git
-        # ignore rules gate directory discovery, and the walk applied both.
-        match_patterns = not self._uses_default_exclude_patterns
+        # A named file is a deliberate request: the default test-file shapes
+        # and git ignore rules gate directory discovery only. The caller's own
+        # exclude patterns are hard exclusions and still apply here.
         if file_path.is_relative_to(self.root) and self._should_exclude(
             file_path,
-            match_patterns=match_patterns,
             match_ignored=False,
+            matchers=self._user_exclude_matchers,
         ):
             return
         try:
@@ -415,7 +418,9 @@ class CodeExtractor:
             resolved = file_path
         if resolved.is_relative_to(self.root):
             file_path = resolved
-        if self._should_exclude(file_path, match_patterns=match_patterns, match_ignored=False):
+        if self._should_exclude(
+            file_path, match_ignored=False, matchers=self._user_exclude_matchers
+        ):
             logger.debug(f"Skipping excluded file {file_path}")
             return
 
