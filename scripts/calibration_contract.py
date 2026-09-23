@@ -83,10 +83,6 @@ class Project:
     def id(self) -> str:
         return self.spec["id"]
 
-    @property
-    def annotations_path(self) -> Path:
-        return self.manifest_path.parent / self.spec["annotations"]
-
 
 def load_projects(
     manifest_path: Path = DEFAULT_MANIFEST,

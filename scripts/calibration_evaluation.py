@@ -30,7 +30,6 @@ try:
         resolve_annotations,
         unit_ids,
         validate_project,
-        write_json,
     )
     from .calibration_measurements import (
         CALIBRATION_BATCH_SIZE,
@@ -50,7 +49,6 @@ except ImportError:
         resolve_annotations,
         unit_ids,
         validate_project,
-        write_json,
     )
     from calibration_measurements import (
         CALIBRATION_BATCH_SIZE,
@@ -2227,8 +2225,3 @@ def load_all(
     for measurement in measurements.values():
         validate_measurement_provenance(project, measurement)
     return measurements
-
-
-def write_full_report(path: Path, report: dict[str, Any]) -> None:
-    """Write one compact report."""
-    write_json(path, report)
