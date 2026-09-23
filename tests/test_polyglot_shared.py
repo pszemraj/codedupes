@@ -8,6 +8,7 @@ import pytest
 
 from codedupes.extractor import CodeExtractor
 from codedupes.languages.registry import get_grammar_statuses
+from codedupes.languages.tree_sitter_backend import FINGERPRINT_SCHEMA_VERSION
 from tests.polyglot_helpers import extract
 
 pytestmark = pytest.mark.grammar
@@ -76,6 +77,7 @@ def test_structural_hash_golden_values_pin_the_fingerprint_schema(
 ) -> None:
     """Nothing else persists these hashes, so canonical-stream drift would
     otherwise silently rename every fingerprint."""
+    assert FINGERPRINT_SCHEMA_VERSION == 2, "bump the goldens below alongside this constant"
     units = extract(tmp_path, filename, source)
 
     assert [unit.structural_hash for unit in units] == [expected_hash]
