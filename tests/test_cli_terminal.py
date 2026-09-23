@@ -286,17 +286,20 @@ def test_cli_show_diff_prints_the_differing_operator(tmp_path: Path) -> None:
     assert "sample.py:1" in result.stdout
 
 
-def test_cli_show_diff_skips_token_families_and_diffs_structural_families(
+def test_cli_show_diff_renders_source_changes_in_exact_families(
     tmp_path: Path,
 ) -> None:
     (tmp_path / "file1.py").write_text("def helper():\n    return 1\n", encoding="utf-8")
-    (tmp_path / "file2.py").write_text("def helper():\n    return 1\n", encoding="utf-8")
+    (tmp_path / "file2.py").write_text(
+        "def helper():\n    # A different comment.\n    return 1\n", encoding="utf-8"
+    )
     (tmp_path / "file3.py").write_text(
         "def calc(value):\n    result = value + 1\n    return result\n", encoding="utf-8"
     )
     (tmp_path / "file4.py").write_text(
         "def calc(value):\n    total = value + 1\n    return total\n", encoding="utf-8"
     )
+    (tmp_path / "file5.py").write_text("def helper():\n    return 1\n", encoding="utf-8")
 
     result = CliRunner().invoke(
         cli.cli,
@@ -316,8 +319,10 @@ def test_cli_show_diff_skips_token_families_and_diffs_structural_families(
     assert "file3.calc vs file4.calc" in result.stdout
     assert "-result = value + 1" in result.stdout
     assert "+total = value + 1" in result.stdout
-    # token_hash family (byte-identical copies): no diff panel, nothing to show.
-    assert "file1.helper vs file2.helper" not in result.stdout
+    # Token-equal copies can differ in comments, while source-identical copies have no diff.
+    assert "file1.helper vs file2.helper" in result.stdout
+    assert "+# A different comment." in result.stdout
+    assert "file1.helper vs file5.helper" not in result.stdout
 
 
 def test_cli_show_diff_respects_source_lines_budget(tmp_path: Path) -> None:

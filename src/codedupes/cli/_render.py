@@ -654,7 +654,7 @@ def print_exact_families(
             )
         pending_rows = True
 
-        diff_members = others if show_diff and family.method == "structural_hash" else ()
+        diff_members = others if show_diff else ()
         if show_source or diff_members:
             _output.console.print(table)
             if show_source:
