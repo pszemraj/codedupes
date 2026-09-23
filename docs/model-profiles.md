@@ -65,7 +65,7 @@ Both `check` and `search` accept `--threshold-profile`; the Python setting is `t
 | `embeddinggemma-300m` | Use the built-in EmbeddingGemma profile's thresholds. |
 | `gte-modernbert-base` | Use the built-in GTE profile's thresholds. |
 
-Explicit numeric thresholds take precedence. Selecting a threshold profile sets duplicate, search, and [hybrid confidence](#hybrid-confidence-gates) gates; it does not change the model, prompts, revision, or cached embeddings. It also does not bypass the explicit numeric threshold requirements for [custom embedding contexts](#semantic-task-defaults-and-choices). In human-readable output, the CLI reports its effective threshold choice and values without prompting; `--json` suppresses those logs and does not add threshold metadata to the JSON schema.
+Explicit numeric thresholds take precedence. Selecting a threshold profile sets duplicate, search, and [hybrid confidence](#hybrid-confidence-gates) gates; it does not change the model, prompts, revision, or cached embeddings. It also does not bypass the explicit numeric threshold requirements for [custom embedding contexts](#semantic-task-defaults-and-choices). In human-readable output, the CLI reports its effective threshold choice and values without prompting. With `--json`, the effective semantic threshold profile and per-language values appear under `run.semantic`; threshold log lines are suppressed.
 
 For an approved local EmbeddingGemma copy, normal family recognition is enough:
 
