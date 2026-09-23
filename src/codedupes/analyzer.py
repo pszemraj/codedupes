@@ -6,7 +6,7 @@ import hashlib
 import json
 import logging
 import math
-from collections.abc import Iterable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -77,27 +77,6 @@ from codedupes.traditional import (
 from codedupes.unused import find_pyproject, run_unused_analysis
 
 logger = logging.getLogger(__name__)
-
-
-def _unique_reference_files(paths: Iterable[Path], root: Path) -> list[Path]:
-    """Deduplicate reference files by source identity, retaining external symlink aliases.
-
-    :param paths: Extracted and reference-only Python files in discovery order.
-    :param root: Resolved scan root used for in-tree source identities.
-    :return: One path per source, with in-tree symlinks represented by their target.
-    """
-    seen: set[Path] = set()
-    unique: list[Path] = []
-    for path in paths:
-        try:
-            identity = path.resolve()
-        except (OSError, RuntimeError):
-            identity = path
-        if identity in seen:
-            continue
-        seen.add(identity)
-        unique.append(identity if identity.is_relative_to(root) else path)
-    return unique
 
 
 DEFAULT_SEMANTIC_UNIT_TYPES = ("function", "method")
@@ -946,9 +925,9 @@ class CodeAnalyzer:
                     languages=self.config.languages,
                     respect_gitignore=self.config.respect_gitignore,
                 )
-                self._python_files = _unique_reference_files(
-                    [*self._python_files, *reference_extractor.reference_files()], root
-                )
+                for reference_file in reference_extractor.reference_files():
+                    if reference_file not in self._python_files:
+                        self._python_files.append(reference_file)
                 self._extraction_diagnostics.extend(reference_extractor.diagnostics)
         else:
             extractor = CodeExtractor(
@@ -966,10 +945,10 @@ class CodeAnalyzer:
             )
             self._effective_excludes = tuple(extractor.exclude_patterns)
             self._extraction_root = path
-            self._python_files = _unique_reference_files(
-                [*extractor.extracted_files.get("python", []), *extractor.reference_only_files],
-                path,
-            )
+            self._python_files = [
+                *extractor.extracted_files.get("python", []),
+                *extractor.reference_only_files,
+            ]
 
         logger.info(f"Extracted {len(units)} code units")
         return units

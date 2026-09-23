@@ -72,8 +72,6 @@ codedupes check <root> --focus <file>
 codedupes check . --focus src/pkg/new_module.py --focus src/pkg/util/
 ```
 
-File symlink aliases to the same source share one extracted copy; focusing any alias selects it.
-
 ## `codedupes search <path> "<query>"`
 
 Run semantic search over extracted code units.

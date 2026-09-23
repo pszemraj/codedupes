@@ -14,55 +14,6 @@ from tests.conftest import patch_cli_analyzer
 from tests.embedding_cache_helpers import CountingModel, patch_get_model
 
 
-@pytest.mark.parametrize("focus_alias", ["linked.py", "spare.py"])
-def test_cli_focus_accepts_analyzed_external_file_symlink(tmp_path: Path, focus_alias: str) -> None:
-    outside = tmp_path / "outside"
-    outside.mkdir()
-    target = outside / "shared.py"
-    target.write_text(
-        "def first(value):\n    result = value + 1\n    return result\n\n"
-        "def second(value):\n    result = value + 1\n    return result\n",
-        encoding="utf-8",
-    )
-    root = tmp_path / "project"
-    root.mkdir()
-    alias = root / "linked.py"
-    alias.symlink_to(target)
-    (root / "spare.py").symlink_to(target)
-    focus = root / focus_alias
-
-    result = CliRunner().invoke(
-        cli.cli,
-        [
-            "check",
-            str(root),
-            "--traditional-only",
-            "--no-unused",
-            "--no-tiny-filter",
-            "--fail-on",
-            "all",
-            "--focus",
-            str(focus),
-            "--json",
-        ],
-    )
-
-    assert result.exit_code == 1, result.output
-    payload = json.loads(result.output)
-    assert payload["summary"]["focus"]["paths"] == [str(focus)]
-    assert payload["summary"]["focus"]["units"] == 2
-    assert len(payload["exact_families"]) == 1
-
-    directory_alias = root / "external_dir"
-    directory_alias.symlink_to(outside, target_is_directory=True)
-    rejected = CliRunner().invoke(
-        cli.cli,
-        ["check", str(root), "--traditional-only", "--focus", str(directory_alias / "shared.py")],
-    )
-    assert rejected.exit_code == 2
-    assert "not inside the scan root" in rejected.output
-
-
 def test_cli_focus_displays_brackets_in_path(tmp_path: Path) -> None:
     root = tmp_path / "[red]"
     root.mkdir()
