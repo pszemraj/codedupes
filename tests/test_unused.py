@@ -460,12 +460,21 @@ def test_entry_points_credit_only_the_named_module(tmp_path: Path) -> None:
     assert ("src/other/__init__.py", "_main") in unused_by_file
 
 
-def test_entry_points_resolve_when_scanning_src(tmp_path: Path) -> None:
-    """``pyproject.toml`` one level above the scan root is still found."""
+@pytest.mark.parametrize(
+    "levels_above",
+    [
+        pytest.param(("src",), id="one-level-above-scan-root"),
+        pytest.param(("src", "pkg"), id="two-levels-above-scan-root"),
+    ],
+)
+def test_entry_points_resolve_above_the_scan_root(
+    tmp_path: Path, levels_above: tuple[str, ...]
+) -> None:
+    """``pyproject.toml`` one or two levels above the scan root is still found."""
     root = _entry_point_project(tmp_path)
     analyzer = CodeAnalyzer(_ENTRY_POINT_ANALYZER_CONFIG)
 
-    result = analyzer.analyze(root / "src")
+    result = analyzer.analyze(root.joinpath(*levels_above))
 
     unused_by_file = {(unit.file_path.name, unit.name) for unit in result.potentially_unused}
     assert ("other.py", "_main") in unused_by_file
@@ -480,18 +489,6 @@ def test_entry_points_resolve_for_a_single_file_scan(tmp_path: Path) -> None:
     result = analyzer.analyze(root / "src" / "pkg" / "cli.py")
 
     assert {unit.name for unit in result.potentially_unused} == set()
-
-
-def test_entry_points_resolve_from_a_pyproject_two_levels_up(tmp_path: Path) -> None:
-    """``pyproject.toml`` two levels above the scan root is still found."""
-    root = _entry_point_project(tmp_path)
-    analyzer = CodeAnalyzer(_ENTRY_POINT_ANALYZER_CONFIG)
-
-    result = analyzer.analyze(root / "src" / "pkg")
-
-    unused_by_file = {(unit.file_path.name, unit.name) for unit in result.potentially_unused}
-    assert ("other.py", "_main") in unused_by_file
-    assert ("cli.py", "_main") not in unused_by_file
 
 
 def test_entry_point_in_a_package_init_resolves_when_scanning_the_package(
