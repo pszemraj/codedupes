@@ -239,6 +239,7 @@ class SemanticSettings:
     requested_model: str
     model: str
     revision: str | None
+    source_commit: str | None
     profile: str
     threshold_profile: str
     task: str

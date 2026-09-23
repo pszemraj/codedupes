@@ -66,6 +66,7 @@ codedupes check ./src --json | jq empty
       "requested_model": "Alibaba-NLP/gte-modernbert-base",
       "model": "Alibaba-NLP/gte-modernbert-base",
       "revision": "abc1234",
+      "source_commit": null,
       "profile": "gte-modernbert",
       "threshold_profile": "auto",
       "task": "code-duplicate",
@@ -209,7 +210,7 @@ The shortened example omits `u1` through `u5` from `units`; real output includes
 
 #### Run record and check status
 
-`run` is what this analysis actually configured and did, independent of what it found: `root` is the resolved analysis root, `target` preserves an explicit file or symlink target's own path, `exclude_patterns` is the effective exclude list after default resolution, and `include_stubs` is true for every explicitly selected file because stub filtering only gates directory discovery, including when a `.py` alias points to a `.pyi` target. `units.extracted`/`units.semantic_eligible` count the corpus before and after semantic candidate filtering. `units.by_language` and `units.by_type` break the extracted corpus down and are what the terminal summary prints: `by_type` always carries `class`, `function`, and `method` (zero when absent), while `by_language` lists only the languages actually extracted. `traditional`, `semantic`, and `unused` are `null` when that detector did not run and otherwise carry its resolved settings — `semantic.model`/`semantic.revision` reflect what actually loaded (falling back to the requested name/revision when no model load was needed), `semantic.execution_device` is the device the model last ran on for this analysis and is `null` when every embedding came from cache, `semantic.search_document` records the embedded corpus representation (`source` for duplicate checks), `semantic.threshold_floor` is `null` for an index-only search because no duplicate-pair scan ran, and `semantic.hybrid_split` is `null` outside combined mode.
+`run` is what this analysis actually configured and did, independent of what it found: `root` is the resolved analysis root, `target` preserves an explicit file or symlink target's own path, `exclude_patterns` is the effective exclude list after default resolution, and `include_stubs` is true for every explicitly selected file because stub filtering only gates directory discovery, including when a `.py` alias points to a `.pyi` target. `units.extracted`/`units.semantic_eligible` count the corpus before and after semantic candidate filtering. `units.by_language` and `units.by_type` break the extracted corpus down and are what the terminal summary prints: `by_type` always carries `class`, `function`, and `method` (zero when absent), while `by_language` lists only the languages actually extracted. `traditional`, `semantic`, and `unused` are `null` when that detector did not run and otherwise carry its resolved settings — `semantic.model`/`semantic.revision` reflect what actually loaded (falling back to the requested name/revision when no model load was needed), while `semantic.source_commit` records the actual checkpoint commit when a mutable revision label produced the vectors and its commit is known, `semantic.execution_device` is the device the model last ran on for this analysis and is `null` when every embedding came from cache, `semantic.search_document` records the embedded corpus representation (`source` for duplicate checks), `semantic.threshold_floor` is `null` for an index-only search because no duplicate-pair scan ran, and `semantic.hybrid_split` is `null` outside combined mode.
 
 `run.checks` derives one status per detector from `run` and this result's diagnostics, so it never needs its own storage: `extraction` is `empty` when the corpus has no units, `partial` when any file raised a scope-losing diagnostic (`read-error`, `invalid-utf8`, `partial-parse`, `unit-parse-error`, `walk-error`) and `completed` otherwise — an advisory-only diagnostic (`c-header-policy`, `semantic-context-overflow`, `suppression-syntax`) does not mark extraction partial. `traditional` and `unused` are `disabled` when that detector did not run, else `completed` (`unused` is `partial` when any file raised an unused-analysis diagnostic). `semantic` is `disabled` when it did not run, `fallback` when combined mode degraded to traditional-only results (`summary.semantic_fallback`), else `completed`. Each check record's `files`/`files_failed`/`diagnostics` count that detector's own scope; `files` is `null` for `traditional` and `semantic`, which do not have a per-file failure count.
 
@@ -271,6 +272,7 @@ Default search hits (`--result-level unit`) use `{"unit": "u0", "score": 0.95}`;
       "requested_model": "Alibaba-NLP/gte-modernbert-base",
       "model": "Alibaba-NLP/gte-modernbert-base",
       "revision": null,
+      "source_commit": null,
       "profile": "gte-modernbert",
       "threshold_profile": "auto",
       "task": "code-search-query",

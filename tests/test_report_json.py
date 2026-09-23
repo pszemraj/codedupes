@@ -561,6 +561,7 @@ def test_search_json_v4_unit_and_file_levels(tmp_path):
         extracted_files=3,
         units=UnitCounts(extracted=3, semantic_eligible=2),
     )
+    run = replace(run, semantic=replace(run.semantic, revision="main", source_commit="a" * 40))
     query_execution = [
         QueryExecution(execution_device="mps", cache_hit=False, threshold=0.1),
         QueryExecution(execution_device="cpu", cache_hit=True, threshold=0.5),
@@ -583,6 +584,7 @@ def test_search_json_v4_unit_and_file_levels(tmp_path):
     assert unit_level["analysis_status"] == "complete"
     assert unit_level["run"]["checks"]["semantic"]["status"] == "completed"
     assert unit_level["run"]["semantic"]["search_document"] == "source"
+    assert unit_level["run"]["semantic"]["source_commit"] == "a" * 40
     assert unit_level["summary"]["extracted_units"] == run.units.extracted
     assert unit_level["summary"]["query_execution"] == [
         {"execution_device": "cpu", "cache_hit": True, "threshold": 0.5}

@@ -72,6 +72,7 @@ def make_run_record(root: Path, *, mode: AnalysisMode = "combined", **overrides:
             requested_model=DEFAULT_MODEL,
             model=DEFAULT_MODEL,
             revision=None,
+            source_commit=None,
             profile="gte-modernbert",
             threshold_profile="auto",
             task="semantic-similarity",

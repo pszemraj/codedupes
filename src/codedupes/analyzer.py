@@ -1148,6 +1148,7 @@ class CodeAnalyzer:
                 requested_model=self.config.model_name,
                 model=model_name,
                 revision=resolved_revision,
+                source_commit=identity.source_commit if identity is not None else None,
                 profile=profile.family,
                 threshold_profile=self.config.threshold_profile,
                 task=semantic_task,

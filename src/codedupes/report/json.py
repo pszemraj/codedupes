@@ -125,6 +125,7 @@ def _run_to_dict(run: RunRecord, checks: AnalysisChecks) -> dict[str, Any]:
                 "requested_model": run.semantic.requested_model,
                 "model": run.semantic.model,
                 "revision": run.semantic.revision,
+                "source_commit": run.semantic.source_commit,
                 "profile": run.semantic.profile,
                 "threshold_profile": run.semantic.threshold_profile,
                 "task": run.semantic.task,

@@ -71,7 +71,10 @@ def test_index_run_record_tracks_semantic_work_with_check_config(
     source.write_text("def entry():\n    first = 1\n    second = first + 1\n    return second\n")
 
     def fake_compute_embeddings(units, **kwargs):
-        return np.zeros((len(units), 2), dtype=np.float32), embedding_identity_from_kwargs(kwargs)
+        identity = embedding_identity_from_kwargs(kwargs)
+        return np.zeros((len(units), 2), dtype=np.float32), replace(
+            identity, source_commit="a" * 40
+        )
 
     monkeypatch.setattr(analyzer_module, "compute_embeddings", fake_compute_embeddings)
     analyzer = CodeAnalyzer(
@@ -86,6 +89,7 @@ def test_index_run_record_tracks_semantic_work_with_check_config(
     assert analyzer.run_record.analysis_mode == "semantic"
     assert analyzer.run_record.semantic is not None
     assert analyzer.run_record.semantic.task == "code-retrieval"
+    assert analyzer.run_record.semantic.source_commit == "a" * 40
     assert analyzer.run_record.semantic.search_document == "source"
     assert analyzer.run_record.semantic.threshold_floor is None
 
