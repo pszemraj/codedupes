@@ -788,7 +788,9 @@ def test_decorator_and_default_argument_names_are_references(tmp_path: Path) -> 
     # Decorators and defaults evaluate in the enclosing (module) namespace.
     assert _unit(units, "sample._decorate").references == {_module_ref(units)}
     assert _unit(units, "sample._default").references == {_module_ref(units)}
-    assert unused == {"run"}
+    # A project decorator may register what it wraps, so ``run`` counts as reached.
+    assert _unit(units, "sample.run").references == {"decorator::_decorate"}
+    assert unused == set()
 
 
 def test_class_body_alias_is_a_reference(tmp_path: Path) -> None:
@@ -855,7 +857,8 @@ def test_decorated_definition_references_are_attributed_to_its_unit(tmp_path: Pa
     assert definitions["_target"] == (7, 8)
     assert target.lineno == 7
     assert _unit(units, "sample._helper").references == {target.uid}
-    assert unused == {"_target"}
+    assert target.references == {"decorator::_decorate"}
+    assert unused == set()
 
 
 def test_callback_passed_as_a_value_is_a_reference(tmp_path: Path) -> None:
@@ -1078,6 +1081,59 @@ def test_framework_rule_resolves_bases_through_module_aliases(tmp_path: Path) ->
     assert _unit(units, "pkg.other._FromAlias.dead_public").references == set()
     assert _unit(units, "pkg.other._Via.also_dead").references == set()
     assert unused == {"_FromAlias", "dead_public", "_Via", "also_dead"}
+
+
+def test_registration_decorators_reach_the_definition_and_wrappers_do_not(tmp_path: Path) -> None:
+    """Any decorator but a standard-library wrapper may register what it decorates."""
+    source = dedent(
+        """
+        import functools
+        import functools as ft
+        from contextlib import contextmanager
+
+        from django.dispatch import receiver
+        from flask import Flask
+
+        app = Flask(__name__)
+
+        @app.route("/")
+        def index():
+            return "hi"
+
+        @receiver("post_save")
+        def on_saved(sender):
+            return sender
+
+        @functools.lru_cache
+        def dead_cached():
+            return 1
+
+        @ft.cache
+        def dead_aliased():
+            return 2
+
+        @contextmanager
+        def dead_context():
+            yield
+
+        class Settings:
+            @staticmethod
+            def dead_static():
+                return 3
+        """
+    ).strip()
+    units, unused = _referenced_graph(tmp_path, source)
+
+    assert _unit(units, "sample.index").references == {"decorator::app.route"}
+    assert _unit(units, "sample.on_saved").references == {"decorator::receiver"}
+    assert unused == {"dead_cached", "dead_aliased", "dead_context", "dead_static"}
+
+
+def test_pytest_hooks_are_exempt_outside_conftest(tmp_path: Path) -> None:
+    source = "def pytest_addoption(parser):\n    parser.addoption('--x')\n\n\ndef dead():\n    return 1\n"
+    _units, unused = _referenced_graph(tmp_path, source)
+
+    assert unused == {"dead"}
 
 
 def test_literal_annotation_values_are_not_references(tmp_path: Path) -> None:
@@ -1536,7 +1592,7 @@ def test_parser_stack_overflow_is_a_diagnostic_not_a_crash(tmp_path: Path) -> No
 
 def test_abstractmethod_exemption_reads_only_the_units_own_decorators(tmp_path: Path) -> None:
     """The decorated method is exempt; its class, a body mentioning the text, and a
-    same-prefix decorator name are not."""
+    same-prefix decorator name are not (that one is reached as a registration instead)."""
     source = dedent(
         """
         import abc
@@ -1565,7 +1621,10 @@ def test_abstractmethod_exemption_reads_only_the_units_own_decorators(tmp_path: 
     units, unused = _referenced_graph(tmp_path, source)
 
     assert _unit(units, "sample._Holder._do").references == set()
-    assert unused == {"_Holder", "_fake", "_lookalike"}
+    lookalike = _unit(units, "sample._Holder._lookalike")
+    assert not unused_module._is_abstract(lookalike)
+    assert lookalike.references == {"decorator::abstractmethodish"}
+    assert unused == {"_Holder", "_fake"}
 
 
 def test_test_file_exemption_matches_the_default_exclude_shapes(tmp_path: Path) -> None:

@@ -13,13 +13,3 @@ Precedence is the part that is not solved. `cli/_options.py` distinguishes an ex
 `codedupes check` and `codedupes search` emit JSON; `codedupes info` (`cli/info.py`) and `codedupes cache info` (`cli/cache.py`) print Rich tables only, so automation has to scrape them or import the package.
 
 Adding `--json` to both is small in isolation. The reason to wait is overlap: a check report's `run` record already carries the resolved model, revision, profile, requested and executed device, and the per-language gates, leaving environment probing and cache statistics as the only unique payload. Those deserve their own schemas rather than a second copy of `run`.
-
-## Framework-derived methods under `--strict-unused`
-
-`--strict-unused` reports public functions and public methods, and the reference graph is name-based over the project's own source. A method that exists because a framework calls it — a `Model.save` override, a pytest plugin hook, a callback registered by decorator, a subclass filling in a base-class contract — has no in-repo caller and is reported.
-
-Today's exemptions are narrow and syntactic: `abstractmethod` (`unused._is_abstract`), dunder and `__init__`/`__new__`/`__call__` names, `__all__` exports, public classes (`CodeUnit.is_likely_api`), `get_`/`set_` prefixes, pyproject entry points, and anything carrying a `codedupes: ignore[unused]` directive. Exempting framework overrides means either resolving base classes across files — real inheritance analysis, not a suffix index — or shipping a per-framework list of decorators and base classes that goes stale between releases. A directive at the definition states the same fact and stays checkable:
-
-```text
-def save(self, *args, **kwargs):  # codedupes: ignore[unused] ORM hook
-```

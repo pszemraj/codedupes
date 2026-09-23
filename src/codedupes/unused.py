@@ -36,6 +36,7 @@ class DefinitionReferences:
     # built any other way still resolves.
     linenos: tuple[int, ...]
     is_class: bool = False
+    decorators: tuple[str, ...] = ()
     parent: DefinitionReferences | None = field(default=None, repr=False, compare=False)
     children_by_name: dict[str, list[DefinitionReferences]] = field(
         default_factory=dict, repr=False, compare=False
@@ -230,6 +231,7 @@ class _ReferenceCollector(ast.NodeVisitor):
             name=node.name,
             linenos=_definition_linenos(node),
             is_class=isinstance(node, ast.ClassDef),
+            decorators=tuple(_base_text(decorator) for decorator in node.decorator_list),
             parent=parent,
         )
         if parent is not None:
@@ -524,6 +526,51 @@ def _entry_point_targets(pyproject: Path) -> set[tuple[str, str]]:
     return targets
 
 
+# Standard-library decorators that wrap or mark a definition without registering
+# it anywhere; every other decorator may be a registration.
+_WRAPPER_DECORATORS = frozenset(
+    {
+        "abc.abstractmethod",
+        "classmethod",
+        "contextlib.asynccontextmanager",
+        "contextlib.contextmanager",
+        "dataclasses.dataclass",
+        "enum.unique",
+        "functools.cache",
+        "functools.cached_property",
+        "functools.lru_cache",
+        "functools.singledispatch",
+        "functools.singledispatchmethod",
+        "functools.total_ordering",
+        "functools.wraps",
+        "property",
+        "staticmethod",
+        "typing.final",
+        "typing.no_type_check",
+        "typing.overload",
+        "typing.override",
+        "typing.runtime_checkable",
+        "typing_extensions.final",
+        "typing_extensions.overload",
+        "typing_extensions.override",
+        "typing_extensions.runtime_checkable",
+    }
+)
+_PROPERTY_ACCESSORS = (".setter", ".getter", ".deleter")
+
+
+def _is_wrapper_decorator(decorator: str, aliases: dict[str, str]) -> bool:
+    """Return whether a decorator is a standard-library wrapper rather than a possible registration.
+
+    :param decorator: Dotted decorator target, call arguments stripped.
+    :param aliases: Module alias map used to expand imported names.
+    :return: ``True`` for a property accessor or a name resolving to ``_WRAPPER_DECORATORS``.
+    """
+    if decorator.endswith(_PROPERTY_ACCESSORS):
+        return True
+    return bool(_resolve_reference_targets(decorator, aliases) & _WRAPPER_DECORATORS)
+
+
 def _framework_derived_classes(
     classes: list[tuple[Path, ClassInfo, dict[str, str]]],
 ) -> list[tuple[Path, ClassInfo, str]]:
@@ -701,6 +748,22 @@ def build_reference_graph(
             for unit in units_for(file_path, method):
                 unit.references.add(f"framework::{base}")
 
+    # Any other decorator receives the function object and may register it
+    # (@app.route, @receiver(...), @cli.command()), which no in-project name shows.
+    for file_path, module in modules.items():
+        for definition in module.definitions:
+            registration = next(
+                (
+                    decorator
+                    for decorator in definition.decorators
+                    if not _is_wrapper_decorator(decorator, module.aliases)
+                ),
+                None,
+            )
+            if registration is not None:
+                for unit in units_for(file_path, definition):
+                    unit.references.add(f"decorator::{registration}")
+
     # Seed references from the entry points of the nearest project above the
     # scan target, bounded by the git work tree.
     if project_root is not None:
@@ -794,7 +857,7 @@ def _is_unused_candidate(unit: CodeUnit, strict_unused: bool) -> bool:
         return False
     if _is_abstract(unit):
         return False
-    return not (unit.name.startswith("test_") or _is_test_file(unit.file_path))
+    return not (unit.name.startswith(("test_", "pytest_")) or _is_test_file(unit.file_path))
 
 
 def find_potentially_unused(units: list[CodeUnit], strict_unused: bool = False) -> list[CodeUnit]:
