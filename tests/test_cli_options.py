@@ -348,7 +348,7 @@ def test_cli_cross_language_flag_passes_through(monkeypatch, tmp_path, choice):
 
 @pytest.mark.parametrize("command_tail", [[], ["entry"]], ids=["check", "search"])
 @pytest.mark.parametrize("explicit_options", [False, True])
-def test_cli_options_ignore_automatic_environment_variables(
+def test_cli_environment_variables_never_reach_parsed_config(
     monkeypatch, tmp_path, command_tail, explicit_options
 ) -> None:
     path = tmp_path / "sample.py"
