@@ -222,7 +222,15 @@ class ProjectAnalyzer(CodeAnalyzer):
         super().__init__(config)
         self.project = project
 
-    def _extract_corpus_units(self, path: Path) -> list[CodeUnit]:
+    def _extract_corpus_units(
+        self, path: Path, *, collect_unused_references: bool
+    ) -> list[CodeUnit]:
+        """Extract manifest-selected units for analysis or indexing.
+
+        :param path: Requested project path; the manifest selects the files.
+        :param collect_unused_references: Ignored because the manifest fixes the scope.
+        :return: Extracted project units.
+        """
         units, diagnostics = extract_project(self.project)
         self._extraction_diagnostics = diagnostics
         self._python_files = sorted({u.file_path for u in units if u.language == "python"})
