@@ -33,8 +33,7 @@ See [analysis behavior](analysis-defaults.md#semantic-duplicate-gate-defaults) f
 
 ### Hybrid confidence gates
 
-These values promote admitted semantic pairs to `semantic_high_confidence`; otherwise they remain `semantic_review`.
-They were selected from CPU float32 measurements and independently checked on MPS float32; the CUDA bfloat16 policy shares these gates but is not separate calibration evidence.
+These values promote admitted semantic pairs to `semantic_high_confidence`; otherwise they remain `semantic_review`. They were selected from CPU float32 measurements and independently checked on MPS float32; the CUDA bfloat16 policy shares these gates but is not separate calibration evidence.
 
 | profile | identifier Jaccard min | statement ratio min | promotion gates |
 | --- | --- | --- | --- |
