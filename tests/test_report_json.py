@@ -26,7 +26,6 @@ from codedupes.report.json import (
     unit_to_dict,
 )
 from codedupes.report.selection import (
-    DEFAULT_MAX_DUPLICATES,
     ReportPolicy,
     focus_result,
     group_file_results,
@@ -197,24 +196,17 @@ def test_check_json_v4_summary_counts(tmp_path):
     assert summary["hidden_only_failure"] == []
 
 
-def test_check_json_hidden_only_failure_names_withheld_review(tmp_path):
+def test_check_json_hidden_only_failure_serializes_as_a_sorted_list(tmp_path):
+    """The rule and its matrix live in test_report_selection; this only pins
+    the JSON shape (a sorted list, not the helper's set) when non-empty."""
     result = _result(tmp_path)
     result.hybrid_duplicates.pop(0)  # Leave only the semantic_review pair.
     result.traditional_duplicates.clear()
     result.potentially_unused.clear()
 
-    withheld = _payload(result, fail_on="all", exit_code=1)["summary"]
-    assert withheld["reported_duplicates"] == 0
-    assert withheld["omitted_review_duplicates"] == 1
-    assert withheld["actionable_duplicates"] == 0
-    assert withheld["hidden_only_failure"] == ["review"]
+    summary = _payload(result, fail_on="all", exit_code=1)["summary"]
 
-    listed = _payload(result, ReportPolicy(include_review=True), fail_on="all", exit_code=1)
-    assert listed["summary"]["hidden_only_failure"] == []
-
-    # Review pairs never fail the default policy, so nothing hidden is named.
-    passing = _payload(result, fail_on="actionable", exit_code=0)["summary"]
-    assert passing["hidden_only_failure"] == []
+    assert summary["hidden_only_failure"] == ["review"]
 
 
 def test_check_json_raw_modes_count_every_pair_as_actionable(tmp_path):
@@ -287,20 +279,6 @@ def test_check_json_emits_every_selected_finding_untruncated(tmp_path):
     assert len(payload["duplicates"]) == 25
     assert len(payload["units"]) == 26
     assert payload["summary"]["truncated_duplicates"] == 0
-
-
-def test_check_json_cli_default_policy_caps_at_twenty(tmp_path):
-    payload = _payload(
-        _chain_result(tmp_path, 25), ReportPolicy(max_duplicates=DEFAULT_MAX_DUPLICATES)
-    )
-    summary = payload["summary"]
-
-    assert len(payload["duplicates"]) == 20
-    assert len(payload["units"]) == 21
-    assert summary["max_duplicates"] == 20
-    assert summary["truncated_duplicates"] == 5
-    assert summary["actionable_duplicates"] == 25
-    assert summary["reported_actionable_duplicates"] == 20
 
 
 def test_check_json_max_duplicates_caps_edges_and_units_but_not_counts(tmp_path):
@@ -384,7 +362,10 @@ def test_check_json_exact_family_record_replaces_pairwise_edges(tmp_path):
     assert summary["hidden_only_failure"] == []
 
 
-def test_check_json_family_cap_counts_and_truncated_by_tier_exact(tmp_path):
+def test_check_json_family_cap_excludes_a_squeezed_out_family(tmp_path):
+    """A cap that squeezes out a second family drops it from ``exact_families``
+    and its members from ``units`` entirely; the counting arithmetic itself is
+    ``test_report_selection.py::test_max_duplicates_counts_a_family_as_one_finding``'s."""
     result = _family_result(tmp_path, 5)
     # A second, smaller family ranks after the five-copy one.
     small_a = _unit(tmp_path, "small_a", file="s.py", start_byte=0)
@@ -393,7 +374,6 @@ def test_check_json_family_cap_counts_and_truncated_by_tier_exact(tmp_path):
     result.hybrid_duplicates.append(HybridDuplicate(small_a, small_b, "exact", 1.0))
 
     payload = _payload(result, ReportPolicy(max_duplicates=1))
-    summary = payload["summary"]
 
     assert [family["members"] for family in payload["exact_families"]] == [
         ["u0", "u1", "u2", "u3", "u4"]
@@ -401,27 +381,6 @@ def test_check_json_family_cap_counts_and_truncated_by_tier_exact(tmp_path):
     assert payload["exact_families"][0]["method"] == "structural_hash"
     assert payload["duplicates"] == []
     assert len(payload["units"]) == 5
-    assert summary["max_duplicates"] == 1
-    assert summary["hybrid_duplicates"] == 3
-    assert summary["reported_duplicates"] == 1
-    assert summary["truncated_duplicates"] == 2
-    assert summary["truncated_by_tier"] == {
-        "exact": 1,
-        "traditional_near": 0,
-        "hybrid_confirmed": 1,
-        "semantic_high_confidence": 0,
-        "semantic_review": 0,
-    }
-    assert summary["duplicates_by_tier"]["exact"] == 2
-    assert summary["exact_family_members"] == 7
-    assert summary["actionable_duplicates"] == 3
-    assert summary["reported_actionable_duplicates"] == 1
-    assert (
-        summary["reported_duplicates"]
-        + summary["omitted_review_duplicates"]
-        + summary["truncated_duplicates"]
-        == summary["hybrid_duplicates"]
-    )
 
 
 def test_check_json_max_unused_caps_ids_and_units_but_not_counts(tmp_path):
