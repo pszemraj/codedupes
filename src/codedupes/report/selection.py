@@ -13,6 +13,7 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, replace
+from itertools import combinations
 from pathlib import Path
 from typing import Literal
 
@@ -666,25 +667,25 @@ def _finding_count(pairs: Sequence[HybridDuplicate | DuplicatePair]) -> int:
 def _focus_pairs(
     pairs: Sequence[HybridDuplicate] | Sequence[DuplicatePair],
     *,
-    kept_family_uids: frozenset[str],
+    kept_family_pairs: frozenset[frozenset[str]],
     paths: tuple[Path, ...],
 ) -> list[HybridDuplicate] | list[DuplicatePair]:
     """Filter one duplicate list to the pairs a focused report keeps.
 
     An exact edge is one indivisible finding with the rest of its family, so
-    it is kept only when both endpoints already belong to a family that has
-    at least one in-focus member (``kept_family_uids``); a non-exact pair is
+    it is kept only when both endpoints belong to the same family that has
+    at least one in-focus member; a non-exact pair is
     its own finding, kept when either endpoint is in focus.
 
     :param pairs: Duplicate pairs to filter, raw or hybrid.
-    :param kept_family_uids: Uids of every member of a family with an in-focus member.
+    :param kept_family_pairs: Uid pairs within families with an in-focus member.
     :param paths: Resolved focus paths.
     :return: The subset of ``pairs`` a focused report keeps, in input order.
     """
     kept: list[HybridDuplicate] | list[DuplicatePair] = []
     for pair in pairs:
         if _is_exact_edge(pair):
-            if pair.unit_a.uid in kept_family_uids and pair.unit_b.uid in kept_family_uids:
+            if frozenset((pair.unit_a.uid, pair.unit_b.uid)) in kept_family_pairs:
                 kept.append(pair)  # type: ignore[arg-type]
         elif _in_focus(pair.unit_a, paths) or _in_focus(pair.unit_b, paths):
             kept.append(pair)  # type: ignore[arg-type]
@@ -708,20 +709,22 @@ def focus_result(result: AnalysisResult, paths: tuple[Path, ...]) -> AnalysisRes
     :return: A new result scoped to ``paths``, with ``focus`` set.
     """
     families = build_exact_families(result.all_duplicates)
-    kept_family_uids = frozenset(
-        unit.uid
+    kept_family_pairs = frozenset(
+        frozenset((unit_a.uid, unit_b.uid))
         for family in families
         if any(_in_focus(member, paths) for member in family.members)
-        for unit in family.members
+        for unit_a, unit_b in combinations(family.members, 2)
     )
 
     traditional = _focus_pairs(
-        result.traditional_duplicates, kept_family_uids=kept_family_uids, paths=paths
+        result.traditional_duplicates, kept_family_pairs=kept_family_pairs, paths=paths
     )
     semantic = _focus_pairs(
-        result.semantic_duplicates, kept_family_uids=kept_family_uids, paths=paths
+        result.semantic_duplicates, kept_family_pairs=kept_family_pairs, paths=paths
     )
-    hybrid = _focus_pairs(result.hybrid_duplicates, kept_family_uids=kept_family_uids, paths=paths)
+    hybrid = _focus_pairs(
+        result.hybrid_duplicates, kept_family_pairs=kept_family_pairs, paths=paths
+    )
     unused = [unit for unit in result.potentially_unused if _in_focus(unit, paths)]
 
     focused = replace(

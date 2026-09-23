@@ -835,6 +835,29 @@ def test_focus_result_keeps_whole_families_touching_focus(tmp_path):
     assert focused.run is result.run
 
 
+def test_focus_result_drops_untouched_family_overlapping_touched_families(tmp_path):
+    a = _unit(tmp_path, "a", file="a.py")
+    b = _unit(tmp_path, "b", file="b.py")
+    c = _unit(tmp_path, "c", file="c.py")
+    d = _unit(tmp_path, "d", file="d.py")
+    left = DuplicatePair(a, b, 1.0, "structural_hash")
+    middle = DuplicatePair(b, c, 1.0, "token_hash")
+    right = DuplicatePair(c, d, 1.0, "structural_hash")
+    result = _result(
+        tmp_path,
+        units=[a, b, c, d],
+        traditional_duplicates=[left, middle, right],
+        semantic_duplicates=[],
+        hybrid_duplicates=[],
+        run=make_run_record(tmp_path, mode="traditional"),
+    )
+
+    focused = focus_result(result, (a.file_path, d.file_path))
+
+    assert focused.traditional_duplicates == [left, right]
+    assert focused.focus.out_of_focus_duplicates == 1
+
+
 def test_focus_result_filters_unused_and_leaves_units_and_diagnostics(tmp_path):
     diagnostic = ExtractionDiagnostic(
         file_path=tmp_path / "a.py", language="python", message="warn"
