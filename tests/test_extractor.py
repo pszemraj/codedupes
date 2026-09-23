@@ -794,3 +794,10 @@ def test_reference_only_files_are_the_default_test_exclusions(tmp_path: Path) ->
     from codedupes.extractor import DEFAULT_EXCLUDE_PATTERNS
 
     assert reference_only_names([*DEFAULT_EXCLUDE_PATTERNS, "tests"]) == {"pkg/legacy_test.py"}
+
+    # Repeating a built-in shape explicitly is a real user exclusion for the
+    # reference walk, whether or not the built-ins are otherwise active.
+    assert reference_only_names([*DEFAULT_EXCLUDE_PATTERNS, "**/tests/**"]) == {
+        "pkg/legacy_test.py"
+    }
+    assert reference_only_names(["**/tests/**"]) == set()

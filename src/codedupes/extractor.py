@@ -152,15 +152,16 @@ class CodeExtractor:
             self._exclude_matchers.append(
                 (anchored or "/" in pattern, directory_only, matcher, zero_depth)
             )
-        # Matchers for patterns the caller added on top of the built-in test
-        # shapes: used to walk default-excluded test files and directories for
-        # unused-code references without re-admitting a real user exclusion,
-        # a gitignored path, or an artifact directory.
-        self._user_exclude_matchers: list[_ExcludeMatcher] = [
-            matcher
-            for pattern, matcher in zip(self.exclude_patterns, self._exclude_matchers, strict=True)
-            if pattern not in DEFAULT_EXCLUDE_PATTERNS
-        ]
+        # The CLI prefixes its explicit patterns with these defaults. Preserve
+        # that boundary by position: a user may explicitly repeat a default
+        # shape to exclude it from unused-code references too.
+        default_count = (
+            len(DEFAULT_EXCLUDE_PATTERNS)
+            if self.exclude_patterns[: len(DEFAULT_EXCLUDE_PATTERNS)] == DEFAULT_EXCLUDE_PATTERNS
+            else 0
+        )
+        self._default_exclude_patterns = self.exclude_patterns[:default_count]
+        self._user_exclude_matchers = self._exclude_matchers[default_count:]
         self.include_private = include_private
         self.include_stubs = include_stubs
         self.languages = normalize_languages(languages)
@@ -509,7 +510,7 @@ class CodeExtractor:
         skipped_test_dirs = 0
         skipped_ignored_files = 0
         skipped_ignored_dirs = 0
-        default_test_patterns = set(DEFAULT_EXCLUDE_PATTERNS).intersection(self.exclude_patterns)
+        default_test_patterns = set(self._default_exclude_patterns)
 
         def matches_default_tests(path: Path) -> bool:
             """Identify active default test globs on an already excluded path.

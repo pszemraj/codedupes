@@ -1206,6 +1206,16 @@ def test_production_function_referenced_only_from_tests_is_not_reported(tmp_path
     excluded_result = CodeAnalyzer(excluded_config).analyze(root)
     assert "helper" in {unit.name for unit in excluded_result.potentially_unused}
 
+    same_shape_config = AnalyzerConfig(
+        run_traditional=False,
+        run_semantic=False,
+        run_unused=True,
+        strict_unused=True,
+        exclude_patterns=[*DEFAULT_EXCLUDE_PATTERNS, "**/tests/**"],
+    )
+    same_shape_result = CodeAnalyzer(same_shape_config).analyze(root)
+    assert "helper" in {unit.name for unit in same_shape_result.potentially_unused}
+
 
 def test_non_utf8_module_still_contributes_references(tmp_path: Path) -> None:
     """The graph decodes lossily like the extractor instead of dropping the file."""
