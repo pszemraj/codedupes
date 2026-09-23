@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 from collections.abc import Callable
 from pathlib import Path
 from textwrap import dedent
@@ -15,25 +16,14 @@ from codedupes.analyzer import AnalyzerConfig, CodeAnalyzer
 from codedupes.models import AnalysisResult, CodeUnit
 from tests.analyzer_helpers import embedding_identity_from_kwargs, make_semantic_runner
 from tests.conftest import create_project
+from tests.semantic_helpers import WhitespaceTokenizer
 
-_QUERY_KWARG_NAMES = {
-    "threshold_profile",
-    "cache_scope",
-    "corpus_identity",
-    "device",
-    "execution",
-    "instruction_prefix",
-    "model_name",
-    "mps_fallback",
-    "mps_memory_fraction",
-    "revision",
-    "semantic_task",
-    "strict_revision_cache",
-    "threshold",
-    "top_k",
-    "trust_remote_code",
-    "use_cache",
-}
+# Derived from find_similar_to_query's own signature (the function
+# analyzer.search() calls) so an added/removed parameter fails loudly here
+# instead of drifting silently.
+_QUERY_KWARG_NAMES = frozenset(
+    inspect.signature(semantic_module.find_similar_to_query).parameters
+) - {"query", "units", "embeddings"}
 
 
 def _capture_query_runner(
@@ -244,7 +234,10 @@ def test_index_embeds_corpus_without_mining_duplicates(tmp_path: Path, monkeypat
     assert results == []
     assert captured["semantic_task"] == analyzer_module.DEFAULT_SEARCH_SEMANTIC_TASK
     assert captured["query_semantic_task"] == analyzer_module.DEFAULT_SEARCH_SEMANTIC_TASK
-    assert captured["cache_scope"] == project.resolve()
+    # _reset_analysis_state stores the raw analyzed path unresolved; match that
+    # here rather than project.resolve() (see the other cache_scope assertions
+    # in this file).
+    assert captured["cache_scope"] == project
 
 
 @pytest.mark.parametrize("search_document", ["source", "contextual"])
@@ -375,18 +368,11 @@ def test_empty_reanalysis_clears_previous_search_state(tmp_path: Path, monkeypat
     assert analyzer.search("entry") == []
 
 
-class _WhitespaceTokenizer:
-    """Tokenizer stub whose token count is the whitespace-separated word count."""
-
-    def __call__(self, texts, **_kwargs):
-        return {"input_ids": [text.split() for text in texts]}
-
-
 class _ContextLimitedModel:
     """Model stub that rejects nothing but exposes a tiny context window."""
 
     max_seq_length = 20
-    tokenizer = _WhitespaceTokenizer()
+    tokenizer = WhitespaceTokenizer()
 
     def __init__(self) -> None:
         self.encoded: list[str] = []
