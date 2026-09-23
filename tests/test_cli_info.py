@@ -30,13 +30,13 @@ def test_cli_info_verbose_exit_zero(flag):
     assert "built-in semantic model aliases" in result.output.lower()
     assert "Family" in result.output and "gte-modernbert" in result.output
     assert "Search threshold" in result.output and "0.68" in result.output
-    assert (
-        "python=0.87, c=0.84, rust=0.84, "
-        "javascript=0.69, typescript=0.76 (fallback=0.87)" in result.output
+    profile = cli.resolve_model_profile(cli.DEFAULT_MODEL)
+    gates = ", ".join(
+        f"{language}={gate}" for language, gate in profile.language_semantic_thresholds.items()
     )
-    default_revision = cli.resolve_model_profile(cli.DEFAULT_MODEL).default_revision
+    assert f"{gates} (fallback={profile.default_semantic_threshold})" in result.output
     assert "Default model revision" in result.output
-    assert default_revision in result.output
+    assert profile.default_revision in result.output
 
 
 def test_cli_info_configures_mps_environment_before_diagnostics(monkeypatch):
