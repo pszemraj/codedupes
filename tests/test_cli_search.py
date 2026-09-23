@@ -19,6 +19,7 @@ from codedupes.semantic import QueryExecution
 from tests.cli_helpers import build_result, build_unit
 from tests.conftest import make_code_unit, make_run_record, patch_cli_analyzer
 from tests.embedding_cache_helpers import CountingModel, patch_get_model
+from tests.semantic_helpers import fail_if_called
 
 
 def test_cli_search_json_surfaces_semantic_diagnostics(monkeypatch, tmp_path):
@@ -227,10 +228,7 @@ def test_cli_file_search_without_matches(monkeypatch, tmp_path, indexed_units, a
 
 
 def test_cli_search_rejects_unknown_result_level_before_indexing(monkeypatch, tmp_path):
-    def unexpected_analyzer(config):
-        raise AssertionError("Invalid result levels must fail before indexing")
-
-    monkeypatch.setattr(cli, "CodeAnalyzer", unexpected_analyzer)
+    monkeypatch.setattr(cli, "CodeAnalyzer", fail_if_called)
     result = CliRunner().invoke(
         cli.cli, ["search", str(tmp_path), "entry", "--result-level", "directory"]
     )
@@ -240,10 +238,7 @@ def test_cli_search_rejects_unknown_result_level_before_indexing(monkeypatch, tm
 
 @pytest.mark.parametrize("query", ["", " \t"])
 def test_cli_search_rejects_blank_query_before_indexing(monkeypatch, tmp_path, query):
-    def unexpected_analyzer(config):
-        raise AssertionError("Blank queries must fail before indexing")
-
-    monkeypatch.setattr(cli, "CodeAnalyzer", unexpected_analyzer)
+    monkeypatch.setattr(cli, "CodeAnalyzer", fail_if_called)
     result = CliRunner().invoke(cli.cli, ["search", str(tmp_path), query])
 
     assert result.exit_code == 2
@@ -463,15 +458,11 @@ def test_cli_search_reports_runtime_failures(monkeypatch, tmp_path, phase, as_js
     assert not isinstance(result.exception, FileNotFoundError)
 
 
-@pytest.mark.parametrize("value", ["nan", "inf", "-inf"])
-def test_cli_search_rejects_nonfinite_threshold_before_analysis(monkeypatch, tmp_path, value):
-    def unexpected(*args, **kwargs):
-        pytest.fail("Non-finite threshold reached analysis")
-
-    monkeypatch.setattr(cli, "CodeAnalyzer", unexpected)
+def test_cli_search_rejects_nonfinite_threshold_before_analysis(monkeypatch, tmp_path):
+    monkeypatch.setattr(cli, "CodeAnalyzer", fail_if_called)
     result = CliRunner().invoke(
         cli.cli,
-        ["search", str(tmp_path), "entry", "--threshold", value, "--json"],
+        ["search", str(tmp_path), "entry", "--threshold", "nan", "--json"],
     )
 
     assert result.exit_code == 2

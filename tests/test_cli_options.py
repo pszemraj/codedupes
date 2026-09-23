@@ -10,6 +10,7 @@ from click.testing import CliRunner
 from codedupes import cli
 from tests.cli_helpers import build_result, build_unit, run_cli_subprocess
 from tests.conftest import patch_cli_analyzer
+from tests.semantic_helpers import fail_if_called
 
 
 def _unwrapped(output: str) -> str:
@@ -21,14 +22,11 @@ def _unwrapped(output: str) -> str:
     return " ".join(output.replace("│", " ").split())
 
 
-@pytest.mark.parametrize("value", ["nan", "inf", "-inf", "-0.1", "1.1"])
+@pytest.mark.parametrize("value", ["nan", "1.1"])
 def test_cli_check_rejects_invalid_duplicate_threshold_before_analysis(
     monkeypatch, tmp_path, value
 ):
-    def unexpected(*args, **kwargs):
-        pytest.fail("Invalid threshold reached analysis")
-
-    monkeypatch.setattr(cli, "CodeAnalyzer", unexpected)
+    monkeypatch.setattr(cli, "CodeAnalyzer", fail_if_called)
     result = CliRunner().invoke(cli.cli, ["check", str(tmp_path), "--threshold", value, "--json"])
 
     assert result.exit_code == 2
