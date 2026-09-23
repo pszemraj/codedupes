@@ -23,9 +23,3 @@ Today's exemptions are narrow and syntactic: `abstractmethod` (`unused._is_abstr
 ```text
 def save(self, *args, **kwargs):  # codedupes: ignore[unused] ORM hook
 ```
-
-## Unit-type counts in JSON
-
-The terminal Analysis Summary breaks `Total code units` down by language and by Functions / Methods / Classes (`cli/_render.py`). JSON carries `run.units.extracted` and `run.units.semantic_eligible` only, and `units[]` holds just the units referenced by reported findings, so a consumer cannot reconstruct the breakdown from a report.
-
-Per-language and per-unit-type counts under `run.units` would close the gap, and `_build_run_record` already receives the unit list, so the computation is a `Counter` over `unit.language` and `unit.unit_type`. It is deferred for scope, not difficulty — a JSON addition also carries the schema, `docs/output.md`, and consumer-facing consequences that belong in a change of their own.

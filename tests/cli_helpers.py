@@ -13,6 +13,7 @@ from codedupes.models import (
     CodeUnit,
     DuplicatePair,
     HybridDuplicate,
+    UnitCounts,
 )
 from codedupes.semantic import EmbeddingRunStats
 from tests.conftest import make_code_unit, make_run_record
@@ -47,13 +48,18 @@ def build_result(tmp_path: Path) -> AnalysisResult:
         exact_method="structural_hash",
     )
 
+    units = [unit, copy]
     return AnalysisResult(
-        units=[unit, copy],
+        units=units,
         traditional_duplicates=[duplicate],
         semantic_duplicates=[],
         hybrid_duplicates=[hybrid],
         potentially_unused=[unit],
-        run=make_run_record(tmp_path, mode="combined"),
+        run=make_run_record(
+            tmp_path,
+            mode="combined",
+            units=UnitCounts.from_units(units, semantic_eligible=len(units)),
+        ),
         embedding_stats=EmbeddingRunStats(
             requested_rows=1,
             unique_inputs=1,

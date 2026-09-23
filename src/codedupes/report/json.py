@@ -106,6 +106,8 @@ def _run_to_dict(run: RunRecord, checks: AnalysisChecks) -> dict[str, Any]:
         "units": {
             "extracted": run.units.extracted,
             "semantic_eligible": run.units.semantic_eligible,
+            "by_language": dict(run.units.by_language),
+            "by_type": dict(run.units.by_type),
         },
         "traditional": (
             None

@@ -65,8 +65,9 @@ def _result(tmp_path: Path) -> AnalysisResult:
     b = _unit(tmp_path, "b", file="a.py", start_byte=40)
     c = _unit(tmp_path, "c", file="a.py", start_byte=0)
     orphan = _unit(tmp_path, "orphan", file="z.py")
+    units = [a, b, c, orphan]
     return AnalysisResult(
-        units=[a, b, c, orphan],
+        units=units,
         traditional_duplicates=[DuplicatePair(a, b, 1.0, "structural_hash")],
         semantic_duplicates=[DuplicatePair(b, c, 0.9, "semantic")],
         hybrid_duplicates=[
@@ -74,7 +75,11 @@ def _result(tmp_path: Path) -> AnalysisResult:
             HybridDuplicate(b, c, "semantic_review", 0.8, semantic_similarity=0.9),
         ],
         potentially_unused=[orphan],
-        run=make_run_record(tmp_path, mode="combined"),
+        run=make_run_record(
+            tmp_path,
+            mode="combined",
+            units=UnitCounts.from_units(units, semantic_eligible=len(units)),
+        ),
     )
 
 
@@ -469,6 +474,12 @@ def test_check_json_run_block_and_analysis_status(tmp_path):
         "traditional": {"status": "completed", "files": None, "files_failed": 0, "diagnostics": 0},
         "semantic": {"status": "completed", "files": None, "files_failed": 0, "diagnostics": 0},
         "unused": {"status": "completed", "files": 0, "files_failed": 0, "diagnostics": 0},
+    }
+    assert run["units"] == {
+        "extracted": 4,
+        "semantic_eligible": 4,
+        "by_language": {"python": 4},
+        "by_type": {"class": 0, "function": 4, "method": 0},
     }
     assert "extraction_diagnostics" not in payload["summary"]
     assert "semantic_diagnostics" not in payload["summary"]

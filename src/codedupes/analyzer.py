@@ -1153,7 +1153,7 @@ class CodeAnalyzer:
             include_private=self.config.include_private,
             include_stubs=self.config.include_stubs,
             extracted_files=self._extracted_file_count,
-            units=UnitCounts(extracted=len(units), semantic_eligible=len(semantic_candidates)),
+            units=UnitCounts.from_units(units, semantic_eligible=len(semantic_candidates)),
             traditional=traditional,
             semantic=semantic,
             unused=unused,

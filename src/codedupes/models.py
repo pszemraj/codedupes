@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections import Counter
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from pathlib import Path
@@ -264,10 +265,38 @@ class UnusedSettings:
 
 @dataclass(frozen=True)
 class UnitCounts:
-    """Corpus size at two extraction stages."""
+    """Corpus size at two extraction stages, with a breakdown of the extracted units."""
 
     extracted: int
     semantic_eligible: int
+    by_language: Mapping[str, int] = field(default_factory=dict)
+    by_type: Mapping[str, int] = field(default_factory=dict)
+
+    @classmethod
+    def from_units(cls, units: Sequence[CodeUnit], *, semantic_eligible: int) -> UnitCounts:
+        """Count extracted units by language and by unit type.
+
+        ``by_type`` always carries all three :class:`CodeUnitType` names
+        (``class``, ``function``, ``method``), with ``0`` for a type that is
+        absent, because the enum is closed. ``by_language`` carries only the
+        languages actually present, because the language set is open-ended.
+
+        :param units: Extracted code units.
+        :param semantic_eligible: Count of units eligible for semantic embedding.
+        :return: Unit counts with both breakdowns populated.
+        """
+        by_language = dict(sorted(Counter(unit.language for unit in units).items()))
+        type_counts = Counter(unit.unit_type.name.lower() for unit in units)
+        by_type = {
+            name: type_counts.get(name, 0)
+            for name in sorted(member.name.lower() for member in CodeUnitType)
+        }
+        return cls(
+            extracted=len(units),
+            semantic_eligible=semantic_eligible,
+            by_language=by_language,
+            by_type=by_type,
+        )
 
 
 @dataclass(frozen=True)

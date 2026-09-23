@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -9,9 +10,9 @@ import pytest
 from codedupes import analyzer as analyzer_module
 from codedupes.analyzer import AnalyzerConfig, CodeAnalyzer
 from codedupes.extractor import DEFAULT_EXCLUDE_PATTERNS
-from codedupes.models import AnalysisMode
+from codedupes.models import AnalysisMode, CodeUnitType, UnitCounts
 from tests.analyzer_helpers import make_semantic_runner
-from tests.conftest import create_project
+from tests.conftest import create_project, make_code_unit
 
 
 @pytest.mark.parametrize("mode", ["combined", "traditional", "semantic", "unused"])
@@ -60,6 +61,47 @@ def test_run_record_captures_resolved_settings(
 
     assert run.unused.strict == config.strict_unused
     assert run.unused.files >= 1
+
+
+def test_unit_counts_break_down_by_language_and_every_unit_type(tmp_path: Path) -> None:
+    function = make_code_unit(tmp_path, name="helper", source="def helper():\n    pass\n")
+    method = make_code_unit(
+        tmp_path, name="run", source="def run(self):\n    pass\n", unit_type=CodeUnitType.METHOD
+    )
+    rust = replace(function, language="rust", name="parse")
+
+    counts = UnitCounts.from_units([function, method, rust], semantic_eligible=2)
+
+    assert counts.extracted == 3
+    assert counts.semantic_eligible == 2
+    # Languages are open-ended, so only those present appear; the unit-type enum is
+    # closed, so every type appears and an absent one counts zero.
+    assert counts.by_language == {"python": 2, "rust": 1}
+    assert counts.by_type == {"class": 0, "function": 2, "method": 1}
+    assert list(counts.by_language) == sorted(counts.by_language)
+    assert list(counts.by_type) == sorted(counts.by_type)
+
+
+def test_run_record_unit_counts_agree_with_the_extracted_units(tmp_path: Path) -> None:
+    source = (
+        "class Service:\n"
+        "    def handle(self, x):\n"
+        "        return x + 1\n"
+        "\n"
+        "\n"
+        "def entry(x):\n"
+        "    return Service().handle(x)\n"
+    )
+    project = create_project(tmp_path, source)
+    result = CodeAnalyzer(
+        AnalyzerConfig(run_traditional=True, run_semantic=False, run_unused=True)
+    ).analyze(project)
+
+    units = result.run.units
+    assert units.extracted == len(result.units) == 3
+    assert units.by_type == {"class": 1, "function": 1, "method": 1}
+    assert units.by_language == {"python": 3}
+    assert sum(units.by_type.values()) == sum(units.by_language.values()) == units.extracted
 
 
 def test_run_record_marks_semantic_fallback_as_a_partial_check(tmp_path: Path, monkeypatch) -> None:

@@ -51,7 +51,12 @@ codedupes check ./src --json | jq empty
     "include_private": true,
     "include_stubs": false,
     "extracted_files": 40,
-    "units": {"extracted": 42, "semantic_eligible": 40},
+    "units": {
+      "extracted": 42,
+      "semantic_eligible": 40,
+      "by_language": {"python": 42},
+      "by_type": {"class": 6, "function": 24, "method": 12}
+    },
     "traditional": {
       "jaccard_threshold": 0.85,
       "tiny_filter": true,
@@ -203,7 +208,7 @@ The shortened example omits `u1` through `u5` from `units`; real output includes
 
 #### Run record and check status
 
-`run` is what this analysis actually configured and did, independent of what it found: `root` is the resolved analysis root, `target` preserves an explicit file or symlink target's own path, `exclude_patterns` is the effective exclude list after default resolution, and `units.extracted`/`units.semantic_eligible` count the corpus before and after semantic candidate filtering. `traditional`, `semantic`, and `unused` are `null` when that detector did not run and otherwise carry its resolved settings — `semantic.model`/`semantic.revision` reflect what actually loaded (falling back to the requested name/revision when no model load was needed), `semantic.execution_device` is the device the model last ran on for this analysis and is `null` when every embedding came from cache, and `semantic.hybrid_split` is `null` outside combined mode.
+`run` is what this analysis actually configured and did, independent of what it found: `root` is the resolved analysis root, `target` preserves an explicit file or symlink target's own path, `exclude_patterns` is the effective exclude list after default resolution, and `units.extracted`/`units.semantic_eligible` count the corpus before and after semantic candidate filtering. `units.by_language` and `units.by_type` break the extracted corpus down and are what the terminal summary prints: `by_type` always carries `class`, `function`, and `method` (zero when absent), while `by_language` lists only the languages actually extracted. `traditional`, `semantic`, and `unused` are `null` when that detector did not run and otherwise carry its resolved settings — `semantic.model`/`semantic.revision` reflect what actually loaded (falling back to the requested name/revision when no model load was needed), `semantic.execution_device` is the device the model last ran on for this analysis and is `null` when every embedding came from cache, and `semantic.hybrid_split` is `null` outside combined mode.
 
 `run.checks` derives one status per detector from `run` and this result's diagnostics, so it never needs its own storage: `extraction` is `empty` when the corpus has no units, `partial` when any file raised a scope-losing diagnostic (`read-error`, `invalid-utf8`, `partial-parse`, `unit-parse-error`, `walk-error`) and `completed` otherwise — an advisory-only diagnostic (`c-header-policy`, `semantic-context-overflow`, `suppression-syntax`) does not mark extraction partial. `traditional` and `unused` are `disabled` when that detector did not run, else `completed` (`unused` is `partial` when any file raised an unused-analysis diagnostic). `semantic` is `disabled` when it did not run, `fallback` when combined mode degraded to traditional-only results (`summary.semantic_fallback`), else `completed`. Each check record's `files`/`files_failed`/`diagnostics` count that detector's own scope; `files` is `null` for `traditional` and `semantic`, which do not have a per-file failure count.
 
@@ -254,7 +259,12 @@ Default search hits (`--result-level unit`) use `{"unit": "u0", "score": 0.95}`;
     "include_private": true,
     "include_stubs": false,
     "extracted_files": 0,
-    "units": {"extracted": 0, "semantic_eligible": 0},
+    "units": {
+      "extracted": 0,
+      "semantic_eligible": 0,
+      "by_language": {},
+      "by_type": {"class": 0, "function": 0, "method": 0}
+    },
     "traditional": null,
     "semantic": {
       "requested_model": "Alibaba-NLP/gte-modernbert-base",

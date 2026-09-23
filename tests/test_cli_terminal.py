@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -15,6 +16,7 @@ from codedupes.models import (
     DuplicatePair,
     ExtractionDiagnostic,
     HybridDuplicate,
+    UnitCounts,
 )
 from tests.cli_helpers import build_result, build_result_with_semantic_duplicate, build_unit
 from tests.conftest import make_code_unit, make_run_record, patch_cli_analyzer
@@ -56,6 +58,37 @@ def test_cli_check_prints_run_panel(monkeypatch, tmp_path):
     assert "Scope" in result.output
     assert "combined" in result.output
     assert "extraction=completed" in result.output
+
+
+def test_cli_summary_unit_rows_come_from_the_run_record(monkeypatch, tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def entry():\n    return 1\n")
+    result_obj = build_result(tmp_path)
+    # A record that disagrees with ``result.units`` proves which one the summary reads.
+    result_obj.run = replace(
+        result_obj.run,
+        units=UnitCounts(
+            extracted=7,
+            semantic_eligible=5,
+            by_language={"python": 4, "rust": 3},
+            by_type={"class": 1, "function": 4, "method": 2},
+        ),
+    )
+    patch_cli_analyzer(monkeypatch, cli, analyze_result=lambda: result_obj)
+
+    result = CliRunner().invoke(cli.cli, ["check", str(path)])
+
+    rows = [" ".join(line.split()) for line in result.output.splitlines()]
+    for row in (
+        "Total code units 7",
+        "python 4",
+        "rust 3",
+        "Functions 4",
+        "Methods 2",
+        "Classes 1",
+    ):
+        assert row in rows
+    assert rows.index("Functions 4") < rows.index("Methods 2") < rows.index("Classes 1")
 
 
 def test_cli_reports_semantic_diagnostics(monkeypatch, tmp_path):

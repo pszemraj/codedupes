@@ -5,7 +5,6 @@ from __future__ import annotations
 import difflib
 import os
 import textwrap
-from collections import Counter
 from collections.abc import Iterable
 from typing import cast
 
@@ -40,6 +39,8 @@ _RAW_DUPLICATE_TITLES = {
     "traditional": "Near Duplicates (Jaccard)",
     "semantic": "Semantic Duplicates (Embedding)",
 }
+# Summary rows for ``run.units.by_type``, in display order rather than its sorted key order.
+_UNIT_TYPE_LABELS = (("function", "Functions"), ("method", "Methods"), ("class", "Classes"))
 
 
 def _settings_panel(title: str, rows: Iterable[tuple[str, object]]) -> Panel:
@@ -262,22 +263,12 @@ def print_summary(
         summary.add_row("Focus", ", ".join(str(path) for path in result.focus.paths))
         summary.add_row("Out-of-focus duplicates", str(result.focus.out_of_focus_duplicates))
         summary.add_row("Out-of-focus unused", str(result.focus.out_of_focus_unused))
-    summary.add_row("Total code units", str(len(result.units)))
-    language_counts = Counter(unit.language for unit in result.units)
-    for language, count in sorted(language_counts.items()):
+    run = result.run
+    summary.add_row("Total code units", str(run.units.extracted))
+    for language, count in run.units.by_language.items():
         summary.add_row(f"  {language}", str(count))
-    summary.add_row(
-        "  Functions",
-        str(sum(1 for unit in result.units if unit.unit_type.name.lower() == "function")),
-    )
-    summary.add_row(
-        "  Methods",
-        str(sum(1 for unit in result.units if unit.unit_type.name.lower() == "method")),
-    )
-    summary.add_row(
-        "  Classes",
-        str(sum(1 for unit in result.units if unit.unit_type.name.lower() == "class")),
-    )
+    for unit_type, label in _UNIT_TYPE_LABELS:
+        summary.add_row(f"  {label}", str(run.units.by_type.get(unit_type, 0)))
     summary.add_row("", "")
 
     if selection.mode == "combined":
