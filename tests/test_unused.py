@@ -438,6 +438,25 @@ def _entry_point_project(tmp_path: Path) -> Path:
 def test_entry_points_credit_only_the_named_module(tmp_path: Path) -> None:
     """Only the named module receives entry-point credit, even with matching basenames."""
     root = _entry_point_project(tmp_path)
+    cli = root / "src" / "pkg" / "cli.py"
+    cli.write_text(
+        cli.read_text()
+        + dedent(
+            """
+
+            def factory():
+                def _main():
+                    return 4
+                return 5
+
+
+            class Outer:
+                class App:
+                    def run(self):
+                        return 6
+            """
+        )
+    )
     other_pkg = root / "src" / "other"
     other_pkg.mkdir()
     (other_pkg / "__init__.py").write_text("def _main():\n    return 0\n")
@@ -452,9 +471,13 @@ def test_entry_points_credit_only_the_named_module(tmp_path: Path) -> None:
         (unit.file_path.relative_to(root).as_posix(), unit.name)
         for unit in result.potentially_unused
     }
+    unused_qualified = {unit.qualified_name for unit in result.potentially_unused}
+    # The object path must match exactly, not as a suffix of a nested definition.
+    assert "src.pkg.cli.factory._main" in unused_qualified
+    assert "src.pkg.cli.Outer.App.run" in unused_qualified
     assert ("src/pkg/other.py", "_main") in unused_by_file
-    assert ("src/pkg/cli.py", "_main") not in unused_by_file
-    assert ("src/pkg/cli.py", "run") not in unused_by_file
+    assert "src.pkg.cli._main" not in unused_qualified
+    assert "src.pkg.cli.App.run" not in unused_qualified
     assert ("src/other/cli.py", "_main") in unused_by_file
     assert ("src/other/cli.py", "run") in unused_by_file
     assert ("src/other/__init__.py", "_main") in unused_by_file
@@ -491,10 +514,11 @@ def test_entry_points_resolve_for_a_single_file_scan(tmp_path: Path) -> None:
     assert {unit.name for unit in result.potentially_unused} == set()
 
 
-def test_entry_point_in_a_package_init_resolves_when_scanning_the_package(
-    tmp_path: Path,
+@pytest.mark.parametrize("scan_root", [".", "src", "src/pkg"])
+def test_entry_point_in_a_package_init_resolves_from_any_scan_root(
+    tmp_path: Path, scan_root: str
 ) -> None:
-    """A ``pkg/__init__.py`` unit's qualified name drops the package segment at its own root."""
+    """``pkg:_main`` names the ``pkg/__init__.py`` definition whatever its qualified name."""
     root = tmp_path / "proj"
     root.mkdir()
     (root / "pyproject.toml").write_text(
@@ -515,7 +539,7 @@ def test_entry_point_in_a_package_init_resolves_when_scanning_the_package(
     (pkg / "__init__.py").write_text("def _main():\n    return 1\n")
     analyzer = CodeAnalyzer(_ENTRY_POINT_ANALYZER_CONFIG)
 
-    result = analyzer.analyze(pkg)
+    result = analyzer.analyze(root / scan_root)
 
     assert {unit.name for unit in result.potentially_unused} == set()
 

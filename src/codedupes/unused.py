@@ -618,6 +618,20 @@ def _framework_derived_classes(
     ]
 
 
+def _lexical_path(definition: DefinitionReferences) -> str:
+    """Return a definition's dotted path from its module's top level.
+
+    :param definition: Collected definition.
+    :return: Names from the outermost enclosing definition inward (``App.run``).
+    """
+    names: list[str] = []
+    scope: DefinitionReferences | None = definition
+    while scope is not None:
+        names.append(scope.name)
+        scope = scope.parent
+    return ".".join(reversed(names))
+
+
 def build_reference_graph(
     units: list[CodeUnit],
     project_root: Path | None = None,
@@ -797,15 +811,21 @@ def build_reference_graph(
         if pyproject_path is not None:
             for module, obj in _entry_point_targets(pyproject_path):
                 module_parts = tuple(module.split("."))
-                for candidate in by_name.get(obj, []):
-                    file_path = candidate.file_path
+                for file_path, module_references in modules.items():
                     path_parts = (
                         file_path.parent.parts
                         if file_path.name == "__init__.py"
                         else (*file_path.parent.parts, file_path.stem)
                     )
-                    if path_parts[-len(module_parts) :] == module_parts:
-                        candidate.references.add("project.entrypoint")
+                    if path_parts[-len(module_parts) :] != module_parts:
+                        continue
+                    # ``module:object`` names one definition exactly: a nested
+                    # ``factory._main`` or ``Outer.App.run`` is not ``_main`` or
+                    # ``App.run``.
+                    for definition in module_references.definitions:
+                        if _lexical_path(definition) == obj:
+                            for unit in units_for(file_path, definition):
+                                unit.references.add("project.entrypoint")
 
     return [module.diagnostic for module in modules.values() if module.diagnostic is not None]
 
