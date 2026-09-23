@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 from collections.abc import Callable
 
 import numpy as np
@@ -10,27 +11,12 @@ import codedupes.semantic as semantic_module
 from codedupes import analyzer as analyzer_module
 from codedupes.models import CodeUnit, DuplicatePair
 
-SEMANTIC_ANALYSIS_KWARG_NAMES = {
-    "batch_size",
-    "cache_scope",
-    "cross_language",
-    "device",
-    "diagnostics",
-    "exclude_pairs",
-    "instruction_prefix",
-    "language_thresholds",
-    "model_name",
-    "mps_fallback",
-    "mps_memory_fraction",
-    "progress",
-    "stats",
-    "revision",
-    "semantic_task",
-    "strict_revision_cache",
-    "threshold",
-    "trust_remote_code",
-    "use_cache",
-}
+# Derived from the signature actually called at the analyzer's call site
+# (analyzer_module.run_semantic_analysis is run_semantic_analysis_with_identity)
+# so an added/removed parameter fails loudly here instead of drifting silently.
+SEMANTIC_ANALYSIS_KWARG_NAMES = frozenset(
+    inspect.signature(analyzer_module.run_semantic_analysis).parameters
+) - {"units"}
 
 
 def embedding_identity_from_kwargs(kwargs: dict[str, object]):
