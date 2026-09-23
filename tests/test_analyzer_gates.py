@@ -76,11 +76,11 @@ def test_analyzer_resolves_per_language_semantic_gate(tmp_path: Path, monkeypatc
         ("builtin", "generic", None, 0.82),
         ("default", "embeddinggemma-300m", None, 0.74),
         ("builtin", "gte-modernbert-base", None, 0.87),
-        # Numeric gates bypass profile resolution for every profile choice.
+        # Numeric gates bypass profile resolution regardless of the model kind
+        # or the chosen threshold_profile; one row each proves the bypass
+        # holds under the default profile choice and under an explicit one.
         ("local", "auto", 0.91, 0.91),
-        ("hub", "generic", 0.91, 0.91),
         ("builtin", "embeddinggemma-300m", 0.91, 0.91),
-        ("default", "gte-modernbert-base", 0.91, 0.91),
     ],
 )
 def test_analyze_directory_threshold_profiles(
@@ -242,12 +242,16 @@ def test_per_language_gates_survive_the_whole_semantic_pipeline(
 
 @pytest.mark.grammar
 @pytest.mark.parametrize(
+    # "auto" (early-return branch of resolve_threshold_profile) and "generic"
+    # (named-constant branch) cover both accept and reject outcomes and both
+    # branches that matter here; the specific accept/reject boundary for each
+    # named built-in profile is calibration data already pinned in
+    # test_semantic_profiles.py, so a "gte-modernbert-base"/"embeddinggemma-300m"
+    # row would only re-run the same for-loop-match branch with a different value.
     ("threshold_profile", "score", "accepted"),
     [
         ("auto", 0.70, True),
         ("generic", 0.75, False),
-        ("gte-modernbert-base", 0.75, True),
-        ("embeddinggemma-300m", 0.77, True),
     ],
 )
 def test_cross_language_pairs_require_opt_in_and_use_looser_gate(
@@ -477,6 +481,7 @@ def test_analyzer_gemma_python_promotion_gate_requires_no_corroboration(
     tmp_path: Path, monkeypatch
 ) -> None:
     """Gemma's Python promotion gate works without identifier corroboration."""
+    profile = resolve_model_profile("embeddinggemma-300m")
     source = dedent(
         """
         def alpha(value):
@@ -516,7 +521,7 @@ def test_analyzer_gemma_python_promotion_gate_requires_no_corroboration(
     default_result = default_analyzer.analyze(project)
 
     [default_pair] = default_result.hybrid_duplicates
-    assert default_pair.weak_identifier_jaccard < 0.30
+    assert default_pair.weak_identifier_jaccard < profile.hybrid_weak_identifier_jaccard_min
     assert default_pair.tier == "semantic_high_confidence"
 
     gated_off_analyzer = CodeAnalyzer(
