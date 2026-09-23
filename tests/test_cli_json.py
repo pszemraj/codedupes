@@ -17,6 +17,19 @@ from codedupes.models import (
 from tests.cli_helpers import build_copy, build_result, build_unit, run_cli_subprocess
 from tests.conftest import make_run_record, patch_cli_analyzer
 
+# Shared by the subprocess noise-injection tests below: a native printf handle
+# so a fault-injected analyzer can emit output the C runtime buffers itself,
+# not just Python's.
+_NATIVE_PRINTF_PREAMBLE = """
+        import ctypes
+        import os
+        import sys
+
+        native_printf = ctypes.CDLL("ucrtbase" if os.name == "nt" else None).printf
+        native_printf.argtypes = [ctypes.c_char_p]
+        native_printf.restype = ctypes.c_int
+"""
+
 
 def test_cli_json_output_hybrid_default(monkeypatch, tmp_path):
     path = tmp_path / "sample.py"
@@ -170,15 +183,8 @@ def test_cli_json_isolates_backend_output_in_completed_report(
         args.append("entry")
     result = run_cli_subprocess(
         args,
-        f"""
-        import ctypes
-        import os
-        import sys
-
-        native_printf = ctypes.CDLL("ucrtbase" if os.name == "nt" else None).printf
-        native_printf.argtypes = [ctypes.c_char_p]
-        native_printf.restype = ctypes.c_int
-
+        _NATIVE_PRINTF_PREAMBLE
+        + f"""
         class NoisyAnalyzer(cli.CodeAnalyzer):
             def __init__(self, config):
                 os.write({stream_fd}, b"native initialization diagnostic\\n")
@@ -219,15 +225,8 @@ def test_cli_json_replays_python_and_native_output_on_failure(tmp_path, command,
         args.append("entry")
     result = run_cli_subprocess(
         args,
-        f"""
-        import ctypes
-        import os
-        import sys
-
-        native_printf = ctypes.CDLL("ucrtbase" if os.name == "nt" else None).printf
-        native_printf.argtypes = [ctypes.c_char_p]
-        native_printf.restype = ctypes.c_int
-
+        _NATIVE_PRINTF_PREAMBLE
+        + f"""
         class FailingAnalyzer(cli.CodeAnalyzer):
             def analyze(self, path):
                 print("Python backend diagnostic", file=sys.{"stdout" if stream_fd == 1 else "stderr"})
