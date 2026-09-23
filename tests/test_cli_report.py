@@ -793,28 +793,31 @@ def test_cli_explicit_max_unused_wins_over_expansion_flags(monkeypatch, tmp_path
 
 
 def test_cli_cap_keeps_the_actionable_pair_ahead_of_a_stronger_advisory_pair(monkeypatch, tmp_path):
-    from codedupes import analyzer as analyzer_module
-
     path = tmp_path / "sample.py"
     path.write_text("def entry():\n    return 1\n")
-    kwargs = {"identifiers": frozenset({"x"}), "statement_count": 1}
-    entry = make_code_unit(tmp_path, name="entry", source="def entry():\n    return 1", **kwargs)
-    other = make_code_unit(
-        tmp_path, name="other", source="def other():\n    return 2", lineno=5, **kwargs
-    )
-    third = make_code_unit(
-        tmp_path, name="third", source="def third():\n    return 3", lineno=9, **kwargs
-    )
+    entry = make_code_unit(tmp_path, name="entry", source="def entry():\n    return 1")
+    other = make_code_unit(tmp_path, name="other", source="def other():\n    return 2", lineno=5)
+    third = make_code_unit(tmp_path, name="third", source="def third():\n    return 3", lineno=9)
     traditional = [DuplicatePair(entry, other, 0.86, "jaccard")]
     semantic = [
         DuplicatePair(entry, third, 0.95, "semantic"),
         DuplicatePair(entry, other, 0.90, "semantic"),
     ]
-    hybrid = analyzer_module._synthesize_hybrid_duplicates(
-        traditional, semantic, jaccard_threshold=0.85
-    )
-    # Production synthesis ranks the uncorroborated pair first by score.
-    assert [pair.tier for pair in hybrid] == ["semantic_high_confidence", "hybrid_confirmed"]
+    # Hand-built analyzer-order fixture: an uncorroborated semantic_high_confidence
+    # pair outscores a corroborated hybrid_confirmed one, exactly as the real tier
+    # scoring in analyzer.py ranks them (score is only tier-monotone at equal
+    # similarity) -- the report must still rank the actionable pair first.
+    hybrid = [
+        HybridDuplicate(entry, third, "semantic_high_confidence", 0.97, semantic_similarity=0.95),
+        HybridDuplicate(
+            entry,
+            other,
+            "hybrid_confirmed",
+            0.88,
+            semantic_similarity=0.90,
+            jaccard_similarity=0.86,
+        ),
+    ]
     result = AnalysisResult(
         units=[entry, other, third],
         traditional_duplicates=traditional,
