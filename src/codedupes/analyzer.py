@@ -911,21 +911,21 @@ class CodeAnalyzer:
                 else (git_work_tree(path.parent) or path.parent)
             )
             self._extraction_root = root
-            reference_extractor = CodeExtractor(
-                root,
-                exclude_patterns=self.config.exclude_patterns,
-                include_private=self.config.include_private,
-                include_stubs=self.config.include_stubs,
-                languages=self.config.languages,
-                respect_gitignore=self.config.respect_gitignore,
-            )
-            reference_files = reference_extractor.reference_files()
-            seen_reference_files = {path}
             self._python_files = [path]
-            for reference_file in reference_files:
-                if reference_file not in seen_reference_files:
-                    seen_reference_files.add(reference_file)
-                    self._python_files.append(reference_file)
+            if self.config.run_unused:
+                reference_extractor = CodeExtractor(
+                    root,
+                    exclude_patterns=self.config.exclude_patterns,
+                    include_private=self.config.include_private,
+                    include_stubs=self.config.include_stubs,
+                    languages=self.config.languages,
+                    respect_gitignore=self.config.respect_gitignore,
+                )
+                seen_reference_files = {path}
+                for reference_file in reference_extractor.reference_files():
+                    if reference_file not in seen_reference_files:
+                        seen_reference_files.add(reference_file)
+                        self._python_files.append(reference_file)
         else:
             extractor = CodeExtractor(
                 path,
@@ -935,7 +935,7 @@ class CodeAnalyzer:
                 languages=self.config.languages,
                 respect_gitignore=self.config.respect_gitignore,
             )
-            units = extractor.extract_all()
+            units = extractor.extract_all(collect_reference_files=self.config.run_unused)
             self._extraction_diagnostics = list(extractor.diagnostics)
             self._extracted_file_count = sum(
                 len(files) for files in extractor.extracted_files.values()

@@ -9,6 +9,7 @@ import pytest
 
 from codedupes import analyzer as analyzer_module
 from codedupes.analyzer import AnalyzerConfig, CodeAnalyzer
+from codedupes.extractor import CodeExtractor
 from tests.analyzer_helpers import embedding_identity_from_kwargs
 
 
@@ -92,6 +93,31 @@ def test_file_target_reads_references_from_the_project_tree(tmp_path: Path) -> N
     project_result = CodeAnalyzer(config).analyze(pkg / "a.py")
     assert [unit.qualified_name for unit in project_result.units] == ["a.helper"]
     assert "helper" not in {unit.name for unit in project_result.potentially_unused}
+
+
+@pytest.mark.parametrize("target_is_file", [False, True])
+def test_no_unused_skips_reference_file_discovery(
+    tmp_path: Path, monkeypatch, target_is_file: bool
+) -> None:
+    """Duplicate-only scans avoid traversing files used solely for unused references."""
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "demo"\n')
+    source = tmp_path / "entry.py"
+    source.write_text("def entry():\n    return 1\n")
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir()
+    (tests_dir / "test_entry.py").write_text("def test_entry():\n    assert True\n")
+
+    def unexpected_reference_walk(*_args, **_kwargs):
+        pytest.fail("unused reference files were walked with run_unused=False")
+
+    monkeypatch.setattr(CodeExtractor, "reference_files", unexpected_reference_walk)
+    monkeypatch.setattr(CodeExtractor, "_collect_reference_files", unexpected_reference_walk)
+    target = source if target_is_file else tmp_path
+
+    result = CodeAnalyzer(AnalyzerConfig(run_semantic=False, run_unused=False)).analyze(target)
+
+    assert [unit.name for unit in result.units] == ["entry"]
+    assert result.run.unused is None
 
 
 def test_explicit_test_file_bypasses_defaults_but_honors_configured_excludes(

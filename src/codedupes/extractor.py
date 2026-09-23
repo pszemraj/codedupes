@@ -494,15 +494,18 @@ class CodeExtractor:
             )
         )
 
-    def extract_all(self) -> list[CodeUnit]:
+    def extract_all(self, *, collect_reference_files: bool = True) -> list[CodeUnit]:
         """Extract all supported code units from the configured directory tree.
 
-        As a side effect, populates :attr:`reference_only_files` with Python files
+        When requested, populates :attr:`reference_only_files` with Python files
         skipped only by a default test-file shape, for unused-code reference parsing.
 
+        :param collect_reference_files: Discover default-excluded Python files
+            for unused-code references; disable when unused analysis will not run.
         :return: Every code unit extracted from the tree, in sorted walk order.
         """
         units: list[CodeUnit] = []
+        self.reference_only_files = []
         seen: set[Path] = set()
         allow_c_header: bool | None = None
         skipped_headers: list[Path] = []
@@ -551,7 +554,7 @@ class CodeExtractor:
                 if self._should_exclude(directory, check_ancestors=False):
                     skipped_test_dirs += matches_default_tests(directory)
                     skipped_ignored_dirs += skipped_by_gitignore(directory)
-                    if self._default_only_exclusion(directory):
+                    if collect_reference_files and self._default_only_exclusion(directory):
                         self.reference_only_files.extend(self._collect_reference_files(directory))
                 else:
                     included_dirs.append(name)
@@ -579,7 +582,11 @@ class CodeExtractor:
                 if self._should_exclude(source_file, check_ancestors=False):
                     skipped_test_files += matches_default_tests(source_file)
                     skipped_ignored_files += skipped_by_gitignore(source_file)
-                    if source_file.suffix == ".py" and self._default_only_exclusion(source_file):
+                    if (
+                        collect_reference_files
+                        and source_file.suffix == ".py"
+                        and self._default_only_exclusion(source_file)
+                    ):
                         self.reference_only_files.append(source_file)
                     continue
                 if selection is None:
@@ -597,11 +604,19 @@ class CodeExtractor:
                 units.extend(self.extract_from_file(source_file))
 
         if skipped_test_files or skipped_test_dirs:
+            message = (
+                "their Python files still count as references for unused-code analysis. "
+                if collect_reference_files
+                else ""
+            )
+            hint = (
+                "Use --no-default-excludes to include them in duplicate detection too."
+                if collect_reference_files
+                else "Use --no-default-excludes to include them in duplicate detection."
+            )
             logger.info(
                 f"Skipped {skipped_test_files} files and {skipped_test_dirs} directories "
-                "matching default test exclusions; their Python files still count as "
-                "references for unused-code analysis. Use --no-default-excludes to include "
-                "them in duplicate detection too."
+                f"matching default test exclusions; {message}{hint}"
             )
         if skipped_ignored_files or skipped_ignored_dirs:
             logger.info(
