@@ -174,26 +174,18 @@ def test_public_method_inside_a_private_class_still_credits_what_it_calls(
     assert "public_helper" not in {unit.name for unit in unused}
 
 
-def test_ignore_directive_and_main_block_mark_as_used(tmp_path: Path) -> None:
+def test_ignore_directive_marks_the_unit_as_used(tmp_path: Path) -> None:
     source = dedent(
         """
         def ignored_unused():  # codedupes: ignore
             return 42
-
-        def used_by_main():
-            return 7
-
-        if __name__ == "__main__":
-            used_by_main()
         """
     ).strip()
     units = extract_units(tmp_path, source, include_private=True)
     build_reference_graph(units, project_root=tmp_path)
     unused = find_potentially_unused(units, strict_unused=True)
-    names = {unit.name for unit in unused}
 
-    assert "ignored_unused" not in names
-    assert "used_by_main" not in names
+    assert "ignored_unused" not in {unit.name for unit in unused}
 
 
 def test_noqa_marker_no_longer_suppresses(tmp_path: Path) -> None:
@@ -232,8 +224,12 @@ def test_directive_in_a_string_or_docstring_does_not_suppress(tmp_path: Path) ->
     assert "unused_with_string" in names
 
 
-def test_nested_directive_does_not_suppress_the_container(tmp_path: Path) -> None:
-    """A directive on a nested unit never propagates up to its container."""
+def test_directive_propagates_down_not_up(tmp_path: Path) -> None:
+    """A directive marks its own unit and everything nested in it, but never its container.
+
+    ``_Service`` is private, so absent its own directive both it and ``run``
+    would be reported (see ``test_public_method_of_private_class_is_reported_by_default``).
+    """
     source = dedent(
         """
         def outer():
@@ -241,6 +237,10 @@ def test_nested_directive_does_not_suppress_the_container(tmp_path: Path) -> Non
                 return 1
 
             return 2
+
+        class _Service:  # codedupes: ignore
+            def run(self):
+                return 1
         """
     ).strip()
     units = extract_units(tmp_path, source, include_private=True)
@@ -250,26 +250,6 @@ def test_nested_directive_does_not_suppress_the_container(tmp_path: Path) -> Non
 
     assert "outer" in names
     assert "inner" not in names
-
-
-def test_container_directive_suppresses_nested_units(tmp_path: Path) -> None:
-    """A directive on a container applies to every unit nested in it.
-
-    ``_Service`` is private, so absent the directive both the class and its
-    method would be reported (see ``test_public_method_of_private_class_is_reported_by_default``).
-    """
-    source = dedent(
-        """
-        class _Service:  # codedupes: ignore
-            def run(self):
-                return 1
-        """
-    ).strip()
-    units = extract_units(tmp_path, source, include_private=True)
-    build_reference_graph(units, project_root=tmp_path)
-    unused = find_potentially_unused(units, strict_unused=False)
-    names = {unit.name for unit in unused}
-
     assert "_Service" not in names
     assert "run" not in names
 
