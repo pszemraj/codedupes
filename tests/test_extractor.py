@@ -488,8 +488,8 @@ def test_walk_exclusion_matching_cost(tmp_path: Path, monkeypatch: Any, depth: i
         (directory / f"notes{i}.txt").touch()
     extractor = CodeExtractor(tmp_path)
     matchers = [
-        (use_path, directory_only, Mock(wraps=matcher), Mock(wraps=zero_depth))
-        for use_path, directory_only, matcher, zero_depth in extractor._exclude_matchers
+        (use_path, anchored, directory_only, Mock(wraps=matcher), Mock(wraps=zero_depth))
+        for use_path, anchored, directory_only, matcher, zero_depth in extractor._exclude_matchers
     ]
     extractor._exclude_matchers = matchers
     translate = Mock(side_effect=AssertionError("Patterns must be compiled before walking"))
@@ -502,7 +502,7 @@ def test_walk_exclusion_matching_cost(tmp_path: Path, monkeypatch: Any, depth: i
     extract.assert_called_once_with(source)
     # Each directory gets at most four matches per pattern, and the source two.
     # Unsupported files and previously visited ancestors add no matching work.
-    calls = sum(m.match.call_count + z.match.call_count for _, _, m, z in matchers)
+    calls = sum(m.match.call_count + z.match.call_count for _, _, _, m, z in matchers)
     assert calls <= len(matchers) * (4 * depth + 2)
     translate.assert_not_called()
 

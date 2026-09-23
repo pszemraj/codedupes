@@ -117,6 +117,30 @@ def test_file_target_anchors_reference_exclusions_to_its_parent(tmp_path: Path) 
     assert excluded.run.unused.files == 1
 
 
+def test_file_target_applies_unanchored_reference_exclusions_project_wide(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "demo"\n')
+    pkg = tmp_path / "pkg"
+    pkg.mkdir()
+    target = pkg / "target.py"
+    target.write_text("def _helper():\n    return 1\n")
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir()
+    (tests_dir / "test_target.py").write_text("from pkg.target import _helper\n_helper()\n")
+
+    config = {"run_traditional": False, "run_semantic": False, "run_unused": True}
+    with_reference = CodeAnalyzer(AnalyzerConfig(exclude_patterns=[], **config)).analyze(target)
+    excluded = CodeAnalyzer(AnalyzerConfig(exclude_patterns=["**/tests/**"], **config)).analyze(
+        target
+    )
+
+    assert with_reference.potentially_unused == []
+    assert with_reference.run.unused.files == 2
+    assert [unit.name for unit in excluded.potentially_unused] == ["_helper"]
+    assert excluded.run.unused.files == 1
+
+
 def test_file_target_reports_incomplete_reference_walk(tmp_path: Path, monkeypatch) -> None:
     (tmp_path / "pyproject.toml").write_text('[project]\nname = "demo"\n')
     source = tmp_path / "entry.py"
