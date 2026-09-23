@@ -762,22 +762,70 @@ def _comments_on_rows(node: Any, rows: frozenset[int]) -> list[Any]:
     ]
 
 
-def _following_comments(anchor: Any, rows: frozenset[int], body: Any, source: bytes) -> list[Any]:
+def _owns_comment(
+    comment: Any, anchor: Any, spec: UnitSpec, nested_scope_types: frozenset[str]
+) -> bool:
+    """Decide whether a comment descendant of ``anchor`` belongs to this unit or a nested scope.
+
+    Walks upward from the comment's parent toward ``anchor``. A node matching
+    the unit's own ``spec.node``, ``spec.source_node``, or ``anchor`` reached
+    first means the comment is the unit's own; that identity test runs before
+    the type test on the same node because a bound arrow or class expression's
+    own node type (``arrow_function``, ``class``) can itself be a nested-scope
+    type. A node whose ``type`` is in ``nested_scope_types`` reached first
+    means a nested function, method, class, or callback -- including an
+    anonymous callback sitting in a parameter default -- owns it instead.
+
+    :param comment: Candidate comment, a descendant of ``anchor``.
+    :param anchor: Statement anchor from :func:`_statement_anchor`.
+    :param spec: Unit spec being inspected.
+    :param nested_scope_types: Backend's nested-scope syntax kinds.
+    :return: ``True`` when the comment belongs to this unit.
+    """
+    current = getattr(comment, "parent", None)
+    while current is not None:
+        if (
+            _same_node(current, anchor)
+            or _same_node(current, spec.node)
+            or _same_node(current, spec.source_node)
+        ):
+            return True
+        if getattr(current, "type", "") in nested_scope_types:
+            return False
+        current = getattr(current, "parent", None)
+    return True
+
+
+def _following_comments(
+    anchor: Any,
+    rows: frozenset[int],
+    spec: UnitSpec,
+    source: bytes,
+    nested_scope_types: frozenset[str],
+) -> list[Any]:
     """Collect comments trailing within a unit's header rows.
 
     Covers a comment trailing the ``def``/signature line, sitting between
     decorators or attributes, trailing the opening brace of a body on its
-    own row (``{ // codedupes: ignore``), or ending a one-line unit.
+    own row (``{ // codedupes: ignore``), or ending a one-line unit. A
+    descendant candidate whose nearest owning scope (per :func:`_owns_comment`)
+    is a nested function, method, class, or parameter-default callback is
+    dropped: it lies in the unit's header rows only because a callback's own
+    header can share them, not because it belongs to this unit.
 
     :param anchor: Statement anchor from :func:`_statement_anchor`.
     :param rows: Header rows from :meth:`TreeSitterBackend._header_rows`.
-    :param body: Unit body node, whose opening row may also contain statements.
+    :param spec: Unit spec being inspected, for comment-ownership resolution.
     :param source: Full file source bytes.
+    :param nested_scope_types: Backend's nested-scope syntax kinds.
     :return: Matching comments in document order.
     """
+    body = spec.body
     body_start = int(getattr(body, "start_byte", 0))
     comments = []
     for comment in _comments_on_rows(anchor, rows):
+        if not _owns_comment(comment, anchor, spec, nested_scope_types):
+            continue
         comment_start = int(getattr(comment, "start_byte", 0))
         # With more body after it, a comment trails a statement or nested
         # unit inside the body, unless only the opening brace precedes it
@@ -1009,7 +1057,7 @@ class TreeSitterBackend:
         rows = self._header_rows(anchor, spec)
         return [
             *_leading_comments(anchor, source),
-            *_following_comments(anchor, rows, spec.body, source),
+            *_following_comments(anchor, rows, spec, source, self.nested_scope_types),
         ]
 
     def extract_file(self, file_path: Path) -> BackendResult:

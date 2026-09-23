@@ -601,3 +601,156 @@ def test_javascript_suppression_directive_attachment(tmp_path: Path) -> None:
         """,
     )
     assert export_arrow.suppressions == {"unused", "duplicates"}
+
+
+@pytest.mark.parametrize(
+    ("filename", "source", "expected"),
+    [
+        pytest.param(
+            "ts_trailing_brace.ts",
+            "function foo(): number {  // codedupes: ignore\n  return 1;\n}\n",
+            {"foo": {"unused", "duplicates"}},
+            id="ts-trailing-brace",
+        ),
+        pytest.param(
+            "js_trailing_signature.js",
+            "function foo() // codedupes: ignore\n{\n  return 1;\n}\n",
+            {"foo": {"unused", "duplicates"}},
+            id="js-trailing-signature",
+        ),
+        pytest.param(
+            "ts_trailing_signature.ts",
+            "function foo(): number // codedupes: ignore\n{\n  return 1;\n}\n",
+            {"foo": {"unused", "duplicates"}},
+            id="ts-trailing-signature",
+        ),
+        pytest.param(
+            "one_line_class.js",
+            "class A { m() { /* codedupes: ignore */ return 1; } }\n",
+            {"A": set(), "A.m": {"unused", "duplicates"}},
+            id="js-one-line-class-method",
+        ),
+    ],
+)
+def test_ecmascript_suppression_directive_positive_controls(
+    tmp_path: Path, filename: str, source: str, expected: dict[str, set[str]]
+) -> None:
+    """Documented attachment points hold for TypeScript, K&R braces, and one-line classes.
+
+    A one-line class's own directive never leaks onto its method the other way
+    either: ``A`` carries none of ``A.m``'s suppression.
+    """
+    prefix = Path(filename).stem
+    units = {unit.qualified_name: unit for unit in extract(tmp_path, filename, source)}
+    for suffix, suppressions in expected.items():
+        assert units[f"{prefix}.{suffix}"].suppressions == suppressions
+
+
+@pytest.mark.parametrize(
+    ("filename", "source", "inner_expected"),
+    [
+        pytest.param(
+            "callback_fn_expr_multiline.js",
+            """
+            function outer(callback = function inner() {
+                /* codedupes: ignore[duplicates] */ return 1;
+            }) {
+                return callback();
+            }
+            """,
+            set(),
+            id="js-function-expression-multiline",
+        ),
+        pytest.param(
+            "callback_fn_expr_one_line.js",
+            "function outer(callback = function inner() "
+            "{ /* codedupes: ignore[duplicates] */ return 1; }) { return callback(); }\n",
+            {"duplicates"},
+            id="js-function-expression-one-line",
+        ),
+        pytest.param(
+            "callback_arrow_multiline.js",
+            """
+            function outer(callback = () => {
+                // codedupes: ignore[duplicates]
+                return 1;
+            }) {
+                return callback();
+            }
+            """,
+            None,
+            id="js-arrow-multiline",
+        ),
+        pytest.param(
+            "callback_arrow_one_line.js",
+            "function outer(callback = () => "
+            "{ /* codedupes: ignore[duplicates] */ return 1; }) { return callback(); }\n",
+            None,
+            id="js-arrow-one-line",
+        ),
+        pytest.param(
+            "callback_fn_expr_multiline.ts",
+            """
+            function outer(callback: () => number = function inner(): number {
+                /* codedupes: ignore[duplicates] */ return 1;
+            }): number {
+                return callback();
+            }
+            """,
+            set(),
+            id="ts-function-expression-multiline",
+        ),
+        pytest.param(
+            "callback_fn_expr_one_line.ts",
+            "function outer(callback: () => number = function inner(): number "
+            "{ /* codedupes: ignore[duplicates] */ return 1; }): number { return callback(); }\n",
+            {"duplicates"},
+            id="ts-function-expression-one-line",
+        ),
+        pytest.param(
+            "callback_arrow_multiline.ts",
+            """
+            function outer(cb: () => number = () => {
+                // codedupes: ignore[duplicates]
+                return 1;
+            }): number {
+                return cb();
+            }
+            """,
+            None,
+            id="ts-arrow-multiline",
+        ),
+        pytest.param(
+            "callback_arrow_one_line.ts",
+            "function outer(cb: () => number = () => "
+            "{ /* codedupes: ignore[duplicates] */ return 1; }): number { return cb(); }\n",
+            None,
+            id="ts-arrow-one-line",
+        ),
+    ],
+)
+def test_parameter_default_callback_directive_stays_in_the_callback(
+    tmp_path: Path, filename: str, source: str, inner_expected: set[str] | None
+) -> None:
+    """A directive inside a parameter-default callback belongs to the callback, not the enclosing unit.
+
+    The callback's own header rows (its signature through its body's opening
+    row) sit inside the enclosing function's header rows too, so the row-based
+    screen alone cannot tell the two scopes apart; only walking comment
+    ownership up through the syntax tree can. A named function-expression
+    callback (``function inner() {...}``) is itself an extracted unit; an
+    arrow callback is not, since nothing binds it to a name. ``inner_expected``
+    is ``None`` when no nested unit is extracted at all, and the callback's own
+    directive is otherwise expected to attach exactly when it trails the
+    callback's own opening brace on its own row (the one-line cases); a comment
+    on the row after it is not an attachment point for the callback either.
+    """
+    prefix = Path(filename).stem
+    units = {unit.qualified_name: unit for unit in extract(tmp_path, filename, source)}
+    assert units[f"{prefix}.outer"].suppressions == set()
+    inner = units.get(f"{prefix}.outer.inner")
+    if inner_expected is None:
+        assert inner is None
+    else:
+        assert inner is not None
+        assert inner.suppressions == inner_expected
