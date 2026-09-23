@@ -692,8 +692,13 @@ SUPPRESSION_KINDS = frozenset({"unused", "duplicates"})
 # free text after the closing bracket (a reason) is not captured. Matching is
 # case-sensitive and searched rather than anchored, so it finds the directive
 # inside a comment's own delimiters (``# codedupes: ignore``, ``// ...``);
-# ``ignored`` and ``noqa: codedupes`` do not match.
-_SUPPRESSION_RE = re.compile(r"\bcodedupes:[ \t]*ignore\b[ \t]*(?:\[([^\]\r\n]*)\])?")
+# ``ignored`` and ``noqa: codedupes`` do not match. ``\b`` alone would also
+# accept ``ignore-me`` or ``ignore:``, so parse_suppressions checks what
+# follows a bare ``ignore``.
+_SUPPRESSION_RE = re.compile(r"\bcodedupes:[ \t]*ignore\b(?:[ \t]*\[([^\]\r\n]*)\])?")
+# What may directly follow a bare ``ignore``: whitespace (then a free-text
+# reason), a block comment's closing ``*/``, or the end of the comment.
+_BARE_DIRECTIVE_END_RE = re.compile(r"\s|\*/|$")
 # A wrapping declaration/statement node a unit's source node can sit inside;
 # comments attach to the outermost one, not to the inner binding node.
 _STATEMENT_WRAPPER_TYPES = frozenset(
@@ -712,15 +717,22 @@ def parse_suppressions(text: str) -> tuple[frozenset[str], frozenset[str]]:
     :return: Recognized suppression kinds, and any unrecognized kind names
         (both empty when the comment carries no directive at all); no
         bracket means every kind.
-    :raises ValueError: If a kind list opens without a closing bracket.
+    :raises ValueError: If a kind list opens without a closing bracket, or a
+        bare ``ignore`` runs straight into other text (``ignore-me``).
     """
     match = _SUPPRESSION_RE.search(text)
     if match is None:
         return frozenset(), frozenset()
     bracket = match.group(1)
     if bracket is None:
-        if text[match.end() :].lstrip(" \t").startswith("["):
+        rest = text[match.end() :]
+        if rest.lstrip(" \t").startswith("["):
             raise ValueError("Unclosed suppression kind list")
+        if not _BARE_DIRECTIVE_END_RE.match(rest):
+            raise ValueError(
+                f"Unexpected {rest[0]!r} directly after 'ignore'; expected whitespace, "
+                "a [kind, ...] list, or the end of the comment"
+            )
         return SUPPRESSION_KINDS, frozenset()
     requested = frozenset(part.strip() for part in bracket.split(",") if part.strip())
     return requested & SUPPRESSION_KINDS, requested - SUPPRESSION_KINDS

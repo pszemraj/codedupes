@@ -757,9 +757,10 @@ def test_python_directive_attachment(tmp_path: Path) -> None:
     )
     assert blank_line_breaks["blank_line_breaks.f"].suppressions == set()
 
-    # One diagnostic smoke: the grammar itself (unknown kind vs. unclosed
-    # kind list) is pinned by test_tree_sitter_backend_unit.py; this only
-    # proves the diagnostic surfaces through Python extraction.
+    # Diagnostic smokes: the grammar itself (unknown kind, unclosed kind
+    # list, text run onto a bare ``ignore``) is pinned by
+    # test_tree_sitter_backend_unit.py; these only prove both diagnostic paths
+    # surface through Python extraction and suppress nothing.
     unknown_kind_result = python_result(
         tmp_path,
         """
@@ -770,6 +771,17 @@ def test_python_directive_attachment(tmp_path: Path) -> None:
     )
     assert unknown_kind_result.units[0].suppressions == set()
     assert [d.code for d in unknown_kind_result.diagnostics] == ["suppression-syntax"]
+
+    malformed_result = python_result(
+        tmp_path,
+        """
+        def f():  # codedupes: ignore-me
+            return 1
+        """,
+        filename="malformed.py",
+    )
+    assert malformed_result.units[0].suppressions == set()
+    assert [d.code for d in malformed_result.diagnostics] == ["suppression-syntax"]
 
     single_line_body = python_result(
         tmp_path,
