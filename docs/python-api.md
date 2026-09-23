@@ -246,7 +246,7 @@ quiet_dependency_loggers()  # or quiet_dependency_loggers(logging.ERROR)
 - `AnalysisResult.run`: the resolved `RunRecord` this analysis actually applied — root/target, scope, per-detector settings (`traditional`, `semantic`, `unused`, each `None` when that detector did not run), and extraction/unit counts (`run.units` is a `UnitCounts`: `extracted`, `semantic_eligible`, and the `by_language`/`by_type` breakdowns, built by `UnitCounts.from_units(units, semantic_eligible=...)`); see [the run record](output.md#run-record-and-check-status)
 - `AnalysisResult.checks`: `AnalysisChecks` derived from `run` and this result's diagnostics — one `CheckRecord(status, files, files_failed, diagnostics)` per detector, `status` one of `completed`, `partial`, `empty`, `fallback`, `disabled`
 - `AnalysisResult.analysis_status`: `checks.analysis_status` — `"complete"`, `"partial"`, or `"empty"`
-- `CodeAnalyzer.run_record`: the same `RunRecord` after the latest `index()` or `analyze()` call, or `None` before the first run
+- `CodeAnalyzer.run_record`: the same `RunRecord` after the latest `index()` or `analyze()` call, or `None` before the first run; `index()` records semantic work even when a check-mode config has `run_semantic=False`, because that flag gates `analyze()`
 - `AnalysisResult.embedding_stats`: [embedding telemetry](#progress-and-embedding-telemetry)
 - `AnalysisResult.focus`: `FocusSummary(paths, units, out_of_focus_duplicates, out_of_focus_unused)` after `focus_result()`, else `None`; see [focused reports](output.md#focused-reports)
 - `CodeUnit.uid`: in-run definition identity, `<path>::<language>::<qualified name>::<start byte>` for every language; the byte position keeps overloads and redefinitions distinct

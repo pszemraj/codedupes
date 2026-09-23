@@ -5,13 +5,14 @@ from __future__ import annotations
 from dataclasses import replace
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from codedupes import analyzer as analyzer_module
 from codedupes.analyzer import AnalyzerConfig, CodeAnalyzer
 from codedupes.extractor import DEFAULT_EXCLUDE_PATTERNS
 from codedupes.models import AnalysisMode, CodeUnitType, UnitCounts
-from tests.analyzer_helpers import make_semantic_runner
+from tests.analyzer_helpers import embedding_identity_from_kwargs, make_semantic_runner
 from tests.conftest import create_project, make_code_unit
 
 
@@ -61,6 +62,30 @@ def test_run_record_captures_resolved_settings(
 
     assert run.unused.strict == config.strict_unused
     assert run.unused.files >= 1
+
+
+def test_index_run_record_tracks_semantic_work_with_check_config(
+    tmp_path: Path, monkeypatch
+) -> None:
+    source = tmp_path / "entry.py"
+    source.write_text("def entry():\n    first = 1\n    second = first + 1\n    return second\n")
+
+    def fake_compute_embeddings(units, **kwargs):
+        return np.zeros((len(units), 2), dtype=np.float32), embedding_identity_from_kwargs(kwargs)
+
+    monkeypatch.setattr(analyzer_module, "compute_embeddings", fake_compute_embeddings)
+    analyzer = CodeAnalyzer(
+        AnalyzerConfig(
+            run_semantic=False,
+            run_traditional=True,
+            run_unused=False,
+        )
+    )
+
+    assert analyzer.index(source) == 1
+    assert analyzer.run_record.analysis_mode == "semantic"
+    assert analyzer.run_record.semantic is not None
+    assert analyzer.run_record.semantic.task == "code-retrieval"
 
 
 def test_unit_counts_break_down_by_language_and_every_unit_type(tmp_path: Path) -> None:

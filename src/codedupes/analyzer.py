@@ -1071,6 +1071,7 @@ class CodeAnalyzer:
         embedding_stats: EmbeddingRunStats | None,
         python_files: list[Path],
         run_traditional: bool,
+        run_semantic: bool,
         run_unused: bool,
     ) -> RunRecord:
         """Build the resolved run record describing what this run actually did.
@@ -1086,6 +1087,7 @@ class CodeAnalyzer:
         :param embedding_stats: Telemetry from the semantic stage, or ``None``.
         :param python_files: Every Python file parsed for the unused reference graph.
         :param run_traditional: Whether traditional detection actually ran.
+        :param run_semantic: Whether semantic embedding actually ran.
         :param run_unused: Whether unused-code detection actually ran.
         :return: Resolved run record.
         """
@@ -1102,7 +1104,7 @@ class CodeAnalyzer:
         )
 
         semantic: SemanticSettings | None = None
-        if self.config.run_semantic:
+        if run_semantic:
             profile = resolve_model_profile(self.config.model_name)
             identity = self._embedding_space_identity
             model_name = identity.model_name if identity is not None else profile.canonical_name
@@ -1379,6 +1381,7 @@ class CodeAnalyzer:
             embedding_stats=embedding_stats,
             python_files=self._python_files,
             run_traditional=self.config.run_traditional,
+            run_semantic=self.config.run_semantic,
             run_unused=self.config.run_unused,
         )
 
@@ -1480,6 +1483,7 @@ class CodeAnalyzer:
             embedding_stats=self._embedding_stats,
             python_files=self._python_files,
             run_traditional=False,
+            run_semantic=True,
             run_unused=False,
         )
         return len(semantic_candidates)
