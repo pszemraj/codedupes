@@ -13,6 +13,7 @@ from codedupes.models import CodeUnit
 from tests.conftest import extract_units
 
 REVISION_1 = "1" * 40
+REVISION_2 = "2" * 40
 
 FIVE_FUNCTION_SOURCE = """
 def alpha(x):

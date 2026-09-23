@@ -19,13 +19,12 @@ from codedupes.semantic import (
 from tests.conftest import extract_units
 from tests.embedding_cache_helpers import (
     REVISION_1,
+    REVISION_2,
     CountingModel,
     MidEncodeCpuFallbackModel,
     five_units,
     patch_get_model,
 )
-
-REVISION_2 = "2" * 40
 
 
 def test_full_cache_hit_skips_model_load_and_encode(tmp_path, monkeypatch):
