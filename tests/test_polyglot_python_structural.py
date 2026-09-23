@@ -767,3 +767,14 @@ def test_python_directive_attachment(tmp_path: Path) -> None:
     )
     assert unknown_kind_result.units[0].suppressions == set()
     assert [d.code for d in unknown_kind_result.diagnostics] == ["suppression-syntax"]
+
+    unclosed_result = python_result(
+        tmp_path,
+        """
+        def f():  # codedupes: ignore[unused
+            return 1
+        """,
+        filename="unclosed_kind.py",
+    )
+    assert unclosed_result.units[0].suppressions == set()
+    assert [d.code for d in unclosed_result.diagnostics] == ["suppression-syntax"]

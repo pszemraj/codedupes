@@ -735,3 +735,8 @@ def test_parse_suppressions_grammar(text: str, known: set[str], unknown: set[str
 
     assert parsed_known == frozenset(known)
     assert parsed_unknown == frozenset(unknown)
+
+
+def test_parse_suppressions_rejects_unclosed_kind_list() -> None:
+    with pytest.raises(ValueError, match="Unclosed suppression kind list"):
+        parse_suppressions("# codedupes: ignore[unused")

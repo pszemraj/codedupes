@@ -711,12 +711,15 @@ def parse_suppressions(text: str) -> tuple[frozenset[str], frozenset[str]]:
     :return: Recognized suppression kinds, and any unrecognized kind names
         (both empty when the comment carries no directive at all); no
         bracket means every kind.
+    :raises ValueError: If a kind list opens without a closing bracket.
     """
     match = _SUPPRESSION_RE.search(text)
     if match is None:
         return frozenset(), frozenset()
     bracket = match.group(1)
     if bracket is None:
+        if text[match.end() :].lstrip().startswith("["):
+            raise ValueError("Unclosed suppression kind list")
         return SUPPRESSION_KINDS, frozenset()
     requested = frozenset(part.strip() for part in bracket.split(",") if part.strip())
     return requested & SUPPRESSION_KINDS, requested - SUPPRESSION_KINDS
@@ -1061,7 +1064,18 @@ class TreeSitterBackend:
         for spec in deduped.values():
             known: set[str] = set()
             for comment in self._attached_comments(spec, source):
-                comment_known, comment_unknown = parse_suppressions(_node_text(source, comment))
+                try:
+                    comment_known, comment_unknown = parse_suppressions(_node_text(source, comment))
+                except ValueError as exc:
+                    diagnostics.append(
+                        self._diagnostic_for_node(
+                            file_path,
+                            comment,
+                            f"Invalid suppression directive on {spec.qualified_name}: {exc}.",
+                            code="suppression-syntax",
+                        )
+                    )
+                    continue
                 known |= comment_known
                 if comment_unknown:
                     diagnostics.append(
