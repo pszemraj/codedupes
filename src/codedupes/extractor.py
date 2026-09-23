@@ -120,6 +120,7 @@ class CodeExtractor:
         languages: tuple[str, ...] | list[str] | None = None,
         respect_gitignore: bool = True,
         implicit_default_excludes: bool = False,
+        pattern_root: Path | None = None,
     ) -> None:
         """Construct an extractor for a project root.
 
@@ -135,8 +136,11 @@ class CodeExtractor:
             git work tree. Directly named files are analyzed regardless.
         :param implicit_default_excludes: Whether an explicit pattern list starts
             with CLI-added defaults rather than caller-supplied exclusions.
+        :param pattern_root: Root for path-specific exclusions when walking a
+            larger tree for a directly selected file's references.
         """
         self.root = root.resolve()
+        self.pattern_root = pattern_root.resolve() if pattern_root is not None else self.root
         self.respect_gitignore = respect_gitignore
         self._ignored_paths: frozenset[Path] | None = None
         self._uses_default_exclude_patterns = exclude_patterns is None
@@ -287,16 +291,25 @@ class CodeExtractor:
         if not match_patterns:
             return False
 
+        # A single-file target keeps its pattern scope at the file's parent
+        # even when reference discovery walks the larger project. Basename
+        # patterns still apply throughout that project.
+        pattern_rel = (
+            path.relative_to(self.pattern_root) if path.is_relative_to(self.pattern_root) else None
+        )
+        match_rel = pattern_rel if pattern_rel is not None else rel
         # Match ancestors too: excluding a directory excludes its whole subtree.
-        candidates = [rel]
+        candidates = [match_rel]
         if check_ancestors:
-            candidates.extend(parent for parent in rel.parents if parent != Path("."))
+            candidates.extend(parent for parent in match_rel.parents if parent != Path("."))
         active_matchers = self._exclude_matchers if matchers is None else matchers
         for candidate in candidates:
-            is_directory = candidate != rel or path_is_directory
+            is_directory = candidate != match_rel or path_is_directory
             relative_name = os.path.normcase(candidate.as_posix())
             basename = os.path.normcase(candidate.name)
             for use_path, directory_only, matcher, zero_depth in active_matchers:
+                if use_path and pattern_rel is None:
+                    continue
                 if directory_only and not is_directory:
                     continue
                 value = relative_name if use_path else basename
