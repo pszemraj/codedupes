@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 from click.testing import CliRunner
 
@@ -657,8 +659,6 @@ def test_cli_unused_only_builds_an_unused_only_config(monkeypatch, tmp_path):
         ["--threshold", "0.8"],
         ["--traditional-threshold", "0.8"],
         ["--max-duplicates", "5"],
-        ["--show-source"],
-        ["--source-lines", "10"],
         ["--show-diff"],
         ["--include-review"],
         ["--show-all"],
@@ -678,6 +678,24 @@ def test_cli_rejects_duplicate_controls_with_unused_only(tmp_path, extra_args):
     # (which fires for every exclusive mode) before the unused-only-specific
     # rejection; every other option is rejected by name with --unused-only.
     assert extra_args[0] in result.output
+
+
+def test_cli_unused_only_can_show_source_in_json_and_terminal(tmp_path):
+    path = tmp_path / "sample.py"
+    path.write_text("def _helper():\n    value = 1\n    return value\n", encoding="utf-8")
+    runner = CliRunner()
+    args = ["check", str(path), "--unused-only", "--source-lines", "1"]
+
+    json_result = runner.invoke(cli.cli, [*args, "--json"])
+    assert json_result.exit_code == 0, json_result.output
+    payload = json.loads(json_result.output)
+    assert payload["units"]["u0"]["source"] == "def _helper():"
+    assert payload["units"]["u0"]["source_lines_omitted"] == 2
+
+    terminal_result = runner.invoke(cli.cli, args)
+    assert terminal_result.exit_code == 0, terminal_result.output
+    assert "Potentially Unused" in terminal_result.output
+    assert "def _helper():" in terminal_result.output
 
 
 def test_cli_rejects_max_unused_with_no_unused(tmp_path):

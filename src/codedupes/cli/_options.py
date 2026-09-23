@@ -123,8 +123,6 @@ TRADITIONAL_ONLY_OPTIONS: tuple[str, ...] = (
 DUPLICATE_ONLY_OPTIONS: tuple[str, ...] = (
     "threshold",
     "max_duplicates",
-    "show_source",
-    "source_lines",
     "show_diff",
     "include_review",
     "show_all",

@@ -735,12 +735,16 @@ def print_unused(
     unused: list[CodeUnit],
     *,
     strict: bool,
+    show_source: bool = False,
+    source_lines: int | None = None,
     truncated: int = 0,
 ) -> None:
     """Print every selected unused unit, largest first; the report cap is the only bound.
 
     :param unused: Units with no detected references, in report order.
     :param strict: Whether public functions and methods are also reported.
+    :param show_source: Whether to render a source snippet for each unused unit.
+    :param source_lines: Maximum source lines per snippet, or ``None`` for no bound.
     :param truncated: Units the ``--max-unused`` cap cut from the report.
     :return: ``None``.
     """
@@ -774,6 +778,8 @@ def print_unused(
         )
 
     _output.console.print(table)
+    if show_source:
+        _print_source_panels(*unused, source_lines=source_lines)
 
 
 def print_findings(
@@ -818,6 +824,8 @@ def print_findings(
         print_unused(
             selection.potentially_unused,
             strict=strict_unused,
+            show_source=show_source,
+            source_lines=source_lines,
             truncated=len(selection.truncated_unused),
         )
         if selection.traditional_duplicates is not None:
@@ -853,6 +861,8 @@ def print_findings(
     print_unused(
         selection.potentially_unused,
         strict=strict_unused,
+        show_source=show_source,
+        source_lines=source_lines,
         truncated=len(selection.truncated_unused),
     )
 
