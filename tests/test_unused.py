@@ -484,6 +484,52 @@ def test_entry_points_credit_only_the_named_module(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(
+    ("files", "scan_root", "reported"),
+    [
+        pytest.param(
+            ("src/pkg/cli.py", "examples/pkg/cli.py"),
+            ".",
+            {"examples/pkg/cli.py"},
+            id="src-layout",
+        ),
+        pytest.param(
+            ("pkg/cli.py", "examples/pkg/cli.py"),
+            ".",
+            {"examples/pkg/cli.py"},
+            id="flat-layout",
+        ),
+        pytest.param(
+            ("src/pkg/cli.py", "examples/pkg/cli.py"),
+            "examples",
+            {"examples/pkg/cli.py"},
+            id="package-outside-the-scan",
+        ),
+        pytest.param(("python/pkg/cli.py",), ".", set(), id="other-source-root"),
+    ],
+)
+def test_entry_point_module_resolves_from_the_project_layout(
+    tmp_path: Path, files: tuple[str, ...], scan_root: str, reported: set[str]
+) -> None:
+    """``pkg.cli:main`` names ``src/pkg/cli.py`` or ``pkg/cli.py``, not every file ending in ``pkg/cli.py``."""
+    root = tmp_path / "proj"
+    root.mkdir()
+    (root / "pyproject.toml").write_text(
+        '[project]\nname = "proj"\nversion = "0.1"\n\n[project.scripts]\napp = "pkg.cli:main"\n'
+    )
+    for relative in files:
+        path = root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("def main():\n    return 1\n")
+    analyzer = CodeAnalyzer(_ENTRY_POINT_ANALYZER_CONFIG)
+
+    result = analyzer.analyze(root / scan_root)
+
+    assert {
+        unit.file_path.relative_to(root).as_posix() for unit in result.potentially_unused
+    } == reported
+
+
+@pytest.mark.parametrize(
     "levels_above",
     [
         pytest.param(("src",), id="one-level-above-scan-root"),

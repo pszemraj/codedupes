@@ -489,6 +489,27 @@ def find_pyproject(target: Path) -> Path | None:
         current = parent
 
 
+def _entry_point_module_files(project_dir: Path, module_parts: tuple[str, ...]) -> set[Path]:
+    """Resolve an entry-point module to its file under the standard project layouts.
+
+    The src layout (``src/pkg/cli.py``) and the flat layout (``pkg/cli.py``)
+    beside ``pyproject.toml`` are checked on disk, whether or not the scan
+    covers them.
+
+    :param project_dir: Directory holding ``pyproject.toml``.
+    :param module_parts: Dotted module path split into segments.
+    :return: Resolved ``<root>/<module>.py`` or ``<root>/<module>/__init__.py``
+        files that exist; empty when the module lives under another source root.
+    """
+    files: set[Path] = set()
+    for root in (project_dir / "src", project_dir):
+        base = root.joinpath(*module_parts)
+        for candidate in (base.parent / f"{base.name}.py", base / "__init__.py"):
+            if candidate.is_file():
+                files.add(candidate.resolve())
+    return files
+
+
 def _entry_point_targets(pyproject: Path) -> set[tuple[str, str]]:
     """Collect ``(module, object)`` targets from a ``pyproject.toml``.
 
@@ -811,6 +832,7 @@ def build_reference_graph(
         if pyproject_path is not None:
             for module, obj in _entry_point_targets(pyproject_path):
                 module_parts = tuple(module.split("."))
+                home_files = _entry_point_module_files(pyproject_path.parent, module_parts)
                 for file_path, module_references in modules.items():
                     path_parts = (
                         file_path.parent.parts
@@ -818,6 +840,12 @@ def build_reference_graph(
                         else (*file_path.parent.parts, file_path.stem)
                     )
                     if path_parts[-len(module_parts) :] != module_parts:
+                        continue
+                    # A module found in the src or flat layout is that one file,
+                    # so a same-shaped copy elsewhere (examples/pkg/cli.py) gets
+                    # no credit; under any other source root the module path
+                    # suffix is all there is to go on.
+                    if home_files and file_path.resolve() not in home_files:
                         continue
                     # ``module:object`` names one definition exactly: a nested
                     # ``factory._main`` or ``Outer.App.run`` is not ``_main`` or
