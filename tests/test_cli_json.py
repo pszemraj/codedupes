@@ -119,15 +119,11 @@ def test_cli_json_discards_direct_backend_output_on_success(monkeypatch, tmp_pat
     path = tmp_path / "sample.py"
     path.write_text("def entry():\n    return 1\n")
 
-    class NoisyAnalyzer:
-        def __init__(self, _config):
-            pass
+    def _noisy_analyze():
+        print("backend progress", file=getattr(sys, stream))
+        return build_result(tmp_path)
 
-        def analyze(self, _path):
-            print("backend progress", file=getattr(sys, stream))
-            return build_result(tmp_path)
-
-    monkeypatch.setattr(cli, "CodeAnalyzer", NoisyAnalyzer)
+    patch_cli_analyzer(monkeypatch, cli, analyze_result=_noisy_analyze)
 
     result = CliRunner().invoke(cli.cli, ["check", str(path), "--json"])
 
