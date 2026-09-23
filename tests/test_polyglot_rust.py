@@ -518,6 +518,25 @@ def test_rust_suppression_directive_attachment(tmp_path: Path) -> None:
     )
     assert above_attribute.suppressions == {"unused", "duplicates"}
 
+    trailing_attribute = extract(
+        tmp_path,
+        "trailing_attribute.rs",
+        """
+        #[inline] // codedupes: ignore[unused]
+        fn foo() -> i32 {
+            1
+        }
+        #[derive(Debug)] struct S; // codedupes: ignore
+        fn bar() -> i32 {
+            2
+        }
+        """,
+    )
+    assert {unit.name: unit.suppressions for unit in trailing_attribute} == {
+        "foo": {"unused"},
+        "bar": set(),
+    }
+
     [trailing_brace] = extract(
         tmp_path,
         "trailing_brace.rs",

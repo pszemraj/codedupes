@@ -699,9 +699,10 @@ _SUPPRESSION_RE = re.compile(r"\bcodedupes:[ \t]*ignore\b[ \t]*(?:\[([^\]\r\n]*)
 _STATEMENT_WRAPPER_TYPES = frozenset(
     {"export_statement", "lexical_declaration", "variable_declaration", "expression_statement"}
 )
-# Rust attributes (``#[inline]``) sit between a doc comment and the item they
-# decorate; they are transparent to the leading-comment walk.
-_ATTRIBUTE_ITEM_TYPE = "attribute_item"
+# Rust attributes (``#[inline]``) and TypeScript class-member decorators
+# (``@Deco()``, parsed as siblings of the member) sit between a comment and the
+# item they decorate; they are transparent to the leading-comment walk.
+_TRANSPARENT_ITEM_TYPES = frozenset({"attribute_item", "decorator"})
 
 
 def parse_suppressions(text: str) -> tuple[frozenset[str], frozenset[str]]:
@@ -870,8 +871,10 @@ def _leading_comments(anchor: Any, source: bytes) -> list[Any]:
 
     Walks preceding named siblings backward, stopping at the first
     non-comment, the first comment sharing a row with other code, or the
-    first row gap between two rows. A Rust ``attribute_item`` is transparent:
-    skipped without breaking the chain or counting as a comment. When the
+    first row gap between two rows. A Rust ``attribute_item`` or a TypeScript
+    member ``decorator`` is transparent: skipped without breaking the chain
+    or counting as a comment, and a comment trailing one on its row still
+    counts. When the
     anchor has no preceding sibling of its own, the search hops to the
     anchor's parent once, so a comment tree-sitter attaches to the enclosing
     definition (a class, for its first method) rather than to the block
@@ -897,12 +900,18 @@ def _leading_comments(anchor: Any, source: bytes) -> list[Any]:
             reference_row = int(getattr(parent, "start_point", (0, 0))[0])
             current = getattr(parent, "prev_named_sibling", None)
             continue
-        if getattr(current, "type", "") == _ATTRIBUTE_ITEM_TYPE:
+        if getattr(current, "type", "") in _TRANSPARENT_ITEM_TYPES:
             reference_row = int(getattr(current, "start_point", (0, 0))[0])
             current = getattr(current, "prev_named_sibling", None)
             continue
-        if not _is_comment(current) or not _own_line(current, source):
+        if not _is_comment(current):
             break
+        if not _own_line(current, source):
+            decorated = getattr(current, "prev_named_sibling", None)
+            if getattr(decorated, "type", "") not in _TRANSPARENT_ITEM_TYPES or int(
+                getattr(decorated, "end_point", (-1, 0))[0]
+            ) != int(getattr(current, "start_point", (0, 0))[0]):
+                break
         if int(getattr(current, "end_point", (0, 0))[0]) + 1 < reference_row:
             break
         collected.append(current)
