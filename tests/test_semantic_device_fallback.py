@@ -161,11 +161,7 @@ def test_compute_embeddings_cpu_fallback_retries_once_and_bails_on_persistent_oo
     class PersistentCpuOomModel:
         def encode(self, texts, **kwargs):
             seen_batches.append((kwargs["batch_size"], kwargs.get("device")))
-            if kwargs["batch_size"] >= 2:
-                raise RuntimeError("CUDA out of memory")
-            if kwargs["batch_size"] >= 1:
-                raise RuntimeError("CUDA out of memory")
-            return np.array([[1.0, 0.0], [0.0, 1.0]], dtype=np.float32)
+            raise RuntimeError("CUDA out of memory")
 
     monkeypatch.setattr(semantic, "get_model", lambda *args, **kwargs: PersistentCpuOomModel())
 
