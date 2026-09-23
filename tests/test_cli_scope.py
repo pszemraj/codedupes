@@ -60,6 +60,22 @@ def test_cli_focus_accepts_analyzed_external_file_symlink(tmp_path: Path) -> Non
     assert "not inside the scan root" in rejected.output
 
 
+def test_cli_focus_displays_brackets_in_path(tmp_path: Path) -> None:
+    root = tmp_path / "[red]"
+    root.mkdir()
+    source = root / "sample.py"
+    source.write_text("def entry():\n    return 1\n", encoding="utf-8")
+
+    result = CliRunner().invoke(
+        cli.cli,
+        ["check", str(root), "--traditional-only", "--no-unused", "--focus", str(source)],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Focus" in result.output
+    assert "[red]" in result.output
+
+
 @pytest.mark.parametrize(("command", "expected_exit_code"), [("check", 1), ("search", 0)])
 @pytest.mark.parametrize("include_tests", [False, True])
 def test_cli_exclusions_extend_defaults(
