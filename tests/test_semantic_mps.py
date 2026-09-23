@@ -436,16 +436,10 @@ def test_query_oom_recovers_on_cpu(tmp_path: Path) -> None:
     assert [score for _unit, score in results] == sorted(
         (score for _unit, score in results), reverse=True
     )
+    # execution_device == "cpu" here is itself the fact that calibration's
+    # measurement-harness schema rule (tests/test_calibration_measurements.py)
+    # would reject as "not independent on mps" - that rejection rule is owned
+    # and tested there, not against live hardware.
     assert execution == [
         semantic.QueryExecution(execution_device="cpu", cache_hit=False, threshold=0.0)
     ]
-
-    from scripts.calibration_measurements import _query_execution
-
-    with pytest.raises(ValueError, match="did not execute independently on mps"):
-        _query_execution(
-            SimpleNamespace(query_execution=tuple(execution)),
-            "mps",
-            "find-addition",
-            1,
-        )
