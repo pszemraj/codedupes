@@ -766,8 +766,8 @@ def _following_comments(anchor: Any, rows: frozenset[int], body: Any, source: by
     """Collect comments trailing within a unit's header rows.
 
     Covers a comment trailing the ``def``/signature line, sitting between
-    decorators or attributes, or trailing the opening brace of a body on its
-    own row (``{ // codedupes: ignore``).
+    decorators or attributes, trailing the opening brace of a body on its
+    own row (``{ // codedupes: ignore``), or ending a one-line unit.
 
     :param anchor: Statement anchor from :func:`_statement_anchor`.
     :param rows: Header rows from :meth:`TreeSitterBackend._header_rows`.
@@ -790,6 +790,17 @@ def _following_comments(anchor: Any, rows: frozenset[int], body: Any, source: by
         if body_follows and source[body_start:comment_start].strip() not in {b"", b"{"}:
             continue
         comments.append(comment)
+    # C and Rust parse a comment after a one-line unit's closing brace as the
+    # unit's next sibling rather than a descendant.
+    end_row = int(getattr(anchor, "end_point", (-1, 0))[0])
+    trailing = getattr(anchor, "next_sibling", None)
+    if (
+        int(getattr(anchor, "start_point", (-1, 0))[0]) == end_row
+        and trailing is not None
+        and _is_comment(trailing)
+        and int(getattr(trailing, "start_point", (-1, 0))[0]) == end_row
+    ):
+        comments.append(trailing)
     return comments
 
 

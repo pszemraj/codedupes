@@ -108,3 +108,13 @@ def test_c_suppression_directive_attachment(tmp_path: Path) -> None:
         """,
     )
     assert trailing_brace.suppressions == {"unused", "duplicates"}
+
+    # tree-sitter-c parses a comment after a one-line unit as its next sibling.
+    first, last = extract(
+        tmp_path,
+        "one_line.c",
+        """
+        int foo(void) { return 1; } int bar(void) { return 2; } // codedupes: ignore
+        """,
+    )
+    assert (first.suppressions, last.suppressions) == (set(), {"unused", "duplicates"})

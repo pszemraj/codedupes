@@ -528,3 +528,19 @@ def test_rust_suppression_directive_attachment(tmp_path: Path) -> None:
         """,
     )
     assert trailing_brace.suppressions == {"unused", "duplicates"}
+
+    one_line = extract(
+        tmp_path,
+        "one_line.rs",
+        """
+        struct S;
+        impl S {
+            fn m(&self) -> i32 { 1 } // codedupes: ignore[duplicates]
+            fn n(&self) -> i32 { 2 }
+        }
+        """,
+    )
+    assert {unit.name: unit.suppressions for unit in one_line if unit.name in {"m", "n"}} == {
+        "m": {"duplicates"},
+        "n": set(),
+    }
