@@ -334,6 +334,10 @@ class CodeExtractor:
         :param directory: Directory the main walk pruned for matching a default test shape.
         :return: Python file paths under ``directory`` not otherwise excluded.
         """
+        # os.walk does not descend into symlink directories it encounters, but
+        # it does walk one supplied as the starting path.
+        if directory.is_symlink():
+            return []
         collected: list[Path] = []
         for dirpath, dirnames, filenames in os.walk(
             directory, followlinks=False, onerror=self._report_walk_error

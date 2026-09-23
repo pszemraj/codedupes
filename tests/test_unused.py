@@ -1217,6 +1217,27 @@ def test_production_function_referenced_only_from_tests_is_not_reported(tmp_path
     assert "helper" in {unit.name for unit in same_shape_result.potentially_unused}
 
 
+def test_default_excluded_symlink_directory_does_not_import_external_references(
+    tmp_path: Path,
+) -> None:
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "test_impl.py").write_text(
+        "from pkg.impl import helper\n\nhelper()\n", encoding="utf-8"
+    )
+    root = tmp_path / "pkg"
+    root.mkdir()
+    (root / "__init__.py").write_text("", encoding="utf-8")
+    (root / "impl.py").write_text("def helper():\n    return 1\n", encoding="utf-8")
+    (root / "tests").symlink_to(outside, target_is_directory=True)
+
+    result = CodeAnalyzer(
+        AnalyzerConfig(run_traditional=False, run_semantic=False, strict_unused=True)
+    ).analyze(root)
+
+    assert "helper" in {unit.name for unit in result.potentially_unused}
+
+
 def test_non_utf8_module_still_contributes_references(tmp_path: Path) -> None:
     """The graph decodes lossily like the extractor instead of dropping the file."""
     path = tmp_path / "legacy.py"
