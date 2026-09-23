@@ -95,6 +95,26 @@ def test_file_target_reads_references_from_the_project_tree(tmp_path: Path) -> N
     assert "helper" not in {unit.name for unit in project_result.potentially_unused}
 
 
+def test_file_target_reports_incomplete_reference_walk(tmp_path: Path, monkeypatch) -> None:
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "demo"\n')
+    source = tmp_path / "entry.py"
+    source.write_text("def _helper():\n    return 1\n")
+
+    def failed_reference_walk(extractor: CodeExtractor, directory: Path) -> list[Path]:
+        extractor._report_walk_error(
+            PermissionError(13, "Permission denied", str(directory / "blocked"))
+        )
+        return []
+
+    monkeypatch.setattr(CodeExtractor, "_collect_reference_files", failed_reference_walk)
+
+    result = CodeAnalyzer(AnalyzerConfig(run_semantic=False, run_traditional=False)).analyze(source)
+
+    assert [unit.name for unit in result.potentially_unused] == ["_helper"]
+    assert [diagnostic.code for diagnostic in result.extraction_diagnostics] == ["walk-error"]
+    assert result.analysis_status == "partial"
+
+
 @pytest.mark.parametrize("target_is_file", [False, True])
 def test_no_unused_skips_reference_file_discovery(
     tmp_path: Path, monkeypatch, target_is_file: bool

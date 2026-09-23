@@ -926,6 +926,7 @@ class CodeAnalyzer:
                     if reference_file not in seen_reference_files:
                         seen_reference_files.add(reference_file)
                         self._python_files.append(reference_file)
+                self._extraction_diagnostics.extend(reference_extractor.diagnostics)
         else:
             extractor = CodeExtractor(
                 path,
