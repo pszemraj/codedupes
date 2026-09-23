@@ -1,10 +1,11 @@
-"""Schema-v3 JSON serialization of check and search reports."""
+"""Schema-v4 JSON serialization of check and search reports."""
 
 from __future__ import annotations
 
 import json
 import random
 import re
+from dataclasses import replace
 from pathlib import Path
 
 from codedupes.models import (
@@ -13,25 +14,37 @@ from codedupes.models import (
     CodeUnit,
     CodeUnitType,
     DuplicatePair,
+    ExtractionDiagnostic,
     HybridDuplicate,
+    UnitCounts,
 )
 from codedupes.report.json import (
     SCHEMA_VERSION,
     check_result_to_json,
     search_result_to_json,
     to_json_text,
+    unit_to_dict,
 )
 from codedupes.report.selection import (
-    DEFAULT_MAX_DUPLICATES,
     ReportPolicy,
+    focus_result,
     group_file_results,
     select_findings,
 )
+from codedupes.semantic import QueryExecution
+from tests.conftest import make_run_record
 
 _ID = re.compile(r"^u\d+$")
 
 
-def _unit(tmp_path: Path, name: str, *, file: str = "a.py", start_byte: int = 0) -> CodeUnit:
+def _unit(
+    tmp_path: Path,
+    name: str,
+    *,
+    file: str = "a.py",
+    start_byte: int = 0,
+    token_hash: str | None = None,
+) -> CodeUnit:
     return CodeUnit(
         name=name,
         qualified_name=f"mod.{name}",
@@ -42,6 +55,7 @@ def _unit(tmp_path: Path, name: str, *, file: str = "a.py", start_byte: int = 0)
         source=f"def {name}():\n    return 1\n",
         start_byte=start_byte,
         end_byte=start_byte + 20,
+        token_hash=token_hash,
     )
 
 
@@ -50,16 +64,21 @@ def _result(tmp_path: Path) -> AnalysisResult:
     b = _unit(tmp_path, "b", file="a.py", start_byte=40)
     c = _unit(tmp_path, "c", file="a.py", start_byte=0)
     orphan = _unit(tmp_path, "orphan", file="z.py")
+    units = [a, b, c, orphan]
     return AnalysisResult(
-        units=[a, b, c, orphan],
+        units=units,
         traditional_duplicates=[DuplicatePair(a, b, 1.0, "structural_hash")],
         semantic_duplicates=[DuplicatePair(b, c, 0.9, "semantic")],
         hybrid_duplicates=[
-            HybridDuplicate(a, b, "exact", 1.0, has_exact=True),
+            HybridDuplicate(a, b, "exact", 1.0, exact_method="structural_hash"),
             HybridDuplicate(b, c, "semantic_review", 0.8, semantic_similarity=0.9),
         ],
         potentially_unused=[orphan],
-        analysis_mode="combined",
+        run=make_run_record(
+            tmp_path,
+            mode="combined",
+            units=UnitCounts.from_units(units, semantic_eligible=len(units)),
+        ),
     )
 
 
@@ -80,18 +99,42 @@ def _payload(
 
 def _referenced_ids(payload: dict) -> set[str]:
     ids = set(payload["potentially_unused"])
+    for family in payload["exact_families"]:
+        ids.update(family["members"])
     for key in ("duplicates", "traditional_duplicates", "semantic_duplicates"):
         for edge in payload.get(key, []):
             ids.update((edge["unit_a"], edge["unit_b"]))
     return ids
 
 
-def test_check_json_v3_ids_resolve_and_have_no_orphans(tmp_path):
+def test_unit_to_dict_suppressions_is_opt_in(tmp_path):
+    """``suppressions`` is omitted for a unit with none, sorted when present."""
+    plain = _unit(tmp_path, "plain")
+    marked = CodeUnit(
+        name="marked",
+        qualified_name="mod.marked",
+        unit_type=CodeUnitType.FUNCTION,
+        file_path=tmp_path / "a.py",
+        lineno=1,
+        end_lineno=2,
+        source="def marked():\n    return 1\n",
+        suppressions=frozenset({"duplicates", "unused"}),
+    )
+
+    assert "suppressions" not in unit_to_dict(plain)
+    assert unit_to_dict(marked)["suppressions"] == ["duplicates", "unused"]
+
+
+def test_check_json_v4_ids_resolve_and_have_no_orphans(tmp_path):
     result = _result(tmp_path)
 
     payload = _payload(result, ReportPolicy(show_all=True))
 
-    assert payload["schema_version"] == SCHEMA_VERSION == 3
+    assert payload["schema_version"] == SCHEMA_VERSION == 4
+    assert payload["about"]["tool"] == "codedupes"
+    assert payload["about"]["description"].startswith("Report from `codedupes check`")
+    assert payload["about"]["docs"].startswith("https://github.com/pszemraj/codedupes")
+    assert payload["about"]["repository"].startswith("https://github.com/pszemraj/codedupes")
     assert _referenced_ids(payload) == set(payload["units"])
     assert all(_ID.match(key) for key in payload["units"])
     by_uid = {unit.uid: unit for unit in result.units}
@@ -99,13 +142,13 @@ def test_check_json_v3_ids_resolve_and_have_no_orphans(tmp_path):
         assert by_uid[record["uid"]].name == record["name"], key
 
 
-def test_check_json_v3_ids_follow_file_then_source_order(tmp_path):
+def test_check_json_v4_ids_follow_file_then_source_order(tmp_path):
     payload = _payload(_result(tmp_path), ReportPolicy(include_review=True))
 
     assert [payload["units"][f"u{i}"]["name"] for i in range(4)] == ["c", "b", "a", "orphan"]
 
 
-def test_check_json_v3_hidden_review_units_are_absent(tmp_path):
+def test_check_json_v4_hidden_review_units_are_absent(tmp_path):
     result = _result(tmp_path)
 
     default = _payload(result)
@@ -129,7 +172,7 @@ def test_check_json_round_trips_and_keeps_unit_ids_under_edge_shuffle(tmp_path):
     assert _payload(shuffled, policy)["units"] == payload["units"]
 
 
-def test_check_json_v3_summary_counts(tmp_path):
+def test_check_json_v4_summary_counts(tmp_path):
     payload = _payload(_result(tmp_path))
     summary = payload["summary"]
 
@@ -148,6 +191,7 @@ def test_check_json_v3_summary_counts(tmp_path):
     assert summary["max_duplicates"] is None
     assert summary["actionable_duplicates"] == 1
     assert summary["reported_actionable_duplicates"] == 1
+    assert summary["exact_family_members"] == 2
     assert summary["raw_traditional_duplicates"] == 1
     assert summary["raw_semantic_duplicates"] == 1
     assert summary["fail_on"] == "actionable"
@@ -156,29 +200,22 @@ def test_check_json_v3_summary_counts(tmp_path):
     assert summary["hidden_only_failure"] == []
 
 
-def test_check_json_hidden_only_failure_names_withheld_review(tmp_path):
+def test_check_json_hidden_only_failure_serializes_as_a_sorted_list(tmp_path):
+    """The rule and its matrix live in test_report_selection; this only pins
+    the JSON shape (a sorted list, not the helper's set) when non-empty."""
     result = _result(tmp_path)
     result.hybrid_duplicates.pop(0)  # Leave only the semantic_review pair.
     result.traditional_duplicates.clear()
     result.potentially_unused.clear()
 
-    withheld = _payload(result, fail_on="all", exit_code=1)["summary"]
-    assert withheld["reported_duplicates"] == 0
-    assert withheld["omitted_review_duplicates"] == 1
-    assert withheld["actionable_duplicates"] == 0
-    assert withheld["hidden_only_failure"] == ["review"]
+    summary = _payload(result, fail_on="all", exit_code=1)["summary"]
 
-    listed = _payload(result, ReportPolicy(include_review=True), fail_on="all", exit_code=1)
-    assert listed["summary"]["hidden_only_failure"] == []
-
-    # Review pairs never fail the default policy, so nothing hidden is named.
-    passing = _payload(result, fail_on="actionable", exit_code=0)["summary"]
-    assert passing["hidden_only_failure"] == []
+    assert summary["hidden_only_failure"] == ["review"]
 
 
 def test_check_json_raw_modes_count_every_pair_as_actionable(tmp_path):
     result = _result(tmp_path)
-    result.analysis_mode = "semantic"
+    result = replace(result, run=make_run_record(tmp_path, mode="semantic"))
     result.hybrid_duplicates.clear()
 
     summary = _payload(result, ReportPolicy(max_duplicates=1))["summary"]
@@ -186,8 +223,11 @@ def test_check_json_raw_modes_count_every_pair_as_actionable(tmp_path):
     assert summary["actionable_duplicates"] == 2
     assert summary["reported_actionable_duplicates"] == 1
     assert summary["truncated_duplicates"] == 1
-    # Raw pairs carry no tier, so the breakdown stays zero-filled.
-    assert summary["truncated_by_tier"] == dict.fromkeys(summary["duplicates_by_tier"], 0)
+    # Raw pairs carry no tier, so only ``exact`` (families) is ever non-zero;
+    # the family took the one slot and the semantic pair was cut.
+    assert summary["duplicates_by_tier"] == dict.fromkeys(HYBRID_TIERS, 0) | {"exact": 1}
+    assert summary["truncated_by_tier"] == dict.fromkeys(HYBRID_TIERS, 0)
+    assert summary["hybrid_duplicates"] == 0
 
 
 def test_check_json_truncated_by_tier_names_cut_review_pairs(tmp_path):
@@ -214,10 +254,18 @@ def test_check_json_truncated_by_tier_names_cut_review_pairs(tmp_path):
 
 
 def _chain_result(tmp_path: Path, pairs: int) -> AnalysisResult:
-    """Build ``pairs`` exact hybrid edges chaining ``pairs + 1`` units."""
+    """Build ``pairs`` hybrid_confirmed edges chaining ``pairs + 1`` units."""
     units = [_unit(tmp_path, f"f{i}", start_byte=i * 30) for i in range(pairs + 1)]
     hybrid = [
-        HybridDuplicate(units[i], units[i + 1], "exact", 1.0, has_exact=True) for i in range(pairs)
+        HybridDuplicate(
+            units[i],
+            units[i + 1],
+            "hybrid_confirmed",
+            0.99 - i * 0.001,
+            jaccard_similarity=0.9,
+            semantic_similarity=0.9,
+        )
+        for i in range(pairs)
     ]
     return AnalysisResult(
         units=units,
@@ -225,7 +273,7 @@ def _chain_result(tmp_path: Path, pairs: int) -> AnalysisResult:
         semantic_duplicates=[],
         hybrid_duplicates=hybrid,
         potentially_unused=[],
-        analysis_mode="combined",
+        run=make_run_record(tmp_path, mode="combined"),
     )
 
 
@@ -235,20 +283,6 @@ def test_check_json_emits_every_selected_finding_untruncated(tmp_path):
     assert len(payload["duplicates"]) == 25
     assert len(payload["units"]) == 26
     assert payload["summary"]["truncated_duplicates"] == 0
-
-
-def test_check_json_cli_default_policy_caps_at_twenty(tmp_path):
-    payload = _payload(
-        _chain_result(tmp_path, 25), ReportPolicy(max_duplicates=DEFAULT_MAX_DUPLICATES)
-    )
-    summary = payload["summary"]
-
-    assert len(payload["duplicates"]) == 20
-    assert len(payload["units"]) == 21
-    assert summary["max_duplicates"] == 20
-    assert summary["truncated_duplicates"] == 5
-    assert summary["actionable_duplicates"] == 25
-    assert summary["reported_actionable_duplicates"] == 20
 
 
 def test_check_json_max_duplicates_caps_edges_and_units_but_not_counts(tmp_path):
@@ -268,8 +302,115 @@ def test_check_json_max_duplicates_caps_edges_and_units_but_not_counts(tmp_path)
         + summary["truncated_duplicates"]
         == summary["hybrid_duplicates"]
     )
-    assert summary["duplicates_by_tier"]["exact"] == 25
+    assert summary["duplicates_by_tier"]["hybrid_confirmed"] == 25
     assert summary["exit_code"] == 1
+
+
+def _family_result(
+    tmp_path: Path, copies: int, *, method: str = "structural_hash"
+) -> AnalysisResult:
+    """Build one ``copies``-member exact clique plus one hybrid_confirmed pair."""
+    members = [
+        _unit(
+            tmp_path,
+            f"copy{i}",
+            file=f"m{i}.py",
+            token_hash="t" if method == "token_hash" else None,
+        )
+        for i in range(copies)
+    ]
+    near_a = _unit(tmp_path, "near_a", file="n.py", start_byte=0)
+    near_b = _unit(tmp_path, "near_b", file="n.py", start_byte=40)
+    hybrid = [
+        HybridDuplicate(members[i], members[j], "exact", 1.0, exact_method=method)
+        for i in range(copies)
+        for j in range(i + 1, copies)
+    ]
+    hybrid.append(
+        HybridDuplicate(
+            near_a, near_b, "hybrid_confirmed", 0.9, jaccard_similarity=0.9, semantic_similarity=0.9
+        )
+    )
+    return AnalysisResult(
+        units=members + [near_a, near_b],
+        traditional_duplicates=[],
+        semantic_duplicates=[],
+        hybrid_duplicates=hybrid,
+        potentially_unused=[],
+        run=make_run_record(tmp_path, mode="combined"),
+    )
+
+
+def test_check_json_exact_family_record_replaces_pairwise_edges(tmp_path):
+    payload = _payload(_family_result(tmp_path, 5, method="token_hash"))
+    summary = payload["summary"]
+
+    # Ten exact edges become one record; no exact edge remains in duplicates.
+    assert payload["exact_families"] == [
+        {
+            "method": "token_hash",
+            "members": ["u0", "u1", "u2", "u3", "u4"],
+            "lines": 2,
+            "redundant_lines": 8,
+        }
+    ]
+    assert [edge["tier"] for edge in payload["duplicates"]] == ["hybrid_confirmed"]
+    assert "has_exact" not in payload["duplicates"][0]
+    assert _referenced_ids(payload) == set(payload["units"])
+    assert summary["hybrid_duplicates"] == 2
+    assert summary["reported_duplicates"] == 2
+    assert summary["actionable_duplicates"] == 2
+    assert summary["reported_actionable_duplicates"] == 2
+    assert summary["duplicates_by_tier"]["exact"] == 1
+    assert summary["exact_family_members"] == 5
+    assert summary["hidden_only_failure"] == []
+
+
+def test_check_json_family_cap_excludes_a_squeezed_out_family(tmp_path):
+    """A cap that squeezes out a second family drops it from ``exact_families``
+    and its members from ``units`` entirely; the counting arithmetic itself is
+    ``test_report_selection.py::test_max_duplicates_counts_a_family_as_one_finding``'s."""
+    result = _family_result(tmp_path, 5)
+    # A second, smaller family ranks after the five-copy one.
+    small_a = _unit(tmp_path, "small_a", file="s.py", start_byte=0)
+    small_b = _unit(tmp_path, "small_b", file="s.py", start_byte=40)
+    result.units.extend([small_a, small_b])
+    result.hybrid_duplicates.append(HybridDuplicate(small_a, small_b, "exact", 1.0))
+
+    payload = _payload(result, ReportPolicy(max_duplicates=1))
+
+    assert [family["members"] for family in payload["exact_families"]] == [
+        ["u0", "u1", "u2", "u3", "u4"]
+    ]
+    assert payload["exact_families"][0]["method"] == "structural_hash"
+    assert payload["duplicates"] == []
+    assert len(payload["units"]) == 5
+
+
+def test_check_json_max_unused_caps_ids_and_units_but_not_counts(tmp_path):
+    result = _result(tmp_path)
+    result.potentially_unused = [
+        _unit(tmp_path, f"dead{i}", file=f"d{i}.py", start_byte=0) for i in range(6)
+    ]
+    for i, unit in enumerate(result.potentially_unused):
+        unit.end_lineno = unit.lineno + i  # dead5 is the largest
+
+    payload = _payload(result, ReportPolicy(max_unused=2))
+    summary = payload["summary"]
+
+    names = [payload["units"][key]["name"] for key in payload["potentially_unused"]]
+    assert names == ["dead5", "dead4"]
+    assert _referenced_ids(payload) == set(payload["units"])
+    assert {record["name"] for record in payload["units"].values()} == {"a", "b", "dead5", "dead4"}
+    assert summary["potentially_unused"] == 6
+    assert summary["reported_unused"] == 2
+    assert summary["truncated_unused"] == 4
+    assert summary["max_unused"] == 2
+
+    uncapped = _payload(result)["summary"]
+    assert uncapped["reported_unused"] == 6
+    assert uncapped["truncated_unused"] == 0
+    assert uncapped["max_unused"] is None
 
 
 def test_check_json_show_all_raw_edges_use_short_ids(tmp_path):
@@ -282,25 +423,153 @@ def test_check_json_show_all_raw_edges_use_short_ids(tmp_path):
     assert payload["semantic_duplicates"][0]["unit_b"] == "u0"
 
 
-def test_search_json_v3_unit_and_file_levels(tmp_path):
+def test_check_json_run_block_and_analysis_status(tmp_path):
+    result = _result(tmp_path)
+    payload = _payload(result)
+
+    assert payload["analysis_status"] == "complete"
+    run = payload["run"]
+    assert run["tool_version"]
+    assert run["root"] == str(tmp_path)
+    assert run["target"] == str(tmp_path)
+    assert run["checks"] == {
+        "extraction": {"status": "completed", "files": 0, "files_failed": 0, "diagnostics": 0},
+        "traditional": {"status": "completed", "files": None, "files_failed": 0, "diagnostics": 0},
+        "semantic": {"status": "completed", "files": None, "files_failed": 0, "diagnostics": 0},
+        "unused": {"status": "completed", "files": 0, "files_failed": 0, "diagnostics": 0},
+    }
+    assert run["units"] == {
+        "extracted": 4,
+        "semantic_eligible": 4,
+        "by_language": {"python": 4},
+        "by_type": {"class": 0, "function": 4, "method": 0},
+    }
+    assert "extraction_diagnostics" not in payload["summary"]
+    assert "semantic_diagnostics" not in payload["summary"]
+    assert payload["extraction_diagnostics"] == []
+
+
+def test_check_json_run_checks_count_diagnostics(tmp_path):
+    unit = _unit(tmp_path, "a")
+    diagnostic = ExtractionDiagnostic(
+        file_path=unit.file_path,
+        language="python",
+        message="ERROR node in parse tree",
+        code="partial-parse",
+    )
+    result = AnalysisResult(
+        units=[unit],
+        traditional_duplicates=[],
+        semantic_duplicates=[],
+        hybrid_duplicates=[],
+        potentially_unused=[],
+        run=make_run_record(tmp_path, mode="combined", extracted_files=1),
+        extraction_diagnostics=[diagnostic],
+    )
+    payload = _payload(result, fail_on="none", exit_code=0)
+
+    assert payload["run"]["checks"]["extraction"] == {
+        "status": "partial",
+        "files": 1,
+        "files_failed": 1,
+        "diagnostics": 1,
+    }
+    assert payload["analysis_status"] == "partial"
+
+
+def test_check_json_focus_summary_is_null_when_unfocused(tmp_path):
+    result = _result(tmp_path)
+    payload = _payload(result)
+
+    assert payload["summary"]["focus"] is None
+
+
+def test_check_json_focus_summary_serializes_sorted_paths(tmp_path):
+    result = _result(tmp_path)
+    focused = focus_result(result, (tmp_path / "a.py", tmp_path / "b.py"))
+    payload = _payload(focused)
+
+    assert payload["summary"]["focus"] == {
+        "paths": sorted([str(tmp_path / "a.py"), str(tmp_path / "b.py")]),
+        "units": focused.focus.units,
+        "out_of_focus_duplicates": focused.focus.out_of_focus_duplicates,
+        "out_of_focus_unused": focused.focus.out_of_focus_unused,
+    }
+
+
+def test_unit_to_dict_source_is_opt_in_and_bounded(tmp_path):
+    unit = _unit(tmp_path, "a")
+
+    default = unit_to_dict(unit)
+    assert "source" not in default
+    assert "source_lines_omitted" not in default
+
+    bounded = unit_to_dict(unit, include_source=True, source_lines=1)
+    assert bounded["source"] == "def a():"
+    assert bounded["source_lines_omitted"] == 2
+
+    unbounded = unit_to_dict(unit, include_source=True)
+    assert unbounded["source"] == unit.source
+    assert unbounded["source_lines_omitted"] == 0
+
+
+def test_search_json_v4_unit_and_file_levels(tmp_path):
     a = _unit(tmp_path, "a", file="a.py", start_byte=0)
     b = _unit(tmp_path, "b", file="a.py", start_byte=40)
     c = _unit(tmp_path, "c", file="b.py", start_byte=0)
     hits = [(c, 0.95), (a, 0.9), (b, 0.8)]
+    run = make_run_record(
+        tmp_path,
+        mode="semantic",
+        extracted_files=3,
+        units=UnitCounts(extracted=3, semantic_eligible=2),
+    )
+    run = replace(run, semantic=replace(run.semantic, revision="main", source_commit="a" * 40))
+    query_execution = [
+        QueryExecution(execution_device="mps", cache_hit=False, threshold=0.1),
+        QueryExecution(execution_device="cpu", cache_hit=True, threshold=0.5),
+    ]
 
     unit_level = search_result_to_json(
-        "q", hits, 3, None, extraction_diagnostics=[], semantic_diagnostics=[]
+        "q",
+        hits,
+        3,
+        None,
+        run=run,
+        extraction_diagnostics=[],
+        semantic_diagnostics=[],
+        query_execution=query_execution,
     )
-    assert unit_level["schema_version"] == 3
+    assert unit_level["schema_version"] == 4
+    assert unit_level["about"]["tool"] == "codedupes"
+    assert unit_level["about"]["description"].startswith("Report from `codedupes search`")
+    assert unit_level["about"]["docs"].startswith("https://github.com/pszemraj/codedupes")
+    assert unit_level["about"]["repository"].startswith("https://github.com/pszemraj/codedupes")
     assert [hit["unit"] for hit in unit_level["results"]] == ["u2", "u0", "u1"]
     assert unit_level["units"]["u2"]["uid"] == c.uid
     assert set(unit_level["units"]) == {"u0", "u1", "u2"}
+    assert unit_level["analysis_status"] == "complete"
+    assert unit_level["run"]["checks"]["semantic"]["status"] == "completed"
+    assert unit_level["run"]["semantic"]["search_document"] == "source"
+    assert unit_level["run"]["semantic"]["source_commit"] == "a" * 40
+    assert unit_level["summary"]["extracted_units"] == run.units.extracted
+    assert unit_level["summary"]["query_execution"] == [
+        {"execution_device": "cpu", "cache_hit": True, "threshold": 0.5}
+    ]
 
     files = group_file_results(hits, top_k=1)
     file_level = search_result_to_json(
-        "q", hits, 3, None, extraction_diagnostics=[], semantic_diagnostics=[], file_results=files
+        "q",
+        hits,
+        3,
+        None,
+        run=run,
+        extraction_diagnostics=[],
+        semantic_diagnostics=[],
+        file_results=files,
     )
     assert file_level["result_level"] == "file"
     assert file_level["results"][0]["matches"] == [{"unit": "u0", "score": 0.95}]
     assert set(file_level["units"]) == {"u0"}
     assert file_level["units"]["u0"]["uid"] == c.uid
+    assert file_level["summary"]["query_execution"] == []

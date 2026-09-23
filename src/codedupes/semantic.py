@@ -129,6 +129,7 @@ class QueryExecution:
 
     execution_device: str | None
     cache_hit: bool
+    threshold: float
 
 
 def _reset_embedding_run_stats(stats: EmbeddingRunStats | None) -> None:
@@ -4278,6 +4279,7 @@ def _find_similar_to_query_unlocked(
             QueryExecution(
                 execution_device=query_execution_device,
                 cache_hit=query_cache_hit,
+                threshold=resolved_threshold,
             )
         )
     return results

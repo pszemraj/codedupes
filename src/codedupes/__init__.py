@@ -11,7 +11,7 @@ Example:
     result = analyze_directory("./src")
 
     for dup in result.hybrid_duplicates:
-        print(f"{dup.unit_a.name} ~ {dup.unit_b.name} ({dup.confidence:.0%}, {dup.tier})")
+        print(f"{dup.unit_a.name} ~ {dup.unit_b.name} ({dup.score:.0%}, {dup.tier})")
 
     for unused in result.potentially_unused:
         print(f"Unused: {unused.qualified_name}")
@@ -21,20 +21,28 @@ from .analyzer import AnalyzerConfig, CodeAnalyzer, analyze_directory
 from .logging_utils import quiet_dependency_loggers
 from .models import (
     HYBRID_TIERS,
+    AnalysisChecks,
     AnalysisResult,
+    CheckRecord,
     CodeUnit,
     CodeUnitType,
     DuplicatePair,
     ExtractionDiagnostic,
+    FocusSummary,
     HybridDuplicate,
+    RunRecord,
 )
 from .report import (
     ACTIONABLE_TIERS,
     DEFAULT_MAX_DUPLICATES,
+    DEFAULT_MAX_UNUSED,
+    ExactFamily,
     ReportPolicy,
     ReportSelection,
     actionable_pairs,
+    build_exact_families,
     check_result_to_json,
+    focus_result,
     hidden_only_failure,
     run_should_fail,
     search_result_to_json,
@@ -51,22 +59,30 @@ except ImportError:
 __all__ = [
     "ACTIONABLE_TIERS",
     "DEFAULT_MAX_DUPLICATES",
+    "DEFAULT_MAX_UNUSED",
     "HYBRID_TIERS",
+    "AnalysisChecks",
     "AnalysisResult",
     "AnalyzerConfig",
+    "CheckRecord",
     "CodeAnalyzer",
     "CodeUnit",
     "CodeUnitType",
     "DuplicatePair",
+    "ExactFamily",
     "ExtractionDiagnostic",
+    "FocusSummary",
     "HybridDuplicate",
     "ReportPolicy",
     "ReportSelection",
+    "RunRecord",
     "__version__",
     "__version_tuple__",
     "actionable_pairs",
     "analyze_directory",
+    "build_exact_families",
     "check_result_to_json",
+    "focus_result",
     "hidden_only_failure",
     "quiet_dependency_loggers",
     "run_should_fail",

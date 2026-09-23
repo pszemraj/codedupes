@@ -37,7 +37,7 @@ pytestmark = pytest.mark.mps
 # which turns the allocator's genuine OOM path into a deterministic fixture.
 _TINY_MEMORY_FRACTION = 0.0001
 # torch's default high-watermark ratio (PYTORCH_MPS_HIGH_WATERMARK_RATIO).
-_DEFAULT_MEMORY_FRACTION = 1.7
+_DEFAULT_MEMORY_FRACTION = devices._PYTORCH_DEFAULT_MPS_HIGH_WATERMARK_RATIO
 
 
 @pytest.fixture(autouse=True)
@@ -208,7 +208,9 @@ def test_model_loads_and_encodes_on_mps(tmp_path: Path) -> None:
     assert np.isfinite(embeddings).all()
     np.testing.assert_allclose(np.linalg.norm(embeddings, axis=1), 1.0, atol=1e-5)
     assert len(results) == len(units)
-    assert execution == [semantic.QueryExecution(execution_device="mps", cache_hit=False)]
+    assert execution == [
+        semantic.QueryExecution(execution_device="mps", cache_hit=False, threshold=-1.0)
+    ]
 
 
 def test_model_cache_is_keyed_by_resolved_device() -> None:
@@ -434,14 +436,10 @@ def test_query_oom_recovers_on_cpu(tmp_path: Path) -> None:
     assert [score for _unit, score in results] == sorted(
         (score for _unit, score in results), reverse=True
     )
-    assert execution == [semantic.QueryExecution(execution_device="cpu", cache_hit=False)]
-
-    from scripts.calibration_measurements import _query_execution
-
-    with pytest.raises(ValueError, match="did not execute independently on mps"):
-        _query_execution(
-            SimpleNamespace(query_execution=tuple(execution)),
-            "mps",
-            "find-addition",
-            1,
-        )
+    # execution_device == "cpu" here is itself the fact that calibration's
+    # measurement-harness schema rule (tests/test_calibration_measurements.py)
+    # would reject as "not independent on mps" - that rejection rule is owned
+    # and tested there, not against live hardware.
+    assert execution == [
+        semantic.QueryExecution(execution_device="cpu", cache_hit=False, threshold=0.0)
+    ]

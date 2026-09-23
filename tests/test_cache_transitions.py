@@ -15,7 +15,7 @@ from codedupes import semantic as semantic_module
 from codedupes.analyzer import AnalyzerConfig, CodeAnalyzer
 from codedupes.embedding_cache import INDEX_FILENAME, EmbeddingCache
 from codedupes.models import AnalysisResult, CodeUnit
-from tests.test_embedding_cache import REVISION_1, CountingModel, _patch_get_model
+from tests.embedding_cache_helpers import REVISION_1, CountingModel, patch_get_model
 
 
 def _write_repo(tmp_path: Path, files: Mapping[str, str]) -> Path:
@@ -93,7 +93,7 @@ def _normalized_findings(result: AnalysisResult) -> dict[str, Any]:
             _unit_identity(duplicate.unit_a),
             _unit_identity(duplicate.unit_b),
             duplicate.tier,
-            round(duplicate.confidence, 6),
+            round(duplicate.score, 6),
         )
 
     return {
@@ -121,7 +121,7 @@ def test_cold_scan_encodes_every_unique_body(tmp_path, monkeypatch) -> None:
             "src/gamma.py": "def gamma(value):\n    return value + 3",
         },
     )
-    _patch_get_model(monkeypatch, CountingModel())
+    patch_get_model(monkeypatch, CountingModel())
 
     result = _analyze(repo)
 
@@ -144,7 +144,7 @@ def test_in_file_edits_reencode_only_changed_bodies(tmp_path, monkeypatch, edit_
         tmp_path,
         {"src/math.py": source},
     )
-    _patch_get_model(monkeypatch, CountingModel())
+    patch_get_model(monkeypatch, CountingModel())
     _analyze(repo)
     updated = (
         source.replace("+ 1", "+ 99").replace("+ 2", "+ 100")
@@ -173,7 +173,7 @@ def test_single_file_edit_preserves_old_key_for_orphan_collection(tmp_path, monk
             "b.py": "def beta(value):\n    return value + 2",
         },
     )
-    _patch_get_model(monkeypatch, CountingModel())
+    patch_get_model(monkeypatch, CountingModel())
     _analyze(repo)
     (repo / "a.py").write_text(
         "def alpha(value):\n    return value + 99\n",
@@ -207,7 +207,7 @@ def test_rename_file_reuses_embeddings_and_reports_only_new_path(tmp_path, monke
             "src/app.py": "def run(value):\n    return value.upper()",
         },
     )
-    _patch_get_model(monkeypatch, CountingModel())
+    patch_get_model(monkeypatch, CountingModel())
     _analyze(repo)
     new_path = repo / "src/text/normalize.py"
     new_path.parent.mkdir()
@@ -234,7 +234,7 @@ def test_move_file_across_directories_reuses_embeddings(tmp_path, monkeypatch) -
             "src/app.py": "def run(value):\n    return value + 1",
         },
     )
-    _patch_get_model(monkeypatch, CountingModel())
+    patch_get_model(monkeypatch, CountingModel())
     _analyze(repo)
     destination = repo / "lib/jobs/worker.py"
     destination.parent.mkdir(parents=True)
@@ -266,7 +266,7 @@ def test_delete_file_removes_its_units_and_findings_without_encoding(
     )
     if excludes:
         (repo / "src/ignored_test.py").write_text("def ignored():\n    return 42\n")
-    _patch_get_model(monkeypatch, CountingModel())
+    patch_get_model(monkeypatch, CountingModel())
     initial = _analyze(repo, exclude_patterns=excludes)
     assert len(initial.units) == 2
     deleted = (repo / "src/remove.py").resolve()
@@ -315,7 +315,7 @@ def test_delete_last_unit_publishes_empty_manifest(tmp_path, monkeypatch) -> Non
             "api.h": "int value(void);",
         },
     )
-    _patch_get_model(monkeypatch, CountingModel())
+    patch_get_model(monkeypatch, CountingModel())
     _analyze(repo)
     (repo / "only.py").unlink()
 
@@ -337,7 +337,7 @@ def test_last_ineligible_candidate_publishes_empty_manifest(tmp_path, monkeypatc
         tmp_path,
         {"only.py": "def only(value):\n    adjusted = value + 1\n    return adjusted"},
     )
-    _patch_get_model(monkeypatch, CountingModel())
+    patch_get_model(monkeypatch, CountingModel())
     _analyze(repo, min_semantic_statements=2)
     (repo / "only.py").write_text(
         "def only(value):\n    return value + 1\n",
@@ -359,7 +359,7 @@ def test_single_file_scan_orphans_candidate_that_became_ineligible(tmp_path, mon
         tmp_path,
         {"only.py": "def only(value):\n    adjusted = value + 1\n    return adjusted"},
     )
-    _patch_get_model(monkeypatch, CountingModel())
+    patch_get_model(monkeypatch, CountingModel())
     _analyze(repo, min_semantic_statements=2)
     (repo / "only.py").write_text(
         "def only(value):\n    return value + 1\n",
@@ -388,7 +388,7 @@ def test_single_symlink_scan_updates_observed_target(
     )
     alias = repo / "alias.py"
     alias.symlink_to(target)
-    _patch_get_model(monkeypatch, CountingModel())
+    patch_get_model(monkeypatch, CountingModel())
     analyzer = CodeAnalyzer(
         AnalyzerConfig(
             model_name="test-model",
@@ -422,7 +422,7 @@ def test_move_and_edit_reencodes_changed_function_but_hits_sibling(tmp_path, mon
             )
         },
     )
-    _patch_get_model(monkeypatch, CountingModel())
+    patch_get_model(monkeypatch, CountingModel())
     _analyze(repo)
     destination = repo / "src/new/math.py"
     destination.parent.mkdir()
@@ -443,7 +443,7 @@ def test_move_and_edit_reencodes_changed_function_but_hits_sibling(tmp_path, mon
 def test_identical_bodies_in_two_files_encode_once(tmp_path, monkeypatch) -> None:
     source = "def normalize(value):\n    return value.strip().lower()"
     repo = _write_repo(tmp_path, {"src/a.py": source, "src/b.py": source})
-    _patch_get_model(monkeypatch, CountingModel())
+    patch_get_model(monkeypatch, CountingModel())
 
     result = _analyze(repo)
 
@@ -461,7 +461,7 @@ def test_adding_caller_updates_unused_findings_without_reencoding_callee(
         tmp_path,
         {"src/helpers.py": "def _normalize(value):\n    return value.strip().lower()"},
     )
-    _patch_get_model(monkeypatch, CountingModel())
+    patch_get_model(monkeypatch, CountingModel())
     initial = _analyze(repo)
     assert {unit.name for unit in initial.potentially_unused} == {"_normalize"}
     (repo / "src/app.py").write_text(
@@ -486,7 +486,7 @@ def test_narrow_rerun_does_not_change_full_scan_shard_rows(tmp_path, monkeypatch
             "src/b.py": "def beta(value):\n    return value + 2",
         },
     )
-    _patch_get_model(monkeypatch, CountingModel())
+    patch_get_model(monkeypatch, CountingModel())
     _analyze(repo)
     cache = EmbeddingCache()
     full_shard_index = cache.shard_dir(repo, "test-model", REVISION_1) / INDEX_FILENAME
@@ -547,7 +547,7 @@ def test_scope_filter_does_not_age_or_collect_other_selection_rows(
     tmp_path, monkeypatch, files, overrides
 ) -> None:
     repo = _write_repo(tmp_path, files)
-    _patch_get_model(monkeypatch, CountingModel())
+    patch_get_model(monkeypatch, CountingModel())
     initial = _analyze(repo)
     assert initial.embedding_stats is not None
     initial_count = initial.embedding_stats.requested_rows
@@ -583,7 +583,7 @@ def test_runtime_variant_switch_preserves_warm_corpus(
         },
     )
     model = CountingModel()
-    model_loads = _patch_get_model(monkeypatch, model)
+    model_loads = patch_get_model(monkeypatch, model)
     dtype_variant = ""
     monkeypatch.setattr(
         semantic_module, "_dtype_variant_for", lambda *_args, **_kwargs: dtype_variant
@@ -624,7 +624,7 @@ def test_incomplete_scans_do_not_refresh_unseen_sibling_pins(tmp_path, monkeypat
             "b.py": "def beta(value):\n    return value + 2",
         },
     )
-    _patch_get_model(monkeypatch, CountingModel())
+    patch_get_model(monkeypatch, CountingModel())
     _analyze(repo)
     _analyze(repo, languages=("python",))
     (repo / "b.py").unlink()
@@ -655,7 +655,7 @@ def test_stale_scope_selection_stops_pinning_deleted_rows(tmp_path, monkeypatch)
             "src/private.py": "def _private(value):\n    return value + 3",
         },
     )
-    _patch_get_model(monkeypatch, CountingModel())
+    patch_get_model(monkeypatch, CountingModel())
     _analyze(repo)
     _analyze(repo, include_private=False)
     (repo / "src/b.py").unlink()
@@ -694,7 +694,7 @@ def test_expired_selection_retains_deletion_baseline(tmp_path, monkeypatch) -> N
             "src/b.py": "def beta(value):\n    return value + 2",
         },
     )
-    _patch_get_model(monkeypatch, CountingModel())
+    patch_get_model(monkeypatch, CountingModel())
     _analyze(repo)
     for _ in range(3):
         _index(repo, search_document="source")
@@ -727,7 +727,7 @@ def test_orphan_aging_survives_search_selection_between_checks(tmp_path, monkeyp
             "src/b.py": "def beta(value):\n    return value + 2",
         },
     )
-    _patch_get_model(monkeypatch, CountingModel())
+    patch_get_model(monkeypatch, CountingModel())
     _analyze(repo)
     (repo / "src/b.py").unlink()
     orphaned = _analyze(repo)
@@ -759,7 +759,7 @@ def test_single_file_scan_preserves_shared_complete_baseline(tmp_path, monkeypat
             "b.py": "def beta(value):\n    return value + 2",
         },
     )
-    _patch_get_model(monkeypatch, CountingModel())
+    patch_get_model(monkeypatch, CountingModel())
     _analyze(repo)
     cache = EmbeddingCache()
 
@@ -786,7 +786,7 @@ def test_failed_analysis_keeps_previous_manifest_authoritative(tmp_path, monkeyp
         tmp_path,
         {"src/value.py": "def value(number):\n    return number + 1"},
     )
-    _patch_get_model(monkeypatch, CountingModel())
+    patch_get_model(monkeypatch, CountingModel())
     initial = _analyze(repo)
     assert initial.embedding_stats is not None
     cache = EmbeddingCache()
@@ -840,7 +840,7 @@ def test_incomplete_extraction_keeps_previous_manifest_authoritative(
     )
     affected = repo / affected_name
     original_source = affected.read_bytes()
-    _patch_get_model(monkeypatch, CountingModel())
+    patch_get_model(monkeypatch, CountingModel())
 
     def scan(target):
         analyzer = CodeAnalyzer(
@@ -939,7 +939,7 @@ def test_tree_sitter_coverage_failures_preserve_manifest(
     repo = _write_repo(tmp_path, {"b.js": "function beta(value) { return value + 2; }"})
     source_file = repo / "b.js"
     original_source = source_file.read_bytes()
-    _patch_get_model(monkeypatch, CountingModel())
+    patch_get_model(monkeypatch, CountingModel())
     _analyze(repo, run_unused=False)
     cache = EmbeddingCache()
     previous = cache.load_manifest(repo, "test-model", REVISION_1)
@@ -969,7 +969,7 @@ def test_contextual_search_embeds_envelope_while_analysis_embeds_source(
         {"billing/refunds.py": "def validate(value):\n    return value > 0"},
     )
     model = CountingModel()
-    _patch_get_model(monkeypatch, model)
+    patch_get_model(monkeypatch, model)
 
     contextual = _index(repo, search_document="contextual")
     contextual_text = model.encode_calls[-1][0]
@@ -1002,7 +1002,7 @@ def test_contextual_rename_reembeds_search_but_source_check_stays_warm(
         tmp_path,
         {"src/old.py": "def normalize(value):\n    return value.strip().lower()"},
     )
-    _patch_get_model(monkeypatch, CountingModel())
+    patch_get_model(monkeypatch, CountingModel())
     _analyze(repo)
     _index(repo, search_document="contextual")
     destination = repo / "src/text/normalize.py"

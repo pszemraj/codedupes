@@ -10,7 +10,7 @@ from click.testing import CliRunner
 from codedupes import cli
 from codedupes.models import AnalysisResult, CodeUnit, CodeUnitType, ExtractionDiagnostic
 from codedupes.report.json import unit_to_dict
-from tests.conftest import patch_cli_analyzer
+from tests.conftest import make_run_record, patch_cli_analyzer
 
 
 def _rust_result(tmp_path: Path) -> AnalysisResult:
@@ -39,7 +39,7 @@ def _rust_result(tmp_path: Path) -> AnalysisResult:
         semantic_duplicates=[],
         hybrid_duplicates=[],
         potentially_unused=[],
-        analysis_mode="traditional",
+        run=make_run_record(tmp_path, mode="traditional"),
         extraction_diagnostics=[
             ExtractionDiagnostic(
                 file_path=unit.file_path,
@@ -149,7 +149,7 @@ def test_missing_grammar_reports_remediation_instead_of_a_generic_error(
     patch_cli_analyzer(monkeypatch, cli, analyze_result=raise_grammar_error)
     result = CliRunner().invoke(cli.cli, ["check", str(path), "--traditional-only"])
 
-    assert result.exit_code == 1
+    assert result.exit_code == 3
     assert "Parser unavailable" in result.output
     assert "tree-sitter-rust==0.24.2" in result.output
     assert "codedupes info" in result.output

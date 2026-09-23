@@ -21,36 +21,56 @@ codedupes check ./src --traditional-only --no-unused
 codedupes check ./src --include-review
 codedupes check ./src --show-all
 codedupes check ./src --json --max-duplicates 50
-# Every default-visible pair, not just the top 20.
-codedupes check ./src --json --max-duplicates all
+# Every default-visible finding, not just the top 20 duplicates and 20 unused units.
+codedupes check ./src --json --max-duplicates all --max-unused all
 codedupes check ./src --fail-on all
 codedupes check ./src/module.py
 codedupes check ./src --semantic-threshold 0.84 --traditional-threshold 0.75
 codedupes check ./src --exclude "**/generated/**" --exclude "**/migrations/**"
 codedupes check tests --no-default-excludes --no-unused
+codedupes check ./src --json --show-source --source-lines all
+codedupes check ./src --traditional-only --show-diff
+codedupes check ./src --unused-only --strict-unused
 ```
 
 Options, in addition to the [shared options](#options-shared-by-check-and-search):
 
+- `--focus <path>`: Scope the [report and exit code](output.md#focused-reports) to findings touching this file or directory; repeat for multiple paths. Requires a directory target and each path inside it
 - `-t, --threshold <float>`: Shared threshold override for semantic and traditional checks (in single-method modes, it applies to the active method only)
 - `--traditional-threshold <float>`: Override the [traditional Jaccard threshold](analysis-defaults.md#traditional-duplicate-defaults) only
 - `--cross-language`: Also report semantic duplicate pairs across languages; see [comparison boundaries](polyglot-languages.md#fingerprints-and-comparison-boundaries)
 - `--semantic-task <name>`: Duplicate embedding task; see [task defaults and choices](model-profiles.md#semantic-task-defaults-and-choices)
 - `--semantic-only`: Use only semantic matching for duplicate detection
 - `--traditional-only`: Use only traditional matching for duplicate detection
+- `--unused-only`: Only run unused-code detection; no duplicate detection runs and no embedding model is loaded
 - `--allow-semantic-fallback`: Enable [combined-mode fallback](output.md#exit-codes)
 - `--no-unused`: Disable unused-code detection
 - `--strict-unused`: Also report unreferenced public functions and public methods; see the [unused-code policy](analysis-defaults.md#potentially-unused-defaults)
 - `--suppress-test-semantic`: Suppress semantic duplicate matches involving `test_*` functions
 - `--no-tiny-filter`: Disable tiny code-unit filtering for traditional duplicates
 - `--tiny-cutoff <int>`: Override the [traditional tiny-filter cutoff](analysis-defaults.md#traditional-duplicate-defaults)
-- `--include-review`, `--show-all`: Expand the [reported findings](output.md#report-selection) and lift the default report cap
-- `--max-duplicates <N|all>`: Cap the [reported duplicate pairs](output.md#report-selection) at `N` (default `20`, actionable tiers first) or remove the cap with `all`
-- `--full-table`: Print all rows in the unused and raw duplicate tables and lift the default report cap
-- `--show-source`: Show truncated duplicate snippets
+- `--include-review`, `--show-all`: Expand the [reported findings](output.md#report-selection) and lift the default report caps
+- `--max-duplicates <N|all>`: Cap the [reported duplicate findings](output.md#report-selection) at `N` (default `20`; exact families first and counted once, then actionable tiers) or remove the cap with `all`
+- `--max-unused <N|all>`: Cap the [reported unused units](output.md#report-selection) at `N` (default `20`, largest line span first) or remove the cap with `all`
+- `--full-table`: Print all rows in the raw `--show-all` duplicate tables and lift the default `--max-duplicates` and `--max-unused` caps
+- `--show-source`: Show a bounded source snippet per reported unit, in terminal panels and (unlike other display controls) also as a `source` field on every JSON unit record
+- `--source-lines <N|all>`: Cap each shown snippet at `N` lines (default `40`) or remove the cap with `all`; implies `--show-source`
+- `--show-diff`: Show a unified source diff per duplicate pair, bounded by `--source-lines`; exact families diff each member against the first when their source differs
 - `--fail-on <actionable|all|none>`: Select the [finding exit policy](output.md#exit-codes)
+- `--fail-on-incomplete`: Also exit `1` when the [analysis did not complete](output.md#exit-codes), independent of `--fail-on` (including `none`)
 
-Single-method flags leave unused-code detection enabled; add `--no-unused` to disable it.
+`--semantic-only`, `--traditional-only`, and `--unused-only` are mutually exclusive; the first two leave unused-code detection enabled (add `--no-unused` to disable it), while `--unused-only` disables both duplicate methods instead and rejects any option that only makes sense with duplicate detection running (a duplicate threshold, `--max-duplicates`, `--show-diff`, `--include-review`/`--show-all`, or any semantic/device option). `--show-source` and `--source-lines` also work with unused-only findings. `--fail-on` semantics are unchanged under `--unused-only`: the default `actionable` policy never fails on non-strict unused findings alone, so add `--strict-unused` or `--fail-on all` to make an unused-only run fail on what it finds.
+
+### Single-file targets
+
+`codedupes check <file>` only compares code units within that one file, so a duplicate of it living elsewhere in the project is not reported. For a Python file, unused-code detection is not limited the same way: it resolves a [project-wide reference root](analysis-defaults.md#extraction-scope-defaults) for the target (the nearest `pyproject.toml`, else the git work tree, else the file's own directory) and parses every Python file under it, test files included, so a call from elsewhere in the project still counts.
+
+For cross-file duplicate detection against one file, scan the project root and use `--focus` (repeatable) to narrow the report and exit code back to that file or a set of files/directories:
+
+```text
+codedupes check <root> --focus <file>
+codedupes check . --focus src/pkg/new_module.py --focus src/pkg/util/
+```
 
 ## `codedupes search <path> "<query>"`
 
@@ -93,6 +113,7 @@ codedupes search . "validate session token" --language js --language ts
 - `--no-private`: Exclude private units according to [language visibility rules](polyglot-languages.md#visibility-filtering)
 - `--exclude <name|glob>`: Add a quoted exclusion pattern; repeat for multiple patterns. See [pattern matching and scope](analysis-defaults.md#extraction-scope-defaults)
 - `--no-default-excludes`: Disable [default test-file exclusions](analysis-defaults.md#extraction-scope-defaults)
+- `--no-gitignore`: Scan paths git ignores; by default a directory scan inside a git work tree [skips them](analysis-defaults.md#extraction-scope-defaults)
 - `--include-stubs`: Include `.pyi` files when scanning a directory (single-file `.pyi` targets are analyzed as given)
 
 ### Semantic model
@@ -143,19 +164,21 @@ Display the embedding-cache summary plus per-model entry counts and a per-repo b
 
 ## `codedupes cache clear [--model <name>]`
 
-Clear all cached embeddings or only entries for one model. An empty or whitespace-only `--model` is a usage error (exit `2`) and deletes nothing; omit the option to clear all models. See [Embedding cache](caching.md).
+Clear all cached embeddings or only entries for one model. An empty or whitespace-only `--model` is a usage error (exit `2`) and deletes nothing; omit the option to clear all models. A failure to construct the cache, an outright clear failure, or a best-effort clear that leaves any deletion failed all exit `3` (`cache info` uses the same code for its own construction failure); see [exit codes](output.md#exit-codes). See [Embedding cache](caching.md).
 
 ## Validation and mode notes
 
 - `check` threshold values must be in `[0.0, 1.0]`; `search --threshold`
   accepts any finite value, including a negative similarity floor
 - `--semantic-threshold` and `--traditional-threshold` override `--threshold` for their respective methods
-- `--batch-size` and `--top-k` must be greater than `0`; `--max-duplicates` takes a positive integer or `all`
+- `--batch-size` and `--top-k` must be greater than `0`; `--max-duplicates` and `--max-unused` take a positive integer or `all`
 - `--min-statements` and `--tiny-cutoff` must be greater than or equal to `0`
-- `--include-review`, `--show-all`, and `--allow-semantic-fallback` are only valid in default combined `check` mode (not with `--semantic-only` or `--traditional-only`)
-- `--json` rejects rich-only display controls: `--show-source`, `--full-table`, `--verbose`, and explicit `--output-width`
-- `--semantic-only` and `--traditional-only` are mutually exclusive
+- `--include-review`, `--show-all`, and `--allow-semantic-fallback` are only valid in default combined `check` mode (not with `--semantic-only`, `--traditional-only`, or `--unused-only`)
+- `--json` rejects rich-only display controls: `--show-diff`, `--full-table`, `--verbose`, and explicit `--output-width`; `--show-source`/`--source-lines` are accepted and add `source` to JSON unit records instead
+- `--semantic-only`, `--traditional-only`, and `--unused-only` are mutually exclusive; `--unused-only` also rejects `--no-unused` and every duplicate-detection-only option (see [`check`](#codedupes-check-path))
 - `--no-unused` and `--strict-unused` are mutually exclusive
+- `--focus` requires a directory target and rejects a path outside the scan root; a missing focus path is the same click "does not exist" error as a missing scan target
+- `--no-unused` and an explicit `--max-unused` are mutually exclusive
 - `--trust-remote-code` and `--no-trust-remote-code` are mutually exclusive
 - `--mps-fallback` and `--no-mps-fallback` are mutually exclusive
 - Explicit semantic-analysis controls are rejected with `--traditional-only`, including model/task, candidate-scope, device/runtime options, and either revision-cache policy flag. `--no-cache` is accepted as a harmless no-op.

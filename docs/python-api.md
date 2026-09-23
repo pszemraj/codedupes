@@ -22,7 +22,7 @@ for dup in result.hybrid_duplicates:
         "<->",
         dup.unit_b.qualified_name,
         dup.tier,
-        f"{dup.confidence:.2f}",
+        f"{dup.score:.2f}",
     )
 
 for unit in result.potentially_unused:
@@ -53,7 +53,7 @@ result = analyzer.analyze("./src")
 
 | Area | Fields | Behavior |
 | --- | --- | --- |
-| Extraction | `exclude_patterns`, `include_private`, `languages`, `include_stubs` | [Scope defaults](analysis-defaults.md#extraction-scope-defaults) and [language selection](polyglot-languages.md#supported-files) |
+| Extraction | `exclude_patterns`, `default_excludes`, `respect_gitignore`, `include_private`, `languages`, `include_stubs` | [Scope defaults](analysis-defaults.md#extraction-scope-defaults) and [language selection](polyglot-languages.md#supported-files) |
 | Analysis stages | `mode`, `run_traditional`, `run_semantic`, `run_unused`, `strict_unused`, `allow_semantic_fallback`, `suppress_test_semantic_matches` | [Check defaults](analysis-defaults.md), [fallback behavior](output.md#exit-codes), and [CLI option mapping](cli.md#codedupes-check-path) |
 | Traditional matching | `jaccard_threshold`, `filter_tiny_traditional`, `tiny_unit_statement_cutoff` | [Traditional defaults](analysis-defaults.md#traditional-duplicate-defaults) |
 | Semantic matching | `semantic_threshold`, `threshold_profile`, `cross_language`, `min_semantic_statements`, `semantic_unit_types`, `semantic_task` | [Semantic candidates and gates](analysis-defaults.md#semantic-duplicate-gate-defaults) and [model profiles](model-profiles.md) |
@@ -114,7 +114,7 @@ Inspect `analyzer.extraction_diagnostics` for recoverable parse errors after ind
 
 [Long-input diagnostics](analysis-defaults.md#semantic-candidate-defaults) remain available through `analyzer.semantic_diagnostics`; low-level `compute_embeddings*` and `run_semantic_analysis*` callers can collect them through `diagnostics=`.
 
-`search(query, top_k=10, threshold=None)` resolves its floor as `threshold`, then `config.semantic_threshold`, then the selected threshold profile's search default. Prefer the per-call value when tuning one query: `config.semantic_threshold` also replaces every calibrated per-language duplicate gate with one flat value. Per-call thresholds must be finite; `NaN` and infinity raise `ValueError`, including for empty corpora and cached queries. Zero and finite negative floors are supported.
+`search(query, top_k=10, threshold=None)` resolves its floor as `threshold`, then `config.semantic_threshold`, then the selected threshold profile's search default. Prefer the per-call value when tuning one query: `config.semantic_threshold` also replaces every calibrated per-language duplicate gate with one flat value. Per-call thresholds must be finite; `NaN` and infinity raise `ValueError`, including for empty corpora and cached queries. Zero and finite negative floors are supported. After a search over a nonempty index, `analyzer.query_execution` records the effective threshold alongside each query vector's device and cache status.
 
 `AnalyzerConfig`, `analyze_directory()`, `semantic.resolve_search_threshold()`, and `semantic.find_similar_to_query()` accept the [threshold profile choices](model-profiles.md#choosing-threshold-defaults). Numeric thresholds take precedence.
 
@@ -126,7 +126,7 @@ See [task defaults and calibration requirements](model-profiles.md#semantic-task
 
 `index()` extracts the corpus and computes (or loads from cache) its embeddings without the all-pairs duplicate scan, traditional analysis, or unused-code analysis that `analyze()` runs, so building a search corpus stays linear in corpus size. `analyzer.extracted_unit_count` reports the pre-filter extraction count from the latest `index()` or `analyze()` run, which can be larger than the count returned by `index()` after semantic eligibility filtering. A search after `analyze()` reuses the analysis task and therefore requires an explicit search threshold when that task changes the model's prompt or route, as it does for EmbeddingGemma.
 
-The contextual-threshold requirement follows the indexed representation even if the config changes afterward. Its [cache behavior](caching.md#what-invalidates-what) follows the complete document input. `analyze()` always embeds bare source for duplicate detection regardless of this search-only setting.
+The contextual-threshold requirement follows the indexed representation even if the config changes afterward. Its [cache behavior](caching.md#what-invalidates-what) follows the complete document input. `analyze()` always embeds bare source for duplicate detection regardless of this search-only setting. The resolved `run.semantic.search_document` records which representation was actually embedded; `run.semantic.source_commit` records a known checkpoint commit behind a mutable model revision.
 
 For direct embedding/query calls, pass the identity returned by `compute_embeddings_with_identity(...)` as `find_similar_to_query(corpus_identity=...)`. It is required for contextual documents and prompt- or route-sensitive models, and preserves calibration and checkpoint checks on both cold and warm cache paths. Use `search_document="contextual"` with aligned `document_texts` when supplying contextual inputs. The array-only `compute_embeddings(...)` helper accepts source documents only because it cannot return the identity needed to enforce contextual-search thresholds.
 
@@ -236,24 +236,34 @@ quiet_dependency_loggers()  # or quiet_dependency_loggers(logging.ERROR)
 - `AnalysisResult.extraction_diagnostics`: recoverable parser diagnostics and skipped-unit reasons
 - `CodeAnalyzer.extraction_diagnostics`: extraction diagnostics from the latest `index()` or `analyze()` run
 - `AnalysisResult.semantic_diagnostics`: semantic-stage diagnostics, mirroring `CodeAnalyzer.semantic_diagnostics` for that run
+- `AnalysisResult.unused_diagnostics`: per-file diagnostics from the unused reference walk (`unused-read-error`, `unused-parse-error`, `unused-recursion-limit`); `codedupes.unused.run_unused_analysis` returns them, together with `unused` and `suppressed`, in an `UnusedReport`
 - `AnalysisResult.unused_excluded_units`: non-Python units intentionally excluded from unused analysis
 - `AnalysisResult.unused_supported_languages`: languages the unused heuristic evaluates (currently always `("python",)`)
+- `AnalysisResult.suppressed_duplicates`: traditional and semantic pairs dropped for carrying a `codedupes: ignore[duplicates]` directive on either endpoint
+- `AnalysisResult.suppressed_unused`: units carrying a `codedupes: ignore`/`codedupes: ignore[unused]` directive that would otherwise have been reported unused (same `suppressed` count `run_unused_analysis` returns on `UnusedReport`)
 - `AnalysisResult.all_duplicates`: hybrid duplicates in combined mode; raw duplicates in single-method mode
-- `AnalysisResult.analysis_mode`: `"combined"`, `"traditional"`, `"semantic"`, or `"none"`
+- `AnalysisResult.analysis_mode`: derived from `run`; `"combined"` when both traditional and semantic ran, else `"traditional"`, `"semantic"`, or `"unused"`
+- `AnalysisResult.run`: the resolved `RunRecord` this analysis actually applied — root/target, scope, per-detector settings (`traditional`, `semantic`, `unused`, each `None` when that detector did not run), and extraction/unit counts (`run.units` is a `UnitCounts`: `extracted`, `semantic_eligible`, and the `by_language`/`by_type` breakdowns, built by `UnitCounts.from_units(units, semantic_eligible=...)`); see [the run record](output.md#run-record-and-check-status)
+- `AnalysisResult.checks`: `AnalysisChecks` derived from `run` and this result's diagnostics — one `CheckRecord(status, files, files_failed, diagnostics)` per detector, `status` one of `completed`, `partial`, `empty`, `fallback`, `disabled`
+- `AnalysisResult.analysis_status`: `checks.analysis_status` — `"complete"`, `"partial"`, or `"empty"`
+- `CodeAnalyzer.run_record`: the same `RunRecord` after the latest `index()` or `analyze()` call, or `None` before the first run; `index()` records semantic work even when a check-mode config has `run_semantic=False`, because that flag gates `analyze()`
 - `AnalysisResult.embedding_stats`: [embedding telemetry](#progress-and-embedding-telemetry)
+- `AnalysisResult.focus`: `FocusSummary(paths, units, out_of_focus_duplicates, out_of_focus_unused)` after `focus_result()`, else `None`; see [focused reports](output.md#focused-reports)
 - `CodeUnit.uid`: in-run definition identity, `<path>::<language>::<qualified name>::<start byte>` for every language; the byte position keeps overloads and redefinitions distinct
 - `CodeUnit.language`, `dialect`, and `native_kind`: canonical language, parser dialect, and grammar node kind (`function_definition`/`class_definition` for Python)
 - `CodeUnit.start_byte`/`end_byte`: exact byte range used to slice the emitted source; a decorated Python definition starts at its first decorator
 - `CodeUnit.structural_hash`, `token_hash`, `identifiers`, and `statement_count`: computed by the language backend from one Tree-sitter parse for every language; see [fingerprints](polyglot-languages.md#fingerprints-and-comparison-boundaries)
-- `HYBRID_TIERS`: the five tier names in declaration order, for zero-filled counts; pairs sort by [confidence](analysis-defaults.md#confidence-scale)
+- `CodeUnit.suppressions`: [`codedupes: ignore`](analysis-defaults.md#suppression-directives) kinds attached to this unit, including any inherited from an enclosing unit's own directive; empty when none apply
+- `HYBRID_TIERS`: the five tier names in declaration order, for zero-filled counts; pairs sort by [score](analysis-defaults.md#score-scale)
 
 ## Report selection and JSON
 
-The CLI's report policy and [JSON schema](output.md#json-schema-v3) are importable, so Python callers can produce the same document as `check --json`:
+The CLI's report policy and [JSON schema](output.md#json-schema-v4) are importable, so Python callers can produce the same document as `check --json`:
 
 ```python
 from codedupes import (
     DEFAULT_MAX_DUPLICATES,
+    DEFAULT_MAX_UNUSED,
     ReportPolicy,
     check_result_to_json,
     run_should_fail,
@@ -261,7 +271,9 @@ from codedupes import (
     to_json_text,
 )
 
-selection = select_findings(result, ReportPolicy(max_duplicates=DEFAULT_MAX_DUPLICATES))
+selection = select_findings(
+    result, ReportPolicy(max_duplicates=DEFAULT_MAX_DUPLICATES, max_unused=DEFAULT_MAX_UNUSED)
+)
 exit_code = int(run_should_fail(result, policy="actionable", strict_unused=False))
 print(
     to_json_text(
@@ -272,9 +284,13 @@ print(
 )
 ```
 
-`ReportPolicy()` is uncapped: `select_findings(result)` returns every default-visible pair, which is what `check --max-duplicates all` emits. The CLI's concise default is `ReportPolicy(max_duplicates=DEFAULT_MAX_DUPLICATES)` (20); `ReportPolicy(include_review=True)` and `ReportPolicy(show_all=True)` match `--include-review` and `--show-all`, which lift the cap on the command line.
+`check_result_to_json(..., include_source=True, source_lines=40)` adds a bounded `source` and `source_lines_omitted` to every unit record, matching `--show-source`/`--source-lines`; both keyword arguments default to opting out, so the example above stays byte-identical to `check`'s default JSON.
 
-`select_findings` applies the visibility policy to a complete result and returns a `ReportSelection` with the emitted `duplicates`, the withheld `omitted_review` pairs, the `truncated` pairs cut by `max_duplicates`, zero-filled `duplicates_by_tier` and `truncated_by_tier` counts, and the referenced `units` in report-id order. In combined mode `duplicates` is ranked for review — actionable tiers, then `semantic_high_confidence`, then included `semantic_review` pairs, each group in the analyzer's confidence order — and the cap keeps a prefix of that ranking; `result.hybrid_duplicates` keeps the analyzer's order. `actionable_pairs(pairs, combined=...)` is the shared filter behind the `actionable` policy and the `actionable_duplicates` counts. `run_should_fail` always evaluates the complete result, so hidden pairs still count; `hidden_only_failure(selection, ...)` returns `{"review"}` when withheld `semantic_review` pairs are the only failing findings and an empty set otherwise (a cap cannot hide every failing pair because actionable tiers rank first). Both failure helpers raise `ValueError` for a `policy` outside `"actionable"`, `"all"`, and `"none"`.
+`ReportPolicy()` is uncapped: `select_findings(result)` returns every default-visible finding, which is what `check --max-duplicates all --max-unused all` emits. The CLI's concise default is `ReportPolicy(max_duplicates=DEFAULT_MAX_DUPLICATES, max_unused=DEFAULT_MAX_UNUSED)` (20 and 20); `ReportPolicy(include_review=True)` and `ReportPolicy(show_all=True)` match `--include-review` and `--show-all`, which lift both caps on the command line. Either cap below `1` raises `ValueError`.
+
+`select_findings` applies the visibility policy to a complete result and returns a `ReportSelection`. Exact edges of the primary list are grouped into `exact_families` (`ExactFamily` records with sorted `members`, a `method` of `token_hash` or `structural_hash`, and `lines`, `redundant_lines`, and `pair_count` properties; `build_exact_families(edges)` is the grouping itself), every other duplicate is a pair in `duplicates`, withheld pairs are `omitted_review`, and `truncated_exact_families` plus `truncated` hold what `max_duplicates` cut; `duplicates_by_tier` and `truncated_by_tier` are zero-filled with `exact` counting families. `potentially_unused` is ranked by `unused_sort_key` (line span, statement count, position) and capped by `max_unused`, with the cut units in `truncated_unused`; `units` holds the referenced units in report-id order. The finding counts JSON and the terminal print (`total_findings`, `reported_findings`, `truncated_findings`, `actionable_findings`, `reported_actionable_findings`, `exact_family_members`) are properties of the selection. In combined mode the primary list is ranked for review — families by `redundant_lines`, then actionable pair tiers, then `semantic_high_confidence`, then included `semantic_review` pairs, each pair group in the analyzer's score order — and the cap keeps a prefix of that ranking with a family counting once; `result.hybrid_duplicates` keeps the analyzer's order, exact pairs first. `actionable_pairs(pairs, combined=...)` is the shared pairwise filter behind the `actionable` policy. `run_should_fail` always evaluates the complete result, so hidden findings still count; `hidden_only_failure(selection, ...)` returns `{"review"}` when withheld `semantic_review` pairs are the only failing findings and an empty set otherwise (a cap cannot hide every failing finding because families and actionable tiers rank first). Both failure helpers raise `ValueError` for a `policy` outside `"actionable"`, `"all"`, and `"none"`. `run_should_fail(..., fail_on_incomplete=True)` also fails whenever `result.analysis_status != "complete"`, independent of `policy` (applies under `"none"` too); `hidden_only_failure` is unaffected by it. See [exit codes](output.md#exit-codes).
+
+`focus_result(result, paths)` builds the result behind `check --focus`: pass a complete `AnalysisResult` and a tuple of resolved, deduplicated paths (files or directories under the scan root — `codedupes.cli._options.resolve_focus_paths` performs that resolution and validation for the CLI) to get back a new `AnalysisResult` with `traditional_duplicates`, `semantic_duplicates`, `hybrid_duplicates`, and `potentially_unused` scoped to those paths, `focus` set to a `FocusSummary`, and every other field — `units`, `run`, the diagnostics lists, `unused_excluded_units`, `embedding_stats` — left corpus-wide. An exact-duplicate family (from `build_exact_families`) is kept whole when any member is in focus, since consolidating it is one indivisible finding; every other duplicate pair is kept when either endpoint is in focus; a `potentially_unused` unit is kept when its file is in focus. `select_findings` and `run_should_fail` both work unmodified on the returned result, so `check`'s focused exit code and report are exactly `select_findings(focus_result(result, paths))` and `run_should_fail(focus_result(result, paths), ...)`. `FocusSummary.out_of_focus_duplicates`/`out_of_focus_unused` count what focusing removed, in the same finding units `total_findings` uses (a family counts once), so `select_findings(result).total_findings == select_findings(focus_result(result, paths)).total_findings + focus.out_of_focus_duplicates` always holds.
 
 `search_result_to_json` serializes unit hits or [file search results](output.md#file-search). For file reports, fetch every matching unit before grouping so a file's contributors cannot exhaust the unit limit and hide other files:
 
@@ -291,19 +307,22 @@ payload = search_result_to_json(
     hits,
     indexed_units,
     analyzer.embedding_stats,
+    run=analyzer.run_record,
     extraction_diagnostics=analyzer.extraction_diagnostics,
     semantic_diagnostics=analyzer.semantic_diagnostics,
     file_results=group_file_results(hits, top_k=5),
+    query_execution=analyzer.query_execution,
 )
 print(to_json_text(payload))
 ```
 
-For a unit report, set `search(query, top_k=...)` to the desired unit count and omit `file_results` from the serializer call.
+For a unit report, set `search(query, top_k=...)` to the desired unit count and omit `file_results` from the serializer call. `run` is required: it is `analyzer.run_record` after `index()` (or `analyze()`) has populated it. `query_execution` is optional and defaults to `()`; pass `analyzer.query_execution` to include the latest query's threshold, cache, and device provenance in `summary.query_execution`, even after earlier searches on the same analyzer. The extraction check inside `run.checks` is derived from `run.units.extracted` (the pre-filter extraction count), not from `indexed_units` (the post-eligibility-filter search corpus size), so a corpus that extraction populated but semantic eligibility filtered down to zero reports `analysis_status: "complete"` rather than `"empty"`; see [the three empty cases](output.md#search).
 
 ## Notes
 
 - `AnalyzerConfig` enforces workflow dependencies:
-  - semantic-only settings require `run_semantic=True`
+  - semantic-only settings require `run_semantic=True`, including `model_name`, `min_semantic_statements`, and `semantic_unit_types`
   - traditional-only settings require `run_traditional=True`
   - `strict_unused=True` requires `run_unused=True`
+  - at least one of `run_traditional`, `run_semantic`, `run_unused` must be `True`; a config with every detector disabled raises `ValueError` at construction
 - `device`, `mps_fallback`, and `mps_memory_fraction` require `run_semantic=True`. `embedding_cache=False` is accepted when semantic analysis is disabled and has no effect.

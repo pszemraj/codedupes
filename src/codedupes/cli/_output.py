@@ -22,6 +22,14 @@ from codedupes.logging_utils import quiet_dependency_loggers
 DEFAULT_OUTPUT_WIDTH = 160
 MIN_OUTPUT_WIDTH = 80
 DEFAULT_TABLE_ROWS = 20
+DEFAULT_SOURCE_LINES = 40
+# Exit codes: findings (or an incomplete analysis under --fail-on-incomplete)
+# use EXIT_FINDINGS; a runtime failure (parser unavailable, an unhandled
+# exception, a path that disappeared mid-run) uses EXIT_RUNTIME_FAILURE so
+# automation can tell "the check ran and found something" from "the check
+# did not run to completion." Click usage/validation errors keep exit 2.
+EXIT_FINDINGS = 1
+EXIT_RUNTIME_FAILURE = 3
 
 
 def _make_console(output_width: int = DEFAULT_OUTPUT_WIDTH, *, stderr: bool = False) -> Console:
@@ -219,18 +227,18 @@ def _run_cli_action(
         if not catch_file_not_found:
             raise
         error_console.print(f"[red]Error:[/red] {exc}")
-        raise click.exceptions.Exit(1) from exc
+        raise click.exceptions.Exit(EXIT_RUNTIME_FAILURE) from exc
     except GrammarUnavailableError as exc:
         error_console.print(f"[red]Parser unavailable:[/red] {exc}")
         error_console.print(
             "Run `codedupes info --verbose` to check Tree-sitter parser package status."
         )
-        raise click.exceptions.Exit(1) from exc
+        raise click.exceptions.Exit(EXIT_RUNTIME_FAILURE) from exc
     except Exception as exc:
         error_console.print(f"[red]Error during {error_label}:[/red] {exc}")
         if verbose:
             error_console.print_exception()
-        raise click.exceptions.Exit(1) from exc
+        raise click.exceptions.Exit(EXIT_RUNTIME_FAILURE) from exc
 
 
 def _validate_positive_int(_ctx: click.Context, _param: click.Parameter, value: int) -> int:
@@ -276,16 +284,19 @@ def _validate_json_output_controls(
     as_json: bool,
     verbose: bool,
     output_width_explicit: bool,
-    show_source: bool = False,
     full_table: bool = False,
+    show_diff: bool = False,
 ) -> None:
     """Reject flags that are incompatible with JSON-only output mode.
+
+    ``--show-source``/``--source-lines`` are terminal-panel controls that also
+    add ``source`` to JSON unit records, so they are valid with ``--json``.
 
     :param as_json: Whether JSON output is active.
     :param verbose: Whether verbose logging was requested.
     :param output_width_explicit: Whether output width was explicitly set.
-    :param show_source: Whether source panels were requested.
     :param full_table: Whether unbounded terminal tables were requested.
+    :param show_diff: Whether diff panels were requested.
     :return: ``None``.
     :raises click.UsageError: If a terminal-only option accompanies JSON.
     """
@@ -297,10 +308,10 @@ def _validate_json_output_controls(
         incompatible.append("--verbose")
     if output_width_explicit:
         incompatible.append("--output-width")
-    if show_source:
-        incompatible.append("--show-source")
     if full_table:
         incompatible.append("--full-table")
+    if show_diff:
+        incompatible.append("--show-diff")
 
     if incompatible:
         listed = ", ".join(incompatible)

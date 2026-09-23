@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -23,7 +23,6 @@ from codedupes.constants import (
     DEFAULT_TRADITIONAL_THRESHOLD,
     SEMANTIC_DEVICE_CHOICES,
 )
-from codedupes.extractor import DEFAULT_EXCLUDE_PATTERNS
 from codedupes.report.selection import ReportPolicy
 from codedupes.semantic import ProgressMode, resolve_search_threshold
 from codedupes.semantic_profiles import (
@@ -46,25 +45,34 @@ logger = logging.getLogger(__name__)
 DEFAULT_EXCLUDE_HELP_HINT = (
     "Add a name or root-relative glob to exclude (repeat for multiple patterns). "
     "Bare names match at any depth; excluded directories include all descendants. "
-    "Default test exclusions apply to directory scans; artifact directories beneath the scan "
-    "root are always excluded."
+    "Default test exclusions and git ignore rules apply to directory scans; artifact "
+    "directories beneath the scan root are always excluded."
 )
 
 
-def _resolve_exclude_patterns(
-    exclude: tuple[str, ...], no_default_excludes: bool, path: Path
-) -> list[str] | None:
-    """Combine CLI exclusions while respecting explicitly selected files.
+def resolve_focus_paths(focus: tuple[Path, ...], target: Path) -> tuple[Path, ...]:
+    """Resolve and validate ``--focus`` paths against the scan target.
 
-    :param exclude: User-supplied exclusion patterns.
-    :param no_default_excludes: Whether default test patterns are disabled.
-    :param path: Selected file or directory.
-    :return: Explicit patterns, or ``None`` for the analyzer's scope-aware defaults.
+    :param focus: Raw ``--focus`` paths from the command line.
+    :param target: File or directory passed as the analysis target.
+    :return: Resolved, deduplicated, sorted focus paths; empty when ``focus`` is empty.
+    :raises click.UsageError: If ``target`` is a file, or a focus path is outside it.
     """
-    if not no_default_excludes and not exclude:
-        return None
-    defaults = [] if no_default_excludes or path.is_file() else DEFAULT_EXCLUDE_PATTERNS.copy()
-    return defaults + list(exclude)
+    if not focus:
+        return ()
+    if target.is_file():
+        raise click.UsageError(
+            "--focus requires a directory target; scan the project root instead, e.g. "
+            f"codedupes check <root> --focus {target}"
+        )
+    root = target.resolve()
+    resolved: set[Path] = set()
+    for raw in focus:
+        candidate = raw.resolve()
+        if not candidate.is_relative_to(root):
+            raise click.UsageError(f"--focus path {raw} is not inside the scan root {target}.")
+        resolved.add(candidate)
+    return tuple(sorted(resolved))
 
 
 class Panel(StrEnum):
@@ -79,12 +87,28 @@ class Panel(StrEnum):
 
 
 SEMANTIC_ONLY_PANELS = frozenset({Panel.SEMANTIC, Panel.DEVICE})
+# Options that only make sense with traditional (Jaccard) duplicate detection
+# enabled, and are therefore rejected under --semantic-only and --unused-only.
+TRADITIONAL_ONLY_OPTIONS: tuple[str, ...] = (
+    "traditional_threshold",
+    "no_tiny_filter",
+    "tiny_cutoff",
+)
+# Options that only make sense when duplicate detection (of either method)
+# runs at all, and are therefore rejected under --unused-only.
+DUPLICATE_ONLY_OPTIONS: tuple[str, ...] = (
+    "threshold",
+    "max_duplicates",
+    "show_diff",
+    "include_review",
+    "show_all",
+)
 
 
-class MaxDuplicatesType(click.ParamType):
-    """``--max-duplicates`` value: a positive integer, or ``all`` for no cap."""
+class ReportCapType(click.ParamType):
+    """Cap (``--max-duplicates``, ``--max-unused``, ``--source-lines``): integer or ``all``."""
 
-    name = "max_duplicates"
+    name = "report_cap"
 
     def convert(self, value: Any, param: click.Parameter | None, ctx: click.Context | None) -> Any:
         """Parse one cap value.
@@ -106,7 +130,7 @@ class MaxDuplicatesType(click.ParamType):
         return limit
 
 
-MAX_DUPLICATES = MaxDuplicatesType()
+REPORT_CAP = ReportCapType()
 
 
 output_width_option = click.option(
@@ -209,6 +233,30 @@ def _display_option(name: str, params: dict[str, Any]) -> str:
     return f"--{name.replace('_', '-')}"
 
 
+def _reject_explicit_options(
+    ctx: click.Context,
+    params: dict[str, Any],
+    names: Iterable[str],
+    *,
+    mode_flag: str,
+    reason: str,
+) -> None:
+    """Raise a usage error naming every option a mode flag makes incompatible.
+
+    :param ctx: Active Click context.
+    :param params: Parsed Click parameters.
+    :param names: Internal parameter names incompatible with ``mode_flag``.
+    :param mode_flag: User-facing flag spelling that triggered the check, without leading dashes.
+    :param reason: Human-readable reason appended after the offending flag list.
+    :return: ``None``.
+    :raises click.UsageError: If any of ``names`` was set explicitly on the command line.
+    """
+    specified = [name for name in names if _is_cli_explicit(ctx, name)]
+    if specified:
+        listed = ", ".join(_display_option(name, params) for name in specified)
+        raise click.UsageError(f"Cannot use {listed} with --{mode_flag}; {reason}.")
+
+
 @dataclass(frozen=True)
 class SemanticOptions:
     """Shared semantic-analysis command options."""
@@ -289,7 +337,9 @@ class CheckOptions:
     no_private: bool
     exclude: tuple[str, ...]
     no_default_excludes: bool
+    no_gitignore: bool
     include_stubs: bool
+    focus: tuple[Path, ...]
     as_json: bool
     verbose: bool
     output_width: int
@@ -299,6 +349,7 @@ class CheckOptions:
     cross_language: bool
     semantic_only: bool
     traditional_only: bool
+    unused_only: bool
     allow_semantic_fallback: bool
     no_unused: bool
     strict_unused: bool
@@ -308,9 +359,13 @@ class CheckOptions:
     show_all: bool
     include_review: bool
     max_duplicates: int | None
+    max_unused: int | None
     show_source: bool
+    source_lines: int | None
+    show_diff: bool
     full_table: bool
     fail_on: Literal["actionable", "all", "none"]
+    fail_on_incomplete: bool
 
     @classmethod
     def from_params(cls, ctx: click.Context, params: dict[str, Any]) -> CheckOptions:
@@ -324,15 +379,26 @@ class CheckOptions:
             raise click.UsageError(
                 "Cannot combine --no-unused and --strict-unused because unused reporting is disabled."
             )
+        if params["no_unused"] and _is_cli_explicit(ctx, "max_unused"):
+            raise click.UsageError(
+                "Cannot use --max-unused with --no-unused because unused reporting is disabled."
+            )
         if params["semantic_only"] and params["traditional_only"]:
             raise click.UsageError("Cannot use both --semantic-only and --traditional-only.")
-        if params["allow_semantic_fallback"] and (
-            params["semantic_only"] or params["traditional_only"]
-        ):
+        if params["unused_only"] and params["semantic_only"]:
+            raise click.UsageError("Cannot use both --unused-only and --semantic-only.")
+        if params["unused_only"] and params["traditional_only"]:
+            raise click.UsageError("Cannot use both --unused-only and --traditional-only.")
+        if params["unused_only"] and params["no_unused"]:
+            raise click.UsageError("Cannot use both --unused-only and --no-unused.")
+        exclusive_mode = (
+            params["semantic_only"] or params["traditional_only"] or params["unused_only"]
+        )
+        if params["allow_semantic_fallback"] and exclusive_mode:
             raise click.UsageError(
                 "--allow-semantic-fallback is only valid in default combined mode."
             )
-        if params["semantic_only"] or params["traditional_only"]:
+        if exclusive_mode:
             for name in ("show_all", "include_review"):
                 if params[name]:
                     raise click.UsageError(
@@ -343,54 +409,60 @@ class CheckOptions:
             as_json=params["as_json"],
             verbose=params["verbose"],
             output_width_explicit=_is_cli_explicit(ctx, "output_width"),
-            show_source=params["show_source"],
             full_table=params["full_table"],
+            show_diff=params["show_diff"],
         )
+        show_source = params["show_source"] or _is_cli_explicit(ctx, "source_lines")
 
         if params["traditional_only"]:
-            specified = [
-                name
-                for name in options_in_panels(ctx.command, SEMANTIC_ONLY_PANELS)
-                if _is_cli_explicit(ctx, name)
-            ]
-            if specified:
-                listed = ", ".join(_display_option(name, params) for name in specified)
-                raise click.UsageError(
-                    f"Cannot use {listed} with --traditional-only; semantic analysis is disabled."
-                )
+            _reject_explicit_options(
+                ctx,
+                params,
+                options_in_panels(ctx.command, SEMANTIC_ONLY_PANELS),
+                mode_flag="traditional-only",
+                reason="semantic analysis is disabled",
+            )
 
         if params["semantic_only"]:
-            specified = [
-                name
-                for name in (
-                    "traditional_threshold",
-                    "no_tiny_filter",
-                    "tiny_cutoff",
-                )
-                if _is_cli_explicit(ctx, name)
-            ]
-            if specified:
-                listed = ", ".join(f"--{name.replace('_', '-')}" for name in specified)
-                raise click.UsageError(
-                    f"Cannot use {listed} with --semantic-only; traditional duplicate analysis is disabled."
-                )
+            _reject_explicit_options(
+                ctx,
+                params,
+                TRADITIONAL_ONLY_OPTIONS,
+                mode_flag="semantic-only",
+                reason="traditional duplicate analysis is disabled",
+            )
 
-        # Every expansion flag lifts the default primary-list cap; an explicit
-        # --max-duplicates always wins, whatever the argument order.
+        if params["unused_only"]:
+            _reject_explicit_options(
+                ctx,
+                params,
+                [
+                    *options_in_panels(ctx.command, SEMANTIC_ONLY_PANELS),
+                    *TRADITIONAL_ONLY_OPTIONS,
+                    *DUPLICATE_ONLY_OPTIONS,
+                ],
+                mode_flag="unused-only",
+                reason="duplicate analysis is disabled",
+            )
+
+        # Every expansion flag lifts the default report caps; an explicit
+        # --max-duplicates or --max-unused always wins, whatever the argument order.
         expands = params["include_review"] or params["show_all"] or params["full_table"]
-        max_duplicates = params["max_duplicates"]
-        if expands and not _is_cli_explicit(ctx, "max_duplicates"):
-            max_duplicates = None
+        caps = {
+            name: None if expands and not _is_cli_explicit(ctx, name) else params[name]
+            for name in ("max_duplicates", "max_unused")
+        }
 
         return cls(
             semantic=SemanticOptions.from_params(params),
             **{
                 name: params[name]
                 for name in cls.__dataclass_fields__
-                if name not in {"semantic", "include_review", "max_duplicates"}
+                if name not in {"semantic", "include_review", "show_source", *caps}
             },
             include_review=params["include_review"] or params["show_all"],
-            max_duplicates=max_duplicates,
+            show_source=show_source,
+            **caps,
         )
 
     @property
@@ -403,23 +475,26 @@ class CheckOptions:
             include_review=self.include_review,
             show_all=self.show_all,
             max_duplicates=self.max_duplicates,
+            max_unused=self.max_unused,
         )
 
     @property
     def table_max_items(self) -> int | None:
-        """Return the terminal table row cap.
+        """Return the row cap for the raw ``--show-all`` duplicate tables.
 
         :return: Maximum table rows, or ``None`` when ``--full-table`` disables the cap.
         """
         return None if self.full_table else DEFAULT_TABLE_ROWS
 
-    def to_analysis_config(self, path: Path) -> Any:
+    def to_analysis_config(self) -> Any:
         """Build the analyzer config represented by this option bundle.
 
-        :param path: Selected file or directory.
-        :return: Analyzer configuration with scope-appropriate exclusions.
+        :return: Analyzer configuration for this option bundle.
         """
         import codedupes.cli as cli_module
+
+        run_traditional = not (self.semantic_only or self.unused_only)
+        run_semantic = not (self.traditional_only or self.unused_only)
 
         semantic_threshold, traditional_threshold = _resolve_check_thresholds(
             self.threshold,
@@ -427,23 +502,23 @@ class CheckOptions:
             self.traditional_threshold,
         )
         semantic_kwargs = self.semantic.analysis_kwargs()
-        if self.semantic_only:
-            traditional_threshold = DEFAULT_TRADITIONAL_THRESHOLD
-        if self.traditional_only:
+        if not run_semantic:
             semantic_threshold = None
             semantic_kwargs["semantic_task"] = None
+        if not run_traditional:
+            traditional_threshold = DEFAULT_TRADITIONAL_THRESHOLD
 
         return cli_module.AnalyzerConfig(
-            exclude_patterns=_resolve_exclude_patterns(
-                self.exclude, self.no_default_excludes, path
-            ),
+            exclude_patterns=list(self.exclude),
+            default_excludes=not self.no_default_excludes,
+            respect_gitignore=not self.no_gitignore,
             include_private=not self.no_private,
             languages=self.languages or None,
             jaccard_threshold=traditional_threshold,
             semantic_threshold=semantic_threshold,
             cross_language=self.cross_language,
-            run_traditional=not self.semantic_only,
-            run_semantic=not self.traditional_only,
+            run_traditional=run_traditional,
+            run_semantic=run_semantic,
             allow_semantic_fallback=self.allow_semantic_fallback,
             run_unused=not self.no_unused,
             filter_tiny_traditional=not self.no_tiny_filter,
@@ -464,6 +539,7 @@ class SearchOptions:
     no_private: bool
     exclude: tuple[str, ...]
     no_default_excludes: bool
+    no_gitignore: bool
     include_stubs: bool
     as_json: bool
     verbose: bool
@@ -500,19 +576,18 @@ class SearchOptions:
             **{name: params[name] for name in cls.__dataclass_fields__ if name != "semantic"},
         )
 
-    def to_analysis_config(self, path: Path) -> Any:
+    def to_analysis_config(self) -> Any:
         """Build the analyzer config represented by this option bundle.
 
-        :param path: Selected file or directory.
-        :return: Analyzer configuration with scope-appropriate exclusions.
+        :return: Analyzer configuration for this option bundle.
         """
         import codedupes.cli as cli_module
 
         config = cli_module.AnalyzerConfig(
             mode="search",
-            exclude_patterns=_resolve_exclude_patterns(
-                self.exclude, self.no_default_excludes, path
-            ),
+            exclude_patterns=list(self.exclude),
+            default_excludes=not self.no_default_excludes,
+            respect_gitignore=not self.no_gitignore,
             include_private=not self.no_private,
             languages=self.languages or None,
             semantic_threshold=_resolve_search_threshold(
@@ -594,6 +669,16 @@ def semantic_options() -> Callable[[F], F]:
             help=(
                 "Disable default test-file exclusions; artifact directories beneath the scan "
                 "root remain excluded."
+            ),
+        ),
+        click.option(
+            "--no-gitignore",
+            is_flag=True,
+            panel=Panel.SCOPE,
+            help=(
+                "Scan paths git ignores. By default a directory scan inside a git work tree "
+                "skips them (nested .gitignore files, .git/info/exclude, and the global "
+                "excludes file all apply)."
             ),
         ),
         click.option(

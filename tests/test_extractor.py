@@ -3,6 +3,8 @@ from __future__ import annotations
 import codecs
 import fnmatch
 import os
+import shutil
+import subprocess
 from pathlib import Path
 from textwrap import dedent
 from typing import Any
@@ -313,27 +315,38 @@ def test_extract_all_skips_suffix_test_files_by_default(tmp_path: Path, caplog) 
     assert [unit.file_path.name for unit in units] == ["keeper.py"]
     assert (
         "Skipped 2 files and 0 directories matching default test exclusions; "
-        "use --no-default-excludes to include them."
+        "their Python files still count as references for unused-code analysis. "
+        "Use --no-default-excludes to include them in duplicate detection too."
     ) in caplog.text
 
 
 @pytest.mark.parametrize("include_tests", [False, True])
 def test_default_exclusion_hint_counts_pruned_directories(tmp_path: Path, caplog, include_tests):
-    from codedupes.extractor import DEFAULT_EXCLUDE_PATTERNS
-
     for relative in ["test_one.py", "test_helpers/deep.py", "node_modules/test_dep.py", "skip.py"]:
         path = tmp_path / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("def entry():\n    return 1\n", encoding="utf-8")
-    patterns = ([] if include_tests else DEFAULT_EXCLUDE_PATTERNS) + ["skip.py"]
 
+    extractor = CodeExtractor(
+        tmp_path, exclude_patterns=["skip.py"], default_excludes=not include_tests
+    )
     with caplog.at_level("INFO", logger="codedupes.extractor"):
-        CodeExtractor(tmp_path, exclude_patterns=patterns).extract_all()
+        extractor.extract_all()
 
     if include_tests:
         assert "matching default test exclusions" not in caplog.text
+        # Nothing is skipped by a default shape when defaults are disabled, so
+        # nothing needs the reference-only path either.
+        assert extractor.reference_only_files == []
     else:
-        assert "Skipped 1 files and 1 directories matching default test exclusions" in caplog.text
+        assert (
+            "Skipped 1 files and 1 directories matching default test exclusions; "
+            "their Python files still count as references for unused-code analysis."
+        ) in caplog.text
+        # Both default-excluded shapes feed the reference-only list; the
+        # artifact directory and the user's own "skip.py" exclusion do not.
+        names = {path.name for path in extractor.reference_only_files}
+        assert names == {"test_one.py", "deep.py"}
 
 
 def test_extract_from_file_respects_exclude_patterns(tmp_path: Path) -> None:
@@ -386,10 +399,10 @@ def test_exclude_root_relative_paths(tmp_path: Path, pattern: str) -> None:
     assert [unit.file_path.relative_to(tmp_path).as_posix() for unit in units] == [paths[1]]
 
 
-def test_explicit_empty_excludes_include_tests(tmp_path: Path) -> None:
+def test_no_default_excludes_includes_tests(tmp_path: Path) -> None:
     path = tmp_path / "test_entry.py"
     path.write_text("def entry():\n    return 1\n", encoding="utf-8")
-    assert len(CodeExtractor(tmp_path, exclude_patterns=[]).extract_all()) == 1
+    assert len(CodeExtractor(tmp_path, default_excludes=False).extract_all()) == 1
 
 
 @pytest.mark.parametrize("cpp_path", ["examples/foreign.cpp", "test_foreign.cpp"])
@@ -398,9 +411,8 @@ def test_header_detection_ignores_excluded_cpp(tmp_path: Path, cpp_path: str) ->
     foreign = tmp_path / cpp_path
     foreign.parent.mkdir(parents=True, exist_ok=True)
     foreign.write_text("", encoding="utf-8")
-    from codedupes.extractor import DEFAULT_EXCLUDE_PATTERNS
 
-    extractor = CodeExtractor(tmp_path, exclude_patterns=[*DEFAULT_EXCLUDE_PATTERNS, "examples"])
+    extractor = CodeExtractor(tmp_path, exclude_patterns=["examples"])
     assert extractor._allow_c_headers()
 
 
@@ -567,6 +579,8 @@ def test_python_crlf_source_stays_byte_exact(tmp_path: Path) -> None:
 
 
 def test_python_bom_file_extracts_with_on_disk_byte_offsets(tmp_path: Path) -> None:
+    # The lexer skips the BOM, so the first unit starts at byte 3 and the byte range
+    # still slices the file as stored.
     file_path = tmp_path / "bom_sample.py"
     body = 'def greet(name):\n    message = "héllo " + name\n    return message\n'
     file_path.write_bytes(codecs.BOM_UTF8 + body.encode("utf-8"))
@@ -641,3 +655,173 @@ def test_extract_all_order_is_independent_of_walk_order(tmp_path: Path, monkeypa
     reverse = extracted(list(reversed(names)))
 
     assert forward == reverse == ["alpha.alpha", "beta.beta", "gamma.gamma"]
+
+
+requires_git = pytest.mark.skipif(shutil.which("git") is None, reason="git is not installed")
+
+
+def _write_source_tree(root: Path, relative_paths: list[str]) -> None:
+    """Write one three-statement function per path, named after the file stem."""
+    for relative in relative_paths:
+        path = root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"def {path.stem}_fn():\n    a = 1\n    b = 2\n    return a + b\n")
+
+
+def _git_work_tree(tmp_path: Path) -> Path:
+    """Create a repository whose root and nested ``.gitignore`` files ignore three paths."""
+    root = tmp_path / "repo"
+    root.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+    (root / ".gitignore").write_text("ignored_dir/\nignored_module.py\n")
+    (root / "sub").mkdir()
+    (root / "sub" / ".gitignore").write_text("local.py\n")
+    _write_source_tree(
+        root,
+        ["kept.py", "ignored_module.py", "ignored_dir/inner.py", "sub/local.py", "sub/kept2.py"],
+    )
+    return root
+
+
+@requires_git
+def test_extract_all_skips_gitignored_paths_and_logs_a_hint(tmp_path: Path, caplog) -> None:
+    root = _git_work_tree(tmp_path)
+
+    with caplog.at_level("INFO", logger="codedupes.extractor"):
+        units = CodeExtractor(root, include_private=True).extract_all()
+    assert sorted(unit.name for unit in units) == ["kept2_fn", "kept_fn"]
+    assert (
+        "Skipped 2 files and 1 directories ignored by git; use --no-gitignore to include them."
+    ) in caplog.text
+    assert "default test exclusions" not in caplog.text
+
+    everything = CodeExtractor(root, include_private=True, respect_gitignore=False).extract_all()
+    assert sorted(unit.name for unit in everything) == [
+        "ignored_module_fn",
+        "inner_fn",
+        "kept2_fn",
+        "kept_fn",
+        "local_fn",
+    ]
+
+
+@requires_git
+def test_gitignored_scan_root_and_named_files_are_analyzed(tmp_path: Path) -> None:
+    """Pointing at an ignored directory or file is an explicit request for it."""
+    root = _git_work_tree(tmp_path)
+
+    inside = CodeExtractor(root / "ignored_dir", include_private=True).extract_all()
+    assert [unit.name for unit in inside] == ["inner_fn"]
+
+    extractor = CodeExtractor(root, include_private=True)
+    named = list(extractor.extract_from_file(root / "sub" / "local.py"))
+    assert [unit.name for unit in named] == ["local_fn"]
+
+
+@requires_git
+def test_gitignore_applies_to_ignored_files_beneath_subdirectory_target(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+    (root / ".gitignore").write_text("pkg/ignored.py\n", encoding="utf-8")
+    package = root / "pkg"
+    package.mkdir()
+    (package / "ignored.py").write_text("def should_skip():\n    return 1\n", encoding="utf-8")
+
+    extractor = CodeExtractor(package)
+
+    assert extractor.extract_all() == []
+
+
+@requires_git
+def test_gitignore_prunes_the_c_header_policy_scan_too(tmp_path: Path) -> None:
+    """C++ git ignores must not flip ``.h`` handling for files the walk never visits."""
+    root = tmp_path / "repo"
+    root.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+    (root / ".gitignore").write_text("vendor/\n")
+    (root / "vendor").mkdir()
+    (root / "vendor" / "addon.cpp").write_text("int addon() {\n    return 2;\n}\n")
+    (root / "main.c").write_text("int main(void) {\n    return 0;\n}\n")
+    (root / "util.h").write_text("static int helper(int v) {\n    return v + 1;\n}\n")
+
+    extractor = CodeExtractor(root, include_private=True)
+    assert sorted(unit.qualified_name for unit in extractor.extract_all()) == [
+        "main.main",
+        "util.helper",
+    ]
+    assert extractor.diagnostics == []
+
+    ignoring_nothing = CodeExtractor(root, include_private=True, respect_gitignore=False)
+    assert [unit.qualified_name for unit in ignoring_nothing.extract_all()] == ["main.main"]
+    assert [diagnostic.code for diagnostic in ignoring_nothing.diagnostics] == ["c-header-policy"]
+
+
+def test_gitignore_files_outside_a_work_tree_are_plain_files(tmp_path: Path) -> None:
+    (tmp_path / ".gitignore").write_text("ignored_module.py\n")
+    _write_source_tree(tmp_path, ["kept.py", "ignored_module.py"])
+
+    units = CodeExtractor(tmp_path, include_private=True).extract_all()
+    assert sorted(unit.name for unit in units) == ["ignored_module_fn", "kept_fn"]
+
+
+@requires_git
+def test_reference_only_files_are_the_default_test_exclusions(tmp_path: Path) -> None:
+    """Files skipped only by a default test shape still surface for reference parsing."""
+    root = tmp_path / "repo"
+    root.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+    (root / ".gitignore").write_text("tests/generated/\n")
+    for relative in [
+        "tests/test_impl.py",
+        "tests/conftest.py",
+        "tests/generated/test_gen.py",
+        "pkg/legacy_test.py",
+        "pkg/keeper.py",
+        "node_modules/test_dep.py",
+    ]:
+        path = root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("def entry():\n    return 1\n")
+
+    def reference_only_names(
+        exclude_patterns: list[str] | None = None, *, default_excludes: bool = True
+    ) -> set[str]:
+        extractor = CodeExtractor(
+            root,
+            exclude_patterns=exclude_patterns,
+            default_excludes=default_excludes,
+            include_private=True,
+        )
+        extractor.extract_all()
+        return {file.relative_to(root).as_posix() for file in extractor.reference_only_files}
+
+    # Defaults only: both default-excluded shapes feed the reference-only list;
+    # the gitignored file and the artifact directory do not.
+    default_names = {
+        "tests/test_impl.py",
+        "tests/conftest.py",
+        "pkg/legacy_test.py",
+    }
+    assert reference_only_names() == default_names
+
+    # A user exclusion for "tests/" is a hard exclusion: the whole directory
+    # drops out of both duplicate detection and unused-code references. The
+    # unrelated default-shape match under "pkg" is unaffected and stays
+    # reference-transparent.
+    assert reference_only_names(["**/tests/**"]) == {"pkg/legacy_test.py"}
+
+    # Disabling defaults makes the same user exclusion still a hard exclusion.
+    assert reference_only_names(["**/tests/**"], default_excludes=False) == set()
+
+    # A differently shaped user pattern for the same directory is just as hard
+    # an exclusion.
+    assert reference_only_names(["tests/"]) == {"pkg/legacy_test.py"}
+
+    # Disabling default test exclusions alone extracts test files directly, so
+    # nothing needs the reference-only path.
+    assert reference_only_names(default_excludes=False) == set()
+
+    # A user pattern for an unrelated path leaves every default-shape file
+    # reference-only.
+    assert reference_only_names(["missing"]) == default_names

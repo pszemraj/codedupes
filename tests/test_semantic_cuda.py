@@ -45,6 +45,7 @@ from codedupes.constants import DEFAULT_MODEL
 from codedupes.semantic import CPU_FALLBACK_MAX_BATCH_SIZE
 from codedupes.semantic_profiles import resolve_model_profile
 from tests.conftest import extract_arithmetic_units
+from tests.semantic_helpers import fail_if_called
 
 torch = pytest.importorskip("torch")
 
@@ -381,10 +382,7 @@ def test_warm_cache_serves_explicit_cuda_without_model_load(tmp_path: Path, monk
     )
     semantic.clear_model_cache()
 
-    def _fail_if_called(*_args, **_kwargs):
-        raise AssertionError("the model must not load when every embedding is cached")
-
-    monkeypatch.setattr(semantic, "get_model", _fail_if_called)
+    monkeypatch.setattr(semantic, "get_model", fail_if_called)
 
     # The explicit-device availability check still runs for real and passes on
     # this hardware.

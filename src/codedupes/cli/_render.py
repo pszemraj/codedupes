@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import difflib
 import os
-from collections import Counter
+import textwrap
 from collections.abc import Iterable
 from typing import cast
 
@@ -15,16 +16,18 @@ from rich.table import Table
 from rich.text import Text
 
 from codedupes.models import (
+    AnalysisChecks,
     CodeUnit,
     DuplicatePair,
     ExtractionDiagnostic,
     HybridDuplicate,
+    RunRecord,
 )
 from codedupes.report.selection import (
+    ExactFamily,
     FailOnPolicy,
     FileSearchResult,
     ReportSelection,
-    actionable_pairs,
     hidden_only_failure,
 )
 from codedupes.semantic import EmbeddingRunStats
@@ -33,10 +36,11 @@ from . import _output
 from ._output import DEFAULT_TABLE_ROWS
 
 _RAW_DUPLICATE_TITLES = {
-    "traditional": "Traditional Duplicates (Structural/Token/Jaccard)",
+    "traditional": "Near Duplicates (Jaccard)",
     "semantic": "Semantic Duplicates (Embedding)",
-    "none": "Duplicates",
 }
+# Summary rows for ``run.units.by_type``, in display order rather than its sorted key order.
+_UNIT_TYPE_LABELS = (("function", "Functions"), ("method", "Methods"), ("class", "Classes"))
 
 
 def _settings_panel(title: str, rows: Iterable[tuple[str, object]]) -> Panel:
@@ -86,8 +90,8 @@ def _format_embedding_stats(stats: EmbeddingRunStats) -> str:
     return f"{', '.join(parts)} ({', '.join(context)})"
 
 
-def format_path(path: os.PathLike[str] | str) -> str:
-    """Format a compact, markup-safe path for table rendering.
+def _display_path(path: os.PathLike[str] | str) -> str:
+    """Return a compact display path, unescaped.
 
     Bare file names collide across directories, which renders a cross-directory
     duplicate pair as two identical cells. Prefer the shorter of the relative
@@ -95,17 +99,24 @@ def format_path(path: os.PathLike[str] | str) -> str:
     filename within narrow tables.
 
     :param path: Path to format.
-    :return: Markup-escaped path.
+    :return: Compact path, not markup-escaped.
     """
     absolute = os.fspath(path)
     try:
         relative = os.path.relpath(path)
     except ValueError:
         # Windows: no relative path exists across drives.
-        location = absolute
-    else:
-        location = min(relative, absolute, key=len)
-    return escape(location)
+        return absolute
+    return min(relative, absolute, key=len)
+
+
+def format_path(path: os.PathLike[str] | str) -> str:
+    """Format a compact, markup-safe path for table rendering.
+
+    :param path: Path to format.
+    :return: Markup-escaped path.
+    """
+    return escape(_display_path(path))
 
 
 def format_location(unit: CodeUnit) -> str:
@@ -117,17 +128,14 @@ def format_location(unit: CodeUnit) -> str:
     return f"{format_path(unit.file_path)}:{unit.lineno}"
 
 
-def truncate_source(source: str, max_lines: int = 5) -> str:
-    """Truncate source code for compact display.
+def _count(count: int, noun: str) -> str:
+    """Pluralize a simple count/noun pair for terminal output.
 
-    :param source: Source string to truncate.
-    :param max_lines: Maximum lines to keep.
-    :return: Truncated source with optional overflow note.
+    :param count: Item count.
+    :param noun: Singular noun, regular plural (append ``s``).
+    :return: ``"N noun"`` for one item, ``"N nouns"`` otherwise.
     """
-    lines = source.strip().split("\n")
-    if len(lines) <= max_lines:
-        return source.strip()
-    return "\n".join(lines[:max_lines]) + f"\n... ({len(lines) - max_lines} more lines)"
+    return f"{count} {noun}" if count == 1 else f"{count} {noun}s"
 
 
 def _print_diagnostics(title: str, diagnostics: list[ExtractionDiagnostic]) -> None:
@@ -151,7 +159,63 @@ def _print_diagnostics(title: str, diagnostics: list[ExtractionDiagnostic]) -> N
         )
     remaining = len(diagnostics) - 10
     if remaining > 0:
-        _output.console.print(f"  [dim]... and {remaining} more diagnostics[/dim]")
+        _output.console.print(f"  [dim]... and {_count(remaining, 'more diagnostic')}[/dim]")
+
+
+def _family_noun(count: int) -> str:
+    """Return ``family`` or ``families`` for a count.
+
+    :param count: Number of families.
+    :return: Singular or plural noun.
+    """
+    return "family" if count == 1 else "families"
+
+
+def print_run(run: RunRecord, checks: AnalysisChecks) -> None:
+    """Print the resolved run record as a compact settings panel.
+
+    Prints before the summary so a reader learns what was configured and what
+    completed before seeing what it found.
+
+    :param run: Resolved run record for this analysis.
+    :param checks: Derived per-check status for this analysis.
+    :return: ``None``.
+    """
+    rows: list[tuple[str, object]] = [
+        ("codedupes", run.tool_version),
+        ("Root", _display_path(run.root)),
+        ("Target", _display_path(run.target)),
+        ("Scope", run.analysis_mode),
+        (
+            "Checks",
+            ", ".join(
+                f"{name}={record.status}"
+                for name, record in (
+                    ("extraction", checks.extraction),
+                    ("traditional", checks.traditional),
+                    ("semantic", checks.semantic),
+                    ("unused", checks.unused),
+                )
+            ),
+        ),
+    ]
+    if run.traditional is not None:
+        traditional_note = f"jaccard>={run.traditional.jaccard_threshold:.2f}"
+        if run.traditional.tiny_filter:
+            traditional_note += f", tiny filter <{run.traditional.tiny_cutoff} statements"
+        rows.append(("Traditional", traditional_note))
+    if run.semantic is not None:
+        device = run.semantic.execution_device or run.semantic.device
+        rows.append(
+            ("Semantic", f"{run.semantic.model} ({run.semantic.threshold_profile}, {device})")
+        )
+    rows.append(
+        (
+            "Units",
+            f"{run.units.extracted} extracted, {run.units.semantic_eligible} semantic-eligible",
+        )
+    )
+    _output.console.print(_settings_panel("Run", rows))
 
 
 def print_summary(
@@ -160,6 +224,7 @@ def print_summary(
     fail_on: FailOnPolicy,
     exit_code: int,
     strict_unused: bool = False,
+    fail_on_incomplete: bool = False,
 ) -> None:
     """Print analysis summary.
 
@@ -167,100 +232,121 @@ def print_summary(
     :param fail_on: Finding policy selected for this run.
     :param exit_code: Exit code computed from the selected policy.
     :param strict_unused: Whether unused findings count under the failure policy.
+    :param fail_on_incomplete: Whether an incomplete analysis also fails the run.
     :return: ``None``.
     """
     result = selection.result
     withheld = len(selection.omitted_review)
-    truncated = len(selection.truncated)
+    truncated = selection.truncated_findings
     # Name the cut tiers: review pairs rank last, so under --include-review a
     # cap can drop every one of them while the withheld row stays absent.
     cut_tiers = ", ".join(
-        f"{count} {tier}" for tier, count in selection.truncated_by_tier.items() if count
+        f"{count} exact {_family_noun(count)}" if tier == "exact" else f"{count} {tier}"
+        for tier, count in selection.truncated_by_tier.items()
+        if count
     )
     truncation_note = (
         f"{truncated} ({cut_tiers + '; ' if cut_tiers else ''}use --max-duplicates all)"
     )
+    truncated_unused = len(selection.truncated_unused)
+    unused_note = f"{truncated_unused} (use --max-unused all)"
+    families = len(selection.all_exact_families)
+    family_note = f"{families} {_family_noun(families)} ({selection.exact_family_members} units)"
     _output.console.print()
 
     summary = Table(title="Analysis Summary", show_header=False, box=None)
     summary.add_column(style="bold cyan", overflow="fold")
     summary.add_column(style="white", overflow="fold")
 
-    summary.add_row("Total code units", str(len(result.units)))
-    language_counts = Counter(unit.language for unit in result.units)
-    for language, count in sorted(language_counts.items()):
+    summary.add_row("Analysis status", result.analysis_status)
+    if result.focus is not None:
+        summary.add_row("Focus", escape(", ".join(str(path) for path in result.focus.paths)))
+        summary.add_row("Out-of-focus duplicates", str(result.focus.out_of_focus_duplicates))
+        summary.add_row("Out-of-focus unused", str(result.focus.out_of_focus_unused))
+    run = result.run
+    summary.add_row("Total code units", str(run.units.extracted))
+    for language, count in run.units.by_language.items():
         summary.add_row(f"  {language}", str(count))
-    summary.add_row(
-        "  Functions",
-        str(sum(1 for unit in result.units if unit.unit_type.name.lower() == "function")),
-    )
-    summary.add_row(
-        "  Methods",
-        str(sum(1 for unit in result.units if unit.unit_type.name.lower() == "method")),
-    )
-    summary.add_row(
-        "  Classes",
-        str(sum(1 for unit in result.units if unit.unit_type.name.lower() == "class")),
-    )
+    for unit_type, label in _UNIT_TYPE_LABELS:
+        summary.add_row(f"  {label}", str(run.units.by_type.get(unit_type, 0)))
     summary.add_row("", "")
 
     if selection.mode == "combined":
-        summary.add_row("Hybrid duplicates", str(len(result.hybrid_duplicates)))
+        summary.add_row("Hybrid duplicates", str(selection.total_findings))
         for tier, count in selection.duplicates_by_tier.items():
-            summary.add_row(f"  {tier}", str(count))
-        actionable = len(actionable_pairs(result.hybrid_duplicates, combined=True))
-        reported_actionable = len(actionable_pairs(selection.duplicates, combined=True))
-        summary.add_row("Actionable duplicates", f"{actionable} ({reported_actionable} reported)")
-        summary.add_row("Reported duplicates", str(len(selection.duplicates)))
+            summary.add_row(f"  {tier}", family_note if tier == "exact" and count else str(count))
+        summary.add_row(
+            "Actionable duplicates",
+            f"{selection.actionable_findings} ({selection.reported_actionable_findings} reported)",
+        )
+        summary.add_row("Reported duplicates", str(selection.reported_findings))
         if withheld:
             summary.add_row("Withheld review candidates", f"{withheld} (use --include-review)")
         if truncated:
             summary.add_row("Truncated duplicates", truncation_note)
-        summary.add_row("Likely dead code", str(len(result.potentially_unused)))
-        summary.add_row("", "")
-        summary.add_row("Raw traditional duplicates", str(len(result.traditional_duplicates)))
-        summary.add_row("Raw semantic duplicates", str(len(result.semantic_duplicates)))
     else:
         if selection.mode == "traditional":
             summary.add_row("Traditional duplicates", str(len(result.traditional_duplicates)))
         elif selection.mode == "semantic":
             summary.add_row("Semantic duplicates", str(len(result.semantic_duplicates)))
-        else:
-            summary.add_row(
-                "Duplicates",
-                str(len(result.traditional_duplicates) + len(result.semantic_duplicates)),
-            )
+        if families:
+            summary.add_row("Exact duplicate families", family_note)
         if truncated:
-            summary.add_row("Reported duplicates", str(len(selection.duplicates)))
+            summary.add_row("Reported duplicates", str(selection.reported_findings))
             summary.add_row("Truncated duplicates", truncation_note)
-        summary.add_row("Potentially unused", str(len(result.potentially_unused)))
+
+    summary.add_row("Potentially unused", str(len(result.potentially_unused)))
+    if truncated_unused:
+        summary.add_row("Truncated unused", unused_note)
+    summary.add_row("Unused policy", "strict" if strict_unused else "default")
+
+    if selection.mode == "combined":
+        summary.add_row("", "")
+        summary.add_row("Raw traditional duplicates", str(len(result.traditional_duplicates)))
+        summary.add_row("Raw semantic duplicates", str(len(result.semantic_duplicates)))
 
     if result.extraction_diagnostics:
         summary.add_row("Extraction diagnostics", str(len(result.extraction_diagnostics)))
     if result.semantic_diagnostics:
         summary.add_row("Semantic diagnostics", str(len(result.semantic_diagnostics)))
+    if result.unused_diagnostics:
+        summary.add_row("Unused diagnostics", str(len(result.unused_diagnostics)))
     if result.unused_excluded_units:
         summary.add_row(
             "Unused-analysis exclusions",
-            f"{result.unused_excluded_units} non-Python units",
+            _count(result.unused_excluded_units, "non-Python unit"),
+        )
+    if result.suppressed_duplicates or result.suppressed_unused:
+        summary.add_row(
+            "Suppressed findings",
+            f"{result.suppressed_duplicates} duplicate edges, "
+            f"{result.suppressed_unused} unused (codedupes: ignore)",
         )
     if result.embedding_stats is not None:
         summary.add_row("Embeddings", _format_embedding_stats(result.embedding_stats))
     summary.add_row("Failure policy", fail_on)
     status = f"{'fail' if exit_code else 'pass'} (exit {exit_code})"
-    if exit_code and hidden_only_failure(selection, policy=fail_on, strict_unused=strict_unused):
+    if exit_code:
         # Only withheld review pairs can fail without an emitted finding failing
         # too: the primary list ranks actionable tiers first, so the cap never
         # hides every failing pair.
-        status = (
-            f"fail (exit {exit_code}; only withheld semantic_review candidates fail "
-            f"--fail-on {fail_on}, use --include-review to list them in the primary report)"
-        )
+        notes = []
+        if hidden_only_failure(selection, policy=fail_on, strict_unused=strict_unused):
+            notes.append(
+                "only withheld semantic_review candidates fail "
+                f"--fail-on {fail_on}, use --include-review to list them in the primary report"
+            )
+        if fail_on_incomplete and result.analysis_status != "complete":
+            reasons = ", ".join(result.checks.incomplete_reasons)
+            notes.append(f"analysis {result.analysis_status}: {reasons} fails --fail-on-incomplete")
+        if notes:
+            status = f"fail (exit {exit_code}; {'; '.join(notes)})"
     summary.add_row("Finding status", status)
 
     _output.console.print(summary)
     _print_diagnostics("Extraction diagnostics", result.extraction_diagnostics)
     _print_diagnostics("Semantic diagnostics", result.semantic_diagnostics)
+    _print_diagnostics("Unused diagnostics", result.unused_diagnostics)
     _output.console.print()
 
 
@@ -276,7 +362,7 @@ def _build_duplicates_table(*, hybrid: bool = False, compact: bool = False) -> T
         table.add_column("Evidence", width=26, min_width=18, overflow="fold")
         table.add_column("Code units", style="cyan", overflow="fold")
     elif hybrid:
-        table.add_column("Confidence", style="green", width=10, min_width=10, no_wrap=True)
+        table.add_column("Score", style="green", width=10, min_width=10, no_wrap=True)
         table.add_column("Tier", style="magenta", overflow="fold")
         table.add_column("Semantic", style="green", width=8, min_width=8, no_wrap=True)
         table.add_column("Jaccard", style="green", width=7, min_width=7, no_wrap=True)
@@ -308,24 +394,74 @@ def _syntax_lexer(unit: CodeUnit) -> str:
     }.get(dialect, "text")
 
 
-def _print_source_panels(unit_a: CodeUnit, unit_b: CodeUnit) -> None:
-    """Print syntax-highlighted source snippets for two units.
+def _print_source_panels(*units: CodeUnit, source_lines: int | None) -> None:
+    """Print a syntax-highlighted source snippet per unit, bounded by a line budget.
 
-    :param unit_a: First code unit.
-    :param unit_b: Second code unit.
+    :param units: Code units to render, in order.
+    :param source_lines: Maximum lines to keep per unit, or ``None`` for no bound.
     :return: ``None``.
     """
-    _output.console.print(
-        Panel(
-            Syntax(truncate_source(unit_a.source), _syntax_lexer(unit_a), theme="monokai"),
-            title=f"[cyan]{escape(unit_a.qualified_name)}[/cyan]",
-            border_style="dim",
+    for unit in units:
+        lines, omitted = unit.source_lines(source_lines)
+        text = "\n".join(lines)
+        if omitted:
+            text += f"\n... ({_count(omitted, 'more line')})"
+        _output.console.print(
+            Panel(
+                Syntax(text, _syntax_lexer(unit), theme="monokai"),
+                title=f"[cyan]{escape(unit.qualified_name)}[/cyan]",
+                border_style="dim",
+            )
+        )
+
+
+def _diff_lines(unit: CodeUnit) -> list[str]:
+    """Split a unit's source into diff lines, dedenting its body only.
+
+    A method's first line already carries the signature at its own
+    indentation, but ``textwrap.dedent`` on the remaining lines keeps a
+    function-vs-method pair from diffing on indentation alone.
+
+    :param unit: Unit whose source is being diffed.
+    :return: Source lines, with every line after the first dedented as a block.
+    """
+    lines = unit.source.split("\n")
+    if len(lines) <= 1:
+        return lines
+    return [lines[0], *textwrap.dedent("\n".join(lines[1:])).split("\n")]
+
+
+def _print_diff_panel(unit_a: CodeUnit, unit_b: CodeUnit, *, source_lines: int | None) -> None:
+    """Print a unified diff panel between two units' source, when they differ.
+
+    :param unit_a: First unit; the diff's "from" side.
+    :param unit_b: Second unit; the diff's "to" side.
+    :param source_lines: Maximum diff lines to keep, or ``None`` for no bound.
+    :return: ``None``.
+    """
+    diff = list(
+        difflib.unified_diff(
+            _diff_lines(unit_a),
+            _diff_lines(unit_b),
+            fromfile=f"{_display_path(unit_a.file_path)}:{unit_a.lineno} {unit_a.qualified_name}",
+            tofile=f"{_display_path(unit_b.file_path)}:{unit_b.lineno} {unit_b.qualified_name}",
+            n=2,
+            lineterm="",
         )
     )
+    if not diff:
+        return
+    omitted = 0
+    if source_lines is not None and len(diff) > source_lines:
+        omitted = len(diff) - source_lines
+        diff = diff[:source_lines]
+    text = "\n".join(diff)
+    if omitted:
+        text += f"\n... ({_count(omitted, 'more diff line')})"
     _output.console.print(
         Panel(
-            Syntax(truncate_source(unit_b.source), _syntax_lexer(unit_b), theme="monokai"),
-            title=f"[cyan]{escape(unit_b.qualified_name)}[/cyan]",
+            Syntax(text, "diff", theme="monokai"),
+            title=f"[cyan]{escape(unit_a.qualified_name)} vs {escape(unit_b.qualified_name)}[/cyan]",
             border_style="dim",
         )
     )
@@ -336,6 +472,8 @@ def _print_duplicate_table(
     *,
     title: str,
     show_source: bool,
+    source_lines: int | None = None,
+    show_diff: bool = False,
     max_items: int | None,
     hybrid: bool,
     withheld: int = 0,
@@ -346,6 +484,8 @@ def _print_duplicate_table(
     :param duplicates: Duplicate pairs to display.
     :param title: Section title.
     :param show_source: Whether to render source snippets.
+    :param source_lines: Maximum source/diff lines per unit when ``show_source``/``show_diff`` is set.
+    :param show_diff: Whether to render a unified diff per pair.
     :param max_items: Optional row limit for the raw diagnostic tables; the primary list is already bounded by the report cap and passes ``None``.
     :param hybrid: Whether the payload is hybrid duplicates.
     :param withheld: Review pairs the report policy withheld from this table.
@@ -360,7 +500,7 @@ def _print_duplicate_table(
             )
         return
 
-    counts = f"{len(duplicates)} pairs"
+    counts = _count(len(duplicates), "pair")
     if withheld:
         counts += f", {withheld} review withheld"
     if truncated:
@@ -370,6 +510,7 @@ def _print_duplicate_table(
     table = _build_duplicates_table(hybrid=hybrid, compact=compact)
 
     visible = duplicates if max_items is None else duplicates[:max_items]
+    pending_rows = False
     for duplicate in visible:
         if hybrid:
             pair = cast(HybridDuplicate, duplicate)
@@ -380,12 +521,12 @@ def _print_duplicate_table(
                 f"{pair.jaccard_similarity:.2%}" if pair.jaccard_similarity is not None else "-"
             )
             cells = (
-                f"{pair.confidence:.2%}",
+                f"{pair.score:.2%}",
                 pair.tier,
                 semantic,
                 jaccard,
-                f"{pair.unit_a.name}\n[dim]{format_location(pair.unit_a)}[/dim]",
-                f"{pair.unit_b.name}\n[dim]{format_location(pair.unit_b)}[/dim]",
+                f"{escape(pair.unit_a.qualified_name)}\n[dim]{format_location(pair.unit_a)}[/dim]",
+                f"{escape(pair.unit_b.qualified_name)}\n[dim]{format_location(pair.unit_b)}[/dim]",
             )
             unit_a = pair.unit_a
             unit_b = pair.unit_b
@@ -393,8 +534,8 @@ def _print_duplicate_table(
             pair = cast(DuplicatePair, duplicate)
             cells = (
                 f"{pair.similarity:.2%}",
-                f"{pair.unit_a.name}\n[dim]{format_location(pair.unit_a)}[/dim]",
-                f"{pair.unit_b.name}\n[dim]{format_location(pair.unit_b)}[/dim]",
+                f"{escape(pair.unit_a.qualified_name)}\n[dim]{format_location(pair.unit_a)}[/dim]",
+                f"{escape(pair.unit_b.qualified_name)}\n[dim]{format_location(pair.unit_b)}[/dim]",
                 pair.method,
             )
             unit_a = pair.unit_a
@@ -402,25 +543,29 @@ def _print_duplicate_table(
 
         if compact:
             evidence = (
-                f"Confidence: {cells[0]}\nTier: {cells[1]}\n"
-                f"Semantic: {cells[2]}\nJaccard: {cells[3]}"
+                f"Score: {cells[0]}\nTier: {cells[1]}\nSemantic: {cells[2]}\nJaccard: {cells[3]}"
                 if hybrid
                 else f"Similarity: {cells[0]}\nMethod: {cells[3]}"
             )
             table.add_row(
                 evidence,
-                f"A: {escape(unit_a.name)}\n[dim]{format_location(unit_a)}[/dim]\n"
-                f"B: {escape(unit_b.name)}\n[dim]{format_location(unit_b)}[/dim]",
+                f"A: {escape(unit_a.qualified_name)}\n[dim]{format_location(unit_a)}[/dim]\n"
+                f"B: {escape(unit_b.qualified_name)}\n[dim]{format_location(unit_b)}[/dim]",
             )
         else:
             table.add_row(*cells)
+        pending_rows = True
 
-        if show_source:
+        if show_source or show_diff:
             _output.console.print(table)
-            _print_source_panels(unit_a, unit_b)
+            if show_source:
+                _print_source_panels(unit_a, unit_b, source_lines=source_lines)
+            if show_diff:
+                _print_diff_panel(unit_a, unit_b, source_lines=source_lines)
             table = _build_duplicates_table(hybrid=hybrid, compact=compact)
+            pending_rows = False
 
-    if not show_source:
+    if pending_rows:
         _output.console.print(table)
 
     if max_items is not None and len(duplicates) > max_items:
@@ -430,10 +575,104 @@ def _print_duplicate_table(
         )
 
 
+def _build_families_table(*, compact: bool) -> Table:
+    """Build the exact-family table columns for terminal output.
+
+    :param compact: Whether to stack the counts for a narrow terminal.
+    :return: Configured rich ``Table`` instance.
+    """
+    table = Table(header_style="bold", box=box.ROUNDED, border_style="dim", show_lines=True)
+    if compact:
+        table.add_column("Family", width=26, min_width=18, overflow="fold")
+        table.add_column("Code units", style="cyan", overflow="fold")
+    else:
+        table.add_column("Members", style="green", width=7, min_width=7, justify="right")
+        table.add_column("Lines", style="green", width=5, min_width=5, justify="right")
+        table.add_column("Method", style="magenta", width=15, min_width=15, no_wrap=True)
+        table.add_column("First member", style="cyan", overflow="fold")
+        table.add_column("Others", style="cyan", overflow="fold")
+    return table
+
+
+def print_exact_families(
+    families: list[ExactFamily],
+    *,
+    truncated: int = 0,
+    show_source: bool = False,
+    source_lines: int | None = None,
+    show_diff: bool = False,
+) -> None:
+    """Print every selected exact family; the report cap is the only bound.
+
+    Each member is diffed against the first when ``--show-diff`` is set;
+    source-identical members have no diff to print.
+
+    :param families: Families to print, in report order.
+    :param truncated: Families the ``--max-duplicates`` cap cut from the report.
+    :param show_source: Whether to render a source snippet per member.
+    :param source_lines: Maximum source/diff lines per unit when ``show_source``/``show_diff`` is set.
+    :param show_diff: Whether to render a unified diff per non-first member.
+    :return: ``None``.
+    """
+    if not families:
+        return
+
+    counts = f"{len(families)} {_family_noun(len(families))}"
+    if truncated:
+        counts += f", {truncated} truncated"
+    _output.console.print(f"\n[bold yellow]Exact Duplicate Families[/bold yellow] ({counts})")
+    _output.console.print(
+        "[dim]Each row is one set of mutually identical units; token_hash members are "
+        "token-for-token copies, while structural_hash members share normalized "
+        "structure.[/dim]"
+    )
+    compact = _output.console.width < 120
+    table = _build_families_table(compact=compact)
+
+    pending_rows = False
+    for family in families:
+        first, *others = family.members
+        shown = others[:3]
+        overflow = len(others) - len(shown)
+        other_cells = [format_location(unit) for unit in shown]
+        if overflow:
+            other_cells.append(f"+{overflow} more")
+        if compact:
+            table.add_row(
+                f"Members: {len(family.members)}\nLines: {family.lines}\nMethod: {family.method}",
+                f"{escape(first.qualified_name)}\n[dim]{format_location(first)}[/dim]\n"
+                + "\n".join(f"[dim]{cell}[/dim]" for cell in other_cells),
+            )
+        else:
+            table.add_row(
+                str(len(family.members)),
+                str(family.lines),
+                family.method,
+                f"{escape(first.qualified_name)}\n[dim]{format_location(first)}[/dim]",
+                "\n".join(other_cells),
+            )
+        pending_rows = True
+
+        diff_members = others if show_diff else ()
+        if show_source or diff_members:
+            _output.console.print(table)
+            if show_source:
+                _print_source_panels(*family.members, source_lines=source_lines)
+            for other in diff_members:
+                _print_diff_panel(first, other, source_lines=source_lines)
+            table = _build_families_table(compact=compact)
+            pending_rows = False
+
+    if pending_rows:
+        _output.console.print(table)
+
+
 def print_duplicates(
     duplicates: list[DuplicatePair],
     title: str,
     show_source: bool = False,
+    source_lines: int | None = None,
+    show_diff: bool = False,
     max_items: int | None = DEFAULT_TABLE_ROWS,
     truncated: int = 0,
 ) -> None:
@@ -442,6 +681,8 @@ def print_duplicates(
     :param duplicates: Duplicate pairs to print.
     :param title: Section title.
     :param show_source: Whether to render source snippets.
+    :param source_lines: Maximum source/diff lines per unit when ``show_source``/``show_diff`` is set.
+    :param show_diff: Whether to render a unified diff per pair.
     :param max_items: Optional max rows.
     :param truncated: Pairs the ``--max-duplicates`` cap cut from the table.
     :return: ``None``.
@@ -450,6 +691,8 @@ def print_duplicates(
         duplicates,
         title=title,
         show_source=show_source,
+        source_lines=source_lines,
+        show_diff=show_diff,
         max_items=max_items,
         hybrid=False,
         truncated=truncated,
@@ -459,6 +702,8 @@ def print_duplicates(
 def print_hybrid_duplicates(
     duplicates: list[HybridDuplicate],
     show_source: bool = False,
+    source_lines: int | None = None,
+    show_diff: bool = False,
     withheld: int = 0,
     truncated: int = 0,
 ) -> None:
@@ -466,6 +711,8 @@ def print_hybrid_duplicates(
 
     :param duplicates: Hybrid duplicates to print.
     :param show_source: Whether to render source snippets.
+    :param source_lines: Maximum source/diff lines per unit when ``show_source``/``show_diff`` is set.
+    :param show_diff: Whether to render a unified diff per pair.
     :param withheld: Review pairs the report policy withheld from the table.
     :param truncated: Pairs the ``--max-duplicates`` cap cut from the table.
     :return: ``None``.
@@ -474,6 +721,8 @@ def print_hybrid_duplicates(
         duplicates,
         title="Hybrid Duplicates",
         show_source=show_source,
+        source_lines=source_lines,
+        show_diff=show_diff,
         max_items=None,
         hybrid=True,
         withheld=withheld,
@@ -483,75 +732,108 @@ def print_hybrid_duplicates(
 
 def print_unused(
     unused: list[CodeUnit],
-    max_items: int | None = DEFAULT_TABLE_ROWS,
-    title: str = "Potentially Unused",
+    *,
+    strict: bool,
+    show_source: bool = False,
+    source_lines: int | None = None,
+    truncated: int = 0,
 ) -> None:
-    """Print potentially unused code units.
+    """Print every selected unused unit, largest first; the report cap is the only bound.
 
-    :param unused: Units with no detected references.
-    :param max_items: Optional max rows.
-    :param title: Section title.
+    :param unused: Units with no detected references, in report order.
+    :param strict: Whether public functions and methods are also reported.
+    :param show_source: Whether to render a source snippet for each unused unit.
+    :param source_lines: Maximum source lines per snippet, or ``None`` for no bound.
+    :param truncated: Units the ``--max-unused`` cap cut from the report.
     :return: ``None``.
     """
     if not unused:
         return
 
-    _output.console.print(f"\n[bold yellow]{title}[/bold yellow] ({len(unused)} units)")
-    _output.console.print(
-        "[dim]These have no detected references and don't appear to be public API.[/dim]"
+    counts = _count(len(unused), "unit")
+    if truncated:
+        counts += f", {truncated} truncated"
+    _output.console.print(f"\n[bold yellow]Potentially Unused[/bold yellow] ({counts})")
+    blurb = (
+        "No detected references, including public functions and methods; largest first."
+        if strict
+        else "No detected references; public functions and methods are excluded "
+        "(use --strict-unused to include them); largest first."
     )
+    _output.console.print(f"[dim]{blurb}[/dim]")
 
     table = Table(header_style="bold", box=box.ROUNDED, border_style="dim", show_lines=True)
     table.add_column("Name", style="cyan", overflow="fold")
     table.add_column("Type", style="dim", width=8, min_width=8, no_wrap=True)
+    table.add_column("Lines", style="green", width=5, min_width=5, justify="right")
     table.add_column("Location", style="dim", overflow="fold")
 
-    visible = unused if max_items is None else unused[:max_items]
-    for unit in visible:
+    for unit in unused:
         table.add_row(
-            unit.name,
+            escape(unit.qualified_name),
             unit.unit_type.name.lower(),
+            str(unit.end_lineno - unit.lineno + 1),
             format_location(unit),
         )
 
     _output.console.print(table)
-
-    if max_items is not None and len(unused) > max_items:
-        _output.console.print(
-            f"[dim]... and {len(unused) - max_items} more (use --full-table to list all rows)[/dim]"
-        )
+    if show_source:
+        _print_source_panels(*unused, source_lines=source_lines)
 
 
 def print_findings(
     selection: ReportSelection,
     *,
     show_source: bool,
+    source_lines: int | None = None,
+    show_diff: bool = False,
     max_items: int | None,
+    strict_unused: bool,
 ) -> None:
     """Print every finding panel selected for one check report.
 
-    The primary duplicate list is already bounded by the report cap, so it
-    renders in full; ``max_items`` only abbreviates the unused table and the
-    raw ``--show-all`` lists.
+    The primary duplicate and unused lists are already bounded by the report
+    caps, so they render in full; ``max_items`` only abbreviates the raw
+    ``--show-all`` lists.
 
     :param selection: Findings selected for this report.
     :param show_source: Whether to render source snippets.
-    :param max_items: Optional row limit for the unused and raw diagnostic tables.
+    :param source_lines: Maximum source/diff lines per unit when ``show_source``/``show_diff`` is set.
+    :param show_diff: Whether to render a unified diff per pair.
+    :param max_items: Optional row limit for the raw diagnostic tables.
+    :param strict_unused: Whether public functions and methods are also reported.
     :return: ``None``.
     """
+    print_exact_families(
+        selection.exact_families,
+        truncated=len(selection.truncated_exact_families),
+        show_source=show_source,
+        source_lines=source_lines,
+        show_diff=show_diff,
+    )
     if selection.mode == "combined":
         print_hybrid_duplicates(
             cast(list[HybridDuplicate], selection.duplicates),
             show_source=show_source,
+            source_lines=source_lines,
+            show_diff=show_diff,
             withheld=len(selection.omitted_review),
             truncated=len(selection.truncated),
         )
-        print_unused(selection.potentially_unused, title="Likely Dead Code", max_items=max_items)
+        print_unused(
+            selection.potentially_unused,
+            strict=strict_unused,
+            show_source=show_source,
+            source_lines=source_lines,
+            truncated=len(selection.truncated_unused),
+        )
         if selection.traditional_duplicates is not None:
             print_duplicates(
                 selection.traditional_duplicates,
                 "Traditional Duplicates (Raw Structural/Token/Jaccard)",
                 show_source=show_source,
+                source_lines=source_lines,
+                show_diff=show_diff,
                 max_items=max_items,
             )
         if selection.semantic_duplicates is not None:
@@ -559,18 +841,29 @@ def print_findings(
                 selection.semantic_duplicates,
                 "Semantic Duplicates (Raw Embedding)",
                 show_source=show_source,
+                source_lines=source_lines,
+                show_diff=show_diff,
                 max_items=max_items,
             )
         return
 
-    print_duplicates(
-        cast(list[DuplicatePair], selection.duplicates),
-        _RAW_DUPLICATE_TITLES[selection.mode],
+    if selection.mode != "unused":
+        print_duplicates(
+            cast(list[DuplicatePair], selection.duplicates),
+            _RAW_DUPLICATE_TITLES[selection.mode],
+            show_source=show_source,
+            source_lines=source_lines,
+            show_diff=show_diff,
+            max_items=None,
+            truncated=len(selection.truncated),
+        )
+    print_unused(
+        selection.potentially_unused,
+        strict=strict_unused,
         show_source=show_source,
-        max_items=None,
-        truncated=len(selection.truncated),
+        source_lines=source_lines,
+        truncated=len(selection.truncated_unused),
     )
-    print_unused(selection.potentially_unused, max_items=max_items)
 
 
 def _ranked_table() -> Table:
@@ -595,7 +888,7 @@ def print_search_results(results: list[tuple[CodeUnit, float]]) -> None:
     table.add_column("Location", style="dim", overflow="fold")
 
     for idx, (unit, score) in enumerate(results, start=1):
-        table.add_row(str(idx), f"{score:.2%}", unit.name, format_location(unit))
+        table.add_row(str(idx), f"{score:.2%}", escape(unit.qualified_name), format_location(unit))
 
     _output.console.print(table)
 
@@ -622,7 +915,7 @@ def print_file_search_results(results: list[FileSearchResult]) -> None:
         ]
         remaining = result.matching_units - len(result.matches)
         if remaining:
-            evidence.append(f"+{remaining} more matching units")
+            evidence.append(f"+{_count(remaining, 'more matching unit')}")
         table.add_row(str(rank), f"{result.score:.2%}", location, "\n".join(evidence))
 
     _output.console.print(table)
