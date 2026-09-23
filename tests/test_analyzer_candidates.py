@@ -5,28 +5,23 @@ from __future__ import annotations
 from pathlib import Path
 from textwrap import dedent
 
-import numpy as np
 import pytest
 
 from codedupes import analyzer as analyzer_module
 from codedupes.analyzer import AnalyzerConfig, CodeAnalyzer
 from codedupes.models import CodeUnit, CodeUnitType, DuplicatePair
-from tests.analyzer_helpers import embedding_identity_from_kwargs
+from tests.analyzer_helpers import make_semantic_runner
 from tests.conftest import create_project
 
 
-def _capture_semantic_unit_types(captured_types: list[CodeUnitType]):
-    """Build a semantic runner that records unit types and returns no matches."""
+def _record_unit_types(captured_types: list[CodeUnitType]):
+    """Build a duplicate_factory that records unit types and finds no matches."""
 
-    def fake_run_semantic(units, **_kwargs):
+    def record(units: list[CodeUnit]) -> list[DuplicatePair]:
         captured_types.extend(unit.unit_type for unit in units)
-        return (
-            np.zeros((len(units), 2), dtype=np.float32),
-            [],
-            embedding_identity_from_kwargs(_kwargs),
-        )
+        return []
 
-    return fake_run_semantic
+    return record
 
 
 def test_short_functions_are_skipped_from_semantic(tmp_path: Path) -> None:
@@ -75,15 +70,15 @@ def test_decorated_methods_survive_semantic_and_tiny_filters(tmp_path: Path, mon
     project = create_project(tmp_path, source, module="decorated.py")
     semantic_units: list[CodeUnit] = []
 
-    def capture_semantic_candidates(units, **_kwargs):
+    def record_semantic_units(units: list[CodeUnit]) -> list[DuplicatePair]:
         semantic_units.extend(units)
-        return (
-            np.zeros((len(units), 2), dtype=np.float32),
-            [],
-            embedding_identity_from_kwargs(_kwargs),
-        )
+        return []
 
-    monkeypatch.setattr(analyzer_module, "run_semantic_analysis", capture_semantic_candidates)
+    monkeypatch.setattr(
+        analyzer_module,
+        "run_semantic_analysis",
+        make_semantic_runner(duplicate_factory=record_semantic_units),
+    )
     result = CodeAnalyzer(AnalyzerConfig(run_unused=False)).analyze(project)
 
     assert {unit.qualified_name for unit in semantic_units} == {
@@ -126,7 +121,7 @@ def test_semantic_unit_scope(
     monkeypatch.setattr(
         analyzer_module,
         "run_semantic_analysis",
-        _capture_semantic_unit_types(captured_types),
+        make_semantic_runner(duplicate_factory=_record_unit_types(captured_types)),
     )
 
     config_kwargs = {
@@ -145,14 +140,14 @@ def test_semantic_unit_scope(
 
 
 @pytest.mark.parametrize(
-    ("filter_tiny_traditional", "expected_exact_duplicate"),
-    [(None, False), (False, True)],
+    ("filter_tiny_traditional", "expected_exact_count"),
+    [(None, 0), (False, 2)],
 )
 def test_tiny_exact_duplicate_filter(
     tmp_path: Path,
     caplog,
     filter_tiny_traditional: bool | None,
-    expected_exact_duplicate: bool,
+    expected_exact_count: int,
 ) -> None:
     source = dedent(
         """
@@ -183,21 +178,19 @@ def test_tiny_exact_duplicate_filter(
     with caplog.at_level("INFO"):
         result = analyzer.analyze(project)
 
-    has_exact_duplicate = any(
-        duplicate.method in {"structural_hash", "token_hash"}
-        for duplicate in result.traditional_duplicates
-    )
-    assert has_exact_duplicate is expected_exact_duplicate
+    # Pin the expected count independently of the result under test, so a
+    # wrong analysis with a matching log message cannot pass silently.
     exact_count = sum(
         duplicate.method in {"structural_hash", "token_hash"}
         for duplicate in result.traditional_duplicates
     )
+    assert exact_count == expected_exact_count
     exact_logs = [
         record.getMessage()
         for record in caplog.records
         if "exact duplicates" in record.getMessage()
     ]
-    assert exact_logs == [f"Found {exact_count} exact duplicates"]
+    assert exact_logs == [f"Found {expected_exact_count} exact duplicates"]
 
 
 @pytest.mark.parametrize("filter_tiny_traditional", [True, False])
@@ -346,7 +339,6 @@ def test_large_class_duplicates_survive_private_member_filter(tmp_path: Path) ->
     )
 
 
-@pytest.mark.parametrize("suffix", ["js", "jsx", "ts", "tsx"])
 @pytest.mark.parametrize(
     ("initializer", "expected_duplicate"),
     [
@@ -356,14 +348,21 @@ def test_large_class_duplicates_survive_private_member_filter(tmp_path: Path) ->
     ],
 )
 def test_class_static_initializers_follow_tiny_filter(
-    tmp_path: Path, suffix: str, initializer: str, expected_duplicate: bool
+    tmp_path: Path, initializer: str, expected_duplicate: bool
 ) -> None:
-    """Count static-block bodies even though they have no separate code units."""
+    """Prove the tiny filter consumes the static-block statement count.
+
+    Per-suffix (js/jsx/ts/tsx) statement counting of static-block bodies is
+    the authority of
+    test_polyglot_ecmascript.py::test_class_member_count_includes_static_initializer_bodies;
+    one suffix here is enough to prove the analyzer's tiny filter reacts to
+    that count.
+    """
     source = (
         f"class First {{ static {{ {initializer} }} }}\n"
         f"class Second {{ static {{ {initializer} }} }}\n"
     )
-    project = create_project(tmp_path, source, module=f"initializers.{suffix}")
+    project = create_project(tmp_path, source, module="initializers.js")
     unfiltered = CodeAnalyzer(
         AnalyzerConfig(run_semantic=False, run_unused=False, filter_tiny_traditional=False)
     ).analyze(project)
