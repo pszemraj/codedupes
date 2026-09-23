@@ -1288,6 +1288,15 @@ def test_excluded_definition_recursion_does_not_credit_production_names(
             "def helper():\n    return 1\n",
             (
                 "from pkg.impl import *\n\nclass Test:\n"
+                "    def helper():\n        return 0\n"
+                "    callback = lambda: helper()\n"
+            ),
+            False,
+        ),
+        (
+            "def helper():\n    return 1\n",
+            (
+                "from pkg.impl import *\n\nclass Test:\n"
                 "    value = helper()\n    def helper(self):\n        return 0\n"
             ),
             False,
@@ -1372,6 +1381,76 @@ def test_filtered_nested_bindings_do_not_mask_sibling_references(
     build_reference_graph(units)
 
     assert bool(_unit(units, "sample.helper").references) is sibling_call
+
+
+def test_decorator_uses_the_definition_bound_before_it(tmp_path: Path) -> None:
+    """A decorator call precedes binding the definition it decorates."""
+    source = (
+        "def outer():\n"
+        "    def _helper(fn):\n        return fn\n"
+        "    @_helper\n"
+        "    def _helper():\n        return 1\n"
+        "    return _helper()\n"
+    )
+    units, _unused = _referenced_graph(tmp_path, source)
+    outer = _unit(units, "sample.outer")
+    helpers = sorted((unit for unit in units if unit.name == "_helper"), key=lambda u: u.lineno)
+
+    assert len(helpers) == 2
+    assert all(outer.uid in helper.references for helper in helpers)
+
+
+def test_conditional_local_definitions_are_all_possible_targets(tmp_path: Path) -> None:
+    """A load after conditional branches may reach either local definition."""
+    source = (
+        "def outer(flag):\n"
+        "    if flag:\n"
+        "        def _helper():\n            return 1\n"
+        "    else:\n"
+        "        def _helper():\n            return 2\n"
+        "    return _helper()\n"
+    )
+    units, _unused = _referenced_graph(tmp_path, source)
+    outer = _unit(units, "sample.outer")
+    helpers = [unit for unit in units if unit.name == "_helper"]
+
+    assert len(helpers) == 2
+    assert all(outer.uid in helper.references for helper in helpers)
+
+
+def test_global_declaration_bypasses_nested_definition(tmp_path: Path) -> None:
+    """A bare global load credits the module definition, not a nested homonym."""
+    source = (
+        "def _helper():\n    return 1\n"
+        "def outer():\n"
+        "    def _helper():\n        return 2\n"
+        "    def caller():\n"
+        "        global _helper\n"
+        "        return _helper()\n"
+        "    return caller()\n"
+    )
+    units, _unused = _referenced_graph(tmp_path, source)
+    module_helper, nested_helper = sorted(
+        (unit for unit in units if unit.name == "_helper"), key=lambda u: u.lineno
+    )
+
+    assert module_helper.references
+    assert nested_helper.references == set()
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "    callback = lambda: _helper()\n",
+        "    callback = (_helper() for _ in range(1))\n",
+    ],
+)
+def test_deferred_scope_sees_later_local_definition(tmp_path: Path, body: str) -> None:
+    """A deferred body can run after a later definition is bound."""
+    source = f"def outer():\n{body}    def _helper():\n        return 1\n    return callback\n"
+    units, _unused = _referenced_graph(tmp_path, source)
+
+    assert _unit(units, "sample.outer").uid in _unit(units, "sample.outer._helper").references
 
 
 def test_default_excluded_symlink_directory_does_not_import_external_references(

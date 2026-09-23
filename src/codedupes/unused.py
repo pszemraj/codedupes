@@ -37,7 +37,11 @@ class DefinitionReferences:
     linenos: tuple[int, ...]
     is_class: bool = False
     parent: DefinitionReferences | None = field(default=None, repr=False, compare=False)
-    children: list[DefinitionReferences] = field(default_factory=list, repr=False, compare=False)
+    children_by_name: dict[str, list[DefinitionReferences]] = field(
+        default_factory=dict, repr=False, compare=False
+    )
+    global_names: set[str] = field(default_factory=set, repr=False, compare=False)
+    nonlocal_names: set[str] = field(default_factory=set, repr=False, compare=False)
     uses: list[ReferenceUse] = field(default_factory=list, repr=False, compare=False)
 
 
@@ -49,7 +53,8 @@ class ReferenceUse:
     origin: DefinitionReferences = field(repr=False)
     lineno: int
     bare: bool
-    in_comprehension: bool
+    separate_scope: bool
+    deferred: bool
 
 
 @dataclass
@@ -129,7 +134,8 @@ class _ReferenceCollector(ast.NodeVisitor):
         # Parallel to _scopes: the ClassInfo when that scope is a class body.
         self._class_scopes: list[ClassInfo | None] = []
         self._annotation_depth = 0
-        self._comprehension_depth = 0
+        self._separate_scope_depth = 0
+        self._deferred_scope_depth = 0
 
     def _record(self, name: str, node: ast.AST, *, bare: bool = False) -> None:
         """Attribute one referenced name to the enclosing scopes or the module.
@@ -149,7 +155,8 @@ class _ReferenceCollector(ast.NodeVisitor):
             self._scopes[-1],
             getattr(node, "lineno", 0),
             bare,
-            self._comprehension_depth > 0,
+            self._separate_scope_depth > 0,
+            self._deferred_scope_depth > 0,
         )
         for scope in self._scopes:
             scope.uses.append(use)
@@ -188,7 +195,9 @@ class _ReferenceCollector(ast.NodeVisitor):
         """
         first, *rest = node.generators
         self.visit(first.iter)
-        self._comprehension_depth += 1
+        self._separate_scope_depth += 1
+        if isinstance(node, ast.GeneratorExp):
+            self._deferred_scope_depth += 1
         try:
             self.visit(first.target)
             for condition in first.ifs:
@@ -204,12 +213,35 @@ class _ReferenceCollector(ast.NodeVisitor):
             else:
                 self.visit(node.elt)
         finally:
-            self._comprehension_depth -= 1
+            self._separate_scope_depth -= 1
+            if isinstance(node, ast.GeneratorExp):
+                self._deferred_scope_depth -= 1
 
     visit_ListComp = _visit_comprehension
     visit_SetComp = _visit_comprehension
     visit_DictComp = _visit_comprehension
     visit_GeneratorExp = _visit_comprehension
+
+    def visit_Lambda(self, node: ast.Lambda) -> None:
+        """Evaluate lambda defaults outside its body scope."""
+        self.visit(node.args)
+        self._separate_scope_depth += 1
+        self._deferred_scope_depth += 1
+        try:
+            self.visit(node.body)
+        finally:
+            self._separate_scope_depth -= 1
+            self._deferred_scope_depth -= 1
+
+    def visit_Global(self, node: ast.Global) -> None:
+        """Record names that bypass enclosing definition scopes."""
+        if self._scopes:
+            self._scopes[-1].global_names.update(node.names)
+
+    def visit_Nonlocal(self, node: ast.Nonlocal) -> None:
+        """Record names bound in an enclosing function scope."""
+        if self._scopes:
+            self._scopes[-1].nonlocal_names.update(node.names)
 
     def visit_Constant(self, node: ast.Constant) -> None:
         """Parse quoted forward references inside annotations."""
@@ -268,7 +300,7 @@ class _ReferenceCollector(ast.NodeVisitor):
             parent=parent,
         )
         if parent is not None:
-            parent.children.append(definition)
+            parent.children_by_name.setdefault(node.name, []).append(definition)
         self.definitions.append(definition)
         for decorator in node.decorator_list:
             self.visit(decorator)
@@ -667,37 +699,45 @@ def build_reference_graph(
             for unit in by_location.get((file_path, lineno, definition.name), [])
         ]
 
-    def local_definition(
-        use: ReferenceUse, module: ModuleReferences
-    ) -> DefinitionReferences | None:
-        """Resolve a bare name bound by a definition in its lexical scope.
+    def local_definitions(
+        use: ReferenceUse, top_level_by_name: dict[str, list[DefinitionReferences]]
+    ) -> list[DefinitionReferences] | None:
+        """Resolve possible definitions bound to a bare name in its scope.
 
         :param use: Bare name load and its originating definition.
-        :param module: Module containing that load.
-        :return: The local definition, if one shadows name-based matching.
+        :param top_level_by_name: Module definitions indexed by name.
+        :return: Possible local definitions, ``[]`` for an unbound local, or
+            ``None`` when name-based matching should apply.
         """
-        scope: DefinitionReferences | None = use.origin
+        scope: DefinitionReferences | None = (
+            None if use.name in use.origin.global_names else use.origin
+        )
         while scope is not None:
             # A method does not close over its class namespace. A direct
             # class-body load sees only definitions already executed there.
-            if not scope.is_class or (scope is use.origin and not use.in_comprehension):
-                for child in reversed(scope.children):
-                    if child.name != use.name:
-                        continue
-                    if scope.is_class and child.linenos[-1] >= use.lineno:
-                        continue
-                    return child
+            if use.name in scope.global_names or use.name in scope.nonlocal_names:
+                scope = scope.parent
+                continue
+            if not scope.is_class or (scope is use.origin and not use.separate_scope):
+                children = scope.children_by_name.get(use.name, [])
+                if scope is use.origin and not use.deferred:
+                    prior = [child for child in children if child.linenos[-1] < use.lineno]
+                    if prior or (children and not scope.is_class):
+                        return prior
+                elif children:
+                    return children
             scope = scope.parent
 
         # Function bodies run after their module's definitions are bound;
         # class bodies run while their own definition is still in progress.
-        for definition in reversed(module.definitions):
-            if definition.parent is not None or definition.name != use.name:
-                continue
-            if use.origin.is_class and definition.linenos[-1] >= use.origin.linenos[-1]:
-                continue
-            return definition
-        return None
+        top_level = top_level_by_name.get(use.name, [])
+        if use.origin.is_class and not use.deferred:
+            top_level = [
+                definition
+                for definition in top_level
+                if definition.linenos[-1] < use.origin.linenos[-1]
+            ]
+        return top_level or None
 
     module_paths = {unit.file_path for unit in units} | set(source_files or ())
     modules = {
@@ -705,6 +745,10 @@ def build_reference_graph(
     }
     for file_path, module in modules.items():
         mark(f"__module__::{file_path}", module.module_references, module.aliases)
+        top_level_by_name: dict[str, list[DefinitionReferences]] = defaultdict(list)
+        for definition in module.definitions:
+            if definition.parent is None:
+                top_level_by_name[definition.name].append(definition)
         extracted_by_definition = {
             id(definition): units_for(file_path, definition) for definition in module.definitions
         }
@@ -721,11 +765,12 @@ def build_reference_graph(
                 for use in definition.uses:
                     origin_units = extracted_by_definition[id(use.origin)]
                     excluded = frozenset(unit.uid for unit in origin_units)
-                    bound = local_definition(use, module) if use.bare else None
+                    bound = local_definitions(use, top_level_by_name) if use.bare else None
                     if bound is not None:
-                        for target in extracted_by_definition[id(bound)]:
-                            if target.uid not in excluded and target.uid != referrer_uid:
-                                target.references.add(referrer_uid)
+                        for local in bound:
+                            for target in extracted_by_definition[id(local)]:
+                                if target.uid not in excluded and target.uid != referrer_uid:
+                                    target.references.add(referrer_uid)
                         continue
                     mark(referrer_uid, {use.name}, module.aliases, excluded)
 
