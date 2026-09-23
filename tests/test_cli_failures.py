@@ -184,9 +184,14 @@ def test_cli_semantic_required_modes_fail_on_semantic_backend_error(
 
 
 def test_setup_logging_quiets_external_loggers() -> None:
-    cli.setup_logging(verbose=False)
-    for logger_name in NOISY_EXTERNAL_LOGGERS:
-        assert logging.getLogger(logger_name).level == logging.WARNING
+    prior = {name: logging.getLogger(name).level for name in NOISY_EXTERNAL_LOGGERS}
+    try:
+        cli.setup_logging(verbose=False)
+        for logger_name in NOISY_EXTERNAL_LOGGERS:
+            assert logging.getLogger(logger_name).level == logging.WARNING
+    finally:
+        for name, level in prior.items():
+            logging.getLogger(name).setLevel(level)
 
 
 def test_main_propagates_check_exit_code(monkeypatch, tmp_path):
