@@ -941,7 +941,6 @@ class CodeAnalyzer:
                 reference_extractor = CodeExtractor(
                     root,
                     exclude_patterns=self.config.exclude_patterns,
-                    pattern_root=path.parent,
                     include_private=self.config.include_private,
                     include_stubs=self.config.include_stubs,
                     languages=self.config.languages,

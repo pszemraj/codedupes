@@ -23,8 +23,8 @@ from codedupes.models import CodeUnit, ExtractionDiagnostic
 
 logger = logging.getLogger(__name__)
 
-# (use path or basename, anchored, directory-only, matcher, zero-depth matcher)
-_ExcludeMatcher = tuple[bool, bool, bool, re.Pattern[str], re.Pattern[str] | None]
+# (use full relative path or basename, directory-only, name/path matcher, zero-depth matcher)
+_ExcludeMatcher = tuple[bool, bool, re.Pattern[str], re.Pattern[str] | None]
 
 DEFAULT_EXCLUDE_PATTERNS = [
     "**/test_*",
@@ -120,7 +120,6 @@ class CodeExtractor:
         include_stubs: bool = False,
         languages: tuple[str, ...] | list[str] | None = None,
         respect_gitignore: bool = True,
-        pattern_root: Path | None = None,
     ) -> None:
         """Construct an extractor for a project root.
 
@@ -134,12 +133,8 @@ class CodeExtractor:
             supported source files when omitted.
         :param respect_gitignore: Skip paths git ignores when the root is inside a
             git work tree. Directly named files are analyzed regardless.
-        :param pattern_root: Root for anchored exclusions when walking a larger
-            tree for a directly selected file's references. Unanchored patterns
-            still apply throughout the tree.
         """
         self.root = root.resolve()
-        self.pattern_root = pattern_root.resolve() if pattern_root is not None else self.root
         self.respect_gitignore = respect_gitignore
         self._ignored_paths: frozenset[Path] | None = None
         self._uses_default_exclude_patterns = exclude_patterns is None
@@ -158,7 +153,7 @@ class CodeExtractor:
                 else None
             )
             self._exclude_matchers.append(
-                (anchored or "/" in pattern, anchored, directory_only, matcher, zero_depth)
+                (anchored or "/" in pattern, directory_only, matcher, zero_depth)
             )
         # Walk the configured patterns alongside their matchers, consuming one
         # remaining occurrence of each default shape from a budget of the
@@ -291,25 +286,16 @@ class CodeExtractor:
         if not match_patterns:
             return False
 
-        # Anchored patterns keep a single-file target's parent as their scope
-        # during the wider reference walk. Unanchored patterns still apply to
-        # project files outside that parent.
-        pattern_rel = (
-            path.relative_to(self.pattern_root) if path.is_relative_to(self.pattern_root) else None
-        )
-        match_rel = pattern_rel if pattern_rel is not None else rel
         # Match ancestors too: excluding a directory excludes its whole subtree.
-        candidates = [match_rel]
+        candidates = [rel]
         if check_ancestors:
-            candidates.extend(parent for parent in match_rel.parents if parent != Path("."))
+            candidates.extend(parent for parent in rel.parents if parent != Path("."))
         active_matchers = self._exclude_matchers if matchers is None else matchers
         for candidate in candidates:
-            is_directory = candidate != match_rel or path_is_directory
+            is_directory = candidate != rel or path_is_directory
             relative_name = os.path.normcase(candidate.as_posix())
             basename = os.path.normcase(candidate.name)
-            for use_path, anchored, directory_only, matcher, zero_depth in active_matchers:
-                if anchored and pattern_rel is None:
-                    continue
+            for use_path, directory_only, matcher, zero_depth in active_matchers:
                 if directory_only and not is_directory:
                     continue
                 value = relative_name if use_path else basename
