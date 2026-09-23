@@ -242,6 +242,7 @@ class SemanticSettings:
     profile: str
     threshold_profile: str
     task: str
+    search_document: Literal["source", "contextual"]
     device: str
     execution_device: str | None
     thresholds: Mapping[str, float]

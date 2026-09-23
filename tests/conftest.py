@@ -75,6 +75,7 @@ def make_run_record(root: Path, *, mode: AnalysisMode = "combined", **overrides:
             profile="gte-modernbert",
             threshold_profile="auto",
             task="semantic-similarity",
+            search_document="source",
             device="cpu",
             execution_device=None,
             thresholds={},

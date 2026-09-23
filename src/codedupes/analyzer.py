@@ -1094,6 +1094,7 @@ class CodeAnalyzer:
         semantic_floor: float | None,
         hybrid_split: tuple[float, float, dict[str, float]],
         semantic_task: str,
+        search_document: SearchDocumentMode,
         embedding_stats: EmbeddingRunStats | None,
         python_files: list[Path],
         run_traditional: bool,
@@ -1111,6 +1112,7 @@ class CodeAnalyzer:
         :param hybrid_split: Weak identifier Jaccard minimum, statement ratio
             minimum, and per-language promotion gates hybrid synthesis applied.
         :param semantic_task: Resolved task used to embed semantic candidates.
+        :param search_document: Representation actually used for corpus embeddings.
         :param embedding_stats: Telemetry from the semantic stage, or ``None``.
         :param python_files: Every Python file parsed for the unused reference graph.
         :param run_traditional: Whether traditional detection actually ran.
@@ -1149,6 +1151,7 @@ class CodeAnalyzer:
                 profile=profile.family,
                 threshold_profile=self.config.threshold_profile,
                 task=semantic_task,
+                search_document=search_document,
                 device=self.config.device,
                 execution_device=execution_device,
                 thresholds=dict(semantic_gates),
@@ -1405,6 +1408,7 @@ class CodeAnalyzer:
             semantic_floor=semantic_scan_floor,
             hybrid_split=hybrid_split,
             semantic_task=semantic_task,
+            search_document="source",
             embedding_stats=embedding_stats,
             python_files=self._python_files,
             run_traditional=self.config.run_traditional,
@@ -1507,6 +1511,7 @@ class CodeAnalyzer:
             semantic_floor=None,
             hybrid_split=(HYBRID_WEAK_JACCARD_MIN, HYBRID_STATEMENT_RATIO_MIN, {}),
             semantic_task=self._resolved_search_semantic_task or DEFAULT_SEARCH_SEMANTIC_TASK,
+            search_document=self.config.search_document,
             embedding_stats=self._embedding_stats,
             python_files=self._python_files,
             run_traditional=False,

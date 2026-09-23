@@ -86,7 +86,30 @@ def test_index_run_record_tracks_semantic_work_with_check_config(
     assert analyzer.run_record.analysis_mode == "semantic"
     assert analyzer.run_record.semantic is not None
     assert analyzer.run_record.semantic.task == "code-retrieval"
+    assert analyzer.run_record.semantic.search_document == "source"
     assert analyzer.run_record.semantic.threshold_floor is None
+
+
+def test_index_run_record_captures_contextual_document_mode(tmp_path: Path, monkeypatch) -> None:
+    source = tmp_path / "entry.py"
+    source.write_text("def entry():\n    first = 1\n    second = first + 1\n    return second\n")
+
+    def fake_compute_embeddings(units, **kwargs):
+        return np.zeros((len(units), 2), dtype=np.float32), embedding_identity_from_kwargs(kwargs)
+
+    monkeypatch.setattr(analyzer_module, "compute_embeddings", fake_compute_embeddings)
+    analyzer = CodeAnalyzer(
+        AnalyzerConfig(
+            mode="search",
+            run_traditional=False,
+            run_unused=False,
+            search_document="contextual",
+            semantic_threshold=0.5,
+        )
+    )
+
+    assert analyzer.index(source) == 1
+    assert analyzer.run_record.semantic.search_document == "contextual"
 
 
 def test_unit_counts_break_down_by_language_and_every_unit_type(tmp_path: Path) -> None:

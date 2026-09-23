@@ -582,6 +582,7 @@ def test_search_json_v4_unit_and_file_levels(tmp_path):
     assert set(unit_level["units"]) == {"u0", "u1", "u2"}
     assert unit_level["analysis_status"] == "complete"
     assert unit_level["run"]["checks"]["semantic"]["status"] == "completed"
+    assert unit_level["run"]["semantic"]["search_document"] == "source"
     assert unit_level["summary"]["extracted_units"] == run.units.extracted
     assert unit_level["summary"]["query_execution"] == [
         {"execution_device": "cpu", "cache_hit": True, "threshold": 0.5}

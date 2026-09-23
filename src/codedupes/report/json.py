@@ -128,6 +128,7 @@ def _run_to_dict(run: RunRecord, checks: AnalysisChecks) -> dict[str, Any]:
                 "profile": run.semantic.profile,
                 "threshold_profile": run.semantic.threshold_profile,
                 "task": run.semantic.task,
+                "search_document": run.semantic.search_document,
                 "device": run.semantic.device,
                 "execution_device": run.semantic.execution_device,
                 "thresholds": dict(sorted(run.semantic.thresholds.items())),
