@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 from click.testing import CliRunner
@@ -11,6 +12,52 @@ from codedupes import cli
 from tests.cli_helpers import build_result
 from tests.conftest import patch_cli_analyzer
 from tests.embedding_cache_helpers import CountingModel, patch_get_model
+
+
+def test_cli_focus_accepts_analyzed_external_file_symlink(tmp_path: Path) -> None:
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    target = outside / "shared.py"
+    target.write_text(
+        "def first(value):\n    result = value + 1\n    return result\n\n"
+        "def second(value):\n    result = value + 1\n    return result\n",
+        encoding="utf-8",
+    )
+    root = tmp_path / "project"
+    root.mkdir()
+    alias = root / "linked.py"
+    alias.symlink_to(target)
+
+    result = CliRunner().invoke(
+        cli.cli,
+        [
+            "check",
+            str(root),
+            "--traditional-only",
+            "--no-unused",
+            "--no-tiny-filter",
+            "--fail-on",
+            "all",
+            "--focus",
+            str(alias),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 1, result.output
+    payload = json.loads(result.output)
+    assert payload["summary"]["focus"]["paths"] == [str(alias)]
+    assert payload["summary"]["focus"]["units"] == 2
+    assert len(payload["exact_families"]) == 1
+
+    directory_alias = root / "external_dir"
+    directory_alias.symlink_to(outside, target_is_directory=True)
+    rejected = CliRunner().invoke(
+        cli.cli,
+        ["check", str(root), "--traditional-only", "--focus", str(directory_alias / "shared.py")],
+    )
+    assert rejected.exit_code == 2
+    assert "not inside the scan root" in rejected.output
 
 
 @pytest.mark.parametrize(("command", "expected_exit_code"), [("check", 1), ("search", 0)])
