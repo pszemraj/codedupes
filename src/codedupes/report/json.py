@@ -32,6 +32,22 @@ from .selection import (
 )
 
 SCHEMA_VERSION = 4
+DOCS_URL = "https://github.com/pszemraj/codedupes/blob/main/docs/output.md"
+REPOSITORY_URL = "https://github.com/pszemraj/codedupes"
+
+
+def _about(description: str) -> dict[str, str]:
+    """Build the top-level ``about`` block identifying this report's origin.
+
+    :param description: One-sentence summary of what this payload is.
+    :return: Serialized ``about`` fields.
+    """
+    return {
+        "description": description,
+        "docs": DOCS_URL,
+        "repository": REPOSITORY_URL,
+        "tool": "codedupes",
+    }
 
 
 def _embedding_stats_to_dict(stats: EmbeddingRunStats | None) -> dict[str, Any] | None:
@@ -319,6 +335,10 @@ def check_result_to_json(
     exact_families = [_family_record(family, ids) for family in selection.exact_families]
 
     output: dict[str, Any] = {
+        "about": _about(
+            "Report from `codedupes check`: duplicate and potentially unused code"
+            " found in a source tree."
+        ),
         "schema_version": SCHEMA_VERSION,
         "analysis_mode": result.analysis_mode,
         "analysis_status": result.analysis_status,
@@ -457,6 +477,10 @@ def search_result_to_json(
             for result in file_results
         ]
     payload = {
+        "about": _about(
+            "Report from `codedupes search`: code units ranked by similarity to a"
+            " natural-language query."
+        ),
         "schema_version": SCHEMA_VERSION,
         "query": query,
         "analysis_status": checks.analysis_status,

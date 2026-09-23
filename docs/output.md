@@ -34,10 +34,18 @@ codedupes check ./src --json | jq empty
 
 `check --json` and `search --json` emit schema version `4`. Units are nodes in a top-level `units` object keyed by report-local ids (`u0`, `u1`, ...); findings refer to those ids instead of repeating a complete unit object for every endpoint. Ids are assigned in file-path then source-offset order over the referenced units only, so they renumber whenever the referenced set changes (for example with `--include-review`). Treat them as opaque within one report. Each unit record also carries the [in-run `CodeUnit.uid`](python-api.md#key-result-types).
 
+Every payload also carries a top-level `about` block (`description`, `docs`, `repository`, `tool`) so a report found on disk with no other context still identifies what produced it and where to read about it; it sorts first because keys are alphabetized.
+
 ### Check
 
 ```json
 {
+  "about": {
+    "description": "Report from `codedupes check`: duplicate and potentially unused code found in a source tree.",
+    "docs": "https://github.com/pszemraj/codedupes/blob/main/docs/output.md",
+    "repository": "https://github.com/pszemraj/codedupes",
+    "tool": "codedupes"
+  },
   "schema_version": 4,
   "analysis_mode": "combined",
   "analysis_status": "complete",
@@ -248,6 +256,12 @@ Default search hits (`--result-level unit`) use `{"unit": "u0", "score": 0.95}`;
 
 ```json
 {
+  "about": {
+    "description": "Report from `codedupes search`: code units ranked by similarity to a natural-language query.",
+    "docs": "https://github.com/pszemraj/codedupes/blob/main/docs/output.md",
+    "repository": "https://github.com/pszemraj/codedupes",
+    "tool": "codedupes"
+  },
   "schema_version": 4,
   "query": "refund validation",
   "analysis_status": "empty",

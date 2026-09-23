@@ -131,6 +131,10 @@ def test_check_json_v4_ids_resolve_and_have_no_orphans(tmp_path):
     payload = _payload(result, ReportPolicy(show_all=True))
 
     assert payload["schema_version"] == SCHEMA_VERSION == 4
+    assert payload["about"]["tool"] == "codedupes"
+    assert payload["about"]["description"].startswith("Report from `codedupes check`")
+    assert payload["about"]["docs"].startswith("https://github.com/pszemraj/codedupes")
+    assert payload["about"]["repository"].startswith("https://github.com/pszemraj/codedupes")
     assert _referenced_ids(payload) == set(payload["units"])
     assert all(_ID.match(key) for key in payload["units"])
     by_uid = {unit.uid: unit for unit in result.units}
@@ -537,6 +541,10 @@ def test_search_json_v4_unit_and_file_levels(tmp_path):
         query_execution=query_execution,
     )
     assert unit_level["schema_version"] == 4
+    assert unit_level["about"]["tool"] == "codedupes"
+    assert unit_level["about"]["description"].startswith("Report from `codedupes search`")
+    assert unit_level["about"]["docs"].startswith("https://github.com/pszemraj/codedupes")
+    assert unit_level["about"]["repository"].startswith("https://github.com/pszemraj/codedupes")
     assert [hit["unit"] for hit in unit_level["results"]] == ["u2", "u0", "u1"]
     assert unit_level["units"]["u2"]["uid"] == c.uid
     assert set(unit_level["units"]) == {"u0", "u1", "u2"}
