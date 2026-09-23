@@ -106,11 +106,11 @@ class ExactFamily:
 
     @property
     def redundant_lines(self) -> int:
-        """Return the source lines removable by keeping one copy.
+        """Return the source lines removable when the largest copy is kept.
 
-        :return: ``(len(members) - 1) * lines``; the family ranking key.
+        :return: Sum of member spans minus the largest span; the family ranking key.
         """
-        return (len(self.members) - 1) * self.lines
+        return sum(unit.end_lineno - unit.lineno + 1 for unit in self.members) - self.lines
 
     @property
     def pair_count(self) -> int:

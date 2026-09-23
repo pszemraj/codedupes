@@ -721,6 +721,19 @@ def test_families_rank_first_by_redundant_lines_then_position(tmp_path):
     assert [pair.tier for pair in selection.duplicates] == ["hybrid_confirmed"]
 
 
+def test_family_redundant_lines_uses_each_members_actual_span(tmp_path):
+    members = (
+        _unit(tmp_path, "commented", lines=32),
+        _unit(tmp_path, "plain_a", lines=2),
+        _unit(tmp_path, "plain_b", lines=2),
+    )
+
+    family = ExactFamily(members=members, method="token_hash")
+
+    assert family.lines == 32
+    assert family.redundant_lines == 4
+
+
 def test_max_duplicates_counts_a_family_as_one_finding(tmp_path):
     copies = [_unit(tmp_path, f"c{i}", file=f"c{i}.py") for i in range(5)]
     clique = [
