@@ -14,7 +14,8 @@ from tests.conftest import patch_cli_analyzer
 from tests.embedding_cache_helpers import CountingModel, patch_get_model
 
 
-def test_cli_focus_accepts_analyzed_external_file_symlink(tmp_path: Path) -> None:
+@pytest.mark.parametrize("focus_alias", ["linked.py", "spare.py"])
+def test_cli_focus_accepts_analyzed_external_file_symlink(tmp_path: Path, focus_alias: str) -> None:
     outside = tmp_path / "outside"
     outside.mkdir()
     target = outside / "shared.py"
@@ -27,6 +28,8 @@ def test_cli_focus_accepts_analyzed_external_file_symlink(tmp_path: Path) -> Non
     root.mkdir()
     alias = root / "linked.py"
     alias.symlink_to(target)
+    (root / "spare.py").symlink_to(target)
+    focus = root / focus_alias
 
     result = CliRunner().invoke(
         cli.cli,
@@ -39,14 +42,14 @@ def test_cli_focus_accepts_analyzed_external_file_symlink(tmp_path: Path) -> Non
             "--fail-on",
             "all",
             "--focus",
-            str(alias),
+            str(focus),
             "--json",
         ],
     )
 
     assert result.exit_code == 1, result.output
     payload = json.loads(result.output)
-    assert payload["summary"]["focus"]["paths"] == [str(alias)]
+    assert payload["summary"]["focus"]["paths"] == [str(focus)]
     assert payload["summary"]["focus"]["units"] == 2
     assert len(payload["exact_families"]) == 1
 

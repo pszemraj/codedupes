@@ -701,30 +701,41 @@ def focus_result(result: AnalysisResult, paths: tuple[Path, ...]) -> AnalysisRes
     exactly the focus scope. An exact-duplicate family is kept whole when any
     of its members is in focus, since consolidating it is one indivisible
     finding; every other duplicate pair is kept when either endpoint is in
-    focus; a potentially-unused unit is kept when its file is in focus.
+    focus; a potentially-unused unit is kept when its file is in focus. File
+    symlink aliases to the same source match the one path extraction retained.
 
     :param result: Complete analysis result.
     :param paths: Resolved, deduplicated focus paths (files or directories); must be non-empty.
     :return: A new result scoped to ``paths``, with ``focus`` set.
     """
+    match_paths = set(paths)
+    file_targets = {path.resolve() for path in paths if path.is_file()}
+    if file_targets:
+        match_paths.update(
+            file_path
+            for file_path in {unit.file_path for unit in result.units}
+            if file_path.resolve() in file_targets
+        )
+    scoped_paths = tuple(sorted(match_paths))
+
     families = build_exact_families(result.all_duplicates)
     kept_family_pairs = frozenset(
         frozenset((unit_a.uid, unit_b.uid))
         for family in families
-        if any(_in_focus(member, paths) for member in family.members)
+        if any(_in_focus(member, scoped_paths) for member in family.members)
         for unit_a, unit_b in combinations(family.members, 2)
     )
 
     traditional = _focus_pairs(
-        result.traditional_duplicates, kept_family_pairs=kept_family_pairs, paths=paths
+        result.traditional_duplicates, kept_family_pairs=kept_family_pairs, paths=scoped_paths
     )
     semantic = _focus_pairs(
-        result.semantic_duplicates, kept_family_pairs=kept_family_pairs, paths=paths
+        result.semantic_duplicates, kept_family_pairs=kept_family_pairs, paths=scoped_paths
     )
     hybrid = _focus_pairs(
-        result.hybrid_duplicates, kept_family_pairs=kept_family_pairs, paths=paths
+        result.hybrid_duplicates, kept_family_pairs=kept_family_pairs, paths=scoped_paths
     )
-    unused = [unit for unit in result.potentially_unused if _in_focus(unit, paths)]
+    unused = [unit for unit in result.potentially_unused if _in_focus(unit, scoped_paths)]
 
     focused = replace(
         result,
@@ -737,7 +748,7 @@ def focus_result(result: AnalysisResult, paths: tuple[Path, ...]) -> AnalysisRes
         focused.all_duplicates
     )
     out_of_focus_unused = len(result.potentially_unused) - len(unused)
-    focus_units = sum(1 for unit in result.units if _in_focus(unit, paths))
+    focus_units = sum(1 for unit in result.units if _in_focus(unit, scoped_paths))
     return replace(
         focused,
         focus=FocusSummary(
