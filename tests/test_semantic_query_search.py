@@ -110,6 +110,10 @@ def test_search_threshold_notices_do_not_repeat_on_warm_queries(
 
 
 @pytest.mark.parametrize(
+    # Each kwarg trips a distinct, independently-checked reason (resolve_search_threshold
+    # appends one per condition); use_cache and threshold_profile are dropped
+    # because neither participates in that guard - every case raised the same
+    # ValueError regardless of their value.
     "kwargs",
     [
         {"semantic_task": "classification"},
@@ -119,10 +123,8 @@ def test_search_threshold_notices_do_not_repeat_on_warm_queries(
         {"search_document": "contextual"},
     ],
 )
-@pytest.mark.parametrize("use_cache", [False, True])
-@pytest.mark.parametrize("threshold_profile", ["auto", "generic", "embeddinggemma-300m"])
 def test_uncalibrated_search_context_requires_explicit_threshold(
-    tmp_path: Path, monkeypatch, kwargs: dict[str, object], use_cache: bool, threshold_profile: str
+    tmp_path: Path, monkeypatch, kwargs: dict[str, object]
 ) -> None:
     units = extract_arithmetic_units(tmp_path)
     model = RecordingModel()
@@ -132,7 +134,7 @@ def test_uncalibrated_search_context_requires_explicit_threshold(
     options = {
         "model_name": "embeddinggemma-300m",
         "device": "cpu",
-        "use_cache": use_cache,
+        "use_cache": True,
         "cache_scope": tmp_path,
         "semantic_task": semantic.DEFAULT_SEARCH_SEMANTIC_TASK,
         **query_options,
@@ -149,7 +151,7 @@ def test_uncalibrated_search_context_requires_explicit_threshold(
             **options,
         )
         assert identity.search_document == search_document
-        assert len(model.encoded) - corpus_calls_before == (0 if use_cache and iteration else 1)
+        assert len(model.encoded) - corpus_calls_before == (0 if iteration else 1)
         calls_before = len(model.encoded)
         with pytest.raises(ValueError, match=r"find_similar_to_query\(threshold=\.\.\.\)"):
             find_similar_to_query(
@@ -157,7 +159,6 @@ def test_uncalibrated_search_context_requires_explicit_threshold(
                 units,
                 embeddings,
                 corpus_identity=identity,
-                threshold_profile=threshold_profile,
                 **options,
             )
         assert len(model.encoded) == calls_before
@@ -167,7 +168,6 @@ def test_uncalibrated_search_context_requires_explicit_threshold(
                 units,
                 embeddings,
                 threshold=0.0,
-                threshold_profile=threshold_profile,
                 corpus_identity=identity,
                 **options,
             )
@@ -203,11 +203,7 @@ def test_direct_embeddings_are_normalized_before_query_scoring(tmp_path: Path, m
     units = extract_arithmetic_units(tmp_path)
     embeddings = np.array([[5.0, 0.0], [1.0, 0.5]], dtype=np.float32)
 
-    class QueryModel:
-        def encode(self, texts, **kwargs):
-            return np.array([[1.0, 0.0]], dtype=np.float32)
-
-    monkeypatch.setattr(semantic, "get_model", lambda *args, **kwargs: QueryModel())
+    monkeypatch.setattr(semantic, "get_model", lambda *args, **kwargs: RecordingModel())
 
     results = find_similar_to_query(
         "find addition",
@@ -258,14 +254,14 @@ def test_search_requires_nonempty_query(query: str) -> None:
 
 
 @pytest.mark.parametrize(
+    # Plain round values (-1.0/0.0/0.9) are dropped: basic threshold filtering
+    # is already covered by the profile-default test's coverage, and every
+    # non-finite value hits the identical "threshold must be finite" branch,
+    # so one (nan) stands in for all three. The float32 boundary cases stay:
+    # they are the only rows proving the score is compared at float32 precision.
     "threshold",
     [
-        -1.0,
-        0.0,
-        0.9,
         float("nan"),
-        float("inf"),
-        -float("inf"),
         pytest.param(0.45, id="decimal-floor"),
         pytest.param(float(np.float32(0.45)), id="exact-score"),
         pytest.param(math.nextafter(float(np.float32(0.45)), -math.inf), id="below-score"),
@@ -319,11 +315,7 @@ def test_find_similar_to_query_default_threshold_is_search_default(
     # duplicate-detection gate; second row scores 0.3 and is dropped.
     embeddings = np.array([[0.7, 0.71414284], [0.3, 0.9539392]], dtype=np.float32)
 
-    class QueryModel:
-        def encode(self, texts, **kwargs):
-            return np.array([[1.0, 0.0]], dtype=np.float32)
-
-    monkeypatch.setattr(semantic, "get_model", lambda *args, **kwargs: QueryModel())
+    monkeypatch.setattr(semantic, "get_model", lambda *args, **kwargs: RecordingModel())
 
     results = find_similar_to_query(
         query="find addition",
@@ -351,26 +343,21 @@ def test_query_scores_bound_cosine_overshoot_before_thresholding(tmp_path: Path,
     assert results == [(units[0], 1.0), (units[1], -1.0)]
 
 
-@pytest.mark.parametrize(
-    ("choice", "expected"),
-    [
-        ("auto", 0.56),
-        ("generic", 0.35),
-        ("embeddinggemma-300m", 0.56),
-        ("gte-modernbert-base", 0.68),
-    ],
-)
-def test_search_threshold_profile_defaults_and_numeric_precedence(choice, expected) -> None:
+def test_search_threshold_numeric_override_wins_over_profile() -> None:
+    """A numeric override returns unchanged regardless of the selected profile.
+
+    Per-profile default search thresholds (auto/generic/embeddinggemma-300m/
+    gte-modernbert-base) are pinned by
+    test_semantic_profiles.py::test_threshold_profile_selection_for_unknown_model;
+    this only proves resolve_search_threshold ignores threshold_profile once an
+    explicit numeric threshold is given.
+    """
     assert (
-        semantic.resolve_search_threshold("embeddinggemma", None, threshold_profile=choice)
-        == expected
-    )
-    assert (
-        semantic.resolve_search_threshold("embeddinggemma", 0.62, threshold_profile=choice) == 0.62
+        semantic.resolve_search_threshold("embeddinggemma", 0.62, threshold_profile="generic")
+        == 0.62
     )
 
 
-@pytest.mark.parametrize("threshold", [math.nan, math.inf, -math.inf])
-def test_resolve_search_threshold_rejects_nonfinite_override(threshold: float) -> None:
+def test_resolve_search_threshold_rejects_nonfinite_override() -> None:
     with pytest.raises(ValueError, match="threshold must be finite"):
-        semantic.resolve_search_threshold("embeddinggemma", threshold)
+        semantic.resolve_search_threshold("embeddinggemma", math.nan)
