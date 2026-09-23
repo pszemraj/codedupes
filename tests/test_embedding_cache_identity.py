@@ -115,6 +115,10 @@ def test_strict_symbolic_revision_revalidates_before_cache_hit(tmp_path, monkeyp
     np.testing.assert_array_equal(first, second)
 
 
+# The mps/cpu decision-table rows for _dtype_variant_for are authoritative in
+# tests/test_semantic_model_loading.py; this file keeps only the cache-key
+# consequence of a resolved non-default dtype (the branch that decision table
+# does not reach, since it never mocks a concrete resolved device).
 def test_embeddinggemma_cache_variant_scopes_only_nondefault_dtype(monkeypatch):
     profile = semantic.resolve_model_profile("embeddinggemma-300m")
     monkeypatch.setattr(
@@ -133,25 +137,6 @@ def test_embeddinggemma_cache_variant_scopes_only_nondefault_dtype(monkeypatch):
 
     selected_dtype["value"] = "torch.float32"
     assert semantic._dtype_variant_for(profile, "cuda", mps_fallback=None) == ""
-
-
-def test_cuda_dtype_variant_applies_to_every_family(monkeypatch):
-    profile = semantic.resolve_model_profile("test-model")
-    monkeypatch.setattr(
-        semantic,
-        "_resolve_semantic_device_request",
-        lambda *_args, **_kwargs: "cuda",
-    )
-    monkeypatch.setattr(
-        semantic,
-        "_resolve_model_dtype",
-        lambda _family, _device, **_kwargs: "torch.bfloat16",
-    )
-
-    assert semantic._dtype_variant_for(profile, "cuda", mps_fallback=None) == "dtype=torch.bfloat16"
-    # CPU/MPS requests never resolve a device and stay in the shared float32 space.
-    assert semantic._dtype_variant_for(profile, "cpu", mps_fallback=None) == ""
-    assert semantic._dtype_variant_for(profile, "mps", mps_fallback=None) == ""
 
 
 def test_runtime_upgrade_invalidates_whole_corpus_not_row_subset(tmp_path, monkeypatch):
