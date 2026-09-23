@@ -571,6 +571,23 @@ def test_javascript_suppression_directive_attachment(tmp_path: Path) -> None:
     )
     assert body_statement_comment.suppressions == set()
 
+    [one_line] = extract(
+        tmp_path,
+        "one_line.js",
+        "function foo() { return 1; } // codedupes: ignore[duplicates]\n",
+    )
+    assert one_line.suppressions == {"duplicates"}
+
+    nested_one_row = {
+        unit.name: unit.suppressions
+        for unit in extract(
+            tmp_path,
+            "nested_one_row.js",
+            "function outer() { function inner() {} // codedupes: ignore\n return inner(); }",
+        )
+    }
+    assert nested_one_row == {"outer": set(), "inner": {"unused", "duplicates"}}
+
     [export_arrow] = extract(
         tmp_path,
         "export_arrow.js",

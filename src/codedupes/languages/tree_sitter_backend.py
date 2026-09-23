@@ -775,20 +775,19 @@ def _following_comments(anchor: Any, rows: frozenset[int], body: Any, source: by
     :param source: Full file source bytes.
     :return: Matching comments in document order.
     """
-    body_row = int(getattr(body, "start_point", (-1, 0))[0])
     body_start = int(getattr(body, "start_byte", 0))
     comments = []
     for comment in _comments_on_rows(anchor, rows):
-        comment_row = int(getattr(comment, "start_point", (-1, 0))[0])
         comment_start = int(getattr(comment, "start_byte", 0))
-        # A comment after a statement on the opening row belongs to the
-        # body. Only a comment directly after the opening brace is header
-        # syntax; Python's single-line bodies have no such brace.
-        if (
-            comment_row == body_row
-            and comment_start > body_start
-            and source[body_start:comment_start].strip() != b"{"
-        ):
+        # With more body after it, a comment trails a statement or nested
+        # unit inside the body, unless only the opening brace precedes it
+        # (`{ // codedupes: ignore`). A comment ending a one-line unit
+        # (`def f(): return 1  # ...`, `f() { ... } // ...`) is the unit's.
+        body_follows = any(
+            not _is_comment(child) and int(getattr(child, "start_byte", 0)) > comment_start
+            for child in _children(body)
+        )
+        if body_follows and source[body_start:comment_start].strip() not in {b"", b"{"}:
             continue
         comments.append(comment)
     return comments

@@ -784,4 +784,4 @@ def test_python_directive_attachment(tmp_path: Path) -> None:
         "def f(): return 1  # codedupes: ignore[duplicates]\n",
         filename="single_line_body.py",
     )
-    assert single_line_body.units[0].suppressions == set()
+    assert single_line_body.units[0].suppressions == {"duplicates"}
