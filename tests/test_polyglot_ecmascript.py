@@ -352,7 +352,9 @@ def test_typescript_excludes_signatures_and_ambient_declarations(tmp_path: Path)
     assert all(not name.endswith("required") for name in names)
 
 
-@pytest.mark.parametrize("suffix", ["js", "jsx", "ts", "tsx"])
+# "jsx" is omitted: its dialect maps to the same "javascript" grammar_key
+# and backend class as "js" (registry.py), so it is not a distinct code path.
+@pytest.mark.parametrize("suffix", ["js", "ts", "tsx"])
 @pytest.mark.parametrize(
     ("initializer", "expected_count"),
     [
