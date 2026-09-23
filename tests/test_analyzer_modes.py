@@ -5,7 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 from textwrap import dedent
 
-import numpy as np
 import pytest
 
 from codedupes import analyzer as analyzer_module
@@ -14,7 +13,6 @@ from codedupes.models import AnalysisResult, CodeUnit, CodeUnitType, DuplicatePa
 from codedupes.pairs import ordered_pair_key
 from codedupes.report.selection import build_exact_families
 from tests.analyzer_helpers import (
-    embedding_identity_from_kwargs,
     make_semantic_runner,
     traditional_single_jaccard_runner,
 )
@@ -522,20 +520,9 @@ def test_suppress_test_semantic_matches_filters_test_named_pairs(
     ).strip()
     project = create_project(tmp_path, source, module="tests_like.py")
 
-    def fake_run_semantic(
-        units,
-        model_name="Alibaba-NLP/gte-modernbert-base",
-        instruction_prefix=None,
-        threshold=0.82,
-        exclude_pairs=None,
-        batch_size=32,
-        revision=None,
-        trust_remote_code=None,
-        semantic_task=None,
-        **_device_kwargs,
-    ):
+    def duplicates_by_name(units: list[CodeUnit]) -> list[DuplicatePair]:
         by_name = {unit.name: unit for unit in units}
-        duplicates = [
+        return [
             DuplicatePair(
                 unit_a=by_name["test_alpha"],
                 unit_b=by_name["test_beta"],
@@ -549,21 +536,12 @@ def test_suppress_test_semantic_matches_filters_test_named_pairs(
                 method="semantic",
             ),
         ]
-        identity_kwargs = {
-            "model_name": model_name,
-            "instruction_prefix": instruction_prefix,
-            "revision": revision,
-            "trust_remote_code": trust_remote_code,
-            "semantic_task": semantic_task,
-            **_device_kwargs,
-        }
-        return (
-            np.zeros((len(units), 2), dtype=np.float32),
-            duplicates,
-            embedding_identity_from_kwargs(identity_kwargs),
-        )
 
-    monkeypatch.setattr(analyzer_module, "run_semantic_analysis", fake_run_semantic)
+    monkeypatch.setattr(
+        analyzer_module,
+        "run_semantic_analysis",
+        make_semantic_runner(duplicate_factory=duplicates_by_name),
+    )
 
     analyzer = CodeAnalyzer(
         AnalyzerConfig(
