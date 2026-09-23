@@ -895,10 +895,13 @@ class CodeAnalyzer:
         stats.orphan_rows_collected = published.orphan_rows_collected
         stats.manifest_generation = published.generation
 
-    def _extract_corpus_units(self, path: Path) -> list[CodeUnit]:
+    def _extract_corpus_units(
+        self, path: Path, *, collect_unused_references: bool
+    ) -> list[CodeUnit]:
         """Extract code units while preserving an explicit file target's name.
 
         :param path: Existing directory or file path with a resolved parent.
+        :param collect_unused_references: Discover files read only by unused analysis.
         :return: Extracted code units.
         """
         logger.info(f"Extracting code units from {path}")
@@ -937,7 +940,7 @@ class CodeAnalyzer:
             )
             self._extraction_root = root
             self._python_files = list(extractor.extracted_files.get("python", []))
-            if self.config.run_unused and any(unit.language == "python" for unit in units):
+            if collect_unused_references and any(unit.language == "python" for unit in units):
                 reference_extractor = CodeExtractor(
                     root,
                     exclude_patterns=self.config.exclude_patterns,
@@ -962,7 +965,7 @@ class CodeAnalyzer:
                 languages=self.config.languages,
                 respect_gitignore=self.config.respect_gitignore,
             )
-            units = extractor.extract_all(collect_reference_files=self.config.run_unused)
+            units = extractor.extract_all(collect_reference_files=collect_unused_references)
             self._extraction_diagnostics = list(extractor.diagnostics)
             self._extracted_file_count = sum(
                 len(files) for files in extractor.extracted_files.values()
@@ -1223,7 +1226,7 @@ class CodeAnalyzer:
 
         self._reset_analysis_state(path.parent if path.is_file() else path)
 
-        units = self._extract_corpus_units(path)
+        units = self._extract_corpus_units(path, collect_unused_references=self.config.run_unused)
         self._units = units
 
         traditional_duplicates: list[DuplicatePair] = []
@@ -1458,7 +1461,7 @@ class CodeAnalyzer:
 
         self._reset_analysis_state(path.parent if path.is_file() else path)
 
-        units = self._extract_corpus_units(path)
+        units = self._extract_corpus_units(path, collect_unused_references=False)
         self._units = units
         self._resolved_search_semantic_task = (
             self.config.semantic_task or DEFAULT_SEARCH_SEMANTIC_TASK

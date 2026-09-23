@@ -210,6 +210,35 @@ def test_no_unused_skips_reference_file_discovery(
     assert result.run.unused is None
 
 
+@pytest.mark.parametrize("target_is_file", [False, True])
+def test_index_skips_unused_reference_discovery_with_default_config(
+    tmp_path: Path, monkeypatch, target_is_file: bool
+) -> None:
+    """Indexing does not walk reference-only files even when checks would."""
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "demo"\n')
+    source = tmp_path / "entry.py"
+    source.write_text("def entry():\n    return 1\n")
+    (tmp_path / "test_entry.py").write_text("def test_entry():\n    assert True\n")
+
+    def unexpected_reference_walk(*_args, **_kwargs):
+        pytest.fail("index walked files used only for unused analysis")
+
+    def fake_compute_embeddings(units, **kwargs):
+        return (
+            np.zeros((len(units), 2), dtype=np.float32),
+            embedding_identity_from_kwargs(kwargs),
+        )
+
+    monkeypatch.setattr(CodeExtractor, "reference_files", unexpected_reference_walk)
+    monkeypatch.setattr(CodeExtractor, "_collect_reference_files", unexpected_reference_walk)
+    monkeypatch.setattr(analyzer_module, "compute_embeddings", fake_compute_embeddings)
+    analyzer = CodeAnalyzer(AnalyzerConfig(min_semantic_statements=0))
+
+    assert analyzer.index(source if target_is_file else tmp_path) == 1
+    assert analyzer.run_record.unused is None
+    assert analyzer._python_files == [source.resolve()]
+
+
 def test_explicit_test_file_bypasses_defaults_but_honors_configured_excludes(
     tmp_path: Path,
 ) -> None:
