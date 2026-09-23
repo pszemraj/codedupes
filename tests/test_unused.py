@@ -1228,6 +1228,152 @@ def test_production_function_referenced_only_from_tests_is_not_reported(tmp_path
     assert "helper" in {unit.name for unit in same_shape_result.potentially_unused}
 
 
+@pytest.mark.parametrize(
+    "test_body",
+    [
+        "def _loop():\n    return _loop() + impl.helper()\n",
+        (
+            "def outer():\n"
+            "    def _loop():\n"
+            "        return _loop()\n"
+            "    return _loop() + impl.helper()\n"
+        ),
+        (
+            "def outer():\n"
+            "    def branch():\n"
+            "        def _loop():\n"
+            "            return 1\n"
+            "        return _loop()\n"
+            "    return branch() + impl.helper()\n"
+        ),
+    ],
+)
+def test_excluded_definition_recursion_does_not_credit_production_names(
+    tmp_path: Path,
+    test_body: str,
+) -> None:
+    """A reference-only definition credits its calls, but not its own name."""
+    root = tmp_path / "pkg"
+    root.mkdir()
+    (root / "__init__.py").write_text("")
+    (root / "impl.py").write_text("def _loop():\n    return 1\n\n\ndef helper():\n    return 2\n")
+    tests_dir = root / "tests"
+    tests_dir.mkdir()
+    (tests_dir / "test_impl.py").write_text("import pkg.impl as impl\n\n\n" + test_body)
+
+    result = CodeAnalyzer(
+        AnalyzerConfig(
+            run_traditional=False,
+            run_semantic=False,
+            run_unused=True,
+            strict_unused=True,
+        )
+    ).analyze(root)
+
+    assert [unit.name for unit in result.potentially_unused] == ["_loop"]
+
+
+@pytest.mark.parametrize(
+    ("production", "test_body", "unused"),
+    [
+        (
+            "def helper():\n    return 1\n",
+            (
+                "from pkg.impl import *\n\nclass Test:\n"
+                "    def helper(self):\n        return helper()\n"
+            ),
+            False,
+        ),
+        (
+            "def helper():\n    return 1\n",
+            (
+                "from pkg.impl import *\n\nclass Test:\n"
+                "    value = helper()\n    def helper(self):\n        return 0\n"
+            ),
+            False,
+        ),
+        (
+            "def helper():\n    return 1\n",
+            (
+                "from pkg.impl import *\n\nclass Test:\n"
+                "    def helper():\n        return 0\n    value = helper()\n"
+            ),
+            True,
+        ),
+        (
+            "def helper():\n    return 1\n",
+            (
+                "from pkg.impl import *\n\nclass Test:\n"
+                "    def helper():\n        return 0\n"
+                "    values = [helper() for _ in range(1)]\n"
+            ),
+            False,
+        ),
+        (
+            "def helper():\n    return [1]\n",
+            (
+                "from pkg.impl import *\n\nclass Test:\n"
+                "    def helper():\n        return [2]\n"
+                "    values = [x for x in helper()]\n"
+            ),
+            True,
+        ),
+        (
+            "class Obj:\n    def helper(self):\n        return 1\n",
+            (
+                "from pkg.impl import Obj\n\ndef test_call():\n"
+                "    def helper():\n        return 0\n"
+                "    return Obj().helper()\n"
+            ),
+            False,
+        ),
+    ],
+)
+def test_reference_only_definitions_resolve_class_and_attribute_uses(
+    tmp_path: Path, production: str, test_body: str, unused: bool
+) -> None:
+    """Local definitions shadow bare names, but not global or attribute uses."""
+    root = tmp_path / "pkg"
+    root.mkdir()
+    (root / "__init__.py").write_text("")
+    (root / "impl.py").write_text(production)
+    tests_dir = root / "tests"
+    tests_dir.mkdir()
+    (tests_dir / "test_impl.py").write_text(test_body)
+
+    result = CodeAnalyzer(
+        AnalyzerConfig(
+            run_traditional=False,
+            run_semantic=False,
+            run_unused=True,
+            strict_unused=True,
+        )
+    ).analyze(root)
+
+    assert ("helper" in {unit.name for unit in result.potentially_unused}) is unused
+
+
+@pytest.mark.parametrize("sibling_call", [False, True])
+def test_filtered_nested_bindings_do_not_mask_sibling_references(
+    tmp_path: Path, sibling_call: bool
+) -> None:
+    """A nested binding shadows its own loads, not loads in sibling scopes."""
+    sibling = "    def _sibling():\n        return helper()\n" if sibling_call else ""
+    source = (
+        "def helper():\n    return 1\n\n"
+        "def public():\n"
+        "    def _branch():\n"
+        "        def helper():\n            return 2\n"
+        "        return helper()\n"
+        f"{sibling}"
+        "    return _branch()\n"
+    )
+    units = extract_units(tmp_path, source, include_private=False)
+    build_reference_graph(units)
+
+    assert bool(_unit(units, "sample.helper").references) is sibling_call
+
+
 def test_default_excluded_symlink_directory_does_not_import_external_references(
     tmp_path: Path,
 ) -> None:

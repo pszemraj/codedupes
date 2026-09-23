@@ -28,21 +28,28 @@ _VISIT_RECURSION_LIMIT = 15_000
 
 @dataclass
 class DefinitionReferences:
-    """Names one ``def``/``class`` statement references, keyed to the unit it maps to.
-
-    ``references`` holds the names loaded directly in this definition's body;
-    ``nested`` holds the names loaded inside definitions nested in it, keyed by
-    the nested definition, so that a nested definition's reference to itself
-    can be excluded when the enclosing unit is credited with it.
-    """
+    """A ``def``/``class`` statement and its lexical reference scope."""
 
     name: str
     # (first decorator line, def line) or (def line,): the tree-sitter backend
     # starts a decorated unit at its decorator; the def line is kept so a unit
     # built any other way still resolves.
     linenos: tuple[int, ...]
-    references: set[str] = field(default_factory=set)
-    nested: dict[int, tuple[DefinitionReferences, set[str]]] = field(default_factory=dict)
+    is_class: bool = False
+    parent: DefinitionReferences | None = field(default=None, repr=False, compare=False)
+    children: list[DefinitionReferences] = field(default_factory=list, repr=False, compare=False)
+    uses: list[ReferenceUse] = field(default_factory=list, repr=False, compare=False)
+
+
+@dataclass
+class ReferenceUse:
+    """One loaded name, preserving its origin and whether it was a bare name."""
+
+    name: str
+    origin: DefinitionReferences = field(repr=False)
+    lineno: int
+    bare: bool
+    in_comprehension: bool
 
 
 @dataclass
@@ -122,23 +129,30 @@ class _ReferenceCollector(ast.NodeVisitor):
         # Parallel to _scopes: the ClassInfo when that scope is a class body.
         self._class_scopes: list[ClassInfo | None] = []
         self._annotation_depth = 0
+        self._comprehension_depth = 0
 
-    def _record(self, name: str) -> None:
+    def _record(self, name: str, node: ast.AST, *, bare: bool = False) -> None:
         """Attribute one referenced name to the enclosing scopes or the module.
 
-        The innermost definition owns the reference; every enclosing definition
-        records it as nested, tagged with its origin.
+        Every enclosing definition records the use with its original scope.
 
         :param name: Referenced name or dotted attribute path.
+        :param node: AST node that loaded the name.
+        :param bare: Whether this was a bare ``Name`` load.
         :return: ``None``.
         """
         if not self._scopes:
             self.module_references.add(name)
             return
-        origin = self._scopes[-1]
-        origin.references.add(name)
-        for scope in self._scopes[:-1]:
-            scope.nested.setdefault(id(origin), (origin, set()))[1].add(name)
+        use = ReferenceUse(
+            name,
+            self._scopes[-1],
+            getattr(node, "lineno", 0),
+            bare,
+            self._comprehension_depth > 0,
+        )
+        for scope in self._scopes:
+            scope.uses.append(use)
 
     def _visit_annotation(self, node: ast.expr) -> None:
         """Visit an annotation, unquoting string forward references on the way.
@@ -155,14 +169,47 @@ class _ReferenceCollector(ast.NodeVisitor):
     def visit_Name(self, node: ast.Name) -> None:
         """Record loaded names; stores and deletes are not uses."""
         if isinstance(node.ctx, ast.Load):
-            self._record(node.id)
+            self._record(node.id, node, bare=True)
 
     def visit_Attribute(self, node: ast.Attribute) -> None:
         """Record attribute access in any context (a property setter is a use too)."""
-        self._record(node.attr)
+        self._record(node.attr, node)
         if isinstance(node.value, ast.Name):
-            self._record(f"{node.value.id}.{node.attr}")
+            self._record(f"{node.value.id}.{node.attr}", node)
         self.generic_visit(node)
+
+    def _visit_comprehension(
+        self, node: ast.ListComp | ast.SetComp | ast.DictComp | ast.GeneratorExp
+    ) -> None:
+        """Visit a comprehension with its first iterable in the enclosing scope.
+
+        :param node: Comprehension expression.
+        :return: ``None``.
+        """
+        first, *rest = node.generators
+        self.visit(first.iter)
+        self._comprehension_depth += 1
+        try:
+            self.visit(first.target)
+            for condition in first.ifs:
+                self.visit(condition)
+            for generator in rest:
+                self.visit(generator.iter)
+                self.visit(generator.target)
+                for condition in generator.ifs:
+                    self.visit(condition)
+            if isinstance(node, ast.DictComp):
+                self.visit(node.key)
+                self.visit(node.value)
+            else:
+                self.visit(node.elt)
+        finally:
+            self._comprehension_depth -= 1
+
+    visit_ListComp = _visit_comprehension
+    visit_SetComp = _visit_comprehension
+    visit_DictComp = _visit_comprehension
+    visit_GeneratorExp = _visit_comprehension
 
     def visit_Constant(self, node: ast.Constant) -> None:
         """Parse quoted forward references inside annotations."""
@@ -183,12 +230,12 @@ class _ReferenceCollector(ast.NodeVisitor):
     def visit_Import(self, node: ast.Import) -> None:
         """Count an import as a reference to what it imports."""
         for alias in node.names:
-            self._record(alias.name)
+            self._record(alias.name, node)
 
     def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
         """Count a from-import as a reference to each imported name."""
         for alias in node.names:
-            self._record(alias.name)
+            self._record(alias.name, node)
 
     def visit_arg(self, node: ast.arg) -> None:
         """Visit a parameter annotation."""
@@ -213,7 +260,15 @@ class _ReferenceCollector(ast.NodeVisitor):
         :param node: Definition node.
         :return: The registered definition.
         """
-        definition = DefinitionReferences(name=node.name, linenos=_definition_linenos(node))
+        parent = self._scopes[-1] if self._scopes else None
+        definition = DefinitionReferences(
+            name=node.name,
+            linenos=_definition_linenos(node),
+            is_class=isinstance(node, ast.ClassDef),
+            parent=parent,
+        )
+        if parent is not None:
+            parent.children.append(definition)
         self.definitions.append(definition)
         for decorator in node.decorator_list:
             self.visit(decorator)
@@ -612,27 +667,67 @@ def build_reference_graph(
             for unit in by_location.get((file_path, lineno, definition.name), [])
         ]
 
+    def local_definition(
+        use: ReferenceUse, module: ModuleReferences
+    ) -> DefinitionReferences | None:
+        """Resolve a bare name bound by a definition in its lexical scope.
+
+        :param use: Bare name load and its originating definition.
+        :param module: Module containing that load.
+        :return: The local definition, if one shadows name-based matching.
+        """
+        scope: DefinitionReferences | None = use.origin
+        while scope is not None:
+            # A method does not close over its class namespace. A direct
+            # class-body load sees only definitions already executed there.
+            if not scope.is_class or (scope is use.origin and not use.in_comprehension):
+                for child in reversed(scope.children):
+                    if child.name != use.name:
+                        continue
+                    if scope.is_class and child.linenos[-1] >= use.lineno:
+                        continue
+                    return child
+            scope = scope.parent
+
+        # Function bodies run after their module's definitions are bound;
+        # class bodies run while their own definition is still in progress.
+        for definition in reversed(module.definitions):
+            if definition.parent is not None or definition.name != use.name:
+                continue
+            if use.origin.is_class and definition.linenos[-1] >= use.origin.linenos[-1]:
+                continue
+            return definition
+        return None
+
     module_paths = {unit.file_path for unit in units} | set(source_files or ())
     modules = {
         file_path: collect_module_references(file_path) for file_path in sorted(module_paths)
     }
     for file_path, module in modules.items():
         mark(f"__module__::{file_path}", module.module_references, module.aliases)
+        extracted_by_definition = {
+            id(definition): units_for(file_path, definition) for definition in module.definitions
+        }
         for definition in module.definitions:
             # A definition the extractor dropped (a filtered-out private
             # symbol, or one nested in a private container) still has a
             # body that references other units; credit it from a synthetic
             # id so those references aren't lost.
-            referrers = [u.uid for u in units_for(file_path, definition)] or [
+            extracted = extracted_by_definition[id(definition)]
+            referrers = [unit.uid for unit in extracted] or [
                 f"__definition__::{file_path}::{definition.name}::{definition.linenos[-1]}"
             ]
             for referrer_uid in referrers:
-                mark(referrer_uid, definition.references, module.aliases)
-                # A nested definition's reference to itself must not surface
-                # as the enclosing unit referencing it.
-                for origin, names in definition.nested.values():
-                    own = frozenset(item.uid for item in units_for(file_path, origin))
-                    mark(referrer_uid, names, module.aliases, own)
+                for use in definition.uses:
+                    origin_units = extracted_by_definition[id(use.origin)]
+                    excluded = frozenset(unit.uid for unit in origin_units)
+                    bound = local_definition(use, module) if use.bare else None
+                    if bound is not None:
+                        for target in extracted_by_definition[id(bound)]:
+                            if target.uid not in excluded and target.uid != referrer_uid:
+                                target.references.add(referrer_uid)
+                        continue
+                    mark(referrer_uid, {use.name}, module.aliases, excluded)
 
     # Public methods of classes deriving from outside the project are reached
     # by the framework's dispatch (NodeVisitor.visit_*, logging.Filter.filter),
