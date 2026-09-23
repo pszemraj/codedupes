@@ -88,6 +88,7 @@ def test_query_cache_hits_enforce_cosine_vector_invariants(
         semantic.QueryExecution(
             execution_device="cpu" if expected_encode_calls else None,
             cache_hit=expected_encode_calls == 0,
+            threshold=0.9,
         )
     ]
 

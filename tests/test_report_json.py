@@ -561,7 +561,7 @@ def test_search_json_v4_unit_and_file_levels(tmp_path):
         extracted_files=3,
         units=UnitCounts(extracted=3, semantic_eligible=2),
     )
-    query_execution = [QueryExecution(execution_device="cpu", cache_hit=True)]
+    query_execution = [QueryExecution(execution_device="cpu", cache_hit=True, threshold=0.5)]
 
     unit_level = search_result_to_json(
         "q",
@@ -581,7 +581,7 @@ def test_search_json_v4_unit_and_file_levels(tmp_path):
     assert unit_level["run"]["checks"]["semantic"]["status"] == "completed"
     assert unit_level["summary"]["extracted_units"] == run.units.extracted
     assert unit_level["summary"]["query_execution"] == [
-        {"execution_device": "cpu", "cache_hit": True}
+        {"execution_device": "cpu", "cache_hit": True, "threshold": 0.5}
     ]
 
     files = group_file_results(hits, top_k=1)

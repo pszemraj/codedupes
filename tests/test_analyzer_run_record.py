@@ -86,6 +86,7 @@ def test_index_run_record_tracks_semantic_work_with_check_config(
     assert analyzer.run_record.analysis_mode == "semantic"
     assert analyzer.run_record.semantic is not None
     assert analyzer.run_record.semantic.task == "code-retrieval"
+    assert analyzer.run_record.semantic.threshold_floor is None
 
 
 def test_unit_counts_break_down_by_language_and_every_unit_type(tmp_path: Path) -> None:

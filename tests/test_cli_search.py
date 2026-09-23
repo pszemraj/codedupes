@@ -431,7 +431,7 @@ def test_cli_search_json_records_query_execution(monkeypatch, tmp_path):
         monkeypatch,
         indexed_units=1,
         results=[(build_unit(tmp_path), 0.9)],
-        query_execution=(QueryExecution(execution_device="cpu", cache_hit=False),),
+        query_execution=(QueryExecution(execution_device="cpu", cache_hit=False, threshold=0.67),),
     )
 
     result = CliRunner().invoke(cli.cli, ["search", str(path), "entry", "--json"])
@@ -439,7 +439,7 @@ def test_cli_search_json_records_query_execution(monkeypatch, tmp_path):
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
     assert payload["summary"]["query_execution"] == [
-        {"execution_device": "cpu", "cache_hit": False}
+        {"execution_device": "cpu", "cache_hit": False, "threshold": 0.67}
     ]
 
 

@@ -39,7 +39,25 @@ def test_query_search_with_mocked_semantic_model(tmp_path, monkeypatch):
 
     assert len(results) == 1
     assert results[0][0] in units
-    assert execution == [semantic.QueryExecution(execution_device="cpu", cache_hit=False)]
+    assert execution == [
+        semantic.QueryExecution(
+            execution_device="cpu",
+            cache_hit=False,
+            threshold=semantic.resolve_search_threshold("gte-modernbert-base", None),
+        )
+    ]
+
+    find_similar_to_query(
+        query="find addition",
+        units=units,
+        embeddings=embeddings,
+        top_k=1,
+        threshold=0.9,
+        device="cpu",
+        use_cache=False,
+        execution=execution,
+    )
+    assert execution[-1].threshold == 0.9
 
 
 @pytest.mark.parametrize("model_kind", ["gte", "gemma", "local", "hub"])

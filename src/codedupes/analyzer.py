@@ -1090,7 +1090,7 @@ class CodeAnalyzer:
         units: list[CodeUnit],
         semantic_candidates: list[CodeUnit],
         semantic_gates: dict[str, float],
-        semantic_floor: float,
+        semantic_floor: float | None,
         hybrid_split: tuple[float, float, dict[str, float]],
         semantic_task: str,
         embedding_stats: EmbeddingRunStats | None,
@@ -1105,7 +1105,8 @@ class CodeAnalyzer:
         :param units: Extracted code units.
         :param semantic_candidates: Units eligible for semantic embedding.
         :param semantic_gates: Per-language semantic duplicate gates in effect.
-        :param semantic_floor: Fallback semantic scan floor.
+        :param semantic_floor: Fallback semantic duplicate-scan floor, or ``None``
+            when indexing without a duplicate scan.
         :param hybrid_split: Weak identifier Jaccard minimum, statement ratio
             minimum, and per-language promotion gates hybrid synthesis applied.
         :param semantic_task: Resolved task used to embed semantic candidates.
@@ -1502,7 +1503,7 @@ class CodeAnalyzer:
             units=units,
             semantic_candidates=semantic_candidates,
             semantic_gates={},
-            semantic_floor=0.0,
+            semantic_floor=None,
             hybrid_split=(HYBRID_WEAK_JACCARD_MIN, HYBRID_STATEMENT_RATIO_MIN, {}),
             semantic_task=self._resolved_search_semantic_task or DEFAULT_SEARCH_SEMANTIC_TASK,
             embedding_stats=self._embedding_stats,

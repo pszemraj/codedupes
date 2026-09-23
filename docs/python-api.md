@@ -114,7 +114,7 @@ Inspect `analyzer.extraction_diagnostics` for recoverable parse errors after ind
 
 [Long-input diagnostics](analysis-defaults.md#semantic-candidate-defaults) remain available through `analyzer.semantic_diagnostics`; low-level `compute_embeddings*` and `run_semantic_analysis*` callers can collect them through `diagnostics=`.
 
-`search(query, top_k=10, threshold=None)` resolves its floor as `threshold`, then `config.semantic_threshold`, then the selected threshold profile's search default. Prefer the per-call value when tuning one query: `config.semantic_threshold` also replaces every calibrated per-language duplicate gate with one flat value. Per-call thresholds must be finite; `NaN` and infinity raise `ValueError`, including for empty corpora and cached queries. Zero and finite negative floors are supported.
+`search(query, top_k=10, threshold=None)` resolves its floor as `threshold`, then `config.semantic_threshold`, then the selected threshold profile's search default. Prefer the per-call value when tuning one query: `config.semantic_threshold` also replaces every calibrated per-language duplicate gate with one flat value. Per-call thresholds must be finite; `NaN` and infinity raise `ValueError`, including for empty corpora and cached queries. Zero and finite negative floors are supported. After a search over a nonempty index, `analyzer.query_execution` records the effective threshold alongside each query vector's device and cache status.
 
 `AnalyzerConfig`, `analyze_directory()`, `semantic.resolve_search_threshold()`, and `semantic.find_similar_to_query()` accept the [threshold profile choices](model-profiles.md#choosing-threshold-defaults). Numeric thresholds take precedence.
 

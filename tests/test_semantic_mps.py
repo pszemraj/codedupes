@@ -208,7 +208,9 @@ def test_model_loads_and_encodes_on_mps(tmp_path: Path) -> None:
     assert np.isfinite(embeddings).all()
     np.testing.assert_allclose(np.linalg.norm(embeddings, axis=1), 1.0, atol=1e-5)
     assert len(results) == len(units)
-    assert execution == [semantic.QueryExecution(execution_device="mps", cache_hit=False)]
+    assert execution == [
+        semantic.QueryExecution(execution_device="mps", cache_hit=False, threshold=-1.0)
+    ]
 
 
 def test_model_cache_is_keyed_by_resolved_device() -> None:
@@ -434,7 +436,9 @@ def test_query_oom_recovers_on_cpu(tmp_path: Path) -> None:
     assert [score for _unit, score in results] == sorted(
         (score for _unit, score in results), reverse=True
     )
-    assert execution == [semantic.QueryExecution(execution_device="cpu", cache_hit=False)]
+    assert execution == [
+        semantic.QueryExecution(execution_device="cpu", cache_hit=False, threshold=0.0)
+    ]
 
     from scripts.calibration_measurements import _query_execution
 

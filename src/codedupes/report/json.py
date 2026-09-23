@@ -390,7 +390,11 @@ def _query_execution_to_dict(execution: QueryExecution) -> dict[str, Any]:
     :param execution: Provenance for a single query embedding.
     :return: JSON-safe mapping.
     """
-    return {"execution_device": execution.execution_device, "cache_hit": execution.cache_hit}
+    return {
+        "execution_device": execution.execution_device,
+        "cache_hit": execution.cache_hit,
+        "threshold": execution.threshold,
+    }
 
 
 def search_result_to_json(

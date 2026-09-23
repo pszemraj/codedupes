@@ -245,7 +245,7 @@ class SemanticSettings:
     device: str
     execution_device: str | None
     thresholds: Mapping[str, float]
-    threshold_floor: float
+    threshold_floor: float | None
     min_statements: int
     unit_types: tuple[str, ...]
     cross_language: bool
