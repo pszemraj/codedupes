@@ -45,6 +45,20 @@ from scripts.calibration_measurements import (
 pytestmark = pytest.mark.grammar
 
 
+def test_query_execution_keeps_measurement_provenance_schema() -> None:
+    analyzer = SimpleNamespace(
+        query_execution=(
+            semantic.QueryExecution(execution_device="cpu", cache_hit=False, threshold=0.72),
+        )
+    )
+
+    assert calibration_measurements._query_execution(analyzer, "cpu", "probe", 1) == {
+        "probe": "probe",
+        "execution_device": "cpu",
+        "cache_hit": False,
+    }
+
+
 def _empty_measurement(project, model: str = "gte-modernbert-base") -> dict:
     """Build a complete payload whose non-model evidence matches the corpus."""
     inventory, _ = extract_project(project, inventory=True)

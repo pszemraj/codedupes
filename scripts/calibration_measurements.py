@@ -265,7 +265,11 @@ def _query_execution(
     record = records[-1]
     if record.execution_device != requested or record.cache_hit:
         raise ValueError(f"probe {probe!r} did not execute independently on {requested}: {record}")
-    return {"probe": probe, **asdict(record)}
+    return {
+        "probe": probe,
+        "execution_device": record.execution_device,
+        "cache_hit": record.cache_hit,
+    }
 
 
 def capture(
