@@ -175,18 +175,13 @@ def test_dtype_variant_matches_pre_capability_gate_baseline_without_opt_in(
 
 
 @pytest.mark.parametrize(
+    # The full priority matrix is authoritative in
+    # test_devices.py::test_could_resolve_to_mps_mirrors_auto_resolution_priority;
+    # these two rows only prove delegation (one true, one false case).
     ("device", "platform_name", "expect_mps_possible"),
     [
-        ("mps", "darwin", True),
-        ("mps", "linux", True),
-        ("mps", "win32", True),
         ("auto", "darwin", True),
-        ("auto", "linux", False),
-        ("auto", "win32", False),
         ("cpu", "darwin", False),
-        ("cuda", "darwin", False),
-        (None, "darwin", True),
-        (None, "linux", False),
     ],
 )
 def test_mps_fast_math_variant_matches_could_resolve_to_mps(
