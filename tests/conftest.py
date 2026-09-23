@@ -225,6 +225,7 @@ def patch_cli_analyzer(
     ) = None,
     captured_configs: list[Any] | None = None,
     semantic_diagnostics: list[ExtractionDiagnostic] | None = None,
+    indexed_units: int = 1,
 ) -> None:
     """Patch CLI analyzer construction with a configurable test double."""
 
@@ -247,7 +248,7 @@ def patch_cli_analyzer(
             # A populated corpus, so search tests exercise the normal path
             # instead of the empty-index warning branch.
             self.run_record = make_run_record(path, mode="semantic")
-            return 1
+            return indexed_units
 
         def search(self, query: str, top_k: int = 10) -> list[tuple[CodeUnit, float]]:
             if callable(search_results):

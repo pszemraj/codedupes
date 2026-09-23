@@ -98,27 +98,15 @@ def test_cli_search_indexes_without_running_full_analysis(monkeypatch, tmp_path)
     path = tmp_path / "sample.py"
     path.write_text("def entry():\n    return 1\n")
 
-    class IndexOnlyAnalyzer:
-        def __init__(self, config):
-            del config
-            self.extraction_diagnostics = []
-            self.semantic_diagnostics = []
-            self.embedding_stats = None
-            self.run_record = None
-            self.query_execution = ()
+    def _analyze_forbidden() -> AnalysisResult:
+        raise AssertionError("search must build its corpus via index(), not analyze()")
 
-        def analyze(self, _path):
-            raise AssertionError("search must build its corpus via index(), not analyze()")
-
-        def index(self, _path):
-            self.run_record = make_run_record(path, mode="semantic")
-            return 1
-
-        def search(self, query, top_k=10):
-            del query, top_k
-            return [(build_unit(tmp_path), 0.99)]
-
-    monkeypatch.setattr(cli, "CodeAnalyzer", IndexOnlyAnalyzer)
+    patch_cli_analyzer(
+        monkeypatch,
+        cli,
+        analyze_result=_analyze_forbidden,
+        search_results=[(build_unit(tmp_path), 0.99)],
+    )
     runner = CliRunner()
 
     result = runner.invoke(cli.cli, ["search", str(path), "entry", "--json"])
@@ -155,23 +143,18 @@ def test_cli_search_file_ranking_groups_before_top_k(
     ]
     requested_limits = []
 
-    class RankedAnalyzer:
-        def __init__(self, config):
-            self.extraction_diagnostics = []
-            self.semantic_diagnostics = []
-            self.embedding_stats = None
-            self.run_record = None
-            self.query_execution = ()
+    def _search(query, top_k):
+        del query
+        requested_limits.append(top_k)
+        return hits[:top_k]
 
-        def index(self, path):
-            self.run_record = make_run_record(path, mode="semantic")
-            return len(hits)
-
-        def search(self, query, top_k=10):
-            requested_limits.append(top_k)
-            return hits[:top_k]
-
-    monkeypatch.setattr(cli, "CodeAnalyzer", RankedAnalyzer)
+    patch_cli_analyzer(
+        monkeypatch,
+        cli,
+        analyze_result=build_result(tmp_path),
+        search_results=_search,
+        indexed_units=len(hits),
+    )
     args = ["search", str(tmp_path), "find helpers", "--top-k", "2"]
     if result_level is not None:
         args += ["--result-level", result_level]
