@@ -507,8 +507,6 @@ class AnalyzerConfig:
 
     # Extraction
     exclude_patterns: list[str] | None = None
-    # Provenance for a CLI-composed prefix, not inferred from pattern values.
-    implicit_default_excludes: bool = False
     respect_gitignore: bool = True
     include_private: bool = True
     languages: tuple[str, ...] | None = None
@@ -913,7 +911,6 @@ class CodeAnalyzer:
             extractor = CodeExtractor(
                 path.parent,
                 exclude_patterns=self.config.exclude_patterns,
-                implicit_default_excludes=self.config.implicit_default_excludes,
                 include_private=self.config.include_private,
                 # Stub filtering only gates directory discovery. This target
                 # is explicit, including aliases resolving to in-tree .pyi files.
@@ -945,7 +942,6 @@ class CodeAnalyzer:
                     root,
                     exclude_patterns=self.config.exclude_patterns,
                     pattern_root=path.parent,
-                    implicit_default_excludes=self.config.implicit_default_excludes,
                     include_private=self.config.include_private,
                     include_stubs=self.config.include_stubs,
                     languages=self.config.languages,
@@ -959,7 +955,6 @@ class CodeAnalyzer:
             extractor = CodeExtractor(
                 path,
                 exclude_patterns=self.config.exclude_patterns,
-                implicit_default_excludes=self.config.implicit_default_excludes,
                 include_private=self.config.include_private,
                 include_stubs=self.config.include_stubs,
                 languages=self.config.languages,

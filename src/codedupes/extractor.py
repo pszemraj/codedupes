@@ -7,6 +7,7 @@ import logging
 import os
 import re
 import subprocess
+from collections import Counter
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -119,7 +120,6 @@ class CodeExtractor:
         include_stubs: bool = False,
         languages: tuple[str, ...] | list[str] | None = None,
         respect_gitignore: bool = True,
-        implicit_default_excludes: bool = False,
         pattern_root: Path | None = None,
     ) -> None:
         """Construct an extractor for a project root.
@@ -134,8 +134,6 @@ class CodeExtractor:
             supported source files when omitted.
         :param respect_gitignore: Skip paths git ignores when the root is inside a
             git work tree. Directly named files are analyzed regardless.
-        :param implicit_default_excludes: Whether an explicit pattern list starts
-            with CLI-added defaults rather than caller-supplied exclusions.
         :param pattern_root: Root for anchored exclusions when walking a larger
             tree for a directly selected file's references. Unanchored patterns
             still apply throughout the tree.
@@ -162,20 +160,21 @@ class CodeExtractor:
             self._exclude_matchers.append(
                 (anchored or "/" in pattern, anchored, directory_only, matcher, zero_depth)
             )
-        # Pattern values cannot reveal whether the caller supplied a default
-        # shape explicitly. The CLI marks its own prefix so only that prefix
-        # is ignored by the reference-only walk.
-        if implicit_default_excludes and (
-            self.exclude_patterns[: len(DEFAULT_EXCLUDE_PATTERNS)] != DEFAULT_EXCLUDE_PATTERNS
-        ):
-            raise ValueError("implicit_default_excludes requires the default pattern prefix")
-        default_count = (
-            len(DEFAULT_EXCLUDE_PATTERNS)
-            if exclude_patterns is None or implicit_default_excludes
-            else 0
-        )
-        self._default_exclude_patterns = self.exclude_patterns[:default_count]
-        self._user_exclude_matchers = self._exclude_matchers[default_count:]
+        # Walk the configured patterns alongside their matchers, consuming one
+        # remaining occurrence of each default shape from a budget of the
+        # built-in defaults: a pattern past that budget, including a repeat of
+        # a default shape, is a real user exclusion for the reference walk.
+        remaining_defaults = Counter(DEFAULT_EXCLUDE_PATTERNS)
+        default_exclude_patterns: list[str] = []
+        user_exclude_matchers: list[_ExcludeMatcher] = []
+        for pattern, matcher in zip(self.exclude_patterns, self._exclude_matchers, strict=True):
+            if remaining_defaults[pattern] > 0:
+                remaining_defaults[pattern] -= 1
+                default_exclude_patterns.append(pattern)
+            else:
+                user_exclude_matchers.append(matcher)
+        self._default_exclude_patterns = default_exclude_patterns
+        self._user_exclude_matchers = user_exclude_matchers
         self.include_private = include_private
         self.include_stubs = include_stubs
         self.languages = normalize_languages(languages)

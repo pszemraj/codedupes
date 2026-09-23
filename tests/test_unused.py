@@ -1205,7 +1205,7 @@ def test_production_function_referenced_only_from_tests_is_not_reported(tmp_path
             exclude_patterns=DEFAULT_EXCLUDE_PATTERNS.copy(),
         )
     ).analyze(root)
-    assert "helper" in {unit.name for unit in explicit_defaults.potentially_unused}
+    assert "helper" not in {unit.name for unit in explicit_defaults.potentially_unused}
 
     excluded_config = AnalyzerConfig(
         run_traditional=False,

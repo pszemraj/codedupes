@@ -330,9 +330,7 @@ def test_default_exclusion_hint_counts_pruned_directories(tmp_path: Path, caplog
         path.write_text("def entry():\n    return 1\n", encoding="utf-8")
     patterns = ([] if include_tests else DEFAULT_EXCLUDE_PATTERNS) + ["skip.py"]
 
-    extractor = CodeExtractor(
-        tmp_path, exclude_patterns=patterns, implicit_default_excludes=not include_tests
-    )
+    extractor = CodeExtractor(tmp_path, exclude_patterns=patterns)
     with caplog.at_level("INFO", logger="codedupes.extractor"):
         extractor.extract_all()
 
@@ -788,34 +786,32 @@ def test_reference_only_files_are_the_default_test_exclusions(tmp_path: Path) ->
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("def entry():\n    return 1\n")
 
-    def reference_only_names(
-        exclude_patterns: list[str] | None, *, implicit_default_excludes: bool = False
-    ) -> set[str]:
-        extractor = CodeExtractor(
-            root,
-            exclude_patterns=exclude_patterns,
-            include_private=True,
-            implicit_default_excludes=implicit_default_excludes,
-        )
+    def reference_only_names(exclude_patterns: list[str] | None) -> set[str]:
+        extractor = CodeExtractor(root, exclude_patterns=exclude_patterns, include_private=True)
         extractor.extract_all()
         return {file.relative_to(root).as_posix() for file in extractor.reference_only_files}
 
     # Default configuration: both default-excluded shapes feed the reference-only
     # list; the gitignored file and the artifact directory do not.
-    assert reference_only_names(None) == {
+    default_names = {
         "tests/test_impl.py",
         "tests/conftest.py",
         "pkg/legacy_test.py",
     }
+    assert reference_only_names(None) == default_names
 
-    # Explicitly supplying the same shapes makes them user exclusions, not
-    # implicit defaults. The CLI marks its own prefix when appending a user rule.
+    # An explicit list of the same default patterns behaves exactly like None:
+    # every pattern still fills a default slot, so none becomes a user exclusion.
     from codedupes.extractor import DEFAULT_EXCLUDE_PATTERNS
 
-    assert reference_only_names(DEFAULT_EXCLUDE_PATTERNS.copy()) == set()
-    assert reference_only_names(
-        [*DEFAULT_EXCLUDE_PATTERNS, "pkg/legacy_test.py"], implicit_default_excludes=True
-    ) == {"tests/test_impl.py", "tests/conftest.py"}
+    assert reference_only_names(DEFAULT_EXCLUDE_PATTERNS.copy()) == default_names
+
+    # A pattern past the default budget is a real user exclusion, dropping the
+    # file from references too, not only from duplicate detection.
+    assert reference_only_names([*DEFAULT_EXCLUDE_PATTERNS, "pkg/legacy_test.py"]) == {
+        "tests/test_impl.py",
+        "tests/conftest.py",
+    }
 
     # Disabling default test exclusions extracts test files directly, so nothing
     # needs the reference-only path.
@@ -824,13 +820,13 @@ def test_reference_only_files_are_the_default_test_exclusions(tmp_path: Path) ->
     # A real user exclusion for "tests" drops the whole directory from both
     # duplicate detection and unused-code references; the unrelated default
     # shape match under "pkg" is unaffected.
-    assert reference_only_names(
-        [*DEFAULT_EXCLUDE_PATTERNS, "tests"], implicit_default_excludes=True
-    ) == {"pkg/legacy_test.py"}
+    assert reference_only_names([*DEFAULT_EXCLUDE_PATTERNS, "tests"]) == {"pkg/legacy_test.py"}
 
-    # Repeating a built-in shape explicitly is a real user exclusion for the
-    # reference walk, whether or not the built-ins are otherwise active.
-    assert reference_only_names(
-        [*DEFAULT_EXCLUDE_PATTERNS, "**/tests/**"], implicit_default_excludes=True
-    ) == {"pkg/legacy_test.py"}
-    assert reference_only_names(["**/tests/**"]) == set()
+    # Repeating a built-in shape past the default budget is a real user
+    # exclusion for the reference walk too.
+    assert reference_only_names([*DEFAULT_EXCLUDE_PATTERNS, "**/tests/**"]) == {
+        "pkg/legacy_test.py"
+    }
+
+    # A lone default shape is still a default pattern: reference-transparent.
+    assert reference_only_names(["**/tests/**"]) == {"tests/test_impl.py", "tests/conftest.py"}

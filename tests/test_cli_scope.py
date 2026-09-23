@@ -100,11 +100,7 @@ def test_cli_exclusions_extend_defaults(
         args.append("--no-default-excludes")
     result = CliRunner().invoke(cli.cli, args)
     assert result.exit_code == expected_exit_code, result.output
-    units = CodeExtractor(
-        tmp_path,
-        exclude_patterns=captured[0].exclude_patterns,
-        implicit_default_excludes=captured[0].implicit_default_excludes,
-    ).extract_all()
+    units = CodeExtractor(tmp_path, exclude_patterns=captured[0].exclude_patterns).extract_all()
     assert {unit.file_path.name for unit in units} == (
         {"keep.py", "test_entry.py"} if include_tests else {"keep.py"}
     )

@@ -537,9 +537,6 @@ class CheckOptions:
             exclude_patterns=_resolve_exclude_patterns(
                 self.exclude, self.no_default_excludes, path
             ),
-            implicit_default_excludes=(
-                bool(self.exclude) and not self.no_default_excludes and path.is_dir()
-            ),
             respect_gitignore=not self.no_gitignore,
             include_private=not self.no_private,
             languages=self.languages or None,
@@ -617,9 +614,6 @@ class SearchOptions:
             mode="search",
             exclude_patterns=_resolve_exclude_patterns(
                 self.exclude, self.no_default_excludes, path
-            ),
-            implicit_default_excludes=(
-                bool(self.exclude) and not self.no_default_excludes and path.is_dir()
             ),
             respect_gitignore=not self.no_gitignore,
             include_private=not self.no_private,
