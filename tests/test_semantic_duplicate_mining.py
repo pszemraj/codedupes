@@ -18,7 +18,7 @@ from codedupes.semantic import (
     run_semantic_analysis,
 )
 from tests.conftest import extract_arithmetic_units, extract_units
-from tests.semantic_helpers import FakeModel
+from tests.semantic_helpers import FakeModel, RecordingModel
 
 
 def test_run_semantic_analysis_with_mock_model(tmp_path, monkeypatch):
@@ -246,11 +246,7 @@ def test_direct_embedding_apis_return_to_base_ndarray_semantics(
 
     assert len(find_semantic_duplicates(units, embeddings, threshold=0.9)) == 1
 
-    class QueryModel:
-        def encode(self, texts, **kwargs):
-            return np.array([[1.0, 0.0]], dtype=np.float32)
-
-    monkeypatch.setattr(semantic, "get_model", lambda *args, **kwargs: QueryModel())
+    monkeypatch.setattr(semantic, "get_model", lambda *args, **kwargs: RecordingModel())
     results = find_similar_to_query(
         "find addition",
         units,
