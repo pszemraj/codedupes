@@ -550,6 +550,13 @@ def test_javascript_suppression_directive_attachment(tmp_path: Path) -> None:
     )
     assert trailing_brace.suppressions == {"unused", "duplicates"}
 
+    [body_statement_comment] = extract(
+        tmp_path,
+        "body_statement_comment.js",
+        "function foo() { const value = 1; // codedupes: ignore[duplicates]\n return value; }",
+    )
+    assert body_statement_comment.suppressions == set()
+
     [export_arrow] = extract(
         tmp_path,
         "export_arrow.js",

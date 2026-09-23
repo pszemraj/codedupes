@@ -762,7 +762,7 @@ def _comments_on_rows(node: Any, rows: frozenset[int]) -> list[Any]:
     ]
 
 
-def _following_comments(anchor: Any, rows: frozenset[int]) -> list[Any]:
+def _following_comments(anchor: Any, rows: frozenset[int], body: Any, source: bytes) -> list[Any]:
     """Collect comments trailing within a unit's header rows.
 
     Covers a comment trailing the ``def``/signature line, sitting between
@@ -771,9 +771,27 @@ def _following_comments(anchor: Any, rows: frozenset[int]) -> list[Any]:
 
     :param anchor: Statement anchor from :func:`_statement_anchor`.
     :param rows: Header rows from :meth:`TreeSitterBackend._header_rows`.
+    :param body: Unit body node, whose opening row may also contain statements.
+    :param source: Full file source bytes.
     :return: Matching comments in document order.
     """
-    return _comments_on_rows(anchor, rows)
+    body_row = int(getattr(body, "start_point", (-1, 0))[0])
+    body_start = int(getattr(body, "start_byte", 0))
+    comments = []
+    for comment in _comments_on_rows(anchor, rows):
+        comment_row = int(getattr(comment, "start_point", (-1, 0))[0])
+        comment_start = int(getattr(comment, "start_byte", 0))
+        # A comment after a statement on the opening row belongs to the
+        # body. Only a comment directly after the opening brace is header
+        # syntax; Python's single-line bodies have no such brace.
+        if (
+            comment_row == body_row
+            and comment_start > body_start
+            and source[body_start:comment_start].strip() != b"{"
+        ):
+            continue
+        comments.append(comment)
+    return comments
 
 
 def _own_line(comment: Any, source: bytes) -> bool:
@@ -979,7 +997,10 @@ class TreeSitterBackend:
         """
         anchor = _statement_anchor(spec.source_node)
         rows = self._header_rows(anchor, spec)
-        return [*_leading_comments(anchor, source), *_following_comments(anchor, rows)]
+        return [
+            *_leading_comments(anchor, source),
+            *_following_comments(anchor, rows, spec.body, source),
+        ]
 
     def extract_file(self, file_path: Path) -> BackendResult:
         """Parse one file and build its code units and parse diagnostics.
