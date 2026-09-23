@@ -419,7 +419,8 @@ def search_result_to_json(
     :param extraction_diagnostics: Diagnostics from corpus extraction.
     :param semantic_diagnostics: Warnings from semantic indexing.
     :param file_results: Ranked file results, or ``None`` for unit-level output.
-    :param query_execution: Provenance for every query vector this search resolved.
+    :param query_execution: Query provenance in call order; only the latest
+        record belongs to this single-query payload.
     :return: Search payload.
     """
     # ``indexed_units`` is the search corpus after semantic-eligibility
@@ -463,7 +464,7 @@ def search_result_to_json(
             "extracted_units": run.units.extracted,
             "results": len(serialized_results),
             "embeddings": _embedding_stats_to_dict(embedding_stats),
-            "query_execution": [_query_execution_to_dict(item) for item in query_execution],
+            "query_execution": [_query_execution_to_dict(item) for item in query_execution[-1:]],
         },
         "results": serialized_results,
         "units": _unit_nodes(referenced, ids),

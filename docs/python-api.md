@@ -316,7 +316,7 @@ payload = search_result_to_json(
 print(to_json_text(payload))
 ```
 
-For a unit report, set `search(query, top_k=...)` to the desired unit count and omit `file_results` from the serializer call. `run` is required: it is `analyzer.run_record` after `index()` (or `analyze()`) has populated it. `query_execution` is optional and defaults to `()`; pass `analyzer.query_execution` to include per-query cache/device provenance in `summary.query_execution`. The extraction check inside `run.checks` is derived from `run.units.extracted` (the pre-filter extraction count), not from `indexed_units` (the post-eligibility-filter search corpus size), so a corpus that extraction populated but semantic eligibility filtered down to zero reports `analysis_status: "complete"` rather than `"empty"`; see [the three empty cases](output.md#search).
+For a unit report, set `search(query, top_k=...)` to the desired unit count and omit `file_results` from the serializer call. `run` is required: it is `analyzer.run_record` after `index()` (or `analyze()`) has populated it. `query_execution` is optional and defaults to `()`; pass `analyzer.query_execution` to include the latest query's threshold, cache, and device provenance in `summary.query_execution`, even after earlier searches on the same analyzer. The extraction check inside `run.checks` is derived from `run.units.extracted` (the pre-filter extraction count), not from `indexed_units` (the post-eligibility-filter search corpus size), so a corpus that extraction populated but semantic eligibility filtered down to zero reports `analysis_status: "complete"` rather than `"empty"`; see [the three empty cases](output.md#search).
 
 ## Notes
 

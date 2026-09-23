@@ -561,7 +561,10 @@ def test_search_json_v4_unit_and_file_levels(tmp_path):
         extracted_files=3,
         units=UnitCounts(extracted=3, semantic_eligible=2),
     )
-    query_execution = [QueryExecution(execution_device="cpu", cache_hit=True, threshold=0.5)]
+    query_execution = [
+        QueryExecution(execution_device="mps", cache_hit=False, threshold=0.1),
+        QueryExecution(execution_device="cpu", cache_hit=True, threshold=0.5),
+    ]
 
     unit_level = search_result_to_json(
         "q",
