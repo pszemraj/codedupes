@@ -764,13 +764,15 @@ def _is_abstract(unit: CodeUnit) -> bool:
 
 
 def _is_test_file(path: Path) -> bool:
-    """Return whether a path matches the default test-file exclude shapes.
+    """Return whether a path is a pytest ``conftest.py`` or matches the default test-file shapes.
 
     :param path: File path to inspect.
-    :return: ``True`` for a ``test_*`` prefix or a ``_test``/``_tests`` stem suffix.
+    :return: ``True`` for ``conftest.py``, a ``test_*`` prefix, or a ``_test``/``_tests`` stem suffix.
     """
     stem = path.stem
-    return stem.startswith("test_") or stem.endswith(("_test", "_tests"))
+    return (
+        path.name == "conftest.py" or stem.startswith("test_") or stem.endswith(("_test", "_tests"))
+    )
 
 
 def _is_unused_candidate(unit: CodeUnit, strict_unused: bool) -> bool:

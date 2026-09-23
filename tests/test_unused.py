@@ -1592,9 +1592,10 @@ def test_abstractmethod_exemption_reads_only_the_units_own_decorators(tmp_path: 
 
 
 def test_test_file_exemption_matches_the_default_exclude_shapes(tmp_path: Path) -> None:
-    """The test-file exemption matches only the default exclude shapes, not any ``_test`` substring."""
+    """The test-file exemption covers ``conftest.py`` and the default exclude shapes, not any ``_test`` substring."""
     source = "def _dead():\n    return 1\n"
     expect_reported = {
+        "conftest.py": False,
         "legacy_testament.py": True,
         "probe_test.py": False,
         "probe_tests.py": False,
