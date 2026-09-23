@@ -10,6 +10,4 @@ Precedence is the part that is not solved. `cli/_options.py` distinguishes an ex
 
 ## Machine-readable `info` and `cache info`
 
-`codedupes check` and `codedupes search` emit JSON; `codedupes info` (`cli/info.py`) and `codedupes cache info` (`cli/cache.py`) print Rich tables only, so automation has to scrape them or import the package.
-
-Adding `--json` to both is small in isolation. The reason to wait is overlap: a check report's `run` record already carries the resolved model, revision, profile, requested and executed device, and the per-language gates, leaving environment probing and cache statistics as the only unique payload. Those deserve their own schemas rather than a second copy of `run`.
+`codedupes info` (`cli/info.py`) and `codedupes cache info` (`cli/cache.py`) print Rich tables only. Neither has an automation use case: the cache is managed by a person, not scripted, and a check report's `run` record already carries the resolved model, revision, profile, requested and executed device, and the per-language gates.
