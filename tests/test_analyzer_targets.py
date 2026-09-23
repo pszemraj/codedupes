@@ -21,6 +21,7 @@ def test_analyze_explicit_stub_target_ignores_include_stubs_default(tmp_path: Pa
     result = CodeAnalyzer(config).analyze(stub)
 
     assert [unit.qualified_name for unit in result.units] == ["typed_mod.entry"]
+    assert result.run.include_stubs is True
 
 
 def test_explicit_stub_symlink_target_ignores_include_stubs_default(
