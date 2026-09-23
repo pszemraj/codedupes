@@ -117,6 +117,7 @@ class CodeExtractor:
         include_stubs: bool = False,
         languages: tuple[str, ...] | list[str] | None = None,
         respect_gitignore: bool = True,
+        implicit_default_excludes: bool = False,
     ) -> None:
         """Construct an extractor for a project root.
 
@@ -130,6 +131,8 @@ class CodeExtractor:
             supported source files when omitted.
         :param respect_gitignore: Skip paths git ignores when the root is inside a
             git work tree. Directly named files are analyzed regardless.
+        :param implicit_default_excludes: Whether an explicit pattern list starts
+            with CLI-added defaults rather than caller-supplied exclusions.
         """
         self.root = root.resolve()
         self.respect_gitignore = respect_gitignore
@@ -152,12 +155,16 @@ class CodeExtractor:
             self._exclude_matchers.append(
                 (anchored or "/" in pattern, directory_only, matcher, zero_depth)
             )
-        # The CLI prefixes its explicit patterns with these defaults. Preserve
-        # that boundary by position: a user may explicitly repeat a default
-        # shape to exclude it from unused-code references too.
+        # Pattern values cannot reveal whether the caller supplied a default
+        # shape explicitly. The CLI marks its own prefix so only that prefix
+        # is ignored by the reference-only walk.
+        if implicit_default_excludes and (
+            self.exclude_patterns[: len(DEFAULT_EXCLUDE_PATTERNS)] != DEFAULT_EXCLUDE_PATTERNS
+        ):
+            raise ValueError("implicit_default_excludes requires the default pattern prefix")
         default_count = (
             len(DEFAULT_EXCLUDE_PATTERNS)
-            if self.exclude_patterns[: len(DEFAULT_EXCLUDE_PATTERNS)] == DEFAULT_EXCLUDE_PATTERNS
+            if exclude_patterns is None or implicit_default_excludes
             else 0
         )
         self._default_exclude_patterns = self.exclude_patterns[:default_count]

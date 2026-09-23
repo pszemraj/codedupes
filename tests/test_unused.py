@@ -1196,6 +1196,17 @@ def test_production_function_referenced_only_from_tests_is_not_reported(tmp_path
 
     from codedupes.extractor import DEFAULT_EXCLUDE_PATTERNS
 
+    explicit_defaults = CodeAnalyzer(
+        AnalyzerConfig(
+            run_traditional=False,
+            run_semantic=False,
+            run_unused=True,
+            strict_unused=True,
+            exclude_patterns=DEFAULT_EXCLUDE_PATTERNS.copy(),
+        )
+    ).analyze(root)
+    assert "helper" in {unit.name for unit in explicit_defaults.potentially_unused}
+
     excluded_config = AnalyzerConfig(
         run_traditional=False,
         run_semantic=False,
