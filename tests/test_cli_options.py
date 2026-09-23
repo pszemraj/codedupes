@@ -585,6 +585,12 @@ def test_cli_rejects_conflicting_paired_flags(
         (["--min-statements", "1"], "--min-statements"),
         (["--semantic-unit-type", "class"], "--semantic-unit-type"),
         (["--suppress-test-semantic"], "--suppress-test-semantic"),
+        (["--device", "mps"], "--device"),
+        (["--mps-fallback"], "--mps-fallback"),
+        (["--no-mps-fallback"], "--no-mps-fallback"),
+        (["--mps-memory-fraction", "0.8"], "--mps-memory-fraction"),
+        (["--strict-revision-cache"], "--strict-revision-cache"),
+        (["--loose-revision-cache"], "--loose-revision-cache"),
     ],
 )
 def test_cli_rejects_all_semantic_mode_flags_with_traditional_only(
@@ -796,35 +802,6 @@ def test_cli_rejects_mps_memory_fraction_with_cpu_device(tmp_path):
 
     assert result.exit_code == 2
     assert "mps_memory_fraction requires device='mps' or device='auto'" in result.output
-
-
-@pytest.mark.parametrize(
-    ("extra_args", "expected_option"),
-    [
-        (["--device", "mps"], "--device"),
-        (["--mps-fallback"], "--mps-fallback"),
-        (["--no-mps-fallback"], "--no-mps-fallback"),
-        (["--mps-memory-fraction", "0.8"], "--mps-memory-fraction"),
-        (["--strict-revision-cache"], "--strict-revision-cache"),
-        (["--loose-revision-cache"], "--loose-revision-cache"),
-    ],
-)
-def test_cli_rejects_device_controls_with_traditional_only(
-    tmp_path,
-    extra_args,
-    expected_option,
-):
-    path = tmp_path / "sample.py"
-    path.write_text("def entry():\n    return 1\n")
-
-    runner = CliRunner()
-    result = runner.invoke(
-        cli.cli,
-        ["check", str(path), "--traditional-only", *extra_args],
-    )
-
-    assert result.exit_code == 2
-    assert f"Cannot use {expected_option}" in result.output
 
 
 def test_cli_focus_rejects_file_targets_and_out_of_root_paths(tmp_path):
