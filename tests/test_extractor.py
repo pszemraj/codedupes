@@ -723,6 +723,21 @@ def test_gitignored_scan_root_and_named_files_are_analyzed(tmp_path: Path) -> No
 
 
 @requires_git
+def test_gitignore_applies_to_ignored_files_beneath_subdirectory_target(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+    (root / ".gitignore").write_text("pkg/ignored.py\n", encoding="utf-8")
+    package = root / "pkg"
+    package.mkdir()
+    (package / "ignored.py").write_text("def should_skip():\n    return 1\n", encoding="utf-8")
+
+    extractor = CodeExtractor(package)
+
+    assert extractor.extract_all() == []
+
+
+@requires_git
 def test_gitignore_prunes_the_c_header_policy_scan_too(tmp_path: Path) -> None:
     """C++ git ignores must not flip ``.h`` handling for files the walk never visits."""
     root = tmp_path / "repo"

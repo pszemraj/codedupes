@@ -75,9 +75,11 @@ def git_ignored_paths(root: Path) -> frozenset[Path]:
         )
         return frozenset()
     entries = [os.fsdecode(entry) for entry in completed.stdout.split(b"\0") if entry]
-    if any(entry.rstrip("/") in {"", "."} for entry in entries):
-        return frozenset()
-    return frozenset(Path(entry.rstrip("/")) for entry in entries)
+    # Git can emit "./" for the selected root alongside ignored child files;
+    # the marker itself is not a path to prune.
+    return frozenset(
+        Path(entry.rstrip("/")) for entry in entries if entry.rstrip("/") not in {"", "."}
+    )
 
 
 def git_work_tree(path: Path) -> Path | None:
