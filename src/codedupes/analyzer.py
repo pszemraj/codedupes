@@ -937,7 +937,7 @@ class CodeAnalyzer:
             )
             self._extraction_root = root
             self._python_files = list(extractor.extracted_files.get("python", []))
-            if self.config.run_unused:
+            if self.config.run_unused and any(unit.language == "python" for unit in units):
                 reference_extractor = CodeExtractor(
                     root,
                     exclude_patterns=self.config.exclude_patterns,

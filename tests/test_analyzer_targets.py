@@ -161,6 +161,30 @@ def test_file_target_reports_incomplete_reference_walk(tmp_path: Path, monkeypat
     assert result.analysis_status == "partial"
 
 
+def test_non_python_file_target_skips_irrelevant_reference_walk(
+    tmp_path: Path, monkeypatch
+) -> None:
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "demo"\n')
+    source = tmp_path / "entry.js"
+    source.write_text("function entry() { return 1; }\n")
+
+    def failed_reference_walk(extractor: CodeExtractor) -> list[Path]:
+        extractor._report_walk_error(
+            PermissionError(13, "Permission denied", str(tmp_path / "tests"))
+        )
+        return []
+
+    monkeypatch.setattr(CodeExtractor, "reference_files", failed_reference_walk)
+    result = CodeAnalyzer(
+        AnalyzerConfig(run_traditional=False, run_semantic=False, run_unused=True)
+    ).analyze(source)
+
+    assert [unit.language for unit in result.units] == ["javascript"]
+    assert result.run.unused.files == 0
+    assert result.extraction_diagnostics == []
+    assert result.analysis_status == "complete"
+
+
 @pytest.mark.parametrize("target_is_file", [False, True])
 def test_no_unused_skips_reference_file_discovery(
     tmp_path: Path, monkeypatch, target_is_file: bool

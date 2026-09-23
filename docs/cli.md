@@ -63,7 +63,7 @@ Options, in addition to the [shared options](#options-shared-by-check-and-search
 
 ### Single-file targets
 
-`codedupes check <file>` only compares code units within that one file, so a duplicate of it living elsewhere in the project is not reported. Unused-code detection is not limited the same way: it resolves a [project-wide reference root](analysis-defaults.md#extraction-scope-defaults) for the target (the nearest `pyproject.toml`, else the git work tree, else the file's own directory) and parses every Python file under it, test files included, so a call from elsewhere in the project still counts.
+`codedupes check <file>` only compares code units within that one file, so a duplicate of it living elsewhere in the project is not reported. For a Python file, unused-code detection is not limited the same way: it resolves a [project-wide reference root](analysis-defaults.md#extraction-scope-defaults) for the target (the nearest `pyproject.toml`, else the git work tree, else the file's own directory) and parses every Python file under it, test files included, so a call from elsewhere in the project still counts.
 
 For cross-file duplicate detection against one file, scan the project root and use `--focus` (repeatable) to narrow the report and exit code back to that file or a set of files/directories:
 
