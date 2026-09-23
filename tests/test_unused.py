@@ -1274,74 +1274,39 @@ def test_excluded_definition_recursion_does_not_credit_production_names(
 
 
 @pytest.mark.parametrize(
-    ("production", "test_body", "unused"),
+    ("production", "test_body"),
     [
-        (
+        pytest.param(
             "def helper():\n    return 1\n",
             (
                 "from pkg.impl import *\n\nclass Test:\n"
                 "    def helper(self):\n        return helper()\n"
             ),
-            False,
+            id="method-homonym-is-not-in-scope",
         ),
-        (
-            "def helper():\n    return 1\n",
-            (
-                "from pkg.impl import *\n\nclass Test:\n"
-                "    def helper():\n        return 0\n"
-                "    callback = lambda: helper()\n"
-            ),
-            False,
-        ),
-        (
-            "def helper():\n    return 1\n",
-            (
-                "from pkg.impl import *\n\nclass Test:\n"
-                "    value = helper()\n    def helper(self):\n        return 0\n"
-            ),
-            False,
-        ),
-        (
+        pytest.param(
             "def helper():\n    return 1\n",
             (
                 "from pkg.impl import *\n\nclass Test:\n"
                 "    def helper():\n        return 0\n    value = helper()\n"
             ),
-            True,
+            id="class-body-falls-back-to-name-matching",
         ),
-        (
-            "def helper():\n    return 1\n",
-            (
-                "from pkg.impl import *\n\nclass Test:\n"
-                "    def helper():\n        return 0\n"
-                "    values = [helper() for _ in range(1)]\n"
-            ),
-            False,
-        ),
-        (
-            "def helper():\n    return [1]\n",
-            (
-                "from pkg.impl import *\n\nclass Test:\n"
-                "    def helper():\n        return [2]\n"
-                "    values = [x for x in helper()]\n"
-            ),
-            True,
-        ),
-        (
+        pytest.param(
             "class Obj:\n    def helper(self):\n        return 1\n",
             (
                 "from pkg.impl import Obj\n\ndef test_call():\n"
                 "    def helper():\n        return 0\n"
                 "    return Obj().helper()\n"
             ),
-            False,
+            id="attribute-load-is-name-matched",
         ),
     ],
 )
-def test_reference_only_definitions_resolve_class_and_attribute_uses(
-    tmp_path: Path, production: str, test_body: str, unused: bool
+def test_class_scopes_and_attribute_loads_do_not_shadow_production_names(
+    tmp_path: Path, production: str, test_body: str
 ) -> None:
-    """Local definitions shadow bare names, but not global or attribute uses."""
+    """Only enclosing function scopes and the module top level shadow a bare name."""
     root = tmp_path / "pkg"
     root.mkdir()
     (root / "__init__.py").write_text("")
@@ -1359,7 +1324,7 @@ def test_reference_only_definitions_resolve_class_and_attribute_uses(
         )
     ).analyze(root)
 
-    assert ("helper" in {unit.name for unit in result.potentially_unused}) is unused
+    assert "helper" not in {unit.name for unit in result.potentially_unused}
 
 
 @pytest.mark.parametrize("sibling_call", [False, True])
@@ -1383,38 +1348,35 @@ def test_filtered_nested_bindings_do_not_mask_sibling_references(
     assert bool(_unit(units, "sample.helper").references) is sibling_call
 
 
-def test_decorator_uses_the_definition_bound_before_it(tmp_path: Path) -> None:
-    """A decorator call precedes binding the definition it decorates."""
-    source = (
-        "def outer():\n"
-        "    def _helper(fn):\n        return fn\n"
-        "    @_helper\n"
-        "    def _helper():\n        return 1\n"
-        "    return _helper()\n"
-    )
-    units, _unused = _referenced_graph(tmp_path, source)
-    outer = _unit(units, "sample.outer")
-    helpers = sorted((unit for unit in units if unit.name == "_helper"), key=lambda u: u.lineno)
-
-    assert len(helpers) == 2
-    assert all(outer.uid in helper.references for helper in helpers)
-
-
-def test_conditional_local_definitions_are_all_possible_targets(tmp_path: Path) -> None:
-    """A load after conditional branches may reach either local definition."""
-    source = (
-        "def outer(flag):\n"
-        "    if flag:\n"
-        "        def _helper():\n            return 1\n"
-        "    else:\n"
-        "        def _helper():\n            return 2\n"
-        "    return _helper()\n"
-    )
-    units, _unused = _referenced_graph(tmp_path, source)
+@pytest.mark.parametrize(
+    "body",
+    [
+        pytest.param(
+            "    if flag:\n        def _helper():\n            return 1\n"
+            "    else:\n        def _helper():\n            return 2\n"
+            "    return _helper()\n",
+            id="conditional-branches",
+        ),
+        pytest.param(
+            "    def _helper(fn):\n        return fn\n"
+            "    @_helper\n    def _helper():\n        return 1\n"
+            "    return _helper()\n",
+            id="decorator-rebinds-the-name",
+        ),
+        pytest.param(
+            "    for step in range(2):\n        if step:\n            _helper()\n"
+            "        def _helper():\n            return 1\n",
+            id="loop-use-before-definition",
+        ),
+    ],
+)
+def test_every_same_named_local_definition_is_a_candidate(tmp_path: Path, body: str) -> None:
+    """Resolution ignores statement order, so no binding the load can reach is reported."""
+    units, _unused = _referenced_graph(tmp_path, f"def outer(flag):\n{body}")
     outer = _unit(units, "sample.outer")
     helpers = [unit for unit in units if unit.name == "_helper"]
 
-    assert len(helpers) == 2
+    assert helpers
     assert all(outer.uid in helper.references for helper in helpers)
 
 
@@ -1436,21 +1398,6 @@ def test_global_declaration_bypasses_nested_definition(tmp_path: Path) -> None:
 
     assert module_helper.references
     assert nested_helper.references == set()
-
-
-@pytest.mark.parametrize(
-    "body",
-    [
-        "    callback = lambda: _helper()\n",
-        "    callback = (_helper() for _ in range(1))\n",
-    ],
-)
-def test_deferred_scope_sees_later_local_definition(tmp_path: Path, body: str) -> None:
-    """A deferred body can run after a later definition is bound."""
-    source = f"def outer():\n{body}    def _helper():\n        return 1\n    return callback\n"
-    units, _unused = _referenced_graph(tmp_path, source)
-
-    assert _unit(units, "sample.outer").uid in _unit(units, "sample.outer._helper").references
 
 
 def test_default_excluded_symlink_directory_does_not_import_external_references(

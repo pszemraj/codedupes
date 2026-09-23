@@ -41,20 +41,16 @@ class DefinitionReferences:
         default_factory=dict, repr=False, compare=False
     )
     global_names: set[str] = field(default_factory=set, repr=False, compare=False)
-    nonlocal_names: set[str] = field(default_factory=set, repr=False, compare=False)
     uses: list[ReferenceUse] = field(default_factory=list, repr=False, compare=False)
 
 
 @dataclass
 class ReferenceUse:
-    """One loaded name, preserving its origin and whether it was a bare name."""
+    """One loaded name, the definition it was loaded in, and whether it was a bare name."""
 
     name: str
     origin: DefinitionReferences = field(repr=False)
-    lineno: int
     bare: bool
-    separate_scope: bool
-    deferred: bool
 
 
 @dataclass
@@ -134,30 +130,20 @@ class _ReferenceCollector(ast.NodeVisitor):
         # Parallel to _scopes: the ClassInfo when that scope is a class body.
         self._class_scopes: list[ClassInfo | None] = []
         self._annotation_depth = 0
-        self._separate_scope_depth = 0
-        self._deferred_scope_depth = 0
 
-    def _record(self, name: str, node: ast.AST, *, bare: bool = False) -> None:
+    def _record(self, name: str, *, bare: bool = False) -> None:
         """Attribute one referenced name to the enclosing scopes or the module.
 
         Every enclosing definition records the use with its original scope.
 
         :param name: Referenced name or dotted attribute path.
-        :param node: AST node that loaded the name.
         :param bare: Whether this was a bare ``Name`` load.
         :return: ``None``.
         """
         if not self._scopes:
             self.module_references.add(name)
             return
-        use = ReferenceUse(
-            name,
-            self._scopes[-1],
-            getattr(node, "lineno", 0),
-            bare,
-            self._separate_scope_depth > 0,
-            self._deferred_scope_depth > 0,
-        )
+        use = ReferenceUse(name, self._scopes[-1], bare)
         for scope in self._scopes:
             scope.uses.append(use)
 
@@ -176,72 +162,19 @@ class _ReferenceCollector(ast.NodeVisitor):
     def visit_Name(self, node: ast.Name) -> None:
         """Record loaded names; stores and deletes are not uses."""
         if isinstance(node.ctx, ast.Load):
-            self._record(node.id, node, bare=True)
+            self._record(node.id, bare=True)
 
     def visit_Attribute(self, node: ast.Attribute) -> None:
         """Record attribute access in any context (a property setter is a use too)."""
-        self._record(node.attr, node)
+        self._record(node.attr)
         if isinstance(node.value, ast.Name):
-            self._record(f"{node.value.id}.{node.attr}", node)
+            self._record(f"{node.value.id}.{node.attr}")
         self.generic_visit(node)
-
-    def _visit_comprehension(
-        self, node: ast.ListComp | ast.SetComp | ast.DictComp | ast.GeneratorExp
-    ) -> None:
-        """Visit a comprehension with its first iterable in the enclosing scope.
-
-        :param node: Comprehension expression.
-        :return: ``None``.
-        """
-        first, *rest = node.generators
-        self.visit(first.iter)
-        self._separate_scope_depth += 1
-        if isinstance(node, ast.GeneratorExp):
-            self._deferred_scope_depth += 1
-        try:
-            self.visit(first.target)
-            for condition in first.ifs:
-                self.visit(condition)
-            for generator in rest:
-                self.visit(generator.iter)
-                self.visit(generator.target)
-                for condition in generator.ifs:
-                    self.visit(condition)
-            if isinstance(node, ast.DictComp):
-                self.visit(node.key)
-                self.visit(node.value)
-            else:
-                self.visit(node.elt)
-        finally:
-            self._separate_scope_depth -= 1
-            if isinstance(node, ast.GeneratorExp):
-                self._deferred_scope_depth -= 1
-
-    visit_ListComp = _visit_comprehension
-    visit_SetComp = _visit_comprehension
-    visit_DictComp = _visit_comprehension
-    visit_GeneratorExp = _visit_comprehension
-
-    def visit_Lambda(self, node: ast.Lambda) -> None:
-        """Evaluate lambda defaults outside its body scope."""
-        self.visit(node.args)
-        self._separate_scope_depth += 1
-        self._deferred_scope_depth += 1
-        try:
-            self.visit(node.body)
-        finally:
-            self._separate_scope_depth -= 1
-            self._deferred_scope_depth -= 1
 
     def visit_Global(self, node: ast.Global) -> None:
         """Record names that bypass enclosing definition scopes."""
         if self._scopes:
             self._scopes[-1].global_names.update(node.names)
-
-    def visit_Nonlocal(self, node: ast.Nonlocal) -> None:
-        """Record names bound in an enclosing function scope."""
-        if self._scopes:
-            self._scopes[-1].nonlocal_names.update(node.names)
 
     def visit_Constant(self, node: ast.Constant) -> None:
         """Parse quoted forward references inside annotations."""
@@ -262,12 +195,12 @@ class _ReferenceCollector(ast.NodeVisitor):
     def visit_Import(self, node: ast.Import) -> None:
         """Count an import as a reference to what it imports."""
         for alias in node.names:
-            self._record(alias.name, node)
+            self._record(alias.name)
 
     def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
         """Count a from-import as a reference to each imported name."""
         for alias in node.names:
-            self._record(alias.name, node)
+            self._record(alias.name)
 
     def visit_arg(self, node: ast.arg) -> None:
         """Visit a parameter annotation."""
@@ -702,42 +635,24 @@ def build_reference_graph(
     def local_definitions(
         use: ReferenceUse, top_level_by_name: dict[str, list[DefinitionReferences]]
     ) -> list[DefinitionReferences] | None:
-        """Resolve possible definitions bound to a bare name in its scope.
+        """Resolve a bare name to the module's own definitions that can bind it.
+
+        Enclosing function scopes are searched innermost first, then the
+        module's top level. Class bodies are skipped: their names are not
+        visible to the functions nested in them, and a class-body load of a
+        class-local name falls back to name matching, which only over-credits.
 
         :param use: Bare name load and its originating definition.
-        :param top_level_by_name: Module definitions indexed by name.
-        :return: Possible local definitions, ``[]`` for an unbound local, or
-            ``None`` when name-based matching should apply.
+        :param top_level_by_name: Module-level definitions indexed by name.
+        :return: Candidate definitions, or ``None`` when the module defines
+            none and name-based matching applies.
         """
-        scope: DefinitionReferences | None = (
-            None if use.name in use.origin.global_names else use.origin
-        )
-        while scope is not None:
-            # A method does not close over its class namespace. A direct
-            # class-body load sees only definitions already executed there.
-            if use.name in scope.global_names or use.name in scope.nonlocal_names:
-                scope = scope.parent
-                continue
-            if not scope.is_class or (scope is use.origin and not use.separate_scope):
-                children = scope.children_by_name.get(use.name, [])
-                if scope is use.origin and not use.deferred:
-                    prior = [child for child in children if child.linenos[-1] < use.lineno]
-                    if prior or (children and not scope.is_class):
-                        return prior
-                elif children:
-                    return children
+        scope: DefinitionReferences | None = use.origin
+        while scope is not None and use.name not in scope.global_names:
+            if not scope.is_class and use.name in scope.children_by_name:
+                return scope.children_by_name[use.name]
             scope = scope.parent
-
-        # Function bodies run after their module's definitions are bound;
-        # class bodies run while their own definition is still in progress.
-        top_level = top_level_by_name.get(use.name, [])
-        if use.origin.is_class and not use.deferred:
-            top_level = [
-                definition
-                for definition in top_level
-                if definition.linenos[-1] < use.origin.linenos[-1]
-            ]
-        return top_level or None
+        return top_level_by_name.get(use.name)
 
     module_paths = {unit.file_path for unit in units} | set(source_files or ())
     modules = {
@@ -761,18 +676,19 @@ def build_reference_graph(
             referrers = [unit.uid for unit in extracted] or [
                 f"__definition__::{file_path}::{definition.name}::{definition.linenos[-1]}"
             ]
-            for referrer_uid in referrers:
-                for use in definition.uses:
-                    origin_units = extracted_by_definition[id(use.origin)]
-                    excluded = frozenset(unit.uid for unit in origin_units)
-                    bound = local_definitions(use, top_level_by_name) if use.bare else None
-                    if bound is not None:
-                        for local in bound:
-                            for target in extracted_by_definition[id(local)]:
-                                if target.uid not in excluded and target.uid != referrer_uid:
-                                    target.references.add(referrer_uid)
+            for use in definition.uses:
+                # A nested definition's reference to itself must not surface
+                # as the enclosing unit referencing it.
+                excluded = frozenset(unit.uid for unit in extracted_by_definition[id(use.origin)])
+                bound = local_definitions(use, top_level_by_name) if use.bare else None
+                for referrer_uid in referrers:
+                    if bound is None:
+                        mark(referrer_uid, {use.name}, module.aliases, excluded)
                         continue
-                    mark(referrer_uid, {use.name}, module.aliases, excluded)
+                    for local in bound:
+                        for target in extracted_by_definition[id(local)]:
+                            if target.uid not in excluded and target.uid != referrer_uid:
+                                target.references.add(referrer_uid)
 
     # Public methods of classes deriving from outside the project are reached
     # by the framework's dispatch (NodeVisitor.visit_*, logging.Filter.filter),
