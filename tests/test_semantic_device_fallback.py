@@ -76,56 +76,50 @@ def test_compute_embeddings_rejects_invalid_model_output(
         compute_embeddings(units, device="cpu")
 
 
+class _FlakyAcceleratorModel:
+    """Fake accelerator model returning NaN output until it runs on CPU."""
+
+    device = "cuda"
+
+    def __init__(self) -> None:
+        self.seen_batches: list[tuple[int | None, str | None]] = []
+
+    def encode(self, texts, **kwargs):
+        self.seen_batches.append((kwargs.get("batch_size"), kwargs.get("device")))
+        if kwargs.get("device") != "cpu":
+            return np.array([[np.nan, 0.0]] * len(texts), dtype=np.float32)
+        return np.array(
+            [[1.0, 0.0] if i == 0 else [0.0, 1.0] for i in range(len(texts))],
+            dtype=np.float32,
+        )
+
+
 def test_accelerator_nonfinite_output_retries_once_on_cpu(tmp_path: Path, monkeypatch) -> None:
     units = extract_arithmetic_units(tmp_path)
-    devices_seen: list[str | None] = []
+    model = _FlakyAcceleratorModel()
 
-    class FlakyAcceleratorModel:
-        device = "cuda"
-
-        def encode(self, texts, **kwargs):
-            devices_seen.append(kwargs.get("device"))
-            if kwargs.get("device") != "cpu":
-                return np.array([[np.nan, 0.0]] * len(texts), dtype=np.float32)
-            return np.array(
-                [[1.0, 0.0] if i == 0 else [0.0, 1.0] for i in range(len(texts))],
-                dtype=np.float32,
-            )
-
-    monkeypatch.setattr(semantic, "get_model", lambda *args, **kwargs: FlakyAcceleratorModel())
+    monkeypatch.setattr(semantic, "get_model", lambda *args, **kwargs: model)
     monkeypatch.setattr(semantic, "_prepare_semantic_device", lambda *_args, **_kwargs: "cuda")
     monkeypatch.setattr(semantic, "validate_explicit_device_request", lambda *_a, **_k: None)
 
     embeddings = compute_embeddings(units, device="cuda")
 
-    assert devices_seen == [None, "cpu"]
+    assert [device for _batch_size, device in model.seen_batches] == [None, "cpu"]
     assert embeddings.shape == (2, 2)
     assert np.isfinite(embeddings).all()
 
 
 def test_invalid_output_cpu_retry_restarts_at_capped_batch(tmp_path: Path, monkeypatch) -> None:
     units = extract_arithmetic_units(tmp_path)
-    seen_batches: list[tuple[int, str | None]] = []
+    model = _FlakyAcceleratorModel()
 
-    class FlakyAcceleratorModel:
-        device = "cuda"
-
-        def encode(self, texts, **kwargs):
-            seen_batches.append((kwargs.get("batch_size"), kwargs.get("device")))
-            if kwargs.get("device") != "cpu":
-                return np.array([[np.nan, 0.0]] * len(texts), dtype=np.float32)
-            return np.array(
-                [[1.0, 0.0] if i == 0 else [0.0, 1.0] for i in range(len(texts))],
-                dtype=np.float32,
-            )
-
-    monkeypatch.setattr(semantic, "get_model", lambda *args, **kwargs: FlakyAcceleratorModel())
+    monkeypatch.setattr(semantic, "get_model", lambda *args, **kwargs: model)
     monkeypatch.setattr(semantic, "_prepare_semantic_device", lambda *_args, **_kwargs: "cuda")
     monkeypatch.setattr(semantic, "validate_explicit_device_request", lambda *_a, **_k: None)
 
     embeddings = compute_embeddings(units, device="cuda", batch_size=512)
 
-    assert seen_batches == [(512, None), (CPU_FALLBACK_MAX_BATCH_SIZE, "cpu")]
+    assert model.seen_batches == [(512, None), (CPU_FALLBACK_MAX_BATCH_SIZE, "cpu")]
     assert embeddings.shape == (2, 2)
 
 
