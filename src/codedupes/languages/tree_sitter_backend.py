@@ -693,7 +693,7 @@ SUPPRESSION_KINDS = frozenset({"unused", "duplicates"})
 # case-sensitive and searched rather than anchored, so it finds the directive
 # inside a comment's own delimiters (``# codedupes: ignore``, ``// ...``);
 # ``ignored`` and ``noqa: codedupes`` do not match.
-_SUPPRESSION_RE = re.compile(r"\bcodedupes:\s*ignore\b\s*(?:\[([^\]]*)\])?")
+_SUPPRESSION_RE = re.compile(r"\bcodedupes:[ \t]*ignore\b[ \t]*(?:\[([^\]\r\n]*)\])?")
 # A wrapping declaration/statement node a unit's source node can sit inside;
 # comments attach to the outermost one, not to the inner binding node.
 _STATEMENT_WRAPPER_TYPES = frozenset(
@@ -718,7 +718,7 @@ def parse_suppressions(text: str) -> tuple[frozenset[str], frozenset[str]]:
         return frozenset(), frozenset()
     bracket = match.group(1)
     if bracket is None:
-        if text[match.end() :].lstrip().startswith("["):
+        if text[match.end() :].lstrip(" \t").startswith("["):
             raise ValueError("Unclosed suppression kind list")
         return SUPPRESSION_KINDS, frozenset()
     requested = frozenset(part.strip() for part in bracket.split(",") if part.strip())

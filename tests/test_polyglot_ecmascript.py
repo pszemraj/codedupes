@@ -539,6 +539,20 @@ def test_javascript_suppression_directive_attachment(tmp_path: Path) -> None:
     )
     assert leading_block.suppressions == {"unused", "duplicates"}
 
+    [multiline_block] = extract(
+        tmp_path,
+        "multiline_block.js",
+        """
+        /* codedupes: ignore
+        [details]
+        */
+        function foo() {
+          return 1;
+        }
+        """,
+    )
+    assert multiline_block.suppressions == {"unused", "duplicates"}
+
     [trailing_brace] = extract(
         tmp_path,
         "trailing_brace.js",

@@ -722,6 +722,12 @@ def test_typescript_private_method_is_not_public(tmp_path: Path) -> None:
         pytest.param(
             "/* codedupes: ignore */", {"unused", "duplicates"}, set(), id="block-comment"
         ),
+        pytest.param(
+            "/* codedupes: ignore\n[details]\n*/",
+            {"unused", "duplicates"},
+            set(),
+            id="next-line-prose-is-not-kinds",
+        ),
         pytest.param("/// codedupes: ignore", {"unused", "duplicates"}, set(), id="doc-comment"),
         pytest.param("# codedupes: ignored", set(), set(), id="ignored-does-not-match"),
         pytest.param("# noqa: codedupes", set(), set(), id="noqa-does-not-match"),
