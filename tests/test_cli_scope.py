@@ -35,12 +35,8 @@ def test_cli_focus_displays_brackets_in_path(tmp_path: Path) -> None:
 def test_cli_exclusions_extend_defaults(
     monkeypatch, tmp_path, command, expected_exit_code, include_tests
 ):
-    from codedupes.extractor import CodeExtractor
+    from codedupes.extractor import DEFAULT_EXCLUDE_PATTERNS
 
-    for relative in ["keep.py", "test_entry.py", "pkg/examples/deep.py", "node_modules/mod.py"]:
-        path = tmp_path / relative
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text("def entry():\n    return 1\n", encoding="utf-8")
     captured = []
     patch_cli_analyzer(
         monkeypatch, cli, analyze_result=build_result(tmp_path), captured_configs=captured
@@ -51,9 +47,10 @@ def test_cli_exclusions_extend_defaults(
         args.append("--no-default-excludes")
     result = CliRunner().invoke(cli.cli, args)
     assert result.exit_code == expected_exit_code, result.output
-    units = CodeExtractor(tmp_path, exclude_patterns=captured[0].exclude_patterns).extract_all()
-    assert {unit.file_path.name for unit in units} == (
-        {"keep.py", "test_entry.py"} if include_tests else {"keep.py"}
+    # The extractor's own handling of a pattern list is test_extractor.py's;
+    # this only proves the CLI composes the right list to forward.
+    assert captured[0].exclude_patterns == (
+        ["examples"] if include_tests else [*DEFAULT_EXCLUDE_PATTERNS, "examples"]
     )
 
 
