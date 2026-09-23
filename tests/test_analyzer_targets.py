@@ -34,6 +34,7 @@ def test_explicit_stub_symlink_target_ignores_include_stubs_default(
 
     check_result = CodeAnalyzer(AnalyzerConfig(run_semantic=False, run_unused=False)).analyze(alias)
     assert [unit.qualified_name for unit in check_result.units] == ["typed_mod.entry"]
+    assert check_result.run.include_stubs is True
 
     def fake_compute_embeddings(units, **kwargs):
         return (
@@ -202,6 +203,7 @@ def test_run_record_file_target_has_no_default_excludes(tmp_path: Path) -> None:
 
     file_result = CodeAnalyzer(AnalyzerConfig(run_semantic=False, run_unused=False)).analyze(source)
     assert file_result.run.exclude_patterns == ()
+    assert file_result.run.include_stubs is True
     assert file_result.run.target.name == "entry.py"
 
     directory_result = CodeAnalyzer(AnalyzerConfig(run_semantic=False, run_unused=False)).analyze(
