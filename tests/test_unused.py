@@ -456,16 +456,28 @@ def _entry_point_project(tmp_path: Path) -> Path:
 
 
 def test_entry_points_credit_only_the_named_module(tmp_path: Path) -> None:
-    """The entry point names ``pkg.cli``; ``pkg.other``'s same-named function is untouched."""
+    """Only the named module receives entry-point credit, even with matching basenames."""
     root = _entry_point_project(tmp_path)
+    other_pkg = root / "src" / "other"
+    other_pkg.mkdir()
+    (other_pkg / "__init__.py").write_text("def _main():\n    return 0\n")
+    (other_pkg / "cli.py").write_text(
+        "def _main():\n    return 0\n\nclass App:\n    def run(self):\n        return 0\n"
+    )
     analyzer = CodeAnalyzer(_ENTRY_POINT_ANALYZER_CONFIG)
 
     result = analyzer.analyze(root)
 
-    unused_by_file = {(unit.file_path.name, unit.name) for unit in result.potentially_unused}
-    assert ("other.py", "_main") in unused_by_file
-    assert ("cli.py", "_main") not in unused_by_file
-    assert not any(name == "run" for _file, name in unused_by_file)
+    unused_by_file = {
+        (unit.file_path.relative_to(root).as_posix(), unit.name)
+        for unit in result.potentially_unused
+    }
+    assert ("src/pkg/other.py", "_main") in unused_by_file
+    assert ("src/pkg/cli.py", "_main") not in unused_by_file
+    assert ("src/pkg/cli.py", "run") not in unused_by_file
+    assert ("src/other/cli.py", "_main") in unused_by_file
+    assert ("src/other/cli.py", "run") in unused_by_file
+    assert ("src/other/__init__.py", "_main") in unused_by_file
 
 
 def test_entry_points_resolve_when_scanning_src(tmp_path: Path) -> None:

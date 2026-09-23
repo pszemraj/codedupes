@@ -651,14 +651,15 @@ def build_reference_graph(
         pyproject_path = find_pyproject(project_root)
         if pyproject_path is not None:
             for module, obj in _entry_point_targets(pyproject_path):
-                key = f"{module.rsplit('.', 1)[-1]}.{obj}"
-                for candidate in by_name.get(key, []):
-                    candidate.references.add("project.entrypoint")
-                # A pkg/__init__.py unit's qualified name drops the package
-                # segment when the extraction root is that package directory,
-                # so the suffix key above cannot resolve it there.
+                module_parts = tuple(module.split("."))
                 for candidate in by_name.get(obj, []):
-                    if candidate.file_path.name == "__init__.py":
+                    file_path = candidate.file_path
+                    path_parts = (
+                        file_path.parent.parts
+                        if file_path.name == "__init__.py"
+                        else (*file_path.parent.parts, file_path.stem)
+                    )
+                    if path_parts[-len(module_parts) :] == module_parts:
                         candidate.references.add("project.entrypoint")
 
     return [module.diagnostic for module in modules.values() if module.diagnostic is not None]
