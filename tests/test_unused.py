@@ -1249,6 +1249,22 @@ def test_default_excluded_symlink_directory_does_not_import_external_references(
     assert "helper" in {unit.name for unit in result.potentially_unused}
 
 
+@pytest.mark.parametrize("target_name", ["source.py", "test_alias.py", None])
+def test_reference_graph_counts_in_tree_file_symlink_once(tmp_path: Path, target_name: str | None):
+    source = tmp_path / "source.py"
+    source.write_text("def _loop():\n    return _loop()\n", encoding="utf-8")
+    alias = tmp_path / "test_alias.py"
+    alias.symlink_to(source)
+    target = tmp_path / target_name if target_name is not None else tmp_path
+
+    result = CodeAnalyzer(
+        AnalyzerConfig(run_traditional=False, run_semantic=False, strict_unused=True)
+    ).analyze(target)
+
+    assert [unit.name for unit in result.potentially_unused] == ["_loop"]
+    assert result.potentially_unused[0].references == set()
+
+
 def test_non_utf8_module_still_contributes_references(tmp_path: Path) -> None:
     """The graph decodes lossily like the extractor instead of dropping the file."""
     path = tmp_path / "legacy.py"
