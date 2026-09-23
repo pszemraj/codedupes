@@ -37,7 +37,7 @@ pytestmark = pytest.mark.mps
 # which turns the allocator's genuine OOM path into a deterministic fixture.
 _TINY_MEMORY_FRACTION = 0.0001
 # torch's default high-watermark ratio (PYTORCH_MPS_HIGH_WATERMARK_RATIO).
-_DEFAULT_MEMORY_FRACTION = 1.7
+_DEFAULT_MEMORY_FRACTION = devices._PYTORCH_DEFAULT_MPS_HIGH_WATERMARK_RATIO
 
 
 @pytest.fixture(autouse=True)
