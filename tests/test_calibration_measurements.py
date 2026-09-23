@@ -164,6 +164,43 @@ def _empty_measurement(project, model: str = "gte-modernbert-base") -> dict:
     }
 
 
+def _measurement_with_captured_profile(project, timing_seconds: dict) -> dict:
+    """Build an ``_empty_measurement`` with a valid captured_profile and execution block.
+
+    :param project: Calibration project loaded via ``load_projects``.
+    :param timing_seconds: Value installed under ``metadata.timing_seconds``.
+    :return: Measurement payload that passes ``validate_measurement_provenance`` as-is.
+    """
+    measurement = _empty_measurement(project)
+    profile = resolve_model_profile("gte-modernbert-base")
+    measurement["metadata"].update(
+        {
+            "captured_profile": {
+                "semantic_threshold": profile.semantic_threshold_for_language("python"),
+                "weak_identifier_jaccard_min": profile.hybrid_weak_identifier_jaccard_min,
+                "statement_ratio_min": profile.hybrid_statement_ratio_min,
+                "high_gate": profile.high_confidence_threshold_for_language("python"),
+            },
+            "timing_seconds": timing_seconds,
+        }
+    )
+    encoded_inputs = sum(unit["embedded"] for unit in measurement["units"])
+    execution = {
+        "execution_device": "cpu",
+        "cache_hit_rows": 0,
+        "cache_enabled": False,
+        "model_loaded": True,
+        "requested_rows": encoded_inputs,
+        "unique_inputs": encoded_inputs,
+        "encoded_inputs": encoded_inputs,
+    }
+    measurement["metadata"]["execution"] = {
+        "duplicate": execution.copy(),
+        "search": execution.copy(),
+    }
+    return measurement
+
+
 def test_measurements_bind_capture_inputs_but_load_on_other_runtimes(tmp_path: Path, monkeypatch):
     project = load_projects(project_ids=["ledger"])[0]
     path = tmp_path / "measurement.json"
@@ -442,33 +479,7 @@ def test_device_comparison_rejects_score_coverage_mismatch():
 
 def test_measurement_provenance_rejects_forged_runtime_and_fast_math(monkeypatch):
     project = load_projects(project_ids=["ledger"])[0]
-    measurement = _empty_measurement(project)
-    profile = resolve_model_profile("gte-modernbert-base")
-    measurement["metadata"].update(
-        {
-            "captured_profile": {
-                "semantic_threshold": profile.semantic_threshold_for_language("python"),
-                "weak_identifier_jaccard_min": profile.hybrid_weak_identifier_jaccard_min,
-                "statement_ratio_min": profile.hybrid_statement_ratio_min,
-                "high_gate": profile.high_confidence_threshold_for_language("python"),
-            },
-            "timing_seconds": {"duplicate": 1.0, "search": 1.0},
-        }
-    )
-    encoded_inputs = sum(unit["embedded"] for unit in measurement["units"])
-    execution = {
-        "execution_device": "cpu",
-        "cache_hit_rows": 0,
-        "cache_enabled": False,
-        "model_loaded": True,
-        "requested_rows": encoded_inputs,
-        "unique_inputs": encoded_inputs,
-        "encoded_inputs": encoded_inputs,
-    }
-    measurement["metadata"]["execution"] = {
-        "duplicate": execution.copy(),
-        "search": execution.copy(),
-    }
+    measurement = _measurement_with_captured_profile(project, {"duplicate": 1.0, "search": 1.0})
     validate_measurement_provenance(project, measurement)
 
     measurement["metadata"]["query_execution"][0]["execution_device"] = "mps"
@@ -517,33 +528,7 @@ def test_measurement_provenance_rejects_forged_runtime_and_fast_math(monkeypatch
 
 def test_measurement_provenance_rejects_boolean_timings():
     project = load_projects(project_ids=["ledger"])[0]
-    measurement = _empty_measurement(project)
-    profile = resolve_model_profile("gte-modernbert-base")
-    measurement["metadata"].update(
-        {
-            "captured_profile": {
-                "semantic_threshold": profile.semantic_threshold_for_language("python"),
-                "weak_identifier_jaccard_min": profile.hybrid_weak_identifier_jaccard_min,
-                "statement_ratio_min": profile.hybrid_statement_ratio_min,
-                "high_gate": profile.high_confidence_threshold_for_language("python"),
-            },
-            "timing_seconds": {"duplicate": True, "search": True},
-        }
-    )
-    encoded_inputs = sum(unit["embedded"] for unit in measurement["units"])
-    execution = {
-        "execution_device": "cpu",
-        "cache_hit_rows": 0,
-        "cache_enabled": False,
-        "model_loaded": True,
-        "requested_rows": encoded_inputs,
-        "unique_inputs": encoded_inputs,
-        "encoded_inputs": encoded_inputs,
-    }
-    measurement["metadata"]["execution"] = {
-        "duplicate": execution.copy(),
-        "search": execution.copy(),
-    }
+    measurement = _measurement_with_captured_profile(project, {"duplicate": True, "search": True})
     with pytest.raises(ValueError, match="invalid measurement timing provenance"):
         validate_measurement_provenance(project, measurement)
 
