@@ -4,9 +4,7 @@
 
 For `check` and `search`, stdout contains the report: JSON under `--json` and Rich tables otherwise. Errors and parser-unavailable remediation use stderr; Rich mode also sends logs, cache warnings, sentence-transformers progress, and Hugging Face download progress there. A completed JSON report is a single parseable JSON document even when `check` exits `1` for findings (or an incomplete analysis under `--fail-on-incomplete`). JSON mode disables progress and records non-fatal cache failures in `summary.embeddings.cache_warnings` instead of emitting them. Direct backend output on stdout or stderr, including buffered C stdio, is captured during JSON runs and replayed to stderr only on a runtime failure (exit `3`), without a completed JSON report.
 
-Terminal reports fit the available width. Below 120 columns, duplicate tables stack
-their metrics and both code locations into **Evidence** and **Code units** columns.
-Search scores keep their own columns, and long names and paths wrap within rows.
+Terminal reports fit the available width. Below 120 columns, duplicate tables stack their metrics and both code locations into **Evidence** and **Code units** columns. Search scores keep their own columns, and long names and paths wrap within rows.
 
 Write a JSON report directly in automation:
 
@@ -14,16 +12,13 @@ Write a JSON report directly in automation:
 codedupes check ./src --json > codedupes-report.json
 ```
 
-On a completed scan, the report is written before the command returns its [finding
-status](#exit-codes). Use `--fail-on none` to collect a report without making findings
-fail an incremental rollout:
+On a completed scan, the report is written before the command returns its [finding status](#exit-codes). Use `--fail-on none` to collect a report without making findings fail an incremental rollout:
 
 ```text
 codedupes check ./src --json --fail-on none > codedupes-report.json
 ```
 
-If a Bash or Zsh pipeline validates JSON with `jq`, enable `pipefail` so the parser's successful
-exit does not hide `codedupes`' status:
+If a Bash or Zsh pipeline validates JSON with `jq`, enable `pipefail` so the parser's successful exit does not hide `codedupes`' status:
 
 ```text
 set -o pipefail
@@ -77,7 +72,7 @@ Every payload also carries a top-level `about` block (`description`, `docs`, `re
       "source_commit": null,
       "profile": "gte-modernbert",
       "threshold_profile": "auto",
-      "task": "code-duplicate",
+      "task": "semantic-similarity",
       "search_document": "source",
       "device": "auto",
       "execution_device": "cuda",
@@ -158,7 +153,8 @@ Every payload also carries a top-level `about` block (`description`, `docs`, `re
     "strict_unused": false,
     "fail_on_incomplete": false,
     "exit_code": 1,
-    "hidden_only_failure": []
+    "hidden_only_failure": [],
+    "focus": null
   },
   "exact_families": [
     {
@@ -236,7 +232,7 @@ Summary counts are findings, where a family counts once and every other tier cou
 
 The primary list is capped by default: families plus pairs hold at most 20 findings (`--max-duplicates`, recorded as `summary.max_duplicates`), the same findings in the same order as the terminal panels, and `units` drops units referenced only by cut findings. Because families and actionable tiers rank first, the cap trims advisory candidates before corroborated ones, and a family is one item however many copies it holds. `--max-duplicates N` changes the budget and `--max-duplicates all` removes it (`max_duplicates: null`); `--include-review`, `--show-all`, and `--full-table` also remove it unless an explicit `--max-duplicates` accompanies them. With `--include-review --max-duplicates N`, review pairs sit at the end of the ranking, so they appear only once every actionable and advisory finding fits under `N`; findings the cap cuts count as `truncated`, not `omitted_review`, and `truncated_by_tier.semantic_review` says how many review pairs were cut. The raw `--show-all` lists are never capped. The exit code ignores the cap, see [exit codes](#exit-codes).
 
-In `--traditional-only` mode, exact edges are grouped into `exact_families` the same way. In `--semantic-only` mode there are no exact edges or families. In either single-method mode, `duplicates` contains the remaining raw edges ordered by descending similarity (ties in analyzer order; the cap keeps families then that prefix). `duplicates_by_tier` and `truncated_by_tier` are zero except for `exact`, which counts families, `hybrid_duplicates` is `0`, and the `--show-all` arrays are omitted. `analysis_mode` is always one of `combined`, `traditional`, `semantic`, or `unused` (neither traditional nor semantic detection ran, so `duplicates` and `exact_families` are empty and `traditional`/`semantic` are `null` in `run`).
+In `--traditional-only` mode, exact edges are grouped into `exact_families` the same way. In `--semantic-only` mode there are no exact edges or families. In either single-method mode, `duplicates` contains the remaining raw edges ordered by descending similarity (ties in analyzer order; the cap keeps families then that prefix). `duplicates_by_tier` and `truncated_by_tier` are zero except for `exact`, which counts families, `hybrid_duplicates` is `0`, and `--show-all`/`--include-review` are usage errors outside combined mode, so their extra arrays never appear. `analysis_mode` is always one of `combined`, `traditional`, `semantic`, or `unused` (neither traditional nor semantic detection ran, so `duplicates` and `exact_families` are empty and `traditional`/`semantic` are `null` in `run`).
 
 `potentially_unused` is ranked and bounded too: ids are ordered by line span (`end_line - line + 1`) descending, then statement count, then file position, so the largest dead definitions lead, and the list holds at most 20 (`--max-unused`, recorded as `summary.max_unused`; `--max-unused all` removes the cap and the expansion flags above lift it unless an explicit value is given). `summary.potentially_unused` stays the complete count while `summary.reported_unused` and `summary.truncated_unused` split it into emitted and cut; units referenced only by cut unused findings leave `units`. `summary.suppressed_unused` counts units that carry a `codedupes: ignore`/`codedupes: ignore[unused]` directive and would otherwise have been a finding; a directive on a unit that was already exempt some other way (public surface, `get_*`/`set_*`, a test file) is not counted. `extraction_diagnostics`, `semantic_diagnostics`, `unused_diagnostics`, and the raw `--show-all` edge lists are deliberately complete: they are per-file records a consumer needs in full, so a scan with many diagnostics still produces a large document.
 
@@ -285,11 +281,11 @@ Default search hits (`--result-level unit`) use `{"unit": "u0", "score": 0.95}`;
     "semantic": {
       "requested_model": "Alibaba-NLP/gte-modernbert-base",
       "model": "Alibaba-NLP/gte-modernbert-base",
-      "revision": null,
+      "revision": "abc1234",
       "source_commit": null,
       "profile": "gte-modernbert",
       "threshold_profile": "auto",
-      "task": "code-search-query",
+      "task": "code-retrieval",
       "search_document": "source",
       "device": "auto",
       "execution_device": null,
