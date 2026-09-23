@@ -216,8 +216,8 @@ from ._render import print_findings, print_run, print_summary
     is_flag=True,
     panel=Panel.OUTPUT,
     help=(
-        "Show a unified diff per duplicate pair (structural_hash families diff each member "
-        "against the first; token_hash families are token-identical, so nothing prints)"
+        "Show a unified source diff per duplicate pair; exact families diff each member "
+        "against the first when their source differs"
     ),
 )
 @click.option(

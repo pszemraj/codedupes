@@ -604,9 +604,8 @@ def print_exact_families(
 ) -> None:
     """Print every selected exact family; the report cap is the only bound.
 
-    Diffs only make sense for ``structural_hash`` families (each member
-    against the first); a ``token_hash`` family is token-identical, so
-    ``--show-diff`` prints nothing extra for it.
+    Each member is diffed against the first when ``--show-diff`` is set;
+    source-identical members have no diff to print.
 
     :param families: Families to print, in report order.
     :param truncated: Families the ``--max-duplicates`` cap cut from the report.
@@ -624,8 +623,8 @@ def print_exact_families(
     _output.console.print(f"\n[bold yellow]Exact Duplicate Families[/bold yellow] ({counts})")
     _output.console.print(
         "[dim]Each row is one set of mutually identical units; token_hash members are "
-        "token-for-token copies, structural_hash members differ only in names or "
-        "string literals.[/dim]"
+        "token-for-token copies, while structural_hash members share normalized "
+        "structure.[/dim]"
     )
     compact = _output.console.width < 120
     table = _build_families_table(compact=compact)

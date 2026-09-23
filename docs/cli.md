@@ -55,7 +55,7 @@ Options, in addition to the [shared options](#options-shared-by-check-and-search
 - `--full-table`: Print all rows in the raw `--show-all` duplicate tables and lift the default `--max-duplicates` and `--max-unused` caps
 - `--show-source`: Show a bounded source snippet per reported unit, in terminal panels and (unlike other display controls) also as a `source` field on every JSON unit record
 - `--source-lines <N|all>`: Cap each shown snippet at `N` lines (default `40`) or remove the cap with `all`; implies `--show-source`
-- `--show-diff`: Show a unified diff per duplicate pair, bounded by `--source-lines`; `structural_hash` families diff each member against the first, `token_hash` families print nothing extra (token-identical already)
+- `--show-diff`: Show a unified source diff per duplicate pair, bounded by `--source-lines`; exact families diff each member against the first when their source differs
 - `--fail-on <actionable|all|none>`: Select the [finding exit policy](output.md#exit-codes)
 - `--fail-on-incomplete`: Also exit `1` when the [analysis did not complete](output.md#exit-codes), independent of `--fail-on` (including `none`)
 
