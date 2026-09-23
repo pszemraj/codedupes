@@ -572,15 +572,14 @@ def run_should_fail(
     :return: Whether findings, or an incomplete analysis, require exit code one.
     :raises ValueError: If ``policy`` is not a supported failure policy.
     """
-    if fail_on_incomplete and result.analysis_status != "complete":
-        return True
-    return _findings_fail(
+    findings_fail = _findings_fail(
         result.all_duplicates,
         result.potentially_unused,
         combined=result.analysis_mode == "combined",
         policy=policy,
         strict_unused=strict_unused,
     )
+    return findings_fail or (fail_on_incomplete and result.analysis_status != "complete")
 
 
 def hidden_only_failure(
