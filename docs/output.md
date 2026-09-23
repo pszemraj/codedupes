@@ -320,7 +320,7 @@ Default search hits (`--result-level unit`) use `{"unit": "u0", "score": 0.95}`;
 }
 ```
 
-`summary.indexed_units` is the semantic corpus size after eligibility filtering; `summary.extracted_units` (`run.units.extracted`) is the pre-filter extraction count, so the two distinguish an empty repository from a populated one that eligibility filtering emptied. `summary.query_execution` lists one `{"execution_device", "cache_hit"}` record per query vector this search resolved (empty for `--result-level file`'s per-match grouping, which does not issue extra queries); `cache_hit: true` and `execution_device: null` together mean the query embedding came from the persistent cache without loading the model.
+`summary.indexed_units` is the semantic corpus size after eligibility filtering; `summary.extracted_units` (`run.units.extracted`) is the pre-filter extraction count, so the two distinguish an empty repository from a populated one that eligibility filtering emptied. `summary.query_execution` lists one `{"execution_device", "cache_hit"}` record per query vector this search resolved; `--result-level file` retains the original query record because grouping matches by file does not issue an extra query. `cache_hit: true` and `execution_device: null` together mean the query embedding came from the persistent cache without loading the model.
 
 An empty index means one of three different things, and `analysis_status`/`run.checks.extraction` distinguish them:
 
