@@ -809,6 +809,68 @@ def test_class_body_alias_is_a_reference(tmp_path: Path) -> None:
     assert unused == {"_Visitor"}
 
 
+@pytest.mark.parametrize("module_homonym", [False, True])
+@pytest.mark.parametrize("strict", [False, True])
+def test_class_body_alias_of_a_method_credits_the_method(
+    tmp_path: Path, module_homonym: bool, strict: bool
+) -> None:
+    """A class-body load sees the class's own definitions before the module's."""
+    homonym = "def _parse(text):\n    return int(text)\n\n" if module_homonym else ""
+    source = (
+        f"{homonym}"
+        "class Decoder:\n"
+        "    def _parse(self, text):\n        return text[::-1]\n"
+        "    parse = _parse\n"
+    )
+    units = extract_units(tmp_path, source, include_private=True)
+    build_reference_graph(units)
+    unused = {unit.qualified_name for unit in find_potentially_unused(units, strict_unused=strict)}
+
+    decoder = _unit(units, "sample.Decoder")
+    assert decoder.uid in _unit(units, "sample.Decoder._parse").references
+    assert "sample.Decoder._parse" not in unused
+    if module_homonym:
+        # Statement order is ignored, so the module function stays a candidate.
+        assert decoder.uid in _unit(units, "sample._parse").references
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        pytest.param(
+            "def _helper():\n    return 'old'\n"
+            "def _replace():\n"
+            "    global _helper\n"
+            "    def _helper():\n        return 'new'\n"
+            "def run():\n"
+            "    _replace()\n"
+            "    return _helper()\n",
+            id="global",
+        ),
+        pytest.param(
+            "def outer():\n"
+            "    def _helper():\n        return 'old'\n"
+            "    def _replace():\n"
+            "        nonlocal _helper\n"
+            "        def _helper():\n            return 'new'\n"
+            "    _replace()\n"
+            "    return _helper()\n",
+            id="nonlocal",
+        ),
+    ],
+)
+def test_definitions_rebound_through_global_or_nonlocal_are_references(
+    tmp_path: Path, source: str
+) -> None:
+    """A ``def`` under ``global``/``nonlocal`` binds outside its lexical parent, so every
+    same-named definition stays a candidate for loads of that name."""
+    units, unused = _referenced_graph(tmp_path, source)
+
+    assert [unit for unit in units if unit.name == "_helper"]
+    assert all(unit.references for unit in units if unit.name == "_helper")
+    assert "_helper" not in unused
+
+
 def test_nested_definition_references_count_for_the_enclosing_unit(tmp_path: Path) -> None:
     source = dedent(
         """

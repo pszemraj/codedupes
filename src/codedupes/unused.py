@@ -42,6 +42,7 @@ class DefinitionReferences:
         default_factory=dict, repr=False, compare=False
     )
     global_names: set[str] = field(default_factory=set, repr=False, compare=False)
+    nonlocal_names: set[str] = field(default_factory=set, repr=False, compare=False)
     uses: list[ReferenceUse] = field(default_factory=list, repr=False, compare=False)
 
 
@@ -176,6 +177,11 @@ class _ReferenceCollector(ast.NodeVisitor):
         """Record names that bypass enclosing definition scopes."""
         if self._scopes:
             self._scopes[-1].global_names.update(node.names)
+
+    def visit_Nonlocal(self, node: ast.Nonlocal) -> None:
+        """Record names whose bindings belong to an enclosing function scope."""
+        if self._scopes:
+            self._scopes[-1].nonlocal_names.update(node.names)
 
     def visit_Constant(self, node: ast.Constant) -> None:
         """Parse quoted forward references inside annotations."""
@@ -680,26 +686,40 @@ def build_reference_graph(
         ]
 
     def local_definitions(
-        use: ReferenceUse, top_level_by_name: dict[str, list[DefinitionReferences]]
+        use: ReferenceUse,
+        top_level_by_name: dict[str, list[DefinitionReferences]],
+        redirected: set[str],
     ) -> list[DefinitionReferences] | None:
         """Resolve a bare name to the module's own definitions that can bind it.
 
+        A class-body load sees the class's own definitions before the
+        enclosing scopes; statement order is ignored, so both are candidates.
         Enclosing function scopes are searched innermost first, then the
-        module's top level. Class bodies are skipped: their names are not
-        visible to the functions nested in them, and a class-body load of a
-        class-local name falls back to name matching, which only over-credits.
+        module's top level. Class bodies above the load are skipped: their
+        names are not visible to the functions nested in them.
 
         :param use: Bare name load and its originating definition.
         :param top_level_by_name: Module-level definitions indexed by name.
-        :return: Candidate definitions, or ``None`` when the module defines
-            none and name-based matching applies.
+        :param redirected: Names a ``def``/``class`` rebinds under ``global``
+            or ``nonlocal``, whose binding scope is not its lexical parent.
+        :return: Candidate definitions, or ``None`` when name-based matching
+            applies (it only over-credits).
         """
+        if use.name in redirected:
+            return None
         scope: DefinitionReferences | None = use.origin
+        class_bound: list[DefinitionReferences] = []
+        if scope.is_class and use.name not in scope.global_names:
+            class_bound = scope.children_by_name.get(use.name, [])
+            scope = scope.parent
         while scope is not None and use.name not in scope.global_names:
             if not scope.is_class and use.name in scope.children_by_name:
-                return scope.children_by_name[use.name]
+                return class_bound + scope.children_by_name[use.name]
             scope = scope.parent
-        return top_level_by_name.get(use.name)
+        module_bound = top_level_by_name.get(use.name)
+        # Without a module-level definition, an import or builtin may bind
+        # the name after a class's own definitions.
+        return None if module_bound is None else class_bound + module_bound
 
     module_paths = {unit.file_path for unit in units} | set(source_files or ())
     modules = {
@@ -711,6 +731,12 @@ def build_reference_graph(
         for definition in module.definitions:
             if definition.parent is None:
                 top_level_by_name[definition.name].append(definition)
+        redirected = {
+            name
+            for definition in module.definitions
+            for name in definition.global_names | definition.nonlocal_names
+            if name in definition.children_by_name
+        }
         extracted_by_definition = {
             id(definition): units_for(file_path, definition) for definition in module.definitions
         }
@@ -727,7 +753,7 @@ def build_reference_graph(
                 # A nested definition's reference to itself must not surface
                 # as the enclosing unit referencing it.
                 excluded = frozenset(unit.uid for unit in extracted_by_definition[id(use.origin)])
-                bound = local_definitions(use, top_level_by_name) if use.bare else None
+                bound = local_definitions(use, top_level_by_name, redirected) if use.bare else None
                 for referrer_uid in referrers:
                     if bound is None:
                         mark(referrer_uid, {use.name}, module.aliases, excluded)
