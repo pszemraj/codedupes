@@ -4,6 +4,7 @@ import ast
 import logging
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 from textwrap import dedent
 
@@ -724,6 +725,8 @@ def test_bound_method_callback_is_a_reference(tmp_path: Path) -> None:
 def test_annotations_are_references(tmp_path: Path) -> None:
     source = dedent(
         """
+        from typing import TypeAlias, TypeVar, cast
+
         class _Node:
             pass
 
@@ -733,9 +736,21 @@ def test_annotations_are_references(tmp_path: Path) -> None:
         class _Edge:
             pass
 
+        class _Aliased:
+            pass
+
+        class _Bound:
+            pass
+
+        class _Cast:
+            pass
+
+        _Alias: TypeAlias = "list[_Aliased]"
+        _T = TypeVar("_T", bound="_Bound")
+
         def _walk(node: _Node, edges: "list[_Edge]") -> "_Leaf | None":
             found: "_Leaf | None" = None
-            return found
+            return cast("_Cast", found)
         """
     ).strip()
     units, unused = _referenced_graph(tmp_path, source)
@@ -743,11 +758,25 @@ def test_annotations_are_references(tmp_path: Path) -> None:
     walker = _unit(units, "sample._walk").uid
     module = _module_ref(units)
     # Signature annotations evaluate in the enclosing (module) namespace; the
-    # annotated assignment inside the body belongs to the function.
+    # annotated assignment inside the body belongs to the function. An explicit
+    # TypeAlias value, a TypeVar bound, and a cast target are type expressions,
+    # so their quoted forward references count like annotations.
     assert _unit(units, "sample._Node").references == {module}
     assert _unit(units, "sample._Edge").references == {module}
     assert _unit(units, "sample._Leaf").references == {module, walker}
+    assert _unit(units, "sample._Aliased").references == {module}
+    assert _unit(units, "sample._Bound").references == {module}
+    assert _unit(units, "sample._Cast").references == {walker}
     assert unused == {"_walk"}
+
+
+@pytest.mark.skipif(sys.version_info < (3, 12), reason="type statements need Python 3.12")
+def test_type_statement_value_is_a_type_expression(tmp_path: Path) -> None:
+    source = 'class _Target:\n    pass\n\ntype Alias = "list[_Target]"\n'
+    units, unused = _referenced_graph(tmp_path, source)
+
+    assert _unit(units, "sample._Target").references == {_module_ref(units)}
+    assert unused == set()
 
 
 def test_base_class_is_a_reference(tmp_path: Path) -> None:
@@ -1494,6 +1523,31 @@ def test_filtered_nested_bindings_do_not_mask_sibling_references(
     build_reference_graph(units)
 
     assert bool(_unit(units, "sample.helper").references) is sibling_call
+
+
+@pytest.mark.parametrize(
+    ("signature", "body", "credited"),
+    [
+        pytest.param("_helper", "    return _helper()\n", False, id="positional"),
+        pytest.param("*, _helper", "    return _helper()\n", False, id="keyword-only"),
+        pytest.param("*_helper", "    return _helper[0]()\n", False, id="var-positional"),
+        pytest.param(
+            "_helper",
+            "    def inner():\n        return _helper()\n    return inner()\n",
+            False,
+            id="closure-over-the-parameter",
+        ),
+        pytest.param("callback=_helper", "    return callback()\n", True, id="default-value"),
+    ],
+)
+def test_parameter_shadows_a_same_named_module_definition(
+    tmp_path: Path, signature: str, body: str, credited: bool
+) -> None:
+    """A load of a parameter's name is the parameter, but a default evaluates outside the function."""
+    source = f"def _helper():\n    return 1\n\n\ndef run({signature}):\n{body}"
+    _units, unused = _referenced_graph(tmp_path, source)
+
+    assert ("_helper" not in unused) is credited
 
 
 @pytest.mark.parametrize(

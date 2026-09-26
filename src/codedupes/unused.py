@@ -43,6 +43,7 @@ class DefinitionReferences:
     )
     global_names: set[str] = field(default_factory=set, repr=False, compare=False)
     nonlocal_names: set[str] = field(default_factory=set, repr=False, compare=False)
+    parameter_names: set[str] = field(default_factory=set, repr=False, compare=False)
     uses: list[ReferenceUse] = field(default_factory=list, repr=False, compare=False)
 
 
@@ -215,11 +216,52 @@ class _ReferenceCollector(ast.NodeVisitor):
             self._visit_annotation(node.annotation)
 
     def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
-        """Visit an annotated assignment with the annotation unquoted."""
+        """Visit an annotated assignment with the annotation unquoted.
+
+        An explicit ``TypeAlias`` value is a type expression too, so a quoted
+        forward reference there (``Alias: TypeAlias = "Target"``) is unquoted.
+        """
         self._visit_annotation(node.annotation)
         self.visit(node.target)
-        if node.value is not None:
+        if node.value is None:
+            return
+        if (_dotted_name(node.annotation) or "").rsplit(".", 1)[-1] == "TypeAlias":
+            self._visit_annotation(node.value)
+        else:
             self.visit(node.value)
+
+    def visit_TypeAlias(self, node: ast.AST) -> None:
+        """Visit a ``type Alias = ...`` statement with its value unquoted."""
+        for type_param in getattr(node, "type_params", ()):
+            self.visit(type_param)
+        self._visit_annotation(node.value)
+
+    def visit_Call(self, node: ast.Call) -> None:
+        """Visit a call, unquoting the type expressions of ``cast`` and ``TypeVar``.
+
+        ``cast("Target", value)``'s first argument and a ``TypeVar``'s
+        constraints and ``bound=`` are type expressions, so a quoted forward
+        reference there is a use like one in an annotation.
+        """
+        callee = (_dotted_name(node.func) or "").rsplit(".", 1)[-1]
+        if callee == "cast":
+            type_args = set(range(min(1, len(node.args))))
+        elif callee == "TypeVar":
+            type_args = set(range(1, len(node.args)))
+        else:
+            self.generic_visit(node)
+            return
+        self.visit(node.func)
+        for index, argument in enumerate(node.args):
+            if index in type_args:
+                self._visit_annotation(argument)
+            else:
+                self.visit(argument)
+        for keyword in node.keywords:
+            if callee == "TypeVar" and keyword.arg == "bound":
+                self._visit_annotation(keyword.value)
+            else:
+                self.visit(keyword.value)
 
     def _enter(
         self, node: ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef
@@ -251,6 +293,18 @@ class _ReferenceCollector(ast.NodeVisitor):
             for keyword in node.keywords:
                 self.visit(keyword)
         else:
+            arguments = node.args
+            definition.parameter_names.update(
+                argument.arg
+                for argument in (
+                    *arguments.posonlyargs,
+                    *arguments.args,
+                    *arguments.kwonlyargs,
+                    arguments.vararg,
+                    arguments.kwarg,
+                )
+                if argument is not None
+            )
             self.visit(node.args)
             if node.returns is not None:
                 self._visit_annotation(node.returns)
@@ -731,7 +785,9 @@ def build_reference_graph(
         enclosing scopes; statement order is ignored, so both are candidates.
         Enclosing function scopes are searched innermost first, then the
         module's top level. Class bodies above the load are skipped: their
-        names are not visible to the functions nested in them.
+        names are not visible to the functions nested in them. A parameter of
+        an enclosing function binds the name for that whole body, so the load
+        is the parameter and no module definition is a candidate.
 
         :param use: Bare name load and its originating definition.
         :param top_level_by_name: Module-level definitions indexed by name.
@@ -748,8 +804,11 @@ def build_reference_graph(
             class_bound = scope.children_by_name.get(use.name, [])
             scope = scope.parent
         while scope is not None and use.name not in scope.global_names:
-            if not scope.is_class and use.name in scope.children_by_name:
-                return class_bound + scope.children_by_name[use.name]
+            if not scope.is_class:
+                if use.name in scope.children_by_name:
+                    return class_bound + scope.children_by_name[use.name]
+                if use.name in scope.parameter_names:
+                    return class_bound
             scope = scope.parent
         module_bound = top_level_by_name.get(use.name)
         # Without a module-level definition, an import or builtin may bind
