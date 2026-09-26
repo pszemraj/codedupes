@@ -13,7 +13,6 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, replace
-from itertools import combinations
 from pathlib import Path
 from typing import Literal
 
@@ -368,14 +367,20 @@ def build_exact_families(
     token_components = _connected_components(by_method["token_hash"])
     structural_uid_sets = [frozenset(unit.uid for unit in c) for c in structural_components]
     token_uid_sets = [frozenset(unit.uid for unit in c) for c in token_components]
+    token_uid_lookup = frozenset(token_uid_sets)
+    # Structural components are disjoint, so each uid has at most one.
+    structural_owner = {
+        uid: index for index, uids in enumerate(structural_uid_sets) for uid in uids
+    }
 
     families: list[ExactFamily] = []
     for component, uids in zip(structural_components, structural_uid_sets, strict=True):
         members = tuple(sorted(component, key=unit_sort_key))
-        method: ExactMethod = "token_hash" if uids in token_uid_sets else "structural_hash"
+        method: ExactMethod = "token_hash" if uids in token_uid_lookup else "structural_hash"
         families.append(ExactFamily(members=members, method=method))
     for component, uids in zip(token_components, token_uid_sets, strict=True):
-        if any(uids <= structural_uids for structural_uids in structural_uid_sets):
+        owners = {structural_owner.get(uid) for uid in uids}
+        if len(owners) == 1 and None not in owners:
             continue
         members = tuple(sorted(component, key=unit_sort_key))
         families.append(ExactFamily(members=members, method="token_hash"))
@@ -666,7 +671,7 @@ def _finding_count(pairs: Sequence[HybridDuplicate | DuplicatePair]) -> int:
 def _focus_pairs(
     pairs: Sequence[HybridDuplicate] | Sequence[DuplicatePair],
     *,
-    kept_family_pairs: frozenset[frozenset[str]],
+    kept_families: dict[str, set[int]],
     paths: tuple[Path, ...],
 ) -> list[HybridDuplicate] | list[DuplicatePair]:
     """Filter one duplicate list to the pairs a focused report keeps.
@@ -677,14 +682,19 @@ def _focus_pairs(
     its own finding, kept when either endpoint is in focus.
 
     :param pairs: Duplicate pairs to filter, raw or hybrid.
-    :param kept_family_pairs: Uid pairs within families with an in-focus member.
+    :param kept_families: Uid to the indices of the families with an in-focus
+        member that contain it (a unit can sit in two overlapping families).
     :param paths: Resolved focus paths.
     :return: The subset of ``pairs`` a focused report keeps, in input order.
     """
     kept: list[HybridDuplicate] | list[DuplicatePair] = []
+    no_family: set[int] = set()
     for pair in pairs:
         if _is_exact_edge(pair):
-            if frozenset((pair.unit_a.uid, pair.unit_b.uid)) in kept_family_pairs:
+            shared = kept_families.get(pair.unit_a.uid, no_family) & kept_families.get(
+                pair.unit_b.uid, no_family
+            )
+            if shared:
                 kept.append(pair)  # type: ignore[arg-type]
         elif _in_focus(pair.unit_a, paths) or _in_focus(pair.unit_b, paths):
             kept.append(pair)  # type: ignore[arg-type]
@@ -707,23 +717,17 @@ def focus_result(result: AnalysisResult, paths: tuple[Path, ...]) -> AnalysisRes
     :param paths: Resolved, deduplicated focus paths (files or directories); must be non-empty.
     :return: A new result scoped to ``paths``, with ``focus`` set.
     """
-    families = build_exact_families(result.all_duplicates)
-    kept_family_pairs = frozenset(
-        frozenset((unit_a.uid, unit_b.uid))
-        for family in families
-        if any(_in_focus(member, paths) for member in family.members)
-        for unit_a, unit_b in combinations(family.members, 2)
-    )
+    kept_families: dict[str, set[int]] = {}
+    for index, family in enumerate(build_exact_families(result.all_duplicates)):
+        if any(_in_focus(member, paths) for member in family.members):
+            for member in family.members:
+                kept_families.setdefault(member.uid, set()).add(index)
 
     traditional = _focus_pairs(
-        result.traditional_duplicates, kept_family_pairs=kept_family_pairs, paths=paths
+        result.traditional_duplicates, kept_families=kept_families, paths=paths
     )
-    semantic = _focus_pairs(
-        result.semantic_duplicates, kept_family_pairs=kept_family_pairs, paths=paths
-    )
-    hybrid = _focus_pairs(
-        result.hybrid_duplicates, kept_family_pairs=kept_family_pairs, paths=paths
-    )
+    semantic = _focus_pairs(result.semantic_duplicates, kept_families=kept_families, paths=paths)
+    hybrid = _focus_pairs(result.hybrid_duplicates, kept_families=kept_families, paths=paths)
     unused = [unit for unit in result.potentially_unused if _in_focus(unit, paths)]
 
     focused = replace(
