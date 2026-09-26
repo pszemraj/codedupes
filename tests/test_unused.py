@@ -769,6 +769,14 @@ def test_annotations_are_references(tmp_path: Path) -> None:
             typing.cast("_QualifiedCast", found)
             cast(typ="_KeywordCast", val=found)
             return cast("_Cast", found)
+
+        def _format_name():
+            return 2
+
+        def _render(value):
+            from mylib import local_cast
+
+            return local_cast("_format_name", value)
         """
     ).strip()
     units, unused = _referenced_graph(tmp_path, source)
@@ -779,7 +787,8 @@ def test_annotations_are_references(tmp_path: Path) -> None:
     # annotated assignment inside the body belongs to the function. An explicit
     # TypeAlias value, a TypeVar bound, and a typing.cast target (positional,
     # keyword, or module-qualified) are type expressions, so their quoted
-    # forward references count like annotations; another API's .cast() takes data.
+    # forward references count like annotations; another API's cast takes data,
+    # even under a name a sibling function imports from typing.
     assert _unit(units, "sample._Node").references == {module}
     assert _unit(units, "sample._Edge").references == {module}
     assert _unit(units, "sample._Leaf").references == {module, walker}
@@ -789,7 +798,7 @@ def test_annotations_are_references(tmp_path: Path) -> None:
     assert _unit(units, "sample._KeywordCast").references == {walker}
     assert _unit(units, "sample._QualifiedCast").references == {walker}
     assert _unit(units, "sample._LocalCast").references == {walker}
-    assert unused == {"_walk", "_field_name"}
+    assert unused == {"_walk", "_field_name", "_format_name", "_render"}
 
 
 @pytest.mark.skipif(sys.version_info < (3, 12), reason="type statements need Python 3.12")

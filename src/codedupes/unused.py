@@ -133,7 +133,7 @@ class _ReferenceCollector(ast.NodeVisitor):
     def __init__(self, aliases: dict[str, str] | None = None) -> None:
         """Start with an empty module scope.
 
-        :param aliases: Module-level import and assignment aliases, used to
+        :param aliases: Module-scope import and assignment aliases, used to
             recognize ``typing`` helpers whose string arguments are type expressions.
         """
         self._aliases = aliases or {}
@@ -141,6 +141,8 @@ class _ReferenceCollector(ast.NodeVisitor):
         self.definitions: list[DefinitionReferences] = []
         self.classes: list[ClassInfo] = []
         self._scopes: list[DefinitionReferences] = []
+        # Parallel to _scopes: the names each definition body binds by import.
+        self._scope_imports: list[dict[str, str]] = []
         # Parallel to _scopes: the ClassInfo when that scope is a class body.
         self._class_scopes: list[ClassInfo | None] = []
         self._annotation_depth = 0
@@ -245,16 +247,29 @@ class _ReferenceCollector(ast.NodeVisitor):
         self._visit_annotation(node.value)
 
     def _resolves_to(self, node: ast.expr, targets: frozenset[str]) -> bool:
-        """Return whether a name or dotted attribute resolves through the module's imports to a target.
+        """Return whether a name or dotted attribute resolves through the imports in scope to a target.
+
+        The innermost definition body that imports the leading name decides,
+        as in Python's own lookup: enclosing class bodies are skipped, and the
+        module's imports and aliases apply when no enclosing function imports it.
 
         :param node: Callee or annotation expression.
         :param targets: Fully qualified names to match (``typing.cast``).
         :return: ``True`` when an alias expansion of the expression is a target.
         """
         dotted = _dotted_name(node)
-        return dotted is not None and bool(
-            _resolve_reference_targets(dotted, self._aliases) & targets
-        )
+        if dotted is None:
+            return False
+        head = dotted.partition(".")[0]
+        aliases = self._aliases
+        innermost = len(self._scopes) - 1
+        for depth in range(innermost, -1, -1):
+            if depth != innermost and self._scopes[depth].is_class:
+                continue
+            if head in self._scope_imports[depth]:
+                aliases = self._scope_imports[depth]
+                break
+        return bool(_resolve_reference_targets(dotted, aliases) & targets)
 
     def visit_Call(self, node: ast.Call) -> None:
         """Visit a call, unquoting the type expressions of ``typing.cast`` and ``TypeVar``.
@@ -348,12 +363,14 @@ class _ReferenceCollector(ast.NodeVisitor):
         """
         self._scopes.append(definition)
         self._class_scopes.append(class_info)
+        self._scope_imports.append(_scope_imports(node.body))
         try:
             for statement in node.body:
                 self.visit(statement)
         finally:
             self._scopes.pop()
             self._class_scopes.pop()
+            self._scope_imports.pop()
 
     def _visit_function(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
         """Register a function or method and collect its references.
@@ -461,7 +478,35 @@ def _import_aliases(node: ast.Import | ast.ImportFrom) -> dict[str, str]:
     return {
         alias.asname or alias.name: f"{base}.{alias.name}" if base else alias.name
         for alias in node.names
+        if alias.name != "*"
     }
+
+
+def _scope_imports(body: list[ast.stmt]) -> dict[str, str]:
+    """Map the names one scope binds by import, including under ``if``/``try``/``with``.
+
+    Nested function and class bodies are separate scopes and are not entered.
+
+    :param body: Statements of a module or definition body.
+    :return: Local name to imported dotted target.
+    """
+    aliases: dict[str, str] = {}
+    pending: list[ast.AST] = list(reversed(body))
+    while pending:
+        node = pending.pop()
+        if isinstance(node, ast.Import | ast.ImportFrom):
+            aliases.update(_import_aliases(node))
+        elif not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
+            pending.extend(
+                reversed(
+                    [
+                        child
+                        for child in ast.iter_child_nodes(node)
+                        if isinstance(child, ast.stmt | ast.excepthandler | ast.match_case)
+                    ]
+                )
+            )
+    return aliases
 
 
 def _extract_aliases(tree: ast.Module) -> dict[str, str]:
@@ -504,13 +549,8 @@ def collect_module_references(file_path: Path) -> ModuleReferences:
         return ModuleReferences(diagnostic=parsed)
     tree = parsed
     aliases = _extract_aliases(tree)
-    # typing helpers are recognized through any import in the module, a
-    # function-local or TYPE_CHECKING-guarded one included.
-    nested_imports: dict[str, str] = {}
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import | ast.ImportFrom):
-            nested_imports.update(_import_aliases(node))
-    collector = _ReferenceCollector({**nested_imports, **aliases})
+    # A TYPE_CHECKING-guarded import binds a module name as well.
+    collector = _ReferenceCollector({**_scope_imports(tree.body), **aliases})
     try:
         with _recursion_limit(_VISIT_RECURSION_LIMIT):
             collector.visit(tree)
