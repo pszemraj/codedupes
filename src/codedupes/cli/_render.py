@@ -261,6 +261,14 @@ def print_summary(
     summary.add_row("Analysis status", result.analysis_status)
     if result.focus is not None:
         summary.add_row("Focus", escape(", ".join(str(path) for path in result.focus.paths)))
+        # A focus that matches no extracted unit (excluded, git-ignored, or
+        # unsupported files) passes like a clean one; say so.
+        summary.add_row(
+            "In-focus units",
+            _count(result.focus.units, "unit")
+            if result.focus.units
+            else "[yellow]0 (nothing under the focus paths was extracted)[/yellow]",
+        )
         summary.add_row("Out-of-focus duplicates", str(result.focus.out_of_focus_duplicates))
         summary.add_row("Out-of-focus unused", str(result.focus.out_of_focus_unused))
     run = result.run

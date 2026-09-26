@@ -28,6 +28,27 @@ def test_cli_focus_displays_brackets_in_path(tmp_path: Path) -> None:
     assert result.exit_code == 0, result.output
     assert "Focus" in result.output
     assert "[red]" in result.output
+    assert "In-focus units" in result.output
+    assert "1 unit" in result.output
+
+    # A focus on a file the scan excluded matches nothing, which the summary says.
+    skipped = root / "skipped.py"
+    skipped.write_text("def other():\n    return 2\n", encoding="utf-8")
+    excluded = CliRunner().invoke(
+        cli.cli,
+        [
+            "check",
+            str(root),
+            "--traditional-only",
+            "--no-unused",
+            "--exclude",
+            "skipped.py",
+            "--focus",
+            str(skipped),
+        ],
+    )
+    assert excluded.exit_code == 0, excluded.output
+    assert "nothing under the focus paths was extracted" in excluded.output
 
 
 def test_cli_focus_accepts_an_in_tree_symlink_to_an_outside_file(tmp_path: Path) -> None:
