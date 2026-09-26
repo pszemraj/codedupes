@@ -531,10 +531,11 @@ class _ProxyError(Exception):
     "load_error",
     [
         RuntimeError("EmbeddingGemma tokenizer backend is incompatible"),
+        RuntimeError("CUDA error: an illegal memory access was encountered"),
         OSError("We couldn't connect to 'https://huggingface.co' to load the files"),
         _ProxyError("403 Forbidden"),
     ],
-    ids=["known-backend-error", "offline-hub", "proxy-refusal"],
+    ids=["known-backend-error", "unclassified-runtime-error", "offline-hub", "proxy-refusal"],
 )
 def test_get_model_wraps_load_failures(monkeypatch, load_error: Exception) -> None:
     """Any failure to construct the model is a SemanticBackendError that keeps the cause text."""

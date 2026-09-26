@@ -2379,16 +2379,14 @@ def _get_model_unlocked(
                             stage=f"CPU model-loading retry after {resolved_device.upper()} OOM",
                         ) from retry_exc
                     load_device = "cpu"
-                elif _is_known_semantic_backend_error(exc):
+                else:
                     raise _wrap_semantic_backend_error(
                         exc,
                         model_name=resolved_model_name,
                         revision=resolved_revision,
                         trust_remote_code=resolved_trust_remote_code,
                         stage=f"model loading on {resolved_device}",
-                    )
-                else:
-                    raise
+                    ) from exc
             except Exception as exc:
                 # A model that cannot be fetched or constructed (offline hub,
                 # proxy refusal, missing files) is a semantic backend failure,

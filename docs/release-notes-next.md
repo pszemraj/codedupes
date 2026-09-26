@@ -49,6 +49,7 @@
 - Recognized local copies and fine-tunes retain their family's tuned thresholds; use `--threshold-profile generic` to restore generic defaults. See [model profiles](model-profiles.md).
 - Added persistent [embedding caching](caching.md) and [corpus lifecycle tracking](caching.md#corpus-lifecycle).
 - Added explicit CPU/CUDA/MPS selection, dtype control, allocator diagnostics, and bounded OOM recovery. See [accelerator behavior](accelerators.md).
+- Any failure constructing the embedding model (an offline hub, a proxy refusal, missing files) is a `SemanticBackendError` whose message carries the underlying error, so `--allow-semantic-fallback` degrades to traditional results instead of exiting `3`.
 - Added [search indexing, per-query thresholds, and contextual documents](python-api.md#semantic-query-search).
 - Long definitions and queries now use normal embedding-backend truncation rather than being excluded from semantic analysis.
 
