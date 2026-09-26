@@ -690,6 +690,8 @@ def _focus_pairs(
     kept: list[HybridDuplicate] | list[DuplicatePair] = []
     no_family: set[int] = set()
     for pair in pairs:
+        if pair.unit_a.uid == pair.unit_b.uid:
+            continue
         if _is_exact_edge(pair):
             shared = kept_families.get(pair.unit_a.uid, no_family) & kept_families.get(
                 pair.unit_b.uid, no_family

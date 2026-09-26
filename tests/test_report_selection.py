@@ -864,10 +864,12 @@ def test_focus_result_drops_untouched_family_overlapping_touched_families(tmp_pa
     left = DuplicatePair(a, b, 1.0, "structural_hash")
     middle = DuplicatePair(b, c, 1.0, "token_hash")
     right = DuplicatePair(c, d, 1.0, "structural_hash")
+    # A self-edge is no family member's edge, so focus drops it like grouping does.
+    self_edge = DuplicatePair(a, a, 1.0, "token_hash")
     result = _result(
         tmp_path,
         units=[a, b, c, d],
-        traditional_duplicates=[left, middle, right],
+        traditional_duplicates=[left, middle, right, self_edge],
         semantic_duplicates=[],
         hybrid_duplicates=[],
         run=make_run_record(tmp_path, mode="traditional"),
