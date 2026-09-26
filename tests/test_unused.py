@@ -715,10 +715,9 @@ def test_bound_method_callback_is_a_reference(tmp_path: Path) -> None:
     units, unused = _referenced_graph(tmp_path, source)
 
     assert "_on_error" not in unused
-    # The method body is attributed to the method and to its class.
+    # The method body is attributed to the method, not to its class.
     assert _unit(units, "sample._Cleaner._on_error").references == {
-        _unit(units, "sample._Cleaner.run").uid,
-        _unit(units, "sample._Cleaner").uid,
+        _unit(units, "sample._Cleaner.run").uid
     }
 
 
@@ -758,8 +757,14 @@ def test_annotations_are_references(tmp_path: Path) -> None:
         _Alias: TypeAlias = "list[_Aliased]"
         _T = TypeVar("_T", bound="_Bound")
 
+        class _LocalCast:
+            pass
+
         def _walk(node: _Node, edges: "list[_Edge]", converter) -> "_Leaf | None":
+            from typing import cast as local_cast
+
             found: "_Leaf | None" = None
+            local_cast("_LocalCast", found)
             converter.cast("_field_name")
             typing.cast("_QualifiedCast", found)
             cast(typ="_KeywordCast", val=found)
@@ -783,6 +788,7 @@ def test_annotations_are_references(tmp_path: Path) -> None:
     assert _unit(units, "sample._Cast").references == {walker}
     assert _unit(units, "sample._KeywordCast").references == {walker}
     assert _unit(units, "sample._QualifiedCast").references == {walker}
+    assert _unit(units, "sample._LocalCast").references == {walker}
     assert unused == {"_walk", "_field_name"}
 
 
@@ -908,6 +914,28 @@ _CYCLE = (
             True,
             {"_a", "_b", "_c"},
             id="three-cycle",
+        ),
+        pytest.param(
+            "class C:\n    def _a(self):\n        return self._b()\n\n"
+            "    def _b(self):\n        return self._a()\n\nC()\n",
+            True,
+            {"_a", "_b"},
+            id="private-methods-of-a-used-class",
+        ),
+        pytest.param(
+            "def outer(n):\n    def _p(x):\n        return _q(x)\n\n"
+            "    def _q(x):\n        return _p(x)\n\n    return n\n\nouter(3)\n",
+            True,
+            {"_p", "_q"},
+            id="nested-functions-of-a-used-function",
+        ),
+        pytest.param(
+            "class C:\n    def run(self):\n        return self._a()\n\n"
+            "    def _a(self):\n        return self._b()\n\n"
+            "    def _b(self):\n        return self._a()\n\nC().run()\n",
+            True,
+            set(),
+            id="method-cycle-entered-from-a-live-method",
         ),
     ],
 )
@@ -1038,7 +1066,7 @@ def test_definitions_rebound_through_global_or_nonlocal_are_references(
     assert "_helper" not in unused
 
 
-def test_nested_definition_references_count_for_the_enclosing_unit(tmp_path: Path) -> None:
+def test_nested_definition_references_belong_to_the_nested_unit(tmp_path: Path) -> None:
     source = dedent(
         """
         def _helper():
@@ -1055,7 +1083,7 @@ def test_nested_definition_references_count_for_the_enclosing_unit(tmp_path: Pat
 
     outer = _unit(units, "sample._outer")
     inner = _unit(units, "sample._outer._inner")
-    assert _unit(units, "sample._helper").references == {outer.uid, inner.uid}
+    assert _unit(units, "sample._helper").references == {inner.uid}
     assert inner.references == {outer.uid}
     assert unused == {"_outer"}
 

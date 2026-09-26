@@ -123,11 +123,11 @@ _TYPEVAR_NAMES = frozenset({"typing.TypeVar", "typing_extensions.TypeVar"})
 
 
 class _ReferenceCollector(ast.NodeVisitor):
-    """Attribute every loaded name in a module to the definitions that contain it.
+    """Attribute every loaded name in a module to the definition it occurs in.
 
-    A name is recorded on every scope on the stack, so a class sees what its
-    methods use and an outer function sees what its nested functions use.
-    Names outside any definition belong to the module itself.
+    A name is recorded on the innermost enclosing definition only, so a class
+    or outer function is not a referrer of what its members call. Names
+    outside any definition belong to the module itself.
     """
 
     def __init__(self, aliases: dict[str, str] | None = None) -> None:
@@ -146,9 +146,7 @@ class _ReferenceCollector(ast.NodeVisitor):
         self._annotation_depth = 0
 
     def _record(self, name: str, *, bare: bool = False) -> None:
-        """Attribute one referenced name to the enclosing scopes or the module.
-
-        Every enclosing definition records the use with its original scope.
+        """Attribute one referenced name to the innermost definition or the module.
 
         :param name: Referenced name or dotted attribute path.
         :param bare: Whether this was a bare ``Name`` load.
@@ -157,9 +155,8 @@ class _ReferenceCollector(ast.NodeVisitor):
         if not self._scopes:
             self.module_references.add(name)
             return
-        use = ReferenceUse(name, self._scopes[-1], bare)
-        for scope in self._scopes:
-            scope.uses.append(use)
+        scope = self._scopes[-1]
+        scope.uses.append(ReferenceUse(name, scope, bare))
 
     def _visit_annotation(self, node: ast.expr) -> None:
         """Visit an annotation, unquoting string forward references on the way.
@@ -452,6 +449,21 @@ def _parse_module(file_path: Path) -> ast.Module | ExtractionDiagnostic:
         return _diagnostic(file_path, "unused-recursion-limit", f"{type(error).__name__}: {error}")
 
 
+def _import_aliases(node: ast.Import | ast.ImportFrom) -> dict[str, str]:
+    """Map the local names one import statement binds to their full targets.
+
+    :param node: Import statement.
+    :return: Local name to imported dotted target.
+    """
+    if isinstance(node, ast.Import):
+        return {alias.asname or alias.name.rsplit(".", 1)[-1]: alias.name for alias in node.names}
+    base = node.module or ""
+    return {
+        alias.asname or alias.name: f"{base}.{alias.name}" if base else alias.name
+        for alias in node.names
+    }
+
+
 def _extract_aliases(tree: ast.Module) -> dict[str, str]:
     """Extract a conservative alias map from module-level imports and assignments.
 
@@ -461,17 +473,8 @@ def _extract_aliases(tree: ast.Module) -> dict[str, str]:
     aliases: dict[str, str] = {}
 
     for node in tree.body:
-        if isinstance(node, ast.Import):
-            for alias in node.names:
-                name = alias.name
-                asname = alias.asname or name.rsplit(".", 1)[-1]
-                aliases[asname] = name
-        elif isinstance(node, ast.ImportFrom):
-            base = node.module or ""
-            for alias in node.names:
-                imported = alias.name
-                asname = alias.asname or imported
-                aliases[asname] = f"{base}.{imported}" if base else imported
+        if isinstance(node, ast.Import | ast.ImportFrom):
+            aliases.update(_import_aliases(node))
         elif (
             isinstance(node, ast.Assign)
             and len(node.targets) == 1
@@ -501,7 +504,13 @@ def collect_module_references(file_path: Path) -> ModuleReferences:
         return ModuleReferences(diagnostic=parsed)
     tree = parsed
     aliases = _extract_aliases(tree)
-    collector = _ReferenceCollector(aliases)
+    # typing helpers are recognized through any import in the module, a
+    # function-local or TYPE_CHECKING-guarded one included.
+    nested_imports: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import | ast.ImportFrom):
+            nested_imports.update(_import_aliases(node))
+    collector = _ReferenceCollector({**nested_imports, **aliases})
     try:
         with _recursion_limit(_VISIT_RECURSION_LIMIT):
             collector.visit(tree)
@@ -868,10 +877,9 @@ def build_reference_graph(
             referrers = [unit.uid for unit in extracted] or [
                 f"__definition__::{file_path}::{definition.name}::{definition.linenos[-1]}"
             ]
+            # A definition never credits itself.
+            excluded = frozenset(unit.uid for unit in extracted)
             for use in definition.uses:
-                # A nested definition's reference to itself must not surface
-                # as the enclosing unit referencing it.
-                excluded = frozenset(unit.uid for unit in extracted_by_definition[id(use.origin)])
                 bound = local_definitions(use, top_level_by_name, redirected) if use.bare else None
                 for referrer_uid in referrers:
                     if bound is None:
@@ -1152,13 +1160,11 @@ def run_unused_analysis(
     :return: Potentially unused units, the count suppressed by directive, and per-file diagnostics.
     """
     diagnostics = build_reference_graph(units, project_root=project_root, source_files=source_files)
-    unused = find_potentially_unused(units, strict_unused=strict_unused)
     closed_cycles = _closed_cycle_members(units, strict_unused)
-    suppressed = sum(
-        1
-        for unit in units
-        if _is_unused_candidate(unit, strict_unused, closed_cycles)
-        and "unused" in unit.suppressions
-    )
+    candidates = [
+        unit for unit in units if _is_unused_candidate(unit, strict_unused, closed_cycles)
+    ]
+    unused = [unit for unit in candidates if "unused" not in unit.suppressions]
+    suppressed = len(candidates) - len(unused)
     logger.info(f"Found {len(unused)} potentially unused code units")
     return UnusedReport(unused=unused, suppressed=suppressed, diagnostics=diagnostics)
