@@ -801,52 +801,24 @@ def _comments_on_rows(node: Any, rows: frozenset[int]) -> list[Any]:
     ]
 
 
-# Bracketed expressions a header can contain (decorator or annotation call
-# arguments, a default value's literal): a comment inside one annotates that
-# expression, not the unit. Parameter lists are not among them, so a comment
-# trailing a row of a multi-row signature still belongs to the unit.
-_EXPRESSION_GROUP_TYPES = frozenset(
-    {
-        "argument_list",  # Python, C
-        "arguments",  # JavaScript/TypeScript, Rust
-        "dictionary",
-        "list",
-        "set",
-        "tuple",
-        "generator_expression",
-        "list_comprehension",
-        "dictionary_comprehension",
-        "set_comprehension",
-        "object",  # JavaScript/TypeScript
-        "array",
-        "array_expression",  # Rust
-        "tuple_expression",
-        "field_initializer_list",
-        "initializer_list",  # C
-    }
-)
-
-
 def _owns_comment(
-    comment: Any, anchor: Any, spec: UnitSpec, nested_scope_types: frozenset[str]
+    comment: Any, anchor: Any, spec: UnitSpec, header_node_types: frozenset[str]
 ) -> bool:
-    """Decide whether a comment descendant of ``anchor`` belongs to this unit or a nested scope.
+    """Decide whether a comment descendant of ``anchor`` belongs to this unit.
 
-    Walks upward from the comment's parent toward ``anchor``. A node matching
-    the unit's own ``spec.node``, ``spec.source_node``, or ``anchor`` reached
-    first means the comment is the unit's own; that identity test runs before
-    the type test on the same node because a bound arrow or class expression's
-    own node type (``arrow_function``, ``class``) can itself be a nested-scope
-    type. A node whose ``type`` is in ``nested_scope_types`` reached first
-    means a nested function, method, class, or callback -- including an
-    anonymous callback sitting in a parameter default -- owns it instead, and
-    one in ``_EXPRESSION_GROUP_TYPES`` means the comment annotates a decorator
-    argument or a default value's literal rather than the unit.
+    Walks upward from the comment's parent toward ``anchor``. Reaching the
+    unit's own ``spec.node``, ``spec.source_node``, or ``anchor`` through
+    header structure alone (parameter lists and parameters, type-parameter
+    lists, class bases, where clauses, the body block) means the comment is
+    the unit's own. Any other node on the way -- a default value, a type
+    annotation, a decorator argument, a nested function, class, or callback
+    -- owns it instead, so a directive there annotates that expression or
+    scope rather than the unit. Unlisted syntax fails toward not attaching.
 
     :param comment: Candidate comment, a descendant of ``anchor``.
     :param anchor: Statement anchor from :func:`_statement_anchor`.
     :param spec: Unit spec being inspected.
-    :param nested_scope_types: Backend's nested-scope syntax kinds.
+    :param header_node_types: Backend's header-structure node kinds.
     :return: ``True`` when the comment belongs to this unit.
     """
     current = getattr(comment, "parent", None)
@@ -857,8 +829,7 @@ def _owns_comment(
             or _same_node(current, spec.source_node)
         ):
             return True
-        node_type = getattr(current, "type", "")
-        if node_type in nested_scope_types or node_type in _EXPRESSION_GROUP_TYPES:
+        if getattr(current, "type", "") not in header_node_types:
             return False
         current = getattr(current, "parent", None)
     return True
@@ -869,30 +840,29 @@ def _following_comments(
     rows: frozenset[int],
     spec: UnitSpec,
     source: bytes,
-    nested_scope_types: frozenset[str],
+    header_node_types: frozenset[str],
 ) -> list[Any]:
     """Collect comments trailing within a unit's header rows.
 
-    Covers a comment trailing the ``def``/signature line, sitting between
-    decorators or attributes, trailing the opening brace of a body on its
-    own row (``{ // codedupes: ignore``), or ending a one-line unit. A
-    descendant candidate whose nearest owning scope (per :func:`_owns_comment`)
-    is a nested function, method, class, or parameter-default callback is
-    dropped: it lies in the unit's header rows only because a callback's own
-    header can share them, not because it belongs to this unit.
+    Covers a comment trailing the ``def``/signature line or a row of a
+    multi-row signature, sitting between decorators or attributes, trailing
+    the opening brace of a body on its own row (``{ // codedupes: ignore``),
+    or ending a one-line unit. A descendant candidate that
+    :func:`_owns_comment` places inside an expression or nested scope is
+    dropped: it lies in the unit's header rows without belonging to the unit.
 
     :param anchor: Statement anchor from :func:`_statement_anchor`.
     :param rows: Header rows from :meth:`TreeSitterBackend._header_rows`.
     :param spec: Unit spec being inspected, for comment-ownership resolution.
     :param source: Full file source bytes.
-    :param nested_scope_types: Backend's nested-scope syntax kinds.
+    :param header_node_types: Backend's header-structure node kinds.
     :return: Matching comments in document order.
     """
     body = spec.body
     body_start = int(getattr(body, "start_byte", 0))
     comments = []
     for comment in _comments_on_rows(anchor, rows):
-        if not _owns_comment(comment, anchor, spec, nested_scope_types):
+        if not _owns_comment(comment, anchor, spec, header_node_types):
             continue
         comment_start = int(getattr(comment, "start_byte", 0))
         # With more body after it, a comment trails a statement or nested
@@ -1006,6 +976,9 @@ class TreeSitterBackend:
     # a TypeScript ``namespace``), by node type with a label for diagnostics:
     # a directive attached to one applies to every unit inside it.
     directive_containers: ClassVar[dict[str, str]] = {}
+    # Syntax between a unit's own node and a comment inside its header rows
+    # that keeps the comment the unit's (see :func:`_owns_comment`).
+    header_node_types: ClassVar[frozenset[str]] = frozenset()
     builtins: frozenset[str] = frozenset()
     hash_policy: ClassVar[HashPolicy] = DEFAULT_HASH_POLICY
 
@@ -1147,7 +1120,7 @@ class TreeSitterBackend:
         rows = self._header_rows(anchor, spec)
         return [
             *_leading_comments(anchor, source),
-            *_following_comments(anchor, rows, spec, source, self.nested_scope_types),
+            *_following_comments(anchor, rows, spec, source, self.header_node_types),
         ]
 
     def _container_comments(self, container: Any, source: bytes) -> list[Any]:
@@ -1671,6 +1644,19 @@ class PythonBackend(TreeSitterBackend):
     nested_scope_types = frozenset(
         {"function_definition", "class_definition", "decorated_definition"}
     )
+    header_node_types = frozenset(
+        {
+            "block",
+            "decorator",
+            "parameters",
+            "default_parameter",
+            "typed_parameter",
+            "typed_default_parameter",
+            "list_splat_pattern",
+            "dictionary_splat_pattern",
+            "argument_list",  # class bases
+        }
+    )
     builtins = _PYTHON_BUILTINS
     hash_policy = HashPolicy(
         prune_structural=_python_prune_structural,
@@ -1896,6 +1882,15 @@ class CBackend(TreeSitterBackend):
         }
     )
     nested_scope_types = frozenset({"function_definition"})
+    header_node_types = frozenset(
+        {
+            "compound_statement",
+            "function_declarator",
+            "pointer_declarator",
+            "parameter_list",
+            "parameter_declaration",
+        }
+    )
     builtins = frozenset(
         {
             "sizeof",
@@ -2001,6 +1996,18 @@ class RustBackend(TreeSitterBackend):
     # kinds as well would double-count the same statement.
     statement_types = frozenset({"let_declaration", "expression_statement"})
     nested_scope_types = frozenset({"function_item", "closure_expression"})
+    header_node_types = frozenset(
+        {
+            "block",
+            "declaration_list",
+            "parameters",
+            "parameter",
+            "self_parameter",
+            "type_parameters",
+            "where_clause",
+            "where_predicate",
+        }
+    )
     directive_containers: ClassVar[dict[str, str]] = {
         "impl_item": "impl block",
         "trait_item": "trait block",
@@ -2330,7 +2337,6 @@ class ECMAScriptBackend(TreeSitterBackend):
     class_expressions = frozenset({"class"})
     method_types = frozenset({"method_definition"})
     field_types = frozenset({"field_definition", "public_field_definition"})
-    directive_containers: ClassVar[dict[str, str]] = {"internal_module": "namespace"}
     transparent_types = frozenset(
         {
             "parenthesized_expression",
@@ -2375,6 +2381,20 @@ class ECMAScriptBackend(TreeSitterBackend):
     )
     class_member_types = frozenset(
         {"method_definition", "field_definition", "public_field_definition", "class_static_block"}
+    )
+    header_node_types = frozenset(
+        {
+            "statement_block",
+            "class_body",
+            "decorator",
+            "formal_parameters",
+            "required_parameter",
+            "optional_parameter",
+            "type_parameters",
+            "class_heritage",
+            "extends_clause",
+            "implements_clause",
+        }
     )
     builtins = frozenset(
         {
@@ -2955,6 +2975,7 @@ class TypeScriptBackend(ECMAScriptBackend):
     nested_scope_types = ECMAScriptBackend.nested_scope_types | frozenset(
         {"abstract_class_declaration"}
     )
+    directive_containers: ClassVar[dict[str, str]] = {"internal_module": "namespace"}
 
 
 def create_backend(

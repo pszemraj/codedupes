@@ -757,9 +757,10 @@ def test_python_directive_attachment(tmp_path: Path) -> None:
     )
     assert blank_line_breaks["blank_line_breaks.f"].suppressions == set()
 
-    # A comment inside a decorator's arguments or a default value's literal
-    # annotates that expression, not the unit, even on a header row; one
-    # trailing a row of a multi-row signature still belongs to the unit.
+    # A comment inside a decorator's arguments, a default value, or a type
+    # annotation annotates that expression, not the unit, even on a header
+    # row; one trailing a row of a multi-row signature or base list still
+    # belongs to the unit.
     expression_comments = python_units(
         tmp_path,
         """
@@ -784,6 +785,31 @@ def test_python_directive_attachment(tmp_path: Path) -> None:
             b,
         ):
             return a
+
+        def conditional(
+            x=(
+                1
+                if flag  # codedupes: ignore
+                else 2
+            ),
+        ):
+            return x
+
+        def annotated(
+            x: Annotated[
+                int,  # codedupes: ignore
+                "meta",
+            ],
+        ) -> Annotated[
+            int,  # codedupes: ignore
+            "meta",
+        ]:
+            return x
+
+        class Based(
+            Base,  # codedupes: ignore[unused]
+        ):
+            pass
         """,
         filename="expression_comments.py",
     )
@@ -791,6 +817,9 @@ def test_python_directive_attachment(tmp_path: Path) -> None:
         "expression_comments.decorated": set(),
         "expression_comments.defaulted": set(),
         "expression_comments.signature": {"unused"},
+        "expression_comments.conditional": set(),
+        "expression_comments.annotated": set(),
+        "expression_comments.Based": {"unused"},
     }
 
     # A UTF-8 BOM before a first-row directive is not code sharing its row.

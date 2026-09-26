@@ -548,6 +548,34 @@ def test_rust_suppression_directive_attachment(tmp_path: Path) -> None:
     )
     assert trailing_brace.suppressions == {"unused", "duplicates"}
 
+    # A comment inside a parameter or return type is not the function's; one
+    # trailing a parameter row is.
+    typed = extract(
+        tmp_path,
+        "typed.rs",
+        """
+        fn generic(
+            a: Vec<
+                i32, // codedupes: ignore
+            >,
+        ) -> (
+            i32, // codedupes: ignore
+            usize,
+        ) {
+            (1, a.len())
+        }
+        fn listed(
+            a: i32, // codedupes: ignore[unused]
+        ) -> i32 {
+            a
+        }
+        """,
+    )
+    assert {unit.name: unit.suppressions for unit in typed} == {
+        "generic": set(),
+        "listed": {"unused"},
+    }
+
     one_line = extract(
         tmp_path,
         "one_line.rs",

@@ -679,6 +679,17 @@ def test_javascript_suppression_directive_attachment(tmp_path: Path) -> None:
             {"Widget": set(), "Widget.method": set()},
             id="ts-comment-inside-decorator-arguments-is-not-a-directive",
         ),
+        pytest.param(
+            "ts_type_comments.ts",
+            "function constrained<T extends Record<\n  string, // codedupes: ignore\n  number\n>>"
+            "(x: T) {\n  return x;\n}\n"
+            "function shaped(x: {\n  a: number; // codedupes: ignore\n}): Promise<\n"
+            "  number // codedupes: ignore\n> {\n  return g(x);\n}\n"
+            "function listed(\n  a: number, // codedupes: ignore[unused]\n  b: number,\n) {\n"
+            "  return a + b;\n}\n",
+            {"constrained": set(), "shaped": set(), "listed": {"unused"}},
+            id="ts-comment-inside-a-type-is-not-a-directive",
+        ),
     ],
 )
 def test_ecmascript_suppression_directive_positive_controls(
