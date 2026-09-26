@@ -144,6 +144,8 @@ class CodeExtractor:
         self.respect_gitignore = respect_gitignore
         self._ignored_paths: frozenset[Path] | None = None
         user_patterns = list(exclude_patterns) if exclude_patterns else []
+        # The effective list, defaults first when enabled, as the run record
+        # reports it; the default and user matchers below keep the two apart.
         self.exclude_patterns = (
             [*DEFAULT_EXCLUDE_PATTERNS, *user_patterns] if default_excludes else user_patterns
         )
@@ -335,14 +337,16 @@ class CodeExtractor:
         )
 
     def _collect_reference_files(self, directory: Path) -> list[Path]:
-        """Walk a default-excluded directory for Python files to parse for references.
+        """Walk a directory for Python files to parse for references only.
 
-        The caller has already established that ``directory`` is skipped only by a
-        default test-file shape, so this walk prunes with the user's own patterns
-        alone; git ignore rules and artifact directories still apply through
-        :meth:`_should_exclude`.
+        Prunes with the user's own patterns alone, so default test-file shapes do
+        not apply; git ignore rules and artifact directories still do, through
+        :meth:`_should_exclude`. :meth:`extract_all` calls this on a directory
+        skipped only by a default test-file shape, :meth:`reference_files` on
+        the whole root.
 
-        :param directory: Directory the main walk pruned for matching a default test shape.
+        :param directory: A directory the main walk pruned for a default test
+            shape, or the root.
         :return: Python file paths under ``directory`` not otherwise excluded.
         """
         # os.walk does not descend into symlink directories it encounters, but

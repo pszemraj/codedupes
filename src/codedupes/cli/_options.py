@@ -100,13 +100,12 @@ TRADITIONAL_ONLY_OPTIONS: tuple[str, ...] = (
     "tiny_cutoff",
 )
 # Options that only make sense when duplicate detection (of either method)
-# runs at all, and are therefore rejected under --unused-only.
+# runs at all, and are therefore rejected under --unused-only. --include-review
+# and --show-all are rejected earlier, under every exclusive mode.
 DUPLICATE_ONLY_OPTIONS: tuple[str, ...] = (
     "threshold",
     "max_duplicates",
     "show_diff",
-    "include_review",
-    "show_all",
 )
 
 

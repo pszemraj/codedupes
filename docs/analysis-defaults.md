@@ -124,7 +124,7 @@ Default tiny-filter behavior for traditional duplicates:
 - tiny definition: effective code-unit statement count `< 3`; classes expand each extracted member from its declaration count to the member's statement count, so a class with a few substantial methods is not treated as a marker. JavaScript/TypeScript static initializer bodies are counted during extraction, including statements nested in control flow; an empty block still counts as one member. When private-unit filtering is active, class duplicates remain visible because their emitted member inventory may be incomplete
 - traditional pairs where both units are tiny: dropped
 
-Use `--no-tiny-filter` / `--tiny-cutoff`, or `AnalyzerConfig.filter_tiny_traditional` / `tiny_unit_statement_cutoff`, to change the filter.
+Use `--no-tiny-filter` / `--tiny-cutoff`, or `AnalyzerConfig.filter_tiny_traditional` / `tiny_unit_statement_cutoff`, to change the filter. It covers traditional pairs only: semantic candidates are gated by `--min-statements` (`min_semantic_statements`), so a `--tiny-cutoff` above that minimum leaves semantic pairs between those units in place, and identifier overlap can still promote one.
 
 A `codedupes: ignore[duplicates]` (or bare `codedupes: ignore`) directive on either endpoint drops the pair entirely, after the tiny filter and before hybrid synthesis, so it never resurfaces in an exact family or a hybrid edge. Dropped pairs are counted in `suppressed_duplicates`; the same directive applies to semantic pairs, dropped after the `--suppress-test-semantic` filter on the same terms.
 

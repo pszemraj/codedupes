@@ -909,12 +909,11 @@ def _leading_comments(anchor: Any, source: bytes) -> list[Any]:
     first row gap between two rows. A Rust ``attribute_item`` or a TypeScript
     member ``decorator`` is transparent: skipped without breaking the chain
     or counting as a comment, and a comment trailing one on its row still
-    counts. When the
-    anchor has no preceding sibling of its own, the search hops to the
-    anchor's parent once, so a comment tree-sitter attaches to the enclosing
-    definition (a class, for its first method) rather than to the block
-    still counts; a second hop never happens, so the enclosing definition's
-    own leading comment is never reached.
+    counts. When the anchor has no preceding sibling of its own, the search
+    hops to the anchor's parent once, so a comment that tree-sitter attaches
+    to the enclosing definition (a class, for its first method) rather than
+    to the block still counts; a second hop never happens, so the enclosing
+    definition's own leading comment is never reached.
 
     :param anchor: Statement anchor from :func:`_statement_anchor`.
     :param source: Full file source bytes.
