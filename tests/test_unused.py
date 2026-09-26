@@ -725,6 +725,7 @@ def test_bound_method_callback_is_a_reference(tmp_path: Path) -> None:
 def test_annotations_are_references(tmp_path: Path) -> None:
     source = dedent(
         """
+        import typing
         from typing import TypeAlias, TypeVar, cast
 
         class _Node:
@@ -745,11 +746,23 @@ def test_annotations_are_references(tmp_path: Path) -> None:
         class _Cast:
             pass
 
+        class _KeywordCast:
+            pass
+
+        class _QualifiedCast:
+            pass
+
+        def _field_name():
+            return 1
+
         _Alias: TypeAlias = "list[_Aliased]"
         _T = TypeVar("_T", bound="_Bound")
 
-        def _walk(node: _Node, edges: "list[_Edge]") -> "_Leaf | None":
+        def _walk(node: _Node, edges: "list[_Edge]", converter) -> "_Leaf | None":
             found: "_Leaf | None" = None
+            converter.cast("_field_name")
+            typing.cast("_QualifiedCast", found)
+            cast(typ="_KeywordCast", val=found)
             return cast("_Cast", found)
         """
     ).strip()
@@ -759,15 +772,18 @@ def test_annotations_are_references(tmp_path: Path) -> None:
     module = _module_ref(units)
     # Signature annotations evaluate in the enclosing (module) namespace; the
     # annotated assignment inside the body belongs to the function. An explicit
-    # TypeAlias value, a TypeVar bound, and a cast target are type expressions,
-    # so their quoted forward references count like annotations.
+    # TypeAlias value, a TypeVar bound, and a typing.cast target (positional,
+    # keyword, or module-qualified) are type expressions, so their quoted
+    # forward references count like annotations; another API's .cast() takes data.
     assert _unit(units, "sample._Node").references == {module}
     assert _unit(units, "sample._Edge").references == {module}
     assert _unit(units, "sample._Leaf").references == {module, walker}
     assert _unit(units, "sample._Aliased").references == {module}
     assert _unit(units, "sample._Bound").references == {module}
     assert _unit(units, "sample._Cast").references == {walker}
-    assert unused == {"_walk"}
+    assert _unit(units, "sample._KeywordCast").references == {walker}
+    assert _unit(units, "sample._QualifiedCast").references == {walker}
+    assert unused == {"_walk", "_field_name"}
 
 
 @pytest.mark.skipif(sys.version_info < (3, 12), reason="type statements need Python 3.12")

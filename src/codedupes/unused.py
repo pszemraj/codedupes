@@ -116,6 +116,12 @@ def _base_text(node: ast.expr) -> str:
     return _dotted_name(node) or "<unknown>"
 
 
+# typing helpers whose string arguments are type expressions, by resolved import.
+_TYPE_ALIAS_NAMES = frozenset({"typing.TypeAlias", "typing_extensions.TypeAlias"})
+_CAST_NAMES = frozenset({"typing.cast", "typing_extensions.cast"})
+_TYPEVAR_NAMES = frozenset({"typing.TypeVar", "typing_extensions.TypeVar"})
+
+
 class _ReferenceCollector(ast.NodeVisitor):
     """Attribute every loaded name in a module to the definitions that contain it.
 
@@ -124,8 +130,13 @@ class _ReferenceCollector(ast.NodeVisitor):
     Names outside any definition belong to the module itself.
     """
 
-    def __init__(self) -> None:
-        """Start with an empty module scope."""
+    def __init__(self, aliases: dict[str, str] | None = None) -> None:
+        """Start with an empty module scope.
+
+        :param aliases: Module-level import and assignment aliases, used to
+            recognize ``typing`` helpers whose string arguments are type expressions.
+        """
+        self._aliases = aliases or {}
         self.module_references: set[str] = set()
         self.definitions: list[DefinitionReferences] = []
         self.classes: list[ClassInfo] = []
@@ -225,7 +236,7 @@ class _ReferenceCollector(ast.NodeVisitor):
         self.visit(node.target)
         if node.value is None:
             return
-        if (_dotted_name(node.annotation) or "").rsplit(".", 1)[-1] == "TypeAlias":
+        if self._resolves_to(node.annotation, _TYPE_ALIAS_NAMES):
             self._visit_annotation(node.value)
         else:
             self.visit(node.value)
@@ -236,29 +247,42 @@ class _ReferenceCollector(ast.NodeVisitor):
             self.visit(type_param)
         self._visit_annotation(node.value)
 
-    def visit_Call(self, node: ast.Call) -> None:
-        """Visit a call, unquoting the type expressions of ``cast`` and ``TypeVar``.
+    def _resolves_to(self, node: ast.expr, targets: frozenset[str]) -> bool:
+        """Return whether a name or dotted attribute resolves through the module's imports to a target.
 
-        ``cast("Target", value)``'s first argument and a ``TypeVar``'s
-        constraints and ``bound=`` are type expressions, so a quoted forward
-        reference there is a use like one in an annotation.
+        :param node: Callee or annotation expression.
+        :param targets: Fully qualified names to match (``typing.cast``).
+        :return: ``True`` when an alias expansion of the expression is a target.
         """
-        callee = (_dotted_name(node.func) or "").rsplit(".", 1)[-1]
-        if callee == "cast":
-            type_args = set(range(min(1, len(node.args))))
-        elif callee == "TypeVar":
-            type_args = set(range(1, len(node.args)))
+        dotted = _dotted_name(node)
+        return dotted is not None and bool(
+            _resolve_reference_targets(dotted, self._aliases) & targets
+        )
+
+    def visit_Call(self, node: ast.Call) -> None:
+        """Visit a call, unquoting the type expressions of ``typing.cast`` and ``TypeVar``.
+
+        ``cast``'s target type (first argument or ``typ=``) and a ``TypeVar``'s
+        constraints, ``bound=``, and ``default=`` are type expressions, so a
+        quoted forward reference there is a use like one in an annotation. The
+        callee must resolve to ``typing`` or ``typing_extensions`` through the
+        module's imports: another library's ``.cast("name")`` takes data, not a type.
+        """
+        if self._resolves_to(node.func, _CAST_NAMES):
+            positions, keywords = range(1), {"typ"}
+        elif self._resolves_to(node.func, _TYPEVAR_NAMES):
+            positions, keywords = range(1, len(node.args)), {"bound", "default"}
         else:
             self.generic_visit(node)
             return
         self.visit(node.func)
         for index, argument in enumerate(node.args):
-            if index in type_args:
+            if index in positions:
                 self._visit_annotation(argument)
             else:
                 self.visit(argument)
         for keyword in node.keywords:
-            if callee == "TypeVar" and keyword.arg == "bound":
+            if keyword.arg in keywords:
                 self._visit_annotation(keyword.value)
             else:
                 self.visit(keyword.value)
@@ -476,7 +500,8 @@ def collect_module_references(file_path: Path) -> ModuleReferences:
         )
         return ModuleReferences(diagnostic=parsed)
     tree = parsed
-    collector = _ReferenceCollector()
+    aliases = _extract_aliases(tree)
+    collector = _ReferenceCollector(aliases)
     try:
         with _recursion_limit(_VISIT_RECURSION_LIMIT):
             collector.visit(tree)
@@ -493,7 +518,7 @@ def collect_module_references(file_path: Path) -> ModuleReferences:
         )
         return ModuleReferences(diagnostic=diagnostic)
     return ModuleReferences(
-        aliases=_extract_aliases(tree),
+        aliases=aliases,
         module_references=collector.module_references,
         definitions=collector.definitions,
         classes=collector.classes,
