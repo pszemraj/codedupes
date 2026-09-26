@@ -271,12 +271,13 @@ class UnitCounts:
     """Corpus size at two extraction stages, with a breakdown of the extracted units."""
 
     extracted: int
-    semantic_eligible: int
+    # None when the semantic detector did not run, so no candidate filter applied.
+    semantic_eligible: int | None
     by_language: Mapping[str, int] = field(default_factory=dict)
     by_type: Mapping[str, int] = field(default_factory=dict)
 
     @classmethod
-    def from_units(cls, units: Sequence[CodeUnit], *, semantic_eligible: int) -> UnitCounts:
+    def from_units(cls, units: Sequence[CodeUnit], *, semantic_eligible: int | None) -> UnitCounts:
         """Count extracted units by language and by unit type.
 
         ``by_type`` always carries all three :class:`CodeUnitType` names
@@ -285,7 +286,8 @@ class UnitCounts:
         languages actually present, because the language set is open-ended.
 
         :param units: Extracted code units.
-        :param semantic_eligible: Count of units eligible for semantic embedding.
+        :param semantic_eligible: Count of units eligible for semantic embedding,
+            or ``None`` when semantic analysis did not run.
         :return: Unit counts with both breakdowns populated.
         """
         by_language = dict(sorted(Counter(unit.language for unit in units).items()))

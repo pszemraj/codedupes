@@ -209,12 +209,10 @@ def print_run(run: RunRecord, checks: AnalysisChecks) -> None:
         rows.append(
             ("Semantic", f"{run.semantic.model} ({run.semantic.threshold_profile}, {device})")
         )
-    rows.append(
-        (
-            "Units",
-            f"{run.units.extracted} extracted, {run.units.semantic_eligible} semantic-eligible",
-        )
-    )
+    units = f"{run.units.extracted} extracted"
+    if run.units.semantic_eligible is not None:
+        units += f", {run.units.semantic_eligible} semantic-eligible"
+    rows.append(("Units", units))
     _output.console.print(_settings_panel("Run", rows))
 
 

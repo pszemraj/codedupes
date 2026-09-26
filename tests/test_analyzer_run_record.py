@@ -57,8 +57,10 @@ def test_run_record_captures_resolved_settings(
         assert run.semantic.requested_model == config.model_name
         assert run.semantic.task == "semantic-similarity"
         assert run.semantic.unit_types == config.semantic_unit_types
+        assert run.units.semantic_eligible == len(result.units)
     else:
         assert run.semantic is None
+        assert run.units.semantic_eligible is None
 
     assert run.unused.strict == config.strict_unused
     assert run.unused.files >= 1
