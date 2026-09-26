@@ -70,7 +70,12 @@ def resolve_focus_paths(focus: tuple[Path, ...], target: Path) -> tuple[Path, ..
     for raw in focus:
         candidate = raw.resolve()
         if not candidate.is_relative_to(root):
-            raise click.UsageError(f"--focus path {raw} is not inside the scan root {target}.")
+            # Extraction keeps the in-tree name of a symlink whose target is
+            # outside the root, so that name is what its units carry.
+            in_tree = raw.absolute().parent.resolve() / raw.name
+            if not (in_tree.is_symlink() and in_tree.is_relative_to(root)):
+                raise click.UsageError(f"--focus path {raw} is not inside the scan root {target}.")
+            candidate = in_tree
         resolved.add(candidate)
     return tuple(sorted(resolved))
 

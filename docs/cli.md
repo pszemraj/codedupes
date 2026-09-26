@@ -177,7 +177,7 @@ Clear all cached embeddings or only entries for one model. An empty or whitespac
 - `--json` rejects rich-only display controls: `--show-diff`, `--full-table`, `--verbose`, and explicit `--output-width`; `--show-source`/`--source-lines` are accepted and add `source` to JSON unit records instead
 - `--semantic-only`, `--traditional-only`, and `--unused-only` are mutually exclusive; `--unused-only` also rejects `--no-unused` and every duplicate-detection-only option (see [`check`](#codedupes-check-path))
 - `--no-unused` and `--strict-unused` are mutually exclusive
-- `--focus` requires a directory target and rejects a path outside the scan root; a missing focus path is the same click "does not exist" error as a missing scan target
+- `--focus` requires a directory target and rejects a path outside the scan root, except an in-tree symlink to a file outside it, which is reported under its in-tree name; a missing focus path is the same click "does not exist" error as a missing scan target
 - `--no-unused` and an explicit `--max-unused` are mutually exclusive
 - `--trust-remote-code` and `--no-trust-remote-code` are mutually exclusive
 - `--mps-fallback` and `--no-mps-fallback` are mutually exclusive

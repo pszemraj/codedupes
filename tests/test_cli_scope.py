@@ -30,6 +30,29 @@ def test_cli_focus_displays_brackets_in_path(tmp_path: Path) -> None:
     assert "[red]" in result.output
 
 
+def test_cli_focus_accepts_an_in_tree_symlink_to_an_outside_file(tmp_path: Path) -> None:
+    """A symlink keeps its in-tree name when its target is outside the root, so ``--focus`` can name it."""
+    body = "    total = value + 1\n    total = total * 2\n    return total - 3\n"
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "target.py").write_text(f"def linked(value):\n{body}", encoding="utf-8")
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "other.py").write_text(f"def local(value):\n{body}", encoding="utf-8")
+    (root / "link.py").symlink_to(outside / "target.py")
+    args = ["check", str(root), "--traditional-only", "--no-unused", "--json"]
+
+    result = CliRunner().invoke(cli.cli, [*args, "--focus", str(root / "link.py")])
+
+    assert result.exit_code == 1, result.output
+    payload = json.loads(result.output)
+    assert payload["summary"]["focus"]["out_of_focus_duplicates"] == 0
+    assert {Path(unit["file"]).name for unit in payload["units"].values()} == {
+        "link.py",
+        "other.py",
+    }
+
+
 @pytest.mark.parametrize(("command", "expected_exit_code"), [("check", 1), ("search", 0)])
 @pytest.mark.parametrize("include_tests", [False, True])
 def test_cli_exclude_and_no_default_excludes_are_forwarded_separately(
