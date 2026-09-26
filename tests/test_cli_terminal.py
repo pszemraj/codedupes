@@ -422,6 +422,10 @@ def test_cli_table_location_uses_absolute_path_when_relative_path_is_longer(monk
 def test_cli_diagnostic_tables_respect_width(command, width, monkeypatch, tmp_path):
     cache_path = tmp_path / "[red]literal[/red]" / ("long-cache-path-" * 8)
     monkeypatch.setenv("CODEDUPES_CACHE_DIR", str(cache_path))
+    # `info` sets the MPS fallback default when it is unset, which warns on
+    # stderr once an earlier test has imported torch; pin it so the empty
+    # stderr below does not depend on test order.
+    monkeypatch.setenv("PYTORCH_ENABLE_MPS_FALLBACK", "1")
     result = CliRunner().invoke(cli.cli, [*command, "--output-width", str(width)])
 
     assert result.exit_code == 0, result.output
