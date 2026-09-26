@@ -48,7 +48,7 @@ def test_cli_focus_displays_brackets_in_path(tmp_path: Path) -> None:
         ],
     )
     assert excluded.exit_code == 0, excluded.output
-    assert "nothing under the focus paths was extracted" in excluded.output
+    assert "0 (no code units under the focus paths)" in excluded.output
 
 
 def test_cli_focus_accepts_an_in_tree_symlink_to_an_outside_file(tmp_path: Path) -> None:
