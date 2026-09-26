@@ -1654,7 +1654,9 @@ class PythonBackend(TreeSitterBackend):
             "typed_default_parameter",
             "list_splat_pattern",
             "dictionary_splat_pattern",
-            "argument_list",  # class bases
+            # Class bases; a call's arguments always sit under a ``call``,
+            # which is not header structure, so they never reach the unit.
+            "argument_list",
         }
     )
     builtins = _PYTHON_BUILTINS

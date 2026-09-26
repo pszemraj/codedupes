@@ -483,9 +483,10 @@ def _import_aliases(node: ast.Import | ast.ImportFrom) -> dict[str, str]:
 
 
 def _scope_imports(body: list[ast.stmt]) -> dict[str, str]:
-    """Map the names one scope binds by import, including under ``if``/``try``/``with``.
+    """Map the names one scope binds by import, including inside compound statements.
 
-    Nested function and class bodies are separate scopes and are not entered.
+    ``if``/``try``/``with``/loop/``match`` bodies are part of the scope; nested
+    function and class bodies are separate scopes and are not entered.
 
     :param body: Statements of a module or definition body.
     :return: Local name to imported dotted target.
