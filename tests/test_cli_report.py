@@ -63,6 +63,9 @@ def test_cli_traditional_panel_label_is_language_neutral(monkeypatch, tmp_path):
     path.write_text("def entry():\n    return 1\n")
     unit = build_unit(tmp_path)
     copy = build_copy(tmp_path)
+    third = make_code_unit(
+        tmp_path, name="entry_third", source="def entry_third():\n    return 1", lineno=17
+    )
     near_a = make_code_unit(tmp_path, name="near_a", source="def near_a():\n    return 2", lineno=9)
     near_b = make_code_unit(
         tmp_path, name="near_b", source="def near_b():\n    return 3", lineno=13
@@ -71,9 +74,11 @@ def test_cli_traditional_panel_label_is_language_neutral(monkeypatch, tmp_path):
         monkeypatch,
         cli,
         analyze_result=AnalysisResult(
-            units=[unit, copy, near_a, near_b],
+            units=[unit, copy, third, near_a, near_b],
             traditional_duplicates=[
                 DuplicatePair(unit_a=unit, unit_b=copy, similarity=1.0, method="token_hash"),
+                DuplicatePair(unit_a=unit, unit_b=third, similarity=1.0, method="token_hash"),
+                DuplicatePair(unit_a=copy, unit_b=third, similarity=1.0, method="token_hash"),
                 DuplicatePair(unit_a=near_a, unit_b=near_b, similarity=0.9, method="jaccard"),
             ],
             semantic_duplicates=[],
@@ -88,10 +93,13 @@ def test_cli_traditional_panel_label_is_language_neutral(monkeypatch, tmp_path):
     assert "Exact Duplicate Families (1 family)" in result.output
     assert "token_hash" in result.output
     assert "Exact duplicate families" in result.output
-    assert "1 family (2 units)" in result.output
+    assert "1 family (3 units)" in result.output
     assert "Near Duplicates (Jaccard)" in result.output
     assert "(1 pair)" in result.output
     assert "AST" not in result.output
+    # The headline counts findings (the family once); raw edges are labelled raw.
+    assert re.search(r"Duplicates\s+2\b", result.output)
+    assert re.search(r"Raw traditional duplicates\s+4\b", result.output)
 
 
 def _build_capped_result_with_unused(tmp_path: Path, unused: int = 25) -> AnalysisResult:

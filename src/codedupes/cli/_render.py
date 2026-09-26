@@ -293,16 +293,20 @@ def print_summary(
             summary.add_row("Withheld review candidates", f"{withheld} (use --include-review)")
         if truncated:
             summary.add_row("Truncated duplicates", truncation_note)
-    else:
-        if selection.mode == "traditional":
-            summary.add_row("Traditional duplicates", str(len(result.traditional_duplicates)))
-        elif selection.mode == "semantic":
-            summary.add_row("Semantic duplicates", str(len(result.semantic_duplicates)))
+    elif selection.mode in {"traditional", "semantic"}:
+        # Findings, like the combined headline: a family counts once.
+        summary.add_row("Duplicates", str(selection.total_findings))
         if families:
             summary.add_row("Exact duplicate families", family_note)
         if truncated:
             summary.add_row("Reported duplicates", str(selection.reported_findings))
             summary.add_row("Truncated duplicates", truncation_note)
+        raw = (
+            result.traditional_duplicates
+            if selection.mode == "traditional"
+            else result.semantic_duplicates
+        )
+        summary.add_row(f"Raw {selection.mode} duplicates", str(len(raw)))
 
     summary.add_row("Potentially unused", str(len(result.potentially_unused)))
     if truncated_unused:
