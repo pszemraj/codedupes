@@ -996,18 +996,16 @@ def _is_test_file(path: Path) -> bool:
     )
 
 
-def _is_unused_candidate(unit: CodeUnit, strict_unused: bool) -> bool:
-    """Apply every unused heuristic except the ``codedupes: ignore`` directive.
+def _is_reportable(unit: CodeUnit, strict_unused: bool) -> bool:
+    """Apply every unused policy rule that does not look at references.
 
     :param unit: Candidate code unit.
     :param strict_unused: Whether to report public functions and public methods of public classes too.
-    :return: ``True`` when the unit would be reported absent a suppression directive.
+    :return: ``False`` for non-Python units and units kept as API, accessors, abstract methods, or tests.
     """
     if unit.language != "python":
         return False
     if not strict_unused and _is_public_surface(unit):
-        return False
-    if unit.references:
         return False
     if unit.is_likely_api:
         return False
@@ -1018,17 +1016,114 @@ def _is_unused_candidate(unit: CodeUnit, strict_unused: bool) -> bool:
     return not (unit.name.startswith(("test_", "pytest_")) or _is_test_file(unit.file_path))
 
 
+def _strongly_connected(graph: dict[str, list[str]]) -> list[list[str]]:
+    """Split a directed graph into strongly connected components (iterative Tarjan).
+
+    :param graph: Adjacency lists; every neighbor must also be a key.
+    :return: Components, each a list of node keys.
+    """
+    index: dict[str, int] = {}
+    low: dict[str, int] = {}
+    stack: list[str] = []
+    on_stack: set[str] = set()
+    components: list[list[str]] = []
+    for root, root_neighbors in graph.items():
+        if root in index:
+            continue
+        index[root] = low[root] = len(index)
+        stack.append(root)
+        on_stack.add(root)
+        work = [(root, iter(root_neighbors))]
+        while work:
+            node, neighbors = work[-1]
+            for neighbor in neighbors:
+                if neighbor not in index:
+                    index[neighbor] = low[neighbor] = len(index)
+                    stack.append(neighbor)
+                    on_stack.add(neighbor)
+                    work.append((neighbor, iter(graph[neighbor])))
+                    break
+                if neighbor in on_stack:
+                    low[node] = min(low[node], index[neighbor])
+            else:
+                work.pop()
+                if work:
+                    parent = work[-1][0]
+                    low[parent] = min(low[parent], low[node])
+                if low[node] == index[node]:
+                    component: list[str] = []
+                    while True:
+                        member = stack.pop()
+                        on_stack.discard(member)
+                        component.append(member)
+                        if member == node:
+                            break
+                    components.append(component)
+    return components
+
+
+def _closed_cycle_members(units: list[CodeUnit], strict_unused: bool) -> set[str]:
+    """Find units referenced only from inside a reference cycle nothing else reaches.
+
+    Extends "a unit's own body never counts for itself" to mutual recursion:
+    ``_a`` calling ``_b`` and ``_b`` calling ``_a``, with nothing else
+    calling either, leaves both unreferenced. A cycle stays referenced when
+    any member has a referrer outside it (module code, another unit, an entry
+    point, a registration or framework credit), is kept by policy, or carries
+    an ``ignore[unused]`` directive. Callees of a dead cycle keep their credit,
+    as callees of any dead unit do.
+
+    :param units: Units after :func:`build_reference_graph`.
+    :param strict_unused: Whether public functions and methods are reportable.
+    :return: Uids of every member of each closed cycle.
+    """
+    by_uid = {unit.uid: unit for unit in units if unit.language == "python"}
+    graph = {
+        uid: sorted(referrer for referrer in unit.references if referrer in by_uid)
+        for uid, unit in by_uid.items()
+    }
+    closed: set[str] = set()
+    for component in _strongly_connected(graph):
+        members = set(component)
+        if len(members) > 1 and all(
+            by_uid[uid].references <= members
+            and _is_reportable(by_uid[uid], strict_unused)
+            and "unused" not in by_uid[uid].suppressions
+            for uid in members
+        ):
+            closed |= members
+    return closed
+
+
+def _is_unused_candidate(unit: CodeUnit, strict_unused: bool, closed_cycles: set[str]) -> bool:
+    """Apply every unused heuristic except the ``codedupes: ignore`` directive.
+
+    :param unit: Candidate code unit.
+    :param strict_unused: Whether to report public functions and public methods of public classes too.
+    :param closed_cycles: Uids referenced only from inside a closed cycle (see :func:`_closed_cycle_members`).
+    :return: ``True`` when the unit would be reported absent a suppression directive.
+    """
+    if unit.references and unit.uid not in closed_cycles:
+        return False
+    return _is_reportable(unit, strict_unused)
+
+
 def find_potentially_unused(units: list[CodeUnit], strict_unused: bool = False) -> list[CodeUnit]:
     """Find code units that are never referenced, not likely API, and not suppressed.
+
+    A unit referenced only from inside a closed reference cycle (mutual
+    recursion nothing else reaches) counts as never referenced.
 
     :param units: Candidate code units.
     :param strict_unused: Whether to report public functions and public methods of public classes too.
     :return: Candidates carrying no ``unused`` suppression directive.
     """
+    closed_cycles = _closed_cycle_members(units, strict_unused)
     return [
         unit
         for unit in units
-        if _is_unused_candidate(unit, strict_unused) and "unused" not in unit.suppressions
+        if _is_unused_candidate(unit, strict_unused, closed_cycles)
+        and "unused" not in unit.suppressions
     ]
 
 
@@ -1058,10 +1153,12 @@ def run_unused_analysis(
     """
     diagnostics = build_reference_graph(units, project_root=project_root, source_files=source_files)
     unused = find_potentially_unused(units, strict_unused=strict_unused)
+    closed_cycles = _closed_cycle_members(units, strict_unused)
     suppressed = sum(
         1
         for unit in units
-        if _is_unused_candidate(unit, strict_unused) and "unused" in unit.suppressions
+        if _is_unused_candidate(unit, strict_unused, closed_cycles)
+        and "unused" in unit.suppressions
     )
     logger.info(f"Found {len(unused)} potentially unused code units")
     return UnusedReport(unused=unused, suppressed=suppressed, diagnostics=diagnostics)

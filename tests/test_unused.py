@@ -869,6 +869,58 @@ def test_self_recursion_is_not_a_reference(tmp_path: Path) -> None:
     assert unused == {"_factorial"}
 
 
+_CYCLE = (
+    "def _even(n):\n    return n == 0 or _odd(n - 1)\n\n"
+    "def _odd(n):\n    return n != 0 and _even(n - 1)\n\n"
+)
+
+
+@pytest.mark.parametrize(
+    ("source", "strict", "expected"),
+    [
+        pytest.param(_CYCLE, True, {"_even", "_odd"}, id="closed-pair"),
+        pytest.param(
+            _CYCLE + "def run():\n    return _even(4)\n", True, {"run"}, id="entered-from-outside"
+        ),
+        pytest.param(
+            "def _a():\n    return _b() + _leaf()\n\ndef _b():\n    return _a()\n\n"
+            "def _leaf():\n    return 1\n",
+            True,
+            {"_a", "_b"},
+            id="callee-of-a-dead-cycle-keeps-its-credit",
+        ),
+        pytest.param(
+            "def _a():  # codedupes: ignore[unused]\n    return _b()\n\n"
+            "def _b():\n    return _a()\n",
+            True,
+            set(),
+            id="directive-keeps-the-cycle",
+        ),
+        pytest.param(
+            "def helper():\n    return _b()\n\ndef _b():\n    return helper()\n",
+            False,
+            set(),
+            id="public-member-keeps-the-cycle-in-default-mode",
+        ),
+        pytest.param(
+            "def _a():\n    return _b()\n\ndef _b():\n    return _c()\n\n"
+            "def _c():\n    return _a()\n",
+            True,
+            {"_a", "_b", "_c"},
+            id="three-cycle",
+        ),
+    ],
+)
+def test_closed_reference_cycle_is_unreferenced(
+    tmp_path: Path, source: str, strict: bool, expected: set[str]
+) -> None:
+    """Mutual recursion nothing outside reaches is reported, like self-recursion."""
+    units = extract_units(tmp_path, source, include_private=True)
+    build_reference_graph(units)
+
+    assert {unit.name for unit in find_potentially_unused(units, strict_unused=strict)} == expected
+
+
 def test_self_recursive_method_is_not_a_reference(tmp_path: Path) -> None:
     """A method's own body must not reach it through the enclosing class scope."""
     source = dedent(
