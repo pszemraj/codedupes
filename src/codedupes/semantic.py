@@ -1858,7 +1858,7 @@ def _wrap_semantic_backend_error(
 
     message = (
         f"Semantic backend failed during {stage} for model={model_name} revision={revision_text} "
-        f"trust_remote_code={trust_remote_code}. "
+        f"trust_remote_code={trust_remote_code}: {type(error).__name__}: {error}. "
         f"Versions: {version_info}. "
         "Fix suggestions: " + " ".join(hints)
     )
@@ -2371,17 +2371,13 @@ def _get_model_unlocked(
                     try:
                         loaded_model = SentenceTransformer(resolved_model_name, **cpu_kwargs)
                     except Exception as retry_exc:
-                        if _is_known_semantic_backend_error(retry_exc):
-                            raise _wrap_semantic_backend_error(
-                                retry_exc,
-                                model_name=resolved_model_name,
-                                revision=resolved_revision,
-                                trust_remote_code=resolved_trust_remote_code,
-                                stage=(
-                                    f"CPU model-loading retry after {resolved_device.upper()} OOM"
-                                ),
-                            )
-                        raise
+                        raise _wrap_semantic_backend_error(
+                            retry_exc,
+                            model_name=resolved_model_name,
+                            revision=resolved_revision,
+                            trust_remote_code=resolved_trust_remote_code,
+                            stage=f"CPU model-loading retry after {resolved_device.upper()} OOM",
+                        ) from retry_exc
                     load_device = "cpu"
                 elif _is_known_semantic_backend_error(exc):
                     raise _wrap_semantic_backend_error(
@@ -2394,15 +2390,16 @@ def _get_model_unlocked(
                 else:
                     raise
             except Exception as exc:
-                if _is_known_semantic_backend_error(exc):
-                    raise _wrap_semantic_backend_error(
-                        exc,
-                        model_name=resolved_model_name,
-                        revision=resolved_revision,
-                        trust_remote_code=resolved_trust_remote_code,
-                        stage=f"model loading on {resolved_device}",
-                    )
-                raise
+                # A model that cannot be fetched or constructed (offline hub,
+                # proxy refusal, missing files) is a semantic backend failure,
+                # so --allow-semantic-fallback can degrade instead of exiting.
+                raise _wrap_semantic_backend_error(
+                    exc,
+                    model_name=resolved_model_name,
+                    revision=resolved_revision,
+                    trust_remote_code=resolved_trust_remote_code,
+                    stage=f"model loading on {resolved_device}",
+                ) from exc
 
             # Without a pre-load fingerprint there is nothing to verify against;
             # persistent reuse is already disabled and every call reloads.

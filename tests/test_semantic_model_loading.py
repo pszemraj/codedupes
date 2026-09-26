@@ -523,16 +523,33 @@ def test_prepare_semantic_device_ignores_fraction_on_non_mps(caplog) -> None:
     assert "mps_memory_fraction ignored: resolved device is cpu" in caplog.text
 
 
-def test_get_model_wraps_known_backend_error(monkeypatch) -> None:
+class _ProxyError(Exception):
+    """Stand-in for an HTTP client's transport error, which is not an OSError."""
+
+
+@pytest.mark.parametrize(
+    "load_error",
+    [
+        RuntimeError("EmbeddingGemma tokenizer backend is incompatible"),
+        OSError("We couldn't connect to 'https://huggingface.co' to load the files"),
+        _ProxyError("403 Forbidden"),
+    ],
+    ids=["known-backend-error", "offline-hub", "proxy-refusal"],
+)
+def test_get_model_wraps_load_failures(monkeypatch, load_error: Exception) -> None:
+    """Any failure to construct the model is a SemanticBackendError that keeps the cause text."""
+
     def fake_ctor(*args, **kwargs):
-        raise RuntimeError("EmbeddingGemma tokenizer backend is incompatible")
+        raise load_error
 
     monkeypatch.setattr(semantic, "_check_semantic_dependencies", lambda: None)
     monkeypatch.setattr(sentence_transformers, "SentenceTransformer", fake_ctor)
     semantic.clear_model_cache()
 
-    with pytest.raises(SemanticBackendError, match="Semantic backend failed"):
+    with pytest.raises(SemanticBackendError, match="Semantic backend failed") as excinfo:
         semantic.get_model("embeddinggemma-300m")
+    assert str(load_error) in str(excinfo.value)
+    assert excinfo.value.__cause__ is load_error
 
 
 @pytest.mark.parametrize(
